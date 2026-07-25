@@ -28,7 +28,7 @@ func TestSubscribeEmitsEvents(t *testing.T) {
 		require.Equal(t, "1-0", evt.ID)
 		return nil
 	})
-	sinkMock.AddClose(func(ctx context.Context) {})
+	sinkMock.AddClose(func(ctx context.Context) error { return nil })
 
 	client.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 		require.Equal(t, "session/session-123", name)
@@ -75,7 +75,7 @@ func TestSubscribeDecoderError(t *testing.T) {
 		return sinkMock, nil
 	})
 	sinkMock.AddSubscribe(func() <-chan *streaming.Event { return eventCh })
-	sinkMock.AddClose(func(ctx context.Context) {})
+	sinkMock.AddClose(func(ctx context.Context) error { return nil })
 
 	sub, err := NewSubscriber(SubscriberOptions{
 		Client: client,

@@ -107,4 +107,7 @@ func (f *fakeSink) Subscribe() <-chan *streaming.Event { return f.events }
 
 func (f *fakeSink) Ack(context.Context, *streaming.Event) error { return nil }
 
-func (f *fakeSink) Close(context.Context) { f.closed = true }
+func (f *fakeSink) Close(context.Context) error {
+	f.closed = true
+	return nil
+}

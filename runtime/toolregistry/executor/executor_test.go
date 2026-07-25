@@ -1033,7 +1033,7 @@ func (s *fakeSink) Ack(ctx context.Context, ev *streaming.Event) error {
 	return nil
 }
 
-func (s *fakeSink) Close(ctx context.Context) {}
+func (s *fakeSink) Close(ctx context.Context) error { return nil }
 
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()

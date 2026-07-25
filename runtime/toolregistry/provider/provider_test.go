@@ -111,7 +111,7 @@ func TestServe_RespondsToPingWhileToolCallInFlight(t *testing.T) {
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return eventsCh })
 	sink.SetAck(func(_ context.Context, _ *streaming.Event) error { return nil })
-	sink.SetClose(func(_ context.Context) {})
+	sink.SetClose(func(_ context.Context) error { return nil })
 
 	toolsetStream := mockpulse.NewStream(t)
 	toolsetStream.SetNewSink(func(_ context.Context, _ string, _ ...streamopts.Sink) (pulse.Sink, error) {
@@ -232,7 +232,7 @@ func TestServeValidatesTokenAndCompletesStaleQueuedCall(t *testing.T) {
 		acked <- event
 		return nil
 	})
-	sink.SetClose(func(context.Context) {})
+	sink.SetClose(func(context.Context) error { return nil })
 	toolsetStream := mockpulse.NewStream(t)
 	toolsetStream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
 		return sink, nil
@@ -344,11 +344,12 @@ func TestServeShutdownPublishesThenAcknowledgesBeforeRelease(t *testing.T) {
 
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
-	sink.SetClose(func(closeCtx context.Context) {
+	sink.SetClose(func(closeCtx context.Context) error {
 		_, hasDeadline := closeCtx.Deadline()
 		assert.True(t, hasDeadline)
 		require.NoError(t, closeCtx.Err())
 		record("close")
+		return nil
 	})
 	sink.SetAck(func(context.Context, *streaming.Event) error {
 		<-allowAck
@@ -431,7 +432,7 @@ func TestServeAckFailureIsExplicitAndPreventsRelease(t *testing.T) {
 	released := atomic.Bool{}
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
-	sink.SetClose(func(context.Context) {})
+	sink.SetClose(func(context.Context) error { return nil })
 	sink.SetAck(func(context.Context, *streaming.Event) error {
 		return errors.New("ack unavailable")
 	})
@@ -494,8 +495,9 @@ func TestServeSinkCloseTimeoutPreventsRelease(t *testing.T) {
 		return events
 	})
 	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
-	sink.SetClose(func(closeCtx context.Context) {
+	sink.SetClose(func(closeCtx context.Context) error {
 		<-closeCtx.Done()
+		return nil
 	})
 	stream := mockpulse.NewStream(t)
 	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
@@ -541,7 +543,7 @@ func TestServe_RespondsToPingWhenQueueIsFull(t *testing.T) {
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return eventsCh })
 	sink.SetAck(func(_ context.Context, _ *streaming.Event) error { return nil })
-	sink.SetClose(func(_ context.Context) {})
+	sink.SetClose(func(_ context.Context) error { return nil })
 
 	toolsetStream := mockpulse.NewStream(t)
 	toolsetStream.SetNewSink(func(_ context.Context, _ string, _ ...streamopts.Sink) (pulse.Sink, error) {
@@ -673,7 +675,7 @@ func TestServeMaxQueuedToolCallsBoundsTotalWaitingWork(t *testing.T) {
 	ponged := make(chan struct{}, 1)
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
-	sink.SetClose(func(context.Context) {})
+	sink.SetClose(func(context.Context) error { return nil })
 	sink.SetAck(func(context.Context, *streaming.Event) error {
 		acked.Add(1)
 		return nil
@@ -751,7 +753,7 @@ func TestServeDuplicateDeliveryPublishesAndAcknowledgesExactResult(t *testing.T)
 	results := make(chan toolregistry.ToolResultMessage, 2)
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
-	sink.SetClose(func(context.Context) {})
+	sink.SetClose(func(context.Context) error { return nil })
 	sink.SetAck(func(_ context.Context, event *streaming.Event) error {
 		acks <- event
 		return nil
@@ -803,7 +805,7 @@ func TestServeReportsHandlerSettlementTimeoutAndWithholdsRelease(t *testing.T) {
 	events := make(chan *streaming.Event, 1)
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
-	sink.SetClose(func(context.Context) {})
+	sink.SetClose(func(context.Context) error { return nil })
 	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
 	requestStream := mockpulse.NewStream(t)
 	requestStream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
@@ -858,7 +860,7 @@ func TestServe_DoesNotExitOnPongFailure(t *testing.T) {
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return eventsCh })
 	sink.SetAck(func(_ context.Context, _ *streaming.Event) error { return nil })
-	sink.SetClose(func(_ context.Context) {})
+	sink.SetClose(func(_ context.Context) error { return nil })
 
 	toolsetStream := mockpulse.NewStream(t)
 	toolsetStream.SetNewSink(func(_ context.Context, _ string, _ ...streamopts.Sink) (pulse.Sink, error) {
@@ -1026,7 +1028,7 @@ func TestServe_PublishesOutputDeltaToResultStream(t *testing.T) {
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return eventsCh })
 	sink.SetAck(func(_ context.Context, _ *streaming.Event) error { return nil })
-	sink.SetClose(func(_ context.Context) {})
+	sink.SetClose(func(_ context.Context) error { return nil })
 
 	toolsetStream := mockpulse.NewStream(t)
 	toolsetStream.SetNewSink(func(_ context.Context, _ string, _ ...streamopts.Sink) (pulse.Sink, error) {
@@ -1130,7 +1132,7 @@ func TestServeEnsureLoopRepairsConsumerGroup(t *testing.T) {
 	eventsCh := make(chan *streaming.Event)
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return eventsCh })
-	sink.SetClose(func(_ context.Context) {})
+	sink.SetClose(func(_ context.Context) error { return nil })
 
 	var ensuredGroups atomic.Int64
 	toolsetStream := mockpulse.NewStream(t)
@@ -1187,7 +1189,7 @@ func TestServeEnsureLoopFailuresDoNotStopProvider(t *testing.T) {
 	eventsCh := make(chan *streaming.Event)
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return eventsCh })
-	sink.SetClose(func(_ context.Context) {})
+	sink.SetClose(func(_ context.Context) error { return nil })
 
 	var attempts atomic.Int64
 	toolsetStream := mockpulse.NewStream(t)

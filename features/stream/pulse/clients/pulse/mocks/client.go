@@ -43,7 +43,7 @@ type (
 
 	SinkSubscribeFunc func() <-chan *streaming.Event
 	SinkAckFunc       func(p0 context.Context, p1 *streaming.Event) error
-	SinkCloseFunc     func(p0 context.Context)
+	SinkCloseFunc     func(p0 context.Context) error
 
 	Reader struct {
 		m *mock.Mock
@@ -247,13 +247,13 @@ func (m *Sink) SetClose(f SinkCloseFunc) {
 	m.m.Set("Close", f)
 }
 
-func (m *Sink) Close(p0 context.Context) {
+func (m *Sink) Close(p0 context.Context) error {
 	if f := m.m.Next("Close"); f != nil {
-		f.(SinkCloseFunc)(p0)
-		return
+		return f.(SinkCloseFunc)(p0)
 	}
 	m.t.Helper()
 	m.t.Error("unexpected Close call")
+	return nil
 }
 
 func (m *Sink) HasMore() bool {

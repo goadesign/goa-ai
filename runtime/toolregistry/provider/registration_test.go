@@ -128,8 +128,9 @@ func TestServeOpensStreamRegistersThenCreatesSink(t *testing.T) {
 	sink.SetAck(func(context.Context, *streaming.Event) error {
 		return nil
 	})
-	sink.SetClose(func(context.Context) {
+	sink.SetClose(func(context.Context) error {
 		sinkClosed.Store(true)
+		return nil
 	})
 
 	stream := mockpulse.NewStream(t)
@@ -322,8 +323,9 @@ func TestServeClosesConsumptionBeforeLeaseExpiry(t *testing.T) {
 	sink.SetSubscribe(func() <-chan *streaming.Event {
 		return events
 	})
-	sink.SetClose(func(context.Context) {
+	sink.SetClose(func(context.Context) error {
 		closed <- time.Now()
+		return nil
 	})
 	stream := mockpulse.NewStream(t)
 	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
@@ -662,7 +664,7 @@ func TestServeChangedRenewalTokenReleasesBothExactLeases(t *testing.T) {
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
 	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
-	sink.SetClose(func(context.Context) {})
+	sink.SetClose(func(context.Context) error { return nil })
 	stream := mockpulse.NewStream(t)
 	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
 		return sink, nil

@@ -729,12 +729,16 @@ func publishOverloadedResult(
 // before the lifecycle shutdown deadline.
 func closeSinkBounded(ctx context.Context, sink pulseclients.Sink) error {
 	closed := make(chan struct{})
+	var closeErr error
 	go func() {
-		sink.Close(ctx)
+		closeErr = sink.Close(ctx)
 		close(closed)
 	}()
 	select {
 	case <-closed:
+		if closeErr != nil {
+			return fmt.Errorf("close toolset sink: %w", closeErr)
+		}
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("close toolset sink: %w", err)
 		}

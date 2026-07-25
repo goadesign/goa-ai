@@ -76,8 +76,9 @@ type (
 		Subscribe() <-chan *streaming.Event
 		// Ack acknowledges successful processing of an event, removing it from the pending list.
 		Ack(context.Context, *streaming.Event) error
-		// Close stops the sink and releases resources.
-		Close(context.Context)
+		// Close stops the sink and releases resources, reporting a shutdown
+		// that could not complete cleanly.
+		Close(context.Context) error
 	}
 
 	// Reader is an independent immutable-history subscription.
@@ -206,15 +207,14 @@ func (h *handle) Destroy(ctx context.Context) error {
 	return h.stream.Destroy(ctx)
 }
 
-// sinkAdapter adapts streaming.Sink to the Sink interface, making Close match
-// the expected signature (return void instead of error).
+// sinkAdapter adapts streaming.Sink to the Sink interface.
 type sinkAdapter struct {
 	*streaming.Sink
 }
 
 // Close delegates to the underlying Pulse sink.
-func (s sinkAdapter) Close(ctx context.Context) {
-	s.Sink.Close(ctx)
+func (s sinkAdapter) Close(ctx context.Context) error {
+	return s.Sink.Close(ctx)
 }
 
 // pulseStreamKey returns the Redis key Pulse uses for a stream. The prefix is
