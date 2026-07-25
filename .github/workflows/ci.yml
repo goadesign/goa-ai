@@ -61,25 +61,16 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      - name: Install latest protoc
+      # make itest only requires protoc on PATH (see the Makefile protoc-check
+      # target), and the sole proto in this repo is plain proto3, so the
+      # distribution compiler is sufficient. Resolving "latest" through the
+      # unauthenticated GitHub API instead made this lane fail whenever the
+      # API rate-limited the runner: the version resolved empty and the
+      # download was an error page rather than an archive.
+      - name: Install protoc
         run: |
-          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y unzip jq
-          PROTOC_VERSION=$(curl -s https://api.github.com/repos/protocolbuffers/protobuf/releases/latest | jq -r '.tag_name' | sed 's/^v//')
-          ARCH=$(uname -m)
-          case "$ARCH" in
-            x86_64|amd64) ARCH=x86_64 ;;
-            aarch64|arm64) ARCH=aarch_64 ;;
-            *) echo "Unsupported arch: $ARCH" ; exit 1 ;;
-          esac
-          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-          FNAME="protoc-${PROTOC_VERSION}-${OS}-${ARCH}.zip"
-          URL="https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${FNAME}"
-          echo "Downloading $URL" 
-          curl -sSL -o /tmp/protoc.zip "$URL"
-          sudo unzip -o /tmp/protoc.zip -d /usr/local
-          /usr/local/bin/protoc --version
+          sudo apt-get install -y protobuf-compiler
 
       - name: Install protoc plugins
         run: |
