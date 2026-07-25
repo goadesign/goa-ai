@@ -358,7 +358,18 @@ func (h *healthTracker) ensureMapRevision(ctx context.Context, hashKey string) e
 // ping interval.
 func (h *healthTracker) pingRegisteredToolsets() {
 	ctx := context.Background()
-	for _, key := range h.catalogMap.Keys() {
+	keys, err := h.catalogMap.AuthoritativeKeys(ctx)
+	if err != nil {
+		h.logger.Error(
+			ctx,
+			"enumerate catalog toolsets failed",
+			"event", "enumerate_catalog_failed",
+			"component", "tool-registry-health",
+			"err", err,
+		)
+		return
+	}
+	for _, key := range keys {
 		toolset := toolsetFromCatalogKey(key)
 		if toolset == "" {
 			continue

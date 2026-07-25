@@ -82,8 +82,8 @@ func TestMultiNodeAdmissionHandoff(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(map2.Close)
 	clock := newRedisTimeSource(testRedisClient)
-	catalog1 := newToolsetCatalog(map1, clock)
-	catalog2 := newToolsetCatalog(map2, clock)
+	catalog1 := newToolsetCatalog(authoritativeCatalogMap{Map: map1, rdb: testRedisClient}, clock)
+	catalog2 := newToolsetCatalog(authoritativeCatalogMap{Map: map2, rdb: testRedisClient}, clock)
 
 	old, err := catalog1.Register(
 		ctx,
@@ -129,7 +129,7 @@ func TestStoppedRedisRebootstrapReconstructsSameAdmission(t *testing.T) {
 	m, err := rmap.Join(ctx, name, testRedisClient)
 	require.NoError(t, err)
 	clock := newRedisTimeSource(testRedisClient)
-	catalog := newToolsetCatalog(m, clock)
+	catalog := newToolsetCatalog(authoritativeCatalogMap{Map: m, rdb: testRedisClient}, clock)
 	first, err := catalog.Register(
 		ctx,
 		testCatalogToolset("test.toolset", "same", nil),
@@ -145,7 +145,7 @@ func TestStoppedRedisRebootstrapReconstructsSameAdmission(t *testing.T) {
 	recoveredMap, err := rmap.Join(ctx, name+"-recovered", testRedisClient)
 	require.NoError(t, err)
 	t.Cleanup(recoveredMap.Close)
-	recovered, err := newToolsetCatalog(recoveredMap, clock).Register(
+	recovered, err := newToolsetCatalog(authoritativeCatalogMap{Map: recoveredMap, rdb: testRedisClient}, clock).Register(
 		ctx,
 		testCatalogToolset("test.toolset", "same", nil),
 		testAdmissionRevisionA,
@@ -306,8 +306,8 @@ func TestRedisConcurrentRenewalReplacementAndCandidates(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(map2.Close)
 	clock := newRedisTimeSource(testRedisClient)
-	catalog1 := newToolsetCatalog(map1, clock)
-	catalog2 := newToolsetCatalog(map2, clock)
+	catalog1 := newToolsetCatalog(authoritativeCatalogMap{Map: map1, rdb: testRedisClient}, clock)
+	catalog2 := newToolsetCatalog(authoritativeCatalogMap{Map: map2, rdb: testRedisClient}, clock)
 	oldRenewal, err := catalog1.Register(
 		ctx,
 		testCatalogToolset("renewal-race", "old", nil),

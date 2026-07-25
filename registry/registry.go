@@ -35,6 +35,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -166,7 +167,7 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 
 	// Create the one authoritative toolset catalog shared by the service and
 	// health tracker.
-	catalog := newToolsetCatalog(registryMap, clock)
+	catalog := newToolsetCatalog(authoritativeCatalogMap{Map: registryMap, rdb: cfg.Redis}, clock)
 
 	// Create health tracker.
 	healthTracker, err := newHealthTracker(streamManager, catalog, cfg.Redis, registryMapName, healthOpts...)
@@ -297,4 +298,29 @@ func (r *Registry) Run(ctx context.Context, addr string, opts ...grpc.ServerOpti
 	}
 
 	return nil
+}
+
+// authoritativeCatalogMap extends the replicated catalog map with
+// Redis-authoritative key enumeration. Replica keys converge through the
+// update channel, but discovery and ping scheduling must observe an admission
+// the moment Register commits it. The content-hash layout is part of the
+// documented Pulse rmap pins enforced by the integration suite.
+type authoritativeCatalogMap struct {
+	*rmap.Map
+	rdb *redis.Client
+}
+
+// AuthoritativeKeys implements catalogMap.
+func (m authoritativeCatalogMap) AuthoritativeKeys(ctx context.Context) ([]string, error) {
+	fields, err := m.rdb.HKeys(ctx, "map:"+m.Map.Name+":content").Result()
+	if err != nil {
+		return nil, fmt.Errorf("enumerate catalog keys: %w", err)
+	}
+	keys := fields[:0]
+	for _, field := range fields {
+		if !strings.HasPrefix(field, "=") {
+			keys = append(keys, field)
+		}
+	}
+	return keys, nil
 }

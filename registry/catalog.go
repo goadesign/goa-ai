@@ -30,6 +30,10 @@ type (
 	catalogMap interface {
 		Get(key string) (string, bool)
 		Keys() []string
+		// AuthoritativeKeys enumerates the keys currently stored in Redis.
+		// Local replica keys converge eventually; discovery and scheduling
+		// must observe an admission the moment Register commits it.
+		AuthoritativeKeys(ctx context.Context) ([]string, error)
 		Subscribe() <-chan rmap.EventKind
 		Unsubscribe(<-chan rmap.EventKind)
 		SetIfNotExists(ctx context.Context, key, value string) (bool, error)
@@ -502,8 +506,12 @@ func (c *toolsetCatalog) ListToolsets(ctx context.Context, tags []string) ([]*ge
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	toolsets := make([]*genregistry.Toolset, 0, len(c.m.Keys()))
-	for _, key := range c.m.Keys() {
+	keys, err := c.m.AuthoritativeKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	toolsets := make([]*genregistry.Toolset, 0, len(keys))
+	for _, key := range keys {
 		if !strings.HasPrefix(key, toolsetCatalogKeyPrefix) {
 			continue
 		}
@@ -531,8 +539,12 @@ func (c *toolsetCatalog) SearchToolsets(ctx context.Context, query string) ([]*g
 		return nil, err
 	}
 	lowerQuery := strings.ToLower(query)
-	toolsets := make([]*genregistry.Toolset, 0, len(c.m.Keys()))
-	for _, key := range c.m.Keys() {
+	keys, err := c.m.AuthoritativeKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	toolsets := make([]*genregistry.Toolset, 0, len(keys))
+	for _, key := range keys {
 		if !strings.HasPrefix(key, toolsetCatalogKeyPrefix) {
 			continue
 		}
