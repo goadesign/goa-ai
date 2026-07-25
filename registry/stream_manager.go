@@ -26,14 +26,6 @@ type StreamManager interface {
 	// The stream ID is deterministic based on the toolset name.
 	GetOrCreateStream(ctx context.Context, toolset string) (clientspulse.Stream, string, error)
 
-	// GetStream returns the stream for a toolset if it exists.
-	// Returns nil if the toolset has no associated stream.
-	GetStream(toolset string) clientspulse.Stream
-
-	// RemoveStream removes the stream tracking for a toolset.
-	// This does not destroy the underlying Pulse stream.
-	RemoveStream(toolset string)
-
 	// PublishToolCall publishes a tool call message to the toolset's stream.
 	PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error
 }
@@ -84,20 +76,6 @@ func (m *streamManager) GetOrCreateStream(ctx context.Context, toolset string) (
 	}
 	m.streams[toolset] = stream
 	return stream, streamID, nil
-}
-
-// GetStream returns the stream for a toolset if it exists.
-func (m *streamManager) GetStream(toolset string) clientspulse.Stream {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.streams[toolset]
-}
-
-// RemoveStream removes the stream tracking for a toolset.
-func (m *streamManager) RemoveStream(toolset string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.streams, toolset)
 }
 
 // PublishToolCall publishes a tool call message to the toolset's stream.
