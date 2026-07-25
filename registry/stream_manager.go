@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/redis/go-redis/v9"
+
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/runtime/toolregistry"
 
@@ -24,14 +26,6 @@ type StreamManager interface {
 	// The stream ID is deterministic based on the toolset name.
 	GetOrCreateStream(ctx context.Context, toolset string) (clientspulse.Stream, string, error)
 
-	// GetStream returns the stream for a toolset if it exists.
-	// Returns nil if the toolset has no associated stream.
-	GetStream(toolset string) clientspulse.Stream
-
-	// RemoveStream removes the stream tracking for a toolset.
-	// This does not destroy the underlying Pulse stream.
-	RemoveStream(toolset string)
-
 	// PublishToolCall publishes a tool call message to the toolset's stream.
 	PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error
 }
@@ -39,14 +33,18 @@ type StreamManager interface {
 // streamManager is the default implementation of StreamManager.
 type streamManager struct {
 	client  clientspulse.Client
+	rdb     *redis.Client
 	mu      sync.RWMutex
 	streams map[string]clientspulse.Stream
 }
 
-// NewStreamManager creates a new StreamManager backed by the given Pulse client.
-func NewStreamManager(client clientspulse.Client) StreamManager {
+// NewStreamManager creates a new StreamManager backed by the given Pulse
+// client. The raw Redis client backs the atomic bounded publication that the
+// Pulse stream API cannot express.
+func NewStreamManager(client clientspulse.Client, rdb *redis.Client) StreamManager {
 	return &streamManager{
 		client:  client,
+		rdb:     rdb,
 		streams: make(map[string]clientspulse.Stream),
 	}
 }
@@ -80,30 +78,14 @@ func (m *streamManager) GetOrCreateStream(ctx context.Context, toolset string) (
 	return stream, streamID, nil
 }
 
-// GetStream returns the stream for a toolset if it exists.
-func (m *streamManager) GetStream(toolset string) clientspulse.Stream {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.streams[toolset]
-}
-
-// RemoveStream removes the stream tracking for a toolset.
-func (m *streamManager) RemoveStream(toolset string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.streams, toolset)
-}
-
 // PublishToolCall publishes a tool call message to the toolset's stream.
 // It lazily creates a local stream handle if one doesn't exist, enabling
 // cross-node tool invocation where the toolset was registered on a different node.
 func (m *streamManager) PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error {
-	// Use GetOrCreateStream to handle cross-node scenarios where the toolset
-	// was registered on a different gateway node.
-	stream, streamID, err := m.GetOrCreateStream(ctx, toolset)
-	if err != nil {
-		return fmt.Errorf("get stream for toolset %q: %w", toolset, err)
+	if err := toolregistry.ValidateToolCallMessage(msg); err != nil {
+		return fmt.Errorf("publish invalid toolset message: %w", err)
 	}
+	streamID := toolregistry.ToolsetStreamID(toolset)
 
 	if msg.Type == toolregistry.MessageTypeCall {
 		tracer := otel.Tracer("goa.design/goa-ai/registry")
@@ -140,7 +122,14 @@ func (m *streamManager) PublishToolCall(ctx context.Context, toolset string, msg
 		return fmt.Errorf("marshal tool call message: %w", err)
 	}
 
-	eventID, err := stream.Add(ctx, string(msg.Type), payload)
+	// Calls are backlog-bounded so approximate trimming can never drop an
+	// unread admitted call; pings bypass the bound because health must flow
+	// while calls are queued.
+	bound := 0
+	if msg.Type == toolregistry.MessageTypeCall {
+		bound = maxQueuedToolCalls
+	}
+	eventID, err := publishBounded(ctx, m.rdb, streamID, bound, string(msg.Type), payload)
 	if err != nil {
 		if msg.Type == toolregistry.MessageTypeCall {
 			span := trace.SpanFromContext(ctx)

@@ -115,19 +115,24 @@ func (s *Subscriber) Subscribe(
 	cancelFunc := func() {
 		cancel()
 		<-done
-		sink.Close(context.Background())
 	}
 	return events, errs, cancelFunc, nil
 }
 
 // consume reads events from the Pulse sink channel, decodes them, and emits them
-// on the out channel. It acks each event after successful emission. Closes both
-// channels when ctx is canceled or when the sink channel closes. Sends errors
-// on the errs channel if decoding or acking fails, then returns.
+// on the out channel. It acks each event after successful emission. It owns
+// the sink and both channels: on cancellation or sink closure it closes the
+// sink, surfaces a failed close on errs, and then closes both channels.
+// Sends errors on the errs channel if decoding or acking fails, then returns.
 func (s *Subscriber) consume(ctx context.Context, sink clientspulse.Sink, out chan<- stream.Event, errs chan<- error, done chan<- struct{}) {
 	defer close(done)
 	defer close(out)
 	defer close(errs)
+	defer func() {
+		if err := sink.Close(context.WithoutCancel(ctx)); err != nil {
+			errs <- fmt.Errorf("pulse close sink: %w", err)
+		}
+	}()
 	ch := sink.Subscribe()
 	for {
 		select {

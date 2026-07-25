@@ -53,6 +53,30 @@ func DecodeRegisterResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (
 	return res, nil
 }
 
+// BuildReleaseProviderFunc builds the remote method to invoke for "registry"
+// service "ReleaseProvider" endpoint.
+func BuildReleaseProviderFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.ReleaseProvider(ctx, reqpb.(*registrypb.ReleaseProviderRequest), opts...)
+		}
+		return grpccli.ReleaseProvider(ctx, &registrypb.ReleaseProviderRequest{}, opts...)
+	}
+}
+
+// EncodeReleaseProviderRequest encodes requests sent to registry
+// ReleaseProvider endpoint.
+func EncodeReleaseProviderRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.ReleaseProviderPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ReleaseProvider", "*registry.ReleaseProviderPayload", v)
+	}
+	return NewProtoReleaseProviderRequest(payload), nil
+}
+
 // BuildUnregisterFunc builds the remote method to invoke for "registry"
 // service "Unregister" endpoint.
 func BuildUnregisterFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {

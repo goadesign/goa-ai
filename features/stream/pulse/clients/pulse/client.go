@@ -53,6 +53,10 @@ type (
 		Add(ctx context.Context, event string, payload []byte) (string, error)
 		// NewSink creates a Pulse sink (consumer group) on this stream for reading events.
 		NewSink(ctx context.Context, name string, opts ...streamopts.Sink) (Sink, error)
+		// NewReader creates an independent reader. Readers do not create consumer
+		// groups or acknowledgement state, and every reader receives every event.
+		NewReader(ctx context.Context, opts ...streamopts.Reader) (Reader, error)
+
 		// EnsureGroup recreates the named consumer group (and the backing stream)
 		// when Redis lost them, so a sink created earlier with NewSink resumes
 		// receiving events. Long-running subscribers such as tool providers call
@@ -72,8 +76,17 @@ type (
 		Subscribe() <-chan *streaming.Event
 		// Ack acknowledges successful processing of an event, removing it from the pending list.
 		Ack(context.Context, *streaming.Event) error
-		// Close stops the sink and releases resources.
-		Close(context.Context)
+		// Close stops the sink and releases resources, reporting a shutdown
+		// that could not complete cleanly.
+		Close(context.Context) error
+	}
+
+	// Reader is an independent immutable-history subscription.
+	Reader interface {
+		// Subscribe returns every event from the reader's configured cursor.
+		Subscribe() <-chan *streaming.Event
+		// Close stops polling and joins the reader goroutine.
+		Close()
 	}
 )
 
@@ -164,6 +177,11 @@ func (h *handle) NewSink(ctx context.Context, name string, opts ...streamopts.Si
 	return &sinkAdapter{Sink: sink}, nil
 }
 
+// NewReader creates an independent stream reader.
+func (h *handle) NewReader(ctx context.Context, opts ...streamopts.Reader) (Reader, error) {
+	return h.stream.NewReader(ctx, opts...)
+}
+
 // EnsureGroup recreates the consumer group at the stream tail when Redis lost
 // it. Sinks previously created with NewSink resume consuming as soon as the
 // group exists again: XREADGROUP re-creates their consumer on the next poll.
@@ -189,15 +207,14 @@ func (h *handle) Destroy(ctx context.Context) error {
 	return h.stream.Destroy(ctx)
 }
 
-// sinkAdapter adapts streaming.Sink to the Sink interface, making Close match
-// the expected signature (return void instead of error).
+// sinkAdapter adapts streaming.Sink to the Sink interface.
 type sinkAdapter struct {
 	*streaming.Sink
 }
 
 // Close delegates to the underlying Pulse sink.
-func (s sinkAdapter) Close(ctx context.Context) {
-	s.Sink.Close(ctx)
+func (s sinkAdapter) Close(ctx context.Context) error {
+	return s.Sink.Close(ctx)
 }
 
 // pulseStreamKey returns the Redis key Pulse uses for a stream. The prefix is

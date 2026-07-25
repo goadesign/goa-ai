@@ -11,13 +11,34 @@ package goa_ai_registry;
 
 option go_package = "/goa_ai_registrypb";
 
-// Internal tool registry gateway for toolset discovery and tool invocation
+// The registry owns serialized toolset admission generations, provider leases
+// and health, discovery, and routed invocation over Pulse streams. Providers
+// renew leases for the one active schema and admission revision; consumers
+// discover and invoke only healthy admitted providers.
 service Registry {
-	// Register a toolset with the registry
+	// Atomically admit or renew one provider-incarnation lease in the catalog
+// admission record. The same schema and admission revision add or renew
+// replicas under one token. A different token replaces the admission after
+// Redis-time pruning proves every old lease expired and atomically tombstones
+// the prior token; otherwise admission_blocked asks the provider to retry. Any
+// candidate in the permanent retired-token set returns admission_retired and
+// cannot resurrect.
 	rpc Register (RegisterRequest) returns (RegisterResponse);
-	// Unregister a toolset from the registry
+	// Release one exact provider-incarnation lease from the admission token after
+// that Serve lifecycle has stopped claiming work and settled in-flight calls.
+// Missing incarnations and stale tokens succeed without mutation;
+// infrastructure failures are retryable.
+	rpc ReleaseProvider (ReleaseProviderRequest) returns (ReleaseProviderResponse);
+	// Intentionally retire the exact active admission while preserving its
+// provider leases until graceful release or expiry and atomically adding its
+// token to the permanent retired-token set. Repeating the same-token
+// retirement succeeds; a stale token returns admission_conflict. Retirement
+// removes the toolset from discovery and routing and permanently prevents that
+// exact token from registering again.
 	rpc Unregister (UnregisterRequest) returns (UnregisterResponse);
-	// Respond to a health check ping
+	// Atomically record shared consumer-group liveness for a
+// token-and-membership-epoch health ping. The responding provider incarnation
+// must hold an unexpired lease in that same catalog record.
 	rpc Pong (PongRequest) returns (PongResponse);
 	// List all registered toolsets with optional tag filtering
 	rpc ListToolsets (ListToolsetsRequest) returns (ListToolsetsResponse);
@@ -25,8 +46,11 @@ service Registry {
 	rpc GetToolset (GetToolsetRequest) returns (GetToolsetResponse);
 	// Search toolsets by keyword matching name, description, or tags
 	rpc Search (SearchRequest) returns (SearchResponse);
-	// Initiate a tool call by publishing a tool call message to the toolset
-// request stream and returning the tool use identifier.
+	// Admit or attach to one run-scoped tool call. The registry atomically owns
+// publication by tool_use_id and registration token, retries provider overload
+// with bounded backoff, preserves immutable sliding-TTL result history, and
+// returns the exact identity, admission token, and retention used by
+// independent replay readers.
 	rpc CallTool (CallToolRequest) returns (CallToolResponse);
 }
 
@@ -43,6 +67,13 @@ message RegisterRequest {
 	repeated ToolSchema tools = 5;
 	// Stable identity of the provider process registering this toolset.
 	string provider_id = 6;
+	// Deployment-issued revision shared by every replica of one fenced admission.
+// Reuse it for same-contract scaling and rolling updates; change it only to
+// create a new fenced admission.
+	string admission_revision = 7;
+	// Runtime-generated UUID identifying one Serve lifecycle. The provider runtime
+// generates it once and reuses it for every renewal.
+	string provider_incarnation_id = 8;
 }
 // Tool schema declaration for registration with the tool registry gateway.
 message ToolSchema {
@@ -63,11 +94,33 @@ message ToolSchema {
 message RegisterResponse {
 	// ISO 8601 timestamp of registration
 	string registered_at = 1;
+	// Deterministic admission-generation token derived from the canonical schema
+// fingerprint and deployment-issued admission revision
+	string registration_token = 2;
+	// Duration of the admitted provider lease in milliseconds
+	sint64 lease_duration_ms = 3;
+}
+
+message ReleaseProviderRequest {
+	// Name of the toolset whose provider is leaving
+	string name = 1;
+	// Stable identity of the provider process releasing its lease
+	string provider_id = 2;
+	// Exact admission-generation token returned by Register
+	string expected_registration_token = 3;
+	// Runtime-generated UUID of the exact Serve lifecycle releasing its lease.
+	string provider_incarnation_id = 4;
+}
+
+message ReleaseProviderResponse {
 }
 
 message UnregisterRequest {
 	// Name of the toolset to unregister
 	string name = 1;
+	// Exact admission-generation token returned by Register for the stopped
+// provider rollout
+	string expected_registration_token = 2;
 }
 
 message UnregisterResponse {
@@ -80,6 +133,8 @@ message PongRequest {
 	string toolset = 2;
 	// Stable identity of the provider instance responding to the ping.
 	string provider_id = 3;
+	// Runtime-generated UUID of the Serve lifecycle responding to the ping.
+	string provider_incarnation_id = 4;
 }
 
 message PongResponse {
@@ -163,12 +218,17 @@ message ToolCallMeta {
 	// Turn identifier within the session.
 	optional string turn_id = 3;
 	// Tool call identifier used for correlation with model provider tool calls.
-	optional string tool_call_id = 4;
+	string tool_call_id = 4;
 	// Parent tool call identifier when the tool call is nested.
 	optional string parent_tool_call_id = 5;
 }
 
 message CallToolResponse {
-	// Unique identifier for this invocation
+	// Global transport identifier derived from required run_id and tool_call_id.
 	string tool_use_id = 1;
+	// Exact admission-generation token stamped on the routed call
+	string registration_token = 2;
+	// Registry-selected sliding retention for the per-call result stream in
+// milliseconds.
+	sint64 result_stream_ttl_ms = 3;
 }

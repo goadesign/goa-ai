@@ -44,10 +44,29 @@ You describe the agent system in the same design-first style as Goa services. `g
 | Multi-agent systems | First-class agent-as-tool composition with child runs and linked streams |
 | Human approval | Await/clarification flows plus design-time and runtime tool confirmation |
 | Real-time UI | Typed stream events for tool progress, assistant text, usage, awaits, workflow status, and child links |
-| External tools | MCP callers, generated MCP servers, external MCP schemas, and registry-backed discovery with provider-instance health |
+| External tools | MCP callers, generated MCP servers, external MCP schemas, and token-fenced registry routing with incarnation leases plus catalog-owned health epochs |
 | Production operations | Mongo-backed stores, Pulse streaming, OpenAI/Bedrock/Anthropic/gateway clients, telemetry hooks |
 
 Goa-AI is not a prompt wrapper. It is a contract and runtime layer for agentic Go services.
+
+Registry-routed providers use deterministic admission-generation tokens derived
+from canonical schema identity plus a deployment-issued admission revision,
+lease-derived renewal, exact lifecycle release, and token-fenced calls, deltas,
+and results. The registry owns graceful admission handoff: same-token replicas
+scale or roll together, while different-token deployments use Recreate and wait
+for old leases to release or expire. `Serve` generates one UUID incarnation, so
+a delayed release from an old process cannot delete its replacement. Lease
+membership, health epoch, and last pong live in one CAS catalog record. Every
+retirement and replacement permanently retains the prior token; this set grows
+with distinct admissions and cannot be truncated safely. The gateway derives a
+global transport `ToolUseID` from required run plus call identity and atomically
+admits publication by ID/token. Transport retries attach to immutable result
+history through independent oldest-first Pulse Readers. Queue saturation emits
+transient `provider_overloaded`, which the registry serializes into bounded
+delayed republication. One sliding TTL is the sole result-history and call-
+admission cleanup. `Unregister` is reserved for retirement. See
+[Runtime: Registry-Routed Provider Execution](docs/runtime.md#registry-routed-provider-execution-service-side)
+for the complete contract.
 
 ---
 

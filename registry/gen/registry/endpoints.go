@@ -15,31 +15,34 @@ import (
 
 // Endpoints wraps the "registry" service endpoints.
 type Endpoints struct {
-	Register     goa.Endpoint
-	Unregister   goa.Endpoint
-	Pong         goa.Endpoint
-	ListToolsets goa.Endpoint
-	GetToolset   goa.Endpoint
-	Search       goa.Endpoint
-	CallTool     goa.Endpoint
+	Register        goa.Endpoint
+	ReleaseProvider goa.Endpoint
+	Unregister      goa.Endpoint
+	Pong            goa.Endpoint
+	ListToolsets    goa.Endpoint
+	GetToolset      goa.Endpoint
+	Search          goa.Endpoint
+	CallTool        goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "registry" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
-		Register:     NewRegisterEndpoint(s),
-		Unregister:   NewUnregisterEndpoint(s),
-		Pong:         NewPongEndpoint(s),
-		ListToolsets: NewListToolsetsEndpoint(s),
-		GetToolset:   NewGetToolsetEndpoint(s),
-		Search:       NewSearchEndpoint(s),
-		CallTool:     NewCallToolEndpoint(s),
+		Register:        NewRegisterEndpoint(s),
+		ReleaseProvider: NewReleaseProviderEndpoint(s),
+		Unregister:      NewUnregisterEndpoint(s),
+		Pong:            NewPongEndpoint(s),
+		ListToolsets:    NewListToolsetsEndpoint(s),
+		GetToolset:      NewGetToolsetEndpoint(s),
+		Search:          NewSearchEndpoint(s),
+		CallTool:        NewCallToolEndpoint(s),
 	}
 }
 
 // Use applies the given middleware to all the "registry" service endpoints.
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.Register = m(e.Register)
+	e.ReleaseProvider = m(e.ReleaseProvider)
 	e.Unregister = m(e.Unregister)
 	e.Pong = m(e.Pong)
 	e.ListToolsets = m(e.ListToolsets)
@@ -54,6 +57,15 @@ func NewRegisterEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*RegisterPayload)
 		return s.Register(ctx, p)
+	}
+}
+
+// NewReleaseProviderEndpoint returns an endpoint function that calls the
+// method "ReleaseProvider" of service "registry".
+func NewReleaseProviderEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ReleaseProviderPayload)
+		return nil, s.ReleaseProvider(ctx, p)
 	}
 }
 

@@ -25,6 +25,10 @@ func (m *mockGRPCRegistryClient) Register(_ context.Context, _ *registrypb.Regis
 	return nil, nil
 }
 
+func (m *mockGRPCRegistryClient) ReleaseProvider(_ context.Context, _ *registrypb.ReleaseProviderRequest, _ ...grpc.CallOption) (*registrypb.ReleaseProviderResponse, error) {
+	return nil, nil
+}
+
 func (m *mockGRPCRegistryClient) Unregister(_ context.Context, _ *registrypb.UnregisterRequest, _ ...grpc.CallOption) (*registrypb.UnregisterResponse, error) {
 	return nil, nil
 }

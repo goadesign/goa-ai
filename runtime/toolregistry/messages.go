@@ -5,7 +5,9 @@ package toolregistry
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent"
 	goa "goa.design/goa/v3/pkg"
@@ -24,25 +26,37 @@ type (
 		RunID     string `json:"run_id"`
 		SessionID string `json:"session_id"`
 		TurnID    string `json:"turn_id,omitempty"`
-		// ToolCallID is the logical execution identity assigned by the runtime. When
-		// present, registry retries must reuse it as the transport ToolUseID instead
-		// of minting a fresh per-attempt identifier.
-		ToolCallID       string `json:"tool_call_id,omitempty"`
+		// ToolCallID is the model/provider call identity. The registry preserves it
+		// as metadata and derives the separate global ToolUseID from RunID plus
+		// ToolCallID.
+		ToolCallID       string `json:"tool_call_id"`
 		ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
+	}
+
+	// ToolCallRef identifies one registry-routed invocation and the exact
+	// admission generation whose events the caller may accept.
+	ToolCallRef struct {
+		ToolUseID         string
+		RegistrationToken string
+		ResultStreamTTL   time.Duration
 	}
 
 	// ToolCallMessage is published to a toolset request stream for tool invocations
 	// and provider health checks.
 	ToolCallMessage struct {
-		// ToolUseID is the transport identity for this request stream message. For
-		// registry-routed tool calls it is stable across retries and equals the
-		// logical ToolCallID when the caller supplied one.
+		// RegistrationToken is the exact admission generation used to validate
+		// and route this message. Providers reject calls from any other admission.
+		RegistrationToken string `json:"registration_token"`
+		// ToolUseID is the globally unique transport identity for this request.
 		Type      ToolCallMessageType `json:"type"`
 		ToolUseID string              `json:"tool_use_id,omitempty"`
-		PingID    string              `json:"ping_id,omitempty"`
-		Tool      tools.Ident         `json:"tool,omitempty"`
-		Payload   json.RawMessage     `json:"payload,omitempty"`
-		Meta      *ToolCallMeta       `json:"meta,omitempty"`
+		// ResultStreamTTLMillis is the registry-selected sliding retention used
+		// by every producer and consumer of this call's result stream.
+		ResultStreamTTLMillis int64           `json:"result_stream_ttl_ms,omitempty"`
+		PingID                string          `json:"ping_id,omitempty"`
+		Tool                  tools.Ident     `json:"tool,omitempty"`
+		Payload               json.RawMessage `json:"payload,omitempty"`
+		Meta                  *ToolCallMeta   `json:"meta,omitempty"`
 
 		// TraceParent and TraceState carry W3C Trace Context headers for distributed
 		// tracing across Pulse boundaries. These fields are optional and may be empty.
@@ -59,8 +73,10 @@ type (
 	// ToolResultMessage is published to a per-call result stream. The gateway never
 	// interprets these bytes; consumers decode them using compiled tool codecs.
 	ToolResultMessage struct {
-		ToolUseID string          `json:"tool_use_id"`
-		Result    json.RawMessage `json:"result_json,omitempty"`
+		// RegistrationToken echoes the exact token stamped on the tool call.
+		RegistrationToken string          `json:"registration_token"`
+		ToolUseID         string          `json:"tool_use_id"`
+		Result            json.RawMessage `json:"result_json,omitempty"`
 		// Bounds carries canonical bounded-result metadata projected out-of-band
 		// from the semantic result payload when the tool declares a bounded-result
 		// contract.
@@ -85,7 +101,10 @@ type (
 	//   - Deltas are not persisted by default; the canonical output remains the
 	//     final tool result payload.
 	ToolOutputDeltaMessage struct {
-		ToolUseID string `json:"tool_use_id"`
+		// RegistrationToken echoes the exact token stamped on the tool call so
+		// reused transport IDs cannot forward output from an older admission.
+		RegistrationToken string `json:"registration_token"`
+		ToolUseID         string `json:"tool_use_id"`
 		// Stream identifies which logical output channel produced the delta
 		// (for example, "stdout", "stderr", "log", "progress").
 		Stream string `json:"stream"`
@@ -104,6 +123,9 @@ type (
 	ToolError struct {
 		Code    string `json:"code"`
 		Message string `json:"message"`
+		// RetryAfterMillis is a bounded registry orchestration delay supplied by
+		// transient provider-overload results.
+		RetryAfterMillis int64 `json:"retry_after_ms,omitempty"`
 		// Issues optionally carries structured field-level validation issues.
 		// When present, consumers can build a RetryHint without parsing Message.
 		Issues []*tools.FieldIssue `json:"issues,omitempty"`
@@ -123,56 +145,119 @@ const (
 	// OutputDeltaEventKey is the Pulse event name used to publish best-effort tool
 	// output delta messages to a per-call result stream.
 	OutputDeltaEventKey = "output_delta"
+
+	// ProviderOverloadRetryAfter is the provider-requested delay before the
+	// registry republishes an admitted call after queue saturation.
+	ProviderOverloadRetryAfter = 250 * time.Millisecond
+	// MaxProviderOverloadRetryAfter bounds overload delay at the message boundary.
+	MaxProviderOverloadRetryAfter = 5 * time.Second
+
+	// ToolErrorCodeStaleRegistration completes a queued call whose admission
+	// generation no longer matches the admitted provider.
+	ToolErrorCodeStaleRegistration = "stale_registration"
+	// ToolErrorCodeProviderOverloaded completes a call that exceeded the
+	// provider's exact waiting bound.
+	ToolErrorCodeProviderOverloaded = "provider_overloaded"
 )
 
 // NewToolCallMessage constructs a tool invocation message.
-func NewToolCallMessage(toolUseID string, tool tools.Ident, payload json.RawMessage, meta *ToolCallMeta) ToolCallMessage {
+func NewToolCallMessage(
+	registrationToken, toolUseID string,
+	resultStreamTTL time.Duration,
+	tool tools.Ident,
+	payload json.RawMessage,
+	meta *ToolCallMeta,
+) ToolCallMessage {
 	return ToolCallMessage{
-		Type:      MessageTypeCall,
-		ToolUseID: toolUseID,
-		Tool:      tool,
-		Payload:   payload,
-		Meta:      meta,
+		RegistrationToken:     registrationToken,
+		Type:                  MessageTypeCall,
+		ToolUseID:             toolUseID,
+		ResultStreamTTLMillis: resultStreamTTL.Milliseconds(),
+		Tool:                  tool,
+		Payload:               payload,
+		Meta:                  meta,
+	}
+}
+
+// ValidateToolCallMessage enforces the Pulse request boundary before
+// publication and again before provider dispatch.
+func ValidateToolCallMessage(message ToolCallMessage) error {
+	if err := ValidateRegistrationToken(message.RegistrationToken); err != nil {
+		return err
+	}
+	switch message.Type {
+	case MessageTypePing:
+		if message.PingID == "" {
+			return fmt.Errorf("ping ID is required")
+		}
+		return nil
+	case MessageTypeCall:
+		if err := ValidateToolUseID(message.ToolUseID); err != nil {
+			return err
+		}
+		if err := ValidateResultStreamTTLMillis(message.ResultStreamTTLMillis); err != nil {
+			return err
+		}
+		if message.Meta == nil ||
+			message.Meta.RunID == "" ||
+			message.Meta.SessionID == "" ||
+			message.Meta.ToolCallID == "" {
+			return fmt.Errorf("tool call run, session, and tool call metadata are required")
+		}
+		if len(message.Meta.ToolCallID) > MaxToolUseIDLength {
+			return fmt.Errorf("tool call ID exceeds %d bytes", MaxToolUseIDLength)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported tool call message type %q", message.Type)
 	}
 }
 
 // NewPingMessage constructs a health ping message.
-func NewPingMessage(pingID string) ToolCallMessage {
+func NewPingMessage(registrationToken, pingID string) ToolCallMessage {
 	return ToolCallMessage{
-		Type:   MessageTypePing,
-		PingID: pingID,
+		RegistrationToken: registrationToken,
+		Type:              MessageTypePing,
+		PingID:            pingID,
 	}
 }
 
 // NewToolResultMessage constructs a successful tool result message.
-func NewToolResultMessage(toolUseID string, result json.RawMessage) ToolResultMessage {
+func NewToolResultMessage(registrationToken, toolUseID string, result json.RawMessage) ToolResultMessage {
 	return ToolResultMessage{
-		ToolUseID: toolUseID,
-		Result:    result,
+		RegistrationToken: registrationToken,
+		ToolUseID:         toolUseID,
+		Result:            result,
 	}
 }
 
 // NewToolResultMessageWithServerData constructs a successful tool result message with
 // additional server-only metadata.
-func NewToolResultMessageWithServerData(toolUseID string, result json.RawMessage, serverData []*ServerDataItem) ToolResultMessage {
-	out := NewToolResultMessage(toolUseID, result)
+func NewToolResultMessageWithServerData(
+	registrationToken, toolUseID string,
+	result json.RawMessage,
+	serverData []*ServerDataItem,
+) ToolResultMessage {
+	out := NewToolResultMessage(registrationToken, toolUseID, result)
 	out.ServerData = serverData
 	return out
 }
 
 // NewToolOutputDeltaMessage constructs a tool output delta message.
-func NewToolOutputDeltaMessage(toolUseID string, stream string, delta string) ToolOutputDeltaMessage {
+func NewToolOutputDeltaMessage(registrationToken, toolUseID, stream, delta string) ToolOutputDeltaMessage {
 	return ToolOutputDeltaMessage{
-		ToolUseID: toolUseID,
-		Stream:    stream,
-		Delta:     delta,
+		RegistrationToken: registrationToken,
+		ToolUseID:         toolUseID,
+		Stream:            stream,
+		Delta:             delta,
 	}
 }
 
 // NewToolResultErrorMessage constructs an error tool result message.
-func NewToolResultErrorMessage(toolUseID, code, message string) ToolResultMessage {
+func NewToolResultErrorMessage(registrationToken, toolUseID, code, message string) ToolResultMessage {
 	return ToolResultMessage{
-		ToolUseID: toolUseID,
+		RegistrationToken: registrationToken,
+		ToolUseID:         toolUseID,
 		Error: &ToolError{
 			Code:    code,
 			Message: message,
@@ -182,8 +267,11 @@ func NewToolResultErrorMessage(toolUseID, code, message string) ToolResultMessag
 
 // NewToolResultErrorMessageWithIssues constructs an error tool result message that
 // includes structured validation issues for building retry hints.
-func NewToolResultErrorMessageWithIssues(toolUseID, code, message string, issues []*tools.FieldIssue) ToolResultMessage {
-	out := NewToolResultErrorMessage(toolUseID, code, message)
+func NewToolResultErrorMessageWithIssues(
+	registrationToken, toolUseID, code, message string,
+	issues []*tools.FieldIssue,
+) ToolResultMessage {
+	out := NewToolResultErrorMessage(registrationToken, toolUseID, code, message)
 	if out.Error == nil {
 		return out
 	}

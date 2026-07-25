@@ -26,26 +26,48 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Registry_Register_FullMethodName     = "/goa_ai_registry.Registry/Register"
-	Registry_Unregister_FullMethodName   = "/goa_ai_registry.Registry/Unregister"
-	Registry_Pong_FullMethodName         = "/goa_ai_registry.Registry/Pong"
-	Registry_ListToolsets_FullMethodName = "/goa_ai_registry.Registry/ListToolsets"
-	Registry_GetToolset_FullMethodName   = "/goa_ai_registry.Registry/GetToolset"
-	Registry_Search_FullMethodName       = "/goa_ai_registry.Registry/Search"
-	Registry_CallTool_FullMethodName     = "/goa_ai_registry.Registry/CallTool"
+	Registry_Register_FullMethodName        = "/goa_ai_registry.Registry/Register"
+	Registry_ReleaseProvider_FullMethodName = "/goa_ai_registry.Registry/ReleaseProvider"
+	Registry_Unregister_FullMethodName      = "/goa_ai_registry.Registry/Unregister"
+	Registry_Pong_FullMethodName            = "/goa_ai_registry.Registry/Pong"
+	Registry_ListToolsets_FullMethodName    = "/goa_ai_registry.Registry/ListToolsets"
+	Registry_GetToolset_FullMethodName      = "/goa_ai_registry.Registry/GetToolset"
+	Registry_Search_FullMethodName          = "/goa_ai_registry.Registry/Search"
+	Registry_CallTool_FullMethodName        = "/goa_ai_registry.Registry/CallTool"
 )
 
 // RegistryClient is the client API for Registry service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// Internal tool registry gateway for toolset discovery and tool invocation
+// The registry owns serialized toolset admission generations, provider leases
+// and health, discovery, and routed invocation over Pulse streams. Providers
+// renew leases for the one active schema and admission revision; consumers
+// discover and invoke only healthy admitted providers.
 type RegistryClient interface {
-	// Register a toolset with the registry
+	// Atomically admit or renew one provider-incarnation lease in the catalog
+	// admission record. The same schema and admission revision add or renew
+	// replicas under one token. A different token replaces the admission after
+	// Redis-time pruning proves every old lease expired and atomically tombstones
+	// the prior token; otherwise admission_blocked asks the provider to retry. Any
+	// candidate in the permanent retired-token set returns admission_retired and
+	// cannot resurrect.
 	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
-	// Unregister a toolset from the registry
+	// Release one exact provider-incarnation lease from the admission token after
+	// that Serve lifecycle has stopped claiming work and settled in-flight calls.
+	// Missing incarnations and stale tokens succeed without mutation;
+	// infrastructure failures are retryable.
+	ReleaseProvider(ctx context.Context, in *ReleaseProviderRequest, opts ...grpc.CallOption) (*ReleaseProviderResponse, error)
+	// Intentionally retire the exact active admission while preserving its
+	// provider leases until graceful release or expiry and atomically adding its
+	// token to the permanent retired-token set. Repeating the same-token
+	// retirement succeeds; a stale token returns admission_conflict. Retirement
+	// removes the toolset from discovery and routing and permanently prevents that
+	// exact token from registering again.
 	Unregister(ctx context.Context, in *UnregisterRequest, opts ...grpc.CallOption) (*UnregisterResponse, error)
-	// Respond to a health check ping
+	// Atomically record shared consumer-group liveness for a
+	// token-and-membership-epoch health ping. The responding provider incarnation
+	// must hold an unexpired lease in that same catalog record.
 	Pong(ctx context.Context, in *PongRequest, opts ...grpc.CallOption) (*PongResponse, error)
 	// List all registered toolsets with optional tag filtering
 	ListToolsets(ctx context.Context, in *ListToolsetsRequest, opts ...grpc.CallOption) (*ListToolsetsResponse, error)
@@ -53,8 +75,11 @@ type RegistryClient interface {
 	GetToolset(ctx context.Context, in *GetToolsetRequest, opts ...grpc.CallOption) (*GetToolsetResponse, error)
 	// Search toolsets by keyword matching name, description, or tags
 	Search(ctx context.Context, in *SearchRequest, opts ...grpc.CallOption) (*SearchResponse, error)
-	// Initiate a tool call by publishing a tool call message to the toolset
-	// request stream and returning the tool use identifier.
+	// Admit or attach to one run-scoped tool call. The registry atomically owns
+	// publication by tool_use_id and registration token, retries provider overload
+	// with bounded backoff, preserves immutable sliding-TTL result history, and
+	// returns the exact identity, admission token, and retention used by
+	// independent replay readers.
 	CallTool(ctx context.Context, in *CallToolRequest, opts ...grpc.CallOption) (*CallToolResponse, error)
 }
 
@@ -70,6 +95,16 @@ func (c *registryClient) Register(ctx context.Context, in *RegisterRequest, opts
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RegisterResponse)
 	err := c.cc.Invoke(ctx, Registry_Register_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *registryClient) ReleaseProvider(ctx context.Context, in *ReleaseProviderRequest, opts ...grpc.CallOption) (*ReleaseProviderResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReleaseProviderResponse)
+	err := c.cc.Invoke(ctx, Registry_ReleaseProvider_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -140,13 +175,34 @@ func (c *registryClient) CallTool(ctx context.Context, in *CallToolRequest, opts
 // All implementations must embed UnimplementedRegistryServer
 // for forward compatibility.
 //
-// Internal tool registry gateway for toolset discovery and tool invocation
+// The registry owns serialized toolset admission generations, provider leases
+// and health, discovery, and routed invocation over Pulse streams. Providers
+// renew leases for the one active schema and admission revision; consumers
+// discover and invoke only healthy admitted providers.
 type RegistryServer interface {
-	// Register a toolset with the registry
+	// Atomically admit or renew one provider-incarnation lease in the catalog
+	// admission record. The same schema and admission revision add or renew
+	// replicas under one token. A different token replaces the admission after
+	// Redis-time pruning proves every old lease expired and atomically tombstones
+	// the prior token; otherwise admission_blocked asks the provider to retry. Any
+	// candidate in the permanent retired-token set returns admission_retired and
+	// cannot resurrect.
 	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
-	// Unregister a toolset from the registry
+	// Release one exact provider-incarnation lease from the admission token after
+	// that Serve lifecycle has stopped claiming work and settled in-flight calls.
+	// Missing incarnations and stale tokens succeed without mutation;
+	// infrastructure failures are retryable.
+	ReleaseProvider(context.Context, *ReleaseProviderRequest) (*ReleaseProviderResponse, error)
+	// Intentionally retire the exact active admission while preserving its
+	// provider leases until graceful release or expiry and atomically adding its
+	// token to the permanent retired-token set. Repeating the same-token
+	// retirement succeeds; a stale token returns admission_conflict. Retirement
+	// removes the toolset from discovery and routing and permanently prevents that
+	// exact token from registering again.
 	Unregister(context.Context, *UnregisterRequest) (*UnregisterResponse, error)
-	// Respond to a health check ping
+	// Atomically record shared consumer-group liveness for a
+	// token-and-membership-epoch health ping. The responding provider incarnation
+	// must hold an unexpired lease in that same catalog record.
 	Pong(context.Context, *PongRequest) (*PongResponse, error)
 	// List all registered toolsets with optional tag filtering
 	ListToolsets(context.Context, *ListToolsetsRequest) (*ListToolsetsResponse, error)
@@ -154,8 +210,11 @@ type RegistryServer interface {
 	GetToolset(context.Context, *GetToolsetRequest) (*GetToolsetResponse, error)
 	// Search toolsets by keyword matching name, description, or tags
 	Search(context.Context, *SearchRequest) (*SearchResponse, error)
-	// Initiate a tool call by publishing a tool call message to the toolset
-	// request stream and returning the tool use identifier.
+	// Admit or attach to one run-scoped tool call. The registry atomically owns
+	// publication by tool_use_id and registration token, retries provider overload
+	// with bounded backoff, preserves immutable sliding-TTL result history, and
+	// returns the exact identity, admission token, and retention used by
+	// independent replay readers.
 	CallTool(context.Context, *CallToolRequest) (*CallToolResponse, error)
 	mustEmbedUnimplementedRegistryServer()
 }
@@ -169,6 +228,9 @@ type UnimplementedRegistryServer struct{}
 
 func (UnimplementedRegistryServer) Register(context.Context, *RegisterRequest) (*RegisterResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Register not implemented")
+}
+func (UnimplementedRegistryServer) ReleaseProvider(context.Context, *ReleaseProviderRequest) (*ReleaseProviderResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReleaseProvider not implemented")
 }
 func (UnimplementedRegistryServer) Unregister(context.Context, *UnregisterRequest) (*UnregisterResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Unregister not implemented")
@@ -223,6 +285,24 @@ func _Registry_Register_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RegistryServer).Register(ctx, req.(*RegisterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Registry_ReleaseProvider_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseProviderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistryServer).ReleaseProvider(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Registry_ReleaseProvider_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistryServer).ReleaseProvider(ctx, req.(*ReleaseProviderRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -345,6 +425,10 @@ var Registry_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Register",
 			Handler:    _Registry_Register_Handler,
+		},
+		{
+			MethodName: "ReleaseProvider",
+			Handler:    _Registry_ReleaseProvider_Handler,
 		},
 		{
 			MethodName: "Unregister",

@@ -3,7 +3,14 @@ type (
 	// returns canonical JSON tool results and typed server-only data.
 	//
 	// Provider is intended to run inside the toolset-owning service process,
-	// paired with a Pulse subscription loop (see runtime/toolregistry/provider).
+	// paired with a Pulse subscription loop whose Serve lifecycle owns one
+	// immutable registry admission generation, renews its provider lease, and
+	// releases that exact lease only after consumption, terminal results, and
+	// acknowledgements settle. Pulse may redeliver a call when acknowledgement
+	// fails after result publication, so bound methods must make repeated
+	// tool-use IDs idempotent or durably deduplicate them. Serve also stamps
+	// best-effort output deltas published from the call context with that
+	// admission token (see runtime/toolregistry/provider).
 	Provider struct {
 		svc {{ .ServiceTypeRef }}
 	}
@@ -30,13 +37,17 @@ func NewProvider(svc {{ .ServiceTypeRef }}) *Provider {
 	return &Provider{svc: svc}
 }
 
-// HandleToolCall executes the requested tool and returns a tool result message.
+// HandleToolCall executes the requested tool and returns a terminal result that
+// echoes the call's admission-generation token on every success and error path.
+// The bound method receives ctx and must return promptly on cancellation.
+// Pulse may redeliver after result publication but before acknowledgement, so
+// repeated ToolUseID effects must be idempotent or durably deduplicated.
 func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
 	if msg.ToolUseID == "" {
-		return toolregistry.NewToolResultErrorMessage("", "invalid_call", "tool_use_id is required"), nil
+		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, "", "invalid_call", "tool_use_id is required"), nil
 	}
 	if msg.Meta == nil {
-		return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "invalid_call", "meta is required"), nil
+		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "meta is required"), nil
 	}
 {{- if .NeedsInject }}
 	meta := runtime.ToolCallMeta{
@@ -55,28 +66,28 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		args, err := {{ .ConstName }}PayloadCodec.FromJSON(msg.Payload)
 		if err != nil {
 			if issues := toolregistry.ValidationIssues(err); len(issues) > 0 {
-				return toolregistry.NewToolResultErrorMessageWithIssues(msg.ToolUseID, "invalid_arguments", err.Error(), issues), nil
+				return toolregistry.NewToolResultErrorMessageWithIssues(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error(), issues), nil
 			}
-			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "invalid_arguments", err.Error()), nil
+			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
 {{- if .Injected }}
 		if err := Inject{{ .ConstName }}(args, meta, nil); err != nil {
-			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "invalid_arguments", err.Error()), nil
+			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
 {{- end }}
 		methodIn := Init{{ .ConstName }}MethodPayload(args)
 		methodOut, err := p.svc.{{ .MethodGoName }}(ctx, methodIn)
 		if err != nil {
 			if issues := toolregistry.ValidationIssues(err); len(issues) > 0 {
-				return toolregistry.NewToolResultErrorMessageWithIssues(msg.ToolUseID, "invalid_arguments", err.Error(), issues), nil
+				return toolregistry.NewToolResultErrorMessageWithIssues(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error(), issues), nil
 			}
-			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, toolErrorCode(err), err.Error()), nil
+			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, toolErrorCode(err), err.Error()), nil
 		}
 {{- if .HasResult }}
 		result := Init{{ .ConstName }}ToolResult(methodOut)
 		resultJSON, err := {{ .ConstName }}ResultCodec.ToJSON(result)
 		if err != nil {
-			return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "encode_failed", err.Error()), nil
+			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
 		}
 {{- if and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
 		bounds := init{{ goify .Name true }}Bounds(methodOut)
@@ -89,7 +100,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			data := Init{{ $tool.ConstName }}{{ goify .Kind true }}ServerData(methodOut.{{ goify .MethodResultField true }})
 			dataJSON, err := {{ $tool.ConstName }}{{ goify .Kind true }}ServerDataCodec.ToJSON(data)
 			if err != nil {
-				return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "encode_failed", err.Error()), nil
+				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
 			}
 			if string(dataJSON) != "null" {
 				server = append(server, &toolregistry.ServerDataItem{
@@ -103,8 +114,9 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- end }}
 		if len(server) > 0 {
 			return toolregistry.ToolResultMessage{
-				ToolUseID: msg.ToolUseID,
-				Result:    resultJSON,
+				RegistrationToken: msg.RegistrationToken,
+				ToolUseID:          msg.ToolUseID,
+				Result:             resultJSON,
 {{- if and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
 				Bounds:    bounds,
 {{- end }}
@@ -112,19 +124,20 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			}, nil
 		}
 		return toolregistry.ToolResultMessage{
-			ToolUseID: msg.ToolUseID,
-			Result:    resultJSON,
+			RegistrationToken: msg.RegistrationToken,
+			ToolUseID:          msg.ToolUseID,
+			Result:             resultJSON,
 {{- if and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
 			Bounds:    bounds,
 {{- end }}
 		}, nil
 {{- else }}
-		return toolregistry.NewToolResultMessage(msg.ToolUseID, nil), nil
+		return toolregistry.NewToolResultMessage(msg.RegistrationToken, msg.ToolUseID, nil), nil
 {{- end }}
 {{- end }}
 {{- end }}
 	default:
-		return toolregistry.NewToolResultErrorMessage(msg.ToolUseID, "unknown_tool", fmt.Sprintf("unknown tool %q", msg.Tool)), nil
+		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "unknown_tool", fmt.Sprintf("unknown tool %q", msg.Tool)), nil
 	}
 }
 

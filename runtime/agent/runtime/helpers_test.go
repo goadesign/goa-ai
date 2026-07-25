@@ -17,4 +17,3 @@ func TestGenerateDeterministicToolCallID_DeterministicForSameInputs(t *testing.T
 	id2 := generateDeterministicToolCallID("run-1", "turn-1", 3, "svc.read.get_time_series", 7)
 	require.Equal(t, id1, id2)
 }
-

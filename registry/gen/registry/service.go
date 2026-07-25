@@ -13,13 +13,34 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-// Internal tool registry gateway for toolset discovery and tool invocation
+// The registry owns serialized toolset admission generations, provider leases
+// and health, discovery, and routed invocation over Pulse streams. Providers
+// renew leases for the one active schema and admission revision; consumers
+// discover and invoke only healthy admitted providers.
 type Service interface {
-	// Register a toolset with the registry
+	// Atomically admit or renew one provider-incarnation lease in the catalog
+	// admission record. The same schema and admission revision add or renew
+	// replicas under one token. A different token replaces the admission after
+	// Redis-time pruning proves every old lease expired and atomically tombstones
+	// the prior token; otherwise admission_blocked asks the provider to retry. Any
+	// candidate in the permanent retired-token set returns admission_retired and
+	// cannot resurrect.
 	Register(context.Context, *RegisterPayload) (res *RegisterResult, err error)
-	// Unregister a toolset from the registry
+	// Release one exact provider-incarnation lease from the admission token after
+	// that Serve lifecycle has stopped claiming work and settled in-flight calls.
+	// Missing incarnations and stale tokens succeed without mutation;
+	// infrastructure failures are retryable.
+	ReleaseProvider(context.Context, *ReleaseProviderPayload) (err error)
+	// Intentionally retire the exact active admission while preserving its
+	// provider leases until graceful release or expiry and atomically adding its
+	// token to the permanent retired-token set. Repeating the same-token
+	// retirement succeeds; a stale token returns admission_conflict. Retirement
+	// removes the toolset from discovery and routing and permanently prevents that
+	// exact token from registering again.
 	Unregister(context.Context, *UnregisterPayload) (err error)
-	// Respond to a health check ping
+	// Atomically record shared consumer-group liveness for a
+	// token-and-membership-epoch health ping. The responding provider incarnation
+	// must hold an unexpired lease in that same catalog record.
 	Pong(context.Context, *PongPayload) (err error)
 	// List all registered toolsets with optional tag filtering
 	ListToolsets(context.Context, *ListToolsetsPayload) (res *ListToolsetsResult, err error)
@@ -27,8 +48,11 @@ type Service interface {
 	GetToolset(context.Context, *GetToolsetPayload) (res *Toolset, err error)
 	// Search toolsets by keyword matching name, description, or tags
 	Search(context.Context, *SearchPayload) (res *SearchResult, err error)
-	// Initiate a tool call by publishing a tool call message to the toolset
-	// request stream and returning the tool use identifier.
+	// Admit or attach to one run-scoped tool call. The registry atomically owns
+	// publication by tool_use_id and registration token, retries provider overload
+	// with bounded backoff, preserves immutable sliding-TTL result history, and
+	// returns the exact identity, admission token, and retention used by
+	// independent replay readers.
 	CallTool(context.Context, *CallToolPayload) (res *CallToolResult, err error)
 }
 
@@ -46,7 +70,7 @@ const ServiceName = "registry"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [7]string{"Register", "Unregister", "Pong", "ListToolsets", "GetToolset", "Search", "CallTool"}
+var MethodNames = [8]string{"Register", "ReleaseProvider", "Unregister", "Pong", "ListToolsets", "GetToolset", "Search", "CallTool"}
 
 // CallToolPayload is the payload type of the registry service CallTool method.
 type CallToolPayload struct {
@@ -65,8 +89,13 @@ type CallToolPayload struct {
 
 // CallToolResult is the result type of the registry service CallTool method.
 type CallToolResult struct {
-	// Unique identifier for this invocation
+	// Global transport identifier derived from required run_id and tool_call_id.
 	ToolUseID string
+	// Exact admission-generation token stamped on the routed call
+	RegistrationToken string
+	// Registry-selected sliding retention for the per-call result stream in
+	// milliseconds.
+	ResultStreamTTLMs int64
 }
 
 // GetToolsetPayload is the payload type of the registry service GetToolset
@@ -98,6 +127,8 @@ type PongPayload struct {
 	Toolset string
 	// Stable identity of the provider instance responding to the ping.
 	ProviderID string
+	// Runtime-generated UUID of the Serve lifecycle responding to the ping.
+	ProviderIncarnationID string
 }
 
 // RegisterPayload is the payload type of the registry service Register method.
@@ -114,12 +145,37 @@ type RegisterPayload struct {
 	Tools []*ToolSchema
 	// Stable identity of the provider process registering this toolset.
 	ProviderID string
+	// Deployment-issued revision shared by every replica of one fenced admission.
+	// Reuse it for same-contract scaling and rolling updates; change it only to
+	// create a new fenced admission.
+	AdmissionRevision string
+	// Runtime-generated UUID identifying one Serve lifecycle. The provider runtime
+	// generates it once and reuses it for every renewal.
+	ProviderIncarnationID string
 }
 
 // RegisterResult is the result type of the registry service Register method.
 type RegisterResult struct {
 	// ISO 8601 timestamp of registration
 	RegisteredAt string
+	// Deterministic admission-generation token derived from the canonical schema
+	// fingerprint and deployment-issued admission revision
+	RegistrationToken string
+	// Duration of the admitted provider lease in milliseconds
+	LeaseDurationMs int64
+}
+
+// ReleaseProviderPayload is the payload type of the registry service
+// ReleaseProvider method.
+type ReleaseProviderPayload struct {
+	// Name of the toolset whose provider is leaving
+	Name string
+	// Stable identity of the provider process releasing its lease
+	ProviderID string
+	// Exact admission-generation token returned by Register
+	ExpectedRegistrationToken string
+	// Runtime-generated UUID of the exact Serve lifecycle releasing its lease.
+	ProviderIncarnationID string
 }
 
 // SearchPayload is the payload type of the registry service Search method.
@@ -147,7 +203,7 @@ type ToolCallMeta struct {
 	// Turn identifier within the session.
 	TurnID *string
 	// Tool call identifier used for correlation with model provider tool calls.
-	ToolCallID *string
+	ToolCallID string
 	// Parent tool call identifier when the tool call is nested.
 	ParentToolCallID *string
 }
@@ -205,11 +261,19 @@ type ToolsetInfo struct {
 type UnregisterPayload struct {
 	// Name of the toolset to unregister
 	Name string
+	// Exact admission-generation token returned by Register for the stopped
+	// provider rollout
+	ExpectedRegistrationToken string
 }
 
-// MakeNotFound builds a goa.ServiceError from an error.
-func MakeNotFound(err error) *goa.ServiceError {
-	return goa.NewServiceError(err, "not_found", false, false, false)
+// MakeAdmissionBlocked builds a goa.ServiceError from an error.
+func MakeAdmissionBlocked(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "admission_blocked", false, false, false)
+}
+
+// MakeAdmissionRetired builds a goa.ServiceError from an error.
+func MakeAdmissionRetired(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "admission_retired", false, false, false)
 }
 
 // MakeValidationError builds a goa.ServiceError from an error.
@@ -220,4 +284,14 @@ func MakeValidationError(err error) *goa.ServiceError {
 // MakeServiceUnavailable builds a goa.ServiceError from an error.
 func MakeServiceUnavailable(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "service_unavailable", false, false, false)
+}
+
+// MakeAdmissionConflict builds a goa.ServiceError from an error.
+func MakeAdmissionConflict(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "admission_conflict", false, false, false)
+}
+
+// MakeNotFound builds a goa.ServiceError from an error.
+func MakeNotFound(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "not_found", false, false, false)
 }

@@ -20,26 +20,28 @@ import (
 
 // Server implements the registrypb.RegistryServer interface.
 type Server struct {
-	RegisterH     goagrpc.UnaryHandler
-	UnregisterH   goagrpc.UnaryHandler
-	PongH         goagrpc.UnaryHandler
-	ListToolsetsH goagrpc.UnaryHandler
-	GetToolsetH   goagrpc.UnaryHandler
-	SearchH       goagrpc.UnaryHandler
-	CallToolH     goagrpc.UnaryHandler
+	RegisterH        goagrpc.UnaryHandler
+	ReleaseProviderH goagrpc.UnaryHandler
+	UnregisterH      goagrpc.UnaryHandler
+	PongH            goagrpc.UnaryHandler
+	ListToolsetsH    goagrpc.UnaryHandler
+	GetToolsetH      goagrpc.UnaryHandler
+	SearchH          goagrpc.UnaryHandler
+	CallToolH        goagrpc.UnaryHandler
 	registrypb.UnimplementedRegistryServer
 }
 
 // New instantiates the server struct with the registry service endpoints.
 func New(e *registry.Endpoints, uh goagrpc.UnaryHandler) *Server {
 	return &Server{
-		RegisterH:     NewRegisterHandler(e.Register, uh),
-		UnregisterH:   NewUnregisterHandler(e.Unregister, uh),
-		PongH:         NewPongHandler(e.Pong, uh),
-		ListToolsetsH: NewListToolsetsHandler(e.ListToolsets, uh),
-		GetToolsetH:   NewGetToolsetHandler(e.GetToolset, uh),
-		SearchH:       NewSearchHandler(e.Search, uh),
-		CallToolH:     NewCallToolHandler(e.CallTool, uh),
+		RegisterH:        NewRegisterHandler(e.Register, uh),
+		ReleaseProviderH: NewReleaseProviderHandler(e.ReleaseProvider, uh),
+		UnregisterH:      NewUnregisterHandler(e.Unregister, uh),
+		PongH:            NewPongHandler(e.Pong, uh),
+		ListToolsetsH:    NewListToolsetsHandler(e.ListToolsets, uh),
+		GetToolsetH:      NewGetToolsetHandler(e.GetToolset, uh),
+		SearchH:          NewSearchHandler(e.Search, uh),
+		CallToolH:        NewCallToolHandler(e.CallTool, uh),
 	}
 }
 
@@ -59,9 +61,50 @@ func (s *Server) Register(ctx context.Context, message *registrypb.RegisterReque
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.RegisterH.Handle(ctx, message)
 	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "admission_blocked":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			case "admission_retired":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
 		return nil, goagrpc.EncodeError(err)
 	}
 	return resp.(*registrypb.RegisterResponse), nil
+}
+
+// NewReleaseProviderHandler creates a gRPC handler which serves the "registry"
+// service "ReleaseProvider" endpoint.
+func NewReleaseProviderHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeReleaseProviderRequest, EncodeReleaseProviderResponse)
+	}
+	return h
+}
+
+// ReleaseProvider implements the "ReleaseProvider" method in
+// registrypb.RegistryServer interface.
+func (s *Server) ReleaseProvider(ctx context.Context, message *registrypb.ReleaseProviderRequest) (*registrypb.ReleaseProviderResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "ReleaseProvider")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.ReleaseProviderH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.ReleaseProviderResponse), nil
 }
 
 // NewUnregisterHandler creates a gRPC handler which serves the "registry"
@@ -83,8 +126,10 @@ func (s *Server) Unregister(ctx context.Context, message *registrypb.UnregisterR
 		var en goa.GoaErrorNamer
 		if errors.As(err, &en) {
 			switch en.GoaErrorName() {
-			case "not_found":
-				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
+			case "admission_conflict":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
 			}
 		}
 		return nil, goagrpc.EncodeError(err)

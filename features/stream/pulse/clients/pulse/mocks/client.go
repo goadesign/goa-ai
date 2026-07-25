@@ -32,6 +32,7 @@ type (
 
 	StreamAddFunc         func(ctx context.Context, event string, payload []byte) (string, error)
 	StreamNewSinkFunc     func(ctx context.Context, name string, opts ...options.Sink) (pulse.Sink, error)
+	StreamNewReaderFunc   func(ctx context.Context, opts ...options.Reader) (pulse.Reader, error)
 	StreamEnsureGroupFunc func(ctx context.Context, group string) error
 	StreamDestroyFunc     func(ctx context.Context) error
 
@@ -42,7 +43,15 @@ type (
 
 	SinkSubscribeFunc func() <-chan *streaming.Event
 	SinkAckFunc       func(p0 context.Context, p1 *streaming.Event) error
-	SinkCloseFunc     func(p0 context.Context)
+	SinkCloseFunc     func(p0 context.Context) error
+
+	Reader struct {
+		m *mock.Mock
+		t *testing.T
+	}
+
+	ReaderSubscribeFunc func() <-chan *streaming.Event
+	ReaderCloseFunc     func()
 )
 
 func NewClient(t *testing.T) *Client {
@@ -130,6 +139,23 @@ func (m *Stream) NewSink(ctx context.Context, name string, opts ...options.Sink)
 	}
 	m.t.Helper()
 	m.t.Error("unexpected NewSink call")
+	return nil, nil
+}
+
+func (m *Stream) AddNewReader(f StreamNewReaderFunc) {
+	m.m.Add("NewReader", f)
+}
+
+func (m *Stream) SetNewReader(f StreamNewReaderFunc) {
+	m.m.Set("NewReader", f)
+}
+
+func (m *Stream) NewReader(ctx context.Context, opts ...options.Reader) (pulse.Reader, error) {
+	if f := m.m.Next("NewReader"); f != nil {
+		return f.(StreamNewReaderFunc)(ctx, opts...)
+	}
+	m.t.Helper()
+	m.t.Error("unexpected NewReader call")
 	return nil, nil
 }
 
@@ -221,15 +247,61 @@ func (m *Sink) SetClose(f SinkCloseFunc) {
 	m.m.Set("Close", f)
 }
 
-func (m *Sink) Close(p0 context.Context) {
+func (m *Sink) Close(p0 context.Context) error {
 	if f := m.m.Next("Close"); f != nil {
-		f.(SinkCloseFunc)(p0)
+		return f.(SinkCloseFunc)(p0)
+	}
+	m.t.Helper()
+	m.t.Error("unexpected Close call")
+	return nil
+}
+
+func (m *Sink) HasMore() bool {
+	return m.m.HasMore()
+}
+
+func NewReader(t *testing.T) *Reader {
+	var (
+		m              = &Reader{mock.New(), t}
+		_ pulse.Reader = m
+	)
+	return m
+}
+
+func (m *Reader) AddSubscribe(f ReaderSubscribeFunc) {
+	m.m.Add("Subscribe", f)
+}
+
+func (m *Reader) SetSubscribe(f ReaderSubscribeFunc) {
+	m.m.Set("Subscribe", f)
+}
+
+func (m *Reader) Subscribe() <-chan *streaming.Event {
+	if f := m.m.Next("Subscribe"); f != nil {
+		return f.(ReaderSubscribeFunc)()
+	}
+	m.t.Helper()
+	m.t.Error("unexpected Subscribe call")
+	return nil
+}
+
+func (m *Reader) AddClose(f ReaderCloseFunc) {
+	m.m.Add("Close", f)
+}
+
+func (m *Reader) SetClose(f ReaderCloseFunc) {
+	m.m.Set("Close", f)
+}
+
+func (m *Reader) Close() {
+	if f := m.m.Next("Close"); f != nil {
+		f.(ReaderCloseFunc)()
 		return
 	}
 	m.t.Helper()
 	m.t.Error("unexpected Close call")
 }
 
-func (m *Sink) HasMore() bool {
+func (m *Reader) HasMore() bool {
 	return m.m.HasMore()
 }

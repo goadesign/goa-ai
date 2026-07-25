@@ -22,13 +22,13 @@ import (
 //	command (subcommand1|subcommand2|...)
 func UsageCommands() []string {
 	return []string{
-		"registry (register|unregister|pong|list-toolsets|get-toolset|search|call-tool)",
+		"registry (register|release-provider|unregister|pong|list-toolsets|get-toolset|search|call-tool)",
 	}
 }
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "registry register --message '{\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\"\n   }'" + "\n" +
+	return os.Args[0] + " " + "registry register --message '{\n      \"admission_revision\": \"2026-07-23.4+441534ae50f6\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\"\n   }'" + "\n" +
 		""
 }
 
@@ -43,6 +43,9 @@ func ParseEndpoint(
 
 		registryRegisterFlags       = flag.NewFlagSet("register", flag.ExitOnError)
 		registryRegisterMessageFlag = registryRegisterFlags.String("message", "", "")
+
+		registryReleaseProviderFlags       = flag.NewFlagSet("release-provider", flag.ExitOnError)
+		registryReleaseProviderMessageFlag = registryReleaseProviderFlags.String("message", "", "")
 
 		registryUnregisterFlags       = flag.NewFlagSet("unregister", flag.ExitOnError)
 		registryUnregisterMessageFlag = registryUnregisterFlags.String("message", "", "")
@@ -64,6 +67,7 @@ func ParseEndpoint(
 	)
 	registryFlags.Usage = registryUsage
 	registryRegisterFlags.Usage = registryRegisterUsage
+	registryReleaseProviderFlags.Usage = registryReleaseProviderUsage
 	registryUnregisterFlags.Usage = registryUnregisterUsage
 	registryPongFlags.Usage = registryPongUsage
 	registryListToolsetsFlags.Usage = registryListToolsetsUsage
@@ -107,6 +111,9 @@ func ParseEndpoint(
 			switch epn {
 			case "register":
 				epf = registryRegisterFlags
+
+			case "release-provider":
+				epf = registryReleaseProviderFlags
 
 			case "unregister":
 				epf = registryUnregisterFlags
@@ -154,6 +161,9 @@ func ParseEndpoint(
 			case "register":
 				endpoint = c.Register()
 				data, err = registryc.BuildRegisterPayload(*registryRegisterMessageFlag)
+			case "release-provider":
+				endpoint = c.ReleaseProvider()
+				data, err = registryc.BuildReleaseProviderPayload(*registryReleaseProviderMessageFlag)
 			case "unregister":
 				endpoint = c.Unregister()
 				data, err = registryc.BuildUnregisterPayload(*registryUnregisterMessageFlag)
@@ -184,16 +194,17 @@ func ParseEndpoint(
 
 // registryUsage displays the usage of the registry command and its subcommands.
 func registryUsage() {
-	fmt.Fprintln(os.Stderr, `Internal tool registry gateway for toolset discovery and tool invocation`)
+	fmt.Fprintln(os.Stderr, `The registry owns serialized toolset admission generations, provider leases and health, discovery, and routed invocation over Pulse streams. Providers renew leases for the one active schema and admission revision; consumers discover and invoke only healthy admitted providers.`)
 	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] registry COMMAND [flags]\n\n", os.Args[0])
 	fmt.Fprintln(os.Stderr, "COMMAND:")
-	fmt.Fprintln(os.Stderr, `    register: Register a toolset with the registry`)
-	fmt.Fprintln(os.Stderr, `    unregister: Unregister a toolset from the registry`)
-	fmt.Fprintln(os.Stderr, `    pong: Respond to a health check ping`)
+	fmt.Fprintln(os.Stderr, `    register: Atomically admit or renew one provider-incarnation lease in the catalog admission record. The same schema and admission revision add or renew replicas under one token. A different token replaces the admission after Redis-time pruning proves every old lease expired and atomically tombstones the prior token; otherwise admission_blocked asks the provider to retry. Any candidate in the permanent retired-token set returns admission_retired and cannot resurrect.`)
+	fmt.Fprintln(os.Stderr, `    release-provider: Release one exact provider-incarnation lease from the admission token after that Serve lifecycle has stopped claiming work and settled in-flight calls. Missing incarnations and stale tokens succeed without mutation; infrastructure failures are retryable.`)
+	fmt.Fprintln(os.Stderr, `    unregister: Intentionally retire the exact active admission while preserving its provider leases until graceful release or expiry and atomically adding its token to the permanent retired-token set. Repeating the same-token retirement succeeds; a stale token returns admission_conflict. Retirement removes the toolset from discovery and routing and permanently prevents that exact token from registering again.`)
+	fmt.Fprintln(os.Stderr, `    pong: Atomically record shared consumer-group liveness for a token-and-membership-epoch health ping. The responding provider incarnation must hold an unexpired lease in that same catalog record.`)
 	fmt.Fprintln(os.Stderr, `    list-toolsets: List all registered toolsets with optional tag filtering`)
 	fmt.Fprintln(os.Stderr, `    get-toolset: Get a specific toolset by name including all tool schemas`)
 	fmt.Fprintln(os.Stderr, `    search: Search toolsets by keyword matching name, description, or tags`)
-	fmt.Fprintln(os.Stderr, `    call-tool: Initiate a tool call by publishing a tool call message to the toolset request stream and returning the tool use identifier.`)
+	fmt.Fprintln(os.Stderr, `    call-tool: Admit or attach to one run-scoped tool call. The registry atomically owns publication by tool_use_id and registration token, retries provider overload with bounded backoff, preserves immutable sliding-TTL result history, and returns the exact identity, admission token, and retention used by independent replay readers.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s registry COMMAND --help\n", os.Args[0])
@@ -206,14 +217,32 @@ func registryRegisterUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Register a toolset with the registry`)
+	fmt.Fprintln(os.Stderr, `Atomically admit or renew one provider-incarnation lease in the catalog admission record. The same schema and admission revision add or renew replicas under one token. A different token replaces the admission after Redis-time pruning proves every old lease expired and atomically tombstones the prior token; otherwise admission_blocked asks the provider to retry. Any candidate in the permanent retired-token set returns admission_retired and cannot resurrect.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -message JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry register --message '{\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry register --message '{\n      \"admission_revision\": \"2026-07-23.4+441534ae50f6\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\"\n   }'")
+}
+
+func registryReleaseProviderUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] registry release-provider", os.Args[0])
+	fmt.Fprint(os.Stderr, " -message JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Release one exact provider-incarnation lease from the admission token after that Serve lifecycle has stopped claiming work and settled in-flight calls. Missing incarnations and stale tokens succeed without mutation; infrastructure failures are retryable.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -message JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry release-provider --message '{\n      \"expected_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\"\n   }'")
 }
 
 func registryUnregisterUsage() {
@@ -224,14 +253,14 @@ func registryUnregisterUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Unregister a toolset from the registry`)
+	fmt.Fprintln(os.Stderr, `Intentionally retire the exact active admission while preserving its provider leases until graceful release or expiry and atomically adding its token to the permanent retired-token set. Repeating the same-token retirement succeeds; a stale token returns admission_conflict. Retirement removes the toolset from discovery and routing and permanently prevents that exact token from registering again.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -message JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry unregister --message '{\n      \"name\": \"data-tools\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry unregister --message '{\n      \"expected_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"name\": \"data-tools\"\n   }'")
 }
 
 func registryPongUsage() {
@@ -242,14 +271,14 @@ func registryPongUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Respond to a health check ping`)
+	fmt.Fprintln(os.Stderr, `Atomically record shared consumer-group liveness for a token-and-membership-epoch health ping. The responding provider incarnation must hold an unexpired lease in that same catalog record.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -message JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry pong --message '{\n      \"ping_id\": \"ping-xyz789\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"toolset\": \"data-tools\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry pong --message '{\n      \"ping_id\": \"ping-xyz789\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"toolset\": \"data-tools\"\n   }'")
 }
 
 func registryListToolsetsUsage() {
@@ -314,7 +343,7 @@ func registryCallToolUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Initiate a tool call by publishing a tool call message to the toolset request stream and returning the tool use identifier.`)
+	fmt.Fprintln(os.Stderr, `Admit or attach to one run-scoped tool call. The registry atomically owns publication by tool_use_id and registration token, retries provider overload with bounded backoff, preserves immutable sliding-TTL result history, and returns the exact identity, admission token, and retention used by independent replay readers.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -message JSON: `)

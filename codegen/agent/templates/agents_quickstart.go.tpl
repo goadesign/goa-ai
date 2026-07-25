@@ -360,32 +360,54 @@ The provider implements `HandleToolCall(ctx, msg)` which:
 To serve tool calls from the registry gateway, run the provider loop inside the owning service process:
 
 ```go
-// cmd/<service>/main.go (or your service bootstrap)
-handler := <toolsetpkg>.NewProvider(svcImpl)
-providerID := "<pod-name>/" + toolsetID
-register := func(ctx context.Context) error {
-    _, err := registryClient.Register(ctx, registrationPayload) // same schema as startup
-    return err
-}
-if err := register(ctx); err != nil {
-    panic(err)
-}
+// In your service composition root, import the generated toolset package as
+// toolsetpkg and construct its provider around the service implementation.
+handler := toolsetpkg.NewProvider(svcImpl)
+podName := mustRequiredEnv("HOSTNAME")
+providerID := podName + "/" + toolsetID
+admissionRevision := mustRequiredEnv("TOOL_REGISTRY_ADMISSION_REVISION")
 go func() {
-    err := toolprovider.Serve(ctx, pulseClient, toolsetID, handler, toolprovider.Options{
-        ProviderID: providerID,
-        Pong: func(ctx context.Context, providerID, pingID string) error {
-            return registryClient.Pong(ctx, &registry.PongPayload{
-                PingID:     pingID,
-                Toolset:    toolsetID,
-                ProviderID: providerID,
-            })
+    err := toolprovider.Serve(ctx, pulseClient, toolsetID, handler,
+        toolprovider.Registration{
+            AdmissionRevision: admissionRevision,
+            Register: func(ctx context.Context, toolset, providerID, incarnationID, admissionRevision string) (toolprovider.RegistrationLease, error) {
+                result, err := registryClient.Register(ctx, &registry.RegisterPayload{
+                    Name:              toolset,
+                    Tools:             toolSchemas,
+                    ProviderID:        providerID,
+                    ProviderIncarnationID: incarnationID,
+                    AdmissionRevision: admissionRevision,
+                })
+                if err != nil {
+                    return toolprovider.RegistrationLease{}, err
+                }
+                return toolprovider.RegistrationLease{
+                    RegistrationToken: result.RegistrationToken,
+                    Duration:          time.Duration(result.LeaseDurationMs) * time.Millisecond,
+                }, nil
+            },
+            Release: func(ctx context.Context, toolset, providerID, incarnationID, expectedToken string) error {
+                return registryClient.ReleaseProvider(ctx, &registry.ReleaseProviderPayload{
+                    Name:                      toolset,
+                    ProviderID:                providerID,
+                    ProviderIncarnationID:     incarnationID,
+                    ExpectedRegistrationToken: expectedToken,
+                })
+            },
         },
-        // Re-assert registration periodically so the provider self-heals
-        // after Redis state loss (catalog entry restored, health pings
-        // resumed) without a redeploy. Registration is idempotent.
-        EnsureRegistration: register,
-    })
-    if err != nil {
+        toolprovider.Options{
+            ProviderID: providerID,
+            Pong: func(ctx context.Context, providerID, incarnationID, pingID string) error {
+                return registryClient.Pong(ctx, &registry.PongPayload{
+                    PingID:     pingID,
+                    Toolset:    toolsetID,
+                    ProviderID: providerID,
+                    ProviderIncarnationID: incarnationID,
+                })
+            },
+        },
+    )
+    if err != nil && !errors.Is(err, context.Canceled) {
         panic(err)
     }
 }()
@@ -395,6 +417,13 @@ Notes:
 
 - The registry publishes tool calls to the deterministic stream `toolset:<toolsetID>:requests` and providers publish results to `result:<toolUseID>`.
 - Providers are generated only when the toolset has at least one **method-backed** tool (and the toolset is not registry-backed).
+- `AdmissionRevision` is required and immutable for one fenced admission. Reuse it for scaling and same-contract rolling updates; change it only when schema or rollout intent needs a new execution fence. `Registration.Register` passes it to the typed registry payload and returns `RegistrationToken` plus `LeaseDurationMs`.
+- `Serve` generates one UUID incarnation, opens the Pulse request stream, registers that exact provider incarnation, and only then creates the shared request consumer-group sink. It renews from one third of the granted duration. On exit it stops claiming, boundedly closes the request sink, closes work intake, settles workers/results, and drains acknowledgements. It releases only its exact incarnation lease after clean settlement; otherwise lease expiry is the durable fallback. Treat `context.Canceled` as normal process shutdown.
+- `RegistrationToken` is the deterministic SHA-256 admission-generation fence derived from canonical generated schema bytes and `AdmissionRevision`, not a secret. Its canonical wire form is lowercase 64-hex. Every success, error, and best-effort output delta echoes the call token. Providers complete stale queued calls with `stale_registration`; independent executor readers ignore mismatched late deltas/results and continue waiting for the exact tool-use ID and token pair.
+- The gateway derives the global transport `ToolUseID` from required run ID plus required model/provider call ID. A Redis-expiring call admission keyed by `ToolUseID` plus token lets transport retries attach to immutable result history instead of republishing. Result consumers use independent oldest-first Pulse Readers, so sequential and concurrent retries each replay the same retained events without acknowledgement or consumer-group metadata. A full provider queue publishes transient `provider_overloaded`; the registry serializes bounded delayed republication while provider intake remains available for pings. Sliding TTL is the sole result-history cleanup.
+- Generated handlers propagate the lifecycle context to bound methods. Custom handlers must honor cancellation and make repeated `ToolUseID` execution idempotent because acknowledgement failure can redeliver an already-completed call.
+- Health pings carry the admission token and catalog-owned membership epoch; pongs authenticate the exact provider incarnation and update the same CAS admission record. A zero-lease transition advances the epoch and resets pong freshness, so an old process cannot authenticate a later lifecycle.
+- Use RollingUpdate only when every replica has the same registration token. Use Recreate for a different schema or admission revision: graceful release enables immediate server-owned handoff, while crashed providers block the new admission until lease expiry. Retirement and replacement permanently retain every prior token as correctness state, so A→B cannot resurrect A; this set grows with distinct admissions and must not be truncated. `Unregister` is reserved for intentional retirement.
 {{- end }}
 
 #### Connecting to Remote Services (MCP)

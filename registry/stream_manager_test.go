@@ -31,7 +31,14 @@ func TestToolCallMessageStructure(t *testing.T) {
 			}
 
 			// Create the message
-			msg := toolregistry.NewToolCallMessage(toolUseID, tools.Ident(tool), payload, nil)
+			msg := toolregistry.NewToolCallMessage(
+				"registration-a",
+				toolUseID,
+				toolregistry.DefaultResultStreamTTL,
+				tools.Ident(tool),
+				payload,
+				nil,
+			)
 
 			// Verify message type is "call"
 			if msg.Type != toolregistry.MessageTypeCall {
@@ -68,7 +75,7 @@ func TestToolCallMessageStructure(t *testing.T) {
 	properties.Property("NewPingMessage creates message with correct structure", prop.ForAll(
 		func(pingID string) bool {
 			// Create the ping message
-			msg := toolregistry.NewPingMessage(pingID)
+			msg := toolregistry.NewPingMessage("registration-a", pingID)
 
 			// Verify message type is "ping"
 			if msg.Type != toolregistry.MessageTypePing {
@@ -109,7 +116,14 @@ func TestToolCallMessageStructure(t *testing.T) {
 			}
 
 			// Create and serialize the message
-			msg := toolregistry.NewToolCallMessage(toolUseID, tools.Ident(tool), payload, nil)
+			msg := toolregistry.NewToolCallMessage(
+				"registration-a",
+				toolUseID,
+				toolregistry.DefaultResultStreamTTL,
+				tools.Ident(tool),
+				payload,
+				nil,
+			)
 			serialized, err := json.Marshal(msg)
 			if err != nil {
 				return false
@@ -123,6 +137,9 @@ func TestToolCallMessageStructure(t *testing.T) {
 
 			// Verify required fields are present
 			if decoded["type"] != string(toolregistry.MessageTypeCall) {
+				return false
+			}
+			if decoded["registration_token"] != "registration-a" {
 				return false
 			}
 			if decoded["tool_use_id"] != toolUseID {

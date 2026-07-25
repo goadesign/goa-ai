@@ -8,12 +8,12 @@ package registry
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -25,13 +25,15 @@ type (
 	// Service implements the registry service interface.
 	// It provides toolset registration, discovery, and tool invocation capabilities.
 	Service struct {
-		catalog       *toolsetCatalog
-		validator     *schemaValidator
-		streamManager StreamManager
-		healthTracker HealthTracker
+		catalog        *toolsetCatalog
+		validator      *schemaValidator
+		streamManager  StreamManager
+		healthTracker  HealthTracker
+		callAdmissions *callAdmissionStore
 
-		pulseClient     clientspulse.Client
-		resultStreamTTL time.Duration
+		pulseClient           clientspulse.Client
+		resultStreamTTL       time.Duration
+		providerLeaseDuration time.Duration
 	}
 
 	// serviceOptions configures the registry service.
@@ -42,13 +44,22 @@ type (
 		StreamManager StreamManager
 		// HealthTracker tracks provider health status.
 		HealthTracker HealthTracker
+		// CallAdmissions atomically coordinates call publication across replicas.
+		CallAdmissions *callAdmissionStore
 		// PulseClient creates/opens Pulse streams. Required for CallTool.
 		PulseClient clientspulse.Client
 		// ResultStreamTTL controls how long result streams live in Redis.
-		// When zero, defaults to 15 minutes.
+		// When zero, defaults to toolregistry.DefaultResultStreamTTL.
 		ResultStreamTTL time.Duration
+		// ProviderLeaseDuration is the application-level provider membership
+		// lifetime renewed by identical registration.
+		ProviderLeaseDuration time.Duration
 	}
 )
+
+// DefaultProviderLeaseDuration is the application-level provider membership
+// lifetime when the registry Config does not specify one.
+const DefaultProviderLeaseDuration = 2 * time.Minute
 
 // Compile-time check that Service implements the generated interface.
 var _ genregistry.Service = (*Service)(nil)
@@ -65,26 +76,56 @@ func newService(opts serviceOptions) (*Service, error) {
 	if opts.HealthTracker == nil {
 		return nil, fmt.Errorf("health tracker is required")
 	}
+	if opts.CallAdmissions == nil {
+		return nil, fmt.Errorf("call admission store is required")
+	}
 	if opts.PulseClient == nil {
 		return nil, fmt.Errorf("pulse client is required")
 	}
+	if opts.ProviderLeaseDuration < 0 {
+		return nil, fmt.Errorf("provider lease duration must not be negative")
+	}
 	ttl := opts.ResultStreamTTL
 	if ttl == 0 {
-		ttl = 15 * time.Minute
+		ttl = toolregistry.DefaultResultStreamTTL
+	}
+	if ttl < toolregistry.MinResultStreamTTL || ttl > toolregistry.MaxResultStreamTTL {
+		return nil, fmt.Errorf(
+			"result stream TTL must be between %s and %s",
+			toolregistry.MinResultStreamTTL,
+			toolregistry.MaxResultStreamTTL,
+		)
+	}
+	providerLeaseDuration := opts.ProviderLeaseDuration
+	if providerLeaseDuration == 0 {
+		providerLeaseDuration = DefaultProviderLeaseDuration
+	}
+	if providerLeaseDuration < toolregistry.MinProviderLeaseDuration {
+		return nil, fmt.Errorf(
+			"provider lease duration must be at least %s",
+			toolregistry.MinProviderLeaseDuration,
+		)
+	}
+	if providerLeaseDuration > toolregistry.MaxProviderLeaseDuration {
+		return nil, fmt.Errorf(
+			"provider lease duration must not exceed %s",
+			toolregistry.MaxProviderLeaseDuration,
+		)
 	}
 	return &Service{
-		catalog:         opts.catalog,
-		validator:       newSchemaValidator(),
-		streamManager:   opts.StreamManager,
-		healthTracker:   opts.HealthTracker,
-		pulseClient:     opts.PulseClient,
-		resultStreamTTL: ttl,
+		catalog:               opts.catalog,
+		validator:             newSchemaValidator(),
+		streamManager:         opts.StreamManager,
+		healthTracker:         opts.HealthTracker,
+		callAdmissions:        opts.CallAdmissions,
+		pulseClient:           opts.PulseClient,
+		resultStreamTTL:       ttl,
+		providerLeaseDuration: providerLeaseDuration,
 	}, nil
 }
 
-// Register registers a toolset with the registry.
-// It validates the toolset schema, ensures the toolset request stream exists,
-// stores the metadata, and starts the health ping loop.
+// Register prepares routing and atomically creates, renews, or replaces the
+// catalog-owned admission and provider lease.
 func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) (*genregistry.RegisterResult, error) {
 	// Validate tool schemas.
 	if err := s.validator.ValidateToolSchemas(p.Tools); err != nil {
@@ -94,70 +135,85 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 	// Ensure the Pulse request stream for this toolset exists.
 	_, _, err := s.streamManager.GetOrCreateStream(ctx, p.Name)
 	if err != nil {
-		return nil, fmt.Errorf("create stream for toolset: %w", err)
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("create stream for toolset: %w", err))
 	}
 
-	// registered_at is transport metadata for discovery and debugging.
-	// Registration identity is the catalog-owned opaque token rotated on save.
-	registeredAt := time.Now().UTC().Format(time.RFC3339Nano)
-
-	// Build the toolset for storage.
 	toolset := &genregistry.Toolset{
-		Name:         p.Name,
-		Description:  p.Description,
-		Version:      p.Version,
-		Tags:         p.Tags,
-		Tools:        p.Tools,
-		RegisteredAt: registeredAt,
+		Name:        p.Name,
+		Description: p.Description,
+		Version:     p.Version,
+		Tags:        p.Tags,
+		Tools:       p.Tools,
 	}
 
-	// Store the toolset (creates or updates).
-	if err := s.catalog.SaveToolset(ctx, toolset); err != nil {
-		return nil, fmt.Errorf("save toolset: %w", err)
+	admission, err := s.catalog.Register(
+		ctx,
+		toolset,
+		p.AdmissionRevision,
+		p.ProviderID,
+		p.ProviderIncarnationID,
+		s.providerLeaseDuration,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, errAdmissionBlocked):
+			return nil, genregistry.MakeAdmissionBlocked(err)
+		case errors.Is(err, errAdmissionRetired):
+			return nil, genregistry.MakeAdmissionRetired(err)
+		default:
+			return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("register toolset admission: %w", err))
+		}
 	}
-
-	// Admit the registering provider as an active instance without marking it
-	// healthy; the provider must still answer a registration-token-bound ping.
-	if err := s.healthTracker.RegisterProvider(ctx, p.Name, p.ProviderID); err != nil {
-		return nil, fmt.Errorf("register provider: %w", err)
-	}
-
-	// Start health ping loop for the toolset.
-	if err := s.healthTracker.StartPingLoop(ctx, p.Name); err != nil {
-		return nil, fmt.Errorf("start health ping loop: %w", err)
+	if err := s.healthTracker.EnsurePingLoop(ctx, p.Name); err != nil {
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("ensure health ping loop: %w", err))
 	}
 
 	return &genregistry.RegisterResult{
-		RegisteredAt: registeredAt,
+		RegisteredAt:      admission.RegisteredAt,
+		RegistrationToken: admission.RegistrationToken,
+		LeaseDurationMs:   s.providerLeaseDuration.Milliseconds(),
 	}, nil
 }
 
-// Unregister removes a toolset from the registry.
-// It stops the health ping loop and removes the toolset from the catalog.
-// Returns not-found error if the toolset doesn't exist.
-// **Validates: Requirements 5.1, 5.2, 5.3**
-func (s *Service) Unregister(ctx context.Context, p *genregistry.UnregisterPayload) error {
-	// Delete the toolset from the catalog.
-	if err := s.catalog.DeleteToolset(ctx, p.Name); err != nil {
-		if errors.Is(err, errToolsetNotFound) {
-			return genregistry.MakeNotFound(fmt.Errorf("toolset %q not found", p.Name))
-		}
-		return fmt.Errorf("delete toolset: %w", err)
+// ReleaseProvider removes one exact provider lease after its Serve lifecycle
+// has stopped claiming and settled work.
+func (s *Service) ReleaseProvider(ctx context.Context, p *genregistry.ReleaseProviderPayload) error {
+	if err := s.catalog.ReleaseProvider(
+		ctx,
+		p.Name,
+		p.ProviderID,
+		p.ProviderIncarnationID,
+		p.ExpectedRegistrationToken,
+	); err != nil {
+		return genregistry.MakeServiceUnavailable(fmt.Errorf("release provider lease: %w", err))
 	}
-
-	// Stop the health ping loop.
-	s.healthTracker.StopPingLoop(ctx, p.Name)
-
-	// Remove the stream tracking (does not destroy the underlying stream).
-	s.streamManager.RemoveStream(p.Name)
-
 	return nil
 }
 
-// Pong records a pong response for a health check ping.
-// This restores healthy status if the provider was previously marked unhealthy.
+// Unregister intentionally retires exactly the expected admission.
+func (s *Service) Unregister(ctx context.Context, p *genregistry.UnregisterPayload) error {
+	err := s.catalog.Retire(ctx, p.Name, p.ExpectedRegistrationToken)
+	if err != nil {
+		switch {
+		case errors.Is(err, errAdmissionConflict):
+			return genregistry.MakeAdmissionConflict(err)
+		default:
+			return genregistry.MakeServiceUnavailable(fmt.Errorf("retire toolset admission: %w", err))
+		}
+	}
+	return nil
+}
+
+// Pong records generation-level consumer-group liveness only when the
+// responding provider has an unexpired application lease.
 func (s *Service) Pong(ctx context.Context, p *genregistry.PongPayload) error {
-	return s.healthTracker.RecordPong(ctx, p.Toolset, p.ProviderID, p.PingID)
+	return s.healthTracker.RecordPong(
+		ctx,
+		p.Toolset,
+		p.ProviderID,
+		p.ProviderIncarnationID,
+		p.PingID,
+	)
 }
 
 // ListToolsets returns all registered toolsets with optional tag filtering.
@@ -230,14 +286,16 @@ func (s *Service) Search(ctx context.Context, p *genregistry.SearchPayload) (*ge
 // It validates the payload against the tool's payload schema, checks provider health,
 // creates the per-call result stream, and publishes the request to the toolset stream.
 func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) (*genregistry.CallToolResult, error) {
-	// 1. Get the toolset to validate the tool exists and get its schema.
-	toolset, err := s.catalog.GetToolset(ctx, p.Toolset)
+	// 1. Load the exact catalog generation used for validation and routing.
+	registration, err := s.catalog.ActiveRegistration(ctx, p.Toolset)
 	if err != nil {
 		if errors.Is(err, errToolsetNotFound) {
 			return nil, genregistry.MakeNotFound(fmt.Errorf("toolset %q not found", p.Toolset))
 		}
-		return nil, fmt.Errorf("get toolset: %w", err)
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("get toolset: %w", err))
 	}
+
+	toolset := registration.Toolset
 
 	// 2. Find the tool within the toolset.
 	var tool *genregistry.ToolSchema
@@ -257,9 +315,9 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 	}
 
 	// 4. Check provider health - return service_unavailable if unhealthy.
-	h, err := s.healthTracker.Health(p.Toolset)
+	h, err := s.healthTracker.Health(ctx, p.Toolset, registration.RegistrationToken)
 	if err != nil {
-		return nil, fmt.Errorf("check toolset %q health: %w", p.Toolset, err)
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("check toolset %q health: %w", p.Toolset, err))
 	}
 	if !h.Healthy {
 		lastPong := "missing"
@@ -277,39 +335,215 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 
 	toolUseID := toolUseIDForCall(p.Meta)
 	resultStreamID := toolregistry.ResultStreamID(toolUseID)
-	resultStream, err := s.pulseClient.Stream(resultStreamID, streamopts.WithStreamTTL(s.resultStreamTTL))
+	resultStream, err := s.pulseClient.Stream(
+		resultStreamID,
+		streamopts.WithStreamSlidingTTL(s.resultStreamTTL),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("open result stream %q: %w", resultStreamID, err)
-	}
-	if _, err := resultStream.Add(ctx, "init", []byte("{}")); err != nil {
-		return nil, fmt.Errorf("initialize result stream %q: %w", resultStreamID, err)
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("open result stream %q: %w", resultStreamID, err))
 	}
 
 	meta := toolregistry.ToolCallMeta{
 		RunID:            p.Meta.RunID,
 		SessionID:        p.Meta.SessionID,
 		TurnID:           derefString(p.Meta.TurnID),
-		ToolCallID:       derefString(p.Meta.ToolCallID),
+		ToolCallID:       p.Meta.ToolCallID,
 		ParentToolCallID: derefString(p.Meta.ParentToolCallID),
 	}
-	msg := toolregistry.NewToolCallMessage(toolUseID, tools.Ident(p.Tool), json.RawMessage(p.PayloadJSON), &meta)
-	if err := s.streamManager.PublishToolCall(ctx, p.Toolset, msg); err != nil {
-		return nil, fmt.Errorf("publish tool call: %w", err)
+	msg := toolregistry.NewToolCallMessage(
+		registration.RegistrationToken,
+		toolUseID,
+		s.resultStreamTTL,
+		tools.Ident(p.Tool),
+		json.RawMessage(p.PayloadJSON),
+		&meta,
+	)
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("encode call admission: %w", err))
 	}
-	return &genregistry.CallToolResult{
-		ToolUseID: toolUseID,
-	}, nil
+	digest := sha256.Sum256(body)
+	admission, created, err := s.callAdmissions.Ensure(
+		ctx,
+		toolUseID,
+		registration.RegistrationToken,
+		fmt.Sprintf("%x", digest[:]),
+		s.resultStreamTTL,
+	)
+	if err != nil {
+		if errors.Is(err, errCallAdmissionConflict) {
+			return nil, genregistry.MakeValidationError(err)
+		}
+		return nil, genregistry.MakeServiceUnavailable(err)
+	}
+
+	var overloadEventID string
+	if !created {
+		eventID, result, err := latestExactResult(
+			ctx,
+			resultStream,
+			toolUseID,
+			registration.RegistrationToken,
+		)
+		if err != nil {
+			return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("inspect admitted call history: %w", err))
+		}
+		if result != nil {
+			if result.Error == nil || result.Error.Code != toolregistry.ToolErrorCodeProviderOverloaded {
+				return callToolResult(toolUseID, registration.RegistrationToken, s.resultStreamTTL), nil
+			}
+			if result.Error.RetryAfterMillis <= 0 ||
+				result.Error.RetryAfterMillis > toolregistry.MaxProviderOverloadRetryAfter.Milliseconds() {
+				return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
+					"provider overload retry delay %dms is outside (0,%dms]",
+					result.Error.RetryAfterMillis,
+					toolregistry.MaxProviderOverloadRetryAfter.Milliseconds(),
+				))
+			}
+			overloadEventID = eventID
+		}
+	}
+
+	publication, claimed, err := s.callAdmissions.ClaimPublication(ctx, admission, overloadEventID)
+	if err != nil {
+		return nil, genregistry.MakeServiceUnavailable(err)
+	}
+	if claimed {
+		publishErr := s.publishAdmittedCall(
+			ctx,
+			p,
+			registration.RegistrationToken,
+			resultStream,
+			resultStreamID,
+			msg,
+			admission,
+			publication,
+			overloadEventID,
+		)
+		releaseCtx, releaseCancel := context.WithTimeout(
+			context.WithoutCancel(ctx),
+			toolregistry.ResultStreamTransportBudget,
+		)
+		releaseErr := publication.Release(releaseCtx)
+		releaseCancel()
+		if err := errors.Join(publishErr, releaseErr); err != nil {
+			return nil, genregistry.MakeServiceUnavailable(err)
+		}
+	}
+	return callToolResult(toolUseID, registration.RegistrationToken, s.resultStreamTTL), nil
+}
+
+// publishAdmittedCall performs one exact-owned initial or overload publication.
+func (s *Service) publishAdmittedCall(
+	ctx context.Context,
+	payload *genregistry.CallToolPayload,
+	registrationToken string,
+	resultStream clientspulse.Stream,
+	resultStreamID string,
+	message toolregistry.ToolCallMessage,
+	admission callAdmission,
+	publication *callPublication,
+	overloadEventID string,
+) error {
+	if overloadEventID != "" {
+		_, result, err := latestExactResult(ctx, resultStream, message.ToolUseID, registrationToken)
+		if err != nil {
+			return fmt.Errorf("recheck overload history: %w", err)
+		}
+		if result != nil && result.Error != nil {
+			delay := time.Duration(result.Error.RetryAfterMillis) * time.Millisecond
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	if _, err := resultStream.Add(ctx, "init", []byte("{}")); err != nil {
+		return fmt.Errorf("initialize result stream %q: %w", resultStreamID, err)
+	}
+	if err := s.catalog.VerifyActiveToken(ctx, payload.Toolset, registrationToken); err != nil {
+		return fmt.Errorf("verify routed registration: %w", err)
+	}
+	if err := s.streamManager.PublishToolCall(ctx, payload.Toolset, message); err != nil {
+		return fmt.Errorf("publish tool call: %w", err)
+	}
+	if err := publication.MarkPublished(ctx, admission, overloadEventID, s.resultStreamTTL); err != nil {
+		return err
+	}
+	return nil
 }
 
 // toolUseIDForCall returns the stable transport identity for a registry-routed
-// tool execution. When callers already supplied a logical ToolCallID, retries
-// must reuse it so the registry does not turn one logical tool call into
-// multiple transport attempts with different result streams.
+// tool execution. A model/provider ToolCallID is scoped by RunID before hashing
+// so retries reuse one result stream while concurrent runs cannot collide.
 func toolUseIDForCall(meta *genregistry.ToolCallMeta) string {
-	if meta != nil && meta.ToolCallID != nil && *meta.ToolCallID != "" {
-		return *meta.ToolCallID
+	return toolregistry.DeriveToolUseID(meta.RunID, meta.ToolCallID)
+}
+
+// callToolResult returns the stable replay contract for one admitted call.
+func callToolResult(toolUseID, registrationToken string, ttl time.Duration) *genregistry.CallToolResult {
+	return &genregistry.CallToolResult{
+		ToolUseID:         toolUseID,
+		RegistrationToken: registrationToken,
+		ResultStreamTTLMs: ttl.Milliseconds(),
 	}
-	return uuid.New().String()
+}
+
+// latestExactResult replays currently retained history and returns the newest
+// terminal event for one exact call/token without creating acknowledgement or
+// consumer-group state.
+func latestExactResult(
+	ctx context.Context,
+	stream clientspulse.Stream,
+	toolUseID, registrationToken string,
+) (string, *toolregistry.ToolResultMessage, error) {
+	reader, err := stream.NewReader(
+		ctx,
+		streamopts.WithReaderStartAtOldest(),
+		streamopts.WithReaderBlockDuration(10*time.Millisecond),
+	)
+	if err != nil {
+		return "", nil, err
+	}
+	defer reader.Close()
+	events := reader.Subscribe()
+	idle := time.NewTimer(20 * time.Millisecond)
+	defer idle.Stop()
+	var (
+		latestID string
+		latest   *toolregistry.ToolResultMessage
+	)
+	for {
+		select {
+		case <-ctx.Done():
+			return "", nil, ctx.Err()
+		case <-idle.C:
+			return latestID, latest, nil
+		case event, ok := <-events:
+			if !ok {
+				return latestID, latest, nil
+			}
+			if event.EventName != toolregistry.ResultEventKey {
+				continue
+			}
+			var message toolregistry.ToolResultMessage
+			if err := json.Unmarshal(event.Payload, &message); err != nil {
+				continue
+			}
+			if message.ToolUseID != toolUseID || message.RegistrationToken != registrationToken {
+				continue
+			}
+			latestID = event.ID
+			latest = &message
+			if !idle.Stop() {
+				<-idle.C
+			}
+			idle.Reset(20 * time.Millisecond)
+		}
+	}
 }
 
 func derefString(s *string) string {
