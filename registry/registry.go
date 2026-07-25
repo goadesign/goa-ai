@@ -52,7 +52,7 @@ import (
 type (
 	// Registry is the main entry point for the internal tool registry.
 	// It manages all components required for multi-node operation including
-	// Pulse streams, replicated maps, and distributed tickers.
+	// Pulse streams, replicated maps, and lease-scheduled health pings.
 	Registry struct {
 		service       *Service
 		pulseClient   clientspulse.Client

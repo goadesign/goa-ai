@@ -309,10 +309,12 @@ server-owned handoff, and incompatible-admission non-overlap remain permanent.
 
 Health tracking and provider registration self-heal after Redis state loss.
 Ping scheduling uses expiring per-toolset Redis leases that the next scheduler
-tick re-acquires, the registry repairs its replicated-map revision counters so
-post-loss writes propagate to surviving nodes, and `toolprovider.Serve`
-periodically recreates its consumer group and re-asserts registration via the
-`EnsureRegistration` option, restoring the catalog entry without redeploys.
+tick re-acquires, the registry repairs the catalog map's replicated revision
+counter so post-loss writes propagate to surviving nodes, and
+`toolprovider.Serve` periodically recreates its consumer group (see
+`Options.EnsureInterval`) while the required `Registration` supervision loop
+re-registers on every lease renewal, restoring the catalog entry without
+redeploys.
 
 ### Transcript Boundary
 
