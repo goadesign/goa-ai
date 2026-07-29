@@ -294,10 +294,10 @@ var Docs = Toolset("docs", func() {
 
 **What you get:**
 - JSON Schema for LLM function calling (auto-generated)
-- Validation at boundaries: invalid calls get structured retry hints, including
+- Validation at boundaries: invalid calls get structured correction directives, including
   generated JSON type mismatch guidance, not crashes or schema-string parsing
-- Timeout and parent-budget failures are terminal for the current run and do
-  not produce retry hints. Planners may repair invalid arguments, but elapsed
+- Timeout and parent-budget failures are terminal for the current run and use
+  `finish` recovery. Planners may repair invalid arguments, but elapsed
   execution time is not an instruction to repeat a call.
 - Type-safe Go structs for payloads and results
 - Provider-facing examples only when you author a top-level Goa `Example(...)`
@@ -505,15 +505,17 @@ remain available during correction turns, including terminal run tools that clos
 the run, while caller `WithRestrictToTool` policy remains run-scoped and applies
 to every tool.
 
-The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-facing outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany non-resuming, non-terminal bookkeeping side effects; budgeted tools, retryable bookkeeping failures, terminal tools, and awaits must be separate planner decisions. Bookkeeping calls remain in the provider transcript so signed responses are never edited.
+The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-facing outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany non-resuming, non-terminal bookkeeping side effects; budgeted tools, bookkeeping failures whose typed recovery permits tools, terminal tools, and awaits must be separate planner decisions. Bookkeeping calls remain in the provider transcript so signed responses are never edited.
 
 A planner that knows a successful selected tool batch will provide the final
 evidence can set `PlanResult.SynthesizeAfterTools`. The durable workflow carries
 that decision to the next activity as `PlanResumeInput.SynthesisOnly`; the
 runtime requires the planner to return a terminal result without additional
-tool calls. A recoverable tool failure takes the normal repair path first.
-`RetryHint.AllowsRetry()` is the single authority for that distinction because
-some hints, such as timeout classification, are terminal.
+tool calls. A failed tool follows its structured `ToolFailure.Recovery`
+directive first. `correct_call` admits only a changed call to the failed tool,
+`replan` permits a different call or final answer while forbidding exact
+repetition, and `finish` requires a tool-free synthesis turn. The runtime—not
+planner prose—enforces that distinction.
 
 The flag is valid only on a tool-only result, keeping execution and answer
 synthesis as separate turns without relying on process-local state. The batch
@@ -832,7 +834,7 @@ Use `MCP(...)` on a Goa service and mark methods with `Tool(...)`, `Resource(...
 ## Best Practices
 
 - Design first: contracts belong in `design/*.go`; generated code is the artifact, not the source of truth.
-- Add descriptions, examples, and validations. Better schemas make better tool calls and better retry hints.
+- Add descriptions, examples, and validations. Better schemas make better tool calls and correction directives.
 - Use generated codecs and clients. Do not hand-encode tool payloads or structured completion results.
 - Keep planners focused on decisions. Service methods and tool executors perform side effects.
 - Use `PlannerModelClient` for streaming unless you need raw stream control.

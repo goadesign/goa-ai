@@ -8,11 +8,11 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
-	"goa.design/goa-ai/runtime/mcp/retry"
 )
 
 // AssistantAssistantMcpToolsetToolSpecs contains the tool specifications for the assistant-mcp toolset.
@@ -23,8 +23,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Toolset:     "assistant.assistant-mcp",
 		Description: "Analyze sentiment of text",
 		Payload: tools.TypeSpec{
-			Name:   "*assistant.AnalyzeSentimentPayload",
-			Schema: []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}"),
+			Name:        "*assistant.AnalyzeSentimentPayload",
+			Schema:      []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}"),
+			ExampleJSON: []byte("{\"text\":\"abc123\"}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -67,8 +68,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Toolset:     "assistant.assistant-mcp",
 		Description: "Extract keywords from text",
 		Payload: tools.TypeSpec{
-			Name:   "*assistant.ExtractKeywordsPayload",
-			Schema: []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}"),
+			Name:        "*assistant.ExtractKeywordsPayload",
+			Schema:      []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}"),
+			ExampleJSON: []byte("{\"text\":\"abc123\"}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -111,8 +113,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Toolset:     "assistant.assistant-mcp",
 		Description: "Summarize text",
 		Payload: tools.TypeSpec{
-			Name:   "*assistant.SummarizeTextPayload",
-			Schema: []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}"),
+			Name:        "*assistant.SummarizeTextPayload",
+			Schema:      []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}"),
+			ExampleJSON: []byte("{\"text\":\"abc123\"}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -155,8 +158,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Toolset:     "assistant.assistant-mcp",
 		Description: "Search knowledge base",
 		Payload: tools.TypeSpec{
-			Name:   "*assistant.SearchPayload",
-			Schema: []byte("{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}"),
+			Name:        "*assistant.SearchPayload",
+			Schema:      []byte("{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}"),
+			ExampleJSON: []byte("{\"limit\":1,\"query\":\"abc123\"}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -199,8 +203,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Toolset:     "assistant.assistant-mcp",
 		Description: "Execute code",
 		Payload: tools.TypeSpec{
-			Name:   "*assistant.ExecuteCodePayload",
-			Schema: []byte("{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}"),
+			Name:        "*assistant.ExecuteCodePayload",
+			Schema:      []byte("{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}"),
+			ExampleJSON: []byte("{\"code\":\"abc123\",\"language\":\"javascript\"}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -243,8 +248,9 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Toolset:     "assistant.assistant-mcp",
 		Description: "Process a batch of items",
 		Payload: tools.TypeSpec{
-			Name:   "*assistant.ProcessBatchPayload",
-			Schema: []byte("{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"),
+			Name:        "*assistant.ProcessBatchPayload",
+			Schema:      []byte("{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"),
+			ExampleJSON: []byte("{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -361,24 +367,23 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 			toolName = toolName[len(suitePrefix):]
 		}
 
-		payload, err := json.Marshal(call.Payload)
-		if err != nil {
-			return planner.ToolResult{Name: fullName}, err
-		}
-
 		resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
 			Suite:   "assistant.assistant-mcp",
 			Tool:    toolName,
-			Payload: payload,
+			Payload: json.RawMessage(call.Payload),
 		})
 		if err != nil {
-			return AssistantAssistantMcpToolsetHandleError(fullName, err), nil
+			return AssistantAssistantMcpToolsetHandleError(fullName, call.Payload, err), nil
 		}
 
 		var value any
 		if len(resp.Result) > 0 {
 			if err := json.Unmarshal(resp.Result, &value); err != nil {
-				return planner.ToolResult{Name: fullName}, err
+				return AssistantAssistantMcpToolsetHandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(err),
+				), nil
 			}
 		}
 
@@ -386,7 +391,11 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 		if len(resp.Structured) > 0 {
 			var structured any
 			if err := json.Unmarshal(resp.Structured, &structured); err != nil {
-				return planner.ToolResult{Name: fullName}, err
+				return AssistantAssistantMcpToolsetHandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(err),
+				), nil
 			}
 			toolTelemetry = &telemetry.ToolTelemetry{
 				Extra: map[string]any{"structured": structured},
@@ -419,70 +428,81 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 	})
 }
 
-// AssistantAssistantMcpToolsetHandleError converts an error into a tool result with appropriate retry hints.
-func AssistantAssistantMcpToolsetHandleError(toolName tools.Ident, err error) planner.ToolResult {
-	result := planner.ToolResult{
-		Name:  toolName,
+// AssistantAssistantMcpToolsetHandleError converts an MCP failure into the
+// canonical classification and recovery transition.
+func AssistantAssistantMcpToolsetHandleError(toolName tools.Ident, input rawjson.Message, err error) planner.ToolResult {
+	failure := &planner.ToolFailure{
+		Kind:  planner.FailureUnavailable,
 		Error: planner.ToolErrorFromError(err),
+		Recovery: planner.RecoveryDirective{
+			Action: planner.RecoveryReplan,
+		},
 	}
-	if hint := AssistantAssistantMcpToolsetRetryHint(toolName, err); hint != nil {
-		result.RetryHint = hint
+	if errors.Is(err, context.DeadlineExceeded) {
+		failure.Kind = planner.FailureTimeout
+		failure.Recovery.Action = planner.RecoveryFinish
+		return planner.ToolResult{Name: toolName, Failure: failure}
 	}
-	return result
-}
-
-// AssistantAssistantMcpToolsetRetryHint determines if an error should trigger a retry and returns appropriate hints.
-func AssistantAssistantMcpToolsetRetryHint(toolName tools.Ident, err error) *planner.RetryHint {
-	key := string(toolName)
-	var retryErr *retry.RetryableError
-	if errors.As(err, &retryErr) {
-		return &planner.RetryHint{
-			Reason:         planner.RetryReasonInvalidArguments,
-			Tool:           toolName,
-			Message:        retryErr.Prompt,
-			RestrictToTool: true,
-		}
+	var malformed *mcpruntime.MalformedResponseError
+	if errors.As(err, &malformed) {
+		failure.Kind = planner.FailureMalformedResult
+		failure.Recovery.Action = planner.RecoveryFinish
+		return planner.ToolResult{Name: toolName, Failure: failure}
+	}
+	var internal *mcpruntime.InternalError
+	if errors.As(err, &internal) {
+		failure.Kind = planner.FailureInternal
+		failure.Recovery.Action = planner.RecoveryFinish
+		return planner.ToolResult{Name: toolName, Failure: failure}
+	}
+	var execution *mcpruntime.ToolExecutionError
+	if errors.As(err, &execution) {
+		failure.Kind = planner.FailureDomainRejection
+		return planner.ToolResult{Name: toolName, Failure: failure}
 	}
 	var rpcErr *mcpruntime.Error
 	if errors.As(err, &rpcErr) {
 		switch rpcErr.Code {
 		case mcpruntime.JSONRPCInvalidParams:
-			// Schema and example are known at generation time - use switch for direct lookup
-			var schemaJSON, example string
-			switch key {
-			case "analyze_sentiment":
-				schemaJSON = "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}"
-				example = "{\"text\":\"abc123\"}"
-			case "extract_keywords":
-				schemaJSON = "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}"
-				example = "{\"text\":\"abc123\"}"
-			case "summarize_text":
-				schemaJSON = "{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}"
-				example = "{\"text\":\"abc123\"}"
-			case "search":
-				schemaJSON = "{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}"
-				example = "{\"limit\":1,\"query\":\"abc123\"}"
-			case "execute_code":
-				schemaJSON = "{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}"
-				example = "{\"code\":\"abc123\",\"language\":\"javascript\"}"
-			case "process_batch":
-				schemaJSON = "{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"
-				example = "{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}"
-			}
-			prompt := retry.BuildRepairPrompt("tools/call:"+key, rpcErr.Message, example, schemaJSON)
-			return &planner.RetryHint{
-				Reason:         planner.RetryReasonInvalidArguments,
-				Tool:           toolName,
-				Message:        prompt,
-				RestrictToTool: true,
-			}
+			failure = AssistantAssistantMcpToolsetCorrectionFailure(string(toolName), input, err)
 		case mcpruntime.JSONRPCMethodNotFound:
-			return &planner.RetryHint{
-				Reason:  planner.RetryReasonToolUnavailable,
-				Tool:    toolName,
-				Message: rpcErr.Message,
+			failure = &planner.ToolFailure{
+				Kind:  planner.FailureInvalidCall,
+				Error: planner.ToolErrorFromError(err),
+				Recovery: planner.RecoveryDirective{
+					Action: planner.RecoveryReplan,
+				},
 			}
 		}
 	}
-	return nil
+	return planner.ToolResult{Name: toolName, Failure: failure}
+}
+
+// AssistantAssistantMcpToolsetCorrectionFailure attaches the exact rejected input
+// and the generated example for one MCP tool payload.
+func AssistantAssistantMcpToolsetCorrectionFailure(toolName string, input rawjson.Message, err error) *planner.ToolFailure {
+	var example rawjson.Message
+	switch toolName {
+	case "analyze_sentiment":
+		example = rawjson.Message("{\"text\":\"abc123\"}")
+	case "extract_keywords":
+		example = rawjson.Message("{\"text\":\"abc123\"}")
+	case "summarize_text":
+		example = rawjson.Message("{\"text\":\"abc123\"}")
+	case "search":
+		example = rawjson.Message("{\"limit\":1,\"query\":\"abc123\"}")
+	case "execute_code":
+		example = rawjson.Message("{\"code\":\"abc123\",\"language\":\"javascript\"}")
+	case "process_batch":
+		example = rawjson.Message("{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}")
+	}
+	return &planner.ToolFailure{
+		Kind:  planner.FailureInvalidCall,
+		Error: planner.ToolErrorFromError(err),
+		Recovery: planner.RecoveryDirective{
+			Action:      planner.RecoveryCorrectCall,
+			PriorInput:  append(rawjson.Message(nil), input...),
+			ExampleJSON: example,
+		},
+	}
 }

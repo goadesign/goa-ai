@@ -24,7 +24,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
-	"goa.design/goa-ai/runtime/agent/toolerrors"
 )
 
 type (
@@ -437,14 +436,9 @@ type (
 		// Nil if no telemetry was collected. Clients use this for cost tracking, performance
 		// monitoring, and compliance reporting.
 		Telemetry *telemetry.ToolTelemetry `json:"telemetry,omitempty"`
-		// RetryHint carries structured guidance for recovering from tool failures.
-		// When present, clients can ask the user a clarifying question and retry
-		// the tool call deterministically.
-		RetryHint *planner.RetryHint `json:"retry_hint,omitempty"`
-		// Error contains any error returned by the tool execution. Nil on success. When
-		// non-nil, Result is nil and this field contains structured error details (code,
-		// message, retryability). Clients display error messages and may implement retry UIs.
-		Error *toolerrors.ToolError `json:"error,omitempty"`
+		// Failure contains the stable failure classification and recovery action.
+		// Nil on success.
+		Failure *planner.ToolFailure `json:"failure,omitempty"`
 		// Extra carries optional extension data for clients that need to attach
 		// transport- or domain-specific fields without breaking the wire contract.
 		// The runtime ignores its contents; sinks may include it when present.

@@ -254,7 +254,6 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 			50*time.Millisecond,
 			nil,
 			nil,
-			nil,
 		),
 		"",
 	))
@@ -376,7 +375,6 @@ func TestPlanResumeActivityHydratesOmittedResultMetadataFromCanonicalRunlog(t *t
 			"preview",
 			nil,
 			0,
-			nil,
 			nil,
 			nil,
 		),

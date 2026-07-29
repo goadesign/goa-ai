@@ -12,12 +12,15 @@ package runtime
 //   paths.
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -173,6 +176,10 @@ func (r *Runtime) validateSynthesisAfterTools(calls []planner.ToolRequest) error
 // runStep executes one normalized planner result and applies one post-step
 // transition.
 func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
+	if err := l.r.validateRecoveryPlan(l.st.PendingRecovery, program.result); err != nil {
+		return nil, err
+	}
+	l.st.PendingRecovery = nil
 	if len(program.calls) > 0 {
 		program.calls = l.r.prepareAllowedCallsMetadata(
 			l.input.AgentID,
@@ -395,7 +402,124 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	l.st.Result = resOutput.Result
 	l.st.Transcript = resOutput.Transcript
 	l.st.ResponseCommitted = false
+	l.st.PendingRecovery = pendingRecoveryOutputs(batch.records)
 	return nil, nil
+}
+
+// validateRecoveryPlan enforces the failed call's next-turn contract before
+// committing the model response or executing effects.
+func (r *Runtime) validateRecoveryPlan(failures []*planner.ToolOutput, result *planner.PlanResult) error {
+	if len(failures) == 0 {
+		return nil
+	}
+	correctTools := make(map[tools.Ident]int)
+	for _, output := range failures {
+		if output.Failure != nil && output.Failure.Recovery.Action == planner.RecoveryCorrectCall {
+			correctTools[output.Name]++
+		}
+	}
+	if len(correctTools) > 0 && len(result.ToolCalls) == 0 {
+		return errors.New("planner completed without correcting a failed tool call")
+	}
+	for _, call := range result.ToolCalls {
+		for _, output := range failures {
+			if output.Failure == nil || call.Name != output.Name {
+				continue
+			}
+			equal, err := r.equalToolPayloads(call.Name, call.Payload, output.Payload)
+			if err != nil {
+				return err
+			}
+			if equal {
+				return fmt.Errorf("planner repeated failed tool call %q without changing its payload", call.Name)
+			}
+		}
+		if len(correctTools) > 0 {
+			remaining, ok := correctTools[call.Name]
+			if !ok {
+				return fmt.Errorf("planner called %q while recovery requires correcting a failed tool call", call.Name)
+			}
+			if remaining > 0 {
+				correctTools[call.Name]--
+			}
+		}
+	}
+	for tool, remaining := range correctTools {
+		if remaining > 0 {
+			return fmt.Errorf("planner did not correct %d failed call(s) to %q", remaining, tool)
+		}
+	}
+	return nil
+}
+
+// equalToolPayloads compares calls through their generated codec when both
+// payloads satisfy the tool contract. Rejected payloads cannot always decode,
+// so those documents are normalized solely for equality without changing the
+// exact bytes retained in recovery state.
+func (r *Runtime) equalToolPayloads(tool tools.Ident, left, right rawjson.Message) (bool, error) {
+	spec, ok := r.toolSpec(tool)
+	if !ok {
+		return false, fmt.Errorf("recovery tool %q has no registered ToolSpec", tool)
+	}
+	if spec.Payload.Codec.FromJSON != nil && spec.Payload.Codec.ToJSON != nil {
+		leftValue, leftErr := spec.Payload.Codec.FromJSON(left)
+		rightValue, rightErr := spec.Payload.Codec.FromJSON(right)
+		if leftErr == nil && rightErr == nil {
+			leftJSON, err := spec.Payload.Codec.ToJSON(leftValue)
+			if err != nil {
+				return false, fmt.Errorf("encode prior recovery payload for %q: %w", tool, err)
+			}
+			rightJSON, err := spec.Payload.Codec.ToJSON(rightValue)
+			if err != nil {
+				return false, fmt.Errorf("encode planned recovery payload for %q: %w", tool, err)
+			}
+			return bytes.Equal(leftJSON, rightJSON), nil
+		}
+	}
+	leftJSON, err := normalizeJSONDocument(left)
+	if err != nil {
+		return false, fmt.Errorf("normalize prior recovery payload for %q: %w", tool, err)
+	}
+	rightJSON, err := normalizeJSONDocument(right)
+	if err != nil {
+		return false, fmt.Errorf("normalize planned recovery payload for %q: %w", tool, err)
+	}
+	return bytes.Equal(leftJSON, rightJSON), nil
+}
+
+// normalizeJSONDocument renders one validated JSON document deterministically
+// for equality checks while preserving JSON number spellings.
+func normalizeJSONDocument(raw rawjson.Message) ([]byte, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	return json.Marshal(value)
+}
+
+// pendingRecoveryOutputs captures only next-turn tool recovery transitions from
+// the batch that just completed.
+func pendingRecoveryOutputs(records []stepToolRecord) []*planner.ToolOutput {
+	action, failed := dominantRecoveryAction(records)
+	if !failed || action == planner.RecoveryFinish {
+		return nil
+	}
+	var outputs []*planner.ToolOutput
+	for _, record := range records {
+		if record.result == nil ||
+			record.result.Failure == nil ||
+			!record.result.Failure.AllowsToolTurn() {
+			continue
+		}
+		outputs = append(outputs, &planner.ToolOutput{
+			Name:    record.call.Name,
+			Payload: append(rawjson.Message(nil), record.call.Payload...),
+			Failure: record.result.Failure,
+		})
+	}
+	return outputs
 }
 
 // recordUnrecordedStepToolResults persists each concrete tool result exactly
@@ -415,18 +539,36 @@ func (l *workflowLoop) recordUnrecordedStepToolResults(batch *stepBatch) error {
 	return nil
 }
 
-// synthesisOnlyAfterToolBatch applies the planner's requested success
-// transition without overriding typed recovery guidance from a failed tool.
+// synthesisOnlyAfterToolBatch derives the next legal turn from tool failures.
+// A finish directive forces synthesis; a correct-call or replan directive keeps
+// tool planning available. In the absence of failures, the planner's explicit
+// success transition applies.
 func synthesisOnlyAfterToolBatch(batch stepBatch) bool {
-	if !batch.program.result.SynthesizeAfterTools {
-		return false
+	action, failed := dominantRecoveryAction(batch.records)
+	if failed {
+		return action == planner.RecoveryFinish
 	}
-	for _, record := range batch.records {
-		if record.result.Error != nil && record.result.RetryHint.AllowsRetry() {
-			return false
+	return batch.program.result.SynthesizeAfterTools
+}
+
+// dominantRecoveryAction combines parallel failures without allowing one result
+// to weaken another: finish dominates correction, and correction dominates
+// replanning.
+func dominantRecoveryAction(records []stepToolRecord) (planner.RecoveryAction, bool) {
+	var action planner.RecoveryAction
+	for _, record := range records {
+		if record.result == nil || record.result.Failure == nil {
+			continue
+		}
+		next := record.result.Failure.Recovery.Action
+		if next == planner.RecoveryFinish {
+			return next, true
+		}
+		if action == "" || next == planner.RecoveryCorrectCall {
+			action = next
 		}
 	}
-	return true
+	return action, action != ""
 }
 
 // finalizeStep runs a required finalization transition and fails if restricted
@@ -470,8 +612,8 @@ func validateToolTerminalBatch(records []stepToolRecord) error {
 		if record.result == nil {
 			return fmt.Errorf("workflow step terminal payload missing result for tool %q", record.call.Name)
 		}
-		if record.result.Error != nil {
-			return fmt.Errorf("workflow step terminal payload cannot accompany failed tool %q: %w", record.call.Name, record.result.Error)
+		if record.result.Failure != nil {
+			return fmt.Errorf("workflow step terminal payload cannot accompany failed tool %q: %w", record.call.Name, record.result.Failure.Error)
 		}
 	}
 	return nil

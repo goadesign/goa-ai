@@ -418,12 +418,6 @@ func generateMCPClientAdapter(genpkg string, svc *expr.ServiceExpr, data *Adapte
 	if data.NeedsQueryFormatting {
 		imports = append(imports, &codegen.ImportSpec{Path: "strconv"})
 	}
-	if len(data.Tools) > 0 || len(data.DynamicPrompts) > 0 {
-		imports = append(imports, &codegen.ImportSpec{
-			Path: "goa.design/goa-ai/runtime/mcp/retry",
-			Name: "retry",
-		})
-	}
 	if data.NeedsOriginalClient {
 		imports = append(imports,
 			&codegen.ImportSpec{Path: "bytes"},

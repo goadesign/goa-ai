@@ -505,8 +505,8 @@ Bookkeeping exception:
   signed assistant responses are replayed unchanged,
 - successful results are omitted from compact
   `PlanResumeInput.ToolOutputs` and do not force another planner turn,
-- except when a bookkeeping tool fails with a `RetryHint` whose
-  `AllowsRetry()` method returns true: that recoverable failure enters
+- except when a bookkeeping tool fails with a `ToolFailure` whose
+  `AllowsToolTurn()` method returns true: that recoverable failure enters
   `ToolOutputs` so the next resume turn can repair and resend the tool call,
 - bookkeeping tools may still drive an await handshake in the same turn (for
   example a runtime-owned `ToolPause`); that control-plane await remains legal
@@ -535,7 +535,7 @@ Workflow step boundary:
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.
 
-### PlanResult
+### Planner step and failed-result contracts
 
 ```go
 type PlanResult struct {
@@ -545,9 +545,16 @@ type PlanResult struct {
     FinalToolResult *FinalToolResult // Terminal tool result for nested agent runs
     Streamed      bool             // True if text was already streamed via Events
     Await         *Await           // Pause for clarification or external tools
-    RetryHint     *RetryHint       // Guidance after tool failures
     ExpectedChildren int           // Optional hint for nested child results
     Notes         []PlannerAnnotation
+}
+
+type ToolOutput struct {
+    Name       tools.Ident
+    ToolCallID string
+    Payload    rawjson.Message
+    Result     rawjson.Message
+    Failure    *ToolFailure        // Mutually exclusive with Result
 }
 ```
 
@@ -559,7 +566,7 @@ These fields answer different questions:
 | `ToolSpec.Meta` | One tool for every run | Which inert generated annotations are available to their named consumers? Metadata alone changes no runtime behavior. |
 | `ToolSpec.Bookkeeping` | One tool for every run | Does this call consume retrieval or failure budget, and does its success independently schedule another planner turn? |
 | `ToolSpec.TerminalRun` | One tool for every run | Does successful execution itself complete the run? |
-| `RetryHint.AllowsRetry()` | One failed result | Is another tool attempt allowed in this run? |
+| `ToolOutput.Failure.Recovery.Action` | One failed result | Must the planner correct this call, replan, or finish without tools? |
 | `PlanResult.SynthesizeAfterTools` | One selected batch | If the batch has no recoverable failure, must the next turn answer? |
 | `PlanResumeInput.SynthesisOnly` | One planner activity | Must this planner result be terminal and tool-free? |
 | `PlanResumeInput.Finalize` | Runtime-forced termination | Did a cap or deadline prohibit normal work? |
@@ -570,13 +577,16 @@ The runtime applies them in this order:
 | --- | --- |
 | Cap or deadline exhausted | Forced `Finalize` turn |
 | Successful `TerminalRun` tool | End immediately |
-| Any failure allows retry | Normal repair turn |
+| Any failure permits tools | Runtime-enforced correction or replan turn |
 | `SynthesizeAfterTools` requested | `SynthesisOnly` turn |
 | Otherwise | Normal continuation turn |
 
-`SynthesizeAfterTools` therefore does not create a second retry policy.
-Recoverable failures use the existing `RetryHint` contract; terminal failures
-and successful batches proceed to the requested answer.
+`SynthesizeAfterTools` therefore does not create a second recovery policy.
+`ToolFailure.Recovery` is the single transition contract: `correct_call`
+requires a changed payload for the failed tool, `replan` forbids exact
+repetition while permitting another advertised tool or final answer, and
+`finish` forbids more tools. Successful batches proceed to the requested
+answer.
 
 Bookkeeping turn invariant:
 
@@ -587,7 +597,7 @@ Bookkeeping turn invariant:
   terminal outcome (`TerminalRun` tool or `FinalResponse` / `FinalToolResult`),
   or an await/pause control-plane handshake,
 - recoverable bookkeeping failures are the one planner-visible exception: when
-  a bookkeeping tool returns a `RetryHint` whose `AllowsRetry()` method is true,
+  a bookkeeping tool returns a `ToolFailure` whose recovery action permits tools,
   the runtime resumes so the planner can repair and resend that tool call,
 - during forced finalization, terminal bookkeeping calls are not replayed into a
   later planner turn; they either durably close the run or fail finalization,
@@ -797,7 +807,6 @@ type ToolsetRegistration struct {
     Inline      bool                       // Execute in workflow context
     CallHints   map[tools.Ident]*template.Template   // Tool call DisplayHint templates (typed payload only)
     ResultHints map[tools.Ident]*template.Template   // Success result preview templates (typed result only)
-    PayloadAdapter func(...)               // Pre-decode transformation
     ResultAdapter  func(...)               // Post-encode transformation
     AgentTool   *AgentToolConfig           // Agent-as-tool configuration
 }
@@ -1493,8 +1502,10 @@ err := rt.ProvideToolResults(ctx, &api.ToolResultsSet{
         {
             ToolCallID: "toolcall-1",
             Name:       tools.Ident("chat.ask_question.ask_question"),
-            // Contract: canonical JSON bytes matching the tool's Return schema.
-            Result: json.RawMessage(`{"answers":[{"question_id":"...","selected_ids":["approve"]}]}`),
+            Success: &api.ProvidedToolSuccess{
+                // Contract: canonical JSON bytes matching the tool's Return schema.
+                Result: json.RawMessage(`{"answers":[{"question_id":"...","selected_ids":["approve"]}]}`),
+            },
         },
     },
 })
@@ -1502,8 +1513,12 @@ err := rt.ProvideToolResults(ctx, &api.ToolResultsSet{
 
 Provided tool results are strict boundary inputs:
 
-- each item must be exactly one of: `Error` or non-null `Result`,
-- if the tool is bounded and successful, `Bounds` must be present and satisfy
+- each item must contain exactly one `Success` or `Failure` outcome,
+- `Success.Result` is canonical JSON matching the registered result codec,
+- `Failure` supplies the classification, message, and requested recovery
+  action; the runtime derives correction metadata from the registered tool
+  spec instead of accepting caller-authored schema guidance,
+- if the tool is bounded and successful, `Success.Bounds` must be present and satisfy
   bounded-result invariants.
 
 Those rules apply only at execution/history boundaries. Once the runtime projects
@@ -1758,7 +1773,6 @@ type Engine interface {
 type Input struct {
     RunContext    run.Context        // Run identifiers and labels
     Tools         []ToolMetadata     // Candidate tools
-    RetryHint     *RetryHint         // Planner guidance after failures
     RemainingCaps CapsState          // Current execution budgets
     Requested     []tools.Ident      // Explicitly requested tools
     Labels        map[string]string  // Context labels
@@ -2363,8 +2377,10 @@ caller := mcp.NewSSECaller(mcp.SSEOptions{
 })
 ```
 
-All callers implement the `mcp.Caller` interface and include automatic retry via
-`runtime/mcp/retry`.
+All callers implement the `mcp.Caller` interface. They return typed transport,
+protocol, malformed-response, and tool-execution errors without retrying or
+turning error text into control flow. Generated MCP executors classify those
+errors into the canonical `planner.ToolFailure` contract.
 
 ### Server-initiated events (Broadcaster)
 
@@ -2376,14 +2392,6 @@ b := mcp.NewChannelBroadcaster(128, true) // (buf, drop)
 sub, _ := b.Subscribe(ctx)
 defer sub.Close()
 ```
-
-### Repair prompts for invalid params (retry.RetryableError)
-
-When an MCP server reports invalid parameters and a structured repair prompt is available, generated
-clients may return `retry.RetryableError` with a deterministic `Prompt`. This is intended for LLM-driven
-correction: the model returns JSON-only corrected params, which are decoded into the operation payload and retried.
-
----
 
 ## Stream Profiles
 
@@ -2411,41 +2419,37 @@ profile := stream.AgentDebugProfile()
 
 ## Tool Errors
 
-The `runtime/agent/toolerrors` package provides structured error types for tool execution
-failures that integrate with the planner retry system.
+The `runtime/agent/planner` package defines the canonical failed-tool contract.
+Executors classify why execution failed separately from the legal next
+transition.
 
 ```go
-import "goa.design/goa-ai/runtime/agent/toolerrors"
-
-// Create a tool error with retry hint
-err := toolerrors.New(
-    toolerrors.WithMessage("Database connection failed"),
-    toolerrors.WithRetryable(true),
-    toolerrors.WithHint("Check database connectivity and retry"),
-)
-
-// Check if error is retryable
-if toolerrors.IsRetryable(err) {
-    // Handle retry logic
+failure := &planner.ToolFailure{
+    Kind:  planner.FailureInvalidCall,
+    Error: planner.NewToolError("invalid tool arguments"),
+    Recovery: planner.RecoveryDirective{
+        Action:      planner.RecoveryCorrectCall,
+        Issues:      validationErr.Issues(),
+        PriorInput:  input,
+        ExampleJSON: spec.ExamplePayload,
+    },
 }
-
-// Tool errors are automatically converted to planner.RetryHint
-// for planners to handle gracefully
 ```
 
-### Validation Issues and Retry Hints
+### Validation Issues and Tool Failures
 
 Tool calls can fail because the input payload is missing fields, violates constraints,
 or has the wrong JSON shape. When that happens, callers generally need actionable,
 field-level feedback rather than a generic failure string.
 
-Goa‑AI supports two complementary paths that produce `planner.RetryHint`:
+Goa‑AI supports two complementary paths that produce
+`planner.FailureInvalidCall` with `planner.RecoveryCorrectCall`:
 
 1. **Decode‑time validation (generated codecs)**  
    The generated tool codec validates the tool JSON payload before execution.
    If validation fails, the codec returns a generated validation error that exposes
    structured issues (`Issues() []*tools.FieldIssue`) and descriptions. The runtime
-   converts these into `planner.RetryHint` automatically. Generated codecs also
+   converts these into `planner.ToolFailure` automatically. Generated codecs also
    turn JSON type mismatches into `invalid_field_type` issues with expected and
    actual JSON type metadata, so callers can produce guidance such as
    ``sections` must be a JSON array, not a JSON string`` without parsing schemas
@@ -2455,14 +2459,14 @@ Goa‑AI supports two complementary paths that produce `planner.RetryHint`:
    When a tool provider calls a bound service method, the method may return a Goa
    validation error (for example `goa.MissingFieldError`, `goa.InvalidLengthError`, …).
    Providers should surface these as **structured validation issues** in the tool result
-   message so consumers can build a `RetryHint` without parsing error strings.
+   message so consumers can build a `ToolFailure` without parsing error strings.
 
    - **Provider behavior (generated)**: generated providers call
      `toolregistry.ValidationIssues(err)` and, when issues are present, emit an error
      result that includes them.
    - **Wire protocol**: tool result errors may include `issues` (`[]FieldIssue`).
-   - **Consumer behavior**: registry executors convert `issues` into a `RetryHint`
-     (e.g., `missing_fields`) and attach the tool spec example input when available.
+   - **Consumer behavior**: registry executors preserve `issues`, prior canonical
+     input, and the generated tool example in a `correct_call` directive.
 
 This keeps the contract strong and deterministic: validation stays at boundaries,
 and “what to retry with” is computed from structured data, not heuristics.

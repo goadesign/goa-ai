@@ -49,6 +49,6 @@ func TestExecuteToolCalls_CancelsInFlightToolsWhenTimeBudgetReached(t *testing.T
 	require.True(t, timedOut)
 	require.Len(t, results, 1)
 	require.NotNil(t, results[0].ToolResult)
-	require.NotNil(t, results[0].ToolResult.Error)
-	require.Equal(t, "canceled: time budget reached", results[0].ToolResult.Error.Message)
+	require.NotNil(t, results[0].ToolResult.Failure)
+	require.Equal(t, "canceled: time budget reached", results[0].ToolResult.Failure.Error.Message)
 }

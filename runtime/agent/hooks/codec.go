@@ -12,7 +12,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/telemetry"
-	"goa.design/goa-ai/runtime/agent/toolerrors"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -61,8 +60,7 @@ type (
 		Bounds              *agent.Bounds            `json:"bounds,omitempty"`
 		Duration            time.Duration            `json:"duration"`
 		Telemetry           *telemetry.ToolTelemetry `json:"telemetry,omitempty"`
-		RetryHint           *planner.RetryHint       `json:"retry_hint,omitempty"`
-		Error               *toolerrors.ToolError    `json:"error,omitempty"`
+		Failure             *planner.ToolFailure     `json:"failure,omitempty"`
 	}
 )
 
@@ -120,8 +118,7 @@ func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, 
 			Bounds:              e.Bounds,
 			Duration:            e.Duration,
 			Telemetry:           e.Telemetry,
-			RetryHint:           e.RetryHint,
-			Error:               e.Error,
+			Failure:             e.Failure,
 		}
 		b, err := json.Marshal(p)
 		if err != nil {
@@ -335,8 +332,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			p.Bounds,
 			p.Duration,
 			p.Telemetry,
-			p.RetryHint,
-			p.Error,
+			p.Failure,
 		)
 
 	case PolicyDecision:
@@ -345,13 +341,6 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			return nil, fmt.Errorf("decode %s payload: %w", PolicyDecision, err)
 		}
 		evt = NewPolicyDecisionEvent(input.RunID, input.AgentID, input.SessionID, p.AllowedTools, p.Caps, p.Labels, p.Metadata)
-
-	case RetryHintIssued:
-		var p RetryHintIssuedEvent
-		if err := json.Unmarshal(input.Payload, &p); err != nil {
-			return nil, fmt.Errorf("decode %s payload: %w", RetryHintIssued, err)
-		}
-		evt = NewRetryHintIssuedEvent(input.RunID, input.AgentID, input.SessionID, p.Reason, p.ToolName, p.Message)
 
 	case MemoryAppended:
 		var p MemoryAppendedEvent

@@ -33,8 +33,8 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 			WorkflowName:     "wf",
 			DefaultTaskQueue: "default",
 		},
-		PreChildValidator: func(context.Context, *AgentToolValidationInput) *AgentToolValidationError {
-			return NewAgentToolValidationError(
+		PreChildValidator: func(context.Context, *AgentToolValidationInput) *tools.ValidationError {
+			return tools.NewValidationError(
 				"sources must come from prior evidence",
 				[]*tools.FieldIssue{
 					{
@@ -81,9 +81,8 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.NotNil(t, results[0].ToolResult)
-	require.NotNil(t, results[0].ToolResult.Error)
-	require.NotNil(t, results[0].ToolResult.RetryHint)
-	require.Equal(t, planner.RetryReasonInvalidArguments, results[0].ToolResult.RetryHint.Reason)
-	require.True(t, results[0].ToolResult.RetryHint.RestrictToTool)
-	require.Contains(t, results[0].ToolResult.RetryHint.ClarifyingQuestion, "sources")
+	require.NotNil(t, results[0].ToolResult.Failure)
+	require.Equal(t, planner.FailureInvalidCall, results[0].ToolResult.Failure.Kind)
+	require.Equal(t, planner.RecoveryCorrectCall, results[0].ToolResult.Failure.Recovery.Action)
+	require.Equal(t, "sources", results[0].ToolResult.Failure.Recovery.Issues[0].Field)
 }

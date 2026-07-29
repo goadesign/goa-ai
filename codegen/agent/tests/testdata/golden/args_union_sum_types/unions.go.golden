@@ -29,6 +29,36 @@ func decodeUnionStrictJSON(data []byte, v any) error {
 	return nil
 }
 
+// missingUnionValueError reports an omitted value in a tagged union envelope.
+func missingUnionValueError() error {
+	return tools.NewValidationError(
+		"missing required union field \"value\"",
+		[]*tools.FieldIssue{
+			{
+				Field:      "value",
+				Constraint: "missing_field",
+			},
+		},
+		nil,
+	)
+}
+
+// nullUnionValueError reports a null value in a tagged union envelope.
+func nullUnionValueError(expected string) error {
+	return tools.NewValidationError(
+		fmt.Sprintf("union field \"value\" must be a %s, not null", expected),
+		[]*tools.FieldIssue{
+			{
+				Field:            "value",
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   "null",
+			},
+		},
+		nil,
+	)
+}
+
 // Value is a sum-type union.
 type Value struct {
 	kind       ValueKind
@@ -130,6 +160,9 @@ func (u Value) Validate() error {
 	case ValueKindText:
 		return nil
 	case ValueKindStructured:
+		if u.Structured == nil {
+			return missingUnionValueError()
+		}
 		return nil
 	default:
 		got := string(u.kind)
@@ -177,8 +210,14 @@ func (u *Value) UnmarshalJSON(data []byte) error {
 	if raw.Type == nil {
 		return newValueDiscriminatorError("", false)
 	}
+	if len(raw.Value) == 0 {
+		return missingUnionValueError()
+	}
 	switch *raw.Type {
 	case string(ValueKindNumber):
+		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+			return nullUnionValueError("integer")
+		}
 		var v ValueNumber
 		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
 			var typeErr *json.UnmarshalTypeError
@@ -201,6 +240,9 @@ func (u *Value) UnmarshalJSON(data []byte) error {
 		u.kind = ValueKindNumber
 		u.Number = v
 	case string(ValueKindText):
+		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+			return nullUnionValueError("string")
+		}
 		var v ValueText
 		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
 			var typeErr *json.UnmarshalTypeError
@@ -223,6 +265,9 @@ func (u *Value) UnmarshalJSON(data []byte) error {
 		u.kind = ValueKindText
 		u.Text = v
 	case string(ValueKindStructured):
+		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+			return nullUnionValueError("object")
+		}
 		var v *StructuredValue
 		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
 			var typeErr *json.UnmarshalTypeError

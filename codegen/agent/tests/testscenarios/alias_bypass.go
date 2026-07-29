@@ -64,7 +64,7 @@ func AliasPayloadOnly() func() {
 }
 
 // AliasResultOnly returns a design where result reuses the method result
-// user type but payload is inline, requiring a payload adapter.
+// user type but payload is inline, requiring typed payload mapping.
 func AliasResultOnly() func() {
 	return func() {
 		API("alpha", func() {})

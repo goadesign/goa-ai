@@ -156,12 +156,12 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 	tr := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Error:      planner.NewToolError("access denied: missing controlleddevices.write privilege"),
+		Failure:    testToolFailure(planner.FailureDomainRejection, planner.RecoveryFinish, "access denied: missing controlleddevices.write privilege"),
 	}
 
 	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
 
-	require.Len(t, base.Messages, 1)
+	require.Len(t, base.Messages, 2)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
 	require.Len(t, base.Messages[0].Parts, 1)
 
@@ -242,7 +242,7 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 			tr: &planner.ToolResult{
 				Name:       call.Name,
 				ToolCallID: call.ToolCallID,
-				Error:      planner.NewToolError("permission denied"),
+				Failure:    testToolFailure(planner.FailureDomainRejection, planner.RecoveryFinish, "permission denied"),
 			},
 		},
 		{
@@ -262,7 +262,11 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 			base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 
 			appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tc.tr})
-			require.Len(t, base.Messages, 1)
+			expectedMessages := 1
+			if tc.tr.Failure != nil {
+				expectedMessages = 2
+			}
+			require.Len(t, base.Messages, expectedMessages)
 
 			livePart, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
 			require.True(t, ok)
@@ -274,8 +278,8 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 				resultJSON = string(raw)
 			}
 			errorMessage := ""
-			if tc.tr.Error != nil {
-				errorMessage = tc.tr.Error.Error()
+			if tc.tr.Failure != nil {
+				errorMessage = tc.tr.Failure.Error.Error()
 			}
 			preview, err := formatToolResultPreviewForCall(t.Context(), rt, &call, tc.tr)
 			require.NoError(t, err)
@@ -333,7 +337,7 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 	require.Contains(t, txt.Text, "Next cursor: opaque-cursor")
 }
 
-func TestAppendUserToolResults_AppendsRetryHintReminderAfterToolResults(t *testing.T) {
+func TestAppendUserToolResultsAppendsFailureReminderAfterToolResults(t *testing.T) {
 	rt := New()
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
@@ -345,13 +349,14 @@ func TestAppendUserToolResults_AppendsRetryHintReminderAfterToolResults(t *testi
 	tr := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Error:      planner.NewToolError("invalid_argument"),
-		RetryHint: &planner.RetryHint{
-			Reason:         planner.RetryReasonInvalidArguments,
-			Tool:           call.Name,
-			RestrictToTool: true,
-			Message:        "Unsupported filter field.",
-			ExampleJSON:    rawjson.Message(`{"dataset":"alarms"}`),
+		Failure: &planner.ToolFailure{
+			Kind:  planner.FailureInvalidCall,
+			Error: planner.NewToolError("Unsupported filter field."),
+			Recovery: planner.RecoveryDirective{
+				Action:      planner.RecoveryCorrectCall,
+				PriorInput:  rawjson.Message(`{"bad":"field"}`),
+				ExampleJSON: rawjson.Message(`{"dataset":"alarms"}`),
+			},
 		},
 	}
 
@@ -363,10 +368,9 @@ func TestAppendUserToolResults_AppendsRetryHintReminderAfterToolResults(t *testi
 
 	txt, ok := base.Messages[1].Parts[0].(model.TextPart)
 	require.True(t, ok)
-	require.Contains(t, txt.Text, "A tool call failed and provided a RetryHint.")
+	require.Contains(t, txt.Text, "A tool call failed.")
 	require.Contains(t, txt.Text, "Tool: svc.read.aggregate")
-	require.Contains(t, txt.Text, "Restriction: retry the corrected call to svc.read.aggregate.")
-	require.Contains(t, txt.Text, "finish the run through its normal completion path")
+	require.Contains(t, txt.Text, "Call the same tool again with a corrected payload.")
 }
 
 func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
@@ -413,6 +417,40 @@ func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
 	require.Equal(t, "call-2", bookkeeping.ToolUseID)
 }
 
+func TestAppendUserToolResultsEmitsOnlyDominantRecoveryReminders(t *testing.T) {
+	rt := New()
+	seedTestToolSpecs(
+		rt,
+		newAnyJSONSpec("svc.tools.correct", "svc.tools"),
+		newAnyJSONSpec("svc.tools.finish", "svc.tools"),
+	)
+	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	calls := []planner.ToolRequest{
+		{Name: "svc.tools.correct", ToolCallID: "call-1", Payload: rawjson.Message(`{"bad":true}`)},
+		{Name: "svc.tools.finish", ToolCallID: "call-2", Payload: rawjson.Message(`{}`)},
+	}
+	results := []*planner.ToolResult{
+		{
+			Name:       calls[0].Name,
+			ToolCallID: calls[0].ToolCallID,
+			Failure:    testToolFailure(planner.FailureInvalidCall, planner.RecoveryCorrectCall, "correct me"),
+		},
+		{
+			Name:       calls[1].Name,
+			ToolCallID: calls[1].ToolCallID,
+			Failure:    testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "stop now"),
+		},
+	}
+
+	appendUserToolResultsForTest(t, rt, "agent-1", base, calls, results)
+
+	require.Len(t, base.Messages, 2)
+	reminder, ok := base.Messages[1].Parts[0].(model.TextPart)
+	require.True(t, ok)
+	require.Contains(t, reminder.Text, "Do not call more tools.")
+	require.NotContains(t, reminder.Text, "Call the same tool again")
+}
+
 func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(
@@ -435,12 +473,7 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 	tr := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Error:      planner.NewToolError("brief.summary length must be <= 600"),
-		RetryHint: &planner.RetryHint{
-			Reason:             planner.RetryReasonInvalidArguments,
-			Tool:               call.Name,
-			ClarifyingQuestion: "Please resend tasks.progress.complete with a payload that satisfies: brief.summary length must be <= 600.",
-		},
+		Failure:    testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "brief.summary length must be <= 600"),
 	}
 
 	require.NoError(t, rt.appendSelectedModelResponse(

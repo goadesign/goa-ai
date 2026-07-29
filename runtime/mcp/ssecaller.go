@@ -34,11 +34,11 @@ func (c *SSECaller) CallTool(ctx context.Context, req CallRequest) (CallResponse
 	rpcReq := rpcRequest{JSONRPC: "2.0", Method: "tools/call", ID: c.transport.nextID(), Params: params}
 	body, err := json.Marshal(rpcReq)
 	if err != nil {
-		return CallResponse{}, err
+		return CallResponse{}, NewInternalError(err)
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.transport.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return CallResponse{}, err
+		return CallResponse{}, NewInternalError(err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
@@ -56,14 +56,16 @@ func (c *SSECaller) CallTool(ctx context.Context, req CallRequest) (CallResponse
 	if ct := strings.ToLower(resp.Header.Get("Content-Type")); ct != "" && !strings.HasPrefix(ct, "text/event-stream") {
 		raw, _ := io.ReadAll(resp.Body)
 		ctVal := resp.Header.Get("Content-Type")
-		return CallResponse{}, fmt.Errorf("unexpected content type %q: %s", ctVal, string(raw))
+		return CallResponse{}, NewMalformedResponseError(
+			fmt.Errorf("unexpected content type %q: %s", ctVal, string(raw)),
+		)
 	}
 	reader := bufio.NewReader(resp.Body)
 	for {
 		event, data, err := readSSEEvent(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return CallResponse{}, errors.New("sse stream closed before response")
+				return CallResponse{}, NewMalformedResponseError(errors.New("SSE stream closed before response"))
 			}
 			return CallResponse{}, err
 		}
@@ -71,7 +73,7 @@ func (c *SSECaller) CallTool(ctx context.Context, req CallRequest) (CallResponse
 		case "response":
 			var rpcResp rpcResponse
 			if err := json.Unmarshal(data, &rpcResp); err != nil {
-				return CallResponse{}, err
+				return CallResponse{}, NewMalformedResponseError(err)
 			}
 			if rpcResp.Error != nil {
 				return CallResponse{}, rpcResp.Error.callerError()
@@ -80,16 +82,16 @@ func (c *SSECaller) CallTool(ctx context.Context, req CallRequest) (CallResponse
 		case "error":
 			var rpcResp rpcResponse
 			if err := json.Unmarshal(data, &rpcResp); err != nil {
-				return CallResponse{}, fmt.Errorf("mcp error event: %w", err)
+				return CallResponse{}, NewMalformedResponseError(fmt.Errorf("decode MCP error event: %w", err))
 			}
 			if rpcResp.Error != nil {
 				return CallResponse{}, rpcResp.Error.callerError()
 			}
-			return CallResponse{}, errors.New("mcp error event")
+			return CallResponse{}, NewMalformedResponseError(errors.New("MCP error event omitted the error payload"))
 		case "", "notification":
 			continue
 		case "close":
-			return CallResponse{}, errors.New("sse stream closed without response")
+			return CallResponse{}, NewMalformedResponseError(errors.New("SSE stream closed without response"))
 		default:
 			continue
 		}

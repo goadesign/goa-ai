@@ -223,7 +223,6 @@ func TestPublishHookErr_PersistsCanonicalToolResultPayloadWithoutDuplicateResult
 		0,
 		nil,
 		nil,
-		nil,
 	)
 
 	err = rt.publishHookErr(context.Background(), evt, "turn-1")
@@ -264,7 +263,6 @@ func TestPublishHookErr_RejectsOversizedCanonicalPayload(t *testing.T) {
 		"",
 		nil,
 		0,
-		nil,
 		nil,
 		nil,
 	)

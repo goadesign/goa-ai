@@ -22,10 +22,10 @@ func Register(ctx context.Context, rt *runtime.Runtime) error {
 // with client calls and optional transforms from the specs package (transforms.go).
 func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
     if call == nil {
-        return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("tool request is nil")}), nil
+        return nil, errors.New("tool request is nil")
     }
     if meta == nil {
-        return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("tool call meta is nil")}), nil
+        return nil, errors.New("tool call meta is nil")
     }
     switch call.Name {
     {{- range .Tools }}
@@ -33,8 +33,28 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
         // Decode typed payload
         args, err := {{ $.SpecsAlias }}.{{ .PayloadUnmarshal }}(call.Payload)
         if err != nil {
+            var issuer interface {
+                Issues() []*tools.FieldIssue
+            }
+            var issues []*tools.FieldIssue
+            if errors.As(err, &issuer) {
+                issues = issuer.Issues()
+            }
             return runtime.Executed(&planner.ToolResult{
-				Error: planner.NewToolError("invalid payload"),
+                Name: call.Name,
+                Failure: &planner.ToolFailure{
+                    Kind: planner.FailureInvalidCall,
+                    Error: planner.ToolErrorFromError(err),
+                    Recovery: planner.RecoveryDirective{
+                        Action: planner.RecoveryCorrectCall,
+                        Issues: issues,
+                        PriorInput: append(rawjson.Message(nil), call.Payload...),
+                        ExampleJSON: append(
+                            rawjson.Message(nil),
+                            {{ $.SpecsAlias }}.Spec{{ .ConstName }}.Payload.ExampleJSON...,
+                        ),
+                    },
+                },
 			}), nil
         }
         // Optional: transform to method payload if compatible
@@ -49,7 +69,12 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
     {{- end }}
     default:
         return runtime.Executed(&planner.ToolResult{
-			Error: planner.NewToolError("unknown tool"),
+            Name: call.Name,
+            Failure: &planner.ToolFailure{
+                Kind: planner.FailureInvalidCall,
+                Error: planner.NewToolError("unknown tool"),
+                Recovery: planner.RecoveryDirective{Action: planner.RecoveryReplan},
+            },
 		}), nil
     }
 }

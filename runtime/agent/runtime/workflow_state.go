@@ -42,6 +42,11 @@ type (
 		// ToolOutputs is the accumulated executed tool-call history emitted over
 		// the lifetime of this run.
 		ToolOutputs []*planner.ToolOutput
+
+		// PendingRecovery contains the failed calls whose recovery directives
+		// constrain the current planner result. It is replaced after each
+		// planner resume, so recovery applies to exactly the next decision.
+		PendingRecovery []*planner.ToolOutput
 	}
 )
 

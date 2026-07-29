@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"sort"
-	"strings"
 	"time"
 
 	pulsec "goa.design/goa-ai/features/stream/pulse/clients/pulse"
@@ -137,28 +135,35 @@ func New(client Client, pulse pulsec.Client, specs SpecLookup, opts ...Option) *
 
 func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
 	if call == nil {
-		return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("tool request is nil")}), nil
+		return runtime.Executed(internalFailureResult("", "", "tool request is nil")), nil
 	}
 	if meta == nil {
-		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError("tool call meta is nil")}), nil
+		return runtime.Executed(internalFailureResult(call.Name, "", "tool call meta is nil")), nil
 	}
 	if e.client == nil {
-		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError("registry client is nil")}), nil
+		return runtime.Executed(internalFailureResult(call.Name, meta.ToolCallID, "registry client is nil")), nil
 	}
 	if e.pulse == nil {
-		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError("pulse client is nil")}), nil
+		return runtime.Executed(internalFailureResult(call.Name, meta.ToolCallID, "pulse client is nil")), nil
 	}
 	if e.specs == nil {
-		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError("tool specs lookup is nil")}), nil
+		return runtime.Executed(internalFailureResult(call.Name, meta.ToolCallID, "tool specs lookup is nil")), nil
 	}
 
 	spec, ok := e.specs.Spec(call.Name)
 	if !ok {
-		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError(fmt.Sprintf("unknown tool %q", call.Name))}), nil
+		result := internalFailureResult(call.Name, meta.ToolCallID, fmt.Sprintf("unknown tool %q", call.Name))
+		result.Failure.Kind = planner.FailureInvalidCall
+		result.Failure.Recovery.Action = planner.RecoveryReplan
+		return runtime.Executed(result), nil
 	}
 	toolsetID := spec.Toolset
 	if toolsetID == "" {
-		return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.NewToolError(fmt.Sprintf("tool %q missing toolset routing id", call.Name))}), nil
+		return runtime.Executed(internalFailureResult(
+			call.Name,
+			meta.ToolCallID,
+			fmt.Sprintf("tool %q missing toolset routing id", call.Name),
+		)), nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, toolregistry.MaxToolCallWait)
 	defer cancel()
@@ -194,18 +199,17 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 		span.SetStatus(codes.Error, "call tool via registry failed")
 		// CallTool only initiates the invocation through the registry gateway; a
 		// tool's own domain failure arrives later on the result stream as
-		// msg.Error. Any error here is therefore a transport-layer failure (dial,
-		// publish, gateway) and is transient. Classify it as tool_unavailable
-		// without restricting to the tool so downstream planners treat it as a
-		// retryable blip rather than a terminal, hint-less failure that forces the
-		// model to answer from partial evidence.
+		// msg.Error. The runtime therefore exposes a replan transition rather
+		// than silently repeating a call whose admission state is unknown.
 		return runtime.Executed(&planner.ToolResult{
 			Name:       call.Name,
-			Error:      planner.ToolErrorFromError(err),
 			ToolCallID: meta.ToolCallID,
-			RetryHint: &planner.RetryHint{
-				Reason: planner.RetryReasonToolUnavailable,
-				Tool:   call.Name,
+			Failure: &planner.ToolFailure{
+				Kind:  planner.FailureUnavailable,
+				Error: planner.ToolErrorFromError(err),
+				Recovery: planner.RecoveryDirective{
+					Action: planner.RecoveryReplan,
+				},
 			},
 		}), nil
 	}
@@ -392,8 +396,9 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 	}
 }
 
-// unavailableResult maps registry and Pulse infrastructure failures to the one
-// retryable planner outcome used for temporarily unavailable tools.
+// unavailableResult maps registry and Pulse infrastructure failures to a
+// planner-visible replan transition. The executor never repeats an admitted
+// call whose completion state may be uncertain.
 func (e *Executor) unavailableResult(
 	call *planner.ToolRequest,
 	meta *runtime.ToolCallMeta,
@@ -401,11 +406,13 @@ func (e *Executor) unavailableResult(
 ) *planner.ToolResult {
 	return &planner.ToolResult{
 		Name:       call.Name,
-		Error:      planner.ToolErrorFromError(err),
 		ToolCallID: meta.ToolCallID,
-		RetryHint: &planner.RetryHint{
-			Reason: planner.RetryReasonToolUnavailable,
-			Tool:   call.Name,
+		Failure: &planner.ToolFailure{
+			Kind:  planner.FailureUnavailable,
+			Error: planner.ToolErrorFromError(err),
+			Recovery: planner.RecoveryDirective{
+				Action: planner.RecoveryReplan,
+			},
 		},
 	}
 }
@@ -428,18 +435,7 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 		ToolCallID: toolCallID,
 	}
 	if msg.Error != nil {
-		out.Error = planner.NewToolError(msg.Error.Message)
-		if hint := buildRetryHintFromIssues(tool, spec, msg.Error.Issues); hint != nil {
-			out.RetryHint = hint
-		} else if hint := retryHintFromToolErrorCode(tool, msg.Error.Code); hint != nil {
-			out.RetryHint = hint
-		}
-		// The payload example is a same-tool payload-correction aid. Attach it only
-		// to hints that restrict to the failing tool; terminal or sibling-tool
-		// hints (timeout, invalid_input) must not hand the model a retry template.
-		if out.RetryHint != nil && out.RetryHint.RestrictToTool && len(out.RetryHint.ExampleJSON) == 0 {
-			out.RetryHint.ExampleJSON = cloneExampleJSON(spec)
-		}
+		out.Failure = toolFailureFromRegistryError(msg.Error, spec, call)
 		return out, nil
 	}
 	out.Bounds = cloneBounds(msg.Bounds)
@@ -450,11 +446,12 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 			decodeErr := fmt.Errorf("toolregistry result for %q did not match registered schema: %w", tool, err)
 			out.Bounds = nil
 			out.ServerData = nil
-			out.Error = planner.ToolErrorFromError(decodeErr)
-			out.RetryHint = &planner.RetryHint{
-				Reason:  planner.RetryReasonMalformedResponse,
-				Tool:    tool,
-				Message: "provider result did not match the registered result schema",
+			out.Failure = &planner.ToolFailure{
+				Kind:  planner.FailureMalformedResult,
+				Error: planner.ToolErrorFromError(decodeErr),
+				Recovery: planner.RecoveryDirective{
+					Action: planner.RecoveryFinish,
+				},
 			}
 			return out, nil
 		}
@@ -517,143 +514,60 @@ func marshalServerDataItems(items []*toolregistry.ServerDataItem) rawjson.Messag
 	return rawjson.Message(b)
 }
 
-func retryHintFromToolErrorCode(tool tools.Ident, code string) *planner.RetryHint {
-	switch code {
+// toolFailureFromRegistryError translates the provider protocol into the
+// runtime's canonical classification and transition. Structured provider
+// issues are preserved verbatim and only valid-call corrections receive the
+// rejected input and generated payload example.
+func toolFailureFromRegistryError(msg *toolregistry.ToolError, spec *tools.ToolSpec, call *planner.ToolRequest) *planner.ToolFailure {
+	failure := &planner.ToolFailure{
+		Kind:  planner.FailureInternal,
+		Error: planner.NewToolError(msg.Message),
+		Recovery: planner.RecoveryDirective{
+			Action: planner.RecoveryFinish,
+		},
+	}
+	switch msg.Code {
 	case toolregistry.ToolErrorCodeStaleRegistration,
 		toolregistry.ToolErrorCodeProviderOverloaded:
-		return &planner.RetryHint{
-			Reason: planner.RetryReasonToolUnavailable,
-			Tool:   tool,
-		}
+		failure.Kind = planner.FailureUnavailable
+		failure.Recovery.Action = planner.RecoveryReplan
+	case "rate_limited":
+		failure.Kind = planner.FailureRateLimited
+		failure.Recovery.Action = planner.RecoveryReplan
 	case "invalid_input":
-		// Service-level invalid_input is a domain rejection raised by the tool's
-		// own logic, not a codec-schema violation. It is not guaranteed to be
-		// correctable by re-sending the same tool with a fixed payload: the
-		// rejection may name a sibling tool as the remedy (e.g. atlas-data's
-		// 7-day physical-timeline cap points to evaluate_state_activity). We
-		// reuse the invalid_arguments reason so downstream UIs classify the
-		// failure as invalid input (not internal), but we do NOT set
-		// RestrictToTool: forcing a same-tool retry livelocks the model on a
-		// rejection it cannot satisfy. The model reads the tool-error message and
-		// either corrects the payload or switches tools.
-		return &planner.RetryHint{
-			Reason: planner.RetryReasonInvalidArguments,
-			Tool:   tool,
-		}
+		failure.Kind = planner.FailureDomainRejection
+		failure.Recovery.Action = planner.RecoveryReplan
 	case "invalid_arguments":
-		// Tool-codec validation errors are surfaced by providers as invalid_arguments.
-		// These are always user-actionable: they indicate the payload did not satisfy
-		// the tool schema (missing fields, enum violations, range constraints, etc.),
-		// so recovery is a corrected call to the same tool.
-		return &planner.RetryHint{
-			Reason:         planner.RetryReasonInvalidArguments,
-			Tool:           tool,
-			RestrictToTool: true,
+		if spec == nil || call == nil {
+			panic("toolregistry executor: invalid_arguments requires the registered spec and rejected call")
+		}
+		failure.Kind = planner.FailureInvalidCall
+		failure.Recovery = planner.RecoveryDirective{
+			Action:      planner.RecoveryCorrectCall,
+			Issues:      msg.Issues,
+			PriorInput:  append(rawjson.Message(nil), call.Payload...),
+			ExampleJSON: append(rawjson.Message(nil), spec.Payload.ExampleJSON...),
 		}
 	case "timeout":
-		// Providers emit "timeout" for goa deadline failures. A timeout is
-		// terminal for the current run: elapsed time is not an instruction to
-		// repeat the call, so no RestrictToTool. The hint exists only to carry
-		// the classification so consumers page timeouts distinctly from internal
-		// failures instead of dropping the signal.
-		return &planner.RetryHint{
-			Reason: planner.RetryReasonTimeout,
-			Tool:   tool,
-		}
+		failure.Kind = planner.FailureTimeout
 	}
-	return nil
+	return failure
 }
 
-func buildRetryHintFromIssues(toolName tools.Ident, spec *tools.ToolSpec, issues []*tools.FieldIssue) *planner.RetryHint {
-	if len(issues) == 0 {
-		return nil
+// internalFailureResult constructs the terminal result for executor invariant
+// failures that a planner cannot correct.
+func internalFailureResult(name tools.Ident, toolCallID, message string) *planner.ToolResult {
+	return &planner.ToolResult{
+		Name:       name,
+		ToolCallID: toolCallID,
+		Failure: &planner.ToolFailure{
+			Kind:  planner.FailureInternal,
+			Error: planner.NewToolError(message),
+			Recovery: planner.RecoveryDirective{
+				Action: planner.RecoveryFinish,
+			},
+		},
 	}
-	fields := make([]string, 0, len(issues))
-	missing := make([]string, 0, len(issues))
-	typeIssues := make([]*tools.FieldIssue, 0, len(issues))
-	for _, is := range issues {
-		if is == nil || is.Field == "" {
-			continue
-		}
-		fields = append(fields, is.Field)
-		if is.Constraint == "missing_field" {
-			missing = append(missing, is.Field)
-		}
-		if tools.HasInvalidFieldTypeMetadata(is) {
-			typeIssues = append(typeIssues, is)
-		}
-	}
-	if len(fields) == 0 {
-		return nil
-	}
-	fields = uniqueStrings(fields)
-	missing = uniqueStrings(missing)
-	sort.Strings(fields)
-	sort.Strings(missing)
-
-	question := buildClarifyingQuestion(toolName, missing, fields, typeIssues)
-	var example rawjson.Message
-	if spec != nil && len(spec.Payload.ExampleJSON) > 0 {
-		example = append(rawjson.Message(nil), spec.Payload.ExampleJSON...)
-	}
-	reason := planner.RetryReasonInvalidArguments
-	if len(missing) > 0 {
-		reason = planner.RetryReasonMissingFields
-	}
-	hintFields := missing
-	if len(hintFields) == 0 {
-		hintFields = fields
-	}
-	return &planner.RetryHint{
-		Reason:             reason,
-		Tool:               toolName,
-		RestrictToTool:     true,
-		MissingFields:      hintFields,
-		ExampleJSON:        example,
-		ClarifyingQuestion: question,
-	}
-}
-
-func buildClarifyingQuestion(toolName tools.Ident, missing, fields []string, typeIssues []*tools.FieldIssue) string {
-	if len(typeIssues) > 0 {
-		return tools.InvalidFieldTypeQuestion(typeIssues)
-	}
-	if len(missing) == 2 && missing[0] == "query" && missing[1] == "requested_signals" {
-		return "I need additional information to run " + toolName.String() + ". Please provide either `query` (a short description) or `requested_signals` (a non-empty list of signal names) and resend the tool call."
-	}
-	if len(missing) > 0 {
-		return "I need additional information to run " + toolName.String() + ". Please provide: " + strings.Join(missing, ", ") + "."
-	}
-	return "I could not run " + toolName.String() + " due to invalid arguments. Please correct: " + strings.Join(fields, ", ") + " and resend the tool call."
-}
-
-func cloneExampleJSON(spec *tools.ToolSpec) rawjson.Message {
-	if spec == nil || len(spec.Payload.ExampleJSON) == 0 {
-		return nil
-	}
-	return append(rawjson.Message(nil), spec.Payload.ExampleJSON...)
-}
-
-func uniqueStrings(in []string) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(in))
-	out := make([]string, 0, len(in))
-	for _, s := range in {
-		if s == "" {
-			continue
-		}
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 // buildReaderFailureDiagnostics extracts deterministic runtime context for reader

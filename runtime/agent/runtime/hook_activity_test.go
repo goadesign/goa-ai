@@ -151,7 +151,6 @@ func TestGenAITimelineSubscriberEmitsSpans(t *testing.T) {
 		150*time.Millisecond,
 		nil,
 		nil,
-		nil,
 	)
 	childEvent := hooks.NewChildRunLinkedEvent(
 		"run-1",

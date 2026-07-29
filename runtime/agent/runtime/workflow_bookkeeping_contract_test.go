@@ -8,6 +8,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -124,14 +125,17 @@ func TestSynthesisOnlyAfterToolBatch(t *testing.T) {
 	t.Parallel()
 
 	success := &planner.ToolResult{}
-	terminalFailure := &planner.ToolResult{Error: planner.NewToolError("failed")}
+	terminalFailure := &planner.ToolResult{
+		Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "failed"),
+	}
 	timeout := &planner.ToolResult{
-		Error:     planner.NewToolError("timed out"),
-		RetryHint: &planner.RetryHint{Reason: planner.RetryReasonTimeout},
+		Failure: testToolFailure(planner.FailureTimeout, planner.RecoveryFinish, "timed out"),
 	}
 	recoverableFailure := &planner.ToolResult{
-		Error:     planner.NewToolError("invalid input"),
-		RetryHint: &planner.RetryHint{Reason: planner.RetryReasonInvalidArguments},
+		Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "invalid input"),
+	}
+	correctableFailure := &planner.ToolResult{
+		Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryCorrectCall, "invalid input"),
 	}
 	tests := []struct {
 		name      string
@@ -144,6 +148,9 @@ func TestSynthesisOnlyAfterToolBatch(t *testing.T) {
 		{name: "terminal failure", requested: true, results: []*planner.ToolResult{terminalFailure}, want: true},
 		{name: "timeout", requested: true, results: []*planner.ToolResult{timeout}, want: true},
 		{name: "recoverable failure", requested: true, results: []*planner.ToolResult{recoverableFailure}, want: false},
+		{name: "finish dominates replan", results: []*planner.ToolResult{recoverableFailure, terminalFailure}, want: true},
+		{name: "finish dominates correction", results: []*planner.ToolResult{correctableFailure, terminalFailure}, want: true},
+		{name: "correction dominates replan", results: []*planner.ToolResult{recoverableFailure, correctableFailure}, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -174,12 +181,10 @@ func TestBookkeepingResultRequiresResumeOnlyForRecoverableFailure(t *testing.T) 
 
 	assert.False(t, rt.toolResultRequiresResume(call, &planner.ToolResult{}))
 	assert.False(t, rt.toolResultRequiresResume(call, &planner.ToolResult{
-		Error:     planner.NewToolError("timed out"),
-		RetryHint: &planner.RetryHint{Reason: planner.RetryReasonTimeout},
+		Failure: testToolFailure(planner.FailureTimeout, planner.RecoveryFinish, "timed out"),
 	}))
 	assert.True(t, rt.toolResultRequiresResume(call, &planner.ToolResult{
-		Error:     planner.NewToolError("invalid input"),
-		RetryHint: &planner.RetryHint{Reason: planner.RetryReasonInvalidArguments},
+		Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "invalid input"),
 	}))
 }
 
@@ -320,12 +325,7 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				ToolCallID: call.ToolCallID,
-				Error:      planner.NewToolError("brief.summary length must be <= 600"),
-				RetryHint: &planner.RetryHint{
-					Reason:             planner.RetryReasonInvalidArguments,
-					Tool:               call.Name,
-					ClarifyingQuestion: "Please resend tasks.progress.complete with a payload that satisfies: brief.summary length must be <= 600.",
-				},
+				Failure:    testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "brief.summary length must be <= 600"),
 			}, nil
 		}),
 		Specs: []tools.ToolSpec{terminal},
@@ -335,12 +335,7 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 		ctx: context.Background(),
 		asyncResult: ToolOutput{
 			Payload: []byte("null"),
-			Error:   "brief.summary length must be <= 600",
-			RetryHint: &planner.RetryHint{
-				Reason:             planner.RetryReasonInvalidArguments,
-				Tool:               terminal.Name,
-				ClarifyingQuestion: "Please resend tasks.progress.complete with a payload that satisfies: brief.summary length must be <= 600.",
-			},
+			Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "brief.summary length must be <= 600"),
 		},
 		planResult: &planner.PlanResult{
 			FinalResponse: &planner.FinalResponse{
@@ -430,7 +425,7 @@ func TestRunLoopProviderEmptyToolCallIDsAdvanceAcrossResumeAttempts(t *testing.T
 						return &planner.PlanResult{
 							ToolCalls: []planner.ToolRequest{{
 								Name:    tc.tool,
-								Payload: rawjson.Message(`{}`),
+								Payload: rawjson.Message(fmt.Sprintf(`{"requested_tool":"missing.%d"}`, len(resumeAttempts))),
 							}},
 						}, nil
 					case 3:
@@ -476,7 +471,7 @@ func TestRunLoopProviderEmptyToolCallIDsAdvanceAcrossResumeAttempts(t *testing.T
 			initial := &planner.PlanResult{
 				ToolCalls: []planner.ToolRequest{{
 					Name:    tc.tool,
-					Payload: rawjson.Message(`{}`),
+					Payload: rawjson.Message(`{"requested_tool":"missing.0"}`),
 				}},
 			}
 
@@ -513,8 +508,8 @@ func TestRunLoopProviderEmptyToolCallIDsUseBatchIndexes(t *testing.T) {
 		{
 			name: "two tool unavailable calls",
 			calls: []planner.ToolRequest{
-				{Name: tools.ToolUnavailable, Payload: rawjson.Message(`{}`)},
-				{Name: tools.ToolUnavailable, Payload: rawjson.Message(`{}`)},
+				{Name: tools.ToolUnavailable, Payload: rawjson.Message(`{"requested_tool":"missing.one"}`)},
+				{Name: tools.ToolUnavailable, Payload: rawjson.Message(`{"requested_tool":"missing.two"}`)},
 			},
 			want: []string{
 				"run-1/turn-1/attempt-1/runtime-tool_unavailable/0",

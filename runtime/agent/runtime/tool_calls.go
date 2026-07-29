@@ -99,7 +99,6 @@ func collectToolCallIDs(calls []planner.ToolRequest) []string {
 }
 
 func (e *toolBatchExec) normalizeToolCall(call planner.ToolRequest, i int) planner.ToolRequest {
-	call.Payload = rawjson.Message(stripReservedToolPayloadFields(call.Payload.RawMessage()))
 	if call.SessionID == "" {
 		call.SessionID = e.sessionID
 	}
@@ -135,17 +134,28 @@ func parentToolCallID(call planner.ToolRequest, runCtx *run.Context) string {
 	return ""
 }
 
-func retryHintFromExecutionError(tool tools.Ident, err error) *planner.RetryHint {
+// toolFailureFromExecutionError classifies activity and child-workflow errors
+// at the boundary that observed them. Once this failure crosses into the
+// planner, unchanged execution is never repeated.
+func toolFailureFromExecutionError(err error, message string) *planner.ToolFailure {
+	kind := planner.FailureInternal
+	action := planner.RecoveryFinish
 	var svcErr *goa.ServiceError
 	if errors.As(err, &svcErr) && svcErr.Name == "service_unavailable" {
-		return &planner.RetryHint{
-			Reason: planner.RetryReasonToolUnavailable,
-			Tool:   tool,
-			Message: "Tool execution failed because the provider is temporarily unavailable. " +
-				"Retry the same tool call with the same payload.",
-		}
+		kind = planner.FailureUnavailable
+		action = planner.RecoveryReplan
 	}
-	return nil
+	if errors.Is(err, context.DeadlineExceeded) {
+		kind = planner.FailureTimeout
+		action = planner.RecoveryFinish
+	}
+	return &planner.ToolFailure{
+		Kind:  kind,
+		Error: planner.NewToolErrorWithCause(message, err),
+		Recovery: planner.RecoveryDirective{
+			Action: action,
+		},
+	}
 }
 
 // synthesizeToolError creates a ToolResult from an execution error and publishes
@@ -153,12 +163,10 @@ func retryHintFromExecutionError(tool tools.Ident, err error) *planner.RetryHint
 // child workflow execution fails (e.g., timeout) and we want to convert the
 // error into a tool result rather than failing the workflow.
 func (e *toolBatchExec) synthesizeToolError(ctx context.Context, call planner.ToolRequest, err error, errMsg string, duration time.Duration) (*planner.ToolResult, error) {
-	toolErr := planner.NewToolErrorWithCause(errMsg, err)
 	toolRes := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Error:      toolErr,
-		RetryHint:  retryHintFromExecutionError(call.Name, err),
+		Failure:    toolFailureFromExecutionError(err, errMsg),
 	}
 	if _, ok := e.r.toolSpec(call.Name); !ok {
 		return e.synthesizeUnknownToolResult(ctx, call, duration)
@@ -177,19 +185,19 @@ func (e *toolBatchExec) synthesizeToolError(ctx context.Context, call planner.To
 //
 // Provider adapters may surface hallucinated tool names (for example, when a model
 // echoes a tool it saw in prior context but that was not advertised in the current
-// request). This must not fail the workflow: the runtime returns a tool result error
-// with a RetryHint so the planner can resume and the model can recover.
+// request). This must not fail the workflow: the runtime returns an invalid-call
+// failure that requires the planner to choose an advertised capability.
 func (e *toolBatchExec) synthesizeUnknownToolResult(ctx context.Context, call planner.ToolRequest, duration time.Duration) (*planner.ToolResult, error) {
 	toolErr := planner.NewToolError(fmt.Sprintf("unknown tool %q", call.Name))
 	tr := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Error:      toolErr,
-		RetryHint: &planner.RetryHint{
-			Reason:         planner.RetryReasonToolUnavailable,
-			Tool:           call.Name,
-			RestrictToTool: false,
-			Message:        "Tool name is not registered for this run. Choose a tool from the advertised tool list and call it with the exact JSON schema.",
+		Failure: &planner.ToolFailure{
+			Kind:  planner.FailureInvalidCall,
+			Error: toolErr,
+			Recovery: planner.RecoveryDirective{
+				Action: planner.RecoveryReplan,
+			},
 		},
 	}
 	if err := e.publishToolResultReceived(ctx, call, tr, nil, duration); err != nil {
@@ -204,7 +212,13 @@ func (e *toolBatchExec) synthesizeCanceledExecution(ctx context.Context, call pl
 	tr := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Error:      planner.NewToolError(canceledByTimeBudgetMessage),
+		Failure: &planner.ToolFailure{
+			Kind:  planner.FailureTimeout,
+			Error: planner.NewToolError(canceledByTimeBudgetMessage),
+			Recovery: planner.RecoveryDirective{
+				Action: planner.RecoveryFinish,
+			},
+		},
 	}
 	var resultJSON rawjson.Message
 	if _, ok := e.r.toolSpec(call.Name); ok {
@@ -250,8 +264,7 @@ func (e *toolBatchExec) publishToolResultReceived(ctx context.Context, call plan
 		tr.Bounds,
 		duration,
 		tr.Telemetry,
-		tr.RetryHint,
-		tr.Error,
+		tr.Failure,
 	)
 	return e.r.publishHook(ctx, ev, e.turnID)
 }
@@ -323,28 +336,9 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			return nil, err
 		}
 
-		// Inline toolsets execute within the workflow loop.
+		// Inline toolsets execute within the workflow loop. Their generated codec
+		// validates the exact planner-authored payload before typed mapping.
 		if hasTS && ts.Inline {
-			raw := call.Payload
-			if ts.PayloadAdapter != nil && len(raw) > 0 {
-				meta := ToolCallMeta{
-					RunID:            call.RunID,
-					SessionID:        call.SessionID,
-					TurnID:           call.TurnID,
-					ToolCallID:       call.ToolCallID,
-					ParentToolCallID: call.ParentToolCallID,
-				}
-				if adapted, err := ts.PayloadAdapter(ctx, meta, call.Name, raw.RawMessage()); err == nil && len(adapted) > 0 {
-					raw = rawjson.Message(adapted)
-				} else if err != nil {
-					return nil, fmt.Errorf("inline payload adapter failed for %s: %w", call.Name, err)
-				}
-			}
-			if len(raw) > 0 {
-				call.Payload = raw
-				b.calls[i].Payload = raw
-			}
-
 			// Agent-as-tool: start child workflows concurrently and fan in results later.
 			if spec.IsAgentTool {
 				messages, nestedRunCtx, err := e.r.buildAgentChildRequest(ctx, ts.AgentTool, &call, e.messages, e.runCtx)
@@ -548,7 +542,7 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 	}
 
 	var decoded any
-	if out.Error == "" && hasNonNullJSON(out.Payload.RawMessage()) {
+	if out.Failure == nil && hasNonNullJSON(out.Payload.RawMessage()) {
 		v, err := e.r.unmarshalToolValue(ctx, info.call.Name, out.Payload.RawMessage(), false)
 		if err != nil {
 			return nil, fmt.Errorf("tool %q result decode failed (tool_call_id=%s): %w", info.call.Name, info.call.ToolCallID, err)
@@ -564,27 +558,12 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 		ToolCallID: info.call.ToolCallID,
 		Telemetry:  out.Telemetry,
 	}
-	if out.Error != "" {
-		toolRes.Error = planner.NewToolError(out.Error)
-	}
+	toolRes.Failure = out.Failure
 	if err := e.r.enforceToolResultContracts(spec, info.call, toolRes); err != nil {
 		return nil, err
 	}
 	if err := validateToolPauseContract(info.call, toolRes, out.Pause); err != nil {
 		return nil, err
-	}
-	if out.RetryHint != nil {
-		h := *out.RetryHint
-		if len(h.ExampleJSON) == 0 && len(spec.Payload.ExampleJSON) > 0 {
-			h.ExampleJSON = append(rawjson.Message(nil), spec.Payload.ExampleJSON...)
-		}
-		if len(h.PriorInput) == 0 && len(info.call.Payload) > 0 {
-			var prior map[string]any
-			if err := rawjson.Unmarshal(info.call.Payload, &prior); err == nil && len(prior) > 0 {
-				h.PriorInput = prior
-			}
-		}
-		toolRes.RetryHint = &h
 	}
 	if err := e.publishToolResultReceived(ctx, info.call, toolRes, out.Payload, duration); err != nil {
 		return nil, err

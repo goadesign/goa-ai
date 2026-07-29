@@ -181,6 +181,8 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 		agentImport,
 		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/runtime"},
 		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/planner"},
+		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
+		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/tools"},
 	)
 	// Import specs package for typed payloads and transforms.
 	specsAlias := ts.SpecsPackageName + "specs"
@@ -189,6 +191,7 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 	// Build tool switch metadata.
 	type execTool struct {
 		ID               string
+		ConstName        string
 		GoName           string
 		PayloadUnmarshal string
 		PayloadType      string
@@ -207,6 +210,7 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 		g := codegen.Goify(t.Name, true)
 		tools = append(tools, execTool{
 			ID:               t.Name,
+			ConstName:        t.ConstName,
 			GoName:           g,
 			PayloadUnmarshal: "Unmarshal" + g + "Payload",
 			PayloadType:      g + "Payload",

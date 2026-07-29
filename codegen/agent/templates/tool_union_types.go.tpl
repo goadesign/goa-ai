@@ -12,6 +12,36 @@ func decodeUnionStrictJSON(data []byte, v any) error {
 	return nil
 }
 
+// missingUnionValueError reports an omitted value in a tagged union envelope.
+func missingUnionValueError() error {
+	return tools.NewValidationError(
+		"missing required union field \"value\"",
+		[]*tools.FieldIssue{
+			{
+				Field:      "value",
+				Constraint: "missing_field",
+			},
+		},
+		nil,
+	)
+}
+
+// nullUnionValueError reports a null value in a tagged union envelope.
+func nullUnionValueError(expected string) error {
+	return tools.NewValidationError(
+		fmt.Sprintf("union field \"value\" must be a %s, not null", expected),
+		[]*tools.FieldIssue{
+			{
+				Field:            "value",
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   "null",
+			},
+		},
+		nil,
+	)
+}
+
 {{- range $i, $u := .Unions }}
 {{- if gt $i 0 }}
 
@@ -70,6 +100,11 @@ func (u {{ $u.Name }}) Validate() error {
 		return new{{ $u.Name }}DiscriminatorError("", false)
 	{{- range $u.Fields }}
 	case {{ .KindConst }}:
+		{{- if .Nilable }}
+		if u.{{ .FieldName }} == nil {
+			return missingUnionValueError()
+		}
+		{{- end }}
 		return nil
 	{{- end }}
 	default:
@@ -116,9 +151,17 @@ func (u *{{ $u.Name }}) UnmarshalJSON(data []byte) error {
 	if raw.Type == nil {
 		return new{{ $u.Name }}DiscriminatorError("", false)
 	}
+	if len(raw.Value) == 0 {
+		return missingUnionValueError()
+	}
 	switch *raw.Type {
 	{{- range $u.Fields }}
 	case string({{ .KindConst }}):
+		{{- if .JSONType }}
+		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+			return nullUnionValueError({{ printf "%q" .JSONType }})
+		}
+		{{- end }}
 		var v {{ .FieldType }}
 		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
 			{{- if .JSONType }}

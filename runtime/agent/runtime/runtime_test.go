@@ -852,8 +852,8 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 				return &planner.ToolResult{
-					Name:  call.Name,
-					Error: planner.NewToolError("boom"),
+					Name:    call.Name,
+					Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom"),
 				}, nil
 			})},
 		},
@@ -863,7 +863,10 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 		tracer:  telemetry.NoopTracer{},
 	}
 	seedTestToolSpecs(rt, failSpec)
-	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Error: "boom"}}
+	wfCtx := &testWorkflowContext{
+		ctx:         context.Background(),
+		asyncResult: ToolOutput{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom")},
+	}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
@@ -1101,7 +1104,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 			},
 		}
 		tr := ConvertRunOutputToToolResult("parent.tool", &out)
-		require.Nil(t, tr.Error)
+		require.Nil(t, tr.Failure)
 		require.NotNil(t, tr.Telemetry)
 		require.Equal(t, 15, tr.Telemetry.TokensUsed)
 		require.Equal(t, int64(150), tr.Telemetry.DurationMs)
@@ -1112,12 +1115,12 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 		out := RunOutput{
 			Final: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
 			ToolEvents: []*api.ToolEvent{
-				{Error: planner.NewToolError("e1")},
-				{Error: planner.NewToolError("e2")},
+				{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "e1")},
+				{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "e2")},
 			},
 		}
 		tr := ConvertRunOutputToToolResult("parent.tool", &out)
-		require.Error(t, tr.Error)
+		require.NotNil(t, tr.Failure)
 	})
 }
 

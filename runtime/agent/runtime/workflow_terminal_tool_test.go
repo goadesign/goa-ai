@@ -249,7 +249,7 @@ func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
 			if call.Name == failTool.Name {
 				return &planner.ToolResult{
 					Name:       call.Name,
-					Error:      planner.NewToolError("failed terminal side effect"),
+					Failure:    testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "failed terminal side effect"),
 					ToolCallID: call.ToolCallID,
 				}, nil
 			}

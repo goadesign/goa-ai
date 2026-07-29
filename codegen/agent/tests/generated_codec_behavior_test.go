@@ -273,6 +273,60 @@ func TestUnmarshalEchoPayloadUsesSelectedUnionBranchType(t *testing.T) {
 	}
 }
 
+func TestUnmarshalEchoPayloadRejectsMissingUnionValue(t *testing.T) {
+	_, err := UnmarshalEchoPayload([]byte(`+"`"+`{"id":"req_1","value":{"type":"structured"}}`+"`"+`))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var validation *tools.ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("expected ValidationError, got %T: %v", err, err)
+	}
+	issues := validation.Issues()
+	if len(issues) != 1 {
+		t.Fatalf("expected one issue, got %d", len(issues))
+	}
+	issue := issues[0]
+	if issue.Field != "value" || issue.Constraint != "missing_field" {
+		t.Fatalf("unexpected issue: %#v", issue)
+	}
+}
+
+func TestUnmarshalEchoPayloadRejectsNullUnionValue(t *testing.T) {
+	_, err := UnmarshalEchoPayload([]byte(`+"`"+`{"id":"req_1","value":{"type":"structured","value":null}}`+"`"+`))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var validation *tools.ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("expected ValidationError, got %T: %v", err, err)
+	}
+	issues := validation.Issues()
+	if len(issues) != 1 {
+		t.Fatalf("expected one issue, got %d", len(issues))
+	}
+	issue := issues[0]
+	if issue.Field != "value" || issue.Constraint != "invalid_field_type" || issue.ExpectedJSONType != "object" || issue.ActualJSONType != "null" {
+		t.Fatalf("unexpected issue: %#v", issue)
+	}
+}
+
+func TestValueValidateRejectsNilSelectedBranch(t *testing.T) {
+	value := NewValueStructured(nil)
+	err := value.Validate()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var validation *tools.ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("expected ValidationError, got %T: %v", err, err)
+	}
+	issues := validation.Issues()
+	if len(issues) != 1 || issues[0].Field != "value" || issues[0].Constraint != "missing_field" {
+		t.Fatalf("unexpected issues: %#v", issues)
+	}
+}
+
 func TestUnmarshalEchoPayloadRejectsUnknownUnionBranchFields(t *testing.T) {
 	_, err := UnmarshalEchoPayload([]byte(`+"`"+`{"id":"req_1","value":{"type":"structured","value":{"label":"ready","extra":true}}}`+"`"+`))
 	if err == nil {

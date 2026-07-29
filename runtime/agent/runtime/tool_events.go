@@ -44,8 +44,7 @@ func (r *Runtime) encodeToolEvents(ctx context.Context, events []*planner.ToolRe
 			ResultOmitted: false,
 			ServerData:    append(rawjson.Message(nil), ev.ServerData...),
 			Bounds:        ev.Bounds,
-			Error:         ev.Error,
-			RetryHint:     ev.RetryHint,
+			Failure:       planner.CloneToolFailure(ev.Failure),
 			Telemetry:     ev.Telemetry,
 			ToolCallID:    ev.ToolCallID,
 			ChildrenCount: ev.ChildrenCount,
@@ -78,8 +77,7 @@ func (r *Runtime) buildPlannerToolOutputRecords(ctx context.Context, records []s
 			ResultOmittedReason: result.ResultOmittedReason,
 			ServerData:          append(rawjson.Message(nil), result.ServerData...),
 			Bounds:              result.Bounds,
-			Error:               result.Error,
-			RetryHint:           result.RetryHint,
+			Failure:             planner.CloneToolFailure(result.Failure),
 			Telemetry:           result.Telemetry,
 		}
 		if !result.ResultOmitted {

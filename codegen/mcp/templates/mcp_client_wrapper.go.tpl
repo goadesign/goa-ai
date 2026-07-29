@@ -82,8 +82,7 @@ func NewEndpoints(
         // Call MCP tools/call via transport endpoint (SSE stream)
         streamAny, err := mcpC.ToolsCall()(ctx, &{{ $.MCPPkgAlias }}.ToolsCallPayload{Name: "{{ .Name }}", Arguments: args})
         if err != nil {
-            prompt := retry.BuildRepairPrompt("tools/call:{{ .Name }}", err.Error(), {{ printf "%q" .ExampleArguments }}, {{ printf "%q" .InputSchema }})
-            return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
+            return nil, err
         }
         stream, ok := streamAny.(*{{ $.MCPJSONRPCCAlias }}.ToolsCallClientStream)
         if !ok {
@@ -96,14 +95,12 @@ func NewEndpoints(
                 break
             }
             if recvErr != nil {
-                prompt := retry.BuildRepairPrompt("tools/call:{{ .Name }}", recvErr.Error(), {{ printf "%q" .ExampleArguments }}, {{ printf "%q" .InputSchema }})
-                return nil, &retry.RetryableError{Prompt: prompt, Cause: recvErr}
+                return nil, recvErr
             }
             r = ev
         }
         if r == nil || r.Content == nil || len(r.Content) == 0 || r.Content[0] == nil || r.Content[0].Text == nil {
-            prompt := retry.BuildRepairPrompt("tools/call:{{ .Name }}", "empty MCP tool response", {{ printf "%q" .ExampleArguments }}, {{ printf "%q" .InputSchema }})
-            return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP tool response for {{ .Name }}")}
+            return nil, fmt.Errorf("empty MCP tool response for {{ .Name }}")
         }
         {{- if .HasResult }}
         // Build JSON-RPC response envelope and decode using Goa-generated decoder
@@ -183,13 +180,11 @@ func NewEndpoints(
         }
         ires, err := mcpC.PromptsGet()(ctx, &{{ $.MCPPkgAlias }}.PromptsGetPayload{Name: "{{ .Name }}", Arguments: args})
         if err != nil {
-            prompt := retry.BuildRepairPrompt("prompts/get:{{ .Name }}", err.Error(), {{ printf "%q" .ExampleArguments }}, "")
-            return nil, &retry.RetryableError{Prompt: prompt, Cause: err}
+            return nil, err
         }
         r := ires.(*{{ $.MCPPkgAlias }}.PromptsGetResult)
         if r == nil || r.Messages == nil || len(r.Messages) == 0 || r.Messages[0] == nil || r.Messages[0].Content == nil || r.Messages[0].Content.Text == nil {
-            prompt := retry.BuildRepairPrompt("prompts/get:{{ .Name }}", "empty MCP prompt response", {{ printf "%q" .ExampleArguments }}, "")
-            return nil, &retry.RetryableError{Prompt: prompt, Cause: fmt.Errorf("empty MCP prompt response for {{ .Name }}")}
+            return nil, fmt.Errorf("empty MCP prompt response for {{ .Name }}")
         }
         // Build JSON-RPC response envelope and decode using Goa-generated decoder
         req3, err := origC.Build{{ .OriginalMethodName }}Request(ctx, v)
@@ -252,5 +247,4 @@ func NewClient(
         {{- end }}
     )
 }
-
 

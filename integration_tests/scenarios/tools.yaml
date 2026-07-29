@@ -149,7 +149,7 @@ scenarios:
         stream_expect:
           min_events: 1
 
-  - name: tool_execute_code_invalid_language_retry_hint
+  - name: tool_execute_code_invalid_language
     defaults:
       client: jsonrpc.mcp_assistant
     pre:

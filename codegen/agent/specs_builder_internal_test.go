@@ -227,13 +227,15 @@ func TestBuildToolSpecsData_UnionSchemasUseCanonicalEnvelope(t *testing.T) {
 	properties := schema["properties"].(map[string]any)
 	value := properties["value"].(map[string]any)
 	require.Equal(t, "object", value["type"])
-	require.Equal(t, []any{"type", "value"}, value["required"])
-	valueProperties := value["properties"].(map[string]any)
-	valueType := valueProperties["type"].(map[string]any)
-	require.Equal(t, []any{"number", "text"}, valueType["enum"])
-	valuePayload := valueProperties["value"].(map[string]any)
-	anyOf := valuePayload["anyOf"].([]any)
-	require.Len(t, anyOf, 2)
+	oneOf := value["oneOf"].([]any)
+	require.Len(t, oneOf, 2)
+	for i, name := range []string{"number", "text"} {
+		branch := oneOf[i].(map[string]any)
+		require.Equal(t, []any{"type", "value"}, branch["required"])
+		branchProperties := branch["properties"].(map[string]any)
+		require.Equal(t, []any{name}, branchProperties["type"].(map[string]any)["enum"])
+		require.NotEmpty(t, branchProperties["value"])
+	}
 
 	if example, ok := schema["example"].(map[string]any); ok {
 		valueExample := example["value"].(map[string]any)
@@ -305,12 +307,15 @@ func TestBuildToolSpecsData_UnionSchemasSpecializeDefinitions(t *testing.T) {
 	properties := block["properties"].(map[string]any)
 	union := properties["block"].(map[string]any)
 	require.Equal(t, "object", union["type"])
-	unionProperties := union["properties"].(map[string]any)
-	unionType := unionProperties["type"].(map[string]any)
-	require.Equal(t, []any{"markdown", "figure"}, unionType["enum"])
-	unionValue := unionProperties["value"].(map[string]any)
-	anyOf := unionValue["anyOf"].([]any)
-	require.Len(t, anyOf, 2)
+	oneOf := union["oneOf"].([]any)
+	require.Len(t, oneOf, 2)
+	for i, name := range []string{"markdown", "figure"} {
+		branch := oneOf[i].(map[string]any)
+		require.Equal(t, []any{"type", "value"}, branch["required"])
+		branchProperties := branch["properties"].(map[string]any)
+		require.Equal(t, []any{name}, branchProperties["type"].(map[string]any)["enum"])
+		require.NotEmpty(t, branchProperties["value"])
+	}
 }
 
 func TestBuildToolSpecsData_UnionSchemasIncludeEmptyObjectVariants(t *testing.T) {
@@ -383,12 +388,14 @@ func TestBuildToolSpecsData_UnionSchemasIncludeEmptyObjectVariants(t *testing.T)
 	config := defs["Config"].(map[string]any)
 	properties := config["properties"].(map[string]any)
 	union := properties["value"].(map[string]any)
-	unionProperties := union["properties"].(map[string]any)
-	unionType := unionProperties["type"].(map[string]any)
-	require.Equal(t, []any{"none", "delay"}, unionType["enum"])
-	unionValue := unionProperties["value"].(map[string]any)
-	anyOf := unionValue["anyOf"].([]any)
-	require.Len(t, anyOf, 2)
+	oneOf := union["oneOf"].([]any)
+	require.Len(t, oneOf, 2)
+	for i, name := range []string{"none", "delay"} {
+		branch := oneOf[i].(map[string]any)
+		branchProperties := branch["properties"].(map[string]any)
+		require.Equal(t, []any{name}, branchProperties["type"].(map[string]any)["enum"])
+		require.NotEmpty(t, branchProperties["value"])
+	}
 
 	delay := defs["DelayConfig"].(map[string]any)
 	delayProperties := delay["properties"].(map[string]any)
@@ -398,9 +405,8 @@ func TestBuildToolSpecsData_UnionSchemasIncludeEmptyObjectVariants(t *testing.T)
 	}
 	sourceProperties := source["properties"].(map[string]any)
 	sourceValue := sourceProperties["source"].(map[string]any)
-	sourceValueProperties := sourceValue["properties"].(map[string]any)
-	sourceAnyOf := sourceValueProperties["value"].(map[string]any)["anyOf"].([]any)
-	require.Len(t, sourceAnyOf, 2)
+	sourceOneOf := sourceValue["oneOf"].([]any)
+	require.Len(t, sourceOneOf, 2)
 }
 
 // Extend fields in tool shapes must be materialized before type/spec generation.

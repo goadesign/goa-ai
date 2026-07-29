@@ -199,7 +199,7 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, timedOut)
 	require.Len(t, results, 1)
-	require.Equal(t, canceledByTimeBudgetMessage, results[0].ToolResult.Error.Message)
+	require.Equal(t, canceledByTimeBudgetMessage, results[0].ToolResult.Failure.Error.Message)
 
 	handle := waitForChildHandle(t, childHandles, "timed out child")
 	require.True(t, handle.wasCanceled())

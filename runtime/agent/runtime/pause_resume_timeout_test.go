@@ -12,6 +12,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -85,6 +86,14 @@ func TestMissingFieldsClarificationAwaitResumesWhenProvided(t *testing.T) {
 		metrics:       telemetry.NoopMetrics{},
 		tracer:        telemetry.NoopTracer{},
 	}
+	seedTestToolSpecs(rt, tools.ToolSpec{
+		Name: tools.Ident("tool"),
+		Payload: tools.TypeSpec{
+			FieldDescriptions: map[string]string{
+				"field": "The facility detail needed to continue.",
+			},
+		},
+	})
 
 	baseCtx := &testWorkflowContext{
 		ctx:           context.Background(),
@@ -113,11 +122,17 @@ func TestMissingFieldsClarificationAwaitResumesWhenProvided(t *testing.T) {
 	results := []*planner.ToolResult{{
 		Name:       tools.Ident("tool"),
 		ToolCallID: "tool-1",
-		RetryHint: &planner.RetryHint{
-			Reason:             planner.RetryReasonMissingFields,
-			Tool:               tools.Ident("tool"),
-			MissingFields:      []string{"field"},
-			ClarifyingQuestion: "provide field",
+		Failure: &planner.ToolFailure{
+			Kind:  planner.FailureInvalidCall,
+			Error: planner.NewToolError("missing field"),
+			Recovery: planner.RecoveryDirective{
+				Action:     planner.RecoveryCorrectCall,
+				PriorInput: rawjson.Message(`{}`),
+				Issues: []*tools.FieldIssue{{
+					Field:      "field",
+					Constraint: "missing_field",
+				}},
+			},
 		},
 	}}
 	baseCtx.clarifyCh <- &api.ClarificationAnswer{
@@ -149,6 +164,9 @@ func TestMissingFieldsClarificationAwaitResumesWhenProvided(t *testing.T) {
 	require.NotEmpty(t, base.Messages)
 	last := base.Messages[len(base.Messages)-1]
 	require.Equal(t, model.ConversationRoleUser, last.Role)
+	clarification, ok := recorder.events[0].(*hooks.AwaitClarificationEvent)
+	require.True(t, ok)
+	require.Contains(t, clarification.Question, "The facility detail needed to continue.")
 
 	require.Equal(t, []string{
 		"pause:await_clarification",

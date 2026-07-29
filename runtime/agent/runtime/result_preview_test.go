@@ -69,8 +69,8 @@ func TestFormatToolResultPreviewSkipsErrorResults(t *testing.T) {
 	preview, err := formatToolResultPreviewForCall(t.Context(), nil, &planner.ToolRequest{
 		Name: toolName,
 	}, &planner.ToolResult{
-		Name:  toolName,
-		Error: planner.NewToolError("tool failed"),
+		Name:    toolName,
+		Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "tool failed"),
 	})
 
 	require.NoError(t, err)

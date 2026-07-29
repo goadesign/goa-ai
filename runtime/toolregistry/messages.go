@@ -127,7 +127,8 @@ type (
 		// transient provider-overload results.
 		RetryAfterMillis int64 `json:"retry_after_ms,omitempty"`
 		// Issues optionally carries structured field-level validation issues.
-		// When present, consumers can build a RetryHint without parsing Message.
+		// Consumers preserve these in a correct-call recovery directive without
+		// parsing Message.
 		Issues []*tools.FieldIssue `json:"issues,omitempty"`
 	}
 )
@@ -266,7 +267,7 @@ func NewToolResultErrorMessage(registrationToken, toolUseID, code, message strin
 }
 
 // NewToolResultErrorMessageWithIssues constructs an error tool result message that
-// includes structured validation issues for building retry hints.
+// includes structured validation issues for building correction directives.
 func NewToolResultErrorMessageWithIssues(
 	registrationToken, toolUseID, code, message string,
 	issues []*tools.FieldIssue,
@@ -278,7 +279,7 @@ func NewToolResultErrorMessageWithIssues(
 	if len(issues) == 0 {
 		return out
 	}
-	out.Error.Issues = cloneFieldIssues(issues)
+	out.Error.Issues = tools.CloneFieldIssues(issues)
 	return out
 }
 
@@ -299,7 +300,7 @@ func ValidationIssues(err error) []*tools.FieldIssue {
 		Issues() []*tools.FieldIssue
 	}
 	if errors.As(err, &ip) {
-		return cloneFieldIssues(ip.Issues())
+		return tools.CloneFieldIssues(ip.Issues())
 	}
 
 	var se *goa.ServiceError
@@ -337,27 +338,6 @@ func ValidationIssues(err error) []*tools.FieldIssue {
 		return nil
 	}
 	return issues
-}
-
-func cloneFieldIssues(in []*tools.FieldIssue) []*tools.FieldIssue {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]*tools.FieldIssue, 0, len(in))
-	for _, is := range in {
-		if is == nil {
-			continue
-		}
-		cp := *is
-		if len(cp.Allowed) > 0 {
-			cp.Allowed = append([]string(nil), cp.Allowed...)
-		}
-		out = append(out, &cp)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 func isGoaValidationConstraint(name string) bool {

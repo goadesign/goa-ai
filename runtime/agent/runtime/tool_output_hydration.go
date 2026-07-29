@@ -101,11 +101,10 @@ func plannerToolOutputFromCanonicalEvents(runID, toolCallID string, events *cano
 		ResultOmittedReason: events.result.ResultOmittedReason,
 		ServerData:          append(rawjson.Message(nil), events.result.ServerData...),
 		Bounds:              events.result.Bounds,
-		Error:               events.result.Error,
-		RetryHint:           events.result.RetryHint,
+		Failure:             events.result.Failure,
 		Telemetry:           events.result.Telemetry,
 	}
-	if events.result.Error == nil && !output.ResultOmitted {
+	if events.result.Failure == nil && !output.ResultOmitted {
 		if len(events.result.ResultJSON) != output.ResultBytes {
 			return nil, fmt.Errorf(
 				"runtime: canonical tool result size mismatch (run_id=%s tool_call_id=%s tool=%s got=%d want=%d)",

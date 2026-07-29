@@ -29,7 +29,9 @@ func TestNewAgentDataConverterDecodesToolResultsSetIntoSinglePointer(t *testing.
 			{
 				Name:       toolName,
 				ToolCallID: "tooluse-123",
-				Result:     rawjson.Message([]byte(`{"value":"ok"}`)),
+				Success: &api.ProvidedToolSuccess{
+					Result: rawjson.Message([]byte(`{"value":"ok"}`)),
+				},
 			},
 		},
 	})
@@ -40,7 +42,8 @@ func TestNewAgentDataConverterDecodesToolResultsSetIntoSinglePointer(t *testing.
 	require.NotNil(t, decoded)
 	require.Len(t, decoded.Results, 1)
 	require.Equal(t, toolName, decoded.Results[0].Name)
-	require.JSONEq(t, `{"value":"ok"}`, string(decoded.Results[0].Result))
+	require.NotNil(t, decoded.Results[0].Success)
+	require.JSONEq(t, `{"value":"ok"}`, string(decoded.Results[0].Success.Result))
 }
 
 func TestNewAgentDataConverterRoundTripsPlanActivityInputToolOutputs(t *testing.T) {

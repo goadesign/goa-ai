@@ -135,11 +135,6 @@ const (
 	// artifact used for replay and downstream projection.
 	AssistantTurnCommitted EventType = "assistant_turn_committed"
 
-	// RetryHintIssued fires when the planner or runtime suggests a retry
-	// policy change, such as disabling a failing tool or adjusting caps.
-	// The Payload contains the hint reason and affected tool metadata.
-	RetryHintIssued EventType = "retry_hint"
-
 	// MemoryAppended fires when new memory entries are successfully persisted
 	// to the memory store. The Payload may contain the event IDs or counts
 	// for observability.

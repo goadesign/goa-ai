@@ -321,8 +321,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Bounds:              evt.Bounds,
 			Duration:            evt.Duration,
 			Telemetry:           evt.Telemetry,
-			RetryHint:           evt.RetryHint,
-			Error:               evt.Error,
+			Failure:             evt.Failure,
 		}
 		if preview := clampPreview(evt.ResultPreview); preview != "" {
 			payload.ResultPreview = preview

@@ -87,7 +87,7 @@ func formatToolResultPreviewForCall(ctx context.Context, rt *Runtime, call *plan
 }
 
 func toolResultHasError(tr *planner.ToolResult) bool {
-	return tr != nil && tr.Error != nil
+	return tr != nil && tr.Failure != nil
 }
 
 // decodeResultPreviewArgs decodes the original tool payload into its typed Go

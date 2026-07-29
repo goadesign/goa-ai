@@ -196,8 +196,8 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 			tc.ParentToolCallID = p.ParentToolCallID
 			tc.CompletedAt = e.Timestamp
 			tc.Duration = p.Duration
-			if p.Error != nil {
-				tc.ErrorSummary = p.Error.Message
+			if p.Failure != nil {
+				tc.ErrorSummary = p.Failure.Error.Message
 			}
 		case hooks.RunCompleted:
 			var p struct {

@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
-	"strings"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
@@ -309,6 +307,9 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if req.ToolName == "" {
 		return nil, errors.New("tool name is required")
 	}
+	if err := validatePlannerToolPayload(req.Payload); err != nil {
+		return nil, fmt.Errorf("tool payload is invalid: %w", err)
+	}
 	// Forbid agent-as-tool execution from activities. Agent-tools must execute inside
 	// the workflow thread so child workflows can be started legally.
 	if spec, ok := r.toolSpec(req.ToolName); ok && spec.IsAgentTool {
@@ -340,54 +341,22 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		return nil, fmt.Errorf("toolset %q is not registered", sName)
 	}
 
-	// Apply optional payload adapter before decoding. Payloads are canonical
-	// JSON (json.RawMessage) along the planner/runtime boundary; adapters may
-	// normalize them before validation or execution.
-	raw := rawjson.Message(stripReservedToolPayloadFields(req.Payload.RawMessage()))
-	meta := toolCallMeta(planner.ToolRequest{
-		RunID:            req.RunID,
-		SessionID:        req.SessionID,
-		TurnID:           req.TurnID,
-		ToolCallID:       req.ToolCallID,
-		ParentToolCallID: req.ParentToolCallID,
-	})
-	if reg.PayloadAdapter != nil && len(raw) > 0 {
-		if adapted, err := reg.PayloadAdapter(ctx, meta, req.ToolName, raw.RawMessage()); err == nil && len(adapted) > 0 {
-			raw = rawjson.Message(stripReservedToolPayloadFields(adapted))
-		} else if err != nil {
-			return &ToolOutput{Error: fmt.Sprintf("payload adapter failed: %v", err)}, nil
-		}
-	}
+	// The generated payload codec owns the model-authored JSON boundary. Tool
+	// execution receives the exact planner bytes; typed service adaptation happens
+	// only after successful decoding.
+	raw := append(rawjson.Message(nil), req.Payload...)
 
 	// For non DecodeInExecutor toolsets, validate payloads eagerly using the
-	// generated codecs so we can surface structured retry hints. Executors
+	// generated codecs so we can surface structured correction contracts. Executors
 	// still receive the canonical JSON payload and may decode again as needed.
-	if !reg.DecodeInExecutor && len(raw) > 0 {
+	if !reg.DecodeInExecutor {
+		spec, ok := r.toolSpec(req.ToolName)
+		if !ok {
+			return nil, fmt.Errorf("tool %q has no registered ToolSpec", req.ToolName)
+		}
 		if _, decErr := r.unmarshalToolValue(ctx, req.ToolName, raw.RawMessage(), true); decErr != nil {
-			// Build structured retry hints using generated ValidationError when present.
-			if fields, question, reason, ok := buildRetryHintFromValidation(decErr, req.ToolName); ok {
-				return &ToolOutput{
-					Error: decErr.Error(),
-					RetryHint: &planner.RetryHint{
-						Reason:             reason,
-						Tool:               req.ToolName,
-						RestrictToTool:     true,
-						MissingFields:      fields,
-						ClarifyingQuestion: question,
-					},
-				}, nil
-			}
-			// Not a validation error: build the decode-oriented retry hint (for
-			// example malformed, truncated, or wrong-shape JSON) so planners can
-			// guide the caller toward a schema-compliant payload.
-			var specPtr *tools.ToolSpec
-			if spec, ok := r.toolSpec(req.ToolName); ok {
-				cp := spec
-				specPtr = &cp
-			}
 			return &ToolOutput{
-				Error:     decErr.Error(),
-				RetryHint: buildRetryHintFromDecodeError(decErr, req.ToolName, specPtr),
+				Failure: buildToolFailureFromPayloadError(decErr, raw, spec),
 			}, nil
 		}
 	}
@@ -406,6 +375,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		ParentToolCallID: req.ParentToolCallID,
 		ToolCallID:       req.ToolCallID,
 	}
+	meta := toolCallMeta(call)
 	start := time.Now()
 	execResult, err := reg.Execute(ctx, &call)
 	if err != nil {
@@ -430,11 +400,8 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		ServerData: result.ServerData,
 		Telemetry:  result.Telemetry,
 	}
-	if result.Error != nil {
-		out.Error = result.Error.Error()
-	}
-	if result.RetryHint != nil {
-		out.RetryHint = result.RetryHint
+	if result.Failure != nil {
+		out.Failure = result.Failure
 	}
 	if pause != nil {
 		out.Pause = pause
@@ -442,208 +409,47 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	return out, nil
 }
 
-// buildRetryHintFromValidation attempts to extract structured validation issues from
-// a generated ValidationError (emitted by tool codecs) and build a precise retry hint.
-// It returns the field anchors, a clarifying question, and the retry reason when
-// successful; otherwise ok is false.
-func buildRetryHintFromValidation(err error, toolName tools.Ident) ([]string, string, planner.RetryReason, bool) {
-	var ip interface {
+// buildToolFailureFromPayloadError converts a model-authored payload failure
+// into the canonical same-tool correction contract. Generated validation
+// issues remain structured data; the runtime does not reinterpret them into a
+// second handwritten validation or prompting language.
+func buildToolFailureFromPayloadError(err error, input rawjson.Message, spec tools.ToolSpec) *planner.ToolFailure {
+	var issuer interface {
 		Issues() []*tools.FieldIssue
 	}
-	if !errors.As(err, &ip) {
-		return nil, "", planner.RetryReasonInvalidArguments, false
+	var issues []*tools.FieldIssue
+	if errors.As(err, &issuer) {
+		issues = issuer.Issues()
 	}
-	issues := ip.Issues()
-	if len(issues) == 0 {
-		return nil, "", planner.RetryReasonInvalidArguments, false
-	}
-	var descs map[string]string
-	var described interface {
-		Descriptions() map[string]string
-	}
-	if errors.As(err, &described) {
-		descs = described.Descriptions()
-	}
-	fields := make([]string, 0, len(issues))
-	missing := make([]string, 0, len(issues))
-	typeIssues := make([]*tools.FieldIssue, 0, len(issues))
-	unknownIssues := make([]*tools.FieldIssue, 0, len(issues))
-	for _, is := range issues {
-		if is.Field == "" {
-			continue
-		}
-		if !slices.Contains(fields, is.Field) {
-			fields = append(fields, is.Field)
-		}
-		if is.Constraint == "missing_field" {
-			if !slices.Contains(missing, is.Field) {
-				missing = append(missing, is.Field)
-			}
-		}
-		if tools.HasInvalidFieldTypeMetadata(is) {
-			typeIssues = append(typeIssues, is)
-		}
-		if is.Constraint == "unknown_field" {
-			unknownIssues = append(unknownIssues, is)
-		}
-	}
-	if len(fields) == 0 {
-		return nil, "", planner.RetryReasonInvalidArguments, false
-	}
-	if len(typeIssues) > 0 {
-		return fields, tools.InvalidFieldTypeQuestion(typeIssues), planner.RetryReasonInvalidArguments, true
-	}
-	if len(unknownIssues) > 0 {
-		return fields, unknownFieldQuestion(unknownIssues, toolName), planner.RetryReasonInvalidArguments, true
-	}
-	// Build a concise, description-enriched question for up to three fields.
-	var question string
-	if n := len(fields); n > 0 {
-		max := n
-		if max > 3 {
-			max = 3
-		}
-		parts := make([]string, 0, max)
-		for i := 0; i < max; i++ {
-			f := fields[i]
-			label := f
-			if d, ok := descs[f]; ok && d != "" {
-				label = f + " (" + d + ")"
-			}
-			// If enum allowed values exist, append hint.
-			for _, is := range issues {
-				if is.Field == f && len(is.Allowed) > 0 {
-					label = label + " — one of: " + strings.Join(is.Allowed, ", ")
-					break
-				}
-			}
-			parts = append(parts, label)
-		}
-		list := strings.Join(parts, ", ")
-		if toolName != "" {
-			question = "I need additional information to run " + string(toolName) + ". Please provide: " + list + "."
-		} else {
-			question = "I need additional information. Please provide: " + list + "."
-		}
-	}
-	reason := planner.RetryReasonInvalidArguments
-	if len(missing) > 0 {
-		reason = planner.RetryReasonMissingFields
-	}
-	return fields, question, reason, true
-}
-
-func unknownFieldQuestion(issues []*tools.FieldIssue, toolName tools.Ident) string {
-	max := len(issues)
-	if max > 3 {
-		max = 3
-	}
-	parts := make([]string, 0, max)
-	for i := 0; i < max; i++ {
-		issue := issues[i]
-		part := fmt.Sprintf("remove `%s`", issue.Field)
-		if len(issue.Allowed) > 0 {
-			part += "; allowed fields at that object are: " + quotedFieldList(issue.Allowed)
-		}
-		parts = append(parts, part)
-	}
-	if toolName != "" {
-		return "The " + string(toolName) + " tool input includes fields outside its schema. Please " + strings.Join(parts, "; ") + "."
-	}
-	return "The tool input includes fields outside its schema. Please " + strings.Join(parts, "; ") + "."
-}
-
-func quotedFieldList(fields []string) string {
-	ordered := append([]string(nil), fields...)
-	slices.Sort(ordered)
-	quoted := make([]string, 0, len(ordered))
-	for _, field := range ordered {
-		quoted = append(quoted, "`"+field+"`")
-	}
-	return strings.Join(quoted, ", ")
-}
-
-// buildRetryHintFromDecodeError converts a tool payload decode failure into a
-// structured RetryHint. Payloads at this boundary are model-authored, so every
-// decode failure — JSON type mismatches, syntax errors, truncated payloads
-// (io.EOF / io.ErrUnexpectedEOF), or codec-specific errors — is a defect the
-// model can correct by resending the call; the hint restricts recovery to the
-// failing tool. Callers must pass only decode errors: routing configuration or
-// rendering errors here would misreport runtime bugs as model defects.
-//
-// When a payload example is available in the tool specs, the hint attaches it as
-// ExampleJSON so consumers can display a concrete, valid payload.
-func buildRetryHintFromDecodeError(err error, toolName tools.Ident, spec *tools.ToolSpec) *planner.RetryHint {
-	var (
-		typeErr   *json.UnmarshalTypeError
-		syntaxErr *json.SyntaxError
-		fields    []string
-		question  string
-	)
-
-	switch {
-	case errors.As(err, &typeErr):
-		field := typeErr.Field
-		if field == "" {
-			field = "$payload"
-		}
-		fields = []string{field}
-		question = fmt.Sprintf(
-			"I could not decode the %s tool input. The %s field has the wrong JSON shape. Please resend this tool call with a JSON object that matches the expected schema.",
-			toolName,
-			field,
-		)
-	case errors.As(err, &syntaxErr):
-		fields = []string{"$payload"}
-		question = fmt.Sprintf(
-			"I could not parse the %s tool input as JSON (syntax error near byte offset %d). Please resend this tool call with a valid JSON object payload.",
-			toolName,
-			syntaxErr.Offset,
-		)
-	default:
-		fields = []string{"$payload"}
-		question = fmt.Sprintf(
-			"I could not decode the %s tool input (%s). Please resend this tool call with a complete JSON object payload that matches the expected schema.",
-			toolName,
-			err,
-		)
-	}
-
-	var example rawjson.Message
-	if spec != nil && len(spec.Payload.ExampleJSON) > 0 {
-		example = append(rawjson.Message(nil), spec.Payload.ExampleJSON...)
-	}
-
-	return &planner.RetryHint{
-		Reason:             planner.RetryReasonMissingFields,
-		Tool:               toolName,
-		RestrictToTool:     true,
-		MissingFields:      fields,
-		ExampleJSON:        example,
-		ClarifyingQuestion: question,
+	return &planner.ToolFailure{
+		Kind:  planner.FailureInvalidCall,
+		Error: planner.ToolErrorFromError(err),
+		Recovery: planner.RecoveryDirective{
+			Action:      planner.RecoveryCorrectCall,
+			Issues:      issues,
+			PriorInput:  append(rawjson.Message(nil), input...),
+			ExampleJSON: append(rawjson.Message(nil), spec.Payload.ExampleJSON...),
+		},
 	}
 }
 
-// buildRetryHintFromAgentToolRequestError classifies agent-tool request
+// buildToolFailureFromAgentToolRequestError classifies agent-tool request
 // failures raised before the child run starts. Model payload defects —
 // structured validation failures and payload decode failures marked by
-// agentToolPayloadError — produce a restricted retry hint so the parent run
+// agentToolPayloadError — produce a correction directive so the parent run
 // feeds the failure back to the model. Runtime configuration errors (missing
 // ToolSpec registrations, prompt rendering failures) return nil and stay
 // terminal workflow errors.
-func buildRetryHintFromAgentToolRequestError(err error, toolName tools.Ident, spec *tools.ToolSpec) *planner.RetryHint {
-	if fields, question, reason, ok := buildRetryHintFromValidation(err, toolName); ok {
-		return &planner.RetryHint{
-			Reason:             reason,
-			Tool:               toolName,
-			RestrictToTool:     true,
-			MissingFields:      fields,
-			ClarifyingQuestion: question,
-		}
+func buildToolFailureFromAgentToolRequestError(err error, input rawjson.Message, spec tools.ToolSpec) *planner.ToolFailure {
+	var issuer interface {
+		Issues() []*tools.FieldIssue
+	}
+	if errors.As(err, &issuer) {
+		return buildToolFailureFromPayloadError(err, input, spec)
 	}
 	var payloadErr *agentToolPayloadError
 	if errors.As(err, &payloadErr) {
-		return buildRetryHintFromDecodeError(payloadErr.cause, toolName, spec)
+		return buildToolFailureFromPayloadError(payloadErr.cause, input, spec)
 	}
 	return nil
 }
@@ -769,12 +575,6 @@ func (r *Runtime) marshalToolValue(ctx context.Context, toolName tools.Ident, va
 
 // unmarshalToolValue decodes a tool value using the registered codec or standard JSON.
 func (r *Runtime) unmarshalToolValue(ctx context.Context, toolName tools.Ident, raw json.RawMessage, payload bool) (any, error) {
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	if payload {
-		raw = stripReservedToolPayloadFields(raw)
-	}
 	codec, ok := r.toolCodec(toolName, payload)
 	if ok && codec.FromJSON != nil {
 		v, err := codec.FromJSON(raw)
@@ -790,33 +590,6 @@ func (r *Runtime) unmarshalToolValue(ctx context.Context, toolName tools.Ident, 
 	}
 	r.logger.Error(ctx, "no codec found for tool", "tool", toolName, "payload", payload)
 	return nil, fmt.Errorf("no codec found for tool %s", toolName)
-}
-
-// stripReservedToolPayloadFields removes runtime-owned controls before
-// generated tool payload codecs enforce the authored schema. `server_data` is
-// not part of any tool's domain payload; sidecar emission is owned by tool
-// implementation contracts such as explicit render flags or result fields.
-func stripReservedToolPayloadFields(raw json.RawMessage) json.RawMessage {
-	if !bytes.Contains(raw, []byte(`"server_data"`)) {
-		return raw
-	}
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return raw
-	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(trimmed, &obj); err != nil {
-		return raw
-	}
-	if _, ok := obj["server_data"]; !ok {
-		return raw
-	}
-	delete(obj, "server_data")
-	out, err := json.Marshal(obj)
-	if err != nil {
-		return raw
-	}
-	return out
 }
 
 // toolCodec retrieves the JSON codec for a tool's payload or result.

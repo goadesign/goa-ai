@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -19,6 +20,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -360,8 +362,8 @@ func (r *Runtime) validateFinalizationTerminalToolRecords(records []stepToolReco
 		if record.pause != nil {
 			return fmt.Errorf("finalization terminal tool step cannot pause on tool %q", record.call.Name)
 		}
-		if record.result.Error != nil {
-			return fmt.Errorf("finalization terminal tool step failed on tool %q: %w", record.call.Name, record.result.Error)
+		if record.result.Failure != nil {
+			return fmt.Errorf("finalization terminal tool step failed on tool %q: %w", record.call.Name, record.result.Failure.Error)
 		}
 		spec, ok := r.toolSpec(record.result.Name)
 		if !ok {
@@ -524,7 +526,7 @@ func (r *Runtime) handleInterrupts(
 	return nil
 }
 
-// handleMissingFieldsPolicy inspects tool results for a RetryHint indicating missing
+// handleMissingFieldsPolicy inspects generated validation issues for missing
 // required fields and applies the agent RunPolicy.OnMissingFields behavior:
 //
 //   - MissingFieldsFinalize: immediately finalize by requesting a tool-free final answer
@@ -532,8 +534,8 @@ func (r *Runtime) handleInterrupts(
 //   - MissingFieldsAwaitClarification: when durable (interrupt controller present), emit
 //     an await_clarification event, pause the run, and wait indefinitely for operator input.
 //     On resume, append the user answer to base PlanInput so the next turn can proceed.
-//   - MissingFieldsResume (or unspecified): do nothing; the planner will see RetryHints
-//     and may choose how to proceed. Returns handled=false.
+//   - MissingFieldsResume (or unspecified): do nothing; the planner will see the
+//     correction directive and may choose how to proceed. Returns handled=false.
 //
 // The function returns:
 //   - out: non-nil only when finalization occurred
@@ -556,24 +558,32 @@ func (r *Runtime) handleMissingFieldsPolicy(
 		return nil, nil
 	}
 	ctx := wfCtx.Context()
-	// Find first result with missing-fields hint and capture tool context.
+	// Find the first same-tool correction with generated missing-field issues.
 	var (
-		mf          *planner.RetryHint
+		missing     []string
+		example     rawjson.Message
 		triggerTool tools.Ident
 		triggerCall string
 	)
 	for _, tr := range results {
-		if tr == nil || tr.RetryHint == nil {
+		if tr == nil ||
+			tr.Failure == nil ||
+			tr.Failure.Recovery.Action != planner.RecoveryCorrectCall {
 			continue
 		}
-		if tr.RetryHint.Reason == planner.RetryReasonMissingFields {
-			mf = tr.RetryHint
+		for _, issue := range tr.Failure.Recovery.Issues {
+			if issue.Constraint == "missing_field" {
+				missing = append(missing, issue.Field)
+			}
+		}
+		if len(missing) > 0 {
+			example = tr.Failure.Recovery.ExampleJSON
 			triggerTool = tr.Name
 			triggerCall = tr.ToolCallID
 			break
 		}
 	}
-	if mf == nil {
+	if len(missing) == 0 {
 		return nil, nil
 	}
 	switch reg.Policy.OnMissingFields {
@@ -601,19 +611,19 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	case MissingFieldsAwaitClarification:
 		// Generate deterministic await ID for correlation safety.
 		awaitID := generateDeterministicAwaitID(base.RunContext.RunID, base.RunContext.TurnID, triggerTool, triggerCall)
-		var restrict tools.Ident
-		if mf.RestrictToTool {
-			restrict = mf.Tool
+		question, err := r.missingFieldsQuestion(triggerTool, missing)
+		if err != nil {
+			return nil, err
 		}
 		if err := r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
 			base.RunContext.RunID,
 			input.AgentID,
 			base.RunContext.SessionID,
 			awaitID,
-			mf.ClarifyingQuestion,
-			mf.MissingFields,
-			restrict,
-			mf.ExampleJSON,
+			question,
+			missing,
+			triggerTool,
+			example,
 		), turnID); err != nil {
 			return nil, err
 		}
@@ -691,9 +701,31 @@ func (r *Runtime) handleMissingFieldsPolicy(
 		return nil, nil
 	case MissingFieldsResume:
 		return nil, nil
-	default:
-		return nil, nil
 	}
+	panic("unreachable missing-fields action")
+}
+
+// missingFieldsQuestion renders a user-facing clarification request from the
+// generated missing-field issues and descriptions owned by the tool payload
+// contract.
+func (r *Runtime) missingFieldsQuestion(tool tools.Ident, fields []string) (string, error) {
+	spec, ok := r.toolSpec(tool)
+	if !ok {
+		return "", fmt.Errorf("missing ToolSpec for clarification tool %q", tool)
+	}
+	var question strings.Builder
+	question.WriteString("I need a little more information before I can continue:")
+	for _, field := range fields {
+		description, ok := spec.Payload.FieldDescriptions[field]
+		if !ok || description == "" {
+			return "", fmt.Errorf("missing generated description for clarification field %q on tool %q", field, tool)
+		}
+		question.WriteString("\n\n- `")
+		question.WriteString(field)
+		question.WriteString("`: ")
+		question.WriteString(description)
+	}
+	return question.String(), nil
 }
 
 // errRunSessionEnded terminates the run loop when a planner activity observes

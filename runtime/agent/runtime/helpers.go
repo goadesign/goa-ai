@@ -251,8 +251,7 @@ func cloneMetadata(src map[string]any) map[string]any {
 	return dst
 }
 
-// cloneToolResults creates a shallow copy of a tool result slice by copying the
-// ToolResult struct values. It does not deep-copy nested fields.
+// cloneToolResults copies tool results before workflow state owns the batch.
 func cloneToolResults(src []*planner.ToolResult) []*planner.ToolResult {
 	if len(src) == 0 {
 		return nil
@@ -264,6 +263,7 @@ func cloneToolResults(src []*planner.ToolResult) []*planner.ToolResult {
 			continue
 		}
 		cp := *tr
+		cp.Failure = planner.CloneToolFailure(tr.Failure)
 		out = append(out, &cp)
 	}
 	return out
@@ -588,12 +588,6 @@ func decrementCap(current int, delta int) int {
 	return result
 }
 
-// capFailures counts tool failures that should decrement the consecutive-failure cap.
-//
-// Contract:
-//   - Every tool result error counts as one failed attempt.
-//   - Retry hints may shape the next planner attempt, but they do not make the
-//
 // budgetedBatchOutcome classifies a step batch's budgeted (non-bookkeeping)
 // results for failure-streak accounting: progress reports at least one
 // budgeted success and failed reports at least one budgeted failure.
@@ -602,7 +596,7 @@ func (r *Runtime) budgetedBatchOutcome(records []stepToolRecord) (progress, fail
 		if record.result == nil || r.isBookkeeping(record.call.Name) {
 			continue
 		}
-		if record.result.Error != nil {
+		if record.result.Failure != nil {
 			failed = true
 		} else {
 			progress = true
@@ -833,10 +827,11 @@ func filterToolCalls(calls []planner.ToolRequest, allowed []tools.Ident) []plann
 // Server data must remain attached to the tool events that produced it so UIs and
 // sinks can render/ingest it at the correct node in nested tool trees.
 //
-// Error propagation: If the nested agent executed tools and ALL of them failed, the
-// ToolResult.Error field is set with a summary. This allows the parent planner to
-// react appropriately (retry, skip, or abort) rather than treating a failed nested
-// agent as a successful tool execution.
+// Error propagation: If every nested tool failed, the parent receives one
+// parent-scoped failure. A terminal child failure remains terminal across the
+// agent-tool boundary; otherwise the parent may replan. Child correction issues
+// are intentionally excluded because the parent cannot call the child's tool
+// schemas.
 //
 // Planner notes are currently discarded. Future enhancement: include notes as structured
 // metadata or append them to the payload content for visibility to the parent planner.
@@ -858,7 +853,7 @@ func ConvertRunOutputToToolResult(toolName tools.Ident, output *RunOutput) plann
 		var totalDurationMs int64
 		var models []string
 		var failedCount int
-		var lastError error
+		var dominantFailure *planner.ToolFailure
 		modelSeen := make(map[string]bool)
 
 		for _, event := range output.ToolEvents {
@@ -871,18 +866,33 @@ func ConvertRunOutputToToolResult(toolName tools.Ident, output *RunOutput) plann
 				}
 			}
 			// Track tool failures
-			if event.Error != nil {
+			if event.Failure != nil {
 				failedCount++
-				lastError = event.Error
+				if dominantFailure == nil ||
+					event.Failure.Recovery.Action == planner.RecoveryFinish {
+					dominantFailure = event.Failure
+				}
 			}
 		}
 
-		// If ALL tools failed, propagate error to parent planner
+		// If every tool failed, preserve terminal recovery across the parent
+		// boundary. Child-scoped correction cannot be exposed to the parent, so
+		// every non-terminal failure becomes a parent replan.
 		if failedCount > 0 && failedCount == len(output.ToolEvents) {
+			message := fmt.Sprintf("agent-tool %q: all %d nested tools failed", toolName, failedCount)
 			if failedCount == 1 {
-				result.Error = planner.NewToolErrorWithCause(fmt.Sprintf("agent-tool %q: nested tool failed", toolName), lastError)
-			} else {
-				result.Error = planner.NewToolErrorWithCause(fmt.Sprintf("agent-tool %q: all %d nested tools failed", toolName, failedCount), lastError)
+				message = fmt.Sprintf("agent-tool %q: nested tool failed", toolName)
+			}
+			action := planner.RecoveryReplan
+			if dominantFailure.Recovery.Action == planner.RecoveryFinish {
+				action = planner.RecoveryFinish
+			}
+			result.Failure = &planner.ToolFailure{
+				Kind:  dominantFailure.Kind,
+				Error: planner.NewToolErrorWithCause(message, dominantFailure.Error),
+				Recovery: planner.RecoveryDirective{
+					Action: action,
+				},
 			}
 		}
 

@@ -127,13 +127,15 @@ The runtime keeps execution policy and planner intent separate:
 | --- | --- |
 | A cap or deadline requires finalization | `PlanResumeInput.Finalize` |
 | A successful `TerminalRun` tool completed | End the run without another planner turn |
-| Any failed tool has a `RetryHint` whose `AllowsRetry()` is true | Normal repair turn |
-| `SynthesizeAfterTools` is true and no failure allows retry | `PlanResumeInput.SynthesisOnly` |
+| Any failed tool has a `ToolFailure` whose recovery action permits tools | Runtime-enforced correction or replan turn |
+| `SynthesizeAfterTools` is true and no failure permits tools | `PlanResumeInput.SynthesisOnly` |
 | Otherwise | Normal continuation turn |
 
-This order makes recovery explicit rather than presence-based. `RetryHint` may
-also carry terminal classification such as `timeout`; callers use
-`AllowsRetry()` instead of treating every non-nil hint as permission to retry.
+This order makes recovery explicit rather than presence-based. `ToolFailure`
+classifies why execution failed independently from its `RecoveryDirective`:
+`correct_call` requires a changed payload for the same tool, `replan` permits a
+different call or final answer but forbids exact repetition, and `finish`
+forbids more tools. The runtime validates and enforces those transitions.
 Synthesis-after-tools batches must contain at least one budgeted tool and cannot
 contain a `TerminalRun` tool, ensuring the existing step classification always
 reaches the appropriate planner resume. The resume activity validates the
@@ -353,7 +355,7 @@ redeploys.
   They consume neither retrieval budget nor consecutive-failure allowance.
   Successful bookkeeping results are omitted only from compact `ToolOutputs`
   and do not force another planner turn. A failed bookkeeping result enters a
-  repair turn only when its `RetryHint.AllowsRetry()` is true. A bookkeeping-only
+  repair turn only when its `ToolFailure` permits another tool turn. A bookkeeping-only
   turn must otherwise resolve in the same turn via a terminal outcome or an
   await/pause handshake.
 - **Forced finalization control plane**: when runtime caps or deadlines force
@@ -430,9 +432,9 @@ that UIs and stream bridges can consume without heuristics.
     - `retryable`: whether retrying may succeed without changing input
     - `error`: **user-safe** message suitable for direct display
     - `debug_error`: raw error string for logs/diagnostics (not for UI)
-  - Invalid-argument tool failures may carry a planner retry hint. Timeout,
-    cancellation, and exhausted run budget are terminal and carry no retry
-    hint.
+  - Tool-execution events carry a `ToolFailure` with an independent failure kind
+    and recovery action. `correct_call` and `replan` permit runtime-constrained
+    tool turns; `finish` is terminal for tool execution.
 
 - **Terminal identity**
   - `RunCompletedEvent.Labels` carries the run-scoped labels provided at run

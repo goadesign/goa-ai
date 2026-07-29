@@ -139,10 +139,10 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
     }
     return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
         if call == nil {
-            return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("tool request is nil")}), nil
+            return runtime.Executed(failedServiceToolResult("", errors.New("tool request is nil"))), nil
         }
         if meta == nil {
-            return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("tool call meta is nil")}), nil
+            return runtime.Executed(failedServiceToolResult(call.Name, errors.New("tool call meta is nil"))), nil
         }
         switch call.Name {
         {{- range .Toolset.Tools }}
@@ -164,11 +164,19 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             {
                 val, err := {{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}PayloadCodec.FromJSON(call.Payload)
                 if err != nil {
-                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
+                    return runtime.Executed(invalidServiceToolCall(
+                        call,
+                        err,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                    )), nil
                 }
                 {{- if .Injected }}
                 if err := {{ $.Toolset.SpecsPackageName }}.Inject{{ .ConstName }}(val, *meta, call.Labels); err != nil {
-                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
+                    return runtime.Executed(failedServiceCallResult(
+                        call,
+                        err,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                    )), nil
                 }
                 {{- end }}
                 toolArgs = val
@@ -179,7 +187,11 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                 var err error
                 methodIn, err = cfg.mapPayload(call.Name, toolArgs, meta)
                 if err != nil {
-                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
+                    return runtime.Executed(failedServiceCallResult(
+                        call,
+                        err,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                    )), nil
                 }
             } else {
                 {{- if .MethodPayloadTypeRef }}
@@ -192,29 +204,31 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             }
             for _, inj := range cfg.injectors {
                 if err := inj.Inject(ctx, methodIn, meta); err != nil {
-                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
+                    return runtime.Executed(failedServiceCallResult(
+                        call,
+                        err,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                    )), nil
                 }
             }
             methodOut, err := caller(ctx, methodIn)
             if err != nil {
-                tr := &planner.ToolResult{
-                    Name:  call.Name,
-                    Error: planner.ToolErrorFromError(err),
-                }
-                var provider planner.RetryHintProvider
-                if errors.As(err, &provider) {
-                    if hint := provider.RetryHint(call.Name); hint != nil {
-                        tr.RetryHint = hint
-                    }
-                }
-                return runtime.Executed(tr), nil
+                return runtime.Executed(failedServiceCallResult(
+                    call,
+                    err,
+                    {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                )), nil
             }
             var result any
             if cfg.mapResult != nil {
                 var e error
                 result, e = cfg.mapResult(call.Name, methodOut, meta)
                 if e != nil {
-                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(e)}), nil
+                    return runtime.Executed(failedServiceCallResult(
+                        call,
+                        e,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                    )), nil
                 }
             } else {
                 {{- if .HasResult }}
@@ -228,10 +242,11 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             {{- if or $hasBoundsProjection $toolHasSource }}
             mr, ok := methodOut.({{ .MethodResultTypeRef }})
             if !ok {
-                return runtime.Executed(&planner.ToolResult{
-                    Name:  call.Name,
-                    Error: planner.NewToolError(fmt.Sprintf("unexpected method result type for %q: %T", call.Name, methodOut)),
-                }), nil
+                return runtime.Executed(failedServiceCallResult(
+                    call,
+                    fmt.Errorf("unexpected method result type for %q: %T", call.Name, methodOut),
+                    {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                )), nil
             }
             {{- end }}
             {{- if $hasBoundsProjection }}
@@ -246,7 +261,11 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                 data := {{ $.Toolset.SpecsPackageName }}.Init{{ $tool.ConstName }}{{ goify .Kind true }}ServerData(mr.{{ goify .MethodResultField true }})
                 dataJSON, err := {{ $.Toolset.SpecsPackageName }}.{{ $tool.ConstName }}{{ goify .Kind true }}ServerDataCodec.ToJSON(data)
                 if err != nil {
-                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
+                    return runtime.Executed(failedServiceCallResult(
+                        call,
+                        err,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ $tool.ConstName }}.Payload.ExampleJSON,
+                    )), nil
                 }
                 if string(dataJSON) != "null" {
                     serverItems = append(serverItems, &toolregistry.ServerDataItem{
@@ -262,7 +281,11 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             if len(serverItems) > 0 {
                 b, err := json.Marshal(serverItems)
                 if err != nil {
-                    return runtime.Executed(&planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}), nil
+                    return runtime.Executed(failedServiceCallResult(
+                        call,
+                        err,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                    )), nil
                 }
                 serverData = rawjson.Message(b)
             }
@@ -280,12 +303,70 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         {{- end }}
         {{- end }}
         default:
-            return runtime.Executed(&planner.ToolResult{
-                Name:  call.Name,
-                Error: planner.NewToolError(fmt.Sprintf("unknown tool %q for toolset %q", call.Name, "{{ .Toolset.QualifiedName }}")),
-            }), nil
+            return runtime.Executed(failedServiceToolResult(
+                call.Name,
+                fmt.Errorf("unknown tool %q for toolset %q", call.Name, "{{ .Toolset.QualifiedName }}"),
+            )), nil
         }
     })
+}
+
+// failedServiceToolResult converts a service-executor invariant failure into a
+// terminal internal tool failure.
+func failedServiceToolResult(name tools.Ident, err error) *planner.ToolResult {
+    return &planner.ToolResult{
+        Name: name,
+        Failure: &planner.ToolFailure{
+            Kind:  planner.FailureInternal,
+            Error: planner.ToolErrorFromError(err),
+            Recovery: planner.RecoveryDirective{
+                Action: planner.RecoveryFinish,
+            },
+        },
+    }
+}
+
+// failedServiceCallResult applies a service-owned failure classification at
+// every stage of an admitted call and attaches call-owned correction data.
+func failedServiceCallResult(call *planner.ToolRequest, err error, example rawjson.Message) *planner.ToolResult {
+    var provider planner.ToolFailureProvider
+    if !errors.As(err, &provider) {
+        return failedServiceToolResult(call.Name, err)
+    }
+    failure := planner.CloneToolFailure(provider.ToolFailure(call.Name))
+    if failure.Recovery.Action == planner.RecoveryCorrectCall {
+        failure.Recovery.PriorInput = append(rawjson.Message(nil), call.Payload...)
+        failure.Recovery.ExampleJSON = append(rawjson.Message(nil), example...)
+    }
+    return &planner.ToolResult{
+        Name:    call.Name,
+        Failure: failure,
+    }
+}
+
+// invalidServiceToolCall preserves generated validation issues and canonical
+// payload metadata for a same-tool correction turn.
+func invalidServiceToolCall(call *planner.ToolRequest, err error, example rawjson.Message) *planner.ToolResult {
+    var issuer interface {
+        Issues() []*tools.FieldIssue
+    }
+    var issues []*tools.FieldIssue
+    if errors.As(err, &issuer) {
+        issues = issuer.Issues()
+    }
+    return &planner.ToolResult{
+        Name: call.Name,
+        Failure: &planner.ToolFailure{
+            Kind:  planner.FailureInvalidCall,
+            Error: planner.ToolErrorFromError(err),
+            Recovery: planner.RecoveryDirective{
+                Action:      planner.RecoveryCorrectCall,
+                Issues:      issues,
+                PriorInput:  append(rawjson.Message(nil), call.Payload...),
+                ExampleJSON: example,
+            },
+        },
+    }
 }
 
 {{- range .Toolset.Tools }}

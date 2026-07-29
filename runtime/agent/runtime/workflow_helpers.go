@@ -141,9 +141,11 @@ func (r *Runtime) appendUserToolRecordResults(
 
 	parts := make([]model.Part, 0, len(records))
 	var reminders []string
+	recoveryAction, hasFailure := dominantRecoveryAction(records)
 	for _, record := range records {
 		call := record.call
 		tr := record.result
+		spec, hasSpec := r.toolSpec(tr.Name)
 		content, err := r.toolResultContent(&call, tr)
 		if err != nil {
 			return err
@@ -151,15 +153,23 @@ func (r *Runtime) appendUserToolRecordResults(
 		parts = append(parts, model.ToolResultPart{
 			ToolUseID: tr.ToolCallID,
 			Content:   content,
-			IsError:   tr.Error != nil,
+			IsError:   tr.Failure != nil,
 		})
-		if spec, ok := r.toolSpec(tr.Name); ok && spec.ResultReminder != "" {
+		if hasSpec && spec.ResultReminder != "" && tr.Failure == nil {
 			reminders = append(reminders, spec.ResultReminder)
 		}
-		if rem := retryHintReminder(tr); rem != "" {
-			reminders = append(reminders, rem)
+		if hasFailure &&
+			tr.Failure != nil &&
+			tr.Failure.Recovery.Action == recoveryAction {
+			var descriptions map[string]string
+			if hasSpec {
+				descriptions = spec.Payload.FieldDescriptions
+			}
+			if rem := toolFailureReminder(tr, descriptions); rem != "" {
+				reminders = append(reminders, rem)
+			}
 		}
-		if spec, ok := r.toolSpec(tr.Name); ok {
+		if hasSpec {
 			cursorField := ""
 			if spec.Bounds != nil && spec.Bounds.Paging != nil {
 				cursorField = spec.Bounds.Paging.CursorField
@@ -243,7 +253,7 @@ func (r *Runtime) toolResultRequiresResume(call planner.ToolRequest, result *pla
 	if !r.isBookkeeping(call.Name) {
 		return true
 	}
-	return result != nil && result.Error != nil && result.RetryHint.AllowsRetry()
+	return result != nil && result.Failure != nil && result.Failure.AllowsToolTurn()
 }
 
 func (r *Runtime) toolResultContent(call *planner.ToolRequest, tr *planner.ToolResult) (any, error) {
@@ -259,8 +269,8 @@ func (r *Runtime) toolResultContent(call *planner.ToolRequest, tr *planner.ToolR
 		resultJSON = rawjson.Message(raw)
 	}
 	errorMessage := ""
-	if tr.Error != nil {
-		errorMessage = tr.Error.Error()
+	if tr.Failure != nil {
+		errorMessage = tr.Failure.Error.Error()
 	}
 	preview, err := formatToolResultPreviewForCall(context.Background(), r, call, tr)
 	if err != nil {
