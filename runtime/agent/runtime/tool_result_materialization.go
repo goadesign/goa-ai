@@ -16,6 +16,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent"
@@ -33,21 +34,36 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call planner.ToolRe
 	if !ok {
 		return nil, fmt.Errorf("tool %q is not registered", call.Name)
 	}
+	if result == nil {
+		return nil, fmt.Errorf("nil tool result for %q (%s)", call.Name, call.ToolCallID)
+	}
+	if result.Name == "" {
+		result.Name = call.Name
+	}
+	if result.Failure != nil {
+		if err := r.enforceToolResultContracts(spec, call, result); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+	if result.Result == nil && spec.Result.Codec.ToJSON != nil {
+		setMalformedToolResult(result, call, errors.New("registered tool result is required"))
+		return nil, nil
+	}
 	if err := r.applyResultMaterializer(ctx, spec, call, result); err != nil {
-		return nil, err
+		setMalformedToolResult(result, call, err)
+		return nil, nil
 	}
 	if err := r.enforceToolResultContracts(spec, call, result); err != nil {
-		return nil, err
+		setMalformedToolResult(result, call, err)
+		return nil, nil
 	}
-	var resultJSON rawjson.Message
-	if result.Error == nil {
-		encoded, err := r.marshalToolValue(ctx, call.Name, result.Result, result.Bounds)
-		if err != nil {
-			return nil, fmt.Errorf("encode %s tool result: %w", call.Name, err)
-		}
-		resultJSON = rawjson.Message(encoded)
+	encoded, err := r.marshalToolValue(ctx, call.Name, result.Result, result.Bounds)
+	if err != nil {
+		setMalformedToolResult(result, call, fmt.Errorf("encode %s tool result: %w", call.Name, err))
+		return nil, nil
 	}
-	return resultJSON, nil
+	return rawjson.Message(encoded), nil
 }
 
 // materializeToolExecutionResult validates the runtime-owned execution wrapper,
@@ -77,12 +93,6 @@ func (r *Runtime) materializeToolExecutionResult(
 // applyResultMaterializer invokes the toolset-owned typed result materializer
 // when the toolset registered one.
 func (r *Runtime) applyResultMaterializer(ctx context.Context, spec tools.ToolSpec, call planner.ToolRequest, result *planner.ToolResult) error {
-	if result == nil {
-		return fmt.Errorf("nil tool result for %q (%s)", call.Name, call.ToolCallID)
-	}
-	if result.Name == "" {
-		result.Name = call.Name
-	}
 	r.mu.RLock()
 	reg, ok := r.toolsets[spec.Toolset]
 	r.mu.RUnlock()
@@ -133,36 +143,76 @@ func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolS
 	if item == nil {
 		return nil, nil, fmt.Errorf("await: nil tool result")
 	}
-	resultProvided := hasNonNullJSON(item.Result.RawMessage())
-	if item.Error != nil && resultProvided {
-		return nil, nil, fmt.Errorf("await: tool result for %s is invalid: error and result are both set", call.Name)
+	if (item.Success == nil) == (item.Failure == nil) {
+		return nil, nil, fmt.Errorf("await: tool result for %s must contain exactly one success or failure", call.Name)
 	}
-	if item.Error != nil && item.Bounds != nil {
-		return nil, nil, fmt.Errorf("await: tool result for %s is invalid: error and bounds are both set", call.Name)
-	}
-	bounds := cloneProvidedToolBounds(item.Bounds)
+	var bounds *agent.Bounds
 	var decoded any
 	var err error
-	if resultProvided && item.Error == nil {
-		decoded, err = spec.Result.Codec.FromJSON(item.Result.RawMessage())
-		if err != nil {
-			return nil, nil, fmt.Errorf("await: decode tool result for %s: %w", call.Name, err)
-		}
+	if item.Success != nil {
+		bounds = cloneProvidedToolBounds(item.Success.Bounds)
+		decoded, err = spec.Result.Codec.FromJSON(item.Success.Result.RawMessage())
 	}
 	result := &planner.ToolResult{
 		Name:       call.Name,
 		Result:     decoded,
 		ServerData: nil,
 		Bounds:     bounds,
-		Error:      item.Error,
-		RetryHint:  item.RetryHint,
+		Failure:    canonicalProvidedToolFailure(spec, call, item.Failure),
 		ToolCallID: call.ToolCallID,
+	}
+	if err != nil {
+		setMalformedToolResult(result, call, fmt.Errorf("decode provided result for %s: %w", call.Name, err))
 	}
 	resultJSON, err := r.materializeToolResult(ctx, call, result)
 	if err != nil {
 		return nil, nil, fmt.Errorf("await: %w", err)
 	}
 	return result, resultJSON, nil
+}
+
+// setMalformedToolResult replaces a nominal success that violated its
+// registered result contract with the terminal failure observed by the model.
+func setMalformedToolResult(result *planner.ToolResult, call planner.ToolRequest, cause error) {
+	result.Name = call.Name
+	result.Result = nil
+	result.Bounds = nil
+	result.ResultBytes = 0
+	result.ResultOmitted = false
+	result.ResultOmittedReason = ""
+	result.Failure = &planner.ToolFailure{
+		Kind: planner.FailureMalformedResult,
+		Error: planner.NewToolErrorWithCause(
+			fmt.Sprintf("tool %s returned a malformed result", call.Name),
+			cause,
+		),
+		Recovery: planner.RecoveryDirective{
+			Action: planner.RecoveryFinish,
+		},
+	}
+}
+
+// canonicalProvidedToolFailure combines external failure facts with call-owned
+// correction metadata before the canonical result contract is validated.
+func canonicalProvidedToolFailure(spec tools.ToolSpec, call planner.ToolRequest, in *api.ProvidedToolFailure) *planner.ToolFailure {
+	if in == nil {
+		return nil
+	}
+	failure := &planner.ToolFailure{
+		Kind: in.Kind,
+		Error: &planner.ToolError{
+			Message: in.Message,
+		},
+		Recovery: planner.RecoveryDirective{
+			Action: in.Action,
+			Issues: tools.CloneFieldIssues(in.Issues),
+		},
+	}
+	if in.Action == planner.RecoveryCorrectCall {
+		failure.Recovery.PriorInput = append(rawjson.Message(nil), call.Payload...)
+		failure.Recovery.ExampleJSON = append(rawjson.Message(nil), spec.Payload.ExampleJSON...)
+	}
+	return failure
 }
 
 // cloneProvidedToolBounds copies provided bounds metadata into an internal

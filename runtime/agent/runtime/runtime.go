@@ -370,11 +370,6 @@ type (
 		// render concise result previews.
 		ResultHints map[tools.Ident]*template.Template
 
-		// PayloadAdapter normalizes or enriches raw JSON payloads prior to decoding.
-		// The adapter is applied exactly once at the activity boundary, or before
-		// inline execution for Inline toolsets. When nil, no adaptation is applied.
-		PayloadAdapter func(ctx context.Context, meta ToolCallMeta, tool tools.Ident, raw json.RawMessage) (json.RawMessage, error)
-
 		// ResultMaterializer enriches typed tool results before the runtime encodes
 		// them for hooks, workflow boundaries, or callers. When nil, the runtime
 		// publishes the tool result exactly as produced by the executor.
@@ -850,8 +845,8 @@ func newFromOptions(opts Options) *Runtime {
 				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
 			case *hooks.ToolResultReceivedEvent:
 				errorMessage := ""
-				if evt.Error != nil {
-					errorMessage = evt.Error.Error()
+				if evt.Failure != nil {
+					errorMessage = evt.Failure.Error.Error()
 				}
 				memEvent = memory.NewEvent(time.UnixMilli(evt.Timestamp()), memory.ToolResultData{
 					ToolCallID:       evt.ToolCallID,
@@ -1070,6 +1065,9 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	}
 	if reg.ResumeActivityName == "" {
 		return fmt.Errorf("%w: missing resume activity name", ErrInvalidConfig)
+	}
+	if err := validateRunPolicy(reg.Policy); err != nil {
+		return err
 	}
 	if err := validateSpecs(reg.Specs, reg.ToolMetadataLookup); err != nil {
 		return err
@@ -2102,6 +2100,17 @@ func (r *Runtime) OverridePolicy(agentID agent.Ident, delta RunPolicy) error {
 	}
 	r.agents[agentID] = reg
 	return nil
+}
+
+// validateRunPolicy rejects configuration values outside the runtime-owned
+// transition vocabulary before an agent registration becomes executable.
+func validateRunPolicy(policy RunPolicy) error {
+	switch policy.OnMissingFields {
+	case "", MissingFieldsFinalize, MissingFieldsAwaitClarification, MissingFieldsResume:
+		return nil
+	default:
+		return fmt.Errorf("%w: unknown missing-fields action %q", ErrInvalidConfig, policy.OnMissingFields)
+	}
 }
 
 func (r *Runtime) storeWorkflowHandle(runID string, handle engine.WorkflowHandle) {

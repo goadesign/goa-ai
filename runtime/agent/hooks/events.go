@@ -12,7 +12,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
-	"goa.design/goa-ai/runtime/agent/toolerrors"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"time"
 
@@ -271,13 +270,9 @@ type (
 		// Telemetry holds structured observability metadata (tokens, model, retries).
 		// Nil if no telemetry was collected.
 		Telemetry *telemetry.ToolTelemetry
-		// RetryHint carries structured guidance for recovering from tool failures.
-		// It is typically populated for validation/repair flows (missing fields,
-		// invalid arguments) and surfaced to clients so they can prompt the user
-		// and retry deterministically.
-		RetryHint *planner.RetryHint
-		// Error contains any error returned by the tool execution. Nil on success.
-		Error *toolerrors.ToolError
+		// Failure is the canonical failure classification and recovery contract.
+		// Nil on success.
+		Failure *planner.ToolFailure
 	}
 
 	// ToolCallUpdatedEvent fires when a tool call's metadata is updated after
@@ -361,18 +356,6 @@ type (
 		baseEvent
 		// Message is the canonical assistant transcript message that was just committed.
 		Message *model.Message
-	}
-
-	// RetryHintIssuedEvent fires when the planner or runtime suggests a retry
-	// policy change, such as disabling a failing tool or adjusting caps.
-	RetryHintIssuedEvent struct {
-		baseEvent
-		// Reason summarizes why the retry hint was issued (e.g., "invalid_arguments").
-		Reason string
-		// ToolName identifies the tool involved in the failure, if applicable.
-		ToolName tools.Ident
-		// Message provides human-readable guidance for the retry adjustment.
-		Message string
 	}
 
 	// MemoryAppendedEvent fires when new memory entries are successfully
@@ -934,7 +917,7 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 // result JSON and server-side sidecars are stored exactly once here; duration is
 // the wall-clock execution time; telemetry carries structured observability
 // metadata (nil if not collected).
-func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, resultBytes int, resultOmitted bool, resultOmittedReason string, serverData rawjson.Message, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, retryHint *planner.RetryHint, err *toolerrors.ToolError) *ToolResultReceivedEvent {
+func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, resultBytes int, resultOmitted bool, resultOmittedReason string, serverData rawjson.Message, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, failure *planner.ToolFailure) *ToolResultReceivedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &ToolResultReceivedEvent{
@@ -951,8 +934,7 @@ func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID str
 		Bounds:              bounds,
 		Duration:            duration,
 		Telemetry:           telemetry,
-		RetryHint:           retryHint,
-		Error:               err,
+		Failure:             planner.CloneToolFailure(failure),
 	}
 }
 
@@ -1056,19 +1038,6 @@ func NewAssistantTurnCommittedEvent(runID string, agentID agent.Ident, sessionID
 	be.sessionID = sessionID
 	return &AssistantTurnCommittedEvent{
 		baseEvent: be,
-		Message:   message,
-	}
-}
-
-// NewRetryHintIssuedEvent constructs a RetryHintIssuedEvent indicating a
-// suggested retry policy adjustment.
-func NewRetryHintIssuedEvent(runID string, agentID agent.Ident, sessionID string, reason string, toolName tools.Ident, message string) *RetryHintIssuedEvent {
-	be := newBaseEvent(runID, agentID)
-	be.sessionID = sessionID
-	return &RetryHintIssuedEvent{
-		baseEvent: be,
-		Reason:    reason,
-		ToolName:  toolName,
 		Message:   message,
 	}
 }
@@ -1214,7 +1183,6 @@ func (e *AssistantTurnCommittedEvent) Type() EventType {
 	return AssistantTurnCommitted
 }
 func (e *ThinkingBlockEvent) Type() EventType   { return ThinkingBlock }
-func (e *RetryHintIssuedEvent) Type() EventType { return RetryHintIssued }
 func (e *MemoryAppendedEvent) Type() EventType  { return MemoryAppended }
 func (e *PolicyDecisionEvent) Type() EventType  { return PolicyDecision }
 func (e *UsageEvent) Type() EventType           { return Usage }

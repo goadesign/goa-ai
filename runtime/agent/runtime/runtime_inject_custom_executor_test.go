@@ -97,7 +97,10 @@ func newCustomLookupHouseholdToolset(t *testing.T, resultHouseholdID *string) To
 			}
 			p, err := decodeLookupHousehold(call.Payload, meta, call.Labels)
 			if err != nil {
-				return &planner.ToolResult{Name: call.Name, Error: planner.ToolErrorFromError(err)}, nil
+				return &planner.ToolResult{
+					Name:    call.Name,
+					Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryFinish, err.Error()),
+				}, nil
 			}
 			*resultHouseholdID = *p.HouseholdID
 			return &planner.ToolResult{Name: call.Name, Result: map[string]any{"ok": true}}, nil
@@ -128,7 +131,7 @@ func TestCustomExecutorLabelInjection_TypedFieldPopulated(t *testing.T) {
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.Empty(t, out.Error, "tool call must succeed once the required label is present and valid")
+	require.Nil(t, out.Failure, "tool call must succeed once the required label is present and valid")
 	require.Equal(t, "house-42", gotHouseholdID, "the injected field must carry the run label value")
 }
 
@@ -154,9 +157,9 @@ func TestCustomExecutorLabelInjection_MissingLabelProducesPreciseToolError(t *te
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.NotEmpty(t, out.Error)
-	require.Contains(t, out.Error, `required label "household_id" is missing`)
-	require.Contains(t, out.Error, "helpers.lookup_household")
+	require.NotNil(t, out.Failure)
+	require.Contains(t, out.Failure.Error.Error(), `required label "household_id" is missing`)
+	require.Contains(t, out.Failure.Error.Error(), "helpers.lookup_household")
 	require.Empty(t, gotHouseholdID)
 }
 
@@ -182,7 +185,7 @@ func TestCustomExecutorLabelInjection_MalformedLabelProducesPreciseToolError(t *
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.NotEmpty(t, out.Error)
-	require.Contains(t, out.Error, `label "household_id" failed validation`)
+	require.NotNil(t, out.Failure)
+	require.Contains(t, out.Failure.Error.Error(), `label "household_id" failed validation`)
 	require.Empty(t, gotHouseholdID)
 }

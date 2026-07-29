@@ -44,7 +44,6 @@ func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *tes
 		250*time.Millisecond,
 		nil,
 		nil,
-		nil,
 	)
 
 	in, err := EncodeToRecordInput(ev, EncodeOptions{

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -199,6 +200,20 @@ func TestStdioCallerCallTool(t *testing.T) {
 	err = json.Unmarshal(resp.Result, &result)
 	require.NoError(t, err)
 	require.Equal(t, expectedTrace, result)
+}
+
+func TestNormalizeToolResultReturnsTypedExecutionError(t *testing.T) {
+	t.Parallel()
+
+	message := "device alias does not exist"
+	_, err := normalizeToolResult(toolsCallResult{
+		Content: []contentItem{{Type: "text", Text: &message}},
+		IsError: true,
+	})
+
+	var executionErr *ToolExecutionError
+	require.ErrorAs(t, err, &executionErr)
+	assert.Equal(t, `MCP tool execution error: "device alias does not exist"`, executionErr.Error())
 }
 
 func contextWithTrace() (context.Context, string) {

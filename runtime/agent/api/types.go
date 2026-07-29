@@ -244,11 +244,9 @@ type (
 		// to the full underlying data set (for example, list/window/graph caps).
 		Bounds *agent.Bounds
 
-		// Error is the structured tool error when tool execution failed.
-		Error *planner.ToolError
-
-		// RetryHint is optional structured guidance for recovering from tool failures.
-		RetryHint *planner.RetryHint
+		// Failure is the structured tool failure when execution did not produce a
+		// result.
+		Failure *planner.ToolFailure
 
 		// Telemetry contains tool execution metrics (duration, token usage, model).
 		Telemetry *telemetry.ToolTelemetry
@@ -394,11 +392,9 @@ type (
 		// Telemetry contains execution timing and provider usage metadata when available.
 		Telemetry *telemetry.ToolTelemetry
 
-		// Error is a plain-text error message when tool execution failed.
-		Error string
-
-		// RetryHint provides structured retry guidance when execution failed due to invalid payloads.
-		RetryHint *planner.RetryHint
+		// Failure is the structured tool failure when execution did not produce a
+		// result.
+		Failure *planner.ToolFailure
 
 		// Pause carries an optional runtime-owned pause signal emitted by the tool
 		// from the current execution batch.
@@ -517,20 +513,41 @@ type (
 		// ToolCallID correlates the result with the original awaited tool call.
 		ToolCallID string
 
-		// Result contains the external actor's canonical JSON payload for the tool
-		// result. Nil or `null` is allowed when the tool's result contract permits it.
+		// Success is set exactly when external execution produced a result.
+		Success *ProvidedToolSuccess
+
+		// Failure is the externally observed failure when execution did not
+		// produce a result. Exactly one of Success and Failure must be set.
+		Failure *ProvidedToolFailure
+	}
+
+	// ProvidedToolSuccess carries a successful external result and its optional
+	// bounded-result metadata.
+	ProvidedToolSuccess struct {
+		// Result contains canonical JSON for the tool's result contract. JSON
+		// null remains a successful result when the registered codec permits it.
 		Result rawjson.Message
 
-		// Bounds carries runtime-owned bounded-result metadata when the tool
-		// contract requires it.
+		// Bounds carries bounded-result metadata when the tool contract requires it.
 		Bounds *agent.Bounds
+	}
 
-		// Error is the structured tool failure, when the external tool execution failed.
-		Error *planner.ToolError
+	// ProvidedToolFailure carries the failure facts owned by an external tool
+	// executor. The runtime combines these facts with the awaited call and
+	// registered tool metadata to construct a canonical planner.ToolFailure.
+	ProvidedToolFailure struct {
+		// Kind classifies why the external execution failed.
+		Kind planner.FailureKind
 
-		// RetryHint optionally provides structured guidance for recovering from a
-		// provided tool failure.
-		RetryHint *planner.RetryHint
+		// Message describes the external execution failure.
+		Message string
+
+		// Action declares the legal next planner transition.
+		Action planner.RecoveryAction
+
+		// Issues contains generated field issues when the external boundary
+		// rejected model-authored input.
+		Issues []*tools.FieldIssue
 	}
 
 	// ToolResultsSet carries results for an external tools await request.

@@ -169,9 +169,9 @@ func (r *Runtime) recordGenAIToolSpan(ctx context.Context, evt *hooks.ToolResult
 		trace.WithTimestamp(startedAt),
 		trace.WithAttributes(telemetry.GenAIToolAttrs(ctx, string(evt.ToolName), evt.ToolCallID)...),
 	)
-	if evt.Error != nil {
-		span.RecordError(evt.Error)
-		span.SetStatus(codes.Error, evt.Error.Error())
+	if evt.Failure != nil {
+		span.RecordError(evt.Failure.Error)
+		span.SetStatus(codes.Error, evt.Failure.Error.Error())
 	} else {
 		span.SetStatus(codes.Ok, "ok")
 	}

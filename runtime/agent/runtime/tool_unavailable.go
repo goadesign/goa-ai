@@ -8,6 +8,7 @@ package runtime
 // tool and embedding the originally requested name + payload inside its input.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -21,13 +22,37 @@ import (
 
 const (
 	toolUnavailableToolsetName     = "goa-ai.runtime"
-	toolUnavailableCallHintPattern = `Tool not available: {{index . "requested_tool"}}`
+	toolUnavailableCallHintPattern = `Tool not available: {{.RequestedTool}}`
 )
 
-var toolUnavailableCallHint = template.Must(
-	template.New(tools.ToolUnavailable.String()).
-		Option("missingkey=error").
-		Parse(toolUnavailableCallHintPattern),
+var (
+	toolUnavailableCallHint = template.Must(
+		template.New(tools.ToolUnavailable.String()).
+			Option("missingkey=error").
+			Parse(toolUnavailableCallHintPattern),
+	)
+	toolUnavailableSpec = tools.ToolSpec{
+		Name:        tools.ToolUnavailable,
+		Service:     "goa-ai",
+		Toolset:     toolUnavailableToolsetName,
+		Description: "Runtime-owned tool that represents unavailable tool calls.",
+		Payload: tools.TypeSpec{
+			Name:        "ToolUnavailablePayload",
+			Schema:      mustMarshalToolUnavailableSchema(),
+			ExampleJSON: tools.RawJSON(`{"requested_tool":"svc_read_count_events","requested_payload":{"from":"2026-02-06T00:00:00Z"}}`),
+			Codec: tools.JSONCodec[any]{
+				ToJSON: marshalToolUnavailablePayload,
+				FromJSON: func(data []byte) (any, error) {
+					return unmarshalToolUnavailablePayload(data)
+				},
+			},
+		},
+		Result: tools.TypeSpec{
+			Name:   "ToolUnavailableResult",
+			Schema: tools.RawJSON(`{"type":"object","additionalProperties":true}`),
+			Codec:  tools.AnyJSONCodec,
+		},
+	}
 )
 
 type toolUnavailablePayload struct {
@@ -38,35 +63,19 @@ type toolUnavailablePayload struct {
 func toolUnavailableToolDefinition() *model.ToolDefinition {
 	return &model.ToolDefinition{
 		Name:        tools.ToolUnavailable.String(),
-		Description: "Internal. Used when the model requests a tool that is not available for this run. Always returns an error with a retry hint to pick a tool from the advertised list.",
-		Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object","properties":{"requested_tool":{"type":"string","description":"The provider-visible tool name originally requested by the model."},"requested_payload":{"description":"The original JSON payload that the model provided for the unknown tool."}},"required":["requested_tool"],"additionalProperties":false}`)),
+		Description: "Internal. Used when the model requests a tool that is not available for this run. Always tells the model to choose from the advertised tool list.",
+		Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object","properties":{"requested_tool":{"type":"string","minLength":1,"description":"The provider-visible tool name originally requested by the model."},"requested_payload":{"description":"The original JSON payload that the model provided for the unknown tool."}},"required":["requested_tool"],"additionalProperties":false}`)),
 	}
 }
 
 func toolUnavailableToolsetRegistration() ToolsetRegistration {
-	spec := tools.ToolSpec{
-		Name:        tools.ToolUnavailable,
-		Service:     "goa-ai",
-		Toolset:     toolUnavailableToolsetName,
-		Description: "Runtime-owned tool that represents unavailable tool calls.",
-		Payload: tools.TypeSpec{
-			Name:        "ToolUnavailablePayload",
-			Schema:      mustMarshalToolUnavailableSchema(),
-			ExampleJSON: tools.RawJSON(`{"requested_tool":"svc_read_count_events","requested_payload":{"from":"2026-02-06T00:00:00Z"}}`),
-			Codec:       tools.AnyJSONCodec,
-		},
-		Result: tools.TypeSpec{
-			Name:   "ToolUnavailableResult",
-			Schema: tools.RawJSON(`{"type":"object","additionalProperties":true}`),
-			Codec:  tools.AnyJSONCodec,
-		},
-	}
 	return ToolsetRegistration{
-		Name:        toolUnavailableToolsetName,
-		Description: "goa-ai runtime internal tools",
-		Inline:      true,
-		Execute:     executeToolUnavailable,
-		Specs:       []tools.ToolSpec{spec},
+		Name:             toolUnavailableToolsetName,
+		Description:      "goa-ai runtime internal tools",
+		Inline:           true,
+		DecodeInExecutor: true,
+		Execute:          executeToolUnavailable,
+		Specs:            []tools.ToolSpec{toolUnavailableSpec},
 		CallHints: map[tools.Ident]*template.Template{
 			tools.ToolUnavailable: toolUnavailableCallHint,
 		},
@@ -78,43 +87,71 @@ func mustMarshalToolUnavailableSchema() tools.RawJSON {
 }
 
 func executeToolUnavailable(ctx context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
-	requested := ""
-	if len(call.Payload) > 0 {
-		var p toolUnavailablePayload
-		if err := json.Unmarshal(call.Payload, &p); err != nil {
-			// This tool is runtime-owned but models can still call it directly.
-			// Treat malformed payloads as tool errors so the run can continue.
-			toolErr := planner.NewToolError(fmt.Sprintf("tool_unavailable payload is invalid JSON: %v", err))
-			return Executed(&planner.ToolResult{
-				Name:       call.Name,
-				ToolCallID: call.ToolCallID,
-				Error:      toolErr,
-				RetryHint: &planner.RetryHint{
-					Reason:         planner.RetryReasonInvalidArguments,
-					Tool:           call.Name,
-					Message:        "Call tool_unavailable with JSON: {\"requested_tool\": <string>, \"requested_payload\": <json>} (requested_payload is optional).",
-					RestrictToTool: true,
-				},
-			}), nil
-		}
-		requested = p.RequestedTool
+	decoded, err := unmarshalToolUnavailablePayload(call.Payload)
+	if err != nil {
+		return Executed(&planner.ToolResult{
+			Name:       call.Name,
+			ToolCallID: call.ToolCallID,
+			Failure:    buildToolFailureFromPayloadError(err, call.Payload, toolUnavailableSpec),
+		}), nil
 	}
-	if requested == "" {
-		requested = "<missing requested_tool>"
-	}
+	requested := decoded.RequestedTool
 
 	toolErr := planner.NewToolError(fmt.Sprintf("tool %q is not available for this run", requested))
 	return Executed(&planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Error:      toolErr,
-		RetryHint: &planner.RetryHint{
-			Reason:         planner.RetryReasonToolUnavailable,
-			Tool:           call.Name,
-			RestrictToTool: false,
-			Message:        "Tool is not available for this run. Choose a tool from the advertised tool list and call it with the exact JSON schema.",
+		Failure: &planner.ToolFailure{
+			Kind:  planner.FailureInvalidCall,
+			Error: toolErr,
+			Recovery: planner.RecoveryDirective{
+				Action: planner.RecoveryReplan,
+			},
 		},
 	}), nil
+}
+
+// marshalToolUnavailablePayload encodes the runtime-owned payload after its
+// concrete type has been established by the tool contract.
+func marshalToolUnavailablePayload(value any) ([]byte, error) {
+	payload, ok := value.(*toolUnavailablePayload)
+	if !ok {
+		return nil, fmt.Errorf("tool_unavailable payload has type %T", value)
+	}
+	return json.Marshal(payload)
+}
+
+// unmarshalToolUnavailablePayload enforces the closed runtime-owned schema for
+// direct model calls to the internal unavailable-tool marker.
+func unmarshalToolUnavailablePayload(data []byte) (*toolUnavailablePayload, error) {
+	var wire struct {
+		RequestedTool    *string         `json:"requested_tool"`
+		RequestedPayload rawjson.Message `json:"requested_payload,omitempty"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&wire); err != nil {
+		return nil, err
+	}
+	if wire.RequestedTool == nil {
+		return nil, tools.NewValidationError(
+			"requested_tool is required",
+			[]*tools.FieldIssue{{Field: "requested_tool", Constraint: "missing_field"}},
+			nil,
+		)
+	}
+	if *wire.RequestedTool == "" {
+		minLen := 1
+		return nil, tools.NewValidationError(
+			"requested_tool must not be empty",
+			[]*tools.FieldIssue{{Field: "requested_tool", Constraint: "invalid_length", MinLen: &minLen}},
+			nil,
+		)
+	}
+	return &toolUnavailablePayload{
+		RequestedTool:    *wire.RequestedTool,
+		RequestedPayload: wire.RequestedPayload,
+	}, nil
 }
 
 // rewriteToolCallUnavailable rewrites one tool call to the runtime-owned

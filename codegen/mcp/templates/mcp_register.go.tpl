@@ -8,11 +8,11 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
-	"goa.design/goa-ai/runtime/mcp/retry"
 )
 
 // {{ .Register.HelperName }}ToolSpecs contains the tool specifications for the {{ .Register.SuiteName }} toolset.
@@ -24,8 +24,9 @@ var {{ .Register.HelperName }}ToolSpecs = []tools.ToolSpec{
 		Toolset:     {{ printf "%q" $.Register.SuiteQualifiedName }},
 		Description: {{ printf "%q" .Description }},
 		Payload: tools.TypeSpec{
-			Name:   {{ printf "%q" .PayloadType }},
-			Schema: []byte({{ printf "%q" .InputSchema }}),
+			Name:        {{ printf "%q" .PayloadType }},
+			Schema:      []byte({{ printf "%q" .InputSchema }}),
+			ExampleJSON: []byte({{ printf "%q" .ExampleArgs }}),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					return json.Marshal(v)
@@ -107,24 +108,23 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 			toolName = toolName[len(suitePrefix):]
 		}
 
-		payload, err := json.Marshal(call.Payload)
-		if err != nil {
-			return planner.ToolResult{Name: fullName}, err
-		}
-
 		resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
 			Suite:   {{ printf "%q" .Register.SuiteQualifiedName }},
 			Tool:    toolName,
-			Payload: payload,
+			Payload: json.RawMessage(call.Payload),
 		})
 		if err != nil {
-			return {{ .Register.HelperName }}HandleError(fullName, err), nil
+			return {{ .Register.HelperName }}HandleError(fullName, call.Payload, err), nil
 		}
 
 		var value any
 		if len(resp.Result) > 0 {
 			if err := json.Unmarshal(resp.Result, &value); err != nil {
-				return planner.ToolResult{Name: fullName}, err
+				return {{ .Register.HelperName }}HandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(err),
+				), nil
 			}
 		}
 
@@ -132,7 +132,11 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 		if len(resp.Structured) > 0 {
 			var structured any
 			if err := json.Unmarshal(resp.Structured, &structured); err != nil {
-				return planner.ToolResult{Name: fullName}, err
+				return {{ .Register.HelperName }}HandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(err),
+				), nil
 			}
 			toolTelemetry = &telemetry.ToolTelemetry{
 				Extra: map[string]any{"structured": structured},
@@ -165,57 +169,73 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 	})
 }
 
-// {{ .Register.HelperName }}HandleError converts an error into a tool result with appropriate retry hints.
-func {{ .Register.HelperName }}HandleError(toolName tools.Ident, err error) planner.ToolResult {
-	result := planner.ToolResult{
-		Name:  toolName,
+// {{ .Register.HelperName }}HandleError converts an MCP failure into the
+// canonical classification and recovery transition.
+func {{ .Register.HelperName }}HandleError(toolName tools.Ident, input rawjson.Message, err error) planner.ToolResult {
+	failure := &planner.ToolFailure{
+		Kind:  planner.FailureUnavailable,
 		Error: planner.ToolErrorFromError(err),
+		Recovery: planner.RecoveryDirective{
+			Action: planner.RecoveryReplan,
+		},
 	}
-	if hint := {{ .Register.HelperName }}RetryHint(toolName, err); hint != nil {
-		result.RetryHint = hint
+	if errors.Is(err, context.DeadlineExceeded) {
+		failure.Kind = planner.FailureTimeout
+		failure.Recovery.Action = planner.RecoveryFinish
+		return planner.ToolResult{Name: toolName, Failure: failure}
 	}
-	return result
-}
-
-// {{ .Register.HelperName }}RetryHint determines if an error should trigger a retry and returns appropriate hints.
-func {{ .Register.HelperName }}RetryHint(toolName tools.Ident, err error) *planner.RetryHint {
-	key := string(toolName)
-	var retryErr *retry.RetryableError
-	if errors.As(err, &retryErr) {
-		return &planner.RetryHint{
-			Reason:         planner.RetryReasonInvalidArguments,
-			Tool:           toolName,
-			Message:        retryErr.Prompt,
-			RestrictToTool: true,
-		}
+	var malformed *mcpruntime.MalformedResponseError
+	if errors.As(err, &malformed) {
+		failure.Kind = planner.FailureMalformedResult
+		failure.Recovery.Action = planner.RecoveryFinish
+		return planner.ToolResult{Name: toolName, Failure: failure}
+	}
+	var internal *mcpruntime.InternalError
+	if errors.As(err, &internal) {
+		failure.Kind = planner.FailureInternal
+		failure.Recovery.Action = planner.RecoveryFinish
+		return planner.ToolResult{Name: toolName, Failure: failure}
+	}
+	var execution *mcpruntime.ToolExecutionError
+	if errors.As(err, &execution) {
+		failure.Kind = planner.FailureDomainRejection
+		return planner.ToolResult{Name: toolName, Failure: failure}
 	}
 	var rpcErr *mcpruntime.Error
 	if errors.As(err, &rpcErr) {
 		switch rpcErr.Code {
 		case mcpruntime.JSONRPCInvalidParams:
-			// Schema and example are known at generation time - use switch for direct lookup
-			var schemaJSON, example string
-			switch key {
-	{{- range .Register.Tools }}
-			case {{ printf "%q" .ID }}:
-				schemaJSON = {{ printf "%q" .InputSchema }}
-				example = {{ printf "%q" .ExampleArgs }}
-	{{- end }}
-			}
-			prompt := retry.BuildRepairPrompt("tools/call:"+key, rpcErr.Message, example, schemaJSON)
-			return &planner.RetryHint{
-				Reason:         planner.RetryReasonInvalidArguments,
-				Tool:           toolName,
-				Message:        prompt,
-				RestrictToTool: true,
-			}
+			failure = {{ .Register.HelperName }}CorrectionFailure(string(toolName), input, err)
 		case mcpruntime.JSONRPCMethodNotFound:
-			return &planner.RetryHint{
-				Reason:  planner.RetryReasonToolUnavailable,
-				Tool:    toolName,
-				Message: rpcErr.Message,
+			failure = &planner.ToolFailure{
+				Kind:  planner.FailureInvalidCall,
+				Error: planner.ToolErrorFromError(err),
+				Recovery: planner.RecoveryDirective{
+					Action: planner.RecoveryReplan,
+				},
 			}
 		}
 	}
-	return nil
+	return planner.ToolResult{Name: toolName, Failure: failure}
+}
+
+// {{ .Register.HelperName }}CorrectionFailure attaches the exact rejected input
+// and the generated example for one MCP tool payload.
+func {{ .Register.HelperName }}CorrectionFailure(toolName string, input rawjson.Message, err error) *planner.ToolFailure {
+	var example rawjson.Message
+	switch toolName {
+{{- range .Register.Tools }}
+	case {{ printf "%q" .ID }}:
+		example = rawjson.Message({{ printf "%q" .ExampleArgs }})
+{{- end }}
+	}
+	return &planner.ToolFailure{
+		Kind:  planner.FailureInvalidCall,
+		Error: planner.ToolErrorFromError(err),
+		Recovery: planner.RecoveryDirective{
+			Action:      planner.RecoveryCorrectCall,
+			PriorInput:  append(rawjson.Message(nil), input...),
+			ExampleJSON: example,
+		},
+	}
 }

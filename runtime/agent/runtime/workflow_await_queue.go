@@ -121,7 +121,6 @@ func (r *Runtime) waitAwaitConfirmation(
 				0,
 				nil,
 				nil,
-				nil,
 			),
 			turnID,
 		); err != nil {
@@ -132,7 +131,6 @@ func (r *Runtime) waitAwaitConfirmation(
 			Name:       it.call.Name,
 			ToolCallID: it.call.ToolCallID,
 			Result:     deniedResult,
-			Error:      nil,
 		}
 		records := []stepToolRecord{{call: it.call, result: tr}}
 		return records, nil, false, nil
@@ -549,8 +547,7 @@ func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *R
 				tr.Bounds,
 				0,
 				nil,
-				tr.RetryHint,
-				tr.Error,
+				tr.Failure,
 			),
 			turnID,
 		); err != nil {

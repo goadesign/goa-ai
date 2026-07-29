@@ -17,11 +17,27 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+func testToolFailure(kind planner.FailureKind, action planner.RecoveryAction, message string) *planner.ToolFailure {
+	var priorInput rawjson.Message
+	if action == planner.RecoveryCorrectCall {
+		priorInput = rawjson.Message(`{"invalid":true}`)
+	}
+	return &planner.ToolFailure{
+		Kind:  kind,
+		Error: planner.NewToolError(message),
+		Recovery: planner.RecoveryDirective{
+			Action:     action,
+			PriorInput: priorInput,
+		},
+	}
+}
 
 func wrapExecute(fn func(context.Context, *planner.ToolRequest) (*planner.ToolResult, error)) func(context.Context, *planner.ToolRequest) (*ToolExecutionResult, error) {
 	return func(ctx context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {

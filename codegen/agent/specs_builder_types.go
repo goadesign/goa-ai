@@ -113,6 +113,7 @@ type (
 		KindConst string
 		FieldName string
 		FieldType string
+		Nilable   bool
 		JSONType  string
 		TypeTag   string
 	}
@@ -161,7 +162,7 @@ type (
 		SchemaWithoutRootExampleJSON []byte
 		// ExampleJSON holds a canonical example JSON document for this type when
 		// available. For payloads, it is derived from Goa examples and can be used
-		// by runtimes to surface concrete examples in retry hints or UI prompts.
+		// by runtimes to surface concrete examples in correction directives or UI prompts.
 		ExampleJSON []byte
 		// Typed codec variable name (e.g., "MyToolPayloadCodec").
 		ExportedCodec string

@@ -195,8 +195,8 @@ func TestDefaultAgentToolExecute_PreChildValidatorReturnsToolResult(t *testing.T
 			WorkflowName:     "wf",
 			DefaultTaskQueue: "default",
 		},
-		PreChildValidator: func(context.Context, *AgentToolValidationInput) *AgentToolValidationError {
-			return NewAgentToolValidationError(
+		PreChildValidator: func(context.Context, *AgentToolValidationInput) *tools.ValidationError {
+			return tools.NewValidationError(
 				"sources must come from prior evidence",
 				[]*tools.FieldIssue{
 					{
@@ -224,11 +224,10 @@ func TestDefaultAgentToolExecute_PreChildValidatorReturnsToolResult(t *testing.T
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, result.ToolResult)
-	require.NotNil(t, result.ToolResult.Error)
-	require.NotNil(t, result.ToolResult.RetryHint)
-	require.Equal(t, planner.RetryReasonInvalidArguments, result.ToolResult.RetryHint.Reason)
-	require.Equal(t, []string{"sources"}, result.ToolResult.RetryHint.MissingFields)
-	require.True(t, result.ToolResult.RetryHint.RestrictToTool)
+	require.NotNil(t, result.ToolResult.Failure)
+	require.Equal(t, planner.FailureInvalidCall, result.ToolResult.Failure.Kind)
+	require.Equal(t, planner.RecoveryCorrectCall, result.ToolResult.Failure.Recovery.Action)
+	require.Equal(t, "sources", result.ToolResult.Failure.Recovery.Issues[0].Field)
 }
 
 func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilder(t *testing.T) {

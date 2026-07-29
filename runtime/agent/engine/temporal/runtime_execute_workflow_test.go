@@ -95,7 +95,9 @@ func TestExecuteWorkflowCancelsAwaitQuestionsBeforeLateResults(t *testing.T) {
 				{
 					Name:       questionTool,
 					ToolCallID: questionToolCallID,
-					Result:     rawjson.Message([]byte(`{"answers":[{"question_id":"q1","selected_option_ids":["yes"]}]}`)),
+					Success: &api.ProvidedToolSuccess{
+						Result: rawjson.Message([]byte(`{"answers":[{"question_id":"q1","selected_option_ids":["yes"]}]}`)),
+					},
 				},
 			},
 		})

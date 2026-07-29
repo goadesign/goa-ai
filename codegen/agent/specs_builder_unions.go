@@ -133,6 +133,7 @@ func buildUnionTypeData(u *goaexpr.Union, scope *codegen.NameScope) *unionTypeDa
 			KindConst: kindConst,
 			FieldName: fieldName,
 			FieldType: fieldType,
+			Nilable:   generatedTypeNilable(nat.Attribute.Type),
 			JSONType:  generatedJSONType(nat.Attribute.Type),
 			TypeTag:   nat.Name,
 		})
@@ -143,4 +144,14 @@ func buildUnionTypeData(u *goaexpr.Union, scope *codegen.NameScope) *unionTypeDa
 		KindName: kindName,
 		Fields:   fields,
 	}
+}
+
+// generatedTypeNilable reports whether the generated Go representation can be
+// nil even though a tagged union branch always requires a value.
+func generatedTypeNilable(dt goaexpr.DataType) bool {
+	return goaexpr.IsObject(dt) ||
+		goaexpr.IsArray(dt) ||
+		goaexpr.IsMap(dt) ||
+		dt.Kind() == goaexpr.BytesKind ||
+		dt.Kind() == goaexpr.AnyKind
 }

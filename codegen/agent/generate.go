@@ -582,9 +582,12 @@ func mcpExecutorFiles(agent *AgentData) []*codegen.File {
 		imports := []*codegen.ImportSpec{
 			{Path: "context"},
 			{Path: "encoding/json"},
+			{Path: "errors"},
 			{Path: "goa.design/goa-ai/runtime/agent/planner"},
+			{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
 			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
 			{Path: "goa.design/goa-ai/runtime/agent/telemetry"},
+			{Path: "goa.design/goa-ai/runtime/agent/tools"},
 			{Path: "goa.design/goa-ai/runtime/mcp", Name: "mcpruntime"},
 			// Per-toolset specs package (codecs + schemas)
 			{Path: ts.SpecsImportPath, Name: ts.SpecsPackageName},
@@ -772,6 +775,7 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 			{Path: "fmt"},
 			{Path: "strings"},
 			{Path: "goa.design/goa-ai/runtime/agent/planner"},
+			{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
 			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
 			{Path: "goa.design/goa-ai/runtime/agent/tools"},
 			{Path: ts.SpecsImportPath, Name: specsAlias},
@@ -782,7 +786,6 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 		if needsRawJSON {
 			imports = append(imports,
 				&codegen.ImportSpec{Path: "encoding/json"},
-				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
 				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/toolregistry"},
 			)
 		}

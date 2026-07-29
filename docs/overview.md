@@ -384,7 +384,7 @@ Per‑turn enforcement of:
 |---------------------|--------------------------------------------------------------------------------------|
 | **Native toolsets** | Your implementations + generated codecs = typed, validated tools                     |
 | **Agent‑as‑tool**   | Child workflow executes the nested agent with linked streams and run links           |
-| **MCP toolsets**    | Generated wrappers handle JSON schemas, transport (HTTP/SSE/stdio), retries, tracing |
+| **MCP toolsets**    | Generated wrappers preserve JSON schemas and typed transport failures across HTTP/SSE/stdio |
 
 MCP callers in `runtime/mcp` support multiple transports:
 
@@ -392,8 +392,9 @@ MCP callers in `runtime/mcp` support multiple transports:
 - **`HTTPCaller`** — HTTP POST to MCP endpoints
 - **`SSECaller`** — Server‑Sent Events for streaming MCP responses
 
-All callers implement the `Caller` interface and include automatic retry (`runtime/mcp/retry`) and
-distributed tracing.
+All callers implement the `Caller` interface, preserve structured MCP error data, and include
+distributed tracing. Recovery is selected by the runtime from the typed failure contract rather
+than by parsing error text or retrying transport calls implicitly.
 
 ### Memory, Streaming & Telemetry
 
@@ -751,14 +752,14 @@ type PlanResult struct {
     FinalToolResult *FinalToolResult // Terminal tool result for nested agent runs
     Streamed      bool             // True if text already streamed via Events
     Await         *Await           // Pause for human input
-    RetryHint     *RetryHint       // Guidance after failures
     ExpectedChildren int           // Optional hint for nested child results
     Notes         []PlannerAnnotation // Intermediate reasoning
 }
 ```
 
-`SynthesizeAfterTools` is batch intent, not retry policy. A failed result whose
-`RetryHint.AllowsRetry()` returns true receives a normal repair turn first.
+`SynthesizeAfterTools` is batch intent, not recovery policy. Failed results
+carry `ToolFailure.Recovery`: `correct_call` and `replan` receive a
+runtime-constrained tool turn, while `finish` requires tool-free synthesis.
 Otherwise the runtime carries the batch intent as `SynthesisOnly`, which rejects
 additional tool calls. `Finalize` remains reserved for runtime-forced cap or
 deadline termination.
@@ -953,10 +954,10 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 | `WithTagPolicyClauses([]TagPolicyClause)` | Compose explicit tag clauses |
 | `WithTiming(Timing)`                    | Set multiple timing overrides |
 
-Runtime-owned retry restrictions installed from `RetryHint` constrain normal
-repair turns only. They do not block validated terminal bookkeeping tools during
-forced finalization; caller `WithRestrictToTool` policy remains run-scoped and
-still applies.
+Runtime-owned recovery restrictions installed from `ToolFailure` constrain
+normal correction and replan turns only. They do not block validated terminal
+bookkeeping tools during forced finalization; caller `WithRestrictToTool`
+policy remains run-scoped and still applies.
 
 `WithTiming(Timing)` sets semantic run/planner/tool budgets. It does not expose
 engine-level queue-wait or heartbeat tuning.
@@ -1006,23 +1007,24 @@ The engine invokes the workflow handler, which calls `rt.ExecuteWorkflow`.
 | **Child**    | Agent‑as‑tool  | Execute as child workflow via `ExecuteAgentChildWithRoute`        |
 
 `ExecuteToolActivity` decodes payloads, calls the toolset's `Execute`, re‑encodes results.
-Validation errors become structured `planner.RetryHint` for planners.
+Validation errors become `FailureInvalidCall` with a `RecoveryCorrectCall`
+directive for planners.
 
-#### Validation Errors → RetryHint
+#### Validation Errors → Correctable ToolFailure
 
-Goa‑AI produces retry hints from validation failures in two places:
+Goa‑AI produces correctable tool failures from validation failures in two places:
 
 - **Codec validation (decode‑time)**: generated tool codecs validate JSON payloads before
   execution. When validation fails, the runtime extracts structured `FieldIssue` entries
   (missing fields, invalid enum values, length/range constraints, and JSON type
-  mismatches) and converts them into `planner.RetryHint` so planners/UIs can ask
+  mismatches) and converts them into `planner.ToolFailure` so planners/UIs can ask
   for the missing/corrected fields. JSON type mismatches carry generated
   expected/actual JSON type metadata instead of requiring runtime schema parsing.
 
 - **Provider/service validation (execution‑time)**: tool providers may call a bound service
   method that returns a Goa validation error. Providers should include structured field
   issues in the tool result message (instead of only returning a string error) so registry
-  consumers can build the same `RetryHint` deterministically.
+  consumers can build the same `ToolFailure` deterministically.
 
 ### 6. Completion
 

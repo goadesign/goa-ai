@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
@@ -121,7 +120,7 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 	require.Equal(t, `"hello"`, firstText(pl.msgs[0]))
 }
 
-func TestAgentTool_StripsReservedServerDataBeforePayloadDecode(t *testing.T) {
+func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 	rt := &Runtime{
 		agents:        make(map[agent.Ident]AgentRegistration),
 		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
@@ -159,7 +158,11 @@ func TestAgentTool_StripsReservedServerDataBeforePayloadDecode(t *testing.T) {
 						return nil, err
 					}
 					if _, ok := raw["server_data"]; ok {
-						return nil, errors.New("reserved server_data reached payload codec")
+						return nil, tools.NewValidationError(
+							"unknown field server_data",
+							[]*tools.FieldIssue{{Field: "server_data", Constraint: "unknown_field"}},
+							nil,
+						)
 					}
 					var out strictPayload
 					if err := json.Unmarshal(data, &out); err != nil {
@@ -199,10 +202,13 @@ func TestAgentTool_StripsReservedServerDataBeforePayloadDecode(t *testing.T) {
 	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
-	require.Len(t, pl.msgs, 1)
-	require.Equal(t, "src_1", firstText(pl.msgs[0]))
-	require.Len(t, wf.childRequests, 1)
-	require.JSONEq(t, `{"sources_ref":"src_1"}`, string(wf.childRequests[0].Input.ToolArgs))
+	require.NotNil(t, tr.ToolResult)
+	require.NotNil(t, tr.ToolResult.Failure)
+	require.Equal(t, planner.FailureInvalidCall, tr.ToolResult.Failure.Kind)
+	require.Equal(t, planner.RecoveryCorrectCall, tr.ToolResult.Failure.Recovery.Action)
+	require.JSONEq(t, string(call.Payload), string(tr.ToolResult.Failure.Recovery.PriorInput))
+	require.Empty(t, pl.msgs)
+	require.Empty(t, wf.childRequests)
 }
 
 func TestAgentTool_TextContent(t *testing.T) {
@@ -433,10 +439,50 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
-	require.Nil(t, tr.Error)
+	require.Nil(t, tr.Failure)
 	typed, ok := tr.Result.(*ParentResult)
 	require.True(t, ok)
 	require.Equal(t, []string{"ok"}, typed.Events)
 	require.NotNil(t, tr.RunLink)
 	require.Equal(t, "child-run", tr.RunLink.RunID)
+}
+
+func TestConvertRunOutputToToolResultPreservesTerminalChildFailure(t *testing.T) {
+	output := &RunOutput{
+		ToolEvents: []*api.ToolEvent{
+			{
+				Name:    "child.correctable",
+				Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryCorrectCall, "bad call"),
+			},
+			{
+				Name:    "child.internal",
+				Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "broken"),
+			},
+		},
+	}
+
+	result := ConvertRunOutputToToolResult("parent.agent_tool", output)
+
+	require.NotNil(t, result.Failure)
+	require.Equal(t, planner.FailureInternal, result.Failure.Kind)
+	require.Equal(t, planner.RecoveryFinish, result.Failure.Recovery.Action)
+	require.Empty(t, result.Failure.Recovery.Issues)
+	require.Empty(t, result.Failure.Recovery.PriorInput)
+}
+
+func TestConvertRunOutputToToolResultReplansNonTerminalChildFailures(t *testing.T) {
+	output := &RunOutput{
+		ToolEvents: []*api.ToolEvent{
+			{
+				Name:    "child.search",
+				Failure: testToolFailure(planner.FailureUnavailable, planner.RecoveryReplan, "offline"),
+			},
+		},
+	}
+
+	result := ConvertRunOutputToToolResult("parent.agent_tool", output)
+
+	require.NotNil(t, result.Failure)
+	require.Equal(t, planner.FailureUnavailable, result.Failure.Kind)
+	require.Equal(t, planner.RecoveryReplan, result.Failure.Recovery.Action)
 }

@@ -43,8 +43,8 @@ type (
 	// agentToolPayloadError marks a model-authored agent-tool payload that
 	// failed typed decoding at the parent boundary. buildAgentChildRequest wraps
 	// only its unmarshalToolValue failure in this type so that
-	// buildRetryHintFromAgentToolRequestError can distinguish model payload
-	// defects (fed back to the model as a restricted retry) from runtime
+	// buildToolFailureFromAgentToolRequestError can distinguish model payload
+	// defects (fed back to the model as a correction directive) from runtime
 	// configuration errors such as missing ToolSpec registrations or prompt
 	// rendering failures (which stay terminal workflow errors).
 	agentToolPayloadError struct {
@@ -56,8 +56,9 @@ type (
 	PromptBuilder func(id tools.Ident, payload any) string
 
 	// AgentToolValidator validates a nested agent-tool call after payload decoding
-	// and before the child run is started.
-	AgentToolValidator func(ctx context.Context, input *AgentToolValidationInput) *AgentToolValidationError
+	// and before the child run is started. It returns the canonical structured
+	// validation error used by generated payload codecs.
+	AgentToolValidator func(ctx context.Context, input *AgentToolValidationInput) *tools.ValidationError
 
 	// AgentToolContent configures the optional consumer-side rendering of the
 	// nested agent's initial user message.
@@ -143,78 +144,7 @@ type (
 		Messages  []*model.Message
 		ParentRun *run.Context
 	}
-
-	// AgentToolValidationError reports a tool-scoped validation failure at the
-	// agent-as-tool boundary.
-	//
-	// The runtime converts this error into an `invalid_arguments` tool result with
-	// structured retry guidance instead of failing the workflow.
-	AgentToolValidationError struct {
-		message      string
-		issues       []*tools.FieldIssue
-		descriptions map[string]string
-	}
 )
-
-// NewAgentToolValidationError constructs a structured validation error for an
-// agent-as-tool pre-child validator.
-func NewAgentToolValidationError(message string, issues []*tools.FieldIssue, descriptions map[string]string) *AgentToolValidationError {
-	return &AgentToolValidationError{
-		message:      message,
-		issues:       cloneFieldIssues(issues),
-		descriptions: cloneStringMap(descriptions),
-	}
-}
-
-// Error implements the error interface.
-func (e *AgentToolValidationError) Error() string {
-	return e.message
-}
-
-// Issues returns the structured field issues associated with this validation failure.
-func (e *AgentToolValidationError) Issues() []*tools.FieldIssue {
-	return cloneFieldIssues(e.issues)
-}
-
-// Descriptions returns optional human-readable descriptions for the invalid fields.
-func (e *AgentToolValidationError) Descriptions() map[string]string {
-	return cloneStringMap(e.descriptions)
-}
-
-func cloneFieldIssues(in []*tools.FieldIssue) []*tools.FieldIssue {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]*tools.FieldIssue, 0, len(in))
-	for _, issue := range in {
-		if issue == nil {
-			continue
-		}
-		clone := &tools.FieldIssue{
-			Field:      issue.Field,
-			Constraint: issue.Constraint,
-		}
-		if len(issue.Allowed) > 0 {
-			clone.Allowed = append([]string(nil), issue.Allowed...)
-		}
-		out = append(out, clone)
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func cloneStringMap(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
-	return out
-}
 
 // WithText sets plain text content for the given tool ID. The runtime treats the
 // text as the user message for that tool. Exactly one of WithText or WithTemplate
@@ -450,18 +380,15 @@ func (r *Runtime) agentToolRequestFailureResult(call planner.ToolRequest, err er
 	if !ok {
 		return nil, fmt.Errorf("agent tool %s requires a registered ToolSpec", call.Name)
 	}
-	hint := buildRetryHintFromAgentToolRequestError(err, call.Name, &spec)
-	if hint == nil {
+	failure := buildToolFailureFromAgentToolRequestError(err, call.Payload, spec)
+	if failure == nil {
 		return nil, err
 	}
-	toolErr := planner.NewToolError(err.Error())
 	result := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Error:      toolErr,
+		Failure:    failure,
 	}
-	hint.RestrictToTool = true
-	result.RetryHint = hint
 	if _, err := r.materializeToolResult(context.Background(), call, result); err != nil {
 		return nil, err
 	}
@@ -479,9 +406,6 @@ func attachRunLink(result *planner.ToolResult, handle *run.Handle) {
 // payload for prompt/template rendering and records canonical JSON args for the child.
 func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConfig, call *planner.ToolRequest, messages []*model.Message, parentRun *run.Context) ([]*model.Message, run.Context, error) {
 	var zeroCtx run.Context
-	sanitizedCall := *call
-	sanitizedCall.Payload = rawjson.Message(stripReservedToolPayloadFields(call.Payload.RawMessage()))
-	call = &sanitizedCall
 
 	// Decode payload for prompt/template rendering. Prefer tool codecs when
 	// specs are registered. Agent-as-tool payloads must be validated at the
@@ -706,11 +630,10 @@ func (r *Runtime) decodeAgentChildFinalToolResult(ctx context.Context, call *pla
 		ResultOmittedReason: event.ResultOmittedReason,
 		ServerData:          append(rawjson.Message(nil), event.ServerData...),
 		Bounds:              event.Bounds,
-		Error:               event.Error,
-		RetryHint:           event.RetryHint,
+		Failure:             event.Failure,
 		Telemetry:           event.Telemetry,
 	}
-	if hasNonNullJSON(event.Result.RawMessage()) && event.Error == nil {
+	if hasNonNullJSON(event.Result.RawMessage()) && event.Failure == nil {
 		decoded, err := r.unmarshalToolValue(ctx, call.Name, event.Result.RawMessage(), false)
 		if err != nil {
 			return nil, fmt.Errorf("decode final tool result for %s: %w", call.Name, err)
@@ -726,8 +649,7 @@ func (e *agentToolPayloadError) Error() string {
 	return e.cause.Error()
 }
 
-// Unwrap exposes the decode failure for errors.As-based classification such as
-// the JSON type/syntax specializations in buildRetryHintFromDecodeError.
+// Unwrap exposes the decode failure for generated-codec issue classification.
 func (e *agentToolPayloadError) Unwrap() error {
 	return e.cause
 }

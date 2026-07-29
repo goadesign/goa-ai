@@ -483,7 +483,7 @@ type (
 		// result. Server data is never sent to model providers.
 		ServerData []*ServerDataData
 		// MethodPayloadAttr is the Goa attribute for the bound service payload
-		// (resolved user type). Used to generate default payload adapters.
+		// (resolved user type). Used to generate the typed payload mapper.
 		MethodPayloadAttr *goaexpr.AttributeExpr
 
 		// MethodResultAttr is the Goa attribute for the bound service result
@@ -543,8 +543,8 @@ type (
 
 		// PayloadAliasesMethod is true when the tool payload user type matches
 		// the bound method payload user type or any of its Extend bases. In this
-		// case the generated code bypasses the payload adapter and forwards the
-		// tool payload directly to the client.
+		// case the generated code bypasses typed payload mapping and forwards the
+		// decoded tool payload directly to the client.
 		PayloadAliasesMethod bool
 		// ResultAliasesMethod is true when the tool result user type matches the
 		// bound method result user type or any of its Extend bases. In this case the

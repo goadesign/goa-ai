@@ -185,7 +185,7 @@ type (
 		SchemaWithoutRootExample RawJSON
 		// ExampleJSON optionally contains a canonical example JSON document for this
 		// type. When present on payload types, runtimes and planners can surface it
-		// in retry hints or await-clarification prompts to guide callers toward a
+		// in correction directives or await-clarification prompts to guide callers toward a
 		// schema-compliant shape.
 		ExampleJSON RawJSON
 		// FieldDescriptions maps dotted JSON field paths to their generated

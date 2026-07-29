@@ -76,31 +76,26 @@ func newProjectedResultSpec() tools.ToolSpec {
 	}
 }
 
-func TestExecuteToolActivityReturnsErrorAndHint(t *testing.T) {
+func TestExecuteToolActivityReturnsFailure(t *testing.T) {
 	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 		require.Equal(t, "tool-1", call.ToolCallID)
 		require.Equal(t, "parent-1", call.ParentToolCallID)
 		require.Equal(t, "run", call.RunID)
 		return &planner.ToolResult{
-			Name:  call.Name,
-			Error: planner.NewToolError("invalid payload"),
-			RetryHint: &planner.RetryHint{
-				Reason: planner.RetryReasonInvalidArguments,
-				Tool:   call.Name,
-			},
+			Name:    call.Name,
+			Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "invalid payload"),
 		}, nil
 	})}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", ParentToolCallID: "parent-1", Payload: []byte("null")}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", ParentToolCallID: "parent-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.Equal(t, "invalid payload", out.Error)
+	require.Equal(t, "invalid payload", out.Failure.Error.Message)
 	require.Nil(t, out.Payload)
-	require.NotNil(t, out.RetryHint)
-	require.Equal(t, planner.RetryReasonInvalidArguments, out.RetryHint.Reason)
+	require.Equal(t, planner.FailureInvalidCall, out.Failure.Kind)
 }
 
 func TestExecuteToolActivityPropagatesLabels(t *testing.T) {
@@ -122,7 +117,7 @@ func TestExecuteToolActivityPropagatesLabels(t *testing.T) {
 		RunID:      "run",
 		ToolName:   "tool",
 		ToolCallID: "tool-1",
-		Payload:    []byte("null"),
+		Payload:    []byte("{}"),
 		Labels: map[string]string{
 			"aura.session.id": "sess-1",
 			"kind":            "brief",
@@ -135,7 +130,6 @@ func TestExecuteToolActivityPropagatesLabels(t *testing.T) {
 }
 
 func TestEnforceToolResultContractsRequiresExplicitBoundsForBoundedTool(t *testing.T) {
-	rt := &Runtime{}
 	spec := newAnyJSONSpec("tool", "svc.ts")
 	spec.Bounds = &tools.BoundsSpec{
 		Paging: &tools.PagingSpec{
@@ -143,6 +137,7 @@ func TestEnforceToolResultContractsRequiresExplicitBoundsForBoundedTool(t *testi
 			NextCursorField: "next_cursor",
 		},
 	}
+	rt := &Runtime{}
 	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
 
 	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
@@ -155,7 +150,6 @@ func TestEnforceToolResultContractsRequiresExplicitBoundsForBoundedTool(t *testi
 }
 
 func TestEnforceToolResultContractsAcceptsExplicitBoundsForBoundedTool(t *testing.T) {
-	rt := &Runtime{}
 	spec := newAnyJSONSpec("tool", "svc.ts")
 	spec.Bounds = &tools.BoundsSpec{
 		Paging: &tools.PagingSpec{
@@ -163,6 +157,7 @@ func TestEnforceToolResultContractsAcceptsExplicitBoundsForBoundedTool(t *testin
 			NextCursorField: "next_cursor",
 		},
 	}
+	rt := &Runtime{}
 	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
 
 	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
@@ -177,7 +172,6 @@ func TestEnforceToolResultContractsAcceptsExplicitBoundsForBoundedTool(t *testin
 }
 
 func TestEnforceToolResultContractsRejectsTruncatedBoundsWithoutContinuation(t *testing.T) {
-	rt := &Runtime{}
 	spec := newAnyJSONSpec("tool", "svc.ts")
 	spec.Bounds = &tools.BoundsSpec{
 		Paging: &tools.PagingSpec{
@@ -185,6 +179,7 @@ func TestEnforceToolResultContractsRejectsTruncatedBoundsWithoutContinuation(t *
 			NextCursorField: "next_cursor",
 		},
 	}
+	rt := &Runtime{}
 	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
 
 	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
@@ -222,7 +217,7 @@ func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("null")}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -276,7 +271,7 @@ func TestExecuteToolActivityPropagatesBounds(t *testing.T) {
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): spec,
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("null")}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -350,7 +345,7 @@ func TestExecuteToolActivityProjectsBoundsIntoEncodedResult(t *testing.T) {
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): newProjectedResultSpec(),
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("null")}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -384,7 +379,7 @@ func TestExecuteToolActivityDropsStaleOptionalBoundFieldsFromSemanticResult(t *t
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): newProjectedResultSpec(),
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("null")}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -753,7 +748,9 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 				{
 					Name:       tools.Ident("svc.tools.example"),
 					ToolCallID: "tool-call-1",
-					Result:     rawjson.Message([]byte(`{"ok":true}`)),
+					Success: &api.ProvidedToolSuccess{
+						Result: rawjson.Message([]byte(`{"ok":true}`)),
+					},
 				},
 			},
 		},
@@ -775,7 +772,7 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 	require.JSONEq(t, `[{"kind":"example.materialized","data":{"source":"await"}}]`, string(resultEvt.ServerData))
 }
 
-func TestConsumeProvidedToolResultsRejectsAmbiguousErrorAndResult(t *testing.T) {
+func TestConsumeProvidedToolResultsRejectsAmbiguousSuccessAndFailure(t *testing.T) {
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
@@ -791,14 +788,20 @@ func TestConsumeProvidedToolResultsRejectsAmbiguousErrorAndResult(t *testing.T) 
 	_, _, err := rt.decodeProvidedToolResult(context.Background(), rt.toolSpecs[call.Name], call, &api.ProvidedToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Result:     rawjson.Message([]byte(`{"ok":true}`)),
-		Error:      planner.NewToolError("failed"),
+		Success: &api.ProvidedToolSuccess{
+			Result: rawjson.Message([]byte(`{"ok":true}`)),
+		},
+		Failure: &api.ProvidedToolFailure{
+			Kind:    planner.FailureInternal,
+			Message: "failed",
+			Action:  planner.RecoveryFinish,
+		},
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "error and result are both set")
+	require.Contains(t, err.Error(), "exactly one success or failure")
 }
 
-func TestConsumeProvidedToolResultsRejectsAmbiguousErrorAndBounds(t *testing.T) {
+func TestConsumeProvidedToolResultsRejectsMissingOutcome(t *testing.T) {
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
@@ -814,11 +817,44 @@ func TestConsumeProvidedToolResultsRejectsAmbiguousErrorAndBounds(t *testing.T) 
 	_, _, err := rt.decodeProvidedToolResult(context.Background(), rt.toolSpecs[call.Name], call, &api.ProvidedToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Error:      planner.NewToolError("failed"),
-		Bounds:     &agent.Bounds{Returned: 1},
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "error and bounds are both set")
+	require.Contains(t, err.Error(), "exactly one success or failure")
+}
+
+func TestDecodeProvidedToolResultDerivesCorrectionMetadata(t *testing.T) {
+	t.Parallel()
+
+	spec := newAnyJSONSpec("svc.tools.example", "svc.tools")
+	spec.Payload.ExampleJSON = rawjson.Message(`{"query":"example"}`)
+	call := planner.ToolRequest{
+		Name:       spec.Name,
+		ToolCallID: "tool-call-1",
+		Payload:    rawjson.Message(`{"query":""}`),
+	}
+	rt := &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{spec.Name: spec},
+	}
+
+	result, _, err := rt.decodeProvidedToolResult(context.Background(), spec, call, &api.ProvidedToolResult{
+		Name:       call.Name,
+		ToolCallID: call.ToolCallID,
+		Failure: &api.ProvidedToolFailure{
+			Kind:    planner.FailureInvalidCall,
+			Message: "query is required",
+			Action:  planner.RecoveryCorrectCall,
+			Issues: []*tools.FieldIssue{{
+				Field:      "query",
+				Constraint: "missing_field",
+			}},
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Failure)
+	require.JSONEq(t, string(call.Payload), string(result.Failure.Recovery.PriorInput))
+	require.JSONEq(t, string(spec.Payload.ExampleJSON), string(result.Failure.Recovery.ExampleJSON))
 }
 
 func TestEnforceToolResultContractsRejectsAmbiguousErrorAndResult(t *testing.T) {
@@ -831,12 +867,12 @@ func TestEnforceToolResultContractsRejectsAmbiguousErrorAndResult(t *testing.T) 
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
 		Result:     map[string]any{"ok": true},
-		Error:      planner.NewToolError("failed"),
+		Failure:    testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "failed"),
 	}
 
 	err := rt.enforceToolResultContracts(newAnyJSONSpec(call.Name, "svc.tools"), call, tr)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "error and result are both set")
+	require.Contains(t, err.Error(), "failure and result are both set")
 }
 
 func TestConsumeProvidedToolResultsRejectsTruncatedBoundsWithoutContinuation(t *testing.T) {
@@ -863,17 +899,23 @@ func TestConsumeProvidedToolResultsRejectsTruncatedBoundsWithoutContinuation(t *
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "tool-call-1",
 	}
-	_, _, err := rt.decodeProvidedToolResult(context.Background(), rt.toolSpecs[call.Name], call, &api.ProvidedToolResult{
+	result, _, err := rt.decodeProvidedToolResult(context.Background(), rt.toolSpecs[call.Name], call, &api.ProvidedToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Result:     rawjson.Message([]byte(`{"ok":true}`)),
-		Bounds: &agent.Bounds{
-			Returned:  1,
-			Truncated: true,
+		Success: &api.ProvidedToolSuccess{
+			Result: rawjson.Message([]byte(`{"ok":true}`)),
+			Bounds: &agent.Bounds{
+				Returned:  1,
+				Truncated: true,
+			},
 		},
 	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "truncated result without next_cursor or refinement_hint")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Failure)
+	require.Equal(t, planner.FailureMalformedResult, result.Failure.Kind)
+	require.Equal(t, planner.RecoveryFinish, result.Failure.Recovery.Action)
+	require.Contains(t, result.Failure.Error.Error(), "malformed result")
 }
 
 func TestServiceToolEventsPropagateBounds(t *testing.T) {

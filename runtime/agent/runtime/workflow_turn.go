@@ -47,7 +47,7 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 	if err != nil {
 		return nil, nil, err
 	}
-	allowed, nextCaps, err := l.r.applyRuntimePolicy(ctx, l.base, l.input, candidates, l.st.Caps, l.turnID, result.RetryHint)
+	allowed, nextCaps, err := l.r.applyRuntimePolicy(ctx, l.base, l.input, candidates, l.st.Caps, l.turnID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -63,7 +63,13 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 			tr := &planner.ToolResult{
 				Name:       call.Name,
 				ToolCallID: call.ToolCallID,
-				Error:      planner.NewToolError("tool call was not executed because the run tool-call cap was exhausted"),
+				Failure: &planner.ToolFailure{
+					Kind:  planner.FailureInternal,
+					Error: planner.NewToolError("tool call was not executed because the run tool-call cap was exhausted"),
+					Recovery: planner.RecoveryDirective{
+						Action: planner.RecoveryFinish,
+					},
+				},
 			}
 			if err := l.recordCapDeniedToolCall(ctx, call, tr); err != nil {
 				return nil, nil, err
@@ -232,7 +238,7 @@ func (r *Runtime) executedSuccessfulTerminalRunTool(records []stepToolRecord) (b
 		if !ok {
 			return false, fmt.Errorf("unknown tool %q", record.result.Name)
 		}
-		if spec.TerminalRun && record.result.Error == nil {
+		if spec.TerminalRun && record.result.Failure == nil {
 			return true, nil
 		}
 	}
@@ -291,8 +297,7 @@ func (l *workflowLoop) recordCapDeniedToolCall(ctx context.Context, call planner
 			nil,
 			0,
 			nil,
-			tr.RetryHint,
-			tr.Error,
+			tr.Failure,
 		),
 		l.turnID,
 	)

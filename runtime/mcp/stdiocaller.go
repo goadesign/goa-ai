@@ -158,7 +158,7 @@ func (c *StdioCaller) call(ctx context.Context, method string, params any, resul
 		}
 		if result != nil && res.resp.Result != nil {
 			if err := json.Unmarshal(res.resp.Result, result); err != nil {
-				return err
+				return NewMalformedResponseError(err)
 			}
 		}
 		return nil
@@ -173,7 +173,7 @@ func (c *StdioCaller) call(ctx context.Context, method string, params any, resul
 func (c *StdioCaller) writeMessage(req rpcRequest) error {
 	data, err := json.Marshal(req)
 	if err != nil {
-		return err
+		return NewInternalError(err)
 	}
 	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
 	c.writeMu.Lock()
@@ -197,7 +197,8 @@ func (c *StdioCaller) readLoop(stdout io.Reader) {
 		}
 		var resp rpcResponse
 		if err := json.Unmarshal(frame, &resp); err != nil {
-			continue
+			c.failPending(NewMalformedResponseError(err))
+			return
 		}
 		if resp.ID == 0 {
 			continue

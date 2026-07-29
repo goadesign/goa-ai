@@ -1,44 +1,86 @@
+// Package planner tool failures classify failed tool execution and define the
+// only legal next planner transition.
 package planner
 
-import toolerrors "goa.design/goa-ai/runtime/agent/toolerrors"
+import (
+	"goa.design/goa-ai/runtime/agent/rawjson"
+	toolerrors "goa.design/goa-ai/runtime/agent/toolerrors"
+	"goa.design/goa-ai/runtime/agent/tools"
+)
 
-// RetryReason categorizes the failure described by a RetryHint. Policy engines
-// use this to make informed handling decisions such as retrying, disabling
-// tools, adjusting caps, or requesting human intervention.
-type RetryReason string
+type (
+	// ToolError represents a structured tool failure and is an alias to the
+	// runtime toolerrors type.
+	ToolError = toolerrors.ToolError
 
-// ToolError represents a structured tool failure and is an alias to the runtime
-// toolerrors type. Planners use this to return structured tool errors to the runtime.
-type ToolError = toolerrors.ToolError
+	// FailureKind classifies why a tool failed independently from what the
+	// planner may do next.
+	FailureKind string
+
+	// RecoveryAction defines the next planner transition after a tool failure.
+	RecoveryAction string
+
+	// RecoveryDirective is the runtime-enforced recovery contract for one tool
+	// failure. Correction details are populated only for CorrectCall.
+	RecoveryDirective struct {
+		// Action selects the next planner transition.
+		Action RecoveryAction `json:"action"`
+
+		// Issues are generated-codec field issues explaining how to correct the
+		// failed call.
+		Issues []*tools.FieldIssue `json:"issues,omitempty"`
+
+		// PriorInput is the exact canonical JSON payload rejected by the tool.
+		PriorInput rawjson.Message `json:"prior_input,omitempty"`
+
+		// ExampleJSON is a canonical schema-compliant payload example.
+		ExampleJSON rawjson.Message `json:"example_json,omitempty"`
+	}
+
+	// ToolFailure is the canonical failed-tool result. Kind classifies the
+	// failure, Error preserves its causal chain, and Recovery determines the
+	// only legal next planner transition.
+	ToolFailure struct {
+		// Kind classifies the failure for policy, observability, and UI.
+		Kind FailureKind `json:"kind"`
+
+		// Error is the structured tool error.
+		Error *ToolError `json:"error"`
+
+		// Recovery defines the legal next planner transition.
+		Recovery RecoveryDirective `json:"recovery"`
+	}
+)
 
 const (
-	// RetryReasonInvalidArguments indicates the tool call failed due to invalid
-	// or malformed input arguments (schema violation, type mismatch, etc.).
-	RetryReasonInvalidArguments RetryReason = "invalid_arguments"
+	// FailureInvalidCall means model-authored arguments or tool selection did
+	// not satisfy the advertised contract.
+	FailureInvalidCall FailureKind = "invalid_call"
+	// FailureDomainRejection means the tool accepted the payload shape but
+	// rejected its requested domain semantics.
+	FailureDomainRejection FailureKind = "domain_rejection"
+	// FailureUnavailable means the tool or its provider is unavailable.
+	FailureUnavailable FailureKind = "unavailable"
+	// FailureRateLimited means the provider exhausted its local throttling retry.
+	FailureRateLimited FailureKind = "rate_limited"
+	// FailureTimeout means execution exceeded its deadline or has uncertain
+	// completion state.
+	FailureTimeout FailureKind = "timeout"
+	// FailureMalformedResult means a provider result violated its registered
+	// result contract.
+	FailureMalformedResult FailureKind = "malformed_result"
+	// FailureInternal means an internal invariant or implementation failed.
+	FailureInternal FailureKind = "internal"
 
-	// RetryReasonMissingFields indicates required fields were missing or empty
-	// in the tool call payload. The planner may populate MissingFields to specify
-	// which fields are needed.
-	RetryReasonMissingFields RetryReason = "missing_fields"
-
-	// RetryReasonMalformedResponse indicates the tool returned data that couldn't
-	// be parsed or didn't match the expected schema (e.g., invalid JSON).
-	RetryReasonMalformedResponse RetryReason = "malformed_response"
-
-	// RetryReasonTimeout classifies a tool failure caused by exceeding a time or
-	// budget limit. It is a terminal classification, not a retry instruction:
-	// hints carrying this reason never set RestrictToTool, so the tool is not
-	// re-issued. Consumers use it to page timeouts distinctly from internal
-	// failures rather than to drive recovery.
-	RetryReasonTimeout RetryReason = "timeout"
-
-	// RetryReasonRateLimited indicates the tool or underlying service is rate-limited.
-	// Policy engines may back off or disable the tool temporarily.
-	RetryReasonRateLimited RetryReason = "rate_limited"
-
-	// RetryReasonToolUnavailable indicates the tool is temporarily or permanently
-	// unavailable (service down, not configured, etc.).
-	RetryReasonToolUnavailable RetryReason = "tool_unavailable"
+	// RecoveryCorrectCall requires a corrected call to the same tool. The next
+	// planner step may await clarification instead when user input is required.
+	RecoveryCorrectCall RecoveryAction = "correct_call"
+	// RecoveryReplan permits a changed call, another advertised capability, or
+	// a final answer, but never an exact repetition of the failed call.
+	RecoveryReplan RecoveryAction = "replan"
+	// RecoveryFinish forbids further tool execution and requires final synthesis
+	// from evidence already collected.
+	RecoveryFinish RecoveryAction = "finish"
 )
 
 // NewToolError constructs a ToolError with the provided message.
@@ -56,29 +98,40 @@ func ToolErrorFromError(err error) *ToolError {
 	return toolerrors.FromError(err)
 }
 
-// ToolErrorf formats according to a format specifier and returns the string as
-// a ToolError.
+// ToolErrorf formats according to fmt conventions and returns a ToolError.
 func ToolErrorf(format string, args ...any) *ToolError {
 	return toolerrors.Errorf(format, args...)
 }
 
-// AllowsRetry reports whether the hint authorizes another tool attempt in the
-// current run. Timeout hints classify a terminal failure for policy and UX
-// consumers; every other defined reason describes a recoverable failure.
-func (h *RetryHint) AllowsRetry() bool {
-	if h == nil {
+// CloneToolFailure deep-copies a failed-tool value across workflow,
+// persistence, and replay ownership boundaries.
+func CloneToolFailure(in *ToolFailure) *ToolFailure {
+	if in == nil {
+		return nil
+	}
+	return &ToolFailure{
+		Kind:  in.Kind,
+		Error: toolerrors.Clone(in.Error),
+		Recovery: RecoveryDirective{
+			Action:      in.Recovery.Action,
+			Issues:      tools.CloneFieldIssues(in.Recovery.Issues),
+			PriorInput:  append(rawjson.Message(nil), in.Recovery.PriorInput...),
+			ExampleJSON: append(rawjson.Message(nil), in.Recovery.ExampleJSON...),
+		},
+	}
+}
+
+// AllowsToolTurn reports whether recovery permits another planner tool turn.
+func (f *ToolFailure) AllowsToolTurn() bool {
+	if f == nil {
 		return false
 	}
-	switch h.Reason {
-	case RetryReasonInvalidArguments,
-		RetryReasonMissingFields,
-		RetryReasonMalformedResponse,
-		RetryReasonRateLimited,
-		RetryReasonToolUnavailable:
+	switch f.Recovery.Action {
+	case RecoveryCorrectCall, RecoveryReplan:
 		return true
-	case RetryReasonTimeout:
+	case RecoveryFinish:
 		return false
 	default:
-		panic("planner: unknown retry reason " + h.Reason)
+		panic("planner: unknown recovery action " + f.Recovery.Action)
 	}
 }

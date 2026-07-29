@@ -305,8 +305,11 @@ package <toolset>
 
 import (
     "context"
+    "errors"
     "goa.design/goa-ai/runtime/agent/planner"
+    "goa.design/goa-ai/runtime/agent/rawjson"
     "goa.design/goa-ai/runtime/agent/runtime"
+    "goa.design/goa-ai/runtime/agent/tools"
     specs "<module>/gen/<svc>/agents/<agent>/specs/<toolset>"
 )
 
@@ -314,13 +317,38 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
     switch call.Name {
     case "<svc>.<toolset>.<tool>":
         // Decode payload using generated codec
-        pc, ok := specs.PayloadCodec(string(call.Name))
+        spec, ok := specs.Spec(call.Name)
         if !ok {
-            return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("payload codec not found")}), nil
+            return runtime.Executed(&planner.ToolResult{
+                Failure: &planner.ToolFailure{
+                    Kind: planner.FailureInternal,
+                    Error: planner.NewToolError("payload codec not found"),
+                    Recovery: planner.RecoveryDirective{Action: planner.RecoveryFinish},
+                },
+            }), nil
         }
-        args, err := pc.FromJSON(call.Payload)
+        args, err := spec.Payload.Codec.FromJSON(call.Payload)
         if err != nil {
-            return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("invalid payload: " + err.Error())}), nil
+            var issuer interface {
+                Issues() []*tools.FieldIssue
+            }
+            var issues []*tools.FieldIssue
+            if errors.As(err, &issuer) {
+                issues = issuer.Issues()
+            }
+            return runtime.Executed(&planner.ToolResult{
+                Name: call.Name,
+                Failure: &planner.ToolFailure{
+                    Kind: planner.FailureInvalidCall,
+                    Error: planner.ToolErrorFromError(err),
+                    Recovery: planner.RecoveryDirective{
+                        Action: planner.RecoveryCorrectCall,
+                        Issues: issues,
+                        PriorInput: append(rawjson.Message(nil), call.Payload...),
+                        ExampleJSON: append(rawjson.Message(nil), spec.Payload.ExampleJSON...),
+                    },
+                },
+            }), nil
         }
         // Type-assert to the generated payload type:
         // typedArgs := args.(*specs.<ToolPayload>)
@@ -336,7 +364,12 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
 		}), nil
     }
     return runtime.Executed(&planner.ToolResult{
-		Error: planner.NewToolError("unknown tool"),
+        Name: call.Name,
+        Failure: &planner.ToolFailure{
+            Kind: planner.FailureInvalidCall,
+            Error: planner.NewToolError("unknown tool"),
+            Recovery: planner.RecoveryDirective{Action: planner.RecoveryReplan},
+        },
 	}), nil
 }
 ```

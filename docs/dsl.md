@@ -1044,7 +1044,7 @@ Keep the built-in contracts canonical:
 
 - use `Tags` for generic allow/deny and capability filtering,
 - use `Bookkeeping` and `TerminalRun` for accounting and terminal behavior,
-- use `RetryHint` for per-result failure handling,
+- use `ToolFailure` for per-result failure classification and recovery,
 - use planner fields such as `SynthesizeAfterTools` for per-batch transitions.
 
 ### ResultReminder
@@ -1107,8 +1107,8 @@ This means a bookkeeping-only planner turn is only valid when the same turn
 already resolves without another reasoning resume (a `TerminalRun` tool, a
 `FinalResponse` / `FinalToolResult`, or an await/pause control-plane
 handshake). A failed bookkeeping result remains planner-visible only when its
-`RetryHint.AllowsRetry()` is true, so terminal classifications do not create an
-accidental repair turn.
+`ToolFailure.Recovery` permits another tool turn, so terminal recovery does not
+create an accidental repair turn.
 
 Operationally, a planner result is processed as one workflow step: the runtime
 executes admitted tool and await work, records durable and planner-visible
@@ -1425,7 +1425,8 @@ The DSL re-exports standardized agent API types for use in Goa service designs:
 - `AgentRunPayload`: input for agent run/start/resume endpoints
 - `AgentRunResult`: terminal result for non-streaming endpoints
 - `AgentRunChunk`: streaming progress events
-- Supporting types: `AgentMessage`, `AgentToolEvent`, `AgentToolError`, `AgentRetryHint`, etc.
+- Supporting types: `AgentMessage`, `AgentToolEvent`, `AgentToolError`,
+  `AgentToolFailure`, `AgentRecoveryDirective`, etc.
 
 ```go
 Service("orchestrator", func() {

@@ -112,7 +112,6 @@ func TestStreamSubscriber_ToolEnd_EmitsServerData(t *testing.T) {
 		0,
 		nil,
 		nil,
-		nil,
 	)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
@@ -143,7 +142,6 @@ func TestStreamSubscriber_ToolEnd_AllowsMissingResult(t *testing.T) {
 		"",
 		nil,
 		0,
-		nil,
 		nil,
 		nil,
 	)
@@ -424,7 +422,6 @@ func TestStreamSubscriber_ToolEndPrecedesRunStreamEnd(t *testing.T) {
 		"",
 		nil,
 		0,
-		nil,
 		nil,
 		nil,
 	)

@@ -1,15 +1,14 @@
 // Package policy codifies policy evaluation and enforcement for agent runs.
 // Policy engines decide which tools are available to planners on each turn,
-// enforce resource caps (max tool calls, time budgets, failure limits), and
-// react to planner retry hints. This allows runtime-level control over agent
-// behavior without modifying planner logic or tool implementations.
+// and enforce resource caps (max tool calls, time budgets, failure limits).
+// Tool-failure recovery is an execution transition owned by the runtime, not a
+// policy suggestion.
 package policy
 
 import (
 	"context"
 	"time"
 
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -20,13 +19,13 @@ type (
 	// to compute the allowlist and update caps. This enables dynamic tool filtering,
 	// circuit breaking, and budget enforcement without planner awareness.
 	//
-	// Implementations can inspect retry hints, track failure patterns, consult external
-	// systems (approval workflows, rate limiters), or apply rule-based logic to restrict
-	// tool access. The default implementation (if no Engine is provided) allows all tools
-	// and enforces basic cap counting.
+	// Implementations can track failure patterns, consult external systems
+	// (approval workflows, rate limiters), or apply rule-based logic to restrict
+	// tool access. The default implementation (if no Engine is provided) allows
+	// all tools and enforces basic cap counting.
 	Engine interface {
 		// Decide evaluates policy constraints and returns the decision for this turn.
-		// The runtime passes candidate tools, remaining caps, retry hints, and context.
+		// The runtime passes candidate tools, remaining caps, and context.
 		// Returns an error if the policy engine fails (e.g., external system unavailable);
 		// this typically terminates the workflow.
 		//
@@ -48,11 +47,6 @@ type (
 		// registration. The policy engine filters this list down to the allowlist
 		// for the current turn.
 		Tools []ToolMetadata
-
-		// RetryHint carries planner suggestions after tool failures (e.g., "disable
-		// this tool", "increase timeout"). Nil if no hint was provided. Policies
-		// can honor or ignore these hints based on configuration.
-		RetryHint *RetryHint
 
 		// RemainingCaps reflects the current execution budgets (remaining tool calls,
 		// consecutive failures allowed, time budget). Policies use this to decide
@@ -171,27 +165,4 @@ const (
 	ToolBudgetClassBudgeted ToolBudgetClass = "budgeted"
 	// ToolBudgetClassBookkeeping identifies tools that are exempt from MaxToolCalls.
 	ToolBudgetClassBookkeeping ToolBudgetClass = "bookkeeping"
-)
-
-type (
-	// RetryReason categorizes planner failures communicated via RetryHint.
-	// The planner package owns the enum; the alias keeps policy engines on
-	// the same vocabulary with one source of truth, so retiring or adding a
-	// reason is a single edit the compiler propagates.
-	RetryReason = planner.RetryReason
-
-	// RetryHint communicates planner guidance after tool failures so policy
-	// engines can adjust allowlists or caps. The runtime hands Engine.Decide
-	// the planner's hint directly; engines must treat it as read-only.
-	RetryHint = planner.RetryHint
-)
-
-// Re-exported retry reasons so policy engines need not import the planner
-// package to match on them.
-const (
-	RetryReasonInvalidArguments  = planner.RetryReasonInvalidArguments
-	RetryReasonMissingFields     = planner.RetryReasonMissingFields
-	RetryReasonMalformedResponse = planner.RetryReasonMalformedResponse
-	RetryReasonRateLimited       = planner.RetryReasonRateLimited
-	RetryReasonToolUnavailable   = planner.RetryReasonToolUnavailable
 )

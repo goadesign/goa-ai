@@ -281,77 +281,7 @@ func TestExecutorIgnoresLateResultFromReusedToolUseID(t *testing.T) {
 	assert.Empty(t, stream.acked)
 }
 
-func TestBuildRetryHintFromIssuesRestrictsToFailedTool(t *testing.T) {
-	t.Parallel()
-
-	hint := buildRetryHintFromIssues("atlas.read.recommend_signals", nil, []*tools.FieldIssue{{
-		Field:            "selector",
-		Constraint:       "invalid_field_type",
-		ExpectedJSONType: "object",
-		ActualJSONType:   "string",
-	}})
-
-	require.NotNil(t, hint)
-	assert.Equal(t, planner.RetryReasonInvalidArguments, hint.Reason)
-	assert.Equal(t, tools.Ident("atlas.read.recommend_signals"), hint.Tool)
-	assert.True(t, hint.RestrictToTool)
-	assert.Equal(t, []string{"selector"}, hint.MissingFields)
-	assert.Contains(t, hint.ClarifyingQuestion, "`selector` must be a JSON object, not a JSON string")
-}
-
-func TestRetryHintFromInvalidArgumentsRestrictsToFailedTool(t *testing.T) {
-	t.Parallel()
-
-	hint := retryHintFromToolErrorCode("atlas.read.recommend_signals", "invalid_arguments")
-
-	require.NotNil(t, hint)
-	assert.Equal(t, planner.RetryReasonInvalidArguments, hint.Reason)
-	assert.Equal(t, tools.Ident("atlas.read.recommend_signals"), hint.Tool)
-	assert.True(t, hint.RestrictToTool)
-}
-
-func TestRetryHintFromTimeoutClassifiesWithoutRetry(t *testing.T) {
-	t.Parallel()
-
-	hint := retryHintFromToolErrorCode("atlas.read.get_time_series", "timeout")
-
-	require.NotNil(t, hint)
-	assert.Equal(t, planner.RetryReasonTimeout, hint.Reason)
-	assert.Equal(t, tools.Ident("atlas.read.get_time_series"), hint.Tool)
-	assert.False(t, hint.RestrictToTool, "a timeout is terminal and must not force a same-tool retry")
-
-	// Unknown codes carry no hint.
-	assert.Nil(t, retryHintFromToolErrorCode("atlas.read.get_time_series", "query_too_expensive"))
-}
-
-func TestRetryHintFromStaleRegistrationIsToolUnavailable(t *testing.T) {
-	t.Parallel()
-
-	hint := retryHintFromToolErrorCode(
-		"atlas.read.get_time_series",
-		toolregistry.ToolErrorCodeStaleRegistration,
-	)
-
-	require.NotNil(t, hint)
-	assert.Equal(t, planner.RetryReasonToolUnavailable, hint.Reason)
-	assert.False(t, hint.RestrictToTool)
-}
-
-func TestRetryHintFromInvalidInputDoesNotRestrict(t *testing.T) {
-	t.Parallel()
-
-	// Service-level invalid_input is a domain rejection that may name a sibling
-	// tool as the remedy. It classifies as invalid input for the UI but must not
-	// pin the model to the rejecting tool.
-	hint := retryHintFromToolErrorCode("atlas.read.get_time_series", "invalid_input")
-
-	require.NotNil(t, hint)
-	assert.Equal(t, planner.RetryReasonInvalidArguments, hint.Reason)
-	assert.Equal(t, tools.Ident("atlas.read.get_time_series"), hint.Tool)
-	assert.False(t, hint.RestrictToTool, "invalid_input must not force a same-tool retry")
-}
-
-func TestExecutorErrorHintCarriesExampleJSONOnlyWhenRestricting(t *testing.T) {
+func TestExecutorRegistryErrorsCarryCanonicalRecovery(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -361,21 +291,15 @@ func TestExecutorErrorHintCarriesExampleJSONOnlyWhenRestricting(t *testing.T) {
 	example := tools.RawJSON(`{"query":"latency"}`)
 
 	cases := []struct {
-		name         string
-		code         string
-		wantReason   planner.RetryReason
-		wantRestrict bool
-		wantExample  bool
+		name        string
+		code        string
+		wantKind    planner.FailureKind
+		wantAction  planner.RecoveryAction
+		wantExample bool
 	}{
-		// A timeout is terminal: it must not hand the model a payload-correction
-		// template that reads as a same-tool retry instruction.
-		{"timeout carries no retry template", "timeout", planner.RetryReasonTimeout, false, false},
-		// invalid_input may name a sibling tool as the remedy; a payload example
-		// would wrongly pin the model to the rejecting tool.
-		{"invalid_input carries no retry template", "invalid_input", planner.RetryReasonInvalidArguments, false, false},
-		// invalid_arguments restricts to the same tool for payload correction, so
-		// the canonical example belongs here.
-		{"invalid_arguments carries the payload example", "invalid_arguments", planner.RetryReasonInvalidArguments, true, true},
+		{"timeout finishes", "timeout", planner.FailureTimeout, planner.RecoveryFinish, false},
+		{"domain rejection replans", "invalid_input", planner.FailureDomainRejection, planner.RecoveryReplan, false},
+		{"invalid call carries correction data", "invalid_arguments", planner.FailureInvalidCall, planner.RecoveryCorrectCall, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -394,13 +318,13 @@ func TestExecutorErrorHintCarriesExampleJSONOnlyWhenRestricting(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, res)
 			require.NotNil(t, res.ToolResult)
-			require.NotNil(t, res.ToolResult.RetryHint)
-			assert.Equal(t, tc.wantReason, res.ToolResult.RetryHint.Reason)
-			assert.Equal(t, tc.wantRestrict, res.ToolResult.RetryHint.RestrictToTool)
+			require.NotNil(t, res.ToolResult.Failure)
+			assert.Equal(t, tc.wantKind, res.ToolResult.Failure.Kind)
+			assert.Equal(t, tc.wantAction, res.ToolResult.Failure.Recovery.Action)
 			if tc.wantExample {
-				assert.NotEmpty(t, res.ToolResult.RetryHint.ExampleJSON)
+				assert.NotEmpty(t, res.ToolResult.Failure.Recovery.ExampleJSON)
 			} else {
-				assert.Empty(t, res.ToolResult.RetryHint.ExampleJSON)
+				assert.Empty(t, res.ToolResult.Failure.Recovery.ExampleJSON)
 			}
 		})
 	}
@@ -432,12 +356,10 @@ func TestExecutorTransportFailureClassifiesToolUnavailable(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.ToolResult)
-	require.NotNil(t, res.ToolResult.Error)
-	require.NotNil(t, res.ToolResult.RetryHint)
-	assert.Equal(t, planner.RetryReasonToolUnavailable, res.ToolResult.RetryHint.Reason)
-	assert.Equal(t, tools.Ident("atlas.read.get_time_series"), res.ToolResult.RetryHint.Tool)
-	assert.False(t, res.ToolResult.RetryHint.RestrictToTool, "a transport blip must not force a same-tool retry")
-	assert.Empty(t, res.ToolResult.RetryHint.ExampleJSON, "a transient transport failure is not a payload-correction case")
+	require.NotNil(t, res.ToolResult.Failure)
+	assert.Equal(t, planner.FailureUnavailable, res.ToolResult.Failure.Kind)
+	assert.Equal(t, planner.RecoveryReplan, res.ToolResult.Failure.Recovery.Action)
+	assert.Empty(t, res.ToolResult.Failure.Recovery.ExampleJSON)
 	assert.Equal(t, "toolcall-transport", res.ToolResult.ToolCallID)
 }
 
@@ -890,13 +812,10 @@ func TestExecutorResultDecodeFailureReturnsModelVisibleErrorWithoutBounds(t *tes
 	require.NotNil(t, res.ToolResult)
 	assert.Nil(t, res.ToolResult.Bounds)
 	assert.Nil(t, res.ToolResult.ServerData)
-	require.NotNil(t, res.ToolResult.Error)
-	assert.Contains(t, res.ToolResult.Error.Error(), "invalid enum value \"retired\"")
-	require.NotNil(t, res.ToolResult.RetryHint)
-	assert.Equal(t, planner.RetryReasonMalformedResponse, res.ToolResult.RetryHint.Reason)
-	assert.Equal(t, tools.Ident("atlas.read.list_devices"), res.ToolResult.RetryHint.Tool)
-	assert.False(t, res.ToolResult.RetryHint.RestrictToTool)
-	assert.Contains(t, res.ToolResult.RetryHint.Message, "registered result schema")
+	require.NotNil(t, res.ToolResult.Failure)
+	assert.Contains(t, res.ToolResult.Failure.Error.Error(), "invalid enum value \"retired\"")
+	assert.Equal(t, planner.FailureMalformedResult, res.ToolResult.Failure.Kind)
+	assert.Equal(t, planner.RecoveryFinish, res.ToolResult.Failure.Recovery.Action)
 }
 
 type fakeRegistryClient struct {

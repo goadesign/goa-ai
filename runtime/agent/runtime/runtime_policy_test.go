@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -223,8 +224,8 @@ func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, outputs, 1)
 	require.Equal(t, toolSpec.Name, outputs[0].Name)
-	require.NotNil(t, outputs[0].Error)
-	require.Contains(t, outputs[0].Error.Message, "tool-call cap was exhausted")
+	require.NotNil(t, outputs[0].Failure)
+	require.Contains(t, outputs[0].Failure.Error.Message, "tool-call cap was exhausted")
 	require.JSONEq(t, `{"q":"x"}`, string(outputs[0].Payload))
 }
 
@@ -244,11 +245,7 @@ func TestRestrictedRunFailureCapFinalizes(t *testing.T) {
 		ctx:         context.Background(),
 		hookRuntime: rt,
 		asyncResult: ToolOutput{
-			Error: "invalid arguments",
-			RetryHint: &planner.RetryHint{
-				Reason: planner.RetryReasonInvalidArguments,
-				Tool:   toolSpec.Name,
-			},
+			Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "invalid arguments"),
 		},
 		planResult:    restrictedFinalPlanResult("finalized after failure cap"),
 		hasPlanResult: true,
@@ -327,7 +324,7 @@ func TestRestrictedUnknownToolReachesFailureCap(t *testing.T) {
 	require.NotNil(t, out.Final)
 	require.Len(t, out.ToolEvents, 1)
 	require.Equal(t, tools.ToolUnavailable, out.ToolEvents[0].Name)
-	require.NotNil(t, out.ToolEvents[0].Error)
+	require.NotNil(t, out.ToolEvents[0].Failure)
 	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
 	require.Equal(t, planner.TerminationReasonFailureCap, wfCtx.lastPlannerCall.Input.Finalize.Reason)
 }
@@ -382,12 +379,29 @@ func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
 	require.JSONEq(t, `{"requested_tool":"missing"}`, string(rewritten[1].Payload))
 	require.JSONEq(t, `{"requested_tool":"denied"}`, string(rewritten[2].Payload))
 
-	var hintPayload map[string]any
-	require.NoError(t, json.Unmarshal(rewritten[2].Payload.RawMessage(), &hintPayload))
+	hintPayload, err := toolUnavailableSpec.Payload.Codec.FromJSON(rewritten[2].Payload.RawMessage())
+	require.NoError(t, err)
 	hint, ok, err := rthints.RenderCallHint(tools.ToolUnavailable, hintPayload)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, "Tool not available: denied", hint)
+}
+
+func TestValidateRunPolicyRejectsUnknownMissingFieldsAction(t *testing.T) {
+	t.Parallel()
+
+	for _, action := range []MissingFieldsAction{
+		"",
+		MissingFieldsFinalize,
+		MissingFieldsAwaitClarification,
+		MissingFieldsResume,
+	} {
+		require.NoError(t, validateRunPolicy(RunPolicy{OnMissingFields: action}))
+	}
+
+	err := validateRunPolicy(RunPolicy{OnMissingFields: "retry"})
+	require.ErrorIs(t, err, ErrInvalidConfig)
+	assert.Contains(t, err.Error(), `unknown missing-fields action "retry"`)
 }
 
 func TestFilterToolCallsKeepsToolUnavailable(t *testing.T) {

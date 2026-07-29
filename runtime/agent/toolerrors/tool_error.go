@@ -13,16 +13,16 @@ import (
 // nested via Cause to retain rich diagnostics across retries and agent-as-tool hops.
 type ToolError struct {
 	// Message is the human-readable summary of the failure.
-	Message string
+	Message string `json:"message"`
 	// Cause links to the underlying tool error, enabling error chains with errors.Is/As.
-	Cause *ToolError
+	Cause *ToolError `json:"cause,omitempty"`
 }
 
 // New constructs a ToolError with the provided message. Use when the failure does not
 // wrap an underlying error but still requires structured reporting.
 func New(message string) *ToolError {
 	if message == "" {
-		message = "tool error"
+		panic("toolerrors: message is required")
 	}
 	return &ToolError{Message: message}
 }
@@ -31,8 +31,11 @@ func New(message string) *ToolError {
 // converted into a ToolError chain so error metadata survives serialization while still
 // supporting errors.Is/As through Unwrap.
 func NewWithCause(message string, cause error) *ToolError {
-	if message == "" && cause != nil {
-		message = cause.Error()
+	if message == "" {
+		panic("toolerrors: message is required")
+	}
+	if cause == nil {
+		panic("toolerrors: cause is required")
 	}
 	return &ToolError{
 		Message: message,
@@ -45,14 +48,39 @@ func FromError(err error) *ToolError {
 	if err == nil {
 		return nil
 	}
-	var te *ToolError
-	if errors.As(err, &te) {
-		return te
-	}
 	return &ToolError{
 		Message: err.Error(),
 		Cause:   FromError(errors.Unwrap(err)),
 	}
+}
+
+// Clone deep-copies a serializable tool error cause chain.
+func Clone(in *ToolError) *ToolError {
+	if in == nil {
+		return nil
+	}
+	return &ToolError{
+		Message: in.Message,
+		Cause:   Clone(in.Cause),
+	}
+}
+
+// Validate checks the serialized error-chain invariant at tool-result ingress.
+func Validate(in *ToolError) error {
+	if in == nil {
+		return errors.New("toolerrors: error is required")
+	}
+	seen := make(map[*ToolError]struct{})
+	for depth, current := 0, in; current != nil; depth, current = depth+1, current.Cause {
+		if _, ok := seen[current]; ok {
+			return errors.New("toolerrors: cause chain contains a cycle")
+		}
+		seen[current] = struct{}{}
+		if current.Message == "" {
+			return fmt.Errorf("toolerrors: message is required at cause depth %d", depth)
+		}
+	}
+	return nil
 }
 
 // Errorf formats according to a format specifier and returns the string as a ToolError.

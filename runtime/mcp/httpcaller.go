@@ -112,11 +112,11 @@ func (t *httpTransport) call(ctx context.Context, method string, params any, res
 	reqBody := rpcRequest{JSONRPC: "2.0", Method: method, ID: id, Params: params}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return err
+		return NewInternalError(err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.endpoint, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return NewInternalError(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	injectTraceHeaders(ctx, req.Header)
@@ -131,14 +131,14 @@ func (t *httpTransport) call(ctx context.Context, method string, params any, res
 	}
 	var rpcResp rpcResponse
 	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
-		return err
+		return NewMalformedResponseError(err)
 	}
 	if rpcResp.Error != nil {
 		return rpcResp.Error.callerError()
 	}
 	if result != nil && rpcResp.Result != nil {
 		if err := json.Unmarshal(rpcResp.Result, result); err != nil {
-			return err
+			return NewMalformedResponseError(err)
 		}
 	}
 	return nil

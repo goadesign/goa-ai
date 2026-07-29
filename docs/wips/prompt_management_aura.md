@@ -70,7 +70,6 @@ This section enumerates all prompt sources to migrate.
 - `services/chat-agent/prompts/templates/chat.go.tpl`
 - `services/chat-agent/prompts/templates/brief_context.go.tpl`
 - `services/chat-agent/prompts/templates/partials/guidance_common.go.tpl`
-- `services/chat-agent/prompts/templates/partials/retry_policy.go.tpl`
 - `services/chat-agent/prompts/templates/partials/tool_use_rules.go.tpl`
 - `services/chat-agent/prompts/templates/partials/evidence_citations.go.tpl`
 
@@ -192,7 +191,6 @@ Add explicit canonical IDs so overrides and analytics are stable:
 - `aura.chat.system`
 - `aura.chat.brief_context`
 - `aura.chat.partial.guidance_common`
-- `aura.chat.partial.retry_policy`
 - `aura.chat.partial.tool_use_rules`
 - `aura.chat.partial.evidence_citations`
 - `aura.ada.system`
@@ -530,4 +528,3 @@ WS-A8 can be split and started as each track lands.
 5. Update architecture docs in AURA if runtime flow changes materially:
    - `docs/ARCHITECTURE.md`
    - `diagram/` artifacts
-

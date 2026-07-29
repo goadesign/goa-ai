@@ -68,7 +68,6 @@ func (r *Runtime) applyRuntimePolicy(
 	candidates []planner.ToolRequest,
 	caps policy.CapsState,
 	turnID string,
-	retry *planner.RetryHint,
 ) ([]planner.ToolRequest, policy.CapsState, error) {
 	if r.Policy == nil {
 		return candidates, caps, nil
@@ -77,7 +76,6 @@ func (r *Runtime) applyRuntimePolicy(
 	decision, err := r.Policy.Decide(ctx, policy.Input{
 		RunContext:    base.RunContext,
 		Tools:         r.toolMetadata(candidates),
-		RetryHint:     retry,
 		RemainingCaps: caps,
 		Requested:     toolHandles(candidates),
 		Labels:        base.RunContext.Labels,

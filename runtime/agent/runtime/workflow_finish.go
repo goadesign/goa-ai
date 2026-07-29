@@ -183,8 +183,7 @@ func finalToolResultEvent(toolName tools.Ident, result *planner.FinalToolResult)
 		ResultOmittedReason: result.ResultOmittedReason,
 		ServerData:          append(rawjson.Message(nil), result.ServerData...),
 		Bounds:              result.Bounds,
-		Error:               result.Error,
-		RetryHint:           result.RetryHint,
+		Failure:             planner.CloneToolFailure(result.Failure),
 		Telemetry:           result.Telemetry,
 	}
 }

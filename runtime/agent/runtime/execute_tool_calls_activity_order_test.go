@@ -132,10 +132,10 @@ func TestExecuteToolCalls_ServiceToolErrorDoesNotAbortRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.NotNil(t, results[0].ToolResult)
-	require.NotNil(t, results[0].ToolResult.Error)
-	require.Equal(t, "tool activity failed", results[0].ToolResult.Error.Message)
-	require.NotNil(t, results[0].ToolResult.Error.Cause)
-	require.Equal(t, "activity start-to-close timeout", results[0].ToolResult.Error.Cause.Message)
+	require.NotNil(t, results[0].ToolResult.Failure)
+	require.Equal(t, "tool activity failed", results[0].ToolResult.Failure.Error.Message)
+	require.NotNil(t, results[0].ToolResult.Failure.Error.Cause)
+	require.Equal(t, "activity start-to-close timeout", results[0].ToolResult.Failure.Error.Cause.Message)
 
 	var ends []*hooks.ToolResultReceivedEvent
 	for _, evt := range recorder.events {
@@ -145,6 +145,6 @@ func TestExecuteToolCalls_ServiceToolErrorDoesNotAbortRun(t *testing.T) {
 	}
 	require.Len(t, ends, 1)
 	require.Equal(t, callFail.ToolCallID, ends[0].ToolCallID)
-	require.NotNil(t, ends[0].Error)
-	require.Equal(t, "tool activity failed", ends[0].Error.Message)
+	require.NotNil(t, ends[0].Failure)
+	require.Equal(t, "tool activity failed", ends[0].Failure.Error.Message)
 }

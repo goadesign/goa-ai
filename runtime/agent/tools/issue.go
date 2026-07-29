@@ -2,8 +2,8 @@
 package tools
 
 import (
+	"errors"
 	"fmt"
-	"strings"
 )
 
 // FieldIssue represents a single validation issue for a payload.
@@ -13,58 +13,27 @@ import (
 // keys outside a closed generated payload or result contract.
 // Generated tool codecs return []FieldIssue from ValidationError.Issues().
 type FieldIssue struct {
-	Field      string
-	Constraint string
-	// Optional extras for richer UIs and retry hints; not all are populated by the codecs.
+	Field      string `json:"field"`
+	Constraint string `json:"constraint"`
+	// Optional extras for richer UIs and correction directives; not all are populated by the codecs.
 	// For unknown_field, Allowed lists the valid field names at that object level.
-	Allowed []string
-	MinLen  *int
-	MaxLen  *int
-	Pattern string
-	Format  string
+	Allowed []string `json:"allowed,omitempty"`
+	MinLen  *int     `json:"min_len,omitempty"`
+	MaxLen  *int     `json:"max_len,omitempty"`
+	Pattern string   `json:"pattern,omitempty"`
+	Format  string   `json:"format,omitempty"`
 	// ExpectedJSONType and ActualJSONType are populated for invalid_field_type
 	// issues emitted by generated codecs after JSON decoding rejects a field.
-	ExpectedJSONType string
-	ActualJSONType   string
-}
-
-// InvalidFieldTypeMessage renders generated JSON type metadata as planner guidance.
-func InvalidFieldTypeMessage(issue *FieldIssue) string {
-	validateInvalidFieldTypeIssue(issue)
-	expected := jsonTypeArticle(issue.ExpectedJSONType)
-	actual := jsonTypeArticle(issue.ActualJSONType)
-	return fmt.Sprintf("`%s` must be %s, not %s", issue.Field, expected, actual)
-}
-
-// HasInvalidFieldTypeMetadata reports whether an issue carries enough generated
-// codec metadata to render precise JSON type guidance.
-func HasInvalidFieldTypeMetadata(issue *FieldIssue) bool {
-	return issue != nil &&
-		issue.Constraint == "invalid_field_type" &&
-		issue.ExpectedJSONType != "" &&
-		issue.ActualJSONType != ""
-}
-
-// InvalidFieldTypeQuestion renders invalid_field_type issues as retry guidance.
-func InvalidFieldTypeQuestion(issues []*FieldIssue) string {
-	if len(issues) == 0 {
-		panic("tools.InvalidFieldTypeQuestion requires at least one issue")
-	}
-	parts := make([]string, 0, min(len(issues), 3))
-	for i, issue := range issues {
-		if i == 3 {
-			break
-		}
-		parts = append(parts, InvalidFieldTypeMessage(issue))
-	}
-	return "Please resend the tool call with " + strings.Join(parts, ", ") + "."
+	ExpectedJSONType string `json:"expected_json_type,omitempty"`
+	ActualJSONType   string `json:"actual_json_type,omitempty"`
 }
 
 // ValidationError is the canonical structured validation error emitted by
 // generated tool codecs.
 //
 // It keeps payload/result schema failures as data, not text parsing contracts:
-// runtimes consume Issues and Descriptions to produce retry hints and UI copy.
+// runtimes consume Issues and Descriptions to produce correction directives
+// and UI copy.
 type ValidationError struct {
 	message      string
 	issues       []*FieldIssue
@@ -76,36 +45,13 @@ func NewValidationError(message string, issues []*FieldIssue, descriptions map[s
 	if message == "" {
 		panic("tools.ValidationError requires a message")
 	}
-	clonedIssues := cloneFieldIssues(issues)
-	if len(clonedIssues) == 0 {
-		panic("tools.ValidationError requires at least one field issue")
+	if err := ValidateFieldIssues(issues); err != nil {
+		panic(err)
 	}
 	return &ValidationError{
 		message:      message,
-		issues:       clonedIssues,
+		issues:       CloneFieldIssues(issues),
 		descriptions: cloneStringMap(descriptions),
-	}
-}
-
-func jsonTypeArticle(value string) string {
-	if strings.HasPrefix(value, "JSON ") {
-		return "a " + value
-	}
-	return "a JSON " + value
-}
-
-func validateInvalidFieldTypeIssue(issue *FieldIssue) {
-	if issue == nil {
-		panic("tools invalid_field_type issue must be non-nil")
-	}
-	if issue.Constraint != "invalid_field_type" {
-		panic("tools invalid field type guidance requires invalid_field_type constraint")
-	}
-	if issue.ExpectedJSONType == "" {
-		panic("tools invalid_field_type issue requires expected JSON type")
-	}
-	if issue.ActualJSONType == "" {
-		panic("tools invalid_field_type issue requires actual JSON type")
 	}
 }
 
@@ -148,7 +94,7 @@ func (e *ValidationError) Error() string {
 
 // Issues returns the structured field-level validation failures.
 func (e *ValidationError) Issues() []*FieldIssue {
-	return cloneFieldIssues(e.issues)
+	return CloneFieldIssues(e.issues)
 }
 
 // Descriptions returns optional human-readable descriptions for invalid fields.
@@ -156,19 +102,42 @@ func (e *ValidationError) Descriptions() map[string]string {
 	return cloneStringMap(e.descriptions)
 }
 
-// cloneFieldIssues copies validation issues so callers cannot mutate error state.
-func cloneFieldIssues(in []*FieldIssue) []*FieldIssue {
-	out := make([]*FieldIssue, 0, len(in))
-	for _, issue := range in {
+// ValidateFieldIssues checks the canonical structured validation issue contract.
+func ValidateFieldIssues(issues []*FieldIssue) error {
+	if len(issues) == 0 {
+		return errors.New("tools: at least one field issue is required")
+	}
+	for i, issue := range issues {
 		if issue == nil {
-			panic("tools.ValidationError field issues must be non-nil")
+			return fmt.Errorf("tools: field issue %d is nil", i)
 		}
 		if issue.Field == "" {
-			panic("tools.ValidationError field issue requires a field")
+			return fmt.Errorf("tools: field issue %d requires a field", i)
 		}
 		if issue.Constraint == "" {
-			panic("tools.ValidationError field issue requires a constraint")
+			return fmt.Errorf("tools: field issue %d requires a constraint", i)
 		}
+		switch issue.Constraint {
+		case "missing_field",
+			"invalid_enum_value",
+			"invalid_format",
+			"invalid_pattern",
+			"invalid_range",
+			"invalid_length",
+			"invalid_field_type",
+			"unknown_field":
+		default:
+			return fmt.Errorf("tools: field issue %d has unknown constraint %q", i, issue.Constraint)
+		}
+	}
+	return nil
+}
+
+// CloneFieldIssues deep-copies canonical issues so callers cannot mutate
+// generated validation or recovery state.
+func CloneFieldIssues(in []*FieldIssue) []*FieldIssue {
+	out := make([]*FieldIssue, 0, len(in))
+	for _, issue := range in {
 		clone := *issue
 		clone.Allowed = append([]string(nil), issue.Allowed...)
 		clone.MinLen = cloneInt(issue.MinLen)

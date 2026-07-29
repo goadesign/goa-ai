@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,7 +21,7 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 		ToJSON: func(v any) ([]byte, error) { return json.Marshal("encoded_payload") },
 		FromJSON: func(data []byte) (any, error) {
 			decodedCalled = true
-			require.JSONEq(t, "{}", string(data))
+			require.JSONEq(t, `{"server_data":"on"}`, string(data))
 			return "decoded_payload", nil
 		},
 	}
@@ -41,8 +42,8 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 		toolsets: map[string]ToolsetRegistration{
 			"svc.ts": {
 				Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
-					// Executors receive canonical JSON payloads.
-					require.JSONEq(t, "{}", string(call.Payload))
+					// Executors receive the exact model-authored JSON payload.
+					require.JSONEq(t, `{"server_data":"on"}`, string(call.Payload))
 					// Return arbitrary value; encode path should use result codec.
 					return &planner.ToolResult{Result: map[string]string{"status": "ok"}}, nil
 				}),
@@ -61,4 +62,48 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 	var got any
 	require.NoError(t, json.Unmarshal(out.Payload, &got))
 	require.Equal(t, "encoded_result", got)
+}
+
+func TestExecuteToolActivity_RejectsEmptyPayloadAtActivityBoundary(t *testing.T) {
+	var executed bool
+	spec := tools.ToolSpec{
+		Name:    tools.Ident("svc.ts.required"),
+		Toolset: "svc.ts",
+		Payload: tools.TypeSpec{
+			Name: "RequiredPayload",
+			Codec: tools.JSONCodec[any]{
+				FromJSON: func(data []byte) (any, error) {
+					require.Empty(t, data)
+					return nil, errors.New("requiredPayload JSON is empty")
+				},
+			},
+		},
+		Result: tools.TypeSpec{
+			Name: "Result",
+			Codec: tools.JSONCodec[any]{
+				ToJSON: json.Marshal,
+			},
+		},
+	}
+	rt := &Runtime{
+		toolsets: map[string]ToolsetRegistration{
+			"svc.ts": {
+				Execute: wrapExecute(func(context.Context, *planner.ToolRequest) (*planner.ToolResult, error) {
+					executed = true
+					return &planner.ToolResult{}, nil
+				}),
+			},
+		},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{spec.Name: spec},
+	}
+
+	out, err := rt.ExecuteToolActivity(context.Background(), &ToolInput{
+		AgentID:  "agent",
+		RunID:    "run",
+		ToolName: spec.Name,
+	})
+
+	require.ErrorContains(t, err, "tool payload is invalid: payload is empty")
+	require.Nil(t, out)
+	require.False(t, executed)
 }

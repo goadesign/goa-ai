@@ -41,13 +41,13 @@ func (e *rpcError) callerError() *Error {
 
 type toolsCallResult struct {
 	Content []contentItem `json:"content"`
-	IsError bool          `json:"is_error"`
+	IsError bool          `json:"isError"` //nolint:tagliatelle // MCP protocol field.
 }
 
 type contentItem struct {
 	Type     string  `json:"type"`
 	Text     *string `json:"text"`
-	MimeType *string `json:"mime_type"`
+	MimeType *string `json:"mimeType"` //nolint:tagliatelle // MCP protocol field.
 }
 
 func (c contentItem) text() string {
@@ -60,14 +60,14 @@ func (c contentItem) text() string {
 func decodeToolCallResult(raw json.RawMessage) (CallResponse, error) {
 	var result toolsCallResult
 	if err := json.Unmarshal(raw, &result); err != nil {
-		return CallResponse{}, err
+		return CallResponse{}, NewMalformedResponseError(err)
 	}
 	return normalizeToolResult(result)
 }
 
 func normalizeToolResult(result toolsCallResult) (CallResponse, error) {
 	if len(result.Content) == 0 {
-		return CallResponse{}, errors.New("empty MCP response")
+		return CallResponse{}, NewMalformedResponseError(errors.New("empty tool response"))
 	}
 	item := result.Content[0]
 	var payload json.RawMessage
@@ -90,7 +90,7 @@ func normalizeToolResult(result toolsCallResult) (CallResponse, error) {
 	if len(payload) == 0 {
 		text := item.text()
 		if text == "" {
-			return CallResponse{}, errors.New("tool returned no content")
+			return CallResponse{}, NewMalformedResponseError(errors.New("tool returned no content"))
 		}
 		marshaled, err := json.Marshal(text)
 		if err != nil {
@@ -101,5 +101,9 @@ func normalizeToolResult(result toolsCallResult) (CallResponse, error) {
 	if structured == nil && json.Valid(payload) {
 		structured = append(json.RawMessage(nil), payload...)
 	}
-	return CallResponse{Result: payload, Structured: structured}, nil
+	response := CallResponse{Result: payload, Structured: structured}
+	if result.IsError {
+		return CallResponse{}, NewToolExecutionError(response.Result)
+	}
+	return response, nil
 }
