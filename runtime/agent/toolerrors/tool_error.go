@@ -98,7 +98,7 @@ func (e *ToolError) Error() string {
 
 // Unwrap returns the underlying tool error to support errors.Is/As.
 func (e *ToolError) Unwrap() error {
-	if e == nil {
+	if e == nil || e.Cause == nil {
 		return nil
 	}
 	return e.Cause
