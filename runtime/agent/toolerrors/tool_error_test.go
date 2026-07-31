@@ -21,6 +21,17 @@ func TestFromErrorPreservesOuterWrappers(t *testing.T) {
 	assert.NotSame(t, inner, out.Cause)
 }
 
+func TestFromErrorStopsAtTerminalToolError(t *testing.T) {
+	t.Parallel()
+
+	out := FromError(NewWithCause("outer", New("terminal")))
+
+	require.NoError(t, Validate(out))
+	require.NotNil(t, out.Cause)
+	assert.Equal(t, "terminal", out.Cause.Message)
+	assert.Nil(t, out.Cause.Cause)
+}
+
 func TestCloneOwnsCauseChain(t *testing.T) {
 	t.Parallel()
 
