@@ -931,7 +931,7 @@ func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID str
 		ResultOmittedReason: resultOmittedReason,
 		ServerData:          serverData,
 		ResultPreview:       resultPreview,
-		Bounds:              bounds,
+		Bounds:              agent.CloneBounds(bounds),
 		Duration:            duration,
 		Telemetry:           telemetry,
 		Failure:             planner.CloneToolFailure(failure),

@@ -40,8 +40,8 @@ Tool: {{ .ToolName }}
 Returned: {{ .Returned }}
 Total: {{ .Total }}
 Truncated: true{{ if .NextCursor }}
-Next cursor: {{ .NextCursor }}
-To continue, call the same tool again with the same parameters and set {{ .CursorField }} to the exact opaque cursor string shown above. Do not send the literal strings "next_cursor" or "<next_cursor>", and do not modify the cursor.{{ else if .RefinementHint }}
+Next page reference: {{ .NextCursor }}
+To continue, call the same tool again with only {{ .CursorField }} set to the exact reference shown above. Do not repeat other arguments, modify the reference, or reuse an earlier reference.{{ else if .RefinementHint }}
 Refinement hint: {{ .RefinementHint }}
 Do not claim completeness unless you page or explicitly state the answer is partial.{{ else }}
 Do not claim completeness unless you page or explicitly state the answer is partial.{{ end }}
@@ -128,8 +128,8 @@ func boundsReminder(tr *planner.ToolResult, cursorField string) string {
 	}
 
 	next := ""
-	if b.NextCursor != nil {
-		next = strings.TrimSpace(*b.NextCursor)
+	if b.Continuation != nil {
+		next = strings.TrimSpace(*b.Continuation)
 	}
 	field := strings.TrimSpace(cursorField)
 	if field == "" {

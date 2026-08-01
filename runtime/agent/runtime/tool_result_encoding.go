@@ -56,7 +56,7 @@ func EncodeCanonicalToolResult(spec tools.ToolSpec, value any, bounds *agent.Bou
 // Contract:
 //   - Authored tool result types remain semantic and domain-focused.
 //   - planner.ToolResult.Bounds is the sole runtime-owned source for canonical
-//     bounded fields.
+//     bounded fields. Provider cursor bytes are never projected to the model.
 //   - Any authored canonical bounded fields in the semantic JSON are discarded
 //     before projection so stale values cannot leak past the bounds contract.
 //   - The projected JSON contract is object-shaped; bounded tools that encode a
@@ -91,8 +91,8 @@ func projectBoundedToolResultJSON(spec tools.ToolSpec, raw json.RawMessage, boun
 	if bounds.RefinementHint != "" {
 		projected[boundedresult.FieldRefinementHint] = bounds.RefinementHint
 	}
-	if spec.Bounds.Paging != nil && spec.Bounds.Paging.NextCursorField != "" && bounds.NextCursor != nil {
-		projected[spec.Bounds.Paging.NextCursorField] = *bounds.NextCursor
+	if spec.Bounds.Paging != nil && spec.Bounds.Paging.NextCursorField != "" && bounds.Continuation != nil {
+		projected[spec.Bounds.Paging.NextCursorField] = *bounds.Continuation
 	}
 
 	out, err := json.Marshal(projected)

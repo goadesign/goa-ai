@@ -23,7 +23,8 @@ import (
 //   - Successful bounded results must carry bounds.
 //   - Truncated bounded results must provide continuation via next cursor or
 //     refinement hint.
-//   - next cursor is only valid for bounded tools with paging configured.
+//   - provider cursors and model-visible continuations exist as a pair and are
+//     only valid for bounded tools with paging configured.
 func validateToolResultContract(spec tools.ToolSpec, call planner.ToolRequest, tr *planner.ToolResult) error {
 	if tr == nil {
 		return fmt.Errorf("nil tool result for %q (%s)", call.Name, call.ToolCallID)
@@ -86,6 +87,12 @@ func validateToolBoundsContract(spec tools.ToolSpec, call planner.ToolRequest, f
 	}
 	if spec.Bounds.Paging == nil && bounds.NextCursor != nil {
 		return fmt.Errorf("bounded tool %q returned next_cursor but paging is not configured (tool_call_id=%s)", call.Name, call.ToolCallID)
+	}
+	if bounds.NextCursor != nil && !bounds.Truncated {
+		return fmt.Errorf("bounded tool %q returned next_cursor without truncation (tool_call_id=%s)", call.Name, call.ToolCallID)
+	}
+	if (bounds.NextCursor == nil) != (bounds.Continuation == nil) {
+		return fmt.Errorf("bounded tool %q returned an incomplete continuation pair (tool_call_id=%s)", call.Name, call.ToolCallID)
 	}
 	return nil
 }

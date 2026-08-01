@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"text/template"
 	"time"
@@ -194,6 +195,22 @@ func TestEnforceToolResultContractsRejectsTruncatedBoundsWithoutContinuation(t *
 	require.Contains(t, err.Error(), "truncated result without next_cursor or refinement_hint")
 }
 
+func TestEnforceToolResultContractsRejectsCursorWithoutTruncation(t *testing.T) {
+	spec := newAnyJSONSpec("tool", "svc.ts")
+	spec.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{
+		CursorField: "cursor", NextCursorField: "next_cursor",
+	}}
+	cursor, continuation := "provider", "next-reference"
+	err := (&Runtime{}).enforceToolResultContracts(spec, planner.ToolRequest{
+		Name: "tool", ToolCallID: "tool-1",
+	}, &planner.ToolResult{
+		Name: "tool", Result: map[string]any{"ok": true},
+		Bounds: &agent.Bounds{NextCursor: &cursor, Continuation: &continuation},
+	})
+
+	require.ErrorContains(t, err, "next_cursor without truncation")
+}
+
 func TestEnforceToolResultContractsRejectsNilToolResultWithoutCriticalPrefix(t *testing.T) {
 	rt := &Runtime{}
 	spec := newAnyJSONSpec("tool", "svc.ts")
@@ -285,6 +302,7 @@ func TestExecuteToolActivityPropagatesBounds(t *testing.T) {
 func TestEncodeCanonicalToolResultProjectsBoundsIntoEncodedResult(t *testing.T) {
 	total := 9
 	cursor := "next-page"
+	continuation := "next-ref"
 	result, err := EncodeCanonicalToolResult(newProjectedResultSpec(), &projectedRuntimeResult{
 		Results: []string{"alpha"},
 	}, &agent.Bounds{
@@ -292,6 +310,7 @@ func TestEncodeCanonicalToolResultProjectsBoundsIntoEncodedResult(t *testing.T) 
 		Total:          &total,
 		Truncated:      true,
 		NextCursor:     &cursor,
+		Continuation:   &continuation,
 		RefinementHint: "narrow by source",
 	})
 	require.NoError(t, err)
@@ -300,7 +319,7 @@ func TestEncodeCanonicalToolResultProjectsBoundsIntoEncodedResult(t *testing.T) 
 		"returned": 1,
 		"total": 9,
 		"truncated": true,
-		"next_cursor": "next-page",
+		"next_cursor": "next-ref",
 		"refinement_hint": "narrow by source"
 	}`, string(result))
 }
@@ -345,18 +364,19 @@ func TestExecuteToolActivityProjectsBoundsIntoEncodedResult(t *testing.T) {
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): newProjectedResultSpec(),
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
+	input := ToolInput{AgentID: "agent", RunID: "run", SessionID: "session", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.JSONEq(t, `{
+	wantContinuation := continuationReference("run", "session", "tool", "tool-1", cursor)
+	require.JSONEq(t, fmt.Sprintf(`{
 		"results": ["alpha"],
 		"returned": 1,
 		"total": 9,
 		"truncated": true,
-		"next_cursor": "next-page",
+		"next_cursor": %q,
 		"refinement_hint": "narrow by source"
-	}`, string(out.Payload))
+	}`, wantContinuation), string(out.Payload))
 }
 
 func TestExecuteToolActivityDropsStaleOptionalBoundFieldsFromSemanticResult(t *testing.T) {

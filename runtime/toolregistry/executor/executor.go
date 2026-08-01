@@ -438,7 +438,7 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 		out.Failure = toolFailureFromRegistryError(msg.Error, spec, call)
 		return out, nil
 	}
-	out.Bounds = cloneBounds(msg.Bounds)
+	out.Bounds = agent.CloneBounds(msg.Bounds)
 	out.ServerData = marshalServerDataItems(cloneServerDataItems(msg.ServerData))
 	if spec.Result.Codec.FromJSON != nil {
 		res, err := spec.Result.Codec.FromJSON(msg.Result)
@@ -465,24 +465,6 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 func rawMessageHasNonNullJSON(raw json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(raw)
 	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
-}
-
-// cloneBounds copies wire-level bounds metadata into executor-owned memory so
-// callers do not retain references to the decoded registry message.
-func cloneBounds(bounds *agent.Bounds) *agent.Bounds {
-	if bounds == nil {
-		return nil
-	}
-	c := *bounds
-	if bounds.Total != nil {
-		total := *bounds.Total
-		c.Total = &total
-	}
-	if bounds.NextCursor != nil {
-		next := *bounds.NextCursor
-		c.NextCursor = &next
-	}
-	return &c
 }
 
 func cloneServerDataItems(items []*toolregistry.ServerDataItem) []*toolregistry.ServerDataItem {

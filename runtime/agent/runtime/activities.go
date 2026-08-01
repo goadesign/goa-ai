@@ -66,6 +66,9 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 		act.notePlannerRateLimit(ctx, err)
 		return nil, err
 	}
+	if err := r.resolvePlanContinuations(ctx, input, result); err != nil {
+		return nil, err
+	}
 	r.logger.Info(ctx, "PlanStartActivity returning PlanResult", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
 	return act.output(result)
 }
@@ -120,6 +123,9 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		if err := validateTerminalPlanResult(result); err != nil {
 			return nil, fmt.Errorf("synthesis-only planner result: %w", err)
 		}
+	}
+	if err := r.resolvePlanContinuations(ctx, input, result); err != nil {
+		return nil, err
 	}
 	return act.output(result)
 }

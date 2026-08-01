@@ -312,8 +312,15 @@ Cursor-paged tools identify two canonical paging fields:
 Contract:
 
 - Treat cursors as **opaque**: do not parse, modify, or synthesize them.
-- When paging, keep **all other arguments unchanged**; only set the model-facing
-payload cursor field named in generated `tools.ToolSpec.Bounds`.
+- An initial call satisfies the authored argument contract and omits the cursor.
+- A continuation call contains **only** the exact model-visible reference in the
+  cursor field. Generated model schemas express these as two distinct shapes.
+- The runtime loads the originating call from durable history, verifies the
+  reference belongs to the current run, session, and tool and has not already
+  been consumed, restores the original arguments, and substitutes the provider
+  cursor only in the execution payload.
+- Invalid or stale references produce the ordinary `invalid_call`/`replan`
+  tool-failure contract; they never execute the tool.
 - Paged tools should also be `BoundedResult(...)` tools and return the next cursor through
 `planner.ToolResult.Bounds.NextCursor`.
 

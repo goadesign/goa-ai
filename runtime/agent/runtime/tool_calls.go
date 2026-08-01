@@ -335,6 +335,25 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		if err := e.publishToolCallScheduled(ctx, call, queue); err != nil {
 			return nil, err
 		}
+		if call.PreflightFailure != nil {
+			tr := &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Failure:    planner.CloneToolFailure(call.PreflightFailure),
+			}
+			resultJSON, err := e.r.materializeToolResult(ctx, call, tr)
+			if err != nil {
+				return nil, err
+			}
+			if err := e.publishToolResultReceived(ctx, call, tr, resultJSON, 0); err != nil {
+				return nil, err
+			}
+			b.inlineByID[call.ToolCallID] = Executed(tr)
+			if e.parentTracker != nil {
+				b.discoveredIDs = append(b.discoveredIDs, call.ToolCallID)
+			}
+			continue
+		}
 
 		// Inline toolsets execute within the workflow loop. Their generated codec
 		// validates the exact planner-authored payload before typed mapping.

@@ -189,9 +189,16 @@ type ToolRequest struct {
 	// Empty means the model-facing transcript identity is Name.
 	ModelName tools.Ident
 
-	// ModelPayload is the payload the model actually emitted when ModelName is
-	// set. Empty means the model-facing transcript payload is Payload.
+	// ModelPayload is the exact payload the model emitted when execution rewrites
+	// Payload, for example when resolving a continuation reference. Empty means
+	// the model-facing transcript payload is Payload.
 	ModelPayload rawjson.Message
+
+	// PreflightFailure is a runtime-owned rejection discovered after planning but
+	// before tool execution. Planner implementations must leave this field nil.
+	// The workflow publishes it as the canonical failed-tool result without
+	// invoking confirmation policy or the tool executor.
+	PreflightFailure *ToolFailure
 
 	// AgentID is the identifier of the agent that issued this tool request.
 	AgentID agent.Ident

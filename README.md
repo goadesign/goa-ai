@@ -471,7 +471,30 @@ Tool("get_time_series", "Get a bounded time-series view", func() {
 })
 ```
 
-`BoundedResult` makes truncation explicit through runtime-owned bounds metadata (`returned`, `truncated`, optional `total`, `next_cursor`, and `refinement_hint`). Bounds metadata is success-only: error results never carry bounds. Generated tool specs and result JSON use model-facing JSON names, so lower-camel Goa fields such as `nextCursor` are exposed as `next_cursor`. Truncated results must carry a continuation: bound method results must define `refinement_hint` (snake_case, optional String) unless paging is configured, and the runtime rejects truncated results that provide neither a next cursor nor a refinement hint. `ServerData` attaches rich data that is never sent to model providers.
+`BoundedResult` makes truncation explicit through runtime-owned bounds metadata (`returned`, `truncated`, optional `total`, `next_cursor`, and `refinement_hint`). Bounds metadata is success-only: error results never carry bounds. Generated tool specs and result JSON use model-facing JSON names, so lower-camel Goa fields such as `nextCursor` are exposed as `next_cursor`. For paged tools, the provider cursor stays in durable runtime history and the model sees a short run-, session-, and tool-bound continuation reference. A continuation call contains only that reference; the runtime verifies its scope, origin, and freshness, then reconstructs the complete execution payload. Invalid references produce the ordinary `invalid_call`/`replan` tool failure without executing the provider. `ServerData` attaches rich data that is never sent to model providers.
+
+### Generated Evaluation Suites
+
+Goa-AI can generate application-owned evaluation hooks from a generic suite DSL:
+
+```go
+Suite("chat", func() {
+	Description("Exercises complete Chat outcomes.")
+	Timeout("2m")
+	Scenario("alarm_inventory", func() {
+		Description("Retrieves the complete alarm inventory.")
+		Input("List every alarm in the requested window.")
+		Tags("production")
+	})
+	Calibration("entailed", func() {
+		Answer("Compressor 1 is on.")
+		Claim("Compressor 1 is on.")
+		Want(eval.Entailed)
+	})
+})
+```
+
+Code generation emits one direct method per scenario and an immutable suite constructor. The application implements those methods on a normal struct whose fields and closures own system targets, execution, and deterministic checks. The runtime calibrates a strict semantic judge before executing scenarios, then records deterministic checks, atomic answer claims, judgments, errors, durations, and artifacts in a stable report contract. There are no registries, reflection, YAML parsers, or framework-specific application adapters. See [`docs/evals.md`](docs/evals.md).
 
 ### Bookkeeping and Terminal Tools
 
@@ -861,6 +884,7 @@ Use `MCP(...)` on a Goa service and mark methods with `Tool(...)`, `Resource(...
 | [`docs/overview.md`](docs/overview.md) | Architecture and mental model |
 | [`docs/dsl.md`](docs/dsl.md) | Complete DSL reference and patterns |
 | [`docs/runtime.md`](docs/runtime.md) | Runtime API, planners, engines, stores, streaming, policies |
+| [`docs/evals.md`](docs/evals.md) | Generated evaluation DSL, hooks, judging, and reports |
 | [`DESIGN.md`](DESIGN.md) | Generator design and repository architecture |
 | [Goa-AI docs](https://goa.design/docs/2-goa-ai/) | Published guides |
 | [Go package docs](https://pkg.go.dev/goa.design/goa-ai) | API reference |

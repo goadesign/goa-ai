@@ -35,7 +35,9 @@ func TestBoundedResultProjectsBoundsIntoResultSchemaWithoutMutatingResultType(t 
 				Use("tools", func() {
 					Tool("search", "Search", func() {
 						Args(func() {
-							goadsl.Attribute("query", goadsl.String)
+							goadsl.Attribute("query", goadsl.String, func() {
+								goadsl.MinLength(3)
+							})
 							goadsl.Attribute("pageCursor", goadsl.String)
 							goadsl.Required("query")
 						})
@@ -89,7 +91,18 @@ func TestBoundedResultProjectsBoundsIntoResultSchemaWithoutMutatingResultType(t 
 
 	var doc struct {
 		Tools []struct {
-			ID     string `json:"id"`
+			ID      string `json:"id"`
+			Payload struct {
+				Schema struct {
+					Required   []string       `json:"required"`
+					Properties map[string]any `json:"properties"`
+					OneOf      []struct {
+						Required      []string         `json:"required"`
+						MaxProperties int              `json:"maxProperties"` //nolint:tagliatelle // JSON Schema keyword.
+						AllOf         []map[string]any `json:"allOf"`         //nolint:tagliatelle // JSON Schema keyword.
+					} `json:"oneOf"` //nolint:tagliatelle // JSON Schema keyword.
+				} `json:"schema"`
+			} `json:"payload"`
 			Result struct {
 				Schema struct {
 					Properties map[string]any `json:"properties"`
@@ -100,6 +113,17 @@ func TestBoundedResultProjectsBoundsIntoResultSchemaWithoutMutatingResultType(t 
 	}
 	require.NoError(t, json.Unmarshal([]byte(schemas), &doc))
 	require.Len(t, doc.Tools, 1)
+	require.Empty(t, doc.Tools[0].Payload.Schema.Required)
+	require.Contains(t, doc.Tools[0].Payload.Schema.Properties, "query")
+	require.Contains(t, doc.Tools[0].Payload.Schema.Properties, "page_cursor")
+	require.Len(t, doc.Tools[0].Payload.Schema.OneOf, 2)
+	require.Len(t, doc.Tools[0].Payload.Schema.OneOf[0].AllOf, 2)
+	require.Equal(t, []any{"query"}, doc.Tools[0].Payload.Schema.OneOf[0].AllOf[0]["required"])
+	require.Equal(t, map[string]any{"required": []any{"page_cursor"}}, doc.Tools[0].Payload.Schema.OneOf[0].AllOf[1]["not"])
+	authoredProperties := doc.Tools[0].Payload.Schema.OneOf[0].AllOf[0]["properties"].(map[string]any)
+	require.InDelta(t, 3, authoredProperties["query"].(map[string]any)["minLength"], 0)
+	require.Equal(t, []string{"page_cursor"}, doc.Tools[0].Payload.Schema.OneOf[1].Required)
+	require.Equal(t, 1, doc.Tools[0].Payload.Schema.OneOf[1].MaxProperties)
 
 	props := doc.Tools[0].Result.Schema.Properties
 	require.Contains(t, props, "results")

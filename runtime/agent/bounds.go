@@ -6,10 +6,13 @@ package agent
 // re-inspecting tool-specific fields.
 //
 // Returned reports how many items or points are present in the bounded view.
-// Total, when non-nil, reports the best-effort total before truncation.
+// Total, when non-nil, reports the provider-owned total before truncation.
 // Truncated indicates whether any caps were applied (length, window, depth).
-// NextCursor, when non-nil, is an opaque cursor that can be used to fetch the
-// next page of results when Truncated is true.
+// NextCursor, when non-nil, is the provider cursor used internally to fetch the
+// next page. It is persisted for continuation resolution but is never projected
+// into model-visible result JSON.
+// Continuation, when non-nil, is the run-, session-, and tool-bound reference
+// projected to the model in place of NextCursor.
 // RefinementHint provides short, human-readable guidance on how to narrow or
 // refine the query when Truncated is true.
 type Bounds struct {
@@ -17,5 +20,28 @@ type Bounds struct {
 	Total          *int
 	Truncated      bool
 	NextCursor     *string
+	Continuation   *string
 	RefinementHint string
+}
+
+// CloneBounds deep-copies bounded-result metadata when it crosses runtime,
+// persistence, registry, or hook ownership boundaries.
+func CloneBounds(bounds *Bounds) *Bounds {
+	if bounds == nil {
+		return nil
+	}
+	cloned := *bounds
+	if bounds.Total != nil {
+		total := *bounds.Total
+		cloned.Total = &total
+	}
+	if bounds.NextCursor != nil {
+		cursor := *bounds.NextCursor
+		cloned.NextCursor = &cursor
+	}
+	if bounds.Continuation != nil {
+		continuation := *bounds.Continuation
+		cloned.Continuation = &continuation
+	}
+	return &cloned
 }

@@ -54,6 +54,9 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call planner.ToolRe
 		setMalformedToolResult(result, call, err)
 		return nil, nil
 	}
+	if err := attachContinuation(call, result); err != nil {
+		return nil, err
+	}
 	if err := r.enforceToolResultContracts(spec, call, result); err != nil {
 		setMalformedToolResult(result, call, err)
 		return nil, nil
@@ -150,7 +153,7 @@ func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolS
 	var decoded any
 	var err error
 	if item.Success != nil {
-		bounds = cloneProvidedToolBounds(item.Success.Bounds)
+		bounds = agent.CloneBounds(item.Success.Bounds)
 		decoded, err = spec.Result.Codec.FromJSON(item.Success.Result.RawMessage())
 	}
 	result := &planner.ToolResult{
@@ -213,24 +216,6 @@ func canonicalProvidedToolFailure(spec tools.ToolSpec, call planner.ToolRequest,
 		failure.Recovery.ExampleJSON = append(rawjson.Message(nil), spec.Payload.ExampleJSON...)
 	}
 	return failure
-}
-
-// cloneProvidedToolBounds copies provided bounds metadata into an internal
-// planner result. Contract validation is centralized in materializeToolResult.
-func cloneProvidedToolBounds(bounds *agent.Bounds) *agent.Bounds {
-	if bounds == nil {
-		return nil
-	}
-	c := *bounds
-	if bounds.Total != nil {
-		total := *bounds.Total
-		c.Total = &total
-	}
-	if bounds.NextCursor != nil {
-		next := *bounds.NextCursor
-		c.NextCursor = &next
-	}
-	return &c
 }
 
 func toolCallMeta(call planner.ToolRequest) ToolCallMeta {

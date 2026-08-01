@@ -148,9 +148,9 @@ type (
 		// CursorField is the name of the optional String field in the tool payload
 		// used to request subsequent pages.
 		CursorField string
-		// NextCursorField is the canonical field name for the next-page cursor in
-		// the projected result contract. Runtimes populate it from
-		// planner.ToolResult.Bounds.NextCursor when present.
+		// NextCursorField is the canonical field name for the next-page reference
+		// in the projected result contract. Runtimes populate it from the
+		// run-, session-, and tool-bound continuation derived from the provider cursor.
 		NextCursorField string
 	}
 

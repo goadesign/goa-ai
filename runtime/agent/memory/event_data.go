@@ -353,7 +353,7 @@ func (d ToolResultData) ToMap() map[string]any {
 		m[eventFieldPreview] = d.Preview
 	}
 	if d.Bounds != nil {
-		m[eventFieldBounds] = cloneBounds(d.Bounds)
+		m[eventFieldBounds] = agent.CloneBounds(d.Bounds)
 	}
 	if d.Duration != 0 {
 		m[eventFieldDuration] = d.Duration
@@ -591,7 +591,7 @@ func optionalBoundsField(eventType EventType, data map[string]any, key string) (
 	}
 	switch typed := value.(type) {
 	case *agent.Bounds:
-		return cloneBounds(typed), nil
+		return agent.CloneBounds(typed), nil
 	case agent.Bounds:
 		bounds := typed
 		return &bounds, nil
@@ -733,14 +733,6 @@ func cloneEventLabels(labels map[string]string) map[string]string {
 	return cloned
 }
 
-func cloneBounds(bounds *agent.Bounds) *agent.Bounds {
-	if bounds == nil {
-		return nil
-	}
-	cloned := *bounds
-	return &cloned
-}
-
 func cloneToolCallData(data ToolCallData) ToolCallData {
 	data.PayloadJSON = append(rawjson.Message(nil), data.PayloadJSON...)
 	return data
@@ -748,7 +740,7 @@ func cloneToolCallData(data ToolCallData) ToolCallData {
 
 func cloneToolResultData(data ToolResultData) ToolResultData {
 	data.ResultJSON = append(rawjson.Message(nil), data.ResultJSON...)
-	data.Bounds = cloneBounds(data.Bounds)
+	data.Bounds = agent.CloneBounds(data.Bounds)
 	return data
 }
 

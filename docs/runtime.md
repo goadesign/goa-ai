@@ -1318,6 +1318,24 @@ result-hint templates under `.Bounds`, hook events, and stream events. Services
 own truncation logic; the runtime only propagates and projects what tools
 report.
 
+For cursor-paged tools, `Bounds.NextCursor` is the provider-owned cursor and is
+never projected directly to the model. After successful materialization the
+runtime derives a short continuation reference bound to the current run,
+session, tool, originating call, and cursor. Both values are persisted in durable bounds
+metadata; only the reference is encoded in the model-facing `next_cursor`
+field. The next planner call must contain only that reference in the configured
+cursor field. Before execution, the runtime verifies its scope, uniqueness, and
+freshness against durable history, restores the originating arguments, and
+replaces the reference with the provider cursor. The unmodified model payload
+remains in the transcript while the reconstructed payload is the only value
+sent to the tool executor.
+
+An invalid, stale, repeated, or cross-scope reference is model-authored tool
+misuse, so the runtime publishes an `invalid_call` result with `replan`
+recovery and does not invoke the tool. Failures to load or decode durable
+history, and contradictory persisted continuation state, remain runtime errors
+because the model cannot correct them.
+
 Transcript-facing tool results use a stricter provider contract than execution
 boundaries:
 

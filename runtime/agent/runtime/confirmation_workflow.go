@@ -45,6 +45,10 @@ func (r *Runtime) splitConfirmationCalls(ctx context.Context, base *planner.Plan
 	toExecute := make([]planner.ToolRequest, 0, len(allowed))
 	toConfirm := make([]confirmationAwait, 0, 1)
 	for _, call := range allowed {
+		if call.PreflightFailure != nil {
+			toExecute = append(toExecute, call)
+			continue
+		}
 		plan, needs, err := r.confirmationPlan(ctx, &call)
 		if err != nil {
 			return nil, nil, err

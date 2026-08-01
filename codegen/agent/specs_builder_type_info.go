@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -175,6 +176,19 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	schemaBytes, schemaWithoutRootExampleBytes, err := schemaVariantsForAttribute(schemaAttr, exampleValue(example))
 	if err != nil {
 		return nil, err
+	}
+	if usage == usagePayload && owner.Bounds != nil && owner.Bounds.Paging != nil {
+		schemaBytes, err = projectPagingPayloadSchema(schemaBytes, owner.Bounds.Paging.CursorField)
+		if err != nil {
+			return nil, err
+		}
+		schemaWithoutRootExampleBytes, err = projectPagingPayloadSchema(
+			schemaWithoutRootExampleBytes,
+			owner.Bounds.Paging.CursorField,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if usage == usageResult && owner.Bounds != nil {
 		schemaBytes, err = projectBoundedResultSchema(schemaBytes, owner.Bounds)
@@ -354,6 +368,50 @@ func projectBoundedResultSchema(schemaBytes []byte, bounds *ToolBoundsData) ([]b
 	return projected, nil
 }
 
+// projectPagingPayloadSchema expresses the two honest model-facing calls for a
+// paged tool: an initial request satisfying the authored contract, or a
+// continuation request containing only the runtime-issued cursor reference.
+// Generated codecs retain the authored service contract because the runtime
+// reconstructs and validates the complete execution payload before dispatch.
+func projectPagingPayloadSchema(schemaBytes []byte, cursorField string) ([]byte, error) {
+	var authored map[string]any
+	if err := json.Unmarshal(schemaBytes, &authored); err != nil {
+		return nil, fmt.Errorf("unmarshal paged payload schema: %w", err)
+	}
+	cursorField = modelJSONName(cursorField)
+	properties, ok := authored["properties"].(map[string]any)
+	if !ok {
+		return nil, errors.New("paged tool payload schema must define object properties")
+	}
+	if _, ok := properties[cursorField]; !ok {
+		return nil, fmt.Errorf("paged tool payload schema is missing cursor field %q", cursorField)
+	}
+	projectedSchema := map[string]any{
+		"type":       jsonSchemaTypeObject,
+		"properties": properties,
+		"oneOf": []any{
+			map[string]any{"allOf": []any{
+				authored,
+				map[string]any{"not": map[string]any{"required": []string{cursorField}}},
+			}},
+			map[string]any{
+				"required":      []string{cursorField},
+				"maxProperties": 1,
+			},
+		},
+	}
+	for _, name := range []string{"$schema", "$id", "$defs", "definitions", "description", "additionalProperties"} {
+		if value, ok := authored[name]; ok {
+			projectedSchema[name] = value
+		}
+	}
+	projected, err := json.Marshal(projectedSchema)
+	if err != nil {
+		return nil, fmt.Errorf("marshal paged payload schema: %w", err)
+	}
+	return projected, nil
+}
+
 func boundedResultSchemaFields(bounds *ToolBoundsData) map[string]any {
 	fields := map[string]any{
 		boundedresult.FieldReturned: map[string]any{
@@ -376,7 +434,7 @@ func boundedResultSchemaFields(bounds *ToolBoundsData) map[string]any {
 	if bounds.Paging != nil && bounds.Paging.NextCursorField != "" {
 		fields[modelJSONName(bounds.Paging.NextCursorField)] = map[string]any{
 			"type":        "string",
-			"description": "Opaque cursor for the next page. Call the same tool again with the same parameters and pass this exact string back as the paging cursor. Do not send the literal text \"next_cursor\" or modify the cursor.",
+			"description": "Reference for the next page. Call the same tool again with only the paging cursor field set to this exact reference. Do not repeat other arguments, modify the reference, or reuse an earlier reference.",
 		}
 	}
 	return fields
