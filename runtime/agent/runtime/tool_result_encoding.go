@@ -91,8 +91,11 @@ func projectBoundedToolResultJSON(spec tools.ToolSpec, raw json.RawMessage, boun
 	if bounds.RefinementHint != "" {
 		projected[boundedresult.FieldRefinementHint] = bounds.RefinementHint
 	}
-	if spec.Bounds.Paging != nil && spec.Bounds.Paging.NextCursorField != "" && bounds.Continuation != nil {
-		projected[spec.Bounds.Paging.NextCursorField] = *bounds.Continuation
+	if spec.Bounds.Paging != nil &&
+		spec.Bounds.Paging.ContinueTool == "" &&
+		spec.Bounds.Paging.NextCursorField != "" &&
+		bounds.NextCursor != nil {
+		projected[spec.Bounds.Paging.NextCursorField] = *bounds.NextCursor
 	}
 
 	out, err := json.Marshal(projected)

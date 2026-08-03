@@ -313,17 +313,15 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 		ToolCallID: "tc-1",
 	}
 	cursor := "opaque-cursor"
-	continuation := "next-reference"
 	tr := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
 		Result:     map[string]any{"devices": []any{}},
 		Bounds: &agent.Bounds{
-			Returned:     10,
-			Total:        func() *int { v := 42; return &v }(),
-			Truncated:    true,
-			NextCursor:   &cursor,
-			Continuation: &continuation,
+			Returned:   10,
+			Total:      func() *int { v := 42; return &v }(),
+			Truncated:  true,
+			NextCursor: &cursor,
 		},
 	}
 
@@ -336,7 +334,7 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 	txt, ok := base.Messages[1].Parts[0].(model.TextPart)
 	require.True(t, ok)
 	require.Contains(t, txt.Text, "A tool call returned a bounded/truncated result.")
-	require.Contains(t, txt.Text, "Next page reference: next-reference")
+	require.Contains(t, txt.Text, "Next cursor: opaque-cursor")
 }
 
 func TestAppendUserToolResultsAppendsFailureReminderAfterToolResults(t *testing.T) {
@@ -371,8 +369,8 @@ func TestAppendUserToolResultsAppendsFailureReminderAfterToolResults(t *testing.
 	txt, ok := base.Messages[1].Parts[0].(model.TextPart)
 	require.True(t, ok)
 	require.Contains(t, txt.Text, "A tool call failed.")
-	require.Contains(t, txt.Text, "Tool: svc.read.aggregate")
-	require.Contains(t, txt.Text, "Call the same tool again with a corrected payload.")
+	require.Contains(t, txt.Text, "Tool: svc_read_aggregate")
+	require.Contains(t, txt.Text, "Call the same tool again with corrected arguments.")
 }
 
 func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {

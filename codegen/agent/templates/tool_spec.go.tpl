@@ -48,6 +48,9 @@ var (
         Bounds: &tools.BoundsSpec{
             {{- if .Bounds.Paging }}
             Paging: &tools.PagingSpec{
+                ContinueTool: tools.Ident({{ printf "%q" .Bounds.Paging.ContinueTool }}),
+                SourceTool: tools.Ident({{ printf "%q" .Bounds.Paging.SourceTool }}),
+                ReplayPayload: {{ .Bounds.Paging.ReplayPayload }},
                 CursorField: {{ printf "%q" .Bounds.Paging.CursorField }},
                 NextCursorField: {{ printf "%q" .Bounds.Paging.NextCursorField }},
             },
@@ -221,5 +224,3 @@ func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
         return policy.ToolMetadata{}, false
     }
 }
-
-

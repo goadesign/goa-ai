@@ -245,6 +245,11 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		Bookkeeping:        expr.Bookkeeping,
 		ResultReminder:     expr.ResultReminder,
 	}
+	if isDedicatedContinuation(expr) {
+		tool.ModelHiddenPayloadFields = continuationModelHiddenFields(expr)
+	} else if expr.Bounds != nil && expr.Bounds.Paging != nil && expr.Bounds.Paging.ContinueTool != "" {
+		tool.ModelHiddenPayloadFields = []string{expr.Bounds.Paging.CursorField}
+	}
 	// Resolve Inject() sources now: tool.Args already reflects codegen Prepare's
 	// defaulting (method payload copy for bound tools) and hiding, so this is
 	// the single point where both bound and unbound tools compile identically.
@@ -370,14 +375,71 @@ func mergedToolTags(ts *ToolsetData, expr *agentsExpr.ToolExpr) []string {
 }
 
 // pagingData converts the optional DSL paging contract into generator data.
-func pagingData(p *agentsExpr.ToolPagingExpr) *ToolPagingData {
+func pagingData(tool *agentsExpr.ToolExpr, p *agentsExpr.ToolPagingExpr) *ToolPagingData {
 	if p == nil {
 		return nil
 	}
-	return &ToolPagingData{
+	data := &ToolPagingData{
+		ContinueTool:    continuationToolIdent(tool, continuationToolName(tool, p)),
 		CursorField:     modelJSONName(p.CursorField),
 		NextCursorField: modelJSONName(p.NextCursorField),
 	}
+	if source := dedicatedContinuationSource(tool); source != nil {
+		data.SourceTool = continuationToolIdent(source, source.Name)
+		data.ReplayPayload = !isCursorOnlyContinuation(tool)
+	}
+	return data
+}
+
+// continuationToolName returns the tool selected by a model-visible continue
+// action. A dedicated continuation advances itself after its first page.
+func continuationToolName(tool *agentsExpr.ToolExpr, paging *agentsExpr.ToolPagingExpr) string {
+	if paging.ContinueTool != "" {
+		return paging.ContinueTool
+	}
+	if isDedicatedContinuation(tool) {
+		return tool.Name
+	}
+	return ""
+}
+
+// isDedicatedContinuation reports whether another bounded tool delegates its
+// continuation action to tool.
+func isDedicatedContinuation(tool *agentsExpr.ToolExpr) bool {
+	return dedicatedContinuationSource(tool) != nil
+}
+
+// dedicatedContinuationSource returns the single sibling query advanced by
+// tool. Expression validation rejects ambiguous continuation targets.
+func dedicatedContinuationSource(tool *agentsExpr.ToolExpr) *agentsExpr.ToolExpr {
+	if tool == nil || tool.Toolset == nil || tool.Bounds == nil || tool.Bounds.Paging == nil {
+		return nil
+	}
+	for _, candidate := range tool.Toolset.Tools {
+		if candidate.Bounds != nil && candidate.Bounds.Paging != nil && candidate.Bounds.Paging.ContinueTool == tool.Name {
+			return candidate
+		}
+	}
+	return nil
+}
+
+// isCursorOnlyContinuation reports whether the continuation cursor carries all
+// query state needed by its executor.
+func isCursorOnlyContinuation(tool *agentsExpr.ToolExpr) bool {
+	obj := effectiveObject(tool.Args)
+	return obj != nil && len(*obj) == 1 && (*obj)[0].Name == tool.Bounds.Paging.CursorField
+}
+
+// continuationModelHiddenFields returns every root payload field for a
+// dedicated continuation action. The model chooses only whether to continue;
+// runtime execution supplies both retained query arguments and paging state.
+func continuationModelHiddenFields(tool *agentsExpr.ToolExpr) []string {
+	obj := effectiveObject(tool.Args)
+	fields := make([]string, 0, len(*obj))
+	for _, field := range *obj {
+		fields = append(fields, field.Name)
+	}
+	return fields
 }
 
 // boundsData projects tool bounds metadata and, when a bound method is known,
@@ -387,7 +449,7 @@ func boundsData(bounds *agentsExpr.ToolBoundsExpr, method *goaexpr.MethodExpr) *
 		return nil
 	}
 	data := &ToolBoundsData{
-		Paging: pagingData(bounds.Paging),
+		Paging: pagingData(bounds.Tool, bounds.Paging),
 	}
 	if method == nil {
 		return data
@@ -402,6 +464,16 @@ func boundsData(bounds *agentsExpr.ToolBoundsExpr, method *goaexpr.MethodExpr) *
 		data.Projection.NextCursor = boundsFieldData(method.Result, bounds.Paging.NextCursorField)
 	}
 	return data
+}
+
+// continuationToolIdent qualifies a sibling continuation tool in the owning
+// toolset so generated runtime metadata uses the same canonical identity as the
+// generated tool registry.
+func continuationToolIdent(tool *agentsExpr.ToolExpr, name string) string {
+	if name == "" {
+		return ""
+	}
+	return tool.Toolset.Name + "." + name
 }
 
 // boundsFieldData resolves one result-field projection used by tool bounds.

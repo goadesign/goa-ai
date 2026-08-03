@@ -113,6 +113,14 @@ Each `PlanResult` is one admitted workflow step. Planners may return tool calls,
 await work, or a terminal result according to the runtime's mutually exclusive
 step shapes.
 
+External input does not weaken provider transcript identity. A model-authored
+free-text interaction uses the tool-clarification await branch, which retains
+the exact tool name, call ID, and payload and resumes with the human answer as
+that tool's generated result. Runtime-owned clarification prompts remain a
+separate branch that resumes as a user message. This distinction prevents
+prompt reminders or presence-dependent fields from standing in for a real
+`tool_use` / `tool_result` exchange.
+
 `PlanResult.SynthesizeAfterTools` selects the success transition for a tool-only
 step: after the selected batch succeeds, the next planner activity may only
 synthesize a final response. The workflow serializes that decision in its
@@ -533,18 +541,34 @@ side effect:
 
 ## Tool Input Schema
 
+### Pagination Ownership
+
+Pagination metadata names both the result cursor and, when appropriate, a
+dedicated continuation tool. `ContinueWith` is the canonical contract when an
+opaque cursor already contains the resolved query: the originating tool has no
+cursor mode, the continuation tool accepts one required cursor, and generated
+runtime metadata routes the next page. `Cursor` on the originating tool remains
+available only for APIs where callers must intentionally repeat the original
+query. This keeps correlation state in the issuing system instead of asking a
+model to reproduce it. A model batch may contain only one call for a dedicated
+continuation chain, and the next resume binds only when that batch produced one
+compatible successful result. Ambiguity is rejected rather than resolved by
+call order.
+
 For each tool with a non-empty payload, the plugin derives JSON Schema from the
 Goa attribute using Goa's `openapi.Schema` type for complete JSON Schema draft
 2020-12 support. The generated tool spec is the canonical model-facing contract:
-it contains the annotated schema, a schema with only the root `example` removed,
+it contains the annotated schema, a schema with the root `example` removed,
 the raw authored example JSON, and a parsed `ExampleInput` object when the
 payload has an authored top-level Goa `Example(...)`.
 
-An authored top-level Goa `Example(...)` is the only source for provider-facing
-top-level tool examples. Synthesized Goa examples may remain nested JSON Schema
-annotations for fields and definitions, but they are not promoted to
-provider-native examples. This keeps provider examples intentional rather than
-letting generated placeholder data become model guidance.
+Authored Goa `Example(...)` values are the only source for provider-facing tool
+examples. Codegen removes synthesized Goa examples throughout the JSON Schema
+graph, including fields and definitions, so generated placeholder data never
+becomes model guidance. Explicitly authored nested examples remain on their
+schema nodes. The annotated schema retains the authored root example; the plain
+schema omits that root for providers that carry it through a native
+tool-examples field.
 
 Provider adapters choose between the precomputed projections. Providers that
 consume JSON Schema annotations use the annotated schema. Direct Anthropic and

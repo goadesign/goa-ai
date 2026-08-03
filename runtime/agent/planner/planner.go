@@ -190,15 +190,9 @@ type ToolRequest struct {
 	ModelName tools.Ident
 
 	// ModelPayload is the exact payload the model emitted when execution rewrites
-	// Payload, for example when resolving a continuation reference. Empty means
-	// the model-facing transcript payload is Payload.
+	// Payload with runtime-owned fields. Empty means the model-facing transcript
+	// payload is Payload.
 	ModelPayload rawjson.Message
-
-	// PreflightFailure is a runtime-owned rejection discovered after planning but
-	// before tool execution. Planner implementations must leave this field nil.
-	// The workflow publishes it as the canonical failed-tool result without
-	// invoking confirmation policy or the tool executor.
-	PreflightFailure *ToolFailure
 
 	// AgentID is the identifier of the agent that issued this tool request.
 	AgentID agent.Ident
@@ -435,9 +429,10 @@ type Await struct {
 type AwaitItemKind string
 
 const (
-	AwaitItemKindClarification AwaitItemKind = "clarification"
-	AwaitItemKindQuestions     AwaitItemKind = "questions"
-	AwaitItemKindExternalTools AwaitItemKind = "external_tools"
+	AwaitItemKindClarification     AwaitItemKind = "clarification"
+	AwaitItemKindToolClarification AwaitItemKind = "tool_clarification"
+	AwaitItemKindQuestions         AwaitItemKind = "questions"
+	AwaitItemKindExternalTools     AwaitItemKind = "external_tools"
 )
 
 // AwaitItem describes one external-input prompt.
@@ -446,9 +441,10 @@ const (
 type AwaitItem struct {
 	Kind AwaitItemKind
 
-	Clarification *AwaitClarification
-	Questions     *AwaitQuestions
-	ExternalTools *AwaitExternalTools
+	Clarification     *AwaitClarification
+	ToolClarification *AwaitToolClarification
+	Questions         *AwaitQuestions
+	ExternalTools     *AwaitExternalTools
 }
 
 // NewAwait constructs an Await barrier with items in the given order.
@@ -459,6 +455,11 @@ func NewAwait(items ...AwaitItem) *Await {
 // AwaitClarificationItem constructs a clarification await item.
 func AwaitClarificationItem(c *AwaitClarification) AwaitItem {
 	return AwaitItem{Kind: AwaitItemKindClarification, Clarification: c}
+}
+
+// AwaitToolClarificationItem constructs a model-authored free-text tool await item.
+func AwaitToolClarificationItem(c *AwaitToolClarification) AwaitItem {
+	return AwaitItem{Kind: AwaitItemKindToolClarification, ToolClarification: c}
 }
 
 // AwaitQuestionsItem constructs a questions await item.
@@ -490,6 +491,30 @@ type AwaitClarification struct {
 
 	// ClarifyingPrompt is an optional prompt to use when building follow-up messages.
 	ClarifyingPrompt string
+}
+
+// AwaitToolClarification requests one free-text answer for a model-authored
+// tool call. The runtime preserves the original call in the provider transcript
+// and returns the human answer through the tool's generated result codec.
+//
+// Contract: the tool result is an object with one required string field named
+// "answer". ToolName, ToolCallID, and Payload must remain exact so provider
+// transcript correlation survives the external-input pause.
+type AwaitToolClarification struct {
+	// ID uniquely identifies this clarification request.
+	ID string
+
+	// ToolName identifies the model-authored free-text tool.
+	ToolName tools.Ident
+
+	// ToolCallID correlates the human-provided answer with the tool call.
+	ToolCallID string
+
+	// Payload is the canonical JSON payload for the model-authored call.
+	Payload rawjson.Message
+
+	// Question is the user-facing question to ask.
+	Question string
 }
 
 // AwaitQuestions requests structured multiple-choice answers from the user.

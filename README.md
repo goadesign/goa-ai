@@ -301,8 +301,10 @@ var Docs = Toolset("docs", func() {
   execution time is not an instruction to repeat a call.
 - Type-safe Go structs for payloads and results
 - Provider-facing examples only when you author a top-level Goa `Example(...)`
-  on the tool payload. Codegen precomputes the annotated schema, the schema with
-  the root `example` removed, and the parsed example input so OpenAI-style
+  on the tool payload. Codegen removes synthesized placeholder examples from
+  the complete schema graph, then precomputes the annotated schema, the schema
+  with the authored root `example` removed, and the parsed example input so
+  OpenAI-style
   providers consume schema annotations while Anthropic, Bedrock Claude, and
   Claude-on-Vertex receive provider-native `input_examples` under the required
   tool-examples beta contract, including exact Anthropic token counting.
@@ -459,7 +461,7 @@ Tool("get_time_series", "Get a bounded time-series view", func() {
 	Args(TimeSeriesRequest)
 	Return(TimeSeriesSummary)
 	BoundedResult(func() {
-		Cursor("cursor")
+		ContinueWith("continue_time_series", "cursor")
 		NextCursor("next_cursor")
 	})
 	ServerData("charts.points", TimeSeriesPoints, func() {
@@ -469,9 +471,18 @@ Tool("get_time_series", "Get a bounded time-series view", func() {
 	})
 	ServerDataDefault("off")
 })
+
+Tool("continue_time_series", "Continue a bounded time-series view", func() {
+	Args(ContinuationRequest) // one required cursor field
+	Return(TimeSeriesSummary)
+	BoundedResult(func() {
+		Cursor("cursor")
+		NextCursor("next_cursor")
+	})
+})
 ```
 
-`BoundedResult` makes truncation explicit through runtime-owned bounds metadata (`returned`, `truncated`, optional `total`, `next_cursor`, and `refinement_hint`). Bounds metadata is success-only: error results never carry bounds. Generated tool specs and result JSON use model-facing JSON names, so lower-camel Goa fields such as `nextCursor` are exposed as `next_cursor`. For paged tools, the provider cursor stays in durable runtime history and the model sees a short run-, session-, and tool-bound continuation reference. A continuation call contains only that reference; the runtime verifies its scope, origin, and freshness, then reconstructs the complete execution payload. Invalid references produce the ordinary `invalid_call`/`replan` tool failure without executing the provider. `ServerData` attaches rich data that is never sent to model providers.
+`BoundedResult` makes truncation explicit through runtime-owned bounds metadata (`returned`, `truncated`, optional `total`, `next_cursor`, and `refinement_hint`). Bounds metadata is success-only: error results never carry bounds. Generated tool specs and result JSON use model-facing JSON names, so lower-camel Goa fields such as `nextCursor` are exposed as `next_cursor`. Use `ContinueWith` when the cursor already carries the resolved query: the originating tool keeps an honest semantic payload, the required cursor-only sibling resumes it, and the runtime advertises that sibling only while another page exists. The model calls the sibling with `{}`; the runtime binds its cursor and, when required, the prior canonical query payload before execution. Use `Cursor` directly only when repeating the original arguments is part of the public contract. Truncated results must carry a continuation: bound method results must define `refinement_hint` (snake_case, optional String) unless paging is configured, and the runtime rejects truncated results that provide neither a next cursor nor a refinement hint. `ServerData` attaches rich data that is never sent to model providers.
 
 ### Generated Evaluation Suites
 

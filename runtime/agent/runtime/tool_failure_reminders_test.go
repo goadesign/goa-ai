@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -31,9 +32,9 @@ func TestToolFailureReminderCarriesCorrectionContract(t *testing.T) {
 		},
 	}, map[string]string{"dataset": "Data source to query."})
 
-	assert.Contains(t, got, "Call the same tool again with a corrected payload.")
+	assert.Contains(t, got, "Call the same tool again with corrected arguments.")
 	assert.Contains(t, got, `"field":"parameters"`)
-	assert.Contains(t, got, `Generated field descriptions: {"dataset":"Data source to query."}`)
+	assert.Contains(t, got, `Field guidance: {"dataset":"Data source to query."}`)
 	assert.Contains(t, got, `Example input: {"dataset":"alarms"}`)
 	assert.Contains(t, got, `Rejected input: {"parameters":{}}`)
 }
@@ -46,7 +47,53 @@ func TestToolFailureReminderFinishForbidsMoreTools(t *testing.T) {
 		Failure: testToolFailure(planner.FailureTimeout, planner.RecoveryFinish, "deadline exceeded"),
 	}, nil)
 
-	assert.Contains(t, got, "Failure: timeout")
 	assert.Contains(t, got, "Do not call more tools.")
+	assert.NotContains(t, got, "Failure type:")
 	assert.NotContains(t, got, "Example input:")
+	assert.NotContains(t, got, "Input issues:")
+}
+
+func TestBoundsReminderUsesDedicatedContinuationTool(t *testing.T) {
+	t.Parallel()
+
+	cursor := "OPAQUE-CURSOR"
+	total := 12
+	got := boundsReminder(&planner.ToolResult{
+		Name: tools.Ident("tools.search"),
+		Bounds: &agent.Bounds{
+			Returned:   5,
+			Total:      &total,
+			Truncated:  true,
+			NextCursor: &cursor,
+		},
+	}, "continue_search", "cursor")
+
+	assert.Contains(t, got, "call continue_search")
+	assert.NotContains(t, got, "OPAQUE-CURSOR")
+	assert.NotContains(t, got, "cursor set")
+	assert.NotContains(t, got, "call the same tool again")
+}
+
+func TestToolRemindersUseProviderVisibleToolNames(t *testing.T) {
+	t.Parallel()
+
+	failure := toolFailureReminder(&planner.ToolResult{
+		Name:    tools.Ident("svc.read.get_status"),
+		Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "not available"),
+	}, nil)
+	cursor := "OPAQUE-CURSOR"
+	bounds := boundsReminder(&planner.ToolResult{
+		Name: tools.Ident("svc.read.list_events"),
+		Bounds: &agent.Bounds{
+			Returned:   1,
+			Truncated:  true,
+			NextCursor: &cursor,
+		},
+	}, "svc.read.continue_events", "cursor")
+
+	assert.Contains(t, failure, "Tool: svc_read_get_status")
+	assert.NotContains(t, failure, "svc.read.get_status")
+	assert.Contains(t, bounds, "Tool: svc_read_list_events")
+	assert.Contains(t, bounds, "call svc_read_continue_events")
+	assert.NotContains(t, bounds, "svc.read.")
 }

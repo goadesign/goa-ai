@@ -29,8 +29,8 @@ var (
 		Tags:        []string{},
 		Payload: tools.TypeSpec{
 			Name:                     "SummarizeDocPayload",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"doc_id\":{\"type\":\"string\",\"description\":\"Document identifier\",\"example\":\"Aut consequatur.\"}},\"required\":[\"doc_id\"]}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"doc_id\":{\"type\":\"string\",\"description\":\"Document identifier\",\"example\":\"Aut consequatur.\"}},\"required\":[\"doc_id\"]}"),
+			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"doc_id\":{\"description\":\"Document identifier\",\"type\":\"string\"}},\"required\":[\"doc_id\"],\"type\":\"object\"}"),
+			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"doc_id\":{\"description\":\"Document identifier\",\"type\":\"string\"}},\"required\":[\"doc_id\"],\"type\":\"object\"}"),
 			ExampleJSON:              nil,
 			FieldDescriptions:        SummarizeDocPayloadFieldDescs,
 			FieldJSONTypes:           SummarizeDocPayloadFieldJSONTypes,
@@ -38,8 +38,8 @@ var (
 		},
 		Result: tools.TypeSpec{
 			Name:                     "SummarizeDocResult",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Inventore adipisci.\"}},\"required\":[\"title\"]}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"description\":\"Title\",\"example\":\"Inventore adipisci.\"}},\"required\":[\"title\"]}"),
+			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"title\"],\"type\":\"object\"}"),
+			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"title\"],\"type\":\"object\"}"),
 			FieldDescriptions:        SummarizeDocResultFieldDescs,
 			FieldJSONTypes:           SummarizeDocResultFieldJSONTypes,
 			Codec:                    summarizeDocResultCodec,

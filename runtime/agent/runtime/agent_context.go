@@ -10,51 +10,55 @@ import (
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // agentContextOptions configures construction of a planner.PlannerContext.
 type agentContextOptions struct {
-	runtime     *Runtime
-	agentID     agent.Ident
-	runID       string
-	memory      memory.Reader
-	sessionID   string
-	labels      map[string]string
-	policy      compiledToolPolicy
-	turnID      string
-	events      planner.PlannerEvents
-	invocations modelInvocationSink
-	cache       CachePolicy
+	runtime                *Runtime
+	agentID                agent.Ident
+	runID                  string
+	memory                 memory.Reader
+	sessionID              string
+	labels                 map[string]string
+	policy                 compiledToolPolicy
+	turnID                 string
+	events                 planner.PlannerEvents
+	invocations            modelInvocationSink
+	cache                  CachePolicy
+	availableContinuations map[tools.Ident]struct{}
 }
 
 // simplePlannerContext is a minimal implementation of planner.PlannerContext.
 type simplePlannerContext struct {
-	rt          *Runtime
-	agent       agent.Ident
-	runID       string
-	turnID      string
-	mem         memory.Reader
-	sessionID   string
-	labels      map[string]string
-	policy      compiledToolPolicy
-	ev          planner.PlannerEvents
-	invocations modelInvocationSink
-	cache       CachePolicy
+	rt                     *Runtime
+	agent                  agent.Ident
+	runID                  string
+	turnID                 string
+	mem                    memory.Reader
+	sessionID              string
+	labels                 map[string]string
+	policy                 compiledToolPolicy
+	ev                     planner.PlannerEvents
+	invocations            modelInvocationSink
+	cache                  CachePolicy
+	availableContinuations map[tools.Ident]struct{}
 }
 
 func newAgentContext(opts agentContextOptions) planner.PlannerContext {
 	return &simplePlannerContext{
-		rt:          opts.runtime,
-		agent:       opts.agentID,
-		runID:       opts.runID,
-		turnID:      opts.turnID,
-		mem:         opts.memory,
-		sessionID:   opts.sessionID,
-		labels:      cloneLabels(opts.labels),
-		policy:      opts.policy,
-		ev:          opts.events,
-		invocations: opts.invocations,
-		cache:       opts.cache,
+		rt:                     opts.runtime,
+		agent:                  opts.agentID,
+		runID:                  opts.runID,
+		turnID:                 opts.turnID,
+		mem:                    opts.memory,
+		sessionID:              opts.sessionID,
+		labels:                 cloneLabels(opts.labels),
+		policy:                 opts.policy,
+		ev:                     opts.events,
+		invocations:            opts.invocations,
+		cache:                  opts.cache,
+		availableContinuations: opts.availableContinuations,
 	}
 }
 
@@ -76,7 +80,17 @@ func (c *simplePlannerContext) Metrics() telemetry.Metrics { return c.rt.metrics
 func (c *simplePlannerContext) Tracer() telemetry.Tracer   { return c.rt.tracer }
 func (c *simplePlannerContext) State() planner.AgentState  { return noopAgentState{} }
 func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefinition {
-	return advertisedToolDefinitions(c.rt.ToolSpecsForAgent(c.agent), c.policy)
+	specs := c.rt.ToolSpecsForAgent(c.agent)
+	visible := specs[:0]
+	for _, spec := range specs {
+		if isDedicatedContinuationSpec(spec) {
+			if _, ok := c.availableContinuations[spec.Name]; !ok {
+				continue
+			}
+		}
+		visible = append(visible, spec)
+	}
+	return advertisedToolDefinitions(visible, c.policy)
 }
 func (c *simplePlannerContext) ModelClient(id string) (model.Client, bool) {
 	return c.configuredModelClient(id, false)

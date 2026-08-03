@@ -154,7 +154,7 @@ func MarshalEchoPayload(v *EchoPayload) ([]byte, error) {
 	}
 	in := v
 	_ = in
-	var out *toolhttp.EchoPayloadTransport
+	var out toolhttp.EchoPayloadTransport
 	out = toolhttp.EchoPayloadTransport(in)
 	return json.Marshal(out)
 }
@@ -168,7 +168,7 @@ func UnmarshalEchoPayload(data []byte) (*EchoPayload, error) {
 	if err := decodeStrictJSON(data, &tv); err != nil {
 		return nil, invalidEchoPayloadFieldTypeError(err)
 	}
-	in := &tv
+	in := tv
 	_ = in
 	var out *EchoPayload
 	out = EchoPayload(in)
@@ -177,7 +177,11 @@ func UnmarshalEchoPayload(data []byte) (*EchoPayload, error) {
 
 // MarshalEchoResult serializes EchoResult into JSON.
 func MarshalEchoResult(v EchoResult) ([]byte, error) {
-	return json.Marshal(v)
+	in := v
+	_ = in
+	var out toolhttp.EchoResultTransport
+	out = toolhttp.EchoResultTransport(in)
+	return json.Marshal(out)
 }
 
 // UnmarshalEchoResult deserializes JSON into EchoResult.
@@ -186,12 +190,15 @@ func UnmarshalEchoResult(data []byte) (EchoResult, error) {
 	if len(data) == 0 {
 		return zero, fmt.Errorf("echoResult JSON is empty")
 	}
-	var v EchoResult
-	if err := json.Unmarshal(data, &v); err != nil {
-		err = invalidEchoResultFieldTypeError(err)
-		return zero, fmt.Errorf("decode echoResult: %w", err)
+	var tv toolhttp.EchoResultTransport
+	if err := json.Unmarshal(data, &tv); err != nil {
+		return zero, invalidEchoResultFieldTypeError(err)
 	}
-	return v, nil
+	in := tv
+	_ = in
+	var out EchoResult
+	out = EchoResult(in)
+	return out, nil
 }
 
 // decodeStrictJSON decodes one JSON document and rejects object fields that are

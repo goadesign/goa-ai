@@ -24,11 +24,35 @@ func Cursor(field string) {
 	bounds.Paging.CursorField = field
 }
 
-// NextCursor declares the canonical field name for the next-page reference in
-// the bounded paging contract. Providers return their cursor through
-// planner.ToolResult.Bounds.NextCursor; the runtime retains that cursor and
-// projects a run-, session-, and tool-bound reference into model-visible JSON.
-// NextCursor must be used inside BoundedResult.
+// ContinueWith declares a sibling tool that accepts the cursor for the next
+// page. It separates the initial semantic query from cursor-only continuation.
+// ContinueWith must be used inside BoundedResult.
+func ContinueWith(tool, cursorField string) {
+	bounds, ok := eval.Current().(*agentsexpr.ToolBoundsExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	if tool == "" {
+		eval.ReportError("continuation tool name cannot be empty")
+		return
+	}
+	if cursorField == "" {
+		eval.ReportError("continuation cursor field name cannot be empty")
+		return
+	}
+	if bounds.Paging == nil {
+		bounds.Paging = &agentsexpr.ToolPagingExpr{}
+	}
+	bounds.Paging.ContinueTool = tool
+	bounds.Paging.CursorField = cursorField
+}
+
+// NextCursor declares the canonical field name for the next-page cursor in the
+// bounded paging contract. Providers return the actual cursor through
+// planner.ToolResult.Bounds.NextCursor; codegen and runtimes then project that
+// value into the model-visible result JSON using this field name. NextCursor
+// must be used inside BoundedResult.
 func NextCursor(field string) {
 	bounds, ok := eval.Current().(*agentsexpr.ToolBoundsExpr)
 	if !ok {

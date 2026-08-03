@@ -135,9 +135,10 @@ type (
 
 		// PreferMethodResult reports whether result generation should fall back to
 		// MethodResultAttr when the declared result is empty.
-		PreferMethodResult bool
-		MethodResultAttr   *goaexpr.AttributeExpr
-		Bounds             *ToolBoundsData
+		PreferMethodResult       bool
+		MethodResultAttr         *goaexpr.AttributeExpr
+		Bounds                   *ToolBoundsData
+		ModelHiddenPayloadFields []string
 	}
 
 	// typeData holds all metadata needed to generate a type definition, schema,

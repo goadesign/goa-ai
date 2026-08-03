@@ -50,7 +50,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	} else if ended {
 		return &PlanActivityOutput{SessionEnded: true}, nil
 	}
-	act, err := r.preparePlannerActivity(ctx, input)
+	act, err := r.preparePlannerActivity(ctx, input, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 		act.notePlannerRateLimit(ctx, err)
 		return nil, err
 	}
-	if err := r.resolvePlanContinuations(ctx, input, result); err != nil {
+	if err := r.bindContinuationCursors(result, nil); err != nil {
 		return nil, err
 	}
 	r.logger.Info(ctx, "PlanStartActivity returning PlanResult", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
@@ -93,11 +93,18 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	} else if ended {
 		return &PlanActivityOutput{SessionEnded: true}, nil
 	}
-	act, err := r.preparePlannerActivity(ctx, input)
+	toolOutputs, err := r.loadPlannerToolOutputs(ctx, input.RunID, input.ToolOutputs)
 	if err != nil {
 		return nil, err
 	}
-	toolOutputs, err := r.loadPlannerToolOutputs(ctx, input.RunID, input.ToolOutputs)
+	var availableContinuations map[tools.Ident]struct{}
+	if input.Finalize == nil && !input.SynthesisOnly {
+		availableContinuations, err = r.availableContinuationTools(input.AgentID, toolOutputs)
+		if err != nil {
+			return nil, err
+		}
+	}
+	act, err := r.preparePlannerActivity(ctx, input, availableContinuations)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +123,9 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		act.notePlannerRateLimit(ctx, err)
 		return nil, err
 	}
+	if err := r.bindContinuationCursors(result, toolOutputs); err != nil {
+		return nil, err
+	}
 	if input.SynthesisOnly {
 		if result != nil && len(result.ToolCalls) > 0 {
 			return nil, errors.New("synthesis-only planner result contains tool calls")
@@ -124,18 +134,19 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 			return nil, fmt.Errorf("synthesis-only planner result: %w", err)
 		}
 	}
-	if err := r.resolvePlanContinuations(ctx, input, result); err != nil {
-		return nil, err
-	}
 	return act.output(result)
 }
 
 // preparePlannerActivity constructs all shared planner activity state before
 // the specific PlanStart or PlanResume payload is built.
-func (r *Runtime) preparePlannerActivity(ctx context.Context, input *PlanActivityInput) (*plannerActivityInvocation, error) {
+func (r *Runtime) preparePlannerActivity(
+	ctx context.Context,
+	input *PlanActivityInput,
+	availableContinuations map[tools.Ident]struct{},
+) (*plannerActivityInvocation, error) {
 	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID, input.RunContext.TurnID)
 	invocations := &modelInvocationJournal{}
-	reg, agentCtx, err := r.plannerContext(ctx, input, events, invocations)
+	reg, agentCtx, err := r.plannerContext(ctx, input, events, invocations, availableContinuations)
 	if err != nil {
 		return nil, err
 	}
@@ -222,6 +233,19 @@ func validatePlannerResultPayloads(result *planner.PlanResult) error {
 				if err := validatePlannerToolPayload(item.Clarification.ExampleJSON); err != nil {
 					return fmt.Errorf("planner await item %d clarification example: %w", itemIndex, err)
 				}
+			}
+		case planner.AwaitItemKindToolClarification:
+			if item.ToolClarification == nil {
+				return fmt.Errorf("planner await item %d tool clarification payload is missing", itemIndex)
+			}
+			if item.ToolClarification.ToolName == "" {
+				return fmt.Errorf("planner await item %d tool clarification name is missing", itemIndex)
+			}
+			if item.ToolClarification.ToolCallID == "" {
+				return fmt.Errorf("planner await item %d tool clarification call ID is missing", itemIndex)
+			}
+			if err := validatePlannerToolPayload(item.ToolClarification.Payload); err != nil {
+				return fmt.Errorf("planner await item %d tool clarification payload: %w", itemIndex, err)
 			}
 		case planner.AwaitItemKindQuestions:
 			if item.Questions == nil {
@@ -530,6 +554,7 @@ func (r *Runtime) plannerContext(
 	input *PlanActivityInput,
 	events planner.PlannerEvents,
 	invocations modelInvocationSink,
+	availableContinuations map[tools.Ident]struct{},
 ) (*AgentRegistration, planner.PlannerContext, error) {
 	if input.AgentID == "" {
 		return nil, nil, errors.New("agent id is required")
@@ -544,17 +569,18 @@ func (r *Runtime) plannerContext(
 	}
 	runPolicy := compileToolPolicy(input.Policy)
 	agentCtx := newAgentContext(agentContextOptions{
-		runtime:     r,
-		agentID:     input.AgentID,
-		runID:       input.RunID,
-		memory:      reader,
-		sessionID:   input.RunContext.SessionID,
-		labels:      input.RunContext.Labels,
-		policy:      runPolicy,
-		turnID:      input.RunContext.TurnID,
-		events:      events,
-		invocations: invocations,
-		cache:       reg.Policy.Cache,
+		runtime:                r,
+		agentID:                input.AgentID,
+		runID:                  input.RunID,
+		memory:                 reader,
+		sessionID:              input.RunContext.SessionID,
+		labels:                 input.RunContext.Labels,
+		policy:                 runPolicy,
+		turnID:                 input.RunContext.TurnID,
+		events:                 events,
+		invocations:            invocations,
+		cache:                  reg.Policy.Cache,
+		availableContinuations: availableContinuations,
 	})
 	return &reg, agentCtx, nil
 }

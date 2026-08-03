@@ -232,6 +232,12 @@ func planResultModelToolCalls(result *planner.PlanResult) []modelFacingToolCall 
 	for _, item := range result.Await.Items {
 		switch item.Kind {
 		case planner.AwaitItemKindClarification:
+		case planner.AwaitItemKindToolClarification:
+			calls = append(calls, modelFacingToolCall{
+				id:      item.ToolClarification.ToolCallID,
+				name:    item.ToolClarification.ToolName,
+				payload: item.ToolClarification.Payload,
+			})
 		case planner.AwaitItemKindQuestions:
 			calls = append(calls, modelFacingToolCall{
 				id:      item.Questions.ToolCallID,

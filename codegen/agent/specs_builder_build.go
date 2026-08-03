@@ -108,13 +108,14 @@ func newToolContractTypeOwner(tool *ToolData) *contractTypeOwner {
 		scopeName = tool.Toolset.QualifiedName
 	}
 	return &contractTypeOwner{
-		Kind:               contractTypeOwnerTool,
-		Name:               tool.Name,
-		QualifiedName:      tool.QualifiedName,
-		ScopeName:          scopeName,
-		PreferMethodResult: tool.IsMethodBacked,
-		MethodResultAttr:   tool.MethodResultAttr,
-		Bounds:             tool.Bounds,
+		Kind:                     contractTypeOwnerTool,
+		Name:                     tool.Name,
+		QualifiedName:            tool.QualifiedName,
+		ScopeName:                scopeName,
+		PreferMethodResult:       tool.IsMethodBacked,
+		MethodResultAttr:         tool.MethodResultAttr,
+		Bounds:                   tool.Bounds,
+		ModelHiddenPayloadFields: tool.ModelHiddenPayloadFields,
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -50,38 +49,4 @@ func TestDispatchToolCallsPropagatesLabelsToActivityInput(t *testing.T) {
 		"aura.session.id": "sess-1",
 		"kind":            "brief",
 	}, wfCtx.lastToolCall.Input.Labels)
-}
-
-func TestDispatchToolCallsPublishesPreflightFailureWithoutExecution(t *testing.T) {
-	wfCtx := &testWorkflowContext{ctx: context.Background()}
-	exec := &toolBatchExec{
-		r: &Runtime{
-			toolsets: map[string]ToolsetRegistration{
-				"svc.tools": {},
-			},
-			toolSpecs: map[tools.Ident]tools.ToolSpec{
-				"search": newAnyJSONSpec("search", "svc.tools"),
-			},
-		},
-		runID:     "run-1",
-		agentID:   "svc.agent",
-		sessionID: "sess-1",
-		turnID:    "turn-1",
-	}
-	failure := invalidContinuationFailure(assert.AnError)
-
-	batch, err := exec.dispatchToolCalls(wfCtx, []planner.ToolRequest{{
-		Name:             "search",
-		Payload:          rawjson.Message(`{"cursor":"next-ref"}`),
-		PreflightFailure: failure,
-	}})
-
-	require.NoError(t, err)
-	require.Len(t, batch.inlineByID, 1)
-	for _, execution := range batch.inlineByID {
-		require.NotNil(t, execution.ToolResult.Failure)
-		assert.Equal(t, planner.FailureInvalidCall, execution.ToolResult.Failure.Kind)
-		assert.NotSame(t, failure, execution.ToolResult.Failure)
-	}
-	assert.Nil(t, wfCtx.lastToolCall.Input)
 }

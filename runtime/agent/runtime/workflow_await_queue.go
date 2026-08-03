@@ -13,6 +13,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -298,6 +299,37 @@ func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *pla
 			c.RestrictToTool,
 			c.ExampleJSON,
 		), turnID)
+	case planner.AwaitItemKindToolClarification:
+		c := it.ToolClarification
+		if c == nil {
+			return fmt.Errorf("await tool clarification item %d missing payload", idx)
+		}
+		if c.ToolCallID == "" {
+			return errors.New("await_tool_clarification: missing tool_call_id")
+		}
+		if err := r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
+			base.RunContext.RunID,
+			input.AgentID,
+			base.RunContext.SessionID,
+			c.ID,
+			c.Question,
+			nil,
+			c.ToolName,
+			nil,
+		), turnID); err != nil {
+			return err
+		}
+		return r.publishHook(ctx, hooks.NewToolCallScheduledEvent(
+			base.RunContext.RunID,
+			input.AgentID,
+			base.RunContext.SessionID,
+			c.ToolName,
+			c.ToolCallID,
+			c.Payload,
+			"",
+			"",
+			0,
+		), turnID)
 	case planner.AwaitItemKindQuestions:
 		q := it.Questions
 		if q == nil {
@@ -424,6 +456,47 @@ func (r *Runtime) waitAwaitQueueItem(ctx context.Context, ctrl *interrupt.Contro
 			}
 		}
 		return nil, nil
+	case planner.AwaitItemKindToolClarification:
+		c := it.ToolClarification
+		if c == nil {
+			return nil, errors.New("await tool clarification missing payload")
+		}
+		ans, err := ctrl.WaitProvideClarification(ctx, timeout)
+		if err != nil {
+			return nil, err
+		}
+		if ans == nil {
+			return nil, errors.New("await tool clarification: nil answer")
+		}
+		if c.ID != "" && ans.ID != "" && ans.ID != c.ID {
+			return nil, errors.New("unexpected await ID for tool clarification")
+		}
+		resultJSON, err := json.Marshal(struct {
+			Answer string `json:"answer"`
+		}{Answer: ans.Answer})
+		if err != nil {
+			return nil, fmt.Errorf("encode tool clarification answer: %w", err)
+		}
+		call := planner.ToolRequest{
+			Name:       c.ToolName,
+			ToolCallID: c.ToolCallID,
+			Payload:    c.Payload,
+		}
+		return r.consumeProvidedToolResultRecords(
+			ctx,
+			input,
+			base,
+			turnID,
+			&api.ToolResultsSet{Results: []*api.ProvidedToolResult{{
+				Name:       c.ToolName,
+				ToolCallID: c.ToolCallID,
+				Success: &api.ProvidedToolSuccess{
+					Result: rawjson.Message(resultJSON),
+				},
+			}}},
+			[]planner.ToolRequest{call},
+			map[string]struct{}{c.ToolCallID: {}},
+		)
 	case planner.AwaitItemKindQuestions:
 		q := it.Questions
 		if q == nil {

@@ -161,6 +161,20 @@ const (
 	ToolErrorCodeProviderOverloaded = "provider_overloaded"
 )
 
+// DecodeServerData decodes the canonical server-only item envelope carried by
+// planner tool results. Kind-specific payloads remain raw JSON for decoding by
+// the generated codec declared on the corresponding tool specification.
+func DecodeServerData(data []byte) ([]*ServerDataItem, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var items []*ServerDataItem
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, fmt.Errorf("decode server data: %w", err)
+	}
+	return items, nil
+}
+
 // NewToolCallMessage constructs a tool invocation message.
 func NewToolCallMessage(
 	registrationToken, toolUseID string,

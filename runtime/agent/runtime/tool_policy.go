@@ -83,8 +83,15 @@ func (p compiledToolPolicy) allowsTool(name tools.Ident, facts toolPolicyFacts) 
 	if p.callerRestrictToTool != "" && name != p.callerRestrictToTool {
 		return false
 	}
-	for _, clause := range p.tagClauses {
-		if !tagClauseAllows(clause, facts.tags) {
+	return TagPolicyAllows(p.tagClauses, facts.tags)
+}
+
+// TagPolicyAllows reports whether tool tags satisfy every tag-policy clause.
+// Callers that render instructions before starting a run use this predicate to
+// keep those instructions aligned with the tools the runtime will advertise.
+func TagPolicyAllows(clauses []TagPolicyClause, tags []string) bool {
+	for _, clause := range clauses {
+		if !tagClauseAllows(clause, tags) {
 			return false
 		}
 	}

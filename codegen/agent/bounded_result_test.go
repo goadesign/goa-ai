@@ -91,18 +91,6 @@ func TestBoundedResultProjectsBoundsIntoResultSchemaWithoutMutatingResultType(t 
 
 	var doc struct {
 		Tools []struct {
-			ID      string `json:"id"`
-			Payload struct {
-				Schema struct {
-					Required   []string       `json:"required"`
-					Properties map[string]any `json:"properties"`
-					OneOf      []struct {
-						Required      []string         `json:"required"`
-						MaxProperties int              `json:"maxProperties"` //nolint:tagliatelle // JSON Schema keyword.
-						AllOf         []map[string]any `json:"allOf"`         //nolint:tagliatelle // JSON Schema keyword.
-					} `json:"oneOf"` //nolint:tagliatelle // JSON Schema keyword.
-				} `json:"schema"`
-			} `json:"payload"`
 			Result struct {
 				Schema struct {
 					Properties map[string]any `json:"properties"`
@@ -113,17 +101,6 @@ func TestBoundedResultProjectsBoundsIntoResultSchemaWithoutMutatingResultType(t 
 	}
 	require.NoError(t, json.Unmarshal([]byte(schemas), &doc))
 	require.Len(t, doc.Tools, 1)
-	require.Empty(t, doc.Tools[0].Payload.Schema.Required)
-	require.Contains(t, doc.Tools[0].Payload.Schema.Properties, "query")
-	require.Contains(t, doc.Tools[0].Payload.Schema.Properties, "page_cursor")
-	require.Len(t, doc.Tools[0].Payload.Schema.OneOf, 2)
-	require.Len(t, doc.Tools[0].Payload.Schema.OneOf[0].AllOf, 2)
-	require.Equal(t, []any{"query"}, doc.Tools[0].Payload.Schema.OneOf[0].AllOf[0]["required"])
-	require.Equal(t, map[string]any{"required": []any{"page_cursor"}}, doc.Tools[0].Payload.Schema.OneOf[0].AllOf[1]["not"])
-	authoredProperties := doc.Tools[0].Payload.Schema.OneOf[0].AllOf[0]["properties"].(map[string]any)
-	require.InDelta(t, 3, authoredProperties["query"].(map[string]any)["minLength"], 0)
-	require.Equal(t, []string{"page_cursor"}, doc.Tools[0].Payload.Schema.OneOf[1].Required)
-	require.Equal(t, 1, doc.Tools[0].Payload.Schema.OneOf[1].MaxProperties)
 
 	props := doc.Tools[0].Result.Schema.Properties
 	require.Contains(t, props, "results")
@@ -209,6 +186,150 @@ func TestBoundedResultGeneratesBoundsSpec(t *testing.T) {
 	require.Contains(t, specs, "Bounds: &tools.BoundsSpec{")
 	require.Contains(t, specs, "Paging: &tools.PagingSpec{")
 	require.NotContains(t, specs, "BoundedResult: true")
+}
+
+// TestBoundedResultGeneratesDedicatedContinuation verifies that a query tool
+// can delegate paging to a cursor-only sibling without adding a cursor mode to
+// its own semantic payload.
+func TestBoundedResultGeneratesDedicatedContinuation(t *testing.T) {
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	design := func() {
+		goadsl.API("bounded_result_continuation_test", func() {})
+		goadsl.Service("svc", func() {
+			Agent("agent", "desc", func() {
+				Use("tools", func() {
+					Tool("search", "Search", func() {
+						Args(func() {
+							goadsl.Attribute("query", goadsl.String)
+							goadsl.Required("query")
+						})
+						Return(func() {
+							goadsl.Attribute("results", goadsl.ArrayOf(goadsl.String))
+						})
+						BoundedResult(func() {
+							ContinueWith("continue_search", "cursor")
+							NextCursor("next_cursor")
+						})
+					})
+					Tool("continue_search", "Continue search", func() {
+						Args(func() {
+							goadsl.Attribute("cursor", goadsl.String)
+							goadsl.Required("cursor")
+						})
+						Return(func() {
+							goadsl.Attribute("results", goadsl.ArrayOf(goadsl.String))
+						})
+						BoundedResult(func() {
+							Cursor("cursor")
+							NextCursor("next_cursor")
+						})
+					})
+				})
+			})
+		})
+	}
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+
+	files, err := codegen.Generate("example.com/bounded_result", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
+	require.NoError(t, err)
+
+	var specs string
+	expectedPath := filepath.ToSlash("gen/svc/toolsets/tools/specs.go")
+	for _, f := range files {
+		if filepath.ToSlash(f.Path) == expectedPath {
+			var buf bytes.Buffer
+			for _, section := range f.SectionTemplates {
+				require.NoError(t, section.Write(&buf))
+			}
+			specs = buf.String()
+			break
+		}
+	}
+	require.NotEmpty(t, specs, "expected generated specs.go at %s", expectedPath)
+	require.Contains(t, specs, `ContinueTool: tools.Ident("tools.continue_search")`)
+	require.NotContains(t, specs, `Continuation reference for the next page.`)
+	require.Contains(t, specs, `Schema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\"}")`)
+	require.NotContains(t, specs, `Call the same tool again with the same parameters`)
+}
+
+// TestBoundedResultGeneratesReplayContinuation verifies that a continuation
+// action can reuse the source tool payload while keeping every execution field
+// out of the model-facing schema.
+func TestBoundedResultGeneratesReplayContinuation(t *testing.T) {
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	var queryArgs = goadsl.Type("QueryArgs", func() {
+		goadsl.Attribute("query", goadsl.String)
+		goadsl.Attribute("cursor", goadsl.String)
+		goadsl.Required("query")
+	})
+	design := func() {
+		goadsl.API("bounded_result_replay_continuation_test", func() {})
+		goadsl.Service("svc", func() {
+			Agent("agent", "desc", func() {
+				Use("tools", func() {
+					Tool("search", "Search", func() {
+						Args(queryArgs)
+						Return(func() {
+							goadsl.Attribute("results", goadsl.ArrayOf(goadsl.String))
+						})
+						BoundedResult(func() {
+							ContinueWith("continue_search", "cursor")
+							NextCursor("next_cursor")
+						})
+					})
+					Tool("continue_search", "Continue search", func() {
+						Args(queryArgs)
+						Return(func() {
+							goadsl.Attribute("results", goadsl.ArrayOf(goadsl.String))
+						})
+						BoundedResult(func() {
+							Cursor("cursor")
+							NextCursor("next_cursor")
+						})
+					})
+				})
+			})
+		})
+	}
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+
+	files, err := codegen.Generate("example.com/bounded_result", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
+	require.NoError(t, err)
+
+	var specs string
+	expectedPath := filepath.ToSlash("gen/svc/toolsets/tools/specs.go")
+	for _, f := range files {
+		if filepath.ToSlash(f.Path) == expectedPath {
+			var buf bytes.Buffer
+			for _, section := range f.SectionTemplates {
+				require.NoError(t, section.Write(&buf))
+			}
+			specs = buf.String()
+			break
+		}
+	}
+	require.NotEmpty(t, specs, "expected generated specs.go at %s", expectedPath)
+	require.Contains(t, specs, `SourceTool: tools.Ident("tools.search")`)
+	require.Contains(t, specs, `ReplayPayload: true`)
+	require.Contains(t, specs, `Schema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\"}")`)
 }
 
 // TestBoundedResultRequiresRequiredReturnedAndTruncated verifies that bounded

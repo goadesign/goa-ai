@@ -145,12 +145,20 @@ type (
 	// BoundedResult, not necessarily to fields authored on the semantic Go
 	// result type.
 	PagingSpec struct {
-		// CursorField is the name of the optional String field in the tool payload
-		// used to request subsequent pages.
+		// ContinueTool is the canonical sibling tool that accepts CursorField.
+		// Empty means the current tool accepts its own continuation cursor.
+		ContinueTool Ident
+		// SourceTool is the canonical query tool whose successful result this
+		// dedicated continuation advances. Empty on initial query tools.
+		SourceTool Ident
+		// ReplayPayload retains SourceTool's canonical query arguments and replaces
+		// only CursorField before execution.
+		ReplayPayload bool
+		// CursorField is the String field used to request subsequent pages.
 		CursorField string
-		// NextCursorField is the canonical field name for the next-page reference
-		// in the projected result contract. Runtimes populate it from the
-		// run-, session-, and tool-bound continuation derived from the provider cursor.
+		// NextCursorField is the canonical field name for the next-page cursor in
+		// the projected result contract. Dedicated continuation tools keep this
+		// value runtime-owned; self-paging tools expose it to the model.
 		NextCursorField string
 	}
 

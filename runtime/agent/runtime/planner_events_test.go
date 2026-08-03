@@ -241,6 +241,31 @@ func TestRuntimePlannerEventsMatchesAwaitCallTransparently(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestRuntimePlannerEventsMatchesToolClarificationCallTransparently(t *testing.T) {
+	e := &modelInvocationJournal{}
+	invocation := e.beginModelInvocation()
+	mustRecordModelResponse(t, e, invocation, testModelResponse(nil, model.ToolCall{
+		ID:      "clarification-1",
+		Name:    "chat.ask_clarification",
+		Payload: []byte(`{"question":"Which device?"}`),
+	}))
+
+	transcript, err := e.exportModelInvocation(&planner.PlanResult{
+		Await: planner.NewAwait(planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
+			ToolCallID: "clarification-1",
+			ToolName:   "chat.ask_clarification",
+			Payload:    []byte(`{"question":"Which device?"}`),
+			Question:   "Which device?",
+		})),
+	})
+
+	require.NoError(t, err)
+	require.Len(t, transcript, 1)
+	toolUse, ok := transcript[0].Parts[0].(model.ToolUsePart)
+	require.True(t, ok)
+	require.Equal(t, "clarification-1", toolUse.ID)
+}
+
 func TestRuntimePlannerEventsRejectsModifiedModelToolCall(t *testing.T) {
 	e := &modelInvocationJournal{}
 	invocation := e.beginModelInvocation()

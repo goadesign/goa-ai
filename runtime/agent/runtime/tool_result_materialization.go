@@ -54,9 +54,6 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call planner.ToolRe
 		setMalformedToolResult(result, call, err)
 		return nil, nil
 	}
-	if err := attachContinuation(call, result); err != nil {
-		return nil, err
-	}
 	if err := r.enforceToolResultContracts(spec, call, result); err != nil {
 		setMalformedToolResult(result, call, err)
 		return nil, nil

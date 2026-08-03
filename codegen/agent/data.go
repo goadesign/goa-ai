@@ -566,6 +566,12 @@ type (
 		// payload attribute (bound method payload or tool Args).
 		Injected []*InjectedFieldData
 
+		// ModelHiddenPayloadFields names execution-only payload fields omitted from
+		// the model tool schema while remaining present in the generated codec.
+		// Dedicated continuation cursors use this boundary: the runtime supplies the
+		// cursor from the preceding bounded result.
+		ModelHiddenPayloadFields []string
+
 		// Bounds declares the out-of-band bounded-result contract for this tool.
 		// When non-nil, codegen emits runtime specs and method-result projection
 		// helpers without mutating the semantic result schema.
@@ -623,6 +629,15 @@ type (
 	}
 
 	ToolPagingData struct {
+		// ContinueTool is the canonical tool that advances this result set. It is
+		// set to the continuation tool itself on dedicated continuation tools.
+		ContinueTool string
+		// SourceTool is the canonical query tool whose result set this dedicated
+		// continuation advances. It is empty on initial query tools.
+		SourceTool string
+		// ReplayPayload reports whether continuation execution starts from the
+		// source tool's most recent canonical payload before replacing its cursor.
+		ReplayPayload bool
 		// CursorField is the model-facing JSON payload field name.
 		CursorField string
 		// NextCursorField is the model-facing JSON result field name.

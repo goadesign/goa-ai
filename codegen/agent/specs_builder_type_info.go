@@ -2,7 +2,6 @@ package codegen
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -177,14 +176,14 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	if err != nil {
 		return nil, err
 	}
-	if usage == usagePayload && owner.Bounds != nil && owner.Bounds.Paging != nil {
-		schemaBytes, err = projectPagingPayloadSchema(schemaBytes, owner.Bounds.Paging.CursorField)
+	if usage == usagePayload && len(owner.ModelHiddenPayloadFields) > 0 {
+		schemaBytes, err = projectHiddenPayloadSchema(schemaBytes, owner.ModelHiddenPayloadFields)
 		if err != nil {
 			return nil, err
 		}
-		schemaWithoutRootExampleBytes, err = projectPagingPayloadSchema(
+		schemaWithoutRootExampleBytes, err = projectHiddenPayloadSchema(
 			schemaWithoutRootExampleBytes,
-			owner.Bounds.Paging.CursorField,
+			owner.ModelHiddenPayloadFields,
 		)
 		if err != nil {
 			return nil, err
@@ -199,6 +198,10 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		if err != nil {
 			return nil, err
 		}
+	}
+	exampleBytes, err := modelVisibleExampleJSON(example, owner, usage)
+	if err != nil {
+		return nil, err
 	}
 
 	doc := fmt.Sprintf("%s defines the JSON %s for the %s tool.", typeName, usage, owner.QualifiedName)
@@ -275,7 +278,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		Def:                          defLine,
 		SchemaJSON:                   schemaBytes,
 		SchemaWithoutRootExampleJSON: schemaWithoutRootExampleBytes,
-		ExampleJSON:                  exampleJSON(example),
+		ExampleJSON:                  exampleBytes,
 		ExportedCodec:                typeName + "Codec",
 		GenericCodec:                 lowerCamel(typeName) + "Codec",
 		MarshalFunc:                  "Marshal" + typeName,
@@ -311,9 +314,11 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	}
 	// Keep field descriptions for validation error enrichment.
 	if fdesc := buildFieldDescriptions(schemaAttr); len(fdesc) > 0 {
+		deleteModelHiddenFields(fdesc, owner, usage)
 		info.FieldDescs = fdesc
 	}
 	if ftypes := buildFieldJSONTypes(schemaAttr); len(ftypes) > 0 {
+		deleteModelHiddenFields(ftypes, owner, usage)
 		info.FieldJSONTypes = ftypes
 	}
 	if allowed := buildFieldAllowedObjectKeys(schemaAttr); len(allowed) > 0 {
@@ -331,6 +336,104 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		b.types[nameKey] = info
 	}
 	return info, nil
+}
+
+// projectHiddenPayloadSchema removes runtime-supplied root fields from the
+// model contract while leaving the generated execution codec unchanged.
+func projectHiddenPayloadSchema(schemaBytes []byte, fields []string) ([]byte, error) {
+	var schema map[string]any
+	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
+		return nil, fmt.Errorf("decode model payload schema: %w", err)
+	}
+	properties, _ := schema["properties"].(map[string]any)
+	for _, field := range fields {
+		delete(properties, modelJSONName(field))
+	}
+	if len(properties) == 0 {
+		delete(schema, "properties")
+		delete(schema, "$defs")
+	}
+	if required, ok := schema["required"].([]any); ok {
+		kept := required[:0]
+		for _, item := range required {
+			name, _ := item.(string)
+			if !containsModelField(fields, name) {
+				kept = append(kept, item)
+			}
+		}
+		if len(kept) == 0 {
+			delete(schema, "required")
+		} else {
+			schema["required"] = kept
+		}
+	}
+	if rootExample, ok := schema["example"].(map[string]any); ok {
+		for _, field := range fields {
+			delete(rootExample, modelJSONName(field))
+		}
+	}
+	projected, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("encode model payload schema: %w", err)
+	}
+	return projected, nil
+}
+
+// modelVisibleExampleJSON removes runtime-supplied fields from the standalone
+// example document advertised to models.
+func modelVisibleExampleJSON(example *exampleData, owner *contractTypeOwner, usage typeUsage) ([]byte, error) {
+	encoded := exampleJSON(example)
+	if usage != usagePayload || len(owner.ModelHiddenPayloadFields) == 0 || len(encoded) == 0 {
+		return encoded, nil
+	}
+	var value map[string]any
+	if err := json.Unmarshal(encoded, &value); err != nil {
+		return nil, fmt.Errorf("decode authored model payload example: %w", err)
+	}
+	for _, field := range owner.ModelHiddenPayloadFields {
+		delete(value, modelJSONName(field))
+	}
+	projected, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("encode authored model payload example: %w", err)
+	}
+	return projected, nil
+}
+
+// deleteModelHiddenFields removes runtime-supplied root fields from generated
+// field guidance maps.
+func deleteModelHiddenFields[V any](fields map[string]V, owner *contractTypeOwner, usage typeUsage) {
+	if usage != usagePayload {
+		return
+	}
+	for path := range fields {
+		if isModelHiddenPath(path, owner.ModelHiddenPayloadFields) {
+			delete(fields, path)
+		}
+	}
+}
+
+// isModelHiddenPath reports whether a metadata path names a runtime-supplied
+// root field or one of its descendants.
+func isModelHiddenPath(path string, hidden []string) bool {
+	for _, field := range hidden {
+		root := modelJSONName(field)
+		if path == root || strings.HasPrefix(path, root+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// containsModelField reports whether modelName is the JSON name of one of the
+// design fields.
+func containsModelField(fields []string, modelName string) bool {
+	for _, field := range fields {
+		if modelJSONName(field) == modelName {
+			return true
+		}
+	}
+	return false
 }
 
 // NOTE: The reserved `server_data` payload field is added by the runtime, not by
@@ -368,50 +471,6 @@ func projectBoundedResultSchema(schemaBytes []byte, bounds *ToolBoundsData) ([]b
 	return projected, nil
 }
 
-// projectPagingPayloadSchema expresses the two honest model-facing calls for a
-// paged tool: an initial request satisfying the authored contract, or a
-// continuation request containing only the runtime-issued cursor reference.
-// Generated codecs retain the authored service contract because the runtime
-// reconstructs and validates the complete execution payload before dispatch.
-func projectPagingPayloadSchema(schemaBytes []byte, cursorField string) ([]byte, error) {
-	var authored map[string]any
-	if err := json.Unmarshal(schemaBytes, &authored); err != nil {
-		return nil, fmt.Errorf("unmarshal paged payload schema: %w", err)
-	}
-	cursorField = modelJSONName(cursorField)
-	properties, ok := authored["properties"].(map[string]any)
-	if !ok {
-		return nil, errors.New("paged tool payload schema must define object properties")
-	}
-	if _, ok := properties[cursorField]; !ok {
-		return nil, fmt.Errorf("paged tool payload schema is missing cursor field %q", cursorField)
-	}
-	projectedSchema := map[string]any{
-		"type":       jsonSchemaTypeObject,
-		"properties": properties,
-		"oneOf": []any{
-			map[string]any{"allOf": []any{
-				authored,
-				map[string]any{"not": map[string]any{"required": []string{cursorField}}},
-			}},
-			map[string]any{
-				"required":      []string{cursorField},
-				"maxProperties": 1,
-			},
-		},
-	}
-	for _, name := range []string{"$schema", "$id", "$defs", "definitions", "description", "additionalProperties"} {
-		if value, ok := authored[name]; ok {
-			projectedSchema[name] = value
-		}
-	}
-	projected, err := json.Marshal(projectedSchema)
-	if err != nil {
-		return nil, fmt.Errorf("marshal paged payload schema: %w", err)
-	}
-	return projected, nil
-}
-
 func boundedResultSchemaFields(bounds *ToolBoundsData) map[string]any {
 	fields := map[string]any{
 		boundedresult.FieldReturned: map[string]any{
@@ -431,10 +490,10 @@ func boundedResultSchemaFields(bounds *ToolBoundsData) map[string]any {
 			"description": "Short guidance on how to narrow the request when the result is truncated.",
 		},
 	}
-	if bounds.Paging != nil && bounds.Paging.NextCursorField != "" {
-		fields[modelJSONName(bounds.Paging.NextCursorField)] = map[string]any{
+	if field := modelVisibleNextCursorField(bounds); field != "" {
+		fields[modelJSONName(field)] = map[string]any{
 			"type":        "string",
-			"description": "Reference for the next page. Call the same tool again with only the paging cursor field set to this exact reference. Do not repeat other arguments, modify the reference, or reuse an earlier reference.",
+			"description": "Continuation reference for the next page.",
 		}
 	}
 	return fields
@@ -475,10 +534,7 @@ func mergeBoundedResultRequired(existing any, bounds *ToolBoundsData, names ...s
 // canonicalOptionalBoundedResultFields returns the bounded-result fields that
 // must remain optional in the generated JSON schema.
 func canonicalOptionalBoundedResultFields(bounds *ToolBoundsData) map[string]struct{} {
-	nextCursorField := ""
-	if bounds != nil && bounds.Paging != nil {
-		nextCursorField = bounds.Paging.NextCursorField
-	}
+	nextCursorField := modelVisibleNextCursorField(bounds)
 	fields := make(map[string]struct{})
 	for _, name := range boundedresult.OptionalFieldNames(nextCursorField) {
 		fields[modelJSONName(name)] = struct{}{}
@@ -487,15 +543,21 @@ func canonicalOptionalBoundedResultFields(bounds *ToolBoundsData) map[string]str
 }
 
 func withBoundedResultAllowedObjectKeys(allowed map[string][]string, bounds *ToolBoundsData) map[string][]string {
-	nextCursorField := ""
-	if bounds != nil && bounds.Paging != nil {
-		nextCursorField = bounds.Paging.NextCursorField
-	}
+	nextCursorField := modelVisibleNextCursorField(bounds)
 	root := append([]string(nil), allowed[""]...)
 	root = append(root, boundedresult.CanonicalFieldNames(modelJSONName(nextCursorField))...)
 	sort.Strings(root)
 	allowed[""] = slices.Compact(root)
 	return allowed
+}
+
+// modelVisibleNextCursorField returns the cursor only for legacy same-tool
+// paging. Dedicated continuation tools keep cursor state in the runtime.
+func modelVisibleNextCursorField(bounds *ToolBoundsData) string {
+	if bounds == nil || bounds.Paging == nil || bounds.Paging.ContinueTool != "" {
+		return ""
+	}
+	return bounds.Paging.NextCursorField
 }
 
 // isEmptyStruct reports whether the provided attribute ultimately resolves to

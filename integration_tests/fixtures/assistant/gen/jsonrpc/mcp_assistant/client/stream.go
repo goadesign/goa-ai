@@ -129,7 +129,7 @@ func (s *ToolsCallClientStream) Recv(ctx context.Context) (*mcpassistant.ToolsCa
 			}
 
 			if response.Error != nil {
-				return zero, fmt.Errorf("JSON-RPC error %d: %s", response.Error.Code, response.Error.Message)
+				return zero, response.Error
 			}
 			// Decode the final result
 			if response.Result == nil {
@@ -158,7 +158,7 @@ func (s *ToolsCallClientStream) Recv(ctx context.Context) (*mcpassistant.ToolsCa
 
 			s.closed = true
 			if response.Error != nil {
-				return zero, fmt.Errorf("JSON-RPC error %d: %s", response.Error.Code, response.Error.Message)
+				return zero, response.Error
 			}
 			return zero, fmt.Errorf("unexpected error response")
 
@@ -199,7 +199,9 @@ func (s *ToolsCallClientStream) Close() error {
 		}
 	}
 	return nil
-} // EventsStreamClientStream implements the
+}
+
+// EventsStreamClientStream implements the
 // mcpassistant.EventsStreamClientStream interface using Server-Sent Events.
 type EventsStreamClientStream struct {
 	resp    *http.Response                       // HTTP response object
@@ -305,7 +307,7 @@ func (s *EventsStreamClientStream) Recv(ctx context.Context) (*mcpassistant.Even
 			}
 
 			if response.Error != nil {
-				return zero, fmt.Errorf("JSON-RPC error %d: %s", response.Error.Code, response.Error.Message)
+				return zero, response.Error
 			}
 			// Decode the final result
 			if response.Result == nil {
@@ -334,7 +336,7 @@ func (s *EventsStreamClientStream) Recv(ctx context.Context) (*mcpassistant.Even
 
 			s.closed = true
 			if response.Error != nil {
-				return zero, fmt.Errorf("JSON-RPC error %d: %s", response.Error.Code, response.Error.Message)
+				return zero, response.Error
 			}
 			return zero, fmt.Errorf("unexpected error response")
 

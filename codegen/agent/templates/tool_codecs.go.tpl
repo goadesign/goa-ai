@@ -226,10 +226,10 @@ func {{ .MarshalFunc }}(v {{ if .Pointer }}*{{ end }}{{ .FullRef }}) ([]byte, er
         {{- end }}
     }
     {{- end }}
-    {{- if and .TransportTypeName .Pointer }}
+    {{- if .TransportTypeName }}
     in := v
     _ = in
-    var out *toolhttp.{{ .TransportTypeName }}
+    var out {{ if .TransportPointer }}*{{ end }}toolhttp.{{ .TransportTypeName }}
 {{ .EncodeTransform }}
     return json.Marshal(out)
     {{- else }}
@@ -254,7 +254,7 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
         {{- end }}
         {{- end }}
     }
-    {{- if and .TransportTypeName .Pointer }}
+    {{- if .TransportTypeName }}
     var tv toolhttp.{{ .TransportTypeName }}
     {{- if .FieldAllowedObjectKeys }}
     if err := decodeKnownJSON(data, &tv, {{ .TypeName }}FieldAllowedObjectKeys); err != nil {
@@ -264,23 +264,35 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     if err := json.Unmarshal(data, &tv); err != nil {
     {{- end }}
         {{- if .FieldJSONTypes }}
+        {{- if .Pointer }}
         return nil, invalid{{ .TypeName }}FieldTypeError(err)
         {{- else }}
+        return zero, invalid{{ .TypeName }}FieldTypeError(err)
+        {{- end }}
+        {{- else }}
+        {{- if .Pointer }}
         return nil, fmt.Errorf("{{ .DecodeError }}: %w", err)
+        {{- else }}
+        return zero, fmt.Errorf("{{ .DecodeError }}: %w", err)
+        {{- end }}
         {{- end }}
     }
     {{- if .TransportValidationSrc }}
-    if err := toolhttp.Validate{{ .TransportTypeName }}(&tv); err != nil {
+    if err := toolhttp.Validate{{ .TransportTypeName }}({{ if .TransportPointer }}&{{ end }}tv); err != nil {
         err = newValidationError(err)
         {{- if .FieldDescs }}
         err = enrich{{ .TypeName }}ValidationError(err)
         {{- end }}
+        {{- if .Pointer }}
         return nil, err
+        {{- else }}
+        return zero, err
+        {{- end }}
     }
     {{- end }}
-    in := &tv
+    in := {{ if .TransportPointer }}&{{ end }}tv
     _ = in
-    var out *{{ .FullRef }}
+    var out {{ if .Pointer }}*{{ end }}{{ .FullRef }}
 {{ .DecodeTransform }}
     return out, nil
     {{- else }}

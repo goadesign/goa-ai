@@ -288,10 +288,11 @@ func servicePkgAlias(svc *service.Data) string {
 }
 
 // schemaVariantsForAttribute generates the annotated and plain OpenAPI JSON
-// schema views for att from one Goa schema graph. The annotated view receives
-// the root example supplied by the caller; the plain view clears only that root
-// example so provider adapters can carry examples outside the schema without
-// reprocessing JSON at runtime.
+// schema views for att from one Goa schema graph. Both views omit Goa's
+// synthesized examples and retain examples explicitly authored on nested
+// attributes. The annotated view also contains the authored root example; the
+// plain view omits that root so provider adapters can carry it outside the
+// schema without reprocessing JSON at runtime.
 func schemaVariantsForAttribute(att *goaexpr.AttributeExpr, example any) ([]byte, []byte, error) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return nil, nil, nil
@@ -354,6 +355,11 @@ func schemaVariantBytes(schema *openapi.Schema, att *goaexpr.AttributeExpr, exam
 		schema.Example = prevExample
 		return annotated, nil, err
 	}
+	annotated, err = projectAuthoredSchemaExamples(annotated, att, example)
+	if err != nil {
+		schema.Example = prevExample
+		return annotated, nil, err
+	}
 	schema.Example = nil
 	plain, err := schema.JSON()
 	schema.Example = prevExample
@@ -361,7 +367,115 @@ func schemaVariantBytes(schema *openapi.Schema, att *goaexpr.AttributeExpr, exam
 		return annotated, plain, err
 	}
 	plain, err = specializeUnionSchemas(plain, att)
+	if err != nil {
+		return annotated, plain, err
+	}
+	plain, err = projectAuthoredSchemaExamples(plain, att, nil)
 	return annotated, plain, err
+}
+
+// projectAuthoredSchemaExamples removes examples synthesized while Goa builds
+// the OpenAPI schema, then restores examples explicitly authored in the Goa
+// contract. Generated placeholder values are not model guidance.
+func projectAuthoredSchemaExamples(schemaBytes []byte, att *goaexpr.AttributeExpr, rootExample any) ([]byte, error) {
+	var schema map[string]any
+	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
+		return nil, fmt.Errorf("decode generated tool schema: %w", err)
+	}
+	removeSchemaExamples(schema)
+	if rootExample != nil {
+		schema["example"] = rootExample
+	}
+	defs, _ := schema["$defs"].(map[string]any)
+	restoreNestedSchemaExamples(att, schema, defs, make(map[string]struct{}), true)
+	projected, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("encode generated tool schema: %w", err)
+	}
+	return projected, nil
+}
+
+// restoreNestedSchemaExamples projects explicitly authored examples onto the
+// matching schema nodes after synthesized examples have been removed.
+func restoreNestedSchemaExamples(att *goaexpr.AttributeExpr, schema, defs map[string]any, seen map[string]struct{}, root bool) {
+	if att == nil || len(schema) == 0 {
+		return
+	}
+	if refName := schemaRefName(schema); refName != "" {
+		if _, ok := seen[refName]; ok {
+			return
+		}
+		definition, ok := defs[refName].(map[string]any)
+		if !ok {
+			return
+		}
+		seen[refName] = struct{}{}
+		restoreNestedSchemaExamples(att, definition, defs, seen, root)
+		delete(seen, refName)
+		return
+	}
+	if !root {
+		if example := authoredExampleForAttribute(att); example != nil {
+			schema["example"] = example.Value
+		}
+	}
+	restoreSchemaChildExamples(att, schema, defs, seen)
+}
+
+// restoreSchemaChildExamples follows the attribute and specialized JSON Schema
+// together so each nested authored example lands on its model-visible node.
+func restoreSchemaChildExamples(att *goaexpr.AttributeExpr, schema, defs map[string]any, seen map[string]struct{}) {
+	switch actual := att.Type.(type) {
+	case goaexpr.UserType:
+		restoreSchemaChildExamples(actual.Attribute(), schema, defs, seen)
+	case *goaexpr.Object:
+		properties, _ := schema["properties"].(map[string]any)
+		for _, nat := range *actual {
+			name, ok := transportFieldName(nat)
+			if !ok {
+				continue
+			}
+			child, _ := properties[name].(map[string]any)
+			restoreNestedSchemaExamples(nat.Attribute, child, defs, seen, false)
+		}
+	case *goaexpr.Array:
+		items, _ := schema["items"].(map[string]any)
+		restoreNestedSchemaExamples(actual.ElemType, items, defs, seen, false)
+	case *goaexpr.Map:
+		values, _ := schema["additionalProperties"].(map[string]any)
+		restoreNestedSchemaExamples(actual.ElemType, values, defs, seen, false)
+	case *goaexpr.Union:
+		valueKey := actual.GetValueKey()
+		if valueKey == "" {
+			valueKey = unionValueKeyDefault
+		}
+		branches, _ := schema["oneOf"].([]any)
+		for i, nat := range actual.Values {
+			if i >= len(branches) {
+				return
+			}
+			branch, _ := branches[i].(map[string]any)
+			properties, _ := branch["properties"].(map[string]any)
+			value, _ := properties[valueKey].(map[string]any)
+			restoreNestedSchemaExamples(nat.Attribute, value, defs, seen, false)
+		}
+	}
+}
+
+// removeSchemaExamples recursively removes OpenAPI example annotations from a
+// generated schema graph, including definitions and union branches.
+func removeSchemaExamples(node any) {
+	switch actual := node.(type) {
+	case map[string]any:
+		delete(actual, "example")
+		for _, child := range actual {
+			removeSchemaExamples(child)
+		}
+	case []any:
+		for _, child := range actual {
+			removeSchemaExamples(child)
+		}
+	}
 }
 
 // specializeUnionSchemas rewrites Goa's generic OneOf schema projection into

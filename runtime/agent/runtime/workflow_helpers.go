@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -170,14 +171,16 @@ func (r *Runtime) appendUserToolRecordResults(
 			}
 		}
 		if hasSpec {
+			continueTool := ""
 			cursorField := ""
 			if spec.Bounds != nil && spec.Bounds.Paging != nil {
 				cursorField = spec.Bounds.Paging.CursorField
+				continueTool = toolname.Sanitize(string(spec.Bounds.Paging.ContinueTool))
 			}
-			if rem := boundsReminder(tr, cursorField); rem != "" {
+			if rem := boundsReminder(tr, continueTool, cursorField); rem != "" {
 				reminders = append(reminders, rem)
 			}
-		} else if rem := boundsReminder(tr, ""); rem != "" {
+		} else if rem := boundsReminder(tr, "", ""); rem != "" {
 			reminders = append(reminders, rem)
 		}
 	}

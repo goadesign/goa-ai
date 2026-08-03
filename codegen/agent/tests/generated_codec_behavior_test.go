@@ -213,6 +213,54 @@ func sameStrings(got, want []string) bool {
 	runGeneratedLookupGoTest(t, root)
 }
 
+func TestGeneratedCodecArrayServerDataRoundTrip(t *testing.T) {
+	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ServiceToolsetBindSelfServerData())
+	root := writeGeneratedModuleWithPath(t, "generated.local/gen", files)
+	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/provider.go")
+	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/transforms.go")
+	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/http/validate_stub.go", `package http
+
+func ValidateByIDPayloadTransport(v *ByIDPayloadTransport) error {
+	return nil
+}
+
+func ValidateByIDResultTransport(v *ByIDResultTransport) error {
+	return nil
+}
+
+func ValidateByIDAuraEvidenceServerDataTransport(v ByIDAuraEvidenceServerDataTransport) error {
+	return nil
+}
+`)
+	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/codecs_server_data_test.go", `package lookup
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestArrayServerDataRoundTrip(t *testing.T) {
+	want := ByIDAuraEvidenceServerData{&Evidence{Kind: "alarm"}}
+	data, err := MarshalByIDAuraEvidenceServerData(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "\"kind\"") || strings.Contains(string(data), "\"Kind\"") {
+		t.Fatalf("unexpected JSON field names: %s", data)
+	}
+	got, err := UnmarshalByIDAuraEvidenceServerData(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] == nil || got[0].Kind != "alarm" {
+		t.Fatalf("unexpected round trip: %#v", got)
+	}
+}
+`)
+
+	runGeneratedLookupGoTest(t, root)
+}
+
 func TestGeneratedCodecUnionInvalidFieldTypeBehavior(t *testing.T) {
 	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local", testscenarios.ArgsUnionSumTypes()))
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/union/http/validate_stub.go", `package http

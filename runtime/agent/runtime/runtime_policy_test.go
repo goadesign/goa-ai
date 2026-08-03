@@ -387,6 +387,18 @@ func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
 	require.Equal(t, "Tool not available: denied", hint)
 }
 
+func TestTagPolicyAllowsUsesRuntimeClauseSemantics(t *testing.T) {
+	t.Parallel()
+
+	clauses := []TagPolicyClause{
+		{AllowedAny: []string{"system", "profile"}},
+		{DeniedAny: []string{"blocked"}},
+	}
+	assert.True(t, TagPolicyAllows(clauses, []string{"profile"}))
+	assert.False(t, TagPolicyAllows(clauses, []string{"other"}))
+	assert.False(t, TagPolicyAllows(clauses, []string{"system", "blocked"}))
+}
+
 func TestValidateRunPolicyRejectsUnknownMissingFieldsAction(t *testing.T) {
 	t.Parallel()
 

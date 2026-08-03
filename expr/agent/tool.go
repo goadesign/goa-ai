@@ -154,13 +154,17 @@ type (
 		Paging *ToolPagingExpr
 	}
 
-	// ToolPagingExpr identifies the cursor field names used by a cursor-paged tool.
-	// CursorField always names a payload field. NextCursorField names the
-	// canonical continuation-reference field projected into model-visible result
-	// JSON while provider cursor bytes remain in durable runtime metadata.
+	// ToolPagingExpr identifies the continuation operation and cursor field names
+	// used by a cursor-paged tool. CursorField names a payload field on either the
+	// current tool or ContinueTool. NextCursorField names the
+	// canonical next-page cursor identifier for the paging contract, which is
+	// projected into runtime-owned bounds metadata rather than the semantic tool
+	// result.
 	ToolPagingExpr struct {
-		// CursorField is the name of the optional String field in the tool payload
-		// that carries the runtime-issued continuation reference for the next page.
+		// ContinueTool is the sibling tool that accepts CursorField. Empty means the
+		// current tool accepts its own continuation cursor.
+		ContinueTool string
+		// CursorField is the String field that carries the paging cursor.
 		CursorField string
 		// NextCursorField is the canonical field name for the next-page reference
 		// in the projected result contract.
@@ -619,7 +623,116 @@ func validateBoundsShape(tool *ToolExpr, verr *eval.ValidationErrors) {
 		verr.Add(tool, "NextCursor() is required when configuring paging")
 		return
 	}
-	validatePagingField("Args", tool.Args, tool.Bounds.Paging.CursorField, true)
+	if tool.Bounds.Paging.ContinueTool == "" {
+		sources := continuationSources(tool)
+		if len(sources) > 0 {
+			if len(sources) > 1 {
+				verr.Add(tool, "continuation tool %q is referenced by more than one bounded tool", tool.Name)
+				return
+			}
+			if isCursorOnlyPayload(tool, tool.Bounds.Paging.CursorField) {
+				validateRequiredPagingField("Args", tool.Args, tool.Bounds.Paging.CursorField, verr, tool)
+			} else {
+				validatePagingField("Args", tool.Args, tool.Bounds.Paging.CursorField, true)
+				validateContinuationPayloadMatch(sources[0], tool, verr)
+			}
+		} else {
+			validatePagingField("Args", tool.Args, tool.Bounds.Paging.CursorField, true)
+		}
+		return
+	}
+	continuation := findSiblingTool(tool, tool.Bounds.Paging.ContinueTool)
+	if continuation == nil {
+		verr.Add(tool, "ContinueWith() references unknown tool %q", tool.Bounds.Paging.ContinueTool)
+		return
+	}
+	if isCursorOnlyPayload(continuation, tool.Bounds.Paging.CursorField) {
+		validateRequiredPagingField("continuation Args", continuation.Args, tool.Bounds.Paging.CursorField, verr, tool)
+	} else {
+		validatePagingField("continuation Args", continuation.Args, tool.Bounds.Paging.CursorField, true)
+		validateContinuationPayloadMatch(tool, continuation, verr)
+	}
+	if continuation.Bounds == nil || continuation.Bounds.Paging == nil || continuation.Bounds.Paging.CursorField != tool.Bounds.Paging.CursorField {
+		verr.Add(tool, "continuation tool %q must declare Cursor(%q) inside BoundedResult", continuation.Name, tool.Bounds.Paging.CursorField)
+	}
+}
+
+// continuationSources returns the bounded tools that delegate their next page
+// to tool. Dedicated continuation tools have exactly one source so a no-argument
+// continuation always advances one unambiguous result set.
+func continuationSources(tool *ToolExpr) []*ToolExpr {
+	if tool == nil || tool.Toolset == nil {
+		return nil
+	}
+	var sources []*ToolExpr
+	for _, candidate := range tool.Toolset.Tools {
+		if candidate.Bounds != nil && candidate.Bounds.Paging != nil && candidate.Bounds.Paging.ContinueTool == tool.Name {
+			sources = append(sources, candidate)
+		}
+	}
+	return sources
+}
+
+// isCursorOnlyPayload reports whether the continuation cursor carries the
+// complete query state and no prior query payload must be retained.
+func isCursorOnlyPayload(tool *ToolExpr, cursorField string) bool {
+	root := tool.Args
+	if ut, ok := root.Type.(goaexpr.UserType); ok {
+		root = ut.Attribute()
+	}
+	obj, ok := root.Type.(*goaexpr.Object)
+	return ok && len(*obj) == 1 && (*obj)[0].Name == cursorField
+}
+
+// validateContinuationPayloadMatch requires replaying continuations to use the
+// exact source payload type, so retaining the prior canonical payload cannot
+// change query semantics.
+func validateContinuationPayloadMatch(source, continuation *ToolExpr, verr *eval.ValidationErrors) {
+	if source.Args == nil || continuation.Args == nil || source.Args.Type == nil || continuation.Args.Type == nil ||
+		source.Args.Type.Hash() != continuation.Args.Type.Hash() {
+		verr.Add(
+			continuation,
+			"continuation Args must match source tool %q Args or contain only the cursor field %q",
+			source.Name,
+			continuation.Bounds.Paging.CursorField,
+		)
+	}
+}
+
+// findSiblingTool returns the named tool from the same defining toolset.
+func findSiblingTool(tool *ToolExpr, name string) *ToolExpr {
+	if tool == nil || tool.Toolset == nil {
+		return nil
+	}
+	for _, candidate := range tool.Toolset.Tools {
+		if candidate.Name == name {
+			return candidate
+		}
+	}
+	return nil
+}
+
+// validateRequiredPagingField enforces the cursor-only continuation boundary.
+func validateRequiredPagingField(where string, att *goaexpr.AttributeExpr, name string, verr *eval.ValidationErrors, tool *ToolExpr) {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		verr.Add(tool, "%s must define a required String field named %q", where, name)
+		return
+	}
+	field := att.Find(name)
+	if field == nil || field.Type != goaexpr.String {
+		verr.Add(tool, "%s must define a required String field named %q", where, name)
+		return
+	}
+	root := att
+	if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
+		root = ut.Attribute()
+	}
+	for _, required := range root.Validation.Required {
+		if required == name {
+			return
+		}
+	}
+	verr.Add(tool, "%s field %q must be required", where, name)
 }
 
 // validateToolReturnBoundsShape enforces that the explicit tool-facing Return

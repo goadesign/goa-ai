@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -58,39 +57,6 @@ func TestConfirmationPlanOverrideKeepsCanonicalPayload(t *testing.T) {
 	require.Equal(t, "Confirm tool", plan.Prompt)
 	require.JSONEq(t, `{"execution":"payload"}`, string(call.Payload.RawMessage()))
 	require.Equal(t, map[string]string{"summary": "denied"}, plan.DeniedResult)
-}
-
-func TestSplitConfirmationCallsBypassesPolicyForPreflightFailure(t *testing.T) {
-	rt := New(
-		WithToolConfirmation(&ToolConfirmationConfig{
-			Confirm: map[tools.Ident]*ToolConfirmation{
-				"tool.confirm": {
-					Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
-						return "Confirm tool", nil
-					},
-					DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
-						return map[string]string{"summary": "denied"}, nil
-					},
-				},
-			},
-		}),
-	)
-	call := planner.ToolRequest{
-		Name:             "tool.confirm",
-		Payload:          rawjson.Message(`{"cursor":"next-ref"}`),
-		PreflightFailure: invalidContinuationFailure(assert.AnError),
-	}
-
-	toExecute, confirmations, err := rt.splitConfirmationCalls(
-		context.Background(),
-		&planner.PlanInput{RunContext: run.Context{RunID: "run-1", TurnID: "turn-1"}},
-		[]planner.ToolRequest{call},
-	)
-
-	require.NoError(t, err)
-	require.Len(t, toExecute, 1)
-	assert.Same(t, call.PreflightFailure, toExecute[0].PreflightFailure)
-	assert.Empty(t, confirmations)
 }
 
 func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *testing.T) {

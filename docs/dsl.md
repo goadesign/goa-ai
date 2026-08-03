@@ -239,6 +239,7 @@ on agent/tool contracts.
 | `ResultHintTemplate(tmpl)`                    | Inside `Tool`                          | Go template for result display hint                                                                 |
 | `BoundedResult(dsl?)`                         | Inside `Tool`                          | Declares a runtime-owned bounded-result contract; optional sub-DSL can declare paging cursor fields |
 | `Cursor(name)`                                | Inside `BoundedResult(func() { ... })` | Declares which payload field carries the paging cursor (optional)                                   |
+| `ContinueWith(tool, cursor)`                  | Inside `BoundedResult(func() { ... })` | Delegates paging to a sibling continuation tool whose cursor is bound by the runtime                 |
 | `NextCursor(name)`                            | Inside `BoundedResult(func() { ... })` | Declares the projected result field name for the next-page cursor (optional)                        |
 | `ResultReminder(text)`                        | Inside `Tool`                          | Static system reminder injected after tool result                                                   |
 | `Confirmation(dsl)`                           | Inside `Tool`                          | Declares that tool execution must be explicitly approved out-of-band                                |
@@ -275,10 +276,10 @@ Canonical model-visible fields:
 - `refinement_hint` (optional, String)
 - `next_cursor` (optional, String) when declared via `NextCursor(...)`
 
-`Cursor(...)` and `NextCursor(...)` name Goa attributes in the tool payload or
-bound method result. Generated schemas, `tools.ToolSpec.Bounds`, and runtime
-result JSON expose the model-facing JSON names, so a lower-camel attribute such
-as `nextCursor` is projected as `next_cursor`.
+`Cursor(...)`, `ContinueWith(...)`, and `NextCursor(...)` name Goa attributes or
+sibling tools in the generated contract. Generated schemas,
+`tools.ToolSpec.Bounds`, and runtime result JSON expose model-facing JSON names,
+so a lower-camel attribute such as `nextCursor` is projected as `next_cursor`.
 
 Single source of truth:
 
@@ -312,15 +313,17 @@ Cursor-paged tools identify two canonical paging fields:
 Contract:
 
 - Treat cursors as **opaque**: do not parse, modify, or synthesize them.
-- An initial call satisfies the authored argument contract and omits the cursor.
-- A continuation call contains **only** the exact model-visible reference in the
-  cursor field. Generated model schemas express these as two distinct shapes.
-- The runtime loads the originating call from durable history, verifies the
-  reference belongs to the current run, session, and tool and has not already
-  been consumed, restores the original arguments, and substitutes the provider
-  cursor only in the execution payload.
-- Invalid or stale references produce the ordinary `invalid_call`/`replan`
-  tool-failure contract; they never execute the tool.
+- Prefer `ContinueWith("continue_tool", "cursor")` when the cursor identifies the
+  prior query. The sibling continuation declares the required cursor with
+  `Cursor("cursor")`; its model-facing schema is an empty object, and the runtime
+  advertises it only while the single compatible successful result from the
+  preceding batch has a next cursor. The runtime preserves the empty model
+  payload for replay and binds the cursor plus any required prior query fields
+  only in the execution payload. A planner batch may contain at most one call
+  for a dedicated continuation chain.
+- Use `Cursor(...)` directly on the original tool only when the caller must
+  intentionally repeat all other query arguments. In that mode, keep those
+  arguments unchanged and set only the cursor field.
 - Paged tools should also be `BoundedResult(...)` tools and return the next cursor through
 `planner.ToolResult.Bounds.NextCursor`.
 
@@ -993,6 +996,15 @@ Tool("list_devices", "List devices in scope", func() {
     Args(ListDevicesArgs)
     Return(ListDevicesReturn)
     BoundedResult(func() {
+        ContinueWith("continue_devices", "cursor")
+        NextCursor("next_cursor")
+    })
+})
+
+Tool("continue_devices", "Continue listing devices", func() {
+    Args(ContinueDevicesArgs) // one required cursor field
+    Return(ListDevicesReturn)
+    BoundedResult(func() {
         Cursor("cursor")
         NextCursor("next_cursor")
     })
@@ -1004,6 +1016,10 @@ Services and finalizers are responsible for trimming and populating
 model-visible result JSON using model-facing field names derived from
 `BoundedResult(...)`. Result-hint templates access the same runtime metadata via
 `.Bounds`; Goa-AI does not merge those fields into the semantic result value.
+For `ContinueWith`, the runtime exposes the dedicated continuation as a
+temporarily available no-argument action and binds its generated execution
+payload from the single compatible successful page in the preceding result
+batch.
 
 ### Tags
 

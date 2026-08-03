@@ -1304,6 +1304,16 @@ The runtime enforces one strict contract across all result ingress paths
 - when `truncated=true`, bounds must include either `next_cursor` or
   `refinement_hint`.
 
+When `tools.ToolSpec.Bounds.Paging` names a dedicated continuation, the runtime
+advertises that tool only while the single compatible successful result in the
+preceding batch has a non-empty next cursor. The model-facing continuation
+schema is an empty object. Before execution, the runtime binds the opaque cursor
+and any canonical query fields retained from the preceding page, while
+preserving the model-authored empty payload separately for transcript replay. A
+planner batch may contain at most one call for a dedicated continuation chain;
+a continuation cannot advance a different result chain or run without an
+available preceding page.
+
 ```go
 type Bounds struct {
     Returned       int     // Items in this response
@@ -1318,23 +1328,18 @@ result-hint templates under `.Bounds`, hook events, and stream events. Services
 own truncation logic; the runtime only propagates and projects what tools
 report.
 
-For cursor-paged tools, `Bounds.NextCursor` is the provider-owned cursor and is
-never projected directly to the model. After successful materialization the
-runtime derives a short continuation reference bound to the current run,
-session, tool, originating call, and cursor. Both values are persisted in durable bounds
-metadata; only the reference is encoded in the model-facing `next_cursor`
-field. The next planner call must contain only that reference in the configured
-cursor field. Before execution, the runtime verifies its scope, uniqueness, and
-freshness against durable history, restores the originating arguments, and
-replaces the reference with the provider cursor. The unmodified model payload
-remains in the transcript while the reconstructed payload is the only value
-sent to the tool executor.
+For a dedicated continuation, `Bounds.NextCursor` remains runtime-owned and is
+not projected into the model-visible result. The runtime exposes the empty
+continuation action only when the preceding batch contains exactly one
+compatible successful page with another cursor. It then binds that cursor and,
+when configured, the originating query payload before execution. Multiple
+compatible pages are rejected as ambiguous because the empty continuation
+contract intentionally exposes no chain selector.
 
-An invalid, stale, repeated, or cross-scope reference is model-authored tool
-misuse, so the runtime publishes an `invalid_call` result with `replan`
-recovery and does not invoke the tool. Failures to load or decode durable
-history, and contradictory persisted continuation state, remain runtime errors
-because the model cannot correct them.
+For a self-paging tool declared with `Cursor`, `Bounds.NextCursor` is projected
+into the configured result field and the model supplies it in the next call.
+Use that contract only when repeating the query arguments and opaque cursor is
+part of the public tool interaction rather than mechanical continuation state.
 
 Transcript-facing tool results use a stricter provider contract than execution
 boundaries:
@@ -1466,17 +1471,18 @@ err := rt.ResumeRun(ctx, interrupt.ResumeRequest{
 
 ### Clarification Requests
 
-Planners can request missing information:
+Runtime-owned flows can request missing information that resumes as a user
+message:
 
 ```go
 return &planner.PlanResult{
-    Await: &planner.Await{
-        Clarification: &planner.AwaitClarification{
-            ID:            "clarify-device",
-            Question:      "Which device should I configure?",
-            MissingFields: []string{"device_id"},
-        },
-    },
+	Await: planner.NewAwait(
+		planner.AwaitClarificationItem(&planner.AwaitClarification{
+			ID:            "clarify-device",
+			Question:      "Which device should I configure?",
+			MissingFields: []string{"device_id"},
+		}),
+	),
 }
 ```
 
@@ -1490,6 +1496,30 @@ err := rt.ProvideClarification(ctx, interrupt.ClarificationAnswer{
     Answer: "Device ID is ABC-123",
 })
 ```
+
+When a model-authored tool collects free text, use the distinct tool-bound
+clarification branch. It preserves the exact provider call across the pause and
+correlates the human answer as that call's generated `{\"answer\": string}`
+result:
+
+```go
+return &planner.PlanResult{
+	Await: planner.NewAwait(
+		planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
+			ID:         "clarify-device",
+			ToolName:   tools.Ident("chat.ask_clarification"),
+			ToolCallID: call.ToolCallID,
+			Payload:    call.Payload,
+			Question:   "Which device should I configure?",
+		}),
+	),
+}
+```
+
+The runtime emits the same `AwaitClarification` event for the UI, waits for
+`ProvideClarification`, decodes the answer with the registered generated result
+codec, and resumes with a provider-valid `tool_use` / `tool_result` pair. Do not
+replace this correlation with a reminder or a copied user message.
 
 ### External Tools
 

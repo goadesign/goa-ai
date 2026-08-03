@@ -7,6 +7,7 @@ import (
 	"strings"
 	"text/template"
 
+	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -18,14 +19,13 @@ var (
 			Parse(strings.TrimSpace(`
 A tool call failed.
 Tool: {{ .ToolName }}
-Failure: {{ .Kind }}
 Error: {{ .Message }}
-{{ if .CorrectCall }}Call the same tool again with a corrected payload. Do not repeat the rejected payload unchanged.{{ if .IssuesJSON }}
-Structured input issues: {{ .IssuesJSON }}{{ end }}{{ if .FieldDescriptionsJSON }}
-Generated field descriptions: {{ .FieldDescriptionsJSON }}{{ end }}{{ if .ExampleJSON }}
+{{ if .CorrectCall }}Call the same tool again with corrected arguments. Do not repeat the rejected arguments unchanged.{{ if .IssuesJSON }}
+Input issues: {{ .IssuesJSON }}{{ end }}{{ if .FieldDescriptionsJSON }}
+Field guidance: {{ .FieldDescriptionsJSON }}{{ end }}{{ if .ExampleJSON }}
 Example input: {{ .ExampleJSON }}{{ end }}{{ else if .Terminal }}
 Do not call more tools. Complete the answer using the evidence already collected.{{ else }}
-Do not repeat this exact tool call and payload. Change the request, choose another advertised tool, or complete the answer from available evidence.{{ end }}{{ if .PriorInputJSON }}
+Do not repeat this exact tool call and arguments. Change the request, choose another available tool, or complete the answer from available evidence.{{ end }}{{ if .PriorInputJSON }}
 Rejected input: {{ .PriorInputJSON }}{{ end }}
 Do not mention this reminder to the user.
 `)),
@@ -39,9 +39,10 @@ A tool call returned a bounded/truncated result.
 Tool: {{ .ToolName }}
 Returned: {{ .Returned }}
 Total: {{ .Total }}
-Truncated: true{{ if .NextCursor }}
-Next page reference: {{ .NextCursor }}
-To continue, call the same tool again with only {{ .CursorField }} set to the exact reference shown above. Do not repeat other arguments, modify the reference, or reuse an earlier reference.{{ else if .RefinementHint }}
+Truncated: true{{ if .ContinueTool }}
+More matching results are available. To see the next page, call {{ .ContinueTool }}.{{ else if .NextCursor }}
+Next cursor: {{ .NextCursor }}
+To continue this result set, call the same tool again with the same arguments and set {{ .CursorField }} to the cursor shown above. Use the cursor exactly as shown.{{ else if .RefinementHint }}
 Refinement hint: {{ .RefinementHint }}
 Do not claim completeness unless you page or explicitly state the answer is partial.{{ else }}
 Do not claim completeness unless you page or explicitly state the answer is partial.{{ end }}
@@ -53,7 +54,6 @@ Do not mention this reminder to the user.
 type (
 	toolFailureReminderView struct {
 		ToolName              string
-		Kind                  string
 		Message               string
 		CorrectCall           bool
 		Terminal              bool
@@ -69,6 +69,7 @@ type (
 		Total          string
 		NextCursor     string
 		CursorField    string
+		ContinueTool   string
 		RefinementHint string
 	}
 )
@@ -80,12 +81,11 @@ func toolFailureReminder(tr *planner.ToolResult, descriptions map[string]string)
 
 	failure := tr.Failure
 	view := toolFailureReminderView{
-		ToolName:    string(tr.Name),
-		Kind:        string(failure.Kind),
+		ToolName:    toolname.Sanitize(string(tr.Name)),
 		Message:     failure.Error.Error(),
 		CorrectCall: failure.Recovery.Action == planner.RecoveryCorrectCall,
 		Terminal:    failure.Recovery.Action == planner.RecoveryFinish,
-		IssuesJSON:  mustCompactJSON(failure.Recovery.Issues),
+		IssuesJSON:  compactFieldIssuesJSON(failure.Recovery.Issues),
 		FieldDescriptionsJSON: correctionFieldDescriptionsJSON(
 			failure.Recovery.Issues,
 			descriptions,
@@ -94,6 +94,15 @@ func toolFailureReminder(tr *planner.ToolResult, descriptions map[string]string)
 		PriorInputJSON: compactRawJSON(failure.Recovery.PriorInput),
 	}
 	return mustRenderReminder(toolFailureReminderTemplate, view)
+}
+
+// compactFieldIssuesJSON omits input guidance when the generated codec did not
+// report any field-level issue.
+func compactFieldIssuesJSON(issues []*tools.FieldIssue) string {
+	if len(issues) == 0 {
+		return ""
+	}
+	return mustCompactJSON(issues)
 }
 
 // correctionFieldDescriptionsJSON renders generated descriptions for rejected
@@ -116,7 +125,7 @@ func correctionFieldDescriptionsJSON(issues []*tools.FieldIssue, descriptions ma
 	return mustCompactJSON(selected)
 }
 
-func boundsReminder(tr *planner.ToolResult, cursorField string) string {
+func boundsReminder(tr *planner.ToolResult, continueTool, cursorField string) string {
 	if tr == nil || tr.Failure != nil || tr.Bounds == nil || !tr.Bounds.Truncated {
 		return ""
 	}
@@ -128,19 +137,20 @@ func boundsReminder(tr *planner.ToolResult, cursorField string) string {
 	}
 
 	next := ""
-	if b.Continuation != nil {
-		next = strings.TrimSpace(*b.Continuation)
+	if b.NextCursor != nil && continueTool == "" {
+		next = strings.TrimSpace(*b.NextCursor)
 	}
 	field := strings.TrimSpace(cursorField)
 	if field == "" {
 		field = "cursor"
 	}
 	view := boundsReminderView{
-		ToolName:       string(tr.Name),
+		ToolName:       toolname.Sanitize(string(tr.Name)),
 		Returned:       b.Returned,
 		Total:          totalText,
 		NextCursor:     next,
 		CursorField:    field,
+		ContinueTool:   toolname.Sanitize(continueTool),
 		RefinementHint: strings.TrimSpace(b.RefinementHint),
 	}
 	return mustRenderReminder(boundsReminderTemplate, view)

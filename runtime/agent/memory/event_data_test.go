@@ -44,7 +44,6 @@ func TestToolCallDataRoundTrip(t *testing.T) {
 func TestToolResultDataRoundTrip(t *testing.T) {
 	total := 5
 	nextCursor := "next-page"
-	continuation := "continuation-reference"
 	original := ToolResultData{
 		ToolCallID:       "tc-1",
 		ParentToolCallID: "parent-1",
@@ -56,7 +55,6 @@ func TestToolResultDataRoundTrip(t *testing.T) {
 			Total:          &total,
 			Truncated:      true,
 			NextCursor:     &nextCursor,
-			Continuation:   &continuation,
 			RefinementHint: "add a tighter filter",
 		},
 		Duration:     2 * time.Second,
@@ -78,7 +76,6 @@ func TestToolResultDataRoundTrip(t *testing.T) {
 	assert.Equal(t, *original.Bounds.Total, *decoded.Bounds.Total)
 	assert.Equal(t, original.Bounds.Truncated, decoded.Bounds.Truncated)
 	assert.Equal(t, *original.Bounds.NextCursor, *decoded.Bounds.NextCursor)
-	assert.Equal(t, *original.Bounds.Continuation, *decoded.Bounds.Continuation)
 	assert.Equal(t, original.Bounds.RefinementHint, decoded.Bounds.RefinementHint)
 }
 
@@ -104,7 +101,6 @@ func TestThinkingDataRoundTrip(t *testing.T) {
 func TestEventDataCurrentFormatJSONRoundTrip(t *testing.T) {
 	total := 5
 	nextCursor := "next-page"
-	continuation := "continuation-reference"
 	tests := []struct {
 		name   string
 		event  Event
@@ -144,7 +140,6 @@ func TestEventDataCurrentFormatJSONRoundTrip(t *testing.T) {
 					Total:          &total,
 					Truncated:      true,
 					NextCursor:     &nextCursor,
-					Continuation:   &continuation,
 					RefinementHint: "add a tighter filter",
 				},
 				Duration:     2 * time.Second,
@@ -164,8 +159,6 @@ func TestEventDataCurrentFormatJSONRoundTrip(t *testing.T) {
 				assert.Equal(t, 5, *decoded.Bounds.Total)
 				require.NotNil(t, decoded.Bounds.NextCursor)
 				assert.Equal(t, "next-page", *decoded.Bounds.NextCursor)
-				require.NotNil(t, decoded.Bounds.Continuation)
-				assert.Equal(t, "continuation-reference", *decoded.Bounds.Continuation)
 				assert.Equal(t, 2*time.Second, decoded.Duration)
 				assert.Equal(t, "boom", decoded.ErrorMessage)
 			},

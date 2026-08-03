@@ -178,11 +178,18 @@ surfaces the contract:
 - For tools marked `BoundedResult`, the runtime enforces that bounds metadata is present and that
   any untruncated result stays under a configurable JSON size limit; trimming logic stays entirely
   in service code.
+- Use `ContinueWith` when a cursor can resume the query without another model decision. The runtime
+  advertises the dedicated continuation only while a next page exists, accepts an empty model call,
+  and binds the opaque cursor plus any retained canonical query fields from the single compatible
+  successful result in the preceding batch. One planner batch may contain only one call for that
+  continuation chain. Use `Cursor` on the original tool only when repeating the query is
+  intentionally caller-owned.
 
 For bounded tools, bounds metadata is a hard contract:
 
 - `Returned` and `Truncated` must always be present.
 - `Total`, `NextCursor`, and `RefinementHint` are optional and should only be set when known.
+- A truncated result must provide `NextCursor` or `RefinementHint`.
 
 ### Server Data (Sidecar Data)
 

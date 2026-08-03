@@ -40,3 +40,14 @@ func TestValidateResultStreamTTLMillis(t *testing.T) {
 		})
 	}
 }
+
+func TestDecodeServerDataPreservesTypedPayload(t *testing.T) {
+	t.Parallel()
+
+	items, err := DecodeServerData([]byte(`[{"kind":"aura.citations","audience":"evidence","data":[{"index":1}]}]`))
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, "aura.citations", items[0].Kind)
+	assert.Equal(t, "evidence", items[0].Audience)
+	assert.JSONEq(t, `[{"index":1}]`, string(items[0].Data))
+}

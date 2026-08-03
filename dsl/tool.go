@@ -723,10 +723,11 @@ func ResultHintTemplate(s string) {
 //
 // Cursor-based pagination contract:
 //
-//   - Providers return opaque cursor bytes through planner.ToolResult.Bounds.
-//   - The runtime retains those bytes and projects a short continuation reference.
-//   - A model requests the next page with only the cursor field set to that
-//     reference; the runtime validates it and reconstructs the original arguments.
+//   - Cursor values are opaque.
+//   - When paging, callers must keep all other parameters unchanged and only set
+//     the payload cursor field to the value returned in bounds as the next-page cursor.
+//   - Use ContinueWith instead of Cursor when a separate cursor-only tool owns
+//     continuation.
 //
 // BoundedResult must appear in a Tool expression.
 func BoundedResult(fns ...func()) {
