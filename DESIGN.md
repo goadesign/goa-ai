@@ -551,9 +551,9 @@ runtime metadata routes the next page. `Cursor` on the originating tool remains
 available only for APIs where callers must intentionally repeat the original
 query. This keeps correlation state in the issuing system instead of asking a
 model to reproduce it. A model batch may contain only one call for a dedicated
-continuation chain, and the next resume binds only when that batch produced one
-compatible successful result. Ambiguity is rejected rather than resolved by
-call order.
+continuation chain. Successful continuation payloads consume their predecessor
+by exact opaque-cursor equality, leaving one live chain head across sequential
+pages. Multiple live heads are rejected rather than resolved by call order.
 
 For each tool with a non-empty payload, the plugin derives JSON Schema from the
 Goa attribute using Goa's `openapi.Schema` type for complete JSON Schema draft

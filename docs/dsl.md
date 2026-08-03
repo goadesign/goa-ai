@@ -316,8 +316,10 @@ Contract:
 - Prefer `ContinueWith("continue_tool", "cursor")` when the cursor identifies the
   prior query. The sibling continuation declares the required cursor with
   `Cursor("cursor")`; its model-facing schema is an empty object, and the runtime
-  advertises it only while the single compatible successful result from the
-  preceding batch has a next cursor. The runtime preserves the empty model
+  advertises it only while the single live result-chain head has a next cursor.
+  Successful continuation payloads consume their exact predecessor cursor, so
+  sequential pages advance without ambiguity while parallel live chains fail
+  fast. The runtime preserves the empty model
   payload for replay and binds the cursor plus any required prior query fields
   only in the execution payload. A planner batch may contain at most one call
   for a dedicated continuation chain.
@@ -1018,8 +1020,7 @@ model-visible result JSON using model-facing field names derived from
 `.Bounds`; Goa-AI does not merge those fields into the semantic result value.
 For `ContinueWith`, the runtime exposes the dedicated continuation as a
 temporarily available no-argument action and binds its generated execution
-payload from the single compatible successful page in the preceding result
-batch.
+payload from the single unconsumed successful page in the result history.
 
 ### Tags
 

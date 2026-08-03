@@ -12,6 +12,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+const firstCursorValue = "first"
+
 func TestBindContinuationCursorFromCanonicalHistory(t *testing.T) {
 	t.Parallel()
 
@@ -65,7 +67,7 @@ func TestBindContinuationRetainsCanonicalQueryPayload(t *testing.T) {
 	assert.JSONEq(t, `{"query":"alarms","limit":10,"cursor":"second-page"}`, string(result.ToolCalls[0].Payload))
 }
 
-func TestContinuationAvailabilityRejectsMultipleCompatibleResults(t *testing.T) {
+func TestContinuationAvailabilityAdvancesSequentialChain(t *testing.T) {
 	t.Parallel()
 
 	search, continuation := continuationTestSpecs()
@@ -78,17 +80,120 @@ func TestContinuationAvailabilityRejectsMultipleCompatibleResults(t *testing.T) 
 			"svc.agent": {search, continuation},
 		},
 	}
-	firstCursor := "first"
+	firstCursor := firstCursorValue
+	secondCursor := "second"
 	outputs := []*planner.ToolOutput{{
 		Name:   search.Name,
 		Bounds: &agent.Bounds{Truncated: true, NextCursor: &firstCursor},
 	}, {
-		Name:   continuation.Name,
-		Bounds: &agent.Bounds{Truncated: false},
+		Name:    continuation.Name,
+		Payload: rawjson.Message(`{"cursor":"first"}`),
+		Bounds:  &agent.Bounds{Truncated: true, NextCursor: &secondCursor},
+	}}
+
+	available, err := rt.availableContinuationTools("svc.agent", outputs)
+	require.NoError(t, err)
+	assert.Contains(t, available, continuation.Name)
+
+	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:    continuation.Name,
+		Payload: rawjson.Message(`{}`),
+	}}}
+	require.NoError(t, rt.bindContinuationCursors(result, outputs))
+	assert.JSONEq(t, `{"cursor":"second"}`, string(result.ToolCalls[0].Payload))
+}
+
+func TestContinuationAvailabilityClosesTerminalChain(t *testing.T) {
+	t.Parallel()
+
+	search, continuation := continuationTestSpecs()
+	rt := &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			search.Name:       search,
+			continuation.Name: continuation,
+		},
+		agentToolSpecs: map[agent.Ident][]tools.ToolSpec{
+			"svc.agent": {search, continuation},
+		},
+	}
+	firstCursor := firstCursorValue
+	outputs := []*planner.ToolOutput{{
+		Name:   search.Name,
+		Bounds: &agent.Bounds{Truncated: true, NextCursor: &firstCursor},
+	}, {
+		Name:    continuation.Name,
+		Payload: rawjson.Message(`{"cursor":"first"}`),
+		Bounds:  &agent.Bounds{Truncated: false},
+	}}
+
+	available, err := rt.availableContinuationTools("svc.agent", outputs)
+	require.NoError(t, err)
+	assert.NotContains(t, available, continuation.Name)
+}
+
+func TestContinuationAvailabilityRejectsParallelChainHeads(t *testing.T) {
+	t.Parallel()
+
+	search, continuation := continuationTestSpecs()
+	rt := &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			search.Name:       search,
+			continuation.Name: continuation,
+		},
+		agentToolSpecs: map[agent.Ident][]tools.ToolSpec{
+			"svc.agent": {search, continuation},
+		},
+	}
+	firstCursor := firstCursorValue
+	secondCursor := "second"
+	outputs := []*planner.ToolOutput{{
+		Name:   search.Name,
+		Bounds: &agent.Bounds{Truncated: true, NextCursor: &firstCursor},
+	}, {
+		Name:   search.Name,
+		Bounds: &agent.Bounds{Truncated: true, NextCursor: &secondCursor},
 	}}
 
 	_, err := rt.availableContinuationTools("svc.agent", outputs)
-	assert.ErrorContains(t, err, "multiple compatible preceding pages")
+	assert.ErrorContains(t, err, "multiple compatible chain heads")
+}
+
+func TestContinuationAvailabilityRejectsMalformedCanonicalHistory(t *testing.T) {
+	t.Parallel()
+
+	search, continuation := continuationTestSpecs()
+	rt := &Runtime{agentToolSpecs: map[agent.Ident][]tools.ToolSpec{
+		"svc.agent": {search, continuation},
+	}}
+	outputs := []*planner.ToolOutput{{
+		Name:    continuation.Name,
+		Payload: rawjson.Message(`{}`),
+		Bounds:  &agent.Bounds{Truncated: false},
+	}}
+
+	_, err := rt.availableContinuationTools("svc.agent", outputs)
+	assert.ErrorContains(t, err, `canonical payload is missing cursor field "cursor"`)
+}
+
+func TestContinuationAvailabilityRejectsDuplicateConsumption(t *testing.T) {
+	t.Parallel()
+
+	search, continuation := continuationTestSpecs()
+	rt := &Runtime{agentToolSpecs: map[agent.Ident][]tools.ToolSpec{
+		"svc.agent": {search, continuation},
+	}}
+	outputs := []*planner.ToolOutput{{
+		Name:    continuation.Name,
+		Payload: rawjson.Message(`{"cursor":"first"}`),
+		Bounds:  &agent.Bounds{Truncated: false},
+	}, {
+		Name:    continuation.Name,
+		Payload: rawjson.Message(`{"cursor":"first"}`),
+		Bounds:  &agent.Bounds{Truncated: false},
+	}}
+
+	_, err := rt.availableContinuationTools("svc.agent", outputs)
+	assert.ErrorContains(t, err, "cursor was consumed more than once")
 }
 
 func TestBindContinuationRejectsMultipleCallsForOneChain(t *testing.T) {

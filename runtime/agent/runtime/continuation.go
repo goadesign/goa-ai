@@ -81,30 +81,81 @@ func (r *Runtime) bindContinuationCursors(result *planner.PlanResult, outputs []
 	return nil
 }
 
-// continuationState returns the only successful page belonging to the
-// dedicated continuation or its source query. Multiple compatible outputs are
-// ambiguous because no model-visible selector identifies a result chain.
+// continuationState returns the only unconsumed successful page belonging to
+// the dedicated continuation or its source query. Each successful continuation
+// consumes the page whose next cursor it received, so completed ancestors do
+// not make a sequential chain ambiguous. Multiple live heads remain ambiguous
+// because no model-visible selector identifies one of those result chains.
 func (r *Runtime) continuationState(spec tools.ToolSpec, outputs []*planner.ToolOutput) (continuationState, bool, error) {
-	var compatible *planner.ToolOutput
+	consumed := make(map[string]struct{})
+	for _, output := range outputs {
+		if output == nil || output.Failure != nil || output.Name != spec.Name {
+			continue
+		}
+		cursor, err := continuationInputCursor(spec, output.Payload)
+		if err != nil {
+			return continuationState{}, false, fmt.Errorf(
+				"runtime: continuation tool %q history: %w",
+				spec.Name,
+				err,
+			)
+		}
+		if _, exists := consumed[cursor]; exists {
+			return continuationState{}, false, fmt.Errorf(
+				"runtime: continuation tool %q cursor was consumed more than once",
+				spec.Name,
+			)
+		}
+		consumed[cursor] = struct{}{}
+	}
+
+	var head *planner.ToolOutput
 	for _, output := range outputs {
 		if output == nil || output.Failure != nil || !isContinuationOutput(spec, output.Name) {
 			continue
 		}
-		if compatible != nil {
+		if output.Bounds == nil || output.Bounds.NextCursor == nil || *output.Bounds.NextCursor == "" {
+			continue
+		}
+		if _, wasConsumed := consumed[*output.Bounds.NextCursor]; wasConsumed {
+			continue
+		}
+		if head != nil {
 			return continuationState{}, false, fmt.Errorf(
-				"runtime: continuation tool %q has multiple compatible preceding pages",
+				"runtime: continuation tool %q has multiple compatible chain heads",
 				spec.Name,
 			)
 		}
-		compatible = output
+		head = output
 	}
-	if compatible == nil || compatible.Bounds == nil || compatible.Bounds.NextCursor == nil || *compatible.Bounds.NextCursor == "" {
+	if head == nil {
 		return continuationState{}, false, nil
 	}
 	return continuationState{
-		cursor:  *compatible.Bounds.NextCursor,
-		payload: compatible.Payload,
+		cursor:  *head.Bounds.NextCursor,
+		payload: head.Payload,
 	}, true, nil
+}
+
+// continuationInputCursor reads the runtime-authored cursor from a canonical
+// continuation payload so history can identify the exact predecessor page.
+func continuationInputCursor(spec tools.ToolSpec, payload rawjson.Message) (string, error) {
+	fields := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return "", fmt.Errorf("decode canonical payload: %w", err)
+	}
+	raw, ok := fields[spec.Bounds.Paging.CursorField]
+	if !ok {
+		return "", fmt.Errorf("canonical payload is missing cursor field %q", spec.Bounds.Paging.CursorField)
+	}
+	var cursor string
+	if err := json.Unmarshal(raw, &cursor); err != nil {
+		return "", fmt.Errorf("decode cursor field %q: %w", spec.Bounds.Paging.CursorField, err)
+	}
+	if cursor == "" {
+		return "", fmt.Errorf("canonical payload cursor field %q is empty", spec.Bounds.Paging.CursorField)
+	}
+	return cursor, nil
 }
 
 // validateContinuationBatch rejects planner batches that fork a dedicated

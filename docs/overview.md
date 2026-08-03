@@ -180,10 +180,10 @@ surfaces the contract:
   in service code.
 - Use `ContinueWith` when a cursor can resume the query without another model decision. The runtime
   advertises the dedicated continuation only while a next page exists, accepts an empty model call,
-  and binds the opaque cursor plus any retained canonical query fields from the single compatible
-  successful result in the preceding batch. One planner batch may contain only one call for that
-  continuation chain. Use `Cursor` on the original tool only when repeating the query is
-  intentionally caller-owned.
+  and binds the opaque cursor plus any retained canonical query fields from the single live chain
+  head. Exact cursor lineage advances sequential pages; multiple parallel live heads are rejected.
+  One planner batch may contain only one call for that continuation chain. Use `Cursor` on the
+  original tool only when repeating the query is intentionally caller-owned.
 
 For bounded tools, bounds metadata is a hard contract:
 
