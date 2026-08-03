@@ -131,7 +131,7 @@ func TestContinuationAvailabilityClosesTerminalChain(t *testing.T) {
 	assert.NotContains(t, available, continuation.Name)
 }
 
-func TestContinuationAvailabilityRejectsParallelChainHeads(t *testing.T) {
+func TestContinuationAvailabilityWithholdsAmbiguousParallelChainHeads(t *testing.T) {
 	t.Parallel()
 
 	search, continuation := continuationTestSpecs()
@@ -154,8 +154,9 @@ func TestContinuationAvailabilityRejectsParallelChainHeads(t *testing.T) {
 		Bounds: &agent.Bounds{Truncated: true, NextCursor: &secondCursor},
 	}}
 
-	_, err := rt.availableContinuationTools("svc.agent", outputs)
-	assert.ErrorContains(t, err, "multiple compatible chain heads")
+	available, err := rt.availableContinuationTools("svc.agent", outputs)
+	require.NoError(t, err)
+	assert.NotContains(t, available, continuation.Name)
 }
 
 func TestContinuationAvailabilityRejectsMalformedCanonicalHistory(t *testing.T) {
@@ -196,7 +197,7 @@ func TestContinuationAvailabilityRejectsDuplicateConsumption(t *testing.T) {
 	assert.ErrorContains(t, err, "cursor was consumed more than once")
 }
 
-func TestBindContinuationRejectsMultipleCallsForOneChain(t *testing.T) {
+func TestBindContinuationAllowsParallelSourceCalls(t *testing.T) {
 	t.Parallel()
 
 	search, continuation := continuationTestSpecs()
@@ -209,8 +210,29 @@ func TestBindContinuationRejectsMultipleCallsForOneChain(t *testing.T) {
 		{Name: search.Name, Payload: rawjson.Message(`{"query":"second"}`)},
 	}}
 
-	err := rt.bindContinuationCursors(result, nil)
-	assert.ErrorContains(t, err, "cannot include multiple calls in one planner result")
+	require.NoError(t, rt.bindContinuationCursors(result, nil))
+	assert.Len(t, result.ToolCalls, 2)
+}
+
+func TestBindContinuationRejectsDuplicateContinuationCalls(t *testing.T) {
+	t.Parallel()
+
+	search, continuation := continuationTestSpecs()
+	rt := &Runtime{toolSpecs: map[tools.Ident]tools.ToolSpec{
+		search.Name:       search,
+		continuation.Name: continuation,
+	}}
+	cursor := "next"
+	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
+		{Name: continuation.Name, Payload: rawjson.Message(`{}`)},
+		{Name: continuation.Name, Payload: rawjson.Message(`{}`)},
+	}}
+
+	err := rt.bindContinuationCursors(result, []*planner.ToolOutput{{
+		Name:   search.Name,
+		Bounds: &agent.Bounds{Truncated: true, NextCursor: &cursor},
+	}})
+	assert.ErrorContains(t, err, "cannot be called more than once")
 }
 
 func TestContinuationToolIsAdvertisedOnlyWhenAvailable(t *testing.T) {

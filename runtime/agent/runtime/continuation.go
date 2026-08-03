@@ -27,18 +27,20 @@ type (
 )
 
 // availableContinuationTools returns the dedicated continuation actions whose
-// single compatible successful result has another page.
+// single unconsumed successful result has another page. Parallel source calls
+// remain valid; an action is withheld while more than one invocation in its
+// family could be continued because its empty payload cannot select a chain.
 func (r *Runtime) availableContinuationTools(agentID agent.Ident, outputs []*planner.ToolOutput) (map[tools.Ident]struct{}, error) {
 	available := make(map[tools.Ident]struct{})
 	for _, spec := range r.ToolSpecsForAgent(agentID) {
 		if !isDedicatedContinuationSpec(spec) {
 			continue
 		}
-		_, ok, err := r.continuationState(spec, outputs)
+		states, err := r.continuationStates(spec, outputs)
 		if err != nil {
 			return nil, err
 		}
-		if ok {
+		if len(states) == 1 {
 			available[spec.Name] = struct{}{}
 		}
 	}
@@ -52,26 +54,31 @@ func (r *Runtime) bindContinuationCursors(result *planner.PlanResult, outputs []
 	if result == nil {
 		return errors.New("runtime: cannot bind continuation cursor on nil planner result")
 	}
-	if err := r.validateContinuationBatch(result); err != nil {
-		return err
-	}
+	bound := make(map[tools.Ident]struct{})
 	for i := range result.ToolCalls {
 		call := &result.ToolCalls[i]
 		spec, ok := r.toolSpec(call.Name)
 		if !ok || !isDedicatedContinuationSpec(spec) {
 			continue
 		}
+		if _, exists := bound[call.Name]; exists {
+			return fmt.Errorf("runtime: continuation tool %q cannot be called more than once in one planner result", call.Name)
+		}
+		bound[call.Name] = struct{}{}
 		if err := validateEmptyContinuationPayload(call.Payload); err != nil {
 			return fmt.Errorf("runtime: continuation tool %q payload: %w", call.Name, err)
 		}
-		state, ok, err := r.continuationState(spec, outputs)
+		states, err := r.continuationStates(spec, outputs)
 		if err != nil {
 			return err
 		}
-		if !ok {
+		if len(states) == 0 {
 			return fmt.Errorf("runtime: continuation tool %q has no available preceding page", call.Name)
 		}
-		executable, err := r.continuationPayload(spec, state)
+		if len(states) > 1 {
+			return fmt.Errorf("runtime: continuation tool %q has multiple compatible chain heads", call.Name)
+		}
+		executable, err := r.continuationPayload(spec, states[0])
 		if err != nil {
 			return fmt.Errorf("runtime: bind continuation tool %q payload: %w", call.Name, err)
 		}
@@ -81,12 +88,11 @@ func (r *Runtime) bindContinuationCursors(result *planner.PlanResult, outputs []
 	return nil
 }
 
-// continuationState returns the only unconsumed successful page belonging to
-// the dedicated continuation or its source query. Each successful continuation
-// consumes the page whose next cursor it received, so completed ancestors do
-// not make a sequential chain ambiguous. Multiple live heads remain ambiguous
-// because no model-visible selector identifies one of those result chains.
-func (r *Runtime) continuationState(spec tools.ToolSpec, outputs []*planner.ToolOutput) (continuationState, bool, error) {
+// continuationStates returns every unconsumed successful page belonging to the
+// dedicated continuation or its source query. Each successful continuation
+// consumes the page whose next cursor it received, so completed ancestors are
+// omitted while independent parallel invocations remain separate live heads.
+func (r *Runtime) continuationStates(spec tools.ToolSpec, outputs []*planner.ToolOutput) ([]continuationState, error) {
 	consumed := make(map[string]struct{})
 	for _, output := range outputs {
 		if output == nil || output.Failure != nil || output.Name != spec.Name {
@@ -94,14 +100,14 @@ func (r *Runtime) continuationState(spec tools.ToolSpec, outputs []*planner.Tool
 		}
 		cursor, err := continuationInputCursor(spec, output.Payload)
 		if err != nil {
-			return continuationState{}, false, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"runtime: continuation tool %q history: %w",
 				spec.Name,
 				err,
 			)
 		}
 		if _, exists := consumed[cursor]; exists {
-			return continuationState{}, false, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"runtime: continuation tool %q cursor was consumed more than once",
 				spec.Name,
 			)
@@ -109,7 +115,7 @@ func (r *Runtime) continuationState(spec tools.ToolSpec, outputs []*planner.Tool
 		consumed[cursor] = struct{}{}
 	}
 
-	var head *planner.ToolOutput
+	var states []continuationState
 	for _, output := range outputs {
 		if output == nil || output.Failure != nil || !isContinuationOutput(spec, output.Name) {
 			continue
@@ -120,21 +126,12 @@ func (r *Runtime) continuationState(spec tools.ToolSpec, outputs []*planner.Tool
 		if _, wasConsumed := consumed[*output.Bounds.NextCursor]; wasConsumed {
 			continue
 		}
-		if head != nil {
-			return continuationState{}, false, fmt.Errorf(
-				"runtime: continuation tool %q has multiple compatible chain heads",
-				spec.Name,
-			)
-		}
-		head = output
+		states = append(states, continuationState{
+			cursor:  *output.Bounds.NextCursor,
+			payload: output.Payload,
+		})
 	}
-	if head == nil {
-		return continuationState{}, false, nil
-	}
-	return continuationState{
-		cursor:  *head.Bounds.NextCursor,
-		payload: head.Payload,
-	}, true, nil
+	return states, nil
 }
 
 // continuationInputCursor reads the runtime-authored cursor from a canonical
@@ -156,34 +153,6 @@ func continuationInputCursor(spec tools.ToolSpec, payload rawjson.Message) (stri
 		return "", fmt.Errorf("canonical payload cursor field %q is empty", spec.Bounds.Paging.CursorField)
 	}
 	return cursor, nil
-}
-
-// validateContinuationBatch rejects planner batches that fork a dedicated
-// pagination chain. The next resume receives one result batch, so accepting
-// multiple source or continuation calls would make cursor correlation
-// ambiguous without adding a model-visible chain selector.
-func (r *Runtime) validateContinuationBatch(result *planner.PlanResult) error {
-	calls := make(map[tools.Ident]tools.Ident)
-	for _, call := range result.ToolCalls {
-		spec, ok := r.toolSpec(call.Name)
-		if !ok {
-			continue
-		}
-		chain, ok := dedicatedContinuationChain(spec)
-		if !ok {
-			continue
-		}
-		if prior, exists := calls[chain]; exists {
-			return fmt.Errorf(
-				"runtime: continuation chain %q cannot include multiple calls in one planner result (%q and %q)",
-				chain,
-				prior,
-				call.Name,
-			)
-		}
-		calls[chain] = call.Name
-	}
-	return nil
 }
 
 // isContinuationOutput reports whether a tool result belongs to the result set
@@ -229,22 +198,6 @@ func isDedicatedContinuationSpec(spec tools.ToolSpec) bool {
 		spec.Bounds.Paging != nil &&
 		spec.Bounds.Paging.ContinueTool == spec.Name &&
 		spec.Bounds.Paging.SourceTool != ""
-}
-
-// dedicatedContinuationChain identifies the generated continuation action
-// shared by a source query and its dedicated continuation tool.
-func dedicatedContinuationChain(spec tools.ToolSpec) (tools.Ident, bool) {
-	if spec.Bounds == nil || spec.Bounds.Paging == nil {
-		return "", false
-	}
-	paging := spec.Bounds.Paging
-	if paging.SourceTool != "" && paging.ContinueTool == spec.Name {
-		return spec.Name, true
-	}
-	if paging.SourceTool == "" && paging.ContinueTool != "" {
-		return paging.ContinueTool, true
-	}
-	return "", false
 }
 
 // validateEmptyContinuationPayload rejects any model-authored argument because
