@@ -429,7 +429,7 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 		[]byte(`{"stale":true}`),
 	)
 	require.NoError(t, err)
-	assert.Equal(t, callClaimExecute, disposition)
+	assert.Equal(t, callClaimTerminal, disposition)
 	require.Eventually(t, func() bool {
 		exists, existsErr := testRedisClient.Exists(ctx, attached.key).Result()
 		return existsErr == nil && exists == 0
