@@ -242,7 +242,7 @@ planner and runtime streaming:
 | Unary tool calls with provider-issued IDs | Supported |
 | Runtime-owned factory | Supported via `Runtime.NewOpenAIModelClient(...)` |
 | Explicit full transcript input | Supported; callers pass the complete provider-ready transcript in `model.Request.Messages` |
-| Assistant `tool_use` + user `tool_result` transcript replay | Supported for OpenAI-representable assistant turns; tool-result errors stay explicit |
+| Assistant `tool_use` + user `tool_result` transcript replay | Supported for OpenAI-representable assistant turns; version 2 function-call metadata retains its canonical agreement payload, so replay validation remains independent of the currently advertised tool catalog. Unversioned persisted metadata keeps the original exact-arguments agreement contract. Unknown versions and malformed combinations fail closed; tool-result errors stay explicit |
 | Streaming text | Supported |
 | Streaming `tool_call_delta` and final `tool_call` | Supported |
 | Streaming usage and stop chunks | Supported |
@@ -528,9 +528,10 @@ Workflow step boundary:
   bookkeeping), executes them inside the remaining hard-deadline window, stamps
   generated tool-call IDs with the finalization attempt, and requires every
   terminal side effect in the batch to complete successfully,
-- retry-owned restrict-to-tool state constrains normal repair turns but not this
-  validated terminal bookkeeping path; caller-supplied `WithRestrictToTool`
-  remains run-scoped and still applies,
+- correct-call restrictions are scoped to one normal recovery activity, queue
+  distinct failed tools for separate turns, and do not constrain this validated
+  terminal bookkeeping path; caller-supplied `WithRestrictToTool` remains
+  run-scoped and still applies,
 - deadline checks happen before admitting new work; in-flight tool batches
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.
@@ -583,10 +584,15 @@ The runtime applies them in this order:
 
 `SynthesizeAfterTools` therefore does not create a second recovery policy.
 `ToolFailure.Recovery` is the single transition contract: `correct_call`
-requires a changed payload for the failed tool, `replan` forbids exact
-repetition while permitting another advertised tool or final answer, and
-`finish` forbids more tools. Successful batches proceed to the requested
-answer.
+advertises one tool with outstanding correction obligations and requires
+changed payloads that satisfy every failed call for that tool. Distinct failed
+tools are queued in canonical order. Historical tool calls retain deterministic
+provider-name projection even while the current correction turn advertises one
+tool. `replan` forbids exact repetition while permitting another advertised tool
+or final answer, and `finish` forbids more tools. Synthesis intent requested by
+the original batch or a later correction turn survives a queue containing only
+`correct_call` obligations; `replan` or `finish` clears it. Successful batches
+proceed to the requested answer.
 
 Bookkeeping turn invariant:
 
@@ -628,7 +634,9 @@ type PlannerContext interface {
 
 Use `AdvertisedToolDefinitions()` when constructing provider requests inside planners. The
 runtime filters registered tool specs before the planner/model sees them and strips tag metadata
-from the model-facing `ToolDefinition` values.
+from the model-facing `ToolDefinition` values. Provider adapters still encode
+historical tool-use and tool-result blocks from the transcript when a
+correct-call turn narrows the current definitions.
 
 Generated tool definitions also carry precomputed provider projections. The
 DSL-authored top-level Goa `Example(...)` on a payload becomes the only
@@ -1355,10 +1363,15 @@ For method-backed `BindTo` tools, the bound service method result still needs to
 carry the canonical bounded fields so the generated executor can build
 `planner.ToolResult.Bounds` before runtime projection. Explicit tool-facing
 `Return(...)` shapes must not duplicate those canonical fields. Within the bound
-method result, only `returned` and `truncated` may be required; `total`,
-`refinement_hint`, and `next_cursor` remain optional and are omitted from emitted
-JSON whenever runtime bounds omit them. `BoundedResult(...)` still owns the
-tool-facing contract exposed to models.
+method result, `returned` and `truncated` are required. `total` may also be
+required when the service always computes exact cardinality; otherwise it is
+optional. `refinement_hint` and `next_cursor` remain optional and are omitted
+from emitted JSON whenever runtime bounds omit them. `BoundedResult(...)` still
+owns the tool-facing contract exposed to models.
+
+Code generation marks exact-total tools in `tools.BoundsSpec`, requires `total`
+in their model-visible result schema, and rejects a successful runtime result
+whose bounds omit it.
 
 When a service boundary must assemble canonical result JSON outside
 `ExecuteToolActivity` itself, use `runtime.EncodeCanonicalToolResult(...)`

@@ -129,9 +129,6 @@ func (c *simplePlannerContext) configuredModelClient(id string, designated bool)
 	if c.cache.AfterSystem || c.cache.AfterTools {
 		cli = newCacheConfiguredClient(cli, c.cache)
 	}
-	// Restore the runtime-owned tool_unavailable definition only when canonical
-	// history contains an actual call to it.
-	cli = newToolUnavailableConfiguredClient(cli)
 	// Wrap with tracing so model invocations are always visible in traces, including
 	// full stream lifetimes when streaming is used.
 	cli = newTracedClient(cli, c.rt.tracer, c.rt.logger, id, telemetry.GenAIContext{

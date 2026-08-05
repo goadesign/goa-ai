@@ -1,12 +1,20 @@
 package runtime
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -35,6 +43,15 @@ func TestValidateRecoveryPlan(t *testing.T) {
 			planner.FailureInvalidCall,
 			planner.RecoveryCorrectCall,
 			"query is also invalid",
+		),
+	}
+	listCorrectFailure := &planner.ToolOutput{
+		Name:    tools.Ident("catalog.list"),
+		Payload: rawjson.Message(`{"page":0}`),
+		Failure: testToolFailure(
+			planner.FailureInvalidCall,
+			planner.RecoveryCorrectCall,
+			"page is invalid",
 		),
 	}
 	replanFailure := &planner.ToolOutput{
@@ -129,6 +146,35 @@ func TestValidateRecoveryPlan(t *testing.T) {
 			}},
 		},
 		{
+			name:     "correction rejects extra calls",
+			failures: []*planner.ToolOutput{correctFailure},
+			result: &planner.PlanResult{ToolCalls: []planner.ToolRequest{
+				{
+					Name:    tools.Ident("catalog.search"),
+					Payload: rawjson.Message(`{"query":"good"}`),
+				},
+				{
+					Name:    tools.Ident("catalog.search"),
+					Payload: rawjson.Message(`{"query":"extra"}`),
+				},
+			}},
+			wantErr: "added an extra call",
+		},
+		{
+			name:     "corrections satisfy failures from multiple tools",
+			failures: []*planner.ToolOutput{correctFailure, listCorrectFailure},
+			result: &planner.PlanResult{ToolCalls: []planner.ToolRequest{
+				{
+					Name:    tools.Ident("catalog.search"),
+					Payload: rawjson.Message(`{"query":"good"}`),
+				},
+				{
+					Name:    tools.Ident("catalog.list"),
+					Payload: rawjson.Message(`{"page":1}`),
+				},
+			}},
+		},
+		{
 			name:     "replan permits completion",
 			failures: []*planner.ToolOutput{replanFailure},
 			result:   &planner.PlanResult{},
@@ -188,4 +234,166 @@ func TestPendingRecoveryOutputsDropsWeakerTransitionsWhenFinishIsPresent(t *test
 	}
 
 	assert.Empty(t, pendingRecoveryOutputs(records))
+}
+
+func TestNextRecoveryTurnQueuesDistinctCorrectionTools(t *testing.T) {
+	t.Parallel()
+
+	searchOne := recoveryOutput("catalog.search", planner.RecoveryCorrectCall)
+	replan := recoveryOutput("catalog.search", planner.RecoveryReplan)
+	searchTwo := recoveryOutput("catalog.search", planner.RecoveryCorrectCall)
+	list := recoveryOutput("catalog.list", planner.RecoveryCorrectCall)
+
+	current, queued, policy, err := nextRecoveryTurn(
+		nil,
+		[]*planner.ToolOutput{searchOne, replan, searchTwo, list},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []*planner.ToolOutput{searchOne, replan, searchTwo}, current)
+	assert.Equal(t, []*planner.ToolOutput{list}, queued)
+	require.NotNil(t, policy)
+	assert.Equal(t, tools.Ident("catalog.search"), policy.RestrictToTool)
+
+	current, queued, policy, err = nextRecoveryTurn(nil, queued)
+
+	require.NoError(t, err)
+	assert.Equal(t, []*planner.ToolOutput{list}, current)
+	assert.Empty(t, queued)
+	assert.Equal(t, tools.Ident("catalog.list"), policy.RestrictToTool)
+}
+
+func TestRunLoopCorrectsDistinctToolsInSeparateRestrictedTurns(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	_, err := rt.CreateSession(context.Background(), "sess-1")
+	require.NoError(t, err)
+
+	search := newAnyJSONSpec("catalog.search", "catalog")
+	list := newAnyJSONSpec("catalog.list", "catalog")
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "catalog",
+		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			if string(call.Payload) == `{"invalid":true}` ||
+				(call.Name == search.Name && string(call.Payload) == `{"retry":1}`) {
+				return &planner.ToolResult{
+					Name:       call.Name,
+					ToolCallID: call.ToolCallID,
+					Failure: testToolFailure(
+						planner.FailureInvalidCall,
+						planner.RecoveryCorrectCall,
+						"invalid call",
+					),
+				}, nil
+			}
+			return &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Result:     map[string]any{"ok": true},
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{search, list},
+	}))
+
+	agentID := agent.Ident("catalog.agent")
+	var advertised [][]string
+	registration := AgentRegistration{
+		ID: agentID,
+		Planner: &stubPlanner{resume: func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			definitions := input.Agent.AdvertisedToolDefinitions()
+			names := make([]string, len(definitions))
+			for i, definition := range definitions {
+				names[i] = definition.Name
+			}
+			advertised = append(advertised, names)
+			switch len(advertised) {
+			case 1:
+				return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+					Name: search.Name, Payload: rawjson.Message(`{"retry":1}`),
+				}}}, nil
+			case 2:
+				return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+					Name: search.Name, Payload: rawjson.Message(`{"retry":2}`),
+				}}, SynthesizeAfterTools: true}, nil
+			case 3:
+				return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+					Name: list.Name, Payload: rawjson.Message(`{"page":1}`),
+				}}}, nil
+			case 4:
+				require.True(t, input.SynthesisOnly)
+				return &planner.PlanResult{FinalResponse: &planner.FinalResponse{
+					Message: &model.Message{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{model.TextPart{Text: "done"}},
+					},
+				}}, nil
+			default:
+				require.FailNow(t, "unexpected planner resume")
+				return nil, nil
+			}
+		}},
+		ExecuteToolActivity: "execute",
+		ResumeActivityName:  "resume",
+	}
+	rt.agents[agentID] = registration
+	rt.agentToolSpecs[agentID] = []tools.ToolSpec{search, list}
+	wfCtx := &routeWorkflowContext{
+		ctx:         context.Background(),
+		runID:       "run-1",
+		hookRuntime: rt,
+		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+			"resume": rt.PlanResumeActivity,
+		},
+		toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
+			"execute": rt.ExecuteToolActivity,
+		},
+	}
+	base := &planner.PlanInput{RunContext: run.Context{
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+		Attempt:   1,
+	}}
+	input := &RunInput{
+		AgentID:   agentID,
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+	}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
+		{Name: search.Name, Payload: rawjson.Message(`{"invalid":true}`)},
+		{Name: list.Name, Payload: rawjson.Message(`{"invalid":true}`)},
+	}}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		registration,
+		input,
+		base,
+		initial,
+		policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 10},
+		time.Time{},
+		time.Time{},
+		"turn-1",
+		nil,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Len(t, advertised, 4)
+	assert.Equal(t, []string{search.Name.String()}, advertised[0])
+	assert.Equal(t, []string{search.Name.String()}, advertised[1])
+	assert.Equal(t, []string{list.Name.String()}, advertised[2])
+	assert.ElementsMatch(t, []string{search.Name.String(), list.Name.String()}, advertised[3])
+}
+
+// recoveryOutput constructs one pending recovery obligation for queue tests.
+func recoveryOutput(name tools.Ident, action planner.RecoveryAction) *planner.ToolOutput {
+	return &planner.ToolOutput{
+		Name: name,
+		Failure: testToolFailure(
+			planner.FailureInvalidCall,
+			action,
+			"failed",
+		),
+	}
 }

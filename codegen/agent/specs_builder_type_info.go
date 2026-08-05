@@ -507,6 +507,9 @@ func mergeBoundedResultRequired(existing any, bounds *ToolBoundsData, names ...s
 	for _, name := range names {
 		requiredSet[name] = struct{}{}
 	}
+	if boundsTotalRequired(bounds) {
+		requiredSet[boundedresult.FieldTotal] = struct{}{}
+	}
 	optionalBoundsFields := canonicalOptionalBoundedResultFields(bounds)
 	if existingRequired, ok := existing.([]any); ok {
 		for _, item := range existingRequired {
@@ -537,9 +540,21 @@ func canonicalOptionalBoundedResultFields(bounds *ToolBoundsData) map[string]str
 	nextCursorField := modelVisibleNextCursorField(bounds)
 	fields := make(map[string]struct{})
 	for _, name := range boundedresult.OptionalFieldNames(nextCursorField) {
+		if name == boundedresult.FieldTotal && boundsTotalRequired(bounds) {
+			continue
+		}
 		fields[modelJSONName(name)] = struct{}{}
 	}
 	return fields
+}
+
+// boundsTotalRequired reports whether the bound method guarantees exact total
+// cardinality for every successful result.
+func boundsTotalRequired(bounds *ToolBoundsData) bool {
+	return bounds != nil &&
+		bounds.Projection != nil &&
+		bounds.Projection.Total != nil &&
+		bounds.Projection.Total.Required
 }
 
 func withBoundedResultAllowedObjectKeys(allowed map[string][]string, bounds *ToolBoundsData) map[string][]string {

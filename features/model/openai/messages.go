@@ -16,14 +16,18 @@ import (
 	"github.com/openai/openai-go/packages/param"
 	"github.com/openai/openai-go/responses"
 
+	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 const (
-	openAIOutputItemMetaKey       = "openai_output_item"
-	openAIFunctionCallItemMetaKey = "openai_function_call_item"
-	openAIReasoningItemsMetaKey   = "openai_reasoning_items"
+	openAIOutputItemMetaKey            = "openai_output_item"
+	openAIFunctionCallItemMetaKey      = "openai_function_call_item"
+	openAIFunctionCallVersionMetaKey   = "openai_function_call_version"
+	openAIFunctionCallPayloadMetaKey   = "openai_function_call_payload"
+	openAIReasoningItemsMetaKey        = "openai_reasoning_items"
+	openAIFunctionCallMetadataVersion2 = "2"
 )
 
 func encodeMessages(msgs []*model.Message, canonicalToProvider map[string]string) (responses.ResponseInputParam, error) {
@@ -140,6 +144,11 @@ func encodeAssistantMessage(
 	if err != nil {
 		return nil, err
 	}
+	if reusedFunctionCall == nil {
+		if err := validateNoOrphanFunctionCallAgreementMeta(msg.Meta); err != nil {
+			return nil, err
+		}
+	}
 	if reusedOutput != nil && reusedFunctionCall != nil {
 		return nil, errors.New("openai: assistant message cannot carry output and function-call metadata")
 	}
@@ -218,7 +227,12 @@ func encodeAssistantMessage(
 		if len(toolUses) != 1 {
 			return nil, errors.New("openai: function-call metadata requires exactly one tool_use part")
 		}
-		if err := validateFunctionCallAgreement(*reusedFunctionCall, toolUses[0], canonicalToProvider); err != nil {
+		if err := validateFunctionCallAgreement(
+			*reusedFunctionCall,
+			toolUses[0],
+			msg.Meta,
+			canonicalToProvider,
+		); err != nil {
 			return nil, err
 		}
 		out = append(out, responses.ResponseInputItemUnionParam{
@@ -359,18 +373,9 @@ func encodeToolUse(
 	if part.Name == "" {
 		return responses.ResponseFunctionToolCallParam{}, errors.New("openai: tool_use part missing name")
 	}
-	providerName, ok := canonicalToProvider[part.Name]
-	if !ok {
-		for canonical, provider := range canonicalToProvider {
-			if provider == part.Name {
-				return responses.ResponseFunctionToolCallParam{}, fmt.Errorf(
-					"openai: historical provider tool name %q collides with current tool %q",
-					part.Name,
-					canonical,
-				)
-			}
-		}
-		providerName = part.Name
+	providerName, err := toolname.ProviderName(part.Name, canonicalToProvider)
+	if err != nil {
+		return responses.ResponseFunctionToolCallParam{}, fmt.Errorf("openai: %w", err)
 	}
 	payload, err := marshalToolInput(part.Input)
 	if err != nil {
@@ -490,6 +495,24 @@ func decodeFunctionCallMeta(meta map[string]any) (*responses.ResponseFunctionToo
 	return &item, nil
 }
 
+// validateNoOrphanFunctionCallAgreementMeta rejects versioned agreement fields
+// unless the same message retains the provider function-call envelope they
+// authenticate.
+func validateNoOrphanFunctionCallAgreementMeta(meta map[string]any) error {
+	version, err := metaString(meta, openAIFunctionCallVersionMetaKey)
+	if err != nil {
+		return err
+	}
+	payload, err := metaString(meta, openAIFunctionCallPayloadMetaKey)
+	if err != nil {
+		return err
+	}
+	if version != "" || payload != "" {
+		return errors.New("openai: function-call agreement metadata requires function-call item metadata")
+	}
+	return nil
+}
+
 // validateOutputMessageAgreement rejects replay when canonical visible parts
 // diverge from the provider output item retained for lossless replay.
 func validateOutputMessageAgreement(meta map[string]any, visibleParts []model.Part) error {
@@ -512,20 +535,70 @@ func validateOutputMessageAgreement(meta map[string]any, visibleParts []model.Pa
 }
 
 // validateFunctionCallAgreement rejects replay when a canonical tool use
-// diverges from its provider-authored function-call envelope.
+// diverges from its provider-authored function-call envelope. Unversioned
+// metadata retains the original exact-arguments contract; version 2 compares
+// the canonical payload captured before provider strict-mode expansion.
 func validateFunctionCallAgreement(
 	item responses.ResponseFunctionToolCallParam,
 	part model.ToolUsePart,
+	meta map[string]any,
 	canonicalToProvider map[string]string,
 ) error {
-	providerName, ok := canonicalToProvider[part.Name]
-	if !ok {
-		providerName = part.Name
+	providerName, err := toolname.ProviderName(part.Name, canonicalToProvider)
+	if err != nil {
+		return fmt.Errorf("openai: %w", err)
 	}
-	if item.CallID != part.ID || item.Name != providerName || item.Arguments != string(part.Input) {
+	rawAgreement, err := metaString(meta, openAIFunctionCallPayloadMetaKey)
+	if err != nil {
+		return err
+	}
+	version, err := metaString(meta, openAIFunctionCallVersionMetaKey)
+	if err != nil {
+		return err
+	}
+	var payloadAgrees bool
+	switch version {
+	case "":
+		if rawAgreement != "" {
+			return errors.New("openai: unversioned function-call metadata cannot carry a canonical agreement payload")
+		}
+		payloadAgrees = item.Arguments == string(part.Input)
+	case openAIFunctionCallMetadataVersion2:
+		if rawAgreement == "" {
+			return errors.New("openai: function-call metadata missing canonical agreement payload")
+		}
+		agreementPayload, err := decodeToolPayload(rawAgreement)
+		if err != nil {
+			return fmt.Errorf("openai: invalid canonical function-call metadata payload: %w", err)
+		}
+		payloadAgrees, err = equalJSONPayloads(agreementPayload, part.Input)
+		if err != nil {
+			return fmt.Errorf("openai: compare function-call metadata payload: %w", err)
+		}
+	default:
+		return fmt.Errorf("openai: unsupported function-call metadata version %q", version)
+	}
+	if item.CallID != part.ID || item.Name != providerName || !payloadAgrees {
 		return errors.New("openai: tool_use diverged from provider function-call metadata")
 	}
 	return nil
+}
+
+// equalJSONPayloads compares canonical JSON values without making object key
+// order part of the replay contract.
+func equalJSONPayloads(left, right rawjson.Message) (bool, error) {
+	var leftValue, rightValue any
+	leftDecoder := json.NewDecoder(strings.NewReader(string(left)))
+	leftDecoder.UseNumber()
+	if err := leftDecoder.Decode(&leftValue); err != nil {
+		return false, err
+	}
+	rightDecoder := json.NewDecoder(strings.NewReader(string(right)))
+	rightDecoder.UseNumber()
+	if err := rightDecoder.Decode(&rightValue); err != nil {
+		return false, err
+	}
+	return reflect.DeepEqual(leftValue, rightValue), nil
 }
 
 func decodeReasoningItemsMeta(meta map[string]any) ([]responses.ResponseReasoningItemParam, error) {

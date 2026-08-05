@@ -1,5 +1,5 @@
-// Package runtime compiles per-run tool policy into one reusable predicate used
-// both before planner prompting and during execution-time enforcement.
+// Package runtime compiles tool policy into the predicate used to advertise
+// planner tools and enforce caller run constraints during execution.
 package runtime
 
 import (
@@ -13,8 +13,7 @@ import (
 
 type (
 	// compiledToolPolicy is the runtime-owned predicate built from per-run policy
-	// overrides. It is the single source of truth for planner-visible tool
-	// advertising and execution-time filtering.
+	// overrides. The same constraints apply to advertising and execution.
 	compiledToolPolicy struct {
 		callerRestrictToTool tools.Ident
 		tagClauses           []api.TagPolicyClause
@@ -24,8 +23,7 @@ type (
 	// Advertising obtains them from ToolSpec while execution-time filtering obtains
 	// them from canonical policy metadata; both paths share the same predicate.
 	toolPolicyFacts struct {
-		tags        []string
-		bookkeeping bool
+		tags []string
 	}
 )
 
@@ -115,8 +113,7 @@ func advertisedToolDefinitions(specs []tools.ToolSpec, policy compiledToolPolicy
 // planner-visible advertising decisions.
 func toolPolicyFactsFromSpec(spec tools.ToolSpec) toolPolicyFacts {
 	return toolPolicyFacts{
-		tags:        spec.Tags,
-		bookkeeping: spec.Bookkeeping,
+		tags: spec.Tags,
 	}
 }
 
@@ -124,8 +121,7 @@ func toolPolicyFactsFromSpec(spec tools.ToolSpec) toolPolicyFacts {
 // facts for execution-time filtering decisions.
 func toolPolicyFactsFromMetadata(meta policy.ToolMetadata) toolPolicyFacts {
 	return toolPolicyFacts{
-		tags:        meta.Tags,
-		bookkeeping: meta.BudgetClass == policy.ToolBudgetClassBookkeeping,
+		tags: meta.Tags,
 	}
 }
 

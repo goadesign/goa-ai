@@ -6,18 +6,19 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
-func TestEncodeMessagesReplaysHistoricalToolUseUnchanged(t *testing.T) {
+func TestEncodeMessagesProjectsHistoryOnlyToolName(t *testing.T) {
 	messages, _, err := encodeMessages([]*model.Message{
 		{
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{
 				model.ToolUsePart{
 					ID:    "tu1",
-					Name:  "atlas_read_count_events",
+					Name:  "atlas.read.count_events",
 					Input: rawjson.Message(`{"from":"2026-02-06T00:00:00Z"}`),
 				},
 			},
@@ -38,7 +39,7 @@ func TestEncodeMessagesReplaysHistoricalToolUseUnchanged(t *testing.T) {
 	require.Len(t, messages[0].Content, 1)
 	use := messages[0].Content[0].OfToolUse
 	require.NotNil(t, use)
-	require.Equal(t, "atlas_read_count_events", use.Name)
+	require.Equal(t, toolname.Sanitize("atlas.read.count_events"), use.Name)
 	input, err := json.Marshal(use.Input)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"from":"2026-02-06T00:00:00Z"}`, string(input))

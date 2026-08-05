@@ -270,6 +270,86 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 	require.NotNil(t, out.Result.FinalResponse)
 }
 
+func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) {
+	first := newAnyJSONSpec("svc.tools.first", "svc.tools")
+	wrong := newAnyJSONSpec("svc.tools.wrong", "svc.tools")
+	second := newAnyJSONSpec("svc.tools.second", "svc.tools")
+	bookkeeping := newBookkeepingSpec("svc.tools.progress")
+	specs := []tools.ToolSpec{first, wrong, second, bookkeeping}
+
+	pl := &stubPlanner{resume: func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+		definitions := input.Agent.AdvertisedToolDefinitions()
+		require.Len(t, definitions, 1)
+		require.Equal(t, first.Name.String(), definitions[0].Name)
+		require.Len(t, input.ToolOutputs, 2)
+		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+			Name: first.Name, Payload: rawjson.Message(`{"valid":"first"}`),
+		}}}, nil
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	seedTestToolSpecs(rt, specs...)
+	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{"service.agent": specs}
+
+	for _, failed := range []struct {
+		spec   tools.ToolSpec
+		callID string
+	}{
+		{spec: first, callID: "call-1"},
+		{spec: second, callID: "call-2"},
+	} {
+		require.NoError(t, rt.publishHookErr(
+			context.Background(),
+			hooks.NewToolCallScheduledEvent(
+				"run-123",
+				"service.agent",
+				"",
+				failed.spec.Name,
+				failed.callID,
+				rawjson.Message(`{"invalid":true}`),
+				"queue",
+				"",
+				0,
+			),
+			"",
+		))
+		require.NoError(t, rt.publishHookErr(
+			context.Background(),
+			hooks.NewToolResultReceivedEvent(
+				"run-123",
+				"service.agent",
+				"",
+				failed.spec.Name,
+				failed.callID,
+				"",
+				nil,
+				0,
+				false,
+				"",
+				nil,
+				"",
+				nil,
+				0,
+				nil,
+				testToolFailure(planner.FailureInvalidCall, planner.RecoveryCorrectCall, "invalid call"),
+			),
+			"",
+		))
+	}
+
+	out, err := rt.PlanResumeActivity(context.Background(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123", Attempt: 2},
+		Policy:     &PolicyOverrides{RestrictToTool: first.Name},
+		ToolOutputs: []*api.ToolOutputRef{
+			{ToolCallID: "call-1"},
+			{ToolCallID: "call-2"},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.Result.ToolCalls, 1)
+}
+
 func TestPlanResumeActivityEnforcesSynthesisOnly(t *testing.T) {
 	pl := &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
 		return &planner.PlanResult{
@@ -482,6 +562,24 @@ func TestBuildPlannerToolOutputRecordsSkipsBookkeepingResults(t *testing.T) {
 	require.Len(t, outputs, 1)
 	require.Equal(t, "call-1", outputs[0].ToolCallID)
 	require.Equal(t, tools.Ident("svc.ts.tool"), outputs[0].Name)
+}
+
+func TestBuildNextResumeRequestCarriesStableRestrictionPolicy(t *testing.T) {
+	t.Parallel()
+
+	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-123"}}
+	nextAttempt := 1
+
+	req, err := (&Runtime{}).buildNextResumeRequest(
+		"service.agent",
+		base,
+		&PolicyOverrides{RestrictToTool: "svc.tools.first"},
+		nil,
+		false,
+		&nextAttempt,
+	)
+	require.NoError(t, err)
+	require.Equal(t, tools.Ident("svc.tools.first"), req.Policy.RestrictToTool)
 }
 
 func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {

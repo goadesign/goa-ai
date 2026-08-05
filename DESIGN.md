@@ -141,9 +141,15 @@ The runtime keeps execution policy and planner intent separate:
 
 This order makes recovery explicit rather than presence-based. `ToolFailure`
 classifies why execution failed independently from its `RecoveryDirective`:
-`correct_call` requires a changed payload for the same tool, `replan` permits a
-different call or final answer but forbids exact repetition, and `finish`
-forbids more tools. The runtime validates and enforces those transitions.
+`correct_call` narrows the next planner activity to one failed tool and requires
+changed payloads that satisfy every correction obligation for that tool.
+Distinct failed tools are queued in canonical failure order, while provider
+adapters continue to project historical canonical tool names independently of
+the narrowed current catalog. `replan` permits a different call or final answer
+but forbids exact repetition, and `finish` forbids more tools. The runtime
+validates and enforces those transitions. `SynthesizeAfterTools` from the
+original batch or a later correction turn survives while a queue contains only
+`correct_call` obligations; `replan` or `finish` clears that intent.
 Synthesis-after-tools batches must contain at least one budgeted tool and cannot
 contain a `TerminalRun` tool, ensuring the existing step classification always
 reaches the appropriate planner resume. The resume activity validates the
@@ -371,10 +377,12 @@ redeploys.
   prose final answer. The runtime executes only `TerminalRun()` tools in that
   path (`TerminalRun()` implies bookkeeping), keeps them inside the remaining
   hard-deadline window, and closes the run only if every terminal side effect
-  succeeds. Retry-owned
-  restrict-to-tool state filters budgeted work tools only, so bookkeeping tools
-  remain available in correction and finalization turns. Caller
-  `WithRestrictToTool` policy remains run-scoped and still applies to every tool.
+  succeeds. Correct-call restrictions use the stable run-policy envelope and
+  are scoped to one normal recovery activity; queued tools receive separate
+  turns and recovery never changes the Temporal activity payload contract.
+  These restrictions therefore never constrain forced finalization. Caller
+  `WithRestrictToTool` policy remains run-scoped and still applies to every
+  tool.
 - **Visible reasoning contract**: Bedrock adaptive-thinking requests ask for
   summarized reasoning display explicitly so streamed `thinking` events remain
   visible across Claude adaptive model revisions whose provider defaults may
@@ -441,8 +449,10 @@ that UIs and stream bridges can consume without heuristics.
     - `error`: **user-safe** message suitable for direct display
     - `debug_error`: raw error string for logs/diagnostics (not for UI)
   - Tool-execution events carry a `ToolFailure` with an independent failure kind
-    and recovery action. `correct_call` and `replan` permit runtime-constrained
-    tool turns; `finish` is terminal for tool execution.
+    and recovery action. `correct_call` permits a runtime-constrained turn
+    containing only one failed tool and queues other failed tools, `replan`
+    permits the normal
+    caller-allowed catalog, and `finish` is terminal for tool execution.
 
 - **Terminal identity**
   - `RunCompletedEvent.Labels` carries the run-scoped labels provided at run

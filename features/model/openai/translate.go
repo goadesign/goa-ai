@@ -92,7 +92,9 @@ func translateResponse(
 					Input: toolCall.Payload,
 				}},
 				Meta: map[string]any{
-					openAIFunctionCallItemMetaKey: actual.RawJSON(),
+					openAIFunctionCallItemMetaKey:    actual.RawJSON(),
+					openAIFunctionCallVersionMetaKey: openAIFunctionCallMetadataVersion2,
+					openAIFunctionCallPayloadMetaKey: string(toolCall.Payload),
 				},
 			})
 		default:

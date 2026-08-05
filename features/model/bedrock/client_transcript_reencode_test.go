@@ -217,7 +217,7 @@ func TestEncodeMessages_ReencodeTranscriptOrder(t *testing.T) {
 	}
 }
 
-func TestClientPrepareRequestLowersRunlogReplayedTranscript(t *testing.T) {
+func TestClientPrepareRequestLowersRunlogReplayedTranscriptWithNarrowedTools(t *testing.T) {
 	messages := replayedBedrockToolLoopMessages(t)
 	client := &Client{
 		defaultModel: "test-model",
@@ -229,8 +229,8 @@ func TestClientPrepareRequestLowersRunlogReplayedTranscript(t *testing.T) {
 	parts, err := client.prepareRequest(&model.Request{
 		Messages: messages,
 		Tools: []*model.ToolDefinition{{
-			Name:        "analytics.analyze",
-			Description: "Run an analysis.",
+			Name:        "analytics.correct",
+			Description: "Correct the failed analysis request.",
 			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
@@ -251,6 +251,9 @@ func TestClientPrepareRequestLowersRunlogReplayedTranscript(t *testing.T) {
 	require.NotNil(t, toolUse)
 	require.NotNil(t, toolUse.Value.ToolUseId)
 	require.Equal(t, "call_1", *toolUse.Value.ToolUseId)
+	require.Equal(t, "analytics_analyze", aws.ToString(toolUse.Value.Name))
+	require.Equal(t, "analytics_analyze", parts.toolNameCanonicalToProv["analytics.analyze"])
+	require.Equal(t, "analytics_correct", parts.toolNameCanonicalToProv["analytics.correct"])
 
 	toolResult, ok := parts.messages[2].Content[0].(*brtypes.ContentBlockMemberToolResult)
 	require.True(t, ok)

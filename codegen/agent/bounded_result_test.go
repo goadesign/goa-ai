@@ -496,9 +496,6 @@ func TestBoundedResultRequiresOptionalMethodNextCursor(t *testing.T) {
 	require.ErrorContains(t, err, `bounded method result field "next_cursor" must be optional`)
 }
 
-// TestBoundedResultRequiresOptionalMethodTotalAndRefinementHint verifies that
-// bounded tools reject bound method results that make optional canonical bounds
-// fields required.
 // TestBoundedResultRequiresMethodRefinementHintWithoutPaging verifies that
 // non-paging bounded tools fail DSL validation when the bound method result
 // omits "refinement_hint": without paging the hint is the only continuation
@@ -552,7 +549,9 @@ func TestBoundedResultRequiresMethodRefinementHintWithoutPaging(t *testing.T) {
 	require.ErrorContains(t, err, `bounded method result must define "refinement_hint" on the bound method result`)
 }
 
-func TestBoundedResultRequiresOptionalMethodTotalAndRefinementHint(t *testing.T) {
+// TestBoundedResultAllowsRequiredMethodTotal verifies that a service with exact
+// cardinality can strengthen total while refinement_hint remains optional.
+func TestBoundedResultAllowsRequiredMethodTotal(t *testing.T) {
 	eval.Reset()
 	goaexpr.Root = new(goaexpr.RootExpr)
 	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
@@ -576,7 +575,7 @@ func TestBoundedResultRequiresOptionalMethodTotalAndRefinementHint(t *testing.T)
 					goadsl.Attribute("truncated", goadsl.Boolean)
 					goadsl.Attribute("total", goadsl.Int)
 					goadsl.Attribute("refinement_hint", goadsl.String)
-					goadsl.Required("results", "returned", "truncated", "total", "refinement_hint")
+					goadsl.Required("results", "returned", "truncated", "total")
 				})
 			})
 			Agent("agent", "desc", func() {
@@ -597,10 +596,7 @@ func TestBoundedResultRequiresOptionalMethodTotalAndRefinementHint(t *testing.T)
 		})
 	}
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
-	err := eval.RunDSL()
-	require.Error(t, err)
-	require.ErrorContains(t, err, `bounded method result field "total" must be optional`)
-	require.ErrorContains(t, err, `bounded method result field "refinement_hint" must be optional`)
+	require.NoError(t, eval.RunDSL())
 }
 
 // TestBoundedResultRejectsCanonicalToolReturnFields verifies that explicit
