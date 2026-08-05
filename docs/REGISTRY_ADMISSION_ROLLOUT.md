@@ -16,11 +16,24 @@ gRPC contract (registry service):
   returns `registration_token` plus `lease_duration_ms`.
 - `Unregister` requires `expected_registration_token` and returns
   `admission_conflict` on a stale token.
-- New `ReleaseProvider` method releases one exact provider-incarnation lease.
+- `DrainProvider` marks one exact provider-incarnation lease non-routable before
+  sink close and carries the configured settlement duration; `ReleaseProvider`
+  removes it after settlement.
 - `Pong` requires `provider_incarnation_id`.
 - `ToolCallMeta.tool_call_id` is required.
-- `CallToolResult` adds required `registration_token` and
-  `result_stream_ttl_ms`.
+- `CallToolResult` returns required `registration_token`, the call record's
+  `execution_deadline`, and the later `result_stream_expires_at`.
+- `CompleteToolCall` atomically publishes the canonical terminal result and
+  stores the full terminal in call state under the exact provider incarnation.
+  Bounded Pulse history is restored from that record when needed. A preserved
+  retired lease can complete work it claimed.
+- `ClaimToolCall` is the single pre-dispatch transition. It grants immutable
+  execution ownership or returns terminal, claimed, or expired; stale
+  generations receive the registry-owned terminal in the same atomic operation.
+  A lost exact dispatch lease commits `outcome_unknown`; execution never moves
+  to another provider.
+- Result streams and output deltas are bounded. `RetryTool` reads overload state
+  from the call record and does not snapshot Pulse.
 - New typed errors: `admission_blocked` (retryable), `admission_retired`
   (permanent), `admission_conflict` (stale token).
 
@@ -30,8 +43,16 @@ Go library surfaces (hit external consumers harder than the payload changes):
   is no longer a startup step outside `Serve`.
 - `provider.Options.Pong` becomes
   `func(ctx, providerID, incarnationID, pingID string) error`.
+- `provider.Options.ShutdownTimeout` is one total sink, worker, and
+  acknowledgement settlement deadline. It must not exceed
+  `provider.MaxShutdownTimeout`; the remaining provider-lease duration is
+  reserved as transport margin.
+- `provider.Registration` requires `Claim` and ordinary `Complete`. Providers
+  never construct or submit stale terminal result payloads themselves.
 - `executor.Client.CallTool` returns `toolregistry.ToolCallRef` (identity,
-  token, result-stream TTL) instead of a bare tool-use ID; the
+  token, absolute result-stream expiration) instead of a bare tool-use ID. Its distinct
+  `RetryTool` method passes that original token back for exact overload
+  republication; the
   `executor.WithSinkName` option is deleted (executors read results with
   independent oldest-first Readers, no sink/ack/keepalive state).
 - Every `runtime/toolregistry` message constructor gains a leading
@@ -57,13 +78,17 @@ Bump `goa.design/goa-ai` in aura and port in dependency order:
 
 1. Regenerate `gen/**` (toolset providers pick up token-threaded message
    constructors).
-2. Rewrite `shared/clients/toolregistry`: add `ReleaseProvider` to the client
-   interface and gRPC wiring, return `ToolCallRef` from `CallTool`, make
-   `tool_call_id` required, convert the ponger to the four-argument form,
-   delete the startup-only `RegisterToolset` helper, regenerate mocks.
+2. Rewrite `shared/clients/toolregistry`: add `DrainProvider`,
+   `ReleaseProvider`, `ClaimToolCall`, `CompleteToolCall`, and `RetryTool`
+   to the client interface and gRPC wiring, return `ToolCallRef` from both
+   `CallTool` and `RetryTool`, pass the original registration token as
+   `ExpectedRegistrationToken`, make `tool_call_id` required, convert the
+   ponger to the four-argument form, delete the startup-only
+   `RegisterToolset` helper, and regenerate mocks.
 3. Port the eight `toolprovider.Serve` sites (code-interpreter,
    analytics-agent ×2, google-drive, atlas-data ×3, todos) to the
-   `Registration{AdmissionRevision, Register, Release}` pattern from
+   `Registration{AdmissionRevision, Register, Drain, Release, Claim, Complete}`
+   pattern from
    `codegen/agent/templates/agents_quickstart.go.tpl`.
 4. Thread tokens through provider-side wrappers: `shared/toolreplay`
    (replayed results must carry `RegistrationToken`), atlas-data's

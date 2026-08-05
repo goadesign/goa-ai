@@ -216,42 +216,65 @@ incarnation, so delayed old-process release cannot remove a replacement.
 Membership epoch and pong freshness live beside those leases in the same CAS
 record. The active `toolprovider.Serve` lifecycle owns an
 immutable, required `AdmissionRevision`, opens the Pulse stream, invokes a typed
-context-compliant registration callback with that revision, and creates the
-shared sink only after admission. It renews with jitter while the last
+context-compliant registration callback that sends the runtime-owned
+`toolregistry.WireProtocolVersion` with that revision, and creates the shared
+sink only after admission. It renews with jitter while the last
 duration-derived monotonic deadline remains valid and closes consumption before
 expiration. The first renewal is derived from one third of the granted lease
 duration; bounded retries preserve cutoff slack. After every admitted exit,
-`Serve` stops claiming, boundedly closes an established sink, closes work
-intake, waits workers and terminal result publication, drains every queued
-acknowledgement, and stops renewal. A sink-setup failure has no consumption to
-settle and proceeds directly to bounded release. Established sinks release
-exact provider leases only after the sequence proves consumption settled.
+`Serve` stops renewal, atomically marks each exact token/incarnation lease
+draining, then closes the canonical shared sink before processing the remaining
+local queue. Draining leases are excluded from new publication but retain
+authority to claim and settle calls already delivered before intake closed. The
+drain transition carries the configured shutdown duration so Redis keeps that
+authority for the full settlement lifecycle. `Serve` waits workers and
+registry-owned terminal publication, drains every queued acknowledgement, and
+releases each exact lease. A sink-setup
+failure has no consumption to settle and proceeds directly to bounded release.
 Close, worker, result, or acknowledgement failure is explicit and suppresses
-release; lease expiry is the durable fallback. Acknowledgement failure permits
-Pulse redelivery after a result was published, so handlers must make repeated
-tool-use IDs idempotent or durably deduplicate them.
+release; lease expiry is the durable fallback. Before a worker dispatches
+locally queued work, `ClaimToolCall` authenticates its exact lease and request
+event at the global call record. The atomic result is `execute`, `terminal`,
+`claimed`, or `expired`; only `execute` invokes the handler. Dispatch ownership
+never transfers, so acknowledgement redelivery cannot repeat side effects.
+Claims enter global and exact-lease settlement indexes. At the call's absolute
+execution deadline, or earlier if the lease is released, the registry
+atomically commits `internal` / `outcome_unknown`, states that the effect may
+have occurred, and forbids another execution. This happens before the later
+call-record retention deadline. The same transition publishes stale-generation
+terminal history before acknowledgement.
 
 Provider processes supply one stable `ProviderID` per process/toolset pair and
 one deployment-issued `AdmissionRevision` per fenced admission to `Serve`.
+Provider registration wiring must also send the single
+`runtime/toolregistry.WireProtocolVersion`; it is not deployment configuration
+or capability negotiation. Consumers never register, but every `CallTool` and
+`RetryTool` request must send the same version before the registry can publish
+protocol bytes.
 Every replica with the same contract shares the revision across scaling and
 RollingUpdate; a revision changes only when a new execution fence is intended.
-The registry stores active/retired state, toolset, canonical schema fingerprint,
-admission revision, token, Redis `RegisteredAt`, every provider-incarnation
+The registry rejects a missing or mismatched wire version with
+`validation_error` before creating streams, mutating catalog state, admitting a
+lease, or scheduling health checks. It stores active/retired state, toolset,
+wire protocol version, canonical schema fingerprint, admission revision, token,
+Redis `RegisteredAt`, every provider-incarnation
 lease, health epoch, last pong, and the exact set of all retired registration
 tokens in one exact-CAS catalog record. A nonzero-to-zero lease transition
 advances the epoch and resets pong freshness. Ping IDs carry token plus epoch;
 pongs authenticate that pair and the responding incarnation atomically.
-Aggregate health requires one unexpired lease plus a fresh current-epoch pong.
+Aggregate health and new-call routing require one unexpired, non-draining lease
+plus a fresh current-epoch pong.
 
 The wire-visible `RegistrationToken` is not a secret. It is the lowercase
-SHA-256 digest of the domain `goa-ai/tool-registry-admission/v1\0`, the raw
-32-byte canonical schema fingerprint, a uint32 big-endian admission-revision
-byte length, and the revision bytes. Tool order and toolset/tool tag order are
+SHA-256 digest of the domain `goa-ai/tool-registry-admission/v2\0`, the uint32
+big-endian wire protocol version, the raw 32-byte canonical schema fingerprint,
+a uint32 big-endian admission-revision byte length, and the revision bytes. Tool
+order and toolset/tool tag order are
 normalized before schema fingerprinting; payload, result, and sidecar raw schema
 bytes are exact identity inputs, so generated schema JSON must remain canonical.
-The same schema and revision derive the same admission token across replicas.
-The same schema under another revision derives a different token. Every Goa and
-Pulse boundary requires the canonical lowercase 64-hex spelling
+The same wire version, schema, and revision derive the same admission token
+across replicas. Changing any of those inputs derives a different token. Every
+Goa and Pulse boundary requires the canonical lowercase 64-hex spelling
 `^[0-9a-f]{64}$`.
 
 Registration is one exact-CAS state machine. An absent record becomes an active
@@ -269,13 +292,29 @@ compaction is safe without another immutable authority that can prove
 non-resurrection.
 
 Same-token scaling and RollingUpdate require no deployment token persistence.
-A different schema or admission revision requires Kubernetes Recreate so
-incompatible providers never overlap: graceful releases permit immediate
-server-owned handoff, while crashes delay handoff until lease expiry.
+A different wire protocol, schema, or admission revision requires Kubernetes
+Recreate so incompatible providers never overlap: graceful releases permit
+immediate server-owned handoff, while crashes delay handoff until lease expiry.
 `Unregister` is not rollout orchestration; it intentionally changes active to
 retired while preserving leases. Same-token retirement retry succeeds, a stale
 expected token returns `admission_conflict`, retired toolsets are unavailable to
 discovery and calls, and the retired exact token cannot register again.
+
+Wire protocol changes use a hard cutover. There is no legacy envelope, optional
+fallback, capability negotiation, or dual decoder. Quiesce registry-routed tool
+traffic, then deploy consumer binaries first so every future CallTool sends
+version 7 and can decode the execution-deadline and bounded-result envelope. Stop or fence old
+providers, deploy the new registry, deliberately remove pre-version catalog
+records while providers are stopped, and deploy providers that send version 7
+on Register. Resume tool traffic only after old leases and consumer requests
+have drained.
+
+The new registry rejects an old consumer's missing version before service
+invocation, catalog lookup, health checks, result-stream creation, call
+admission, or Pulse publication. It rejects an old provider on Register or
+renewal before provider admission. The one runtime-owned version therefore
+fences both independent rollout populations, while the version-bound
+registration token preserves the existing provider-generation fence.
 
 Supported rmap `Destroy`, stream destruction, and ticker loss recover live under
 the same registry name without a process restart: renewal reconstructs the
@@ -293,29 +332,67 @@ concurrent runs cannot collide. Both IDs are required; direct callers generate
 and retain stable call identity. The original model/provider ID remains separate
 metadata.
 
-Providers execute only matching calls and publish a terminal typed
-`stale_registration` error for stale queued calls, then acknowledge them, so
-generation changes cannot execute old work or strand a waiting caller. Every
+Providers execute only matching calls. For a stale queued call, the current
+provider asks the registry to reject the exact call; the registry authenticates
+that provider's distinct current token/incarnation lease and publishes the only
+valid terminal `stale_registration` result under the call's older token. The
+provider then acknowledges the request, so generation changes cannot execute old
+work or strand a waiting caller. Every
 success and error result echoes the call token; independent executor readers
 accept only the exact tool-use ID and token pair and ignore mismatched late
-results from reused IDs. Best-effort output deltas carry the same token, and executors forward only
-deltas matching that exact pair. The waiting queue is exact and bounded. A
-provider that claims a call after that queue fills publishes transient
-retryable `provider_overloaded` with a bounded retry-after for the exact
-ID/token before acknowledging it. The registry's expiring call admission
-serializes one delayed republication per overload event across replicas, without
-blocking provider ping intake. Handlers remain responsible for idempotency when Pulse
-redelivers after result publication but before acknowledgement.
+results from reused IDs. Ordinary completion verifies the completing provider's
+exact token/incarnation lease, including a preserved lease after retirement, and
+atomically stores the full canonical result in terminal call state while
+appending its delivery event. Result streams retain at most
+`ResultStreamMaxLen` events through the absolute retention deadline; a terminal
+trimmed from Pulse is restored from the call record on replay. Output deltas and
+completion require the exact immutable dispatch owner and stop at the earlier
+execution deadline. Delta bytes and count are bounded. Overload notices are
+idempotent per request event and accepted only before dispatch; stale overload
+observations become the canonical stale terminal atomically. Preserved retired
+or draining exact leases may
+settle calls they already claimed. The waiting queue is exact and bounded. A provider that claims
+a call after that queue fills reports transient retry intent with reason
+`provider_overloaded` before acknowledging it. Retry control has
+no planner failure; terminal `ToolError` is the single authority for planner
+classification and recovery. The executor submits `RetryTool` with the original
+admission token. The registry requires that exact admission to remain active,
+attaches to its existing immutable call admission, and atomically republishes at
+most once per retained overload event across replicas. It never creates retry
+state or republishes through a replacement provider. Provider ping intake remains
+available while the retry waits.
 
-The registry atomically admits each immutable request under
-`(ToolUseID, RegistrationToken)`. The first caller initializes and publishes;
-concurrent and sequential retries attach to retained history. An exact-owner
-short publication lock prevents concurrent cross-node attempts. The registry
-selects one bounded sliding TTL for both admission and result history. Executors
-use independent oldest-first Pulse Readers, so each waiter replays every event
+The registry atomically admits each global `ToolUseID` once. The authoritative
+record stores a token-independent digest of toolset, tool, payload, and call
+metadata plus the admitted registration token. `CallTool` attaches to this
+record before current catalog or health lookup; an exact retained retry therefore
+returns its original token and deadlines after retirement or replacement.
+`CallTool` owns only initial admission and publication. `RetryTool` owns overload
+republication and requires both the
+existing admission record and its still-active token. The request-stream append
+and admission marker commit atomically, so ownership cannot expire between
+publication and commit and exact retries return the original request event. The
+call record owns a Redis-selected absolute execution deadline no longer than
+`MaxToolCallWait` and a later bounded retention expiration shared with result
+history. Provider handler context and executor waiting use the execution
+deadline. Structural reference validation checks only timestamp shape and
+ordering; Redis owns liveness. The record stores the complete canonical
+terminal payload. Atomic terminal publication preserves the later retention
+expiration; replay restores a missing terminal delivery event without
+re-executing the call. Claimed calls that reach execution deadline without a
+provider terminal atomically become `outcome_unknown` while the authoritative
+record is still retained. Redis expiry deletes only after that settlement
+window.
+The request stream is trimmed by the minimum safe consumer-group watermark:
+the earliest pending ID for groups with pending work, otherwise each group's
+last-delivered ID. Length-based trimming is forbidden because a single old PEL
+entry can outlive arbitrarily many acknowledged later entries.
+Retry decisions use the overload event retained in the call record and never
+snapshot Pulse history. Executors use independent oldest-first Pulse Readers,
+so each waiter replays retained events
 without consumer groups, acknowledgements, or keepalive metadata. No consumer
-destroys the stream; abandoned, completed, and recreated state expires through
-the same inactivity policy.
+destroys the stream; abandoned, completed, and recreated state expires at the
+record's absolute deadline.
 
 The one-time cleanup of pre-contract Redis records and queued unfenced messages
 is an operational hard-cutover concern, not a compatibility mechanism. See

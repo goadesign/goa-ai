@@ -410,6 +410,7 @@ go func() {
                     ProviderID:        providerID,
                     ProviderIncarnationID: incarnationID,
                     AdmissionRevision: admissionRevision,
+                    WireProtocolVersion: registrywire.WireProtocolVersion,
                 })
                 if err != nil {
                     return toolprovider.RegistrationLease{}, err
@@ -419,6 +420,15 @@ go func() {
                     Duration:          time.Duration(result.LeaseDurationMs) * time.Millisecond,
                 }, nil
             },
+            Drain: func(ctx context.Context, toolset, providerID, incarnationID, expectedToken string, settlementDuration time.Duration) error {
+                return registryClient.DrainProvider(ctx, &registry.DrainProviderPayload{
+                    Name:                      toolset,
+                    ProviderID:                providerID,
+                    ProviderIncarnationID:     incarnationID,
+                    ExpectedRegistrationToken: expectedToken,
+                    SettlementDurationMs:      settlementDuration.Milliseconds(),
+                })
+            },
             Release: func(ctx context.Context, toolset, providerID, incarnationID, expectedToken string) error {
                 return registryClient.ReleaseProvider(ctx, &registry.ReleaseProviderPayload{
                     Name:                      toolset,
@@ -426,6 +436,61 @@ go func() {
                     ProviderIncarnationID:     incarnationID,
                     ExpectedRegistrationToken: expectedToken,
                 })
+            },
+            Complete: func(ctx context.Context, toolset, providerID, incarnationID, providerToken, requestEventID string, result registrywire.ToolResultMessage) error {
+                resultJSON, err := json.Marshal(result)
+                if err != nil {
+                    return err
+                }
+                return registryClient.CompleteToolCall(ctx, &registry.CompleteToolCallPayload{
+                    Toolset:                   toolset,
+                    ProviderID:                providerID,
+                    ProviderIncarnationID:     incarnationID,
+                    RegistrationToken:         result.RegistrationToken,
+                    ToolUseID:                 result.ToolUseID,
+                    ResultJSON:                resultJSON,
+                    RequestEventID:            requestEventID,
+                    ProviderRegistrationToken: providerToken,
+                })
+            },
+            PublishOutputDelta: func(ctx context.Context, toolset, providerID, incarnationID, providerToken, callToken, toolUseID, requestEventID, stream, delta string) error {
+                return registryClient.PublishToolOutputDelta(ctx, &registry.PublishToolOutputDeltaPayload{
+                    Toolset:                   toolset,
+                    ProviderID:                providerID,
+                    ProviderIncarnationID:     incarnationID,
+                    ProviderRegistrationToken: providerToken,
+                    CallRegistrationToken:     callToken,
+                    ToolUseID:                 toolUseID,
+                    RequestEventID:            requestEventID,
+                    Stream:                    stream,
+                    Delta:                     delta,
+                })
+            },
+            ReportOverload: func(ctx context.Context, toolset, providerID, incarnationID, providerToken, callToken, toolUseID, requestEventID string) error {
+                return registryClient.ReportToolCallOverload(ctx, &registry.ProviderToolCallClaimPayload{
+                    Toolset:                   toolset,
+                    ProviderID:                providerID,
+                    ProviderIncarnationID:     incarnationID,
+                    ProviderRegistrationToken: providerToken,
+                    CallRegistrationToken:     callToken,
+                    ToolUseID:                 toolUseID,
+                    RequestEventID:            requestEventID,
+                })
+            },
+            Claim: func(ctx context.Context, toolset, providerID, incarnationID, providerToken, callToken, toolUseID, requestEventID string) (toolprovider.ClaimDisposition, error) {
+                result, err := registryClient.ClaimToolCall(ctx, &registry.ProviderToolCallClaimPayload{
+                    Toolset:                   toolset,
+                    ProviderID:                providerID,
+                    ProviderIncarnationID:     incarnationID,
+                    ProviderRegistrationToken: providerToken,
+                    CallRegistrationToken:     callToken,
+                    ToolUseID:                 toolUseID,
+                    RequestEventID:            requestEventID,
+                })
+                if err != nil {
+                    return "", err
+                }
+                return toolprovider.ClaimDisposition(result.Disposition), nil
             },
         },
         toolprovider.Options{
@@ -448,13 +513,16 @@ go func() {
 
 Notes:
 
-- The registry publishes tool calls to the deterministic stream `toolset:<toolsetID>:requests` and providers publish results to `result:<toolUseID>`.
+- The registry publishes tool calls to the deterministic stream `toolset:<toolsetID>:requests`. Every provider uses the canonical consumer group and submits terminal results to the registry, which publishes the canonical event on `result:<toolUseID>`.
+- `Serve` obtains an immutable registry dispatch claim before invoking a method, then injects the canonical call identity into its context. Pulse redelivery returns retained terminal/claimed state and never repeats handler execution.
 - Providers are generated only when the toolset has at least one **method-backed** tool (and the toolset is not registry-backed).
+- Import `goa.design/goa-ai/runtime/toolregistry` as `registrywire`. Every provider Register payload must set `WireProtocolVersion: registrywire.WireProtocolVersion`; the registry rejects missing or mismatched versions before admission.
+- Registry-backed consumer clients must set the same `WireProtocolVersion` on every CallTool and RetryTool payload; the registry rejects mismatches before catalog lookup or publication. CallTool performs initial admission. When the executor receives `provider_overloaded` retry control, its RetryTool implementation must pass the original `ToolCallRef.RegistrationToken` as `ExpectedRegistrationToken`; the registry rejects admission rollover and never republishes through a replacement provider.
 - `AdmissionRevision` is required and immutable for one fenced admission. Reuse it for scaling and same-contract rolling updates; change it only when schema or rollout intent needs a new execution fence. `Registration.Register` passes it to the typed registry payload and returns `RegistrationToken` plus `LeaseDurationMs`.
-- `Serve` generates one UUID incarnation, opens the Pulse request stream, registers that exact provider incarnation, and only then creates the shared request consumer-group sink. It renews from one third of the granted duration. On exit it stops claiming, boundedly closes the request sink, closes work intake, settles workers/results, and drains acknowledgements. It releases only its exact incarnation lease after clean settlement; otherwise lease expiry is the durable fallback. Treat `context.Canceled` as normal process shutdown.
-- `RegistrationToken` is the deterministic SHA-256 admission-generation fence derived from canonical generated schema bytes and `AdmissionRevision`, not a secret. Its canonical wire form is lowercase 64-hex. Every success, error, and best-effort output delta echoes the call token. Providers complete stale queued calls with `stale_registration`; independent executor readers ignore mismatched late deltas/results and continue waiting for the exact tool-use ID and token pair.
-- The gateway derives the global transport `ToolUseID` from required run ID plus required model/provider call ID. A Redis-expiring call admission keyed by `ToolUseID` plus token lets transport retries attach to immutable result history instead of republishing. Result consumers use independent oldest-first Pulse Readers, so sequential and concurrent retries each replay the same retained events without acknowledgement or consumer-group metadata. A full provider queue publishes transient `provider_overloaded`; the registry serializes bounded delayed republication while provider intake remains available for pings. Sliding TTL is the sole result-history cleanup.
-- Generated handlers propagate the lifecycle context to bound methods. Custom handlers must honor cancellation and make repeated `ToolUseID` execution idempotent because acknowledgement failure can redeliver an already-completed call.
+- `Serve` generates one UUID incarnation, opens the Pulse request stream, registers that exact provider incarnation, and only then creates the canonical shared request consumer-group sink. It renews from one third of the granted duration. On exit it stops renewal, marks each exact token/incarnation lease draining, and closes sink intake. Draining excludes the lease from new publication while preserving authority to claim and settle already-delivered work. It then settles the local queue and results through the registry, drains acknowledgements, and releases only after clean settlement; otherwise lease expiry is the durable fallback. Treat `context.Canceled` as normal process shutdown.
+- `RegistrationToken` is the deterministic SHA-256 admission-generation fence derived from the registry wire protocol version, canonical generated schema bytes, and `AdmissionRevision`, not a secret. Its canonical wire form is lowercase 64-hex. Every success, error, and best-effort output delta echoes the call token. Providers complete stale queued calls with `stale_registration`; independent executor readers ignore mismatched late deltas/results and continue waiting for the exact tool-use ID and token pair.
+- The gateway derives the global transport `ToolUseID` from required run ID plus required model/provider call ID. One call record owns immutable identity, terminal state, a Redis-selected execution deadline no longer than `MaxToolCallWait`, and a later bounded result-history expiration. Handler contexts and executor waiting use the execution deadline; result streams and canonical terminals use retention. Unresolved claims atomically settle to `outcome_unknown` before retention expires. Result consumers use independent oldest-first Pulse Readers, so sequential and concurrent retries each replay the same retained events without acknowledgement or consumer-group metadata. A full provider queue publishes top-level retry control with reason `provider_overloaded`, bounded delay, and no planner failure; overload reporting is idempotent per request event. RetryTool attaches to the existing immutable admission and serializes delayed republication only while that exact token remains active.
+- Generated handlers receive the call execution-deadline context. Custom handlers must honor cancellation; handler-level idempotency is not required for registry redelivery because dispatch ownership never transfers.
 - Health pings carry the admission token and catalog-owned membership epoch; pongs authenticate the exact provider incarnation and update the same CAS admission record. A zero-lease transition advances the epoch and resets pong freshness, so an old process cannot authenticate a later lifecycle.
 - Use RollingUpdate only when every replica has the same registration token. Use Recreate for a different schema or admission revision: graceful release enables immediate server-owned handoff, while crashed providers block the new admission until lease expiry. Retirement and replacement permanently retain every prior token as correctness state, so A→B cannot resurrect A; this set grows with distinct admissions and must not be truncated. `Unregister` is reserved for intentional retirement.
 {{- end }}

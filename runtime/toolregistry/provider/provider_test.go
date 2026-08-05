@@ -23,12 +23,22 @@ import (
 type blockingHandler struct {
 	started  chan struct{}
 	unblock  chan struct{}
+	deadline chan time.Time
 	callSeen atomic.Bool
 }
 
 type recordingHandler struct {
 	calls atomic.Int64
 }
+
+type backlogHandler struct {
+	firstStarted chan struct{}
+	unblockFirst chan struct{}
+	handled      chan string
+	calls        atomic.Int64
+}
+
+type invalidResultHandler struct{}
 
 const pulseAddEventID = "0-0"
 const (
@@ -48,6 +58,10 @@ func (h *blockingHandler) HandleToolCall(ctx context.Context, msg toolregistry.T
 	if !h.callSeen.Swap(true) {
 		close(h.started)
 	}
+	if h.deadline != nil {
+		deadline, _ := ctx.Deadline()
+		h.deadline <- deadline
+	}
 	<-h.unblock
 	return toolregistry.NewToolResultMessage(msg.RegistrationToken, msg.ToolUseID, json.RawMessage(`{"ok":true}`)), nil
 }
@@ -55,6 +69,21 @@ func (h *blockingHandler) HandleToolCall(ctx context.Context, msg toolregistry.T
 func (h *recordingHandler) HandleToolCall(_ context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
 	h.calls.Add(1)
 	return toolregistry.NewToolResultMessage(msg.RegistrationToken, msg.ToolUseID, json.RawMessage(`{"ok":true}`)), nil
+}
+
+func (h *backlogHandler) HandleToolCall(_ context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
+	if h.calls.Add(1) == 1 {
+		close(h.firstStarted)
+		<-h.unblockFirst
+	}
+	h.handled <- msg.ToolUseID
+	return toolregistry.NewToolResultMessage(msg.RegistrationToken, msg.ToolUseID, json.RawMessage(`{"ok":true}`)), nil
+}
+
+func (h *invalidResultHandler) HandleToolCall(context.Context, toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
+	result := toolregistry.NewToolResultErrorMessage("", "", "execution_failed", "failed")
+	result.Result = json.RawMessage(`{"ok":true}`)
+	return result, nil
 }
 
 func TestServe_RejectsEmptyProviderID(t *testing.T) {
@@ -68,6 +97,23 @@ func TestServe_RejectsEmptyProviderID(t *testing.T) {
 	require.ErrorContains(t, err, "provider id is required")
 }
 
+func TestServeRejectsNULProviderID(t *testing.T) {
+	t.Parallel()
+
+	err := Serve(
+		context.Background(),
+		mockpulse.NewClient(t),
+		"test.toolset",
+		&blockingHandler{},
+		successfulRegistration(),
+		Options{
+			ProviderID: "provider\x00alias",
+			Pong:       func(context.Context, string, string, string) error { return nil },
+		},
+	)
+	require.ErrorContains(t, err, "provider id must not contain NUL")
+}
+
 func TestServeRejectsUnsafeCapacityConfiguration(t *testing.T) {
 	t.Parallel()
 
@@ -79,6 +125,13 @@ func TestServeRejectsUnsafeCapacityConfiguration(t *testing.T) {
 		{name: "excessive concurrency", options: Options{MaxConcurrentToolCalls: MaxConcurrentToolCalls + 1}},
 		{name: "negative queue", options: Options{MaxQueuedToolCalls: -1}},
 		{name: "excessive queue", options: Options{MaxQueuedToolCalls: MaxQueuedToolCalls + 1}},
+		{name: "negative shutdown timeout", options: Options{ShutdownTimeout: -1}},
+		{
+			name: "shutdown exceeds settlement",
+			options: Options{
+				ShutdownTimeout: MaxShutdownTimeout + time.Millisecond,
+			},
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			test.options.ProviderID = testProviderID
@@ -138,15 +191,19 @@ func TestServe_RespondsToPingWhileToolCallInFlight(t *testing.T) {
 	})
 
 	h := &blockingHandler{
-		started: make(chan struct{}),
-		unblock: make(chan struct{}),
+		started:  make(chan struct{}),
+		unblock:  make(chan struct{}),
+		deadline: make(chan time.Time, 1),
 	}
 
 	pongs := make(chan pongCall, 10)
 
 	errc := make(chan error, 1)
 	go func() {
-		errc <- Serve(ctx, client, toolset, h, successfulRegistration(), Options{
+		errc <- Serve(ctx, client, toolset, h, successfulRegistration(func(toolregistry.ToolResultMessage) error {
+			adds.Add(1)
+			return nil
+		}), Options{
 			ProviderID: testProviderID,
 			Pong: func(_ context.Context, providerID, _ string, pingID string) error {
 				pongs <- pongCall{providerID: providerID, pingID: pingID}
@@ -156,10 +213,12 @@ func TestServe_RespondsToPingWhileToolCallInFlight(t *testing.T) {
 	}()
 
 	// Send a tool call first, then wait until the handler is running (blocked).
+	executionDeadline := time.Now().Add(toolregistry.MaxToolCallWait).UTC().Truncate(time.Millisecond)
 	call := toolregistry.NewToolCallMessage(
 		testRegistrationTokenA,
 		"tooluse_1",
-		toolregistry.DefaultResultStreamTTL,
+		executionDeadline,
+		time.Now().Add(toolregistry.DefaultResultStreamTTL),
 		tools.Ident("toolset.tool"),
 		json.RawMessage(`{"x":1}`),
 		&toolregistry.ToolCallMeta{RunID: "r1", SessionID: "s1", ToolCallID: "call-1"},
@@ -175,6 +234,7 @@ func TestServe_RespondsToPingWhileToolCallInFlight(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("handler did not start")
 	}
+	assert.True(t, executionDeadline.Equal(<-h.deadline))
 
 	// Now send a ping and assert Pong is handled promptly while the tool call is still blocked.
 	ping := toolregistry.NewPingMessage(testRegistrationTokenA, "ping_1")
@@ -217,7 +277,7 @@ func TestServe_RespondsToPingWhileToolCallInFlight(t *testing.T) {
 	}
 }
 
-func TestServeValidatesTokenAndCompletesStaleQueuedCall(t *testing.T) {
+func TestServeAcknowledgesRegistrySettledStaleQueuedCall(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -225,6 +285,7 @@ func TestServeValidatesTokenAndCompletesStaleQueuedCall(t *testing.T) {
 	events := make(chan *streaming.Event, 2)
 	acked := make(chan *streaming.Event, 2)
 	results := make(chan toolregistry.ToolResultMessage, 1)
+	rejected := make(chan [3]string, 1)
 
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
@@ -250,15 +311,26 @@ func TestServeValidatesTokenAndCompletesStaleQueuedCall(t *testing.T) {
 			return toolsetStream, nil
 		}
 		retention := streamopts.ParseStreamOptions(opts...)
-		assert.Equal(t, toolregistry.DefaultResultStreamTTL, retention.TTL)
-		assert.True(t, retention.TTLSliding)
+		assert.True(t, retention.DeadlineSet)
+		assert.WithinDuration(t, time.Now().Add(toolregistry.DefaultResultStreamTTL), retention.Deadline, time.Second)
 		return resultStream, nil
 	})
 
 	handler := &recordingHandler{}
+	registration := successfulRegistration(func(result toolregistry.ToolResultMessage) error {
+		results <- result
+		return nil
+	})
+	registration.Claim = func(
+		_ context.Context,
+		_, _, _, providerToken, callToken, toolUseID, _ string,
+	) (ClaimDisposition, error) {
+		rejected <- [3]string{providerToken, callToken, toolUseID}
+		return ClaimTerminal, nil
+	}
 	errc := make(chan error, 1)
 	go func() {
-		errc <- Serve(ctx, client, "test.toolset", handler, successfulRegistration(), Options{
+		errc <- Serve(ctx, client, "test.toolset", handler, registration, Options{
 			ProviderID: testProviderID,
 			Pong:       func(context.Context, string, string, string) error { return nil },
 		})
@@ -267,7 +339,8 @@ func TestServeValidatesTokenAndCompletesStaleQueuedCall(t *testing.T) {
 	malformed := toolregistry.NewToolCallMessage(
 		"ABC123",
 		"tooluse_malformed",
-		toolregistry.DefaultResultStreamTTL,
+		time.Now().Add(toolregistry.MaxToolCallWait),
+		time.Now().Add(toolregistry.DefaultResultStreamTTL),
 		tools.Ident("toolset.tool"),
 		json.RawMessage(`{"x":1}`),
 		&toolregistry.ToolCallMeta{RunID: "r1", SessionID: "s1", ToolCallID: "call-1"},
@@ -291,7 +364,8 @@ func TestServeValidatesTokenAndCompletesStaleQueuedCall(t *testing.T) {
 	call := toolregistry.NewToolCallMessage(
 		testRegistrationTokenB,
 		"tooluse_stale",
-		toolregistry.DefaultResultStreamTTL,
+		time.Now().Add(toolregistry.MaxToolCallWait),
+		time.Now().Add(toolregistry.DefaultResultStreamTTL),
 		tools.Ident("toolset.tool"),
 		json.RawMessage(`{"x":1}`),
 		&toolregistry.ToolCallMeta{RunID: "r1", SessionID: "s1", ToolCallID: "call-2"},
@@ -302,14 +376,16 @@ func TestServeValidatesTokenAndCompletesStaleQueuedCall(t *testing.T) {
 	events <- event
 
 	select {
-	case result := <-results:
-		require.NotNil(t, result.Error)
-		assert.Equal(t, testRegistrationTokenB, result.RegistrationToken)
-		assert.Equal(t, toolregistry.ToolErrorCodeStaleRegistration, result.Error.Code)
-		assert.Contains(t, result.Error.Message, testRegistrationTokenB)
+	case tokens := <-rejected:
+		assert.Equal(t, [3]string{
+			testRegistrationTokenA,
+			testRegistrationTokenB,
+			"tooluse_stale",
+		}, tokens)
 	case <-time.After(time.Second):
-		t.Fatal("provider did not complete stale queued call")
+		t.Fatal("provider did not ask registry to reject stale queued call")
 	}
+	assert.Empty(t, results)
 	select {
 	case got := <-acked:
 		assert.Same(t, event, got)
@@ -331,6 +407,7 @@ func TestServeShutdownPublishesThenAcknowledgesBeforeRelease(t *testing.T) {
 	resultPublished := make(chan struct{})
 	allowAck := make(chan struct{})
 	released := make(chan struct{})
+	drainDuration := make(chan time.Duration, 1)
 
 	var (
 		orderMu sync.Mutex
@@ -374,6 +451,16 @@ func TestServeShutdownPublishesThenAcknowledgesBeforeRelease(t *testing.T) {
 		return resultStream, nil
 	})
 	registration := successfulRegistration()
+	registration.Complete = func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
+		record("result")
+		close(resultPublished)
+		return nil
+	}
+	registration.Drain = func(_ context.Context, _, _, _, _ string, duration time.Duration) error {
+		drainDuration <- duration
+		record("drain")
+		return nil
+	}
 	registration.Release = func(context.Context, string, string, string, string) error {
 		record("release")
 		close(released)
@@ -392,7 +479,8 @@ func TestServeShutdownPublishesThenAcknowledgesBeforeRelease(t *testing.T) {
 	call := toolregistry.NewToolCallMessage(
 		testRegistrationTokenA,
 		"tooluse-shutdown",
-		toolregistry.DefaultResultStreamTTL,
+		time.Now().Add(toolregistry.MaxToolCallWait),
+		time.Now().Add(toolregistry.DefaultResultStreamTTL),
 		tools.Ident("toolset.tool"),
 		json.RawMessage(`{"x":1}`),
 		&toolregistry.ToolCallMeta{RunID: "r1", SessionID: "s1", ToolCallID: "call-1"},
@@ -413,16 +501,102 @@ func TestServeShutdownPublishesThenAcknowledgesBeforeRelease(t *testing.T) {
 	close(allowAck)
 	require.ErrorIs(t, <-errc, context.Canceled)
 	<-released
+	assert.Equal(t, time.Second+SettlementAuthorityMargin, <-drainDuration)
 
 	orderMu.Lock()
 	resultIndex := slices.Index(order, "result")
+	drainIndex := slices.Index(order, "drain")
 	closeIndex := slices.Index(order, "close")
 	ackIndex := slices.Index(order, "ack")
 	releaseIndex := slices.Index(order, "release")
 	assert.Less(t, resultIndex, ackIndex)
+	assert.Less(t, drainIndex, closeIndex)
 	assert.Less(t, closeIndex, releaseIndex)
 	assert.Less(t, ackIndex, releaseIndex)
 	orderMu.Unlock()
+}
+
+func TestServeDrainingLeaseProcessesAcceptedBufferedCalls(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan *streaming.Event)
+	drainStarted := make(chan struct{})
+	allowDrain := make(chan struct{})
+	handler := &blockingHandler{started: make(chan struct{}), unblock: make(chan struct{})}
+	completed := make(chan string, 2)
+	acked := make(chan string, 2)
+	released := make(chan struct{})
+	subscribed := make(chan struct{})
+
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetClose(func(context.Context) error { return nil })
+	sink.SetAck(func(_ context.Context, ev *streaming.Event) error {
+		acked <- ev.ID
+		return nil
+	})
+	toolsetStream := mockpulse.NewStream(t)
+	toolsetStream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		close(subscribed)
+		return sink, nil
+	})
+	resultStream := mockpulse.NewStream(t)
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(name string, _ ...streamopts.Stream) (pulse.Stream, error) {
+		if name == toolregistry.ToolsetStreamID("test.toolset") {
+			return toolsetStream, nil
+		}
+		return resultStream, nil
+	})
+	registration := successfulRegistration()
+	registration.Drain = func(context.Context, string, string, string, string, time.Duration) error {
+		close(drainStarted)
+		<-allowDrain
+		return nil
+	}
+	registration.Complete = func(
+		_ context.Context,
+		_, _, _, _, _ string,
+		result toolregistry.ToolResultMessage,
+	) error {
+		completed <- result.ToolUseID
+		return nil
+	}
+	registration.Release = func(context.Context, string, string, string, string) error {
+		close(released)
+		return nil
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(ctx, client, "test.toolset", handler, registration, Options{
+			ProviderID:             testProviderID,
+			Pong:                   func(context.Context, string, string, string) error { return nil },
+			MaxConcurrentToolCalls: 1,
+			ShutdownTimeout:        time.Second,
+		})
+	}()
+	<-subscribed
+
+	events <- testToolCallEvent(t, "drain-active")
+	<-handler.started
+	secondAccepted := make(chan struct{})
+	bufferedEvent := testToolCallEvent(t, "drain-buffered")
+	go func() {
+		events <- bufferedEvent
+		close(secondAccepted)
+	}()
+	<-secondAccepted
+	cancel()
+	<-drainStarted
+	close(allowDrain)
+	close(handler.unblock)
+
+	require.ErrorIs(t, <-errc, context.Canceled)
+	assert.ElementsMatch(t, []string{"drain-active", "drain-buffered"}, []string{<-completed, <-completed})
+	assert.ElementsMatch(t, []string{"drain-active", "drain-buffered"}, []string{<-acked, <-acked})
+	<-released
 }
 
 func TestServeAckFailureIsExplicitAndPreventsRelease(t *testing.T) {
@@ -468,7 +642,8 @@ func TestServeAckFailureIsExplicitAndPreventsRelease(t *testing.T) {
 	call := toolregistry.NewToolCallMessage(
 		testRegistrationTokenA,
 		"tooluse-ack-failure",
-		toolregistry.DefaultResultStreamTTL,
+		time.Now().Add(toolregistry.MaxToolCallWait),
+		time.Now().Add(toolregistry.DefaultResultStreamTTL),
 		tools.Ident("toolset.tool"),
 		json.RawMessage(`{"x":1}`),
 		&toolregistry.ToolCallMeta{RunID: "r1", SessionID: "s1", ToolCallID: "call-1"},
@@ -480,6 +655,76 @@ func TestServeAckFailureIsExplicitAndPreventsRelease(t *testing.T) {
 	err = <-errc
 	require.ErrorContains(t, err, "ack unavailable")
 	assert.False(t, released.Load())
+}
+
+func TestServeDrainFailureStillClosesAndJoinsConsumer(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan *streaming.Event, 2)
+	closed := make(chan struct{})
+	released := atomic.Bool{}
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetClose(func(context.Context) error {
+		close(closed)
+		return nil
+	})
+	sink.SetAck(func(context.Context, *streaming.Event) error {
+		return errors.New("ack unavailable")
+	})
+	requestStream := mockpulse.NewStream(t)
+	requestStream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	resultStream := mockpulse.NewStream(t)
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(name string, _ ...streamopts.Stream) (pulse.Stream, error) {
+		if name == toolregistry.ToolsetStreamID("test.toolset") {
+			return requestStream, nil
+		}
+		return resultStream, nil
+	})
+	handler := &recordingHandler{}
+	registration := successfulRegistration()
+	registration.Drain = func(context.Context, string, string, string, string, time.Duration) error {
+		return errors.New("drain unavailable")
+	}
+	registration.Release = func(context.Context, string, string, string, string) error {
+		released.Store(true)
+		return nil
+	}
+	registration.RetryInitialInterval = time.Millisecond
+	registration.RetryMaxInterval = time.Millisecond
+	registration.AttemptTimeout = 2 * time.Millisecond
+	registration.ReleaseTimeout = 10 * time.Millisecond
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(
+			context.Background(),
+			client,
+			"test.toolset",
+			handler,
+			registration,
+			Options{
+				ProviderID:      testProviderID,
+				Pong:            func(context.Context, string, string, string) error { return nil },
+				ShutdownTimeout: 100 * time.Millisecond,
+			},
+		)
+	}()
+	events <- testToolCallEvent(t, "drain-failure")
+
+	err := <-errc
+	require.ErrorContains(t, err, "ack unavailable")
+	require.ErrorContains(t, err, "drain unavailable")
+	<-closed
+	assert.Equal(t, int64(1), handler.calls.Load())
+	assert.False(t, released.Load())
+
+	events <- testToolCallEvent(t, "orphan-probe")
+	time.Sleep(20 * time.Millisecond)
+	assert.Equal(t, int64(1), handler.calls.Load())
 }
 
 func TestServeSinkCloseTimeoutPreventsRelease(t *testing.T) {
@@ -578,7 +823,10 @@ func TestServe_RespondsToPingWhenQueueIsFull(t *testing.T) {
 
 	errc := make(chan error, 1)
 	go func() {
-		errc <- Serve(ctx, client, toolset, h, successfulRegistration(), Options{
+		errc <- Serve(ctx, client, toolset, h, successfulRegistration(func(toolregistry.ToolResultMessage) error {
+			adds.Add(1)
+			return nil
+		}), Options{
 			ProviderID:             testProviderID,
 			MaxConcurrentToolCalls: 1,
 			MaxQueuedToolCalls:     0,
@@ -593,7 +841,8 @@ func TestServe_RespondsToPingWhenQueueIsFull(t *testing.T) {
 	call1 := toolregistry.NewToolCallMessage(
 		testRegistrationTokenA,
 		"tooluse_1",
-		toolregistry.DefaultResultStreamTTL,
+		time.Now().Add(toolregistry.MaxToolCallWait),
+		time.Now().Add(toolregistry.DefaultResultStreamTTL),
 		tools.Ident("toolset.tool"),
 		json.RawMessage(`{"x":1}`),
 		&toolregistry.ToolCallMeta{RunID: "r1", SessionID: "s1", ToolCallID: "call-1"},
@@ -615,7 +864,8 @@ func TestServe_RespondsToPingWhenQueueIsFull(t *testing.T) {
 	call2 := toolregistry.NewToolCallMessage(
 		testRegistrationTokenA,
 		"tooluse_2",
-		toolregistry.DefaultResultStreamTTL,
+		time.Now().Add(toolregistry.MaxToolCallWait),
+		time.Now().Add(toolregistry.DefaultResultStreamTTL),
 		tools.Ident("toolset.tool"),
 		json.RawMessage(`{"x":2}`),
 		&toolregistry.ToolCallMeta{RunID: "r1", SessionID: "s1", ToolCallID: "call-2"},
@@ -684,35 +934,33 @@ func TestServeMaxQueuedToolCallsBoundsTotalWaitingWork(t *testing.T) {
 	toolsetStream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
 		return sink, nil
 	})
-	resultStream := mockpulse.NewStream(t)
-	resultStream.SetAdd(func(_ context.Context, _ string, payload []byte) (string, error) {
-		published.Add(1)
-		var result toolregistry.ToolResultMessage
-		require.NoError(t, json.Unmarshal(payload, &result))
-		if result.Error != nil && result.Error.Code == toolregistry.ToolErrorCodeProviderOverloaded {
-			assert.Equal(
-				t,
-				toolregistry.ProviderOverloadRetryAfter.Milliseconds(),
-				result.Error.RetryAfterMillis,
-			)
-			overloaded.Add(1)
-		}
-		return pulseAddEventID, nil
-	})
 	client := mockpulse.NewClient(t)
-	client.SetStream(func(name string, opts ...streamopts.Stream) (pulse.Stream, error) {
+	client.SetStream(func(name string, _ ...streamopts.Stream) (pulse.Stream, error) {
 		if name == toolregistry.ToolsetStreamID("test.toolset") {
 			return toolsetStream, nil
 		}
-		retention := streamopts.ParseStreamOptions(opts...)
-		assert.Equal(t, toolregistry.DefaultResultStreamTTL, retention.TTL)
-		assert.True(t, retention.TTLSliding)
-		return resultStream, nil
+		t.Fatalf("provider opened unexpected result stream %q", name)
+		return nil, nil
 	})
 
+	registration := successfulRegistration(func(toolregistry.ToolResultMessage) error {
+		published.Add(1)
+		return nil
+	})
+	registration.ReportOverload = func(
+		_ context.Context,
+		_, _, _, providerToken, callToken, _ string,
+		_ string,
+	) error {
+		assert.Equal(t, testRegistrationTokenA, providerToken)
+		assert.Equal(t, testRegistrationTokenA, callToken)
+		published.Add(1)
+		overloaded.Add(1)
+		return nil
+	}
 	errc := make(chan error, 1)
 	go func() {
-		errc <- Serve(ctx, client, "test.toolset", handler, successfulRegistration(), Options{
+		errc <- Serve(ctx, client, "test.toolset", handler, registration, Options{
 			ProviderID: testProviderID,
 			Pong: func(context.Context, string, string, string) error {
 				ponged <- struct{}{}
@@ -742,6 +990,198 @@ func TestServeMaxQueuedToolCallsBoundsTotalWaitingWork(t *testing.T) {
 	assert.Equal(t, int64(3), published.Load())
 	assert.Equal(t, int64(1), overloaded.Load())
 	assert.Equal(t, int64(4), acked.Load())
+}
+
+func TestServeSettlesExpiredQueuedCallAndKeepsServing(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan *streaming.Event, 3)
+	acked := make(chan string, 3)
+	settled := make(chan string, 1)
+	completed := make(chan string, 2)
+	handler := &backlogHandler{
+		firstStarted: make(chan struct{}),
+		unblockFirst: make(chan struct{}),
+		handled:      make(chan string, 2),
+	}
+
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetClose(func(context.Context) error { return nil })
+	sink.SetAck(func(_ context.Context, event *streaming.Event) error {
+		acked <- event.ID
+		return nil
+	})
+	toolsetStream := mockpulse.NewStream(t)
+	toolsetStream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	resultStream := mockpulse.NewStream(t)
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(name string, _ ...streamopts.Stream) (pulse.Stream, error) {
+		if name == toolregistry.ToolsetStreamID("test.toolset") {
+			return toolsetStream, nil
+		}
+		assert.NotEqual(t, toolregistry.ResultStreamID("expired"), name)
+		return resultStream, nil
+	})
+
+	start := time.Now().Truncate(time.Millisecond)
+	registration := successfulRegistration(func(result toolregistry.ToolResultMessage) error {
+		completed <- result.ToolUseID
+		return nil
+	})
+	registration.Claim = func(
+		_ context.Context,
+		_, _, _, providerToken, callToken, toolUseID, _ string,
+	) (ClaimDisposition, error) {
+		assert.Equal(t, testRegistrationTokenA, providerToken)
+		assert.Equal(t, testRegistrationTokenA, callToken)
+		if toolUseID != "expired" {
+			return ClaimExecute, nil
+		}
+		settled <- toolUseID
+		return ClaimExpired, nil
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(
+			ctx,
+			client,
+			"test.toolset",
+			handler,
+			registration,
+			Options{
+				ProviderID:             testProviderID,
+				Pong:                   func(context.Context, string, string, string) error { return nil },
+				MaxConcurrentToolCalls: 1,
+				MaxQueuedToolCalls:     1,
+				ShutdownTimeout:        time.Second,
+			},
+		)
+	}()
+
+	events <- testToolCallEventAt(t, "first", start.Add(time.Hour))
+	<-handler.firstStarted
+	events <- testToolCallEventAt(t, "expired", start.Add(time.Minute))
+	close(handler.unblockFirst)
+
+	assert.Equal(t, "first", <-handler.handled)
+	assert.Equal(t, "first", <-completed)
+	assert.Equal(t, "expired", <-settled)
+	assert.ElementsMatch(t, []string{"first", "expired"}, []string{<-acked, <-acked})
+	assert.Equal(t, int64(1), handler.calls.Load())
+	select {
+	case err := <-errc:
+		t.Fatalf("provider stopped after expired queued call: %v", err)
+	default:
+	}
+
+	events <- testToolCallEventAt(t, "after-expiration", start.Add(time.Hour))
+	assert.Equal(t, "after-expiration", <-handler.handled)
+	assert.Equal(t, "after-expiration", <-completed)
+	assert.Equal(t, "after-expiration", <-acked)
+	assert.Equal(t, int64(2), handler.calls.Load())
+
+	cancel()
+	require.ErrorIs(t, <-errc, context.Canceled)
+}
+
+func TestServeUsesRegistryExpirationForDeliveredCall(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name            string
+		registryExpired bool
+	}{
+		{name: "Redis confirms expired", registryExpired: true},
+		{name: "provider clock is ahead"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			events := make(chan *streaming.Event, 1)
+			acked := make(chan string, 1)
+			settled := make(chan string, 1)
+			completed := make(chan string, 1)
+			sink := mockpulse.NewSink(t)
+			sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+			sink.SetClose(func(context.Context) error { return nil })
+			sink.SetAck(func(_ context.Context, event *streaming.Event) error {
+				acked <- event.ID
+				return nil
+			})
+			requestStream := mockpulse.NewStream(t)
+			requestStream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+				return sink, nil
+			})
+			resultStream := mockpulse.NewStream(t)
+			var resultStreamOpens atomic.Int64
+			client := mockpulse.NewClient(t)
+			client.SetStream(func(name string, _ ...streamopts.Stream) (pulse.Stream, error) {
+				if name == toolregistry.ToolsetStreamID("test.toolset") {
+					return requestStream, nil
+				}
+				resultStreamOpens.Add(1)
+				return resultStream, nil
+			})
+			handler := &recordingHandler{}
+			registration := successfulRegistration(func(result toolregistry.ToolResultMessage) error {
+				completed <- result.ToolUseID
+				return nil
+			})
+			registration.Claim = func(
+				_ context.Context,
+				_, _, _, providerToken, callToken, toolUseID, _ string,
+			) (ClaimDisposition, error) {
+				assert.Equal(t, testRegistrationTokenA, providerToken)
+				assert.Equal(t, testRegistrationTokenA, callToken)
+				settled <- toolUseID
+				if test.registryExpired {
+					return ClaimExpired, nil
+				}
+				return ClaimExecute, nil
+			}
+
+			localNow := time.Now().Truncate(time.Millisecond)
+			errc := make(chan error, 1)
+			go func() {
+				errc <- Serve(
+					ctx,
+					client,
+					"test.toolset",
+					handler,
+					registration,
+					Options{
+						ProviderID:      testProviderID,
+						Pong:            func(context.Context, string, string, string) error { return nil },
+						ShutdownTimeout: time.Second,
+					},
+				)
+			}()
+			events <- testToolCallEventAt(t, "delivered-expired-looking", localNow.Add(-time.Minute))
+
+			assert.Equal(t, "delivered-expired-looking", <-settled)
+			assert.Equal(t, "delivered-expired-looking", <-acked)
+			if test.registryExpired {
+				assert.Zero(t, handler.calls.Load())
+				assert.Zero(t, resultStreamOpens.Load())
+				select {
+				case toolUseID := <-completed:
+					t.Fatalf("expired call completed by handler: %s", toolUseID)
+				default:
+				}
+			} else {
+				assert.Equal(t, "delivered-expired-looking", <-completed)
+				assert.Equal(t, int64(1), handler.calls.Load())
+				assert.Zero(t, resultStreamOpens.Load())
+			}
+
+			cancel()
+			require.ErrorIs(t, <-errc, context.Canceled)
+		})
+	}
 }
 
 func TestServeDuplicateDeliveryPublishesAndAcknowledgesExactResult(t *testing.T) {
@@ -779,7 +1219,10 @@ func TestServeDuplicateDeliveryPublishesAndAcknowledgesExactResult(t *testing.T)
 	handler := &recordingHandler{}
 	errc := make(chan error, 1)
 	go func() {
-		errc <- Serve(ctx, client, "test.toolset", handler, successfulRegistration(), Options{
+		errc <- Serve(ctx, client, "test.toolset", handler, successfulRegistration(func(result toolregistry.ToolResultMessage) error {
+			results <- result
+			return nil
+		}), Options{
 			ProviderID: testProviderID,
 			Pong:       func(context.Context, string, string, string) error { return nil },
 		})
@@ -796,6 +1239,54 @@ func TestServeDuplicateDeliveryPublishesAndAcknowledgesExactResult(t *testing.T)
 	assert.Equal(t, int64(2), handler.calls.Load())
 	cancel()
 	require.ErrorIs(t, <-errc, context.Canceled)
+}
+
+func TestServeRejectsInvalidHandlerResultBeforePublication(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	events := make(chan *streaming.Event, 1)
+	var (
+		acked     atomic.Int64
+		published atomic.Int64
+	)
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetClose(func(context.Context) error { return nil })
+	sink.SetAck(func(context.Context, *streaming.Event) error {
+		acked.Add(1)
+		return nil
+	})
+	requestStream := mockpulse.NewStream(t)
+	requestStream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	resultStream := mockpulse.NewStream(t)
+	resultStream.SetAdd(func(context.Context, string, []byte) (string, error) {
+		published.Add(1)
+		return pulseAddEventID, nil
+	})
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(name string, _ ...streamopts.Stream) (pulse.Stream, error) {
+		if name == toolregistry.ToolsetStreamID("test.toolset") {
+			return requestStream, nil
+		}
+		return resultStream, nil
+	})
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(ctx, client, "test.toolset", &invalidResultHandler{}, successfulRegistration(), Options{
+			ProviderID: testProviderID,
+			Pong:       func(context.Context, string, string, string) error { return nil },
+		})
+	}()
+	events <- testToolCallEvent(t, "invalid-result")
+
+	err := <-errc
+	require.ErrorContains(t, err, "tool call handler returned invalid result")
+	assert.Zero(t, published.Load())
+	assert.Zero(t, acked.Load())
 }
 
 func TestServeReportsHandlerSettlementTimeoutAndWithholdsRelease(t *testing.T) {
@@ -840,10 +1331,15 @@ func TestServeReportsHandlerSettlementTimeoutAndWithholdsRelease(t *testing.T) {
 	events <- testToolCallEvent(t, "slow-handler")
 	<-handler.started
 	cancel()
+	select {
+	case err := <-errc:
+		t.Fatalf("Serve returned before the claimed call's worker joined: %v", err)
+	case <-time.After(40 * time.Millisecond):
+	}
+	close(handler.unblock)
 	err := <-errc
 	require.ErrorContains(t, err, "settle tool worker")
 	assert.False(t, released.Load())
-	close(handler.unblock)
 }
 
 func TestServe_DoesNotExitOnPongFailure(t *testing.T) {
@@ -894,7 +1390,10 @@ func TestServe_DoesNotExitOnPongFailure(t *testing.T) {
 
 	errc := make(chan error, 1)
 	go func() {
-		errc <- Serve(ctx, client, toolset, h, successfulRegistration(), Options{
+		errc <- Serve(ctx, client, toolset, h, successfulRegistration(func(toolregistry.ToolResultMessage) error {
+			adds.Add(1)
+			return nil
+		}), Options{
 			ProviderID:  testProviderID,
 			PongTimeout: 50 * time.Millisecond,
 			Pong: func(_ context.Context, providerID, _ string, pingID string) error {
@@ -944,7 +1443,8 @@ func TestServe_DoesNotExitOnPongFailure(t *testing.T) {
 	call := toolregistry.NewToolCallMessage(
 		testRegistrationTokenA,
 		"tooluse_1",
-		toolregistry.DefaultResultStreamTTL,
+		time.Now().Add(toolregistry.MaxToolCallWait),
+		time.Now().Add(toolregistry.DefaultResultStreamTTL),
 		tools.Ident("toolset.tool"),
 		json.RawMessage(`{"x":1}`),
 		&toolregistry.ToolCallMeta{RunID: "r1", SessionID: "s1", ToolCallID: "call-1"},
@@ -979,10 +1479,16 @@ func TestServe_DoesNotExitOnPongFailure(t *testing.T) {
 
 func testToolCallEvent(t *testing.T, toolUseID string) *streaming.Event {
 	t.Helper()
+	return testToolCallEventAt(t, toolUseID, time.Now().Add(toolregistry.DefaultResultStreamTTL))
+}
+
+func testToolCallEventAt(t *testing.T, toolUseID string, expiresAt time.Time) *streaming.Event {
+	t.Helper()
 	call := toolregistry.NewToolCallMessage(
 		testRegistrationTokenA,
 		toolUseID,
-		toolregistry.DefaultResultStreamTTL,
+		expiresAt.Add(-toolregistry.ResultStreamTransportBudget),
+		expiresAt,
 		tools.Ident("toolset.tool"),
 		json.RawMessage(`{"x":1}`),
 		&toolregistry.ToolCallMeta{RunID: "r1", SessionID: "s1", ToolCallID: "call-2"},
@@ -997,6 +1503,14 @@ type outputDeltaHandler struct {
 }
 
 func (h *outputDeltaHandler) HandleToolCall(ctx context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
+	toolUseID, ok := toolregistry.ToolUseIDFromContext(ctx)
+	if !ok || toolUseID != msg.ToolUseID {
+		select {
+		case h.errc <- errors.New("missing canonical tool use ID in context"):
+		default:
+		}
+		return toolregistry.NewToolResultMessage(msg.RegistrationToken, msg.ToolUseID, json.RawMessage(`{"ok":true}`)), nil
+	}
 	pub, ok := toolregistry.OutputDeltaPublisherFromContext(ctx)
 	if !ok {
 		select {
@@ -1039,31 +1553,50 @@ func TestServe_PublishesOutputDeltaToResultStream(t *testing.T) {
 		name    string
 		payload []byte
 	}, 8)
-	resultStream := mockpulse.NewStream(t)
-	resultStream.SetAdd(func(_ context.Context, event string, payload []byte) (string, error) {
-		addEvents <- struct {
-			name    string
-			payload []byte
-		}{name: event, payload: payload}
-		return pulseAddEventID, nil
-	})
-
 	client := mockpulse.NewClient(t)
 	client.SetStream(func(name string, _ ...streamopts.Stream) (pulse.Stream, error) {
-		switch name {
-		case toolsetStreamID:
+		if name == toolsetStreamID {
 			return toolsetStream, nil
-		default:
-			return resultStream, nil
 		}
+		t.Fatalf("provider opened unexpected result stream %q", name)
+		return nil, nil
 	})
 
 	handlerErrs := make(chan error, 1)
 	h := &outputDeltaHandler{errc: handlerErrs}
+	registration := successfulRegistration(func(result toolregistry.ToolResultMessage) error {
+		payload, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		addEvents <- struct {
+			name    string
+			payload []byte
+		}{name: toolregistry.ResultEventKey, payload: payload}
+		return nil
+	})
+	registration.PublishOutputDelta = func(
+		_ context.Context,
+		_, _, _, providerToken, callToken, toolUseID, requestEventID, stream, delta string,
+	) error {
+		assert.Equal(t, testRegistrationTokenA, providerToken)
+		assert.Equal(t, testRegistrationTokenA, callToken)
+		assert.Equal(t, "tooluse_1", toolUseID)
+		assert.Equal(t, "1-0", requestEventID)
+		payload, err := json.Marshal(toolregistry.NewToolOutputDeltaMessage(callToken, toolUseID, stream, delta))
+		if err != nil {
+			return err
+		}
+		addEvents <- struct {
+			name    string
+			payload []byte
+		}{name: toolregistry.OutputDeltaEventKey, payload: payload}
+		return nil
+	}
 
 	errc := make(chan error, 1)
 	go func() {
-		errc <- Serve(ctx, client, toolset, h, successfulRegistration(), Options{
+		errc <- Serve(ctx, client, toolset, h, registration, Options{
 			ProviderID: testProviderID,
 			Pong:       func(_ context.Context, _, _, _ string) error { return nil },
 		})
@@ -1072,7 +1605,8 @@ func TestServe_PublishesOutputDeltaToResultStream(t *testing.T) {
 	call := toolregistry.NewToolCallMessage(
 		testRegistrationTokenA,
 		"tooluse_1",
-		toolregistry.DefaultResultStreamTTL,
+		time.Now().Add(toolregistry.MaxToolCallWait),
+		time.Now().Add(toolregistry.DefaultResultStreamTTL),
 		tools.Ident("toolset.tool"),
 		json.RawMessage(`{"x":1}`),
 		&toolregistry.ToolCallMeta{RunID: "r1", SessionID: "s1", ToolCallID: "call-1"},

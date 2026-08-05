@@ -22,13 +22,13 @@ import (
 //	command (subcommand1|subcommand2|...)
 func UsageCommands() []string {
 	return []string{
-		"registry (register|release-provider|unregister|pong|list-toolsets|get-toolset|search|call-tool)",
+		"registry (register|release-provider|drain-provider|unregister|pong|list-toolsets|get-toolset|search|call-tool|retry-tool|complete-tool-call|publish-tool-output-delta|report-tool-call-overload|claim-tool-call)",
 	}
 }
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "registry register --message '{\n      \"admission_revision\": \"2026-07-23.4+441534ae50f6\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\"\n   }'" + "\n" +
+	return os.Args[0] + " " + "registry register --message '{\n      \"admission_revision\": \"2026-07-23.4+441534ae50f6\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 7\n   }'" + "\n" +
 		""
 }
 
@@ -47,6 +47,9 @@ func ParseEndpoint(
 		registryReleaseProviderFlags       = flag.NewFlagSet("release-provider", flag.ExitOnError)
 		registryReleaseProviderMessageFlag = registryReleaseProviderFlags.String("message", "", "")
 
+		registryDrainProviderFlags       = flag.NewFlagSet("drain-provider", flag.ExitOnError)
+		registryDrainProviderMessageFlag = registryDrainProviderFlags.String("message", "", "")
+
 		registryUnregisterFlags       = flag.NewFlagSet("unregister", flag.ExitOnError)
 		registryUnregisterMessageFlag = registryUnregisterFlags.String("message", "", "")
 
@@ -64,16 +67,37 @@ func ParseEndpoint(
 
 		registryCallToolFlags       = flag.NewFlagSet("call-tool", flag.ExitOnError)
 		registryCallToolMessageFlag = registryCallToolFlags.String("message", "", "")
+
+		registryRetryToolFlags       = flag.NewFlagSet("retry-tool", flag.ExitOnError)
+		registryRetryToolMessageFlag = registryRetryToolFlags.String("message", "", "")
+
+		registryCompleteToolCallFlags       = flag.NewFlagSet("complete-tool-call", flag.ExitOnError)
+		registryCompleteToolCallMessageFlag = registryCompleteToolCallFlags.String("message", "", "")
+
+		registryPublishToolOutputDeltaFlags       = flag.NewFlagSet("publish-tool-output-delta", flag.ExitOnError)
+		registryPublishToolOutputDeltaMessageFlag = registryPublishToolOutputDeltaFlags.String("message", "", "")
+
+		registryReportToolCallOverloadFlags       = flag.NewFlagSet("report-tool-call-overload", flag.ExitOnError)
+		registryReportToolCallOverloadMessageFlag = registryReportToolCallOverloadFlags.String("message", "", "")
+
+		registryClaimToolCallFlags       = flag.NewFlagSet("claim-tool-call", flag.ExitOnError)
+		registryClaimToolCallMessageFlag = registryClaimToolCallFlags.String("message", "", "")
 	)
 	registryFlags.Usage = registryUsage
 	registryRegisterFlags.Usage = registryRegisterUsage
 	registryReleaseProviderFlags.Usage = registryReleaseProviderUsage
+	registryDrainProviderFlags.Usage = registryDrainProviderUsage
 	registryUnregisterFlags.Usage = registryUnregisterUsage
 	registryPongFlags.Usage = registryPongUsage
 	registryListToolsetsFlags.Usage = registryListToolsetsUsage
 	registryGetToolsetFlags.Usage = registryGetToolsetUsage
 	registrySearchFlags.Usage = registrySearchUsage
 	registryCallToolFlags.Usage = registryCallToolUsage
+	registryRetryToolFlags.Usage = registryRetryToolUsage
+	registryCompleteToolCallFlags.Usage = registryCompleteToolCallUsage
+	registryPublishToolOutputDeltaFlags.Usage = registryPublishToolOutputDeltaUsage
+	registryReportToolCallOverloadFlags.Usage = registryReportToolCallOverloadUsage
+	registryClaimToolCallFlags.Usage = registryClaimToolCallUsage
 
 	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
 		return nil, nil, err
@@ -115,6 +139,9 @@ func ParseEndpoint(
 			case "release-provider":
 				epf = registryReleaseProviderFlags
 
+			case "drain-provider":
+				epf = registryDrainProviderFlags
+
 			case "unregister":
 				epf = registryUnregisterFlags
 
@@ -132,6 +159,21 @@ func ParseEndpoint(
 
 			case "call-tool":
 				epf = registryCallToolFlags
+
+			case "retry-tool":
+				epf = registryRetryToolFlags
+
+			case "complete-tool-call":
+				epf = registryCompleteToolCallFlags
+
+			case "publish-tool-output-delta":
+				epf = registryPublishToolOutputDeltaFlags
+
+			case "report-tool-call-overload":
+				epf = registryReportToolCallOverloadFlags
+
+			case "claim-tool-call":
+				epf = registryClaimToolCallFlags
 
 			}
 
@@ -164,6 +206,9 @@ func ParseEndpoint(
 			case "release-provider":
 				endpoint = c.ReleaseProvider()
 				data, err = registryc.BuildReleaseProviderPayload(*registryReleaseProviderMessageFlag)
+			case "drain-provider":
+				endpoint = c.DrainProvider()
+				data, err = registryc.BuildDrainProviderPayload(*registryDrainProviderMessageFlag)
 			case "unregister":
 				endpoint = c.Unregister()
 				data, err = registryc.BuildUnregisterPayload(*registryUnregisterMessageFlag)
@@ -182,6 +227,21 @@ func ParseEndpoint(
 			case "call-tool":
 				endpoint = c.CallTool()
 				data, err = registryc.BuildCallToolPayload(*registryCallToolMessageFlag)
+			case "retry-tool":
+				endpoint = c.RetryTool()
+				data, err = registryc.BuildRetryToolPayload(*registryRetryToolMessageFlag)
+			case "complete-tool-call":
+				endpoint = c.CompleteToolCall()
+				data, err = registryc.BuildCompleteToolCallPayload(*registryCompleteToolCallMessageFlag)
+			case "publish-tool-output-delta":
+				endpoint = c.PublishToolOutputDelta()
+				data, err = registryc.BuildPublishToolOutputDeltaPayload(*registryPublishToolOutputDeltaMessageFlag)
+			case "report-tool-call-overload":
+				endpoint = c.ReportToolCallOverload()
+				data, err = registryc.BuildReportToolCallOverloadPayload(*registryReportToolCallOverloadMessageFlag)
+			case "claim-tool-call":
+				endpoint = c.ClaimToolCall()
+				data, err = registryc.BuildClaimToolCallPayload(*registryClaimToolCallMessageFlag)
 			}
 		}
 	}
@@ -197,14 +257,20 @@ func registryUsage() {
 	fmt.Fprintln(os.Stderr, `The registry owns serialized toolset admission generations, provider leases and health, discovery, and routed invocation over Pulse streams. Providers renew leases for the one active schema and admission revision; consumers discover and invoke only healthy admitted providers.`)
 	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] registry COMMAND [flags]\n\n", os.Args[0])
 	fmt.Fprintln(os.Stderr, "COMMAND:")
-	fmt.Fprintln(os.Stderr, `    register: Atomically admit or renew one provider-incarnation lease in the catalog admission record. The same schema and admission revision add or renew replicas under one token. A different token replaces the admission after Redis-time pruning proves every old lease expired and atomically tombstones the prior token; otherwise admission_blocked asks the provider to retry. Any candidate in the permanent retired-token set returns admission_retired and cannot resurrect.`)
+	fmt.Fprintln(os.Stderr, `    register: Reject providers whose required runtime-owned wire protocol version differs from the registry, then atomically admit or renew one provider-incarnation lease in the catalog admission record. The same wire version, schema, and admission revision add or renew replicas under one token. A different token replaces the admission after Redis-time pruning proves every old lease expired and atomically tombstones the prior token; otherwise admission_blocked asks the provider to retry. Any candidate in the permanent retired-token set returns admission_retired and cannot resurrect.`)
 	fmt.Fprintln(os.Stderr, `    release-provider: Release one exact provider-incarnation lease from the admission token after that Serve lifecycle has stopped claiming work and settled in-flight calls. Missing incarnations and stale tokens succeed without mutation; infrastructure failures are retryable.`)
+	fmt.Fprintln(os.Stderr, `    drain-provider: Atomically mark one exact provider-incarnation lease non-routable before its Serve lifecycle closes the shared request sink. The provider supplies its configured settlement duration; Redis time extends the draining lease through that full lifecycle so already-claimed work can publish terminal results, while new calls route only when another non-draining provider remains.`)
 	fmt.Fprintln(os.Stderr, `    unregister: Intentionally retire the exact active admission while preserving its provider leases until graceful release or expiry and atomically adding its token to the permanent retired-token set. Repeating the same-token retirement succeeds; a stale token returns admission_conflict. Retirement removes the toolset from discovery and routing and permanently prevents that exact token from registering again.`)
 	fmt.Fprintln(os.Stderr, `    pong: Atomically record shared consumer-group liveness for a token-and-membership-epoch health ping. The responding provider incarnation must hold an unexpired lease in that same catalog record.`)
 	fmt.Fprintln(os.Stderr, `    list-toolsets: List all registered toolsets with optional tag filtering`)
 	fmt.Fprintln(os.Stderr, `    get-toolset: Get a specific toolset by name including all tool schemas`)
 	fmt.Fprintln(os.Stderr, `    search: Search toolsets by keyword matching name, description, or tags`)
-	fmt.Fprintln(os.Stderr, `    call-tool: Admit or attach to one run-scoped tool call. The registry atomically owns publication by tool_use_id and registration token, retries provider overload with bounded backoff, preserves immutable sliding-TTL result history, and returns the exact identity, admission token, and retention used by independent replay readers.`)
+	fmt.Fprintln(os.Stderr, `    call-tool: Reject consumers whose required runtime-owned wire protocol version differs from the registry, then admit or attach to one run-scoped tool call. The registry atomically owns initial publication and terminal completion by tool_use_id: the call record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed.`)
+	fmt.Fprintln(os.Stderr, `    retry-tool: Republish one previously admitted call after provider overload recorded in the authoritative call record. The runtime supplies the exact original registration token; the registry rejects a changed active admission before publishing and never rebinds claimed execution to a replacement provider.`)
+	fmt.Fprintln(os.Stderr, `    complete-tool-call: Publish one canonical terminal result for an admitted call. The registry verifies the exact provider incarnation still owns an unexpired lease and claimed request event, then atomically stores the full terminal in the authoritative call record and appends it to bounded result history. If that exact dispatch lease disappears first, registry-owned settlement commits outcome_unknown because the effect may have occurred; execution ownership never transfers.`)
+	fmt.Fprintln(os.Stderr, `    publish-tool-output-delta: Publish one best-effort output fragment for a claimed live call. The registry verifies the exact provider lease and request-event claim, then atomically appends the delta only while the authoritative call record remains nonterminal.`)
+	fmt.Fprintln(os.Stderr, `    report-tool-call-overload: Report that an exact provider claim could not enter its bounded worker queue. The registry verifies the provider lease and request-event claim, then atomically appends retry control only while the authoritative call record remains nonterminal.`)
+	fmt.Fprintln(os.Stderr, `    claim-tool-call: Atomically settle one queued request before handler dispatch. The registry authenticates the exact provider lease and request event; only an active non-draining lease may gain immutable execution ownership. Existing owners, retained terminal history, and Redis-owned expiration settle without execution, while stale, draining, or retired unclaimed work receives the canonical stale-generation terminal. Only the exact granted provider incarnation and request event may publish deltas or complete the call; ownership never transfers after a crash.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s registry COMMAND --help\n", os.Args[0])
@@ -217,14 +283,14 @@ func registryRegisterUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Atomically admit or renew one provider-incarnation lease in the catalog admission record. The same schema and admission revision add or renew replicas under one token. A different token replaces the admission after Redis-time pruning proves every old lease expired and atomically tombstones the prior token; otherwise admission_blocked asks the provider to retry. Any candidate in the permanent retired-token set returns admission_retired and cannot resurrect.`)
+	fmt.Fprintln(os.Stderr, `Reject providers whose required runtime-owned wire protocol version differs from the registry, then atomically admit or renew one provider-incarnation lease in the catalog admission record. The same wire version, schema, and admission revision add or renew replicas under one token. A different token replaces the admission after Redis-time pruning proves every old lease expired and atomically tombstones the prior token; otherwise admission_blocked asks the provider to retry. Any candidate in the permanent retired-token set returns admission_retired and cannot resurrect.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -message JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry register --message '{\n      \"admission_revision\": \"2026-07-23.4+441534ae50f6\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry register --message '{\n      \"admission_revision\": \"2026-07-23.4+441534ae50f6\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 7\n   }'")
 }
 
 func registryReleaseProviderUsage() {
@@ -243,6 +309,24 @@ func registryReleaseProviderUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry release-provider --message '{\n      \"expected_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\"\n   }'")
+}
+
+func registryDrainProviderUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] registry drain-provider", os.Args[0])
+	fmt.Fprint(os.Stderr, " -message JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Atomically mark one exact provider-incarnation lease non-routable before its Serve lifecycle closes the shared request sink. The provider supplies its configured settlement duration; Redis time extends the draining lease through that full lifecycle so already-claimed work can publish terminal results, while new calls route only when another non-draining provider remains.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -message JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry drain-provider --message '{\n      \"expected_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"settlement_duration_ms\": 30000\n   }'")
 }
 
 func registryUnregisterUsage() {
@@ -343,12 +427,102 @@ func registryCallToolUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Admit or attach to one run-scoped tool call. The registry atomically owns publication by tool_use_id and registration token, retries provider overload with bounded backoff, preserves immutable sliding-TTL result history, and returns the exact identity, admission token, and retention used by independent replay readers.`)
+	fmt.Fprintln(os.Stderr, `Reject consumers whose required runtime-owned wire protocol version differs from the registry, then admit or attach to one run-scoped tool call. The registry atomically owns initial publication and terminal completion by tool_use_id: the call record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -message JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry call-tool --message '{\n      \"meta\": {\n         \"parent_tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX19Z\",\n         \"run_id\": \"run_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"session_id\": \"sess_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"turn_id\": \"turn_0001\"\n      },\n      \"payload_json\": \"eyJxdWVyeSI6ImNvbXByZXNzb3JfMSBrZXkgZXZlbnRzIn0=\",\n      \"tool\": \"atlas.read.get_time_series\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry call-tool --message '{\n      \"meta\": {\n         \"parent_tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX19Z\",\n         \"run_id\": \"run_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"session_id\": \"sess_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"turn_id\": \"turn_0001\"\n      },\n      \"payload_json\": \"eyJxdWVyeSI6ImNvbXByZXNzb3JfMSBrZXkgZXZlbnRzIn0=\",\n      \"tool\": \"atlas.read.get_time_series\",\n      \"toolset\": \"atlas_data.atlas.read\",\n      \"wire_protocol_version\": 7\n   }'")
+}
+
+func registryRetryToolUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] registry retry-tool", os.Args[0])
+	fmt.Fprint(os.Stderr, " -message JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Republish one previously admitted call after provider overload recorded in the authoritative call record. The runtime supplies the exact original registration token; the registry rejects a changed active admission before publishing and never rebinds claimed execution to a replacement provider.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -message JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry retry-tool --message '{\n      \"expected_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"meta\": {\n         \"parent_tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX19Z\",\n         \"run_id\": \"run_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"session_id\": \"sess_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"turn_id\": \"turn_0001\"\n      },\n      \"payload_json\": \"eyJxdWVyeSI6ImNvbXByZXNzb3JfMSBrZXkgZXZlbnRzIn0=\",\n      \"tool\": \"atlas.read.get_time_series\",\n      \"toolset\": \"atlas_data.atlas.read\",\n      \"wire_protocol_version\": 7\n   }'")
+}
+
+func registryCompleteToolCallUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] registry complete-tool-call", os.Args[0])
+	fmt.Fprint(os.Stderr, " -message JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Publish one canonical terminal result for an admitted call. The registry verifies the exact provider incarnation still owns an unexpired lease and claimed request event, then atomically stores the full terminal in the authoritative call record and appends it to bounded result history. If that exact dispatch lease disappears first, registry-owned settlement commits outcome_unknown because the effect may have occurred; execution ownership never transfers.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -message JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry complete-tool-call --message '{\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"provider_registration_token\": \"7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82\",\n      \"registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"result_json\": \"eyJyZWdpc3RyYXRpb25fdG9rZW4iOiIyNzBhNjU5ZDM4ZmYzMzE0MDEyODBhZDdiMGM4ZmRiYTY3M2ZkMDJlNzExNGI4NTZhMmYxMmUxYzQ5ZWVjMzRjIiwidG9vbF91c2VfaWQiOiI1YzFkOTFlN2VhNmExYWExYmIzYzM5NWUwYTdlMDk5MDFhODVkZjY2ZmIwNjRhNjc5ZDZmMGZmMGQxMmE1MTZlIiwicmVzdWx0X2pzb24iOnsib2siOnRydWV9fQ==\",\n      \"tool_use_id\": \"5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
+}
+
+func registryPublishToolOutputDeltaUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] registry publish-tool-output-delta", os.Args[0])
+	fmt.Fprint(os.Stderr, " -message JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Publish one best-effort output fragment for a claimed live call. The registry verifies the exact provider lease and request-event claim, then atomically appends the delta only while the authoritative call record remains nonterminal.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -message JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry publish-tool-output-delta --message '{\n      \"call_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"delta\": \"processed 10 rows\\n\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"provider_registration_token\": \"7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"stream\": \"stdout\",\n      \"tool_use_id\": \"5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
+}
+
+func registryReportToolCallOverloadUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] registry report-tool-call-overload", os.Args[0])
+	fmt.Fprint(os.Stderr, " -message JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Report that an exact provider claim could not enter its bounded worker queue. The registry verifies the provider lease and request-event claim, then atomically appends retry control only while the authoritative call record remains nonterminal.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -message JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry report-tool-call-overload --message '{\n      \"call_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"provider_registration_token\": \"7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"tool_use_id\": \"5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
+}
+
+func registryClaimToolCallUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] registry claim-tool-call", os.Args[0])
+	fmt.Fprint(os.Stderr, " -message JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Atomically settle one queued request before handler dispatch. The registry authenticates the exact provider lease and request event; only an active non-draining lease may gain immutable execution ownership. Existing owners, retained terminal history, and Redis-owned expiration settle without execution, while stale, draining, or retired unclaimed work receives the canonical stale-generation terminal. Only the exact granted provider incarnation and request event may publish deltas or complete the call; ownership never transfers after a crash.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -message JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry claim-tool-call --message '{\n      \"call_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"provider_registration_token\": \"7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"tool_use_id\": \"5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
 }

@@ -55,12 +55,13 @@ type (
 	// It manages all components required for multi-node operation including
 	// Pulse streams, replicated maps, and lease-scheduled health pings.
 	Registry struct {
-		service       *Service
-		pulseClient   clientspulse.Client
-		registryMap   *rmap.Map
-		healthTracker HealthTracker
-		streamManager StreamManager
-		redis         *redis.Client
+		service        *Service
+		pulseClient    clientspulse.Client
+		registryMap    *rmap.Map
+		healthTracker  HealthTracker
+		callSettlement *callSettlementTracker
+		streamManager  StreamManager
+		redis          *redis.Client
 	}
 
 	// Config configures the registry service.
@@ -87,9 +88,13 @@ type (
 		// before marking a toolset as unhealthy.
 		// Defaults to 3 if not provided.
 		MissedPingThreshold int
-		// ResultStreamTTL is the singular sliding TTL for per-call result streams.
-		// Zero uses toolregistry.DefaultResultStreamTTL.
+		// ResultStreamTTL selects the retention used to compute each call
+		// record's Redis-owned absolute expiration. Zero uses
+		// toolregistry.DefaultResultStreamTTL.
 		ResultStreamTTL time.Duration
+		// ExecutionTimeout selects how long newly admitted tool execution may
+		// run. Zero uses toolregistry.MaxToolCallWait.
+		ExecutionTimeout time.Duration
 		// ProviderLeaseDuration is how long identical registration admits one
 		// provider instance without renewal. Provider Serve derives its renewal
 		// schedule from this duration; the default is two minutes.
@@ -113,6 +118,15 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 			"result stream TTL must be between %s and %s",
 			toolregistry.MinResultStreamTTL,
 			toolregistry.MaxResultStreamTTL,
+		)
+	}
+	if cfg.ExecutionTimeout != 0 &&
+		(cfg.ExecutionTimeout < time.Millisecond ||
+			cfg.ExecutionTimeout > toolregistry.MaxToolCallWait) {
+		return nil, fmt.Errorf(
+			"tool execution timeout must be between %s and %s",
+			time.Millisecond,
+			toolregistry.MaxToolCallWait,
 		)
 	}
 	if cfg.ProviderLeaseDuration != 0 &&
@@ -176,29 +190,35 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		return nil, fmt.Errorf("create health tracker: %w", err)
 	}
 
+	callAdmissions := newCallAdmissionStore(cfg.Redis, name)
+	callSettlement := newCallSettlementTracker(ctx, callAdmissions, cfg.Logger)
+
 	// Create the service.
 	service, err := newService(serviceOptions{
 		catalog:               catalog,
 		StreamManager:         streamManager,
 		HealthTracker:         healthTracker,
-		CallAdmissions:        newCallAdmissionStore(cfg.Redis, name),
+		CallAdmissions:        callAdmissions,
 		PulseClient:           pulseClient,
+		ExecutionTimeout:      cfg.ExecutionTimeout,
 		ResultStreamTTL:       cfg.ResultStreamTTL,
 		ProviderLeaseDuration: cfg.ProviderLeaseDuration,
 	})
 	if err != nil {
+		callSettlement.Close()
 		htCloseErr := healthTracker.Close()
 		registryMap.Close()
 		return nil, errors.Join(fmt.Errorf("create service: %w", err), htCloseErr)
 	}
 
 	return &Registry{
-		service:       service,
-		pulseClient:   pulseClient,
-		registryMap:   registryMap,
-		healthTracker: healthTracker,
-		streamManager: streamManager,
-		redis:         cfg.Redis,
+		service:        service,
+		pulseClient:    pulseClient,
+		registryMap:    registryMap,
+		healthTracker:  healthTracker,
+		callSettlement: callSettlement,
+		streamManager:  streamManager,
+		redis:          cfg.Redis,
 	}, nil
 }
 
@@ -216,6 +236,10 @@ func (r *Registry) Service() *Service {
 // This method does not close the Redis client passed in Config.
 func (r *Registry) Close(ctx context.Context) error {
 	var errs []error
+
+	if r.callSettlement != nil {
+		r.callSettlement.Close()
+	}
 
 	// Stop the ping scheduler via health tracker.
 	if r.healthTracker != nil {

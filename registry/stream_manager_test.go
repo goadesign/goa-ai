@@ -3,6 +3,7 @@ package registry
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
@@ -32,9 +33,10 @@ func TestToolCallMessageStructure(t *testing.T) {
 
 			// Create the message
 			msg := toolregistry.NewToolCallMessage(
-				"registration-a",
+				"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				toolUseID,
-				toolregistry.DefaultResultStreamTTL,
+				time.Now().Add(toolregistry.MaxToolCallWait),
+				time.Now().Add(toolregistry.DefaultResultStreamTTL),
 				tools.Ident(tool),
 				payload,
 				nil,
@@ -117,9 +119,10 @@ func TestToolCallMessageStructure(t *testing.T) {
 
 			// Create and serialize the message
 			msg := toolregistry.NewToolCallMessage(
-				"registration-a",
+				"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				toolUseID,
-				toolregistry.DefaultResultStreamTTL,
+				time.Now().Add(toolregistry.MaxToolCallWait),
+				time.Now().Add(toolregistry.DefaultResultStreamTTL),
 				tools.Ident(tool),
 				payload,
 				nil,
@@ -139,7 +142,7 @@ func TestToolCallMessageStructure(t *testing.T) {
 			if decoded["type"] != string(toolregistry.MessageTypeCall) {
 				return false
 			}
-			if decoded["registration_token"] != "registration-a" {
+			if decoded["registration_token"] != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 				return false
 			}
 			if decoded["tool_use_id"] != toolUseID {

@@ -54,7 +54,9 @@ func TestCatalogSameTokenAddRenewReleaseRolling(t *testing.T) {
 
 	assert.Equal(t, first.RegistrationToken, second.RegistrationToken)
 	assert.Equal(t, first.RegisteredAt, renewed.RegisteredAt)
-	assert.Equal(t, now.Add(80*time.Second).UnixNano(), renewed.ProviderLeases[providerLeaseKey("provider-a", testIncarnationA)])
+	assert.Equal(t, providerLease{
+		ExpiresAtUnixMilli: now.Add(80 * time.Second).UnixMilli(),
+	}, renewed.ProviderLeases[providerLeaseKey("provider-a", testIncarnationA)])
 	assert.Contains(t, renewed.ProviderLeases, providerLeaseKey("provider-b", testIncarnationB))
 
 	require.NoError(t, catalog.ReleaseProvider(ctx, "test.toolset", "provider-a", testIncarnationA, first.RegistrationToken))
@@ -67,6 +69,146 @@ func TestCatalogSameTokenAddRenewReleaseRolling(t *testing.T) {
 	entry, err = catalog.ActiveRegistration(ctx, "test.toolset")
 	require.NoError(t, err)
 	assert.Contains(t, entry.ProviderLeases, providerLeaseKey("provider-b", testIncarnationB))
+}
+
+func TestCatalogDrainFencesRoutingButPreservesSettlementLease(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	clock := newTestTimeSource(now)
+	catalog := newToolsetCatalog(newTestCatalogMap(), clock)
+	admission, err := catalog.Register(
+		ctx,
+		testCatalogToolset("test.toolset", "test", nil),
+		testAdmissionRevisionA,
+		"provider",
+		testIncarnationA,
+		time.Minute,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, catalog.DrainProvider(
+		ctx,
+		"test.toolset",
+		"provider",
+		testIncarnationA,
+		admission.RegistrationToken,
+		time.Minute,
+	))
+	entry, _, err := catalog.healthEntry(ctx, "test.toolset")
+	require.NoError(t, err)
+	assert.Zero(t, routableProviderCount(entry, now))
+	assert.Equal(t, admission.HealthEpoch+1, entry.HealthEpoch)
+	lease := entry.ProviderLeases[providerLeaseKey("provider", testIncarnationA)]
+	assert.True(t, lease.Draining)
+	assert.Equal(t, now.Add(time.Minute).UnixMilli(), lease.ExpiresAtUnixMilli)
+	active, _, err := catalog.ActiveProviderLease(
+		ctx,
+		"test.toolset",
+		"provider",
+		testIncarnationA,
+		admission.RegistrationToken,
+	)
+	require.NoError(t, err)
+	assert.True(t, active, "draining lease remains valid for terminal settlement")
+	_, _, err = catalog.HealthIdentity(ctx, "test.toolset")
+	require.ErrorIs(t, err, errToolsetNotFound)
+	require.NoError(t, catalog.ReleaseProvider(
+		ctx,
+		"test.toolset",
+		"provider",
+		testIncarnationA,
+		admission.RegistrationToken,
+	))
+	released, _, err := catalog.healthEntry(ctx, "test.toolset")
+	require.NoError(t, err)
+	assert.Equal(t, entry.HealthEpoch, released.HealthEpoch)
+}
+
+func TestCatalogReleasePrunesExpiredRoutableEpochOnce(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	clock := newTestTimeSource(now)
+	catalog := newToolsetCatalog(newTestCatalogMap(), clock)
+	admission, err := catalog.Register(
+		ctx,
+		testCatalogToolset("test.toolset", "test", nil),
+		testAdmissionRevisionA,
+		"provider",
+		testIncarnationA,
+		time.Minute,
+	)
+	require.NoError(t, err)
+
+	clock.Set(now.Add(time.Minute))
+	require.NoError(t, catalog.ReleaseProvider(
+		ctx,
+		"test.toolset",
+		"provider",
+		testIncarnationA,
+		admission.RegistrationToken,
+	))
+	entry, _, err := catalog.healthEntry(ctx, "test.toolset")
+	require.NoError(t, err)
+	assert.Equal(t, admission.HealthEpoch+1, entry.HealthEpoch)
+	require.NoError(t, catalog.ReleaseProvider(
+		ctx,
+		"test.toolset",
+		"provider",
+		testIncarnationA,
+		admission.RegistrationToken,
+	))
+	unchanged, _, err := catalog.healthEntry(ctx, "test.toolset")
+	require.NoError(t, err)
+	assert.Equal(t, entry.HealthEpoch, unchanged.HealthEpoch)
+}
+
+func TestAdmissionTokenBindsWireProtocolVersion(t *testing.T) {
+	t.Parallel()
+
+	fingerprint, err := toolsetSchemaFingerprint(testCatalogToolset("test.toolset", "test", nil))
+	require.NoError(t, err)
+	current, err := admissionRegistrationToken(
+		fingerprint,
+		testAdmissionRevisionA,
+		toolregistry.WireProtocolVersion,
+	)
+	require.NoError(t, err)
+	other, err := admissionRegistrationToken(
+		fingerprint,
+		testAdmissionRevisionA,
+		toolregistry.WireProtocolVersion+1,
+	)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, current, other)
+}
+
+func TestCatalogRejectsPersistedMismatchedWireProtocol(t *testing.T) {
+	t.Parallel()
+
+	entry, err := newToolsetCatalog(
+		newTestCatalogMap(),
+		newTestTimeSource(time.Unix(1_700_000_000, 0)),
+	).Register(
+		context.Background(),
+		testCatalogToolset("test.toolset", "test", nil),
+		testAdmissionRevisionA,
+		"provider",
+		testIncarnationA,
+		time.Minute,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, toolregistry.WireProtocolVersion, entry.WireProtocolVersion)
+
+	entry.WireProtocolVersion++
+	body, err := marshalCatalogEntry(entry)
+	require.NoError(t, err)
+	_, err = parseCatalogEntry("test.toolset", body)
+	require.ErrorContains(t, err, "invalid wire protocol version")
 }
 
 func TestCatalogDelayedOldIncarnationReleaseCannotDeleteReplacement(t *testing.T) {
@@ -135,8 +277,10 @@ func TestCatalogDifferentAdmissionGracefulAndExpiryHandoff(t *testing.T) {
 	clock.Set(now.Add(time.Minute))
 	replacement, err := expiryCatalog.Register(ctx, testCatalogToolset("expiry.toolset", "new", nil), testAdmissionRevisionB, "new", testIncarnationB, time.Minute)
 	require.NoError(t, err)
-	assert.Equal(t, map[string]int64{
-		providerLeaseKey("new", testIncarnationB): now.Add(2 * time.Minute).UnixNano(),
+	assert.Equal(t, map[string]providerLease{
+		providerLeaseKey("new", testIncarnationB): {
+			ExpiresAtUnixMilli: now.Add(2 * time.Minute).UnixMilli(),
+		},
 	}, replacement.ProviderLeases)
 }
 
@@ -332,7 +476,9 @@ func TestCatalogRejectsLeaseDurationAndDeadlineOverflow(t *testing.T) {
 
 	overflowCatalog := newToolsetCatalog(
 		newTestCatalogMap(),
-		newTestTimeSource(time.Unix(0, math.MaxInt64-toolregistry.MinProviderLeaseDuration.Nanoseconds()+1)),
+		newTestTimeSource(time.UnixMilli(
+			math.MaxInt64-toolregistry.MinProviderLeaseDuration.Milliseconds()+1,
+		)),
 	)
 	_, err = overflowCatalog.Register(
 		ctx,
@@ -342,7 +488,7 @@ func TestCatalogRejectsLeaseDurationAndDeadlineOverflow(t *testing.T) {
 		testIncarnationA,
 		toolregistry.MinProviderLeaseDuration,
 	)
-	require.ErrorContains(t, err, "overflows Unix nanoseconds")
+	require.ErrorContains(t, err, "overflows Unix milliseconds")
 }
 
 func testCatalogToolset(name, description string, tags []string) *genregistry.Toolset {

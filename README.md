@@ -50,21 +50,45 @@ You describe the agent system in the same design-first style as Goa services. `g
 Goa-AI is not a prompt wrapper. It is a contract and runtime layer for agentic Go services.
 
 Registry-routed providers use deterministic admission-generation tokens derived
-from canonical schema identity plus a deployment-issued admission revision,
-lease-derived renewal, exact lifecycle release, and token-fenced calls, deltas,
-and results. The registry owns graceful admission handoff: same-token replicas
+from the wire protocol version, canonical schema identity, and a
+deployment-issued admission revision, with lease-derived renewal, exact
+drain-then-close-intake lifecycle release, and token-fenced calls, deltas, and
+results. The registry
+owns graceful admission handoff: same-token replicas
 scale or roll together, while different-token deployments use Recreate and wait
 for old leases to release or expire. `Serve` generates one UUID incarnation, so
 a delayed release from an old process cannot delete its replacement. Lease
 membership, health epoch, and last pong live in one CAS catalog record. Every
 retirement and replacement permanently retains the prior token; this set grows
 with distinct admissions and cannot be truncated safely. The gateway derives a
-global transport `ToolUseID` from required run plus call identity and atomically
-admits publication by ID/token. Transport retries attach to immutable result
-history through independent oldest-first Pulse Readers. Queue saturation emits
-transient `provider_overloaded`, which the registry serializes into bounded
-delayed republication. One sliding TTL is the sole result-history and call-
-admission cleanup. `Unregister` is reserved for retirement. See
+global transport `ToolUseID` from required run plus call identity. Its global
+call record stores a token-independent request digest, the immutable admitted
+token, overload state, and the complete canonical terminal. Exact retained calls
+replay before current routing or health lookup after a generation changes.
+Transport readers remain independent and oldest-first. Queue saturation emits
+top-level retry control with reason `provider_overloaded`, bounded delay, and no
+planner failure. The executor requests republication through the distinct
+`RetryTool` operation using the original admission token; the registry refuses
+to bind retry to a replacement provider. One call record owns an absolute
+execution deadline no longer than `MaxToolCallWait`, a later bounded retention
+expiration, and terminal state. Provider handler contexts and executor waiting
+use the execution deadline; result streams use the retention expiration.
+The registry atomically stores each terminal with the call record. Replay
+restores a trimmed terminal from bounded delivery history. Output deltas have
+byte and per-call count limits, and overload reporting is idempotent per request
+event. Retired and draining leases retain authority to settle the exact
+already-published request events they own. At execution deadline, or sooner if
+that lease disappears, registry-owned settlement publishes `outcome_unknown`
+because the effect may have occurred; execution never transfers to another
+provider and the canonical terminal remains retained.
+`Serve` also exposes the canonical ToolUseID through context for durable method
+deduplication without changing tool payloads. Workers recheck the
+absolute deadline when dispatching local backlog and acknowledge expired calls
+only after the registry authenticates the provider lease and confirms
+expiration using Redis time. Request-stream
+retention trims only below every consumer group's earliest pending ID; raw
+length trimming never removes pending calls. `Unregister` is reserved for
+retirement. See
 [Runtime: Registry-Routed Provider Execution](docs/runtime.md#registry-routed-provider-execution-service-side)
 for the complete contract.
 
