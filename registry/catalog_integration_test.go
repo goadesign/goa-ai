@@ -315,6 +315,19 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 	assert.EqualValues(t, 2, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+streamID).Val())
 
 	resultStreamID := toolregistry.ResultStreamID(toolUseID)
+	claimDisposition, err := firstStore.Claim(
+		ctx,
+		toolset,
+		toolUseID,
+		token,
+		token,
+		providerLeaseKey("provider", testIncarnationA),
+		overload[0].eventID,
+		resultStreamID,
+		[]byte(`{"stale":true}`),
+	)
+	require.NoError(t, err)
+	require.Equal(t, callClaimExecute, claimDisposition)
 	terminal := []byte(fmt.Sprintf(
 		`{"registration_token":%q,"tool_use_id":%q,"result_json":{"ok":true}}`,
 		token,

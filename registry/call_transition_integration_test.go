@@ -232,8 +232,14 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 		"+",
 	).Result()
 	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	payload, ok := entries[0].Values["p"].(string)
+	var terminalEntries []redis.XMessage
+	for _, entry := range entries {
+		if entry.Values["n"] == toolregistry.ResultEventKey {
+			terminalEntries = append(terminalEntries, entry)
+		}
+	}
+	require.Len(t, terminalEntries, 1)
+	payload, ok := terminalEntries[0].Values["p"].(string)
 	require.True(t, ok)
 	var rejected toolregistry.ToolResultMessage
 	require.NoError(t, json.Unmarshal([]byte(payload), &rejected))
