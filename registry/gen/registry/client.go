@@ -15,27 +15,39 @@ import (
 
 // Client is the "registry" service client.
 type Client struct {
-	RegisterEndpoint        goa.Endpoint
-	ReleaseProviderEndpoint goa.Endpoint
-	UnregisterEndpoint      goa.Endpoint
-	PongEndpoint            goa.Endpoint
-	ListToolsetsEndpoint    goa.Endpoint
-	GetToolsetEndpoint      goa.Endpoint
-	SearchEndpoint          goa.Endpoint
-	CallToolEndpoint        goa.Endpoint
+	RegisterEndpoint               goa.Endpoint
+	ReleaseProviderEndpoint        goa.Endpoint
+	DrainProviderEndpoint          goa.Endpoint
+	UnregisterEndpoint             goa.Endpoint
+	PongEndpoint                   goa.Endpoint
+	ListToolsetsEndpoint           goa.Endpoint
+	GetToolsetEndpoint             goa.Endpoint
+	SearchEndpoint                 goa.Endpoint
+	CallToolEndpoint               goa.Endpoint
+	RetryToolEndpoint              goa.Endpoint
+	CompleteToolCallEndpoint       goa.Endpoint
+	PublishToolOutputDeltaEndpoint goa.Endpoint
+	ReportToolCallOverloadEndpoint goa.Endpoint
+	ClaimToolCallEndpoint          goa.Endpoint
 }
 
 // NewClient initializes a "registry" service client given the endpoints.
-func NewClient(register, releaseProvider, unregister, pong, listToolsets, getToolset, search, callTool goa.Endpoint) *Client {
+func NewClient(register, releaseProvider, drainProvider, unregister, pong, listToolsets, getToolset, search, callTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
 	return &Client{
-		RegisterEndpoint:        register,
-		ReleaseProviderEndpoint: releaseProvider,
-		UnregisterEndpoint:      unregister,
-		PongEndpoint:            pong,
-		ListToolsetsEndpoint:    listToolsets,
-		GetToolsetEndpoint:      getToolset,
-		SearchEndpoint:          search,
-		CallToolEndpoint:        callTool,
+		RegisterEndpoint:               register,
+		ReleaseProviderEndpoint:        releaseProvider,
+		DrainProviderEndpoint:          drainProvider,
+		UnregisterEndpoint:             unregister,
+		PongEndpoint:                   pong,
+		ListToolsetsEndpoint:           listToolsets,
+		GetToolsetEndpoint:             getToolset,
+		SearchEndpoint:                 search,
+		CallToolEndpoint:               callTool,
+		RetryToolEndpoint:              retryTool,
+		CompleteToolCallEndpoint:       completeToolCall,
+		PublishToolOutputDeltaEndpoint: publishToolOutputDelta,
+		ReportToolCallOverloadEndpoint: reportToolCallOverload,
+		ClaimToolCallEndpoint:          claimToolCall,
 	}
 }
 
@@ -62,6 +74,15 @@ func (c *Client) Register(ctx context.Context, p *RegisterPayload) (res *Registe
 //   - error: internal error
 func (c *Client) ReleaseProvider(ctx context.Context, p *ReleaseProviderPayload) (err error) {
 	_, err = c.ReleaseProviderEndpoint(ctx, p)
+	return
+}
+
+// DrainProvider calls the "DrainProvider" endpoint of the "registry" service.
+// DrainProvider may return the following errors:
+//   - "service_unavailable" (type *goa.ServiceError)
+//   - error: internal error
+func (c *Client) DrainProvider(ctx context.Context, p *DrainProviderPayload) (err error) {
+	_, err = c.DrainProviderEndpoint(ctx, p)
 	return
 }
 
@@ -127,4 +148,67 @@ func (c *Client) CallTool(ctx context.Context, p *CallToolPayload) (res *CallToo
 		return
 	}
 	return ires.(*CallToolResult), nil
+}
+
+// RetryTool calls the "RetryTool" endpoint of the "registry" service.
+// RetryTool may return the following errors:
+//   - "not_found" (type *goa.ServiceError)
+//   - "validation_error" (type *goa.ServiceError)
+//   - "service_unavailable" (type *goa.ServiceError)
+//   - "admission_conflict" (type *goa.ServiceError)
+//   - error: internal error
+func (c *Client) RetryTool(ctx context.Context, p *RetryToolPayload) (res *CallToolResult, err error) {
+	var ires any
+	ires, err = c.RetryToolEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*CallToolResult), nil
+}
+
+// CompleteToolCall calls the "CompleteToolCall" endpoint of the "registry"
+// service.
+// CompleteToolCall may return the following errors:
+//   - "validation_error" (type *goa.ServiceError)
+//   - "service_unavailable" (type *goa.ServiceError)
+//   - error: internal error
+func (c *Client) CompleteToolCall(ctx context.Context, p *CompleteToolCallPayload) (err error) {
+	_, err = c.CompleteToolCallEndpoint(ctx, p)
+	return
+}
+
+// PublishToolOutputDelta calls the "PublishToolOutputDelta" endpoint of the
+// "registry" service.
+// PublishToolOutputDelta may return the following errors:
+//   - "validation_error" (type *goa.ServiceError)
+//   - "service_unavailable" (type *goa.ServiceError)
+//   - error: internal error
+func (c *Client) PublishToolOutputDelta(ctx context.Context, p *PublishToolOutputDeltaPayload) (err error) {
+	_, err = c.PublishToolOutputDeltaEndpoint(ctx, p)
+	return
+}
+
+// ReportToolCallOverload calls the "ReportToolCallOverload" endpoint of the
+// "registry" service.
+// ReportToolCallOverload may return the following errors:
+//   - "validation_error" (type *goa.ServiceError)
+//   - "service_unavailable" (type *goa.ServiceError)
+//   - error: internal error
+func (c *Client) ReportToolCallOverload(ctx context.Context, p *ProviderToolCallClaimPayload) (err error) {
+	_, err = c.ReportToolCallOverloadEndpoint(ctx, p)
+	return
+}
+
+// ClaimToolCall calls the "ClaimToolCall" endpoint of the "registry" service.
+// ClaimToolCall may return the following errors:
+//   - "validation_error" (type *goa.ServiceError)
+//   - "service_unavailable" (type *goa.ServiceError)
+//   - error: internal error
+func (c *Client) ClaimToolCall(ctx context.Context, p *ProviderToolCallClaimPayload) (res *ClaimToolCallResult, err error) {
+	var ires any
+	ires, err = c.ClaimToolCallEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ClaimToolCallResult), nil
 }

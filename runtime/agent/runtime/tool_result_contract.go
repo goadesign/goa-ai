@@ -8,7 +8,6 @@ import (
 	"goa.design/goa-ai/boundedresult"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/toolerrors"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -32,8 +31,18 @@ func validateToolResultContract(spec tools.ToolSpec, call planner.ToolRequest, t
 		return fmt.Errorf("tool %q result is invalid: failure and result are both set (tool_call_id=%s)", call.Name, call.ToolCallID)
 	}
 	if tr.Failure != nil {
-		if err := validateToolFailure(tr.Failure); err != nil {
+		if err := planner.ValidateToolFailure(tr.Failure); err != nil {
 			return fmt.Errorf("tool %q result is invalid: %w (tool_call_id=%s)", call.Name, err, call.ToolCallID)
+		}
+		if tr.Failure.Recovery.Action == planner.RecoveryCorrectCall {
+			if err := validatePlannerToolPayload(tr.Failure.Recovery.PriorInput); err != nil {
+				return fmt.Errorf(
+					"tool %q result is invalid: correct-call recovery prior input is invalid: %w (tool_call_id=%s)",
+					call.Name,
+					err,
+					call.ToolCallID,
+				)
+			}
 		}
 	}
 	return validateToolBoundsContract(spec, call, tr.Failure != nil, tr.Bounds)
@@ -89,54 +98,6 @@ func validateToolBoundsContract(spec tools.ToolSpec, call planner.ToolRequest, f
 	}
 	if bounds.NextCursor != nil && !bounds.Truncated {
 		return fmt.Errorf("bounded tool %q returned next_cursor without truncation (tool_call_id=%s)", call.Name, call.ToolCallID)
-	}
-	return nil
-}
-
-// validateToolFailure enforces the runtime-owned classification and transition
-// vocabulary at every tool-result ingress boundary.
-func validateToolFailure(failure *planner.ToolFailure) error {
-	if err := toolerrors.Validate(failure.Error); err != nil {
-		return fmt.Errorf("failure error is invalid: %w", err)
-	}
-	switch failure.Kind {
-	case planner.FailureInvalidCall,
-		planner.FailureDomainRejection,
-		planner.FailureUnavailable,
-		planner.FailureRateLimited,
-		planner.FailureTimeout,
-		planner.FailureMalformedResult,
-		planner.FailureInternal:
-	default:
-		return fmt.Errorf("unknown failure kind %q", failure.Kind)
-	}
-	switch failure.Recovery.Action {
-	case planner.RecoveryCorrectCall:
-		if failure.Kind != planner.FailureInvalidCall &&
-			failure.Kind != planner.FailureDomainRejection {
-			return fmt.Errorf("failure kind %q cannot require same-tool correction", failure.Kind)
-		}
-		if err := validatePlannerToolPayload(failure.Recovery.PriorInput); err != nil {
-			return fmt.Errorf("correct-call recovery prior input is invalid: %w", err)
-		}
-		if len(failure.Recovery.ExampleJSON) > 0 {
-			if err := validatePlannerToolPayload(failure.Recovery.ExampleJSON); err != nil {
-				return fmt.Errorf("correct-call recovery example is invalid: %w", err)
-			}
-		}
-		if len(failure.Recovery.Issues) > 0 {
-			if err := tools.ValidateFieldIssues(failure.Recovery.Issues); err != nil {
-				return fmt.Errorf("correct-call recovery issues are invalid: %w", err)
-			}
-		}
-	case planner.RecoveryReplan, planner.RecoveryFinish:
-		if len(failure.Recovery.Issues) > 0 ||
-			len(failure.Recovery.PriorInput) > 0 ||
-			len(failure.Recovery.ExampleJSON) > 0 {
-			return fmt.Errorf("recovery %q cannot carry correction data", failure.Recovery.Action)
-		}
-	default:
-		return fmt.Errorf("unknown recovery action %q", failure.Recovery.Action)
 	}
 	return nil
 }

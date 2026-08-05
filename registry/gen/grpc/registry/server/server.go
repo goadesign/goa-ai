@@ -20,28 +20,40 @@ import (
 
 // Server implements the registrypb.RegistryServer interface.
 type Server struct {
-	RegisterH        goagrpc.UnaryHandler
-	ReleaseProviderH goagrpc.UnaryHandler
-	UnregisterH      goagrpc.UnaryHandler
-	PongH            goagrpc.UnaryHandler
-	ListToolsetsH    goagrpc.UnaryHandler
-	GetToolsetH      goagrpc.UnaryHandler
-	SearchH          goagrpc.UnaryHandler
-	CallToolH        goagrpc.UnaryHandler
+	RegisterH               goagrpc.UnaryHandler
+	ReleaseProviderH        goagrpc.UnaryHandler
+	DrainProviderH          goagrpc.UnaryHandler
+	UnregisterH             goagrpc.UnaryHandler
+	PongH                   goagrpc.UnaryHandler
+	ListToolsetsH           goagrpc.UnaryHandler
+	GetToolsetH             goagrpc.UnaryHandler
+	SearchH                 goagrpc.UnaryHandler
+	CallToolH               goagrpc.UnaryHandler
+	RetryToolH              goagrpc.UnaryHandler
+	CompleteToolCallH       goagrpc.UnaryHandler
+	PublishToolOutputDeltaH goagrpc.UnaryHandler
+	ReportToolCallOverloadH goagrpc.UnaryHandler
+	ClaimToolCallH          goagrpc.UnaryHandler
 	registrypb.UnimplementedRegistryServer
 }
 
 // New instantiates the server struct with the registry service endpoints.
 func New(e *registry.Endpoints, uh goagrpc.UnaryHandler) *Server {
 	return &Server{
-		RegisterH:        NewRegisterHandler(e.Register, uh),
-		ReleaseProviderH: NewReleaseProviderHandler(e.ReleaseProvider, uh),
-		UnregisterH:      NewUnregisterHandler(e.Unregister, uh),
-		PongH:            NewPongHandler(e.Pong, uh),
-		ListToolsetsH:    NewListToolsetsHandler(e.ListToolsets, uh),
-		GetToolsetH:      NewGetToolsetHandler(e.GetToolset, uh),
-		SearchH:          NewSearchHandler(e.Search, uh),
-		CallToolH:        NewCallToolHandler(e.CallTool, uh),
+		RegisterH:               NewRegisterHandler(e.Register, uh),
+		ReleaseProviderH:        NewReleaseProviderHandler(e.ReleaseProvider, uh),
+		DrainProviderH:          NewDrainProviderHandler(e.DrainProvider, uh),
+		UnregisterH:             NewUnregisterHandler(e.Unregister, uh),
+		PongH:                   NewPongHandler(e.Pong, uh),
+		ListToolsetsH:           NewListToolsetsHandler(e.ListToolsets, uh),
+		GetToolsetH:             NewGetToolsetHandler(e.GetToolset, uh),
+		SearchH:                 NewSearchHandler(e.Search, uh),
+		CallToolH:               NewCallToolHandler(e.CallTool, uh),
+		RetryToolH:              NewRetryToolHandler(e.RetryTool, uh),
+		CompleteToolCallH:       NewCompleteToolCallHandler(e.CompleteToolCall, uh),
+		PublishToolOutputDeltaH: NewPublishToolOutputDeltaHandler(e.PublishToolOutputDelta, uh),
+		ReportToolCallOverloadH: NewReportToolCallOverloadHandler(e.ReportToolCallOverload, uh),
+		ClaimToolCallH:          NewClaimToolCallHandler(e.ClaimToolCall, uh),
 	}
 }
 
@@ -105,6 +117,34 @@ func (s *Server) ReleaseProvider(ctx context.Context, message *registrypb.Releas
 		return nil, goagrpc.EncodeError(err)
 	}
 	return resp.(*registrypb.ReleaseProviderResponse), nil
+}
+
+// NewDrainProviderHandler creates a gRPC handler which serves the "registry"
+// service "DrainProvider" endpoint.
+func NewDrainProviderHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeDrainProviderRequest, EncodeDrainProviderResponse)
+	}
+	return h
+}
+
+// DrainProvider implements the "DrainProvider" method in
+// registrypb.RegistryServer interface.
+func (s *Server) DrainProvider(ctx context.Context, message *registrypb.DrainProviderRequest) (*registrypb.DrainProviderResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "DrainProvider")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.DrainProviderH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.DrainProviderResponse), nil
 }
 
 // NewUnregisterHandler creates a gRPC handler which serves the "registry"
@@ -256,4 +296,158 @@ func (s *Server) CallTool(ctx context.Context, message *registrypb.CallToolReque
 		return nil, goagrpc.EncodeError(err)
 	}
 	return resp.(*registrypb.CallToolResponse), nil
+}
+
+// NewRetryToolHandler creates a gRPC handler which serves the "registry"
+// service "RetryTool" endpoint.
+func NewRetryToolHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeRetryToolRequest, EncodeRetryToolResponse)
+	}
+	return h
+}
+
+// RetryTool implements the "RetryTool" method in registrypb.RegistryServer
+// interface.
+func (s *Server) RetryTool(ctx context.Context, message *registrypb.RetryToolRequest) (*registrypb.RetryToolResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "RetryTool")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.RetryToolH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "not_found":
+				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			case "admission_conflict":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.RetryToolResponse), nil
+}
+
+// NewCompleteToolCallHandler creates a gRPC handler which serves the
+// "registry" service "CompleteToolCall" endpoint.
+func NewCompleteToolCallHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeCompleteToolCallRequest, EncodeCompleteToolCallResponse)
+	}
+	return h
+}
+
+// CompleteToolCall implements the "CompleteToolCall" method in
+// registrypb.RegistryServer interface.
+func (s *Server) CompleteToolCall(ctx context.Context, message *registrypb.CompleteToolCallRequest) (*registrypb.CompleteToolCallResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "CompleteToolCall")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.CompleteToolCallH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.CompleteToolCallResponse), nil
+}
+
+// NewPublishToolOutputDeltaHandler creates a gRPC handler which serves the
+// "registry" service "PublishToolOutputDelta" endpoint.
+func NewPublishToolOutputDeltaHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodePublishToolOutputDeltaRequest, EncodePublishToolOutputDeltaResponse)
+	}
+	return h
+}
+
+// PublishToolOutputDelta implements the "PublishToolOutputDelta" method in
+// registrypb.RegistryServer interface.
+func (s *Server) PublishToolOutputDelta(ctx context.Context, message *registrypb.PublishToolOutputDeltaRequest) (*registrypb.PublishToolOutputDeltaResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "PublishToolOutputDelta")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.PublishToolOutputDeltaH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.PublishToolOutputDeltaResponse), nil
+}
+
+// NewReportToolCallOverloadHandler creates a gRPC handler which serves the
+// "registry" service "ReportToolCallOverload" endpoint.
+func NewReportToolCallOverloadHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeReportToolCallOverloadRequest, EncodeReportToolCallOverloadResponse)
+	}
+	return h
+}
+
+// ReportToolCallOverload implements the "ReportToolCallOverload" method in
+// registrypb.RegistryServer interface.
+func (s *Server) ReportToolCallOverload(ctx context.Context, message *registrypb.ReportToolCallOverloadRequest) (*registrypb.ReportToolCallOverloadResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "ReportToolCallOverload")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.ReportToolCallOverloadH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.ReportToolCallOverloadResponse), nil
+}
+
+// NewClaimToolCallHandler creates a gRPC handler which serves the "registry"
+// service "ClaimToolCall" endpoint.
+func NewClaimToolCallHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeClaimToolCallRequest, EncodeClaimToolCallResponse)
+	}
+	return h
+}
+
+// ClaimToolCall implements the "ClaimToolCall" method in
+// registrypb.RegistryServer interface.
+func (s *Server) ClaimToolCall(ctx context.Context, message *registrypb.ClaimToolCallRequest) (*registrypb.ClaimToolCallResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "ClaimToolCall")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.ClaimToolCallH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.ClaimToolCallResponse), nil
 }

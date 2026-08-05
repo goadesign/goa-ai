@@ -224,7 +224,7 @@ func (h *healthTracker) Health(
 		return ToolsetHealth{}, errToolsetNotFound
 	}
 	health := ToolsetHealth{
-		ProviderCount:      len(entry.ProviderLeases),
+		ProviderCount:      routableProviderCount(entry, now),
 		StalenessThreshold: h.stalenessThreshold,
 	}
 	if entry.LastPongUnixNano != 0 {
@@ -325,6 +325,7 @@ func (h *healthTracker) ensureMapRevision(ctx context.Context, hashKey string) e
 	}
 	floor := h.revFloors[hashKey]
 	if floor > 0 && rev >= floor {
+		h.revFloors[hashKey] = rev
 		return nil
 	}
 	target := max(time.Now().UnixMilli(), floor+revFloorSlack)
@@ -372,6 +373,12 @@ func (h *healthTracker) pingRegisteredToolsets() {
 	for _, key := range keys {
 		toolset := toolsetFromCatalogKey(key)
 		if toolset == "" {
+			continue
+		}
+		if _, _, err := h.catalog.HealthIdentity(ctx, toolset); err != nil {
+			if !errors.Is(err, errToolsetNotFound) {
+				h.logger.Error(ctx, "resolve ping identity failed", "toolset", toolset, "err", err)
+			}
 			continue
 		}
 		acquired, err := h.acquirePingLease(ctx, toolset)

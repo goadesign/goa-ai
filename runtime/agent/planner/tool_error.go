@@ -3,6 +3,10 @@
 package planner
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	toolerrors "goa.design/goa-ai/runtime/agent/toolerrors"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -103,6 +107,62 @@ func ToolErrorf(format string, args ...any) *ToolError {
 	return toolerrors.Errorf(format, args...)
 }
 
+// ValidateToolFailure enforces the canonical failure classification, error,
+// recovery, and correction-data contract at every ingress boundary. Correct-call
+// prior input is optional here because registry providers do not own it; the
+// executor attaches the rejected call before the runtime requires planner-ready
+// correction context.
+func ValidateToolFailure(failure *ToolFailure) error {
+	if failure == nil {
+		return fmt.Errorf("tool failure is required")
+	}
+	if err := toolerrors.Validate(failure.Error); err != nil {
+		return fmt.Errorf("failure error is invalid: %w", err)
+	}
+	switch failure.Kind {
+	case FailureInvalidCall,
+		FailureDomainRejection,
+		FailureUnavailable,
+		FailureRateLimited,
+		FailureTimeout,
+		FailureMalformedResult,
+		FailureInternal:
+	default:
+		return fmt.Errorf("unknown failure kind %q", failure.Kind)
+	}
+	switch failure.Recovery.Action {
+	case RecoveryCorrectCall:
+		if failure.Kind != FailureInvalidCall &&
+			failure.Kind != FailureDomainRejection {
+			return fmt.Errorf("failure kind %q cannot require same-tool correction", failure.Kind)
+		}
+		if len(failure.Recovery.Issues) > 0 {
+			if err := tools.ValidateFieldIssues(failure.Recovery.Issues); err != nil {
+				return fmt.Errorf("correct-call recovery issues are invalid: %w", err)
+			}
+		}
+		if len(failure.Recovery.PriorInput) > 0 {
+			if err := validateToolPayload(failure.Recovery.PriorInput); err != nil {
+				return fmt.Errorf("correct-call recovery prior input is invalid: %w", err)
+			}
+		}
+		if len(failure.Recovery.ExampleJSON) > 0 {
+			if err := validateToolPayload(failure.Recovery.ExampleJSON); err != nil {
+				return fmt.Errorf("correct-call recovery example is invalid: %w", err)
+			}
+		}
+	case RecoveryReplan, RecoveryFinish:
+		if len(failure.Recovery.Issues) > 0 ||
+			len(failure.Recovery.PriorInput) > 0 ||
+			len(failure.Recovery.ExampleJSON) > 0 {
+			return fmt.Errorf("recovery %q cannot carry correction data", failure.Recovery.Action)
+		}
+	default:
+		return fmt.Errorf("unknown recovery action %q", failure.Recovery.Action)
+	}
+	return nil
+}
+
 // CloneToolFailure deep-copies a failed-tool value across workflow,
 // persistence, and replay ownership boundaries.
 func CloneToolFailure(in *ToolFailure) *ToolFailure {
@@ -134,4 +194,20 @@ func (f *ToolFailure) AllowsToolTurn() bool {
 	default:
 		panic("planner: unknown recovery action " + f.Recovery.Action)
 	}
+}
+
+// validateToolPayload verifies optional correction context is a non-empty JSON
+// object when present.
+func validateToolPayload(payload rawjson.Message) error {
+	data := bytes.TrimSpace(payload)
+	if len(data) == 0 {
+		return fmt.Errorf("payload is empty")
+	}
+	if !json.Valid(data) {
+		return fmt.Errorf("payload is not valid JSON")
+	}
+	if data[0] != '{' {
+		return fmt.Errorf("payload must be a JSON object")
+	}
+	return nil
 }

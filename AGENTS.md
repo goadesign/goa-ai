@@ -114,6 +114,26 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 - Useful test env vars: `TEST_FILTER`, `TEST_DEBUG`, `TEST_KEEP_GENERATED`, `TEST_SERVER_URL`.
 - Commit messages should be imperative and scoped. PRs should include summary, rationale, linked issues, and test evidence. Include before/after notes when generator output changes.
 
+### Release notes
+
+- Write release notes for a capable junior engineer who may not know goa-ai's
+  runtime, registry, or code generator. Use short sentences and define a term
+  before relying on it.
+- Derive the notes from the commits and diff since the previous release tag.
+  Describe only behavior that is included in the release.
+- Lead with the outcome for framework users. Group changes by capability or
+  upgrade task, not by commit or file.
+- For each important change, explain the previous problem, the new behavior,
+  and why the new contract is safer or easier to use. Include a small
+  before/after example when prose alone would leave the behavior unclear.
+- Put required user action in a clearly labeled section. State compatibility
+  precisely, including DSL or API changes, regeneration requirements, wire
+  protocol changes, deployment order, and whether mixed versions can run
+  safely. Say explicitly when no action is required.
+- End with focused links to the relevant documentation and pull requests.
+  Avoid implementation diaries, unexplained jargon, generic claims such as
+  "improved reliability," and exhaustive commit lists.
+
 ### Streaming and runtime contracts
 
 - Streaming planners must choose exactly one event path:

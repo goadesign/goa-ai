@@ -9,12 +9,14 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
@@ -75,6 +77,15 @@ func TestProviderRecoversAfterRedisStateLoss(t *testing.T) {
 					Duration:          time.Duration(res.LeaseDurationMs) * time.Millisecond,
 				}, nil
 			},
+			Drain: func(ctx context.Context, _, providerID, incarnationID, token string, settlementDuration time.Duration) error {
+				return svc.DrainProvider(ctx, &genregistry.DrainProviderPayload{
+					Name:                      toolset,
+					ProviderID:                providerID,
+					ExpectedRegistrationToken: token,
+					ProviderIncarnationID:     incarnationID,
+					SettlementDurationMs:      settlementDuration.Milliseconds(),
+				})
+			},
 			Release: func(ctx context.Context, _, providerID, incarnationID, token string) error {
 				return svc.ReleaseProvider(ctx, &genregistry.ReleaseProviderPayload{
 					Name:                      toolset,
@@ -82,6 +93,76 @@ func TestProviderRecoversAfterRedisStateLoss(t *testing.T) {
 					ExpectedRegistrationToken: token,
 					ProviderIncarnationID:     incarnationID,
 				})
+			},
+			Complete: func(
+				ctx context.Context,
+				_, providerID, incarnationID, providerToken, requestEventID string,
+				result toolregistry.ToolResultMessage,
+			) error {
+				body, err := json.Marshal(result)
+				if err != nil {
+					return err
+				}
+				return svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
+					Toolset:                   toolset,
+					ProviderID:                providerID,
+					ProviderIncarnationID:     incarnationID,
+					RegistrationToken:         result.RegistrationToken,
+					ToolUseID:                 result.ToolUseID,
+					ResultJSON:                body,
+					RequestEventID:            requestEventID,
+					ProviderRegistrationToken: providerToken,
+				})
+			},
+			PublishOutputDelta: func(
+				ctx context.Context,
+				_, providerID, incarnationID, providerToken, callToken,
+				toolUseID, requestEventID, stream, delta string,
+			) error {
+				return svc.PublishToolOutputDelta(ctx, &genregistry.PublishToolOutputDeltaPayload{
+					Toolset:                   toolset,
+					ProviderID:                providerID,
+					ProviderIncarnationID:     incarnationID,
+					ProviderRegistrationToken: providerToken,
+					CallRegistrationToken:     callToken,
+					ToolUseID:                 toolUseID,
+					RequestEventID:            requestEventID,
+					Stream:                    stream,
+					Delta:                     delta,
+				})
+			},
+			ReportOverload: func(
+				ctx context.Context,
+				_, providerID, incarnationID, providerToken, callToken,
+				toolUseID, requestEventID string,
+			) error {
+				return svc.ReportToolCallOverload(ctx, &genregistry.ProviderToolCallClaimPayload{
+					Toolset:                   toolset,
+					ProviderID:                providerID,
+					ProviderIncarnationID:     incarnationID,
+					ProviderRegistrationToken: providerToken,
+					CallRegistrationToken:     callToken,
+					ToolUseID:                 toolUseID,
+					RequestEventID:            requestEventID,
+				})
+			},
+			Claim: func(
+				ctx context.Context,
+				_, providerID, incarnationID, providerToken, callToken, toolUseID, requestEventID string,
+			) (provider.ClaimDisposition, error) {
+				result, err := svc.ClaimToolCall(ctx, &genregistry.ProviderToolCallClaimPayload{
+					Toolset:                   toolset,
+					ProviderID:                providerID,
+					ProviderIncarnationID:     incarnationID,
+					ProviderRegistrationToken: providerToken,
+					CallRegistrationToken:     callToken,
+					ToolUseID:                 toolUseID,
+					RequestEventID:            requestEventID,
+				})
+				if err != nil {
+					return "", err
+				}
+				return provider.ClaimDisposition(result.Disposition), nil
 			},
 		}
 		serveErr <- provider.Serve(ctx, pulseClient, toolset, noopHandler{}, registration, provider.Options{
@@ -188,11 +269,17 @@ func TestConcurrentRevisionPinsConverge(t *testing.T) {
 	require.LessOrEqual(t, pinned, time.Now().UnixMilli()+8*revFloorSlack,
 		"concurrent pins must converge, not sum")
 
+	observed := pinned + 123
+	require.NoError(t, rdb.HSet(ctx, hashKey, "=rev", observed).Err())
+	require.NoError(t, trackers[0].ensureMapRevision(ctx, hashKey))
+	assert.Equal(t, observed, trackers[0].revFloors[hashKey],
+		"every valid observation must advance the local loss-detection floor")
+
 	// Redis loses the map: the counter restarts near zero. Any tracker that
 	// established a floor must detect the regression and re-pin above it.
 	require.NoError(t, rdb.HSet(ctx, hashKey, "=rev", 5).Err())
 	require.NoError(t, trackers[0].ensureMapRevision(ctx, hashKey))
 	repinned, err := rdb.HGet(ctx, hashKey, "=rev").Int64()
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, repinned, pinned, "repair must restore the floor after loss")
+	require.GreaterOrEqual(t, repinned, observed, "repair must restore the highest observed floor after loss")
 }

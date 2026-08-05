@@ -1,6 +1,6 @@
 // Package provider implements the provider-side Pulse subscription loop for
 // registry-routed tool execution. Providers receive tool calls from a toolset
-// stream and publish results to per-call result streams.
+// stream and submit claimed-call results through the registry boundary.
 package provider
 
 import (
@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,11 +27,10 @@ import (
 type (
 	// Handler executes tool calls received from a toolset stream.
 	// Implementations are responsible for decoding/encoding tool payload/result
-	// using the compiled tool codecs for their toolset. Pulse redelivers a call
-	// when result publication succeeds but acknowledgement fails, so handlers
-	// must make repeated ToolUseID execution idempotent or durably deduplicate it.
-	// Handlers must also honor ctx cancellation and return promptly so Serve can
-	// join every worker before releasing its exact provider lease.
+	// using the compiled tool codecs for their toolset. Serve obtains one durable
+	// registry dispatch claim before invoking a handler, so Pulse redelivery
+	// cannot repeat execution. Handlers must honor ctx cancellation and return
+	// promptly so Serve can join every worker before releasing its exact lease.
 	Handler interface {
 		HandleToolCall(ctx context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error)
 	}
@@ -41,25 +41,14 @@ type (
 		// toolset. Deployments should derive it from pod identity plus toolset.
 		ProviderID string
 
-		// SinkName identifies the Pulse sink used for subscribing.
-		// When empty, defaults to "provider".
-		SinkName string
-
-		// ResultEventType is the Pulse entry type used for publishing results.
-		// When empty, defaults to toolregistry.ResultEventKey.
-		ResultEventType string
-
 		// SinkAckGracePeriod configures the Pulse sink acknowledgement grace
 		// period. When non-zero, Serve passes it to the sink.
 		//
 		// This value must be identical across all providers using the same sink
 		// name for a given toolset stream.
 		//
-		// Important: If a tool call can take longer than the sink ack grace
-		// period and the provider only Ack's after publishing the tool result,
-		// Pulse may reclaim and re-deliver the call while it is still in flight.
-		// Deployments should set this high enough to cover worst-case tool
-		// execution time.
+		// A grace period shorter than execution may cause harmless redelivery;
+		// the registry dispatch claim prevents a second handler invocation.
 		SinkAckGracePeriod time.Duration
 
 		// Pong acknowledges health pings emitted by the registry gateway.
@@ -110,8 +99,8 @@ type (
 		MaxQueuedToolCalls int
 
 		// ShutdownTimeout bounds sink closure, worker/result settlement, and
-		// acknowledgement drain after Serve stops claiming new calls. Zero uses
-		// DefaultShutdownTimeout.
+		// acknowledgement drain under one shared deadline after Serve stops
+		// claiming new calls. Zero uses DefaultShutdownTimeout.
 		ShutdownTimeout time.Duration
 
 		// Logger is used for provider internal logging. When nil, defaults to a noop logger.
@@ -121,18 +110,16 @@ type (
 		Tracer telemetry.Tracer
 	}
 
-	// pulseOutputDeltaPublisher publishes best-effort tool output fragments to the
-	// tool call's per-call result stream (`result:<tool_use_id>`).
+	// registryOutputDeltaPublisher submits best-effort output fragments through
+	// the registry's authoritative call-state boundary.
 	//
 	// Contract:
 	//   - This is a UX-only signal: consumers may drop deltas without affecting
 	//     correctness.
 	//   - The canonical tool output remains the final ToolResultMessage published
 	//     under the result event key.
-	pulseOutputDeltaPublisher struct {
-		stream            pulseclients.Stream
-		registrationToken string
-		toolUseID         string
+	registryOutputDeltaPublisher struct {
+		publish func(context.Context, string, string) error
 	}
 )
 
@@ -140,6 +127,13 @@ const (
 	// DefaultShutdownTimeout bounds the provider's graceful consumption stop
 	// and settlement phase before lease expiry becomes the durable fallback.
 	DefaultShutdownTimeout = 30 * time.Second
+	// SettlementAuthorityMargin keeps the draining provider lease valid beyond
+	// the local shutdown deadline while the final registry response crosses the
+	// transport boundary.
+	SettlementAuthorityMargin = 5 * time.Second
+	// MaxShutdownTimeout leaves room for SettlementAuthorityMargin inside the
+	// registry's maximum provider lease duration.
+	MaxShutdownTimeout = toolregistry.MaxProviderLeaseDuration - SettlementAuthorityMargin
 	// MaxConcurrentToolCalls bounds worker allocation from provider config.
 	MaxConcurrentToolCalls = 1024
 	// MaxQueuedToolCalls bounds waiting work and acknowledgement allocation.
@@ -149,23 +143,26 @@ const (
 	MaxOverloadPublishDuration = 2 * time.Second
 )
 
-func (p *pulseOutputDeltaPublisher) PublishToolOutputDelta(ctx context.Context, stream string, delta string) error {
-	msg := toolregistry.NewToolOutputDeltaMessage(p.registrationToken, p.toolUseID, stream, delta)
-	payload, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("marshal tool output delta: %w", err)
-	}
-	_, err = p.stream.Add(ctx, toolregistry.OutputDeltaEventKey, payload)
-	if err != nil {
-		return fmt.Errorf("publish tool output delta: %w", err)
-	}
-	return nil
+func (p *registryOutputDeltaPublisher) PublishToolOutputDelta(ctx context.Context, stream string, delta string) error {
+	return p.publish(ctx, stream, delta)
 }
 
 // Serve prepares the toolset request stream, establishes the required registry
 // registration, and then dispatches tool calls to handler. It publishes tool
-// results to per-call result streams and renews registration until shutdown.
+// results through registry-owned call state and renews registration until shutdown.
 func Serve(
+	ctx context.Context,
+	pulse pulseclients.Client,
+	toolset string,
+	handler Handler,
+	registration Registration,
+	opts Options,
+) error {
+	return serve(ctx, pulse, toolset, handler, registration, opts)
+}
+
+// serve runs one provider lifecycle.
+func serve(
 	ctx context.Context,
 	pulse pulseclients.Client,
 	toolset string,
@@ -185,19 +182,14 @@ func Serve(
 	if opts.ProviderID == "" {
 		return fmt.Errorf("provider id is required")
 	}
+	if strings.ContainsRune(opts.ProviderID, '\x00') {
+		return fmt.Errorf("provider id must not contain NUL")
+	}
 	registrationConfig, err := registration.normalized()
 	if err != nil {
 		return err
 	}
 	incarnationID := uuid.NewString()
-	sinkName := opts.SinkName
-	if sinkName == "" {
-		sinkName = "provider"
-	}
-	resultEventType := opts.ResultEventType
-	if resultEventType == "" {
-		resultEventType = toolregistry.ResultEventKey
-	}
 	if opts.Pong == nil {
 		return fmt.Errorf("pong handler is required")
 	}
@@ -245,6 +237,12 @@ func Serve(
 	if shutdownTimeout == 0 {
 		shutdownTimeout = DefaultShutdownTimeout
 	}
+	if shutdownTimeout > MaxShutdownTimeout {
+		return fmt.Errorf(
+			"shutdown timeout must not exceed %s",
+			MaxShutdownTimeout,
+		)
+	}
 
 	streamID := toolregistry.ToolsetStreamID(toolset)
 	stream, err := pulse.Stream(streamID)
@@ -271,7 +269,7 @@ func Serve(
 	if opts.SinkAckGracePeriod > 0 {
 		sinkOpts = append(sinkOpts, streamopts.WithSinkAckGracePeriod(opts.SinkAckGracePeriod))
 	}
-	sink, err := stream.NewSink(ctx, sinkName, sinkOpts...)
+	sink, err := stream.NewSink(ctx, toolregistry.ProviderConsumerGroup, sinkOpts...)
 	if err != nil {
 		releaseErr := releaseProvider(
 			context.WithoutCancel(ctx),
@@ -284,7 +282,12 @@ func Serve(
 			waitRegistrationDelay,
 		)
 		return errors.Join(
-			fmt.Errorf("create sink %q for toolset stream %q: %w", sinkName, streamID, err),
+			fmt.Errorf(
+				"create sink %q for toolset stream %q: %w",
+				toolregistry.ProviderConsumerGroup,
+				streamID,
+				err,
+			),
 			releaseErr,
 		)
 	}
@@ -296,7 +299,7 @@ func Serve(
 		"toolset", toolset,
 		"provider_id", opts.ProviderID,
 		"stream_id", streamID,
-		"sink", sinkName,
+		"sink", toolregistry.ProviderConsumerGroup,
 	)
 
 	events := sink.Subscribe()
@@ -309,7 +312,15 @@ func Serve(
 	ensureDone := make(chan struct{})
 	go func() {
 		defer close(ensureDone)
-		runEnsureGroupLoop(cancelCtx, stream, sinkName, toolset, opts.ProviderID, ensureInterval, logger)
+		runEnsureGroupLoop(
+			cancelCtx,
+			stream,
+			toolregistry.ProviderConsumerGroup,
+			toolset,
+			opts.ProviderID,
+			ensureInterval,
+			logger,
+		)
 	}()
 
 	type workItem struct {
@@ -319,9 +330,18 @@ func Serve(
 
 	work := make(chan workItem, maxQueued)
 	acks := make(chan *streaming.Event, maxConcurrent+maxQueued)
-	workerDone := make(chan struct{}, maxConcurrent)
+	handlerCtx, cancelHandlers := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelHandlers()
+	ackLifecycleCtx, cancelAcks := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelAcks()
+	var workers sync.WaitGroup
+	workers.Add(maxConcurrent)
+	workerDone := make(chan struct{})
 	ackDone := make(chan struct{})
-	abortAcks := make(chan struct{})
+	go func() {
+		workers.Wait()
+		close(workerDone)
+	}()
 
 	signalStop := func(err error) {
 		select {
@@ -355,31 +375,30 @@ func Serve(
 
 	go func() {
 		defer close(ackDone)
-		for {
-			select {
-			case ev, ok := <-acks:
-				if !ok {
-					return
-				}
-				ackCtx, ackCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
-				err := sink.Ack(ackCtx, ev)
-				ackCancel()
-				if err != nil {
-					signalSettleFailure(fmt.Errorf("ack toolset event %s: %w", ev.ID, err))
-				}
-			case <-abortAcks:
-				return
+		for ev := range acks {
+			ackCtx, ackCancel := context.WithTimeout(ackLifecycleCtx, shutdownTimeout)
+			err := sink.Ack(ackCtx, ev)
+			ackCancel()
+			if err != nil {
+				signalSettleFailure(fmt.Errorf("ack toolset event %s: %w", ev.ID, err))
 			}
 		}
 	}()
 
 	for i := 0; i < maxConcurrent; i++ {
 		go func() {
-			defer func() {
-				workerDone <- struct{}{}
-			}()
+			defer workers.Done()
 			for item := range work {
-				callCtx := toolregistry.ExtractTraceContext(cancelCtx, item.msg.TraceParent, item.msg.TraceState, item.msg.Baggage)
+				callCtx := toolregistry.ExtractTraceContext(
+					handlerCtx,
+					item.msg.TraceParent,
+					item.msg.TraceState,
+					item.msg.Baggage,
+				)
+				callCtx, cancelCall := context.WithDeadline(
+					callCtx,
+					time.UnixMilli(item.msg.ExecutionDeadlineUnixMilli),
+				)
 				callCtx, span := tracer.Start(
 					callCtx,
 					"toolregistry.handle",
@@ -397,76 +416,106 @@ func Serve(
 						attribute.String("toolregistry.event_id", item.ev.ID),
 					),
 				)
-
-				resultStreamID := toolregistry.ResultStreamID(item.msg.ToolUseID)
-				resultStreamTTL := time.Duration(item.msg.ResultStreamTTLMillis) * time.Millisecond
-				resultStream, streamErr := pulse.Stream(
-					resultStreamID,
-					streamopts.WithStreamSlidingTTL(resultStreamTTL),
+				disposition, claimErr := claimToolCall(
+					callCtx,
+					registrationConfig,
+					shutdownTimeout,
+					toolset,
+					opts.ProviderID,
+					incarnationID,
+					admittedToken,
+					item.msg,
+					item.ev.ID,
 				)
-				if streamErr != nil {
-					span.RecordError(streamErr)
-					span.SetStatus(codes.Error, "open result stream")
+				if claimErr != nil {
+					span.RecordError(claimErr)
+					span.SetStatus(codes.Error, "claim tool call")
 					span.End()
-					signalSettleFailure(fmt.Errorf("open result stream %q: %w", resultStreamID, streamErr))
+					signalSettleFailure(fmt.Errorf(
+						"claim tool call %q: %w",
+						item.msg.ToolUseID,
+						claimErr,
+					))
+					cancelCall()
 					continue
 				}
+				if disposition != ClaimExecute {
+					span.AddEvent(
+						"toolregistry.tool_call_not_dispatched",
+						trace.WithAttributes(attribute.String("toolregistry.claim_disposition", string(disposition))),
+					)
+					span.End()
+					acks <- item.ev
+					cancelCall()
+					continue
+				}
+				resultStreamID := toolregistry.ResultStreamID(item.msg.ToolUseID)
+				callCtx = toolregistry.WithToolUseID(callCtx, item.msg.ToolUseID)
+				callCtx = toolregistry.WithOutputDeltaPublisher(callCtx, &registryOutputDeltaPublisher{
+					publish: func(ctx context.Context, stream, delta string) error {
+						return registrationConfig.publishOutputDelta(
+							ctx,
+							toolset,
+							opts.ProviderID,
+							incarnationID,
+							admittedToken,
+							item.msg.RegistrationToken,
+							item.msg.ToolUseID,
+							item.ev.ID,
+							stream,
+							delta,
+						)
+					},
+				})
 
-				var res toolregistry.ToolResultMessage
-				if item.msg.RegistrationToken != admittedToken {
+				res, handlerErr := handler.HandleToolCall(callCtx, item.msg)
+				if handlerErr != nil {
+					span.RecordError(handlerErr)
+					span.SetStatus(codes.Error, "handle tool call")
+					logger.Error(
+						callCtx,
+						"tool call handler failed",
+						"component", "tool-registry-provider",
+						"toolset", toolset,
+						"provider_id", opts.ProviderID,
+						"tool_use_id", item.msg.ToolUseID,
+						"tool", item.msg.Tool,
+						"err", handlerErr,
+					)
 					res = toolregistry.NewToolResultErrorMessage(
 						item.msg.RegistrationToken,
 						item.msg.ToolUseID,
-						toolregistry.ToolErrorCodeStaleRegistration,
-						fmt.Sprintf(
-							"queued tool call belongs to registration %q; provider serves %q",
-							item.msg.RegistrationToken,
-							admittedToken,
-						),
+						"execution_failed",
+						handlerErr.Error(),
 					)
-				} else {
-					callCtx = toolregistry.WithOutputDeltaPublisher(callCtx, &pulseOutputDeltaPublisher{
-						stream:            resultStream,
-						registrationToken: item.msg.RegistrationToken,
-						toolUseID:         item.msg.ToolUseID,
-					})
-
-					var handlerErr error
-					res, handlerErr = handler.HandleToolCall(callCtx, item.msg)
-					if handlerErr != nil {
-						span.RecordError(handlerErr)
-						span.SetStatus(codes.Error, "handle tool call")
-						logger.Error(
-							callCtx,
-							"tool call handler failed",
-							"component", "tool-registry-provider",
-							"toolset", toolset,
-							"provider_id", opts.ProviderID,
-							"tool_use_id", item.msg.ToolUseID,
-							"tool", item.msg.Tool,
-							"err", handlerErr,
-						)
-						res = toolregistry.NewToolResultErrorMessage(
-							item.msg.RegistrationToken,
-							item.msg.ToolUseID,
-							"execution_failed",
-							handlerErr.Error(),
-						)
-					}
 				}
 				res.RegistrationToken = item.msg.RegistrationToken
 				res.ToolUseID = item.msg.ToolUseID
-
-				payload, marshalErr := json.Marshal(res)
-				if marshalErr != nil {
-					span.RecordError(marshalErr)
-					span.SetStatus(codes.Error, "marshal tool result")
+				if resultErr := toolregistry.ValidateToolResultMessage(res); resultErr != nil {
+					span.RecordError(resultErr)
+					span.SetStatus(codes.Error, "validate tool result")
 					span.End()
-					signalSettleFailure(fmt.Errorf("marshal tool result: %w", marshalErr))
+					signalSettleFailure(fmt.Errorf(
+						"tool call handler returned invalid result for %q: %w",
+						item.msg.Tool,
+						resultErr,
+					))
+					cancelCall()
 					continue
 				}
+
 				publishCtx, publishCancel := context.WithTimeout(context.WithoutCancel(callCtx), shutdownTimeout)
-				_, addErr := resultStream.Add(publishCtx, resultEventType, payload)
+				stopPublishCancel := context.AfterFunc(handlerCtx, publishCancel)
+				addErr := registrationConfig.complete(
+					publishCtx,
+					toolset,
+					opts.ProviderID,
+					incarnationID,
+					admittedToken,
+					item.ev.ID,
+					res,
+				)
+				stopPublishCancel()
 				publishCancel()
 				if addErr != nil {
 					span.RecordError(addErr)
@@ -484,6 +533,7 @@ func Serve(
 					)
 					span.End()
 					signalSettleFailure(fmt.Errorf("publish tool result to %q: %w", resultStreamID, addErr))
+					cancelCall()
 					continue
 				}
 				span.AddEvent(
@@ -493,44 +543,185 @@ func Serve(
 				span.End()
 
 				acks <- item.ev
+				cancelCall()
 			}
 		}()
 	}
 
-	finish := func(runErr error) error {
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
-		defer shutdownCancel()
+	ackImmediate := func(ev *streaming.Event, description string) error {
+		ackCtx, ackCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+		err := sink.Ack(ackCtx, ev)
+		ackCancel()
+		if err != nil {
+			return fmt.Errorf("ack %s event %s: %w", description, ev.ID, err)
+		}
+		return nil
+	}
+	acceptEvent := func(ev *streaming.Event) error {
+		var msg toolregistry.ToolCallMessage
+		if err := json.Unmarshal(ev.Payload, &msg); err != nil {
+			logger.Error(
+				ctx,
+				"unmarshal toolset message failed",
+				"component", "tool-registry-provider",
+				"toolset", toolset,
+				"stream_id", streamID,
+				"event_id", ev.ID,
+				"event_name", ev.EventName,
+				"err", err,
+			)
+			return ackImmediate(ev, "malformed toolset")
+		}
+		if err := toolregistry.ValidateToolCallMessage(msg); err != nil {
+			logger.Error(
+				ctx,
+				"validate toolset message failed",
+				"component", "tool-registry-provider",
+				"toolset", toolset,
+				"stream_id", streamID,
+				"event_id", ev.ID,
+				"event_name", ev.EventName,
+				"err", err,
+			)
+			return ackImmediate(ev, "invalid toolset")
+		}
+		switch msg.Type {
+		case toolregistry.MessageTypePing:
+			if msg.RegistrationToken == admittedToken && msg.PingID != "" {
+				pongCtx, pongCancel := context.WithTimeout(context.WithoutCancel(ctx), pongTimeout)
+				err := opts.Pong(pongCtx, opts.ProviderID, incarnationID, msg.PingID)
+				pongCancel()
+				if err != nil {
+					logger.Error(
+						ctx,
+						"pong failed",
+						"component", "tool-registry-provider",
+						"toolset", toolset,
+						"provider_id", opts.ProviderID,
+						"stream_id", streamID,
+						"event_id", ev.ID,
+						"ping_id", msg.PingID,
+						"err", err,
+					)
+				}
+			}
+			return ackImmediate(ev, "ping toolset")
+		case toolregistry.MessageTypeCall:
+		default:
+			return ackImmediate(ev, "unknown toolset")
+		}
+		if msg.ToolUseID == "" {
+			return ackImmediate(ev, "tool call missing tool_use_id")
+		}
+		select {
+		case work <- workItem{ev: ev, msg: msg}:
+			return nil
+		default:
+			logger.Error(
+				ctx,
+				"tool call queue full; completing as provider overloaded",
+				"component", "tool-registry-provider",
+				"toolset", toolset,
+				"provider_id", opts.ProviderID,
+				"tool_use_id", msg.ToolUseID,
+				"tool", msg.Tool,
+				"stream_id", streamID,
+				"event_id", ev.ID,
+				"max_concurrent", maxConcurrent,
+				"max_queued", maxQueued,
+			)
+			if err := reportOverload(
+				ctx,
+				registrationConfig,
+				shutdownTimeout,
+				toolset,
+				opts.ProviderID,
+				incarnationID,
+				admittedToken,
+				msg,
+				ev.ID,
+			); err != nil {
+				return err
+			}
+			return ackImmediate(ev, "overloaded tool call")
+		}
+	}
 
-		closeErr := closeSinkBounded(shutdownCtx, sink)
+	finish := func(runErr error) error {
+		leaseTokens := []string{admittedToken}
+		var changedTokenErr *registrationTokenChangedError
+		if errors.As(runErr, &changedTokenErr) {
+			leaseTokens = append(leaseTokens, changedTokenErr.receivedToken)
+		}
 		cancel()
+		registrationCtx, registrationCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+		registrationErr := waitForDone(registrationCtx, registrationDone, "registration renewal")
+		registrationCancel()
+		if registrationErr != nil {
+			<-registrationDone
+		}
+
+		settlementCtx, settlementCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+		defer settlementCancel()
+
+		var drainErr error
+		for _, token := range leaseTokens {
+			drainErr = errors.Join(drainErr, drainProvider(
+				settlementCtx,
+				toolset,
+				opts.ProviderID,
+				incarnationID,
+				token,
+				shutdownTimeout+SettlementAuthorityMargin,
+				registrationConfig,
+				logger,
+				waitRegistrationDelay,
+			))
+		}
+
+		// The draining lease is now non-routable. Close intake before workers
+		// claim any remaining local queue entries; the registry still authorizes
+		// this exact lease to finish those already-published calls.
+		closeErr := closeSinkBounded(settlementCtx, sink)
 		close(work)
 
-		registrationErr := waitForDone(shutdownCtx, registrationDone, "registration renewal")
-		ensureErr := waitForDone(shutdownCtx, ensureDone, "consumer-group ensure")
-		workerErr := waitForWorkers(shutdownCtx, workerDone, maxConcurrent)
-		if workerErr == nil {
-			close(acks)
-		} else {
-			close(abortAcks)
+		ensureErr := waitForDone(settlementCtx, ensureDone, "consumer-group ensure")
+		if ensureErr != nil {
+			<-ensureDone
 		}
-		ackDrainErr := waitForDone(shutdownCtx, ackDone, "acknowledgements")
+		workerErr := waitForDone(settlementCtx, workerDone, "tool workers")
+		if workerErr != nil {
+			cancelHandlers()
+			<-workerDone
+		}
+		cancelHandlers()
+		close(acks)
+		ackDrainErr := waitForDone(settlementCtx, ackDone, "acknowledgements")
+		if ackDrainErr != nil {
+			cancelAcks()
+			<-ackDone
+		}
+		cancelAcks()
 
 		settleErrMu.Lock()
 		recordedSettlementErr := settlementErr
 		settleErrMu.Unlock()
 
-		stopErr := errors.Join(closeErr, registrationErr, ensureErr, workerErr, ackDrainErr, recordedSettlementErr)
+		stopErr := errors.Join(
+			drainErr,
+			closeErr,
+			registrationErr,
+			ensureErr,
+			workerErr,
+			ackDrainErr,
+			recordedSettlementErr,
+		)
 		if stopErr != nil {
 			return errors.Join(runErr, stopErr)
 		}
 
-		releaseTokens := []string{admittedToken}
-		var changedTokenErr *registrationTokenChangedError
-		if errors.As(runErr, &changedTokenErr) {
-			releaseTokens = append(releaseTokens, changedTokenErr.receivedToken)
-		}
 		var releaseErr error
-		for _, token := range releaseTokens {
+		for _, token := range leaseTokens {
 			releaseErr = errors.Join(
 				releaseErr,
 				releaseProvider(
@@ -547,15 +738,6 @@ func Serve(
 		}
 		return errors.Join(runErr, releaseErr)
 	}
-	ackImmediate := func(ev *streaming.Event, description string) error {
-		ackCtx, ackCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
-		err := sink.Ack(ackCtx, ev)
-		ackCancel()
-		if err != nil {
-			return fmt.Errorf("ack %s event %s: %w", description, ev.ID, err)
-		}
-		return nil
-	}
 
 	for {
 		select {
@@ -570,157 +752,75 @@ func Serve(
 			return finish(err)
 		case ev, ok := <-events:
 			if !ok {
-				return finish(fmt.Errorf("toolset stream subscription closed"))
+				return finish(errors.New("toolset stream subscription closed"))
 			}
-			var msg toolregistry.ToolCallMessage
-			if err := json.Unmarshal(ev.Payload, &msg); err != nil {
-				logger.Error(
-					ctx,
-					"unmarshal toolset message failed",
-					"component", "tool-registry-provider",
-					"toolset", toolset,
-					"stream_id", streamID,
-					"event_id", ev.ID,
-					"event_name", ev.EventName,
-					"err", err,
-				)
-				if err := ackImmediate(ev, "malformed toolset"); err != nil {
-					signalSettleFailure(err)
-					return finish(err)
-				}
-				continue
-			}
-			if err := toolregistry.ValidateToolCallMessage(msg); err != nil {
-				logger.Error(
-					ctx,
-					"validate toolset message failed",
-					"component", "tool-registry-provider",
-					"toolset", toolset,
-					"stream_id", streamID,
-					"event_id", ev.ID,
-					"event_name", ev.EventName,
-					"err", err,
-				)
-				if err := ackImmediate(ev, "invalid toolset"); err != nil {
-					signalSettleFailure(err)
-					return finish(err)
-				}
-				continue
-			}
-			switch msg.Type {
-			case toolregistry.MessageTypePing:
-				if msg.RegistrationToken == admittedToken && msg.PingID != "" {
-					pongCtx, pongCancel := context.WithTimeout(cancelCtx, pongTimeout)
-					err := opts.Pong(pongCtx, opts.ProviderID, incarnationID, msg.PingID)
-					pongCancel()
-					if err != nil {
-						logger.Error(
-							cancelCtx,
-							"pong failed",
-							"component", "tool-registry-provider",
-							"toolset", toolset,
-							"provider_id", opts.ProviderID,
-							"stream_id", streamID,
-							"event_id", ev.ID,
-							"ping_id", msg.PingID,
-							"err", err,
-						)
-					}
-				}
-				if err := ackImmediate(ev, "ping toolset"); err != nil {
-					signalSettleFailure(err)
-					return finish(err)
-				}
-				continue
-			case toolregistry.MessageTypeCall:
-			default:
-				if err := ackImmediate(ev, "unknown toolset"); err != nil {
-					signalSettleFailure(err)
-					return finish(err)
-				}
-				continue
-			}
-			if msg.ToolUseID == "" {
-				if err := ackImmediate(ev, "tool call missing tool_use_id"); err != nil {
-					signalSettleFailure(err)
-					return finish(err)
-				}
-				continue
-			}
-
-			select {
-			case work <- workItem{ev: ev, msg: msg}:
-			default:
-				logger.Error(
-					cancelCtx,
-					"tool call queue full; completing as provider overloaded",
-					"component", "tool-registry-provider",
-					"toolset", toolset,
-					"provider_id", opts.ProviderID,
-					"tool_use_id", msg.ToolUseID,
-					"tool", msg.Tool,
-					"stream_id", streamID,
-					"event_id", ev.ID,
-					"max_concurrent", maxConcurrent,
-					"max_queued", maxQueued,
-				)
-				if err := publishOverloadedResult(
-					cancelCtx,
-					pulse,
-					msg,
-					resultEventType,
-					shutdownTimeout,
-				); err != nil {
-					signalSettleFailure(err)
-					return finish(err)
-				}
-				if err := ackImmediate(ev, "overloaded tool call"); err != nil {
-					signalSettleFailure(err)
-					return finish(err)
-				}
-			case <-cancelCtx.Done():
+			if err := acceptEvent(ev); err != nil {
+				signalSettleFailure(err)
+				return finish(err)
 			}
 		}
 	}
 }
 
-// publishOverloadedResult records a transient saturation event before the
-// request is acknowledged. Registry-owned call admission serializes the
-// bounded republish; providers remain free to drain pings meanwhile.
-func publishOverloadedResult(
+// claimToolCall asks the registry for the one pre-dispatch transition. The
+// handler may run only when the returned disposition is ClaimExecute.
+func claimToolCall(
 	ctx context.Context,
-	pulse pulseclients.Client,
-	message toolregistry.ToolCallMessage,
-	eventType string,
+	registration registrationConfig,
 	timeout time.Duration,
-) error {
-	resultStreamID := toolregistry.ResultStreamID(message.ToolUseID)
-	resultStreamTTL := time.Duration(message.ResultStreamTTLMillis) * time.Millisecond
-	resultStream, err := pulse.Stream(
-		resultStreamID,
-		streamopts.WithStreamSlidingTTL(resultStreamTTL),
-	)
-	if err != nil {
-		return fmt.Errorf("open overloaded result stream %q: %w", resultStreamID, err)
-	}
-	result := toolregistry.NewToolResultErrorMessage(
+	toolset, providerID, incarnationID, providerRegistrationToken string,
+	message toolregistry.ToolCallMessage,
+	requestEventID string,
+) (ClaimDisposition, error) {
+	claimCtx, claimCancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer claimCancel()
+	disposition, err := registration.claim(
+		claimCtx,
+		toolset,
+		providerID,
+		incarnationID,
+		providerRegistrationToken,
 		message.RegistrationToken,
 		message.ToolUseID,
-		toolregistry.ToolErrorCodeProviderOverloaded,
-		"provider capacity is full; retry this tool call",
+		requestEventID,
 	)
-	result.Error.RetryAfterMillis = toolregistry.ProviderOverloadRetryAfter.Milliseconds()
-	payload, err := json.Marshal(result)
 	if err != nil {
-		return fmt.Errorf("marshal overloaded tool result: %w", err)
+		return "", err
 	}
+	switch disposition {
+	case ClaimExecute, ClaimTerminal, ClaimOwned, ClaimExpired:
+		return disposition, nil
+	default:
+		return "", fmt.Errorf("registry returned unsupported claim disposition %q", disposition)
+	}
+}
+
+// reportOverload submits transient retry intent before the request is
+// acknowledged; registry-owned call state suppresses it after terminal state.
+func reportOverload(
+	ctx context.Context,
+	registration registrationConfig,
+	timeout time.Duration,
+	toolset, providerID, incarnationID, providerRegistrationToken string,
+	message toolregistry.ToolCallMessage,
+	requestEventID string,
+) error {
 	publishCtx, publishCancel := context.WithTimeout(
 		context.WithoutCancel(ctx),
 		min(timeout, MaxOverloadPublishDuration),
 	)
 	defer publishCancel()
-	if _, err := resultStream.Add(publishCtx, eventType, payload); err != nil {
-		return fmt.Errorf("publish overloaded tool result to %q: %w", resultStreamID, err)
+	if err := registration.reportOverload(
+		publishCtx,
+		toolset,
+		providerID,
+		incarnationID,
+		providerRegistrationToken,
+		message.RegistrationToken,
+		message.ToolUseID,
+		requestEventID,
+	); err != nil {
+		return fmt.Errorf("report overloaded tool call %q: %w", message.ToolUseID, err)
 	}
 	return nil
 }
@@ -728,33 +828,11 @@ func publishOverloadedResult(
 // closeSinkBounded stops consumer-group claiming and proves Close returned
 // before the lifecycle shutdown deadline.
 func closeSinkBounded(ctx context.Context, sink pulseclients.Sink) error {
-	closed := make(chan struct{})
-	var closeErr error
-	go func() {
-		closeErr = sink.Close(ctx)
-		close(closed)
-	}()
-	select {
-	case <-closed:
-		if closeErr != nil {
-			return fmt.Errorf("close toolset sink: %w", closeErr)
-		}
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("close toolset sink: %w", err)
-		}
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("close toolset sink: %w", ctx.Err())
+	if err := sink.Close(ctx); err != nil {
+		return fmt.Errorf("close toolset sink: %w", err)
 	}
-}
-
-// waitForWorkers joins each configured worker without a waiter goroutine that
-// could outlive Serve after a handler violates the cancellation contract.
-func waitForWorkers(ctx context.Context, done <-chan struct{}, count int) error {
-	for i := 0; i < count; i++ {
-		if err := waitForDone(ctx, done, fmt.Sprintf("tool worker %d/%d", i+1, count)); err != nil {
-			return err
-		}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("close toolset sink: %w", err)
 	}
 	return nil
 }

@@ -78,6 +78,35 @@ func DecodeReleaseProviderRequest(ctx context.Context, v any, md metadata.MD) (a
 	return payload, nil
 }
 
+// EncodeDrainProviderResponse encodes responses from the "registry" service
+// "DrainProvider" endpoint.
+func EncodeDrainProviderResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	resp := NewProtoDrainProviderResponse()
+	return resp, nil
+}
+
+// DecodeDrainProviderRequest decodes requests sent to "registry" service
+// "DrainProvider" endpoint.
+func DecodeDrainProviderRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.DrainProviderRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.DrainProviderRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "DrainProvider", "*registrypb.DrainProviderRequest", v)
+		}
+		if err := ValidateDrainProviderRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.DrainProviderPayload
+	{
+		payload = NewDrainProviderPayload(message)
+	}
+	return payload, nil
+}
+
 // EncodeUnregisterResponse encodes responses from the "registry" service
 // "Unregister" endpoint.
 func EncodeUnregisterResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
@@ -261,6 +290,159 @@ func DecodeCallToolRequest(ctx context.Context, v any, md metadata.MD) (any, err
 	var payload *registry.CallToolPayload
 	{
 		payload = NewCallToolPayload(message)
+	}
+	return payload, nil
+}
+
+// EncodeRetryToolResponse encodes responses from the "registry" service
+// "RetryTool" endpoint.
+func EncodeRetryToolResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.CallToolResult)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "RetryTool", "*registry.CallToolResult", v)
+	}
+	resp := NewProtoRetryToolResponse(result)
+	return resp, nil
+}
+
+// DecodeRetryToolRequest decodes requests sent to "registry" service
+// "RetryTool" endpoint.
+func DecodeRetryToolRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.RetryToolRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.RetryToolRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "RetryTool", "*registrypb.RetryToolRequest", v)
+		}
+		if err := ValidateRetryToolRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.RetryToolPayload
+	{
+		payload = NewRetryToolPayload(message)
+	}
+	return payload, nil
+}
+
+// EncodeCompleteToolCallResponse encodes responses from the "registry" service
+// "CompleteToolCall" endpoint.
+func EncodeCompleteToolCallResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	resp := NewProtoCompleteToolCallResponse()
+	return resp, nil
+}
+
+// DecodeCompleteToolCallRequest decodes requests sent to "registry" service
+// "CompleteToolCall" endpoint.
+func DecodeCompleteToolCallRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.CompleteToolCallRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.CompleteToolCallRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "CompleteToolCall", "*registrypb.CompleteToolCallRequest", v)
+		}
+		if err := ValidateCompleteToolCallRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.CompleteToolCallPayload
+	{
+		payload = NewCompleteToolCallPayload(message)
+	}
+	return payload, nil
+}
+
+// EncodePublishToolOutputDeltaResponse encodes responses from the "registry"
+// service "PublishToolOutputDelta" endpoint.
+func EncodePublishToolOutputDeltaResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	resp := NewProtoPublishToolOutputDeltaResponse()
+	return resp, nil
+}
+
+// DecodePublishToolOutputDeltaRequest decodes requests sent to "registry"
+// service "PublishToolOutputDelta" endpoint.
+func DecodePublishToolOutputDeltaRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.PublishToolOutputDeltaRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.PublishToolOutputDeltaRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "PublishToolOutputDelta", "*registrypb.PublishToolOutputDeltaRequest", v)
+		}
+		if err := ValidatePublishToolOutputDeltaRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.PublishToolOutputDeltaPayload
+	{
+		payload = NewPublishToolOutputDeltaPayload(message)
+	}
+	return payload, nil
+}
+
+// EncodeReportToolCallOverloadResponse encodes responses from the "registry"
+// service "ReportToolCallOverload" endpoint.
+func EncodeReportToolCallOverloadResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	resp := NewProtoReportToolCallOverloadResponse()
+	return resp, nil
+}
+
+// DecodeReportToolCallOverloadRequest decodes requests sent to "registry"
+// service "ReportToolCallOverload" endpoint.
+func DecodeReportToolCallOverloadRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.ReportToolCallOverloadRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.ReportToolCallOverloadRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "ReportToolCallOverload", "*registrypb.ReportToolCallOverloadRequest", v)
+		}
+		if err := ValidateReportToolCallOverloadRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.ProviderToolCallClaimPayload
+	{
+		payload = NewReportToolCallOverloadPayload(message)
+	}
+	return payload, nil
+}
+
+// EncodeClaimToolCallResponse encodes responses from the "registry" service
+// "ClaimToolCall" endpoint.
+func EncodeClaimToolCallResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.ClaimToolCallResult)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ClaimToolCall", "*registry.ClaimToolCallResult", v)
+	}
+	resp := NewProtoClaimToolCallResponse(result)
+	return resp, nil
+}
+
+// DecodeClaimToolCallRequest decodes requests sent to "registry" service
+// "ClaimToolCall" endpoint.
+func DecodeClaimToolCallRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.ClaimToolCallRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.ClaimToolCallRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "ClaimToolCall", "*registrypb.ClaimToolCallRequest", v)
+		}
+		if err := ValidateClaimToolCallRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.ProviderToolCallClaimPayload
+	{
+		payload = NewClaimToolCallPayload(message)
 	}
 	return payload, nil
 }

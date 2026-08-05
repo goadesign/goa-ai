@@ -75,6 +75,28 @@ func (c *Client) ReleaseProvider() goa.Endpoint {
 	}
 }
 
+// DrainProvider calls the "DrainProvider" function in
+// registrypb.RegistryClient interface.
+func (c *Client) DrainProvider() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildDrainProviderFunc(c.grpccli, c.opts...),
+			EncodeDrainProviderRequest,
+			nil)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
 // Unregister calls the "Unregister" function in registrypb.RegistryClient
 // interface.
 func (c *Client) Unregister() goa.Endpoint {
@@ -188,6 +210,116 @@ func (c *Client) CallTool() goa.Endpoint {
 			BuildCallToolFunc(c.grpccli, c.opts...),
 			EncodeCallToolRequest,
 			DecodeCallToolResponse)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
+// RetryTool calls the "RetryTool" function in registrypb.RegistryClient
+// interface.
+func (c *Client) RetryTool() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildRetryToolFunc(c.grpccli, c.opts...),
+			EncodeRetryToolRequest,
+			DecodeRetryToolResponse)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
+// CompleteToolCall calls the "CompleteToolCall" function in
+// registrypb.RegistryClient interface.
+func (c *Client) CompleteToolCall() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildCompleteToolCallFunc(c.grpccli, c.opts...),
+			EncodeCompleteToolCallRequest,
+			nil)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
+// PublishToolOutputDelta calls the "PublishToolOutputDelta" function in
+// registrypb.RegistryClient interface.
+func (c *Client) PublishToolOutputDelta() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildPublishToolOutputDeltaFunc(c.grpccli, c.opts...),
+			EncodePublishToolOutputDeltaRequest,
+			nil)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
+// ReportToolCallOverload calls the "ReportToolCallOverload" function in
+// registrypb.RegistryClient interface.
+func (c *Client) ReportToolCallOverload() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildReportToolCallOverloadFunc(c.grpccli, c.opts...),
+			EncodeReportToolCallOverloadRequest,
+			nil)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
+// ClaimToolCall calls the "ClaimToolCall" function in
+// registrypb.RegistryClient interface.
+func (c *Client) ClaimToolCall() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildClaimToolCallFunc(c.grpccli, c.opts...),
+			EncodeClaimToolCallRequest,
+			DecodeClaimToolCallResponse)
 		res, err := inv.Invoke(ctx, v)
 		if err != nil {
 			resp := goagrpc.DecodeError(err)

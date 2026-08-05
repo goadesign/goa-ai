@@ -4,8 +4,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestValidateWireProtocolVersion(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, ValidateWireProtocolVersion(WireProtocolVersion))
+	require.Error(t, ValidateWireProtocolVersion(0))
+	require.Error(t, ValidateWireProtocolVersion(WireProtocolVersion+1))
+}
 
 func TestValidateAdmissionRevision(t *testing.T) {
 	t.Parallel()
@@ -27,10 +35,10 @@ func TestValidateAdmissionRevision(t *testing.T) {
 			t.Parallel()
 			err := ValidateAdmissionRevision(tc.revision)
 			if tc.valid {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				return
 			}
-			assert.Error(t, err)
+			require.Error(t, err)
 		})
 	}
 }
@@ -68,10 +76,10 @@ func TestValidateRegistrationToken(t *testing.T) {
 			t.Parallel()
 			err := ValidateRegistrationToken(tc.token)
 			if tc.valid {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				return
 			}
-			assert.Error(t, err)
+			require.Error(t, err)
 		})
 	}
 }

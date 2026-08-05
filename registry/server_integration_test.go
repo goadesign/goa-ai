@@ -17,6 +17,7 @@ import (
 	registrypb "goa.design/goa-ai/registry/gen/grpc/registry/pb"
 	grpcserver "goa.design/goa-ai/registry/gen/grpc/registry/server"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
+	"goa.design/goa-ai/runtime/toolregistry"
 	goa "goa.design/goa/v3/pkg"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -96,6 +97,7 @@ func TestServerIntegration(t *testing.T) {
 			ProviderID:            "data-tools/provider-a",
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     testAdmissionRevisionA,
+			WireProtocolVersion:   toolregistry.WireProtocolVersion,
 			Tools: []*genregistry.ToolSchema{
 				{
 					Name:          "transform",
@@ -182,6 +184,7 @@ func TestServerIntegration(t *testing.T) {
 			ProviderID:            "analytics-tools/provider-a",
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     testAdmissionRevisionA,
+			WireProtocolVersion:   toolregistry.WireProtocolVersion,
 			Tools: []*genregistry.ToolSchema{
 				{
 					Name:          "report",
@@ -306,6 +309,7 @@ func TestServerMultiNodeSync(t *testing.T) {
 		ProviderID:            "shared-tools/provider-a",
 		ProviderIncarnationID: testIncarnationA,
 		AdmissionRevision:     testAdmissionRevisionA,
+		WireProtocolVersion:   toolregistry.WireProtocolVersion,
 		Tools: []*genregistry.ToolSchema{
 			{
 				Name:          "shared-tool",
@@ -371,6 +375,7 @@ func TestServerValidationErrors(t *testing.T) {
 			ProviderID:            "bad-schema-tools/provider-a",
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     testAdmissionRevisionA,
+			WireProtocolVersion:   toolregistry.WireProtocolVersion,
 			Tools: []*genregistry.ToolSchema{
 				{
 					Name:          "bad-tool",
@@ -397,6 +402,7 @@ func TestServerValidationErrors(t *testing.T) {
 			ProviderID:            "empty-schema-tools/provider-a",
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     testAdmissionRevisionA,
+			WireProtocolVersion:   toolregistry.WireProtocolVersion,
 			Tools: []*genregistry.ToolSchema{
 				{
 					Name:          "empty-tool",
@@ -422,6 +428,7 @@ func TestServerValidationErrors(t *testing.T) {
 			Name:                  "missing-admission-revision",
 			ProviderID:            "missing-admission-revision/provider-a",
 			ProviderIncarnationID: testIncarnationA,
+			WireProtocolVersion:   toolregistry.WireProtocolVersion,
 			Tools: []*genregistry.ToolSchema{{
 				Name:          "lookup",
 				PayloadSchema: []byte(`{"type":"object"}`),
@@ -437,6 +444,7 @@ func TestServerValidationErrors(t *testing.T) {
 			ProviderID:            "malformed-admission-revision/provider-a",
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     "contains whitespace",
+			WireProtocolVersion:   toolregistry.WireProtocolVersion,
 			Tools: []*genregistry.ToolSchema{{
 				Name:          "lookup",
 				PayloadSchema: []byte(`{"type":"object"}`),
@@ -444,6 +452,21 @@ func TestServerValidationErrors(t *testing.T) {
 			}},
 		})
 		require.ErrorContains(t, err, "admission_revision")
+	})
+
+	t.Run("missing wire protocol version rejected", func(t *testing.T) {
+		_, err := client.Register(ctx, &genregistry.RegisterPayload{
+			Name:                  "missing-wire-protocol-version",
+			ProviderID:            "missing-wire-protocol-version/provider-a",
+			ProviderIncarnationID: testIncarnationA,
+			AdmissionRevision:     testAdmissionRevisionA,
+			Tools: []*genregistry.ToolSchema{{
+				Name:          "lookup",
+				PayloadSchema: []byte(`{"type":"object"}`),
+				ResultSchema:  []byte(`{"type":"object"}`),
+			}},
+		})
+		require.ErrorContains(t, err, "wire_protocol_version")
 	})
 
 	t.Run("noncanonical registration token rejected", func(t *testing.T) {
@@ -504,11 +527,25 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	))
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
-	overlongID := strings.Repeat("x", 257)
 	_, err = rawClient.CallTool(ctx, &registrypb.CallToolRequest{
 		Toolset:     "status-tools",
 		Tool:        "status.lookup",
 		PayloadJson: []byte(`{}`),
+		Meta: &registrypb.ToolCallMeta{
+			RunId:      "run-1",
+			SessionId:  "session-1",
+			ToolCallId: "old-consumer-call",
+		},
+	})
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Zero(t, counting.calls.Load(), "old consumer must be rejected before service invocation")
+
+	overlongID := strings.Repeat("x", 257)
+	_, err = rawClient.CallTool(ctx, &registrypb.CallToolRequest{
+		Toolset:             "status-tools",
+		Tool:                "status.lookup",
+		PayloadJson:         []byte(`{}`),
+		WireProtocolVersion: int32(toolregistry.WireProtocolVersion),
 		Meta: &registrypb.ToolCallMeta{
 			RunId:      "run-1",
 			SessionId:  "session-1",
@@ -569,12 +606,18 @@ func startServiceAndClients(
 	client := genregistry.NewClient(
 		grpcCli.Register(),
 		grpcCli.ReleaseProvider(),
+		grpcCli.DrainProvider(),
 		grpcCli.Unregister(),
 		grpcCli.Pong(),
 		grpcCli.ListToolsets(),
 		grpcCli.GetToolset(),
 		grpcCli.Search(),
 		grpcCli.CallTool(),
+		grpcCli.RetryTool(),
+		grpcCli.CompleteToolCall(),
+		grpcCli.PublishToolOutputDelta(),
+		grpcCli.ReportToolCallOverload(),
+		grpcCli.ClaimToolCall(),
 	)
 	return client, registrypb.NewRegistryClient(conn)
 }
@@ -588,6 +631,7 @@ func grpcRegisterRequest(
 		ProviderId:            providerID,
 		ProviderIncarnationId: testIncarnationA,
 		AdmissionRevision:     revision,
+		WireProtocolVersion:   int32(toolregistry.WireProtocolVersion),
 		Tools: []*registrypb.ToolSchema{{
 			Name:          "status.lookup",
 			PayloadSchema: []byte(`{"type":"object"}`),

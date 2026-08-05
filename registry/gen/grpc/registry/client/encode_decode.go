@@ -77,6 +77,30 @@ func EncodeReleaseProviderRequest(ctx context.Context, v any, md *metadata.MD) (
 	return NewProtoReleaseProviderRequest(payload), nil
 }
 
+// BuildDrainProviderFunc builds the remote method to invoke for "registry"
+// service "DrainProvider" endpoint.
+func BuildDrainProviderFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.DrainProvider(ctx, reqpb.(*registrypb.DrainProviderRequest), opts...)
+		}
+		return grpccli.DrainProvider(ctx, &registrypb.DrainProviderRequest{}, opts...)
+	}
+}
+
+// EncodeDrainProviderRequest encodes requests sent to registry DrainProvider
+// endpoint.
+func EncodeDrainProviderRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.DrainProviderPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "DrainProvider", "*registry.DrainProviderPayload", v)
+	}
+	return NewProtoDrainProviderRequest(payload), nil
+}
+
 // BuildUnregisterFunc builds the remote method to invoke for "registry"
 // service "Unregister" endpoint.
 func BuildUnregisterFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
@@ -269,5 +293,152 @@ func DecodeCallToolResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (
 		return nil, err
 	}
 	res := NewCallToolResult(message)
+	return res, nil
+}
+
+// BuildRetryToolFunc builds the remote method to invoke for "registry" service
+// "RetryTool" endpoint.
+func BuildRetryToolFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.RetryTool(ctx, reqpb.(*registrypb.RetryToolRequest), opts...)
+		}
+		return grpccli.RetryTool(ctx, &registrypb.RetryToolRequest{}, opts...)
+	}
+}
+
+// EncodeRetryToolRequest encodes requests sent to registry RetryTool endpoint.
+func EncodeRetryToolRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.RetryToolPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "RetryTool", "*registry.RetryToolPayload", v)
+	}
+	return NewProtoRetryToolRequest(payload), nil
+}
+
+// DecodeRetryToolResponse decodes responses from the registry RetryTool
+// endpoint.
+func DecodeRetryToolResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.RetryToolResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "RetryTool", "*registrypb.RetryToolResponse", v)
+	}
+	if err := ValidateRetryToolResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewRetryToolResult(message)
+	return res, nil
+}
+
+// BuildCompleteToolCallFunc builds the remote method to invoke for "registry"
+// service "CompleteToolCall" endpoint.
+func BuildCompleteToolCallFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.CompleteToolCall(ctx, reqpb.(*registrypb.CompleteToolCallRequest), opts...)
+		}
+		return grpccli.CompleteToolCall(ctx, &registrypb.CompleteToolCallRequest{}, opts...)
+	}
+}
+
+// EncodeCompleteToolCallRequest encodes requests sent to registry
+// CompleteToolCall endpoint.
+func EncodeCompleteToolCallRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.CompleteToolCallPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "CompleteToolCall", "*registry.CompleteToolCallPayload", v)
+	}
+	return NewProtoCompleteToolCallRequest(payload), nil
+}
+
+// BuildPublishToolOutputDeltaFunc builds the remote method to invoke for
+// "registry" service "PublishToolOutputDelta" endpoint.
+func BuildPublishToolOutputDeltaFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.PublishToolOutputDelta(ctx, reqpb.(*registrypb.PublishToolOutputDeltaRequest), opts...)
+		}
+		return grpccli.PublishToolOutputDelta(ctx, &registrypb.PublishToolOutputDeltaRequest{}, opts...)
+	}
+}
+
+// EncodePublishToolOutputDeltaRequest encodes requests sent to registry
+// PublishToolOutputDelta endpoint.
+func EncodePublishToolOutputDeltaRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.PublishToolOutputDeltaPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "PublishToolOutputDelta", "*registry.PublishToolOutputDeltaPayload", v)
+	}
+	return NewProtoPublishToolOutputDeltaRequest(payload), nil
+}
+
+// BuildReportToolCallOverloadFunc builds the remote method to invoke for
+// "registry" service "ReportToolCallOverload" endpoint.
+func BuildReportToolCallOverloadFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.ReportToolCallOverload(ctx, reqpb.(*registrypb.ReportToolCallOverloadRequest), opts...)
+		}
+		return grpccli.ReportToolCallOverload(ctx, &registrypb.ReportToolCallOverloadRequest{}, opts...)
+	}
+}
+
+// EncodeReportToolCallOverloadRequest encodes requests sent to registry
+// ReportToolCallOverload endpoint.
+func EncodeReportToolCallOverloadRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.ProviderToolCallClaimPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ReportToolCallOverload", "*registry.ProviderToolCallClaimPayload", v)
+	}
+	return NewProtoReportToolCallOverloadRequest(payload), nil
+}
+
+// BuildClaimToolCallFunc builds the remote method to invoke for "registry"
+// service "ClaimToolCall" endpoint.
+func BuildClaimToolCallFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.ClaimToolCall(ctx, reqpb.(*registrypb.ClaimToolCallRequest), opts...)
+		}
+		return grpccli.ClaimToolCall(ctx, &registrypb.ClaimToolCallRequest{}, opts...)
+	}
+}
+
+// EncodeClaimToolCallRequest encodes requests sent to registry ClaimToolCall
+// endpoint.
+func EncodeClaimToolCallRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.ProviderToolCallClaimPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ClaimToolCall", "*registry.ProviderToolCallClaimPayload", v)
+	}
+	return NewProtoClaimToolCallRequest(payload), nil
+}
+
+// DecodeClaimToolCallResponse decodes responses from the registry
+// ClaimToolCall endpoint.
+func DecodeClaimToolCallResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.ClaimToolCallResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ClaimToolCall", "*registrypb.ClaimToolCallResponse", v)
+	}
+	if err := ValidateClaimToolCallResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewClaimToolCallResult(message)
 	return res, nil
 }

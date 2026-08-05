@@ -18,19 +18,27 @@ import (
 // renew leases for the one active schema and admission revision; consumers
 // discover and invoke only healthy admitted providers.
 type Service interface {
-	// Atomically admit or renew one provider-incarnation lease in the catalog
-	// admission record. The same schema and admission revision add or renew
-	// replicas under one token. A different token replaces the admission after
-	// Redis-time pruning proves every old lease expired and atomically tombstones
-	// the prior token; otherwise admission_blocked asks the provider to retry. Any
-	// candidate in the permanent retired-token set returns admission_retired and
-	// cannot resurrect.
+	// Reject providers whose required runtime-owned wire protocol version differs
+	// from the registry, then atomically admit or renew one provider-incarnation
+	// lease in the catalog admission record. The same wire version, schema, and
+	// admission revision add or renew replicas under one token. A different token
+	// replaces the admission after Redis-time pruning proves every old lease
+	// expired and atomically tombstones the prior token; otherwise
+	// admission_blocked asks the provider to retry. Any candidate in the permanent
+	// retired-token set returns admission_retired and cannot resurrect.
 	Register(context.Context, *RegisterPayload) (res *RegisterResult, err error)
 	// Release one exact provider-incarnation lease from the admission token after
 	// that Serve lifecycle has stopped claiming work and settled in-flight calls.
 	// Missing incarnations and stale tokens succeed without mutation;
 	// infrastructure failures are retryable.
 	ReleaseProvider(context.Context, *ReleaseProviderPayload) (err error)
+	// Atomically mark one exact provider-incarnation lease non-routable before its
+	// Serve lifecycle closes the shared request sink. The provider supplies its
+	// configured settlement duration; Redis time extends the draining lease
+	// through that full lifecycle so already-claimed work can publish terminal
+	// results, while new calls route only when another non-draining provider
+	// remains.
+	DrainProvider(context.Context, *DrainProviderPayload) (err error)
 	// Intentionally retire the exact active admission while preserving its
 	// provider leases until graceful release or expiry and atomically adding its
 	// token to the permanent retired-token set. Repeating the same-token
@@ -48,12 +56,45 @@ type Service interface {
 	GetToolset(context.Context, *GetToolsetPayload) (res *Toolset, err error)
 	// Search toolsets by keyword matching name, description, or tags
 	Search(context.Context, *SearchPayload) (res *SearchResult, err error)
-	// Admit or attach to one run-scoped tool call. The registry atomically owns
-	// publication by tool_use_id and registration token, retries provider overload
-	// with bounded backoff, preserves immutable sliding-TTL result history, and
-	// returns the exact identity, admission token, and retention used by
-	// independent replay readers.
+	// Reject consumers whose required runtime-owned wire protocol version differs
+	// from the registry, then admit or attach to one run-scoped tool call. The
+	// registry atomically owns initial publication and terminal completion by
+	// tool_use_id: the call record retains the full canonical terminal through its
+	// absolute expiration and restores it when bounded result-stream history was
+	// trimmed.
 	CallTool(context.Context, *CallToolPayload) (res *CallToolResult, err error)
+	// Republish one previously admitted call after provider overload recorded in
+	// the authoritative call record. The runtime supplies the exact original
+	// registration token; the registry rejects a changed active admission before
+	// publishing and never rebinds claimed execution to a replacement provider.
+	RetryTool(context.Context, *RetryToolPayload) (res *CallToolResult, err error)
+	// Publish one canonical terminal result for an admitted call. The registry
+	// verifies the exact provider incarnation still owns an unexpired lease and
+	// claimed request event, then atomically stores the full terminal in the
+	// authoritative call record and appends it to bounded result history. If that
+	// exact dispatch lease disappears first, registry-owned settlement commits
+	// outcome_unknown because the effect may have occurred; execution ownership
+	// never transfers.
+	CompleteToolCall(context.Context, *CompleteToolCallPayload) (err error)
+	// Publish one best-effort output fragment for a claimed live call. The
+	// registry verifies the exact provider lease and request-event claim, then
+	// atomically appends the delta only while the authoritative call record
+	// remains nonterminal.
+	PublishToolOutputDelta(context.Context, *PublishToolOutputDeltaPayload) (err error)
+	// Report that an exact provider claim could not enter its bounded worker
+	// queue. The registry verifies the provider lease and request-event claim,
+	// then atomically appends retry control only while the authoritative call
+	// record remains nonterminal.
+	ReportToolCallOverload(context.Context, *ProviderToolCallClaimPayload) (err error)
+	// Atomically settle one queued request before handler dispatch. The registry
+	// authenticates the exact provider lease and request event; only an active
+	// non-draining lease may gain immutable execution ownership. Existing owners,
+	// retained terminal history, and Redis-owned expiration settle without
+	// execution, while stale, draining, or retired unclaimed work receives the
+	// canonical stale-generation terminal. Only the exact granted provider
+	// incarnation and request event may publish deltas or complete the call;
+	// ownership never transfers after a crash.
+	ClaimToolCall(context.Context, *ProviderToolCallClaimPayload) (res *ClaimToolCallResult, err error)
 }
 
 // APIName is the name of the API as defined in the design.
@@ -70,7 +111,7 @@ const ServiceName = "registry"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [8]string{"Register", "ReleaseProvider", "Unregister", "Pong", "ListToolsets", "GetToolset", "Search", "CallTool"}
+var MethodNames = [14]string{"Register", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "ListToolsets", "GetToolset", "Search", "CallTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
 
 // CallToolPayload is the payload type of the registry service CallTool method.
 type CallToolPayload struct {
@@ -85,6 +126,9 @@ type CallToolPayload struct {
 	PayloadJSON []byte
 	// Execution metadata propagated alongside the tool call.
 	Meta *ToolCallMeta
+	// Required runtime-owned version of the consumer message envelope. The
+	// registry accepts only its exact canonical version.
+	WireProtocolVersion int
 }
 
 // CallToolResult is the result type of the registry service CallTool method.
@@ -93,9 +137,59 @@ type CallToolResult struct {
 	ToolUseID string
 	// Exact admission-generation token stamped on the routed call
 	RegistrationToken string
-	// Registry-selected sliding retention for the per-call result stream in
-	// milliseconds.
-	ResultStreamTTLMs int64
+	// Absolute Redis-owned deadline that bounds provider execution and caller
+	// waiting.
+	ExecutionDeadline string
+	// Later absolute Redis-owned expiration shared by the call record and result
+	// stream.
+	ResultStreamExpiresAt string
+}
+
+// ClaimToolCallResult is the result type of the registry service ClaimToolCall
+// method.
+type ClaimToolCallResult struct {
+	// Closed settlement outcome. execute grants immutable dispatch ownership;
+	// terminal means retained terminal history already exists; claimed means
+	// another request delivery owns execution; expired means Redis time settled
+	// the call.
+	Disposition string
+}
+
+// CompleteToolCallPayload is the payload type of the registry service
+// CompleteToolCall method.
+type CompleteToolCallPayload struct {
+	// Toolset whose provider completed the call.
+	Toolset string
+	// Stable provider process identity that executed the call.
+	ProviderID string
+	// Runtime UUID of the exact Serve lifecycle that executed the call.
+	ProviderIncarnationID string
+	// Exact admission-generation token stamped on the call.
+	RegistrationToken string
+	// Global transport identity stamped on the call.
+	ToolUseID string
+	// Canonical encoded terminal ToolResultMessage.
+	ResultJSON []byte
+	// Pulse request-stream event claimed by this provider.
+	RequestEventID string
+	// Exact registration token of the provider lease settling the claim.
+	ProviderRegistrationToken string
+}
+
+// DrainProviderPayload is the payload type of the registry service
+// DrainProvider method.
+type DrainProviderPayload struct {
+	// Full provider shutdown duration for which the draining lease must retain
+	// settlement authority.
+	SettlementDurationMs int64
+	// Name of the toolset whose provider is leaving
+	Name string
+	// Stable identity of the provider process releasing its lease
+	ProviderID string
+	// Exact admission-generation token returned by Register
+	ExpectedRegistrationToken string
+	// Runtime-generated UUID of the exact Serve lifecycle releasing its lease.
+	ProviderIncarnationID string
 }
 
 // GetToolsetPayload is the payload type of the registry service GetToolset
@@ -131,6 +225,48 @@ type PongPayload struct {
 	ProviderIncarnationID string
 }
 
+// ProviderToolCallClaimPayload is the payload type of the registry service
+// ReportToolCallOverload method.
+type ProviderToolCallClaimPayload struct {
+	// Toolset whose provider claimed the call.
+	Toolset string
+	// Stable identity of the provider process.
+	ProviderID string
+	// Runtime UUID of the exact Serve lifecycle.
+	ProviderIncarnationID string
+	// Exact registration token of the provider lease.
+	ProviderRegistrationToken string
+	// Admission token stamped on the claimed call.
+	CallRegistrationToken string
+	// Global transport identity stamped on the claimed call.
+	ToolUseID string
+	// Pulse request-stream event claimed by this provider.
+	RequestEventID string
+}
+
+// PublishToolOutputDeltaPayload is the payload type of the registry service
+// PublishToolOutputDelta method.
+type PublishToolOutputDeltaPayload struct {
+	// Logical output stream such as stdout or stderr.
+	Stream string
+	// Output fragment emitted by the running tool.
+	Delta string
+	// Toolset whose provider claimed the call.
+	Toolset string
+	// Stable identity of the provider process.
+	ProviderID string
+	// Runtime UUID of the exact Serve lifecycle.
+	ProviderIncarnationID string
+	// Exact registration token of the provider lease.
+	ProviderRegistrationToken string
+	// Admission token stamped on the claimed call.
+	CallRegistrationToken string
+	// Global transport identity stamped on the claimed call.
+	ToolUseID string
+	// Pulse request-stream event claimed by this provider.
+	RequestEventID string
+}
+
 // RegisterPayload is the payload type of the registry service Register method.
 type RegisterPayload struct {
 	// Unique name for the toolset
@@ -152,14 +288,18 @@ type RegisterPayload struct {
 	// Runtime-generated UUID identifying one Serve lifecycle. The provider runtime
 	// generates it once and reuses it for every renewal.
 	ProviderIncarnationID string
+	// Required runtime-owned version of the provider message envelope. The
+	// registry admits only its exact canonical version.
+	WireProtocolVersion int
 }
 
 // RegisterResult is the result type of the registry service Register method.
 type RegisterResult struct {
 	// ISO 8601 timestamp of registration
 	RegisteredAt string
-	// Deterministic admission-generation token derived from the canonical schema
-	// fingerprint and deployment-issued admission revision
+	// Deterministic admission-generation token derived from the wire protocol
+	// version, canonical schema fingerprint, and deployment-issued admission
+	// revision
 	RegistrationToken string
 	// Duration of the admitted provider lease in milliseconds
 	LeaseDurationMs int64
@@ -176,6 +316,27 @@ type ReleaseProviderPayload struct {
 	ExpectedRegistrationToken string
 	// Runtime-generated UUID of the exact Serve lifecycle releasing its lease.
 	ProviderIncarnationID string
+}
+
+// RetryToolPayload is the payload type of the registry service RetryTool
+// method.
+type RetryToolPayload struct {
+	// Exact admission-generation token returned by the original CallTool admission.
+	ExpectedRegistrationToken string
+	// Toolset registration identifier used for routing (for example,
+	// "atlas_data.atlas.read").
+	Toolset string
+	// Globally unique tool identifier of the form "toolset.tool" (for example,
+	// "atlas.read.get_time_series").
+	Tool string
+	// Canonical JSON payload for the tool call. Must validate against the
+	// registered payload schema.
+	PayloadJSON []byte
+	// Execution metadata propagated alongside the tool call.
+	Meta *ToolCallMeta
+	// Required runtime-owned version of the consumer message envelope. The
+	// registry accepts only its exact canonical version.
+	WireProtocolVersion int
 }
 
 // SearchPayload is the payload type of the registry service Search method.
