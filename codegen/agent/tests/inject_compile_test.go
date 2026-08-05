@@ -170,11 +170,13 @@ import (
 // capturingService records the method payload the generated provider passes
 // to the bound service method.
 type capturingService struct {
-	got *atlas.GetDataPayload
+	got           *atlas.GetDataPayload
+	gotToolUseID  string
 }
 
-func (s *capturingService) GetData(_ context.Context, p *atlas.GetDataPayload) (*atlas.GetDataResult, error) {
+func (s *capturingService) GetData(ctx context.Context, p *atlas.GetDataPayload) (*atlas.GetDataResult, error) {
 	s.got = p
+	s.gotToolUseID, _ = toolregistry.ToolUseIDFromContext(ctx)
 	return &atlas.GetDataResult{OK: true}, nil
 }
 
@@ -187,7 +189,8 @@ func (s *capturingService) GetData(_ context.Context, p *atlas.GetDataPayload) (
 func TestHandleToolCallInjectsSessionID(t *testing.T) {
 	svc := &capturingService{}
 	p := NewProvider(svc)
-	out, err := p.HandleToolCall(context.Background(), toolregistry.ToolCallMessage{
+	ctx := toolregistry.WithToolUseID(context.Background(), "use-1")
+	out, err := p.HandleToolCall(ctx, toolregistry.ToolCallMessage{
 		ToolUseID: "use-1",
 		Tool:      GetData,
 		Payload:   []byte("{\"query\":\"weather\"}"),
@@ -212,6 +215,9 @@ func TestHandleToolCallInjectsSessionID(t *testing.T) {
 	}
 	if svc.got.Query != "weather" {
 		t.Fatalf("method payload Query = %q, want %q", svc.got.Query, "weather")
+	}
+	if svc.gotToolUseID != "use-1" {
+		t.Fatalf("method context ToolUseID = %q, want %q", svc.gotToolUseID, "use-1")
 	}
 }
 `)

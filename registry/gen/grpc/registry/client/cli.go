@@ -24,7 +24,7 @@ func BuildRegisterPayload(registryRegisterMessage string) (*registry.RegisterPay
 		if registryRegisterMessage != "" {
 			err = json.Unmarshal([]byte(registryRegisterMessage), &message)
 			if err != nil {
-				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"admission_revision\": \"2026-07-23.4+441534ae50f6\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\"\n   }'")
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"admission_revision\": \"2026-07-23.4+441534ae50f6\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 7\n   }'")
 			}
 		}
 	}
@@ -34,6 +34,7 @@ func BuildRegisterPayload(registryRegisterMessage string) (*registry.RegisterPay
 		ProviderID:            message.ProviderId,
 		AdmissionRevision:     message.AdmissionRevision,
 		ProviderIncarnationID: message.ProviderIncarnationId,
+		WireProtocolVersion:   int(message.WireProtocolVersion),
 	}
 	if message.Version != nil {
 		version := registry.SemVer(*message.Version)
@@ -81,6 +82,30 @@ func BuildReleaseProviderPayload(registryReleaseProviderMessage string) (*regist
 		}
 	}
 	v := &registry.ReleaseProviderPayload{
+		Name:                      message.Name,
+		ProviderID:                message.ProviderId,
+		ExpectedRegistrationToken: message.ExpectedRegistrationToken,
+		ProviderIncarnationID:     message.ProviderIncarnationId,
+	}
+
+	return v, nil
+}
+
+// BuildDrainProviderPayload builds the payload for the registry DrainProvider
+// endpoint from CLI flags.
+func BuildDrainProviderPayload(registryDrainProviderMessage string) (*registry.DrainProviderPayload, error) {
+	var err error
+	var message registrypb.DrainProviderRequest
+	{
+		if registryDrainProviderMessage != "" {
+			err = json.Unmarshal([]byte(registryDrainProviderMessage), &message)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"settlement_duration_ms\": 30000\n   }'")
+			}
+		}
+	}
+	v := &registry.DrainProviderPayload{
+		SettlementDurationMs:      message.SettlementDurationMs,
 		Name:                      message.Name,
 		ProviderID:                message.ProviderId,
 		ExpectedRegistrationToken: message.ExpectedRegistrationToken,
@@ -207,17 +232,152 @@ func BuildCallToolPayload(registryCallToolMessage string) (*registry.CallToolPay
 		if registryCallToolMessage != "" {
 			err = json.Unmarshal([]byte(registryCallToolMessage), &message)
 			if err != nil {
-				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"meta\": {\n         \"parent_tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX19Z\",\n         \"run_id\": \"run_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"session_id\": \"sess_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"turn_id\": \"turn_0001\"\n      },\n      \"payload_json\": \"eyJxdWVyeSI6ImNvbXByZXNzb3JfMSBrZXkgZXZlbnRzIn0=\",\n      \"tool\": \"atlas.read.get_time_series\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"meta\": {\n         \"parent_tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX19Z\",\n         \"run_id\": \"run_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"session_id\": \"sess_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"turn_id\": \"turn_0001\"\n      },\n      \"payload_json\": \"eyJxdWVyeSI6ImNvbXByZXNzb3JfMSBrZXkgZXZlbnRzIn0=\",\n      \"tool\": \"atlas.read.get_time_series\",\n      \"toolset\": \"atlas_data.atlas.read\",\n      \"wire_protocol_version\": 7\n   }'")
 			}
 		}
 	}
 	v := &registry.CallToolPayload{
-		Toolset:     message.Toolset,
-		Tool:        message.Tool,
-		PayloadJSON: message.PayloadJson,
+		Toolset:             message.Toolset,
+		Tool:                message.Tool,
+		PayloadJSON:         message.PayloadJson,
+		WireProtocolVersion: int(message.WireProtocolVersion),
 	}
 	if message.Meta != nil {
 		v.Meta = protobufRegistrypbToolCallMetaToRegistryToolCallMeta(message.Meta)
+	}
+
+	return v, nil
+}
+
+// BuildRetryToolPayload builds the payload for the registry RetryTool endpoint
+// from CLI flags.
+func BuildRetryToolPayload(registryRetryToolMessage string) (*registry.RetryToolPayload, error) {
+	var err error
+	var message registrypb.RetryToolRequest
+	{
+		if registryRetryToolMessage != "" {
+			err = json.Unmarshal([]byte(registryRetryToolMessage), &message)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"meta\": {\n         \"parent_tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX19Z\",\n         \"run_id\": \"run_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"session_id\": \"sess_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"turn_id\": \"turn_0001\"\n      },\n      \"payload_json\": \"eyJxdWVyeSI6ImNvbXByZXNzb3JfMSBrZXkgZXZlbnRzIn0=\",\n      \"tool\": \"atlas.read.get_time_series\",\n      \"toolset\": \"atlas_data.atlas.read\",\n      \"wire_protocol_version\": 7\n   }'")
+			}
+		}
+	}
+	v := &registry.RetryToolPayload{
+		ExpectedRegistrationToken: message.ExpectedRegistrationToken,
+		Toolset:                   message.Toolset,
+		Tool:                      message.Tool,
+		PayloadJSON:               message.PayloadJson,
+		WireProtocolVersion:       int(message.WireProtocolVersion),
+	}
+	if message.Meta != nil {
+		v.Meta = protobufRegistrypbToolCallMetaToRegistryToolCallMeta(message.Meta)
+	}
+
+	return v, nil
+}
+
+// BuildCompleteToolCallPayload builds the payload for the registry
+// CompleteToolCall endpoint from CLI flags.
+func BuildCompleteToolCallPayload(registryCompleteToolCallMessage string) (*registry.CompleteToolCallPayload, error) {
+	var err error
+	var message registrypb.CompleteToolCallRequest
+	{
+		if registryCompleteToolCallMessage != "" {
+			err = json.Unmarshal([]byte(registryCompleteToolCallMessage), &message)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"provider_registration_token\": \"7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82\",\n      \"registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"result_json\": \"eyJyZWdpc3RyYXRpb25fdG9rZW4iOiIyNzBhNjU5ZDM4ZmYzMzE0MDEyODBhZDdiMGM4ZmRiYTY3M2ZkMDJlNzExNGI4NTZhMmYxMmUxYzQ5ZWVjMzRjIiwidG9vbF91c2VfaWQiOiI1YzFkOTFlN2VhNmExYWExYmIzYzM5NWUwYTdlMDk5MDFhODVkZjY2ZmIwNjRhNjc5ZDZmMGZmMGQxMmE1MTZlIiwicmVzdWx0X2pzb24iOnsib2siOnRydWV9fQ==\",\n      \"tool_use_id\": \"5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
+			}
+		}
+	}
+	v := &registry.CompleteToolCallPayload{
+		Toolset:                   message.Toolset,
+		ProviderID:                message.ProviderId,
+		ProviderIncarnationID:     message.ProviderIncarnationId,
+		RegistrationToken:         message.RegistrationToken,
+		ToolUseID:                 message.ToolUseId,
+		ResultJSON:                message.ResultJson,
+		RequestEventID:            message.RequestEventId,
+		ProviderRegistrationToken: message.ProviderRegistrationToken,
+	}
+
+	return v, nil
+}
+
+// BuildPublishToolOutputDeltaPayload builds the payload for the registry
+// PublishToolOutputDelta endpoint from CLI flags.
+func BuildPublishToolOutputDeltaPayload(registryPublishToolOutputDeltaMessage string) (*registry.PublishToolOutputDeltaPayload, error) {
+	var err error
+	var message registrypb.PublishToolOutputDeltaRequest
+	{
+		if registryPublishToolOutputDeltaMessage != "" {
+			err = json.Unmarshal([]byte(registryPublishToolOutputDeltaMessage), &message)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"call_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"delta\": \"processed 10 rows\\n\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"provider_registration_token\": \"7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"stream\": \"stdout\",\n      \"tool_use_id\": \"5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
+			}
+		}
+	}
+	v := &registry.PublishToolOutputDeltaPayload{
+		Stream:                    message.Stream,
+		Delta:                     message.Delta,
+		Toolset:                   message.Toolset,
+		ProviderID:                message.ProviderId,
+		ProviderIncarnationID:     message.ProviderIncarnationId,
+		ProviderRegistrationToken: message.ProviderRegistrationToken,
+		CallRegistrationToken:     message.CallRegistrationToken,
+		ToolUseID:                 message.ToolUseId,
+		RequestEventID:            message.RequestEventId,
+	}
+
+	return v, nil
+}
+
+// BuildReportToolCallOverloadPayload builds the payload for the registry
+// ReportToolCallOverload endpoint from CLI flags.
+func BuildReportToolCallOverloadPayload(registryReportToolCallOverloadMessage string) (*registry.ProviderToolCallClaimPayload, error) {
+	var err error
+	var message registrypb.ReportToolCallOverloadRequest
+	{
+		if registryReportToolCallOverloadMessage != "" {
+			err = json.Unmarshal([]byte(registryReportToolCallOverloadMessage), &message)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"call_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"provider_registration_token\": \"7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"tool_use_id\": \"5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
+			}
+		}
+	}
+	v := &registry.ProviderToolCallClaimPayload{
+		Toolset:                   message.Toolset,
+		ProviderID:                message.ProviderId,
+		ProviderIncarnationID:     message.ProviderIncarnationId,
+		ProviderRegistrationToken: message.ProviderRegistrationToken,
+		CallRegistrationToken:     message.CallRegistrationToken,
+		ToolUseID:                 message.ToolUseId,
+		RequestEventID:            message.RequestEventId,
+	}
+
+	return v, nil
+}
+
+// BuildClaimToolCallPayload builds the payload for the registry ClaimToolCall
+// endpoint from CLI flags.
+func BuildClaimToolCallPayload(registryClaimToolCallMessage string) (*registry.ProviderToolCallClaimPayload, error) {
+	var err error
+	var message registrypb.ClaimToolCallRequest
+	{
+		if registryClaimToolCallMessage != "" {
+			err = json.Unmarshal([]byte(registryClaimToolCallMessage), &message)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"call_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"provider_registration_token\": \"7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"tool_use_id\": \"5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
+			}
+		}
+	}
+	v := &registry.ProviderToolCallClaimPayload{
+		Toolset:                   message.Toolset,
+		ProviderID:                message.ProviderId,
+		ProviderIncarnationID:     message.ProviderIncarnationId,
+		ProviderRegistrationToken: message.ProviderRegistrationToken,
+		CallRegistrationToken:     message.CallRegistrationToken,
+		ToolUseID:                 message.ToolUseId,
+		RequestEventID:            message.RequestEventId,
 	}
 
 	return v, nil

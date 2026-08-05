@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	goa "goa.design/goa/v3/pkg"
-	"goa.design/pulse/streaming"
 	streamopts "goa.design/pulse/streaming/options"
 
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
@@ -202,6 +201,7 @@ func genRegisterPayload(name string) gopter.Gen {
 			ProviderID:            name + "/provider-a",
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     testAdmissionRevisionA,
+			WireProtocolVersion:   toolregistry.WireProtocolVersion,
 		}
 	})
 }
@@ -334,9 +334,10 @@ func TestCallToolPayloadValidation(t *testing.T) {
 
 			// Call the tool with an invalid payload.
 			_, err = svc.CallTool(ctx, &genregistry.CallToolPayload{
-				Toolset:     tc.toolset.Name,
-				Tool:        tc.toolName,
-				PayloadJSON: tc.invalidPayload,
+				Toolset:             tc.toolset.Name,
+				Tool:                tc.toolName,
+				PayloadJSON:         tc.invalidPayload,
+				WireProtocolVersion: toolregistry.WireProtocolVersion,
 				Meta: &genregistry.ToolCallMeta{
 					RunID:     "test-run",
 					SessionID: "test-session",
@@ -387,9 +388,10 @@ func TestCallToolRejectsToolsetWithoutPayloadSchema(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = svc.CallTool(ctx, &genregistry.CallToolPayload{
-		Toolset:     "toolset-1",
-		Tool:        "lookup",
-		PayloadJSON: []byte(`{"query":"ok"}`),
+		Toolset:             "toolset-1",
+		Tool:                "lookup",
+		PayloadJSON:         []byte(`{"query":"ok"}`),
+		WireProtocolVersion: toolregistry.WireProtocolVersion,
 		Meta: &genregistry.ToolCallMeta{
 			RunID:     "run-1",
 			SessionID: "session-1",
@@ -409,8 +411,10 @@ func TestCallToolDerivesGlobalTransportIdentity(t *testing.T) {
 	for range 3 {
 		pulseClient.AddStream(func(name string, opts ...streamopts.Stream) (clientspulse.Stream, error) {
 			retention := streamopts.ParseStreamOptions(opts...)
-			assert.Equal(t, toolregistry.DefaultResultStreamTTL, retention.TTL)
-			assert.True(t, retention.TTLSliding)
+			assert.True(t, retention.DeadlineSet)
+			assert.True(t, retention.MaxLenSet)
+			assert.Equal(t, toolregistry.ResultStreamMaxLen, retention.MaxLen)
+			assert.False(t, retention.Unbounded)
 			return resultStream, nil
 		})
 	}
@@ -419,16 +423,6 @@ func TestCallToolDerivesGlobalTransportIdentity(t *testing.T) {
 			return "1-0", nil
 		})
 	}
-	reader := mockpulse.NewReader(t)
-	reader.SetSubscribe(func() <-chan *streaming.Event {
-		events := make(chan *streaming.Event)
-		close(events)
-		return events
-	})
-	reader.SetClose(func() {})
-	resultStream.SetNewReader(func(context.Context, ...streamopts.Reader) (clientspulse.Reader, error) {
-		return reader, nil
-	})
 
 	toolset := &genregistry.Toolset{
 		Name: "toolset-1",
@@ -448,9 +442,10 @@ func TestCallToolDerivesGlobalTransportIdentity(t *testing.T) {
 
 	toolCallID := "tool-call-1"
 	payload := &genregistry.CallToolPayload{
-		Toolset:     "toolset-1",
-		Tool:        "lookup",
-		PayloadJSON: []byte(`{"query":"ok"}`),
+		Toolset:             "toolset-1",
+		Tool:                "lookup",
+		PayloadJSON:         []byte(`{"query":"ok"}`),
+		WireProtocolVersion: toolregistry.WireProtocolVersion,
 		Meta: &genregistry.ToolCallMeta{
 			RunID:            "run-1",
 			SessionID:        "session-1",
@@ -477,21 +472,99 @@ func TestCallToolDerivesGlobalTransportIdentity(t *testing.T) {
 	require.NotEqual(t, expected, third.ToolUseID)
 	require.NotEmpty(t, first.RegistrationToken)
 	require.Equal(t, first.RegistrationToken, second.RegistrationToken)
-	require.Equal(t, toolregistry.DefaultResultStreamTTL.Milliseconds(), first.ResultStreamTTLMs)
+	require.NotEmpty(t, first.ExecutionDeadline)
+	require.NotEmpty(t, first.ResultStreamExpiresAt)
 	require.Len(t, streams.messages["toolset-1"], 2)
 	require.Equal(t, expected, streams.messages["toolset-1"][0].ToolUseID)
 	require.Equal(t, third.ToolUseID, streams.messages["toolset-1"][1].ToolUseID)
-	require.Equal(
-		t,
-		toolregistry.DefaultResultStreamTTL.Milliseconds(),
-		streams.messages["toolset-1"][0].ResultStreamTTLMillis,
-	)
+	expiresAt, err := time.Parse(time.RFC3339Nano, first.ResultStreamExpiresAt)
+	require.NoError(t, err)
+	executionDeadline, err := time.Parse(time.RFC3339Nano, first.ExecutionDeadline)
+	require.NoError(t, err)
+	require.True(t, executionDeadline.Before(expiresAt))
+	require.Equal(t, executionDeadline.UnixMilli(), streams.messages["toolset-1"][0].ExecutionDeadlineUnixMilli)
+	require.Equal(t, expiresAt.UnixMilli(), streams.messages["toolset-1"][0].ResultStreamExpiresAtUnixMilli)
 	require.NotEmpty(t, streams.messages["toolset-1"][0].RegistrationToken)
 	require.Equal(
 		t,
 		streams.messages["toolset-1"][0].RegistrationToken,
 		first.RegistrationToken,
 	)
+}
+
+func TestRetryToolRejectsAdmissionRolloverBeforePublication(t *testing.T) {
+	ctx := context.Background()
+	pulseClient := mockpulse.NewClient(t)
+	resultStream := mockpulse.NewStream(t)
+	pulseClient.AddStream(func(string, ...streamopts.Stream) (clientspulse.Stream, error) {
+		return resultStream, nil
+	})
+	resultStream.AddAdd(func(context.Context, string, []byte) (string, error) {
+		return "1-0", nil
+	})
+	toolset := &genregistry.Toolset{
+		Name: "toolset-1",
+		Tools: []*genregistry.ToolSchema{{
+			Name:          "lookup",
+			PayloadSchema: []byte(`{"type":"object"}`),
+			ResultSchema:  []byte(`{"type":"object"}`),
+		}},
+		RegisteredAt: "2024-01-15T10:30:00Z",
+	}
+	streams := newMockStreamManagerForService()
+	svc, err := newTestServiceForServiceTests(
+		pulseClient,
+		streams,
+		newMockHealthTracker(),
+		toolset,
+	)
+	require.NoError(t, err)
+	call := &genregistry.CallToolPayload{
+		Toolset:             toolset.Name,
+		Tool:                "lookup",
+		PayloadJSON:         []byte(`{"query":"ok"}`),
+		WireProtocolVersion: toolregistry.WireProtocolVersion,
+		Meta: &genregistry.ToolCallMeta{
+			RunID:      "run-1",
+			SessionID:  "session-1",
+			ToolCallID: "tool-call-1",
+		},
+	}
+	admitted, err := svc.CallTool(ctx, call)
+	require.NoError(t, err)
+	require.Len(t, streams.messages[toolset.Name], 1)
+
+	require.NoError(t, svc.catalog.ReleaseProvider(
+		ctx,
+		toolset.Name,
+		"test-provider",
+		testIncarnationA,
+		admitted.RegistrationToken,
+	))
+	replacement, err := svc.catalog.Register(
+		ctx,
+		toolset,
+		testAdmissionRevisionB,
+		"replacement-provider",
+		testIncarnationB,
+		24*time.Hour,
+	)
+	require.NoError(t, err)
+	require.NotEqual(t, admitted.RegistrationToken, replacement.RegistrationToken)
+
+	_, err = svc.RetryTool(ctx, &genregistry.RetryToolPayload{
+		Toolset:                   call.Toolset,
+		Tool:                      call.Tool,
+		PayloadJSON:               call.PayloadJSON,
+		Meta:                      call.Meta,
+		WireProtocolVersion:       toolregistry.WireProtocolVersion,
+		ExpectedRegistrationToken: admitted.RegistrationToken,
+	})
+	require.Error(t, err)
+	var serviceErr *goa.ServiceError
+	require.ErrorAs(t, err, &serviceErr)
+	assert.Equal(t, "admission_conflict", serviceErr.Name)
+	assert.Len(t, streams.messages[toolset.Name], 1)
 }
 
 func TestCallToolMapsHealthInfrastructureFailure(t *testing.T) {
@@ -517,9 +590,10 @@ func TestCallToolMapsHealthInfrastructureFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = svc.CallTool(context.Background(), &genregistry.CallToolPayload{
-		Toolset:     "toolset-1",
-		Tool:        "lookup",
-		PayloadJSON: []byte(`{}`),
+		Toolset:             "toolset-1",
+		Tool:                "lookup",
+		PayloadJSON:         []byte(`{}`),
+		WireProtocolVersion: toolregistry.WireProtocolVersion,
 		Meta: &genregistry.ToolCallMeta{
 			RunID:     "run-1",
 			SessionID: "session-1",
@@ -696,11 +770,13 @@ type mockStreamManagerForService struct {
 	mu              sync.RWMutex
 	createdToolsets []string
 	messages        map[string][]toolregistry.ToolCallMessage
+	publications    map[string]struct{}
 }
 
 func newMockStreamManagerForService() *mockStreamManagerForService {
 	return &mockStreamManagerForService{
-		messages: make(map[string][]toolregistry.ToolCallMessage),
+		messages:     make(map[string][]toolregistry.ToolCallMessage),
+		publications: make(map[string]struct{}),
 	}
 }
 
@@ -720,6 +796,24 @@ func (m *mockStreamManagerForService) RemoveStream(toolset string) {}
 func (m *mockStreamManagerForService) PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.messages[toolset] = append(m.messages[toolset], msg)
+	return nil
+}
+
+func (m *mockStreamManagerForService) PublishAdmittedToolCall(
+	ctx context.Context,
+	toolset string,
+	msg toolregistry.ToolCallMessage,
+	admission callAdmission,
+	overloadEventID string,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	publicationKey := admission.key + "\x00" + overloadEventID
+	if _, published := m.publications[publicationKey]; published {
+		return nil
+	}
+	m.publications[publicationKey] = struct{}{}
 	m.messages[toolset] = append(m.messages[toolset], msg)
 	return nil
 }
@@ -978,6 +1072,28 @@ func TestInvalidSchemaRejection(t *testing.T) {
 	properties.TestingRun(t)
 }
 
+func TestRegisterRejectsMismatchedWireProtocolBeforeSideEffects(t *testing.T) {
+	t.Parallel()
+
+	for _, version := range []int{0, toolregistry.WireProtocolVersion + 1} {
+		streams := newMockStreamManagerForService()
+		health := newMockHealthTracker()
+		svc, err := newTestServiceForServiceTests(mockpulse.NewClient(t), streams, health)
+		require.NoError(t, err)
+
+		payload := validRegisterPayloadForSchemaAdmission("wire-version-mismatch")
+		payload.WireProtocolVersion = version
+		_, err = svc.Register(context.Background(), payload)
+		require.Error(t, err)
+
+		var serviceErr *goa.ServiceError
+		require.ErrorAs(t, err, &serviceErr)
+		assert.Equal(t, "validation_error", serviceErr.Name)
+		assert.Empty(t, streams.createdToolsets)
+		assert.Empty(t, health.startedToolsets)
+	}
+}
+
 func TestRegisterRejectsSemanticallyInvalidSchemaWithoutSideEffects(t *testing.T) {
 	ctx := context.Background()
 
@@ -1050,6 +1166,7 @@ func validRegisterPayloadForSchemaAdmission(name string) *genregistry.RegisterPa
 		ProviderID:            name + "/provider-a",
 		ProviderIncarnationID: testIncarnationA,
 		AdmissionRevision:     testAdmissionRevisionA,
+		WireProtocolVersion:   toolregistry.WireProtocolVersion,
 		Tools: []*genregistry.ToolSchema{
 			{
 				Name:          "lookup",
@@ -1084,6 +1201,7 @@ func genInvalidSchemaTestCase() gopter.Gen {
 					ProviderID:            toolsetName + "/provider-a",
 					ProviderIncarnationID: testIncarnationA,
 					AdmissionRevision:     testAdmissionRevisionA,
+					WireProtocolVersion:   toolregistry.WireProtocolVersion,
 				},
 			}
 		})

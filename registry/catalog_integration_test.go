@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -235,65 +236,234 @@ func TestResultStreamReadersReplayWithoutConsumerGroups(t *testing.T) {
 	assert.Empty(t, groups)
 }
 
-func TestCallAdmissionSerializesCrossNodeInitialAndOverloadPublication(t *testing.T) {
+func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 	ctx := context.Background()
 	name := fmt.Sprintf("call-admission-%d", time.Now().UnixNano())
 	firstStore := newCallAdmissionStore(testRedisClient, name)
 	secondStore := newCallAdmissionStore(testRedisClient, name)
+	catalogMap, err := rmap.Join(ctx, name+":toolsets", testRedisClient)
+	require.NoError(t, err)
+	t.Cleanup(catalogMap.Close)
+	catalog := newToolsetCatalog(
+		authoritativeCatalogMap{Map: catalogMap, rdb: testRedisClient},
+		newRedisTimeSource(testRedisClient),
+	)
 	const (
 		toolUseID = "tool-use"
-		token     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		digest    = "request-digest"
+		streamID  = "toolset:call-admission-test:requests"
+		toolset   = "call-admission-test"
 	)
-	first, created, err := firstStore.Ensure(ctx, toolUseID, token, digest, time.Second)
+	registration, err := catalog.Register(
+		ctx,
+		testCatalogToolset(toolset, "atomic publication", nil),
+		testAdmissionRevisionA,
+		"provider",
+		testIncarnationA,
+		time.Minute,
+	)
+	require.NoError(t, err)
+	token := registration.RegistrationToken
+	first, created, err := firstStore.Ensure(
+		ctx, toolset, toolUseID, token, digest, time.Second, 5*time.Second,
+		outcomeUnknownPayload(token, toolUseID),
+	)
 	require.NoError(t, err)
 	require.True(t, created)
-	second, created, err := secondStore.Ensure(ctx, toolUseID, token, digest, time.Second)
+	second, created, err := secondStore.Ensure(
+		ctx, toolset, toolUseID, token, digest, time.Second, 5*time.Second,
+		outcomeUnknownPayload(token, toolUseID),
+	)
 	require.NoError(t, err)
 	require.False(t, created)
 
-	type claimResult struct {
-		publication *callPublication
-		claimed     bool
-		err         error
+	type publicationResult struct {
+		eventID string
+		err     error
 	}
-	claims := make(chan claimResult, 2)
-	for store, admission := range map[*callAdmissionStore]callAdmission{
-		firstStore:  first,
-		secondStore: second,
-	} {
-		go func() {
-			publication, claimed, claimErr := store.ClaimPublication(ctx, admission, "")
-			claims <- claimResult{publication: publication, claimed: claimed, err: claimErr}
-		}()
+	publish := func(overloadEventID string) []publicationResult {
+		results := make(chan publicationResult, 2)
+		for _, admission := range []callAdmission{first, second} {
+			go func(admission callAdmission) {
+				eventID, publishErr := publishAdmittedBounded(
+					ctx,
+					testRedisClient,
+					streamID,
+					maxQueuedToolCalls,
+					string(toolregistry.MessageTypeCall),
+					[]byte(`{"type":"call"}`),
+					admission,
+					overloadEventID,
+				)
+				results <- publicationResult{eventID: eventID, err: publishErr}
+			}(admission)
+		}
+		return []publicationResult{<-results, <-results}
 	}
-	left, right := <-claims, <-claims
-	require.NoError(t, left.err)
-	require.NoError(t, right.err)
-	assert.NotEqual(t, left.claimed, right.claimed)
-	winner := left
-	if right.claimed {
-		winner = right
-	}
-	require.NoError(t, winner.publication.MarkPublished(ctx, first, "", time.Second))
-	require.NoError(t, winner.publication.Release(ctx))
 
-	attached, _, err := secondStore.Ensure(ctx, toolUseID, token, digest, time.Second)
+	initial := publish("")
+	require.NoError(t, initial[0].err)
+	require.NoError(t, initial[1].err)
+	assert.Equal(t, initial[0].eventID, initial[1].eventID)
+	assert.EqualValues(t, 1, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+streamID).Val())
+
+	overload := publish("overload-1")
+	require.NoError(t, overload[0].err)
+	require.NoError(t, overload[1].err)
+	assert.Equal(t, overload[0].eventID, overload[1].eventID)
+	assert.NotEqual(t, initial[0].eventID, overload[0].eventID)
+	assert.EqualValues(t, 2, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+streamID).Val())
+
+	resultStreamID := toolregistry.ResultStreamID(toolUseID)
+	claimDisposition, err := firstStore.Claim(
+		ctx,
+		toolset,
+		toolUseID,
+		token,
+		token,
+		providerLeaseKey("provider", testIncarnationA),
+		overload[0].eventID,
+		resultStreamID,
+		[]byte(`{"stale":true}`),
+	)
 	require.NoError(t, err)
-	publication, claimed, err := secondStore.ClaimPublication(ctx, attached, "overload-1")
+	require.Equal(t, callClaimExecute, claimDisposition)
+	terminal := []byte(fmt.Sprintf(
+		`{"registration_token":%q,"tool_use_id":%q,"result_json":{"ok":true}}`,
+		token,
+		toolUseID,
+	))
+	completions := make(chan error, 2)
+	for _, store := range []*callAdmissionStore{firstStore, secondStore} {
+		go func(store *callAdmissionStore) {
+			completions <- store.Complete(
+				ctx,
+				toolset,
+				toolUseID,
+				token,
+				token,
+				providerLeaseKey("provider", testIncarnationA),
+				overload[0].eventID,
+				resultStreamID,
+				terminal,
+			)
+		}(store)
+	}
+	require.NoError(t, <-completions)
+	require.NoError(t, <-completions)
+	assert.EqualValues(t, 1, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+resultStreamID).Val())
+	err = firstStore.Complete(
+		ctx,
+		toolset,
+		toolUseID,
+		token,
+		token,
+		providerLeaseKey("provider", testIncarnationA),
+		overload[0].eventID,
+		resultStreamID,
+		[]byte(`{"different":true}`),
+	)
+	require.ErrorIs(t, err, errCallTerminalConflict)
+	assert.EqualValues(t, 1, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+resultStreamID).Val())
+	replayed, _, err := firstStore.Ensure(
+		ctx, toolset, toolUseID, token, digest, time.Second, 5*time.Second,
+		outcomeUnknownPayload(token, toolUseID),
+	)
 	require.NoError(t, err)
-	require.True(t, claimed)
-	require.NoError(t, publication.MarkPublished(ctx, attached, "overload-1", time.Second))
-	require.NoError(t, publication.Release(ctx))
-	attached, _, err = firstStore.Ensure(ctx, toolUseID, token, digest, time.Second)
+	assert.True(t, replayed.terminal)
+	_, _, err = firstStore.Ensure(
+		ctx,
+		toolset,
+		toolUseID,
+		strings.Repeat("b", 64),
+		"different-generation-request",
+		time.Second,
+		5*time.Second,
+		outcomeUnknownPayload(strings.Repeat("b", 64), toolUseID),
+	)
+	require.ErrorIs(t, err, errCallAdmissionConflict)
+
+	const drainingToolUseID = "draining-tool-use"
+	drainingAdmission, _, err := firstStore.Ensure(
+		ctx,
+		toolset,
+		drainingToolUseID,
+		token,
+		"draining-request-digest",
+		time.Second,
+		5*time.Second,
+		outcomeUnknownPayload(token, drainingToolUseID),
+	)
 	require.NoError(t, err)
-	_, claimed, err = firstStore.ClaimPublication(ctx, attached, "overload-1")
+	require.NoError(t, catalog.DrainProvider(
+		ctx,
+		toolset,
+		"provider",
+		testIncarnationA,
+		token,
+		time.Minute,
+	))
+	_, err = publishAdmittedBounded(
+		ctx,
+		testRedisClient,
+		streamID,
+		maxQueuedToolCalls,
+		string(toolregistry.MessageTypeCall),
+		[]byte(`{"type":"call"}`),
+		drainingAdmission,
+		"",
+	)
+	require.ErrorIs(t, err, errRoutingUnavailable)
+
+	attached, err := firstStore.Attach(ctx, toolset, toolUseID, digest)
 	require.NoError(t, err)
-	assert.False(t, claimed)
+	disposition, err := firstStore.Claim(
+		ctx,
+		toolset,
+		toolUseID,
+		token,
+		token,
+		providerLeaseKey("provider", testIncarnationA),
+		initial[0].eventID,
+		toolregistry.ResultStreamID(toolUseID),
+		[]byte(`{"stale":true}`),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, callClaimTerminal, disposition)
 	require.Eventually(t, func() bool {
 		exists, existsErr := testRedisClient.Exists(ctx, attached.key).Result()
 		return existsErr == nil && exists == 0
-	}, 3*time.Second, 25*time.Millisecond)
+	}, 7*time.Second, 25*time.Millisecond)
+	disposition, err = firstStore.Claim(
+		ctx,
+		toolset,
+		toolUseID,
+		token,
+		token,
+		providerLeaseKey("provider", testIncarnationA),
+		initial[0].eventID,
+		toolregistry.ResultStreamID(toolUseID),
+		[]byte(`{"stale":true}`),
+	)
+	require.NoError(t, err)
+	assert.Equal(t, callClaimExpired, disposition)
+}
+
+func TestCallAdmissionRetryCannotCreateExpiredAdmission(t *testing.T) {
+	ctx := context.Background()
+	name := fmt.Sprintf("call-admission-attach-%d", time.Now().UnixNano())
+	store := newCallAdmissionStore(testRedisClient, name)
+	const (
+		toolUseID = "missing-tool-use"
+		token     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		toolset   = "missing-toolset"
+	)
+
+	_, err := store.Attach(ctx, toolset, toolUseID, "request-digest")
+	require.ErrorIs(t, err, errCallAdmissionNotFound)
+	exists, err := testRedisClient.Exists(ctx, store.admissionKey(toolUseID)).Result()
+	require.NoError(t, err)
+	assert.Zero(t, exists)
 }
 
 func TestRedisConcurrentRenewalReplacementAndCandidates(t *testing.T) {
@@ -433,6 +603,7 @@ func TestLiveRegistryRecoversOwnedStateLossSameName(t *testing.T) {
 		ProviderID:            "provider-a",
 		ProviderIncarnationID: testIncarnationA,
 		AdmissionRevision:     testAdmissionRevisionA,
+		WireProtocolVersion:   toolregistry.WireProtocolVersion,
 		Tools:                 []*genregistry.ToolSchema{},
 	}
 	first, err := reg.Service().Register(ctx, payload)

@@ -27,16 +27,49 @@ import (
 
 // successfulRegistration supplies a long-lived lease to provider tests whose
 // behavior does not depend on reconciliation.
-func successfulRegistration() Registration {
+func successfulRegistration(
+	complete ...func(toolregistry.ToolResultMessage) error,
+) Registration {
+	completeResult := func(toolregistry.ToolResultMessage) error { return nil }
+	if len(complete) > 0 {
+		completeResult = complete[0]
+	}
 	return Registration{
 		AdmissionRevision: testAdmissionRevision,
 		Register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
 			return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: time.Hour}, nil
 		},
+		Drain: func(context.Context, string, string, string, string, time.Duration) error {
+			return nil
+		},
 		Release: func(context.Context, string, string, string, string) error {
 			return nil
 		},
+		Complete: func(
+			_ context.Context,
+			_, _, _, _, _ string,
+			result toolregistry.ToolResultMessage,
+		) error {
+			return completeResult(result)
+		},
+		PublishOutputDelta: publishOutputDeltaSuccess,
+		ReportOverload:     reportOverloadSuccess,
+		Claim:              claimExecute,
 	}
+}
+
+func publishOutputDeltaSuccess(context.Context, string, string, string, string, string, string, string, string, string) error {
+	return nil
+}
+
+func reportOverloadSuccess(context.Context, string, string, string, string, string, string, string) error {
+	return nil
+}
+
+// claimExecute grants dispatch to lifecycle tests that do not exercise claim
+// settlement outcomes.
+func claimExecute(context.Context, string, string, string, string, string, string, string) (ClaimDisposition, error) {
+	return ClaimExecute, nil
 }
 
 // identityRegistrationJitter keeps scheduling tests on exact intervals.
@@ -172,6 +205,9 @@ func TestServeOpensStreamRegistersThenCreatesSink(t *testing.T) {
 				<-allowRegistration
 				return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: time.Hour}, nil
 			},
+			Drain: func(context.Context, string, string, string, string, time.Duration) error {
+				return nil
+			},
 			Release: func(_ context.Context, gotToolset, providerID, incarnationID, token string) error {
 				assert.True(t, sinkClosed.Load())
 				assert.Equal(t, toolset, gotToolset)
@@ -181,6 +217,12 @@ func TestServeOpensStreamRegistersThenCreatesSink(t *testing.T) {
 				close(released)
 				return nil
 			},
+			Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
+				return nil
+			},
+			PublishOutputDelta: publishOutputDeltaSuccess,
+			ReportOverload:     reportOverloadSuccess,
+			Claim:              claimExecute,
 		}, Options{
 			ProviderID: testProviderID,
 			Pong: func(context.Context, string, string, string) error {
@@ -203,7 +245,8 @@ func TestServeOpensStreamRegistersThenCreatesSink(t *testing.T) {
 	call := toolregistry.NewToolCallMessage(
 		testRegistrationTokenA,
 		"tooluse_1",
-		toolregistry.DefaultResultStreamTTL,
+		time.Now().Add(toolregistry.MaxToolCallWait),
+		time.Now().Add(toolregistry.DefaultResultStreamTTL),
 		tools.Ident("test.toolset.tool"),
 		json.RawMessage(`{"x":1}`),
 		&toolregistry.ToolCallMeta{RunID: "run-1", SessionID: "session-1", ToolCallID: "call-1"},
@@ -303,7 +346,14 @@ func TestServeSetupFailurePrecedesRegistration(t *testing.T) {
 			registrations.Add(1)
 			return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: time.Hour}, nil
 		},
+		Drain:   func(context.Context, string, string, string, string, time.Duration) error { return nil },
 		Release: func(context.Context, string, string, string, string) error { return nil },
+		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
+			return nil
+		},
+		PublishOutputDelta: publishOutputDeltaSuccess,
+		ReportOverload:     reportOverloadSuccess,
+		Claim:              claimExecute,
 	}, Options{
 		ProviderID: testProviderID,
 		Pong: func(context.Context, string, string, string) error {
@@ -347,7 +397,14 @@ func TestServeClosesConsumptionBeforeLeaseExpiry(t *testing.T) {
 			}
 			return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: leaseDuration}, nil
 		},
-		Release:              func(context.Context, string, string, string, string) error { return nil },
+		Drain:   func(context.Context, string, string, string, string, time.Duration) error { return nil },
+		Release: func(context.Context, string, string, string, string) error { return nil },
+		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
+			return nil
+		},
+		PublishOutputDelta:   publishOutputDeltaSuccess,
+		ReportOverload:       reportOverloadSuccess,
+		Claim:                claimExecute,
 		RetryInitialInterval: 5 * time.Millisecond,
 		RetryMaxInterval:     10 * time.Millisecond,
 		AttemptTimeout:       10 * time.Millisecond,
@@ -688,12 +745,21 @@ func TestServeChangedRenewalTokenReleasesBothExactLeases(t *testing.T) {
 			}
 			return RegistrationLease{RegistrationToken: token, Duration: 60 * time.Millisecond}, nil
 		},
+		Drain: func(context.Context, string, string, string, string, time.Duration) error {
+			return nil
+		},
 		Release: func(_ context.Context, _, _, _ string, token string) error {
 			releaseMu.Lock()
 			released = append(released, token)
 			releaseMu.Unlock()
 			return nil
 		},
+		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
+			return nil
+		},
+		PublishOutputDelta:   publishOutputDeltaSuccess,
+		ReportOverload:       reportOverloadSuccess,
+		Claim:                claimExecute,
 		RetryInitialInterval: time.Millisecond,
 		RetryMaxInterval:     time.Millisecond,
 		AttemptTimeout:       20 * time.Millisecond,

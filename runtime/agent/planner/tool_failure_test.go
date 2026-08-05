@@ -68,3 +68,85 @@ func TestCloneToolFailureOwnsMutableState(t *testing.T) {
 	assert.Equal(t, "alpha", in.Recovery.Issues[0].Allowed[0])
 	assert.JSONEq(t, `{"query":""}`, string(in.Recovery.PriorInput))
 }
+
+func TestValidateToolFailure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mutate  func(*ToolFailure)
+		wantErr string
+	}{
+		{name: "valid provider correction without prior input"},
+		{
+			name: "missing error",
+			mutate: func(failure *ToolFailure) {
+				failure.Error = nil
+			},
+			wantErr: "failure error is invalid",
+		},
+		{
+			name: "unknown kind",
+			mutate: func(failure *ToolFailure) {
+				failure.Kind = "unknown"
+			},
+			wantErr: `unknown failure kind "unknown"`,
+		},
+		{
+			name: "unknown recovery",
+			mutate: func(failure *ToolFailure) {
+				failure.Recovery.Action = "unknown"
+			},
+			wantErr: `unknown recovery action "unknown"`,
+		},
+		{
+			name: "issues on replan",
+			mutate: func(failure *ToolFailure) {
+				failure.Recovery.Action = RecoveryReplan
+			},
+			wantErr: `recovery "replan" cannot carry correction data`,
+		},
+		{
+			name: "malformed issue",
+			mutate: func(failure *ToolFailure) {
+				failure.Recovery.Issues[0].Field = ""
+			},
+			wantErr: "correct-call recovery issues are invalid",
+		},
+		{
+			name: "invalid correction kind",
+			mutate: func(failure *ToolFailure) {
+				failure.Kind = FailureUnavailable
+			},
+			wantErr: `failure kind "unavailable" cannot require same-tool correction`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			failure := &ToolFailure{
+				Kind:  FailureInvalidCall,
+				Error: NewToolError("invalid arguments"),
+				Recovery: RecoveryDirective{
+					Action: RecoveryCorrectCall,
+					Issues: []*tools.FieldIssue{{
+						Field:      "query",
+						Constraint: "missing_field",
+					}},
+				},
+			}
+			if test.mutate != nil {
+				test.mutate(failure)
+			}
+
+			err := ValidateToolFailure(failure)
+			if test.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), test.wantErr)
+		})
+	}
+}

@@ -42,24 +42,32 @@ type (
 
 	// catalogEntry is the single CAS-owned admission record for one toolset.
 	catalogEntry struct {
-		State             catalogEntryState    `json:"state"`
-		Toolset           *genregistry.Toolset `json:"toolset"`
-		SchemaFingerprint string               `json:"schema_fingerprint"`
-		AdmissionRevision string               `json:"admission_revision"`
-		RegistrationToken string               `json:"registration_token"`
-		RegisteredAt      string               `json:"registered_at"`
-		ProviderLeases    map[string]int64     `json:"provider_leases"`
-		RetiredTokens     map[string]struct{}  `json:"retired_registration_tokens"`
-		HealthEpoch       uint64               `json:"health_epoch"`
-		LastPongUnixNano  int64                `json:"last_pong_unix_nano"`
+		State               catalogEntryState        `json:"state"`
+		Toolset             *genregistry.Toolset     `json:"toolset"`
+		SchemaFingerprint   string                   `json:"schema_fingerprint"`
+		AdmissionRevision   string                   `json:"admission_revision"`
+		WireProtocolVersion int                      `json:"wire_protocol_version"`
+		RegistrationToken   string                   `json:"registration_token"`
+		RegisteredAt        string                   `json:"registered_at"`
+		ProviderLeases      map[string]providerLease `json:"provider_leases"`
+		RetiredTokens       map[string]struct{}      `json:"retired_registration_tokens"`
+		HealthEpoch         uint64                   `json:"health_epoch"`
+		LastPongUnixNano    int64                    `json:"last_pong_unix_nano"`
 	}
 
 	// providerLeaseRecord projects one provider lease for health derivation.
 	providerLeaseRecord struct {
-		ProviderID           string
-		IncarnationID        string
-		RegistrationToken    string
-		LeaseExpiresUnixNano int64
+		ProviderID            string
+		IncarnationID         string
+		RegistrationToken     string
+		LeaseExpiresUnixMilli int64
+		Draining              bool
+	}
+
+	// providerLease keeps routing and settlement ownership in one catalog value.
+	providerLease struct {
+		ExpiresAtUnixMilli int64 `json:"expires_at_unix_milli"`
+		Draining           bool  `json:"draining"`
 	}
 
 	// toolsetCatalog serializes every admission transition through one rmap key.
@@ -78,7 +86,7 @@ const (
 	catalogEntryRetired catalogEntryState = "retired"
 
 	// #nosec G101 -- this public protocol domain separator is not a credential.
-	registrationTokenDomain = "goa-ai/tool-registry-admission/v1\x00"
+	registrationTokenDomain = "goa-ai/tool-registry-admission/v2\x00"
 )
 
 var (
@@ -114,7 +122,11 @@ func (c *toolsetCatalog) Register(
 	if err != nil {
 		return catalogEntry{}, fmt.Errorf("fingerprint toolset %q schema: %w", toolset.Name, err)
 	}
-	token, err := admissionRegistrationToken(fingerprint, admissionRevision)
+	token, err := admissionRegistrationToken(
+		fingerprint,
+		admissionRevision,
+		toolregistry.WireProtocolVersion,
+	)
 	if err != nil {
 		return catalogEntry{}, fmt.Errorf("derive toolset %q admission token: %w", toolset.Name, err)
 	}
@@ -128,10 +140,10 @@ func (c *toolsetCatalog) Register(
 		if err != nil {
 			return catalogEntry{}, err
 		}
-		if now.UnixNano() > math.MaxInt64-int64(leaseDuration) {
-			return catalogEntry{}, fmt.Errorf("provider lease deadline overflows Unix nanoseconds")
+		if now.UnixMilli() > math.MaxInt64-leaseDuration.Milliseconds() {
+			return catalogEntry{}, fmt.Errorf("provider lease deadline overflows Unix milliseconds")
 		}
-		expiresAt := now.Add(leaseDuration).UnixNano()
+		lease := providerLease{ExpiresAtUnixMilli: now.Add(leaseDuration).UnixMilli()}
 		if !exists {
 			candidate := newCatalogEntry(
 				toolset,
@@ -139,7 +151,7 @@ func (c *toolsetCatalog) Register(
 				admissionRevision,
 				token,
 				providerLeaseKey(providerID, incarnationID),
-				expiresAt,
+				lease,
 				now,
 				make(map[string]struct{}),
 			)
@@ -166,7 +178,12 @@ func (c *toolsetCatalog) Register(
 			return catalogEntry{}, fmt.Errorf("%w: %q token %s", errAdmissionRetired, toolset.Name, token)
 		}
 		if existing.RegistrationToken == token {
-			existing.ProviderLeases[providerLeaseKey(providerID, incarnationID)] = expiresAt
+			hadRoutable := routableProviderCount(existing, now) > 0
+			existing.ProviderLeases[providerLeaseKey(providerID, incarnationID)] = lease
+			if !hadRoutable {
+				existing.HealthEpoch++
+				existing.LastPongUnixNano = 0
+			}
 			updated, err := c.replace(ctx, key, raw, existing)
 			if err != nil {
 				return catalogEntry{}, err
@@ -203,7 +220,7 @@ func (c *toolsetCatalog) Register(
 			admissionRevision,
 			token,
 			providerLeaseKey(providerID, incarnationID),
-			expiresAt,
+			lease,
 			now,
 			retiredTokens,
 		)
@@ -213,6 +230,70 @@ func (c *toolsetCatalog) Register(
 		}
 		if updated {
 			return candidate, nil
+		}
+	}
+}
+
+// DrainProvider marks one exact lease non-routable while preserving settlement
+// ownership for calls that incarnation already claimed.
+func (c *toolsetCatalog) DrainProvider(
+	ctx context.Context,
+	name, providerID, incarnationID, expectedToken string,
+	leaseDuration time.Duration,
+) error {
+	key := toolsetCatalogKey(name)
+	for {
+		raw, exists, err := c.exactRaw(ctx, key)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return nil
+		}
+		entry, err := parseCatalogEntry(name, raw)
+		if err != nil {
+			return err
+		}
+		if entry.RegistrationToken != expectedToken {
+			return nil
+		}
+		leaseKey := providerLeaseKey(providerID, incarnationID)
+		lease, exists := entry.ProviderLeases[leaseKey]
+		if !exists {
+			return nil
+		}
+		now, err := c.clock.Now(ctx)
+		if err != nil {
+			return err
+		}
+		if lease.ExpiresAtUnixMilli <= now.UnixMilli() {
+			pruneExpiredProviderLeases(&entry, now)
+			updated, err := c.replace(ctx, key, raw, entry)
+			if err != nil {
+				return err
+			}
+			if updated {
+				return nil
+			}
+			continue
+		}
+		if now.UnixMilli() > math.MaxInt64-leaseDuration.Milliseconds() {
+			return fmt.Errorf("provider drain deadline overflows Unix milliseconds")
+		}
+		hadRoutable := routableProviderCount(entry, now) > 0
+		lease.Draining = true
+		lease.ExpiresAtUnixMilli = max(lease.ExpiresAtUnixMilli, now.Add(leaseDuration).UnixMilli())
+		entry.ProviderLeases[leaseKey] = lease
+		if hadRoutable && routableProviderCount(entry, now) == 0 {
+			entry.HealthEpoch++
+			entry.LastPongUnixNano = 0
+		}
+		updated, err := c.replace(ctx, key, raw, entry)
+		if err != nil {
+			return err
+		}
+		if updated {
+			return nil
 		}
 	}
 }
@@ -240,11 +321,27 @@ func (c *toolsetCatalog) ReleaseProvider(
 			return nil
 		}
 		leaseKey := providerLeaseKey(providerID, incarnationID)
-		if _, exists := entry.ProviderLeases[leaseKey]; !exists {
-			return nil
+		now, err := c.clock.Now(ctx)
+		if err != nil {
+			return err
 		}
+		pruned := pruneExpiredProviderLeases(&entry, now)
+		if _, exists := entry.ProviderLeases[leaseKey]; !exists {
+			if !pruned {
+				return nil
+			}
+			updated, err := c.replace(ctx, key, raw, entry)
+			if err != nil {
+				return err
+			}
+			if updated {
+				return nil
+			}
+			continue
+		}
+		hadRoutable := routableProviderCount(entry, now) > 0
 		delete(entry.ProviderLeases, leaseKey)
-		if len(entry.ProviderLeases) == 0 {
+		if hadRoutable && routableProviderCount(entry, now) == 0 {
 			entry.HealthEpoch++
 			entry.LastPongUnixNano = 0
 		}
@@ -364,8 +461,8 @@ func (c *toolsetCatalog) ActiveProviderLease(
 	if err != nil {
 		return false, time.Time{}, err
 	}
-	expiresAt, exists := entry.ProviderLeases[providerLeaseKey(providerID, incarnationID)]
-	return exists && expiresAt > now.UnixNano(), now, nil
+	lease, exists := entry.ProviderLeases[providerLeaseKey(providerID, incarnationID)]
+	return exists && lease.ExpiresAtUnixMilli > now.UnixMilli(), now, nil
 }
 
 // ActiveProviderLeases projects every lease from the exact active admission.
@@ -381,16 +478,17 @@ func (c *toolsetCatalog) ActiveProviderLeases(
 		return nil, errToolsetNotFound
 	}
 	leases := make([]providerLeaseRecord, 0, len(entry.ProviderLeases))
-	for leaseKey, expiresAt := range entry.ProviderLeases {
+	for leaseKey, lease := range entry.ProviderLeases {
 		providerID, incarnationID, err := parseProviderLeaseKey(leaseKey)
 		if err != nil {
 			return nil, err
 		}
 		leases = append(leases, providerLeaseRecord{
-			ProviderID:           providerID,
-			IncarnationID:        incarnationID,
-			RegistrationToken:    token,
-			LeaseExpiresUnixNano: expiresAt,
+			ProviderID:            providerID,
+			IncarnationID:         incarnationID,
+			RegistrationToken:     token,
+			LeaseExpiresUnixMilli: lease.ExpiresAtUnixMilli,
+			Draining:              lease.Draining,
 		})
 	}
 	return leases, nil
@@ -398,9 +496,12 @@ func (c *toolsetCatalog) ActiveProviderLeases(
 
 // HealthIdentity returns the exact token and membership epoch a ping must carry.
 func (c *toolsetCatalog) HealthIdentity(ctx context.Context, name string) (string, uint64, error) {
-	entry, _, err := c.healthEntry(ctx, name)
+	entry, now, err := c.healthEntry(ctx, name)
 	if err != nil {
 		return "", 0, err
+	}
+	if routableProviderCount(entry, now) == 0 {
+		return "", 0, errToolsetNotFound
 	}
 	return entry.RegistrationToken, entry.HealthEpoch, nil
 }
@@ -450,8 +551,8 @@ func (c *toolsetCatalog) RecordPong(
 			entry.HealthEpoch != epoch {
 			return nil
 		}
-		expiresAt, admitted := entry.ProviderLeases[providerLeaseKey(providerID, incarnationID)]
-		if !admitted || expiresAt <= now.UnixNano() {
+		lease, admitted := entry.ProviderLeases[providerLeaseKey(providerID, incarnationID)]
+		if !admitted || lease.Draining || lease.ExpiresAtUnixMilli <= now.UnixMilli() {
 			return nil
 		}
 		entry.LastPongUnixNano = max(entry.LastPongUnixNano, now.UnixNano())
@@ -596,22 +697,23 @@ func (c *toolsetCatalog) exactRaw(ctx context.Context, key string) (string, bool
 func newCatalogEntry(
 	toolset *genregistry.Toolset,
 	fingerprint, revision, token, leaseKey string,
-	expiresAt int64,
+	lease providerLease,
 	now time.Time,
 	retiredTokens map[string]struct{},
 ) catalogEntry {
 	registeredAt := now.UTC().Format(time.RFC3339Nano)
 	toolset.RegisteredAt = registeredAt
 	return catalogEntry{
-		State:             catalogEntryActive,
-		Toolset:           toolset,
-		SchemaFingerprint: fingerprint,
-		AdmissionRevision: revision,
-		RegistrationToken: token,
-		RegisteredAt:      registeredAt,
-		ProviderLeases:    map[string]int64{leaseKey: expiresAt},
-		RetiredTokens:     retiredTokens,
-		HealthEpoch:       1,
+		State:               catalogEntryActive,
+		Toolset:             toolset,
+		SchemaFingerprint:   fingerprint,
+		AdmissionRevision:   revision,
+		WireProtocolVersion: toolregistry.WireProtocolVersion,
+		RegistrationToken:   token,
+		RegisteredAt:        registeredAt,
+		ProviderLeases:      map[string]providerLease{leaseKey: lease},
+		RetiredTokens:       retiredTokens,
+		HealthEpoch:         1,
 	}
 }
 
@@ -619,18 +721,41 @@ func newCatalogEntry(
 // pongs from the prior non-empty membership epoch when the last lease expires.
 func pruneExpiredProviderLeases(entry *catalogEntry, now time.Time) bool {
 	changed := false
-	hadLeases := len(entry.ProviderLeases) > 0
-	for leaseKey, expiresAt := range entry.ProviderLeases {
-		if expiresAt <= now.UnixNano() {
+	hadRoutable := nonDrainingProviderCount(*entry) > 0
+	for leaseKey, lease := range entry.ProviderLeases {
+		if lease.ExpiresAtUnixMilli <= now.UnixMilli() {
 			delete(entry.ProviderLeases, leaseKey)
 			changed = true
 		}
 	}
-	if hadLeases && len(entry.ProviderLeases) == 0 {
+	if hadRoutable && routableProviderCount(*entry, now) == 0 {
 		entry.HealthEpoch++
 		entry.LastPongUnixNano = 0
 	}
 	return changed
+}
+
+// nonDrainingProviderCount returns membership immediately before expiration
+// pruning, so removing the final formerly routable lease advances one epoch.
+func nonDrainingProviderCount(entry catalogEntry) int {
+	count := 0
+	for _, lease := range entry.ProviderLeases {
+		if !lease.Draining {
+			count++
+		}
+	}
+	return count
+}
+
+// routableProviderCount returns unexpired non-draining leases at now.
+func routableProviderCount(entry catalogEntry, now time.Time) int {
+	count := 0
+	for _, lease := range entry.ProviderLeases {
+		if !lease.Draining && (now.IsZero() || lease.ExpiresAtUnixMilli > now.UnixMilli()) {
+			count++
+		}
+	}
+	return count
 }
 
 // providerLeaseKey binds a deployment-stable provider label to one runtime
@@ -678,6 +803,9 @@ func parseCatalogEntry(name, body string) (catalogEntry, error) {
 	if err := toolregistry.ValidateAdmissionRevision(entry.AdmissionRevision); err != nil {
 		return catalogEntry{}, fmt.Errorf("toolset %q invalid admission revision: %w", name, err)
 	}
+	if err := toolregistry.ValidateWireProtocolVersion(entry.WireProtocolVersion); err != nil {
+		return catalogEntry{}, fmt.Errorf("toolset %q invalid wire protocol version: %w", name, err)
+	}
 	fingerprint, err := toolsetSchemaFingerprint(entry.Toolset)
 	if err != nil {
 		return catalogEntry{}, fmt.Errorf("fingerprint toolset %q schema: %w", name, err)
@@ -685,7 +813,11 @@ func parseCatalogEntry(name, body string) (catalogEntry, error) {
 	if entry.SchemaFingerprint != fingerprint {
 		return catalogEntry{}, fmt.Errorf("toolset %q schema fingerprint does not match canonical schema", name)
 	}
-	token, err := admissionRegistrationToken(fingerprint, entry.AdmissionRevision)
+	token, err := admissionRegistrationToken(
+		fingerprint,
+		entry.AdmissionRevision,
+		entry.WireProtocolVersion,
+	)
 	if err != nil {
 		return catalogEntry{}, fmt.Errorf("derive toolset %q admission token: %w", name, err)
 	}
@@ -706,11 +838,11 @@ func parseCatalogEntry(name, body string) (catalogEntry, error) {
 	if entry.LastPongUnixNano < 0 {
 		return catalogEntry{}, fmt.Errorf("toolset %q has invalid last pong timestamp", name)
 	}
-	for leaseKey, expiresAt := range entry.ProviderLeases {
+	for leaseKey, lease := range entry.ProviderLeases {
 		if _, _, err := parseProviderLeaseKey(leaseKey); err != nil {
 			return catalogEntry{}, fmt.Errorf("toolset %q has invalid provider lease key: %w", name, err)
 		}
-		if expiresAt <= 0 {
+		if lease.ExpiresAtUnixMilli <= 0 {
 			return catalogEntry{}, fmt.Errorf("toolset %q has invalid provider lease deadline", name)
 		}
 	}
@@ -787,8 +919,12 @@ func toolsetSchemaFingerprint(toolset *genregistry.Toolset) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// admissionRegistrationToken derives the wire-visible execution fence.
-func admissionRegistrationToken(schemaFingerprint, admissionRevision string) (string, error) {
+// admissionRegistrationToken derives the wire-visible execution fence from the
+// exact schema, deployment revision, and provider message protocol.
+func admissionRegistrationToken(
+	schemaFingerprint, admissionRevision string,
+	wireProtocolVersion int,
+) (string, error) {
 	schemaDigest, err := hex.DecodeString(schemaFingerprint)
 	if err != nil {
 		return "", fmt.Errorf("decode schema fingerprint: %w", err)
@@ -799,11 +935,22 @@ func admissionRegistrationToken(schemaFingerprint, admissionRevision string) (st
 	if err := toolregistry.ValidateAdmissionRevision(admissionRevision); err != nil {
 		return "", err
 	}
+	if wireProtocolVersion < 0 || uint64(wireProtocolVersion) > math.MaxUint32 {
+		return "", fmt.Errorf("wire protocol version must fit uint32")
+	}
+	var protocolVersion [4]byte
+	// #nosec G115 -- the range check above proves this conversion is exact.
+	binary.BigEndian.PutUint32(protocolVersion[:], uint32(wireProtocolVersion))
 	var revisionLength [4]byte
 	// #nosec G115 -- canonical validation bounds the revision to 256 bytes.
 	binary.BigEndian.PutUint32(revisionLength[:], uint32(len(admissionRevision)))
-	body := make([]byte, 0, len(registrationTokenDomain)+sha256.Size+len(revisionLength)+len(admissionRevision))
+	body := make(
+		[]byte,
+		0,
+		len(registrationTokenDomain)+len(protocolVersion)+sha256.Size+len(revisionLength)+len(admissionRevision),
+	)
 	body = append(body, registrationTokenDomain...)
+	body = append(body, protocolVersion[:]...)
 	body = append(body, schemaDigest...)
 	body = append(body, revisionLength[:]...)
 	body = append(body, admissionRevision...)

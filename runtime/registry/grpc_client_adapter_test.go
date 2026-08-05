@@ -29,6 +29,10 @@ func (m *mockGRPCRegistryClient) ReleaseProvider(_ context.Context, _ *registryp
 	return nil, nil
 }
 
+func (m *mockGRPCRegistryClient) DrainProvider(_ context.Context, _ *registrypb.DrainProviderRequest, _ ...grpc.CallOption) (*registrypb.DrainProviderResponse, error) {
+	return nil, nil
+}
+
 func (m *mockGRPCRegistryClient) Unregister(_ context.Context, _ *registrypb.UnregisterRequest, _ ...grpc.CallOption) (*registrypb.UnregisterResponse, error) {
 	return nil, nil
 }
@@ -50,6 +54,26 @@ func (m *mockGRPCRegistryClient) Search(_ context.Context, _ *registrypb.SearchR
 }
 
 func (m *mockGRPCRegistryClient) CallTool(_ context.Context, _ *registrypb.CallToolRequest, _ ...grpc.CallOption) (*registrypb.CallToolResponse, error) {
+	return nil, nil
+}
+
+func (m *mockGRPCRegistryClient) RetryTool(_ context.Context, _ *registrypb.RetryToolRequest, _ ...grpc.CallOption) (*registrypb.RetryToolResponse, error) {
+	return nil, nil
+}
+
+func (m *mockGRPCRegistryClient) CompleteToolCall(_ context.Context, _ *registrypb.CompleteToolCallRequest, _ ...grpc.CallOption) (*registrypb.CompleteToolCallResponse, error) {
+	return nil, nil
+}
+
+func (m *mockGRPCRegistryClient) PublishToolOutputDelta(_ context.Context, _ *registrypb.PublishToolOutputDeltaRequest, _ ...grpc.CallOption) (*registrypb.PublishToolOutputDeltaResponse, error) {
+	return nil, nil
+}
+
+func (m *mockGRPCRegistryClient) ReportToolCallOverload(_ context.Context, _ *registrypb.ReportToolCallOverloadRequest, _ ...grpc.CallOption) (*registrypb.ReportToolCallOverloadResponse, error) {
+	return nil, nil
+}
+
+func (m *mockGRPCRegistryClient) ClaimToolCall(_ context.Context, _ *registrypb.ClaimToolCallRequest, _ ...grpc.CallOption) (*registrypb.ClaimToolCallResponse, error) {
 	return nil, nil
 }
 

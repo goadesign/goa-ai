@@ -19,6 +19,16 @@ import (
 )
 
 type (
+	// SnapshotEvent is one immutable event captured by Stream.Snapshot.
+	SnapshotEvent struct {
+		// ID is the Redis stream event identity.
+		ID string
+		// EventName is the producer-defined event name.
+		EventName string
+		// Payload is an independent copy of the event body.
+		Payload []byte
+	}
+
 	// Options configures the Pulse client.
 	Options struct {
 		// Redis is the Redis connection used to back Pulse streams. Required.
@@ -51,6 +61,9 @@ type (
 		// Add publishes an event with the given name and payload to the stream, returning
 		// the event ID assigned by Redis (e.g., "1234567890-0").
 		Add(ctx context.Context, event string, payload []byte) (string, error)
+		// Snapshot returns every event retained at one Redis linearization point.
+		// It creates no reader, cursor, consumer group, or acknowledgement state.
+		Snapshot(ctx context.Context) ([]SnapshotEvent, error)
 		// NewSink creates a Pulse sink (consumer group) on this stream for reading events.
 		NewSink(ctx context.Context, name string, opts ...streamopts.Sink) (Sink, error)
 		// NewReader creates an independent reader. Readers do not create consumer
@@ -165,6 +178,23 @@ func (h *handle) Add(ctx context.Context, event string, payload []byte) (string,
 		return "", fmt.Errorf("pulse add: %w", err)
 	}
 	return id, nil
+}
+
+// Snapshot returns the stream's deterministic retained-history view.
+func (h *handle) Snapshot(ctx context.Context) ([]SnapshotEvent, error) {
+	events, err := h.stream.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	snapshot := make([]SnapshotEvent, len(events))
+	for index, event := range events {
+		snapshot[index] = SnapshotEvent{
+			ID:        event.ID(),
+			EventName: event.EventName(),
+			Payload:   event.Payload(),
+		}
+	}
+	return snapshot, nil
 }
 
 // NewSink creates a consumer group on the stream. Delegates to the underlying

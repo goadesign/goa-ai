@@ -22,6 +22,48 @@ import (
 )
 
 type (
+	// callAdmissionRepository owns immutable call identity and terminal state.
+	// Production uses Redis; service tests may substitute an in-memory recorder.
+	callAdmissionRepository interface {
+		Ensure(
+			ctx context.Context,
+			toolset, toolUseID, registrationToken, digest string,
+			executionTimeout, ttl time.Duration,
+			outcomeUnknownPayload []byte,
+		) (callAdmission, bool, error)
+		Attach(ctx context.Context, toolset, toolUseID, digest string) (callAdmission, error)
+		InitializeResultStream(ctx context.Context, admission callAdmission, resultStreamID string) error
+		RestoreTerminal(ctx context.Context, admission callAdmission, resultStreamID string) error
+		SettleLostClaimsForLease(
+			ctx context.Context,
+			providerRegistrationToken, providerLease string,
+		) error
+		Complete(
+			ctx context.Context,
+			toolset, toolUseID, callRegistrationToken, providerRegistrationToken,
+			providerLease, requestEventID, resultStreamID string,
+			payload []byte,
+		) error
+		PublishLiveEvent(
+			ctx context.Context,
+			toolset, toolUseID, callRegistrationToken, providerRegistrationToken,
+			providerLease, requestEventID, resultStreamID, eventName string,
+			payload []byte,
+		) error
+		ReportOverload(
+			ctx context.Context,
+			toolset, toolUseID, callRegistrationToken, providerRegistrationToken,
+			providerLease, requestEventID, resultStreamID string,
+			overloadPayload, stalePayload []byte,
+		) error
+		Claim(
+			ctx context.Context,
+			toolset, toolUseID, callRegistrationToken, providerRegistrationToken,
+			providerLease, requestEventID, resultStreamID string,
+			stalePayload []byte,
+		) (callClaimDisposition, error)
+	}
+
 	// Service implements the registry service interface.
 	// It provides toolset registration, discovery, and tool invocation capabilities.
 	Service struct {
@@ -29,9 +71,10 @@ type (
 		validator      *schemaValidator
 		streamManager  StreamManager
 		healthTracker  HealthTracker
-		callAdmissions *callAdmissionStore
+		callAdmissions callAdmissionRepository
 
 		pulseClient           clientspulse.Client
+		executionTimeout      time.Duration
 		resultStreamTTL       time.Duration
 		providerLeaseDuration time.Duration
 	}
@@ -45,15 +88,32 @@ type (
 		// HealthTracker tracks provider health status.
 		HealthTracker HealthTracker
 		// CallAdmissions atomically coordinates call publication across replicas.
-		CallAdmissions *callAdmissionStore
+		CallAdmissions callAdmissionRepository
 		// PulseClient creates/opens Pulse streams. Required for CallTool.
 		PulseClient clientspulse.Client
-		// ResultStreamTTL controls how long result streams live in Redis.
-		// When zero, defaults to toolregistry.DefaultResultStreamTTL.
+		// ResultStreamTTL selects the retention used to derive each call record's
+		// Redis-owned absolute expiration. When zero, it defaults to
+		// toolregistry.DefaultResultStreamTTL.
 		ResultStreamTTL time.Duration
+		// ExecutionTimeout selects the duration used to derive the absolute
+		// execution deadline. Zero uses toolregistry.MaxToolCallWait.
+		ExecutionTimeout time.Duration
 		// ProviderLeaseDuration is the application-level provider membership
 		// lifetime renewed by identical registration.
 		ProviderLeaseDuration time.Duration
+	}
+
+	// preparedToolCall is the immutable registry-owned request derived before
+	// initial admission or exact retry touches publication state.
+	preparedToolCall struct {
+		toolset           string
+		registrationToken string
+		toolUseID         string
+		resultStreamID    string
+		tool              tools.Ident
+		payload           json.RawMessage
+		meta              *toolregistry.ToolCallMeta
+		admissionDigest   string
 	}
 )
 
@@ -84,6 +144,17 @@ func newService(opts serviceOptions) (*Service, error) {
 	}
 	if opts.ProviderLeaseDuration < 0 {
 		return nil, fmt.Errorf("provider lease duration must not be negative")
+	}
+	executionTimeout := opts.ExecutionTimeout
+	if executionTimeout == 0 {
+		executionTimeout = toolregistry.MaxToolCallWait
+	}
+	if executionTimeout < time.Millisecond || executionTimeout > toolregistry.MaxToolCallWait {
+		return nil, fmt.Errorf(
+			"tool execution timeout must be between %s and %s",
+			time.Millisecond,
+			toolregistry.MaxToolCallWait,
+		)
 	}
 	ttl := opts.ResultStreamTTL
 	if ttl == 0 {
@@ -119,6 +190,7 @@ func newService(opts serviceOptions) (*Service, error) {
 		healthTracker:         opts.HealthTracker,
 		callAdmissions:        opts.CallAdmissions,
 		pulseClient:           opts.PulseClient,
+		executionTimeout:      executionTimeout,
 		resultStreamTTL:       ttl,
 		providerLeaseDuration: providerLeaseDuration,
 	}, nil
@@ -127,6 +199,9 @@ func newService(opts serviceOptions) (*Service, error) {
 // Register prepares routing and atomically creates, renews, or replaces the
 // catalog-owned admission and provider lease.
 func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) (*genregistry.RegisterResult, error) {
+	if err := toolregistry.ValidateWireProtocolVersion(p.WireProtocolVersion); err != nil {
+		return nil, genregistry.MakeValidationError(err)
+	}
 	// Validate tool schemas.
 	if err := s.validator.ValidateToolSchemas(p.Tools); err != nil {
 		return nil, genregistry.MakeValidationError(fmt.Errorf("invalid tool schema: %w", err))
@@ -186,6 +261,29 @@ func (s *Service) ReleaseProvider(ctx context.Context, p *genregistry.ReleasePro
 		p.ExpectedRegistrationToken,
 	); err != nil {
 		return genregistry.MakeServiceUnavailable(fmt.Errorf("release provider lease: %w", err))
+	}
+	if err := s.callAdmissions.SettleLostClaimsForLease(
+		ctx,
+		p.ExpectedRegistrationToken,
+		providerLeaseKey(p.ProviderID, p.ProviderIncarnationID),
+	); err != nil {
+		return genregistry.MakeServiceUnavailable(fmt.Errorf("settle released provider claims: %w", err))
+	}
+	return nil
+}
+
+// DrainProvider marks one exact provider lease non-routable before its request
+// sink closes while preserving authority to settle already-claimed work.
+func (s *Service) DrainProvider(ctx context.Context, p *genregistry.DrainProviderPayload) error {
+	if err := s.catalog.DrainProvider(
+		ctx,
+		p.Name,
+		p.ProviderID,
+		p.ProviderIncarnationID,
+		p.ExpectedRegistrationToken,
+		time.Duration(p.SettlementDurationMs)*time.Millisecond,
+	); err != nil {
+		return genregistry.MakeServiceUnavailable(fmt.Errorf("drain provider lease: %w", err))
 	}
 	return nil
 }
@@ -286,89 +384,65 @@ func (s *Service) Search(ctx context.Context, p *genregistry.SearchPayload) (*ge
 // It validates the payload against the tool's payload schema, checks provider health,
 // creates the per-call result stream, and publishes the request to the toolset stream.
 func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) (*genregistry.CallToolResult, error) {
-	// 1. Load the exact catalog generation used for validation and routing.
-	registration, err := s.catalog.ActiveRegistration(ctx, p.Toolset)
-	if err != nil {
-		if errors.Is(err, errToolsetNotFound) {
-			return nil, genregistry.MakeNotFound(fmt.Errorf("toolset %q not found", p.Toolset))
-		}
-		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("get toolset: %w", err))
+	if err := toolregistry.ValidateWireProtocolVersion(p.WireProtocolVersion); err != nil {
+		return nil, genregistry.MakeValidationError(err)
 	}
-
-	toolset := registration.Toolset
-
-	// 2. Find the tool within the toolset.
-	var tool *genregistry.ToolSchema
-	for _, t := range toolset.Tools {
-		if t.Name == p.Tool {
-			tool = t
-			break
-		}
-	}
-	if tool == nil {
-		return nil, genregistry.MakeNotFound(fmt.Errorf("tool %q not found in toolset %q", p.Tool, p.Toolset))
-	}
-
-	// 3. Validate payload against tool's payload schema.
-	if err := s.validator.ValidatePayload(tool.PayloadSchema, p.PayloadJSON); err != nil {
-		return nil, genregistry.MakeValidationError(fmt.Errorf("payload validation failed: %w", err))
-	}
-
-	// 4. Check provider health - return service_unavailable if unhealthy.
-	h, err := s.healthTracker.Health(ctx, p.Toolset, registration.RegistrationToken)
-	if err != nil {
-		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("check toolset %q health: %w", p.Toolset, err))
-	}
-	if !h.Healthy {
-		lastPong := "missing"
-		if !h.LastPong.IsZero() {
-			lastPong = h.LastPong.UTC().Format(time.RFC3339Nano)
-		}
-		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
-			"no healthy providers for toolset %q (staleness_threshold=%s, last_pong=%s, age=%s)",
-			p.Toolset,
-			h.StalenessThreshold,
-			lastPong,
-			h.Age,
-		))
-	}
-
-	toolUseID := toolUseIDForCall(p.Meta)
-	resultStreamID := toolregistry.ResultStreamID(toolUseID)
-	resultStream, err := s.pulseClient.Stream(
-		resultStreamID,
-		streamopts.WithStreamSlidingTTL(s.resultStreamTTL),
+	prepared, err := prepareToolCallIdentity(
+		p.Toolset,
+		p.Tool,
+		p.PayloadJSON,
+		p.Meta,
 	)
 	if err != nil {
-		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("open result stream %q: %w", resultStreamID, err))
+		return nil, err
 	}
-
-	meta := toolregistry.ToolCallMeta{
-		RunID:            p.Meta.RunID,
-		SessionID:        p.Meta.SessionID,
-		TurnID:           derefString(p.Meta.TurnID),
-		ToolCallID:       p.Meta.ToolCallID,
-		ParentToolCallID: derefString(p.Meta.ParentToolCallID),
-	}
-	msg := toolregistry.NewToolCallMessage(
-		registration.RegistrationToken,
-		toolUseID,
-		s.resultStreamTTL,
-		tools.Ident(p.Tool),
-		json.RawMessage(p.PayloadJSON),
-		&meta,
-	)
-	body, err := json.Marshal(msg)
-	if err != nil {
-		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("encode call admission: %w", err))
-	}
-	digest := sha256.Sum256(body)
-	admission, created, err := s.callAdmissions.Ensure(
+	admission, err := s.callAdmissions.Attach(
 		ctx,
-		toolUseID,
+		prepared.toolset,
+		prepared.toolUseID,
+		prepared.admissionDigest,
+	)
+	if err == nil {
+		if admission.terminal {
+			if err := s.callAdmissions.RestoreTerminal(ctx, admission, prepared.resultStreamID); err != nil {
+				return nil, genregistry.MakeServiceUnavailable(err)
+			}
+			return callToolResult(
+				prepared.toolUseID,
+				admission,
+			), nil
+		}
+		if admission.published {
+			return callToolResult(
+				prepared.toolUseID,
+				admission,
+			), nil
+		}
+		return s.resumeUnpublishedToolCall(ctx, prepared, admission)
+	}
+	if !errors.Is(err, errCallAdmissionNotFound) {
+		if errors.Is(err, errCallAdmissionConflict) {
+			return nil, genregistry.MakeValidationError(err)
+		}
+		return nil, genregistry.MakeServiceUnavailable(err)
+	}
+
+	registration, err := s.activeRegistration(ctx, p.Toolset)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validatePreparedToolCall(ctx, prepared, registration); err != nil {
+		return nil, err
+	}
+	admission, _, err = s.callAdmissions.Ensure(
+		ctx,
+		prepared.toolset,
+		prepared.toolUseID,
 		registration.RegistrationToken,
-		fmt.Sprintf("%x", digest[:]),
+		prepared.admissionDigest,
+		s.executionTimeout,
 		s.resultStreamTTL,
+		outcomeUnknownPayload(registration.RegistrationToken, prepared.toolUseID),
 	)
 	if err != nil {
 		if errors.Is(err, errCallAdmissionConflict) {
@@ -376,102 +450,543 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		}
 		return nil, genregistry.MakeServiceUnavailable(err)
 	}
-
-	var overloadEventID string
-	if !created {
-		eventID, result, err := latestExactResult(
-			ctx,
-			resultStream,
-			toolUseID,
-			registration.RegistrationToken,
-		)
-		if err != nil {
-			return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("inspect admitted call history: %w", err))
+	prepared.registrationToken = admission.registrationToken
+	if admission.terminal {
+		if err := s.callAdmissions.RestoreTerminal(ctx, admission, prepared.resultStreamID); err != nil {
+			return nil, genregistry.MakeServiceUnavailable(err)
 		}
-		if result != nil {
-			if result.Error == nil || result.Error.Code != toolregistry.ToolErrorCodeProviderOverloaded {
-				return callToolResult(toolUseID, registration.RegistrationToken, s.resultStreamTTL), nil
-			}
-			if result.Error.RetryAfterMillis <= 0 ||
-				result.Error.RetryAfterMillis > toolregistry.MaxProviderOverloadRetryAfter.Milliseconds() {
-				return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
-					"provider overload retry delay %dms is outside (0,%dms]",
-					result.Error.RetryAfterMillis,
-					toolregistry.MaxProviderOverloadRetryAfter.Milliseconds(),
-				))
-			}
-			overloadEventID = eventID
-		}
-	}
-
-	publication, claimed, err := s.callAdmissions.ClaimPublication(ctx, admission, overloadEventID)
-	if err != nil {
-		return nil, genregistry.MakeServiceUnavailable(err)
-	}
-	if claimed {
-		publishErr := s.publishAdmittedCall(
-			ctx,
-			p,
-			registration.RegistrationToken,
-			resultStream,
-			resultStreamID,
-			msg,
+		return callToolResult(
+			prepared.toolUseID,
 			admission,
-			publication,
-			overloadEventID,
-		)
-		releaseCtx, releaseCancel := context.WithTimeout(
-			context.WithoutCancel(ctx),
-			toolregistry.ResultStreamTransportBudget,
-		)
-		releaseErr := publication.Release(releaseCtx)
-		releaseCancel()
-		if err := errors.Join(publishErr, releaseErr); err != nil {
+		), nil
+	}
+	if admission.published {
+		return callToolResult(
+			prepared.toolUseID,
+			admission,
+		), nil
+	}
+	if admission.registrationToken != registration.RegistrationToken {
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"retained unpublished call belongs to inactive registration %q",
+			admission.registrationToken,
+		))
+	}
+	return s.routeInitialToolCall(ctx, prepared, admission)
+}
+
+// RetryTool republishes only the exact original admission after a provider
+// reports overload. A replacement admission is never eligible for this retry.
+func (s *Service) RetryTool(ctx context.Context, p *genregistry.RetryToolPayload) (*genregistry.CallToolResult, error) {
+	if err := toolregistry.ValidateWireProtocolVersion(p.WireProtocolVersion); err != nil {
+		return nil, genregistry.MakeValidationError(err)
+	}
+	prepared, err := prepareToolCallIdentity(
+		p.Toolset,
+		p.Tool,
+		p.PayloadJSON,
+		p.Meta,
+	)
+	if err != nil {
+		return nil, err
+	}
+	admission, err := s.callAdmissions.Attach(
+		ctx,
+		prepared.toolset,
+		prepared.toolUseID,
+		prepared.admissionDigest,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, errCallAdmissionConflict):
+			return nil, genregistry.MakeValidationError(err)
+		case errors.Is(err, errCallAdmissionNotFound):
+			return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("retry admitted tool call: %w", err))
+		default:
 			return nil, genregistry.MakeServiceUnavailable(err)
 		}
 	}
-	return callToolResult(toolUseID, registration.RegistrationToken, s.resultStreamTTL), nil
+	if admission.registrationToken != p.ExpectedRegistrationToken {
+		return nil, genregistry.MakeAdmissionConflict(fmt.Errorf(
+			"toolset %q retained registration %s does not match retry admission %s",
+			p.Toolset,
+			admission.registrationToken,
+			p.ExpectedRegistrationToken,
+		))
+	}
+	prepared.registrationToken = admission.registrationToken
+	if admission.terminal {
+		if err := s.callAdmissions.RestoreTerminal(ctx, admission, prepared.resultStreamID); err != nil {
+			return nil, genregistry.MakeServiceUnavailable(err)
+		}
+		return callToolResult(
+			prepared.toolUseID,
+			admission,
+		), nil
+	}
+
+	registration, err := s.activeRegistration(ctx, p.Toolset)
+	if err != nil {
+		return s.retryTerminalOrError(ctx, prepared, err)
+	}
+	if registration.RegistrationToken != admission.registrationToken {
+		return s.retryTerminalOrError(ctx, prepared, genregistry.MakeAdmissionConflict(fmt.Errorf(
+			"toolset %q active registration %s does not match retry admission %s",
+			p.Toolset,
+			registration.RegistrationToken,
+			admission.registrationToken,
+		)))
+	}
+	if err := s.validatePreparedToolCall(ctx, prepared, registration); err != nil {
+		return s.retryTerminalOrError(ctx, prepared, err)
+	}
+	return s.retryPreparedToolCall(ctx, prepared, admission)
 }
 
-// publishAdmittedCall performs one exact-owned initial or overload publication.
+// retryTerminalOrError resolves a routing failure against the call record one
+// final time. A terminal committed after the first Attach is authoritative and
+// must replay even if its admission retired concurrently.
+func (s *Service) retryTerminalOrError(
+	ctx context.Context,
+	prepared preparedToolCall,
+	routingErr error,
+) (*genregistry.CallToolResult, error) {
+	admission, err := s.callAdmissions.Attach(
+		ctx,
+		prepared.toolset,
+		prepared.toolUseID,
+		prepared.admissionDigest,
+	)
+	if err != nil || !admission.terminal {
+		return nil, routingErr
+	}
+	if err := s.callAdmissions.RestoreTerminal(ctx, admission, prepared.resultStreamID); err != nil {
+		return nil, genregistry.MakeServiceUnavailable(err)
+	}
+	return callToolResult(
+		prepared.toolUseID,
+		admission,
+	), nil
+}
+
+// CompleteToolCall atomically commits one exact provider terminal result.
+func (s *Service) CompleteToolCall(ctx context.Context, p *genregistry.CompleteToolCallPayload) error {
+	var result toolregistry.ToolResultMessage
+	if err := json.Unmarshal(p.ResultJSON, &result); err != nil {
+		return genregistry.MakeValidationError(fmt.Errorf("decode terminal result: %w", err))
+	}
+	if err := toolregistry.ValidateToolResultMessage(result); err != nil {
+		return genregistry.MakeValidationError(fmt.Errorf("validate terminal result: %w", err))
+	}
+	if result.Retry != nil {
+		return genregistry.MakeValidationError(fmt.Errorf("terminal result must not contain retry control"))
+	}
+	if result.ToolUseID != p.ToolUseID || result.RegistrationToken != p.RegistrationToken {
+		return genregistry.MakeValidationError(fmt.Errorf("terminal result identity does not match payload"))
+	}
+	if err := s.callAdmissions.Complete(
+		ctx,
+		p.Toolset,
+		p.ToolUseID,
+		p.RegistrationToken,
+		p.ProviderRegistrationToken,
+		providerLeaseKey(p.ProviderID, p.ProviderIncarnationID),
+		p.RequestEventID,
+		toolregistry.ResultStreamID(p.ToolUseID),
+		p.ResultJSON,
+	); err != nil {
+		if errors.Is(err, errCallTerminalConflict) {
+			return genregistry.MakeValidationError(err)
+		}
+		return genregistry.MakeServiceUnavailable(fmt.Errorf("complete tool call: %w", err))
+	}
+	return nil
+}
+
+// PublishToolOutputDelta appends a provider output fragment only while its
+// claimed call remains live and nonterminal.
+func (s *Service) PublishToolOutputDelta(ctx context.Context, p *genregistry.PublishToolOutputDeltaPayload) error {
+	if len(p.Delta) > toolregistry.MaxToolOutputDeltaBytes {
+		return genregistry.MakeValidationError(fmt.Errorf(
+			"output delta exceeds %d bytes",
+			toolregistry.MaxToolOutputDeltaBytes,
+		))
+	}
+	delta := toolregistry.NewToolOutputDeltaMessage(
+		p.CallRegistrationToken,
+		p.ToolUseID,
+		p.Stream,
+		p.Delta,
+	)
+	payload, err := json.Marshal(delta)
+	if err != nil {
+		return genregistry.MakeServiceUnavailable(fmt.Errorf("encode tool output delta: %w", err))
+	}
+	return s.publishLiveProviderEvent(
+		ctx,
+		p.Toolset,
+		p.ProviderID,
+		p.ProviderIncarnationID,
+		p.ProviderRegistrationToken,
+		p.CallRegistrationToken,
+		p.ToolUseID,
+		p.RequestEventID,
+		toolregistry.OutputDeltaEventKey,
+		payload,
+	)
+}
+
+// ReportToolCallOverload appends canonical retry control only before dispatch.
+// Stale generations receive their canonical terminal result instead.
+func (s *Service) ReportToolCallOverload(ctx context.Context, p *genregistry.ProviderToolCallClaimPayload) error {
+	overload := toolregistry.NewToolResultRetryMessage(
+		p.CallRegistrationToken,
+		p.ToolUseID,
+		toolregistry.ToolRetryReasonProviderOverloaded,
+		toolregistry.ProviderOverloadRetryAfter,
+	)
+	overloadPayload, err := json.Marshal(overload)
+	if err != nil {
+		return genregistry.MakeServiceUnavailable(fmt.Errorf("encode overload control: %w", err))
+	}
+	stale := toolregistry.NewToolResultErrorMessage(
+		p.CallRegistrationToken,
+		p.ToolUseID,
+		toolregistry.ToolErrorCodeStaleRegistration,
+		"queued tool call belongs to an older registration",
+	)
+	stalePayload, err := json.Marshal(stale)
+	if err != nil {
+		return genregistry.MakeServiceUnavailable(fmt.Errorf("encode stale terminal result: %w", err))
+	}
+	if err := s.callAdmissions.ReportOverload(
+		ctx,
+		p.Toolset,
+		p.ToolUseID,
+		p.CallRegistrationToken,
+		p.ProviderRegistrationToken,
+		providerLeaseKey(p.ProviderID, p.ProviderIncarnationID),
+		p.RequestEventID,
+		toolregistry.ResultStreamID(p.ToolUseID),
+		overloadPayload,
+		stalePayload,
+	); err != nil {
+		return genregistry.MakeServiceUnavailable(fmt.Errorf("report tool call overload: %w", err))
+	}
+	return nil
+}
+
+// ClaimToolCall performs the registry-owned pre-dispatch transition.
+func (s *Service) ClaimToolCall(
+	ctx context.Context,
+	p *genregistry.ProviderToolCallClaimPayload,
+) (*genregistry.ClaimToolCallResult, error) {
+	stale := toolregistry.NewToolResultErrorMessage(
+		p.CallRegistrationToken,
+		p.ToolUseID,
+		toolregistry.ToolErrorCodeStaleRegistration,
+		"queued tool call belongs to an older registration",
+	)
+	stalePayload, err := json.Marshal(stale)
+	if err != nil {
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("encode stale terminal result: %w", err))
+	}
+	disposition, err := s.callAdmissions.Claim(
+		ctx,
+		p.Toolset,
+		p.ToolUseID,
+		p.CallRegistrationToken,
+		p.ProviderRegistrationToken,
+		providerLeaseKey(p.ProviderID, p.ProviderIncarnationID),
+		p.RequestEventID,
+		toolregistry.ResultStreamID(p.ToolUseID),
+		stalePayload,
+	)
+	if err != nil {
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"claim tool call: %w",
+			err,
+		))
+	}
+	return &genregistry.ClaimToolCallResult{Disposition: string(disposition)}, nil
+}
+
+// resumeUnpublishedToolCall retries initial publication only while the
+// admission that owns the retained call remains the active routing generation.
+func (s *Service) resumeUnpublishedToolCall(
+	ctx context.Context,
+	prepared preparedToolCall,
+	admission callAdmission,
+) (*genregistry.CallToolResult, error) {
+	registration, err := s.activeRegistration(ctx, prepared.toolset)
+	if err != nil {
+		return nil, err
+	}
+	if registration.RegistrationToken != admission.registrationToken {
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"retained unpublished call belongs to inactive registration %q",
+			admission.registrationToken,
+		))
+	}
+	if err := s.validatePreparedToolCall(ctx, prepared, registration); err != nil {
+		return nil, err
+	}
+	prepared.registrationToken = admission.registrationToken
+	return s.routeInitialToolCall(ctx, prepared, admission)
+}
+
+// routeInitialToolCall publishes an admitted request only when its exact
+// admission has not already completed initial publication.
+func (s *Service) routeInitialToolCall(
+	ctx context.Context,
+	prepared preparedToolCall,
+	admission callAdmission,
+) (*genregistry.CallToolResult, error) {
+	if admission.terminal {
+		return callToolResult(prepared.toolUseID, admission), nil
+	}
+	if err := s.ensureResultStream(prepared.resultStreamID, admission.expiresAt); err != nil {
+		return nil, err
+	}
+	if err := s.publishPreparedToolCall(ctx, prepared, admission, ""); err != nil {
+		return nil, genregistry.MakeServiceUnavailable(err)
+	}
+	return callToolResult(
+		prepared.toolUseID,
+		admission,
+	), nil
+}
+
+// retryPreparedToolCall republishes only when retained exact history ends in
+// valid overload control for this admission.
+func (s *Service) retryPreparedToolCall(
+	ctx context.Context,
+	prepared preparedToolCall,
+	admission callAdmission,
+) (*genregistry.CallToolResult, error) {
+	if admission.terminal {
+		return callToolResult(prepared.toolUseID, admission), nil
+	}
+	if err := s.ensureResultStream(prepared.resultStreamID, admission.expiresAt); err != nil {
+		return nil, err
+	}
+	if admission.overloadEventID == "" {
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"retry admitted tool call: overload control is not retained",
+		))
+	}
+	if err := s.publishPreparedToolCall(
+		ctx,
+		prepared,
+		admission,
+		admission.overloadEventID,
+	); err != nil {
+		return nil, genregistry.MakeServiceUnavailable(err)
+	}
+	return callToolResult(
+		prepared.toolUseID,
+		admission,
+	), nil
+}
+
+// ensureResultStream applies the call record's bounded retention and absolute
+// expiration before any request can publish provider output.
+func (s *Service) ensureResultStream(resultStreamID string, expiresAt time.Time) error {
+	_, err := s.pulseClient.Stream(
+		resultStreamID,
+		streamopts.WithStreamMaxLen(toolregistry.ResultStreamMaxLen),
+		streamopts.WithStreamDeadline(expiresAt),
+	)
+	if err != nil {
+		return genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"open result stream %q: %w",
+			resultStreamID,
+			err,
+		))
+	}
+	return nil
+}
+
+// publishLiveProviderEvent delegates provider-authenticated nonterminal
+// publication to the call-admission store's Redis linearization point.
+func (s *Service) publishLiveProviderEvent(
+	ctx context.Context,
+	toolset, providerID, providerIncarnationID, providerRegistrationToken,
+	callRegistrationToken, toolUseID, requestEventID, eventName string,
+	payload []byte,
+) error {
+	if err := s.callAdmissions.PublishLiveEvent(
+		ctx,
+		toolset,
+		toolUseID,
+		callRegistrationToken,
+		providerRegistrationToken,
+		providerLeaseKey(providerID, providerIncarnationID),
+		requestEventID,
+		toolregistry.ResultStreamID(toolUseID),
+		eventName,
+		payload,
+	); err != nil {
+		return genregistry.MakeServiceUnavailable(fmt.Errorf("publish live provider event: %w", err))
+	}
+	return nil
+}
+
+// publishPreparedToolCall performs one exact initial or overload publication.
+// The stream append and admission commit share one Redis linearization point.
+func (s *Service) publishPreparedToolCall(
+	ctx context.Context,
+	prepared preparedToolCall,
+	admission callAdmission,
+	overloadEventID string,
+) error {
+	return s.publishAdmittedCall(
+		ctx,
+		prepared.toolset,
+		prepared.resultStreamID,
+		prepared.message(admission),
+		admission,
+		overloadEventID,
+	)
+}
+
+// publishAdmittedCall performs one exact initial or overload publication.
 func (s *Service) publishAdmittedCall(
 	ctx context.Context,
-	payload *genregistry.CallToolPayload,
-	registrationToken string,
-	resultStream clientspulse.Stream,
+	toolset string,
 	resultStreamID string,
 	message toolregistry.ToolCallMessage,
 	admission callAdmission,
-	publication *callPublication,
 	overloadEventID string,
 ) error {
 	if overloadEventID != "" {
-		_, result, err := latestExactResult(ctx, resultStream, message.ToolUseID, registrationToken)
-		if err != nil {
-			return fmt.Errorf("recheck overload history: %w", err)
-		}
-		if result != nil && result.Error != nil {
-			delay := time.Duration(result.Error.RetryAfterMillis) * time.Millisecond
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
+		timer := time.NewTimer(admission.overloadRetryAfter)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
 		}
 	}
-	if _, err := resultStream.Add(ctx, "init", []byte("{}")); err != nil {
+	if err := s.callAdmissions.InitializeResultStream(ctx, admission, resultStreamID); err != nil {
 		return fmt.Errorf("initialize result stream %q: %w", resultStreamID, err)
 	}
-	if err := s.catalog.VerifyActiveToken(ctx, payload.Toolset, registrationToken); err != nil {
-		return fmt.Errorf("verify routed registration: %w", err)
-	}
-	if err := s.streamManager.PublishToolCall(ctx, payload.Toolset, message); err != nil {
+	if err := s.streamManager.PublishAdmittedToolCall(
+		ctx,
+		toolset,
+		message,
+		admission,
+		overloadEventID,
+	); err != nil {
 		return fmt.Errorf("publish tool call: %w", err)
 	}
-	if err := publication.MarkPublished(ctx, admission, overloadEventID, s.resultStreamTTL); err != nil {
-		return err
+	return nil
+}
+
+// activeRegistration loads the exact catalog generation used for validation
+// and maps catalog failures onto the public registry contract.
+func (s *Service) activeRegistration(ctx context.Context, toolset string) (catalogEntry, error) {
+	registration, err := s.catalog.ActiveRegistration(ctx, toolset)
+	if err == nil {
+		return registration, nil
+	}
+	if errors.Is(err, errToolsetNotFound) {
+		return catalogEntry{}, genregistry.MakeNotFound(fmt.Errorf("toolset %q not found", toolset))
+	}
+	return catalogEntry{}, genregistry.MakeServiceUnavailable(fmt.Errorf("get toolset: %w", err))
+}
+
+// prepareToolCallIdentity derives the token-independent immutable request
+// identity used to attach global transport retries before current routing.
+func prepareToolCallIdentity(
+	toolset, tool string,
+	payload []byte,
+	meta *genregistry.ToolCallMeta,
+) (preparedToolCall, error) {
+	toolUseID := toolUseIDForCall(meta)
+	messageMeta := toolregistry.ToolCallMeta{
+		RunID:            meta.RunID,
+		SessionID:        meta.SessionID,
+		TurnID:           derefString(meta.TurnID),
+		ToolCallID:       meta.ToolCallID,
+		ParentToolCallID: derefString(meta.ParentToolCallID),
+	}
+	body, err := json.Marshal(struct {
+		Toolset string                     `json:"toolset"`
+		Tool    tools.Ident                `json:"tool"`
+		Payload json.RawMessage            `json:"payload"`
+		Meta    *toolregistry.ToolCallMeta `json:"meta"`
+	}{
+		Toolset: toolset,
+		Tool:    tools.Ident(tool),
+		Payload: json.RawMessage(payload),
+		Meta:    &messageMeta,
+	})
+	if err != nil {
+		return preparedToolCall{}, genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"encode call identity: %w",
+			err,
+		))
+	}
+	digest := sha256.Sum256(body)
+	return preparedToolCall{
+		toolset:         toolset,
+		toolUseID:       toolUseID,
+		resultStreamID:  toolregistry.ResultStreamID(toolUseID),
+		tool:            tools.Ident(tool),
+		payload:         json.RawMessage(payload),
+		meta:            &messageMeta,
+		admissionDigest: fmt.Sprintf("%x", digest[:]),
+	}, nil
+}
+
+// validatePreparedToolCall validates a new or unpublished request against the
+// exact active admission selected for publication.
+func (s *Service) validatePreparedToolCall(
+	ctx context.Context,
+	prepared preparedToolCall,
+	registration catalogEntry,
+) error {
+	var schema *genregistry.ToolSchema
+	for _, candidate := range registration.Toolset.Tools {
+		if candidate.Name == prepared.tool.String() {
+			schema = candidate
+			break
+		}
+	}
+	if schema == nil {
+		return genregistry.MakeNotFound(fmt.Errorf(
+			"tool %q not found in toolset %q",
+			prepared.tool,
+			prepared.toolset,
+		))
+	}
+	if err := s.validator.ValidatePayload(schema.PayloadSchema, prepared.payload); err != nil {
+		return genregistry.MakeValidationError(fmt.Errorf(
+			"payload validation failed: %w",
+			err,
+		))
+	}
+	health, err := s.healthTracker.Health(ctx, prepared.toolset, registration.RegistrationToken)
+	if err != nil {
+		return genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"check toolset %q health: %w",
+			prepared.toolset,
+			err,
+		))
+	}
+	if !health.Healthy {
+		lastPong := "missing"
+		if !health.LastPong.IsZero() {
+			lastPong = health.LastPong.UTC().Format(time.RFC3339Nano)
+		}
+		return genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"no healthy providers for toolset %q (staleness_threshold=%s, last_pong=%s, age=%s)",
+			prepared.toolset,
+			health.StalenessThreshold,
+			lastPong,
+			health.Age,
+		))
 	}
 	return nil
 }
@@ -484,66 +999,43 @@ func toolUseIDForCall(meta *genregistry.ToolCallMeta) string {
 }
 
 // callToolResult returns the stable replay contract for one admitted call.
-func callToolResult(toolUseID, registrationToken string, ttl time.Duration) *genregistry.CallToolResult {
+func callToolResult(toolUseID string, admission callAdmission) *genregistry.CallToolResult {
 	return &genregistry.CallToolResult{
-		ToolUseID:         toolUseID,
-		RegistrationToken: registrationToken,
-		ResultStreamTTLMs: ttl.Milliseconds(),
+		ToolUseID:             toolUseID,
+		RegistrationToken:     admission.registrationToken,
+		ExecutionDeadline:     admission.executionDeadline.UTC().Format(time.RFC3339Nano),
+		ResultStreamExpiresAt: admission.expiresAt.UTC().Format(time.RFC3339Nano),
 	}
 }
 
-// latestExactResult replays currently retained history and returns the newest
-// terminal event for one exact call/token without creating acknowledgement or
-// consumer-group state.
-func latestExactResult(
-	ctx context.Context,
-	stream clientspulse.Stream,
-	toolUseID, registrationToken string,
-) (string, *toolregistry.ToolResultMessage, error) {
-	reader, err := stream.NewReader(
-		ctx,
-		streamopts.WithReaderStartAtOldest(),
-		streamopts.WithReaderBlockDuration(10*time.Millisecond),
+// message returns the exact wire envelope for one admitted lifecycle.
+func (p preparedToolCall) message(admission callAdmission) toolregistry.ToolCallMessage {
+	return toolregistry.NewToolCallMessage(
+		p.registrationToken,
+		p.toolUseID,
+		admission.executionDeadline,
+		admission.expiresAt,
+		p.tool,
+		p.payload,
+		p.meta,
 	)
+}
+
+// outcomeUnknownPayload builds the canonical terminal retained before the
+// provider can claim execution, so lease-loss settlement never needs model or
+// provider input.
+func outcomeUnknownPayload(registrationToken, toolUseID string) []byte {
+	result := toolregistry.NewToolResultErrorMessage(
+		registrationToken,
+		toolUseID,
+		toolregistry.ToolErrorCodeOutcomeUnknown,
+		"tool execution outcome is unknown because the claimed provider lease was lost; the effect may have occurred",
+	)
+	payload, err := json.Marshal(result)
 	if err != nil {
-		return "", nil, err
+		panic(fmt.Sprintf("encode canonical outcome_unknown result: %v", err))
 	}
-	defer reader.Close()
-	events := reader.Subscribe()
-	idle := time.NewTimer(20 * time.Millisecond)
-	defer idle.Stop()
-	var (
-		latestID string
-		latest   *toolregistry.ToolResultMessage
-	)
-	for {
-		select {
-		case <-ctx.Done():
-			return "", nil, ctx.Err()
-		case <-idle.C:
-			return latestID, latest, nil
-		case event, ok := <-events:
-			if !ok {
-				return latestID, latest, nil
-			}
-			if event.EventName != toolregistry.ResultEventKey {
-				continue
-			}
-			var message toolregistry.ToolResultMessage
-			if err := json.Unmarshal(event.Payload, &message); err != nil {
-				continue
-			}
-			if message.ToolUseID != toolUseID || message.RegistrationToken != registrationToken {
-				continue
-			}
-			latestID = event.ID
-			latest = &message
-			if !idle.Stop() {
-				<-idle.C
-			}
-			idle.Reset(20 * time.Millisecond)
-		}
-	}
+	return payload
 }
 
 func derefString(s *string) string {

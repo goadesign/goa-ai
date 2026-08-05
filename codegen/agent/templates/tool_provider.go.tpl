@@ -6,11 +6,10 @@ type (
 	// paired with a Pulse subscription loop whose Serve lifecycle owns one
 	// immutable registry admission generation, renews its provider lease, and
 	// releases that exact lease only after consumption, terminal results, and
-	// acknowledgements settle. Pulse may redeliver a call when acknowledgement
-	// fails after result publication, so bound methods must make repeated
-	// tool-use IDs idempotent or durably deduplicate them. Serve also stamps
-	// best-effort output deltas published from the call context with that
-	// admission token (see runtime/toolregistry/provider).
+	// acknowledgements settle. The registry grants one durable dispatch claim
+	// before Serve invokes a bound method, so redelivery never repeats handler
+	// execution. Serve also stamps best-effort output deltas published from the
+	// call context with that admission token (see runtime/toolregistry/provider).
 	Provider struct {
 		svc {{ .ServiceTypeRef }}
 	}
@@ -40,11 +39,13 @@ func NewProvider(svc {{ .ServiceTypeRef }}) *Provider {
 // HandleToolCall executes the requested tool and returns a terminal result that
 // echoes the call's admission-generation token on every success and error path.
 // The bound method receives ctx and must return promptly on cancellation.
-// Pulse may redeliver after result publication but before acknowledgement, so
-// repeated ToolUseID effects must be idempotent or durably deduplicated.
 func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
 	if msg.ToolUseID == "" {
 		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, "", "invalid_call", "tool_use_id is required"), nil
+	}
+	toolUseID, ok := toolregistry.ToolUseIDFromContext(ctx)
+	if !ok || toolUseID != msg.ToolUseID {
+		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "canonical tool_use_id is missing from context"), nil
 	}
 	if msg.Meta == nil {
 		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "meta is required"), nil
@@ -66,7 +67,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		args, err := {{ .ConstName }}PayloadCodec.FromJSON(msg.Payload)
 		if err != nil {
 			if issues := toolregistry.ValidationIssues(err); len(issues) > 0 {
-				return toolregistry.NewToolResultErrorMessageWithIssues(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error(), issues), nil
+				return toolregistry.NewToolResultInvalidArgumentsMessage(msg.RegistrationToken, msg.ToolUseID, err.Error(), issues), nil
 			}
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
@@ -78,10 +79,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		methodIn := Init{{ .ConstName }}MethodPayload(args)
 		methodOut, err := p.svc.{{ .MethodGoName }}(ctx, methodIn)
 		if err != nil {
-			if issues := toolregistry.ValidationIssues(err); len(issues) > 0 {
-				return toolregistry.NewToolResultErrorMessageWithIssues(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error(), issues), nil
-			}
-			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, toolErrorCode(err), err.Error()), nil
+			return toolregistry.NewToolResultServiceErrorMessage(msg.RegistrationToken, msg.ToolUseID, msg.Tool, toolErrorCode(err), err), nil
 		}
 {{- if .HasResult }}
 		result := Init{{ .ConstName }}ToolResult(methodOut)

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -64,4 +65,54 @@ func TestBoundedPublishRejectsQueueFullAndRecovers(t *testing.T) {
 	require.NoError(t, rdb.XAck(ctx, key, "provider", read[0].Messages[0].ID).Err())
 	_, err = publishBounded(ctx, rdb, streamID, bound, "call", []byte("freed"))
 	require.NoError(t, err)
+}
+
+func TestBoundedPublishNeverTrimsEarliestPendingEntry(t *testing.T) {
+	rdb := getRedis(t)
+	ctx := context.Background()
+	const streamID = "toolset:pending-retention-test:requests"
+	const group = "provider"
+	key := pulseStreamKeyPrefix + streamID
+
+	firstID, err := rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: key,
+		Values: map[string]any{"n": "call", "p": `{"call":"pending"}`},
+	}).Result()
+	require.NoError(t, err)
+	require.NoError(t, rdb.XGroupCreate(ctx, key, group, "0").Err())
+	read, err := rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    group,
+		Consumer: "consumer",
+		Streams:  []string{key, ">"},
+		Count:    1,
+	}).Result()
+	require.NoError(t, err)
+	require.Equal(t, firstID, read[0].Messages[0].ID)
+
+	// Later acknowledged traffic may grow arbitrarily beyond the former
+	// MAXLEN threshold; the next bounded publication trims only below the
+	// earliest PEL entry.
+	for i := 0; i < 10*maxQueuedToolCalls+1; i++ {
+		id, err := rdb.XAdd(ctx, &redis.XAddArgs{
+			Stream: key,
+			Values: map[string]any{"n": "call", "p": strconv.Itoa(i)},
+		}).Result()
+		require.NoError(t, err)
+		claimed, err := rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+			Group:    group,
+			Consumer: "consumer",
+			Streams:  []string{key, ">"},
+			Count:    1,
+		}).Result()
+		require.NoError(t, err)
+		require.Equal(t, id, claimed[0].Messages[0].ID)
+		require.NoError(t, rdb.XAck(ctx, key, group, id).Err())
+	}
+	_, err = publishBounded(ctx, rdb, streamID, 0, "ping", []byte("{}"))
+	require.NoError(t, err)
+
+	retained, err := rdb.XRangeN(ctx, key, firstID, firstID, 1).Result()
+	require.NoError(t, err)
+	require.Len(t, retained, 1)
+	assert.Equal(t, firstID, retained[0].ID)
 }

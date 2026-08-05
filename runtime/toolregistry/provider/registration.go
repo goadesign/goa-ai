@@ -29,6 +29,9 @@ type (
 		Duration time.Duration
 	}
 
+	// ClaimDisposition is the registry-owned pre-dispatch settlement outcome.
+	ClaimDisposition string
+
 	// Registration configures the registry membership that Serve owns for its
 	// complete lifecycle.
 	Registration struct {
@@ -52,6 +55,14 @@ type (
 			toolset, providerID, incarnationID, admissionRevision string,
 		) (RegistrationLease, error)
 
+		// Drain atomically marks the exact lease non-routable while preserving
+		// its authority to complete already-claimed calls.
+		Drain func(
+			ctx context.Context,
+			toolset, providerID, incarnationID, expectedRegistrationToken string,
+			settlementDuration time.Duration,
+		) error
+
 		// Release idempotently removes the exact provider-incarnation lease from
 		// the admitted token.
 		// Serve calls it after consumption and renewal have stopped and all
@@ -60,6 +71,39 @@ type (
 			ctx context.Context,
 			toolset, providerID, incarnationID, expectedRegistrationToken string,
 		) error
+
+		// Complete atomically publishes one canonical terminal result and commits
+		// terminal state in the registry-owned call record.
+		Complete func(
+			ctx context.Context,
+			toolset, providerID, incarnationID, providerRegistrationToken,
+			requestEventID string,
+			result toolregistry.ToolResultMessage,
+		) error
+
+		// PublishOutputDelta asks the registry to append one fragment only while
+		// the exact claimed call remains nonterminal.
+		PublishOutputDelta func(
+			ctx context.Context,
+			toolset, providerID, incarnationID, providerRegistrationToken,
+			callRegistrationToken, toolUseID, requestEventID, stream, delta string,
+		) error
+
+		// ReportOverload asks the registry to append retry control only while the
+		// exact claimed call remains nonterminal.
+		ReportOverload func(
+			ctx context.Context,
+			toolset, providerID, incarnationID, providerRegistrationToken,
+			callRegistrationToken, toolUseID, requestEventID string,
+		) error
+
+		// Claim asks the registry for the one authoritative pre-dispatch
+		// transition. Only ClaimExecute permits handler invocation.
+		Claim func(
+			ctx context.Context,
+			toolset, providerID, incarnationID, providerRegistrationToken,
+			callRegistrationToken, toolUseID, requestEventID string,
+		) (ClaimDisposition, error)
 
 		// RetryInitialInterval is the initial delay before retrying a failed
 		// registration. Consecutive failures back off exponentially. Zero uses
@@ -84,9 +128,26 @@ type (
 	}
 
 	registrationConfig struct {
-		admissionRevision    string
-		register             func(ctx context.Context, toolset, providerID, incarnationID, admissionRevision string) (RegistrationLease, error)
-		release              func(ctx context.Context, toolset, providerID, incarnationID, expectedRegistrationToken string) error
+		admissionRevision  string
+		register           func(ctx context.Context, toolset, providerID, incarnationID, admissionRevision string) (RegistrationLease, error)
+		drain              func(ctx context.Context, toolset, providerID, incarnationID, expectedRegistrationToken string, settlementDuration time.Duration) error
+		release            func(ctx context.Context, toolset, providerID, incarnationID, expectedRegistrationToken string) error
+		complete           func(ctx context.Context, toolset, providerID, incarnationID, providerRegistrationToken, requestEventID string, result toolregistry.ToolResultMessage) error
+		publishOutputDelta func(
+			ctx context.Context,
+			toolset, providerID, incarnationID, providerRegistrationToken,
+			callRegistrationToken, toolUseID, requestEventID, stream, delta string,
+		) error
+		reportOverload func(
+			ctx context.Context,
+			toolset, providerID, incarnationID, providerRegistrationToken,
+			callRegistrationToken, toolUseID, requestEventID string,
+		) error
+		claim func(
+			ctx context.Context,
+			toolset, providerID, incarnationID, providerRegistrationToken,
+			callRegistrationToken, toolUseID, requestEventID string,
+		) (ClaimDisposition, error)
 		retryInitialInterval time.Duration
 		retryMaxInterval     time.Duration
 		attemptTimeout       time.Duration
@@ -114,6 +175,16 @@ type (
 )
 
 const (
+	// ClaimExecute grants this exact Serve lifecycle immutable execution
+	// ownership for the call.
+	ClaimExecute ClaimDisposition = "execute"
+	// ClaimTerminal reports that retained terminal history already exists.
+	ClaimTerminal ClaimDisposition = "terminal"
+	// ClaimOwned reports that another delivery already owns execution.
+	ClaimOwned ClaimDisposition = "claimed"
+	// ClaimExpired reports that Redis time settled the expired call.
+	ClaimExpired ClaimDisposition = "expired"
+
 	// DefaultRegistrationRetryInitialInterval is the default delay after the
 	// first failed provider registration attempt.
 	DefaultRegistrationRetryInitialInterval = 500 * time.Millisecond
@@ -183,6 +254,21 @@ func (r Registration) normalizedWithJitter(jitter registrationJitter) (registrat
 	if r.Release == nil {
 		return registrationConfig{}, fmt.Errorf("release callback is required")
 	}
+	if r.Drain == nil {
+		return registrationConfig{}, fmt.Errorf("drain callback is required")
+	}
+	if r.Complete == nil {
+		return registrationConfig{}, fmt.Errorf("complete callback is required")
+	}
+	if r.PublishOutputDelta == nil {
+		return registrationConfig{}, fmt.Errorf("publish output delta callback is required")
+	}
+	if r.ReportOverload == nil {
+		return registrationConfig{}, fmt.Errorf("report overload callback is required")
+	}
+	if r.Claim == nil {
+		return registrationConfig{}, fmt.Errorf("claim callback is required")
+	}
 	if err := toolregistry.ValidateAdmissionRevision(r.AdmissionRevision); err != nil {
 		return registrationConfig{}, err
 	}
@@ -238,7 +324,12 @@ func (r Registration) normalizedWithJitter(jitter registrationJitter) (registrat
 	return registrationConfig{
 		admissionRevision:    r.AdmissionRevision,
 		register:             r.Register,
+		drain:                r.Drain,
 		release:              r.Release,
+		complete:             r.Complete,
+		publishOutputDelta:   r.PublishOutputDelta,
+		reportOverload:       r.ReportOverload,
+		claim:                r.Claim,
 		retryInitialInterval: retryInitialInterval,
 		retryMaxInterval:     retryMaxInterval,
 		attemptTimeout:       attemptTimeout,
@@ -378,6 +469,39 @@ func superviseRegistration(
 	}
 }
 
+// drainProvider boundedly retries the exact non-routable transition before
+// Serve closes its request sink.
+func drainProvider(
+	parent context.Context,
+	toolset, providerID, incarnationID, token string,
+	settlementDuration time.Duration,
+	registration registrationConfig,
+	logger telemetry.Logger,
+	wait registrationWait,
+) error {
+	return reconcileProviderState(
+		parent,
+		"drain",
+		toolset,
+		providerID,
+		incarnationID,
+		token,
+		registration,
+		func(ctx context.Context, toolset, providerID, incarnationID, token string) error {
+			return registration.drain(
+				ctx,
+				toolset,
+				providerID,
+				incarnationID,
+				token,
+				settlementDuration,
+			)
+		},
+		logger,
+		wait,
+	)
+}
+
 // releaseProvider boundedly retries exact provider release after all claiming
 // and renewal activity has stopped.
 func releaseProvider(
@@ -387,12 +511,36 @@ func releaseProvider(
 	logger telemetry.Logger,
 	wait registrationWait,
 ) error {
+	return reconcileProviderState(
+		parent,
+		"release",
+		toolset,
+		providerID,
+		incarnationID,
+		token,
+		registration,
+		registration.release,
+		logger,
+		wait,
+	)
+}
+
+// reconcileProviderState retries one exact lease transition within the
+// registry-owned shutdown budget.
+func reconcileProviderState(
+	parent context.Context,
+	operation, toolset, providerID, incarnationID, token string,
+	registration registrationConfig,
+	transition func(context.Context, string, string, string, string) error,
+	logger telemetry.Logger,
+	wait registrationWait,
+) error {
 	ctx, cancel := context.WithTimeout(parent, registration.releaseTimeout)
 	defer cancel()
 	failures := 0
 	for {
 		attemptCtx, attemptCancel := context.WithTimeout(ctx, registration.attemptTimeout)
-		err := registration.release(attemptCtx, toolset, providerID, incarnationID, token)
+		err := transition(attemptCtx, toolset, providerID, incarnationID, token)
 		attemptCancel()
 		if err == nil {
 			return nil
@@ -401,14 +549,14 @@ func releaseProvider(
 		delay := registration.retryDelay(failures)
 		logger.Warn(
 			ctx,
-			"provider release failed; retrying",
+			"provider "+operation+" failed; retrying",
 			"component", "tool-registry-provider",
 			"toolset", toolset,
 			"provider_id", providerID,
 			"err", err,
 		)
 		if waitErr := wait(ctx, delay); waitErr != nil {
-			return fmt.Errorf("release provider %q for toolset %q: %w", providerID, toolset, errors.Join(err, waitErr))
+			return fmt.Errorf("%s provider %q for toolset %q: %w", operation, providerID, toolset, errors.Join(err, waitErr))
 		}
 	}
 }

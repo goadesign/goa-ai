@@ -19,6 +19,9 @@
 //	REDIS_PASSWORD         - Redis password (optional)
 //	PING_INTERVAL          - Health check ping interval (default: "10s")
 //	MISSED_PING_THRESHOLD  - Missed pings before unhealthy (default: 3)
+//	TOOL_EXECUTION_TIMEOUT - Maximum tool execution duration (default: registry default)
+//	RESULT_STREAM_TTL      - Tool result retention duration (default: registry default)
+//	PROVIDER_LEASE_DURATION - Provider lease duration (default: registry default)
 //
 // # Example
 //
@@ -60,6 +63,10 @@ func run() error {
 	redisPassword := os.Getenv("REDIS_PASSWORD")
 	pingInterval := envDurationOr("PING_INTERVAL", 10*time.Second)
 	missedPingThreshold := envIntOr("MISSED_PING_THRESHOLD", 3)
+	executionTimeout, err := envDurationOrError("TOOL_EXECUTION_TIMEOUT", 0)
+	if err != nil {
+		return err
+	}
 	resultStreamTTL := envDurationOr("RESULT_STREAM_TTL", 0)
 	providerLeaseDuration := envDurationOr("PROVIDER_LEASE_DURATION", 0)
 
@@ -85,6 +92,7 @@ func run() error {
 		Name:                  name,
 		PingInterval:          pingInterval,
 		MissedPingThreshold:   missedPingThreshold,
+		ExecutionTimeout:      executionTimeout,
 		ResultStreamTTL:       resultStreamTTL,
 		ProviderLeaseDuration: providerLeaseDuration,
 	})
@@ -127,4 +135,18 @@ func envDurationOr(key string, defaultVal time.Duration) time.Duration {
 		}
 	}
 	return defaultVal
+}
+
+// envDurationOrError returns the configured duration, the default when unset,
+// or an error when the process environment contains an invalid duration.
+func envDurationOrError(key string, defaultVal time.Duration) (time.Duration, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultVal, nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s: %w", key, err)
+	}
+	return duration, nil
 }

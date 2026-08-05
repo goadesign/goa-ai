@@ -28,6 +28,16 @@ type StreamManager interface {
 
 	// PublishToolCall publishes a tool call message to the toolset's stream.
 	PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error
+
+	// PublishAdmittedToolCall atomically publishes one exact initial or overload
+	// attempt and commits it in the immutable call admission.
+	PublishAdmittedToolCall(
+		ctx context.Context,
+		toolset string,
+		msg toolregistry.ToolCallMessage,
+		admission callAdmission,
+		overloadEventID string,
+	) error
 }
 
 // streamManager is the default implementation of StreamManager.
@@ -82,6 +92,33 @@ func (m *streamManager) GetOrCreateStream(ctx context.Context, toolset string) (
 // It lazily creates a local stream handle if one doesn't exist, enabling
 // cross-node tool invocation where the toolset was registered on a different node.
 func (m *streamManager) PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error {
+	return m.publishToolCall(ctx, toolset, msg, nil, "")
+}
+
+// PublishAdmittedToolCall publishes one exact call request at the same Redis
+// linearization point that records its initial or overload publication.
+func (m *streamManager) PublishAdmittedToolCall(
+	ctx context.Context,
+	toolset string,
+	msg toolregistry.ToolCallMessage,
+	admission callAdmission,
+	overloadEventID string,
+) error {
+	if msg.Type != toolregistry.MessageTypeCall {
+		return fmt.Errorf("admitted publication requires a call message")
+	}
+	return m.publishToolCall(ctx, toolset, msg, &admission, overloadEventID)
+}
+
+// publishToolCall validates and encodes one toolset message before selecting
+// ordinary or call-admission-owned publication.
+func (m *streamManager) publishToolCall(
+	ctx context.Context,
+	toolset string,
+	msg toolregistry.ToolCallMessage,
+	admission *callAdmission,
+	overloadEventID string,
+) error {
 	if err := toolregistry.ValidateToolCallMessage(msg); err != nil {
 		return fmt.Errorf("publish invalid toolset message: %w", err)
 	}
@@ -122,14 +159,28 @@ func (m *streamManager) PublishToolCall(ctx context.Context, toolset string, msg
 		return fmt.Errorf("marshal tool call message: %w", err)
 	}
 
-	// Calls are backlog-bounded so approximate trimming can never drop an
-	// unread admitted call; pings bypass the bound because health must flow
+	// Calls are backlog-bounded and retention trims only below the earliest
+	// consumer-group PEL entry. Pings bypass the bound because health must flow
 	// while calls are queued.
 	bound := 0
 	if msg.Type == toolregistry.MessageTypeCall {
 		bound = maxQueuedToolCalls
 	}
-	eventID, err := publishBounded(ctx, m.rdb, streamID, bound, string(msg.Type), payload)
+	var eventID string
+	if admission == nil {
+		eventID, err = publishBounded(ctx, m.rdb, streamID, bound, string(msg.Type), payload)
+	} else {
+		eventID, err = publishAdmittedBounded(
+			ctx,
+			m.rdb,
+			streamID,
+			bound,
+			string(msg.Type),
+			payload,
+			*admission,
+			overloadEventID,
+		)
+	}
 	if err != nil {
 		if msg.Type == toolregistry.MessageTypeCall {
 			span := trace.SpanFromContext(ctx)
