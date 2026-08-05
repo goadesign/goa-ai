@@ -435,20 +435,11 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 				if v.Name == "" {
 					return nil, nil, errors.New("anthropic: tool_use part missing name")
 				}
-				if sanitized, ok := nameMap[v.Name]; ok && sanitized != "" {
-					blocks = append(blocks, sdk.NewToolUseBlock(v.ID, v.Input, sanitized))
-					continue
+				providerName, err := toolname.ProviderName(v.Name, nameMap)
+				if err != nil {
+					return nil, nil, fmt.Errorf("anthropic: %w", err)
 				}
-				for canonical, provider := range nameMap {
-					if provider == v.Name {
-						return nil, nil, fmt.Errorf(
-							"anthropic: historical provider tool name %q collides with current tool %q",
-							v.Name,
-							canonical,
-						)
-					}
-				}
-				blocks = append(blocks, sdk.NewToolUseBlock(v.ID, v.Input, v.Name))
+				blocks = append(blocks, sdk.NewToolUseBlock(v.ID, v.Input, providerName))
 				continue
 			}
 			if v, ok := part.(model.ToolResultPart); ok {

@@ -311,7 +311,7 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 	assert.Equal(t, model.ModelClassDefault, resp.Usage.ModelClass)
 }
 
-func TestClientCompleteReplaysHistoricalToolUseUnchanged(t *testing.T) {
+func TestClientCompleteProjectsHistoryOnlyToolName(t *testing.T) {
 	transport := &mockTransport{
 		completeResponse: mustCompletedResponse(t),
 	}
@@ -342,8 +342,180 @@ func TestClientCompleteReplaysHistoricalToolUseUnchanged(t *testing.T) {
 	items := transport.completeRequests[0].Input.OfInputItemList
 	require.Len(t, items, 1)
 	require.NotNil(t, items[0].OfFunctionCall)
-	assert.Equal(t, "atlas.read.unknown", items[0].OfFunctionCall.Name)
+	assert.Equal(t, toolname.Sanitize("atlas.read.unknown"), items[0].OfFunctionCall.Name)
 	assert.JSONEq(t, `{"from":"2026-04-03T00:00:00Z"}`, items[0].OfFunctionCall.Arguments)
+}
+
+func TestValidateFunctionCallAgreementUsesPersistedCanonicalPayload(t *testing.T) {
+	t.Parallel()
+
+	const name = "catalog.search"
+	item := responses.ResponseFunctionToolCallParam{
+		CallID:    "call_1",
+		Name:      toolname.Sanitize(name),
+		Arguments: `{"q":"status","limit":null}`,
+	}
+	meta := map[string]any{
+		openAIFunctionCallVersionMetaKey: openAIFunctionCallMetadataVersion2,
+		openAIFunctionCallPayloadMetaKey: `{"q":"status"}`,
+	}
+	active := map[string]string{"catalog.list": "catalog_list"}
+	for _, test := range []struct {
+		name    string
+		part    model.ToolUsePart
+		wantErr string
+	}{
+		{
+			name: "history-only strict call",
+			part: model.ToolUsePart{
+				ID:    "call_1",
+				Name:  name,
+				Input: rawjson.Message(`{"q":"status"}`),
+			},
+		},
+		{
+			name: "canonical payload divergence",
+			part: model.ToolUsePart{
+				ID:    "call_1",
+				Name:  name,
+				Input: rawjson.Message(`{"q":"alarms"}`),
+			},
+			wantErr: "diverged",
+		},
+		{
+			name: "call id divergence",
+			part: model.ToolUsePart{
+				ID:    "call_2",
+				Name:  name,
+				Input: rawjson.Message(`{"q":"status"}`),
+			},
+			wantErr: "diverged",
+		},
+		{
+			name: "canonical name divergence",
+			part: model.ToolUsePart{
+				ID:    "call_1",
+				Name:  "catalog.other",
+				Input: rawjson.Message(`{"q":"status"}`),
+			},
+			wantErr: "diverged",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateFunctionCallAgreement(item, test.part, meta, active)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+
+	err := validateFunctionCallAgreement(
+		item,
+		model.ToolUsePart{
+			ID:    "call_1",
+			Name:  name,
+			Input: rawjson.Message(`{"q":"status"}`),
+		},
+		map[string]any{
+			openAIFunctionCallVersionMetaKey: openAIFunctionCallMetadataVersion2,
+		},
+		active,
+	)
+	require.ErrorContains(t, err, "missing canonical agreement payload")
+}
+
+func TestValidateFunctionCallAgreementSupportsUnversionedExactArguments(t *testing.T) {
+	t.Parallel()
+
+	const name = "catalog.search"
+	item := responses.ResponseFunctionToolCallParam{
+		CallID:    "call_1",
+		Name:      toolname.Sanitize(name),
+		Arguments: `{"q":"status"}`,
+	}
+	part := model.ToolUsePart{
+		ID:    "call_1",
+		Name:  name,
+		Input: rawjson.Message(`{"q":"status"}`),
+	}
+
+	require.NoError(t, validateFunctionCallAgreement(item, part, nil, nil))
+
+	part.Input = rawjson.Message(`{"q":"alarms"}`)
+	require.ErrorContains(t, validateFunctionCallAgreement(item, part, nil, nil), "diverged")
+}
+
+func TestValidateFunctionCallAgreementRejectsMalformedVersions(t *testing.T) {
+	t.Parallel()
+
+	item := responses.ResponseFunctionToolCallParam{
+		CallID:    "call_1",
+		Name:      "catalog_search",
+		Arguments: `{"q":"status"}`,
+	}
+	part := model.ToolUsePart{
+		ID:    "call_1",
+		Name:  "catalog.search",
+		Input: rawjson.Message(`{"q":"status"}`),
+	}
+	cases := []struct {
+		name    string
+		meta    map[string]any
+		wantErr string
+	}{
+		{
+			name:    "unknown version",
+			meta:    map[string]any{openAIFunctionCallVersionMetaKey: "3"},
+			wantErr: "unsupported function-call metadata version",
+		},
+		{
+			name: "unversioned payload",
+			meta: map[string]any{
+				openAIFunctionCallPayloadMetaKey: `{"q":"status"}`,
+			},
+			wantErr: "unversioned function-call metadata cannot carry",
+		},
+		{
+			name: "invalid version 2 payload",
+			meta: map[string]any{
+				openAIFunctionCallVersionMetaKey: openAIFunctionCallMetadataVersion2,
+				openAIFunctionCallPayloadMetaKey: `{`,
+			},
+			wantErr: "invalid canonical function-call metadata payload",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.ErrorContains(
+				t,
+				validateFunctionCallAgreement(item, part, c.meta, nil),
+				c.wantErr,
+			)
+		})
+	}
+}
+
+func TestEncodeAssistantMessageRejectsOrphanFunctionCallAgreementMetadata(t *testing.T) {
+	t.Parallel()
+
+	for _, meta := range []map[string]any{
+		{openAIFunctionCallVersionMetaKey: openAIFunctionCallMetadataVersion2},
+		{openAIFunctionCallPayloadMetaKey: `{"q":"status"}`},
+	} {
+		_, err := encodeAssistantMessage(&model.Message{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{model.ToolUsePart{
+				ID:    "call_1",
+				Name:  "catalog.search",
+				Input: rawjson.Message(`{"q":"status"}`),
+			}},
+			Meta: meta,
+		}, nil, 0)
+		require.ErrorContains(t, err, "requires function-call item metadata")
+	}
 }
 
 func TestClientCompleteEncodesToolResultErrorsExplicitly(t *testing.T) {
@@ -518,6 +690,29 @@ func TestClientCompleteProjectsStrictToolSchemasAndCanonicalizesArguments(t *tes
 	require.Len(t, resp.ToolCalls(), 1)
 	assert.Equal(t, tools.Ident("helpers.answer"), resp.ToolCalls()[0].Name)
 	assert.JSONEq(t, `{"question":"What is the capital of Japan?"}`, string(resp.ToolCalls()[0].Payload))
+	require.Len(t, resp.Content, 1)
+	version, err := metaString(resp.Content[0].Meta, openAIFunctionCallVersionMetaKey)
+	require.NoError(t, err)
+	assert.Equal(t, openAIFunctionCallMetadataVersion2, version)
+	agreement, err := metaString(resp.Content[0].Meta, openAIFunctionCallPayloadMetaKey)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"question":"What is the capital of Japan?"}`, agreement)
+	replayed, err := encodeAssistantMessage(
+		&resp.Content[0],
+		map[string]string{"catalog.list": "catalog_list"},
+		0,
+	)
+	require.NoError(t, err)
+	require.Len(t, replayed, 1)
+	require.NotNil(t, replayed[0].OfFunctionCall)
+	const rawProviderArguments = `{"question":"What is the capital of Japan?","style":null}`
+	if replayed[0].OfFunctionCall.Arguments != rawProviderArguments {
+		t.Fatalf(
+			"replayed provider arguments = %q, want exact %q",
+			replayed[0].OfFunctionCall.Arguments,
+			rawProviderArguments,
+		)
+	}
 }
 
 func TestClientCompleteRejectsMissingRequestedModelClassConfig(t *testing.T) {

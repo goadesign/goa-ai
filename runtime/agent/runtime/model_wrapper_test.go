@@ -245,28 +245,6 @@ func TestDesignatedModelInvocationWinsIdenticalProbeToolCalls(t *testing.T) {
 	require.Equal(t, "designated", transcript[0].Parts[0].(model.TextPart).Text)
 }
 
-func TestToolUnavailableConfiguredClientDoesNotAdvertiseInternalToolByDefault(t *testing.T) {
-	client := newToolUnavailableConfiguredClient(stubModelClient{
-		complete: func(_ context.Context, req *model.Request) (*model.Response, error) {
-			require.Len(t, req.Tools, 1)
-			require.Equal(t, "svc.lookup", req.Tools[0].Name)
-			return &model.Response{}, nil
-		},
-	})
-
-	_, err := client.Complete(context.Background(), &model.Request{
-		Tools: []*model.ToolDefinition{{
-			Name: "svc.lookup",
-		}},
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "lookup"}},
-		}},
-	})
-
-	require.NoError(t, err)
-}
-
 // fakeModelInvocationSink records complete responses and stream chunks by
 // runtime-owned invocation.
 type fakeModelInvocationSink struct {
@@ -812,60 +790,4 @@ func TestPreparePlannerActivityWiresSignatureCaptureIntoModelClients(t *testing.
 	})
 	require.NoError(t, err)
 	require.Equal(t, "sig-1", transcript[0].Parts[0].(model.ToolUsePart).ThoughtSignature)
-}
-
-func TestToolUnavailableConfiguredClientDoesNotRewriteUnknownHistoricalTool(t *testing.T) {
-	client := newToolUnavailableConfiguredClient(stubModelClient{
-		complete: func(_ context.Context, req *model.Request) (*model.Response, error) {
-			names := make([]string, 0, len(req.Tools))
-			for _, tool := range req.Tools {
-				names = append(names, tool.Name)
-			}
-			require.Equal(t, []string{"svc.lookup"}, names)
-			return &model.Response{}, nil
-		},
-	})
-
-	_, err := client.Complete(context.Background(), &model.Request{
-		Tools: []*model.ToolDefinition{{
-			Name: "svc.lookup",
-		}},
-		Messages: []*model.Message{{
-			Role: model.ConversationRoleAssistant,
-			Parts: []model.Part{model.ToolUsePart{
-				ID:    "tool-1",
-				Name:  "svc.old_lookup",
-				Input: rawjson.Message(`{"q":"status"}`),
-			}},
-		}},
-	})
-
-	require.NoError(t, err)
-}
-
-func TestToolUnavailableConfiguredClientRestoresHistoricalRuntimeTool(t *testing.T) {
-	client := newToolUnavailableConfiguredClient(stubModelClient{
-		complete: func(_ context.Context, req *model.Request) (*model.Response, error) {
-			names := make([]string, 0, len(req.Tools))
-			for _, tool := range req.Tools {
-				names = append(names, tool.Name)
-			}
-			require.ElementsMatch(t, []string{"svc.lookup", tools.ToolUnavailable.String()}, names)
-			return &model.Response{}, nil
-		},
-	})
-
-	_, err := client.Complete(context.Background(), &model.Request{
-		Tools: []*model.ToolDefinition{{Name: "svc.lookup"}},
-		Messages: []*model.Message{{
-			Role: model.ConversationRoleAssistant,
-			Parts: []model.Part{model.ToolUsePart{
-				ID:    "tool-1",
-				Name:  tools.ToolUnavailable.String(),
-				Input: rawjson.Message(`{"requested_tool":"svc.old_lookup"}`),
-			}},
-		}},
-	})
-
-	require.NoError(t, err)
 }

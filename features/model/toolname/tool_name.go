@@ -50,6 +50,28 @@ func BuildMaps(defs []*model.ToolDefinition) (canonToProv, provToCanon map[strin
 	return canonToProv, provToCanon, nil
 }
 
+// ProviderName returns the deterministic provider projection for canonical.
+// Active names take precedence; a history-only name is derived with the same
+// transform and rejected if it collides with an active tool. This keeps replay
+// valid when the current request advertises a narrower executable catalog.
+func ProviderName(canonical string, active map[string]string) (string, error) {
+	if provider, ok := active[canonical]; ok {
+		return provider, nil
+	}
+	provider := Sanitize(canonical)
+	for activeCanonical, activeProvider := range active {
+		if activeProvider == provider {
+			return "", fmt.Errorf(
+				"historical tool name %q sanitizes to %q which collides with active tool %q",
+				canonical,
+				provider,
+				activeCanonical,
+			)
+		}
+	}
+	return provider, nil
+}
+
 // Sanitize maps a canonical tool identifier to the Claude provider contract:
 // [a-zA-Z0-9_-]+ and at most 64 bytes. Namespace dots become underscores, and
 // overlong names receive a stable hash suffix.

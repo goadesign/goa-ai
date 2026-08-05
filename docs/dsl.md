@@ -272,7 +272,8 @@ Canonical model-visible fields:
 
 - `returned` (**required**, Int)
 - `truncated` (**required**, Boolean)
-- `total` (optional, Int)
+- `total` (Int; optional when the provider cannot know exact cardinality,
+  required when the service contract always knows it)
 - `refinement_hint` (optional, String)
 - `next_cursor` (optional, String) when declared via `NextCursor(...)`
 
@@ -298,9 +299,9 @@ declare `returned`, `total`, `truncated`, `refinement_hint`, or the configured
 
 For method-backed `BindTo` tools, the bound service method result may still carry
 the canonical bounded fields so the generated executor can build
-`planner.ToolResult.Bounds`, but only `returned` and `truncated` may be required.
-`total`, `refinement_hint`, and `next_cursor` remain optional parts of the bounds
-contract.
+`planner.ToolResult.Bounds`. `returned` and `truncated` are required. `total`
+may be required when the method always computes exact cardinality; otherwise it
+remains optional. `refinement_hint` and `next_cursor` remain optional.
 
 ### Pagination (cursor / next_cursor)
 
@@ -1141,10 +1142,12 @@ resume, finish, terminal-tool completion, or forced finalization. A
 `FinalResponse` or `FinalToolResult` may only accompany hidden, non-terminal
 bookkeeping calls that complete successfully in the same step.
 
-During forced finalization, retry-owned restrict-to-tool state from a previous
-failed repair constrains normal correction turns but does not block validated
-terminal bookkeeping tools. Caller-supplied `WithRestrictToTool` policy remains
-run-scoped and still applies.
+For `correct_call` recovery, the runtime advertises one failed tool for the
+immediate planner activity and queues distinct failed tools in canonical order.
+The restriction uses the existing activity policy envelope and is recorded
+with that activity, but it is not retained as run-scoped policy for later
+replan or forced-finalization turns. Caller-supplied `WithRestrictToTool` policy
+remains run-scoped and must admit the correction tool.
 
 ```go
 Tool("set_step_status", "Update step status", func() {

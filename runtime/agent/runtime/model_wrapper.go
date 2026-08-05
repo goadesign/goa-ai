@@ -9,12 +9,11 @@ import (
 	"goa.design/goa-ai/runtime/agent/internal/provenance"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // This file implements planner-scoped model client wrappers owned by the
 // runtime. The planner client wrapper emits runtime planner events as model
-// output is consumed, while the remaining wrappers apply cache/tool/tracing/
+// output is consumed, while the remaining wrappers apply cache, tracing, and
 // model-invocation policy to raw model clients returned from
 // PlannerContext.ModelClient.
 //
@@ -136,29 +135,6 @@ func (c *cacheConfiguredClient) Complete(ctx context.Context, req *model.Request
 
 func (c *cacheConfiguredClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
 	applyCachePolicy(req, c.cache)
-	return c.inner.Stream(ctx, req)
-}
-
-// toolUnavailableConfiguredClient restores the runtime-owned tool_unavailable
-// definition only when canonical history contains an actual call to it.
-type toolUnavailableConfiguredClient struct {
-	inner model.Client
-}
-
-func newToolUnavailableConfiguredClient(inner model.Client) model.Client {
-	if inner == nil {
-		return nil
-	}
-	return &toolUnavailableConfiguredClient{inner: inner}
-}
-
-func (c *toolUnavailableConfiguredClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	ensureToolUnavailableDefinition(req)
-	return c.inner.Complete(ctx, req)
-}
-
-func (c *toolUnavailableConfiguredClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
-	ensureToolUnavailableDefinition(req)
 	return c.inner.Stream(ctx, req)
 }
 
@@ -314,53 +290,6 @@ func applyCachePolicy(req *model.Request, cache CachePolicy) {
 		AfterSystem: cache.AfterSystem,
 		AfterTools:  cache.AfterTools,
 	}
-}
-
-func ensureToolUnavailableDefinition(req *model.Request) {
-	if req == nil {
-		return
-	}
-	if !toolHistoryNeedsUnavailableDefinition(req) {
-		return
-	}
-	req.Tools = appendToolUnavailableDefinition(req.Tools)
-}
-
-func appendToolUnavailableDefinition(defs []*model.ToolDefinition) []*model.ToolDefinition {
-	name := tools.ToolUnavailable.String()
-	for _, def := range defs {
-		if def != nil && def.Name == name {
-			return defs
-		}
-	}
-	return append(defs, toolUnavailableToolDefinition())
-}
-
-func toolHistoryNeedsUnavailableDefinition(req *model.Request) bool {
-	if req == nil {
-		return false
-	}
-	current := make(map[string]struct{}, len(req.Tools))
-	for _, tool := range req.Tools {
-		if tool == nil || tool.Name == "" {
-			continue
-		}
-		current[tool.Name] = struct{}{}
-	}
-	for _, msg := range req.Messages {
-		if msg == nil {
-			continue
-		}
-		for _, part := range msg.Parts {
-			use, ok := part.(model.ToolUsePart)
-			if !ok || use.Name != tools.ToolUnavailable.String() {
-				continue
-			}
-			_, defined := current[use.Name]
-			return !defined
-		}
-	}
-	return false
 }
 
 // emitMessageContent publishes unary assistant presentation in provider part

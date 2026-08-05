@@ -765,11 +765,12 @@ type PlanResult struct {
 ```
 
 `SynthesizeAfterTools` is batch intent, not recovery policy. Failed results
-carry `ToolFailure.Recovery`: `correct_call` and `replan` receive a
-runtime-constrained tool turn, while `finish` requires tool-free synthesis.
-Otherwise the runtime carries the batch intent as `SynthesisOnly`, which rejects
-additional tool calls. `Finalize` remains reserved for runtime-forced cap or
-deadline termination.
+carry `ToolFailure.Recovery`: `correct_call` receives a turn whose advertised
+catalog contains exactly one failed tool, with distinct failed tools queued in
+canonical order; `replan` receives the normal caller-allowed catalog, and
+`finish` requires tool-free synthesis. Otherwise the runtime carries the batch
+intent as `SynthesisOnly`, which rejects additional tool calls. `Finalize`
+remains reserved for runtime-forced cap or deadline termination.
 
 ### PlannerContext
 
@@ -961,10 +962,11 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 | `WithTagPolicyClauses([]TagPolicyClause)` | Compose explicit tag clauses |
 | `WithTiming(Timing)`                    | Set multiple timing overrides |
 
-Runtime-owned recovery restrictions installed from `ToolFailure` constrain
-normal correction and replan turns only. They do not block validated terminal
-bookkeeping tools during forced finalization; caller `WithRestrictToTool`
-policy remains run-scoped and still applies.
+Runtime-owned correct-call restrictions constrain exactly one recovery activity
+and queue parallel failures from distinct tools for separate turns. They use
+the stable policy envelope and do not constrain replan or forced-finalization
+turns; caller `WithRestrictToTool` policy remains run-scoped and must admit each
+correction tool.
 
 `WithTiming(Timing)` sets semantic run/planner/tool budgets. It does not expose
 engine-level queue-wait or heartbeat tuning.

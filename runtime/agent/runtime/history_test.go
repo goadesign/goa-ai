@@ -340,15 +340,9 @@ func textPart(t *testing.T, msg *model.Message) string {
 	return part.Text
 }
 
-// TestCompressCountsToolBearingHistoryWithUnavailableDefinition pins the
-// counting contract for transcripts that carry unknown-tool recovery: every
-// token-count request synthesized from history must include the runtime-owned
-// tool_unavailable definition when historical tool_use names are absent from
-// the advertised tool list, mirroring the guarantee the configured model
-// client provides for Complete and Stream. Providers such as Bedrock reject
-// tool-bearing transcripts whose tool_use names are missing from the request
-// tool configuration.
-func TestCompressCountsToolBearingHistoryWithUnavailableDefinition(t *testing.T) {
+// TestCompressDoesNotAdvertiseHistoricalUnavailableTool proves transcript
+// history cannot expand the executable catalog used for token counting.
+func TestCompressDoesNotAdvertiseHistoricalUnavailableTool(t *testing.T) {
 	client := &historyCountingClient{}
 	policy := Compress(client, HistoryCompressionConfig{
 		CompressAtMaxInputTokens: 30,
@@ -379,8 +373,7 @@ func TestCompressCountsToolBearingHistoryWithUnavailableDefinition(t *testing.T)
 			}
 		}
 		if referencesUnavailable {
-			require.True(t, names["runtime.tool_unavailable"],
-				"count request with recovered tool_use history must carry the tool_unavailable definition, got tools %v", names)
+			require.False(t, names["runtime.tool_unavailable"])
 		}
 	}
 }

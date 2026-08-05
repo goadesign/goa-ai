@@ -9,6 +9,16 @@ import (
 // method-backed bounded tool whose semantic result stays domain-only while the
 // bound method result carries canonical bounds fields for projection.
 func ServiceToolsetBindSelfBoundedResult() func() {
+	return serviceToolsetBindSelfBoundedResult(false)
+}
+
+// ServiceToolsetBindSelfBoundedResultExactTotal returns the same bounded tool
+// with total strengthened to a required exact cardinality.
+func ServiceToolsetBindSelfBoundedResultExactTotal() func() {
+	return serviceToolsetBindSelfBoundedResult(true)
+}
+
+func serviceToolsetBindSelfBoundedResult(exactTotal bool) func() {
 	return func() {
 		API("alpha", func() {})
 		var SearchPayload = Type("SearchPayload", func() {
@@ -34,7 +44,11 @@ func ServiceToolsetBindSelfBoundedResult() func() {
 					Attribute("truncated", Boolean, "Truncation flag")
 					Attribute("next_cursor", String, "Next cursor")
 					Attribute("refinement_hint", String, "Refinement hint")
-					Required("results", "returned", "truncated")
+					if exactTotal {
+						Required("results", "returned", "total", "truncated")
+					} else {
+						Required("results", "returned", "truncated")
+					}
 				})
 			})
 			Agent("scribe", "Doc helper", func() {

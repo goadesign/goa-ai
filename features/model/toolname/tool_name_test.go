@@ -109,6 +109,18 @@ func TestBuildMapsIsBijective(t *testing.T) {
 	}, provToCanon)
 }
 
+func TestProviderNameProjectsHistoryWithoutAdvertisingIt(t *testing.T) {
+	t.Parallel()
+
+	active := map[string]string{"atlas.read.lookup": "atlas_read_lookup"}
+	name, err := ProviderName("ada.lookup", active)
+	require.NoError(t, err)
+	assert.Equal(t, "ada_lookup", name)
+
+	_, err = ProviderName("atlas_read.lookup", active)
+	require.ErrorContains(t, err, `collides with active tool "atlas.read.lookup"`)
+}
+
 func TestBuildMapsRejectsInvalidDefinitions(t *testing.T) {
 	t.Parallel()
 

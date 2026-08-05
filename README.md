@@ -193,11 +193,12 @@ or terminal tool result. During runtime-forced finalization, planners may also
 close through terminal bookkeeping tools; the runtime executes only
 `TerminalRun()` tools in that path (`TerminalRun()` implies bookkeeping) and
 requires the terminal side effects to succeed inside the remaining
-hard-deadline window. Retry-owned
-tool restrictions filter only budgeted work tools, so bookkeeping tools remain
-available in correction and finalization turns. Caller `WithRestrictToTool`
-policy is run-scoped and still applies to every tool. Tool executors decide how
-work is performed.
+hard-deadline window. A `correct_call` failure narrows only its immediate
+planner resume to one failed tool. Distinct failed tools from a parallel batch
+are corrected in deterministic order, so recovery does not widen the activity
+payload or constrain later finalization. Caller `WithRestrictToTool` policy is
+run-scoped and still applies to every tool. Tool executors decide how work is
+performed.
 
 ```go
 func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
@@ -482,7 +483,7 @@ Tool("continue_time_series", "Continue a bounded time-series view", func() {
 })
 ```
 
-`BoundedResult` makes truncation explicit through runtime-owned bounds metadata (`returned`, `truncated`, optional `total`, `next_cursor`, and `refinement_hint`). Bounds metadata is success-only: error results never carry bounds. Generated tool specs and result JSON use model-facing JSON names, so lower-camel Goa fields such as `nextCursor` are exposed as `next_cursor`. Use `ContinueWith` when the cursor already carries the resolved query: the originating tool keeps an honest semantic payload, the required cursor-only sibling resumes it, and the runtime advertises that sibling only while exactly one compatible invocation has another page. The model calls the sibling with `{}`; the runtime binds its cursor and, when required, the prior canonical query payload before execution. Parallel source calls remain valid. If several invocations in one continuation family are simultaneously truncated, the no-argument continuation is withheld because it cannot identify a chain; use separate continuation tools or a model-visible selector when the agent must page those calls independently. Use `Cursor` directly only when repeating the original arguments is part of the public contract. Truncated results must carry a continuation: bound method results must define `refinement_hint` (snake_case, optional String) unless paging is configured, and the runtime rejects truncated results that provide neither a next cursor nor a refinement hint. `ServerData` attaches rich data that is never sent to model providers.
+`BoundedResult` makes truncation explicit through runtime-owned bounds metadata (`returned`, `truncated`, `total`, `next_cursor`, and `refinement_hint`). `total` may be required when the service always computes exact cardinality and optional otherwise. Bounds metadata is success-only: error results never carry bounds. Generated tool specs and result JSON use model-facing JSON names, so lower-camel Goa fields such as `nextCursor` are exposed as `next_cursor`. Use `ContinueWith` when the cursor already carries the resolved query: the originating tool keeps an honest semantic payload, the required cursor-only sibling resumes it, and the runtime advertises that sibling only while exactly one compatible invocation has another page. The model calls the sibling with `{}`; the runtime binds its cursor and, when required, the prior canonical query payload before execution. Parallel source calls remain valid. If several invocations in one continuation family are simultaneously truncated, the no-argument continuation is withheld because it cannot identify a chain; use separate continuation tools or a model-visible selector when the agent must page those calls independently. Use `Cursor` directly only when repeating the original arguments is part of the public contract. Truncated results must carry a continuation: bound method results must define `refinement_hint` (snake_case, optional String) unless paging is configured, and the runtime rejects truncated results that provide neither a next cursor nor a refinement hint. `ServerData` attaches rich data that is never sent to model providers.
 
 ### Generated Evaluation Suites
 
@@ -534,10 +535,14 @@ their provider transcript blocks remain intact. Successful results stay out of
 compact future `ToolOutputs`; recoverable failures stay visible there so the
 planner can repair the failed call.
 
-Retry-owned tool restrictions filter budgeted work tools only. Bookkeeping tools
-remain available during correction turns, including terminal run tools that close
-the run, while caller `WithRestrictToTool` policy remains run-scoped and applies
-to every tool.
+On a `correct_call` recovery turn, the runtime advertises only one tool with
+outstanding correction obligations. All failed calls for that tool are
+corrected together; distinct failed tools from a parallel batch are queued in
+canonical failure order. Historical tool calls remain in the provider
+transcript for replay but never restore executable definitions. Unrelated
+current definitions, including bookkeeping tools, are absent. Caller
+`WithRestrictToTool` policy remains run-scoped and must admit the correction
+tool.
 
 The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-facing outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany non-resuming, non-terminal bookkeeping side effects; budgeted tools, bookkeeping failures whose typed recovery permits tools, terminal tools, and awaits must be separate planner decisions. Bookkeeping calls remain in the provider transcript so signed responses are never edited.
 
@@ -546,10 +551,14 @@ evidence can set `PlanResult.SynthesizeAfterTools`. The durable workflow carries
 that decision to the next activity as `PlanResumeInput.SynthesisOnly`; the
 runtime requires the planner to return a terminal result without additional
 tool calls. A failed tool follows its structured `ToolFailure.Recovery`
-directive first. `correct_call` admits only a changed call to the failed tool,
-`replan` permits a different call or final answer while forbidding exact
-repetition, and `finish` requires a tool-free synthesis turn. The runtime—not
-planner prose—enforces that distinction.
+directive first. `correct_call` narrows the advertised catalog and admits only
+changed calls that satisfy every correction obligation for the current tool,
+then advances to the next queued tool; `replan` permits a different call or
+final answer while forbidding exact repetition, and `finish` requires a
+tool-free synthesis turn. The runtime—not planner prose—enforces that
+distinction. A requested synthesis turn survives a queue containing only
+`correct_call` obligations; any `replan` or `finish` directive clears that
+original batch intent.
 
 The flag is valid only on a tool-only result, keeping execution and answer
 synthesis as separate turns without relying on process-local state. The batch

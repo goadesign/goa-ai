@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -40,4 +41,32 @@ func TestGolden_BoundedResult_UsesBoundsSpecAndProjection(t *testing.T) {
 	require.Contains(t, provider, "bounds.Returned = mr.Returned")
 	require.Contains(t, provider, "bounds.Truncated = mr.Truncated")
 	require.Contains(t, provider, "bounds.NextCursor = mr.NextCursor")
+}
+
+func TestGolden_BoundedResult_ProjectsRequiredExactTotal(t *testing.T) {
+	files := buildAndGenerate(t, testscenarios.ServiceToolsetBindSelfBoundedResultExactTotal())
+
+	specs := generatedContentBySuffix(t, files, "toolsets/lookup/specs.go")
+	require.NotContains(t, specs, "TotalRequired")
+	schemas := generatedContentBySuffix(t, files, "agents/scribe/specs/tool_schemas.json")
+	var document struct {
+		Tools []struct {
+			Result struct {
+				Schema struct {
+					Required []string `json:"required"`
+				} `json:"schema"`
+			} `json:"result"`
+		} `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(schemas), &document))
+	require.Len(t, document.Tools, 1)
+	require.ElementsMatch(t, []string{"results", "returned", "total", "truncated"}, document.Tools[0].Result.Schema.Required)
+
+	executor := generatedContentBySuffix(t, files, "agents/scribe/lookup/service_executor.go")
+	require.Contains(t, executor, "total := mr.Total")
+	require.Contains(t, executor, "bounds.Total = &total")
+
+	provider := generatedContentBySuffix(t, files, "toolsets/lookup/provider.go")
+	require.Contains(t, provider, "total := mr.Total")
+	require.Contains(t, provider, "bounds.Total = &total")
 }

@@ -380,12 +380,34 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		}
 	}
 
+	action, failed := dominantRecoveryAction(batch.records)
+	var pendingRecovery []*planner.ToolOutput
+	if !failed || action != planner.RecoveryFinish {
+		pendingRecovery = append(pendingRecoveryOutputs(batch.records), l.st.QueuedRecovery...)
+	} else {
+		l.st.SynthesizeAfterRecovery = false
+	}
+	if batch.program.result.SynthesizeAfterTools && len(pendingRecovery) > 0 {
+		l.st.SynthesizeAfterRecovery = true
+	}
+	if recoveryContainsAction(pendingRecovery, planner.RecoveryReplan) {
+		l.st.SynthesizeAfterRecovery = false
+	}
+	currentRecovery, queuedRecovery, resumePolicy, err := nextRecoveryTurn(l.input.Policy, pendingRecovery)
+	if err != nil {
+		return nil, err
+	}
+	synthesisOnly := len(currentRecovery) == 0 &&
+		(synthesisOnlyAfterToolBatch(batch) || l.st.SynthesizeAfterRecovery)
+	if synthesisOnly {
+		l.st.SynthesizeAfterRecovery = false
+	}
 	resumeReq, err := l.r.buildNextResumeRequest(
 		l.input.AgentID,
 		l.base,
-		l.input.Policy,
+		resumePolicy,
 		l.st.ToolOutputs,
-		synthesisOnlyAfterToolBatch(batch),
+		synthesisOnly,
 		&l.st.NextAttempt,
 	)
 	if err != nil {
@@ -402,7 +424,8 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	l.st.Result = resOutput.Result
 	l.st.Transcript = resOutput.Transcript
 	l.st.ResponseCommitted = false
-	l.st.PendingRecovery = pendingRecoveryOutputs(batch.records)
+	l.st.PendingRecovery = currentRecovery
+	l.st.QueuedRecovery = queuedRecovery
 	return nil, nil
 }
 
@@ -412,12 +435,7 @@ func (r *Runtime) validateRecoveryPlan(failures []*planner.ToolOutput, result *p
 	if len(failures) == 0 {
 		return nil
 	}
-	correctTools := make(map[tools.Ident]int)
-	for _, output := range failures {
-		if output.Failure != nil && output.Failure.Recovery.Action == planner.RecoveryCorrectCall {
-			correctTools[output.Name]++
-		}
-	}
+	correctTools := correctCallToolCounts(failures)
 	if len(correctTools) > 0 && len(result.ToolCalls) == 0 {
 		return errors.New("planner completed without correcting a failed tool call")
 	}
@@ -439,9 +457,10 @@ func (r *Runtime) validateRecoveryPlan(failures []*planner.ToolOutput, result *p
 			if !ok {
 				return fmt.Errorf("planner called %q while recovery requires correcting a failed tool call", call.Name)
 			}
-			if remaining > 0 {
-				correctTools[call.Name]--
+			if remaining == 0 {
+				return fmt.Errorf("planner added an extra call to %q during correction recovery", call.Name)
 			}
+			correctTools[call.Name]--
 		}
 	}
 	for tool, remaining := range correctTools {
@@ -450,6 +469,76 @@ func (r *Runtime) validateRecoveryPlan(failures []*planner.ToolOutput, result *p
 		}
 	}
 	return nil
+}
+
+// correctCallToolCounts returns the outstanding correction obligations grouped
+// by tool. The same projection narrows the resume catalog and validates the
+// planner result after the activity returns.
+func correctCallToolCounts(failures []*planner.ToolOutput) map[tools.Ident]int {
+	counts := make(map[tools.Ident]int)
+	for _, output := range failures {
+		if output.Failure != nil && output.Failure.Recovery.Action == planner.RecoveryCorrectCall {
+			counts[output.Name]++
+		}
+	}
+	return counts
+}
+
+// nextRecoveryTurn partitions pending failures into the next planner
+// obligation and the deterministic remainder. Correct-call recovery advertises
+// exactly one tool through the stable RestrictToTool policy field; every
+// correction or replan obligation for that same tool is validated together
+// before the workflow advances to another tool.
+func nextRecoveryTurn(
+	runPolicy *PolicyOverrides,
+	pending []*planner.ToolOutput,
+) ([]*planner.ToolOutput, []*planner.ToolOutput, *PolicyOverrides, error) {
+	var correctionTool tools.Ident
+	for _, output := range pending {
+		if output.Failure != nil && output.Failure.Recovery.Action == planner.RecoveryCorrectCall {
+			correctionTool = output.Name
+			break
+		}
+	}
+	if correctionTool == "" {
+		return pending, nil, runPolicy, nil
+	}
+
+	current := make([]*planner.ToolOutput, 0, len(pending))
+	queued := make([]*planner.ToolOutput, 0, len(pending))
+	for _, output := range pending {
+		if output.Name == correctionTool {
+			current = append(current, output)
+			continue
+		}
+		queued = append(queued, output)
+	}
+
+	recoveryPolicy := clonePolicyOverrides(runPolicy)
+	if recoveryPolicy == nil {
+		recoveryPolicy = &PolicyOverrides{}
+	}
+	if recoveryPolicy.RestrictToTool != "" && recoveryPolicy.RestrictToTool != correctionTool {
+		return nil, nil, nil, fmt.Errorf(
+			"recovery tool %q conflicts with run restriction to %q",
+			correctionTool,
+			recoveryPolicy.RestrictToTool,
+		)
+	}
+	recoveryPolicy.RestrictToTool = correctionTool
+	return current, queued, recoveryPolicy, nil
+}
+
+// recoveryContainsAction reports whether pending recovery contains the given
+// transition. The workflow uses it to invalidate synthesis intent when any
+// prior call requires semantic replanning.
+func recoveryContainsAction(pending []*planner.ToolOutput, action planner.RecoveryAction) bool {
+	for _, output := range pending {
+		if output.Failure != nil && output.Failure.Recovery.Action == action {
+			return true
+		}
+	}
+	return false
 }
 
 // equalToolPayloads compares calls through their generated codec when both
