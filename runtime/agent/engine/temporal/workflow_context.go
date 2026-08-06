@@ -352,6 +352,11 @@ func (w *temporalWorkflowContext) activityOptionsFor(name string, override engin
 		scheduleToStart = defaults.ScheduleToStartTimeout
 	}
 
+	scheduleToClose := override.ScheduleToCloseTimeout
+	if scheduleToClose == 0 {
+		scheduleToClose = defaults.ScheduleToCloseTimeout
+	}
+
 	heartbeat := override.HeartbeatTimeout
 	if heartbeat == 0 {
 		heartbeat = defaults.HeartbeatTimeout
@@ -366,6 +371,7 @@ func (w *temporalWorkflowContext) activityOptionsFor(name string, override engin
 		// Bound queue wait separately from attempt execution so runtime policies can
 		// keep healthy attempts long enough while still failing worker outages fast.
 		ScheduleToStartTimeout: scheduleToStart,
+		ScheduleToCloseTimeout: scheduleToClose,
 		StartToCloseTimeout:    startToClose,
 		HeartbeatTimeout:       heartbeat,
 		TaskQueue:              queue,

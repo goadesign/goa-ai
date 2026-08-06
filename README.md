@@ -440,6 +440,19 @@ Agent("operator", "Production operations agent", func() {
 })
 ```
 
+Activity execution uses three distinct timeout bounds:
+
+- `ScheduleToStartTimeout` limits how long each attempt may wait in the worker
+  queue.
+- `StartToCloseTimeout` limits one running attempt. The `Plan` and `Tools`
+  timing values above configure this execution budget.
+- `ScheduleToCloseTimeout` limits the total activity lifetime, including queue
+  wait, every retry attempt, and retry backoff.
+
+For planner calls, the runtime caps all three bounds to the remaining run
+deadline. Temporal still applies the configured retry policy within that total
+lifetime, so retries cannot consume time reserved for finalization.
+
 History can also use model-assisted compression: declare
 `CompressAtMaxInputTokens` or `CompressAtTurns` triggers plus `KeepMaxInputTokens`
 or `KeepMaxTurns` exact-retention budgets inside `History`. Token budgets are

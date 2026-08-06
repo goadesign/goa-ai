@@ -42,6 +42,7 @@ func TestActivityOptionsForUsesExplicitTimeoutFields(t *testing.T) {
 				"planner": {
 					Queue:                  "planner.queue",
 					ScheduleToStartTimeout: 12 * time.Second,
+					ScheduleToCloseTimeout: 2 * time.Minute,
 					StartToCloseTimeout:    time.Minute,
 					HeartbeatTimeout:       4 * time.Second,
 					RetryPolicy: engine.RetryPolicy{
@@ -55,13 +56,15 @@ func TestActivityOptionsForUsesExplicitTimeoutFields(t *testing.T) {
 	}
 
 	opts := wf.activityOptionsFor("planner", engine.ActivityOptions{
-		Queue:               "override.queue",
-		StartToCloseTimeout: 90 * time.Second,
-		HeartbeatTimeout:    7 * time.Second,
+		Queue:                  "override.queue",
+		ScheduleToCloseTimeout: 75 * time.Second,
+		StartToCloseTimeout:    90 * time.Second,
+		HeartbeatTimeout:       7 * time.Second,
 	})
 
 	require.Equal(t, "override.queue", opts.TaskQueue)
 	require.Equal(t, 12*time.Second, opts.ScheduleToStartTimeout)
+	require.Equal(t, 75*time.Second, opts.ScheduleToCloseTimeout)
 	require.Equal(t, 90*time.Second, opts.StartToCloseTimeout)
 	require.Equal(t, 7*time.Second, opts.HeartbeatTimeout)
 	require.NotNil(t, opts.RetryPolicy)

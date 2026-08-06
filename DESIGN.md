@@ -167,6 +167,13 @@ work. Time spent blocked on an external-input await (`await_clarification`,
 deadline, so an operator can take arbitrarily long to respond without
 burning the run's active-time budget.
 
+Planner activities project the active deadline onto all three Temporal
+activity bounds. `ScheduleToStartTimeout` limits one queue wait,
+`StartToCloseTimeout` limits one execution attempt, and
+`ScheduleToCloseTimeout` limits the complete queue/retry/backoff lifetime.
+This keeps retries inside `TimeBudget`; planner finalization receives the
+separate Hard deadline and therefore retains its reserved `FinalizerGrace`.
+
 Engines must never impose a second, competing wall-clock ceiling (for
 example Temporal's `WorkflowRunTimeout`) on top of this. Unlike the
 workflow's own deadline check, an engine-level timeout force-closes the run

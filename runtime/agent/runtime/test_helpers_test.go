@@ -643,6 +643,7 @@ func (r testReceiver[T]) ReceiveAsync() (T, bool) {
 type routeWorkflowContext struct {
 	ctx   context.Context
 	runID string
+	now   func() time.Time
 
 	plannerRoutes map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error)
 	toolRoutes    map[string]func(context.Context, *ToolInput) (*ToolOutput, error)
@@ -696,6 +697,7 @@ func (r *routeWorkflowContext) Detached() engine.WorkflowContext {
 	sub := &routeWorkflowContext{
 		ctx:   cctx,
 		runID: r.runID,
+		now:   r.now,
 
 		plannerRoutes: r.plannerRoutes,
 		toolRoutes:    r.toolRoutes,
@@ -721,6 +723,7 @@ func (r *routeWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 	sub := &routeWorkflowContext{
 		ctx:   cctx,
 		runID: r.runID,
+		now:   r.now,
 
 		plannerRoutes: r.plannerRoutes,
 		toolRoutes:    r.toolRoutes,
@@ -738,6 +741,9 @@ func (r *routeWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 }
 
 func (r *routeWorkflowContext) Now() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
 	return time.Unix(0, 0)
 }
 

@@ -402,6 +402,13 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	if synthesisOnly {
 		l.st.SynthesizeAfterRecovery = false
 	}
+	if !l.deadlines.Budget.IsZero() &&
+		l.deadlines.Budget.Sub(l.wfCtx.Now()) <= minActivityTimeout {
+		return l.finalizeStep(
+			planner.TerminationReasonTimeBudget,
+			"time-budget finalization skipped without hard deadline",
+		)
+	}
 	resumeReq, err := l.r.buildNextResumeRequest(
 		l.input.AgentID,
 		l.base,
@@ -415,6 +422,14 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 	resOutput, err := l.r.runPlanActivity(l.wfCtx, l.reg.ResumeActivityName, l.resumeOpts, resumeReq, l.deadlines.Budget)
 	if err != nil {
+		if isRunTimeoutError(err) &&
+			!l.deadlines.Budget.IsZero() &&
+			!l.wfCtx.Now().Before(l.deadlines.Budget) {
+			return l.finalizeStep(
+				planner.TerminationReasonTimeBudget,
+				"time-budget finalization skipped without hard deadline",
+			)
+		}
 		return nil, err
 	}
 	if resOutput == nil || resOutput.Result == nil {

@@ -369,6 +369,10 @@ type (
 		// queue before a worker starts the attempt. Zero means leave queue-wait
 		// unspecified here and let the engine adapter apply its own defaults.
 		ScheduleToStartTimeout time.Duration
+		// ScheduleToCloseTimeout bounds the activity's total elapsed lifetime from
+		// scheduling through queueing, all attempts, and retry backoff. Zero means
+		// leave the total lifetime unspecified.
+		ScheduleToCloseTimeout time.Duration
 		// StartToCloseTimeout bounds one activity attempt once a worker has started
 		// executing it. This is the primary "healthy attempt" budget for planner and
 		// tool work. Zero means use the engine default.

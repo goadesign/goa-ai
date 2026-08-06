@@ -748,10 +748,12 @@ func (r *Runtime) runPlanActivity(
 		return nil, errors.New("plan activity not registered")
 	}
 	callOpts := options
-	// Cap queue wait and attempt time to the remaining hard deadline so finalizer
-	// handling stays deterministic even when workers are unavailable.
+	// Cap queue wait, total retry lifetime, and attempt time to the remaining
+	// deadline so finalizer handling stays deterministic even when workers are
+	// unavailable or retries back off.
 	startToClose := options.StartToCloseTimeout
 	scheduleToStart := options.ScheduleToStartTimeout
+	scheduleToClose := options.ScheduleToCloseTimeout
 	if !hardDeadline.IsZero() {
 		now := wfCtx.Now()
 		rem := hardDeadline.Sub(now)
@@ -764,9 +766,13 @@ func (r *Runtime) runPlanActivity(
 		if scheduleToStart == 0 || scheduleToStart > rem {
 			scheduleToStart = rem
 		}
+		if scheduleToClose == 0 || scheduleToClose > rem {
+			scheduleToClose = rem
+		}
 	}
 	callOpts.StartToCloseTimeout = startToClose
 	callOpts.ScheduleToStartTimeout = scheduleToStart
+	callOpts.ScheduleToCloseTimeout = scheduleToClose
 
 	out, err := wfCtx.ExecutePlannerActivity(wfCtx.Context(), engine.PlannerActivityCall{
 		Name:    activityName,
