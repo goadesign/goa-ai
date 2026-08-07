@@ -742,37 +742,25 @@ func (r *Runtime) runPlanActivity(
 	activityName string,
 	options engine.ActivityOptions,
 	input PlanActivityInput,
-	hardDeadline time.Time,
+	deadline time.Time,
 ) (*PlanActivityOutput, error) {
 	if activityName == "" {
 		return nil, errors.New("plan activity not registered")
 	}
 	callOpts := options
-	// Cap queue wait, total retry lifetime, and attempt time to the remaining
-	// deadline so finalizer handling stays deterministic even when workers are
-	// unavailable or retries back off.
-	startToClose := options.StartToCloseTimeout
-	scheduleToStart := options.ScheduleToStartTimeout
-	scheduleToClose := options.ScheduleToCloseTimeout
-	if !hardDeadline.IsZero() {
-		now := wfCtx.Now()
-		rem := hardDeadline.Sub(now)
+	// Schedule-to-close owns the complete queue, retry, and backoff lifetime.
+	// Queue and attempt bounds retain their distinct failure semantics.
+	if !deadline.IsZero() {
+		rem := deadline.Sub(wfCtx.Now())
 		if rem <= 0 {
-			return nil, fmt.Errorf("plan activity %q missed hard deadline", activityName)
+			return nil, fmt.Errorf(
+				"plan activity %q deadline exceeded: %w",
+				activityName,
+				engine.ErrPlannerActivityDeadlineExceeded,
+			)
 		}
-		if startToClose == 0 || startToClose > rem {
-			startToClose = rem
-		}
-		if scheduleToStart == 0 || scheduleToStart > rem {
-			scheduleToStart = rem
-		}
-		if scheduleToClose == 0 || scheduleToClose > rem {
-			scheduleToClose = rem
-		}
+		callOpts.ScheduleToCloseTimeout = rem
 	}
-	callOpts.StartToCloseTimeout = startToClose
-	callOpts.ScheduleToStartTimeout = scheduleToStart
-	callOpts.ScheduleToCloseTimeout = scheduleToClose
 
 	out, err := wfCtx.ExecutePlannerActivity(wfCtx.Context(), engine.PlannerActivityCall{
 		Name:    activityName,

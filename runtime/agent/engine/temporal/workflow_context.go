@@ -16,8 +16,10 @@ package temporal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -126,6 +128,19 @@ func normalizeTemporalError(err error) error {
 	return err
 }
 
+// normalizeTemporalPlannerError preserves the timeout boundary that owns
+// planner completion. Schedule-to-close is the total activity deadline;
+// queue, attempt, heartbeat, and planner failures keep their original cause.
+func normalizeTemporalPlannerError(err error) error {
+	err = normalizeTemporalError(err)
+	var timeoutErr *temporal.TimeoutError
+	if errors.As(err, &timeoutErr) &&
+		timeoutErr.TimeoutType() == enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE {
+		return fmt.Errorf("%w: %w", engine.ErrPlannerActivityDeadlineExceeded, err)
+	}
+	return err
+}
+
 func mergeRetryPolicies(base, override engine.RetryPolicy) engine.RetryPolicy {
 	result := base
 	if override.MaxAttempts != 0 {
@@ -203,7 +218,7 @@ func (w *temporalWorkflowContext) ExecutePlannerActivity(ctx context.Context, ca
 	fut := workflow.ExecuteActivity(actx, call.Name, call.Input)
 	var out *api.PlanActivityOutput
 	if err := fut.Get(actx, &out); err != nil {
-		return nil, err
+		return nil, normalizeTemporalPlannerError(err)
 	}
 	return out, nil
 }

@@ -449,9 +449,11 @@ Activity execution uses three distinct timeout bounds:
 - `ScheduleToCloseTimeout` limits the total activity lifetime, including queue
   wait, every retry attempt, and retry backoff.
 
-For planner calls, the runtime caps all three bounds to the remaining run
-deadline. Temporal still applies the configured retry policy within that total
-lifetime, so retries cannot consume time reserved for finalization.
+For planner calls, the runtime sets the total lifetime to the remaining run
+deadline. Initial and resumed planning use the run budget; finalization uses
+the separate hard deadline. Queue and attempt timeouts remain distinct
+failures, while only total-lifetime expiration triggers time-budget
+finalization.
 
 History can also use model-assisted compression: declare
 `CompressAtMaxInputTokens` or `CompressAtTurns` triggers plus `KeepMaxInputTokens`

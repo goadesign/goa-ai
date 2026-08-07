@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -402,13 +403,6 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	if synthesisOnly {
 		l.st.SynthesizeAfterRecovery = false
 	}
-	if !l.deadlines.Budget.IsZero() &&
-		l.deadlines.Budget.Sub(l.wfCtx.Now()) <= minActivityTimeout {
-		return l.finalizeStep(
-			planner.TerminationReasonTimeBudget,
-			"time-budget finalization skipped without hard deadline",
-		)
-	}
 	resumeReq, err := l.r.buildNextResumeRequest(
 		l.input.AgentID,
 		l.base,
@@ -422,9 +416,8 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 	resOutput, err := l.r.runPlanActivity(l.wfCtx, l.reg.ResumeActivityName, l.resumeOpts, resumeReq, l.deadlines.Budget)
 	if err != nil {
-		if isRunTimeoutError(err) &&
-			!l.deadlines.Budget.IsZero() &&
-			!l.wfCtx.Now().Before(l.deadlines.Budget) {
+		if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) &&
+			!l.deadlines.Budget.IsZero() {
 			return l.finalizeStep(
 				planner.TerminationReasonTimeBudget,
 				"time-budget finalization skipped without hard deadline",

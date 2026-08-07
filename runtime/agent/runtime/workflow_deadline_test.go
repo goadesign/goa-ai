@@ -1,5 +1,8 @@
 package runtime
 
+// workflow_deadline_test.go verifies that the runtime owns Budget and Hard
+// deadlines while engine adapters preserve the cause of planner timeouts.
+
 import (
 	"context"
 	"errors"
@@ -22,37 +25,31 @@ func TestAdvanceStepBudgetDeadline(t *testing.T) {
 		name              string
 		remaining         time.Duration
 		resumeErr         error
-		exhaustOnResume   bool
+		advanceToBudget   bool
 		wantCalls         int
 		wantFinalizations int
 		wantErr           error
 	}{
 		{
-			name:              "near budget finalizes without normal resume",
-			remaining:         minActivityTimeout,
-			wantCalls:         1,
-			wantFinalizations: 1,
-		},
-		{
-			name:              "timeout at exhausted budget finalizes",
+			name:              "activity deadline finalizes without clock inference",
 			remaining:         4 * time.Second,
-			resumeErr:         context.DeadlineExceeded,
-			exhaustOnResume:   true,
+			resumeErr:         engine.ErrPlannerActivityDeadlineExceeded,
 			wantCalls:         2,
 			wantFinalizations: 1,
 		},
 		{
-			name:      "timeout while budget remains fails",
-			remaining: 4 * time.Second,
-			resumeErr: context.DeadlineExceeded,
-			wantCalls: 1,
-			wantErr:   context.DeadlineExceeded,
+			name:            "provider timeout after budget fails",
+			remaining:       4 * time.Second,
+			resumeErr:       context.DeadlineExceeded,
+			advanceToBudget: true,
+			wantCalls:       1,
+			wantErr:         context.DeadlineExceeded,
 		},
 		{
-			name:            "non-timeout at exhausted budget fails",
+			name:            "non-timeout after budget fails",
 			remaining:       4 * time.Second,
 			resumeErr:       plannerErr,
-			exhaustOnResume: true,
+			advanceToBudget: true,
 			wantCalls:       1,
 			wantErr:         plannerErr,
 		},
@@ -74,7 +71,7 @@ func TestAdvanceStepBudgetDeadline(t *testing.T) {
 						require.Equal(t, planner.TerminationReasonTimeBudget, input.Finalize.Reason)
 						return deadlineTestFinalOutput(), nil
 					}
-					if test.exhaustOnResume {
+					if test.advanceToBudget {
 						current = budget
 					}
 					return nil, test.resumeErr
@@ -97,6 +94,46 @@ func TestAdvanceStepBudgetDeadline(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExecuteWorkflowBoundsPlanStartToBudget(t *testing.T) {
+	const (
+		timeBudget     = 20 * time.Second
+		finalizerGrace = 30 * time.Second
+	)
+	current := time.Unix(100, 0)
+	planOutput := deadlineTestFinalOutput()
+	var planErr error
+	rt := New()
+	rt.agents["agent-1"] = AgentRegistration{
+		ID:               "agent-1",
+		PlanActivityName: "plan",
+		Policy: RunPolicy{
+			TimeBudget:     timeBudget,
+			FinalizerGrace: finalizerGrace,
+		},
+	}
+	wfCtx := &routeWorkflowContext{
+		ctx:   context.Background(),
+		runID: "run-1",
+		now:   func() time.Time { return current },
+		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+			"plan": func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error) {
+				return planOutput, planErr
+			},
+		},
+	}
+
+	out, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
+		AgentID:   "agent-1",
+		RunID:     "run-1",
+		SessionID: "session-1",
+		TurnID:    "turn-1",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Equal(t, timeBudget, wfCtx.lastPlannerCall.Options.ScheduleToCloseTimeout)
 }
 
 func newResumeDeadlineTestLoop(

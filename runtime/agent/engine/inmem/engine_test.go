@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -63,6 +65,64 @@ func TestPlannerActivityTypedExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workflow failed: %v", err)
 	}
+}
+
+func TestPlannerActivityScheduleToCloseTimeout(t *testing.T) {
+	eng := New().(*eng)
+	err := eng.RegisterPlannerActivity(
+		context.Background(),
+		"test_plan",
+		engine.ActivityOptions{},
+		func(ctx context.Context, _ *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	)
+	require.NoError(t, err)
+	wfCtx := &wfCtx{
+		ctx: context.Background(),
+		eng: eng,
+	}
+
+	_, err = wfCtx.ExecutePlannerActivity(context.Background(), engine.PlannerActivityCall{
+		Name:  "test_plan",
+		Input: &api.PlanActivityInput{},
+		Options: engine.ActivityOptions{
+			ScheduleToCloseTimeout: 10 * time.Millisecond,
+			StartToCloseTimeout:    time.Second,
+		},
+	})
+
+	require.ErrorIs(t, err, engine.ErrPlannerActivityDeadlineExceeded)
+}
+
+func TestPlannerActivityPreservesProviderTimeout(t *testing.T) {
+	eng := New().(*eng)
+	err := eng.RegisterPlannerActivity(
+		context.Background(),
+		"test_plan",
+		engine.ActivityOptions{},
+		func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
+			return nil, context.DeadlineExceeded
+		},
+	)
+	require.NoError(t, err)
+	wfCtx := &wfCtx{
+		ctx: context.Background(),
+		eng: eng,
+	}
+
+	_, err = wfCtx.ExecutePlannerActivity(context.Background(), engine.PlannerActivityCall{
+		Name:  "test_plan",
+		Input: &api.PlanActivityInput{},
+		Options: engine.ActivityOptions{
+			ScheduleToCloseTimeout: time.Second,
+			StartToCloseTimeout:    time.Second,
+		},
+	})
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, engine.ErrPlannerActivityDeadlineExceeded)
 }
 
 func TestToolActivityFutureTypedExecution(t *testing.T) {

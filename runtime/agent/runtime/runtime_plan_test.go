@@ -53,7 +53,7 @@ func TestRunPlanActivityUsesOptions(t *testing.T) {
 	require.Equal(t, opts.RetryPolicy, wf.lastPlannerCall.Options.RetryPolicy)
 }
 
-func TestRunPlanActivityCapsTimeoutsToRemainingDeadline(t *testing.T) {
+func TestRunPlanActivityBoundsTotalLifetimeToRemainingDeadline(t *testing.T) {
 	retry := engine.RetryPolicy{
 		MaxAttempts:        3,
 		InitialInterval:    time.Second,
@@ -65,17 +65,17 @@ func TestRunPlanActivityCapsTimeoutsToRemainingDeadline(t *testing.T) {
 		want time.Duration
 	}{
 		{
-			name: "preserves shorter configured timeouts",
+			name: "preserves queue and attempt timeouts",
 			opts: engine.ActivityOptions{
 				ScheduleToStartTimeout: 5 * time.Second,
 				ScheduleToCloseTimeout: 5 * time.Second,
 				StartToCloseTimeout:    5 * time.Second,
 				RetryPolicy:            retry,
 			},
-			want: 5 * time.Second,
+			want: 10 * time.Second,
 		},
 		{
-			name: "caps all timeouts",
+			name: "replaces longer configured total timeout",
 			opts: engine.ActivityOptions{
 				ScheduleToStartTimeout: 30 * time.Second,
 				ScheduleToCloseTimeout: 30 * time.Second,
@@ -115,15 +115,15 @@ func TestRunPlanActivityCapsTimeoutsToRemainingDeadline(t *testing.T) {
 			)
 
 			require.NoError(t, err)
-			require.Equal(t, test.want, wf.lastPlannerCall.Options.ScheduleToStartTimeout)
+			require.Equal(t, test.opts.ScheduleToStartTimeout, wf.lastPlannerCall.Options.ScheduleToStartTimeout)
 			require.Equal(t, test.want, wf.lastPlannerCall.Options.ScheduleToCloseTimeout)
-			require.Equal(t, test.want, wf.lastPlannerCall.Options.StartToCloseTimeout)
+			require.Equal(t, test.opts.StartToCloseTimeout, wf.lastPlannerCall.Options.StartToCloseTimeout)
 			require.Equal(t, retry, wf.lastPlannerCall.Options.RetryPolicy)
 		})
 	}
 }
 
-func TestRunPlanActivityRejectsExpiredHardDeadline(t *testing.T) {
+func TestRunPlanActivityRejectsExpiredDeadline(t *testing.T) {
 	rt := &Runtime{
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
@@ -136,8 +136,7 @@ func TestRunPlanActivityRejectsExpiredHardDeadline(t *testing.T) {
 
 	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, time.Unix(-1, 0))
 
-	require.Error(t, err)
-	require.ErrorContains(t, err, "missed hard deadline")
+	require.ErrorIs(t, err, engine.ErrPlannerActivityDeadlineExceeded)
 	require.Empty(t, wf.lastPlannerCall.Name)
 }
 

@@ -92,6 +92,10 @@ const (
 )
 
 var (
+	// ErrPlannerActivityDeadlineExceeded indicates that a planner activity
+	// exhausted its ScheduleToCloseTimeout. Other planner timeout causes remain
+	// distinguishable backend errors.
+	ErrPlannerActivityDeadlineExceeded = errors.New("planner activity deadline exceeded")
 	// ErrWorkflowNotFound indicates that no workflow execution exists for the given identifier.
 	ErrWorkflowNotFound = errors.New("workflow not found")
 	// ErrWorkflowCompleted indicates that a workflow exists but no longer accepts signals.
@@ -236,7 +240,9 @@ type (
 
 		// ExecutePlannerActivity schedules a planner activity (PlanStart/PlanResume)
 		// and blocks until it completes. Planner activities are executed outside the
-		// deterministic workflow thread and may perform I/O.
+		// deterministic workflow thread and may perform I/O. Implementations return
+		// ErrPlannerActivityDeadlineExceeded only when ScheduleToCloseTimeout expires;
+		// queue, attempt, heartbeat, and activity errors retain their original cause.
 		ExecutePlannerActivity(ctx context.Context, call PlannerActivityCall) (*api.PlanActivityOutput, error)
 
 		// ExecuteToolActivity schedules a tool execution activity and blocks until it

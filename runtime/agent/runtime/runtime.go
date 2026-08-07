@@ -403,15 +403,13 @@ type (
 		// Zero means the cap is not configured.
 		MaxConsecutiveFailedToolCalls int
 
-		// TimeBudget is the semantic wall-clock budget for planner and tool work
-		// within the run (0 = unlimited). The runtime derives the engine run timeout
-		// from this budget plus finalizer reserve and a small engine headroom.
+		// TimeBudget is the active-time budget for planner and tool work within
+		// the run (0 = unlimited). The workflow runtime enforces this deadline;
+		// external-input waits pause it and no engine run timeout is derived.
 		TimeBudget time.Duration
 
-		// FinalizerGrace reserves time to produce a last assistant message after the
-		// budget is exhausted. When set, the runtime stops scheduling new work once
-		// the remaining time is less than or equal to this value and requests a final
-		// response from the planner. Zero means no reserved window; defaults may apply.
+		// FinalizerGrace reserves time to produce a last assistant message after
+		// TimeBudget is exhausted. Zero uses the runtime default.
 		FinalizerGrace time.Duration
 
 		// InterruptsAllowed indicates whether the workflow can be paused and resumed.

@@ -477,13 +477,14 @@ func (w *wfCtx) PublishRecord(ctx context.Context, call engine.RecordActivityCal
 	if !ok {
 		return fmt.Errorf("record activity %q not registered", call.Name)
 	}
-	timeout := call.Options.StartToCloseTimeout
-	if timeout == 0 {
-		timeout = def.opts.StartToCloseTimeout
-	}
+	timeout, _ := activityTimeout(call.Options, def.opts)
 	actCtx, cancel := withOptionalTimeout(ctx, timeout)
 	defer cancel()
-	return def.handler(actCtx, call.Input)
+	err := def.handler(actCtx, call.Input)
+	if errors.Is(actCtx.Err(), context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	return err
 }
 
 func (w *wfCtx) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
@@ -499,13 +500,17 @@ func (w *wfCtx) ExecutePlannerActivity(ctx context.Context, call engine.PlannerA
 	if !ok {
 		return nil, fmt.Errorf("planner activity %q not registered", call.Name)
 	}
-	timeout := call.Options.StartToCloseTimeout
-	if timeout == 0 {
-		timeout = def.opts.StartToCloseTimeout
-	}
+	timeout, totalDeadline := activityTimeout(call.Options, def.opts)
 	actCtx, cancel := withOptionalTimeout(ctx, timeout)
 	defer cancel()
-	return def.handler(actCtx, call.Input)
+	out, err := def.handler(actCtx, call.Input)
+	if errors.Is(actCtx.Err(), context.DeadlineExceeded) {
+		if totalDeadline {
+			return nil, fmt.Errorf("%w: %w", engine.ErrPlannerActivityDeadlineExceeded, actCtx.Err())
+		}
+		return nil, context.DeadlineExceeded
+	}
+	return out, err
 }
 
 func (w *wfCtx) ExecuteToolActivity(ctx context.Context, call engine.ToolActivityCall) (*api.ToolOutput, error) {
@@ -533,13 +538,14 @@ func (w *wfCtx) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolAc
 	fut := &future[*api.ToolOutput]{ready: make(chan struct{})}
 	go func() {
 		defer close(fut.ready)
-		timeout := call.Options.StartToCloseTimeout
-		if timeout == 0 {
-			timeout = def.opts.StartToCloseTimeout
-		}
+		timeout, _ := activityTimeout(call.Options, def.opts)
 		actCtx, cancel := withOptionalTimeout(ctx, timeout)
 		defer cancel()
 		fut.result, fut.err = def.handler(actCtx, call.Input)
+		if errors.Is(actCtx.Err(), context.DeadlineExceeded) {
+			fut.result = nil
+			fut.err = context.DeadlineExceeded
+		}
 	}()
 	return fut, nil
 }
@@ -639,6 +645,24 @@ func sendSignal[T any](ctx context.Context, done <-chan struct{}, ch chan<- T, p
 	case ch <- payload:
 		return nil
 	}
+}
+
+// activityTimeout resolves the effective in-memory execution timeout. With no
+// queue or retries, schedule-to-close and start-to-close are competing bounds;
+// the shorter bound owns expiration.
+func activityTimeout(override, defaults engine.ActivityOptions) (time.Duration, bool) {
+	startToClose := override.StartToCloseTimeout
+	if startToClose == 0 {
+		startToClose = defaults.StartToCloseTimeout
+	}
+	scheduleToClose := override.ScheduleToCloseTimeout
+	if scheduleToClose == 0 {
+		scheduleToClose = defaults.ScheduleToCloseTimeout
+	}
+	if scheduleToClose > 0 && (startToClose == 0 || scheduleToClose <= startToClose) {
+		return scheduleToClose, true
+	}
+	return startToClose, false
 }
 
 func withOptionalTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {

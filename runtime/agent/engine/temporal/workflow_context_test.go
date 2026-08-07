@@ -2,12 +2,17 @@ package temporal
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/activity"
+	temporalsdk "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 )
 
@@ -114,6 +119,97 @@ func TestActivityOptionsForCapsHeartbeatToAttemptBudget(t *testing.T) {
 
 	require.Equal(t, 5*time.Second, opts.StartToCloseTimeout)
 	require.Equal(t, 5*time.Second, opts.HeartbeatTimeout)
+}
+
+func TestExecutePlannerActivityBoundsRetriesByScheduleToClose(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	attempts := 0
+	var activityErr error
+	env.RegisterActivityWithOptions(
+		func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
+			attempts++
+			return nil, errors.New("retry planner")
+		},
+		activity.RegisterOptions{Name: "planner"},
+	)
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := &temporalWorkflowContext{
+			engine: &Engine{},
+			ctx:    ctx,
+		}
+		_, activityErr = wfCtx.ExecutePlannerActivity(context.Background(), engine.PlannerActivityCall{
+			Name:  "planner",
+			Input: &api.PlanActivityInput{},
+			Options: engine.ActivityOptions{
+				ScheduleToCloseTimeout: 5 * time.Second,
+				StartToCloseTimeout:    time.Minute,
+				RetryPolicy: engine.RetryPolicy{
+					MaxAttempts:        100,
+					InitialInterval:    time.Second,
+					BackoffCoefficient: 2,
+				},
+			},
+		})
+		return nil
+	})
+
+	require.NoError(t, env.GetWorkflowError())
+	require.Error(t, activityErr)
+	require.Greater(t, attempts, 1)
+	require.Less(t, attempts, 100)
+}
+
+func TestNormalizeTemporalPlannerError(t *testing.T) {
+	tests := []struct {
+		name         string
+		err          error
+		wantDeadline bool
+	}{
+		{
+			name: "schedule to close owns total deadline",
+			err: temporalsdk.NewTimeoutError(
+				enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE,
+				errors.New("last planner failure"),
+			),
+			wantDeadline: true,
+		},
+		{
+			name: "start to close remains attempt timeout",
+			err: temporalsdk.NewTimeoutError(
+				enumspb.TIMEOUT_TYPE_START_TO_CLOSE,
+				nil,
+			),
+		},
+		{
+			name: "schedule to start remains queue timeout",
+			err: temporalsdk.NewTimeoutError(
+				enumspb.TIMEOUT_TYPE_SCHEDULE_TO_START,
+				nil,
+			),
+		},
+		{
+			name: "heartbeat remains liveness timeout",
+			err: temporalsdk.NewTimeoutError(
+				enumspb.TIMEOUT_TYPE_HEARTBEAT,
+				nil,
+			),
+		},
+		{
+			name: "provider timeout remains activity failure",
+			err:  context.DeadlineExceeded,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := normalizeTemporalPlannerError(test.err)
+			if test.wantDeadline {
+				require.ErrorIs(t, err, engine.ErrPlannerActivityDeadlineExceeded)
+				return
+			}
+			require.NotErrorIs(t, err, engine.ErrPlannerActivityDeadlineExceeded)
+		})
+	}
 }
 
 func TestTemporalReceiverReceiveReturnsCanceledBeforeLaterSignal(t *testing.T) {
