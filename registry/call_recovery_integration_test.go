@@ -17,10 +17,39 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	streamopts "goa.design/pulse/streaming/options"
+
+	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/toolregistry"
 )
+
+func TestCallToolReturnsReadableResultStream(t *testing.T) {
+	rdb := getRedis(t)
+	ctx := context.Background()
+	name := fmt.Sprintf("readable-result-stream-%d", time.Now().UnixNano())
+	reg, err := New(ctx, Config{Redis: rdb, Name: name})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reg.Close(context.Background())) })
+	svc := reg.Service()
+	svc.healthTracker = newMockHealthTracker()
+
+	const toolset = "readable-result-stream-toolset"
+	_, err = svc.Register(ctx, validRegisterPayloadForSchemaAdmission(toolset))
+	require.NoError(t, err)
+	callPayload := transitionCallPayload(toolset, "readable")
+	call, err := svc.CallTool(ctx, callPayload)
+	require.NoError(t, err)
+	requireReadableResultStream(t, ctx, rdb, call)
+
+	resultStreamKey := pulseStreamKeyPrefix + toolregistry.ResultStreamID(call.ToolUseID)
+	require.EqualValues(t, 1, rdb.Del(ctx, resultStreamKey+":lifecycle").Val())
+	replayed, err := svc.CallTool(ctx, callPayload)
+	require.NoError(t, err)
+	assert.Equal(t, call, replayed)
+	requireReadableResultStream(t, ctx, rdb, replayed)
+}
 
 func TestLostDispatchLeaseCommitsAndRestoresOutcomeUnknown(t *testing.T) {
 	rdb := getRedis(t)
@@ -75,9 +104,11 @@ func TestLostDispatchLeaseCommitsAndRestoresOutcomeUnknown(t *testing.T) {
 	require.NoError(t, err)
 	resultStreamKey := pulseStreamKeyPrefix + toolregistry.ResultStreamID(call.ToolUseID)
 	require.EqualValues(t, 1, rdb.XDel(ctx, resultStreamKey, oldEventID).Val())
+	require.EqualValues(t, 1, rdb.Del(ctx, resultStreamKey+":lifecycle").Val())
 	replayed, err := svc.CallTool(ctx, callPayload)
 	require.NoError(t, err)
 	assert.Equal(t, call, replayed)
+	requireReadableResultStream(t, ctx, rdb, replayed)
 	newEventID, err := rdb.HGet(ctx, callKey, "terminal_event_id").Result()
 	require.NoError(t, err)
 	assert.NotEqual(t, oldEventID, newEventID)
@@ -85,6 +116,23 @@ func TestLostDispatchLeaseCommitsAndRestoresOutcomeUnknown(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.Equal(t, string(terminalJSON), events[0].Values["p"])
+
+	require.EqualValues(t, 1, rdb.XDel(ctx, resultStreamKey, newEventID).Val())
+	require.EqualValues(t, 1, rdb.Del(ctx, resultStreamKey+":lifecycle").Val())
+	retried, err := svc.RetryTool(ctx, &genregistry.RetryToolPayload{
+		Toolset:                   callPayload.Toolset,
+		Tool:                      callPayload.Tool,
+		PayloadJSON:               callPayload.PayloadJSON,
+		Meta:                      callPayload.Meta,
+		WireProtocolVersion:       toolregistry.WireProtocolVersion,
+		ExpectedRegistrationToken: admission.RegistrationToken,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, call, retried)
+	requireReadableResultStream(t, ctx, rdb, retried)
+	retryEventID, err := rdb.HGet(ctx, callKey, "terminal_event_id").Result()
+	require.NoError(t, err)
+	assert.NotEqual(t, newEventID, retryEventID)
 }
 
 func TestOverloadRetryUsesLiveCallRecord(t *testing.T) {
@@ -127,6 +175,7 @@ func TestOverloadRetryUsesLiveCallRecord(t *testing.T) {
 		RequestEventID:            requestEventID,
 	}))
 	assert.Equal(t, overloadEventCount, rdb.XLen(ctx, resultStreamKey).Val())
+	require.EqualValues(t, 1, rdb.Del(ctx, resultStreamKey+":lifecycle").Val())
 	retried, err := svc.RetryTool(ctx, &genregistry.RetryToolPayload{
 		Toolset:                   callPayload.Toolset,
 		Tool:                      callPayload.Tool,
@@ -137,6 +186,7 @@ func TestOverloadRetryUsesLiveCallRecord(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, call, retried)
+	requireReadableResultStream(t, ctx, rdb, retried)
 	assert.EqualValues(
 		t,
 		2,
@@ -360,4 +410,28 @@ func TestSettlementScannerStopsWithRegistryContext(t *testing.T) {
 		t.Fatal("settlement scanner did not stop after registry context cancellation")
 	}
 	require.NoError(t, reg.Close(context.Background()))
+}
+
+// requireReadableResultStream proves the CallTool postcondition with a fresh
+// client that has no in-memory knowledge of the registry's stream handle.
+func requireReadableResultStream(
+	t *testing.T,
+	ctx context.Context,
+	rdb *redis.Client,
+	call *genregistry.CallToolResult,
+) {
+	t.Helper()
+	expiresAt, err := time.Parse(time.RFC3339Nano, call.ResultStreamExpiresAt)
+	require.NoError(t, err)
+	pulseClient, err := clientspulse.New(clientspulse.Options{Redis: rdb})
+	require.NoError(t, err)
+	stream, err := pulseClient.Stream(
+		toolregistry.ResultStreamID(call.ToolUseID),
+		streamopts.WithStreamMaxLen(toolregistry.ResultStreamMaxLen),
+		streamopts.WithStreamDeadline(expiresAt),
+	)
+	require.NoError(t, err)
+	reader, err := stream.NewReader(ctx, streamopts.WithReaderStartAtOldest())
+	require.NoError(t, err)
+	reader.Close()
 }
