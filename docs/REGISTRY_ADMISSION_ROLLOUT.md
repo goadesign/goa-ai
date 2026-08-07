@@ -34,8 +34,9 @@ gRPC contract (registry service):
   to another provider.
 - Result streams and output deltas are bounded. `RetryTool` reads overload state
   from the call record and does not snapshot Pulse.
-- New typed errors: `admission_blocked` (retryable), `admission_retired`
-  (permanent), `admission_conflict` (stale token).
+- Typed errors include `admission_blocked` (retryable),
+  `admission_retired` (permanent), `admission_conflict` (stale token), and
+  `call_not_admitted` (no call record or possible provider execution).
 
 Go library surfaces (hit external consumers harder than the payload changes):
 
@@ -122,7 +123,8 @@ consumers, run the one-time data cleanup (delete `registry:health:*`,
 `registry:lease:*`, pre-contract catalog values, unfenced streams), deploy the
 redesigned registry, then the ported providers, then consumers. The caller
 adoption gate must be fully satisfied before cleanup begins; there is no
-mixed-version mode.
+mixed-version mode. Registry startup validates the complete authoritative
+catalog and must become ready before providers resume registration.
 
 ## Stage 4 — Post-cutover
 

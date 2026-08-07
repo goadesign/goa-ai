@@ -21,6 +21,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
+	goa "goa.design/goa/v3/pkg"
 	"goa.design/pulse/streaming"
 	streamopts "goa.design/pulse/streaming/options"
 )
@@ -578,11 +579,76 @@ func TestExecutorTransportFailureClassifiesToolUnavailable(t *testing.T) {
 	require.NotNil(t, res)
 	require.NotNil(t, res.ToolResult)
 	require.NotNil(t, res.ToolResult.Failure)
-	assert.Equal(t, planner.FailureUnavailable, res.ToolResult.Failure.Kind)
+	assert.Equal(t, planner.FailureInternal, res.ToolResult.Failure.Kind)
 	assert.Equal(t, planner.RecoveryFinish, res.ToolResult.Failure.Recovery.Action)
 	assert.Contains(t, res.ToolResult.Failure.Error.Error(), toolregistry.ToolErrorCodeOutcomeUnknown)
 	assert.Empty(t, res.ToolResult.Failure.Recovery.ExampleJSON)
 	assert.Equal(t, "toolcall-transport", res.ToolResult.ToolCallID)
+}
+
+func TestExecutorClassifiesTypedPreAdmissionFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		registry   string
+		wantKind   planner.FailureKind
+		wantAction planner.RecoveryAction
+	}{
+		{
+			name:       "not admitted replans",
+			registry:   "call_not_admitted",
+			wantKind:   planner.FailureUnavailable,
+			wantAction: planner.RecoveryReplan,
+		},
+		{
+			name:       "missing toolset replans",
+			registry:   "not_found",
+			wantKind:   planner.FailureUnavailable,
+			wantAction: planner.RecoveryReplan,
+		},
+		{
+			name:       "registry validation is internal",
+			registry:   "validation_error",
+			wantKind:   planner.FailureInternal,
+			wantAction: planner.RecoveryFinish,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			spec := &tools.ToolSpec{
+				Name:    "atlas.read.get_time_series",
+				Toolset: "atlas.read",
+				Result:  tools.TypeSpec{},
+				Payload: tools.TypeSpec{},
+			}
+			exec := New(
+				fakeRegistryClient{err: goa.NewServiceError(
+					errors.New("registry rejected call"),
+					test.registry,
+					false,
+					false,
+					false,
+				)},
+				fakePulseClient{},
+				fakeSpecs{spec: spec},
+			)
+
+			result, err := exec.Execute(
+				context.Background(),
+				&agentsruntime.ToolCallMeta{ToolCallID: "call-1"},
+				&planner.ToolRequest{Name: spec.Name, Payload: []byte(`{}`)},
+			)
+
+			require.NoError(t, err)
+			require.NotNil(t, result.ToolResult.Failure)
+			assert.Equal(t, test.wantKind, result.ToolResult.Failure.Kind)
+			assert.Equal(t, test.wantAction, result.ToolResult.Failure.Recovery.Action)
+			assert.NotContains(t, result.ToolResult.Failure.Error.Error(), toolregistry.ToolErrorCodeOutcomeUnknown)
+		})
+	}
 }
 
 func TestExecutorRejectsNoncanonicalRegistrationToken(t *testing.T) {

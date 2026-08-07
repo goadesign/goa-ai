@@ -4,8 +4,13 @@ package registry
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+	"goa.design/pulse/rmap"
 )
 
 // TestNewRegistry verifies that the Registry constructor wires all components correctly.
@@ -43,6 +48,42 @@ func TestNewRegistryRequiresRedis(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when Redis is nil")
 	}
+}
+
+// TestNewRegistryRejectsIncompatibleCatalog verifies that constructor-time
+// validation fails before any service can use a legacy persisted lease shape.
+func TestNewRegistryRejectsIncompatibleCatalog(t *testing.T) {
+	rdb := getRedis(t)
+	ctx := context.Background()
+	name := fmt.Sprintf("poisoned-catalog-%d", time.Now().UnixNano())
+	registryMap, err := rmap.Join(ctx, name+":toolsets", rdb)
+	require.NoError(t, err)
+	entry := testPersistedCatalogEntry(t, "poison.toolset", time.Unix(1_700_000_000, 0))
+	body, err := marshalCatalogEntry(entry)
+	require.NoError(t, err)
+	for _, lease := range entry.ProviderLeases {
+		body = strings.Replace(
+			body,
+			fmt.Sprintf(
+				`{"expires_at_unix_milli":%d,"draining":%t}`,
+				lease.ExpiresAtUnixMilli,
+				lease.Draining,
+			),
+			"123",
+			1,
+		)
+		break
+	}
+	inserted, err := registryMap.SetIfNotExists(ctx, toolsetCatalogKey("poison.toolset"), body)
+	require.NoError(t, err)
+	require.True(t, inserted)
+	registryMap.Close()
+
+	reg, err := New(ctx, Config{Redis: rdb, Name: name})
+
+	require.Nil(t, reg)
+	require.ErrorContains(t, err, toolsetCatalogKey("poison.toolset"))
+	require.ErrorContains(t, err, "provider_leases")
 }
 
 // TestRegistryGracefulShutdown verifies that Close properly cleans up resources.
