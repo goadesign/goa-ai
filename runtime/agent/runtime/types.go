@@ -98,8 +98,14 @@ type (
 	// - Pause is optional and is consumed only by the current execution batch.
 	// - Pause is never copied into cumulative planner ToolOutputs history.
 	ToolExecutionResult struct {
-		ToolResult *planner.ToolResult
-		Pause      *ToolPause
+		ToolResult        *planner.ToolResult
+		Pause             *ToolPause
+		resultPublished   bool
+		resultRecord      *RecordActivityInput
+		duration          time.Duration
+		schedulePublished bool
+		scheduleQueue     string
+		expectedChildren  int
 	}
 
 	// ToolCallExecutor executes a tool call and returns a runtime-owned execution
@@ -126,7 +132,7 @@ type (
 	// Timing groups per-run timing overrides in a single structure.
 	// Zero values mean no override.
 	Timing struct {
-		// Budget sets the total wall-clock budget for this run.
+		// Budget sets the active-time budget for planner and tool work.
 		Budget time.Duration
 		// Plan sets the Plan/Resume activity timeout for this run.
 		Plan time.Duration
@@ -157,7 +163,7 @@ func (e *ActivityToolExecutor) Execute(ctx context.Context, wfCtx engine.Workflo
 	if input == nil {
 		return nil, errors.New("tool input is required")
 	}
-	future, err := wfCtx.ExecuteToolActivityAsync(ctx, engine.ToolActivityCall{
+	future, err := wfCtx.ExecuteToolActivityAsync(engine.ToolActivityCall{
 		Name:  e.activityName,
 		Input: input,
 		Options: engine.ActivityOptions{

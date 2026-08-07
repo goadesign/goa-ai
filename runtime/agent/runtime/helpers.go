@@ -342,17 +342,45 @@ func (r *Runtime) logWarn(ctx context.Context, msg string, err error, kv ...any)
 // the error. Workflow loop code may choose to treat failures as fatal via
 // publishHook (panic) to avoid silent divergence.
 func (r *Runtime) publishHookErr(ctx context.Context, evt hooks.Event, turnID string) error {
+	return r.publishHookWithOptions(ctx, evt, turnID, engine.ActivityOptions{})
+}
+
+// publishHookWithOptions persists one hook event with explicit workflow
+// activity bounds when the caller owns a completion deadline.
+func (r *Runtime) publishHookWithOptions(
+	ctx context.Context,
+	evt hooks.Event,
+	turnID string,
+	options engine.ActivityOptions,
+) error {
+	in, err := prepareHookRecordInput(ctx, evt, turnID)
+	if err != nil {
+		return err
+	}
+	return r.publishPreparedHook(ctx, in, options)
+}
+
+// prepareHookRecordInput freezes one hook event into its immutable activity
+// envelope so retries can reuse the exact event key, timestamp, and payload.
+func prepareHookRecordInput(
+	ctx context.Context,
+	evt hooks.Event,
+	turnID string,
+) (*RecordActivityInput, error) {
 	meta := recordDispatchMetadataForContext(ctx)
+	if eventKey := toolLifecycleEventKey(evt); eventKey != "" {
+		meta.EventKey = eventKey
+	}
 	in, err := hooks.EncodeToRecordInput(evt, hooks.EncodeOptions{
 		TurnID:      turnID,
 		EventKey:    meta.EventKey,
 		TimestampMS: meta.TimestampMS,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(in.Payload) > maxHookPayloadBytes {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"runtime: hook payload exceeds budget (%d > %d bytes, type=%s, run_id=%s)",
 			len(in.Payload),
 			maxHookPayloadBytes,
@@ -360,13 +388,38 @@ func (r *Runtime) publishHookErr(ctx context.Context, evt hooks.Event, turnID st
 			evt.RunID(),
 		)
 	}
+	return in, nil
+}
+
+// publishPreparedHook persists a previously frozen hook envelope.
+func (r *Runtime) publishPreparedHook(
+	ctx context.Context,
+	in *RecordActivityInput,
+	options engine.ActivityOptions,
+) error {
 	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
-		return wfCtx.PublishRecord(ctx, engine.RecordActivityCall{
-			Name:  recordActivityName,
-			Input: in,
+		return wfCtx.PublishRecord(engine.RecordActivityCall{
+			Name:    recordActivityName,
+			Input:   in,
+			Options: options,
 		})
 	}
 	return r.recordActivity(ctx, in)
+}
+
+// toolLifecycleEventKey gives each tool-call lifecycle transition one stable
+// durable identity so activity retries and completion recovery are idempotent.
+func toolLifecycleEventKey(evt hooks.Event) string {
+	var toolCallID string
+	switch event := evt.(type) {
+	case *hooks.ToolCallScheduledEvent:
+		toolCallID = event.ToolCallID
+	case *hooks.ToolResultReceivedEvent:
+		toolCallID = event.ToolCallID
+	default:
+		return ""
+	}
+	return fmt.Sprintf("%s/tool/%s/%s", evt.RunID(), toolCallID, evt.Type())
 }
 
 // publishHook emits a runtime hook event and returns an error on failure.
@@ -413,7 +466,7 @@ func (r *Runtime) publishTranscriptMessagesErr(
 		Payload:     payload,
 	}
 	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
-		return wfCtx.PublishRecord(ctx, engine.RecordActivityCall{
+		return wfCtx.PublishRecord(engine.RecordActivityCall{
 			Name:  recordActivityName,
 			Input: input,
 		})
@@ -638,7 +691,6 @@ func mergeCaps(current policy.CapsState, decision policy.CapsState) policy.CapsS
 		current.RemainingConsecutiveFailedToolCalls,
 		decision.RemainingConsecutiveFailedToolCalls,
 	)
-	current.ExpiresAt = mergeDeadlineDown(current.ExpiresAt, decision.ExpiresAt)
 	return current
 }
 
@@ -649,18 +701,6 @@ func mergeCapDown(current int, decision int) int {
 		return current
 	}
 	return min(current, decision)
-}
-
-// mergeDeadlineDown returns the earlier of two configured deadlines. A zero
-// deadline is not configured and therefore cannot be introduced or relaxed by policy.
-func mergeDeadlineDown(current time.Time, decision time.Time) time.Time {
-	if current.IsZero() || decision.IsZero() {
-		return current
-	}
-	if decision.Before(current) {
-		return decision
-	}
-	return current
 }
 
 // toolHandles converts tool call requests into policy tool handles for policy evaluation.

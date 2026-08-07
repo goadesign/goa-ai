@@ -38,18 +38,92 @@ func TestRunPlanActivityUsesOptions(t *testing.T) {
 	}
 
 	opts := engine.ActivityOptions{
-		Queue:               "custom_queue",
-		StartToCloseTimeout: 30 * time.Second,
-		RetryPolicy:         engine.RetryPolicy{MaxAttempts: 3, InitialInterval: time.Second, BackoffCoefficient: 2},
+		Queue:                  "custom_queue",
+		ScheduleToStartTimeout: 10 * time.Second,
+		ScheduleToCloseTimeout: 45 * time.Second,
+		StartToCloseTimeout:    30 * time.Second,
+		RetryPolicy:            engine.RetryPolicy{MaxAttempts: 3, InitialInterval: time.Second, BackoffCoefficient: 2},
 	}
 	_, err := rt.runPlanActivity(wf, "calc.agent.plan", opts, PlanActivityInput{}, time.Time{})
 	require.NoError(t, err)
 	require.Equal(t, opts.Queue, wf.lastPlannerCall.Options.Queue)
+	require.Equal(t, opts.ScheduleToStartTimeout, wf.lastPlannerCall.Options.ScheduleToStartTimeout)
+	require.Equal(t, opts.ScheduleToCloseTimeout, wf.lastPlannerCall.Options.ScheduleToCloseTimeout)
 	require.Equal(t, opts.StartToCloseTimeout, wf.lastPlannerCall.Options.StartToCloseTimeout)
 	require.Equal(t, opts.RetryPolicy, wf.lastPlannerCall.Options.RetryPolicy)
 }
 
-func TestRunPlanActivityRejectsExpiredHardDeadline(t *testing.T) {
+func TestRunPlanActivityBoundsTotalLifetimeToRemainingDeadline(t *testing.T) {
+	retry := engine.RetryPolicy{
+		MaxAttempts:        3,
+		InitialInterval:    time.Second,
+		BackoffCoefficient: 2,
+	}
+	tests := []struct {
+		name string
+		opts engine.ActivityOptions
+		want time.Duration
+	}{
+		{
+			name: "preserves queue and attempt timeouts",
+			opts: engine.ActivityOptions{
+				ScheduleToStartTimeout: 5 * time.Second,
+				ScheduleToCloseTimeout: 5 * time.Second,
+				StartToCloseTimeout:    5 * time.Second,
+				RetryPolicy:            retry,
+			},
+			want: 10 * time.Second,
+		},
+		{
+			name: "replaces longer configured total timeout",
+			opts: engine.ActivityOptions{
+				ScheduleToStartTimeout: 30 * time.Second,
+				ScheduleToCloseTimeout: 30 * time.Second,
+				StartToCloseTimeout:    30 * time.Second,
+				RetryPolicy:            retry,
+			},
+			want: 10 * time.Second,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rt := &Runtime{
+				logger:  telemetry.NoopLogger{},
+				metrics: telemetry.NoopMetrics{},
+				tracer:  telemetry.NoopTracer{},
+				Bus:     noopHooks{},
+			}
+			wf := &testWorkflowContext{
+				ctx:           context.Background(),
+				hasPlanResult: true,
+				planResult: &planner.PlanResult{
+					FinalResponse: &planner.FinalResponse{
+						Message: &model.Message{
+							Role:  model.ConversationRoleAssistant,
+							Parts: []model.Part{model.TextPart{Text: "ok"}},
+						},
+					},
+				},
+			}
+
+			_, err := rt.runPlanActivity(
+				wf,
+				"calc.agent.plan",
+				test.opts,
+				PlanActivityInput{},
+				wf.Now().Add(10*time.Second),
+			)
+
+			require.NoError(t, err)
+			require.Equal(t, test.opts.ScheduleToStartTimeout, wf.lastPlannerCall.Options.ScheduleToStartTimeout)
+			require.Equal(t, test.want, wf.lastPlannerCall.Options.ScheduleToCloseTimeout)
+			require.Equal(t, test.opts.StartToCloseTimeout, wf.lastPlannerCall.Options.StartToCloseTimeout)
+			require.Equal(t, retry, wf.lastPlannerCall.Options.RetryPolicy)
+		})
+	}
+}
+
+func TestRunPlanActivityRejectsExpiredDeadline(t *testing.T) {
 	rt := &Runtime{
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
@@ -62,8 +136,8 @@ func TestRunPlanActivityRejectsExpiredHardDeadline(t *testing.T) {
 
 	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, time.Unix(-1, 0))
 
-	require.Error(t, err)
-	require.ErrorContains(t, err, "missed hard deadline")
+	require.ErrorIs(t, err, engine.ErrPlannerActivityDeadlineExceeded)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Empty(t, wf.lastPlannerCall.Name)
 }
 

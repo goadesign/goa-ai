@@ -376,7 +376,7 @@ can also require confirmation dynamically for additional tools via `runtime.With
 | `DefaultCaps(opts...)`             | Inside `RunPolicy`        | Sets resource limits using option functions                                  |
 | `MaxToolCalls(n)`                  | Argument to `DefaultCaps` | Maximum budgeted (non-bookkeeping) tool invocations                          |
 | `MaxConsecutiveFailedToolCalls(n)` | Argument to `DefaultCaps` | Maximum consecutive failures before stopping                                 |
-| `TimeBudget(duration)`             | Inside `RunPolicy`        | Maximum wall-clock execution time (e.g., "5m")                               |
+| `TimeBudget(duration)`             | Inside `RunPolicy`        | Active-time budget for planner and tool work (e.g., "5m")                    |
 | `InterruptsAllowed(bool)`          | Inside `RunPolicy`        | Enables user interruption handling                                           |
 | `OnMissingFields(action)`          | Inside `RunPolicy`        | Validation behavior: `""`, `"finalize"`, `"await_clarification"`, `"resume"` |
 
@@ -387,7 +387,7 @@ can also require confirmation dynamically for additional tools via `runtime.With
 | Function           | Context                        | Purpose                                |
 | ------------------ | ------------------------------ | -------------------------------------- |
 | `Timing(dsl)`      | Inside `RunPolicy`             | Groups timing configuration            |
-| `Budget(duration)` | Inside `RunPolicy` or `Timing` | Total wall-clock budget for the run    |
+| `Budget(duration)` | Inside `RunPolicy` or `Timing` | Active-time budget for planner and tool work |
 | `Plan(duration)`   | Inside `RunPolicy` or `Timing` | Timeout for Plan and Resume activities |
 | `Tools(duration)`  | Inside `RunPolicy` or `Timing` | Default timeout for tool activities    |
 
@@ -1178,7 +1178,7 @@ RunPolicy(func() {
     // Timing
     TimeBudget("5m")
     Timing(func() {
-        Budget("10m")   // Total wall-clock
+        Budget("10m")   // Active planner and tool work
         Plan("45s")     // Planner activity timeout
         Tools("2m")     // Default tool timeout
     })
@@ -1272,7 +1272,7 @@ Fine-grained timeout control:
 ```go
 RunPolicy(func() {
     Timing(func() {
-        Budget("10m")  // Total wall-clock for the run
+        Budget("10m")  // Active planner and tool work
         Plan("45s")    // Timeout for Plan/Resume activities
         Tools("2m")    // Default timeout for tool activities
     })
@@ -1284,9 +1284,10 @@ attempt budget for planner and tool work once execution begins. They do not
 configure workflow-engine mechanics such as queue-wait timeouts or heartbeat
 liveness. Those deployment concerns belong in the selected engine adapter (for
 example `temporal.Options.ActivityDefaults` for the Temporal engine).
-`Budget(...)` sets the semantic wall-clock budget for the run; the runtime then
-derives an engine run timeout by adding finalizer reserve and small engine
-headroom so the final planner turn and terminal cleanup can still complete.
+`Budget(...)` sets the active-time budget for planner and tool work. The
+workflow runtime enforces it directly and reserves a separate finalizer window;
+it does not set an engine run timeout, so external-input waits remain
+unbounded.
 
 ---
 

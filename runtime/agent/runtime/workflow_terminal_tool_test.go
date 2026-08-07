@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -14,6 +16,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 func TestRunLoopStopsAfterTerminalTool(t *testing.T) {
@@ -83,6 +86,300 @@ func TestRunLoopStopsAfterTerminalTool(t *testing.T) {
 	require.Empty(t, wfCtx.lastPlannerCall.Name, "expected no planner resume/finalization after terminal tool")
 }
 
+func TestRunLoopRejectsMixedTerminalAndNonTerminalTools(t *testing.T) {
+	tests := []struct {
+		name     string
+		atBudget bool
+	}{
+		{name: "before_budget"},
+		{name: "at_budget", atBudget: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rt := New(WithLogger(telemetry.NoopLogger{}))
+			terminal := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
+			terminal.Bookkeeping = true
+			terminal.TerminalRun = true
+			ordinary := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
+			executions := 0
+			require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+				Name: "svc",
+				Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+					executions++
+					return &planner.ToolResult{
+						Name:       call.Name,
+						Result:     map[string]any{"ok": true},
+						ToolCallID: call.ToolCallID,
+					}, nil
+				}),
+				Specs: []tools.ToolSpec{terminal, ordinary},
+			}))
+			current := time.Unix(100, 0)
+			budget := current.Add(time.Minute)
+			if tt.atBudget {
+				budget = current
+			}
+			wfCtx := &testWorkflowContext{
+				ctx:     context.Background(),
+				now:     func() time.Time { return current },
+				runtime: rt,
+			}
+			input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+			seedRunMeta(t, rt, input)
+			base := &planner.PlanInput{RunContext: run.Context{
+				RunID:     input.RunID,
+				SessionID: input.SessionID,
+				TurnID:    input.TurnID,
+				Attempt:   1,
+			}}
+			initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
+				{Name: terminal.Name, Payload: rawjson.Message(`{}`)},
+				{Name: ordinary.Name, Payload: rawjson.Message(`{}`)},
+			}}
+
+			out, err := rt.runLoop(
+				wfCtx,
+				AgentRegistration{ExecuteToolActivity: "execute"},
+				input,
+				base,
+				initial,
+				policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+				budget,
+				current.Add(2*time.Minute),
+				input.TurnID,
+				nil,
+			)
+
+			require.Nil(t, out)
+			require.ErrorContains(t, err, "cannot mix terminal and non-terminal tools")
+			require.Zero(t, executions)
+			require.Empty(t, base.Messages)
+		})
+	}
+}
+
+func TestRunLoopRejectsTerminalToolWithPlannerAwait(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	terminal := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
+	terminal.TerminalRun = true
+	terminal.Bookkeeping = true
+	executed := false
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "svc",
+		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			executed = true
+			return &planner.ToolResult{
+				Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"ok": true},
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{terminal},
+	}))
+	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
+	wfCtx.ensureSignals()
+	ctrl := interrupt.NewController(wfCtx)
+	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	seedRunMeta(t, rt, input)
+	base := &planner.PlanInput{RunContext: run.Context{
+		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
+	}}
+	initial := &planner.PlanResult{
+		ToolCalls: []planner.ToolRequest{{Name: terminal.Name, Payload: rawjson.Message(`{}`)}},
+		Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{
+			ID: "clarify-1", Question: "Continue?",
+		})),
+	}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute"},
+		input,
+		base,
+		initial,
+		policy.CapsState{},
+		time.Time{},
+		time.Time{},
+		input.TurnID,
+		ctrl,
+	)
+
+	require.Nil(t, out)
+	require.ErrorContains(t, err, `terminal tool "svc.complete" cannot accompany planner await work`)
+	require.False(t, executed)
+	require.Empty(t, base.Messages)
+}
+
+func TestPolicyRewriteRejectsTerminalPayloadBeforeTranscriptCommit(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	bookkeeping.Bookkeeping = true
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "svc",
+		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
+				Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"ok": true},
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{bookkeeping},
+	}))
+	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
+	input := &RunInput{
+		AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1",
+		Policy: &PolicyOverrides{RestrictToTool: "svc.other"},
+	}
+	seedRunMeta(t, rt, input)
+	base := &planner.PlanInput{RunContext: run.Context{
+		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
+	}}
+	initial := &planner.PlanResult{
+		ToolCalls: []planner.ToolRequest{{Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)}},
+		FinalResponse: &planner.FinalResponse{Message: &model.Message{
+			Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}},
+		}},
+	}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute"},
+		input,
+		base,
+		initial,
+		policy.CapsState{},
+		time.Time{},
+		time.Time{},
+		input.TurnID,
+		nil,
+	)
+
+	require.Nil(t, out)
+	require.ErrorContains(t, err, `terminal payload cannot accompany budgeted tool "runtime.tool_unavailable"`)
+	require.Empty(t, base.Messages)
+}
+
+func TestRunLoopRejectsTerminalToolPause(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	terminal := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
+	terminal.Bookkeeping = true
+	terminal.TerminalRun = true
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "svc",
+		Execute: func(_ context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+			return &ToolExecutionResult{
+				ToolResult: &planner.ToolResult{
+					Name:       call.Name,
+					Result:     map[string]any{"ok": true},
+					ToolCallID: call.ToolCallID,
+				},
+				Pause: &ToolPause{Clarification: &ToolPauseClarification{
+					ID:       "clarification-1",
+					Question: "Continue?",
+				}},
+			}, nil
+		},
+		Specs: []tools.ToolSpec{terminal},
+	}))
+	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
+	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	seedRunMeta(t, rt, input)
+	base := &planner.PlanInput{RunContext: run.Context{
+		RunID:     input.RunID,
+		SessionID: input.SessionID,
+		TurnID:    input.TurnID,
+		Attempt:   1,
+	}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name: terminal.Name, Payload: rawjson.Message(`{}`),
+	}}}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute"},
+		input,
+		base,
+		initial,
+		policy.CapsState{},
+		time.Time{},
+		time.Time{},
+		input.TurnID,
+		nil,
+	)
+
+	require.Nil(t, out)
+	require.ErrorContains(t, err, `terminal tool "svc.complete" cannot pause`)
+	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
+	require.Len(t, base.Messages, 2)
+}
+
+func TestRunLoopRecordsConfirmedTerminalToolBeforeRejectingPause(t *testing.T) {
+	terminal := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
+	terminal.Bookkeeping = true
+	terminal.TerminalRun = true
+	rt := New(
+		WithLogger(telemetry.NoopLogger{}),
+		WithToolConfirmation(&ToolConfirmationConfig{
+			Confirm: map[tools.Ident]*ToolConfirmation{
+				terminal.Name: {
+					Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+						return "Confirm completion", nil
+					},
+					DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+						return map[string]any{"approved": false}, nil
+					},
+				},
+			},
+		}),
+	)
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "svc",
+		Execute: func(_ context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+			return &ToolExecutionResult{
+				ToolResult: &planner.ToolResult{
+					Name:       call.Name,
+					Result:     map[string]any{"ok": true},
+					ToolCallID: call.ToolCallID,
+				},
+				Pause: &ToolPause{Clarification: &ToolPauseClarification{
+					ID:       "clarification-1",
+					Question: "Continue?",
+				}},
+			}, nil
+		},
+		Specs: []tools.ToolSpec{terminal},
+	}))
+	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
+	wfCtx.ensureSignals()
+	wfCtx.confirmCh <- &api.ConfirmationDecision{Approved: true, RequestedBy: "operator"}
+	ctrl := interrupt.NewController(wfCtx)
+	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	seedRunMeta(t, rt, input)
+	base := &planner.PlanInput{RunContext: run.Context{
+		RunID:     input.RunID,
+		SessionID: input.SessionID,
+		TurnID:    input.TurnID,
+		Attempt:   1,
+	}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name: terminal.Name, Payload: rawjson.Message(`{}`),
+	}}}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute"},
+		input,
+		base,
+		initial,
+		policy.CapsState{},
+		time.Time{},
+		time.Time{},
+		input.TurnID,
+		ctrl,
+	)
+
+	require.Nil(t, out)
+	require.ErrorContains(t, err, `terminal tool "svc.complete" cannot pause`)
+	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
+	require.Len(t, base.Messages, 2)
+}
+
 func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
@@ -101,8 +398,10 @@ func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 		Specs: []tools.ToolSpec{terminalTool},
 	}))
 
+	current := time.Unix(100, 0)
 	wfCtx := &testWorkflowContext{
 		ctx:     context.Background(),
+		now:     func() time.Time { return current },
 		runtime: rt,
 	}
 	base := &planner.PlanInput{
@@ -126,6 +425,8 @@ func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 		}},
 	}
 	caps := policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0}
+	budgetDeadline := current
+	hardDeadline := current.Add(time.Minute)
 
 	out, err := rt.runLoop(
 		wfCtx,
@@ -134,8 +435,8 @@ func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 		base,
 		initial,
 		caps,
-		time.Time{},
-		time.Time{},
+		budgetDeadline,
+		hardDeadline,
 		"turn-1",
 		nil,
 	)
@@ -145,6 +446,165 @@ func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 	require.Len(t, out.ToolEvents, 1)
 	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
 	require.Empty(t, wfCtx.lastPlannerCall.Name, "expected no planner resume/finalization after terminal tool")
+}
+
+func TestRunLoopTerminalResponseBookkeepingExecutesAtBudget(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	bookkeepingTool := newAnyJSONSpec(tools.Ident("tasks.progress.record"), "tasks.progress")
+	bookkeepingTool.Bookkeeping = true
+	executions := 0
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "tasks.progress",
+		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			executions++
+			return &planner.ToolResult{
+				Name:       call.Name,
+				Result:     map[string]any{"ok": true},
+				ToolCallID: call.ToolCallID,
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{bookkeepingTool},
+	}))
+
+	current := time.Unix(100, 0)
+	wfCtx := &testWorkflowContext{
+		ctx:     context.Background(),
+		now:     func() time.Time { return current },
+		runtime: rt,
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-1",
+			SessionID: "sess-1",
+			TurnID:    "turn-1",
+			Attempt:   1,
+		},
+	}
+	input := &RunInput{
+		AgentID:   agent.Ident("agent-1"),
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+	}
+	final := &model.Message{
+		Role:  model.ConversationRoleAssistant,
+		Parts: []model.Part{model.TextPart{Text: "done"}},
+	}
+	initial := &planner.PlanResult{
+		ToolCalls: []planner.ToolRequest{{
+			Name:    bookkeepingTool.Name,
+			Payload: rawjson.Message(`{}`),
+		}},
+		FinalResponse: &planner.FinalResponse{
+			Message: final,
+		},
+	}
+	budgetDeadline := current
+	hardDeadline := current.Add(time.Minute)
+
+	out, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute"},
+		input,
+		base,
+		initial,
+		policy.CapsState{},
+		budgetDeadline,
+		hardDeadline,
+		"turn-1",
+		nil,
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, final, out.Final)
+	require.Equal(t, 1, executions)
+	require.Len(t, out.ToolEvents, 1)
+	require.Empty(t, wfCtx.lastPlannerCall.Name)
+}
+
+func TestRunLoopMixedToolCallsUseOwnedDeadlinesAtBudget(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	bookkeeping.Bookkeeping = true
+	executed := make([]tools.Ident, 0, 1)
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "svc",
+		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			executed = append(executed, call.Name)
+			return &planner.ToolResult{
+				Name:       call.Name,
+				Result:     map[string]any{"ok": true},
+				ToolCallID: call.ToolCallID,
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{budgeted, bookkeeping},
+	}))
+
+	current := time.Unix(100, 0)
+	wfCtx := &testWorkflowContext{
+		ctx:     context.Background(),
+		now:     func() time.Time { return current },
+		runtime: rt,
+		planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{
+			Message: &model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "finalized"}},
+			},
+		}},
+		hasPlanResult: true,
+	}
+	input := &RunInput{
+		AgentID:   "agent-1",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+	}
+	seedRunMeta(t, rt, input)
+	reg := AgentRegistration{
+		ID:                  input.AgentID,
+		ExecuteToolActivity: "execute",
+		ResumeActivityName:  "resume",
+		Planner: &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			return wfCtx.planResult, nil
+		}},
+	}
+	rt.agents[input.AgentID] = reg
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     input.RunID,
+			SessionID: input.SessionID,
+			TurnID:    input.TurnID,
+			Attempt:   1,
+		},
+	}
+	initial := &planner.PlanResult{
+		ToolCalls: []planner.ToolRequest{
+			{Name: budgeted.Name, Payload: rawjson.Message(`{}`)},
+			{Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)},
+		},
+	}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		reg,
+		input,
+		base,
+		initial,
+		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		current,
+		current.Add(time.Minute),
+		input.TurnID,
+		nil,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
+	require.Equal(t, []tools.Ident{bookkeeping.Name}, executed)
+	require.Len(t, out.ToolEvents, 2)
+	require.Equal(t, planner.FailureTimeout, out.ToolEvents[0].Failure.Kind)
+	require.Nil(t, out.ToolEvents[1].Failure)
 }
 
 func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
@@ -211,7 +671,7 @@ func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
 }
 
 func TestFinalizeWithPlannerExecutesTerminalToolCall(t *testing.T) {
-	out, wfCtx, terminalTool, err := runTerminalFinalization(t, nil)
+	out, wfCtx, terminalTool, base, err := runTerminalFinalization(t, nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -221,17 +681,105 @@ func TestFinalizeWithPlannerExecutesTerminalToolCall(t *testing.T) {
 	require.Equal(t, "run-1/turn-1/attempt-2/tasks-progress-complete/0", out.ToolEvents[0].ToolCallID)
 	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
 	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
+	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
+	require.Len(t, base.Messages, 2)
+}
+
+func TestFinalizeWithPlannerTerminalToolStopsAtHard(t *testing.T) {
+	rt, _, wfCtx := newTerminalFinalizationRuntime(t)
+	current := time.Unix(100, 0)
+	hard := current.Add(30 * time.Second)
+	wfCtx.now = func() time.Time { return current }
+	resume := wfCtx.plannerRoutes["resume"]
+	wfCtx.plannerRoutes["resume"] = func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+		out, err := resume(ctx, input)
+		current = hard
+		return out, err
+	}
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     "run-1",
+			SessionID: "sess-1",
+			TurnID:    "turn-1",
+			Attempt:   1,
+		},
+	}
+	input := &RunInput{
+		AgentID:   "agent-1",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+	}
+
+	out, err := rt.finalizeWithPlanner(
+		wfCtx,
+		AgentRegistration{
+			ExecuteToolActivity: "execute",
+			ResumeActivityName:  "resume",
+		},
+		input,
+		base,
+		nil,
+		nil,
+		model.TokenUsage{},
+		2,
+		"turn-1",
+		planner.TerminationReasonTimeBudget,
+		hard,
+	)
+
+	require.Nil(t, out)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Empty(t, wfCtx.lastToolCall.Name)
+	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
+	require.Empty(t, base.Messages)
 }
 
 func TestFinalizeWithPlannerTerminalToolHonorsCallerRestriction(t *testing.T) {
-	out, _, _, err := runTerminalFinalization(t, &PolicyOverrides{
+	out, _, _, base, err := runTerminalFinalization(t, &PolicyOverrides{
 		RestrictToTool: tools.Ident("ada.get_time_series"),
 	})
 
 	require.Nil(t, out)
 	require.Error(t, err)
-	require.ErrorContains(t, err, `finalization terminal tool step failed on tool "runtime.tool_unavailable"`)
-	require.ErrorContains(t, err, `tool "tasks.progress.complete" is not available for this run`)
+	require.ErrorContains(t, err, `finalization terminal tool plan cannot call budgeted tool "runtime.tool_unavailable"`)
+	require.Empty(t, base.Messages)
+}
+
+func TestFinalizeWithPlannerRejectsTerminalPayloadWithToolCalls(t *testing.T) {
+	rt, terminalTool, wfCtx := newTerminalFinalizationRuntime(t)
+	var plannerErr error
+	wfCtx.plannerRoutes["resume"] = func(_ context.Context, _ *PlanActivityInput) (*PlanActivityOutput, error) {
+		return &PlanActivityOutput{Result: &planner.PlanResult{
+			ToolCalls: []planner.ToolRequest{{Name: terminalTool.Name, Payload: rawjson.Message(`{}`)}},
+			FinalResponse: &planner.FinalResponse{Message: &model.Message{
+				Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}},
+			}},
+		}}, plannerErr
+	}
+	base := &planner.PlanInput{RunContext: run.Context{
+		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
+	}}
+	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+
+	out, err := rt.finalizeWithPlanner(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		input,
+		base,
+		nil,
+		nil,
+		model.TokenUsage{},
+		2,
+		input.TurnID,
+		planner.TerminationReasonFailureCap,
+		time.Time{},
+	)
+
+	require.Nil(t, out)
+	require.ErrorContains(t, err, "cannot combine tool calls with a terminal payload")
+	require.Empty(t, wfCtx.lastToolCall.Name)
+	require.Empty(t, base.Messages)
 }
 
 func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
@@ -325,7 +873,7 @@ func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
 
 // runTerminalFinalization drives the finalization path where the planner returns
 // the registered terminal bookkeeping tool.
-func runTerminalFinalization(t *testing.T, runPolicy *PolicyOverrides) (*RunOutput, *routeWorkflowContext, tools.ToolSpec, error) {
+func runTerminalFinalization(t *testing.T, runPolicy *PolicyOverrides) (*RunOutput, *routeWorkflowContext, tools.ToolSpec, *planner.PlanInput, error) {
 	t.Helper()
 
 	rt, terminalTool, wfCtx := newTerminalFinalizationRuntime(t)
@@ -360,7 +908,7 @@ func runTerminalFinalization(t *testing.T, runPolicy *PolicyOverrides) (*RunOutp
 		planner.TerminationReasonFailureCap,
 		time.Time{},
 	)
-	return out, wfCtx, terminalTool, err
+	return out, wfCtx, terminalTool, base, err
 }
 
 // newTerminalFinalizationRuntime registers the task terminal bookkeeping tool and

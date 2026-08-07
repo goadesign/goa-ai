@@ -141,7 +141,8 @@ type (
 		// consumes one unit, and any budgeted success resets the streak.
 		MaxConsecutiveFailedToolCalls int
 
-		// TimeBudget caps the total wall-clock runtime budget for the run.
+		// TimeBudget caps active planner and tool work. External-input waits do
+		// not consume this budget.
 		TimeBudget time.Duration
 
 		// PlanTimeout overrides the per-turn plan/resume activity timeout.
@@ -153,7 +154,8 @@ type (
 		// PerToolTimeout overrides tool execution timeouts for specific tools.
 		PerToolTimeout map[tools.Ident]time.Duration
 
-		// FinalizerGrace caps the time spent in the finalizer phase after termination is requested.
+		// FinalizerGrace extends the active TimeBudget deadline into the Hard
+		// deadline available to finalization and bookkeeping.
 		FinalizerGrace time.Duration
 
 		// InterruptsAllowed enables interrupt/pause behavior for the run when supported by the engine.
