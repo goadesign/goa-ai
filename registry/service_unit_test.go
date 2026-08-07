@@ -207,6 +207,25 @@ func TestCallToolDoesNotReplanAfterAdmission(t *testing.T) {
 	assert.Equal(t, "service_unavailable", serviceErr.Name)
 }
 
+func TestPrepareToolCallIdentityRejectsMalformedJSON(t *testing.T) {
+	t.Parallel()
+
+	_, err := prepareToolCallIdentity(
+		"test.toolset",
+		"lookup",
+		[]byte(`{`),
+		&genregistry.ToolCallMeta{
+			RunID:      "run-1",
+			SessionID:  "session-1",
+			ToolCallID: "call-1",
+		},
+	)
+
+	var serviceErr *goa.ServiceError
+	require.ErrorAs(t, err, &serviceErr)
+	assert.Equal(t, "validation_error", serviceErr.Name)
+}
+
 func TestCallAdmissionParseResultPreservesRegistrationToken(t *testing.T) {
 	t.Parallel()
 

@@ -589,30 +589,52 @@ func TestExecutorTransportFailureClassifiesToolUnavailable(t *testing.T) {
 func TestExecutorClassifiesTypedPreAdmissionFailures(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
+	type classificationTest struct {
 		name       string
 		registry   string
 		wantKind   planner.FailureKind
 		wantAction planner.RecoveryAction
-	}{
-		{
+	}
+	transportValidationNames := []string{
+		goa.InvalidFieldType,
+		goa.MissingField,
+		goa.InvalidEnumValue,
+		goa.InvalidFormat,
+		goa.InvalidPattern,
+		goa.InvalidRange,
+		goa.InvalidLength,
+		goa.UnsupportedMediaType,
+		goa.DecodePayload,
+		goa.MissingPayload,
+	}
+	tests := make([]classificationTest, 0, 3+len(transportValidationNames))
+	tests = append(tests,
+		classificationTest{
 			name:       "not admitted replans",
 			registry:   "call_not_admitted",
 			wantKind:   planner.FailureUnavailable,
 			wantAction: planner.RecoveryReplan,
 		},
-		{
+		classificationTest{
 			name:       "missing toolset replans",
 			registry:   "not_found",
 			wantKind:   planner.FailureUnavailable,
 			wantAction: planner.RecoveryReplan,
 		},
-		{
+		classificationTest{
 			name:       "registry validation is internal",
 			registry:   "validation_error",
 			wantKind:   planner.FailureInternal,
 			wantAction: planner.RecoveryFinish,
 		},
+	)
+	for _, name := range transportValidationNames {
+		tests = append(tests, classificationTest{
+			name:       name + " is internal",
+			registry:   name,
+			wantKind:   planner.FailureInternal,
+			wantAction: planner.RecoveryFinish,
+		})
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

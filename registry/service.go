@@ -990,7 +990,7 @@ func prepareToolCallIdentity(
 		Meta:    &messageMeta,
 	})
 	if err != nil {
-		return preparedToolCall{}, genregistry.MakeServiceUnavailable(fmt.Errorf(
+		return preparedToolCall{}, genregistry.MakeValidationError(fmt.Errorf(
 			"encode call identity: %w",
 			err,
 		))
