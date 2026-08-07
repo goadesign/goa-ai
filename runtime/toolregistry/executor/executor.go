@@ -424,9 +424,9 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 	}
 }
 
-// preAdmissionFailureResult converts only generated registry errors that prove
-// no call record exists. Other failures remain ambiguous because the registry
-// may have admitted the call before the response was lost.
+// preAdmissionFailureResult converts only generated registry errors backed by
+// a durable rejected decision. Other failures remain ambiguous because the
+// registry may have admitted the call before the response was lost.
 func preAdmissionFailureResult(
 	call *planner.ToolRequest,
 	toolCallID string,

@@ -36,7 +36,8 @@ gRPC contract (registry service):
   from the call record and does not snapshot Pulse.
 - Typed errors include `admission_blocked` (retryable),
   `admission_retired` (permanent), `admission_conflict` (stale token), and
-  `call_not_admitted` (no call record or possible provider execution).
+  `call_not_admitted` (the tool-use record contains a rejected decision that
+  prevents provider execution and exact retries while retained).
 
 Go library surfaces (hit external consumers harder than the payload changes):
 
@@ -115,6 +116,13 @@ against a locally run redesigned registry.
 - Audit deployment strategies: RollingUpdate only for identical tokens; use
   Recreate for any schema or admission-revision change (deployment gate in
   POST_ROLLOUT_CLEANUP.md).
+- Wire protocol version 8 changes the retained call-decision semantics. Replace
+  every version 7 registry replica before starting version 8; the two registry
+  binaries must not serve concurrently even when schemas and admission
+  revisions are unchanged. Version 8 startup rejects version 7 catalog entries,
+  so the hard cutover must drain calls and providers, stop version 7 registries,
+  back up and remove those catalog entries, and preserve retained call records
+  before version 8 starts.
 
 ## Stage 3 — Hard cutover
 

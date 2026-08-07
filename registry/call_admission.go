@@ -1,9 +1,10 @@
 // Package registry owns cross-replica admission for routed tool calls.
 //
-// A Redis-expiring hash keyed by transport identity and admission token binds
-// retries to one immutable request, absolute result-history expiration, and
-// terminal state. Request and terminal-result publication each commit into the
-// record in the same Redis operation as their stream append.
+// One expiring Redis hash per transport identity stores the admitted or
+// rejected decision. An admitted record binds retries to one immutable request,
+// provider token, absolute result-history expiration, and terminal state.
+// Request and terminal-result publication each commit into that record in the
+// same Redis operation as their stream append.
 package registry
 
 import (
@@ -62,76 +63,6 @@ var (
 	errCallAdmissionNotFound = errors.New("tool call admission does not exist")
 	errCallTerminalConflict  = errors.New("tool call terminal result conflicts with committed result")
 
-	ensureCallAdmissionScript = redis.NewScript(`
-if redis.call("EXISTS", KEYS[1]) == 0 then
-  local now = redis.call("TIME")
-  local now_millis = (tonumber(now[1]) * 1000) + math.floor(tonumber(now[2]) / 1000)
-  local execution_deadline = now_millis + tonumber(ARGV[4])
-  local expires = now_millis + tonumber(ARGV[5])
-  redis.call(
-    "HSET", KEYS[1],
-    "digest", ARGV[1],
-    "tool_use_id", ARGV[2],
-    "registration_token", ARGV[3],
-    "execution_deadline_unix_milli", execution_deadline,
-    "expires_at_unix_milli", expires,
-    "published", "0",
-    "overload", "",
-    "terminal", "0",
-    "terminal_event_id", "",
-    "terminal_digest", "",
-    "terminal_payload", "",
-    "terminal_cause", "",
-    "outcome_unknown_payload", ARGV[6],
-    "catalog_field", ARGV[7],
-    "output_delta_count", "0",
-    "overload_event_id", "",
-    "overload_retry_after_ms", "0",
-    "dispatch_provider_token", "",
-    "dispatch_provider_lease", "",
-    "dispatch_request_event_id", ""
-  )
-  redis.call("PEXPIREAT", KEYS[1], expires)
-  return {1, ARGV[1], tostring(execution_deadline), tostring(expires), "0", "", ARGV[3], "0", "", "0"}
-end
-local digest = redis.call("HGET", KEYS[1], "digest")
-if digest ~= ARGV[1] then
-  return {-1, digest or "", "0", "0", "0", "", "", "0", "", "0"}
-end
-return {
-  0,
-  digest,
-  redis.call("HGET", KEYS[1], "execution_deadline_unix_milli") or "0",
-  redis.call("HGET", KEYS[1], "expires_at_unix_milli") or "0",
-  redis.call("HGET", KEYS[1], "terminal") or "0",
-  redis.call("HGET", KEYS[1], "terminal_event_id") or "",
-  redis.call("HGET", KEYS[1], "registration_token") or "",
-  redis.call("HGET", KEYS[1], "published") or "0",
-  redis.call("HGET", KEYS[1], "overload_event_id") or "",
-  redis.call("HGET", KEYS[1], "overload_retry_after_ms") or "0"
-}
-`)
-	attachCallAdmissionScript = redis.NewScript(`
-if redis.call("EXISTS", KEYS[1]) == 0 then
-  return {-2, "", "0", "0", "0", "", "", "0", "", "0"}
-end
-local digest = redis.call("HGET", KEYS[1], "digest")
-if digest ~= ARGV[1] then
-  return {-1, digest or "", "0", "0", "0", "", "", "0", "", "0"}
-end
-return {
-  0,
-  digest,
-  redis.call("HGET", KEYS[1], "execution_deadline_unix_milli") or "0",
-  redis.call("HGET", KEYS[1], "expires_at_unix_milli") or "0",
-  redis.call("HGET", KEYS[1], "terminal") or "0",
-  redis.call("HGET", KEYS[1], "terminal_event_id") or "",
-  redis.call("HGET", KEYS[1], "registration_token") or "",
-  redis.call("HGET", KEYS[1], "published") or "0",
-  redis.call("HGET", KEYS[1], "overload_event_id") or "",
-  redis.call("HGET", KEYS[1], "overload_retry_after_ms") or "0"
-}
-`)
 	initializeResultStreamScript = redis.NewScript(`
 if redis.call("HGET", KEYS[1], "digest") ~= ARGV[1] then
   return redis.error_reply("CALLADMISSIONCHANGED")
@@ -533,82 +464,6 @@ func newCallAdmissionStore(redisClient *redis.Client, registryName string) *call
 	}
 }
 
-// Ensure atomically creates or attaches to one immutable call admission.
-func (s *callAdmissionStore) Ensure(
-	ctx context.Context,
-	toolset, toolUseID, registrationToken, digest string,
-	executionTimeout, ttl time.Duration,
-	outcomeUnknownPayload []byte,
-) (callAdmission, bool, error) {
-	key := s.admissionKey(toolUseID)
-	value, err := ensureCallAdmissionScript.Run(
-		ctx,
-		s.redis,
-		[]string{key},
-		digest,
-		toolUseID,
-		registrationToken,
-		executionTimeout.Milliseconds(),
-		ttl.Milliseconds(),
-		outcomeUnknownPayload,
-		toolsetCatalogKey(toolset),
-	).Slice()
-	if err != nil {
-		return callAdmission{}, false, fmt.Errorf("ensure call admission: %w", err)
-	}
-	status, err := redisResultInt64(value[0])
-	if err != nil {
-		return callAdmission{}, false, err
-	}
-	existingDigest, _ := value[1].(string)
-	if status < 0 {
-		return callAdmission{}, false, fmt.Errorf(
-			"%w: existing digest %s",
-			errCallAdmissionConflict,
-			existingDigest,
-		)
-	}
-	admission, err := s.parseResult(toolset, key, digest, value)
-	if err != nil {
-		return callAdmission{}, false, err
-	}
-	return admission, status == 1, nil
-}
-
-// Attach loads one existing immutable call admission for exact retry. It never
-// creates publication state when retention has expired.
-func (s *callAdmissionStore) Attach(
-	ctx context.Context,
-	toolset, toolUseID, digest string,
-) (callAdmission, error) {
-	key := s.admissionKey(toolUseID)
-	value, err := attachCallAdmissionScript.Run(
-		ctx,
-		s.redis,
-		[]string{key},
-		digest,
-	).Slice()
-	if err != nil {
-		return callAdmission{}, fmt.Errorf("attach call admission: %w", err)
-	}
-	status, err := redisResultInt64(value[0])
-	if err != nil {
-		return callAdmission{}, err
-	}
-	existingDigest, _ := value[1].(string)
-	switch status {
-	case -2:
-		return callAdmission{}, errCallAdmissionNotFound
-	case -1:
-		return callAdmission{}, fmt.Errorf(
-			"%w: existing digest %s",
-			errCallAdmissionConflict,
-			existingDigest,
-		)
-	}
-	return s.parseResult(toolset, key, digest, value)
-}
-
 // InitializeResultStream creates one bounded pre-publication event only while
 // the call remains unpublished and nonterminal. Concurrent initial callers and
 // overload retries cannot append initialization after terminal commitment.
@@ -644,7 +499,7 @@ func (s *callAdmissionStore) Complete(
 	providerLease, requestEventID, resultStreamID string,
 	payload []byte,
 ) error {
-	key := s.admissionKey(toolUseID)
+	key := s.callKey(toolUseID)
 	digest := sha256.Sum256(payload)
 	_, err := completeCallAdmissionScript.Run(
 		ctx,
@@ -696,7 +551,7 @@ func (s *callAdmissionStore) Claim(
 	providerLease, requestEventID, resultStreamID string,
 	stalePayload []byte,
 ) (callClaimDisposition, error) {
-	key := s.admissionKey(toolUseID)
+	key := s.callKey(toolUseID)
 	digest := sha256.Sum256(stalePayload)
 	status, err := claimCallAdmissionScript.Run(
 		ctx,
@@ -754,7 +609,7 @@ func (s *callAdmissionStore) PublishLiveEvent(
 	providerLease, requestEventID, resultStreamID, eventName string,
 	payload []byte,
 ) error {
-	key := s.admissionKey(toolUseID)
+	key := s.callKey(toolUseID)
 	_, err := publishLiveCallEventScript.Run(
 		ctx,
 		s.redis,
@@ -796,7 +651,7 @@ func (s *callAdmissionStore) ReportOverload(
 	providerLease, requestEventID, resultStreamID string,
 	overloadPayload, stalePayload []byte,
 ) error {
-	key := s.admissionKey(toolUseID)
+	key := s.callKey(toolUseID)
 	staleDigest := sha256.Sum256(stalePayload)
 	_, err := reportOverloadCallScript.Run(
 		ctx,
@@ -931,10 +786,10 @@ func (s *callAdmissionStore) SettleLostClaimsForLease(
 	return nil
 }
 
-// admissionKey derives the one authoritative Redis record for a global
+// callKey derives the one authoritative Redis record for a global
 // transport identity. The admitted token is immutable data in that record,
 // not part of the key, so an admission rollover cannot republish the same call.
-func (s *callAdmissionStore) admissionKey(toolUseID string) string {
+func (s *callAdmissionStore) callKey(toolUseID string) string {
 	sum := sha256.Sum256([]byte(toolUseID))
 	return s.prefix + hex.EncodeToString(sum[:])
 }
@@ -992,62 +847,6 @@ func (s *callAdmissionStore) cleanupSettlementMember(
 		return fmt.Errorf("clean missing call settlement indexes: %w", err)
 	}
 	return nil
-}
-
-// parseResult decodes the shared Ensure and Attach state.
-func (s *callAdmissionStore) parseResult(
-	toolset, key, digest string,
-	value []any,
-) (callAdmission, error) {
-	if len(value) != 10 {
-		return callAdmission{}, fmt.Errorf("call admission returned %d values", len(value))
-	}
-	executionDeadlineRaw, ok := value[2].(string)
-	if !ok {
-		return callAdmission{}, fmt.Errorf("call admission returned invalid execution deadline %T", value[2])
-	}
-	executionDeadlineMillis, err := strconv.ParseInt(executionDeadlineRaw, 10, 64)
-	if err != nil {
-		return callAdmission{}, fmt.Errorf("parse call admission execution deadline: %w", err)
-	}
-	expiresRaw, ok := value[3].(string)
-	if !ok {
-		return callAdmission{}, fmt.Errorf("call admission returned invalid expiration %T", value[3])
-	}
-	expiresMillis, err := strconv.ParseInt(expiresRaw, 10, 64)
-	if err != nil {
-		return callAdmission{}, fmt.Errorf("parse call admission expiration: %w", err)
-	}
-	terminalRaw, _ := value[4].(string)
-	eventID, _ := value[5].(string)
-	registrationToken, ok := value[6].(string)
-	if !ok {
-		return callAdmission{}, fmt.Errorf("call admission returned invalid registration token %T", value[6])
-	}
-	if err := toolregistry.ValidateRegistrationToken(registrationToken); err != nil {
-		return callAdmission{}, fmt.Errorf("call admission returned invalid registration token: %w", err)
-	}
-	publishedRaw, _ := value[7].(string)
-	overloadEventID, _ := value[8].(string)
-	overloadRetryRaw, _ := value[9].(string)
-	overloadRetryMillis, err := strconv.ParseInt(overloadRetryRaw, 10, 64)
-	if err != nil {
-		return callAdmission{}, fmt.Errorf("parse overload retry delay: %w", err)
-	}
-	return callAdmission{
-		key:                key,
-		digest:             digest,
-		executionDeadline:  time.UnixMilli(executionDeadlineMillis),
-		expiresAt:          time.UnixMilli(expiresMillis),
-		published:          publishedRaw == "1",
-		terminal:           terminalRaw == "1",
-		terminalEventID:    eventID,
-		overloadEventID:    overloadEventID,
-		overloadRetryAfter: time.Duration(overloadRetryMillis) * time.Millisecond,
-		catalogHashKey:     s.catalogHashKey,
-		catalogField:       toolsetCatalogKey(toolset),
-		registrationToken:  registrationToken,
-	}, nil
 }
 
 // redisResultInt64 normalizes Lua integer replies returned by go-redis.

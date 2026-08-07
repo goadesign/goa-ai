@@ -461,9 +461,354 @@ func TestCallAdmissionRetryCannotCreateExpiredAdmission(t *testing.T) {
 
 	_, err := store.Attach(ctx, toolset, toolUseID, "request-digest")
 	require.ErrorIs(t, err, errCallAdmissionNotFound)
-	exists, err := testRedisClient.Exists(ctx, store.admissionKey(toolUseID)).Result()
+	exists, err := testRedisClient.Exists(ctx, store.callKey(toolUseID)).Result()
 	require.NoError(t, err)
 	assert.Zero(t, exists)
+}
+
+func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
+	ctx := context.Background()
+	name := fmt.Sprintf("call-decision-%d", time.Now().UnixNano())
+	firstStore := newCallAdmissionStore(testRedisClient, name)
+	secondStore := newCallAdmissionStore(testRedisClient, name)
+	const (
+		toolset = "decision-toolset"
+		digest  = "request-digest"
+	)
+	token := strings.Repeat("a", 64)
+	rejection := callRejection{
+		kind:    callRejectionUnavailable,
+		message: "no healthy providers",
+	}
+
+	_, err := firstStore.Reject(
+		ctx,
+		toolset,
+		"reject-first",
+		digest,
+		rejection,
+		5*time.Second,
+	)
+	var rejected *callRejectedError
+	require.ErrorAs(t, err, &rejected)
+	require.Equal(t, rejection, rejected.rejection)
+
+	_, _, err = secondStore.Ensure(
+		ctx,
+		toolset,
+		"reject-first",
+		token,
+		digest,
+		time.Second,
+		5*time.Second,
+		outcomeUnknownPayload(token, "reject-first"),
+	)
+	require.ErrorAs(t, err, &rejected)
+	require.Equal(t, rejection, rejected.rejection)
+	assertStoredCallDecision(t, ctx, firstStore, "reject-first", false)
+
+	admitted, _, err := firstStore.Ensure(
+		ctx,
+		toolset,
+		"admit-first",
+		token,
+		digest,
+		time.Second,
+		5*time.Second,
+		outcomeUnknownPayload(token, "admit-first"),
+	)
+	require.NoError(t, err)
+	// v0.70 admission records predate the explicit decision discriminator.
+	legacyKey := firstStore.callKey("admit-first")
+	require.NoError(t, testRedisClient.HDel(
+		ctx,
+		legacyKey,
+		"decision",
+	).Err())
+	ttlBefore, err := testRedisClient.PTTL(ctx, legacyKey).Result()
+	require.NoError(t, err)
+	migrated, err := secondStore.Attach(ctx, toolset, "admit-first", digest)
+	require.NoError(t, err)
+	require.Equal(t, admitted, migrated)
+	ttlAfter, err := testRedisClient.PTTL(ctx, legacyKey).Result()
+	require.NoError(t, err)
+	assert.Positive(t, ttlAfter)
+	assert.LessOrEqual(t, ttlAfter, ttlBefore)
+
+	replayed, err := secondStore.Reject(
+		ctx,
+		toolset,
+		"admit-first",
+		digest,
+		rejection,
+		5*time.Second,
+	)
+	require.NoError(t, err)
+	require.Equal(t, admitted, replayed)
+	assertStoredCallDecision(t, ctx, firstStore, "admit-first", true)
+
+	fractionalLegacyID := "fractional-legacy"
+	_, _, err = firstStore.Ensure(
+		ctx,
+		toolset,
+		fractionalLegacyID,
+		token,
+		digest,
+		time.Second,
+		5*time.Second,
+		outcomeUnknownPayload(token, fractionalLegacyID),
+	)
+	require.NoError(t, err)
+	fractionalLegacyKey := firstStore.callKey(fractionalLegacyID)
+	require.NoError(t, testRedisClient.HDel(ctx, fractionalLegacyKey, "decision").Err())
+	require.NoError(t, testRedisClient.HSet(ctx, fractionalLegacyKey, "output_delta_count", "0.5").Err())
+	_, err = secondStore.Attach(ctx, toolset, fractionalLegacyID, digest)
+	require.ErrorContains(t, err, "CALLDECISIONINVALID counter state")
+	_, err = testRedisClient.HGet(ctx, fractionalLegacyKey, "decision").Result()
+	require.ErrorIs(t, err, redis.Nil)
+	for _, invalidCount := range []string{"00", "9007199254740992"} {
+		require.NoError(t, testRedisClient.HSet(
+			ctx,
+			fractionalLegacyKey,
+			"output_delta_count",
+			invalidCount,
+		).Err())
+		_, err = secondStore.Attach(ctx, toolset, fractionalLegacyID, digest)
+		require.ErrorContains(t, err, "CALLDECISIONINVALID counter state")
+		_, err = testRedisClient.HGet(ctx, fractionalLegacyKey, "decision").Result()
+		require.ErrorIs(t, err, redis.Nil)
+	}
+	require.NoError(t, testRedisClient.HSet(
+		ctx,
+		fractionalLegacyKey,
+		"output_delta_count",
+		"0",
+		"outcome_unknown_payload",
+		`{}`,
+	).Err())
+	_, err = secondStore.Attach(ctx, toolset, fractionalLegacyID, digest)
+	require.ErrorContains(t, err, "outcome unknown payload")
+	_, err = testRedisClient.HGet(ctx, fractionalLegacyKey, "decision").Result()
+	require.ErrorIs(t, err, redis.Nil)
+
+	malformedKey := firstStore.callKey("malformed-legacy")
+	require.NoError(t, testRedisClient.HSet(
+		ctx,
+		malformedKey,
+		"digest",
+		digest,
+		"tool_use_id",
+		"malformed-legacy",
+	).Err())
+	require.NoError(t, testRedisClient.PExpire(ctx, malformedKey, 5*time.Second).Err())
+	_, err = secondStore.Attach(ctx, toolset, "malformed-legacy", digest)
+	require.ErrorContains(t, err, "CALLDECISIONINVALID")
+	_, err = testRedisClient.HGet(ctx, malformedKey, "decision").Result()
+	require.ErrorIs(t, err, redis.Nil)
+
+	missingOutcomeID := "missing-outcome"
+	_, _, err = firstStore.Ensure(
+		ctx,
+		toolset,
+		missingOutcomeID,
+		token,
+		digest,
+		time.Second,
+		5*time.Second,
+		outcomeUnknownPayload(token, missingOutcomeID),
+	)
+	require.NoError(t, err)
+	missingOutcomeKey := firstStore.callKey(missingOutcomeID)
+	require.NoError(t, testRedisClient.HDel(ctx, missingOutcomeKey, "outcome_unknown_payload").Err())
+	_, err = secondStore.Attach(ctx, toolset, missingOutcomeID, digest)
+	require.ErrorContains(t, err, "CALLDECISIONINVALID outcome payload")
+	published, err := testRedisClient.HGet(ctx, missingOutcomeKey, "published").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "0", published)
+
+	missingTTLID := "missing-ttl"
+	_, _, err = firstStore.Ensure(
+		ctx,
+		toolset,
+		missingTTLID,
+		token,
+		digest,
+		time.Second,
+		5*time.Second,
+		outcomeUnknownPayload(token, missingTTLID),
+	)
+	require.NoError(t, err)
+	missingTTLKey := firstStore.callKey(missingTTLID)
+	require.NoError(t, testRedisClient.Persist(ctx, missingTTLKey).Err())
+	_, err = secondStore.Attach(ctx, toolset, missingTTLID, digest)
+	require.ErrorContains(t, err, "CALLDECISIONINVALID expiration")
+	published, err = testRedisClient.HGet(ctx, missingTTLKey, "published").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "0", published)
+	require.NoError(t, testRedisClient.Del(ctx, missingTTLKey).Err())
+
+	orphanOverloadID := "orphan-overload"
+	_, _, err = firstStore.Ensure(
+		ctx,
+		toolset,
+		orphanOverloadID,
+		token,
+		digest,
+		time.Second,
+		5*time.Second,
+		outcomeUnknownPayload(token, orphanOverloadID),
+	)
+	require.NoError(t, err)
+	orphanOverloadKey := firstStore.callKey(orphanOverloadID)
+	require.NoError(t, testRedisClient.HSet(
+		ctx,
+		orphanOverloadKey,
+		"overload_event_id",
+		"1-0",
+	).Err())
+	_, err = secondStore.Attach(ctx, toolset, orphanOverloadID, digest)
+	require.ErrorContains(t, err, "CALLDECISIONINVALID overload state")
+
+	orphanDispatchID := "orphan-dispatch"
+	_, _, err = firstStore.Ensure(
+		ctx,
+		toolset,
+		orphanDispatchID,
+		token,
+		digest,
+		time.Second,
+		5*time.Second,
+		outcomeUnknownPayload(token, orphanDispatchID),
+	)
+	require.NoError(t, err)
+	orphanDispatchKey := firstStore.callKey(orphanDispatchID)
+	require.NoError(t, testRedisClient.HSet(
+		ctx,
+		orphanDispatchKey,
+		"dispatch_lease_expires_at_unix_milli",
+		"1700000060000",
+	).Err())
+	_, err = secondStore.Attach(ctx, toolset, orphanDispatchID, digest)
+	require.ErrorContains(t, err, "CALLDECISIONINVALID dispatch state")
+	require.NoError(t, testRedisClient.HSet(
+		ctx,
+		orphanDispatchKey,
+		"dispatch_provider_token",
+		token,
+		"dispatch_lease_expires_at_unix_milli",
+		"0",
+	).Err())
+	_, err = secondStore.Attach(ctx, toolset, orphanDispatchID, digest)
+	require.ErrorContains(t, err, "CALLDECISIONINVALID dispatch state")
+	require.NoError(t, testRedisClient.HSet(
+		ctx,
+		orphanDispatchKey,
+		"published",
+		"1",
+		"publication_event_id",
+		"1-0",
+		"claim:1-0",
+		"1",
+		"dispatch_provider_token",
+		strings.Repeat("b", 64),
+		"dispatch_provider_lease",
+		"provider/lease",
+		"dispatch_request_event_id",
+		"1-0",
+	).Err())
+	_, err = secondStore.Attach(ctx, toolset, orphanDispatchID, digest)
+	require.ErrorContains(t, err, "CALLDECISIONINVALID dispatch state")
+	require.NoError(t, testRedisClient.HSet(
+		ctx,
+		orphanDispatchKey,
+		"dispatch_provider_token",
+		"",
+		"dispatch_provider_lease",
+		"",
+		"dispatch_request_event_id",
+		"",
+		"dispatch_lease_expires_at_unix_milli",
+		"",
+		"overload_event_id",
+		"1-0",
+		"overload_retry_after_ms",
+		"250",
+		"overload",
+		"2-0",
+	).Err())
+	_, err = secondStore.Attach(ctx, toolset, orphanDispatchID, digest)
+	require.ErrorContains(t, err, "CALLDECISIONINVALID overload state")
+	for _, invalidStreamID := range []string{"01-0", "0-0"} {
+		require.NoError(t, testRedisClient.HSet(
+			ctx,
+			orphanDispatchKey,
+			"overload_event_id",
+			"2-0",
+			"overload",
+			invalidStreamID,
+		).Err())
+		_, err = secondStore.Attach(ctx, toolset, orphanDispatchID, digest)
+		require.ErrorContains(t, err, "CALLDECISIONINVALID overload state")
+	}
+	require.NoError(t, testRedisClient.HSet(
+		ctx,
+		orphanDispatchKey,
+		"overload_event_id",
+		"2-0",
+		"overload",
+		"1-0",
+	).Err())
+	_, err = secondStore.Attach(ctx, toolset, orphanDispatchID, digest)
+	require.NoError(t, err)
+
+	type decisionResult struct {
+		admitted bool
+		err      error
+	}
+	for i := range 25 {
+		toolUseID := fmt.Sprintf("concurrent-%d", i)
+		start := make(chan struct{})
+		results := make(chan decisionResult, 2)
+		go func() {
+			<-start
+			_, _, err := firstStore.Ensure(
+				ctx,
+				toolset,
+				toolUseID,
+				token,
+				digest,
+				time.Second,
+				5*time.Second,
+				outcomeUnknownPayload(token, toolUseID),
+			)
+			results <- decisionResult{admitted: err == nil, err: err}
+		}()
+		go func() {
+			<-start
+			_, err := secondStore.Reject(
+				ctx,
+				toolset,
+				toolUseID,
+				digest,
+				rejection,
+				5*time.Second,
+			)
+			results <- decisionResult{admitted: err == nil, err: err}
+		}()
+		close(start)
+		first := <-results
+		second := <-results
+		require.Equal(t, first.admitted, second.admitted)
+		if first.admitted {
+			require.NoError(t, first.err)
+			require.NoError(t, second.err)
+			assertStoredCallDecision(t, ctx, firstStore, toolUseID, true)
+			continue
+		}
+		require.ErrorAs(t, first.err, &rejected)
+		require.ErrorAs(t, second.err, &rejected)
+		assertStoredCallDecision(t, ctx, firstStore, toolUseID, false)
+	}
 }
 
 func TestRedisConcurrentRenewalReplacementAndCandidates(t *testing.T) {
@@ -642,6 +987,30 @@ func TestLiveRegistryRecoversOwnedStateLossSameName(t *testing.T) {
 		recoveredSink.Close(closeCtx)
 	})
 	waitForRegistrationPing(t, recoveredSink.Subscribe(), recovered.RegistrationToken)
+}
+
+// assertStoredCallDecision verifies the explicit state stored for one tool-use
+// identity.
+func assertStoredCallDecision(
+	t *testing.T,
+	ctx context.Context,
+	store *callAdmissionStore,
+	toolUseID string,
+	admitted bool,
+) {
+	t.Helper()
+
+	key := store.callKey(toolUseID)
+	exists, err := testRedisClient.Exists(ctx, key).Result()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, exists)
+	decision, err := testRedisClient.HGet(ctx, key, "decision").Result()
+	require.NoError(t, err)
+	if admitted {
+		assert.Equal(t, "admitted", decision)
+		return
+	}
+	assert.Equal(t, "rejected", decision)
 }
 
 func waitForRegistrationPing(

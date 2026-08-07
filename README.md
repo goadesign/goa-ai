@@ -83,9 +83,15 @@ because the effect may have occurred; execution never transfers to another
 provider and the canonical terminal remains retained.
 Registry startup strictly validates every authoritative catalog record and
 fails before serving if any persisted value uses an incompatible shape. A new
-call that fails catalog or provider-health checks before record creation returns
-typed `call_not_admitted`, so executors may safely replan; only failures at or
-after admission become `outcome_unknown`.
+call stores one admitted or rejected state. Catalog or provider-health failures
+commit the rejected state before returning typed `call_not_admitted`. Exact
+retries cannot execute that identity while the run-scoped decision is retained,
+so executors may safely replan; only admitted calls with ambiguous execution
+become `outcome_unknown`.
+This decision contract is wire protocol version 8. Quiesce traffic, drain calls
+and providers, stop version 7 registries, and remove version 7 catalog entries
+before starting version 8. Preserve retained call records for validated
+bounded migration; do not roll registry replicas across these versions.
 `Serve` also exposes the canonical ToolUseID through context for durable method
 deduplication without changing tool payloads. Workers recheck the
 absolute deadline when dispatching local backlog and acknowledge expired calls

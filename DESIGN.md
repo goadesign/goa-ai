@@ -320,13 +320,13 @@ expected token returns `admission_conflict`, retired toolsets are unavailable to
 discovery and calls, and the retired exact token cannot register again.
 
 Wire protocol changes use a hard cutover. There is no legacy envelope, optional
-fallback, capability negotiation, or dual decoder. Quiesce registry-routed tool
-traffic, then deploy consumer binaries first so every future CallTool sends
-version 7 and can decode the execution-deadline and bounded-result envelope. Stop or fence old
-providers, deploy the new registry, deliberately remove pre-version catalog
-records while providers are stopped, and deploy providers that send version 7
-on Register. Resume tool traffic only after old leases and consumer requests
-have drained.
+fallback, capability negotiation, or dual decoder. Quiesce consumers, drain
+admitted calls and provider leases, then stop every old registry replica. Back
+up the catalog and atomically remove entries owned by the old wire version while
+preserving retained call records. Start the new registry against that cleaned
+catalog, then start matching providers and finally consumers. Wire protocol
+version 8 uses this order; version 7 and version 8 registries never serve
+concurrently.
 
 The new registry rejects an old consumer's missing version before service
 invocation, catalog lookup, health checks, result-stream creation, call
@@ -386,12 +386,18 @@ record stores a token-independent digest of toolset, tool, payload, and call
 metadata plus the admitted registration token. `CallTool` attaches to this
 record before current catalog or health lookup; an exact retained retry therefore
 returns its original token and deadlines after retirement or replacement.
-For a new call, catalog and provider-health failures before record creation
-return typed `call_not_admitted`; the executor may safely replan because no
-provider could observe the request. Generated `not_found` and
-`validation_error` remain actionable pre-admission responses. Errors at or
-after call-record creation remain ambiguous and produce `outcome_unknown`,
-which forbids replacement execution because an effect may have occurred.
+For a new call, the registry atomically stores one admitted or rejected state in
+the tool-use record. Catalog and provider-health failures commit the rejected
+state or observe an admission that won the race. A rejected state returns typed
+`call_not_admitted` and prevents every exact retry from executing while that
+run-scoped decision is retained, so the executor may safely replan. Generated
+`not_found` and `validation_error` preserve their actionable types in the same
+decision record. Errors after an admitted decision remain ambiguous and produce
+`outcome_unknown`, which forbids replacement execution because an effect may
+have occurred.
+The explicit decision record is wire protocol version 8. Version 7 and version
+8 registry replicas cannot serve concurrently; deployment replaces the complete
+registry replica set before providers and consumers roll forward.
 `CallTool` owns only initial admission and publication. `RetryTool` owns overload
 republication and requires both the
 existing admission record and its still-active token. The request-stream append

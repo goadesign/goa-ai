@@ -24,7 +24,7 @@ var _ = API("registry", func() {
 	Error("not_found", ErrorResult, "Toolset or tool not found")
 	Error("validation_error", ErrorResult, "Payload validation failed")
 	Error("service_unavailable", ErrorResult, "Registry routing infrastructure or healthy providers are unavailable")
-	Error("call_not_admitted", ErrorResult, "The registry proved that no call record was created and no provider could execute the request")
+	Error("call_not_admitted", ErrorResult, "The registry chose a rejected decision for this tool-use identity before provider publication, so no exact retry can execute while the run-scoped decision is retained")
 	Error("admission_blocked", ErrorResult, "Another admission still has active provider leases")
 	Error("admission_retired", ErrorResult, "The requested admission was intentionally retired")
 	Error("admission_conflict", ErrorResult, "The expected admission token does not match the catalog record")
@@ -118,7 +118,7 @@ var _ = Service("registry", func() {
 	// ---- Invocation Operations ----
 
 	Method("CallTool", func() {
-		Description("Reject consumers whose required runtime-owned wire protocol version differs from the registry, then admit or attach to one run-scoped tool call. Catalog or provider-health failures proven to occur before call-record creation return call_not_admitted, so callers may safely choose another plan. The registry atomically owns initial publication and terminal completion by tool_use_id: the call record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed. Before returning, the registry establishes the result stream so the caller can create a reader immediately.")
+		Description("Reject consumers whose required runtime-owned wire protocol version differs from the registry, then store one immutable admitted or rejected decision for a run-scoped tool call. Catalog or provider-health failures commit the rejected decision before returning call_not_admitted, so exact retries cannot execute while that decision is retained and the caller safely chooses another plan. Admitted calls atomically own initial publication and terminal completion by tool_use_id: the call record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed. Before returning an admission, the registry establishes the result stream so the caller can create a reader immediately.")
 		Payload(CallToolPayload)
 		Result(CallToolResult)
 		Error("not_found")

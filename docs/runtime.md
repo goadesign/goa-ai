@@ -1108,12 +1108,11 @@ schema JSON changes schema and admission identity.
 
 This version is a breaking-wire fence, not capability negotiation. There is no
 legacy ToolError envelope, optional fallback, or dual decoder. Quiesce
-registry-routed tool traffic, then roll out consumer binaries first so every
-future CallTool request sends version 7 and can decode the execution-deadline
-and bounded-result envelope. Stop or fence old providers, deploy the new registry, deliberately
-remove pre-version catalog records while providers are stopped, and deploy
-providers whose Register payload sends version 7. Resume tool traffic only
-after old provider leases and consumer requests have drained.
+consumers, drain admitted calls and provider leases, then stop every old
+registry replica. Back up the catalog and atomically remove entries owned by
+the old wire version while preserving retained call records. Start the new
+registry against that cleaned catalog, then start matching providers and
+finally consumers.
 
 The new registry rejects an old consumer's missing version (protobuf zero) at
 the generated transport boundary and repeats the check at the first line of
@@ -1163,10 +1162,13 @@ registry/Pulse infrastructure maps to retryable tool-unavailable.
 `stale_registration` remains a retryable terminal outcome.
 
 Call publication and result retention have one owner. The registry atomically
-admits each global `tool_use_id` once. Its authoritative record stores an
-immutable token-independent request digest plus the admitted registration token.
-`CallTool` attaches to that record before consulting current routing or health,
-so exact retained calls return their original token and deadlines after
+stores one decision for each global `tool_use_id`. The authoritative record
+contains an immutable token-independent request digest and an explicit
+`admitted` or `rejected` state. An admitted record also stores its registration
+token. A rejected record preserves the exact typed pre-publication error, so
+retries cannot execute while the record is retained. `CallTool` reads that
+decision before consulting current routing or health, so rejected calls replay
+their error and admitted calls return their original token and deadlines after
 retirement, replacement, or temporary loss of current health. CallTool owns
 initial admission and publication. RetryTool owns overload republication and
 requires the existing admission plus its original still-active token; it cannot
@@ -1211,6 +1213,15 @@ the stream. Publication preserves rather than extends the absolute deadline, so
 the terminal call record cannot expire before its retained result and a reused
 tool-use ID cannot republish while either exists. Completed, abandoned,
 duplicate, and recreated state expires without a separate cleanup protocol.
+
+Wire protocol version 8 introduces the explicit decision state. Registry
+replicas running versions 7 and 8 must never overlap. Follow the hard-cutover
+order above; version 8 cannot start while version 7 catalog entries remain. On
+first read, version 8 validates the complete retained version 7 call-admission
+shape, adds the `admitted` discriminator without extending its TTL, and rejects
+malformed records. Unobserved version 7 call records expire at their original
+deadline.
+
 Toolsets with no routable leases have no health identity, so the scheduler emits
 no pings and an idle request stream cannot grow. Active request streams trim
 only below the minimum safe consumer-group watermark:

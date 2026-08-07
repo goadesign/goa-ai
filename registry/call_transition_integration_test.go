@@ -348,7 +348,7 @@ func retainedPublicationEventID(
 	toolUseID string,
 ) string {
 	t.Helper()
-	eventID, err := rdb.HGet(ctx, store.admissionKey(toolUseID), "publication_event_id").Result()
+	eventID, err := rdb.HGet(ctx, store.callKey(toolUseID), "publication_event_id").Result()
 	require.NoError(t, err)
 	return eventID
 }
