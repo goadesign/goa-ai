@@ -140,6 +140,7 @@ func (c *Client) Search(ctx context.Context, p *SearchPayload) (res *SearchResul
 //   - "not_found" (type *goa.ServiceError)
 //   - "validation_error" (type *goa.ServiceError)
 //   - "service_unavailable" (type *goa.ServiceError)
+//   - "call_not_admitted" (type *goa.ServiceError)
 //   - error: internal error
 func (c *Client) CallTool(ctx context.Context, p *CallToolPayload) (res *CallToolResult, err error) {
 	var ires any

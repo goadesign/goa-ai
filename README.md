@@ -81,6 +81,11 @@ already-published request events they own. At execution deadline, or sooner if
 that lease disappears, registry-owned settlement publishes `outcome_unknown`
 because the effect may have occurred; execution never transfers to another
 provider and the canonical terminal remains retained.
+Registry startup strictly validates every authoritative catalog record and
+fails before serving if any persisted value uses an incompatible shape. A new
+call that fails catalog or provider-health checks before record creation returns
+typed `call_not_admitted`, so executors may safely replan; only failures at or
+after admission become `outcome_unknown`.
 `Serve` also exposes the canonical ToolUseID through context for durable method
 deduplication without changing tool payloads. Workers recheck the
 absolute deadline when dispatching local backlog and acknowledge expired calls

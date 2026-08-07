@@ -57,7 +57,9 @@ type Service interface {
 	// Search toolsets by keyword matching name, description, or tags
 	Search(context.Context, *SearchPayload) (res *SearchResult, err error)
 	// Reject consumers whose required runtime-owned wire protocol version differs
-	// from the registry, then admit or attach to one run-scoped tool call. The
+	// from the registry, then admit or attach to one run-scoped tool call. Catalog
+	// or provider-health failures proven to occur before call-record creation
+	// return call_not_admitted, so callers may safely choose another plan. The
 	// registry atomically owns initial publication and terminal completion by
 	// tool_use_id: the call record retains the full canonical terminal through its
 	// absolute expiration and restores it when bounded result-stream history was
@@ -458,4 +460,9 @@ func MakeAdmissionConflict(err error) *goa.ServiceError {
 // MakeNotFound builds a goa.ServiceError from an error.
 func MakeNotFound(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "not_found", false, false, false)
+}
+
+// MakeCallNotAdmitted builds a goa.ServiceError from an error.
+func MakeCallNotAdmitted(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "call_not_admitted", false, false, false)
 }

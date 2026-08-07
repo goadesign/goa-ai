@@ -20,6 +20,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
+	goa "goa.design/goa/v3/pkg"
 	"goa.design/pulse/streaming/options"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -193,6 +194,9 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "call tool via registry failed")
+		if result, classified := preAdmissionFailureResult(call, meta.ToolCallID, err); classified {
+			return runtime.Executed(result), nil
+		}
 		return runtime.Executed(e.outcomeUnknownResult(call, meta, err)), nil
 	}
 	if err := toolregistry.ValidateToolCallRef(callRef); err != nil {
@@ -420,6 +424,42 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 	}
 }
 
+// preAdmissionFailureResult converts only generated registry errors that prove
+// no call record exists. Other failures remain ambiguous because the registry
+// may have admitted the call before the response was lost.
+func preAdmissionFailureResult(
+	call *planner.ToolRequest,
+	toolCallID string,
+	err error,
+) (*planner.ToolResult, bool) {
+	var serviceErr *goa.ServiceError
+	if !errors.As(err, &serviceErr) {
+		return nil, false
+	}
+	switch serviceErr.Name {
+	case "call_not_admitted", "not_found":
+		return &planner.ToolResult{
+			Name:       call.Name,
+			ToolCallID: toolCallID,
+			Failure: &planner.ToolFailure{
+				Kind:  planner.FailureUnavailable,
+				Error: planner.ToolErrorFromError(err),
+				Recovery: planner.RecoveryDirective{
+					Action: planner.RecoveryReplan,
+				},
+			},
+		}, true
+	case "validation_error":
+		return internalFailureResult(
+			call.Name,
+			toolCallID,
+			fmt.Sprintf("registry rejected a codec-validated tool call: %v", err),
+		), true
+	default:
+		return nil, false
+	}
+}
+
 // outcomeUnknownResult terminates planning after an invocation may have been
 // admitted. A replacement call could repeat an external side effect.
 func (e *Executor) outcomeUnknownResult(
@@ -436,7 +476,7 @@ func (e *Executor) outcomeUnknownResult(
 		Name:       call.Name,
 		ToolCallID: meta.ToolCallID,
 		Failure: &planner.ToolFailure{
-			Kind:  planner.FailureUnavailable,
+			Kind:  planner.FailureInternal,
 			Error: planner.ToolErrorFromError(outcomeErr),
 			Recovery: planner.RecoveryDirective{
 				Action: planner.RecoveryFinish,

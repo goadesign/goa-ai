@@ -182,6 +182,11 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	// Create the one authoritative toolset catalog shared by the service and
 	// health tracker.
 	catalog := newToolsetCatalog(authoritativeCatalogMap{Map: registryMap, rdb: cfg.Redis}, clock)
+	if err := catalog.validatePersistedEntries(ctx); err != nil {
+		registryMap.Close()
+		closeErr := pulseClient.Close(ctx)
+		return nil, errors.Join(fmt.Errorf("validate persisted toolset catalog: %w", err), closeErr)
+	}
 
 	// Create health tracker.
 	healthTracker, err := newHealthTracker(streamManager, catalog, cfg.Redis, registryMapName, healthOpts...)

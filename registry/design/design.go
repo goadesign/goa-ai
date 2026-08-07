@@ -24,6 +24,7 @@ var _ = API("registry", func() {
 	Error("not_found", ErrorResult, "Toolset or tool not found")
 	Error("validation_error", ErrorResult, "Payload validation failed")
 	Error("service_unavailable", ErrorResult, "Registry routing infrastructure or healthy providers are unavailable")
+	Error("call_not_admitted", ErrorResult, "The registry proved that no call record was created and no provider could execute the request")
 	Error("admission_blocked", ErrorResult, "Another admission still has active provider leases")
 	Error("admission_retired", ErrorResult, "The requested admission was intentionally retired")
 	Error("admission_conflict", ErrorResult, "The expected admission token does not match the catalog record")
@@ -33,6 +34,7 @@ var _ = API("registry", func() {
 		Response("not_found", CodeNotFound)
 		Response("validation_error", CodeInvalidArgument)
 		Response("service_unavailable", CodeUnavailable)
+		Response("call_not_admitted", CodeUnavailable)
 		Response("admission_blocked", CodeUnavailable)
 		Response("admission_retired", CodeFailedPrecondition)
 		Response("admission_conflict", CodeFailedPrecondition)
@@ -116,12 +118,13 @@ var _ = Service("registry", func() {
 	// ---- Invocation Operations ----
 
 	Method("CallTool", func() {
-		Description("Reject consumers whose required runtime-owned wire protocol version differs from the registry, then admit or attach to one run-scoped tool call. The registry atomically owns initial publication and terminal completion by tool_use_id: the call record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed. Before returning, the registry establishes the result stream so the caller can create a reader immediately.")
+		Description("Reject consumers whose required runtime-owned wire protocol version differs from the registry, then admit or attach to one run-scoped tool call. Catalog or provider-health failures proven to occur before call-record creation return call_not_admitted, so callers may safely choose another plan. The registry atomically owns initial publication and terminal completion by tool_use_id: the call record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed. Before returning, the registry establishes the result stream so the caller can create a reader immediately.")
 		Payload(CallToolPayload)
 		Result(CallToolResult)
 		Error("not_found")
 		Error("validation_error")
 		Error("service_unavailable")
+		Error("call_not_admitted")
 		GRPC(func() {})
 	})
 

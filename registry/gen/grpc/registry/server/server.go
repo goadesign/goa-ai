@@ -291,6 +291,8 @@ func (s *Server) CallTool(ctx context.Context, message *registrypb.CallToolReque
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
 			case "service_unavailable":
 				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			case "call_not_admitted":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
 			}
 		}
 		return nil, goagrpc.EncodeError(err)

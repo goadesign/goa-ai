@@ -576,7 +576,7 @@ func TestRetryToolRejectsAdmissionRolloverBeforePublication(t *testing.T) {
 	assert.Len(t, streams.messages[toolset.Name], 1)
 }
 
-func TestCallToolMapsHealthInfrastructureFailure(t *testing.T) {
+func TestCallToolMapsPreAdmissionHealthFailures(t *testing.T) {
 	t.Parallel()
 
 	toolset := &genregistry.Toolset{
@@ -588,29 +588,43 @@ func TestCallToolMapsHealthInfrastructureFailure(t *testing.T) {
 		}},
 		RegisteredAt: "2024-01-15T10:30:00Z",
 	}
-	health := newMockHealthTracker()
-	health.healthErr = errors.New("Redis unavailable")
-	svc, err := newTestServiceForServiceTests(
-		mockpulse.NewClient(t),
-		newMockStreamManagerForService(),
-		health,
-		toolset,
-	)
-	require.NoError(t, err)
+	tests := []struct {
+		name      string
+		healthy   bool
+		healthErr error
+	}{
+		{name: "infrastructure failure", healthy: true, healthErr: errors.New("Redis unavailable")},
+		{name: "no healthy provider"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			health := newMockHealthTracker()
+			health.healthy = test.healthy
+			health.healthErr = test.healthErr
+			svc, err := newTestServiceForServiceTests(
+				mockpulse.NewClient(t),
+				newMockStreamManagerForService(),
+				health,
+				toolset,
+			)
+			require.NoError(t, err)
 
-	_, err = svc.CallTool(context.Background(), &genregistry.CallToolPayload{
-		Toolset:             "toolset-1",
-		Tool:                "lookup",
-		PayloadJSON:         []byte(`{}`),
-		WireProtocolVersion: toolregistry.WireProtocolVersion,
-		Meta: &genregistry.ToolCallMeta{
-			RunID:     "run-1",
-			SessionID: "session-1",
-		},
-	})
-	var serviceErr *goa.ServiceError
-	require.ErrorAs(t, err, &serviceErr)
-	assert.Equal(t, "service_unavailable", serviceErr.Name)
+			_, err = svc.CallTool(context.Background(), &genregistry.CallToolPayload{
+				Toolset:             "toolset-1",
+				Tool:                "lookup",
+				PayloadJSON:         []byte(`{}`),
+				WireProtocolVersion: toolregistry.WireProtocolVersion,
+				Meta: &genregistry.ToolCallMeta{
+					RunID:      "run-1",
+					SessionID:  "test-session",
+					ToolCallID: "call-1",
+				},
+			})
+			var serviceErr *goa.ServiceError
+			require.ErrorAs(t, err, &serviceErr)
+			assert.Equal(t, "call_not_admitted", serviceErr.Name)
+		})
+	}
 }
 
 func TestNewServiceRejectsUnsafeRetentionAndLeaseDurations(t *testing.T) {

@@ -1,8 +1,9 @@
-# Registry Hard-Cutover Cleanup
+# Registry Admission and Catalog Cutovers
 
-This runbook is only for the one-time cutover from pre-admission registry data
-to the server-owned admission record. It is not a recurring deployment
-procedure and must not become runtime fallback logic.
+This runbook owns the permanent hard-cutover contract for registry admission
+and persisted catalog changes. The legacy-data cleanup section applies only to
+the one-time move from pre-admission data. Neither path may become runtime
+fallback logic.
 
 ## Permanent Contract
 
@@ -12,6 +13,9 @@ Keep all of these mechanisms after cleanup:
   toolset metadata, wire protocol version, canonical schema fingerprint,
   admission revision, registration token, Redis `RegisteredAt`, the provider
   lease map, and the permanent exact set of every retired registration token.
+- Registry construction authoritatively reads and strictly validates every
+  catalog entry before health tracking or serving. One incompatible record
+  keeps the registry unready and names every affected key for offline cleanup.
 - `AdmissionRevision` is required. Every replica of one fenced admission shares
   it. Same-contract scaling and RollingUpdate reuse it; a new schema or
   intentionally new execution fence changes it.
@@ -76,18 +80,18 @@ Do not cut over until every provider and registry consumer has regenerated and:
    `Unregister`, and any client-owned stop/start transaction.
 8. Treats `admission_blocked` as retryable and `admission_retired` as
    permanent.
-8. Uses the token on every call, result, and output delta boundary.
-9. Maps `execution_deadline` and `result_stream_expires_at` from
+9. Uses the token on every call, result, and output delta boundary.
+10. Maps `execution_deadline` and `result_stream_expires_at` from
    `CallToolResult` into the matching `ToolCallRef` fields. Executors wait only
    through execution deadline and do not configure or destroy result streams
    independently.
-10. Supplies a required stable `tool_call_id`; transport retries reuse it.
-11. Uses independent Pulse Readers from oldest for result history and does not
+11. Supplies a required stable `tool_call_id`; transport retries reuse it.
+12. Uses independent Pulse Readers from oldest for result history and does not
     configure a result sink name, acknowledgement, or keepalive.
-12. Sends the generated `WireProtocolVersion` on every `CallTool` and
+13. Sends the generated `WireProtocolVersion` on every `CallTool` and
     `RetryTool`; it never retries with another version or interprets version
     rejection as provider unavailability.
-13. Implements executor `RetryTool` with the generated registry operation,
+14. Implements executor `RetryTool` with the generated registry operation,
     passing the original `ToolCallRef.RegistrationToken` as
     `ExpectedRegistrationToken`. It never calls `CallTool` to handle overload.
 
@@ -193,5 +197,5 @@ Retain evidence that:
   still requires the stopped restore/rebootstrap procedure above.
 - No deployment persists a registration token or calls rollout `Unregister`.
 
-After evidence is archived, delete this runbook. Do not remove the permanent
-contract mechanisms listed above.
+Archive the one-time cleanup evidence after the legacy cutover. Keep this
+runbook as the permanent contract for future admission and catalog cutovers.

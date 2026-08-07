@@ -265,6 +265,12 @@ pongs authenticate that pair and the responding incarnation atomically.
 Aggregate health and new-call routing require one unexpired, non-draining lease
 plus a fresh current-epoch pong.
 
+Registry construction enumerates every authoritative catalog key and applies
+the same strict current-format parser used by registration and routing before
+health tracking starts. Unknown fields, legacy lease values, or any other
+incompatible record keep the registry unready and report every affected key;
+startup never rewrites or decodes an older format.
+
 The wire-visible `RegistrationToken` is not a secret. It is the lowercase
 SHA-256 digest of the domain `goa-ai/tool-registry-admission/v2\0`, the uint32
 big-endian wire protocol version, the raw 32-byte canonical schema fingerprint,
@@ -367,6 +373,12 @@ record stores a token-independent digest of toolset, tool, payload, and call
 metadata plus the admitted registration token. `CallTool` attaches to this
 record before current catalog or health lookup; an exact retained retry therefore
 returns its original token and deadlines after retirement or replacement.
+For a new call, catalog and provider-health failures before record creation
+return typed `call_not_admitted`; the executor may safely replan because no
+provider could observe the request. Generated `not_found` and
+`validation_error` remain actionable pre-admission responses. Errors at or
+after call-record creation remain ambiguous and produce `outcome_unknown`,
+which forbids replacement execution because an effect may have occurred.
 `CallTool` owns only initial admission and publication. `RetryTool` owns overload
 republication and requires both the
 existing admission record and its still-active token. The request-stream append

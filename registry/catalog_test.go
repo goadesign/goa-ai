@@ -7,7 +7,9 @@ package registry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -209,6 +211,108 @@ func TestCatalogRejectsPersistedMismatchedWireProtocol(t *testing.T) {
 	require.NoError(t, err)
 	_, err = parseCatalogEntry("test.toolset", body)
 	require.ErrorContains(t, err, "invalid wire protocol version")
+}
+
+func TestCatalogValidatesEveryPersistedEntry(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_700_000_000, 0)
+	validEntry := testPersistedCatalogEntry(t, "valid.toolset", now)
+	validBody, err := marshalCatalogEntry(validEntry)
+	require.NoError(t, err)
+	numericLeaseBody := strings.Replace(
+		validBody,
+		fmt.Sprintf(
+			`{"expires_at_unix_milli":%d,"draining":false}`,
+			now.Add(time.Minute).UnixMilli(),
+		),
+		"123",
+		1,
+	)
+	require.NotEqual(t, validBody, numericLeaseBody)
+	unknownFieldBody := strings.TrimSuffix(validBody, "}") + `,"future_field":true}`
+
+	tests := []struct {
+		name    string
+		content map[string]string
+		wantErr string
+	}{
+		{
+			name:    "empty bootstrap",
+			content: map[string]string{},
+		},
+		{
+			name: "valid catalog",
+			content: map[string]string{
+				toolsetCatalogKey("valid.toolset"): validBody,
+			},
+		},
+		{
+			name: "numeric provider lease",
+			content: map[string]string{
+				toolsetCatalogKey("valid.toolset"): numericLeaseBody,
+			},
+			wantErr: "provider_leases",
+		},
+		{
+			name: "unknown persisted field",
+			content: map[string]string{
+				toolsetCatalogKey("valid.toolset"): unknownFieldBody,
+			},
+			wantErr: "unknown field",
+		},
+		{
+			name: "unexpected key",
+			content: map[string]string{
+				"unexpected": validBody,
+			},
+			wantErr: `catalog key "unexpected" has invalid prefix`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			m := newTestCatalogMap()
+			m.content = test.content
+			catalog := newToolsetCatalog(m, newTestTimeSource(now))
+			err := catalog.validatePersistedEntries(context.Background())
+			if test.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
+func TestCatalogValidationReportsEveryIncompatibleKey(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_700_000_000, 0)
+	first := testPersistedCatalogEntry(t, "first.toolset", now)
+	first.WireProtocolVersion++
+	firstBody, err := marshalCatalogEntry(first)
+	require.NoError(t, err)
+	second := testPersistedCatalogEntry(t, "second.toolset", now)
+	secondBody, err := marshalCatalogEntry(second)
+	require.NoError(t, err)
+	secondBody = strings.TrimSuffix(secondBody, "}") + `,"future_field":true}`
+	valid := testPersistedCatalogEntry(t, "valid.toolset", now)
+	validBody, err := marshalCatalogEntry(valid)
+	require.NoError(t, err)
+	m := newTestCatalogMap()
+	m.content = map[string]string{
+		toolsetCatalogKey("first.toolset"):  firstBody,
+		toolsetCatalogKey("second.toolset"): secondBody,
+		toolsetCatalogKey("valid.toolset"):  validBody,
+	}
+
+	err = newToolsetCatalog(m, newTestTimeSource(now)).validatePersistedEntries(context.Background())
+
+	require.ErrorContains(t, err, toolsetCatalogKey("first.toolset"))
+	require.ErrorContains(t, err, toolsetCatalogKey("second.toolset"))
+	assert.NotContains(t, err.Error(), toolsetCatalogKey("valid.toolset"))
 }
 
 func TestCatalogDelayedOldIncarnationReleaseCannotDeleteReplacement(t *testing.T) {
@@ -498,6 +602,24 @@ func testCatalogToolset(name, description string, tags []string) *genregistry.To
 		Tags:        tags,
 		Tools:       []*genregistry.ToolSchema{},
 	}
+}
+
+// testPersistedCatalogEntry builds one canonical active record for startup
+// validation tests without depending on a pre-populated catalog map.
+func testPersistedCatalogEntry(t *testing.T, name string, now time.Time) catalogEntry {
+	t.Helper()
+
+	catalog := newToolsetCatalog(newTestCatalogMap(), newTestTimeSource(now))
+	entry, err := catalog.Register(
+		context.Background(),
+		testCatalogToolset(name, "test", nil),
+		testAdmissionRevisionA,
+		"provider",
+		testIncarnationA,
+		time.Minute,
+	)
+	require.NoError(t, err)
+	return entry
 }
 
 func newTestCatalogMap() *testCatalogMap {

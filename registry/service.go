@@ -18,6 +18,7 @@ import (
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
+	goa "goa.design/goa/v3/pkg"
 	streamopts "goa.design/pulse/streaming/options"
 )
 
@@ -394,7 +395,7 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		p.Meta,
 	)
 	if err != nil {
-		return nil, err
+		return nil, preAdmissionError(err)
 	}
 	admission, err := s.callAdmissions.Attach(
 		ctx,
@@ -417,10 +418,10 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 
 	registration, err := s.activeRegistration(ctx, p.Toolset)
 	if err != nil {
-		return nil, err
+		return nil, preAdmissionError(err)
 	}
 	if err := s.validatePreparedToolCall(ctx, prepared, registration); err != nil {
-		return nil, err
+		return nil, preAdmissionError(err)
 	}
 	admission, _, err = s.callAdmissions.Ensure(
 		ctx,
@@ -878,6 +879,20 @@ func (s *Service) activeRegistration(ctx context.Context, toolset string) (catal
 		return catalogEntry{}, genregistry.MakeNotFound(fmt.Errorf("toolset %q not found", toolset))
 	}
 	return catalogEntry{}, genregistry.MakeServiceUnavailable(fmt.Errorf("get toolset: %w", err))
+}
+
+// preAdmissionError preserves actionable caller or tool lookup errors and marks
+// every other failure before callAdmissions.Ensure as definitely not admitted.
+// The executor may replan because no provider could have observed the request.
+func preAdmissionError(err error) error {
+	var serviceErr *goa.ServiceError
+	if errors.As(err, &serviceErr) {
+		switch serviceErr.Name {
+		case "not_found", "validation_error":
+			return err
+		}
+	}
+	return genregistry.MakeCallNotAdmitted(err)
 }
 
 // prepareToolCallIdentity derives the token-independent immutable request

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"sort"
 	"strings"
@@ -99,6 +100,38 @@ var (
 // newToolsetCatalog constructs the canonical admission store.
 func newToolsetCatalog(m catalogMap, clock registryTimeSource) *toolsetCatalog {
 	return &toolsetCatalog{m: m, clock: clock}
+}
+
+// validatePersistedEntries reads every authoritative catalog value and applies
+// the same strict parser used by registration, routing, and health. Construction
+// fails with every incompatible key named so cleanup can remove only the
+// affected records while the registry remains offline.
+func (c *toolsetCatalog) validatePersistedEntries(ctx context.Context) error {
+	keys, err := c.m.AuthoritativeKeys(ctx)
+	if err != nil {
+		return fmt.Errorf("enumerate persisted catalog: %w", err)
+	}
+	sort.Strings(keys)
+	var invalid []error
+	for _, key := range keys {
+		if !strings.HasPrefix(key, toolsetCatalogKeyPrefix) {
+			invalid = append(invalid, fmt.Errorf("catalog key %q has invalid prefix", key))
+			continue
+		}
+		raw, exists, err := c.exactRaw(ctx, key)
+		if err != nil {
+			invalid = append(invalid, err)
+			continue
+		}
+		if !exists {
+			continue
+		}
+		name := strings.TrimPrefix(key, toolsetCatalogKeyPrefix)
+		if _, err := parseCatalogEntry(name, raw); err != nil {
+			invalid = append(invalid, fmt.Errorf("catalog key %q: %w", key, err))
+		}
+	}
+	return errors.Join(invalid...)
 }
 
 // Register atomically creates, renews, or replaces one admission and provider
@@ -788,8 +821,13 @@ func marshalCatalogEntry(entry catalogEntry) (string, error) {
 // parseCatalogEntry validates persisted admission identity and lease state.
 func parseCatalogEntry(name, body string) (catalogEntry, error) {
 	var entry catalogEntry
-	if err := json.Unmarshal([]byte(body), &entry); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&entry); err != nil {
 		return catalogEntry{}, fmt.Errorf("unmarshal toolset %q: %w", name, err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return catalogEntry{}, fmt.Errorf("unmarshal toolset %q: trailing JSON value", name)
 	}
 	if entry.Toolset == nil || entry.Toolset.Name != name {
 		return catalogEntry{}, fmt.Errorf("toolset %q has invalid toolset payload", name)

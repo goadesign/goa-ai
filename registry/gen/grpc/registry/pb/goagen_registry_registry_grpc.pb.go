@@ -90,7 +90,9 @@ type RegistryClient interface {
 	// Search toolsets by keyword matching name, description, or tags
 	Search(ctx context.Context, in *SearchRequest, opts ...grpc.CallOption) (*SearchResponse, error)
 	// Reject consumers whose required runtime-owned wire protocol version differs
-	// from the registry, then admit or attach to one run-scoped tool call. The
+	// from the registry, then admit or attach to one run-scoped tool call. Catalog
+	// or provider-health failures proven to occur before call-record creation
+	// return call_not_admitted, so callers may safely choose another plan. The
 	// registry atomically owns initial publication and terminal completion by
 	// tool_use_id: the call record retains the full canonical terminal through its
 	// absolute expiration and restores it when bounded result-stream history was
@@ -329,7 +331,9 @@ type RegistryServer interface {
 	// Search toolsets by keyword matching name, description, or tags
 	Search(context.Context, *SearchRequest) (*SearchResponse, error)
 	// Reject consumers whose required runtime-owned wire protocol version differs
-	// from the registry, then admit or attach to one run-scoped tool call. The
+	// from the registry, then admit or attach to one run-scoped tool call. Catalog
+	// or provider-health failures proven to occur before call-record creation
+	// return call_not_admitted, so callers may safely choose another plan. The
 	// registry atomically owns initial publication and terminal completion by
 	// tool_use_id: the call record retains the full canonical terminal through its
 	// absolute expiration and restores it when bounded result-stream history was
