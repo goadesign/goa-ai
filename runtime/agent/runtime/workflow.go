@@ -17,18 +17,14 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/interrupt"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
 const (
-	// Minimal viable timeout for scheduling an activity. If remaining time is
-	// less than or equal to this value, the runtime should not schedule new work.
-	minActivityTimeout = 3 * time.Second
-
-	// Minimal viable grace period for finalization. If remaining time is
-	// less than or equal to this value, the runtime should finalize with a user-facing message.
+	// defaultFinalizerGrace is the default extension from Budget to Hard.
 	defaultFinalizerGrace = 10 * time.Second
 )
 
@@ -131,10 +127,13 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			r.logWarn(termCtx, "run completion build failed", buildErr, "run_id", input.RunID, "agent_id", input.AgentID)
 			return
 		}
-		if err := r.publishHookErr(
+		if err := r.publishHookWithOptions(
 			termCtx,
 			completed,
 			turnID,
+			engine.ActivityOptions{
+				ScheduleToCloseTimeout: 10 * time.Second,
+			},
 		); err != nil {
 			r.logWarn(termCtx, "run completed hook failed", err, "run_id", input.RunID, "agent_id", input.AgentID)
 		}
@@ -224,6 +223,29 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	firstOutput, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, planOpts, startReq, budgetDeadline)
 	if err != nil {
+		if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) &&
+			!budgetDeadline.IsZero() {
+			out, finalizeErr := r.finalizeWithPlanner(
+				wfCtx,
+				reg,
+				input,
+				planInput,
+				nil,
+				nil,
+				model.TokenUsage{},
+				planInput.RunContext.Attempt+1,
+				turnID,
+				planner.TerminationReasonTimeBudget,
+				hardDeadline,
+			)
+			if finalizeErr != nil {
+				finalErr = finalizeErr
+				finalStatus = terminalRunStatusForError(finalizeErr)
+				return nil, finalizeErr
+			}
+			finalStatus = runStatusSuccess
+			return out, nil
+		}
 		r.logger.Error(wfCtx.Context(), "Plan activity failed", "error", err)
 		finalErr = err
 		finalStatus = terminalRunStatusForError(err)
@@ -293,7 +315,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		turnID,
 		parentTracker,
 		ctrl,
-		grace,
 	)
 	if err != nil {
 		finalErr = err
@@ -317,7 +338,6 @@ func (r *Runtime) runLoopWithState(
 	turnID string,
 	parentTracker *childTracker,
 	ctrl *interrupt.Controller,
-	finalizerGrace time.Duration,
 ) (*RunOutput, error) {
 	if base == nil {
 		return nil, errors.New("base plan input is required")
@@ -373,9 +393,8 @@ func (r *Runtime) runLoopWithState(
 		ctrl,
 		parentTracker,
 		runDeadlines{
-			Budget:         budgetDeadline,
-			Hard:           hardDeadline,
-			FinalizerGrace: finalizerGrace,
+			Budget: budgetDeadline,
+			Hard:   hardDeadline,
 		},
 		resumeOpts,
 		toolOpts,

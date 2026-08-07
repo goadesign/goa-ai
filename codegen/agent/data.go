@@ -188,7 +188,7 @@ type (
 	// The policy is enforced by the agent runtime during workflow execution,
 	// not at code generation time.
 	RunPolicyData struct {
-		// TimeBudget is the maximum wall-clock time allocated to the run.
+		// TimeBudget is the active-time budget for planner and tool work.
 		TimeBudget time.Duration
 		// PlanTimeout applies to the Plan and Resume StartToClose timeouts when set.
 		PlanTimeout time.Duration

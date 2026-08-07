@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -105,21 +106,22 @@ func (r *Runtime) executeGroupedToolCalls(
 ) ([]*ToolExecutionResult, bool, error) {
 	var out []*ToolExecutionResult
 	timedOutAny := false
+	var executionErr error
 	for i := range grouped {
 		opt := toolOpts
 		if timeouts[i] > 0 {
 			opt.StartToCloseTimeout = timeouts[i]
 		}
 		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, base.Messages, grouped[i], expectedChildren, parentTracker, finishBy)
-		if err != nil {
-			return nil, false, err
-		}
 		out = append(out, sub...)
 		if timedOut {
 			timedOutAny = true
 		}
+		if err != nil {
+			executionErr = errors.Join(executionErr, err)
+		}
 	}
-	return out, timedOutAny, nil
+	return out, timedOutAny, executionErr
 }
 
 // appendUserToolRecordResults appends every provider-correlated tool_result in
@@ -222,7 +224,8 @@ func (r *Runtime) filterResumeRequiredToolRecords(records []stepToolRecord) ([]s
 		if err := validateStepToolRecord("filter resume-required tool records", record); err != nil {
 			return nil, err
 		}
-		if !r.toolResultRequiresResume(record.call, record.result) {
+		if !record.requiresResume &&
+			!r.toolResultRequiresResume(record.call, record.result) {
 			continue
 		}
 		filtered = append(filtered, record)

@@ -159,21 +159,26 @@ boundary rather than reopening execution.
 ### Run Timing and Indefinite Awaits
 
 The workflow loop is the sole owner of run-duration enforcement. `TimeBudget`
-and `FinalizerGrace` (`RunPolicy`) become a deterministic "Hard" deadline
-tracked in workflow code; the run finalizes gracefully through the normal
-terminal-hook path once that deadline elapses during active planner/tool
-work. Time spent blocked on an external-input await (`await_clarification`,
-`await_confirmation`, provided tool results) is explicitly excluded from that
-deadline, so an operator can take arbitrarily long to respond without
-burning the run's active-time budget.
+becomes the deterministic Budget deadline for active planner and tool work.
+The Hard deadline is Budget plus `FinalizerGrace`; it bounds the final planner
+activity after budget exhaustion. Terminal hook persistence uses its own
+completion context after planner execution. Time spent blocked on an
+external-input await (`await_clarification`, `await_confirmation`, provided
+tool results) extends both deadlines, so an operator can take arbitrarily long
+to respond without burning the run's active-time budget.
 
 Planner activities project the active deadline onto
 `ScheduleToCloseTimeout`, which limits the complete queue/retry/backoff
 lifetime. `ScheduleToStartTimeout` and `StartToCloseTimeout` retain their
 separate queue-wait and attempt-failure semantics. Initial and resumed planning
 receive the `TimeBudget` deadline; planner finalization alone receives the Hard
-deadline. Engine adapters identify schedule-to-close expiration explicitly, so
-the runtime never infers timeout ownership from the current workflow time.
+deadline. When initial or resumed planning exhausts the budget deadline, the
+runtime performs one explicit finalization turn inside the reserved
+`FinalizerGrace`. Engine adapters identify schedule-to-close expiration
+explicitly, so the runtime never infers timeout ownership from workflow time.
+Planner results that already completed are consumed at the Budget boundary:
+terminal and await results remain valid, budgeted tool plans are rejected
+before transcript commit, and runtime bookkeeping completes inside Hard.
 
 Engines must never impose a second, competing wall-clock ceiling (for
 example Temporal's `WorkflowRunTimeout`) on top of this. Unlike the

@@ -90,8 +90,9 @@ func DefaultCaps(opts ...CapsOption) {
 	}
 }
 
-// TimeBudget sets the maximum execution time for the agent. The agent will be
-// stopped if it exceeds this duration.
+// TimeBudget sets the active-time budget for planner and tool work.
+// External-input waits pause this budget, and final planner work uses a
+// separate grace window.
 //
 // TimeBudget must appear in a RunPolicy expression.
 //

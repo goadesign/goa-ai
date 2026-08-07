@@ -627,9 +627,9 @@ func WithRunMaxConsecutiveFailedToolCalls(n int) RunOption {
 	}
 }
 
-// WithRunTimeBudget sets the semantic wall-clock budget for planner and tool
-// work in the run. The runtime expands this into an engine run timeout by
-// adding finalizer reserve and engine headroom. Zero means no override.
+// WithRunTimeBudget sets the active-time budget for planner and tool work.
+// External-input waits pause the budget, and the runtime does not derive an
+// engine run timeout. Zero means no override.
 func WithRunTimeBudget(d time.Duration) RunOption {
 	return func(in *RunInput) {
 		if in.Policy == nil {
@@ -1578,10 +1578,11 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		TaskQueue: defaultQueue,
 		Input:     input,
 		// RunTimeout is intentionally left zero (engine-unbounded): active-time
-		// enforcement is owned by the workflow's own Hard deadline (run_timing.go,
-		// workflow_loop.go), which correctly exempts indefinite external-input
-		// awaits. An engine-level ceiling here would race that deadline and can
-		// force-close the workflow mid-await with no chance to finalize.
+		// enforcement is owned by the workflow's Budget and Hard deadlines
+		// (run_timing.go, workflow_loop.go), which correctly exempt indefinite
+		// external-input awaits. An engine-level ceiling here would race those
+		// deadlines and can force-close the workflow mid-await with no chance to
+		// finalize.
 	}
 	if opts := input.WorkflowOptions; opts != nil {
 		if opts.TaskQueue != "" {

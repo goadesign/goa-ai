@@ -514,7 +514,7 @@ the toolsets with the runtime.
 | `DefaultCaps(opts...)` | Configure resource limits |
 | `MaxToolCalls(n)` | Cap budgeted (non-bookkeeping) tool invocations per run |
 | `MaxConsecutiveFailedToolCalls(n)` | Cap sequential failures before aborting |
-| `TimeBudget(duration)` | Set maximum execution duration |
+| `TimeBudget(duration)` | Set the active planner/tool work budget; external waits pause it |
 | `InterruptsAllowed(bool)` | Enable/disable user interruptions |
 | `OnMissingFields(action)` | Configure validation behavior |
 

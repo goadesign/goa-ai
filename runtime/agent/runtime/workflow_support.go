@@ -23,6 +23,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 // finalizeWithPlanner asks the planner to finish after budgeted work is
@@ -75,35 +76,8 @@ func (r *Runtime) finalizeWithPlanner(
 	if err != nil {
 		return nil, err
 	}
-	// When finalizing, ensure the message history ends in a valid state for the
-	// provider. If the last message was an assistant turn with tool_use (e.g.
-	// finalization happened while external results were still outstanding), append
-	// user message with error results for those tools before requesting the
-	// final response.
-	if len(messages) > 0 {
-		last := messages[len(messages)-1]
-		if last.Role == model.ConversationRoleAssistant {
-			var unanswered []model.ToolUsePart
-			for _, p := range last.Parts {
-				if tu, ok := p.(model.ToolUsePart); ok {
-					unanswered = append(unanswered, tu)
-				}
-			}
-			if len(unanswered) > 0 {
-				parts := make([]model.Part, 0, len(unanswered))
-				for _, tu := range unanswered {
-					parts = append(parts, model.ToolResultPart{
-						ToolUseID: tu.ID,
-						Content:   "Finalized before a tool result was provided for this request.",
-						IsError:   true,
-					})
-				}
-				messages = append(messages, &model.Message{
-					Role:  model.ConversationRoleUser,
-					Parts: parts,
-				})
-			}
-		}
+	if err := transcript.ValidatePlannerTranscript(messages); err != nil {
+		return nil, fmt.Errorf("cannot finalize invalid planner transcript: %w", err)
 	}
 
 	if hint != "" {
@@ -191,6 +165,9 @@ func (r *Runtime) finalizeWithPlanner(
 	if output == nil || output.Result == nil {
 		return nil, errors.New(reasonText)
 	}
+	if err := validateFinalizationPlanResult(output.Result); err != nil {
+		return nil, fmt.Errorf("%s: %w", reasonText, err)
+	}
 	aggUsage = addTokenUsage(aggUsage, output.Usage)
 	if isFinalizationTerminalToolPlan(output.Result) {
 		out, err := r.finishFinalizationTerminalToolCalls(
@@ -232,6 +209,27 @@ func (r *Runtime) finalizeWithPlanner(
 	return out, nil
 }
 
+// validateFinalizationPlanResult enforces the finalizer's closed result union:
+// one terminal payload, or terminal bookkeeping calls to execute.
+func validateFinalizationPlanResult(result *planner.PlanResult) error {
+	if result == nil {
+		return errors.New("finalization planner returned nil result")
+	}
+	if result.Await != nil {
+		return errors.New("finalization planner cannot await external input")
+	}
+	if result.SynthesizeAfterTools {
+		return errors.New("finalization planner cannot request another synthesis turn")
+	}
+	if len(result.ToolCalls) > 0 {
+		if result.FinalResponse != nil || result.FinalToolResult != nil {
+			return errors.New("finalization planner cannot combine tool calls with a terminal payload")
+		}
+		return nil
+	}
+	return validateTerminalPlanResult(result)
+}
+
 // isFinalizationTerminalToolPlan reports whether a finalization planner turn
 // requested a terminal tool as the terminal action instead of returning text.
 func isFinalizationTerminalToolPlan(result *planner.PlanResult) bool {
@@ -264,7 +262,15 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	if err := r.validateFinalizationTerminalToolCalls(output.Result.ToolCalls); err != nil {
 		return nil, err
 	}
+	if !hardDeadline.IsZero() && !wfCtx.Now().Before(hardDeadline) {
+		return nil, fmt.Errorf("finalization terminal tool step timed out: %w", context.DeadlineExceeded)
+	}
 	execBase := *base
+	// The finalizer uses the next attempt for deterministic tool IDs while the
+	// caller retains ownership of the canonical transcript.
+	defer func() {
+		base.Messages = execBase.Messages
+	}()
 	execBase.RunContext = base.RunContext
 	execBase.RunContext.Attempt = nextAttempt
 	toolOpts := reg.ExecuteToolActivityOptions
@@ -286,7 +292,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		nil,
 		runDeadlines{
 			Budget: hardDeadline,
-			Hard:   terminalToolExecutionDeadline(hardDeadline),
+			Hard:   hardDeadline,
 		},
 		reg.ResumeActivityOptions,
 		toolOpts,
@@ -296,36 +302,41 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		calls:  output.Result.ToolCalls,
 		kind:   stepKindTools,
 	}
+	program.calls = r.prepareAllowedCallsMetadata(input.AgentID, &execBase, program.calls, nil)
+	program.result.ToolCalls = program.calls
+	if err := validatePlanResultToolCallIDs(program.result); err != nil {
+		return nil, err
+	}
+	if err := loop.prepareToolStep(&program); err != nil {
+		return nil, err
+	}
+	if err := r.validateFinalizationTerminalToolCalls(program.allowed); err != nil {
+		return nil, err
+	}
+	if err := loop.commitSelectedModelResponse(program.result); err != nil {
+		return nil, err
+	}
 	batch := stepBatch{program: program}
 	confirmations, items, err := loop.executeToolStep(program, &batch)
 	if err != nil {
+		return nil, loop.failCommittedStep(&batch, err)
+	}
+	if err := loop.recordUnrecordedStepToolResults(&batch); err != nil {
 		return nil, err
 	}
 	if batch.finalize != nil {
 		return nil, fmt.Errorf("finalization terminal tool step requested nested finalization: %s", batch.finalize.reason)
 	}
 	if batch.timedOut {
-		return nil, errors.New("finalization terminal tool step timed out")
+		return nil, fmt.Errorf("finalization terminal tool step timed out: %w", context.DeadlineExceeded)
 	}
 	if len(confirmations) > 0 || len(items) > 0 {
 		return nil, errors.New("finalization terminal tool step cannot pause")
-	}
-	if err := loop.recordUnrecordedStepToolResults(&batch); err != nil {
-		return nil, err
 	}
 	if err := r.validateFinalizationTerminalToolRecords(batch.records); err != nil {
 		return nil, err
 	}
 	return r.finishAfterTerminalToolCalls(wfCtx.Context(), input, &execBase, st)
-}
-
-// terminalToolExecutionDeadline makes executeToolStep use hardDeadline as the
-// terminal tool finishBy without reserving another finalization window.
-func terminalToolExecutionDeadline(hardDeadline time.Time) time.Time {
-	if hardDeadline.IsZero() {
-		return time.Time{}
-	}
-	return hardDeadline.Add(minActivityTimeout)
 }
 
 // validateFinalizationTerminalToolCalls permits only terminal bookkeeping tools
@@ -374,32 +385,6 @@ func (r *Runtime) validateFinalizationTerminalToolRecords(records []stepToolReco
 		}
 	}
 	return nil
-}
-
-// finalizeWithPlannerIfAllowed centralizes the restricted-tool contract after
-// budgeted work is forbidden.
-//
-// Contract:
-//   - Retry restrictions constrain only future tool selection.
-//   - Terminal runtime policy reasons always finalize through the planner with
-//     no legal next budgeted tool step. Planners may retain a catalog to encode
-//     prior tool history and may return only a final response or terminal
-//     bookkeeping calls.
-func (r *Runtime) finalizeWithPlannerIfAllowed(
-	wfCtx engine.WorkflowContext,
-	reg AgentRegistration,
-	input *RunInput,
-	base *planner.PlanInput,
-	allToolResults []*planner.ToolResult,
-	allToolOutputs []*planner.ToolOutput,
-	aggUsage model.TokenUsage,
-	nextAttempt int,
-	turnID string,
-	reason planner.TerminationReason,
-	hardDeadline time.Time,
-) (*RunOutput, bool, error) {
-	out, err := r.finalizeWithPlanner(wfCtx, reg, input, base, allToolResults, allToolOutputs, aggUsage, nextAttempt, turnID, reason, hardDeadline)
-	return out, true, err
 }
 
 // handleInterrupts drains pause signals and blocks until a resume signal arrives.
@@ -588,7 +573,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	}
 	switch reg.Policy.OnMissingFields {
 	case MissingFieldsFinalize:
-		out, finalized, err := r.finalizeWithPlannerIfAllowed(
+		return r.finalizeWithPlanner(
 			wfCtx,
 			reg,
 			input,
@@ -599,15 +584,8 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			*nextAttempt,
 			turnID,
 			planner.TerminationReasonFailureCap,
-			time.Time{},
+			deadlines.Hard,
 		)
-		if err != nil {
-			return nil, err
-		}
-		if finalized {
-			return out, nil
-		}
-		return nil, fmt.Errorf("missing-fields finalize skipped without hard deadline")
 	case MissingFieldsAwaitClarification:
 		// Generate deterministic await ID for correlation safety.
 		awaitID := generateDeterministicAwaitID(base.RunContext.RunID, base.RunContext.TurnID, triggerTool, triggerCall)
@@ -754,15 +732,16 @@ func (r *Runtime) runPlanActivity(
 		rem := deadline.Sub(wfCtx.Now())
 		if rem <= 0 {
 			return nil, fmt.Errorf(
-				"plan activity %q deadline exceeded: %w",
+				"plan activity %q deadline exceeded: %w: %w",
 				activityName,
 				engine.ErrPlannerActivityDeadlineExceeded,
+				context.DeadlineExceeded,
 			)
 		}
 		callOpts.ScheduleToCloseTimeout = rem
 	}
 
-	out, err := wfCtx.ExecutePlannerActivity(wfCtx.Context(), engine.PlannerActivityCall{
+	out, err := wfCtx.ExecutePlannerActivity(engine.PlannerActivityCall{
 		Name:    activityName,
 		Input:   &input,
 		Options: callOpts,

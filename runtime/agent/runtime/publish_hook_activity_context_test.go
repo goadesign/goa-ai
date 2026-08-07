@@ -48,19 +48,19 @@ func (panicWorkflowContext) Detached() engine.WorkflowContext {
 	return panicWorkflowContext{}
 }
 
-func (panicWorkflowContext) PublishRecord(ctx context.Context, call engine.RecordActivityCall) error {
+func (panicWorkflowContext) PublishRecord(call engine.RecordActivityCall) error {
 	panic("unexpected PublishRecord from activity context")
 }
 
-func (panicWorkflowContext) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
+func (panicWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
 	return nil, nil
 }
 
-func (panicWorkflowContext) ExecuteToolActivity(ctx context.Context, call engine.ToolActivityCall) (*api.ToolOutput, error) {
+func (panicWorkflowContext) ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error) {
 	return nil, nil
 }
 
-func (panicWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
+func (panicWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
 	return nil, nil
 }
 
@@ -96,7 +96,7 @@ func (panicWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (engi
 	return nil, nil
 }
 
-func (panicWorkflowContext) Await(ctx context.Context, condition func() bool) error {
+func (panicWorkflowContext) Await(condition func() bool) error {
 	return nil
 }
 
@@ -335,8 +335,8 @@ func (w *cancelOnPlannerWorkflowContext) RunID() string {
 	return testRunID
 }
 
-func (w *cancelOnPlannerWorkflowContext) PublishRecord(ctx context.Context, call engine.RecordActivityCall) error {
-	if err := ctx.Err(); err != nil {
+func (w *cancelOnPlannerWorkflowContext) PublishRecord(call engine.RecordActivityCall) error {
+	if err := w.ctx.Err(); err != nil {
 		return err
 	}
 	// Record only successful terminal hook emission attempts.
@@ -346,16 +346,16 @@ func (w *cancelOnPlannerWorkflowContext) PublishRecord(ctx context.Context, call
 	return nil
 }
 
-func (w *cancelOnPlannerWorkflowContext) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
+func (w *cancelOnPlannerWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
 	w.cancel()
 	return nil, context.Canceled
 }
 
-func (w *cancelOnPlannerWorkflowContext) ExecuteToolActivity(ctx context.Context, call engine.ToolActivityCall) (*api.ToolOutput, error) {
+func (w *cancelOnPlannerWorkflowContext) ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error) {
 	return nil, errors.New("unexpected tool activity")
 }
 
-func (w *cancelOnPlannerWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
+func (w *cancelOnPlannerWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
 	return nil, errors.New("unexpected tool activity")
 }
 
@@ -391,7 +391,7 @@ func (w *cancelOnPlannerWorkflowContext) NewTimer(ctx context.Context, d time.Du
 	return nil, errors.New("unexpected timer")
 }
 
-func (w *cancelOnPlannerWorkflowContext) Await(ctx context.Context, condition func() bool) error {
+func (w *cancelOnPlannerWorkflowContext) Await(condition func() bool) error {
 	return errors.New("unexpected await")
 }
 

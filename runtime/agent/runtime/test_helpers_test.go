@@ -77,7 +77,6 @@ func (r *Runtime) runLoop(
 		turnID,
 		nil,
 		ctrl,
-		0,
 	)
 }
 
@@ -133,6 +132,7 @@ func testModelResponseWithUsage(
 // testWorkflowContext is a lightweight engine.WorkflowContext implementation used by tests.
 type testWorkflowContext struct {
 	ctx context.Context
+	now func() time.Time
 
 	lastHookCall    engine.RecordActivityCall
 	lastPlannerCall engine.PlannerActivityCall
@@ -210,6 +210,7 @@ func (t *testWorkflowContext) Detached() engine.WorkflowContext {
 
 		asyncResult: t.asyncResult,
 		workflowID:  t.workflowID,
+		now:         t.now,
 
 		planResult:    t.planResult,
 		hasPlanResult: t.hasPlanResult,
@@ -245,6 +246,7 @@ func (t *testWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 
 		asyncResult: t.asyncResult,
 		workflowID:  t.workflowID,
+		now:         t.now,
 
 		planResult:    t.planResult,
 		hasPlanResult: t.hasPlanResult,
@@ -265,6 +267,9 @@ func (t *testWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 }
 
 func (t *testWorkflowContext) Now() time.Time {
+	if t.now != nil {
+		return t.now()
+	}
 	return time.Unix(0, 0)
 }
 
@@ -296,7 +301,7 @@ func (t *testWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (en
 	return fut, nil
 }
 
-func (t *testWorkflowContext) Await(ctx context.Context, condition func() bool) error {
+func (t *testWorkflowContext) Await(condition func() bool) error {
 	if condition == nil {
 		return fmt.Errorf("await condition is required")
 	}
@@ -307,8 +312,8 @@ func (t *testWorkflowContext) Await(ctx context.Context, condition func() bool) 
 			return nil
 		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-t.ctx.Done():
+			return t.ctx.Err()
 		case <-ticker.C:
 		}
 	}
@@ -343,7 +348,7 @@ func (t *testWorkflowContext) StartChildWorkflow(ctx context.Context, req engine
 	}, nil
 }
 
-func (t *testWorkflowContext) PublishRecord(ctx context.Context, call engine.RecordActivityCall) error {
+func (t *testWorkflowContext) PublishRecord(call engine.RecordActivityCall) error {
 	t.lastHookCall = call
 	hookRT := t.hookRuntime
 	if hookRT == nil {
@@ -355,19 +360,19 @@ func (t *testWorkflowContext) PublishRecord(ctx context.Context, call engine.Rec
 	if call.Name != recordActivityName {
 		return fmt.Errorf("unexpected record activity name %q", call.Name)
 	}
-	return hookRT.recordActivity(ctx, call.Input)
+	return hookRT.recordActivity(t.Context(), call.Input)
 }
 
-func (t *testWorkflowContext) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
+func (t *testWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
 	t.lastPlannerCall = call
 	switch call.Name {
 	case "plan", "nested.plan":
 		if t.runtime != nil {
-			return t.runtime.PlanStartActivity(ctx, call.Input)
+			return t.runtime.PlanStartActivity(t.Context(), call.Input)
 		}
 	case "resume", "nested.resume":
 		if t.runtime != nil {
-			return t.runtime.PlanResumeActivity(ctx, call.Input)
+			return t.runtime.PlanResumeActivity(t.Context(), call.Input)
 		}
 	}
 
@@ -381,15 +386,15 @@ func (t *testWorkflowContext) ExecutePlannerActivity(ctx context.Context, call e
 	}, nil
 }
 
-func (t *testWorkflowContext) ExecuteToolActivity(ctx context.Context, call engine.ToolActivityCall) (*api.ToolOutput, error) {
-	fut, err := t.ExecuteToolActivityAsync(ctx, call)
+func (t *testWorkflowContext) ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error) {
+	fut, err := t.ExecuteToolActivityAsync(call)
 	if err != nil {
 		return nil, err
 	}
-	return fut.Get(ctx)
+	return fut.Get(t.Context())
 }
 
-func (t *testWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
+func (t *testWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
 	t.lastToolCall = call
 	// Also update parent if this is a derived context, so tests can inspect from the root.
 	if t.parent != nil {
@@ -409,7 +414,7 @@ func (t *testWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call
 	switch call.Name {
 	case "execute", "nested.execute":
 		if t.runtime != nil {
-			fut.result, fut.err = t.runtime.ExecuteToolActivity(ctx, call.Input)
+			fut.result, fut.err = t.runtime.ExecuteToolActivity(t.Context(), call.Input)
 			return fut, nil
 		}
 	}
@@ -775,7 +780,7 @@ func (r *routeWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (e
 	return fut, nil
 }
 
-func (r *routeWorkflowContext) Await(ctx context.Context, condition func() bool) error {
+func (r *routeWorkflowContext) Await(condition func() bool) error {
 	if condition == nil {
 		return fmt.Errorf("await condition is required")
 	}
@@ -786,8 +791,8 @@ func (r *routeWorkflowContext) Await(ctx context.Context, condition func() bool)
 			return nil
 		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-r.ctx.Done():
+			return r.ctx.Err()
 		case <-ticker.C:
 		}
 	}
@@ -805,7 +810,7 @@ func (r *routeWorkflowContext) StartChildWorkflow(ctx context.Context, req engin
 	}, nil
 }
 
-func (r *routeWorkflowContext) PublishRecord(ctx context.Context, call engine.RecordActivityCall) error {
+func (r *routeWorkflowContext) PublishRecord(call engine.RecordActivityCall) error {
 	r.lastHookCall = call
 	if call.Name != recordActivityName {
 		return fmt.Errorf("unexpected record activity name %q", call.Name)
@@ -813,27 +818,27 @@ func (r *routeWorkflowContext) PublishRecord(ctx context.Context, call engine.Re
 	if r.hookRuntime == nil {
 		return nil
 	}
-	return r.hookRuntime.recordActivity(ctx, call.Input)
+	return r.hookRuntime.recordActivity(r.Context(), call.Input)
 }
 
-func (r *routeWorkflowContext) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
+func (r *routeWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
 	r.lastPlannerCall = call
 	handler, ok := r.plannerRoutes[call.Name]
 	if !ok {
 		return nil, fmt.Errorf("no planner route for activity %q", call.Name)
 	}
-	return handler(ctx, call.Input)
+	return handler(r.Context(), call.Input)
 }
 
-func (r *routeWorkflowContext) ExecuteToolActivity(ctx context.Context, call engine.ToolActivityCall) (*api.ToolOutput, error) {
-	fut, err := r.ExecuteToolActivityAsync(ctx, call)
+func (r *routeWorkflowContext) ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error) {
+	fut, err := r.ExecuteToolActivityAsync(call)
 	if err != nil {
 		return nil, err
 	}
-	return fut.Get(ctx)
+	return fut.Get(r.Context())
 }
 
-func (r *routeWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
+func (r *routeWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
 	r.lastToolCall = call
 	handler, ok := r.toolRoutes[call.Name]
 	if !ok {
@@ -841,7 +846,7 @@ func (r *routeWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, cal
 	}
 
 	fut := &testToolFuture{}
-	fut.result, fut.err = handler(ctx, call.Input)
+	fut.result, fut.err = handler(r.Context(), call.Input)
 	return fut, nil
 }
 

@@ -63,6 +63,21 @@ func (r *Runtime) waitAwaitConfirmation(
 	}
 
 	approved := dec.Approved
+	var decisionRecords []stepToolRecord
+	if !approved {
+		decisionRecords = []stepToolRecord{{
+			call:             it.call,
+			scheduleRequired: true,
+			scheduleExact:    true,
+			expectedChildren: expectedChildren,
+			result: &planner.ToolResult{
+				Name:       it.call.Name,
+				ToolCallID: it.call.ToolCallID,
+				Result:     it.plan.DeniedResult,
+			},
+			requiresResume: true,
+		}}
+	}
 	if err := r.publishHook(ctx, hooks.NewToolAuthorizationEvent(
 		base.RunContext.RunID,
 		input.AgentID,
@@ -73,7 +88,7 @@ func (r *Runtime) waitAwaitConfirmation(
 		it.plan.Prompt,
 		dec.RequestedBy,
 	), turnID); err != nil {
-		return nil, nil, false, err
+		return decisionRecords, nil, false, err
 	}
 
 	if !approved {
@@ -93,48 +108,45 @@ func (r *Runtime) waitAwaitConfirmation(
 			),
 			turnID,
 		); err != nil {
-			return nil, nil, false, err
+			return decisionRecords, nil, false, err
 		}
+		decisionRecords[0].scheduleRequired = false
 		resultJSON, err := r.marshalToolValue(ctx, it.call.Name, deniedResult, nil)
 		if err != nil {
-			return nil, nil, false, fmt.Errorf("encode %s denied tool result for streaming: %w", it.call.Name, err)
+			return decisionRecords, nil, false, fmt.Errorf("encode %s denied tool result for streaming: %w", it.call.Name, err)
 		}
 		preview, err := formatResultPreviewForCall(ctx, r, &it.call, deniedResult, nil)
 		if err != nil {
-			return nil, nil, false, err
+			return decisionRecords, nil, false, err
 		}
-		if err := r.publishHook(
-			ctx,
-			hooks.NewToolResultReceivedEvent(
-				it.call.RunID,
-				it.call.AgentID,
-				it.call.SessionID,
-				it.call.Name,
-				it.call.ToolCallID,
-				it.call.ParentToolCallID,
-				rawjson.Message(resultJSON),
-				len(resultJSON),
-				false,
-				"",
-				nil,
-				preview,
-				nil,
-				0,
-				nil,
-				nil,
-			),
-			turnID,
-		); err != nil {
-			return nil, nil, false, err
+		event := hooks.NewToolResultReceivedEvent(
+			it.call.RunID,
+			it.call.AgentID,
+			it.call.SessionID,
+			it.call.Name,
+			it.call.ToolCallID,
+			it.call.ParentToolCallID,
+			rawjson.Message(resultJSON),
+			len(resultJSON),
+			false,
+			"",
+			nil,
+			preview,
+			nil,
+			0,
+			nil,
+			nil,
+		)
+		prepared, err := prepareHookRecordInput(ctx, event, turnID)
+		if err != nil {
+			return decisionRecords, nil, false, err
 		}
-
-		tr := &planner.ToolResult{
-			Name:       it.call.Name,
-			ToolCallID: it.call.ToolCallID,
-			Result:     deniedResult,
+		decisionRecords[0].resultRecord = prepared
+		if err := r.publishPreparedHook(ctx, prepared, engine.ActivityOptions{}); err != nil {
+			return decisionRecords, nil, false, err
 		}
-		records := []stepToolRecord{{call: it.call, result: tr}}
-		return records, nil, false, nil
+		decisionRecords[0].resultPublished = true
+		return decisionRecords, nil, false, nil
 	}
 
 	// Approved: execute the tool call.
@@ -144,11 +156,11 @@ func (r *Runtime) waitAwaitConfirmation(
 	}
 
 	grouped, timeouts := r.groupToolCallsByTimeout([]planner.ToolRequest{call}, input, toolOpts.StartToCloseTimeout)
-	finishBy := time.Time{}
-	if !deadlines.Hard.IsZero() {
-		finishBy = deadlines.Hard.Add(-deadlines.finalizeReserve())
+	finishBy := deadlines.Budget
+	if r.isBookkeeping(call.Name) {
+		finishBy = deadlines.Hard
 	}
-	outcomes, timedOut, err := r.executeGroupedToolCalls(
+	outcomes, timedOut, executionErr := r.executeGroupedToolCalls(
 		wfCtx,
 		reg,
 		input.AgentID,
@@ -160,12 +172,13 @@ func (r *Runtime) waitAwaitConfirmation(
 		timeouts,
 		toolOpts,
 	)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	records, err := stepToolRecordsFromExecutions([]planner.ToolRequest{call}, outcomes)
-	if err != nil {
-		return nil, nil, false, err
+	records, resultErr := stepToolRecordsAfterExecution(
+		[]planner.ToolRequest{call},
+		outcomes,
+		executionErr,
+	)
+	if err := errors.Join(executionErr, resultErr); err != nil {
+		return records, nil, timedOut, err
 	}
 	toolPauses := toolPausesFromRecords(records)
 	if len(toolPauses) == 0 {
@@ -173,7 +186,7 @@ func (r *Runtime) waitAwaitConfirmation(
 	}
 	pauseItems, err := toolPauseAwaitItems(toolPauses)
 	if err != nil {
-		return nil, nil, false, err
+		return records, nil, timedOut, err
 	}
 	return records, pauseItems, timedOut, nil
 }
@@ -183,7 +196,7 @@ func (l *workflowLoop) handleAwaitQueue(
 	confirmations []confirmationAwait,
 	items []planner.AwaitItem,
 	batch *stepBatch,
-) error {
+) (retErr error) {
 	r := l.r
 	wfCtx := l.wfCtx
 	input := l.input
@@ -191,6 +204,19 @@ func (l *workflowLoop) handleAwaitQueue(
 	ctrl := l.ctrl
 	turnID := l.turnID
 	ctx := wfCtx.Context()
+	nextConfirmation := 0
+	defer func() {
+		if retErr == nil || nextConfirmation == len(confirmations) {
+			return
+		}
+		unresolved := make([]planner.ToolRequest, 0, len(confirmations)-nextConfirmation)
+		for _, pending := range confirmations[nextConfirmation:] {
+			unresolved = append(unresolved, pending.call)
+		}
+		failureRecords, resultErr := stepToolRecordsAfterExecution(unresolved, nil, retErr)
+		batch.records = append(batch.records, failureRecords...)
+		retErr = errors.Join(retErr, resultErr)
+	}()
 	if ctrl == nil {
 		return errors.New("await not supported in inline runs")
 	}
@@ -239,13 +265,18 @@ func (l *workflowLoop) handleAwaitQueue(
 	// remain blocked until the operator (or an external system) responds.
 	waitTimeout := time.Duration(0)
 
-	for _, it := range confirmations {
+	for i, it := range confirmations {
 		records, pauseItems, timedOut, err := r.waitAwaitConfirmation(ctx, wfCtx, l.reg, input, base, l.toolOpts, expectedChildren, l.parentTracker, turnID, ctrl, &l.deadlines, it)
+		if len(records) > 0 {
+			batch.records = append(batch.records, records...)
+			nextConfirmation = i + 1
+		}
 		if err != nil {
 			return err
 		}
-		if len(records) > 0 {
-			batch.records = append(batch.records, records...)
+		nextConfirmation = i + 1
+		if err := r.validateTerminalToolPauses(records); err != nil {
+			return err
 		}
 		batch.timedOut = batch.timedOut || timedOut
 		if len(pauseItems) > 0 {
@@ -260,13 +291,13 @@ func (l *workflowLoop) handleAwaitQueue(
 
 	for _, it := range items {
 		waitStartedAt := wfCtx.Now()
-		records, err := r.waitAwaitQueueItem(ctx, ctrl, input, base, turnID, waitTimeout, it)
+		records, err := r.waitAwaitQueueItem(ctx, ctrl, input, base, l.parentTracker, turnID, waitTimeout, it)
 		l.deadlines.pause(wfCtx.Now().Sub(waitStartedAt))
-		if err != nil {
-			return err
-		}
 		if len(records) > 0 {
 			batch.records = append(batch.records, records...)
+		}
+		if err != nil {
+			return err
 		}
 	}
 
@@ -327,7 +358,7 @@ func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *pla
 			c.ToolCallID,
 			c.Payload,
 			"",
-			"",
+			base.RunContext.ParentToolCallID,
 			0,
 		), turnID)
 	case planner.AwaitItemKindQuestions:
@@ -372,7 +403,7 @@ func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *pla
 			q.ToolCallID,
 			q.Payload,
 			"",
-			"",
+			base.RunContext.ParentToolCallID,
 			0,
 		), turnID)
 	case planner.AwaitItemKindExternalTools:
@@ -418,7 +449,7 @@ func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *pla
 				call.ToolCallID,
 				call.Payload,
 				"",
-				"",
+				base.RunContext.ParentToolCallID,
 				0,
 			), turnID); err != nil {
 				return err
@@ -430,7 +461,16 @@ func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *pla
 	}
 }
 
-func (r *Runtime) waitAwaitQueueItem(ctx context.Context, ctrl *interrupt.Controller, input *RunInput, base *planner.PlanInput, turnID string, timeout time.Duration, it planner.AwaitItem) ([]stepToolRecord, error) {
+func (r *Runtime) waitAwaitQueueItem(
+	ctx context.Context,
+	ctrl *interrupt.Controller,
+	input *RunInput,
+	base *planner.PlanInput,
+	parentTracker *childTracker,
+	turnID string,
+	timeout time.Duration,
+	it planner.AwaitItem,
+) ([]stepToolRecord, error) {
 	switch it.Kind {
 	case planner.AwaitItemKindClarification:
 		c := it.Clarification
@@ -482,6 +522,7 @@ func (r *Runtime) waitAwaitQueueItem(ctx context.Context, ctrl *interrupt.Contro
 			ToolCallID: c.ToolCallID,
 			Payload:    c.Payload,
 		}
+		call = r.prepareAllowedCallsMetadata(input.AgentID, base, []planner.ToolRequest{call}, parentTracker)[0]
 		return r.consumeProvidedToolResultRecords(
 			ctx,
 			input,
@@ -520,6 +561,7 @@ func (r *Runtime) waitAwaitQueueItem(ctx context.Context, ctrl *interrupt.Contro
 				Payload:    q.Payload,
 			},
 		}
+		allowed = r.prepareAllowedCallsMetadata(input.AgentID, base, allowed, parentTracker)
 		return r.consumeProvidedToolResultRecords(ctx, input, base, turnID, rs, allowed, expected)
 	case planner.AwaitItemKindExternalTools:
 		e := it.ExternalTools
@@ -549,6 +591,7 @@ func (r *Runtime) waitAwaitQueueItem(ctx context.Context, ctrl *interrupt.Contro
 				Payload:    it.Payload,
 			})
 		}
+		allowed = r.prepareAllowedCallsMetadata(input.AgentID, base, allowed, parentTracker)
 		return r.consumeProvidedToolResultRecords(ctx, input, base, turnID, rs, allowed, expected)
 	default:
 		return nil, fmt.Errorf("unknown await item kind %q", it.Kind)
@@ -592,7 +635,9 @@ func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *R
 		return nil, err
 	}
 
-	for _, record := range records {
+	for i := range records {
+		record := &records[i]
+		record.scheduleExact = true
 		tr := record.result
 		if tr == nil {
 			continue
@@ -600,32 +645,35 @@ func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *R
 		call := record.call
 		preview, err := formatToolResultPreviewForCall(ctx, r, &call, tr)
 		if err != nil {
-			return nil, err
+			return records, err
 		}
-		if err := r.publishHook(
-			ctx,
-			hooks.NewToolResultReceivedEvent(
-				base.RunContext.RunID,
-				input.AgentID,
-				base.RunContext.SessionID,
-				tr.Name,
-				tr.ToolCallID,
-				"",
-				record.resultJSON,
-				len(record.resultJSON),
-				false,
-				"",
-				tr.ServerData,
-				preview,
-				tr.Bounds,
-				0,
-				nil,
-				tr.Failure,
-			),
-			turnID,
-		); err != nil {
-			return nil, err
+		event := hooks.NewToolResultReceivedEvent(
+			base.RunContext.RunID,
+			input.AgentID,
+			base.RunContext.SessionID,
+			tr.Name,
+			tr.ToolCallID,
+			parentToolCallID(call, &base.RunContext),
+			record.resultJSON,
+			len(record.resultJSON),
+			false,
+			"",
+			tr.ServerData,
+			preview,
+			tr.Bounds,
+			0,
+			nil,
+			tr.Failure,
+		)
+		prepared, err := prepareHookRecordInput(ctx, event, turnID)
+		if err != nil {
+			return records, err
 		}
+		record.resultRecord = prepared
+		if err := r.publishPreparedHook(ctx, prepared, engine.ActivityOptions{}); err != nil {
+			return records, err
+		}
+		record.resultPublished = true
 	}
 	return records, nil
 }

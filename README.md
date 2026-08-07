@@ -451,9 +451,9 @@ Activity execution uses three distinct timeout bounds:
 
 For planner calls, the runtime sets the total lifetime to the remaining run
 deadline. Initial and resumed planning use the run budget; finalization uses
-the separate hard deadline. Queue and attempt timeouts remain distinct
-failures, while only total-lifetime expiration triggers time-budget
-finalization.
+the separate hard deadline. If initial or resumed planning exhausts its total
+lifetime, the runtime spends the reserved finalizer window on one explicit
+finalization turn. Queue and attempt timeouts remain distinct failures.
 
 History can also use model-assisted compression: declare
 `CompressAtMaxInputTokens` or `CompressAtTurns` triggers plus `KeepMaxInputTokens`
@@ -931,7 +931,12 @@ Use `MCP(...)` on a Goa service and mark methods with `Tool(...)`, `Resource(...
 
 - Go 1.25+ for this repository
 - Goa v3 CLI: `go install goa.design/goa/v3/cmd/goa@latest`
-- Optional for production: Temporal, MongoDB, Redis/Pulse
+- Optional for production: Temporal Server 1.31+, MongoDB, Redis/Pulse
+
+Temporal Server 1.31 or newer is required for planner time budgets because it
+identifies server-owned Schedule-to-Close expiration as a timeout. Older
+servers report that boundary as a non-retryable activity failure, which cannot
+be distinguished safely from planner code returning a timeout-shaped error.
 
 ---
 

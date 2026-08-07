@@ -137,6 +137,7 @@ func TestRunPlanActivityRejectsExpiredDeadline(t *testing.T) {
 	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, time.Unix(-1, 0))
 
 	require.ErrorIs(t, err, engine.ErrPlannerActivityDeadlineExceeded)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Empty(t, wf.lastPlannerCall.Name)
 }
 

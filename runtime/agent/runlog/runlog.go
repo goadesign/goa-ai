@@ -107,8 +107,10 @@ type (
 		//
 		// Store implementations assign the event ID and persist the payload
 		// verbatim. Append must be durable and idempotent on (run_id, event_key):
-		// exact duplicates return the existing event ID with Inserted=false, while
-		// conflicting bodies for the same key must fail loudly.
+		// retries with the same immutable identity and payload return the existing
+		// event ID with Inserted=false. The first append owns the event timestamp;
+		// retry-attempt timestamps are ignored. Conflicting identity or payload
+		// for the same key must fail loudly.
 		Append(ctx context.Context, e *Event) (AppendResult, error)
 
 		// List returns the next forward page of events for the given run ID.

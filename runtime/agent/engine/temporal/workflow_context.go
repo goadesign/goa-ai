@@ -129,12 +129,19 @@ func normalizeTemporalError(err error) error {
 }
 
 // normalizeTemporalPlannerError preserves the timeout boundary that owns
-// planner completion. Schedule-to-close is the total activity deadline;
-// queue, attempt, heartbeat, and planner failures keep their original cause.
+// planner completion. Only a Temporal-owned activity timeout whose direct cause
+// is schedule-to-close is the total activity deadline; queue, attempt,
+// heartbeat, and planner failures keep their original cause.
 func normalizeTemporalPlannerError(err error) error {
 	err = normalizeTemporalError(err)
-	var timeoutErr *temporal.TimeoutError
-	if errors.As(err, &timeoutErr) &&
+	var activityErr *temporal.ActivityError
+	if !errors.As(err, &activityErr) ||
+		activityErr.RetryState() != enumspb.RETRY_STATE_TIMEOUT {
+		return err
+	}
+	// This must be a direct assertion: a nested timeout belongs to planner code.
+	timeoutErr, ok := activityErr.Unwrap().(*temporal.TimeoutError) //nolint:errorlint
+	if ok &&
 		timeoutErr.TimeoutType() == enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE {
 		return fmt.Errorf("%w: %w", engine.ErrPlannerActivityDeadlineExceeded, err)
 	}
@@ -192,7 +199,7 @@ func (w *temporalWorkflowContext) RunID() string {
 	return w.runID
 }
 
-func (w *temporalWorkflowContext) PublishRecord(ctx context.Context, call engine.RecordActivityCall) error {
+func (w *temporalWorkflowContext) PublishRecord(call engine.RecordActivityCall) error {
 	if call.Name == "" {
 		return errors.New("record activity name is required")
 	}
@@ -206,7 +213,7 @@ func (w *temporalWorkflowContext) PublishRecord(ctx context.Context, call engine
 	return fut.Get(actx, &ignored)
 }
 
-func (w *temporalWorkflowContext) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
+func (w *temporalWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
 	if call.Name == "" {
 		return nil, errors.New("planner activity name is required")
 	}
@@ -223,15 +230,15 @@ func (w *temporalWorkflowContext) ExecutePlannerActivity(ctx context.Context, ca
 	return out, nil
 }
 
-func (w *temporalWorkflowContext) ExecuteToolActivity(ctx context.Context, call engine.ToolActivityCall) (*api.ToolOutput, error) {
-	fut, err := w.ExecuteToolActivityAsync(ctx, call)
+func (w *temporalWorkflowContext) ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error) {
+	fut, err := w.ExecuteToolActivityAsync(call)
 	if err != nil {
 		return nil, err
 	}
-	return fut.Get(ctx)
+	return fut.Get(w.Context())
 }
 
-func (w *temporalWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
+func (w *temporalWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
 	if call.Name == "" {
 		return nil, errors.New("tool activity name is required")
 	}
@@ -316,12 +323,9 @@ func (w *temporalWorkflowContext) NewTimer(ctx context.Context, d time.Duration)
 	return &temporalTimerFuture{future: fut, ctx: w.ctx, fireAt: fireAt}, nil
 }
 
-func (w *temporalWorkflowContext) Await(ctx context.Context, condition func() bool) error {
+func (w *temporalWorkflowContext) Await(condition func() bool) error {
 	if condition == nil {
 		return errors.New("await condition is required")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
 	}
 	return workflow.Await(w.ctx, condition)
 }

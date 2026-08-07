@@ -206,7 +206,6 @@ func TestRunLoopWithStateAcceptsInitialFinalToolResult(t *testing.T) {
 		"turn-1",
 		nil,
 		nil,
-		0,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, out)

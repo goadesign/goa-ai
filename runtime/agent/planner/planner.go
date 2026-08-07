@@ -55,12 +55,18 @@ import (
 // storing per-run state in the Planner struct; use PlannerContext.State() for
 // ephemeral per-run data if needed.
 //
-// Error handling: Errors returned from PlanStart or PlanResume terminate the
-// run with a failed status. Failed tools return ToolFailure as part of their
-// ToolResult; the runtime enforces its recovery transition on the next turn.
+// Retry safety: PlanStart and PlanResume are activity handlers. A workflow has
+// one logical call per planner turn, but an engine may execute that call more
+// than once under its retry policy. Implementations must not perform
+// non-idempotent side effects outside runtime-owned planner output.
+//
+// Error handling: Planner errors terminate the run with a failed status. An
+// engine-owned PlanStart budget expiry instead enters the explicit PlanResume
+// finalization turn. Failed tools return ToolFailure as part of their ToolResult;
+// the runtime enforces its recovery transition on the next turn.
 type Planner interface {
 	// PlanStart receives the initial messages and returns the first decision.
-	// This is called exactly once at the start of each run.
+	// This is one logical call at the start of each run; its activity may retry.
 	PlanStart(ctx context.Context, input *PlanInput) (*PlanResult, error)
 
 	// PlanResume receives messages plus tool results from the previous turn.
@@ -68,6 +74,8 @@ type Planner interface {
 	// returns a FinalResponse or the runtime terminates due to policy limits.
 	// When the runtime forces termination (caps exhausted, time budget expired),
 	// the Finalize field is set and the planner should produce a final response.
+	// A time-budget finalization may be the first completed planner turn when
+	// PlanStart exhausted its activity deadline.
 	PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error)
 }
 

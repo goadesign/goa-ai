@@ -2,6 +2,7 @@ package inmem
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -35,7 +36,7 @@ func TestPlannerActivityTypedExecution(t *testing.T) {
 	err = eng.RegisterWorkflow(ctx, engine.WorkflowDefinition{
 		Name: "test_workflow",
 		Handler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-			out, err2 := wfCtx.ExecutePlannerActivity(wfCtx.Context(), engine.PlannerActivityCall{
+			out, err2 := wfCtx.ExecutePlannerActivity(engine.PlannerActivityCall{
 				Name:  "test_plan",
 				Input: &api.PlanActivityInput{},
 			})
@@ -67,62 +68,96 @@ func TestPlannerActivityTypedExecution(t *testing.T) {
 	}
 }
 
-func TestPlannerActivityScheduleToCloseTimeout(t *testing.T) {
-	eng := New().(*eng)
-	err := eng.RegisterPlannerActivity(
-		context.Background(),
-		"test_plan",
-		engine.ActivityOptions{},
-		func(ctx context.Context, _ *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
-			<-ctx.Done()
-			return nil, ctx.Err()
-		},
-	)
-	require.NoError(t, err)
-	wfCtx := &wfCtx{
-		ctx: context.Background(),
-		eng: eng,
+func TestPlannerActivityTimeoutOwnership(t *testing.T) {
+	waitForCancellation := func(ctx context.Context, _ *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
 	}
-
-	_, err = wfCtx.ExecutePlannerActivity(context.Background(), engine.PlannerActivityCall{
-		Name:  "test_plan",
-		Input: &api.PlanActivityInput{},
-		Options: engine.ActivityOptions{
-			ScheduleToCloseTimeout: 10 * time.Millisecond,
-			StartToCloseTimeout:    time.Second,
+	tests := []struct {
+		name          string
+		parentTimeout time.Duration
+		options       engine.ActivityOptions
+		handler       func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error)
+		want          error
+		wantCause     error
+	}{
+		{
+			name: "schedule to close owns total deadline",
+			options: engine.ActivityOptions{
+				ScheduleToCloseTimeout: 10 * time.Millisecond,
+				StartToCloseTimeout:    time.Second,
+			},
+			handler:   waitForCancellation,
+			want:      engine.ErrPlannerActivityDeadlineExceeded,
+			wantCause: context.DeadlineExceeded,
 		},
-	})
-
-	require.ErrorIs(t, err, engine.ErrPlannerActivityDeadlineExceeded)
-}
-
-func TestPlannerActivityPreservesProviderTimeout(t *testing.T) {
-	eng := New().(*eng)
-	err := eng.RegisterPlannerActivity(
-		context.Background(),
-		"test_plan",
-		engine.ActivityOptions{},
-		func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
-			return nil, context.DeadlineExceeded
+		{
+			name:          "caller deadline retains ownership",
+			parentTimeout: 10 * time.Millisecond,
+			options: engine.ActivityOptions{
+				ScheduleToCloseTimeout: time.Second,
+				StartToCloseTimeout:    time.Second,
+			},
+			handler:   waitForCancellation,
+			want:      context.DeadlineExceeded,
+			wantCause: context.DeadlineExceeded,
 		},
-	)
-	require.NoError(t, err)
-	wfCtx := &wfCtx{
-		ctx: context.Background(),
-		eng: eng,
+		{
+			name: "provider timeout remains activity failure",
+			options: engine.ActivityOptions{
+				ScheduleToCloseTimeout: time.Second,
+				StartToCloseTimeout:    time.Second,
+			},
+			handler: func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
+				return nil, context.DeadlineExceeded
+			},
+			want: context.DeadlineExceeded,
+		},
 	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			eng := New().(*eng)
+			var handlerCause error
+			err := eng.RegisterPlannerActivity(
+				context.Background(),
+				"test_plan",
+				engine.ActivityOptions{},
+				func(ctx context.Context, input *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
+					out, err := test.handler(ctx, input)
+					handlerCause = context.Cause(ctx)
+					return out, err
+				},
+			)
+			require.NoError(t, err)
+			parent := context.Background()
+			cancel := func() {
+			}
+			if test.parentTimeout > 0 {
+				parent, cancel = context.WithTimeout(parent, test.parentTimeout)
+			}
+			defer cancel()
+			wfCtx := &wfCtx{
+				ctx: parent,
+				eng: eng,
+			}
 
-	_, err = wfCtx.ExecutePlannerActivity(context.Background(), engine.PlannerActivityCall{
-		Name:  "test_plan",
-		Input: &api.PlanActivityInput{},
-		Options: engine.ActivityOptions{
-			ScheduleToCloseTimeout: time.Second,
-			StartToCloseTimeout:    time.Second,
-		},
-	})
+			_, err = wfCtx.ExecutePlannerActivity(engine.PlannerActivityCall{
+				Name:    "test_plan",
+				Input:   &api.PlanActivityInput{},
+				Options: test.options,
+			})
 
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	require.NotErrorIs(t, err, engine.ErrPlannerActivityDeadlineExceeded)
+			require.ErrorIs(t, err, test.want)
+			if !errors.Is(test.want, engine.ErrPlannerActivityDeadlineExceeded) {
+				require.NotErrorIs(t, err, engine.ErrPlannerActivityDeadlineExceeded)
+			}
+			if test.wantCause == nil {
+				require.NoError(t, handlerCause)
+			} else {
+				require.ErrorIs(t, handlerCause, test.wantCause)
+			}
+		})
+	}
 }
 
 func TestToolActivityFutureTypedExecution(t *testing.T) {
@@ -141,7 +176,7 @@ func TestToolActivityFutureTypedExecution(t *testing.T) {
 	err = eng.RegisterWorkflow(ctx, engine.WorkflowDefinition{
 		Name: "test_workflow",
 		Handler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-			fut, err2 := wfCtx.ExecuteToolActivityAsync(wfCtx.Context(), engine.ToolActivityCall{
+			fut, err2 := wfCtx.ExecuteToolActivityAsync(engine.ToolActivityCall{
 				Name: "test_tool",
 				Input: &api.ToolInput{
 					RunID:       "test-run-1",

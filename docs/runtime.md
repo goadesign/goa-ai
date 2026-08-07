@@ -540,7 +540,7 @@ Workflow step boundary:
 
 ```go
 type PlanResult struct {
-    ToolCalls     []ToolRequest    // Tools to execute (empty for final response)
+    ToolCalls     []ToolRequest    // Tools to execute; only bookkeeping may accompany a terminal payload
     SynthesizeAfterTools bool      // Synthesize after success; repair remains allowed
     FinalResponse *FinalResponse   // Terminal assistant message
     FinalToolResult *FinalToolResult // Terminal tool result for nested agent runs
@@ -1699,16 +1699,16 @@ Planners can request tools that execute out-of-band:
 
 ```go
 return &planner.PlanResult{
-    Await: &planner.Await{
-        ExternalTools: &planner.AwaitExternalTools{
+    Await: planner.NewAwait(
+        planner.AwaitExternalToolsItem(&planner.AwaitExternalTools{
             ID: "external-1",
             Items: []planner.AwaitToolItem{{
                 Name:       tools.Ident("external.fetch"),
                 ToolCallID: "tc-ext-1",
                 Payload:    json.RawMessage(`{"url":"..."}`),
             }},
-        },
-    },
+        }),
+    ),
 }
 ```
 
@@ -2019,7 +2019,6 @@ type CapsState struct {
     RemainingToolCalls                  int
     MaxConsecutiveFailedToolCalls       int
     RemainingConsecutiveFailedToolCalls int
-    ExpiresAt                           time.Time
 }
 ```
 
@@ -2038,6 +2037,14 @@ client.Run(ctx, "session-1", msgs,
     }),
 )
 ```
+
+`TimeBudget` counts active planner and tool work. External-input waits pause
+that budget. `FinalizerGrace` extends the Budget deadline into the Hard
+deadline. A final planner activity that starts when Budget expires therefore
+has at most that grace; earlier policy-triggered finalization may also use the
+remaining Budget. Terminal event persistence runs afterward under its own
+completion context. The default grace is 10 seconds; use
+`runtime.WithRunFinalizerGrace` to override it for one run.
 
 Tag filtering is applied twice with the same predicate:
 
@@ -2432,23 +2439,47 @@ type WorkflowContext interface {
     RunID() string
     Now() time.Time  // Deterministic time
     NextSequence() uint64
-    PublishRecord(ctx, call) error
-    ExecutePlannerActivity(ctx, call) (*api.PlanActivityOutput, error)
-    ExecuteToolActivity(ctx, call) (*api.ToolOutput, error)
-    ExecuteToolActivityAsync(ctx, call) (Future[*api.ToolOutput], error)
-    PauseRequests() Receiver[api.PauseRequest]
-    ResumeRequests() Receiver[api.ResumeRequest]
-    ClarificationAnswers() Receiver[api.ClarificationAnswer]
-    ExternalToolResults() Receiver[api.ToolResultsSet]
-    ConfirmationDecisions() Receiver[api.ConfirmationDecision]
-    StartChildWorkflow(ctx, req) (ChildWorkflowHandle, error)
-    SetQueryHandler(name, handler) error
+    PublishRecord(call engine.RecordActivityCall) error
+    ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error)
+    ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error)
+    ExecuteToolActivityAsync(call engine.ToolActivityCall) (Future[*api.ToolOutput], error)
+    NewTimer(ctx context.Context, d time.Duration) (Future[time.Time], error)
+    Await(condition func() bool) error
+    PauseRequests() Receiver[*api.PauseRequest]
+    ResumeRequests() Receiver[*api.ResumeRequest]
+    ClarificationAnswers() Receiver[*api.ClarificationAnswer]
+    ExternalToolResults() Receiver[*api.ToolResultsSet]
+    ConfirmationDecisions() Receiver[*api.ConfirmationDecision]
+    StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error)
+    Detached() WorkflowContext
+    WithCancel() (WorkflowContext, func())
+    SetQueryHandler(name string, handler any) error
 }
 ```
+
+Custom engine adapters must implement the activity methods with the signatures
+shown above. The activity methods and `Await` no longer accept a separate
+`context.Context`; the `WorkflowContext` receiver owns cancellation for
+scheduled work and deterministic waits. This is a source-breaking change for
+custom adapters, which must remove the extra argument and use their
+receiver-owned engine-native workflow scope.
+
+`policy.CapsState.ExpiresAt` was also removed. Custom policy integrations must
+stop constructing that field; the workflow loop now owns Budget and Hard
+deadlines directly instead of encoding time in tool-call caps.
+
+Custom adapters must apply `ActivityOptions.ScheduleToCloseTimeout` to the
+complete planner activity lifetime, including queue time, retries, and retry
+backoff. Return `engine.ErrPlannerActivityDeadlineExceeded` only when that
+total planner deadline expires; attempt, queue, heartbeat, and parent
+cancellation errors retain their original causes.
 
 ### Available Engines
 
 **Temporal worker** — Production-grade durable execution:
+
+Planner time budgets require Temporal Server 1.31 or newer so
+Schedule-to-Close expiration carries server-owned timeout provenance.
 
 ```go
 import temporal "goa.design/goa-ai/runtime/agent/engine/temporal"

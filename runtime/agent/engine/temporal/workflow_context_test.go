@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	enumspb "go.temporal.io/api/enums/v1"
+	failurepb "go.temporal.io/api/failure/v1"
 	"go.temporal.io/sdk/activity"
 	temporalsdk "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
@@ -35,6 +36,31 @@ func TestApplyActivityDefaultsUsesTemporalPlannerDefaults(t *testing.T) {
 	require.Equal(t, time.Minute, opts.StartToCloseTimeout)
 	require.Equal(t, 12*time.Second, opts.ScheduleToStartTimeout)
 	require.Equal(t, 4*time.Second, opts.HeartbeatTimeout)
+}
+
+func TestDerivedWorkflowContextsPreserveWorkflowTime(t *testing.T) {
+	t.Parallel()
+
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := &temporalWorkflowContext{
+			engine: &Engine{},
+			ctx:    ctx,
+		}
+		now := wfCtx.Now()
+		if !wfCtx.Detached().Now().Equal(now) {
+			return errors.New("detached context changed workflow time")
+		}
+		child, cancel := wfCtx.WithCancel()
+		defer cancel()
+		if !child.Now().Equal(now) {
+			return errors.New("cancelable context changed workflow time")
+		}
+		return nil
+	})
+
+	require.NoError(t, env.GetWorkflowError())
 }
 
 func TestActivityOptionsForUsesExplicitTimeoutFields(t *testing.T) {
@@ -138,7 +164,7 @@ func TestExecutePlannerActivityBoundsRetriesByScheduleToClose(t *testing.T) {
 			engine: &Engine{},
 			ctx:    ctx,
 		}
-		_, activityErr = wfCtx.ExecutePlannerActivity(context.Background(), engine.PlannerActivityCall{
+		_, activityErr = wfCtx.ExecutePlannerActivity(engine.PlannerActivityCall{
 			Name:  "planner",
 			Input: &api.PlanActivityInput{},
 			Options: engine.ActivityOptions{
@@ -160,6 +186,10 @@ func TestExecutePlannerActivityBoundsRetriesByScheduleToClose(t *testing.T) {
 	require.Less(t, attempts, 100)
 }
 
+// TestNormalizeTemporalPlannerError builds the failure envelope emitted by
+// Temporal Server. The SDK test environment returns the last application
+// failure when retry backoff exhausts Schedule-to-Close, so it cannot exercise
+// this server boundary directly.
 func TestNormalizeTemporalPlannerError(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -168,32 +198,43 @@ func TestNormalizeTemporalPlannerError(t *testing.T) {
 	}{
 		{
 			name: "schedule to close owns total deadline",
-			err: temporalsdk.NewTimeoutError(
+			err: temporalActivityTimeoutError(
 				enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE,
-				errors.New("last planner failure"),
+				enumspb.RETRY_STATE_TIMEOUT,
 			),
 			wantDeadline: true,
 		},
 		{
 			name: "start to close remains attempt timeout",
-			err: temporalsdk.NewTimeoutError(
+			err: temporalActivityTimeoutError(
 				enumspb.TIMEOUT_TYPE_START_TO_CLOSE,
-				nil,
+				enumspb.RETRY_STATE_TIMEOUT,
 			),
 		},
 		{
 			name: "schedule to start remains queue timeout",
-			err: temporalsdk.NewTimeoutError(
+			err: temporalActivityTimeoutError(
 				enumspb.TIMEOUT_TYPE_SCHEDULE_TO_START,
-				nil,
+				enumspb.RETRY_STATE_TIMEOUT,
 			),
 		},
 		{
 			name: "heartbeat remains liveness timeout",
-			err: temporalsdk.NewTimeoutError(
+			err: temporalActivityTimeoutError(
 				enumspb.TIMEOUT_TYPE_HEARTBEAT,
-				nil,
+				enumspb.RETRY_STATE_TIMEOUT,
 			),
+		},
+		{
+			name: "planner returned timeout remains activity failure",
+			err: temporalActivityTimeoutError(
+				enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE,
+				enumspb.RETRY_STATE_UNSPECIFIED,
+			),
+		},
+		{
+			name: "nested timeout is not the activity deadline",
+			err:  temporalActivityNestedTimeoutError(),
 		},
 		{
 			name: "provider timeout remains activity failure",
@@ -266,4 +307,50 @@ func TestTemporalReceiverReceiveWithTimeoutReturnsCanceledBeforeLaterSignal(t *t
 	err := env.GetWorkflowError()
 	require.Error(t, err)
 	require.ErrorContains(t, err, "canceled")
+}
+
+func temporalActivityTimeoutError(timeoutType enumspb.TimeoutType, retryState enumspb.RetryState) error {
+	return temporalsdk.GetDefaultFailureConverter().FailureToError(&failurepb.Failure{
+		Message: "planner activity failed",
+		Cause: &failurepb.Failure{
+			Message: "planner activity timeout",
+			FailureInfo: &failurepb.Failure_TimeoutFailureInfo{
+				TimeoutFailureInfo: &failurepb.TimeoutFailureInfo{
+					TimeoutType: timeoutType,
+				},
+			},
+		},
+		FailureInfo: &failurepb.Failure_ActivityFailureInfo{
+			ActivityFailureInfo: &failurepb.ActivityFailureInfo{
+				RetryState: retryState,
+			},
+		},
+	})
+}
+
+func temporalActivityNestedTimeoutError() error {
+	return temporalsdk.GetDefaultFailureConverter().FailureToError(&failurepb.Failure{
+		Message: "planner activity failed",
+		Cause: &failurepb.Failure{
+			Message: "planner failure",
+			Cause: &failurepb.Failure{
+				Message: "nested timeout",
+				FailureInfo: &failurepb.Failure_TimeoutFailureInfo{
+					TimeoutFailureInfo: &failurepb.TimeoutFailureInfo{
+						TimeoutType: enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE,
+					},
+				},
+			},
+			FailureInfo: &failurepb.Failure_ApplicationFailureInfo{
+				ApplicationFailureInfo: &failurepb.ApplicationFailureInfo{
+					Type: "planner_failure",
+				},
+			},
+		},
+		FailureInfo: &failurepb.Failure_ActivityFailureInfo{
+			ActivityFailureInfo: &failurepb.ActivityFailureInfo{
+				RetryState: enumspb.RETRY_STATE_TIMEOUT,
+			},
+		},
+	})
 }

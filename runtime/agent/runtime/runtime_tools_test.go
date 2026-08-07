@@ -445,7 +445,7 @@ func TestPublishToolResultReceivedProjectsBoundsIntoResultPreview(t *testing.T) 
 		},
 	}
 
-	err := exec.publishToolResultReceived(context.Background(), call, tr, nil, 0)
+	_, err := exec.publishToolResultReceived(context.Background(), call, tr, nil, 0)
 	require.NoError(t, err)
 	require.Len(t, recorder.events, 1)
 

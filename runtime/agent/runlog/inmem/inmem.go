@@ -127,8 +127,8 @@ func (s *Store) List(_ context.Context, runID string, cursor string, limit int) 
 }
 
 // sameEventBody reports whether candidate represents the same immutable logical
-// event as existing. It deliberately excludes the store-assigned ID because
-// deduplication happens before cursor assignment.
+// event as existing. It excludes the store-assigned ID and retry-attempt
+// timestamp; the first successful append owns both values.
 func sameEventBody(existing *runlog.Event, candidate *runlog.Event) bool {
 	if existing == nil || candidate == nil {
 		return false
@@ -139,6 +139,5 @@ func sameEventBody(existing *runlog.Event, candidate *runlog.Event) bool {
 		existing.SessionID == candidate.SessionID &&
 		existing.TurnID == candidate.TurnID &&
 		existing.Type == candidate.Type &&
-		existing.Timestamp.Equal(candidate.Timestamp) &&
 		bytes.Equal(existing.Payload, candidate.Payload)
 }

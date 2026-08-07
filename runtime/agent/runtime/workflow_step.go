@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -28,17 +29,30 @@ type (
 	stepKind uint8
 
 	stepProgram struct {
-		result     *planner.PlanResult
-		calls      []planner.ToolRequest
-		awaitItems []planner.AwaitItem
-		kind       stepKind
+		result        *planner.PlanResult
+		calls         []planner.ToolRequest
+		allowed       []planner.ToolRequest
+		immediate     []planner.ToolRequest
+		confirmations []confirmationAwait
+		awaitItems    []planner.AwaitItem
+		budgetCost    int
+		admitted      bool
+		kind          stepKind
 	}
 
 	stepToolRecord struct {
-		call       planner.ToolRequest
-		result     *planner.ToolResult
-		resultJSON rawjson.Message
-		pause      *ToolPause
+		call             planner.ToolRequest
+		result           *planner.ToolResult
+		resultJSON       rawjson.Message
+		resultPublished  bool
+		resultRecord     *RecordActivityInput
+		scheduleRequired bool
+		scheduleQueue    string
+		scheduleExact    bool
+		expectedChildren int
+		duration         time.Duration
+		pause            *ToolPause
+		requiresResume   bool
 	}
 
 	stepBatch struct {
@@ -54,8 +68,7 @@ type (
 	}
 
 	stepFinalization struct {
-		reason     planner.TerminationReason
-		skippedErr string
+		reason planner.TerminationReason
 	}
 )
 
@@ -108,6 +121,9 @@ func (r *Runtime) normalizeStep(result *planner.PlanResult) (stepProgram, error)
 		if len(awaitItems) == 0 {
 			return stepProgram{}, errors.New("workflow step received empty await")
 		}
+		if err := validateAwaitItems(awaitItems); err != nil {
+			return stepProgram{}, err
+		}
 	}
 	if !hasCalls && !hasTerminal && !hasAwait {
 		return stepProgram{}, errors.New("workflow step received empty PlanResult")
@@ -155,23 +171,119 @@ func (r *Runtime) normalizeStep(result *planner.PlanResult) (stepProgram, error)
 	}, nil
 }
 
+// validateAwaitItems proves the await union and its correlation identifiers
+// before any provider-facing tool use is committed.
+func validateAwaitItems(items []planner.AwaitItem) error {
+	for i, item := range items {
+		variants := 0
+		if item.Clarification != nil {
+			variants++
+		}
+		if item.ToolClarification != nil {
+			variants++
+		}
+		if item.Questions != nil {
+			variants++
+		}
+		if item.ExternalTools != nil {
+			variants++
+		}
+		if variants != 1 {
+			return fmt.Errorf("await item %d must set exactly one payload", i)
+		}
+		switch item.Kind {
+		case planner.AwaitItemKindClarification:
+			if item.Clarification == nil || item.Clarification.ID == "" || item.Clarification.Question == "" {
+				return fmt.Errorf("await clarification item %d requires id and question", i)
+			}
+		case planner.AwaitItemKindToolClarification:
+			q := item.ToolClarification
+			if q == nil || q.ID == "" || q.ToolName == "" || q.ToolCallID == "" || q.Question == "" {
+				return fmt.Errorf("await tool clarification item %d requires id, tool, tool_call_id, and question", i)
+			}
+		case planner.AwaitItemKindQuestions:
+			q := item.Questions
+			if q == nil || q.ID == "" || q.ToolName == "" || q.ToolCallID == "" || len(q.Questions) == 0 {
+				return fmt.Errorf("await questions item %d requires id, tool, tool_call_id, and questions", i)
+			}
+		case planner.AwaitItemKindExternalTools:
+			e := item.ExternalTools
+			if e == nil || e.ID == "" || len(e.Items) == 0 {
+				return fmt.Errorf("await external tools item %d requires id and tool calls", i)
+			}
+			for j, call := range e.Items {
+				if call.Name == "" || call.ToolCallID == "" {
+					return fmt.Errorf("await external tools item %d call %d requires tool and tool_call_id", i, j)
+				}
+			}
+		default:
+			return fmt.Errorf("await item %d has unknown kind %q", i, item.Kind)
+		}
+	}
+	return nil
+}
+
+// awaitToolRequests returns the provider-correlated calls embedded in an await
+// barrier; plain clarification awaits do not create tool uses.
+func awaitToolRequests(items []planner.AwaitItem) []planner.ToolRequest {
+	var calls []planner.ToolRequest
+	for _, item := range items {
+		switch item.Kind {
+		case planner.AwaitItemKindClarification:
+		case planner.AwaitItemKindToolClarification:
+			q := item.ToolClarification
+			calls = append(calls, planner.ToolRequest{
+				Name: q.ToolName, ToolCallID: q.ToolCallID, Payload: q.Payload,
+			})
+		case planner.AwaitItemKindQuestions:
+			q := item.Questions
+			calls = append(calls, planner.ToolRequest{
+				Name: q.ToolName, ToolCallID: q.ToolCallID, Payload: q.Payload,
+			})
+		case planner.AwaitItemKindExternalTools:
+			for _, call := range item.ExternalTools.Items {
+				calls = append(calls, planner.ToolRequest{
+					Name: call.Name, ToolCallID: call.ToolCallID, Payload: call.Payload,
+				})
+			}
+		}
+	}
+	return calls
+}
+
 // validateSynthesisAfterTools requires a batch whose existing execution
 // classification guarantees a subsequent planner resume.
 func (r *Runtime) validateSynthesisAfterTools(calls []planner.ToolRequest) error {
-	hasBudgeted := false
 	for _, call := range calls {
 		spec, ok := r.toolSpec(call.Name)
 		if ok && spec.TerminalRun {
 			return fmt.Errorf("workflow step synthesis-after-tools cannot include terminal tool %q", call.Name)
 		}
-		if !r.isBookkeeping(call.Name) {
-			hasBudgeted = true
-		}
 	}
-	if !hasBudgeted {
+	if !r.hasBudgetedToolCalls(calls) {
 		return errors.New("workflow step synthesis-after-tools requires at least one budgeted tool")
 	}
 	return nil
+}
+
+// hasBudgetedToolCalls distinguishes active work from runtime bookkeeping,
+// which remains a completion obligation after Budget expires.
+func (r *Runtime) hasBudgetedToolCalls(calls []planner.ToolRequest) bool {
+	for _, call := range calls {
+		if !r.isBookkeeping(call.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Runtime) hasBookkeepingToolCalls(calls []planner.ToolRequest) bool {
+	for _, call := range calls {
+		if r.isBookkeeping(call.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // runStep executes one normalized planner result and applies one post-step
@@ -192,6 +304,29 @@ func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
 	}
 	if err := validatePlanResultToolCallIDs(program.result); err != nil {
 		return nil, err
+	}
+	if len(program.awaitItems) > 0 && l.ctrl == nil {
+		return nil, errors.New("planner await requires interrupts")
+	}
+	for _, call := range awaitToolRequests(program.awaitItems) {
+		spec, ok := l.r.toolSpec(call.Name)
+		if !ok {
+			return nil, fmt.Errorf("planner await references unknown tool %q", call.Name)
+		}
+		if spec.TerminalRun {
+			return nil, fmt.Errorf("terminal tool %q cannot be owned by planner await work", call.Name)
+		}
+	}
+	if program.kind == stepKindTools &&
+		l.r.hasBudgetedToolCalls(program.calls) &&
+		!l.r.hasBookkeepingToolCalls(program.calls) &&
+		l.deadlines.shouldFinalize(l.wfCtx.Now()) {
+		return l.finalizeStep(planner.TerminationReasonTimeBudget)
+	}
+	if len(program.calls) > 0 {
+		if err := l.prepareToolStep(&program); err != nil {
+			return nil, err
+		}
 	}
 	if err := l.commitSelectedModelResponse(program.result); err != nil {
 		return nil, err
@@ -249,10 +384,36 @@ func (l *workflowLoop) executeStepProgram(program stepProgram) (stepBatch, error
 	if len(program.calls) > 0 {
 		confirmations, items, err := l.executeToolStep(program, &batch)
 		if err != nil {
-			return stepBatch{}, err
+			return stepBatch{}, l.failCommittedStep(&batch, err)
 		}
 		if batch.finalize != nil {
+			awaitCalls := awaitToolRequests(program.awaitItems)
+			awaitCalls = l.r.prepareAllowedCallsMetadata(
+				l.input.AgentID,
+				l.base,
+				awaitCalls,
+				l.parentTracker,
+			)
+			failures, resultErr := stepToolRecordsAfterExecution(
+				awaitCalls,
+				nil,
+				errors.New("tool call was not executed because the run tool-call cap was exhausted"),
+			)
+			if resultErr != nil {
+				return stepBatch{}, resultErr
+			}
+			batch.records = append(batch.records, failures...)
+			l.prepareRecoveryRecords(&batch)
 			return batch, nil
+		}
+		confirmations, expiredRecords, expired, err := l.resolveExpiredConfirmations(
+			confirmations,
+			program.result.ExpectedChildren,
+		)
+		batch.records = append(batch.records, expiredRecords...)
+		batch.timedOut = batch.timedOut || expired
+		if err != nil {
+			return stepBatch{}, l.failCommittedStep(&batch, err)
 		}
 		// Tool-owned pauses occur after their tool result and must expose that
 		// result before the user's answer. Planner-authored awaits remain behind
@@ -269,7 +430,7 @@ func (l *workflowLoop) executeStepProgram(program stepProgram) (stepBatch, error
 				items,
 				&batch,
 			); err != nil {
-				return stepBatch{}, err
+				return stepBatch{}, l.failCommittedStep(&batch, err)
 			}
 		}
 		return batch, nil
@@ -284,9 +445,69 @@ func (l *workflowLoop) executeStepProgram(program stepProgram) (stepBatch, error
 		program.awaitItems,
 		&batch,
 	); err != nil {
-		return stepBatch{}, err
+		return stepBatch{}, l.failCommittedStep(&batch, err)
 	}
 	return batch, nil
+}
+
+// failCommittedStep closes every provider-correlated call in a committed step
+// before returning the error that interrupted execution.
+func (l *workflowLoop) failCommittedStep(batch *stepBatch, stepErr error) error {
+	recorded := make(map[string]struct{}, len(batch.records))
+	for _, record := range batch.records {
+		recorded[record.call.ToolCallID] = struct{}{}
+	}
+	allCalls := append([]planner.ToolRequest(nil), batch.program.calls...)
+	awaitCalls := awaitToolRequests(batch.program.awaitItems)
+	awaitCalls = l.r.prepareAllowedCallsMetadata(
+		l.input.AgentID,
+		l.base,
+		awaitCalls,
+		l.parentTracker,
+	)
+	allCalls = append(allCalls, awaitCalls...)
+	unresolved := make([]planner.ToolRequest, 0, len(allCalls))
+	for _, call := range allCalls {
+		if _, ok := recorded[call.ToolCallID]; !ok {
+			unresolved = append(unresolved, call)
+		}
+	}
+	failures, resultErr := stepToolRecordsAfterExecution(unresolved, nil, stepErr)
+	batch.records = append(batch.records, failures...)
+	l.prepareRecoveryRecords(batch)
+	return l.recordToolResultsBeforeError(batch, errors.Join(stepErr, resultErr))
+}
+
+// prepareRecoveryRecords restores the exact schedule metadata needed to retry
+// lifecycle publication with the call's stable event key.
+func (l *workflowLoop) prepareRecoveryRecords(batch *stepBatch) {
+	awaitIDs := make(map[string]struct{})
+	for _, call := range awaitToolRequests(batch.program.awaitItems) {
+		awaitIDs[call.ToolCallID] = struct{}{}
+	}
+	for i := range batch.records {
+		record := &batch.records[i]
+		if !record.scheduleRequired || record.scheduleExact {
+			continue
+		}
+		if _, ok := awaitIDs[record.call.ToolCallID]; ok {
+			record.scheduleExact = true
+			continue
+		}
+		record.scheduleQueue = l.toolOpts.Queue
+		if record.scheduleQueue == "" {
+			if spec, ok := l.r.toolSpec(record.call.Name); ok {
+				l.r.mu.RLock()
+				toolset, exists := l.r.toolsets[spec.Toolset]
+				l.r.mu.RUnlock()
+				if exists {
+					record.scheduleQueue = toolset.TaskQueue
+				}
+			}
+		}
+		record.expectedChildren = batch.program.result.ExpectedChildren
+		record.scheduleExact = true
+	}
 }
 
 // advanceStep applies all post-step policy and either completes the run or
@@ -296,16 +517,10 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		return nil, err
 	}
 	if batch.finalize != nil {
-		return l.finalizeStep(batch.finalize.reason, batch.finalize.skippedErr)
+		return l.finalizeStep(batch.finalize.reason)
 	}
 	if batch.timedOut {
-		out, finalized, err := l.tryFinalizeStep(planner.TerminationReasonTimeBudget)
-		if err != nil {
-			return nil, err
-		}
-		if finalized {
-			return out, nil
-		}
+		return l.finalizeStep(planner.TerminationReasonTimeBudget)
 	}
 
 	if batch.program.kind == stepKindToolTerminal {
@@ -337,7 +552,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	// partially fails is progress, not thrash.
 	progress, failed := l.r.budgetedBatchOutcome(batch.records)
 	if applyFailureStreak(&l.st.Caps, progress, failed) {
-		return l.finalizeStep(planner.TerminationReasonFailureCap, "failure-cap finalization skipped without hard deadline")
+		return l.finalizeStep(planner.TerminationReasonFailureCap)
 	}
 
 	if out, err := l.r.handleMissingFieldsPolicy(
@@ -364,7 +579,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		return nil, err
 	}
 	if protected {
-		return l.finalizeStep(planner.TerminationReasonFailureCap, "protected finalization skipped without hard deadline")
+		return l.finalizeStep(planner.TerminationReasonFailureCap)
 	}
 
 	if batch.awaited {
@@ -418,10 +633,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	if err != nil {
 		if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) &&
 			!l.deadlines.Budget.IsZero() {
-			return l.finalizeStep(
-				planner.TerminationReasonTimeBudget,
-				"time-budget finalization skipped without hard deadline",
-			)
+			return l.finalizeStep(planner.TerminationReasonTimeBudget)
 		}
 		return nil, err
 	}
@@ -629,6 +841,11 @@ func (l *workflowLoop) recordUnrecordedStepToolResults(batch *stepBatch) error {
 		panic("runtime: recorded step tool result count exceeds batch records")
 	}
 	records := batch.records[batch.recorded:]
+	ordered, err := canonicalStepToolRecords(batch.program.calls, records)
+	if err != nil {
+		return err
+	}
+	copy(records, ordered)
 	if err := l.r.recordStepToolResults(l.wfCtx.Context(), l.input, l.base, l.st, l.turnID, records); err != nil {
 		return err
 	}
@@ -668,23 +885,10 @@ func dominantRecoveryAction(records []stepToolRecord) (planner.RecoveryAction, b
 	return action, action != ""
 }
 
-// finalizeStep runs a required finalization transition and fails if restricted
-// tool mode legally prevents it.
-func (l *workflowLoop) finalizeStep(reason planner.TerminationReason, skippedErr string) (*RunOutput, error) {
-	out, finalized, err := l.tryFinalizeStep(reason)
-	if err != nil {
-		return nil, err
-	}
-	if finalized {
-		return out, nil
-	}
-	return nil, errors.New(skippedErr)
-}
-
-// tryFinalizeStep invokes planner finalization under the restricted-tool
-// contract and reports whether finalization was allowed.
-func (l *workflowLoop) tryFinalizeStep(reason planner.TerminationReason) (*RunOutput, bool, error) {
-	return l.r.finalizeWithPlannerIfAllowed(
+// finalizeStep invokes the required final planner transition after budgeted
+// tool work is forbidden.
+func (l *workflowLoop) finalizeStep(reason planner.TerminationReason) (*RunOutput, error) {
+	return l.r.finalizeWithPlanner(
 		l.wfCtx,
 		l.reg,
 		l.input,
@@ -761,9 +965,16 @@ func stepToolRecordsFromExecutions(calls []planner.ToolRequest, outcomes []*Tool
 			return nil, fmt.Errorf("workflow step execution missing result for %q (%s)", call.Name, call.ToolCallID)
 		}
 		record := stepToolRecord{
-			call:   call,
-			result: outcome.ToolResult,
-			pause:  outcome.Pause,
+			call:             call,
+			result:           outcome.ToolResult,
+			pause:            outcome.Pause,
+			resultPublished:  outcome.resultPublished,
+			resultRecord:     outcome.resultRecord,
+			scheduleRequired: !outcome.schedulePublished,
+			scheduleQueue:    outcome.scheduleQueue,
+			scheduleExact:    true,
+			expectedChildren: outcome.expectedChildren,
+			duration:         outcome.duration,
 		}
 		if err := validateStepToolRecord("workflow step execution", record); err != nil {
 			return nil, err
@@ -775,6 +986,132 @@ func stepToolRecordsFromExecutions(calls []planner.ToolRequest, outcomes []*Tool
 		return nil, errors.New("workflow step execution returned results for unknown tool calls")
 	}
 	return records, nil
+}
+
+// stepToolRecordsAfterExecution closes every committed tool call even when the
+// execution layer returns only a partial set of concrete outcomes. Concrete
+// results are preserved; unresolved calls receive an explicit infrastructure
+// failure before the original execution error is returned.
+func stepToolRecordsAfterExecution(
+	calls []planner.ToolRequest,
+	outcomes []*ToolExecutionResult,
+	executionErr error,
+) ([]stepToolRecord, error) {
+	callsByID := make(map[string]planner.ToolRequest, len(calls))
+	for _, call := range calls {
+		callsByID[call.ToolCallID] = call
+	}
+	recordsByID := make(map[string]stepToolRecord, len(outcomes))
+	var resultErr error
+	for _, outcome := range outcomes {
+		if outcome == nil || outcome.ToolResult == nil {
+			resultErr = errors.Join(resultErr, errors.New("workflow step execution returned an empty outcome"))
+			continue
+		}
+		id := outcome.ToolResult.ToolCallID
+		call, ok := callsByID[id]
+		if !ok {
+			resultErr = errors.Join(
+				resultErr,
+				fmt.Errorf("workflow step execution returned unknown tool_call_id %s", id),
+			)
+			continue
+		}
+		if _, exists := recordsByID[id]; exists {
+			resultErr = errors.Join(
+				resultErr,
+				fmt.Errorf("workflow step execution returned duplicate tool_call_id %s", id),
+			)
+			continue
+		}
+		record := stepToolRecord{
+			call:             call,
+			result:           outcome.ToolResult,
+			pause:            outcome.Pause,
+			resultPublished:  outcome.resultPublished,
+			resultRecord:     outcome.resultRecord,
+			scheduleRequired: !outcome.schedulePublished,
+			scheduleQueue:    outcome.scheduleQueue,
+			scheduleExact:    true,
+			expectedChildren: outcome.expectedChildren,
+			duration:         outcome.duration,
+		}
+		if err := validateStepToolRecord("workflow step execution", record); err != nil {
+			resultErr = errors.Join(resultErr, err)
+			continue
+		}
+		recordsByID[id] = record
+	}
+	for _, call := range calls {
+		if _, ok := recordsByID[call.ToolCallID]; !ok {
+			if executionErr == nil {
+				resultErr = errors.Join(
+					resultErr,
+					fmt.Errorf("workflow step execution missing result for %q (%s)", call.Name, call.ToolCallID),
+				)
+			}
+		}
+	}
+	boundaryErr := errors.Join(executionErr, resultErr)
+	records := make([]stepToolRecord, 0, len(calls))
+	for _, call := range calls {
+		if record, ok := recordsByID[call.ToolCallID]; ok {
+			records = append(records, record)
+			continue
+		}
+		records = append(records, stepToolRecord{
+			call:             call,
+			scheduleRequired: true,
+			result: &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Failure: &planner.ToolFailure{
+					Kind: planner.FailureInternal,
+					Error: planner.NewToolError(
+						"tool execution did not produce a result: " + boundaryErr.Error(),
+					),
+					Recovery: planner.RecoveryDirective{
+						Action: planner.RecoveryFinish,
+					},
+				},
+			},
+		})
+	}
+	return records, resultErr
+}
+
+// canonicalStepToolRecords restores the provider's call order after calls from
+// different deadline or confirmation classes complete independently. Records
+// created by planner await items follow in their original await order.
+func canonicalStepToolRecords(calls []planner.ToolRequest, records []stepToolRecord) ([]stepToolRecord, error) {
+	byID := make(map[string]stepToolRecord, len(records))
+	for _, record := range records {
+		id := record.call.ToolCallID
+		if id == "" {
+			return nil, fmt.Errorf("workflow step result for %q is missing tool_call_id", record.call.Name)
+		}
+		if _, exists := byID[id]; exists {
+			return nil, fmt.Errorf("workflow step returned duplicate tool_call_id %s", id)
+		}
+		byID[id] = record
+	}
+	ordered := make([]stepToolRecord, 0, len(records))
+	for _, call := range calls {
+		record, ok := byID[call.ToolCallID]
+		if !ok {
+			continue
+		}
+		ordered = append(ordered, record)
+		delete(byID, call.ToolCallID)
+	}
+	for _, record := range records {
+		if _, ok := byID[record.call.ToolCallID]; !ok {
+			continue
+		}
+		ordered = append(ordered, record)
+		delete(byID, record.call.ToolCallID)
+	}
+	return ordered, nil
 }
 
 // toolPausesFromRecords extracts current-step pause signals in canonical call
