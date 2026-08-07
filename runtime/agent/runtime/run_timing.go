@@ -2,12 +2,11 @@
 // workflow execution.
 //
 // The workflow loop (workflow_loop.go) is the sole owner of run-duration
-// enforcement: it tracks TimeBudget/FinalizerGrace as a deterministic "Hard"
-// deadline and finalizes gracefully (emitting a terminal hook) once that
-// deadline elapses during active planner/tool work. Time spent blocked on an
-// external-input await (clarification, confirmation, provided tool results)
-// is explicitly paused out of that deadline by (*runDeadlines).pause, so an
-// operator response never burns the run's active-time budget.
+// enforcement. TimeBudget forms the Budget deadline for active planner/tool
+// work. FinalizerGrace extends that into a Hard deadline for one final planner
+// activity. Time spent blocked on external input (clarification, confirmation,
+// provided tool results) extends both deadlines via (*runDeadlines).pause, so
+// an operator response never burns the run's active-time budget.
 //
 // The engine (e.g. Temporal WorkflowRunTimeout) must never impose a second,
 // competing wall-clock ceiling on top of this: unlike the workflow's own
@@ -31,7 +30,8 @@ type runTiming struct {
 // Contract:
 //   - TimeBudget governs active planner/tool execution only; zero means no
 //     active-time budget (the run finalizes only via caps or a terminal tool).
-//   - FinalizerGrace always reserves enough time for one final planner resume turn.
+//   - FinalizerGrace is the exact extension from Budget to Hard. Finalization
+//     that starts before Budget may use the remaining Budget plus this grace.
 //   - Neither value is ever projected onto an engine-level run timeout: see the
 //     package comment for why that would undermine indefinite external-input
 //     awaits.
@@ -51,17 +51,6 @@ func resolveRunTiming(reg AgentRegistration, input *RunInput) runTiming {
 		timing.FinalizerGrace = reg.Policy.FinalizerGrace
 	default:
 		timing.FinalizerGrace = defaultFinalizerGrace
-	}
-
-	resumeTimeout := reg.ResumeActivityOptions.StartToCloseTimeout
-	if input != nil && input.Policy != nil && input.Policy.PlanTimeout > 0 {
-		resumeTimeout = input.Policy.PlanTimeout
-	}
-	if resumeTimeout == 0 {
-		resumeTimeout = defaultResumeActivityTimeout
-	}
-	if timing.FinalizerGrace < resumeTimeout {
-		timing.FinalizerGrace = resumeTimeout
 	}
 	return timing
 }

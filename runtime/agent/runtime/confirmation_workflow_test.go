@@ -9,6 +9,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 func TestConfirmationPlanOverrideKeepsCanonicalPayload(t *testing.T) {
@@ -57,6 +59,382 @@ func TestConfirmationPlanOverrideKeepsCanonicalPayload(t *testing.T) {
 	require.Equal(t, "Confirm tool", plan.Prompt)
 	require.JSONEq(t, `{"execution":"payload"}`, string(call.Payload.RawMessage()))
 	require.Equal(t, map[string]string{"summary": "denied"}, plan.DeniedResult)
+}
+
+func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
+	terminal := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
+	terminal.Bookkeeping = true
+	terminal.TerminalRun = true
+	executions := 0
+	rt := New(
+		WithLogger(telemetry.NoopLogger{}),
+		WithToolConfirmation(&ToolConfirmationConfig{
+			Confirm: map[tools.Ident]*ToolConfirmation{
+				terminal.Name: {
+					Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+						return "Confirm completion", nil
+					},
+					DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+						return map[string]any{"ok": false}, nil
+					},
+				},
+			},
+		}),
+	)
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "svc",
+		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			executions++
+			return &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Result:     map[string]any{"ok": true},
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{terminal},
+	}))
+
+	current := time.Unix(100, 0)
+	input := &RunInput{
+		AgentID:   "agent-1",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+	}
+	seedRunMeta(t, rt, input)
+	wfCtx := &testWorkflowContext{
+		ctx:     context.Background(),
+		now:     func() time.Time { return current },
+		runtime: rt,
+	}
+	wfCtx.ensureSignals()
+	wfCtx.confirmCh <- &api.ConfirmationDecision{
+		Approved:    true,
+		RequestedBy: "operator",
+	}
+	ctrl := interrupt.NewController(wfCtx)
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     input.RunID,
+			SessionID: input.SessionID,
+			TurnID:    input.TurnID,
+			Attempt:   1,
+		},
+	}
+	initial := &planner.PlanResult{
+		ToolCalls: []planner.ToolRequest{{
+			Name:    terminal.Name,
+			Payload: rawjson.Message(`{}`),
+		}},
+	}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute"},
+		input,
+		base,
+		initial,
+		policy.CapsState{},
+		current,
+		current.Add(time.Minute),
+		input.TurnID,
+		ctrl,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Equal(t, 1, executions)
+	require.Empty(t, wfCtx.lastPlannerCall.Name)
+}
+
+func TestTerminalPayloadConfirmationIsRejectedBeforeTranscriptCommit(t *testing.T) {
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	bookkeeping.Bookkeeping = true
+	rt := New(
+		WithLogger(telemetry.NoopLogger{}),
+		WithToolConfirmation(&ToolConfirmationConfig{
+			Confirm: map[tools.Ident]*ToolConfirmation{
+				bookkeeping.Name: {
+					Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+						return "Confirm record", nil
+					},
+					DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+						return map[string]any{"approved": false}, nil
+					},
+				},
+			},
+		}),
+	)
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "svc",
+		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
+				Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"ok": true},
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{bookkeeping},
+	}))
+	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
+	wfCtx.ensureSignals()
+	ctrl := interrupt.NewController(wfCtx)
+	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	seedRunMeta(t, rt, input)
+	base := &planner.PlanInput{RunContext: run.Context{
+		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
+	}}
+	initial := &planner.PlanResult{
+		ToolCalls: []planner.ToolRequest{{Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)}},
+		FinalResponse: &planner.FinalResponse{Message: &model.Message{
+			Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}},
+		}},
+	}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute"},
+		input,
+		base,
+		initial,
+		policy.CapsState{},
+		time.Time{},
+		time.Time{},
+		input.TurnID,
+		ctrl,
+	)
+
+	require.Nil(t, out)
+	require.ErrorContains(t, err, "terminal payload cannot accompany confirmation-gated tools")
+	require.Empty(t, base.Messages)
+}
+
+func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testing.T) {
+	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	bookkeeping.Bookkeeping = true
+	confirmation := func(name tools.Ident) *ToolConfirmation {
+		return &ToolConfirmation{
+			Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+				return "Confirm " + string(name), nil
+			},
+			DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+				return map[string]any{"approved": false}, nil
+			},
+		}
+	}
+	rt := New(
+		WithLogger(telemetry.NoopLogger{}),
+		WithToolConfirmation(&ToolConfirmationConfig{
+			Confirm: map[tools.Ident]*ToolConfirmation{
+				budgeted.Name:    confirmation(budgeted.Name),
+				bookkeeping.Name: confirmation(bookkeeping.Name),
+			},
+		}),
+	)
+	executed := make([]tools.Ident, 0, 1)
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "svc",
+		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			executed = append(executed, call.Name)
+			return &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Result:     map[string]any{"ok": true},
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{budgeted, bookkeeping},
+	}))
+
+	current := time.Unix(100, 0)
+	input := &RunInput{
+		AgentID:   "agent-1",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+	}
+	seedRunMeta(t, rt, input)
+	reg := AgentRegistration{
+		ID:                  input.AgentID,
+		ExecuteToolActivity: "execute",
+		ResumeActivityName:  "resume",
+		Planner: &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{
+				Message: &model.Message{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "finalized"}},
+				},
+			}}, nil
+		}},
+	}
+	rt.agents[input.AgentID] = reg
+	wfCtx := &testWorkflowContext{
+		ctx:     context.Background(),
+		now:     func() time.Time { return current },
+		runtime: rt,
+		planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{
+			Message: &model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "finalized"}},
+			},
+		}},
+		hasPlanResult: true,
+	}
+	wfCtx.ensureSignals()
+	wfCtx.confirmCh <- &api.ConfirmationDecision{Approved: true, RequestedBy: "operator"}
+	ctrl := interrupt.NewController(wfCtx)
+	base := &planner.PlanInput{
+		RunContext: run.Context{
+			RunID:     input.RunID,
+			SessionID: input.SessionID,
+			TurnID:    input.TurnID,
+			Attempt:   1,
+		},
+	}
+	initial := &planner.PlanResult{
+		ToolCalls: []planner.ToolRequest{
+			{Name: budgeted.Name, Payload: rawjson.Message(`{}`)},
+			{Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)},
+		},
+	}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		reg,
+		input,
+		base,
+		initial,
+		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		current,
+		current.Add(time.Minute),
+		input.TurnID,
+		ctrl,
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Equal(t, []tools.Ident{bookkeeping.Name}, executed)
+	require.Len(t, out.ToolEvents, 2)
+	require.Equal(t, planner.FailureTimeout, out.ToolEvents[0].Failure.Kind)
+	require.Nil(t, out.ToolEvents[1].Failure)
+	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
+}
+
+func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
+	first := newAnyJSONSpec(tools.Ident("svc.first"), "svc")
+	second := newAnyJSONSpec(tools.Ident("svc.second"), "svc")
+	confirmation := func(name tools.Ident) *ToolConfirmation {
+		return &ToolConfirmation{
+			Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+				return "Confirm " + string(name), nil
+			},
+			DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+				return map[string]any{"approved": false}, nil
+			},
+		}
+	}
+	rt := New(
+		WithLogger(telemetry.NoopLogger{}),
+		WithToolConfirmation(&ToolConfirmationConfig{Confirm: map[tools.Ident]*ToolConfirmation{
+			first.Name: confirmation(first.Name), second.Name: confirmation(second.Name),
+		}}),
+	)
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "svc",
+		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
+				Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"ok": true},
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{first, second},
+	}))
+	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
+	wfCtx.ensureSignals()
+	wfCtx.confirmCh <- &api.ConfirmationDecision{Approved: true}
+	ctrl := interrupt.NewController(wfCtx)
+	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	seedRunMeta(t, rt, input)
+	base := &planner.PlanInput{RunContext: run.Context{
+		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
+	}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
+		{Name: first.Name, Payload: rawjson.Message(`{}`)},
+		{Name: second.Name, Payload: rawjson.Message(`{}`)},
+	}}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute"},
+		input,
+		base,
+		initial,
+		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		time.Time{},
+		time.Time{},
+		input.TurnID,
+		ctrl,
+	)
+
+	require.Nil(t, out)
+	require.ErrorContains(t, err, "confirmation decision missing requested_by")
+	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
+	require.GreaterOrEqual(t, len(base.Messages), 2)
+	require.Len(t, base.Messages[1].Parts, 2)
+}
+
+func TestImmediateErrorCompletesUnenteredConfirmation(t *testing.T) {
+	immediate := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
+	confirmed := newAnyJSONSpec(tools.Ident("svc.update"), "svc")
+	rt := New(
+		WithLogger(telemetry.NoopLogger{}),
+		WithToolConfirmation(&ToolConfirmationConfig{Confirm: map[tools.Ident]*ToolConfirmation{
+			confirmed.Name: {
+				Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+					return "Confirm update", nil
+				},
+				DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+					return map[string]any{"approved": false}, nil
+				},
+			},
+		}}),
+	)
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name:   "svc",
+		Inline: true,
+		Execute: func(_ context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+			return nil, fmt.Errorf("inline tool %q failed", call.Name)
+		},
+		Specs: []tools.ToolSpec{immediate, confirmed},
+	}))
+	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
+	wfCtx.ensureSignals()
+	ctrl := interrupt.NewController(wfCtx)
+	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	seedRunMeta(t, rt, input)
+	base := &planner.PlanInput{RunContext: run.Context{
+		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
+	}}
+	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
+		{Name: immediate.Name, Payload: rawjson.Message(`{}`)},
+		{Name: confirmed.Name, Payload: rawjson.Message(`{}`)},
+	}}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute"},
+		input,
+		base,
+		initial,
+		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		time.Time{},
+		time.Time{},
+		input.TurnID,
+		ctrl,
+	)
+
+	require.Nil(t, out)
+	require.ErrorContains(t, err, `inline tool "svc.lookup" failed`)
+	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
+	require.GreaterOrEqual(t, len(base.Messages), 2)
+	require.Len(t, base.Messages[1].Parts, 2)
 }
 
 func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *testing.T) {
@@ -133,8 +511,8 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 
 	initial := &planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{
-			{Name: lookup.Name, Payload: rawjson.Message(`{}`)},
 			{Name: confirm.Name, Payload: rawjson.Message(`{}`)},
+			{Name: lookup.Name, Payload: rawjson.Message(`{}`)},
 		},
 	}
 
@@ -160,10 +538,16 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 	require.Len(t, messages[0].Parts, 2)
 	firstUse, ok := messages[0].Parts[0].(model.ToolUsePart)
 	require.True(t, ok)
-	require.Equal(t, string(lookup.Name), firstUse.Name)
+	require.Equal(t, string(confirm.Name), firstUse.Name)
 	secondUse, ok := messages[0].Parts[1].(model.ToolUsePart)
 	require.True(t, ok)
-	require.Equal(t, string(confirm.Name), secondUse.Name)
+	require.Equal(t, string(lookup.Name), secondUse.Name)
 	require.Equal(t, model.ConversationRoleUser, messages[1].Role)
 	require.Len(t, messages[1].Parts, 2)
+	firstResult, ok := messages[1].Parts[0].(model.ToolResultPart)
+	require.True(t, ok)
+	require.Equal(t, firstUse.ID, firstResult.ToolUseID)
+	secondResult, ok := messages[1].Parts[1].(model.ToolResultPart)
+	require.True(t, ok)
+	require.Equal(t, secondUse.ID, secondResult.ToolUseID)
 }

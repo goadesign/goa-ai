@@ -17,7 +17,6 @@ package runtime
 //   place by loop methods.
 
 import (
-	"fmt"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -45,19 +44,13 @@ type (
 	}
 
 	runDeadlines struct {
-		// Budget is the run time budget deadline for internal work (planner resume,
-		// tool execution, hooks). Time spent waiting on external input is explicitly
-		// paused via (*runDeadlines).pause so an operator response does not burn the
-		// run's time budget.
+		// Budget bounds active planner and budgeted tool work. External-input
+		// waits extend it through (*runDeadlines).pause.
 		Budget time.Time
 
-		// Hard is the run deadline including finalizer grace. It is used to stop
-		// scheduling new work when finalization cannot complete meaningfully.
+		// Hard bounds final planner work and completion-owned bookkeeping after
+		// Budget expires. Terminal hook persistence has its own completion context.
 		Hard time.Time
-
-		// FinalizerGrace reserves time for finalization work (planner resume +
-		// terminal hooks). When zero, callers should treat it as minActivityTimeout.
-		FinalizerGrace time.Duration
 	}
 )
 
@@ -91,13 +84,6 @@ func newWorkflowLoop(
 	}
 }
 
-func (d runDeadlines) finalizeReserve() time.Duration {
-	if d.FinalizerGrace > 0 {
-		return d.FinalizerGrace
-	}
-	return minActivityTimeout
-}
-
 // pause extends the run deadlines by delta to account for time spent waiting on
 // external input (clarifications, confirmations, UI-provided tool results).
 //
@@ -119,10 +105,7 @@ func (d *runDeadlines) pause(delta time.Duration) {
 // shouldFinalize reports whether it is too late to schedule new work and the runtime
 // should move to finalization immediately.
 func (d runDeadlines) shouldFinalize(now time.Time) bool {
-	if d.Hard.IsZero() {
-		return false
-	}
-	return d.Hard.Sub(now) <= d.finalizeReserve()
+	return !d.Budget.IsZero() && !now.Before(d.Budget)
 }
 
 func (l *workflowLoop) run() (*RunOutput, error) {
@@ -138,51 +121,6 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 			l.deadlines.Budget,
 		); err != nil {
 			return nil, err
-		}
-
-		now := l.wfCtx.Now()
-		if l.deadlines.shouldFinalize(now) {
-			out, finalized, err := l.r.finalizeWithPlannerIfAllowed(
-				l.wfCtx,
-				l.reg,
-				l.input,
-				l.base,
-				l.st.ToolEvents,
-				l.st.ToolOutputs,
-				l.st.AggUsage,
-				l.st.NextAttempt,
-				l.turnID,
-				planner.TerminationReasonTimeBudget,
-				l.deadlines.Hard,
-			)
-			if err != nil {
-				return nil, err
-			}
-			if finalized {
-				return out, nil
-			}
-		}
-		if !l.deadlines.Hard.IsZero() && now.After(l.deadlines.Hard) {
-			out, finalized, err := l.r.finalizeWithPlannerIfAllowed(
-				l.wfCtx,
-				l.reg,
-				l.input,
-				l.base,
-				l.st.ToolEvents,
-				l.st.ToolOutputs,
-				l.st.AggUsage,
-				l.st.NextAttempt,
-				l.turnID,
-				planner.TerminationReasonTimeBudget,
-				l.deadlines.Hard,
-			)
-			if err != nil {
-				return nil, err
-			}
-			if finalized {
-				return out, nil
-			}
-			return nil, fmt.Errorf("hard-deadline finalization skipped")
 		}
 
 		program, err := l.r.normalizeStep(l.st.Result)

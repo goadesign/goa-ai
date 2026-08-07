@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -45,13 +44,4 @@ func TestWithRunMaxConsecutiveFailedToolCallsRejectsNonPositive(t *testing.T) {
 	require.Panics(t, func() {
 		WithRunMaxConsecutiveFailedToolCalls(-1)(&RunInput{})
 	})
-}
-
-func TestMergeCaps_DoesNotRelaxExpiry(t *testing.T) {
-	now := time.Now()
-	current := policy.CapsState{ExpiresAt: now.Add(5 * time.Minute)}
-	decision := policy.CapsState{ExpiresAt: now.Add(10 * time.Minute)}
-
-	merged := mergeCaps(current, decision)
-	require.Equal(t, current.ExpiresAt, merged.ExpiresAt)
 }

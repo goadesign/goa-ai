@@ -2,9 +2,10 @@
 // tests and local development.
 //
 // The in-memory engine is intentionally minimal:
-// - It runs workflow handlers in-process in goroutines (no durability).
-// - It does not provide Temporal-like determinism or replay semantics.
-// - Activity and workflow timeouts are best-effort and use the standard library.
+//   - It runs workflow handlers in-process in goroutines (no durability).
+//   - It does not provide Temporal-like determinism or replay semantics.
+//   - Activity timeouts cancel the handler context; handlers must return when
+//     canceled because Go cannot preempt an in-process function safely.
 //
 // This engine is useful for unit tests that want to exercise runtime logic
 // without standing up an external workflow backend.
@@ -446,7 +447,7 @@ func (w *wfCtx) NewTimer(ctx context.Context, d time.Duration) (engine.Future[ti
 	return fut, nil
 }
 
-func (w *wfCtx) Await(ctx context.Context, condition func() bool) error {
+func (w *wfCtx) Await(condition func() bool) error {
 	if condition == nil {
 		return errors.New("await condition is required")
 	}
@@ -457,14 +458,14 @@ func (w *wfCtx) Await(ctx context.Context, condition func() bool) error {
 			return nil
 		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-w.ctx.Done():
+			return w.ctx.Err()
 		case <-ticker.C:
 		}
 	}
 }
 
-func (w *wfCtx) PublishRecord(ctx context.Context, call engine.RecordActivityCall) error {
+func (w *wfCtx) PublishRecord(call engine.RecordActivityCall) error {
 	if call.Name == "" {
 		return errors.New("record activity name is required")
 	}
@@ -477,16 +478,17 @@ func (w *wfCtx) PublishRecord(ctx context.Context, call engine.RecordActivityCal
 	if !ok {
 		return fmt.Errorf("record activity %q not registered", call.Name)
 	}
-	timeout := call.Options.StartToCloseTimeout
-	if timeout == 0 {
-		timeout = def.opts.StartToCloseTimeout
-	}
-	actCtx, cancel := withOptionalTimeout(ctx, timeout)
+	timeout, _ := activityTimeout(call.Options, def.opts)
+	actCtx, cancel, _ := withOptionalTimeout(w.ctx, timeout)
 	defer cancel()
-	return def.handler(actCtx, call.Input)
+	err := def.handler(actCtx, call.Input)
+	if errors.Is(actCtx.Err(), context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	return err
 }
 
-func (w *wfCtx) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
+func (w *wfCtx) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
 	if call.Name == "" {
 		return nil, errors.New("planner activity name is required")
 	}
@@ -499,24 +501,29 @@ func (w *wfCtx) ExecutePlannerActivity(ctx context.Context, call engine.PlannerA
 	if !ok {
 		return nil, fmt.Errorf("planner activity %q not registered", call.Name)
 	}
-	timeout := call.Options.StartToCloseTimeout
-	if timeout == 0 {
-		timeout = def.opts.StartToCloseTimeout
-	}
-	actCtx, cancel := withOptionalTimeout(ctx, timeout)
+	timeout, totalDeadline := activityTimeout(call.Options, def.opts)
+	actCtx, cancel, activityDeadline := withOptionalTimeout(w.ctx, timeout)
 	defer cancel()
-	return def.handler(actCtx, call.Input)
+	out, err := def.handler(actCtx, call.Input)
+	if totalDeadline && activityDeadline &&
+		errors.Is(actCtx.Err(), context.DeadlineExceeded) {
+		return nil, fmt.Errorf("%w: %w", engine.ErrPlannerActivityDeadlineExceeded, actCtx.Err())
+	}
+	if errors.Is(actCtx.Err(), context.DeadlineExceeded) {
+		return nil, context.DeadlineExceeded
+	}
+	return out, err
 }
 
-func (w *wfCtx) ExecuteToolActivity(ctx context.Context, call engine.ToolActivityCall) (*api.ToolOutput, error) {
-	fut, err := w.ExecuteToolActivityAsync(ctx, call)
+func (w *wfCtx) ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error) {
+	fut, err := w.ExecuteToolActivityAsync(call)
 	if err != nil {
 		return nil, err
 	}
-	return fut.Get(ctx)
+	return fut.Get(w.ctx)
 }
 
-func (w *wfCtx) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
+func (w *wfCtx) ExecuteToolActivityAsync(call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
 	if call.Name == "" {
 		return nil, errors.New("tool activity name is required")
 	}
@@ -533,13 +540,14 @@ func (w *wfCtx) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolAc
 	fut := &future[*api.ToolOutput]{ready: make(chan struct{})}
 	go func() {
 		defer close(fut.ready)
-		timeout := call.Options.StartToCloseTimeout
-		if timeout == 0 {
-			timeout = def.opts.StartToCloseTimeout
-		}
-		actCtx, cancel := withOptionalTimeout(ctx, timeout)
+		timeout, _ := activityTimeout(call.Options, def.opts)
+		actCtx, cancel, _ := withOptionalTimeout(w.ctx, timeout)
 		defer cancel()
 		fut.result, fut.err = def.handler(actCtx, call.Input)
+		if errors.Is(actCtx.Err(), context.DeadlineExceeded) {
+			fut.result = nil
+			fut.err = context.DeadlineExceeded
+		}
 	}()
 	return fut, nil
 }
@@ -641,11 +649,37 @@ func sendSignal[T any](ctx context.Context, done <-chan struct{}, ch chan<- T, p
 	}
 }
 
-func withOptionalTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+// activityTimeout resolves the effective in-memory execution timeout. With no
+// queue or retries, schedule-to-close and start-to-close are competing bounds;
+// the shorter bound owns expiration.
+func activityTimeout(override, defaults engine.ActivityOptions) (time.Duration, bool) {
+	startToClose := override.StartToCloseTimeout
+	if startToClose == 0 {
+		startToClose = defaults.StartToCloseTimeout
+	}
+	scheduleToClose := override.ScheduleToCloseTimeout
+	if scheduleToClose == 0 {
+		scheduleToClose = defaults.ScheduleToCloseTimeout
+	}
+	if scheduleToClose > 0 && (startToClose == 0 || scheduleToClose <= startToClose) {
+		return scheduleToClose, true
+	}
+	return startToClose, false
+}
+
+// withOptionalTimeout creates the activity deadline and reports whether it is
+// earlier than the parent deadline. The result identifies which configured
+// boundary owns cancellation without changing the cause visible to handlers.
+func withOptionalTimeout(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc, bool) {
 	if timeout <= 0 {
 		return parent, func() {
-		}
+		}, false
 	}
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	return ctx, cancel
+	deadline := time.Now().Add(timeout)
+	activityDeadline := true
+	if parentDeadline, ok := parent.Deadline(); ok && !deadline.Before(parentDeadline) {
+		activityDeadline = false
+	}
+	ctx, cancel := context.WithDeadline(parent, deadline)
+	return ctx, cancel, activityDeadline
 }

@@ -17,8 +17,8 @@ type (
 		Agent *AgentExpr
 		// DefaultCaps specifies default per-run limits on tool usage.
 		DefaultCaps *CapsExpr
-		// TimeBudget is the maximum duration a run may execute before
-		// being terminated.
+		// TimeBudget limits active planner and tool work. External-input waits
+		// do not consume it.
 		TimeBudget time.Duration
 		// PlanTimeout applies to both Plan and Resume activities when set.
 		PlanTimeout time.Duration

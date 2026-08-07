@@ -16,8 +16,10 @@ package temporal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -126,6 +128,26 @@ func normalizeTemporalError(err error) error {
 	return err
 }
 
+// normalizeTemporalPlannerError preserves the timeout boundary that owns
+// planner completion. Only a Temporal-owned activity timeout whose direct cause
+// is schedule-to-close is the total activity deadline; queue, attempt,
+// heartbeat, and planner failures keep their original cause.
+func normalizeTemporalPlannerError(err error) error {
+	err = normalizeTemporalError(err)
+	var activityErr *temporal.ActivityError
+	if !errors.As(err, &activityErr) ||
+		activityErr.RetryState() != enumspb.RETRY_STATE_TIMEOUT {
+		return err
+	}
+	// This must be a direct assertion: a nested timeout belongs to planner code.
+	timeoutErr, ok := activityErr.Unwrap().(*temporal.TimeoutError) //nolint:errorlint
+	if ok &&
+		timeoutErr.TimeoutType() == enumspb.TIMEOUT_TYPE_SCHEDULE_TO_CLOSE {
+		return fmt.Errorf("%w: %w", engine.ErrPlannerActivityDeadlineExceeded, err)
+	}
+	return err
+}
+
 func mergeRetryPolicies(base, override engine.RetryPolicy) engine.RetryPolicy {
 	result := base
 	if override.MaxAttempts != 0 {
@@ -177,7 +199,7 @@ func (w *temporalWorkflowContext) RunID() string {
 	return w.runID
 }
 
-func (w *temporalWorkflowContext) PublishRecord(ctx context.Context, call engine.RecordActivityCall) error {
+func (w *temporalWorkflowContext) PublishRecord(call engine.RecordActivityCall) error {
 	if call.Name == "" {
 		return errors.New("record activity name is required")
 	}
@@ -191,7 +213,7 @@ func (w *temporalWorkflowContext) PublishRecord(ctx context.Context, call engine
 	return fut.Get(actx, &ignored)
 }
 
-func (w *temporalWorkflowContext) ExecutePlannerActivity(ctx context.Context, call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
+func (w *temporalWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
 	if call.Name == "" {
 		return nil, errors.New("planner activity name is required")
 	}
@@ -203,20 +225,20 @@ func (w *temporalWorkflowContext) ExecutePlannerActivity(ctx context.Context, ca
 	fut := workflow.ExecuteActivity(actx, call.Name, call.Input)
 	var out *api.PlanActivityOutput
 	if err := fut.Get(actx, &out); err != nil {
-		return nil, err
+		return nil, normalizeTemporalPlannerError(err)
 	}
 	return out, nil
 }
 
-func (w *temporalWorkflowContext) ExecuteToolActivity(ctx context.Context, call engine.ToolActivityCall) (*api.ToolOutput, error) {
-	fut, err := w.ExecuteToolActivityAsync(ctx, call)
+func (w *temporalWorkflowContext) ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error) {
+	fut, err := w.ExecuteToolActivityAsync(call)
 	if err != nil {
 		return nil, err
 	}
-	return fut.Get(ctx)
+	return fut.Get(w.Context())
 }
 
-func (w *temporalWorkflowContext) ExecuteToolActivityAsync(ctx context.Context, call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
+func (w *temporalWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
 	if call.Name == "" {
 		return nil, errors.New("tool activity name is required")
 	}
@@ -301,12 +323,9 @@ func (w *temporalWorkflowContext) NewTimer(ctx context.Context, d time.Duration)
 	return &temporalTimerFuture{future: fut, ctx: w.ctx, fireAt: fireAt}, nil
 }
 
-func (w *temporalWorkflowContext) Await(ctx context.Context, condition func() bool) error {
+func (w *temporalWorkflowContext) Await(condition func() bool) error {
 	if condition == nil {
 		return errors.New("await condition is required")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
 	}
 	return workflow.Await(w.ctx, condition)
 }
@@ -352,6 +371,11 @@ func (w *temporalWorkflowContext) activityOptionsFor(name string, override engin
 		scheduleToStart = defaults.ScheduleToStartTimeout
 	}
 
+	scheduleToClose := override.ScheduleToCloseTimeout
+	if scheduleToClose == 0 {
+		scheduleToClose = defaults.ScheduleToCloseTimeout
+	}
+
 	heartbeat := override.HeartbeatTimeout
 	if heartbeat == 0 {
 		heartbeat = defaults.HeartbeatTimeout
@@ -366,6 +390,7 @@ func (w *temporalWorkflowContext) activityOptionsFor(name string, override engin
 		// Bound queue wait separately from attempt execution so runtime policies can
 		// keep healthy attempts long enough while still failing worker outages fast.
 		ScheduleToStartTimeout: scheduleToStart,
+		ScheduleToCloseTimeout: scheduleToClose,
 		StartToCloseTimeout:    startToClose,
 		HeartbeatTimeout:       heartbeat,
 		TaskQueue:              queue,

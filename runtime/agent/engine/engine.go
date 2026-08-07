@@ -92,6 +92,10 @@ const (
 )
 
 var (
+	// ErrPlannerActivityDeadlineExceeded indicates that a planner activity
+	// exhausted its ScheduleToCloseTimeout. Other planner timeout causes remain
+	// distinguishable backend errors.
+	ErrPlannerActivityDeadlineExceeded = errors.New("planner activity deadline exceeded")
 	// ErrWorkflowNotFound indicates that no workflow execution exists for the given identifier.
 	ErrWorkflowNotFound = errors.New("workflow not found")
 	// ErrWorkflowCompleted indicates that a workflow exists but no longer accepts signals.
@@ -211,9 +215,9 @@ type (
 	// until the workflow completes or fails. Do not cache WorkflowContext outside
 	// the workflow function scope.
 	WorkflowContext interface {
-		// Context returns the Go context for the workflow. In deterministic engines
-		// (like Temporal), this is a special replay-aware context. Use this for activity
-		// execution and cancellation propagation.
+		// Context returns the Go carrier for workflow identity and runtime values.
+		// Activity scheduling uses this WorkflowContext receiver as the authoritative
+		// replay-aware cancellation scope.
 		Context() context.Context
 		// SetQueryHandler registers a read-only query handler that can be invoked by
 		// external clients to retrieve workflow state. Handlers must be deterministic
@@ -232,20 +236,22 @@ type (
 		// Implementations must run record persistence outside of the deterministic
 		// workflow thread (e.g., via activities in Temporal) so downstream record
 		// consumers can perform I/O.
-		PublishRecord(ctx context.Context, call RecordActivityCall) error
+		PublishRecord(call RecordActivityCall) error
 
 		// ExecutePlannerActivity schedules a planner activity (PlanStart/PlanResume)
 		// and blocks until it completes. Planner activities are executed outside the
-		// deterministic workflow thread and may perform I/O.
-		ExecutePlannerActivity(ctx context.Context, call PlannerActivityCall) (*api.PlanActivityOutput, error)
+		// deterministic workflow thread and may perform I/O. Implementations return
+		// ErrPlannerActivityDeadlineExceeded only when ScheduleToCloseTimeout expires;
+		// queue, attempt, heartbeat, and activity errors retain their original cause.
+		ExecutePlannerActivity(call PlannerActivityCall) (*api.PlanActivityOutput, error)
 
 		// ExecuteToolActivity schedules a tool execution activity and blocks until it
 		// completes. This is useful for sequential execution (finalizers, single tools).
-		ExecuteToolActivity(ctx context.Context, call ToolActivityCall) (*api.ToolOutput, error)
+		ExecuteToolActivity(call ToolActivityCall) (*api.ToolOutput, error)
 
 		// ExecuteToolActivityAsync schedules a tool execution activity and returns a Future
 		// so workflows can run multiple tools concurrently and collect results later.
-		ExecuteToolActivityAsync(ctx context.Context, call ToolActivityCall) (Future[*api.ToolOutput], error)
+		ExecuteToolActivityAsync(call ToolActivityCall) (Future[*api.ToolOutput], error)
 
 		// PauseRequests returns a typed receiver for pause signals.
 		PauseRequests() Receiver[*api.PauseRequest]
@@ -280,12 +286,13 @@ type (
 		// already ready.
 		NewTimer(ctx context.Context, d time.Duration) (Future[time.Time], error)
 
-		// Await blocks until condition returns true, or ctx is done.
+		// Await blocks until condition returns true or the receiver-owned
+		// workflow scope is canceled.
 		//
 		// Condition must be deterministic and side-effect free. A typical use is to
 		// wait on a set of Futures using IsReady() without draining them in a fixed
 		// order (e.g., "wait until any tool future completes").
-		Await(ctx context.Context, condition func() bool) error
+		Await(condition func() bool) error
 
 		// StartChildWorkflow starts a child workflow execution and returns a handle
 		// to await its completion or cancel it. Implementations should honor the
@@ -369,6 +376,10 @@ type (
 		// queue before a worker starts the attempt. Zero means leave queue-wait
 		// unspecified here and let the engine adapter apply its own defaults.
 		ScheduleToStartTimeout time.Duration
+		// ScheduleToCloseTimeout bounds the activity's total elapsed lifetime from
+		// scheduling through queueing, all attempts, and retry backoff. Zero means
+		// leave the total lifetime unspecified.
+		ScheduleToCloseTimeout time.Duration
 		// StartToCloseTimeout bounds one activity attempt once a worker has started
 		// executing it. This is the primary "healthy attempt" budget for planner and
 		// tool work. Zero means use the engine default.

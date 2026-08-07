@@ -106,7 +106,8 @@ type (
 		// without stringifying domain data into labels.
 		Metadata map[string]any
 
-		// MaxDuration encodes the wall-clock budget remaining (string form for prompts/telemetry).
+		// MaxDuration encodes the active planner/tool budget remaining (string
+		// form for prompts and telemetry).
 		MaxDuration string
 	}
 

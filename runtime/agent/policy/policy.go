@@ -1,13 +1,12 @@
 // Package policy codifies policy evaluation and enforcement for agent runs.
 // Policy engines decide which tools are available to planners on each turn,
-// and enforce resource caps (max tool calls, time budgets, failure limits).
+// and enforce resource caps (max tool calls and failure limits).
 // Tool-failure recovery is an execution transition owned by the runtime, not a
 // policy suggestion.
 package policy
 
 import (
 	"context"
-	"time"
 
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -152,11 +151,6 @@ type (
 		// MaxConsecutiveFailedToolCalls; bookkeeping results never move it. When
 		// this reaches zero, the run is terminated.
 		RemainingConsecutiveFailedToolCalls int
-
-		// ExpiresAt conveys when the run-level budgets expire (wall-clock deadline).
-		// Zero means no deadline. The runtime terminates the workflow if time.Now()
-		// exceeds this timestamp. Configured per-agent via RunPolicy.TimeBudget.
-		ExpiresAt time.Time
 	}
 )
 

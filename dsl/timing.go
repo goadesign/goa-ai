@@ -17,7 +17,7 @@ import (
 // Timing must appear inside a RunPolicy expression.
 //
 // Available settings inside Timing:
-//   - Budget: total wall-clock time budget for the entire run
+//   - Budget: active-time budget for planner and tool work
 //   - Plan: timeout for Plan and Resume planner activities
 //   - Tools: default timeout for tool execution activities
 //
@@ -25,7 +25,7 @@ import (
 //
 //	RunPolicy(func() {
 //	    Timing(func() {
-//	        Budget("10m")  // Total run time
+//	        Budget("10m")  // Active planner and tool work
 //	        Plan("45s")    // Planner timeout
 //	        Tools("2m")    // Tool timeout
 //	    })
@@ -47,9 +47,10 @@ func Timing(fn func()) {
 	}
 }
 
-// Budget sets the total wall-clock budget for an agent run. The runtime will
-// cancel the run if execution exceeds this duration. Budget is equivalent to
-// TimeBudget and can be used either inside Timing or directly inside RunPolicy.
+// Budget sets the active-time budget for planner and tool work. External-input
+// waits pause this budget, and final planner work uses a separate grace window.
+// Budget is equivalent to TimeBudget and can be used either inside Timing or
+// directly inside RunPolicy.
 //
 // Budget must appear inside a RunPolicy or Timing expression.
 //
