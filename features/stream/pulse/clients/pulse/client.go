@@ -40,7 +40,7 @@ type (
 		//
 		// Returning nil means "no additional options".
 		StreamOptions func(name string) []streamopts.Stream
-		// OperationTimeout bounds individual Add operations. Zero means no timeout.
+		// OperationTimeout bounds Add, Open, and EnsureGroup operations. Zero means no timeout.
 		OperationTimeout time.Duration
 	}
 
@@ -48,7 +48,9 @@ type (
 	// Implementations wrap goa.design/pulse streaming and provide type-safe access
 	// to stream operations.
 	Client interface {
-		// Stream returns a handle to the named Pulse stream, creating it if needed.
+		// Stream returns a local handle for the named Pulse stream. Redis
+		// lifecycle establishment happens on the first Open, Add, or NewSink
+		// call — not on Stream itself.
 		Stream(name string, opts ...streamopts.Stream) (Stream, error)
 		// Close releases resources owned by the client. Callers typically own the Redis
 		// connection and may provide a no-op implementation.
@@ -64,10 +66,16 @@ type (
 		// Snapshot returns every event retained at one Redis linearization point.
 		// It creates no reader, cursor, consumer group, or acknowledgement state.
 		Snapshot(ctx context.Context) ([]SnapshotEvent, error)
+		// Open establishes or adopts the Redis stream lifecycle without publishing.
+		// Callers that must subscribe before a writer exists (for example tool-result
+		// waiters) must Open before NewReader; NewReader alone returns the underlying
+		// Pulse stream-not-found error until Open or a writer establishes the stream.
+		Open(ctx context.Context) error
 		// NewSink creates a Pulse sink (consumer group) on this stream for reading events.
 		NewSink(ctx context.Context, name string, opts ...streamopts.Sink) (Sink, error)
 		// NewReader creates an independent reader. Readers do not create consumer
 		// groups or acknowledgement state, and every reader receives every event.
+		// NewReader does not initialize an absent stream lifecycle.
 		NewReader(ctx context.Context, opts ...streamopts.Reader) (Reader, error)
 
 		// EnsureGroup recreates the named consumer group (and the backing stream)
@@ -126,8 +134,8 @@ func New(opts Options) (Client, error) {
 	}, nil
 }
 
-// Stream returns a handle to the named Pulse stream, creating it if it doesn't
-// exist. Returns an error if the name is empty or if stream creation fails.
+// Stream returns a local handle for the named Pulse stream. Redis lifecycle
+// establishment happens on a later Open, Add, or NewSink call.
 func (c *client) Stream(name string, opts ...streamopts.Stream) (Stream, error) {
 	if name == "" {
 		return nil, errors.New("stream name is required")
@@ -195,6 +203,19 @@ func (h *handle) Snapshot(ctx context.Context) ([]SnapshotEvent, error) {
 		}
 	}
 	return snapshot, nil
+}
+
+// Open establishes or adopts the Redis stream lifecycle for this handle.
+func (h *handle) Open(ctx context.Context) error {
+	if h.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, h.timeout)
+		defer cancel()
+	}
+	if err := h.stream.Open(ctx); err != nil {
+		return fmt.Errorf("pulse open: %w", err)
+	}
+	return nil
 }
 
 // NewSink creates a consumer group on the stream. Delegates to the underlying

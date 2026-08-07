@@ -1308,6 +1308,12 @@ func (s *fakeStream) Snapshot(context.Context) ([]pulse.SnapshotEvent, error) {
 	return nil, nil
 }
 
+func (s *fakeStream) Open(context.Context) error {
+	s.t.Helper()
+	s.t.Error("executor must not establish registry-owned result streams")
+	return assert.AnError
+}
+
 func (s *fakeStream) NewSink(ctx context.Context, name string, opts ...streamopts.Sink) (pulse.Sink, error) {
 	o := streamopts.ParseSinkOptions(opts...)
 	assert.Equal(s.t, s.requiredStart, o.LastEventID)

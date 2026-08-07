@@ -132,6 +132,11 @@ func TestCallToolEnsuresAdmissionWithActiveRegistrationToken(t *testing.T) {
 	resultStream.SetAdd(func(context.Context, string, []byte) (string, error) {
 		return "1-0", nil
 	})
+	streamOpened := false
+	resultStream.SetOpen(func(context.Context) error {
+		streamOpened = true
+		return nil
+	})
 	pulseClient := mockpulse.NewClient(t)
 	pulseClient.SetStream(func(string, ...streamopts.Stream) (clientspulse.Stream, error) {
 		return resultStream, nil
@@ -162,6 +167,7 @@ func TestCallToolEnsuresAdmissionWithActiveRegistrationToken(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	assert.True(t, streamOpened)
 	assert.Equal(t, registration.RegistrationToken, admissions.registrationToken)
 	assert.Equal(t, registration.RegistrationToken, result.RegistrationToken)
 	assert.Equal(t, registration.RegistrationToken, streams.message.RegistrationToken)

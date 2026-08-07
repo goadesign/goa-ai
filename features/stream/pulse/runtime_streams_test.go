@@ -92,6 +92,8 @@ func (f *fakeStream) Snapshot(context.Context) ([]clientspulse.SnapshotEvent, er
 	return nil, nil
 }
 
+func (f *fakeStream) Open(context.Context) error { return nil }
+
 func (f *fakeStream) NewReader(context.Context, ...streamopts.Reader) (clientspulse.Reader, error) {
 	return nil, nil
 }
