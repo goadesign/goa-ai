@@ -68,8 +68,8 @@ type (
 		Snapshot(ctx context.Context) ([]SnapshotEvent, error)
 		// Open establishes or adopts the Redis stream lifecycle without publishing.
 		// Callers that must subscribe before a writer exists (for example tool-result
-		// waiters) must Open before NewReader; NewReader alone returns
-		// ErrStreamNotFound until Open or a writer establishes the stream.
+		// waiters) must Open before NewReader; NewReader alone returns the underlying
+		// Pulse stream-not-found error until Open or a writer establishes the stream.
 		Open(ctx context.Context) error
 		// NewSink creates a Pulse sink (consumer group) on this stream for reading events.
 		NewSink(ctx context.Context, name string, opts ...streamopts.Sink) (Sink, error)

@@ -757,7 +757,7 @@ func (s *Service) ensureResultStream(ctx context.Context, resultStreamID string,
 	)
 	if err != nil {
 		return genregistry.MakeServiceUnavailable(fmt.Errorf(
-			"open result stream %q: %w",
+			"create result stream handle %q: %w",
 			resultStreamID,
 			err,
 		))
