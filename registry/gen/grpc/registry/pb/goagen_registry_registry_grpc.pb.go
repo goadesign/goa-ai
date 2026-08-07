@@ -94,12 +94,15 @@ type RegistryClient interface {
 	// registry atomically owns initial publication and terminal completion by
 	// tool_use_id: the call record retains the full canonical terminal through its
 	// absolute expiration and restores it when bounded result-stream history was
-	// trimmed.
+	// trimmed. Before returning, the registry establishes the result stream so the
+	// caller can create a reader immediately.
 	CallTool(ctx context.Context, in *CallToolRequest, opts ...grpc.CallOption) (*CallToolResponse, error)
 	// Republish one previously admitted call after provider overload recorded in
 	// the authoritative call record. The runtime supplies the exact original
 	// registration token; the registry rejects a changed active admission before
 	// publishing and never rebinds claimed execution to a replacement provider.
+	// Before returning either a republished or terminal call, the registry
+	// establishes the result stream so the caller can create a reader immediately.
 	RetryTool(ctx context.Context, in *RetryToolRequest, opts ...grpc.CallOption) (*RetryToolResponse, error)
 	// Publish one canonical terminal result for an admitted call. The registry
 	// verifies the exact provider incarnation still owns an unexpired lease and
@@ -330,12 +333,15 @@ type RegistryServer interface {
 	// registry atomically owns initial publication and terminal completion by
 	// tool_use_id: the call record retains the full canonical terminal through its
 	// absolute expiration and restores it when bounded result-stream history was
-	// trimmed.
+	// trimmed. Before returning, the registry establishes the result stream so the
+	// caller can create a reader immediately.
 	CallTool(context.Context, *CallToolRequest) (*CallToolResponse, error)
 	// Republish one previously admitted call after provider overload recorded in
 	// the authoritative call record. The runtime supplies the exact original
 	// registration token; the registry rejects a changed active admission before
 	// publishing and never rebinds claimed execution to a replacement provider.
+	// Before returning either a republished or terminal call, the registry
+	// establishes the result stream so the caller can create a reader immediately.
 	RetryTool(context.Context, *RetryToolRequest) (*RetryToolResponse, error)
 	// Publish one canonical terminal result for an admitted call. The registry
 	// verifies the exact provider incarnation still owns an unexpired lease and

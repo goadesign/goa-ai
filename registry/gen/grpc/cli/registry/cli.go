@@ -265,8 +265,8 @@ func registryUsage() {
 	fmt.Fprintln(os.Stderr, `    list-toolsets: List all registered toolsets with optional tag filtering`)
 	fmt.Fprintln(os.Stderr, `    get-toolset: Get a specific toolset by name including all tool schemas`)
 	fmt.Fprintln(os.Stderr, `    search: Search toolsets by keyword matching name, description, or tags`)
-	fmt.Fprintln(os.Stderr, `    call-tool: Reject consumers whose required runtime-owned wire protocol version differs from the registry, then admit or attach to one run-scoped tool call. The registry atomically owns initial publication and terminal completion by tool_use_id: the call record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed.`)
-	fmt.Fprintln(os.Stderr, `    retry-tool: Republish one previously admitted call after provider overload recorded in the authoritative call record. The runtime supplies the exact original registration token; the registry rejects a changed active admission before publishing and never rebinds claimed execution to a replacement provider.`)
+	fmt.Fprintln(os.Stderr, `    call-tool: Reject consumers whose required runtime-owned wire protocol version differs from the registry, then admit or attach to one run-scoped tool call. The registry atomically owns initial publication and terminal completion by tool_use_id: the call record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed. Before returning, the registry establishes the result stream so the caller can create a reader immediately.`)
+	fmt.Fprintln(os.Stderr, `    retry-tool: Republish one previously admitted call after provider overload recorded in the authoritative call record. The runtime supplies the exact original registration token; the registry rejects a changed active admission before publishing and never rebinds claimed execution to a replacement provider. Before returning either a republished or terminal call, the registry establishes the result stream so the caller can create a reader immediately.`)
 	fmt.Fprintln(os.Stderr, `    complete-tool-call: Publish one canonical terminal result for an admitted call. The registry verifies the exact provider incarnation still owns an unexpired lease and claimed request event, then atomically stores the full terminal in the authoritative call record and appends it to bounded result history. If that exact dispatch lease disappears first, registry-owned settlement commits outcome_unknown because the effect may have occurred; execution ownership never transfers.`)
 	fmt.Fprintln(os.Stderr, `    publish-tool-output-delta: Publish one best-effort output fragment for a claimed live call. The registry verifies the exact provider lease and request-event claim, then atomically appends the delta only while the authoritative call record remains nonterminal.`)
 	fmt.Fprintln(os.Stderr, `    report-tool-call-overload: Report that an exact provider claim could not enter its bounded worker queue. The registry verifies the provider lease and request-event claim, then atomically appends retry control only while the authoritative call record remains nonterminal.`)
@@ -427,7 +427,7 @@ func registryCallToolUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Reject consumers whose required runtime-owned wire protocol version differs from the registry, then admit or attach to one run-scoped tool call. The registry atomically owns initial publication and terminal completion by tool_use_id: the call record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed.`)
+	fmt.Fprintln(os.Stderr, `Reject consumers whose required runtime-owned wire protocol version differs from the registry, then admit or attach to one run-scoped tool call. The registry atomically owns initial publication and terminal completion by tool_use_id: the call record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed. Before returning, the registry establishes the result stream so the caller can create a reader immediately.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -message JSON: `)
@@ -445,7 +445,7 @@ func registryRetryToolUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Republish one previously admitted call after provider overload recorded in the authoritative call record. The runtime supplies the exact original registration token; the registry rejects a changed active admission before publishing and never rebinds claimed execution to a replacement provider.`)
+	fmt.Fprintln(os.Stderr, `Republish one previously admitted call after provider overload recorded in the authoritative call record. The runtime supplies the exact original registration token; the registry rejects a changed active admission before publishing and never rebinds claimed execution to a replacement provider. Before returning either a republished or terminal call, the registry establishes the result stream so the caller can create a reader immediately.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -message JSON: `)

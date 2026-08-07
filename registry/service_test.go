@@ -408,6 +408,11 @@ func TestCallToolDerivesGlobalTransportIdentity(t *testing.T) {
 	ctx := context.Background()
 	pulseClient := mockpulse.NewClient(t)
 	resultStream := mockpulse.NewStream(t)
+	openCount := 0
+	resultStream.SetOpen(func(context.Context) error {
+		openCount++
+		return nil
+	})
 	for range 3 {
 		pulseClient.AddStream(func(name string, opts ...streamopts.Stream) (clientspulse.Stream, error) {
 			retention := streamopts.ParseStreamOptions(opts...)
@@ -485,6 +490,7 @@ func TestCallToolDerivesGlobalTransportIdentity(t *testing.T) {
 	require.Equal(t, executionDeadline.UnixMilli(), streams.messages["toolset-1"][0].ExecutionDeadlineUnixMilli)
 	require.Equal(t, expiresAt.UnixMilli(), streams.messages["toolset-1"][0].ResultStreamExpiresAtUnixMilli)
 	require.NotEmpty(t, streams.messages["toolset-1"][0].RegistrationToken)
+	require.Equal(t, 3, openCount)
 	require.Equal(
 		t,
 		streams.messages["toolset-1"][0].RegistrationToken,
@@ -496,6 +502,9 @@ func TestRetryToolRejectsAdmissionRolloverBeforePublication(t *testing.T) {
 	ctx := context.Background()
 	pulseClient := mockpulse.NewClient(t)
 	resultStream := mockpulse.NewStream(t)
+	resultStream.SetOpen(func(context.Context) error {
+		return nil
+	})
 	pulseClient.AddStream(func(string, ...streamopts.Stream) (clientspulse.Stream, error) {
 		return resultStream, nil
 	})

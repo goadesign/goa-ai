@@ -116,7 +116,7 @@ var _ = Service("registry", func() {
 	// ---- Invocation Operations ----
 
 	Method("CallTool", func() {
-		Description("Reject consumers whose required runtime-owned wire protocol version differs from the registry, then admit or attach to one run-scoped tool call. The registry atomically owns initial publication and terminal completion by tool_use_id: the call record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed.")
+		Description("Reject consumers whose required runtime-owned wire protocol version differs from the registry, then admit or attach to one run-scoped tool call. The registry atomically owns initial publication and terminal completion by tool_use_id: the call record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed. Before returning, the registry establishes the result stream so the caller can create a reader immediately.")
 		Payload(CallToolPayload)
 		Result(CallToolResult)
 		Error("not_found")
@@ -126,7 +126,7 @@ var _ = Service("registry", func() {
 	})
 
 	Method("RetryTool", func() {
-		Description("Republish one previously admitted call after provider overload recorded in the authoritative call record. The runtime supplies the exact original registration token; the registry rejects a changed active admission before publishing and never rebinds claimed execution to a replacement provider.")
+		Description("Republish one previously admitted call after provider overload recorded in the authoritative call record. The runtime supplies the exact original registration token; the registry rejects a changed active admission before publishing and never rebinds claimed execution to a replacement provider. Before returning either a republished or terminal call, the registry establishes the result stream so the caller can create a reader immediately.")
 		Payload(RetryToolPayload)
 		Result(CallToolResult)
 		Error("not_found")

@@ -403,20 +403,8 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		prepared.admissionDigest,
 	)
 	if err == nil {
-		if admission.terminal {
-			if err := s.callAdmissions.RestoreTerminal(ctx, admission, prepared.resultStreamID); err != nil {
-				return nil, genregistry.MakeServiceUnavailable(err)
-			}
-			return callToolResult(
-				prepared.toolUseID,
-				admission,
-			), nil
-		}
-		if admission.published {
-			return callToolResult(
-				prepared.toolUseID,
-				admission,
-			), nil
+		if admission.terminal || admission.published {
+			return s.replayCallToolResult(ctx, prepared.toolUseID, prepared.resultStreamID, admission)
 		}
 		return s.resumeUnpublishedToolCall(ctx, prepared, admission)
 	}
@@ -451,20 +439,8 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		return nil, genregistry.MakeServiceUnavailable(err)
 	}
 	prepared.registrationToken = admission.registrationToken
-	if admission.terminal {
-		if err := s.callAdmissions.RestoreTerminal(ctx, admission, prepared.resultStreamID); err != nil {
-			return nil, genregistry.MakeServiceUnavailable(err)
-		}
-		return callToolResult(
-			prepared.toolUseID,
-			admission,
-		), nil
-	}
-	if admission.published {
-		return callToolResult(
-			prepared.toolUseID,
-			admission,
-		), nil
+	if admission.terminal || admission.published {
+		return s.replayCallToolResult(ctx, prepared.toolUseID, prepared.resultStreamID, admission)
 	}
 	if admission.registrationToken != registration.RegistrationToken {
 		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
@@ -516,13 +492,7 @@ func (s *Service) RetryTool(ctx context.Context, p *genregistry.RetryToolPayload
 	}
 	prepared.registrationToken = admission.registrationToken
 	if admission.terminal {
-		if err := s.callAdmissions.RestoreTerminal(ctx, admission, prepared.resultStreamID); err != nil {
-			return nil, genregistry.MakeServiceUnavailable(err)
-		}
-		return callToolResult(
-			prepared.toolUseID,
-			admission,
-		), nil
+		return s.replayCallToolResult(ctx, prepared.toolUseID, prepared.resultStreamID, admission)
 	}
 
 	registration, err := s.activeRegistration(ctx, p.Toolset)
@@ -560,13 +530,7 @@ func (s *Service) retryTerminalOrError(
 	if err != nil || !admission.terminal {
 		return nil, routingErr
 	}
-	if err := s.callAdmissions.RestoreTerminal(ctx, admission, prepared.resultStreamID); err != nil {
-		return nil, genregistry.MakeServiceUnavailable(err)
-	}
-	return callToolResult(
-		prepared.toolUseID,
-		admission,
-	), nil
+	return s.replayCallToolResult(ctx, prepared.toolUseID, prepared.resultStreamID, admission)
 }
 
 // CompleteToolCall atomically commits one exact provider terminal result.
@@ -742,10 +706,7 @@ func (s *Service) routeInitialToolCall(
 	prepared preparedToolCall,
 	admission callAdmission,
 ) (*genregistry.CallToolResult, error) {
-	if admission.terminal {
-		return callToolResult(prepared.toolUseID, admission), nil
-	}
-	if err := s.ensureResultStream(prepared.resultStreamID, admission.expiresAt); err != nil {
+	if err := s.ensureResultStream(ctx, prepared.resultStreamID, admission.expiresAt); err != nil {
 		return nil, err
 	}
 	if err := s.publishPreparedToolCall(ctx, prepared, admission, ""); err != nil {
@@ -764,10 +725,7 @@ func (s *Service) retryPreparedToolCall(
 	prepared preparedToolCall,
 	admission callAdmission,
 ) (*genregistry.CallToolResult, error) {
-	if admission.terminal {
-		return callToolResult(prepared.toolUseID, admission), nil
-	}
-	if err := s.ensureResultStream(prepared.resultStreamID, admission.expiresAt); err != nil {
+	if err := s.ensureResultStream(ctx, prepared.resultStreamID, admission.expiresAt); err != nil {
 		return nil, err
 	}
 	if admission.overloadEventID == "" {
@@ -791,8 +749,8 @@ func (s *Service) retryPreparedToolCall(
 
 // ensureResultStream applies the call record's bounded retention and absolute
 // expiration before any request can publish provider output.
-func (s *Service) ensureResultStream(resultStreamID string, expiresAt time.Time) error {
-	_, err := s.pulseClient.Stream(
+func (s *Service) ensureResultStream(ctx context.Context, resultStreamID string, expiresAt time.Time) error {
+	stream, err := s.pulseClient.Stream(
 		resultStreamID,
 		streamopts.WithStreamMaxLen(toolregistry.ResultStreamMaxLen),
 		streamopts.WithStreamDeadline(expiresAt),
@@ -804,7 +762,33 @@ func (s *Service) ensureResultStream(resultStreamID string, expiresAt time.Time)
 			err,
 		))
 	}
+	if err := stream.Open(ctx); err != nil {
+		return genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"open result stream %q: %w",
+			resultStreamID,
+			err,
+		))
+	}
 	return nil
+}
+
+// replayCallToolResult re-establishes the registry-owned result stream before
+// returning an existing admission. Terminal calls also restore their canonical
+// result when retained stream history was lost.
+func (s *Service) replayCallToolResult(
+	ctx context.Context,
+	toolUseID, resultStreamID string,
+	admission callAdmission,
+) (*genregistry.CallToolResult, error) {
+	if err := s.ensureResultStream(ctx, resultStreamID, admission.expiresAt); err != nil {
+		return nil, err
+	}
+	if admission.terminal {
+		if err := s.callAdmissions.RestoreTerminal(ctx, admission, resultStreamID); err != nil {
+			return nil, genregistry.MakeServiceUnavailable(err)
+		}
+	}
+	return callToolResult(toolUseID, admission), nil
 }
 
 // publishLiveProviderEvent delegates provider-authenticated nonterminal

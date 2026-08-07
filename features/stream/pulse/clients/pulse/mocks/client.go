@@ -32,6 +32,7 @@ type (
 
 	StreamAddFunc         func(ctx context.Context, event string, payload []byte) (string, error)
 	StreamSnapshotFunc    func(ctx context.Context) ([]pulse.SnapshotEvent, error)
+	StreamOpenFunc        func(ctx context.Context) error
 	StreamNewSinkFunc     func(ctx context.Context, name string, opts ...options.Sink) (pulse.Sink, error)
 	StreamNewReaderFunc   func(ctx context.Context, opts ...options.Reader) (pulse.Reader, error)
 	StreamEnsureGroupFunc func(ctx context.Context, group string) error
@@ -141,6 +142,23 @@ func (m *Stream) Snapshot(ctx context.Context) ([]pulse.SnapshotEvent, error) {
 	m.t.Helper()
 	m.t.Error("unexpected Snapshot call")
 	return nil, nil
+}
+
+func (m *Stream) AddOpen(f StreamOpenFunc) {
+	m.m.Add("Open", f)
+}
+
+func (m *Stream) SetOpen(f StreamOpenFunc) {
+	m.m.Set("Open", f)
+}
+
+func (m *Stream) Open(ctx context.Context) error {
+	if f := m.m.Next("Open"); f != nil {
+		return f.(StreamOpenFunc)(ctx)
+	}
+	m.t.Helper()
+	m.t.Error("unexpected Open call")
+	return nil
 }
 
 func (m *Stream) AddNewSink(f StreamNewSinkFunc) {
