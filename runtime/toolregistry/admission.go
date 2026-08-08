@@ -13,7 +13,7 @@ const (
 	// this runtime. Provider registration and consumer CallTool/RetryTool requests
 	// carry it explicitly so the registry rejects binaries that encode another
 	// ToolCallMessage or ToolResultMessage contract before side effects.
-	WireProtocolVersion = 7
+	WireProtocolVersion = 8
 	// AdmissionRevisionPattern is the canonical deployment-issued admission
 	// revision syntax shared by the Goa boundary and provider lifecycle config.
 	AdmissionRevisionPattern = `^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,255}$`

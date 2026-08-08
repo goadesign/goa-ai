@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,6 +27,8 @@ import (
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/toolregistry"
 )
+
+var serviceTestSequence atomic.Uint64
 
 // TestRegistrationIdempotence verifies identical-schema lease renewal.
 // **Feature: internal-tool-registry, Property 2: Registration idempotence**
@@ -123,11 +127,14 @@ func newTestServiceForServiceTests(pulseClient clientspulse.Client, streamManage
 		}
 	}
 	return newService(serviceOptions{
-		catalog:        catalog,
-		StreamManager:  streamManager,
-		HealthTracker:  healthTracker,
-		CallAdmissions: newCallAdmissionStore(testRedisClient, "service-tests"),
-		PulseClient:    pulseClient,
+		catalog:       catalog,
+		StreamManager: streamManager,
+		HealthTracker: healthTracker,
+		CallAdmissions: newCallAdmissionStore(
+			testRedisClient,
+			fmt.Sprintf("service-tests-%d", serviceTestSequence.Add(1)),
+		),
+		PulseClient: pulseClient,
 	})
 }
 
@@ -339,8 +346,9 @@ func TestCallToolPayloadValidation(t *testing.T) {
 				PayloadJSON:         tc.invalidPayload,
 				WireProtocolVersion: toolregistry.WireProtocolVersion,
 				Meta: &genregistry.ToolCallMeta{
-					RunID:     "test-run",
-					SessionID: "test-session",
+					RunID:      "test-run",
+					SessionID:  "test-session",
+					ToolCallID: fmt.Sprintf("validation-%d", serviceTestSequence.Add(1)),
 				},
 			})
 
@@ -609,7 +617,7 @@ func TestCallToolMapsPreAdmissionHealthFailures(t *testing.T) {
 			)
 			require.NoError(t, err)
 
-			_, err = svc.CallTool(context.Background(), &genregistry.CallToolPayload{
+			payload := &genregistry.CallToolPayload{
 				Toolset:             "toolset-1",
 				Tool:                "lookup",
 				PayloadJSON:         []byte(`{}`),
@@ -617,12 +625,24 @@ func TestCallToolMapsPreAdmissionHealthFailures(t *testing.T) {
 				Meta: &genregistry.ToolCallMeta{
 					RunID:      "run-1",
 					SessionID:  "test-session",
-					ToolCallID: "call-1",
+					ToolCallID: "call-" + strings.ReplaceAll(test.name, " ", "-"),
 				},
-			})
+			}
+			_, err = svc.CallTool(context.Background(), payload)
 			var serviceErr *goa.ServiceError
 			require.ErrorAs(t, err, &serviceErr)
 			assert.Equal(t, "call_not_admitted", serviceErr.Name)
+			message := serviceErr.Message
+
+			// The negative decision is durable for this exact tool-use identity.
+			// Provider recovery cannot race the caller's replan and execute the
+			// rejected request later.
+			health.healthy = true
+			health.healthErr = nil
+			_, err = svc.CallTool(context.Background(), payload)
+			require.ErrorAs(t, err, &serviceErr)
+			assert.Equal(t, "call_not_admitted", serviceErr.Name)
+			assert.Equal(t, message, serviceErr.Message)
 		})
 	}
 }

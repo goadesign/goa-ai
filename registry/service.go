@@ -32,6 +32,12 @@ type (
 			executionTimeout, ttl time.Duration,
 			outcomeUnknownPayload []byte,
 		) (callAdmission, bool, error)
+		Reject(
+			ctx context.Context,
+			toolset, toolUseID, digest string,
+			rejection callRejection,
+			ttl time.Duration,
+		) (callAdmission, error)
 		Attach(ctx context.Context, toolset, toolUseID, digest string) (callAdmission, error)
 		InitializeResultStream(ctx context.Context, admission callAdmission, resultStreamID string) error
 		RestoreTerminal(ctx context.Context, admission callAdmission, resultStreamID string) error
@@ -395,7 +401,7 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		p.Meta,
 	)
 	if err != nil {
-		return nil, preAdmissionError(err)
+		return nil, err
 	}
 	admission, err := s.callAdmissions.Attach(
 		ctx,
@@ -410,18 +416,15 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		return s.resumeUnpublishedToolCall(ctx, prepared, admission)
 	}
 	if !errors.Is(err, errCallAdmissionNotFound) {
-		if errors.Is(err, errCallAdmissionConflict) {
-			return nil, genregistry.MakeValidationError(err)
-		}
-		return nil, genregistry.MakeServiceUnavailable(err)
+		return nil, callDecisionError(err)
 	}
 
 	registration, err := s.activeRegistration(ctx, p.Toolset)
 	if err != nil {
-		return nil, preAdmissionError(err)
+		return s.rejectPreparedToolCall(ctx, prepared, err)
 	}
 	if err := s.validatePreparedToolCall(ctx, prepared, registration); err != nil {
-		return nil, preAdmissionError(err)
+		return s.rejectPreparedToolCall(ctx, prepared, err)
 	}
 	admission, _, err = s.callAdmissions.Ensure(
 		ctx,
@@ -434,10 +437,7 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		outcomeUnknownPayload(registration.RegistrationToken, prepared.toolUseID),
 	)
 	if err != nil {
-		if errors.Is(err, errCallAdmissionConflict) {
-			return nil, genregistry.MakeValidationError(err)
-		}
-		return nil, genregistry.MakeServiceUnavailable(err)
+		return nil, callDecisionError(err)
 	}
 	prepared.registrationToken = admission.registrationToken
 	if admission.terminal || admission.published {
@@ -685,7 +685,10 @@ func (s *Service) resumeUnpublishedToolCall(
 ) (*genregistry.CallToolResult, error) {
 	registration, err := s.activeRegistration(ctx, prepared.toolset)
 	if err != nil {
-		return nil, err
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"resume admitted tool call: %w",
+			err,
+		))
 	}
 	if registration.RegistrationToken != admission.registrationToken {
 		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
@@ -694,7 +697,10 @@ func (s *Service) resumeUnpublishedToolCall(
 		))
 	}
 	if err := s.validatePreparedToolCall(ctx, prepared, registration); err != nil {
-		return nil, err
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"resume admitted tool call: %w",
+			err,
+		))
 	}
 	prepared.registrationToken = admission.registrationToken
 	return s.routeInitialToolCall(ctx, prepared, admission)
@@ -881,18 +887,80 @@ func (s *Service) activeRegistration(ctx context.Context, toolset string) (catal
 	return catalogEntry{}, genregistry.MakeServiceUnavailable(fmt.Errorf("get toolset: %w", err))
 }
 
-// preAdmissionError preserves actionable caller or tool lookup errors and marks
-// every other failure before callAdmissions.Ensure as definitely not admitted.
-// The executor may replan because no provider could have observed the request.
-func preAdmissionError(err error) error {
+// callRejectionFromError reduces one typed pre-publication failure to the
+// rejected decision replayed for every exact retry.
+func callRejectionFromError(err error) (callRejection, error) {
 	var serviceErr *goa.ServiceError
-	if errors.As(err, &serviceErr) {
-		switch serviceErr.Name {
-		case "not_found", "validation_error":
-			return err
-		}
+	if !errors.As(err, &serviceErr) {
+		return callRejection{}, fmt.Errorf("reject tool call with untyped error: %w", err)
 	}
-	return genregistry.MakeCallNotAdmitted(err)
+	switch serviceErr.Name {
+	case "not_found":
+		return callRejection{kind: callRejectionNotFound, message: serviceErr.Message}, nil
+	case "validation_error":
+		return callRejection{kind: callRejectionValidation, message: serviceErr.Message}, nil
+	case "service_unavailable":
+		return callRejection{kind: callRejectionUnavailable, message: serviceErr.Message}, nil
+	default:
+		return callRejection{}, fmt.Errorf("reject tool call with unsupported error %q", serviceErr.Name)
+	}
+}
+
+// callRejectionError restores the generated service error represented by one
+// validated durable rejection.
+func callRejectionError(rejection callRejection) error {
+	err := errors.New(rejection.message)
+	switch rejection.kind {
+	case callRejectionNotFound:
+		return genregistry.MakeNotFound(err)
+	case callRejectionValidation:
+		return genregistry.MakeValidationError(err)
+	case callRejectionUnavailable:
+		return genregistry.MakeCallNotAdmitted(err)
+	default:
+		panic(fmt.Sprintf("registry: invalid call rejection kind %q", rejection.kind))
+	}
+}
+
+// callDecisionError maps the private decision-store contract to the generated
+// registry boundary.
+func callDecisionError(err error) error {
+	var rejected *callRejectedError
+	if errors.As(err, &rejected) {
+		return callRejectionError(rejected.rejection)
+	}
+	if errors.Is(err, errCallAdmissionConflict) {
+		return genregistry.MakeValidationError(err)
+	}
+	return genregistry.MakeServiceUnavailable(err)
+}
+
+// rejectPreparedToolCall atomically chooses the negative decision or observes
+// an admission that a concurrent exact caller already committed.
+func (s *Service) rejectPreparedToolCall(
+	ctx context.Context,
+	prepared preparedToolCall,
+	cause error,
+) (*genregistry.CallToolResult, error) {
+	rejection, err := callRejectionFromError(cause)
+	if err != nil {
+		return nil, genregistry.MakeServiceUnavailable(err)
+	}
+	admission, err := s.callAdmissions.Reject(
+		ctx,
+		prepared.toolset,
+		prepared.toolUseID,
+		prepared.admissionDigest,
+		rejection,
+		s.resultStreamTTL,
+	)
+	if err != nil {
+		return nil, callDecisionError(err)
+	}
+	if admission.terminal || admission.published {
+		return s.replayCallToolResult(ctx, prepared.toolUseID, prepared.resultStreamID, admission)
+	}
+	return s.resumeUnpublishedToolCall(ctx, prepared, admission)
 }
 
 // prepareToolCallIdentity derives the token-independent immutable request
@@ -922,7 +990,7 @@ func prepareToolCallIdentity(
 		Meta:    &messageMeta,
 	})
 	if err != nil {
-		return preparedToolCall{}, genregistry.MakeServiceUnavailable(fmt.Errorf(
+		return preparedToolCall{}, genregistry.MakeValidationError(fmt.Errorf(
 			"encode call identity: %w",
 			err,
 		))

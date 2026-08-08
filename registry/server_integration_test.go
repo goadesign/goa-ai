@@ -34,7 +34,8 @@ const (
 
 type callCountingService struct {
 	genregistry.Service
-	calls atomic.Int64
+	calls         atomic.Int64
+	callToolError error
 }
 
 // TestServerIntegration tests the full gRPC server stack using Goa's generated
@@ -554,6 +555,38 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	assert.Zero(t, counting.calls.Load(), "invalid tool_call_id must be rejected before publication")
+
+	rejected := &callCountingService{
+		Service:       reg.Service(),
+		callToolError: genregistry.MakeCallNotAdmitted(errors.New("no healthy providers")),
+	}
+	generatedClient, rejectedRawClient := startServiceAndClients(t, rejected)
+	_, err = generatedClient.CallTool(ctx, &genregistry.CallToolPayload{
+		Toolset:             "status-tools",
+		Tool:                "status.lookup",
+		PayloadJSON:         []byte(`{}`),
+		WireProtocolVersion: toolregistry.WireProtocolVersion,
+		Meta: &genregistry.ToolCallMeta{
+			RunID:      "run-1",
+			SessionID:  "session-1",
+			ToolCallID: "rejected-call",
+		},
+	})
+	var serviceErr *goa.ServiceError
+	require.ErrorAs(t, err, &serviceErr)
+	assert.Equal(t, "call_not_admitted", serviceErr.Name)
+	_, err = rejectedRawClient.CallTool(ctx, &registrypb.CallToolRequest{
+		Toolset:             "status-tools",
+		Tool:                "status.lookup",
+		PayloadJson:         []byte(`{}`),
+		WireProtocolVersion: int32(toolregistry.WireProtocolVersion),
+		Meta: &registrypb.ToolCallMeta{
+			RunId:      "run-1",
+			SessionId:  "session-1",
+			ToolCallId: "rejected-call",
+		},
+	})
+	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 func (s *callCountingService) CallTool(
@@ -561,6 +594,9 @@ func (s *callCountingService) CallTool(
 	payload *genregistry.CallToolPayload,
 ) (*genregistry.CallToolResult, error) {
 	s.calls.Add(1)
+	if s.callToolError != nil {
+		return nil, s.callToolError
+	}
 	return s.Service.CallTool(ctx, payload)
 }
 

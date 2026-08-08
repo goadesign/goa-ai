@@ -88,7 +88,7 @@ func TestLostDispatchLeaseCommitsAndRestoresOutcomeUnknown(t *testing.T) {
 		ProviderIncarnationID:     provider.ProviderIncarnationID,
 		ExpectedRegistrationToken: admission.RegistrationToken,
 	}))
-	callKey := store.admissionKey(call.ToolUseID)
+	callKey := store.callKey(call.ToolUseID)
 	terminalJSON, err := rdb.HGet(ctx, callKey, "terminal_payload").Bytes()
 	require.NoError(t, err)
 	var terminal toolregistry.ToolResultMessage
@@ -238,7 +238,7 @@ func TestOutputDeltasAreCountBoundedAndPostTerminalSuppressed(t *testing.T) {
 	for range toolregistry.MaxToolOutputDeltaCount + 10 {
 		require.NoError(t, svc.PublishToolOutputDelta(ctx, deltaPayload))
 	}
-	count, err := rdb.HGet(ctx, store.admissionKey(call.ToolUseID), "output_delta_count").Result()
+	count, err := rdb.HGet(ctx, store.callKey(call.ToolUseID), "output_delta_count").Result()
 	require.NoError(t, err)
 	assert.Equal(t, strconv.Itoa(toolregistry.MaxToolOutputDeltaCount), count)
 
@@ -307,7 +307,7 @@ func TestExecutionDeadlineSettlesClaimBeforeRetention(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, string(callClaimExecute), claim.Disposition)
 
-	callKey := store.admissionKey(call.ToolUseID)
+	callKey := store.callKey(call.ToolUseID)
 	require.Eventually(t, func() bool {
 		return rdb.HGet(ctx, callKey, "terminal").Val() == "1"
 	}, 2*time.Second, 20*time.Millisecond)
@@ -373,7 +373,7 @@ func TestMissingCallHashCleansGlobalAndLeaseSettlementIndexes(t *testing.T) {
 	ctx := context.Background()
 	name := fmt.Sprintf("missing-settlement-%d", time.Now().UnixNano())
 	store := newCallAdmissionStore(rdb, name)
-	callKey := store.admissionKey("missing-call")
+	callKey := store.callKey("missing-call")
 	leaseIndex := store.leaseSettlementKey(
 		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"provider\x00incarnation",

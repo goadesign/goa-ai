@@ -47,8 +47,9 @@ Keep all of these mechanisms after cleanup:
   republication without blocking provider ping intake. It never binds retry to
   a replacement provider.
 - Pulse retains flat toolset request streams. One registry-owned call record
-  carries the Redis-selected absolute expiration and terminal state. Terminal
-  result append and terminal state commit are one fenced Redis operation.
+  carries an explicit admitted or rejected decision. Admitted records carry the
+  Redis-selected absolute expiration and terminal state. Terminal result append
+  and terminal state commit are one fenced Redis operation.
   Every per-call result stream handle uses that deadline. Executors use independent oldest-first
   Readers with no result consumer-group/ack/keepalive state and never eagerly
   destroy result streams.
@@ -99,6 +100,14 @@ Do not cut over until every provider and registry consumer has regenerated and:
 
 - RollingUpdate is allowed only when old and new pods produce the same token.
 - Use Recreate for any schema or admission-revision change.
+- A wire-protocol change is a stopped hard cutover, not an ordinary Recreate:
+  quiesce consumers, drain admitted calls and provider leases, stop every old
+  registry replica, back up and atomically remove old-version catalog entries,
+  then start the new registry, matching providers, and consumers in that order.
+- Preserve retained call records during a wire cutover. The new registry
+  validates and lazily marks complete prior-version admissions without
+  extending their TTL; malformed records fail closed and unobserved records
+  expire naturally.
 - Graceful pods release their exact leases, allowing immediate admission
   replacement.
 - Crashed pods block replacement only until their Redis-time lease expires.

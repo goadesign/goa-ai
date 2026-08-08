@@ -2,6 +2,8 @@ package registry
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 	"time"
@@ -22,6 +24,7 @@ type (
 	// recordingCallAdmissions captures the immutable token selected by CallTool.
 	recordingCallAdmissions struct {
 		registrationToken string
+		attached          *callAdmission
 	}
 
 	// unitStreamManager records admitted publication without Redis.
@@ -173,6 +176,56 @@ func TestCallToolEnsuresAdmissionWithActiveRegistrationToken(t *testing.T) {
 	assert.Equal(t, registration.RegistrationToken, streams.message.RegistrationToken)
 }
 
+func TestCallToolDoesNotReplanAfterAdmission(t *testing.T) {
+	t.Parallel()
+
+	admission := &callAdmission{
+		registrationToken: strings.Repeat("a", 64),
+	}
+	svc := &Service{
+		catalog: newToolsetCatalog(
+			newTestCatalogMap(),
+			newTestTimeSource(time.Unix(1_700_000_000, 0)),
+		),
+		callAdmissions: &recordingCallAdmissions{attached: admission},
+	}
+
+	_, err := svc.CallTool(context.Background(), &genregistry.CallToolPayload{
+		Toolset:             "missing.toolset",
+		Tool:                "lookup",
+		PayloadJSON:         []byte(`{}`),
+		WireProtocolVersion: toolregistry.WireProtocolVersion,
+		Meta: &genregistry.ToolCallMeta{
+			RunID:      "run-1",
+			SessionID:  "session-1",
+			ToolCallID: "call-1",
+		},
+	})
+
+	var serviceErr *goa.ServiceError
+	require.ErrorAs(t, err, &serviceErr)
+	assert.Equal(t, "service_unavailable", serviceErr.Name)
+}
+
+func TestPrepareToolCallIdentityRejectsMalformedJSON(t *testing.T) {
+	t.Parallel()
+
+	_, err := prepareToolCallIdentity(
+		"test.toolset",
+		"lookup",
+		[]byte(`{`),
+		&genregistry.ToolCallMeta{
+			RunID:      "run-1",
+			SessionID:  "session-1",
+			ToolCallID: "call-1",
+		},
+	)
+
+	var serviceErr *goa.ServiceError
+	require.ErrorAs(t, err, &serviceErr)
+	assert.Equal(t, "validation_error", serviceErr.Name)
+}
+
 func TestCallAdmissionParseResultPreservesRegistrationToken(t *testing.T) {
 	t.Parallel()
 
@@ -182,6 +235,7 @@ func TestCallAdmissionParseResultPreservesRegistrationToken(t *testing.T) {
 		"test.toolset",
 		"registry:test:call",
 		"request-digest",
+		"tool-use-1",
 		[]any{
 			int64(1),
 			"request-digest",
@@ -193,10 +247,137 @@ func TestCallAdmissionParseResultPreservesRegistrationToken(t *testing.T) {
 			"0",
 			"",
 			"0",
+			string(outcomeUnknownPayload(token, "tool-use-1")),
+			"",
+			"",
+			"",
 		},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, token, admission.registrationToken)
+}
+
+func TestCallAdmissionParseResultRejectsMalformedState(t *testing.T) {
+	t.Parallel()
+
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	base := []any{
+		int64(1),
+		"request-digest",
+		"1700000060000",
+		"1700000120000",
+		"0",
+		"",
+		token,
+		"0",
+		"",
+		"0",
+		string(outcomeUnknownPayload(token, "tool-use-1")),
+		"",
+		"",
+		"",
+	}
+	tests := []struct {
+		name    string
+		index   int
+		value   any
+		wantErr string
+	}{
+		{name: "deadline order", index: 3, value: "1700000060000", wantErr: "expiration does not follow"},
+		{name: "noncanonical deadline", index: 2, value: "01700000060000", wantErr: "invalid execution deadline"},
+		{name: "terminal state", index: 4, value: "unknown", wantErr: "invalid terminal"},
+		{name: "terminal event", index: 5, value: "1-0", wantErr: "inconsistent terminal"},
+		{name: "published state", index: 7, value: "unknown", wantErr: "invalid published"},
+		{name: "orphan retry delay", index: 9, value: "100", wantErr: "inconsistent overload"},
+		{name: "invalid outcome contract", index: 10, value: `{}`, wantErr: "outcome unknown payload"},
+	}
+	store := &callAdmissionStore{catalogHashKey: "registry:test:toolsets"}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := append([]any(nil), base...)
+			value[test.index] = test.value
+
+			_, err := store.parseResult(
+				"test.toolset",
+				"registry:test:call",
+				"request-digest",
+				"tool-use-1",
+				value,
+			)
+
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+
+	terminalPayload := outcomeUnknownPayload(token, "tool-use-1")
+	terminalDigest := sha256.Sum256(terminalPayload)
+	terminalBase := append([]any(nil), base...)
+	terminalBase[4] = "1"
+	terminalBase[5] = "1-0"
+	terminalBase[7] = "1"
+	terminalBase[11] = hex.EncodeToString(terminalDigest[:])
+	terminalBase[12] = string(terminalPayload)
+	terminalBase[13] = "provider"
+	_, err := store.parseResult(
+		"test.toolset",
+		"registry:test:call",
+		"request-digest",
+		"tool-use-1",
+		terminalBase,
+	)
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		name    string
+		index   int
+		value   any
+		wantErr string
+	}{
+		{name: "terminal cause", index: 13, value: "unknown", wantErr: "invalid terminal cause"},
+		{name: "terminal digest", index: 11, value: strings.Repeat("0", 64), wantErr: "digest does not match"},
+		{name: "terminal payload", index: 12, value: `{}`, wantErr: "terminal payload"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			value := append([]any(nil), terminalBase...)
+			value[test.index] = test.value
+
+			_, err := store.parseResult(
+				"test.toolset",
+				"registry:test:call",
+				"request-digest",
+				"tool-use-1",
+				value,
+			)
+
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+
+	uncertainBase := append([]any(nil), base...)
+	uncertainBase[4] = "1"
+	uncertainBase[5] = "2-0"
+	uncertainBase[7] = "1"
+	uncertainBase[11] = redisTerminalDigest(terminalPayload)
+	uncertainBase[12] = string(terminalPayload)
+	uncertainBase[13] = "execution_deadline"
+	_, err = store.parseResult(
+		"test.toolset",
+		"registry:test:call",
+		"request-digest",
+		"tool-use-1",
+		uncertainBase,
+	)
+	require.NoError(t, err)
+
+	uncertainBase[11] = strings.Repeat("0", 40)
+	_, err = store.parseResult(
+		"test.toolset",
+		"registry:test:call",
+		"request-digest",
+		"tool-use-1",
+		uncertainBase,
+	)
+	require.ErrorContains(t, err, "digest does not match")
 }
 
 func TestToolUseIDForCallUsesRequiredRunScopedIdentity(t *testing.T) {
@@ -250,7 +431,19 @@ func (r *recordingCallAdmissions) Ensure(
 	}, true, nil
 }
 
+func (r *recordingCallAdmissions) Reject(
+	_ context.Context,
+	_, _, _ string,
+	rejection callRejection,
+	_ time.Duration,
+) (callAdmission, error) {
+	return callAdmission{}, &callRejectedError{rejection: rejection}
+}
+
 func (r *recordingCallAdmissions) Attach(context.Context, string, string, string) (callAdmission, error) {
+	if r.attached != nil {
+		return *r.attached, nil
+	}
 	return callAdmission{}, errCallAdmissionNotFound
 }
 

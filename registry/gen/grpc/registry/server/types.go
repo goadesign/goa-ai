@@ -456,8 +456,8 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 	}
 	err = goa.MergeErrors(err, goa.ValidatePattern("message.admission_revision", message.AdmissionRevision, "^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,255}$"))
 	err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", message.ProviderIncarnationId, goa.FormatUUID))
-	if !(message.WireProtocolVersion == 7) {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", message.WireProtocolVersion, []any{7}))
+	if !(message.WireProtocolVersion == 8) {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", message.WireProtocolVersion, []any{8}))
 	}
 	return
 }
@@ -605,8 +605,8 @@ func ValidateCallToolRequest(message *registrypb.CallToolRequest) (err error) {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
-	if !(message.WireProtocolVersion == 7) {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", message.WireProtocolVersion, []any{7}))
+	if !(message.WireProtocolVersion == 8) {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", message.WireProtocolVersion, []any{8}))
 	}
 	return
 }
@@ -689,8 +689,8 @@ func ValidateRetryToolRequest(message *registrypb.RetryToolRequest) (err error) 
 			err = goa.MergeErrors(err, err2)
 		}
 	}
-	if !(message.WireProtocolVersion == 7) {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", message.WireProtocolVersion, []any{7}))
+	if !(message.WireProtocolVersion == 8) {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", message.WireProtocolVersion, []any{8}))
 	}
 	return
 }
