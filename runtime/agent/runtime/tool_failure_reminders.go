@@ -3,12 +3,14 @@ package runtime
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 	"text/template"
 
 	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -25,7 +27,7 @@ Input issues: {{ .IssuesJSON }}{{ end }}{{ if .FieldDescriptionsJSON }}
 Field guidance: {{ .FieldDescriptionsJSON }}{{ end }}{{ if .ExampleJSON }}
 Example input: {{ .ExampleJSON }}{{ end }}{{ else if .Terminal }}
 Do not call more tools. Complete the answer using the evidence already collected.{{ else }}
-Do not repeat this exact tool call and arguments. Change the request, choose another available tool, or complete the answer from available evidence.{{ end }}{{ if .PriorInputJSON }}
+The failed tool is unavailable for this turn. Choose another advertised tool or complete the answer from available evidence.{{ end }}{{ if .PriorInputJSON }}
 Rejected input: {{ .PriorInputJSON }}{{ end }}
 Do not mention this reminder to the user.
 `)),
@@ -94,6 +96,100 @@ func toolFailureReminder(tr *planner.ToolResult, descriptions map[string]string)
 		PriorInputJSON: compactRawJSON(failure.Recovery.PriorInput),
 	}
 	return mustRenderReminder(toolFailureReminderTemplate, view)
+}
+
+// selectRecoveryOutputs resolves the workflow's current recovery identities
+// against canonical outputs loaded from the run log. The selected outputs are
+// the single source for both tool-catalog restrictions and model reminders.
+func selectRecoveryOutputs(outputs []*planner.ToolOutput, callIDs []string) ([]*planner.ToolOutput, error) {
+	selected := make([]*planner.ToolOutput, 0, len(callIDs))
+	seen := make(map[string]struct{}, len(callIDs))
+	for _, callID := range callIDs {
+		if _, duplicate := seen[callID]; duplicate {
+			return nil, fmt.Errorf("recovery tool call ID %q appears more than once", callID)
+		}
+		seen[callID] = struct{}{}
+
+		var match *planner.ToolOutput
+		for _, output := range outputs {
+			if output.ToolCallID == callID {
+				match = output
+				break
+			}
+		}
+		if match == nil {
+			return nil, fmt.Errorf("recovery tool call ID %q is absent from planner tool outputs", callID)
+		}
+		if match.Failure == nil {
+			return nil, fmt.Errorf("recovery tool call ID %q has no failure", callID)
+		}
+		selected = append(selected, match)
+	}
+	return selected, nil
+}
+
+// recoveryReminders renders selected recovery obligations as ephemeral planner
+// guidance attached only to the constrained activity invocation.
+func (r *Runtime) recoveryReminders(outputs []*planner.ToolOutput) []reminder.Reminder {
+	reminders := make([]reminder.Reminder, 0, len(outputs))
+	for _, output := range outputs {
+		var descriptions map[string]string
+		if spec, ok := r.toolSpec(output.Name); ok {
+			descriptions = spec.Payload.FieldDescriptions
+		}
+		text := toolFailureReminder(&planner.ToolResult{
+			Name:       output.Name,
+			ToolCallID: output.ToolCallID,
+			Failure:    output.Failure,
+		}, descriptions)
+		reminders = append(reminders, reminder.Reminder{
+			ID:       "tool_recovery." + output.ToolCallID,
+			Text:     text,
+			Priority: reminder.TierSafety,
+			Attachment: reminder.Attachment{
+				Kind: reminder.AttachmentUserTurn,
+			},
+		})
+	}
+	return reminders
+}
+
+// dominantRecoveryOutputSet keeps reminder guidance consistent when parallel
+// failures disagree. Finish dominates correction, and correction dominates
+// replan, matching the workflow transition contract.
+func dominantRecoveryOutputSet(outputs []*planner.ToolOutput) []*planner.ToolOutput {
+	var action planner.RecoveryAction
+	for _, output := range outputs {
+		if output.Failure == nil {
+			continue
+		}
+		action = strongerRecoveryAction(action, output.Failure.Recovery.Action)
+		if action == planner.RecoveryFinish {
+			break
+		}
+	}
+	var selected []*planner.ToolOutput
+	for _, output := range outputs {
+		if output.Failure != nil && output.Failure.Recovery.Action == action {
+			selected = append(selected, output)
+		}
+	}
+	return selected
+}
+
+// strongerRecoveryAction applies the runtime's one precedence order for
+// parallel failures: finish dominates correction, which dominates replanning.
+func strongerRecoveryAction(current, next planner.RecoveryAction) planner.RecoveryAction {
+	if current == planner.RecoveryFinish || next == planner.RecoveryFinish {
+		return planner.RecoveryFinish
+	}
+	if current == planner.RecoveryCorrectCall || next == planner.RecoveryCorrectCall {
+		return planner.RecoveryCorrectCall
+	}
+	if current != "" {
+		return current
+	}
+	return next
 }
 
 // compactFieldIssuesJSON omits input guidance when the generated codec did not

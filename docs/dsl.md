@@ -1128,12 +1128,13 @@ Runtime contract:
 - successful bookkeeping results stay out of compact future `ToolOutputs` and
   do not force another planner turn.
 
-This means a bookkeeping-only planner turn is only valid when the same turn
+This means a successful bookkeeping-only planner turn is only valid when the same turn
 already resolves without another reasoning resume (a `TerminalRun` tool, a
 `FinalResponse` / `FinalToolResult`, or an await/pause control-plane
-handshake). A failed bookkeeping result remains planner-visible only when its
-`ToolFailure.Recovery` permits another tool turn, so terminal recovery does not
-create an accidental repair turn.
+handshake). Every failed bookkeeping result remains planner-visible and resumes
+through its typed recovery transition. `correct_call` and `replan` may use
+tools; `finish` resumes without tools so the planner can synthesize the
+terminal outcome.
 
 Operationally, a planner result is processed as one workflow step: the runtime
 executes admitted tool and await work, records durable and planner-visible

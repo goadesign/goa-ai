@@ -775,7 +775,7 @@ func TestPreparePlannerActivityWiresSignatureCaptureIntoModelClients(t *testing.
 		AgentID:    "svc.agent",
 		RunID:      "run-1",
 		RunContext: run.Context{SessionID: "sess-1", TurnID: "turn-1"},
-	}, nil)
+	}, nil, nil)
 	require.NoError(t, err)
 
 	cli, ok := act.agentCtx.ModelClient("primary")

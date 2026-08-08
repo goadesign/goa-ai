@@ -1,12 +1,36 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/run"
+)
+
+type (
+	legacyPlanActivityInput struct {
+		AgentID       agent.Ident
+		RunID         string
+		Messages      []*model.Message
+		RunContext    run.Context
+		Policy        *PolicyOverrides
+		ToolOutputs   []*ToolOutputRef
+		SynthesisOnly bool
+		Finalize      *planner.Termination
+	}
+
+	legacyPlanActivityOutput struct {
+		Result       *planner.PlanResult
+		Transcript   []*model.Message
+		Usage        model.TokenUsage
+		SessionEnded bool
+	}
 )
 
 func TestPlanActivityOutputUnmarshalJSON(t *testing.T) {
@@ -69,4 +93,50 @@ func TestPlanActivityOutputUnmarshalJSON(t *testing.T) {
 		var out PlanActivityOutput
 		require.ErrorContains(t, json.Unmarshal([]byte(invalid), &out), "message part requires kind")
 	})
+}
+
+func TestPlanActivityInputOmitsEmptyRecoveryIdentity(t *testing.T) {
+	payload, err := json.Marshal(PlanActivityInput{RunID: "run-1"})
+	require.NoError(t, err)
+	require.NotContains(t, string(payload), "RecoveryToolCallIDs")
+
+	payload, err = json.Marshal(PlanActivityInput{
+		RunID:               "run-1",
+		RecoveryToolCallIDs: []string{"call-1"},
+	})
+	require.NoError(t, err)
+	require.Contains(t, string(payload), `"RecoveryToolCallIDs":["call-1"]`)
+}
+
+func TestRecoveryActivityFieldsRequireHardWorkerCutover(t *testing.T) {
+	t.Parallel()
+
+	ordinaryInput, err := json.Marshal(PlanActivityInput{RunID: "run-1"})
+	require.NoError(t, err)
+	require.NoError(t, strictJSONDecode(ordinaryInput, &legacyPlanActivityInput{}))
+
+	recoveryInput, err := json.Marshal(PlanActivityInput{
+		RunID:               "run-1",
+		RecoveryToolCallIDs: []string{"call-1"},
+	})
+	require.NoError(t, err)
+	require.ErrorContains(t, strictJSONDecode(recoveryInput, &legacyPlanActivityInput{}), "unknown field")
+
+	ordinaryOutput, err := json.Marshal(PlanActivityOutput{})
+	require.NoError(t, err)
+	require.NoError(t, strictJSONDecode(ordinaryOutput, &legacyPlanActivityOutput{}))
+
+	recoveryOutput, err := json.Marshal(PlanActivityOutput{
+		RecoveryCatalog: &RecoveryCatalog{},
+	})
+	require.NoError(t, err)
+	require.ErrorContains(t, strictJSONDecode(recoveryOutput, &legacyPlanActivityOutput{}), "unknown field")
+}
+
+// strictJSONDecode mirrors the Temporal payload decoder's unknown-field
+// rejection so this API test records the mixed-worker deployment boundary.
+func strictJSONDecode(payload []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(target)
 }

@@ -767,9 +767,9 @@ type PlanResult struct {
 `SynthesizeAfterTools` is batch intent, not recovery policy. Failed results
 carry `ToolFailure.Recovery`: `correct_call` receives a turn whose advertised
 catalog contains exactly one failed tool, with distinct failed tools queued in
-canonical order; `replan` receives the normal caller-allowed catalog, and
-`finish` requires tool-free synthesis. Otherwise the runtime carries the batch
-intent as `SynthesisOnly`, which rejects additional tool calls. `Finalize`
+canonical order; `replan` receives the caller-allowed catalog without the failed
+tool, and `finish` requires tool-free synthesis. Otherwise the runtime carries
+the batch intent as `SynthesisOnly`, which rejects additional tool calls. `Finalize`
 remains reserved for runtime-forced cap or deadline termination.
 
 ### PlannerContext

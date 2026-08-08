@@ -48,6 +48,11 @@ type (
 		// planner resume, so recovery applies to exactly the next decision.
 		PendingRecovery []*planner.ToolOutput
 
+		// PendingRecoveryCatalog is the exact tool catalog advertised by the
+		// activity that produced Result. Presence activates workflow-side
+		// enforcement; absence preserves histories created before this contract.
+		PendingRecoveryCatalog *RecoveryCatalog
+
 		// QueuedRecovery contains failures for other tools while correct-call
 		// recovery narrows each planner turn to one tool. The workflow drains the
 		// queue in canonical failure order.

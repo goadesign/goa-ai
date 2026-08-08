@@ -161,7 +161,7 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 
 	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
 
-	require.Len(t, base.Messages, 2)
+	require.Len(t, base.Messages, 1)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
 	require.Len(t, base.Messages[0].Parts, 1)
 
@@ -262,11 +262,7 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 			base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 
 			appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tc.tr})
-			expectedMessages := 1
-			if tc.tr.Failure != nil {
-				expectedMessages = 2
-			}
-			require.Len(t, base.Messages, expectedMessages)
+			require.Len(t, base.Messages, 1)
 
 			livePart, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
 			require.True(t, ok)
@@ -337,7 +333,7 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 	require.Contains(t, txt.Text, "Next cursor: opaque-cursor")
 }
 
-func TestAppendUserToolResultsAppendsFailureReminderAfterToolResults(t *testing.T) {
+func TestRecoveryReminderIsEphemeralPlannerInput(t *testing.T) {
 	rt := New()
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
@@ -362,15 +358,18 @@ func TestAppendUserToolResultsAppendsFailureReminderAfterToolResults(t *testing.
 
 	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
 
-	require.Len(t, base.Messages, 2)
+	require.Len(t, base.Messages, 1)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
-	require.Equal(t, model.ConversationRoleSystem, base.Messages[1].Role)
 
-	txt, ok := base.Messages[1].Parts[0].(model.TextPart)
-	require.True(t, ok)
-	require.Contains(t, txt.Text, "A tool call failed.")
-	require.Contains(t, txt.Text, "Tool: svc_read_aggregate")
-	require.Contains(t, txt.Text, "Call the same tool again with corrected arguments.")
+	reminders := rt.recoveryReminders([]*planner.ToolOutput{{
+		Name:       tr.Name,
+		ToolCallID: tr.ToolCallID,
+		Failure:    tr.Failure,
+	}})
+	require.Len(t, reminders, 1)
+	require.Contains(t, reminders[0].Text, "A tool call failed.")
+	require.Contains(t, reminders[0].Text, "Tool: svc_read_aggregate")
+	require.Contains(t, reminders[0].Text, "Call the same tool again with corrected arguments.")
 }
 
 func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
@@ -417,7 +416,7 @@ func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
 	require.Equal(t, "call-2", bookkeeping.ToolUseID)
 }
 
-func TestAppendUserToolResultsEmitsOnlyDominantRecoveryReminders(t *testing.T) {
+func TestRecoveryRemindersFollowCurrentQueuedTurn(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(
 		rt,
@@ -444,11 +443,19 @@ func TestAppendUserToolResultsEmitsOnlyDominantRecoveryReminders(t *testing.T) {
 
 	appendUserToolResultsForTest(t, rt, "agent-1", base, calls, results)
 
-	require.Len(t, base.Messages, 2)
-	reminder, ok := base.Messages[1].Parts[0].(model.TextPart)
-	require.True(t, ok)
-	require.Contains(t, reminder.Text, "Do not call more tools.")
-	require.NotContains(t, reminder.Text, "Call the same tool again")
+	require.Len(t, base.Messages, 1)
+	outputs := []*planner.ToolOutput{
+		{Name: results[0].Name, ToolCallID: results[0].ToolCallID, Failure: results[0].Failure},
+		{Name: results[1].Name, ToolCallID: results[1].ToolCallID, Failure: results[1].Failure},
+	}
+	finishReminders := rt.recoveryReminders(outputs[1:])
+	require.Len(t, finishReminders, 1)
+	require.Contains(t, finishReminders[0].Text, "Do not call more tools.")
+	require.NotContains(t, finishReminders[0].Text, "Call the same tool again")
+
+	correctionReminders := rt.recoveryReminders(outputs[:1])
+	require.Len(t, correctionReminders, 1)
+	require.Contains(t, correctionReminders[0].Text, "Call the same tool again")
 }
 
 func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T) {
@@ -494,10 +501,9 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 	))
 	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
 
-	require.Len(t, base.Messages, 3)
+	require.Len(t, base.Messages, 2)
 	require.Equal(t, model.ConversationRoleAssistant, base.Messages[0].Role)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[1].Role)
-	require.Equal(t, model.ConversationRoleSystem, base.Messages[2].Role)
 
 	usePart, ok := base.Messages[0].Parts[0].(model.ToolUsePart)
 	require.True(t, ok)

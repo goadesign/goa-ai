@@ -588,23 +588,35 @@ advertises one tool with outstanding correction obligations and requires
 changed payloads that satisfy every failed call for that tool. Distinct failed
 tools are queued in canonical order. Historical tool calls retain deterministic
 provider-name projection even while the current correction turn advertises one
-tool. `replan` forbids exact repetition while permitting another advertised tool
-or final answer, and `finish` forbids more tools. Synthesis intent requested by
+tool. A correction may pause for missing user input; answering resumes the same
+restricted correction turn. `replan` removes the failed tool from the recovery
+turn while permitting another advertised tool or final answer, but not a
+clarification pause. `finish` forbids more tools.
+When the same tool has both correction and replan failures in one batch,
+correction takes precedence and keeps only that tool available until its
+correction obligations are satisfied.
+Synthesis intent requested by
 the original batch or a later correction turn survives a queue containing only
 `correct_call` obligations; `replan` or `finish` clears it. Successful batches
 proceed to the requested answer.
+
+The workflow selects current recovery outputs by stable call ID in
+`PlanActivityInput`. Empty recovery IDs are omitted from canonical JSON.
+Upgrades must drain or stop every old worker before starting the new worker
+bundle: old activities reject the new recovery input and old workflows reject
+the new recovery output.
 
 Bookkeeping turn invariant:
 
 - if a planner turn emits any budgeted tool call, the runtime resumes as usual
   from the surviving planner-visible tool outputs,
-- if a planner turn emits only bookkeeping tool calls, the same `PlanResult`
+- if a planner turn emits only successful bookkeeping tool calls, the same `PlanResult`
   must also resolve that turn without another reasoning resume: either a
   terminal outcome (`TerminalRun` tool or `FinalResponse` / `FinalToolResult`),
   or an await/pause control-plane handshake,
-- recoverable bookkeeping failures are the one planner-visible exception: when
-  a bookkeeping tool returns a `ToolFailure` whose recovery action permits tools,
-  the runtime resumes so the planner can repair and resend that tool call,
+- failed bookkeeping results are the planner-visible exception: the runtime
+  resumes through the typed recovery transition; `correct_call` and `replan`
+  may use tools, while `finish` resumes without tools for terminal synthesis,
 - during forced finalization, terminal bookkeeping calls are not replayed into a
   later planner turn; they either durably close the run or fail finalization,
 - otherwise the runtime fails fast instead of scheduling an implicit extra

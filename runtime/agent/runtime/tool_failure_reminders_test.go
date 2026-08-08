@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -92,8 +93,77 @@ func TestToolRemindersUseProviderVisibleToolNames(t *testing.T) {
 	}, "svc.read.continue_events", "cursor")
 
 	assert.Contains(t, failure, "Tool: svc_read_get_status")
+	assert.Contains(t, failure, "The failed tool is unavailable for this turn.")
+	assert.NotContains(t, failure, "Change the request")
 	assert.NotContains(t, failure, "svc.read.get_status")
 	assert.Contains(t, bounds, "Tool: svc_read_list_events")
 	assert.Contains(t, bounds, "call svc_read_continue_events")
 	assert.NotContains(t, bounds, "svc.read.")
+}
+
+func TestSelectRecoveryOutputsRejectsInvalidSelectors(t *testing.T) {
+	t.Parallel()
+
+	outputs := []*planner.ToolOutput{
+		{
+			Name:       "svc.read.get_status",
+			ToolCallID: "failed",
+			Failure: testToolFailure(
+				planner.FailureDomainRejection,
+				planner.RecoveryReplan,
+				"not available",
+			),
+		},
+		{
+			Name:       "svc.read.get_status",
+			ToolCallID: "succeeded",
+		},
+	}
+	tests := []struct {
+		name    string
+		callIDs []string
+		want    string
+	}{
+		{name: "missing", callIDs: []string{"missing"}, want: "absent from planner tool outputs"},
+		{name: "duplicate", callIDs: []string{"failed", "failed"}, want: "appears more than once"},
+		{name: "successful", callIDs: []string{"succeeded"}, want: "has no failure"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := selectRecoveryOutputs(outputs, tt.callIDs)
+
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+func TestDominantRecoveryOutputSetKeepsCorrectionGuidance(t *testing.T) {
+	t.Parallel()
+
+	outputs := []*planner.ToolOutput{
+		{
+			Name:       "svc.read.get_status",
+			ToolCallID: "replan",
+			Failure: testToolFailure(
+				planner.FailureDomainRejection,
+				planner.RecoveryReplan,
+				"use another capability",
+			),
+		},
+		{
+			Name:       "svc.read.get_status",
+			ToolCallID: "correct",
+			Failure: testToolFailure(
+				planner.FailureInvalidCall,
+				planner.RecoveryCorrectCall,
+				"fix the input",
+			),
+		},
+	}
+
+	selected := dominantRecoveryOutputSet(outputs)
+	require.Len(t, selected, 1)
+	assert.Equal(t, "correct", selected[0].ToolCallID)
 }

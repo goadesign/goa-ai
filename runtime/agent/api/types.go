@@ -277,6 +277,16 @@ type (
 		ToolCallID string
 	}
 
+	// RecoveryCatalog records the exact tools advertised by a recovery planner
+	// activity. Its presence lets the workflow enforce the same catalog after
+	// the activity returns; absence preserves replay of histories recorded
+	// before recovery catalogs were introduced.
+	RecoveryCatalog struct {
+		// Tools lists canonical tool identifiers in advertised order. An empty
+		// list means the recovery turn required a tool-free result.
+		Tools []tools.Ident
+	}
+
 	// PlanActivityInput carries the planner input for PlanStart and PlanResume activities.
 	PlanActivityInput struct {
 		// AgentID identifies which agent is being planned.
@@ -305,6 +315,13 @@ type (
 		//   planner-visible metadata from the run event log before invoking planners.
 		ToolOutputs []*ToolOutputRef
 
+		// RecoveryToolCallIDs selects the failed outputs whose recovery directives
+		// constrain this planner turn. The activity uses these stable identities to
+		// derive both its advertised tools and ephemeral recovery guidance from
+		// canonical run-log outputs. Omitting the empty field keeps PlanStart and
+		// ordinary PlanResume payloads compatible with earlier activity workers.
+		RecoveryToolCallIDs []string `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+
 		// SynthesisOnly requires the planner to produce a final response without
 		// new tool calls. The workflow sets it only when a selected
 		// synthesis-after-tools batch has no recoverable failure.
@@ -332,6 +349,10 @@ type (
 		// status is the authority; engine cancellation only expedites
 		// shutdown.
 		SessionEnded bool
+
+		// RecoveryCatalog is present only for a recovery-aware resume activity
+		// and records the exact executable catalog shown to that planner turn.
+		RecoveryCatalog *RecoveryCatalog `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 	}
 
 	// RecordActivityInput is the canonical workflow-to-activity envelope for

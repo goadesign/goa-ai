@@ -289,10 +289,16 @@ func (r *Runtime) hasBookkeepingToolCalls(calls []planner.ToolRequest) bool {
 // runStep executes one normalized planner result and applies one post-step
 // transition.
 func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
+	if err := validateRecoveryCatalog(l.st.PendingRecoveryCatalog, program.result); err != nil {
+		return nil, err
+	}
 	if err := l.r.validateRecoveryPlan(l.st.PendingRecovery, program.result); err != nil {
 		return nil, err
 	}
-	l.st.PendingRecovery = nil
+	if program.result.Await == nil {
+		l.st.PendingRecovery = nil
+		l.st.PendingRecoveryCatalog = nil
+	}
 	if len(program.calls) > 0 {
 		program.calls = l.r.prepareAllowedCallsMetadata(
 			l.input.AgentID,
@@ -599,7 +605,8 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	action, failed := dominantRecoveryAction(batch.records)
 	var pendingRecovery []*planner.ToolOutput
 	if !failed || action != planner.RecoveryFinish {
-		pendingRecovery = append(pendingRecoveryOutputs(batch.records), l.st.QueuedRecovery...)
+		pendingRecovery = append(pendingRecoveryOutputs(batch.records), l.st.PendingRecovery...)
+		pendingRecovery = append(pendingRecovery, l.st.QueuedRecovery...)
 	} else {
 		l.st.SynthesizeAfterRecovery = false
 	}
@@ -618,11 +625,16 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	if synthesisOnly {
 		l.st.SynthesizeAfterRecovery = false
 	}
+	reminderRecovery := currentRecovery
+	if failed && action == planner.RecoveryFinish {
+		reminderRecovery = dominantRecoveryOutputs(batch.records)
+	}
 	resumeReq, err := l.r.buildNextResumeRequest(
 		l.input.AgentID,
 		l.base,
 		resumePolicy,
 		l.st.ToolOutputs,
+		reminderRecovery,
 		synthesisOnly,
 		&l.st.NextAttempt,
 	)
@@ -645,17 +657,29 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	l.st.Transcript = resOutput.Transcript
 	l.st.ResponseCommitted = false
 	l.st.PendingRecovery = currentRecovery
+	l.st.PendingRecoveryCatalog = resOutput.RecoveryCatalog
 	l.st.QueuedRecovery = queuedRecovery
 	return nil, nil
 }
 
-// validateRecoveryPlan enforces the failed call's next-turn contract before
-// committing the model response or executing effects.
+// validateRecoveryPlan enforces correction-only turns before committing the
+// model response or executing effects. Replan exclusions are enforced by the
+// planner-visible catalog; this validator retains the prior changed-payload
+// behavior so existing workflow histories remain replayable after upgrade.
 func (r *Runtime) validateRecoveryPlan(failures []*planner.ToolOutput, result *planner.PlanResult) error {
 	if len(failures) == 0 {
 		return nil
 	}
 	correctTools := correctCallToolCounts(failures)
+	if result.Await != nil {
+		if len(result.ToolCalls) > 0 || result.FinalResponse != nil || result.FinalToolResult != nil {
+			return errors.New("planner combined recovery clarification with another transition")
+		}
+		if len(correctTools) > 0 {
+			return validateCorrectionAwait(correctTools, result.Await)
+		}
+		return errors.New("planner awaited clarification while recovery requires another capability or a final answer")
+	}
 	if len(correctTools) > 0 && len(result.ToolCalls) == 0 {
 		return errors.New("planner completed without correcting a failed tool call")
 	}
@@ -689,6 +713,82 @@ func (r *Runtime) validateRecoveryPlan(failures []*planner.ToolOutput, result *p
 		}
 	}
 	return nil
+}
+
+// validateRecoveryCatalog rejects every tool call outside the exact catalog
+// advertised by the activity that produced the planner result. A nil catalog
+// denotes a workflow history recorded before this enforcement contract.
+func validateRecoveryCatalog(catalog *RecoveryCatalog, result *planner.PlanResult) error {
+	if catalog == nil {
+		return nil
+	}
+	allowed := make(map[tools.Ident]struct{}, len(catalog.Tools))
+	for _, tool := range catalog.Tools {
+		allowed[tool] = struct{}{}
+	}
+	for _, call := range result.ToolCalls {
+		// ToolUnavailable is the runtime-owned identity for an unknown model
+		// request. It is never advertised, so its existing changed-request and
+		// attempt-cap contract validates it instead of the advertised catalog.
+		if call.Name == tools.ToolUnavailable {
+			continue
+		}
+		if _, ok := allowed[call.Name]; !ok {
+			return fmt.Errorf("planner called tool %q outside the advertised recovery catalog", call.Name)
+		}
+	}
+	return nil
+}
+
+// validateCorrectionAwait admits only plain user clarification bound to the
+// one tool whose failed calls must be corrected. Tool-backed or unbound waits
+// would bypass the correction-only turn.
+func validateCorrectionAwait(correctTools map[tools.Ident]int, await *planner.Await) error {
+	if len(correctTools) != 1 {
+		return errors.New("planner awaited clarification while multiple correction tools are active")
+	}
+	var correctionTool tools.Ident
+	for tool := range correctTools {
+		correctionTool = tool
+	}
+	if len(await.Items) == 0 {
+		return errors.New("planner correction clarification has no items")
+	}
+	for _, item := range await.Items {
+		if item.Kind != planner.AwaitItemKindClarification || item.Clarification == nil {
+			return errors.New("planner correction recovery permits only plain clarification")
+		}
+		if item.Clarification.RestrictToTool != correctionTool {
+			return fmt.Errorf(
+				"planner correction clarification must restrict to %q",
+				correctionTool,
+			)
+		}
+	}
+	return nil
+}
+
+// replanUnavailableTools returns the tools excluded from the next planner
+// turn. Replan chooses another capability; same-tool payload correction belongs
+// to correct-call recovery.
+func replanUnavailableTools(outputs []*planner.ToolOutput) []tools.Ident {
+	correctTools := correctCallToolCounts(outputs)
+	seen := make(map[tools.Ident]struct{})
+	var unavailable []tools.Ident
+	for _, output := range outputs {
+		// ToolUnavailable is the hidden result identity for any unknown model
+		// name, not an advertised capability the model can repeat.
+		if output.Name != tools.ToolUnavailable &&
+			correctTools[output.Name] == 0 &&
+			output.Failure != nil &&
+			output.Failure.Recovery.Action == planner.RecoveryReplan {
+			if _, exists := seen[output.Name]; !exists {
+				seen[output.Name] = struct{}{}
+				unavailable = append(unavailable, output.Name)
+			}
+		}
+	}
+	return unavailable
 }
 
 // correctCallToolCounts returns the outstanding correction obligations grouped
@@ -823,9 +923,35 @@ func pendingRecoveryOutputs(records []stepToolRecord) []*planner.ToolOutput {
 			continue
 		}
 		outputs = append(outputs, &planner.ToolOutput{
-			Name:    record.call.Name,
-			Payload: append(rawjson.Message(nil), record.call.Payload...),
-			Failure: record.result.Failure,
+			Name:       record.call.Name,
+			ToolCallID: record.call.ToolCallID,
+			Payload:    append(rawjson.Message(nil), record.call.Payload...),
+			Failure:    record.result.Failure,
+		})
+	}
+	return outputs
+}
+
+// dominantRecoveryOutputs selects the failed calls whose recovery action owns
+// the next transition. Finish failures use this projection to guide the
+// synthesis-only activity without becoming an executable recovery obligation.
+func dominantRecoveryOutputs(records []stepToolRecord) []*planner.ToolOutput {
+	action, failed := dominantRecoveryAction(records)
+	if !failed {
+		return nil
+	}
+	var outputs []*planner.ToolOutput
+	for _, record := range records {
+		if record.result == nil ||
+			record.result.Failure == nil ||
+			record.result.Failure.Recovery.Action != action {
+			continue
+		}
+		outputs = append(outputs, &planner.ToolOutput{
+			Name:       record.call.Name,
+			ToolCallID: record.call.ToolCallID,
+			Payload:    append(rawjson.Message(nil), record.call.Payload...),
+			Failure:    record.result.Failure,
 		})
 	}
 	return outputs
@@ -874,12 +1000,9 @@ func dominantRecoveryAction(records []stepToolRecord) (planner.RecoveryAction, b
 		if record.result == nil || record.result.Failure == nil {
 			continue
 		}
-		next := record.result.Failure.Recovery.Action
-		if next == planner.RecoveryFinish {
-			return next, true
-		}
-		if action == "" || next == planner.RecoveryCorrectCall {
-			action = next
+		action = strongerRecoveryAction(action, record.result.Failure.Recovery.Action)
+		if action == planner.RecoveryFinish {
+			return action, true
 		}
 	}
 	return action, action != ""

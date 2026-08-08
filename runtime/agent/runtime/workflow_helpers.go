@@ -144,7 +144,6 @@ func (r *Runtime) appendUserToolRecordResults(
 
 	parts := make([]model.Part, 0, len(records))
 	var reminders []string
-	recoveryAction, hasFailure := dominantRecoveryAction(records)
 	for _, record := range records {
 		call := record.call
 		tr := record.result
@@ -160,17 +159,6 @@ func (r *Runtime) appendUserToolRecordResults(
 		})
 		if hasSpec && spec.ResultReminder != "" && tr.Failure == nil {
 			reminders = append(reminders, spec.ResultReminder)
-		}
-		if hasFailure &&
-			tr.Failure != nil &&
-			tr.Failure.Recovery.Action == recoveryAction {
-			var descriptions map[string]string
-			if hasSpec {
-				descriptions = spec.Payload.FieldDescriptions
-			}
-			if rem := toolFailureReminder(tr, descriptions); rem != "" {
-				reminders = append(reminders, rem)
-			}
 		}
 		if hasSpec {
 			continueTool := ""
@@ -259,7 +247,7 @@ func (r *Runtime) toolResultRequiresResume(call planner.ToolRequest, result *pla
 	if !r.isBookkeeping(call.Name) {
 		return true
 	}
-	return result != nil && result.Failure != nil && result.Failure.AllowsToolTurn()
+	return result != nil && result.Failure != nil
 }
 
 func (r *Runtime) toolResultContent(call *planner.ToolRequest, tr *planner.ToolResult) (any, error) {
@@ -353,6 +341,7 @@ func (r *Runtime) buildNextResumeRequest(
 	base *planner.PlanInput,
 	runPolicy *PolicyOverrides,
 	toolOutputs []*planner.ToolOutput,
+	recovery []*planner.ToolOutput,
 	synthesisOnly bool,
 	nextAttempt *int,
 ) (PlanActivityInput, error) {
@@ -371,13 +360,14 @@ func (r *Runtime) buildNextResumeRequest(
 		return PlanActivityInput{}, err
 	}
 	out := PlanActivityInput{
-		AgentID:       agentID,
-		RunID:         base.RunContext.RunID,
-		Messages:      plannerMsgs,
-		RunContext:    resumeCtx,
-		Policy:        clonePolicyOverrides(runPolicy),
-		ToolOutputs:   encodedToolOutputs,
-		SynthesisOnly: synthesisOnly,
+		AgentID:             agentID,
+		RunID:               base.RunContext.RunID,
+		Messages:            plannerMsgs,
+		RunContext:          resumeCtx,
+		Policy:              clonePolicyOverrides(runPolicy),
+		ToolOutputs:         encodedToolOutputs,
+		RecoveryToolCallIDs: recoveryToolCallIDs(recovery),
+		SynthesisOnly:       synthesisOnly,
 	}
 	if err := enforcePlanActivityInputBudget(out); err != nil {
 		return PlanActivityInput{}, err
@@ -385,4 +375,14 @@ func (r *Runtime) buildNextResumeRequest(
 	base.RunContext.Attempt = attempt
 	*nextAttempt = attempt + 1
 	return out, nil
+}
+
+// recoveryToolCallIDs carries stable identities across the activity boundary;
+// the activity reloads canonical failure data from the run log.
+func recoveryToolCallIDs(outputs []*planner.ToolOutput) []string {
+	ids := make([]string, len(outputs))
+	for i, output := range outputs {
+		ids[i] = output.ToolCallID
+	}
+	return ids
 }

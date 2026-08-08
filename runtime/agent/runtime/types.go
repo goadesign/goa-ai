@@ -15,6 +15,7 @@ type (
 	RunInput               = api.RunInput
 	PlanActivityInput      = api.PlanActivityInput
 	PlanActivityOutput     = api.PlanActivityOutput
+	RecoveryCatalog        = api.RecoveryCatalog
 	RecordActivityInput    = api.RecordActivityInput
 	ToolInput              = api.ToolInput
 	ToolOutput             = api.ToolOutput

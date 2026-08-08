@@ -50,7 +50,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	} else if ended {
 		return &PlanActivityOutput{SessionEnded: true}, nil
 	}
-	act, err := r.preparePlannerActivity(ctx, input, nil)
+	act, err := r.preparePlannerActivity(ctx, input, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -97,6 +97,14 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return nil, err
 	}
+	recoveryOutputs, err := selectRecoveryOutputs(toolOutputs, input.RecoveryToolCallIDs)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateRecoveryPolicy(recoveryOutputs, input.Policy); err != nil {
+		return nil, err
+	}
+	recoveryReminders := r.recoveryReminders(dominantRecoveryOutputSet(recoveryOutputs))
 	var availableContinuations map[tools.Ident]struct{}
 	if input.Finalize == nil && !input.SynthesisOnly {
 		availableContinuations, err = r.availableContinuationTools(input.AgentID, toolOutputs)
@@ -104,10 +112,16 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 			return nil, err
 		}
 	}
-	act, err := r.preparePlannerActivity(ctx, input, availableContinuations)
+	act, err := r.preparePlannerActivity(
+		ctx,
+		input,
+		availableContinuations,
+		replanUnavailableTools(recoveryOutputs),
+	)
 	if err != nil {
 		return nil, err
 	}
+	act.reminders = append(recoveryReminders, act.reminders...)
 	planInput := &planner.PlanResumeInput{
 		Messages:      act.messages,
 		RunContext:    input.RunContext,
@@ -134,7 +148,44 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 			return nil, fmt.Errorf("synthesis-only planner result: %w", err)
 		}
 	}
-	return act.output(result)
+	output, err := act.output(result)
+	if err != nil {
+		return nil, err
+	}
+	if len(input.RecoveryToolCallIDs) > 0 {
+		definitions := act.agentCtx.AdvertisedToolDefinitions()
+		advertised := make([]tools.Ident, len(definitions))
+		for i, definition := range definitions {
+			advertised[i] = tools.Ident(definition.Name)
+		}
+		output.RecoveryCatalog = &RecoveryCatalog{Tools: advertised}
+	}
+	return output, nil
+}
+
+// validateRecoveryPolicy proves that correction restrictions and selected
+// canonical failures describe the same turn. Replan recovery needs no policy
+// restriction because its catalog is derived directly from the selected
+// outputs.
+func validateRecoveryPolicy(outputs []*planner.ToolOutput, policy *PolicyOverrides) error {
+	correctTools := correctCallToolCounts(outputs)
+	if len(correctTools) == 0 {
+		return nil
+	}
+	if len(correctTools) != 1 {
+		return errors.New("recovery activity contains multiple correction tools")
+	}
+	var correctionTool tools.Ident
+	for tool := range correctTools {
+		correctionTool = tool
+	}
+	if policy == nil || policy.RestrictToTool != correctionTool {
+		return fmt.Errorf(
+			"recovery activity for %q is missing its matching tool restriction",
+			correctionTool,
+		)
+	}
+	return nil
 }
 
 // preparePlannerActivity constructs all shared planner activity state before
@@ -143,10 +194,18 @@ func (r *Runtime) preparePlannerActivity(
 	ctx context.Context,
 	input *PlanActivityInput,
 	availableContinuations map[tools.Ident]struct{},
+	unavailableTools []tools.Ident,
 ) (*plannerActivityInvocation, error) {
 	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID, input.RunContext.TurnID)
 	invocations := &modelInvocationJournal{}
-	reg, agentCtx, err := r.plannerContext(ctx, input, events, invocations, availableContinuations)
+	reg, agentCtx, err := r.plannerContext(
+		ctx,
+		input,
+		events,
+		invocations,
+		availableContinuations,
+		unavailableTools,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -555,6 +614,7 @@ func (r *Runtime) plannerContext(
 	events planner.PlannerEvents,
 	invocations modelInvocationSink,
 	availableContinuations map[tools.Ident]struct{},
+	unavailableTools []tools.Ident,
 ) (*AgentRegistration, planner.PlannerContext, error) {
 	if input.AgentID == "" {
 		return nil, nil, errors.New("agent id is required")
@@ -581,6 +641,7 @@ func (r *Runtime) plannerContext(
 		invocations:            invocations,
 		cache:                  reg.Policy.Cache,
 		availableContinuations: availableContinuations,
+		unavailableTools:       unavailableTools,
 	})
 	return &reg, agentCtx, nil
 }

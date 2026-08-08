@@ -79,8 +79,8 @@ const (
 	// RecoveryCorrectCall requires a corrected call to the same tool. The next
 	// planner step may await clarification instead when user input is required.
 	RecoveryCorrectCall RecoveryAction = "correct_call"
-	// RecoveryReplan permits a changed call, another advertised capability, or
-	// a final answer, but never an exact repetition of the failed call.
+	// RecoveryReplan permits another advertised capability or a final answer.
+	// The failed tool is unavailable on the recovery turn.
 	RecoveryReplan RecoveryAction = "replan"
 	// RecoveryFinish forbids further tool execution and requires final synthesis
 	// from evidence already collected.

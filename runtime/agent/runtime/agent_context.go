@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"slices"
 
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/memory"
@@ -27,6 +28,7 @@ type agentContextOptions struct {
 	invocations            modelInvocationSink
 	cache                  CachePolicy
 	availableContinuations map[tools.Ident]struct{}
+	unavailableTools       []tools.Ident
 }
 
 // simplePlannerContext is a minimal implementation of planner.PlannerContext.
@@ -43,6 +45,7 @@ type simplePlannerContext struct {
 	invocations            modelInvocationSink
 	cache                  CachePolicy
 	availableContinuations map[tools.Ident]struct{}
+	unavailableTools       []tools.Ident
 }
 
 func newAgentContext(opts agentContextOptions) planner.PlannerContext {
@@ -59,6 +62,7 @@ func newAgentContext(opts agentContextOptions) planner.PlannerContext {
 		invocations:            opts.invocations,
 		cache:                  opts.cache,
 		availableContinuations: opts.availableContinuations,
+		unavailableTools:       opts.unavailableTools,
 	}
 }
 
@@ -83,6 +87,9 @@ func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefiniti
 	specs := c.rt.ToolSpecsForAgent(c.agent)
 	visible := specs[:0]
 	for _, spec := range specs {
+		if slices.Contains(c.unavailableTools, spec.Name) {
+			continue
+		}
 		if isDedicatedContinuationSpec(spec) {
 			if _, ok := c.availableContinuations[spec.Name]; !ok {
 				continue

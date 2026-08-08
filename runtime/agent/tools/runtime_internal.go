@@ -14,5 +14,6 @@ package tools
 // Provider adapters and runtimes rewrite unknown tool calls to this identifier
 // to preserve a valid tool_use → tool_result handshake even when models
 // hallucinate tool names. The tool returns a structured unavailable failure
-// whose replan directive forbids repeating the rejected call.
+// without removing this synthetic identity from later catalogs; the runtime's
+// unknown-tool cap owns repeated hallucinations.
 const ToolUnavailable Ident = "runtime.tool_unavailable"

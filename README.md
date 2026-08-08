@@ -229,9 +229,10 @@ close through terminal bookkeeping tools; the runtime executes only
 `TerminalRun()` tools in that path (`TerminalRun()` implies bookkeeping) and
 requires the terminal side effects to succeed inside the remaining
 hard-deadline window. A `correct_call` failure narrows only its immediate
-planner resume to one failed tool. Distinct failed tools from a parallel batch
-are corrected in deterministic order, so recovery does not widen the activity
-payload or constrain later finalization. Caller `WithRestrictToTool` policy is
+planner resume to one failed tool. It may pause for missing user input; the
+same correction obligation remains active after the answer. Distinct failed
+tools from a parallel batch are corrected in deterministic order. Caller
+`WithRestrictToTool` policy is
 run-scoped and still applies to every tool. Tool executors decide how work is
 performed.
 
@@ -582,8 +583,9 @@ Tool("commit_report", "Commit final report", func() {
 Bookkeeping tools consume neither the normal `MaxToolCalls` budget nor the
 consecutive-failure allowance. Their events are still durable and streamed, and
 their provider transcript blocks remain intact. Successful results stay out of
-compact future `ToolOutputs`; recoverable failures stay visible there so the
-planner can repair the failed call.
+compact future `ToolOutputs`. Every failure resumes through its typed recovery
+transition: `correct_call` and `replan` may use tools, while `finish` resumes
+without tools so the planner can synthesize the terminal outcome.
 
 On a `correct_call` recovery turn, the runtime advertises only one tool with
 outstanding correction obligations. All failed calls for that tool are
@@ -594,7 +596,7 @@ current definitions, including bookkeeping tools, are absent. Caller
 `WithRestrictToTool` policy remains run-scoped and must admit the correction
 tool.
 
-The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-facing outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany non-resuming, non-terminal bookkeeping side effects; budgeted tools, bookkeeping failures whose typed recovery permits tools, terminal tools, and awaits must be separate planner decisions. Bookkeeping calls remain in the provider transcript so signed responses are never edited.
+The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-facing outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany successful, non-terminal bookkeeping side effects; budgeted tools, failed bookkeeping tools, terminal tools, and awaits must be separate planner decisions. Bookkeeping calls remain in the provider transcript so signed responses are never edited.
 
 A planner that knows a successful selected tool batch will provide the final
 evidence can set `PlanResult.SynthesizeAfterTools`. The durable workflow carries
@@ -603,12 +605,21 @@ runtime requires the planner to return a terminal result without additional
 tool calls. A failed tool follows its structured `ToolFailure.Recovery`
 directive first. `correct_call` narrows the advertised catalog and admits only
 changed calls that satisfy every correction obligation for the current tool,
-then advances to the next queued tool; `replan` permits a different call or
-final answer while forbidding exact repetition, and `finish` requires a
-tool-free synthesis turn. The runtime—not planner prose—enforces that
+then advances to the next queued tool; `replan` removes the failed tool from the
+recovery turn and permits another advertised capability or final answer but
+not a clarification pause, and
+`finish` requires a tool-free synthesis turn. The runtime—not planner prose—enforces that
 distinction. A requested synthesis turn survives a queue containing only
 `correct_call` obligations; any `replan` or `finish` directive clears that
-original batch intent.
+original batch intent. When one tool has both correction and replan failures in
+the same batch, correction is stronger: the tool remains advertised only to
+satisfy its exact correction obligations.
+
+Recovery turns carry the constrained failed call IDs in `PlanActivityInput`.
+Empty IDs are omitted, so start and ordinary resume activities retain their
+previous JSON shape. An upgrade that can execute a recovery turn must drain or
+stop every old worker before starting the new worker bundle: old activities
+reject the new input and old workflows reject the new output.
 
 The flag is valid only on a tool-only result, keeping execution and answer
 synthesis as separate turns without relying on process-local state. The batch

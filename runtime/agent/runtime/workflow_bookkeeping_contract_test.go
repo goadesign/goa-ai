@@ -170,7 +170,7 @@ func TestSynthesisOnlyAfterToolBatch(t *testing.T) {
 	}
 }
 
-func TestBookkeepingResultRequiresResumeOnlyForRecoverableFailure(t *testing.T) {
+func TestBookkeepingFailureAlwaysRequiresResume(t *testing.T) {
 	t.Parallel()
 
 	rt := New(WithLogger(telemetry.NoopLogger{}))
@@ -180,7 +180,7 @@ func TestBookkeepingResultRequiresResumeOnlyForRecoverableFailure(t *testing.T) 
 	call := planner.ToolRequest{Name: bookkeeping.Name}
 
 	assert.False(t, rt.toolResultRequiresResume(call, &planner.ToolResult{}))
-	assert.False(t, rt.toolResultRequiresResume(call, &planner.ToolResult{
+	assert.True(t, rt.toolResultRequiresResume(call, &planner.ToolResult{
 		Failure: testToolFailure(planner.FailureTimeout, planner.RecoveryFinish, "timed out"),
 	}))
 	assert.True(t, rt.toolResultRequiresResume(call, &planner.ToolResult{
@@ -385,10 +385,9 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
 	require.Len(t, wfCtx.lastPlannerCall.Input.ToolOutputs, 1)
 	require.Equal(t, "run-1/turn-1/attempt-1/tasks-progress-complete/0", wfCtx.lastPlannerCall.Input.ToolOutputs[0].ToolCallID)
-	require.Len(t, wfCtx.lastPlannerCall.Input.Messages, 3)
+	require.Len(t, wfCtx.lastPlannerCall.Input.Messages, 2)
 	require.Equal(t, model.ConversationRoleAssistant, wfCtx.lastPlannerCall.Input.Messages[0].Role)
 	require.Equal(t, model.ConversationRoleUser, wfCtx.lastPlannerCall.Input.Messages[1].Role)
-	require.Equal(t, model.ConversationRoleSystem, wfCtx.lastPlannerCall.Input.Messages[2].Role)
 }
 
 func TestRunLoopProviderEmptyToolCallIDsAdvanceAcrossResumeAttempts(t *testing.T) {

@@ -145,11 +145,17 @@ classifies why execution failed independently from its `RecoveryDirective`:
 changed payloads that satisfy every correction obligation for that tool.
 Distinct failed tools are queued in canonical failure order, while provider
 adapters continue to project historical canonical tool names independently of
-the narrowed current catalog. `replan` permits a different call or final answer
-but forbids exact repetition, and `finish` forbids more tools. The runtime
-validates and enforces those transitions. `SynthesizeAfterTools` from the
-original batch or a later correction turn survives while a queue contains only
-`correct_call` obligations; `replan` or `finish` clears that intent.
+the narrowed current catalog. `replan` removes the failed tool from the
+recovery turn and permits another advertised capability or final answer, and
+`finish` forbids more tools. The runtime validates and enforces those
+transitions. When the same tool has both correction and replan failures in one
+batch, correction takes precedence and keeps only that tool available until its
+correction obligations are satisfied. A correction turn may pause for missing
+user input; the same obligations remain active when planning resumes after the
+answer. Replan does not permit a clarification pause.
+`SynthesizeAfterTools` from the original batch or a later correction turn
+survives while a queue contains only `correct_call` obligations; `replan` or
+`finish` clears that intent.
 Synthesis-after-tools batches must contain at least one budgeted tool and cannot
 contain a `TerminalRun` tool, ensuring the existing step classification always
 reaches the appropriate planner resume. The resume activity validates the
@@ -476,10 +482,11 @@ redeploys.
   provider transcript so signed model-authored parts replay without modification.
   They consume neither retrieval budget nor consecutive-failure allowance.
   Successful bookkeeping results are omitted only from compact `ToolOutputs`
-  and do not force another planner turn. A failed bookkeeping result enters a
-  repair turn only when its `ToolFailure` permits another tool turn. A bookkeeping-only
-  turn must otherwise resolve in the same turn via a terminal outcome or an
-  await/pause handshake.
+  and do not force another planner turn. Every failed bookkeeping result enters
+  the recovery transition: `correct_call` and `replan` may repair through tools,
+  while `finish` resumes without tools so the planner can synthesize the
+  terminal outcome. A successful bookkeeping-only turn must otherwise resolve
+  in the same turn via a terminal outcome or an await/pause handshake.
 - **Forced finalization control plane**: when runtime caps or deadlines force
   finalization, planners may return terminal bookkeeping tools instead of a
   prose final answer. The runtime executes only `TerminalRun()` tools in that
@@ -487,8 +494,12 @@ redeploys.
   hard-deadline window, and closes the run only if every terminal side effect
   succeeds. Correct-call restrictions use the stable run-policy envelope and
   are scoped to one normal recovery activity; queued tools receive separate
-  turns and recovery never changes the Temporal activity payload contract.
-  These restrictions therefore never constrain forced finalization. Caller
+  turns. Recovery call IDs extend the planner activity payload and select the
+  canonical failed outputs that shape both reminders and the advertised catalog.
+  Empty recovery IDs are omitted for compatibility. Deployments must stop or
+  drain every old worker before recovery turns are scheduled by the new code:
+  old activities reject the new input and old workflows reject the new output.
+  These restrictions never constrain forced finalization. Caller
   `WithRestrictToTool` policy remains run-scoped and still applies to every
   tool.
 - **Visible reasoning contract**: Bedrock adaptive-thinking requests ask for
@@ -559,8 +570,9 @@ that UIs and stream bridges can consume without heuristics.
   - Tool-execution events carry a `ToolFailure` with an independent failure kind
     and recovery action. `correct_call` permits a runtime-constrained turn
     containing only one failed tool and queues other failed tools, `replan`
-    permits the normal
-    caller-allowed catalog, and `finish` is terminal for tool execution.
+    removes the failed tool from the next turn's caller-allowed catalog, and
+    `finish` is terminal for tool execution. A same-tool `correct_call`
+    obligation takes precedence over a parallel `replan`.
 
 - **Terminal identity**
   - `RunCompletedEvent.Labels` carries the run-scoped labels provided at run

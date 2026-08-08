@@ -638,22 +638,36 @@ func TestBuildPlannerToolOutputRecordsSkipsBookkeepingResults(t *testing.T) {
 	require.Equal(t, tools.Ident("svc.ts.tool"), outputs[0].Name)
 }
 
-func TestBuildNextResumeRequestCarriesStableRestrictionPolicy(t *testing.T) {
+func TestBuildNextResumeRequestCarriesTurnScopedRecoveryIdentity(t *testing.T) {
 	t.Parallel()
 
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-123"}}
 	nextAttempt := 1
+	recovery := []*planner.ToolOutput{{
+		Name:       "svc.tools.rejected",
+		ToolCallID: "call-rejected",
+		Failure: testToolFailure(
+			planner.FailureDomainRejection,
+			planner.RecoveryReplan,
+			"use another capability",
+		),
+	}}
 
 	req, err := (&Runtime{}).buildNextResumeRequest(
 		"service.agent",
 		base,
 		&PolicyOverrides{RestrictToTool: "svc.tools.first"},
 		nil,
+		recovery,
 		false,
 		&nextAttempt,
 	)
 	require.NoError(t, err)
 	require.Equal(t, tools.Ident("svc.tools.first"), req.Policy.RestrictToTool)
+	require.Equal(t, []string{"call-rejected"}, req.RecoveryToolCallIDs)
+
+	recovery[0].ToolCallID = "mutated"
+	require.Equal(t, []string{"call-rejected"}, req.RecoveryToolCallIDs)
 }
 
 func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
@@ -673,6 +687,7 @@ func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
 		base,
 		nil,
 		[]*planner.ToolOutput{nil},
+		nil,
 		false,
 		&nextAttempt,
 	)
@@ -701,6 +716,7 @@ func TestBuildNextResumeRequestUsesProviderNeutralTranscriptValidation(t *testin
 	_, err := rt.buildNextResumeRequest(
 		"svc.agent",
 		base,
+		nil,
 		nil,
 		nil,
 		false,
