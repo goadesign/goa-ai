@@ -6,6 +6,7 @@ package registry
 
 import (
 	"context"
+	"crypto/sha1" //nolint:gosec // Redis SHA-1 is a retained-record wire checksum, not a security primitive.
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -747,16 +748,20 @@ func validateTerminalPayload(
 		sum := sha256.Sum256(payload)
 		expectedDigest = hex.EncodeToString(sum[:])
 	} else {
-		decoded, err := hex.DecodeString(digest)
-		if err != nil || len(decoded) != 20 {
-			return fmt.Errorf("call admission terminal digest is not a Redis checksum")
-		}
-		return nil
+		expectedDigest = redisTerminalDigest(payload)
 	}
 	if digest != expectedDigest {
 		return fmt.Errorf("call admission terminal digest does not match payload")
 	}
 	return nil
+}
+
+// redisTerminalDigest reproduces Redis's sha1hex wire checksum for terminal
+// payloads committed by settlement scripts. It is an integrity check, not a
+// cryptographic authenticity mechanism.
+func redisTerminalDigest(payload []byte) string {
+	sum := sha1.Sum(payload) //nolint:gosec // Must match Redis sha1hex exactly.
+	return hex.EncodeToString(sum[:])
 }
 
 // decodePersistedToolResult validates the shared terminal envelope and exact

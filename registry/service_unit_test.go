@@ -352,6 +352,32 @@ func TestCallAdmissionParseResultRejectsMalformedState(t *testing.T) {
 			require.ErrorContains(t, err, test.wantErr)
 		})
 	}
+
+	uncertainBase := append([]any(nil), base...)
+	uncertainBase[4] = "1"
+	uncertainBase[5] = "2-0"
+	uncertainBase[7] = "1"
+	uncertainBase[11] = redisTerminalDigest(terminalPayload)
+	uncertainBase[12] = string(terminalPayload)
+	uncertainBase[13] = "execution_deadline"
+	_, err = store.parseResult(
+		"test.toolset",
+		"registry:test:call",
+		"request-digest",
+		"tool-use-1",
+		uncertainBase,
+	)
+	require.NoError(t, err)
+
+	uncertainBase[11] = strings.Repeat("0", 40)
+	_, err = store.parseResult(
+		"test.toolset",
+		"registry:test:call",
+		"request-digest",
+		"tool-use-1",
+		uncertainBase,
+	)
+	require.ErrorContains(t, err, "digest does not match")
 }
 
 func TestToolUseIDForCallUsesRequiredRunScopedIdentity(t *testing.T) {
