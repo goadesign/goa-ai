@@ -307,14 +307,41 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 	assert.Equal(t, initial[0].eventID, initial[1].eventID)
 	assert.EqualValues(t, 1, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+streamID).Val())
 
-	overload := publish("overload-1")
+	resultStreamID := toolregistry.ResultStreamID(toolUseID)
+	retry := toolregistry.NewToolResultRetryMessage(
+		token,
+		toolUseID,
+		toolregistry.ToolRetryReasonProviderOverloaded,
+		toolregistry.ProviderOverloadRetryAfter,
+	)
+	retryJSON, err := json.Marshal(retry)
+	require.NoError(t, err)
+	require.NoError(t, firstStore.ReportOverload(
+		ctx,
+		toolset,
+		toolUseID,
+		token,
+		token,
+		providerLeaseKey("provider", testIncarnationA),
+		initial[0].eventID,
+		resultStreamID,
+		retryJSON,
+		[]byte(`{}`),
+	))
+	overloadEventID, err := testRedisClient.HGet(
+		ctx,
+		firstStore.callKey(toolUseID),
+		"overload_event_id",
+	).Result()
+	require.NoError(t, err)
+
+	overload := publish(overloadEventID)
 	require.NoError(t, overload[0].err)
 	require.NoError(t, overload[1].err)
 	assert.Equal(t, overload[0].eventID, overload[1].eventID)
 	assert.NotEqual(t, initial[0].eventID, overload[0].eventID)
 	assert.EqualValues(t, 2, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+streamID).Val())
 
-	resultStreamID := toolregistry.ResultStreamID(toolUseID)
 	claimDisposition, err := firstStore.Claim(
 		ctx,
 		toolset,
@@ -351,7 +378,7 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 	}
 	require.NoError(t, <-completions)
 	require.NoError(t, <-completions)
-	assert.EqualValues(t, 1, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+resultStreamID).Val())
+	assert.EqualValues(t, 2, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+resultStreamID).Val())
 	err = firstStore.Complete(
 		ctx,
 		toolset,
@@ -364,7 +391,7 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 		[]byte(`{"different":true}`),
 	)
 	require.ErrorIs(t, err, errCallTerminalConflict)
-	assert.EqualValues(t, 1, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+resultStreamID).Val())
+	assert.EqualValues(t, 2, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+resultStreamID).Val())
 	replayed, _, err := firstStore.Ensure(
 		ctx, toolset, toolUseID, token, digest, time.Second, 5*time.Second,
 		outcomeUnknownPayload(token, toolUseID),
@@ -621,7 +648,7 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 	missingOutcomeKey := firstStore.callKey(missingOutcomeID)
 	require.NoError(t, testRedisClient.HDel(ctx, missingOutcomeKey, "outcome_unknown_payload").Err())
 	_, err = secondStore.Attach(ctx, toolset, missingOutcomeID, digest)
-	require.ErrorContains(t, err, "CALLDECISIONINVALID outcome payload")
+	require.ErrorContains(t, err, "CALLDECISIONINVALID missing admitted field outcome_unknown_payload")
 	published, err := testRedisClient.HGet(ctx, missingOutcomeKey, "published").Result()
 	require.NoError(t, err)
 	assert.Equal(t, "0", published)
@@ -693,8 +720,18 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 	require.NoError(t, testRedisClient.HSet(
 		ctx,
 		orphanDispatchKey,
+		"published",
+		"1",
+		"publication_event_id",
+		"1-0",
+		"claim:1-0",
+		"1",
 		"dispatch_provider_token",
 		token,
+		"dispatch_provider_lease",
+		"provider/lease",
+		"dispatch_request_event_id",
+		"1-0",
 		"dispatch_lease_expires_at_unix_milli",
 		"0",
 	).Err())
@@ -703,18 +740,10 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 	require.NoError(t, testRedisClient.HSet(
 		ctx,
 		orphanDispatchKey,
-		"published",
-		"1",
-		"publication_event_id",
-		"1-0",
-		"claim:1-0",
-		"1",
 		"dispatch_provider_token",
 		strings.Repeat("b", 64),
-		"dispatch_provider_lease",
-		"provider/lease",
-		"dispatch_request_event_id",
-		"1-0",
+		"dispatch_lease_expires_at_unix_milli",
+		"1700000060000",
 	).Err())
 	_, err = secondStore.Attach(ctx, toolset, orphanDispatchID, digest)
 	require.ErrorContains(t, err, "CALLDECISIONINVALID dispatch state")

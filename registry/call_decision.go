@@ -529,7 +529,7 @@ func (s *callAdmissionStore) Reject(
 		s.redis,
 		[]string{key},
 		digest,
-		rejection.kind,
+		string(rejection.kind),
 		rejection.message,
 		ttl.Milliseconds(),
 	).Slice()
