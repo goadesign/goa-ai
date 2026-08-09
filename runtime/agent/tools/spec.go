@@ -38,6 +38,10 @@ type (
 	// UI renderers, persistence sinks). It is not sent to model providers.
 	ServerDataAudience string
 
+	// ServerDataCanonicalizer validates the closed server-data contract
+	// generated for one tool and returns canonical envelope JSON.
+	ServerDataCanonicalizer func(data rawjson.Message) (rawjson.Message, error)
+
 	// ToolSpec enumerates the metadata and JSON codecs for a tool.
 	ToolSpec struct {
 		// Name is the globally unique tool identifier (`toolset.tool`).
@@ -100,6 +104,9 @@ type (
 		// (`toolregistry.ServerDataItem.Data`) so runtimes and consumers can decode
 		// and validate it without runtime design introspection.
 		ServerData []*ServerDataSpec
+		// CanonicalizeServerData validates server data through code generated for
+		// this exact tool. It is nil when the tool declares no server data.
+		CanonicalizeServerData ServerDataCanonicalizer
 		// ResultReminder is an optional system reminder injected into the
 		// conversation after the tool result is returned. It provides backstage
 		// guidance to the model about how to interpret or present the result

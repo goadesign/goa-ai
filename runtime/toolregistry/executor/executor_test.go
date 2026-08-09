@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,11 +18,13 @@ import (
 	"goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	aistream "goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
+	"goa.design/goa-ai/runtime/toolserverdata"
 	goa "goa.design/goa/v3/pkg"
 	"goa.design/pulse/streaming"
 	streamopts "goa.design/pulse/streaming/options"
@@ -1280,15 +1283,42 @@ func TestValidateServerDataEnforcesGeneratedContract(t *testing.T) {
 		},
 		ToJSON: json.Marshal,
 	}
-	specs := []*tools.ServerDataSpec{{
-		Kind:     "atlas.diagram",
-		Audience: tools.AudienceTimeline,
-		Type: tools.TypeSpec{
-			Codec: codec,
-		},
-	}}
+	canonicalize := func(data rawjson.Message) (rawjson.Message, error) {
+		return toolserverdata.Canonicalize(
+			data,
+			func(kind, audience string, data rawjson.Message) (string, rawjson.Message, error) {
+				if kind != "atlas.diagram" {
+					return "", nil, fmt.Errorf("server data kind %q is not declared by tool", kind)
+				}
+				if audience != string(tools.AudienceTimeline) {
+					return "", nil, fmt.Errorf(
+						"server data kind %q has audience %q, expected %q",
+						kind,
+						audience,
+						tools.AudienceTimeline,
+					)
+				}
+				value, err := codec.FromJSON(data)
+				if err != nil {
+					return "", nil, err
+				}
+				canonical, err := codec.ToJSON(value)
+				if err != nil {
+					return "", nil, err
+				}
+				return string(tools.AudienceTimeline), rawjson.Message(canonical), nil
+			},
+		)
+	}
+	apply := func(items []*toolregistry.ServerDataItem) (rawjson.Message, error) {
+		data, err := toolregistry.EncodeServerData(items)
+		if err != nil {
+			return nil, err
+		}
+		return toolserverdata.Apply(canonicalize, rawjson.Message(data))
+	}
 
-	raw, err := validateServerData(specs, []*toolregistry.ServerDataItem{{
+	raw, err := apply([]*toolregistry.ServerDataItem{{
 		Kind:     "atlas.diagram",
 		Audience: string(tools.AudienceTimeline),
 		Data:     json.RawMessage(`{ "value": "ready" }`),
@@ -1308,7 +1338,7 @@ func TestValidateServerDataEnforcesGeneratedContract(t *testing.T) {
 				Audience: "timeline",
 				Data:     json.RawMessage(`{"value":"ready"}`),
 			}},
-			want: "is not registered",
+			want: "is not declared",
 		},
 		{
 			name: "wrong audience",
@@ -1348,7 +1378,7 @@ func TestValidateServerDataEnforcesGeneratedContract(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := validateServerData(specs, test.items)
+			_, err := apply(test.items)
 			require.Error(t, err)
 			assert.ErrorContains(t, err, test.want)
 		})

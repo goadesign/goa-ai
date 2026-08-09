@@ -13,6 +13,16 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 - Prefer the simplest design that satisfies the contract. Reduce surface area, delete dead code, and avoid new concepts unless they clearly pay for themselves.
 - Be concise in progress updates and summaries.
 - Keep one canonical implementation and one source of truth per concept. Delete unused code and commented-out code.
+- Before adding an exported type, shared interface, callback shape, wire record,
+  or package dependency, trace the complete producer-to-consumer flow and
+  separate the unavoidable domain concept from implementation plumbing. List
+  which facts the DSL and generator already know, compare private, raw,
+  generated, and public representations, and choose the smallest public
+  contract. Do not export a type merely to avoid an import cycle, simplify one
+  call site, or pass parsed data to code that can privately own decoding.
+  Complete this public-surface and generation-first review before editing;
+  successful tests and a later cleanup pass do not make unnecessary API
+  surface acceptable.
 - Validate only at boundaries: HTTP/gRPC handlers, event consumers, DB results, third-party APIs, `ctx.Value()`, type assertions, and required map lookups. Inside the codebase, trust Goa and construction-time invariants.
 - Fail fast on invariant violations. Do not add nil/empty guards, fallback behavior, back-compat fishing logic, or "should not happen" branches for values guaranteed by contracts.
 - Do not perform best-effort coercions in runtime/codegen. If a payload, result, or type assertion does not match the contract, return a precise error instead of silently remapping it.

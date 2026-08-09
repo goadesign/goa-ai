@@ -202,6 +202,19 @@ func DecodeServerData(data []byte) ([]*ServerDataItem, error) {
 	return items, nil
 }
 
+// EncodeServerData encodes registry wire items for validation by the generated
+// canonicalizer attached to the receiving tool specification.
+func EncodeServerData(items []*ServerDataItem) (json.RawMessage, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	data, err := json.Marshal(items)
+	if err != nil {
+		return nil, fmt.Errorf("encode server data: %w", err)
+	}
+	return data, nil
+}
+
 // NewToolCallMessage constructs a tool invocation message.
 func NewToolCallMessage(
 	registrationToken, toolUseID string,

@@ -547,6 +547,7 @@ func validateServerDataShapes(t *ToolExpr, verr *eval.ValidationErrors, check fu
 	if len(t.ServerData) == 0 {
 		return
 	}
+	seen := make(map[string]struct{}, len(t.ServerData))
 	for _, sd := range t.ServerData {
 		if sd == nil {
 			continue
@@ -555,6 +556,11 @@ func validateServerDataShapes(t *ToolExpr, verr *eval.ValidationErrors, check fu
 			verr.Add(t, "ServerData kind must be non-empty")
 			continue
 		}
+		if _, duplicate := seen[sd.Kind]; duplicate {
+			verr.Add(t, "ServerData kind %q must be unique within a tool", sd.Kind)
+			continue
+		}
+		seen[sd.Kind] = struct{}{}
 		check("ServerData", sd.Schema)
 		if sd.Schema == nil || sd.Schema.Type == nil || sd.Schema.Type == goaexpr.Empty {
 			verr.Add(t, "ServerData(%q) must declare a schema type", sd.Kind)

@@ -20,6 +20,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
+	"goa.design/goa-ai/runtime/toolserverdata"
 	goa "goa.design/goa/v3/pkg"
 	"goa.design/pulse/streaming/options"
 
@@ -524,7 +525,18 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 		}
 		out.Result = res
 	}
-	serverData, err := validateServerData(spec.ServerData, msg.ServerData)
+	serverDataEnvelope, err := toolregistry.EncodeServerData(msg.ServerData)
+	if err != nil {
+		out.Bounds = nil
+		out.Result = nil
+		out.Failure = malformedResultFailure(fmt.Errorf(
+			"toolregistry server data for %q could not be encoded: %w",
+			tool,
+			err,
+		))
+		return out
+	}
+	serverData, err := toolserverdata.Apply(spec.CanonicalizeServerData, rawjson.Message(serverDataEnvelope))
 	if err != nil {
 		out.Bounds = nil
 		out.Result = nil
@@ -537,72 +549,6 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 	}
 	out.ServerData = serverData
 	return out
-}
-
-// validateServerData decodes each item with the generated codec declared by
-// its tool spec and re-encodes canonical JSON before the runtime persists it.
-func validateServerData(
-	specs []*tools.ServerDataSpec,
-	items []*toolregistry.ServerDataItem,
-) (rawjson.Message, error) {
-	if len(items) == 0 {
-		return nil, nil
-	}
-	specByKind := make(map[string]*tools.ServerDataSpec, len(specs))
-	for _, spec := range specs {
-		specByKind[spec.Kind] = spec
-	}
-	seen := make(map[string]struct{}, len(items))
-	out := make([]*toolregistry.ServerDataItem, 0, len(items))
-	for _, item := range items {
-		if item == nil {
-			return nil, errors.New("contains nil item")
-		}
-		spec, ok := specByKind[item.Kind]
-		if !ok {
-			return nil, fmt.Errorf("kind %q is not registered", item.Kind)
-		}
-		if _, duplicate := seen[item.Kind]; duplicate {
-			return nil, fmt.Errorf("kind %q appears more than once", item.Kind)
-		}
-		seen[item.Kind] = struct{}{}
-		if tools.ServerDataAudience(item.Audience) != spec.Audience {
-			return nil, fmt.Errorf(
-				"kind %q has audience %q, expected %q",
-				item.Kind,
-				item.Audience,
-				spec.Audience,
-			)
-		}
-		if spec.Type.Codec.FromJSON == nil || spec.Type.Codec.ToJSON == nil {
-			return nil, fmt.Errorf("kind %q is missing its generated codec", item.Kind)
-		}
-		value, err := spec.Type.Codec.FromJSON(item.Data)
-		if err != nil {
-			return nil, fmt.Errorf("decode kind %q: %w", item.Kind, err)
-		}
-		data, err := spec.Type.Codec.ToJSON(value)
-		if err != nil {
-			return nil, fmt.Errorf("encode kind %q: %w", item.Kind, err)
-		}
-		out = append(out, &toolregistry.ServerDataItem{
-			Kind:     item.Kind,
-			Audience: item.Audience,
-			Data:     data,
-		})
-	}
-	return marshalServerDataItems(out), nil
-}
-
-func marshalServerDataItems(items []*toolregistry.ServerDataItem) rawjson.Message {
-	if len(items) == 0 {
-		return nil
-	}
-	b, err := json.Marshal(items)
-	if err != nil {
-		panic(fmt.Sprintf("toolregistry executor: marshal server-data items failed: %v", err))
-	}
-	return rawjson.Message(b)
 }
 
 // malformedResultFailure terminates a tool call whose provider output violated

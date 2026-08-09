@@ -24,6 +24,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/toolserverdata"
 )
 
 // materializeToolResult runs the registered typed result materializer, enforces
@@ -41,6 +42,10 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call planner.ToolRe
 		result.Name = call.Name
 	}
 	if result.Failure != nil {
+		if len(result.ServerData) > 0 {
+			setMalformedToolResult(result, call, errors.New("failed tool result contains server data"))
+			return nil, nil
+		}
 		if err := r.enforceToolResultContracts(spec, call, result); err != nil {
 			return nil, err
 		}
@@ -54,6 +59,12 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call planner.ToolRe
 		setMalformedToolResult(result, call, err)
 		return nil, nil
 	}
+	serverData, err := toolserverdata.Apply(spec.CanonicalizeServerData, result.ServerData)
+	if err != nil {
+		setMalformedToolResult(result, call, fmt.Errorf("validate %s server data: %w", call.Name, err))
+		return nil, nil
+	}
+	result.ServerData = serverData
 	if err := r.enforceToolResultContracts(spec, call, result); err != nil {
 		setMalformedToolResult(result, call, err)
 		return nil, nil
@@ -180,6 +191,7 @@ func setMalformedToolResult(result *planner.ToolResult, call planner.ToolRequest
 	result.ResultBytes = 0
 	result.ResultOmitted = false
 	result.ResultOmittedReason = ""
+	result.ServerData = nil
 	result.Failure = &planner.ToolFailure{
 		Kind: planner.FailureMalformedResult,
 		Error: planner.NewToolErrorWithCause(
