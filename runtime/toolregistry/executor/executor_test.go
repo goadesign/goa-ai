@@ -1262,6 +1262,56 @@ func TestExecutorResultDecodeFailureReturnsModelVisibleErrorWithoutBounds(t *tes
 	assert.Equal(t, planner.RecoveryFinish, res.ToolResult.Failure.Recovery.Action)
 }
 
+func TestExecutorInvalidServerDataFailsWholeResult(t *testing.T) {
+	t.Parallel()
+
+	const (
+		toolUseID  = "tooluse-invalid-server-data"
+		toolCallID = "toolcall-invalid-server-data"
+	)
+	spec := &tools.ToolSpec{
+		Name:    "atlas.read.get_diagram",
+		Toolset: "atlas.read",
+		Result: tools.TypeSpec{
+			Codec: tools.JSONCodec[any]{
+				FromJSON: func(data []byte) (any, error) {
+					var result map[string]any
+					err := json.Unmarshal(data, &result)
+					return result, err
+				},
+			},
+		},
+		CanonicalizeServerData: func(rawjson.Message) (rawjson.Message, error) {
+			return nil, errors.New("diagram server data is invalid")
+		},
+	}
+
+	res, err := executeRegistryResultMessage(t, toolUseID, toolCallID, toolregistry.ToolResultMessage{
+		RegistrationToken: testRegistrationTokenA,
+		ToolUseID:         toolUseID,
+		Result:            json.RawMessage(`{"status":"ready"}`),
+		Bounds: &agent.Bounds{
+			Returned: 1,
+		},
+		ServerData: []*toolregistry.ServerDataItem{{
+			Kind:     "atlas.diagram",
+			Audience: "timeline",
+			Data:     json.RawMessage(`{"legacy":true}`),
+		}},
+	}, spec)
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.ToolResult)
+	assert.Nil(t, res.ToolResult.Result)
+	assert.Nil(t, res.ToolResult.Bounds)
+	assert.Nil(t, res.ToolResult.ServerData)
+	require.NotNil(t, res.ToolResult.Failure)
+	assert.Equal(t, planner.FailureMalformedResult, res.ToolResult.Failure.Kind)
+	assert.Equal(t, planner.RecoveryFinish, res.ToolResult.Failure.Recovery.Action)
+	assert.ErrorContains(t, res.ToolResult.Failure.Error, "diagram server data is invalid")
+}
+
 func TestValidateServerDataEnforcesGeneratedContract(t *testing.T) {
 	t.Parallel()
 
