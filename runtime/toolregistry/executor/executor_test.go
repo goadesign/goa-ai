@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1256,6 +1257,102 @@ func TestExecutorResultDecodeFailureReturnsModelVisibleErrorWithoutBounds(t *tes
 	assert.Contains(t, res.ToolResult.Failure.Error.Error(), "invalid enum value \"retired\"")
 	assert.Equal(t, planner.FailureMalformedResult, res.ToolResult.Failure.Kind)
 	assert.Equal(t, planner.RecoveryFinish, res.ToolResult.Failure.Recovery.Action)
+}
+
+func TestValidateServerDataEnforcesGeneratedContract(t *testing.T) {
+	t.Parallel()
+
+	type sidecar struct {
+		Value string `json:"value"`
+	}
+	codec := tools.JSONCodec[any]{
+		FromJSON: func(data []byte) (any, error) {
+			var result sidecar
+			decoder := json.NewDecoder(bytes.NewReader(data))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&result); err != nil {
+				return nil, err
+			}
+			if result.Value == "" {
+				return nil, errors.New("value is required")
+			}
+			return result, nil
+		},
+		ToJSON: json.Marshal,
+	}
+	specs := []*tools.ServerDataSpec{{
+		Kind:     "atlas.diagram",
+		Audience: tools.AudienceTimeline,
+		Type: tools.TypeSpec{
+			Codec: codec,
+		},
+	}}
+
+	raw, err := validateServerData(specs, []*toolregistry.ServerDataItem{{
+		Kind:     "atlas.diagram",
+		Audience: string(tools.AudienceTimeline),
+		Data:     json.RawMessage(`{ "value": "ready" }`),
+	}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"kind":"atlas.diagram","audience":"timeline","data":{"value":"ready"}}]`, string(raw))
+
+	tests := []struct {
+		name  string
+		items []*toolregistry.ServerDataItem
+		want  string
+	}{
+		{
+			name: "unknown kind",
+			items: []*toolregistry.ServerDataItem{{
+				Kind:     "atlas.unknown",
+				Audience: "timeline",
+				Data:     json.RawMessage(`{"value":"ready"}`),
+			}},
+			want: "is not registered",
+		},
+		{
+			name: "wrong audience",
+			items: []*toolregistry.ServerDataItem{{
+				Kind:     "atlas.diagram",
+				Audience: "internal",
+				Data:     json.RawMessage(`{"value":"ready"}`),
+			}},
+			want: `audience "internal", expected "timeline"`,
+		},
+		{
+			name: "unknown field",
+			items: []*toolregistry.ServerDataItem{{
+				Kind:     "atlas.diagram",
+				Audience: "timeline",
+				Data:     json.RawMessage(`{"value":"ready","legacy":true}`),
+			}},
+			want: `unknown field "legacy"`,
+		},
+		{
+			name: "duplicate kind",
+			items: []*toolregistry.ServerDataItem{
+				{
+					Kind:     "atlas.diagram",
+					Audience: "timeline",
+					Data:     json.RawMessage(`{"value":"ready"}`),
+				},
+				{
+					Kind:     "atlas.diagram",
+					Audience: "timeline",
+					Data:     json.RawMessage(`{"value":"ready"}`),
+				},
+			},
+			want: "appears more than once",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := validateServerData(specs, test.items)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, test.want)
+		})
+	}
 }
 
 type fakeRegistryClient struct {

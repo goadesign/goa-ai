@@ -511,43 +511,87 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 		return out
 	}
 	out.Bounds = agent.CloneBounds(msg.Bounds)
-	out.ServerData = marshalServerDataItems(cloneServerDataItems(msg.ServerData))
 	if spec.Result.Codec.FromJSON != nil {
 		res, err := spec.Result.Codec.FromJSON(msg.Result)
 		if err != nil {
-			decodeErr := fmt.Errorf("toolregistry result for %q did not match registered schema: %w", tool, err)
 			out.Bounds = nil
-			out.ServerData = nil
-			out.Failure = &planner.ToolFailure{
-				Kind:  planner.FailureMalformedResult,
-				Error: planner.ToolErrorFromError(decodeErr),
-				Recovery: planner.RecoveryDirective{
-					Action: planner.RecoveryFinish,
-				},
-			}
+			out.Failure = malformedResultFailure(fmt.Errorf(
+				"toolregistry result for %q did not match registered schema: %w",
+				tool,
+				err,
+			))
 			return out
 		}
 		out.Result = res
 	}
+	serverData, err := validateServerData(spec.ServerData, msg.ServerData)
+	if err != nil {
+		out.Bounds = nil
+		out.Result = nil
+		out.Failure = malformedResultFailure(fmt.Errorf(
+			"toolregistry server data for %q did not match registered schema: %w",
+			tool,
+			err,
+		))
+		return out
+	}
+	out.ServerData = serverData
 	return out
 }
 
-func cloneServerDataItems(items []*toolregistry.ServerDataItem) []*toolregistry.ServerDataItem {
+// validateServerData decodes each item with the generated codec declared by
+// its tool spec and re-encodes canonical JSON before the runtime persists it.
+func validateServerData(
+	specs []*tools.ServerDataSpec,
+	items []*toolregistry.ServerDataItem,
+) (rawjson.Message, error) {
 	if len(items) == 0 {
-		return nil
+		return nil, nil
 	}
+	specByKind := make(map[string]*tools.ServerDataSpec, len(specs))
+	for _, spec := range specs {
+		specByKind[spec.Kind] = spec
+	}
+	seen := make(map[string]struct{}, len(items))
 	out := make([]*toolregistry.ServerDataItem, 0, len(items))
 	for _, item := range items {
 		if item == nil {
-			continue
+			return nil, errors.New("contains nil item")
+		}
+		spec, ok := specByKind[item.Kind]
+		if !ok {
+			return nil, fmt.Errorf("kind %q is not registered", item.Kind)
+		}
+		if _, duplicate := seen[item.Kind]; duplicate {
+			return nil, fmt.Errorf("kind %q appears more than once", item.Kind)
+		}
+		seen[item.Kind] = struct{}{}
+		if tools.ServerDataAudience(item.Audience) != spec.Audience {
+			return nil, fmt.Errorf(
+				"kind %q has audience %q, expected %q",
+				item.Kind,
+				item.Audience,
+				spec.Audience,
+			)
+		}
+		if spec.Type.Codec.FromJSON == nil || spec.Type.Codec.ToJSON == nil {
+			return nil, fmt.Errorf("kind %q is missing its generated codec", item.Kind)
+		}
+		value, err := spec.Type.Codec.FromJSON(item.Data)
+		if err != nil {
+			return nil, fmt.Errorf("decode kind %q: %w", item.Kind, err)
+		}
+		data, err := spec.Type.Codec.ToJSON(value)
+		if err != nil {
+			return nil, fmt.Errorf("encode kind %q: %w", item.Kind, err)
 		}
 		out = append(out, &toolregistry.ServerDataItem{
 			Kind:     item.Kind,
 			Audience: item.Audience,
-			Data:     append(json.RawMessage(nil), item.Data...),
+			Data:     data,
 		})
 	}
-	return out
+	return marshalServerDataItems(out), nil
 }
 
 func marshalServerDataItems(items []*toolregistry.ServerDataItem) rawjson.Message {
@@ -559,6 +603,18 @@ func marshalServerDataItems(items []*toolregistry.ServerDataItem) rawjson.Messag
 		panic(fmt.Sprintf("toolregistry executor: marshal server-data items failed: %v", err))
 	}
 	return rawjson.Message(b)
+}
+
+// malformedResultFailure terminates a tool call whose provider output violated
+// its registered generated contract.
+func malformedResultFailure(err error) *planner.ToolFailure {
+	return &planner.ToolFailure{
+		Kind:  planner.FailureMalformedResult,
+		Error: planner.ToolErrorFromError(err),
+		Recovery: planner.RecoveryDirective{
+			Action: planner.RecoveryFinish,
+		},
+	}
 }
 
 // toolFailureFromRegistryError restores the provider's canonical
