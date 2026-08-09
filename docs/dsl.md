@@ -780,6 +780,10 @@ Tool("get_time_series", "Get time series data", func() {
 Server-data is never included in prompts to the LLM. Optional server-data may be projected into
 observer-facing projections via `planner.ToolResult.ServerData`, hooks, and stream events while
 always-on server-data is intended for in-process subscribers such as persistence and telemetry.
+The registry executor decodes every returned item with the generated codec for its declared kind
+and re-encodes canonical JSON before the runtime records it. Unknown or duplicate kinds, audience
+mismatches, and schema-invalid data fail the tool result as malformed; they are never persisted as
+best-effort observer data.
 
 #### Declaring a server-data audience (`Audience*`)
 

@@ -256,6 +256,49 @@ func TestArrayServerDataRoundTrip(t *testing.T) {
 		t.Fatalf("unexpected round trip: %#v", got)
 	}
 }
+
+func TestGeneratedServerDataCanonicalizer(t *testing.T) {
+	canonicalize := SpecByID.CanonicalizeServerData
+	if canonicalize == nil {
+		t.Fatal("expected generated canonicalizer")
+	}
+	got, err := canonicalize([]byte(`+"`"+`[{"kind":"aura.evidence","audience":"timeline","data":[ { "kind": "alarm" } ]}]`+"`"+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `+"`"+`[{"kind":"aura.evidence","audience":"timeline","data":[{"kind":"alarm"}]}]`+"`"+` {
+		t.Fatalf("unexpected canonical envelope: %s", got)
+	}
+
+	tests := []struct {
+		name string
+		data string
+	}{
+		{
+			name: "unknown kind",
+			data: `+"`"+`[{"kind":"aura.unknown","audience":"timeline","data":[{"kind":"alarm"}]}]`+"`"+`,
+		},
+		{
+			name: "wrong audience",
+			data: `+"`"+`[{"kind":"aura.evidence","audience":"internal","data":[{"kind":"alarm"}]}]`+"`"+`,
+		},
+		{
+			name: "invalid payload",
+			data: `+"`"+`[{"kind":"aura.evidence","audience":"timeline","data":[{"kind":"alarm","legacy":true}]}]`+"`"+`,
+		},
+		{
+			name: "duplicate kind",
+			data: `+"`"+`[{"kind":"aura.evidence","audience":"timeline","data":[{"kind":"alarm"}]},{"kind":"aura.evidence","audience":"timeline","data":[{"kind":"alarm"}]}]`+"`"+`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := canonicalize([]byte(test.data)); err == nil {
+				t.Fatal("expected canonicalization error")
+			}
+		})
+	}
+}
 `)
 
 	runGeneratedLookupGoTest(t, root)

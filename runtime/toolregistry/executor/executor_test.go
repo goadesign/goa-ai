@@ -1,9 +1,11 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,11 +18,13 @@ import (
 	"goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	aistream "goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
+	"goa.design/goa-ai/runtime/toolserverdata"
 	goa "goa.design/goa/v3/pkg"
 	"goa.design/pulse/streaming"
 	streamopts "goa.design/pulse/streaming/options"
@@ -1256,6 +1260,179 @@ func TestExecutorResultDecodeFailureReturnsModelVisibleErrorWithoutBounds(t *tes
 	assert.Contains(t, res.ToolResult.Failure.Error.Error(), "invalid enum value \"retired\"")
 	assert.Equal(t, planner.FailureMalformedResult, res.ToolResult.Failure.Kind)
 	assert.Equal(t, planner.RecoveryFinish, res.ToolResult.Failure.Recovery.Action)
+}
+
+func TestExecutorInvalidServerDataFailsWholeResult(t *testing.T) {
+	t.Parallel()
+
+	const (
+		toolUseID  = "tooluse-invalid-server-data"
+		toolCallID = "toolcall-invalid-server-data"
+	)
+	spec := &tools.ToolSpec{
+		Name:    "atlas.read.get_diagram",
+		Toolset: "atlas.read",
+		Result: tools.TypeSpec{
+			Codec: tools.JSONCodec[any]{
+				FromJSON: func(data []byte) (any, error) {
+					var result map[string]any
+					err := json.Unmarshal(data, &result)
+					return result, err
+				},
+			},
+		},
+		CanonicalizeServerData: func(rawjson.Message) (rawjson.Message, error) {
+			return nil, errors.New("diagram server data is invalid")
+		},
+	}
+
+	res, err := executeRegistryResultMessage(t, toolUseID, toolCallID, toolregistry.ToolResultMessage{
+		RegistrationToken: testRegistrationTokenA,
+		ToolUseID:         toolUseID,
+		Result:            json.RawMessage(`{"status":"ready"}`),
+		Bounds: &agent.Bounds{
+			Returned: 1,
+		},
+		ServerData: []*toolregistry.ServerDataItem{{
+			Kind:     "atlas.diagram",
+			Audience: "timeline",
+			Data:     json.RawMessage(`{"legacy":true}`),
+		}},
+	}, spec)
+
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.NotNil(t, res.ToolResult)
+	assert.Nil(t, res.ToolResult.Result)
+	assert.Nil(t, res.ToolResult.Bounds)
+	assert.Nil(t, res.ToolResult.ServerData)
+	require.NotNil(t, res.ToolResult.Failure)
+	assert.Equal(t, planner.FailureMalformedResult, res.ToolResult.Failure.Kind)
+	assert.Equal(t, planner.RecoveryFinish, res.ToolResult.Failure.Recovery.Action)
+	assert.ErrorContains(t, res.ToolResult.Failure.Error, "diagram server data is invalid")
+}
+
+func TestValidateServerDataEnforcesGeneratedContract(t *testing.T) {
+	t.Parallel()
+
+	type sidecar struct {
+		Value string `json:"value"`
+	}
+	codec := tools.JSONCodec[any]{
+		FromJSON: func(data []byte) (any, error) {
+			var result sidecar
+			decoder := json.NewDecoder(bytes.NewReader(data))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&result); err != nil {
+				return nil, err
+			}
+			if result.Value == "" {
+				return nil, errors.New("value is required")
+			}
+			return result, nil
+		},
+		ToJSON: json.Marshal,
+	}
+	canonicalize := func(data rawjson.Message) (rawjson.Message, error) {
+		return toolserverdata.Canonicalize(
+			data,
+			func(kind, audience string, data rawjson.Message) (string, rawjson.Message, error) {
+				if kind != "atlas.diagram" {
+					return "", nil, fmt.Errorf("server data kind %q is not declared by tool", kind)
+				}
+				if audience != string(tools.AudienceTimeline) {
+					return "", nil, fmt.Errorf(
+						"server data kind %q has audience %q, expected %q",
+						kind,
+						audience,
+						tools.AudienceTimeline,
+					)
+				}
+				value, err := codec.FromJSON(data)
+				if err != nil {
+					return "", nil, err
+				}
+				canonical, err := codec.ToJSON(value)
+				if err != nil {
+					return "", nil, err
+				}
+				return string(tools.AudienceTimeline), rawjson.Message(canonical), nil
+			},
+		)
+	}
+	apply := func(items []*toolregistry.ServerDataItem) (rawjson.Message, error) {
+		data, err := toolregistry.EncodeServerData(items)
+		if err != nil {
+			return nil, err
+		}
+		return toolserverdata.Apply(canonicalize, rawjson.Message(data))
+	}
+
+	raw, err := apply([]*toolregistry.ServerDataItem{{
+		Kind:     "atlas.diagram",
+		Audience: string(tools.AudienceTimeline),
+		Data:     json.RawMessage(`{ "value": "ready" }`),
+	}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `[{"kind":"atlas.diagram","audience":"timeline","data":{"value":"ready"}}]`, string(raw))
+
+	tests := []struct {
+		name  string
+		items []*toolregistry.ServerDataItem
+		want  string
+	}{
+		{
+			name: "unknown kind",
+			items: []*toolregistry.ServerDataItem{{
+				Kind:     "atlas.unknown",
+				Audience: "timeline",
+				Data:     json.RawMessage(`{"value":"ready"}`),
+			}},
+			want: "is not declared",
+		},
+		{
+			name: "wrong audience",
+			items: []*toolregistry.ServerDataItem{{
+				Kind:     "atlas.diagram",
+				Audience: "internal",
+				Data:     json.RawMessage(`{"value":"ready"}`),
+			}},
+			want: `audience "internal", expected "timeline"`,
+		},
+		{
+			name: "unknown field",
+			items: []*toolregistry.ServerDataItem{{
+				Kind:     "atlas.diagram",
+				Audience: "timeline",
+				Data:     json.RawMessage(`{"value":"ready","legacy":true}`),
+			}},
+			want: `unknown field "legacy"`,
+		},
+		{
+			name: "duplicate kind",
+			items: []*toolregistry.ServerDataItem{
+				{
+					Kind:     "atlas.diagram",
+					Audience: "timeline",
+					Data:     json.RawMessage(`{"value":"ready"}`),
+				},
+				{
+					Kind:     "atlas.diagram",
+					Audience: "timeline",
+					Data:     json.RawMessage(`{"value":"ready"}`),
+				},
+			},
+			want: "appears more than once",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := apply(test.items)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, test.want)
+		})
+	}
 }
 
 type fakeRegistryClient struct {

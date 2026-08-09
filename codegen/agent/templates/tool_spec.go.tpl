@@ -85,6 +85,7 @@ var (
             },
         {{- end }}
         },
+        CanonicalizeServerData: canonicalize{{ .GoName }}ServerData,
         {{- end }}
         {{- if .ResultReminder }}
         ResultReminder: {{ printf "%q" .ResultReminder }},
@@ -132,6 +133,41 @@ var (
     }
 {{- end }}
 )
+
+{{- range .Tools }}
+{{- if .ServerData }}
+
+// canonicalize{{ .GoName }}ServerData validates the server-only payloads
+// declared by {{ .Name }} and returns their canonical envelope.
+func canonicalize{{ .GoName }}ServerData(data tools.RawJSON) (tools.RawJSON, error) {
+    return toolserverdata.Canonicalize(data, canonicalize{{ .GoName }}ServerDataItem)
+}
+
+// canonicalize{{ .GoName }}ServerDataItem validates one kind-specific payload
+// and returns the audience and JSON declared by {{ .Name }}.
+func canonicalize{{ .GoName }}ServerDataItem(kind, audience string, data tools.RawJSON) (string, tools.RawJSON, error) {
+    switch kind {
+    {{- range .ServerData }}
+    case {{ printf "%q" .Kind }}:
+        if audience != {{ printf "%q" .Audience }} {
+            return "", nil, fmt.Errorf("server data kind %q has audience %q; expected %q", kind, audience, {{ printf "%q" .Audience }})
+        }
+        value, err := {{ .Type.GenericCodec }}.FromJSON(data)
+        if err != nil {
+            return "", nil, fmt.Errorf("decode server data kind %q: %w", kind, err)
+        }
+        canonical, err := {{ .Type.GenericCodec }}.ToJSON(value)
+        if err != nil {
+            return "", nil, fmt.Errorf("encode server data kind %q: %w", kind, err)
+        }
+        return {{ printf "%q" .Audience }}, canonical, nil
+    {{- end }}
+    default:
+        return "", nil, fmt.Errorf("server data kind %q is not declared by tool {{ .Name }}", kind)
+    }
+}
+{{- end }}
+{{- end }}
 
 var (
     metadata   = []policy.ToolMetadata{

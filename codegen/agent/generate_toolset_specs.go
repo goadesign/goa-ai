@@ -249,9 +249,17 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "codecs.go"), SectionTemplates: codecsSections})
 			// specs.go
-			specImports := []*codegen.ImportSpec{
-				{Path: "goa.design/goa-ai/runtime/agent/policy"},
-				{Path: "goa.design/goa-ai/runtime/agent/tools"},
+			hasServerData := toolEntriesHaveServerData(specsData.tools)
+			specImports := make([]*codegen.ImportSpec, 0, 4)
+			if hasServerData {
+				specImports = append(specImports, codegen.SimpleImport("fmt"))
+			}
+			specImports = append(specImports,
+				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/policy"},
+				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/tools"},
+			)
+			if hasServerData {
+				specImports = append(specImports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/toolserverdata"})
 			}
 			specSections := []*codegen.SectionTemplate{
 				codegen.Header(ts.Name+" tool specs", ts.SpecsPackageName, specImports),
@@ -283,6 +291,17 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 	}
 
 	return out
+}
+
+// toolEntriesHaveServerData reports whether specs.go must emit generated
+// server-data canonicalizers and their imports.
+func toolEntriesHaveServerData(tools []*toolEntry) bool {
+	for _, tool := range tools {
+		if len(tool.ServerData) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func toolsetProviderFile(genpkg string, ts *ToolsetData) *codegen.File {

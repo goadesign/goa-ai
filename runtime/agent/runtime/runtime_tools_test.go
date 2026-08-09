@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"text/template"
 	"time"
@@ -25,6 +26,7 @@ import (
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/toolserverdata"
 )
 
 type projectedRuntimeResult struct {
@@ -227,17 +229,17 @@ func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 			Name:       call.Name,
 			ToolCallID: call.ToolCallID,
 			Result:     map[string]any{"ok": true},
-			ServerData: rawjson.Message([]byte(`[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`)),
+			ServerData: rawjson.Message([]byte(`[{"kind":"example.evidence","audience":"evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`)),
 		}, nil
 	})}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
+		tools.Ident("tool"): withAnyServerDataSpec(newAnyJSONSpec("tool", "svc.ts"), "example.evidence", tools.AudienceEvidence),
 	}
 	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.JSONEq(t, `[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`, string(out.ServerData))
+	require.JSONEq(t, `[{"kind":"example.evidence","audience":"evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`, string(out.ServerData))
 }
 
 func TestExecuteToolActivityRunsResultMaterializer(t *testing.T) {
@@ -254,18 +256,18 @@ func TestExecuteToolActivityRunsResultMaterializer(t *testing.T) {
 		ResultMaterializer: func(ctx context.Context, meta ToolCallMeta, call *planner.ToolRequest, result *planner.ToolResult) error {
 			require.Equal(t, "tool-1", meta.ToolCallID)
 			require.JSONEq(t, `{"input":"ok"}`, string(call.Payload))
-			result.ServerData = rawjson.Message([]byte(`[{"kind":"example.materialized","data":{"source":"runtime"}}]`))
+			result.ServerData = rawjson.Message([]byte(`[{"kind":"example.materialized","audience":"timeline","data":{"source":"runtime"}}]`))
 			return nil
 		},
 	}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
+		tools.Ident("tool"): withAnyServerDataSpec(newAnyJSONSpec("tool", "svc.ts"), "example.materialized", tools.AudienceTimeline),
 	}
 	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte(`{"input":"ok"}`)}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.JSONEq(t, `[{"kind":"example.materialized","data":{"source":"runtime"}}]`, string(out.ServerData))
+	require.JSONEq(t, `[{"kind":"example.materialized","audience":"timeline","data":{"source":"runtime"}}]`, string(out.ServerData))
 }
 
 func TestExecuteToolActivityPropagatesBounds(t *testing.T) {
@@ -666,7 +668,11 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 
 func TestServiceToolEventsPropagateServerData(t *testing.T) {
 	recorder := &recordingHooks{}
-	toolSpec := newAnyJSONSpec("svc.tools.example", "svc.tools")
+	toolSpec := withAnyServerDataSpec(
+		newAnyJSONSpec("svc.tools.example", "svc.tools"),
+		"example.evidence",
+		tools.AudienceEvidence,
+	)
 	rt := &Runtime{
 		Bus:           recorder,
 		logger:        telemetry.NoopLogger{},
@@ -678,7 +684,7 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 		},
 	}
 	seedTestToolSpecs(rt, toolSpec)
-	server := rawjson.Message([]byte(`[{"kind":"example.evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`))
+	server := rawjson.Message([]byte(`[{"kind":"example.evidence","audience":"evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`))
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
@@ -726,13 +732,17 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 						"ok":           true,
 						"materialized": true,
 					}
-					result.ServerData = rawjson.Message([]byte(`[{"kind":"example.materialized","data":{"source":"await"}}]`))
+					result.ServerData = rawjson.Message([]byte(`[{"kind":"example.materialized","audience":"timeline","data":{"source":"await"}}]`))
 					return nil
 				},
 			},
 		},
 	}
-	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.example", "svc.tools"))
+	seedTestToolSpecs(rt, withAnyServerDataSpec(
+		newAnyJSONSpec("svc.tools.example", "svc.tools"),
+		"example.materialized",
+		tools.AudienceTimeline,
+	))
 	base := &planner.PlanInput{
 		RunContext: run.Context{
 			RunID:     "run-1",
@@ -775,7 +785,7 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
-	require.JSONEq(t, `[{"kind":"example.materialized","data":{"source":"await"}}]`, string(records[0].result.ServerData))
+	require.JSONEq(t, `[{"kind":"example.materialized","audience":"timeline","data":{"source":"await"}}]`, string(records[0].result.ServerData))
 
 	var resultEvt *hooks.ToolResultReceivedEvent
 	for _, evt := range recorder.events {
@@ -785,7 +795,7 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 	}
 	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent")
 	require.JSONEq(t, `{"ok":true,"materialized":true}`, string(resultEvt.ResultJSON))
-	require.JSONEq(t, `[{"kind":"example.materialized","data":{"source":"await"}}]`, string(resultEvt.ServerData))
+	require.JSONEq(t, `[{"kind":"example.materialized","audience":"timeline","data":{"source":"await"}}]`, string(resultEvt.ServerData))
 }
 
 func TestConsumeProvidedToolResultsRejectsAmbiguousSuccessAndFailure(t *testing.T) {
@@ -1089,4 +1099,40 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	require.Equal(t, tools.Ident("child.get_time_series"), resultEvt.ToolName)
 	require.JSONEq(t, `{"ok":true}`, string(resultEvt.ResultJSON))
 	require.Empty(t, resultEvt.ParentToolCallID)
+}
+
+func withAnyServerDataSpec(spec tools.ToolSpec, kind string, audience tools.ServerDataAudience) tools.ToolSpec {
+	spec.ServerData = []*tools.ServerDataSpec{{
+		Kind:     kind,
+		Audience: audience,
+		Type:     spec.Result,
+	}}
+	spec.CanonicalizeServerData = func(data rawjson.Message) (rawjson.Message, error) {
+		return toolserverdata.Canonicalize(
+			data,
+			func(itemKind, itemAudience string, data rawjson.Message) (string, rawjson.Message, error) {
+				if itemKind != kind {
+					return "", nil, fmt.Errorf("server data kind %q is not declared by tool", itemKind)
+				}
+				if itemAudience != string(audience) {
+					return "", nil, fmt.Errorf(
+						"server data kind %q has audience %q; expected %q",
+						itemKind,
+						itemAudience,
+						audience,
+					)
+				}
+				value, err := spec.Result.Codec.FromJSON(data)
+				if err != nil {
+					return "", nil, err
+				}
+				canonical, err := spec.Result.Codec.ToJSON(value)
+				if err != nil {
+					return "", nil, err
+				}
+				return string(audience), rawjson.Message(canonical), nil
+			},
+		)
+	}
+	return spec
 }

@@ -18,6 +18,15 @@ func TestGolden_ServerData_UsesGeneratedCodec(t *testing.T) {
 	require.Contains(t, provider, "InitByIDAuraEvidenceServerData(methodOut.Evidence)")
 	require.NotContains(t, provider, "json.Marshal(methodOut.")
 
+	specs := generatedContentBySuffix(t, files, "toolsets/lookup/specs.go")
+	require.Contains(t, specs, "CanonicalizeServerData: canonicalizeByIDServerData")
+	require.Contains(t, specs, "toolserverdata.Canonicalize(data, canonicalizeByIDServerDataItem)")
+	require.Contains(t, specs, `case "aura.evidence":`)
+	require.Contains(t, specs, "byIDAuraEvidenceServerDataCodec.FromJSON(data)")
+	require.Contains(t, specs, "byIDAuraEvidenceServerDataCodec.ToJSON(value)")
+	require.NotContains(t, specs, "spec.ServerData")
+	require.NotContains(t, specs, "tools.ServerDataItem")
+
 	executor := generatedContentBySuffix(t, files, "agents/scribe/lookup/service_executor.go")
 	require.Contains(t, executor, "ByIDAuraEvidenceServerDataCodec.ToJSON")
 	require.Contains(t, executor, "lookup.InitByIDAuraEvidenceServerData(mr.Evidence)")

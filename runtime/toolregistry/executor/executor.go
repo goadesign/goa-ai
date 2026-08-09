@@ -20,6 +20,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
+	"goa.design/goa-ai/runtime/toolserverdata"
 	goa "goa.design/goa/v3/pkg"
 	"goa.design/pulse/streaming/options"
 
@@ -511,54 +512,55 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequ
 		return out
 	}
 	out.Bounds = agent.CloneBounds(msg.Bounds)
-	out.ServerData = marshalServerDataItems(cloneServerDataItems(msg.ServerData))
 	if spec.Result.Codec.FromJSON != nil {
 		res, err := spec.Result.Codec.FromJSON(msg.Result)
 		if err != nil {
-			decodeErr := fmt.Errorf("toolregistry result for %q did not match registered schema: %w", tool, err)
 			out.Bounds = nil
-			out.ServerData = nil
-			out.Failure = &planner.ToolFailure{
-				Kind:  planner.FailureMalformedResult,
-				Error: planner.ToolErrorFromError(decodeErr),
-				Recovery: planner.RecoveryDirective{
-					Action: planner.RecoveryFinish,
-				},
-			}
+			out.Failure = malformedResultFailure(fmt.Errorf(
+				"toolregistry result for %q did not match registered schema: %w",
+				tool,
+				err,
+			))
 			return out
 		}
 		out.Result = res
 	}
-	return out
-}
-
-func cloneServerDataItems(items []*toolregistry.ServerDataItem) []*toolregistry.ServerDataItem {
-	if len(items) == 0 {
-		return nil
-	}
-	out := make([]*toolregistry.ServerDataItem, 0, len(items))
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		out = append(out, &toolregistry.ServerDataItem{
-			Kind:     item.Kind,
-			Audience: item.Audience,
-			Data:     append(json.RawMessage(nil), item.Data...),
-		})
-	}
-	return out
-}
-
-func marshalServerDataItems(items []*toolregistry.ServerDataItem) rawjson.Message {
-	if len(items) == 0 {
-		return nil
-	}
-	b, err := json.Marshal(items)
+	serverDataEnvelope, err := toolregistry.EncodeServerData(msg.ServerData)
 	if err != nil {
-		panic(fmt.Sprintf("toolregistry executor: marshal server-data items failed: %v", err))
+		out.Bounds = nil
+		out.Result = nil
+		out.Failure = malformedResultFailure(fmt.Errorf(
+			"toolregistry server data for %q could not be encoded: %w",
+			tool,
+			err,
+		))
+		return out
 	}
-	return rawjson.Message(b)
+	serverData, err := toolserverdata.Apply(spec.CanonicalizeServerData, rawjson.Message(serverDataEnvelope))
+	if err != nil {
+		out.Bounds = nil
+		out.Result = nil
+		out.Failure = malformedResultFailure(fmt.Errorf(
+			"toolregistry server data for %q did not match registered schema: %w",
+			tool,
+			err,
+		))
+		return out
+	}
+	out.ServerData = serverData
+	return out
+}
+
+// malformedResultFailure terminates a tool call whose provider output violated
+// its registered generated contract.
+func malformedResultFailure(err error) *planner.ToolFailure {
+	return &planner.ToolFailure{
+		Kind:  planner.FailureMalformedResult,
+		Error: planner.ToolErrorFromError(err),
+		Recovery: planner.RecoveryDirective{
+			Action: planner.RecoveryFinish,
+		},
+	}
 }
 
 // toolFailureFromRegistryError restores the provider's canonical

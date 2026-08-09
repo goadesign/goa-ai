@@ -18,7 +18,7 @@ import (
 //   - Tool results are never nil.
 //   - Result and Failure are mutually exclusive.
 //   - Unbounded tools never carry bounds metadata.
-//   - Failed results never carry bounds metadata.
+//   - Failed results never carry bounds metadata or server-only data.
 //   - Successful bounded results must carry bounds.
 //   - Truncated bounded results must provide continuation via next cursor or
 //     refinement hint.
@@ -31,6 +31,9 @@ func validateToolResultContract(spec tools.ToolSpec, call planner.ToolRequest, t
 		return fmt.Errorf("tool %q result is invalid: failure and result are both set (tool_call_id=%s)", call.Name, call.ToolCallID)
 	}
 	if tr.Failure != nil {
+		if len(tr.ServerData) > 0 {
+			return fmt.Errorf("tool %q result is invalid: failure and server data are both set (tool_call_id=%s)", call.Name, call.ToolCallID)
+		}
 		if err := planner.ValidateToolFailure(tr.Failure); err != nil {
 			return fmt.Errorf("tool %q result is invalid: %w (tool_call_id=%s)", call.Name, err, call.ToolCallID)
 		}
