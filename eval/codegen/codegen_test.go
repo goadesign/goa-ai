@@ -11,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	aieval "goa.design/goa-ai/eval"
 	evalcodegen "goa.design/goa-ai/eval/codegen"
 	. "goa.design/goa-ai/eval/dsl"
 	evalexpr "goa.design/goa-ai/eval/expr"
@@ -34,11 +33,6 @@ func TestGenerateSuite(t *testing.T) {
 				Input("Analyze solar performance.")
 				Timeout("3m")
 			})
-			Calibration("entailed", func() {
-				Answer("The pump is on.")
-				Claim("The pump is on.")
-				Want(aieval.Entailed)
-			})
 		})
 	})
 
@@ -54,7 +48,6 @@ func TestGenerateSuite(t *testing.T) {
 	assert.Contains(t, content, "Timeout: time.Duration(90000000000)")
 	assert.Contains(t, content, "Timeout: time.Duration(180000000000)")
 	assert.Contains(t, content, `Input: "List alarms.\nDo not stop early."`)
-	assert.Contains(t, content, "Want: eval.Entailed")
 	assert.NotContains(t, content, "reflect")
 	assert.NotContains(t, content, "register")
 }
@@ -134,30 +127,15 @@ func TestGenerateGoifiesReservedSuitePackageName(t *testing.T) {
 	assert.Contains(t, render(t, files[0]), "package type_")
 }
 
-func TestGenerateAllLabelsAndEmptyStaticCollections(t *testing.T) {
+func TestGenerateEmptyTags(t *testing.T) {
 	root := runDesign(t, func() {
-		Suite("judge", func() {
-			Description("Judge labels.")
+		Suite("untagged", func() {
+			Description("Untagged scenario.")
 			Timeout("1s")
 			Scenario("case", func() {
 				Description("No tags.")
 				Input("Run.")
 			})
-			for _, calibration := range []struct {
-				id    string
-				label aieval.Label
-			}{
-				{id: "entailed", label: aieval.Entailed},
-				{id: "contradicted", label: aieval.Contradicted},
-				{id: "not_addressed", label: aieval.NotAddressed},
-				{id: "indeterminate", label: aieval.Indeterminate},
-			} {
-				Calibration(calibration.id, func() {
-					Answer("Answer.")
-					Claim("Claim.")
-					Want(calibration.label)
-				})
-			}
 		})
 	})
 
@@ -167,10 +145,6 @@ func TestGenerateAllLabelsAndEmptyStaticCollections(t *testing.T) {
 	require.Len(t, files, 1)
 	content := render(t, files[0])
 	assert.Contains(t, content, "Tags: []string{}")
-	assert.Contains(t, content, "Want: eval.Entailed")
-	assert.Contains(t, content, "Want: eval.Contradicted")
-	assert.Contains(t, content, "Want: eval.NotAddressed")
-	assert.Contains(t, content, "Want: eval.Indeterminate")
 }
 
 func runDesign(t *testing.T, design func()) *evalexpr.RootExpr {

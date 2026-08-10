@@ -1,15 +1,21 @@
 # Generated Evaluations
 
-Goa-AI evaluations separate stable suite structure from application-specific
-execution. The framework owns design, code generation, orchestration, semantic
-classification, and reports. The application owns targets, system interaction,
-deterministic evidence, and domain claims.
+Goa-AI evaluations let a Goa application define stable scenarios in design and
+implement the product-specific work in ordinary Go code. Goa-AI owns generation,
+scenario selection, bounded execution, semantic judging, and reports. The
+application owns the system it calls, the account or facility it targets, the
+facts it checks, and the diagnostic artifacts it saves.
 
-## Design
+## Define scenarios
 
-Import `goa.design/goa-ai/eval/dsl` from a Goa design package:
+Add the eval DSL to a design package in an application that already uses the Goa
+v3 DSL:
 
 ```go
+package design
+
+import . "goa.design/goa-ai/eval/dsl"
+
 var _ = Suite("chat", func() {
 	Description("Exercises production Chat outcomes.")
 	Timeout("2m")
@@ -20,23 +26,18 @@ var _ = Suite("chat", func() {
 		Tags("production", "alarm")
 		Timeout("3m")
 	})
-
-	Calibration("entailed", func() {
-		Answer("Compressor 1 is on.")
-		Claim("Compressor 1 is on.")
-		Want(eval.Entailed)
-	})
 })
 ```
 
-Suite, scenario, calibration, and tag IDs are lower snake case. Descriptions,
-inputs, and positive timeouts are required. Scenario timeouts override the
-suite default. Generated hook method names must be unique after Go naming.
-Calibrations use the closed labels `entailed`, `contradicted`, `not_addressed`,
-and `indeterminate`.
+The application must also contain its normal Goa service design. The Goa CLI
+uses that design to identify the Goa version before loading extension DSLs.
 
-Importing `goa.design/goa-ai/eval/dsl` registers the eval codegen plugin. `goa gen`
-emits `gen/evals/<suite>/suite.go` with a direct interface and constructor:
+Suite, scenario, and tag IDs use `lower_snake_case`. Descriptions, scenario
+inputs, and positive suite timeouts are required. A scenario timeout replaces
+the suite timeout for that scenario.
+
+Importing `goa.design/goa-ai/eval/dsl` registers the eval generator. Normal
+`goa gen` emits `gen/evals/<suite>/suite.go`:
 
 ```go
 type Hooks interface {
@@ -46,13 +47,14 @@ type Hooks interface {
 func New(hooks Hooks) eval.Suite
 ```
 
-Static names, prompts, tags, timeouts, calibrations, and dispatch decisions are
-fully evaluated during generation. Generated code uses no reflection or runtime
-registration.
+There is one method for each scenario. Adding a scenario therefore creates a
+compile-time obligation for the application that runs the suite. Generated
+code contains the final names, inputs, tags, and timeouts; it does not use
+reflection or runtime registration.
 
-## Application hooks
+## Implement checks and claims
 
-Implement the generated interface on an ordinary application struct:
+Implement the generated interface on a normal application type:
 
 ```go
 type hooks struct {
@@ -66,51 +68,103 @@ func (h *hooks) AlarmInventory(ctx context.Context, input string) (eval.Result, 
 		return eval.Result{}, err
 	}
 	return eval.Result{
-		Checks: []eval.Check{{Name: "complete_page", Passed: evidence.Exhausted}},
-		Claims: []eval.Claim{{ID: "total", Text: "The answer reports every alarm."}},
+		Checks: []eval.Check{{
+			Name:   "all_pages_retrieved",
+			Passed: evidence.Exhausted,
+		}},
+		Claims: []eval.Claim{{
+			ID:   "complete_answer",
+			Text: "The answer reports every alarm in the window.",
+		}},
 		Output: answer,
+		Artifacts: []eval.Artifact{{
+			Name: "protocol",
+			URI:  evidence.ArtifactURI,
+		}},
 	}, nil
 }
 ```
 
-Methods and closures naturally capture application dependencies and targets.
-Do not introduce adapter registries or pass application target concepts through
-the generic DSL.
+A check compares typed evidence with a fact the application can determine
+exactly. A claim is a short statement that must be supported by the model's
+answer. Use checks for tool names, IDs, counts, states, and other exact values.
+Use claims only for meaning that requires reading the answer.
 
-`Result.Checks` are deterministic assertions over application-owned typed
-evidence. `Result.Claims` are independent propositions classified against
-`Result.Output`. Infrastructure and protocol failures are returned as errors.
-Artifacts carry durable diagnostic locations. Results with neither checks nor
-claims, duplicate IDs, claims without output, malformed checks, or malformed
-artifacts are rejected at the hook boundary.
+Return infrastructure and protocol failures as errors. A failed check must
+include a diagnostic. The runner rejects empty results, duplicate check or
+claim IDs, claims without an answer, malformed artifacts, and incomplete judge
+responses.
 
-## Semantic judge
+## Create a runner
 
-`eval/judge` accepts any provider-neutral `model.Client`. It sends one
-tool-free, structured-output request for each assertion batch and accepts only
-one exact judgment per claim ID. Unknown fields, missing judgments, duplicate
-IDs, unsupported labels, multiple content parts, and trailing JSON are errors;
-the judge never retries, repairs, or substitutes output.
-
-Before any scenario runs, `Runner` submits all generated calibrations in one
-batch and verifies their exact expected labels. A calibration failure aborts
-the suite. Scenario claims pass only when each judgment is `entailed`.
-
-## Running and reporting
+Concurrency is explicit and bounded:
 
 ```go
+runner, err := eval.NewRunner(
+	judge.New(modelClient),
+	eval.RunnerConfig{MaxConcurrency: 5},
+)
+if err != nil {
+	return err
+}
 suite := genevals.New(hooks)
-report, err := eval.NewRunner(judge).Run(ctx, suite)
+report, err := runner.Run(ctx, suite)
 ```
 
-Scenarios execute sequentially under their generated timeouts. Passing requires
-at least one selected scenario and every deterministic check and semantic claim
-to pass. Hook, validation, and judge failures are recorded on the scenario
-report; selection and calibration failures are recorded on the suite report.
-`Report` and its nested values have stable JSON field names for CI and retention
-systems.
+`MaxConcurrency` is required and must be positive. At most that many scenarios
+run at once. One scenario failure does not stop the others. Reports always use
+the suite's declaration order, regardless of completion order. Hook
+implementations and semantic judges must therefore support concurrent calls up
+to this limit.
 
-An application may pass tags to `Runner.Run` to select scenarios. Product CLIs
-can also select exact generated scenario IDs before invoking the runner, while
-preserving declaration order. Selection must fail before execution when an ID
-is unknown.
+Pass a nil judge when every hook returns deterministic checks and no semantic
+claims:
+
+```go
+runner, err := eval.NewRunner(nil, eval.RunnerConfig{MaxConcurrency: 2})
+```
+
+## Select scenarios
+
+The runner owns selection and validates it before any product or model call:
+
+```go
+report, err := runner.Run(ctx, suite)
+report, err := runner.RunScenarios(ctx, suite, "alarm_inventory", "solar_analysis")
+report, err := runner.RunTags(ctx, suite, "smoke", "alarm")
+```
+
+`RunScenarios` runs exact IDs. `RunTags` runs every scenario carrying at least
+one requested tag. Both reject empty selections, empty values, duplicates, and
+unknown IDs or tags. Selected scenarios remain in suite declaration order.
+
+## Semantic judging
+
+`eval/judge` accepts a provider-neutral `model.Client`. Before any scenario
+runs, the runner checks the judge with four framework-owned examples:
+
+- `entailed`: the answer establishes the claim;
+- `contradicted`: the answer establishes that the claim is false;
+- `not_addressed`: the answer discusses something else; and
+- `indeterminate`: conflicting information prevents a conclusion.
+
+All four labels must be returned correctly. This prevents a judge that always
+answers `entailed` from making every evaluation pass. A calibration failure
+stops the suite before it calls the application.
+
+For scenario claims, the judge makes one tool-free structured-output request
+and returns exactly one label and rationale for each claim ID. Only `entailed`
+passes. Unknown fields, missing or duplicate IDs, unsupported labels, multiple
+JSON answers, and trailing JSON are errors. The judge never retries or repairs
+its output.
+
+## Read the report
+
+`Report` and its nested values have stable JSON field names. Scenario duration
+includes the application call, result validation, and semantic judging.
+
+Selection and calibration failures are returned as errors and recorded on the
+suite report. Hook, validation, timeout, and judging failures are recorded on
+their scenario reports so the remaining scenarios can finish. After a run with
+no suite-level error, check `report.Passed`; a false value must make the calling
+test or CI command fail.

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -67,19 +68,7 @@ type (
 		Run func(context.Context, string) (Result, error)
 	}
 
-	// Calibration is a labeled example that proves a judge before scenarios run.
-	Calibration struct {
-		// ID is the stable lower_snake_case calibration identifier.
-		ID string
-		// Answer is the example output presented to the judge.
-		Answer string
-		// Claim is the proposition labeled by Want.
-		Claim string
-		// Want is the required judgment for the example.
-		Want Label
-	}
-
-	// Suite is an immutable generated collection of scenarios and calibrations.
+	// Suite is a generated collection of scenarios.
 	Suite struct {
 		// ID is the stable lower_snake_case suite identifier.
 		ID string
@@ -87,8 +76,6 @@ type (
 		Description string
 		// Scenarios are the generated cases in declaration order.
 		Scenarios []Scenario
-		// Calibrations are the generated judge examples in declaration order.
-		Calibrations []Calibration
 	}
 
 	// Judgment is the semantic label assigned to one claim.
@@ -111,7 +98,8 @@ type (
 		Claim string `json:"claim"`
 	}
 
-	// Judge assigns exactly one semantic judgment to each supplied claim.
+	// Judge assigns exactly one semantic judgment to each supplied claim. A
+	// runner may call Judge concurrently for independent scenarios.
 	Judge interface {
 		Judge(context.Context, []Assertion) ([]Judgment, error)
 	}
@@ -138,7 +126,7 @@ type (
 	Report struct {
 		// SuiteID identifies the generated suite.
 		SuiteID string `json:"suite_id"`
-		// StartedAt is when calibration began.
+		// StartedAt is when suite execution began.
 		StartedAt time.Time `json:"started_at"`
 		// Duration is the total suite duration.
 		Duration time.Duration `json:"duration"`
@@ -152,8 +140,16 @@ type (
 
 	// Runner executes generated suites using one semantic judge.
 	Runner struct {
-		judge Judge
-		now   func() time.Time
+		judge          Judge
+		maxConcurrency int
+		now            func() time.Time
+	}
+
+	// RunnerConfig defines how many independent scenarios a runner may execute
+	// at once.
+	RunnerConfig struct {
+		// MaxConcurrency is the positive maximum number of scenarios in flight.
+		MaxConcurrency int
 	}
 )
 
@@ -170,47 +166,42 @@ const (
 
 var errCalibration = errors.New("judge calibration failed")
 
-// NewRunner creates a suite runner that uses judge for semantic assertions.
-func NewRunner(judge Judge) *Runner {
-	return &Runner{judge: judge, now: time.Now}
+// NewRunner creates a suite runner with an explicit concurrency limit. A nil
+// judge is valid for suites whose hooks return deterministic checks only.
+func NewRunner(judge Judge, config RunnerConfig) (*Runner, error) {
+	if config.MaxConcurrency <= 0 {
+		return nil, errors.New("maximum evaluation concurrency must be greater than zero")
+	}
+	return &Runner{
+		judge:          judge,
+		maxConcurrency: config.MaxConcurrency,
+		now:            time.Now,
+	}, nil
 }
 
-// Run validates the judge against every calibration, then executes selected
-// scenarios sequentially. An empty tag selection runs the complete suite.
-func (r *Runner) Run(ctx context.Context, suite Suite, tags ...string) (Report, error) {
-	started := r.now()
-	report := Report{SuiteID: suite.ID, StartedAt: started}
-	wanted := make(map[string]struct{}, len(tags))
-	for _, tag := range tags {
-		wanted[tag] = struct{}{}
-	}
-	selectedScenarios := make([]Scenario, 0, len(suite.Scenarios))
-	for _, scenario := range suite.Scenarios {
-		if selected(scenario.Tags, wanted) {
-			selectedScenarios = append(selectedScenarios, scenario)
-		}
-	}
-	if len(selectedScenarios) == 0 {
-		err := errors.New("evaluation selection contains no scenarios")
-		report.Error = err.Error()
-		report.Duration = r.now().Sub(started)
-		return report, err
-	}
-	if err := r.calibrate(ctx, suite.Calibrations); err != nil {
-		report.Error = err.Error()
-		report.Duration = r.now().Sub(started)
-		return report, err
-	}
+// Run executes every scenario in suite.
+func (r *Runner) Run(ctx context.Context, suite Suite) (Report, error) {
+	return r.run(ctx, suite, suite.Scenarios)
+}
 
-	for _, scenario := range selectedScenarios {
-		report.Scenarios = append(report.Scenarios, r.runScenario(ctx, scenario))
+// RunScenarios executes the named scenarios in suite declaration order. It
+// rejects an empty selection, duplicate IDs, and IDs absent from the suite.
+func (r *Runner) RunScenarios(ctx context.Context, suite Suite, ids ...string) (Report, error) {
+	selected, err := selectScenarios(suite.Scenarios, ids)
+	if err != nil {
+		return r.selectionErrorReport(suite.ID, err), err
 	}
-	report.Duration = r.now().Sub(started)
-	report.Passed = true
-	for _, scenario := range report.Scenarios {
-		report.Passed = report.Passed && scenario.Passed
+	return r.run(ctx, suite, selected)
+}
+
+// RunTags executes scenarios carrying at least one requested tag in suite
+// declaration order. It rejects empty, duplicate, and unknown tags.
+func (r *Runner) RunTags(ctx context.Context, suite Suite, tags ...string) (Report, error) {
+	selected, err := selectTags(suite.Scenarios, tags)
+	if err != nil {
+		return r.selectionErrorReport(suite.ID, err), err
 	}
-	return report, nil
+	return r.run(ctx, suite, selected)
 }
 
 // ValidateResult enforces the hook-to-runner boundary contract.
@@ -295,25 +286,53 @@ func ValidateJudgments(claims []Claim, judgments []Judgment) error {
 	return nil
 }
 
-// calibrate proves the judge contract with one batched request before any
-// application scenario is allowed to run.
-func (r *Runner) calibrate(ctx context.Context, calibrations []Calibration) error {
-	if len(calibrations) == 0 {
+// run validates the judge, executes selected scenarios with bounded
+// concurrency, and records reports in suite declaration order.
+func (r *Runner) run(ctx context.Context, suite Suite, selected []Scenario) (Report, error) {
+	started := r.now()
+	report := Report{SuiteID: suite.ID, StartedAt: started}
+	if len(selected) == 0 {
+		err := errors.New("evaluation selection contains no scenarios")
+		report.Error = err.Error()
+		report.Duration = r.now().Sub(started)
+		return report, err
+	}
+	if err := r.calibrate(ctx); err != nil {
+		report.Error = err.Error()
+		report.Duration = r.now().Sub(started)
+		return report, err
+	}
+
+	report.Scenarios = make([]ScenarioReport, len(selected))
+	jobs := make(chan int, len(selected))
+	workerCount := min(r.maxConcurrency, len(selected))
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go r.runScenarios(ctx, selected, report.Scenarios, jobs, &workers)
+	}
+	for index := range selected {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
+
+	report.Duration = r.now().Sub(started)
+	report.Passed = true
+	for _, scenario := range report.Scenarios {
+		report.Passed = report.Passed && scenario.Passed
+	}
+	return report, nil
+}
+
+// calibrate proves every semantic label in one batch before any application
+// scenario runs. The framework owns these examples because it owns the label
+// meanings and the rule that only entailed claims pass.
+func (r *Runner) calibrate(ctx context.Context) error {
+	if r.judge == nil {
 		return nil
 	}
-	if r.judge == nil {
-		return fmt.Errorf("%w: semantic judge is required", errCalibration)
-	}
-	assertions := make([]Assertion, len(calibrations))
-	claims := make([]Claim, len(calibrations))
-	for i, calibration := range calibrations {
-		assertions[i] = Assertion{
-			ClaimID: calibration.ID,
-			Output:  calibration.Answer,
-			Claim:   calibration.Claim,
-		}
-		claims[i] = Claim{ID: calibration.ID, Text: calibration.Claim}
-	}
+	assertions, claims, expected := calibrationCases()
 	judgments, err := r.judge.Judge(ctx, assertions)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errCalibration, err)
@@ -325,9 +344,10 @@ func (r *Runner) calibrate(ctx context.Context, calibrations []Calibration) erro
 	for _, judgment := range judgments {
 		byID[judgment.ClaimID] = judgment.Label
 	}
-	for _, calibration := range calibrations {
-		if got := byID[calibration.ID]; got != calibration.Want {
-			return fmt.Errorf("%w: %s: got %s, want %s", errCalibration, calibration.ID, got, calibration.Want)
+	for index, want := range expected {
+		id := assertions[index].ClaimID
+		if got := byID[id]; got != want {
+			return fmt.Errorf("%w: %s: got %s, want %s", errCalibration, id, got, want)
 		}
 	}
 	return nil
@@ -335,14 +355,24 @@ func (r *Runner) calibrate(ctx context.Context, calibrations []Calibration) erro
 
 // runScenario executes one hook under its generated timeout and evaluates its
 // validated deterministic and semantic assertions.
-func (r *Runner) runScenario(ctx context.Context, scenario Scenario) ScenarioReport {
+func (r *Runner) runScenario(ctx context.Context, scenario Scenario) (report ScenarioReport) {
 	started := r.now()
-	report := ScenarioReport{ID: scenario.ID, StartedAt: started}
+	report = ScenarioReport{ID: scenario.ID, StartedAt: started}
+	defer func() {
+		report.Duration = r.now().Sub(started)
+	}()
+	if err := ctx.Err(); err != nil {
+		report.Error = err.Error()
+		return report
+	}
 	scenarioCtx, cancel := context.WithTimeout(ctx, scenario.Timeout)
 	defer cancel()
 	result, err := scenario.Run(scenarioCtx, scenario.Input)
-	report.Duration = r.now().Sub(started)
 	if err != nil {
+		report.Error = err.Error()
+		return report
+	}
+	if err := scenarioCtx.Err(); err != nil {
 		report.Error = err.Error()
 		return report
 	}
@@ -369,6 +399,10 @@ func (r *Runner) runScenario(ctx context.Context, scenario Scenario) ScenarioRep
 			report.Error = err.Error()
 			return report
 		}
+		if err := scenarioCtx.Err(); err != nil {
+			report.Error = err.Error()
+			return report
+		}
 		if err := ValidateJudgments(result.Claims, judgments); err != nil {
 			report.Error = err.Error()
 			return report
@@ -382,18 +416,143 @@ func (r *Runner) runScenario(ctx context.Context, scenario Scenario) ScenarioRep
 	return report
 }
 
-// selected reports whether a scenario contains at least one explicitly
-// requested tag. With no requested tags, every scenario is selected.
-func selected(tags []string, wanted map[string]struct{}) bool {
-	if len(wanted) == 0 {
-		return true
+// runScenarios consumes scenario indexes from jobs and writes each report to
+// its declaration-order slot. Every slot has exactly one worker.
+func (r *Runner) runScenarios(
+	ctx context.Context,
+	scenarios []Scenario,
+	reports []ScenarioReport,
+	jobs <-chan int,
+	workers *sync.WaitGroup,
+) {
+	defer workers.Done()
+	for index := range jobs {
+		reports[index] = r.runScenario(ctx, scenarios[index])
 	}
-	for _, tag := range tags {
-		if _, ok := wanted[tag]; ok {
-			return true
+}
+
+// calibrationCases returns one unambiguous example for every framework-owned
+// label so a judge that collapses distinct outcomes cannot pass calibration.
+func calibrationCases() ([]Assertion, []Claim, []Label) {
+	assertions := []Assertion{
+		{
+			ClaimID: "calibration_entailed",
+			Output:  "The pump is running.",
+			Claim:   "The pump is running.",
+		},
+		{
+			ClaimID: "calibration_contradicted",
+			Output:  "The pump is stopped.",
+			Claim:   "The pump is running.",
+		},
+		{
+			ClaimID: "calibration_not_addressed",
+			Output:  "The valve is open.",
+			Claim:   "The pump is running.",
+		},
+		{
+			ClaimID: "calibration_indeterminate",
+			Output:  "Two readings at the same time disagree about whether the pump is running.",
+			Claim:   "The pump is running.",
+		},
+	}
+	claims := make([]Claim, len(assertions))
+	for index, assertion := range assertions {
+		claims[index] = Claim{ID: assertion.ClaimID, Text: assertion.Claim}
+	}
+	expected := []Label{Entailed, Contradicted, NotAddressed, Indeterminate}
+	return assertions, claims, expected
+}
+
+// selectScenarios validates exact IDs and returns matching scenarios in suite
+// declaration order.
+func selectScenarios(scenarios []Scenario, ids []string) ([]Scenario, error) {
+	wanted, err := selectorSet("scenario", ids)
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]struct{}, len(scenarios))
+	for _, scenario := range scenarios {
+		known[scenario.ID] = struct{}{}
+	}
+	if err := validateKnownSelectors("scenario", ids, known); err != nil {
+		return nil, err
+	}
+	selected := make([]Scenario, 0, len(wanted))
+	for _, scenario := range scenarios {
+		if _, ok := wanted[scenario.ID]; ok {
+			selected = append(selected, scenario)
 		}
 	}
-	return false
+	return selected, nil
+}
+
+// selectTags validates tags and returns matching scenarios in suite declaration
+// order using any-tag matching.
+func selectTags(scenarios []Scenario, tags []string) ([]Scenario, error) {
+	wanted, err := selectorSet("tag", tags)
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]struct{})
+	for _, scenario := range scenarios {
+		for _, tag := range scenario.Tags {
+			known[tag] = struct{}{}
+		}
+	}
+	if err := validateKnownSelectors("tag", tags, known); err != nil {
+		return nil, err
+	}
+	selected := make([]Scenario, 0, len(scenarios))
+	for _, scenario := range scenarios {
+		for _, tag := range scenario.Tags {
+			if _, ok := wanted[tag]; ok {
+				selected = append(selected, scenario)
+				break
+			}
+		}
+	}
+	return selected, nil
+}
+
+// selectorSet validates one explicit selector list before any evaluation work.
+func selectorSet(kind string, values []string) (map[string]struct{}, error) {
+	if len(values) == 0 {
+		return nil, fmt.Errorf("evaluation %s selection is empty", kind)
+	}
+	selected := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value == "" {
+			return nil, fmt.Errorf("evaluation %s is empty", kind)
+		}
+		if _, exists := selected[value]; exists {
+			return nil, fmt.Errorf("duplicate evaluation %s %q", kind, value)
+		}
+		selected[value] = struct{}{}
+	}
+	return selected, nil
+}
+
+// validateKnownSelectors reports the first unknown value in caller order so
+// invalid selections always produce the same diagnostic.
+func validateKnownSelectors(kind string, values []string, known map[string]struct{}) error {
+	for _, value := range values {
+		if _, exists := known[value]; !exists {
+			return fmt.Errorf("unknown evaluation %s %q", kind, value)
+		}
+	}
+	return nil
+}
+
+// selectionErrorReport records a selection failure without starting a suite.
+func (r *Runner) selectionErrorReport(suiteID string, err error) Report {
+	started := r.now()
+	return Report{
+		SuiteID:   suiteID,
+		StartedAt: started,
+		Duration:  r.now().Sub(started),
+		Error:     err.Error(),
+	}
 }
 
 // validLabel reports whether a label belongs to the closed judge vocabulary.

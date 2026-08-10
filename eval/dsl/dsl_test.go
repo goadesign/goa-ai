@@ -6,7 +6,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	aieval "goa.design/goa-ai/eval"
 	. "goa.design/goa-ai/eval/dsl"
 	evalexpr "goa.design/goa-ai/eval/expr"
 	"goa.design/goa/v3/eval"
@@ -24,11 +23,6 @@ func TestSuiteDSL(t *testing.T) {
 				Tags("alarm", "smoke")
 				Timeout("3m")
 			})
-			Calibration("entailed", func() {
-				Answer("The pump is on.")
-				Claim("The pump is on.")
-				Want(aieval.Entailed)
-			})
 		})
 	}
 
@@ -41,7 +35,6 @@ func TestSuiteDSL(t *testing.T) {
 	assert.Len(t, suite.Scenarios, 1)
 	assert.Equal(t, []string{"alarm", "smoke"}, suite.Scenarios[0].Tags)
 	assert.Equal(t, 3*time.Minute, suite.Scenarios[0].Timeout)
-	assert.Len(t, suite.Calibrations, 1)
 }
 
 func TestSuiteDSLValidation(t *testing.T) {
@@ -117,18 +110,6 @@ func TestSuiteDSLValidation(t *testing.T) {
 				})
 			},
 			wantErr: "duplicate tag",
-		},
-		{
-			name: "incomplete calibration",
-			design: func() {
-				Suite("chat", func() {
-					Description("Chat.")
-					Timeout("1m")
-					validScenario()
-					Calibration("judge", func() {})
-				})
-			},
-			wantErr: "calibration answer is required",
 		},
 	}
 

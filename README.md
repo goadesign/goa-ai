@@ -41,6 +41,7 @@ You describe the agent system in the same design-first style as Goa services. `g
 | Durable agent execution | A plan/execute/resume workflow loop with retries, budgets, cancellation, and Temporal support |
 | Existing service logic | `BindTo` and generated transforms that connect tools to Goa service methods |
 | Structured final answers | Service-owned `Completion(...)` contracts with unary and streaming helpers |
+| Repeatable agent checks | Generated evaluation hooks, exact scenario selection, bounded concurrency, and calibrated semantic judging |
 | Multi-agent systems | First-class agent-as-tool composition with child runs and linked streams |
 | Human approval | Await/clarification flows plus design-time and runtime tool confirmation |
 | Real-time UI | Typed stream events for tool progress, assistant text, usage, awaits, workflow status, and child links |
@@ -575,15 +576,10 @@ Suite("chat", func() {
 		Input("List every alarm in the requested window.")
 		Tags("production")
 	})
-	Calibration("entailed", func() {
-		Answer("Compressor 1 is on.")
-		Claim("Compressor 1 is on.")
-		Want(eval.Entailed)
-	})
 })
 ```
 
-Code generation emits one direct method per scenario and an immutable suite constructor. The application implements those methods on a normal struct whose fields and closures own system targets, execution, and deterministic checks. The runtime calibrates a strict semantic judge before executing scenarios, then records deterministic checks, atomic answer claims, judgments, errors, durations, and artifacts in a stable report contract. There are no registries, reflection, YAML parsers, or framework-specific application adapters. See [`docs/evals.md`](docs/evals.md).
+Code generation emits one direct method per scenario and a suite constructor. The application implements those methods on a normal struct whose fields own system targets, execution, exact checks, answer claims, and artifacts. A runner validates exact scenario or tag selection, verifies all four semantic labels before using a judge, executes scenarios with an explicit concurrency limit, and returns declaration-ordered reports with complete durations. There are no registries, reflection, YAML parsers, or framework-specific application adapters. See [`docs/evals.md`](docs/evals.md).
 
 ### Bookkeeping and Terminal Tools
 

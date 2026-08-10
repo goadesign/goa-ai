@@ -6,6 +6,7 @@ Build intelligent agents, MCP servers, and registry-integrated toolsets from you
 
 - **Agents**: Durable plan/execute loops with policy enforcement, memory, and streaming
 - **Typed Completions**: Service-owned structured assistant-output contracts with generated codecs and helpers
+- **Generated Evaluations**: Design-owned scenarios with typed application hooks, bounded execution, and trustworthy semantic judging
 - **MCP**: Endpoints mapped from your Goa service (tools, resources, prompts) with JSON-RPC/SSE transport
 - **Registries**: Centralized tool catalogs with federation, caching, and semantic search
 - **Unified Toolsets**: Single `Toolset` construct with providers (local, MCP, registry)
@@ -19,6 +20,7 @@ For each service annotated with agents or MCP, the plugin:
    - Service layer via `codegen/service` (service, endpoints, client)
    - JSON-RPC transport via `jsonrpc/codegen` (server, client, types; SSE when streaming)
    - Agent workflows, activities, tool specs, and completion specs via `codegen/agent`
+   - Evaluation suites and typed scenario hooks via `eval/codegen`
 3. Applies small, deterministic transformations so files land under appropriate paths.
 
 We compose on top of Goa—no forks, minimal templates, and predictable output.
@@ -28,6 +30,7 @@ We compose on top of Goa—no forks, minimal templates, and predictable output.
 - Agent packages: `gen/<svc>/agents/<agent>/`
 - Tool specs: `gen/<svc>/agents/<agent>/specs/`
 - Service completions: `gen/<svc>/completions/`
+- Evaluation suites: `gen/evals/<suite>/`
 - MCP service: `gen/mcp_<service>/`
 - Registry clients: `gen/<svc>/registry/<name>/`
 
@@ -106,6 +109,31 @@ The design intentionally keeps completions separate from toolsets: toolsets mode
 callable capabilities, while completions model final assistant answers. Both reuse
 the same Goa types, validations, and codegen pipeline so there is one contract
 surface for structured model I/O.
+
+## Generated Evaluations
+
+Applications define stable evaluation scenarios with `eval/dsl` beside their
+normal Goa v3 service design. `goa gen` emits one typed hook method per scenario.
+The application implements those methods to call the real product and return:
+
+- deterministic checks for exact facts such as IDs, counts, and tool calls;
+- semantic claims for meaning that requires reading a model answer; and
+- artifacts that help diagnose a failure.
+
+The runner owns execution mechanics. Callers choose all scenarios, exact
+scenario IDs, or tags through separate methods. Selection is validated before
+any product or model call. An explicit positive concurrency limit bounds work;
+failures do not stop unrelated scenarios; reports remain in declaration order.
+Application hooks and the judge support concurrent calls up to that limit.
+
+When semantic claims are present, a provider-neutral judge classifies each one
+as `entailed`, `contradicted`, `not_addressed`, or `indeterminate`. Before any
+scenario runs, the runner verifies all four meanings with framework-owned
+examples. Applications cannot weaken that check by supplying easier examples.
+Only `entailed` passes. Deterministic-only suites may omit the judge entirely.
+
+See [docs/evals.md](docs/evals.md) for the DSL, generated API, runner methods,
+and report behavior.
 
 ## Planner Step Contract
 

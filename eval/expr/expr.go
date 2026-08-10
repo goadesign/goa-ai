@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"time"
 
-	aieval "goa.design/goa-ai/eval"
 	goacodegen "goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
 )
@@ -30,8 +29,6 @@ type (
 		Timeout time.Duration
 		// Scenarios are the suite cases in declaration order.
 		Scenarios []*ScenarioExpr
-		// Calibrations prove the semantic judge before scenarios execute.
-		Calibrations []*CalibrationExpr
 	}
 
 	// ScenarioExpr describes one text-input application scenario.
@@ -47,21 +44,6 @@ type (
 		Tags []string
 		// Timeout overrides the suite timeout when non-zero.
 		Timeout time.Duration
-		// Suite is the owning suite.
-		Suite *SuiteExpr
-	}
-
-	// CalibrationExpr describes one labeled semantic judge example.
-	CalibrationExpr struct {
-		eval.DSLFunc
-		// Name is the stable calibration identifier.
-		Name string
-		// Answer is the example model output.
-		Answer string
-		// Claim is the proposition being labeled.
-		Claim string
-		// Want is the required semantic label.
-		Want aieval.Label
 		// Suite is the owning suite.
 		Suite *SuiteExpr
 	}
@@ -96,12 +78,11 @@ func (r *RootExpr) Packages() []string {
 	return []string{"goa.design/goa-ai/eval/dsl"}
 }
 
-// WalkSets exposes suites, scenarios, and calibrations in evaluation order.
+// WalkSets exposes suites and scenarios in evaluation order.
 func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	walk(eval.ToExpressionSet(r.Suites))
 	for _, suite := range r.Suites {
 		walk(eval.ToExpressionSet(suite.Scenarios))
-		walk(eval.ToExpressionSet(suite.Calibrations))
 	}
 }
 
@@ -149,13 +130,6 @@ func (s *SuiteExpr) Validate() error {
 		}
 		methods[method] = scenario
 	}
-	calibrations := make(map[string]*CalibrationExpr, len(s.Calibrations))
-	for _, calibration := range s.Calibrations {
-		if other, ok := calibrations[calibration.Name]; ok {
-			verr.Add(calibration, "calibration name %q duplicates %s", calibration.Name, other.EvalName())
-		}
-		calibrations[calibration.Name] = calibration
-	}
 	return verr
 }
 
@@ -184,29 +158,6 @@ func (s *ScenarioExpr) Validate() error {
 			verr.Add(s, "duplicate tag %q", tag)
 		}
 		tags[tag] = struct{}{}
-	}
-	return verr
-}
-
-// EvalName implements eval.Expression.
-func (c *CalibrationExpr) EvalName() string {
-	return fmt.Sprintf("calibration %q in suite %q", c.Name, c.Suite.Name)
-}
-
-// Validate enforces the labeled semantic example contract.
-func (c *CalibrationExpr) Validate() error {
-	verr := new(eval.ValidationErrors)
-	validateID(verr, c, "calibration", c.Name)
-	if c.Answer == "" {
-		verr.Add(c, "calibration answer is required")
-	}
-	if c.Claim == "" {
-		verr.Add(c, "calibration claim is required")
-	}
-	switch c.Want {
-	case aieval.Entailed, aieval.Contradicted, aieval.NotAddressed, aieval.Indeterminate:
-	default:
-		verr.Add(c, "calibration want must be a semantic eval label")
 	}
 	return verr
 }

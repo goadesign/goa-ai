@@ -5,7 +5,6 @@ package dsl
 import (
 	"time"
 
-	aieval "goa.design/goa-ai/eval"
 	_ "goa.design/goa-ai/eval/codegen"
 	evalexpr "goa.design/goa-ai/eval/expr"
 	"goa.design/goa/v3/eval"
@@ -32,18 +31,6 @@ func Scenario(name string, fn func()) *evalexpr.ScenarioExpr {
 	scenario := &evalexpr.ScenarioExpr{Name: name, Suite: suite, DSLFunc: fn}
 	suite.Scenarios = append(suite.Scenarios, scenario)
 	return scenario
-}
-
-// Calibration defines one labeled semantic judge example within the current suite.
-func Calibration(name string, fn func()) *evalexpr.CalibrationExpr {
-	suite, ok := eval.Current().(*evalexpr.SuiteExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return nil
-	}
-	calibration := &evalexpr.CalibrationExpr{Name: name, Suite: suite, DSLFunc: fn}
-	suite.Calibrations = append(suite.Calibrations, calibration)
-	return calibration
 }
 
 // Description sets the current suite or scenario description.
@@ -98,34 +85,4 @@ func Tags(values ...string) {
 		return
 	}
 	scenario.Tags = append(scenario.Tags, values...)
-}
-
-// Answer sets the example model output for the current calibration.
-func Answer(value string) {
-	calibration, ok := eval.Current().(*evalexpr.CalibrationExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
-	}
-	calibration.Answer = value
-}
-
-// Claim sets the proposition labeled by the current calibration.
-func Claim(value string) {
-	calibration, ok := eval.Current().(*evalexpr.CalibrationExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
-	}
-	calibration.Claim = value
-}
-
-// Want sets the required semantic label for the current calibration.
-func Want(value aieval.Label) {
-	calibration, ok := eval.Current().(*evalexpr.CalibrationExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
-	}
-	calibration.Want = value
 }

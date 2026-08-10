@@ -15,11 +15,10 @@ import (
 type (
 	// suiteData contains fully evaluated values consumed by the suite template.
 	suiteData struct {
-		ID           string
-		Description  string
-		Package      string
-		Scenarios    []scenarioData
-		Calibrations []calibrationData
+		ID          string
+		Description string
+		Package     string
+		Scenarios   []scenarioData
 	}
 
 	// scenarioData contains one generated hook method and immutable case data.
@@ -30,14 +29,6 @@ type (
 		Method      string
 		Tags        []string
 		Timeout     int64
-	}
-
-	// calibrationData contains one immutable labeled judge example.
-	calibrationData struct {
-		ID     string
-		Answer string
-		Claim  string
-		Want   string
 	}
 )
 
@@ -86,15 +77,14 @@ func evaluationRoot(roots []eval.Root) *evalexpr.RootExpr {
 	return nil
 }
 
-// buildSuiteData partially evaluates all names, literals, durations, and labels
+// buildSuiteData partially evaluates all names, literals, durations, and tags
 // so generated runtime code contains no static decisions.
 func buildSuiteData(suite *evalexpr.SuiteExpr) suiteData {
 	data := suiteData{
-		ID:           strconv.Quote(suite.Name),
-		Description:  strconv.Quote(suite.Description),
-		Package:      goacodegen.Goify(strings.ReplaceAll(suite.Name, "_", ""), false),
-		Scenarios:    make([]scenarioData, len(suite.Scenarios)),
-		Calibrations: make([]calibrationData, len(suite.Calibrations)),
+		ID:          strconv.Quote(suite.Name),
+		Description: strconv.Quote(suite.Description),
+		Package:     goacodegen.Goify(strings.ReplaceAll(suite.Name, "_", ""), false),
+		Scenarios:   make([]scenarioData, len(suite.Scenarios)),
 	}
 	for i, scenario := range suite.Scenarios {
 		timeout := scenario.Timeout
@@ -114,35 +104,11 @@ func buildSuiteData(suite *evalexpr.SuiteExpr) suiteData {
 			Timeout:     int64(timeout),
 		}
 	}
-	for i, calibration := range suite.Calibrations {
-		data.Calibrations[i] = calibrationData{
-			ID:     strconv.Quote(calibration.Name),
-			Answer: strconv.Quote(calibration.Answer),
-			Claim:  strconv.Quote(calibration.Claim),
-			Want:   labelConstant(string(calibration.Want)),
-		}
-	}
 	return data
 }
 
-// labelConstant maps the closed DSL label vocabulary to generated constants.
-func labelConstant(label string) string {
-	switch label {
-	case "entailed":
-		return "eval.Entailed"
-	case "contradicted":
-		return "eval.Contradicted"
-	case "not_addressed":
-		return "eval.NotAddressed"
-	case "indeterminate":
-		return "eval.Indeterminate"
-	default:
-		panic("invalid evaluation label")
-	}
-}
-
 const suiteTemplate = `// Hooks is implemented by the application running this evaluation suite.
-// Each method owns the complete system interaction and returns typed evidence.
+// Methods may run concurrently and each owns its complete system interaction.
 type Hooks interface {
 {{- range .Scenarios }}
 	// {{ .Method }} executes the {{ .ID }} scenario.
@@ -164,16 +130,6 @@ func New(hooks Hooks) eval.Suite {
 				Tags: []string{ {{- range .Tags }}{{ . }}, {{- end }}},
 				Timeout: time.Duration({{ .Timeout }}),
 				Run: hooks.{{ .Method }},
-			},
-{{- end }}
-		},
-		Calibrations: []eval.Calibration{
-{{- range .Calibrations }}
-			{
-				ID: {{ .ID }},
-				Answer: {{ .Answer }},
-				Claim: {{ .Claim }},
-				Want: {{ .Want }},
 			},
 {{- end }}
 		},

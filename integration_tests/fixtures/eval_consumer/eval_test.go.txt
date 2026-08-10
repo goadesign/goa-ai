@@ -1,0 +1,34 @@
+// Package evalconsumer implements and runs the hook interface generated from
+// the fixture design, proving the complete downstream consumption contract.
+package evalconsumer
+
+import (
+	"context"
+	"testing"
+
+	genevals "example.com/evalconsumer/gen/evals/chat_quality"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	aieval "goa.design/goa-ai/eval"
+)
+
+type hooks struct{}
+
+func (hooks) AlarmInventory(context.Context, string) (aieval.Result, error) {
+	return aieval.Result{Checks: []aieval.Check{{Name: "alarm_inventory", Passed: true}}}, nil
+}
+
+func (hooks) EquipmentStatus(context.Context, string) (aieval.Result, error) {
+	return aieval.Result{Checks: []aieval.Check{{Name: "equipment_status", Passed: true}}}, nil
+}
+
+func TestGeneratedSuite(t *testing.T) {
+	runner, err := aieval.NewRunner(nil, aieval.RunnerConfig{MaxConcurrency: 2})
+	require.NoError(t, err)
+
+	report, err := runner.RunTags(context.Background(), genevals.New(hooks{}), "smoke")
+
+	require.NoError(t, err)
+	assert.True(t, report.Passed)
+	assert.Len(t, report.Scenarios, 2)
+}
