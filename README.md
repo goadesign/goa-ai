@@ -664,13 +664,14 @@ rt := runtime.New(
 
 For model streaming inside planners, choose one style per planner call:
 
-- `PlannerContext.PlannerModelClient(id)` is recommended for the selected, single model call. It owns assistant/thinking/usage event emission and returns a `planner.StreamSummary`.
+- `PlannerContext.PlannerModelClient(id)` is recommended for the selected, single model call. It records assistant and thinking output with that invocation and returns a `planner.StreamSummary`; the runtime publishes presentation after the planner selects the response.
 - `PlannerContext.ModelClient(id)` gives you a raw `model.Client`. Pair it with `planner.ConsumeStream` or drain the stream yourself when you need lower-level control.
 
 The runtime captures each model response before planner code sees it. When a
 planner probes through the raw client, goa-ai matches returned model-facing tool
-calls to the exact response that produced them and replays only that transcript.
-Every stream exposes closed typed presentation events, then makes its canonical
+calls to the exact response that produced them, publishes only that response's
+presentation, and replays only that transcript. Usage events still include all
+attempts. Every stream exposes closed typed chunks, then makes its canonical
 response available separately after clean EOF. Model gateways carry that
 response independently from planner-facing chunks, and terminal helpers return
 the selected provider message without exposing transcript identity. Future
