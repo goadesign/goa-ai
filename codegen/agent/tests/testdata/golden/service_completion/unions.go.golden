@@ -81,7 +81,7 @@ func (u Draft) Kind() DraftKind {
 	return u.kind
 }
 
-// NewDraftNewTask constructs a Draft with the new_task branch set.
+// NewDraftNewTask constructs Draft with the new_task branch set.
 func NewDraftNewTask(v *CompletionDraft) Draft {
 	return Draft{
 		kind:    DraftKindNewTask,
@@ -103,7 +103,7 @@ func (u *Draft) SetNewTask(v *CompletionDraft) {
 	u.NewTask = v
 }
 
-// NewDraftExistingTaskID constructs a Draft with the existing_task_id branch set.
+// NewDraftExistingTaskID constructs Draft with the existing_task_id branch set.
 func NewDraftExistingTaskID(v DraftExistingTaskID) Draft {
 	return Draft{
 		kind:           DraftKindExistingTaskID,

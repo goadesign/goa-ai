@@ -22,6 +22,10 @@ func ArgsUnionSumTypes() func() {
 				Attribute("text", String, "Text value")
 				Attribute("structured", StructuredValue, "Structured value")
 			})
+			OneOf("optional_value", func() {
+				Attribute("number", Int32, "Optional numeric value")
+				Attribute("text", String, "Optional text value")
+			})
 			Required("id", "value")
 		})
 

@@ -418,6 +418,59 @@ func TestValueValidateRejectsNilSelectedBranch(t *testing.T) {
 	}
 }
 
+func TestOptionalUnionOmissionAndRoundTrip(t *testing.T) {
+	payload := &EchoPayload{
+		ID:    "req_1",
+		Value: NewValueText("required"),
+	}
+	data, err := MarshalEchoPayload(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "optional_value") {
+		t.Fatalf("omitted optional union was serialized: %s", data)
+	}
+	decoded, err := UnmarshalEchoPayload(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.OptionalValue != nil {
+		t.Fatalf("omitted optional union became present: %#v", decoded.OptionalValue)
+	}
+
+	optional := NewOptionalValueNumber(7)
+	payload.OptionalValue = &optional
+	data, err = MarshalEchoPayload(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err = UnmarshalEchoPayload(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.OptionalValue == nil {
+		t.Fatal("present optional union was omitted")
+	}
+	got, ok := decoded.OptionalValue.AsNumber()
+	if !ok || got != 7 {
+		t.Fatalf("unexpected optional union: %#v", decoded.OptionalValue)
+	}
+}
+
+func TestOptionalUnionRejectsPresentValueWithoutBranch(t *testing.T) {
+	payload := &EchoPayload{
+		ID:            "req_1",
+		Value:         NewValueText("required"),
+		OptionalValue: &OptionalValue{},
+	}
+	if _, err := MarshalEchoPayload(payload); err == nil {
+		t.Fatal("expected malformed in-memory optional union to fail")
+	}
+	if _, err := UnmarshalEchoPayload([]byte("{\"id\":\"req_1\",\"value\":{\"type\":\"text\",\"value\":\"required\"},\"optional_value\":{}}")); err == nil {
+		t.Fatal("expected malformed JSON optional union to fail")
+	}
+}
+
 func TestUnmarshalEchoPayloadRejectsUnknownUnionBranchFields(t *testing.T) {
 	_, err := UnmarshalEchoPayload([]byte(`+"`"+`{"id":"req_1","value":{"type":"structured","value":{"label":"ready","extra":true}}}`+"`"+`))
 	if err == nil {
