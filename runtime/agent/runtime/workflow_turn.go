@@ -423,21 +423,16 @@ func (r *Runtime) publishStepToolSchedule(
 	turnID string,
 	record *stepToolRecord,
 ) error {
-	return r.publishHook(
-		ctx,
-		hooks.NewToolCallScheduledEvent(
-			base.RunContext.RunID,
-			input.AgentID,
-			base.RunContext.SessionID,
-			record.call.Name,
-			record.call.ToolCallID,
-			record.call.Payload,
-			record.scheduleQueue,
-			parentToolCallID(record.call, &base.RunContext),
-			record.expectedChildren,
-		),
-		turnID,
+	event := newToolCallScheduledEvent(
+		base.RunContext.RunID,
+		input.AgentID,
+		base.RunContext.SessionID,
+		record.call,
+		record.scheduleQueue,
+		parentToolCallID(record.call, &base.RunContext),
+		record.expectedChildren,
 	)
+	return r.publishHook(ctx, event, turnID)
 }
 
 // publishStepToolResult closes the canonical lifecycle for a result synthesized
@@ -577,13 +572,11 @@ func (l *workflowLoop) recordCapDeniedToolCall(
 	parentID := parentToolCallID(call, &l.base.RunContext)
 	if err := l.r.publishHook(
 		ctx,
-		hooks.NewToolCallScheduledEvent(
+		newToolCallScheduledEvent(
 			l.base.RunContext.RunID,
 			l.input.AgentID,
 			l.base.RunContext.SessionID,
-			call.Name,
-			call.ToolCallID,
-			call.Payload,
+			call,
 			"",
 			parentID,
 			0,

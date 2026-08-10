@@ -105,9 +105,9 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		return nil, err
 	}
 	recoveryReminders := r.recoveryReminders(dominantRecoveryOutputSet(recoveryOutputs))
-	var availableContinuations map[tools.Ident]struct{}
+	var continuationActions []continuationAction
 	if input.Finalize == nil && !input.SynthesisOnly {
-		availableContinuations, err = r.availableContinuationTools(input.AgentID, toolOutputs)
+		continuationActions, err = r.availableContinuationActions(input.AgentID, toolOutputs)
 		if err != nil {
 			return nil, err
 		}
@@ -115,13 +115,22 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	act, err := r.preparePlannerActivity(
 		ctx,
 		input,
-		availableContinuations,
+		continuationActions,
 		replanUnavailableTools(recoveryOutputs),
 	)
 	if err != nil {
 		return nil, err
 	}
 	act.reminders = append(recoveryReminders, act.reminders...)
+	if len(recoveryOutputs) == 0 {
+		result, automatic, err := r.automaticContinuationPlan(continuationActions)
+		if err != nil {
+			return nil, err
+		}
+		if automatic {
+			return act.output(ctx, result)
+		}
+	}
 	planInput := &planner.PlanResumeInput{
 		Messages:      act.messages,
 		RunContext:    input.RunContext,
@@ -137,7 +146,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		act.notePlannerRateLimit(ctx, err)
 		return nil, err
 	}
-	if err := r.bindContinuationCursors(result, toolOutputs); err != nil {
+	if err := r.bindContinuationCursors(result, continuationActions); err != nil {
 		return nil, err
 	}
 	if input.SynthesisOnly {
@@ -193,7 +202,7 @@ func validateRecoveryPolicy(outputs []*planner.ToolOutput, policy *PolicyOverrid
 func (r *Runtime) preparePlannerActivity(
 	ctx context.Context,
 	input *PlanActivityInput,
-	availableContinuations map[tools.Ident]struct{},
+	continuationActions []continuationAction,
 	unavailableTools []tools.Ident,
 ) (*plannerActivityInvocation, error) {
 	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID, input.RunContext.TurnID)
@@ -203,7 +212,7 @@ func (r *Runtime) preparePlannerActivity(
 		input,
 		events,
 		invocations,
-		availableContinuations,
+		continuationActions,
 		unavailableTools,
 	)
 	if err != nil {
@@ -614,7 +623,7 @@ func (r *Runtime) plannerContext(
 	input *PlanActivityInput,
 	events planner.PlannerEvents,
 	invocations modelInvocationSink,
-	availableContinuations map[tools.Ident]struct{},
+	continuationActions []continuationAction,
 	unavailableTools []tools.Ident,
 ) (*AgentRegistration, planner.PlannerContext, error) {
 	if input.AgentID == "" {
@@ -630,19 +639,19 @@ func (r *Runtime) plannerContext(
 	}
 	runPolicy := compileToolPolicy(input.Policy)
 	agentCtx := newAgentContext(agentContextOptions{
-		runtime:                r,
-		agentID:                input.AgentID,
-		runID:                  input.RunID,
-		memory:                 reader,
-		sessionID:              input.RunContext.SessionID,
-		labels:                 input.RunContext.Labels,
-		policy:                 runPolicy,
-		turnID:                 input.RunContext.TurnID,
-		events:                 events,
-		invocations:            invocations,
-		cache:                  reg.Policy.Cache,
-		availableContinuations: availableContinuations,
-		unavailableTools:       unavailableTools,
+		runtime:             r,
+		agentID:             input.AgentID,
+		runID:               input.RunID,
+		memory:              reader,
+		sessionID:           input.RunContext.SessionID,
+		labels:              input.RunContext.Labels,
+		policy:              runPolicy,
+		turnID:              input.RunContext.TurnID,
+		events:              events,
+		invocations:         invocations,
+		cache:               reg.Policy.Cache,
+		continuationActions: continuationActions,
+		unavailableTools:    unavailableTools,
 	})
 	return &reg, agentCtx, nil
 }

@@ -212,6 +212,9 @@ type (
 		// ParentToolCallID optionally identifies the tool call that requested this tool.
 		// Empty for top-level planner-requested tools. Used to track parent-child chains.
 		ParentToolCallID string
+		// ContinuationRootToolCallID identifies the original bounded query advanced
+		// by this continuation call. Empty for source queries and ordinary calls.
+		ContinuationRootToolCallID string
 		// ExpectedChildrenTotal indicates how many child tools are expected from this batch.
 		// A value of 0 means no children expected or count not tracked by the planner.
 		ExpectedChildrenTotal int

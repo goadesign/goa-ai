@@ -16,53 +16,53 @@ import (
 
 // agentContextOptions configures construction of a planner.PlannerContext.
 type agentContextOptions struct {
-	runtime                *Runtime
-	agentID                agent.Ident
-	runID                  string
-	memory                 memory.Reader
-	sessionID              string
-	labels                 map[string]string
-	policy                 compiledToolPolicy
-	turnID                 string
-	events                 planner.PlannerEvents
-	invocations            modelInvocationSink
-	cache                  CachePolicy
-	availableContinuations map[tools.Ident]struct{}
-	unavailableTools       []tools.Ident
+	runtime             *Runtime
+	agentID             agent.Ident
+	runID               string
+	memory              memory.Reader
+	sessionID           string
+	labels              map[string]string
+	policy              compiledToolPolicy
+	turnID              string
+	events              planner.PlannerEvents
+	invocations         modelInvocationSink
+	cache               CachePolicy
+	continuationActions []continuationAction
+	unavailableTools    []tools.Ident
 }
 
 // simplePlannerContext is a minimal implementation of planner.PlannerContext.
 type simplePlannerContext struct {
-	rt                     *Runtime
-	agent                  agent.Ident
-	runID                  string
-	turnID                 string
-	mem                    memory.Reader
-	sessionID              string
-	labels                 map[string]string
-	policy                 compiledToolPolicy
-	ev                     planner.PlannerEvents
-	invocations            modelInvocationSink
-	cache                  CachePolicy
-	availableContinuations map[tools.Ident]struct{}
-	unavailableTools       []tools.Ident
+	rt                  *Runtime
+	agent               agent.Ident
+	runID               string
+	turnID              string
+	mem                 memory.Reader
+	sessionID           string
+	labels              map[string]string
+	policy              compiledToolPolicy
+	ev                  planner.PlannerEvents
+	invocations         modelInvocationSink
+	cache               CachePolicy
+	continuationActions []continuationAction
+	unavailableTools    []tools.Ident
 }
 
 func newAgentContext(opts agentContextOptions) planner.PlannerContext {
 	return &simplePlannerContext{
-		rt:                     opts.runtime,
-		agent:                  opts.agentID,
-		runID:                  opts.runID,
-		turnID:                 opts.turnID,
-		mem:                    opts.memory,
-		sessionID:              opts.sessionID,
-		labels:                 cloneLabels(opts.labels),
-		policy:                 opts.policy,
-		ev:                     opts.events,
-		invocations:            opts.invocations,
-		cache:                  opts.cache,
-		availableContinuations: opts.availableContinuations,
-		unavailableTools:       opts.unavailableTools,
+		rt:                  opts.runtime,
+		agent:               opts.agentID,
+		runID:               opts.runID,
+		turnID:              opts.turnID,
+		mem:                 opts.memory,
+		sessionID:           opts.sessionID,
+		labels:              cloneLabels(opts.labels),
+		policy:              opts.policy,
+		ev:                  opts.events,
+		invocations:         opts.invocations,
+		cache:               opts.cache,
+		continuationActions: opts.continuationActions,
+		unavailableTools:    opts.unavailableTools,
 	}
 }
 
@@ -91,13 +91,22 @@ func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefiniti
 			continue
 		}
 		if isDedicatedContinuationSpec(spec) {
-			if _, ok := c.availableContinuations[spec.Name]; !ok {
-				continue
-			}
+			continue
 		}
 		visible = append(visible, spec)
 	}
-	return advertisedToolDefinitions(visible, c.policy)
+	definitions := advertisedToolDefinitions(visible, c.policy)
+	for _, action := range c.continuationActions {
+		if slices.Contains(c.unavailableTools, action.spec.Name) ||
+			!c.policy.allowsTool(action.spec.Name, toolPolicyFactsFromSpec(action.spec)) {
+			continue
+		}
+		definition := toolDefinitionFromSpec(action.spec)
+		definition.Name = action.modelName.String()
+		definition.Description = action.description
+		definitions = append(definitions, definition)
+	}
+	return definitions
 }
 func (c *simplePlannerContext) ModelClient(id string) (model.Client, bool) {
 	return c.configuredModelClient(id, false)

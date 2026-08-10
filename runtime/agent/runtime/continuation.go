@@ -1,11 +1,13 @@
 package runtime
 
 // continuation.go keeps dedicated pagination correlation inside the runtime.
-// The planner chooses the domain action to continue; the runtime binds the
-// cursor from the single compatible bounded result before execution.
+// The planner chooses among unfinished domain queries; the runtime binds the
+// chosen source call and cursor before execution.
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,20 +20,32 @@ import (
 )
 
 type (
+	// continuationAction is one model-visible action bound to one unfinished
+	// bounded query. The executable tool and cursor remain runtime-owned.
+	continuationAction struct {
+		modelName   tools.Ident
+		description string
+		spec        tools.ToolSpec
+		state       continuationState
+	}
+
 	// continuationState is the successful page available to a dedicated
 	// continuation action.
 	continuationState struct {
-		cursor  string
-		payload rawjson.Message
+		rootToolCallID string
+		query          rawjson.Message
+		cursor         string
+		payload        rawjson.Message
+		returned       int
 	}
 )
 
-// availableContinuationTools returns the dedicated continuation actions whose
-// single unconsumed successful result has another page. Parallel source calls
-// remain valid; an action is withheld while more than one invocation in its
-// family could be continued because its empty payload cannot select a chain.
-func (r *Runtime) availableContinuationTools(agentID agent.Ident, outputs []*planner.ToolOutput) (map[tools.Ident]struct{}, error) {
-	available := make(map[tools.Ident]struct{})
+// availableContinuationActions returns one empty-input model action for every
+// unfinished bounded query. Each action has a stable model name derived from
+// the source tool call and executes the generated continuation tool.
+func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*planner.ToolOutput) ([]continuationAction, error) {
+	var actions []continuationAction
+	names := make(map[tools.Ident]struct{})
 	for _, spec := range r.ToolSpecsForAgent(agentID) {
 		if !isDedicatedContinuationSpec(spec) {
 			continue
@@ -40,25 +54,43 @@ func (r *Runtime) availableContinuationTools(agentID agent.Ident, outputs []*pla
 		if err != nil {
 			return nil, err
 		}
-		if len(states) == 1 {
-			available[spec.Name] = struct{}{}
+		for _, state := range states {
+			action, err := newContinuationAction(spec, state)
+			if err != nil {
+				return nil, err
+			}
+			if _, exists := names[action.modelName]; exists {
+				return nil, fmt.Errorf("runtime: duplicate continuation action name %q", action.modelName)
+			}
+			if _, exists := r.toolSpec(action.modelName); exists {
+				return nil, fmt.Errorf("runtime: continuation action name %q conflicts with a registered tool", action.modelName)
+			}
+			names[action.modelName] = struct{}{}
+			actions = append(actions, action)
 		}
 	}
-	return available, nil
+	return actions, nil
 }
 
 // bindContinuationCursors converts model-authored empty continuation actions
 // into executable cursor payloads while preserving the empty model payload for
 // transcript replay.
-func (r *Runtime) bindContinuationCursors(result *planner.PlanResult, outputs []*planner.ToolOutput) error {
+func (r *Runtime) bindContinuationCursors(result *planner.PlanResult, actions []continuationAction) error {
 	if result == nil {
 		return errors.New("runtime: cannot bind continuation cursor on nil planner result")
+	}
+	byName := make(map[tools.Ident]continuationAction, len(actions))
+	for _, action := range actions {
+		byName[action.modelName] = action
 	}
 	bound := make(map[tools.Ident]struct{})
 	for i := range result.ToolCalls {
 		call := &result.ToolCalls[i]
-		spec, ok := r.toolSpec(call.Name)
-		if !ok || !isDedicatedContinuationSpec(spec) {
+		action, ok := byName[call.Name]
+		if !ok {
+			if spec, registered := r.toolSpec(call.Name); registered && isDedicatedContinuationSpec(spec) {
+				return fmt.Errorf("runtime: canonical continuation tool %q is not model-callable", call.Name)
+			}
 			continue
 		}
 		if _, exists := bound[call.Name]; exists {
@@ -68,70 +100,186 @@ func (r *Runtime) bindContinuationCursors(result *planner.PlanResult, outputs []
 		if err := validateEmptyContinuationPayload(call.Payload); err != nil {
 			return fmt.Errorf("runtime: continuation tool %q payload: %w", call.Name, err)
 		}
-		states, err := r.continuationStates(spec, outputs)
-		if err != nil {
-			return err
-		}
-		if len(states) == 0 {
-			return fmt.Errorf("runtime: continuation tool %q has no available preceding page", call.Name)
-		}
-		if len(states) > 1 {
-			return fmt.Errorf("runtime: continuation tool %q has multiple compatible chain heads", call.Name)
-		}
-		executable, err := r.continuationPayload(spec, states[0])
+		executable, err := r.continuationPayload(action.spec, action.state)
 		if err != nil {
 			return fmt.Errorf("runtime: bind continuation tool %q payload: %w", call.Name, err)
 		}
+		call.ModelName = call.Name
 		call.ModelPayload = append(rawjson.Message(nil), call.Payload...)
+		call.Name = action.spec.Name
 		call.Payload = executable
+		call.ContinuationRootToolCallID = action.state.rootToolCallID
 	}
 	return nil
 }
 
-// continuationStates returns every unconsumed successful page belonging to the
-// dedicated continuation or its source query. Each successful continuation
-// consumes the page whose next cursor it received, so completed ancestors are
-// omitted while independent parallel invocations remain separate live heads.
-func (r *Runtime) continuationStates(spec tools.ToolSpec, outputs []*planner.ToolOutput) ([]continuationState, error) {
-	consumed := make(map[string]struct{})
-	for _, output := range outputs {
-		if output == nil || output.Failure != nil || output.Name != spec.Name {
+// automaticContinuationPlan advances empty live pages before asking the model
+// to make another decision. A zero-item page contains no semantic evidence, so
+// the generated continuation and its runtime-owned cursor determine the only
+// useful next action.
+func (r *Runtime) automaticContinuationPlan(actions []continuationAction) (*planner.PlanResult, bool, error) {
+	calls := make([]planner.ToolRequest, 0, len(actions))
+	for _, action := range actions {
+		if action.state.returned != 0 {
 			continue
 		}
-		cursor, err := continuationInputCursor(spec, output.Payload)
+		payload, err := r.continuationPayload(action.spec, action.state)
 		if err != nil {
-			return nil, fmt.Errorf(
-				"runtime: continuation tool %q history: %w",
-				spec.Name,
-				err,
-			)
+			return nil, false, fmt.Errorf("runtime: build automatic continuation for %q: %w", action.spec.Name, err)
 		}
-		if _, exists := consumed[cursor]; exists {
-			return nil, fmt.Errorf(
-				"runtime: continuation tool %q cursor was consumed more than once",
-				spec.Name,
-			)
-		}
-		consumed[cursor] = struct{}{}
+		calls = append(calls, planner.ToolRequest{
+			Name:                       action.spec.Name,
+			Payload:                    payload,
+			ContinuationRootToolCallID: action.state.rootToolCallID,
+		})
 	}
+	if len(calls) == 0 {
+		return nil, false, nil
+	}
+	return &planner.PlanResult{ToolCalls: calls}, true, nil
+}
 
-	var states []continuationState
+// continuationStates reconstructs one live head per source tool call. A
+// continuation result carries its source call identity explicitly, so equal
+// opaque cursors and repeated identical queries remain independent.
+func (r *Runtime) continuationStates(spec tools.ToolSpec, outputs []*planner.ToolOutput) ([]continuationState, error) {
+	sourceSpec, ok := r.toolSpec(spec.Bounds.Paging.SourceTool)
+	if !ok {
+		return nil, fmt.Errorf(
+			"runtime: continuation tool %q source tool %q is not registered",
+			spec.Name,
+			spec.Bounds.Paging.SourceTool,
+		)
+	}
+	states := make(map[string]continuationState)
+	var order []string
 	for _, output := range outputs {
 		if output == nil || output.Failure != nil || !isContinuationOutput(spec, output.Name) {
 			continue
 		}
+
+		var rootToolCallID string
+		var query rawjson.Message
+		var consumedCursor string
+		if output.Name == spec.Bounds.Paging.SourceTool {
+			if output.ToolCallID == "" {
+				return nil, fmt.Errorf("runtime: continuation source tool %q history has an empty tool call id", output.Name)
+			}
+			rootToolCallID = output.ToolCallID
+			var err error
+			query, err = modelVisibleContinuationQuery(sourceSpec, output.Payload)
+			if err != nil {
+				return nil, fmt.Errorf("runtime: continuation source tool %q query: %w", output.Name, err)
+			}
+			if _, exists := states[rootToolCallID]; !exists {
+				order = append(order, rootToolCallID)
+			}
+		} else {
+			rootToolCallID = output.ContinuationRootToolCallID
+			if rootToolCallID == "" {
+				return nil, fmt.Errorf("runtime: continuation tool %q history has no source tool call id", spec.Name)
+			}
+			previous, exists := states[rootToolCallID]
+			if !exists {
+				return nil, fmt.Errorf(
+					"runtime: continuation tool %q history references unknown source tool call %q",
+					spec.Name,
+					rootToolCallID,
+				)
+			}
+			inputCursor, err := continuationInputCursor(spec, output.Payload)
+			if err != nil {
+				return nil, fmt.Errorf("runtime: continuation tool %q history: %w", spec.Name, err)
+			}
+			if inputCursor != previous.cursor {
+				return nil, fmt.Errorf(
+					"runtime: continuation tool %q history advanced source tool call %q with the wrong cursor",
+					spec.Name,
+					rootToolCallID,
+				)
+			}
+			consumedCursor = inputCursor
+			query = previous.query
+		}
+
 		if output.Bounds == nil || output.Bounds.NextCursor == nil || *output.Bounds.NextCursor == "" {
+			delete(states, rootToolCallID)
 			continue
 		}
-		if _, wasConsumed := consumed[*output.Bounds.NextCursor]; wasConsumed {
-			continue
+		if consumedCursor != "" && *output.Bounds.NextCursor == consumedCursor {
+			return nil, fmt.Errorf(
+				"runtime: continuation tool %q did not advance source tool call %q cursor",
+				spec.Name,
+				rootToolCallID,
+			)
 		}
-		states = append(states, continuationState{
-			cursor:  *output.Bounds.NextCursor,
-			payload: output.Payload,
-		})
+		states[rootToolCallID] = continuationState{
+			rootToolCallID: rootToolCallID,
+			query:          query,
+			cursor:         *output.Bounds.NextCursor,
+			payload:        output.Payload,
+			returned:       output.Bounds.Returned,
+		}
 	}
-	return states, nil
+
+	live := make([]continuationState, 0, len(states))
+	for _, rootToolCallID := range order {
+		if state, ok := states[rootToolCallID]; ok {
+			live = append(live, state)
+		}
+	}
+	return live, nil
+}
+
+// newContinuationAction builds the model-facing identity and description for one
+// exact live chain without exposing its cursor.
+func newContinuationAction(spec tools.ToolSpec, state continuationState) (continuationAction, error) {
+	if state.rootToolCallID == "" {
+		return continuationAction{}, fmt.Errorf("runtime: continuation tool %q state has an empty source tool call id", spec.Name)
+	}
+	name := continuationActionName(spec.Name, state.rootToolCallID)
+	return continuationAction{
+		modelName: name,
+		description: fmt.Sprintf(
+			"Continue the unfinished %s query with original input %s. The latest page returned %d items.",
+			spec.Bounds.Paging.SourceTool,
+			state.query,
+			state.returned,
+		),
+		spec:  spec,
+		state: state,
+	}, nil
+}
+
+// continuationActionName derives a provider-safe stable name from the canonical
+// continuation tool and the source query's tool-call identity.
+func continuationActionName(toolName tools.Ident, rootToolCallID string) tools.Ident {
+	sum := sha256.Sum256([]byte(toolName.String() + "\x00" + rootToolCallID))
+	return tools.Ident("continue_" + hex.EncodeToString(sum[:12]))
+}
+
+// modelVisibleContinuationQuery retains only generated model-facing fields
+// from a canonical source payload. Runtime-injected fields therefore never
+// enter dynamic tool descriptions.
+func modelVisibleContinuationQuery(spec tools.ToolSpec, payload rawjson.Message) (rawjson.Message, error) {
+	if spec.Payload.FieldJSONTypes == nil {
+		return rawjson.Message(`{}`), nil
+	}
+	var canonical map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &canonical); err != nil {
+		return nil, fmt.Errorf("decode canonical payload: %w", err)
+	}
+	visible := make(map[string]json.RawMessage)
+	for name := range spec.Payload.FieldJSONTypes {
+		if value, ok := canonical[name]; ok {
+			visible[name] = value
+		}
+	}
+	data, err := json.Marshal(visible)
+	if err != nil {
+		return nil, fmt.Errorf("encode model-visible payload: %w", err)
+	}
+	return rawjson.Message(data), nil
 }
 
 // continuationInputCursor reads the runtime-authored cursor from a canonical

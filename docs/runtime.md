@@ -1498,14 +1498,18 @@ The runtime enforces one strict contract across all result ingress paths
   `refinement_hint`.
 
 When `tools.ToolSpec.Bounds.Paging` names a dedicated continuation, the runtime
-advertises that tool only while the single compatible successful result in the
-preceding batch has a non-empty next cursor. The model-facing continuation
-schema is an empty object. Before execution, the runtime binds the opaque cursor
-and any canonical query fields retained from the preceding page, while
-preserving the model-authored empty payload separately for transcript replay. A
-planner batch may contain at most one call for a dedicated continuation chain;
-a continuation cannot advance a different result chain or run without an
-available preceding page.
+advances compatible zero-item results with a non-empty next cursor before
+invoking the planner. The continuation is fully determined until the chain
+returns evidence or exhausts. For a result containing one or more items, the
+runtime advertises a temporary action that uses the generated empty-object
+continuation schema and describes the original model-visible query. Before
+execution, the runtime maps the selected action to the canonical continuation
+tool, binds that query's source tool-call identity and opaque cursor, and
+retains any required canonical query fields. The model-authored action name and
+empty payload remain separate for transcript replay. A planner batch may
+advance several independent actions, but may call each action at most once. A
+continuation result that repeats its input cursor is rejected because it cannot
+make progress.
 
 ```go
 type Bounds struct {
@@ -1518,16 +1522,17 @@ type Bounds struct {
 
 The runtime surfaces bounds via `ToolResult.Bounds`, encoded `tool_result` JSON,
 result-hint templates under `.Bounds`, hook events, and stream events. Services
-own truncation logic; the runtime only propagates and projects what tools
-report.
+own truncation logic; the runtime propagates their bounds and advances only
+zero-item dedicated continuations whose next action is mechanically known.
 
 For a dedicated continuation, `Bounds.NextCursor` remains runtime-owned and is
-not projected into the model-visible result. The runtime exposes the empty
-continuation action only when the preceding batch contains exactly one
-compatible successful page with another cursor. It then binds that cursor and,
-when configured, the originating query payload before execution. Multiple
-compatible pages are rejected as ambiguous because the empty continuation
-contract intentionally exposes no chain selector.
+not projected into the model-visible result. The runtime exposes a distinct
+empty-input action per live chain after that chain returns at least one item and
+includes the original model-visible query in that action's description. It
+binds the selected chain's exact cursor and, when configured, the originating
+query payload before execution. The durable scheduled-call record carries the
+source tool-call identity, so completing or advancing one chain does not
+consume another chain even when their cursor bytes are equal.
 
 For a self-paging tool declared with `Cursor`, `Bounds.NextCursor` is projected
 into the configured result field and the model supplies it in the next call.

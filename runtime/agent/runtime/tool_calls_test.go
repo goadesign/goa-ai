@@ -12,6 +12,29 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+func TestNewToolCallScheduledEventPreservesRuntimeCorrelation(t *testing.T) {
+	t.Parallel()
+
+	event := newToolCallScheduledEvent(
+		"run-1",
+		"svc.agent",
+		"session-1",
+		planner.ToolRequest{
+			Name:                       "tools.continue_search",
+			ToolCallID:                 "continue-1",
+			Payload:                    rawjson.Message(`{"cursor":"next"}`),
+			ContinuationRootToolCallID: "source-1",
+		},
+		"tools",
+		"parent-1",
+		2,
+	)
+
+	require.Equal(t, "source-1", event.ContinuationRootToolCallID)
+	require.Equal(t, "parent-1", event.ParentToolCallID)
+	require.Equal(t, 2, event.ExpectedChildrenTotal)
+}
+
 func TestDispatchToolCallsPropagatesLabelsToActivityInput(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background()}
 	exec := &toolBatchExec{

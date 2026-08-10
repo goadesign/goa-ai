@@ -301,8 +301,43 @@ func (e *toolBatchExec) publishToolResultReceived(
 }
 
 func (e *toolBatchExec) publishToolCallScheduled(ctx context.Context, call planner.ToolRequest, queue string) error {
-	ev := hooks.NewToolCallScheduledEvent(e.runID, e.agentID, e.sessionID, call.Name, call.ToolCallID, call.Payload, queue, call.ParentToolCallID, e.expectedChildren)
+	ev := newToolCallScheduledEvent(
+		e.runID,
+		e.agentID,
+		e.sessionID,
+		call,
+		queue,
+		call.ParentToolCallID,
+		e.expectedChildren,
+	)
 	return e.r.publishHook(ctx, ev, e.turnID)
+}
+
+// newToolCallScheduledEvent projects one complete planner request into its
+// durable scheduled-call record. Every workflow path uses this constructor so
+// runtime-owned correlation metadata cannot be dropped.
+func newToolCallScheduledEvent(
+	runID string,
+	agentID agent.Ident,
+	sessionID string,
+	call planner.ToolRequest,
+	queue string,
+	parentToolCallID string,
+	expectedChildren int,
+) *hooks.ToolCallScheduledEvent {
+	event := hooks.NewToolCallScheduledEvent(
+		runID,
+		agentID,
+		sessionID,
+		call.Name,
+		call.ToolCallID,
+		call.Payload,
+		queue,
+		parentToolCallID,
+		expectedChildren,
+	)
+	event.ContinuationRootToolCallID = call.ContinuationRootToolCallID
+	return event
 }
 
 func computeToolActivityOptions(wfCtx engine.WorkflowContext, base engine.ActivityOptions, finishBy time.Time) engine.ActivityOptions {

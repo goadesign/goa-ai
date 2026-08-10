@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/prompt"
@@ -18,6 +19,35 @@ const (
 	testRunID     = "run-1"
 	testSessionID = "session-1"
 )
+
+func TestToolCallScheduledCodecPreservesContinuationRoot(t *testing.T) {
+	t.Parallel()
+
+	event := NewToolCallScheduledEvent(
+		"run-1",
+		"agent-1",
+		"session-1",
+		tools.Ident("tools.continue_search"),
+		"continue-1",
+		rawjson.Message(`{"cursor":"next"}`),
+		"tools",
+		"",
+		0,
+	)
+	event.ContinuationRootToolCallID = "source-1"
+
+	record, err := EncodeToRecordInput(event, EncodeOptions{
+		EventKey:    "event-1",
+		TimestampMS: 1,
+	})
+	require.NoError(t, err)
+	decoded, err := DecodeFromRecordInput(record)
+	require.NoError(t, err)
+
+	scheduled, ok := decoded.(*ToolCallScheduledEvent)
+	require.True(t, ok)
+	assert.Equal(t, "source-1", scheduled.ContinuationRootToolCallID)
+}
 
 func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *testing.T) {
 	agentID := agent.Ident("agent-1")
