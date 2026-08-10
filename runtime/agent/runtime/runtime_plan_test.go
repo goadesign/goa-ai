@@ -344,6 +344,76 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 	require.NotNil(t, out.Result.FinalResponse)
 }
 
+func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) {
+	const nextCursorValue = "next-page"
+
+	plannerCalled := false
+	pl := &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+		plannerCalled = true
+		return nil, nil
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	search, continuation := continuationTestSpecs()
+	seedTestToolSpecs(rt, search, continuation)
+	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
+		"service.agent": {search, continuation},
+	}
+	require.NoError(t, rt.publishHookErr(
+		context.Background(),
+		hooks.NewToolCallScheduledEvent(
+			"run-123",
+			"service.agent",
+			"",
+			search.Name,
+			"source-1",
+			rawjson.Message(`{"query":"alarms"}`),
+			"queue",
+			"",
+			0,
+		),
+		"",
+	))
+	nextCursor := nextCursorValue
+	resultJSON := rawjson.Message(`{"items":[]}`)
+	require.NoError(t, rt.publishHookErr(
+		context.Background(),
+		hooks.NewToolResultReceivedEvent(
+			"run-123",
+			"service.agent",
+			"",
+			search.Name,
+			"source-1",
+			"",
+			resultJSON,
+			len(resultJSON),
+			false,
+			"",
+			nil,
+			"",
+			&agent.Bounds{Returned: 0, Truncated: true, NextCursor: &nextCursor},
+			0,
+			nil,
+			nil,
+		),
+		"",
+	))
+
+	out, err := rt.PlanResumeActivity(context.Background(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123"},
+		ToolOutputs: []*api.ToolOutputRef{{
+			ToolCallID: "source-1",
+		}},
+	})
+	require.NoError(t, err)
+	require.False(t, plannerCalled)
+	require.Len(t, out.Result.ToolCalls, 1)
+	require.Equal(t, continuation.Name, out.Result.ToolCalls[0].Name)
+	require.Equal(t, "source-1", out.Result.ToolCalls[0].ContinuationRootToolCallID)
+	require.JSONEq(t, `{"cursor":"`+nextCursorValue+`"}`, string(out.Result.ToolCalls[0].Payload))
+}
+
 func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) {
 	first := newAnyJSONSpec("svc.tools.first", "svc.tools")
 	wrong := newAnyJSONSpec("svc.tools.wrong", "svc.tools")

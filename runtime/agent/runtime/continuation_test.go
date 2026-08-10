@@ -86,6 +86,45 @@ func TestContinuationActionSupportsSourceWithoutModelFields(t *testing.T) {
 	assert.Equal(t, continuation.Name, actions[0].spec.Name)
 }
 
+func TestAutomaticContinuationAdvancesOnlyEmptyLiveChains(t *testing.T) {
+	t.Parallel()
+
+	rt, search, continuation := continuationTestRuntime()
+	empty := sourceContinuationOutput(search.Name, "source-empty", `{"query":"may"}`, "may-next")
+	empty.Bounds.Returned = 0
+	outputs := []*planner.ToolOutput{
+		empty,
+		sourceContinuationOutput(search.Name, "source-data", `{"query":"june"}`, "june-next"),
+	}
+	actions, err := rt.availableContinuationActions("svc.agent", outputs)
+	require.NoError(t, err)
+
+	result, automatic, err := rt.automaticContinuationPlan(actions)
+	require.NoError(t, err)
+	require.True(t, automatic)
+	require.Len(t, result.ToolCalls, 1)
+	call := result.ToolCalls[0]
+	assert.Equal(t, continuation.Name, call.Name)
+	assert.Empty(t, call.ModelName)
+	assert.Equal(t, "source-empty", call.ContinuationRootToolCallID)
+	assert.JSONEq(t, `{"cursor":"may-next"}`, string(call.Payload))
+}
+
+func TestAutomaticContinuationLeavesNonEmptyPagesForModelDecision(t *testing.T) {
+	t.Parallel()
+
+	rt, search, _ := continuationTestRuntime()
+	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
+	})
+	require.NoError(t, err)
+
+	result, automatic, err := rt.automaticContinuationPlan(actions)
+	require.NoError(t, err)
+	assert.False(t, automatic)
+	assert.Nil(t, result)
+}
+
 func TestContinuationActionNameStaysStableAsChainAdvances(t *testing.T) {
 	t.Parallel()
 
@@ -197,6 +236,25 @@ func TestContinuationHistoryRejectsWrongCursor(t *testing.T) {
 
 	_, err := rt.availableContinuationActions("svc.agent", outputs)
 	assert.ErrorContains(t, err, "with the wrong cursor")
+}
+
+func TestContinuationHistoryRejectsCursorWithoutProgress(t *testing.T) {
+	t.Parallel()
+
+	rt, search, continuation := continuationTestRuntime()
+	outputs := []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "same"),
+		{
+			Name:                       continuation.Name,
+			ToolCallID:                 "continue-1",
+			ContinuationRootToolCallID: "source-1",
+			Payload:                    rawjson.Message(`{"cursor":"same"}`),
+			Bounds:                     &agent.Bounds{Truncated: true, NextCursor: pointer("same")},
+		},
+	}
+
+	_, err := rt.availableContinuationActions("svc.agent", outputs)
+	assert.ErrorContains(t, err, "did not advance")
 }
 
 func TestPlannerToolOutputHydrationPreservesContinuationRoot(t *testing.T) {

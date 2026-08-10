@@ -680,16 +680,20 @@ cursor mode, the continuation tool accepts one required cursor, and generated
 runtime metadata routes the next page. `Cursor` on the originating tool remains
 available only for APIs where callers must intentionally repeat the original
 query. This keeps correlation state in the issuing system instead of asking a
-model to reproduce it. Parallel source invocations are valid. The runtime
-derives one temporary no-argument action for each live source invocation. Each
-action has a stable model-facing name and describes the original model-visible
-query, while execution retains the canonical continuation tool name. Selecting
-an action binds the exact source tool-call identity and cursor into the
-executable request. Successful continuation results carry that source identity
-through the durable tool-call record, so repeated equal queries, equal opaque
-cursors, sequential pages, and parallel batches remain independent. The model
-chooses which semantic query to continue but never reproduces a cursor or
-correlation identifier.
+model to reproduce it. Parallel source invocations are valid. When a live page
+returns zero items and a next cursor, the runtime advances that chain before
+planning because no semantic evidence exists for the model to judge. Once a
+page returns items, the runtime derives one temporary no-argument action for
+that live source invocation. Each action has a stable model-facing name and
+describes the original model-visible query, while execution retains the
+canonical continuation tool name. Selecting an action binds the exact source
+tool-call identity and cursor into the executable request. Successful
+continuation results carry that source identity through the durable tool-call
+record, so repeated equal queries, equal opaque cursors, sequential pages, and
+parallel batches remain independent. A continuation that returns its input
+cursor violates the paging contract and fails immediately. The model chooses
+which semantic query with returned evidence to continue but never reproduces a
+cursor or correlation identifier.
 
 For each tool with a non-empty payload, the plugin derives JSON Schema from the
 Goa attribute using Goa's `openapi.Schema` type for complete JSON Schema draft

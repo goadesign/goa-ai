@@ -113,6 +113,32 @@ func (r *Runtime) bindContinuationCursors(result *planner.PlanResult, actions []
 	return nil
 }
 
+// automaticContinuationPlan advances empty live pages before asking the model
+// to make another decision. A zero-item page contains no semantic evidence, so
+// the generated continuation and its runtime-owned cursor determine the only
+// useful next action.
+func (r *Runtime) automaticContinuationPlan(actions []continuationAction) (*planner.PlanResult, bool, error) {
+	calls := make([]planner.ToolRequest, 0, len(actions))
+	for _, action := range actions {
+		if action.state.returned != 0 {
+			continue
+		}
+		payload, err := r.continuationPayload(action.spec, action.state)
+		if err != nil {
+			return nil, false, fmt.Errorf("runtime: build automatic continuation for %q: %w", action.spec.Name, err)
+		}
+		calls = append(calls, planner.ToolRequest{
+			Name:                       action.spec.Name,
+			Payload:                    payload,
+			ContinuationRootToolCallID: action.state.rootToolCallID,
+		})
+	}
+	if len(calls) == 0 {
+		return nil, false, nil
+	}
+	return &planner.PlanResult{ToolCalls: calls}, true, nil
+}
+
 // continuationStates reconstructs one live head per source tool call. A
 // continuation result carries its source call identity explicitly, so equal
 // opaque cursors and repeated identical queries remain independent.
@@ -134,6 +160,7 @@ func (r *Runtime) continuationStates(spec tools.ToolSpec, outputs []*planner.Too
 
 		var rootToolCallID string
 		var query rawjson.Message
+		var consumedCursor string
 		if output.Name == spec.Bounds.Paging.SourceTool {
 			if output.ToolCallID == "" {
 				return nil, fmt.Errorf("runtime: continuation source tool %q history has an empty tool call id", output.Name)
@@ -171,12 +198,20 @@ func (r *Runtime) continuationStates(spec tools.ToolSpec, outputs []*planner.Too
 					rootToolCallID,
 				)
 			}
+			consumedCursor = inputCursor
 			query = previous.query
 		}
 
 		if output.Bounds == nil || output.Bounds.NextCursor == nil || *output.Bounds.NextCursor == "" {
 			delete(states, rootToolCallID)
 			continue
+		}
+		if consumedCursor != "" && *output.Bounds.NextCursor == consumedCursor {
+			return nil, fmt.Errorf(
+				"runtime: continuation tool %q did not advance source tool call %q cursor",
+				spec.Name,
+				rootToolCallID,
+			)
 		}
 		states[rootToolCallID] = continuationState{
 			rootToolCallID: rootToolCallID,

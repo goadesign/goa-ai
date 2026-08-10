@@ -534,7 +534,33 @@ Tool("continue_time_series", "Continue a bounded time-series view", func() {
 })
 ```
 
-`BoundedResult` makes truncation explicit through runtime-owned bounds metadata (`returned`, `truncated`, `total`, `next_cursor`, and `refinement_hint`). `total` may be required when the service always computes exact cardinality and optional otherwise. Bounds metadata is success-only: error results never carry bounds. Generated tool specs and result JSON use model-facing JSON names, so lower-camel Goa fields such as `nextCursor` are exposed as `next_cursor`. Use `ContinueWith` when the cursor already carries the resolved query: the originating tool keeps an honest semantic payload, the required cursor-only sibling resumes it, and the runtime advertises one temporary no-argument action for each unfinished query. Each action describes its original model-visible input, so a model can choose among parallel result sets without copying a cursor or call ID. The runtime maps the chosen action to the generated continuation tool, binds its exact cursor and, when required, retains the prior canonical query payload for execution. Use `Cursor` directly only when repeating the original arguments is part of the public contract. Truncated results must carry a continuation: bound method results must define `refinement_hint` (snake_case, optional String) unless paging is configured, and the runtime rejects truncated results that provide neither a next cursor nor a refinement hint. `ServerData` attaches rich data that is never sent to model providers. The registry executor validates each item with its generated kind-specific codec and persists only canonical JSON; unknown, duplicate, audience-mismatched, or invalid items fail the result.
+`BoundedResult` makes truncation explicit through runtime-owned bounds metadata
+(`returned`, `truncated`, `total`, `next_cursor`, and `refinement_hint`). `total`
+may be required when the service always computes exact cardinality and optional
+otherwise. Bounds metadata is success-only: error results never carry bounds.
+Generated tool specs and result JSON use model-facing JSON names, so lower-camel
+Goa fields such as `nextCursor` are exposed as `next_cursor`.
+
+Use `ContinueWith` when the cursor already carries the resolved query: the
+originating tool keeps an honest semantic payload, the required cursor-only
+sibling resumes it, and the runtime tracks each unfinished query independently.
+A page with zero returned items is advanced automatically because it contains
+no evidence for a model to evaluate. After a page returns items, the runtime
+advertises a temporary no-argument action describing the original model-visible
+input, so the model can choose among parallel result sets without copying a
+cursor or call ID. The runtime maps the chosen action to the generated
+continuation tool, binds its exact cursor and, when required, retains the prior
+canonical query payload for execution. Continuation cursors must advance on
+every successful page.
+
+Use `Cursor` directly only when repeating the original arguments is part of the
+public contract. Truncated results must carry a continuation: bound method
+results must define `refinement_hint` (snake_case, optional String) unless
+paging is configured, and the runtime rejects truncated results that provide
+neither a next cursor nor a refinement hint. `ServerData` attaches rich data
+that is never sent to model providers. The registry executor validates each
+item with its generated kind-specific codec and persists only canonical JSON;
+unknown, duplicate, audience-mismatched, or invalid items fail the result.
 
 ### Generated Evaluation Suites
 

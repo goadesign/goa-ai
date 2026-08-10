@@ -122,6 +122,15 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		return nil, err
 	}
 	act.reminders = append(recoveryReminders, act.reminders...)
+	if len(recoveryOutputs) == 0 {
+		result, automatic, err := r.automaticContinuationPlan(continuationActions)
+		if err != nil {
+			return nil, err
+		}
+		if automatic {
+			return act.output(result)
+		}
+	}
 	planInput := &planner.PlanResumeInput{
 		Messages:      act.messages,
 		RunContext:    input.RunContext,

@@ -317,11 +317,14 @@ Contract:
 - Prefer `ContinueWith("continue_tool", "cursor")` when the cursor identifies the
   prior query. The sibling continuation declares the required cursor with
   `Cursor("cursor")`; its model-facing schema is an empty object. The runtime
-  advertises one temporary action per live result-chain head, with the original
-  model-visible query in the action description. The model may choose and call
-  independent actions in one batch. The runtime preserves each empty model
-  payload for replay and binds the selected source tool-call identity, cursor,
-  and any required prior query fields only in the execution payload.
+  advances zero-item pages automatically because they contain no evidence for
+  the model to judge. After a page returns items, the runtime advertises one
+  temporary action per live result-chain head, with the original model-visible
+  query in the action description. The model may choose and call independent
+  actions in one batch. The runtime preserves each empty model payload for
+  replay and binds the selected source tool-call identity, cursor, and any
+  required prior query fields only in the execution payload. Every continuation
+  must return a cursor different from the one it consumed.
 - Use `Cursor(...)` directly on the original tool only when the caller must
   intentionally repeat all other query arguments. In that mode, keep those
   arguments unchanged and set only the cursor field.
