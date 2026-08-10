@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"io"
 	"testing"
 
@@ -24,10 +25,11 @@ type (
 	}
 
 	chunkStreamer struct {
-		chunks   []model.Chunk
-		response *model.Response
-		index    int
-		closed   bool
+		chunks      []model.Chunk
+		response    *model.Response
+		terminalErr error
+		index       int
+		closed      bool
 	}
 )
 
@@ -49,6 +51,9 @@ func (e *recordingPlannerEvents) UsageDelta(_ context.Context, usage model.Token
 
 func (s *chunkStreamer) Recv() (model.Chunk, error) {
 	if s.index >= len(s.chunks) {
+		if s.terminalErr != nil {
+			return nil, s.terminalErr
+		}
 		return nil, io.EOF
 	}
 	chunk := s.chunks[s.index]
@@ -63,6 +68,89 @@ func (s *chunkStreamer) Close() error {
 
 func (s *chunkStreamer) Response() *model.Response {
 	return s.response
+}
+
+func TestModelPresentationPublishesOnlySelectedAttempt(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	events := &recordingPlannerEvents{}
+	invocations := &modelInvocationJournal{}
+	request := &model.Request{Model: "gpt-5", ModelClass: model.ModelClassDefault}
+	failed := newModelInvocationClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			return &chunkStreamer{
+				chunks: []model.Chunk{
+					model.TextChunk{Message: model.Message{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{model.TextPart{Text: "discarded partial"}},
+					}},
+					model.UsageChunk{Usage: model.TokenUsage{
+						InputTokens: 1, OutputTokens: 2, TotalTokens: 3,
+					}},
+				},
+				terminalErr: errors.New("retryable provider failure"),
+			}, nil
+		},
+	}, invocations)
+	failedStream, err := failed.Stream(ctx, request)
+	require.NoError(t, err)
+	_, err = planner.ConsumeStream(ctx, failedStream, request, events)
+	require.EqualError(t, err, "retryable provider failure")
+	require.Empty(t, events.chunks)
+	require.Empty(t, events.usage)
+
+	response := &model.Response{
+		Content: []model.Message{{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "selected answer"}},
+		}},
+		StopReason: "end_turn",
+		Usage: model.TokenUsage{
+			InputTokens: 4, OutputTokens: 5, TotalTokens: 9,
+		},
+	}
+	selected := newModelInvocationClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			return &chunkStreamer{
+				chunks: []model.Chunk{
+					model.TextChunk{Message: response.Content[0]},
+					model.UsageChunk{Usage: response.Usage},
+					model.StopChunk{Reason: response.StopReason},
+				},
+				response: response,
+			}, nil
+		},
+	}, invocations)
+	selectedStream, err := selected.Stream(ctx, request)
+	require.NoError(t, err)
+	summary, err := planner.ConsumeStream(ctx, selectedStream, request, events)
+	require.NoError(t, err)
+	require.Empty(t, events.chunks)
+	require.Empty(t, events.usage)
+
+	result := &planner.PlanResult{FinalResponse: summary.FinalResponse(), Streamed: true}
+	_, err = invocations.exportModelInvocation(result)
+	require.NoError(t, err)
+	invocations.publishSelectedPresentation(ctx, events)
+
+	require.Equal(t, []string{"selected answer"}, events.chunks)
+	require.Equal(t, []model.TokenUsage{
+		{
+			Model:        "gpt-5",
+			ModelClass:   model.ModelClassDefault,
+			InputTokens:  1,
+			OutputTokens: 2,
+			TotalTokens:  3,
+		},
+		{
+			Model:        "gpt-5",
+			ModelClass:   model.ModelClassDefault,
+			InputTokens:  4,
+			OutputTokens: 5,
+			TotalTokens:  9,
+		},
+	}, events.usage)
 }
 
 func TestSimplePlannerContextModelClientDoesNotEmitPlannerEvents(t *testing.T) {
@@ -344,13 +432,8 @@ func TestPlannerModelClientScopesCompleteResponseTranscript(t *testing.T) {
 
 	_, err := client.Complete(context.Background(), &model.Request{})
 	require.NoError(t, err)
-	require.Equal(t, []string{"answer"}, events.chunks)
-	require.Equal(t, []model.ThinkingPart{{
-		Text:      "reasoning",
-		Signature: "thinking-signature",
-		Index:     0,
-		Final:     true,
-	}}, events.thinking)
+	require.Empty(t, events.chunks)
+	require.Empty(t, events.thinking)
 
 	transcript, err := invocations.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{{
@@ -360,6 +443,14 @@ func TestPlannerModelClientScopesCompleteResponseTranscript(t *testing.T) {
 		}},
 	})
 	require.NoError(t, err)
+	invocations.publishSelectedPresentation(context.Background(), events)
+	require.Equal(t, []string{"answer"}, events.chunks)
+	require.Equal(t, []model.ThinkingPart{{
+		Text:      "reasoning",
+		Signature: "thinking-signature",
+		Index:     0,
+		Final:     true,
+	}}, events.thinking)
 	require.Len(t, transcript, 1)
 	require.Equal(t, model.ConversationRoleAssistant, transcript[0].Role)
 	require.Equal(t, []model.Part{

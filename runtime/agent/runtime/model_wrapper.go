@@ -12,8 +12,8 @@ import (
 )
 
 // This file implements planner-scoped model client wrappers owned by the
-// runtime. The planner client wrapper emits runtime planner events as model
-// output is consumed, while the remaining wrappers apply cache, tracing, and
+// runtime. Model output is recorded per invocation until the planner selects a
+// response, while the remaining wrappers apply cache, tracing, and
 // model-invocation policy to raw model clients returned from
 // PlannerContext.ModelClient.
 //
@@ -35,8 +35,8 @@ type (
 	// a planner activity. It never crosses the planner or workflow boundary.
 	modelInvocationID = provenance.Token
 
-	// plannerModelClient wraps a raw model.Client and owns PlannerEvents
-	// emission for one planner turn.
+	// plannerModelClient wraps a raw model.Client and identifies the selected
+	// invocation for one planner turn.
 	plannerModelClient struct {
 		inner  model.Client
 		events planner.PlannerEvents
@@ -45,8 +45,8 @@ type (
 	}
 )
 
-// newPlannerModelClient returns a planner-scoped client that emits
-// PlannerEvents for assistant text, thinking blocks, and usage.
+// newPlannerModelClient returns a planner-scoped client whose provider output is
+// published after the planner selects its response.
 func newPlannerModelClient(inner model.Client, events planner.PlannerEvents) planner.PlannerModelClient {
 	if inner == nil {
 		return nil
@@ -60,26 +60,17 @@ func newPlannerModelClient(inner model.Client, events planner.PlannerEvents) pla
 	}
 }
 
-// Complete delegates to the inner client, then emits its ordered assistant
-// presentation and usage. If the adapter did not stamp model identity, the
-// wrapper fills it from the request. Transcript persistence remains a separate
-// exactly-once workflow transition.
+// Complete delegates to the inner client. The invocation journal publishes
+// presentation only after the planner result selects this response.
 func (c *plannerModelClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
 	if err := c.begin(); err != nil {
 		return nil, err
 	}
 	resp, err := c.inner.Complete(ctx, req)
-	if err != nil {
-		return resp, err
-	}
-	for i := range resp.Content {
-		emitMessageContent(ctx, c.events, &resp.Content[i])
-	}
-	if (resp.Usage != model.TokenUsage{}) {
+	if err == nil {
 		stampModelIdentity(&resp.Usage, req)
-		c.events.UsageDelta(ctx, resp.Usage)
 	}
-	return resp, nil
+	return resp, err
 }
 
 // Stream delegates to the inner client, drains the resulting stream through the
@@ -200,6 +191,7 @@ func (c *modelInvocationClient) Complete(ctx context.Context, req *model.Request
 	if err != nil {
 		return resp, c.sink.finishModelInvocation(invocationID, err)
 	}
+	stampModelIdentity(&resp.Usage, req)
 	if err := c.sink.recordModelResponse(invocationID, resp); err != nil {
 		return nil, c.sink.finishModelInvocation(invocationID, err)
 	}
@@ -226,6 +218,7 @@ func (c *modelInvocationClient) Stream(ctx context.Context, req *model.Request) 
 		inner:        st,
 		sink:         c.sink,
 		invocationID: invocationID,
+		request:      req,
 	}, nil
 }
 
@@ -235,6 +228,7 @@ type modelInvocationStreamer struct {
 	inner        model.Streamer
 	sink         modelInvocationSink
 	invocationID modelInvocationID
+	request      *model.Request
 	finished     bool
 }
 
@@ -248,6 +242,7 @@ func (s *modelInvocationStreamer) Recv() (model.Chunk, error) {
 				err := errors.New("model stream ended without a canonical response")
 				return nil, s.sink.finishModelInvocation(s.invocationID, err)
 			}
+			stampModelIdentity(&response.Usage, s.request)
 			if err := s.sink.recordModelResponse(s.invocationID, response); err != nil {
 				return nil, s.sink.finishModelInvocation(s.invocationID, err)
 			}
@@ -258,6 +253,10 @@ func (s *modelInvocationStreamer) Recv() (model.Chunk, error) {
 			return nil, s.sink.finishModelInvocation(s.invocationID, err)
 		}
 		return ch, err
+	}
+	if usage, ok := ch.(model.UsageChunk); ok {
+		stampModelIdentity(&usage.Usage, s.request)
+		ch = usage
 	}
 	if err := s.sink.recordModelChunk(s.invocationID, ch); err != nil {
 		s.finished = true
@@ -277,6 +276,12 @@ func (s *modelInvocationStreamer) Close() error {
 
 func (s *modelInvocationStreamer) Response() *model.Response { return s.inner.Response() }
 
+// StreamEvents prevents planner helpers from publishing tentative provider
+// output. The invocation journal publishes the selected response after planning.
+func (s *modelInvocationStreamer) StreamEvents(planner.PlannerEvents) planner.PlannerEvents {
+	return planner.NoopEvents()
+}
+
 // applyCachePolicy populates Request.Cache from the agent CachePolicy when no
 // explicit CacheOptions are present on the request.
 func applyCachePolicy(req *model.Request, cache CachePolicy) {
@@ -292,28 +297,8 @@ func applyCachePolicy(req *model.Request, cache CachePolicy) {
 	}
 }
 
-// emitMessageContent publishes unary assistant presentation in provider part
-// order while leaving tool calls to the workflow's canonical execution events.
-func emitMessageContent(ctx context.Context, events planner.PlannerEvents, message *model.Message) {
-	for _, part := range message.Parts {
-		switch actual := part.(type) {
-		case model.TextPart:
-			if actual.Text != "" {
-				events.AssistantChunk(ctx, actual.Text)
-			}
-		case model.CitationsPart:
-			if actual.Text != "" {
-				events.AssistantChunk(ctx, actual.Text)
-			}
-		case model.ThinkingPart:
-			events.PlannerThinkingBlock(ctx, actual)
-		}
-	}
-}
-
-// stampModelIdentity fills Model and ModelClass on usage when the adapter left
-// them empty. This ensures attribution is always present by the time usage
-// reaches the hook bus, using the request as the fallback source.
+// stampModelIdentity fills usage attribution from the request before the
+// invocation journal accounts for the provider response.
 func stampModelIdentity(usage *model.TokenUsage, req *model.Request) {
 	if usage.Model == "" && req.Model != "" {
 		usage.Model = req.Model

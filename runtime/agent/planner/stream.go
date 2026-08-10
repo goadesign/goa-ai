@@ -43,15 +43,22 @@ func (s StreamSummary) FinalResponse() *FinalResponse {
 // Contract:
 //   - A returned client accepts exactly one Complete or Stream invocation for
 //     the selected planner response. Use PlannerContext.ModelClient for probes.
-//   - Complete emits assistant text, thinking blocks, and usage from the final
-//     response before returning it.
-//   - Stream drains the underlying model stream, emits PlannerEvents, and
-//     returns the aggregated StreamSummary.
+//   - Complete records assistant text, thinking blocks, and usage with the
+//     invocation selected by the planner result.
+//   - Stream drains the underlying model stream and returns the aggregated
+//     StreamSummary. The runtime publishes presentation after response selection.
 //   - This interface intentionally does not expose model.Streamer so callers
 //     cannot accidentally combine automatic event emission with ConsumeStream.
 type PlannerModelClient interface {
 	Complete(ctx context.Context, req *model.Request) (*model.Response, error)
 	Stream(ctx context.Context, req *model.Request) (StreamSummary, error)
+}
+
+// streamEventScope lets a runtime-owned streamer replace immediate presentation
+// publication with invocation-scoped recording. External streamers continue to
+// use the PlannerEvents supplied by the caller.
+type streamEventScope interface {
+	StreamEvents(PlannerEvents) PlannerEvents
 }
 
 // ConsumeStream drains the provided streamer, emitting planner events for text and
@@ -67,6 +74,12 @@ func ConsumeStream(ctx context.Context, streamer model.Streamer, req *model.Requ
 	}
 	if ev == nil {
 		return summary, errors.New("nil PlannerEvents")
+	}
+	if scoped, ok := streamer.(streamEventScope); ok {
+		ev = scoped.StreamEvents(ev)
+		if ev == nil {
+			return summary, errors.New("model streamer returned nil PlannerEvents")
+		}
 	}
 	defer func() {
 		err = errors.Join(err, streamer.Close())

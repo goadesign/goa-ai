@@ -455,14 +455,16 @@ redeploys.
   runlog records so providers, replay tooling, and future backends can
   reconstruct the exact message order generically.
 - **Planner-transparent provenance**: Each model call produces an isolated
-  canonical response before planner code observes completion. Streams expose
-  only closed typed presentation events and carry the canonical response
-  separately through gateways. The runtime identifies tool turns from unchanged
-  model-facing calls and terminal turns from the canonical provider message
-  returned by its response helpers. It commits the complete selected response
-  once after atomic admission and before effects. Planners never manage
-  transcript handles or provider replay metadata, and uncertain ownership fails
-  instead of selecting by call order or visible text.
+  canonical response and ordered presentation before planner code observes
+  completion. Streams expose only closed typed chunks and carry the canonical
+  response separately through gateways. The runtime identifies tool turns from
+  unchanged model-facing calls and terminal turns from the canonical provider
+  message returned by its response helpers. It publishes only the selected
+  response's text, thinking, and tool-argument deltas, while usage accounts for
+  every invocation. It commits the complete selected response once after atomic
+  admission and before effects. Planners never manage transcript handles or
+  provider replay metadata, and uncertain ownership fails instead of selecting
+  by call order or visible text.
 - **History compression**: Agent designs may declare compression defaults with
   `CompressAtTurns`, `CompressAtMaxInputTokens`, `KeepMaxTurns`, and
   `KeepMaxInputTokens`. The runtime evaluates token budgets with the configured

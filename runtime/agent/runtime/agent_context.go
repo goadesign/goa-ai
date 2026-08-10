@@ -131,14 +131,6 @@ func (c *simplePlannerContext) configuredModelClient(id string, designated bool)
 		return nil, false
 	}
 	cli := m
-	// Capture each provider response as an isolated transcript candidate before
-	// any planner-facing type exists. This wraps the raw client so both
-	// supported streaming styles have identical ownership.
-	if designated {
-		cli = newDesignatedModelInvocationClient(cli, c.invocations)
-	} else {
-		cli = newModelInvocationClient(cli, c.invocations)
-	}
 	// Apply agent cache policy so planners do not need to thread CacheOptions
 	// through every model.Request construction. Explicit Request.Cache values
 	// continue to take precedence over the agent policy.
@@ -152,6 +144,14 @@ func (c *simplePlannerContext) configuredModelClient(id string, designated bool)
 		AgentID:        string(c.agent),
 		AgentName:      string(c.agent),
 	}, c.rt.captureGenAIMessages)
+	// Capture each traced provider response as an isolated transcript and
+	// presentation candidate before any planner-facing type exists. This outer
+	// wrapper also scopes ConsumeStream events to the invocation journal.
+	if designated {
+		cli = newDesignatedModelInvocationClient(cli, c.invocations)
+	} else {
+		cli = newModelInvocationClient(cli, c.invocations)
+	}
 	return cli, true
 }
 
