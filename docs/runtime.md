@@ -637,7 +637,7 @@ type PlannerContext interface {
     State() AgentState                    // Ephemeral per-run key-value store
     AdvertisedToolDefinitions() []*model.ToolDefinition // Runtime-filtered model-facing tools
     ModelClient(id string) (model.Client, bool)  // Raw LLM client lookup
-    PlannerModelClient(id string) (planner.PlannerModelClient, bool) // Planner-scoped client with runtime-owned event emission
+    PlannerModelClient(id string) (planner.PlannerModelClient, bool) // Planner-scoped client with selected-response event emission
     RenderPrompt(ctx context.Context, id prompt.Ident, data any) (*prompt.PromptContent, error)
     AddReminder(r reminder.Reminder)      // Register backstage guidance
     RemoveReminder(id string)             // Clear a reminder
@@ -683,11 +683,13 @@ Choose one per planner call.
 
 ### Option 1: PlannerModelClient (Recommended)
 
-`PlannerContext.PlannerModelClient(id)` returns a planner-scoped client that owns
-`AssistantChunk`, `PlannerThinkingBlock`, and `UsageDelta` emission. Its
-`Stream(...)` method drains the underlying provider stream and returns a
-`planner.StreamSummary`. A planner client is single-use for the selected
-response; run probes through `ModelClient` before obtaining it:
+`PlannerContext.PlannerModelClient(id)` returns a planner-scoped client that
+records `AssistantChunk`, `PlannerThinkingBlock`, and tool-argument presentation
+with its invocation. Its `Stream(...)` method drains the underlying provider
+stream and returns a `planner.StreamSummary`. After `PlanResult` selects the
+response, the runtime publishes that presentation and usage from every attempted
+invocation. A planner client is single-use for the selected response; run probes
+through `ModelClient` before obtaining it:
 
 ```go
 func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error) {
@@ -748,12 +750,13 @@ want to bypass runtime-owned event emission entirely and manage `input.Events`
 yourself.
 
 Each runtime-managed model call creates an isolated response candidate before
-planner code receives the response or stream chunk. Every successful stream
-ends its typed presentation chunks with clean EOF and exposes exactly one
-canonical response through `Streamer.Response()`. The runtime captures and
-validates that response before returning EOF to planner code, including when the
-provider is behind a model gateway. Incomplete provider content blocks are
-contract errors.
+planner code receives the response or stream chunk. The candidate retains its
+ordered text, thinking, and tool-argument deltas until the planner selects a
+response. Every successful stream ends its typed chunks with clean EOF and
+exposes exactly one canonical response through `Streamer.Response()`. The
+runtime captures and validates that response before returning EOF to planner
+code, including when the provider is behind a model gateway. Incomplete
+provider content blocks are contract errors.
 When `PlanResult` contains tool calls, the runtime
 matches their model-facing IDs, names, and payload bytes to exactly one
 candidate and persists only that response's assistant transcript. Mixed,
@@ -765,10 +768,10 @@ Call order has no commit semantics: planners may probe with `ModelClient`, then
 make exactly one selected call through `PlannerModelClient`. Terminal helpers
 return the selected provider message without exposing transcript identity or
 matching mechanics. Later session turns therefore replay the provider's signed
-thinking while the planner's presentation message remains user-facing. Token
-usage still includes every invocation. After atomic tool-batch admission, the
-workflow commits the complete selected response once before any effects.
-Selection remains independent from planner event publication.
+thinking while only the selected provider response becomes user-facing.
+Retryable or rejected attempts never leak partial presentation. Usage events
+still include every invocation. After atomic tool-batch admission, the workflow
+commits the complete selected response once before any effects.
 
 Provider adapters own reasoning-block validity. Streaming Bedrock and Anthropic
 calls reject plaintext reasoning that closes without its provider signature;

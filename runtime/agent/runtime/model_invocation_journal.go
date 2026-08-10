@@ -7,6 +7,7 @@ package runtime
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"sync"
 
@@ -18,13 +19,29 @@ import (
 )
 
 type (
+	// modelPresentationKind identifies one user-visible event captured from a
+	// provider response before the planner selects that response.
+	modelPresentationKind uint8
+
+	// modelPresentationEvent is the immutable provider output projected from one
+	// model chunk or unary response.
+	modelPresentationEvent struct {
+		kind       modelPresentationKind
+		text       string
+		thinking   model.ThinkingPart
+		toolCallID string
+		toolName   tools.Ident
+	}
+
 	// modelInvocationCandidate is the complete provider-owned state for one
 	// model call. It remains tentative until the journal matches its exact
 	// model-facing result.
 	modelInvocationCandidate struct {
-		response  *model.Response
-		usageSeen bool
-		err       error
+		response     *model.Response
+		presentation []modelPresentationEvent
+		streamed     bool
+		usageSeen    bool
+		err          error
 	}
 
 	// modelFacingToolCall is the provider transcript identity of a planner
@@ -43,8 +60,16 @@ type (
 		invocations  map[modelInvocationID]*modelInvocationCandidate
 		messageOwner map[*model.Message]modelInvocationID
 		designated   modelInvocationID
+		selected     modelInvocationID
+		usageEvents  []model.TokenUsage
 		usage        model.TokenUsage
 	}
+)
+
+const (
+	modelPresentationText modelPresentationKind = iota + 1
+	modelPresentationThinking
+	modelPresentationToolCallDelta
 )
 
 // beginModelInvocation creates an isolated response candidate.
@@ -98,6 +123,11 @@ func (j *modelInvocationJournal) recordModelResponse(
 		return err
 	}
 	candidate.response = captured
+	if !candidate.streamed {
+		for i := range response.Content {
+			candidate.presentation = append(candidate.presentation, presentationFromMessage(&response.Content[i])...)
+		}
+	}
 	if j.messageOwner == nil {
 		j.messageOwner = make(map[*model.Message]modelInvocationID)
 	}
@@ -106,6 +136,9 @@ func (j *modelInvocationJournal) recordModelResponse(
 	}
 	if !candidate.usageSeen {
 		j.usage = addTokenUsage(j.usage, response.Usage)
+		if response.Usage != (model.TokenUsage{}) {
+			j.usageEvents = append(j.usageEvents, response.Usage)
+		}
 	}
 	return nil
 }
@@ -116,17 +149,20 @@ func (j *modelInvocationJournal) recordModelChunk(invocationID modelInvocationID
 	if err := model.ValidateChunk(chunk); err != nil {
 		return err
 	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	candidate := j.invocations[invocationID]
+	if candidate == nil {
+		return errors.New("model chunk references an unknown invocation")
+	}
+	candidate.streamed = true
 	if usage, ok := chunk.(model.UsageChunk); ok {
-		j.mu.Lock()
-		defer j.mu.Unlock()
-		candidate := j.invocations[invocationID]
-		if candidate == nil {
-			return errors.New("model chunk references an unknown invocation")
-		}
 		candidate.usageSeen = true
 		j.usage = addTokenUsage(j.usage, usage.Usage)
+		j.usageEvents = append(j.usageEvents, usage.Usage)
 		return nil
 	}
+	candidate.presentation = append(candidate.presentation, presentationFromChunk(chunk)...)
 	return nil
 }
 
@@ -187,6 +223,8 @@ func (j *modelInvocationJournal) exportModelInvocation(
 		selectedID = id
 	}
 	if selected == nil {
+		var zero modelInvocationID
+		j.selected = zero
 		if hasOwner {
 			return nil, errors.New("planner result did not preserve the selected model invocation")
 		}
@@ -201,6 +239,7 @@ func (j *modelInvocationJournal) exportModelInvocation(
 	if !j.designated.IsZero() && selectedID != j.designated {
 		return nil, errors.New("planner result selected a probe after using PlannerModelClient")
 	}
+	j.selected = selectedID
 	captured, err := model.CloneResponse(selected.response)
 	if err != nil {
 		return nil, err
@@ -210,6 +249,103 @@ func (j *modelInvocationJournal) exportModelInvocation(
 		messages[i] = &captured.Content[i]
 	}
 	return messages, nil
+}
+
+// publishSelectedPresentation emits only the provider output selected by the
+// planner result. Usage remains activity-wide so failed probes and retries are
+// still accounted for.
+func (j *modelInvocationJournal) publishSelectedPresentation(ctx context.Context, events planner.PlannerEvents) {
+	j.mu.Lock()
+	var presentation []modelPresentationEvent
+	if selected := j.invocations[j.selected]; selected != nil {
+		presentation = append(presentation, selected.presentation...)
+	}
+	usageEvents := append([]model.TokenUsage(nil), j.usageEvents...)
+	j.mu.Unlock()
+
+	for _, event := range presentation {
+		switch event.kind {
+		case modelPresentationText:
+			events.AssistantChunk(ctx, event.text)
+		case modelPresentationThinking:
+			events.PlannerThinkingBlock(ctx, event.thinking)
+		case modelPresentationToolCallDelta:
+			events.ToolCallArgsDelta(ctx, event.toolCallID, event.toolName, event.text)
+		}
+	}
+	for _, usage := range usageEvents {
+		events.UsageDelta(ctx, usage)
+	}
+}
+
+// presentationFromMessage projects unary response parts in provider order.
+func presentationFromMessage(message *model.Message) []modelPresentationEvent {
+	if message == nil {
+		return nil
+	}
+	var presentation []modelPresentationEvent
+	for _, part := range message.Parts {
+		switch actual := part.(type) {
+		case model.TextPart:
+			if actual.Text != "" {
+				presentation = append(presentation, modelPresentationEvent{
+					kind: modelPresentationText,
+					text: actual.Text,
+				})
+			}
+		case model.CitationsPart:
+			if actual.Text != "" {
+				presentation = append(presentation, modelPresentationEvent{
+					kind: modelPresentationText,
+					text: actual.Text,
+				})
+			}
+		case model.ThinkingPart:
+			presentation = append(presentation, modelPresentationEvent{
+				kind:     modelPresentationThinking,
+				thinking: actual,
+			})
+		}
+	}
+	return presentation
+}
+
+// presentationFromChunk projects streaming provider output in receive order.
+func presentationFromChunk(chunk model.Chunk) []modelPresentationEvent {
+	switch actual := chunk.(type) {
+	case model.TextChunk:
+		var text string
+		for _, part := range actual.Message.Parts {
+			if value, ok := part.(model.TextPart); ok {
+				text += value.Text
+			}
+		}
+		if text != "" {
+			return []modelPresentationEvent{{
+				kind: modelPresentationText,
+				text: text,
+			}}
+		}
+	case model.ThinkingChunk:
+		var presentation []modelPresentationEvent
+		for _, part := range actual.Message.Parts {
+			if value, ok := part.(model.ThinkingPart); ok {
+				presentation = append(presentation, modelPresentationEvent{
+					kind:     modelPresentationThinking,
+					thinking: value,
+				})
+			}
+		}
+		return presentation
+	case model.ToolCallDeltaChunk:
+		return []modelPresentationEvent{{
+			kind:       modelPresentationToolCallDelta,
+			text:       actual.Delta.Delta,
+			toolCallID: actual.Delta.ID,
+			toolName:   actual.Delta.Name,
+		}}
+	}
+	return nil
 }
 
 // planResultModelToolCalls returns every provider-native tool call that the

@@ -70,7 +70,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 		return nil, err
 	}
 	r.logger.Info(ctx, "PlanStartActivity returning PlanResult", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
-	return act.output(result)
+	return act.output(ctx, result)
 }
 
 // PlanResumeActivity executes the planner's PlanResume method.
@@ -148,7 +148,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 			return nil, fmt.Errorf("synthesis-only planner result: %w", err)
 		}
 	}
-	output, err := act.output(result)
+	output, err := act.output(ctx, result)
 	if err != nil {
 		return nil, err
 	}
@@ -229,15 +229,16 @@ func (r *Runtime) preparePlannerActivity(
 
 // output validates hook publication and exports the workflow-safe planner
 // activity result.
-func (a *plannerActivityInvocation) output(result *planner.PlanResult) (*PlanActivityOutput, error) {
+func (a *plannerActivityInvocation) output(ctx context.Context, result *planner.PlanResult) (*PlanActivityOutput, error) {
 	if err := validatePlannerResultPayloads(result); err != nil {
-		return nil, err
-	}
-	if err := a.events.hookError(); err != nil {
 		return nil, err
 	}
 	transcript, err := a.invocations.exportModelInvocation(result)
 	if err != nil {
+		return nil, err
+	}
+	a.invocations.publishSelectedPresentation(ctx, a.events)
+	if err := a.events.hookError(); err != nil {
 		return nil, err
 	}
 	if len(transcript) == 0 {
