@@ -10,15 +10,21 @@ type (
 	// EchoPayload defines the JSON payload for the union.echo tool.
 	EchoPayload = struct {
 		// Request identifier
-		ID    string
-		Value Value
+		ID            string
+		Value         Value
+		OptionalValue *OptionalValue
 	}
 	// EchoResult defines the JSON result for the union.echo tool.
 	EchoResult = struct {
 		// Request identifier
-		ID    string
-		Value Value
+		ID            string
+		Value         Value
+		OptionalValue *OptionalValue
 	}
+	// OptionalValueNumber is a helper type materialized for nested references.
+	OptionalValueNumber = int32
+	// OptionalValueText is a helper type materialized for nested references.
+	OptionalValueText = string
 	// StructuredValue is a helper type materialized for nested references.
 	StructuredValue = struct {
 		// Structured value label

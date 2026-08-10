@@ -59,6 +59,192 @@ func nullUnionValueError(expected string) error {
 	)
 }
 
+// OptionalValue is a sum-type union.
+type OptionalValue struct {
+	kind   OptionalValueKind
+	Number OptionalValueNumber
+	Text   OptionalValueText
+}
+
+// OptionalValueKind enumerates the union variants for OptionalValue.
+type OptionalValueKind string
+
+const (
+	// OptionalValueKindNumber identifies the number branch of the union.
+	OptionalValueKindNumber OptionalValueKind = "number"
+	// OptionalValueKindText identifies the text branch of the union.
+	OptionalValueKindText OptionalValueKind = "text"
+)
+
+// Kind returns the discriminator value of the union.
+func (u OptionalValue) Kind() OptionalValueKind {
+	return u.kind
+}
+
+// NewOptionalValueNumber constructs a OptionalValue with the number branch set.
+func NewOptionalValueNumber(v OptionalValueNumber) OptionalValue {
+	return OptionalValue{
+		kind:   OptionalValueKindNumber,
+		Number: v,
+	}
+}
+
+// AsNumber returns the value of the number branch if set.
+func (u OptionalValue) AsNumber() (_ OptionalValueNumber, ok bool) {
+	if u.kind != OptionalValueKindNumber {
+		return
+	}
+	return u.Number, true
+}
+
+// SetNumber sets the number branch of the union.
+func (u *OptionalValue) SetNumber(v OptionalValueNumber) {
+	u.kind = OptionalValueKindNumber
+	u.Number = v
+}
+
+// NewOptionalValueText constructs a OptionalValue with the text branch set.
+func NewOptionalValueText(v OptionalValueText) OptionalValue {
+	return OptionalValue{
+		kind: OptionalValueKindText,
+		Text: v,
+	}
+}
+
+// AsText returns the value of the text branch if set.
+func (u OptionalValue) AsText() (_ OptionalValueText, ok bool) {
+	if u.kind != OptionalValueKindText {
+		return
+	}
+	return u.Text, true
+}
+
+// SetText sets the text branch of the union.
+func (u *OptionalValue) SetText(v OptionalValueText) {
+	u.kind = OptionalValueKindText
+	u.Text = v
+}
+
+// Validate ensures the union discriminant is valid.
+func (u OptionalValue) Validate() error {
+	switch u.kind {
+	case "":
+		return newOptionalValueDiscriminatorError("", false)
+	case OptionalValueKindNumber:
+		return nil
+	case OptionalValueKindText:
+		return nil
+	default:
+		got := string(u.kind)
+		return newOptionalValueDiscriminatorError(got, true)
+	}
+}
+
+// MarshalJSON marshals the union into the canonical {type,value} JSON shape.
+func (u OptionalValue) MarshalJSON() ([]byte, error) {
+	if err := u.Validate(); err != nil {
+		return nil, err
+	}
+	var (
+		value any
+	)
+	switch u.kind {
+	case OptionalValueKindNumber:
+		value = u.Number
+	case OptionalValueKindText:
+		value = u.Text
+	default:
+		got := string(u.kind)
+		return nil, newOptionalValueDiscriminatorError(got, true)
+	}
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Value any    `json:"value"`
+	}{
+		Type:  string(u.kind),
+		Value: value,
+	})
+}
+
+// UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
+func (u *OptionalValue) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type  *string         `json:"type"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := decodeUnionStrictJSON(data, &raw); err != nil {
+		return err
+	}
+	if raw.Type == nil {
+		return newOptionalValueDiscriminatorError("", false)
+	}
+	if len(raw.Value) == 0 {
+		return missingUnionValueError()
+	}
+	switch *raw.Type {
+	case string(OptionalValueKindNumber):
+		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+			return nullUnionValueError("integer")
+		}
+		var v OptionalValueNumber
+		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &typeErr) && typeErr.Value != "" {
+				return tools.NewValidationError(
+					err.Error(),
+					[]*tools.FieldIssue{
+						{
+							Field:            "value",
+							Constraint:       "invalid_field_type",
+							ExpectedJSONType: "integer",
+							ActualJSONType:   typeErr.Value,
+						},
+					},
+					nil,
+				)
+			}
+			return err
+		}
+		u.kind = OptionalValueKindNumber
+		u.Number = v
+	case string(OptionalValueKindText):
+		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+			return nullUnionValueError("string")
+		}
+		var v OptionalValueText
+		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
+			var typeErr *json.UnmarshalTypeError
+			if errors.As(err, &typeErr) && typeErr.Value != "" {
+				return tools.NewValidationError(
+					err.Error(),
+					[]*tools.FieldIssue{
+						{
+							Field:            "value",
+							Constraint:       "invalid_field_type",
+							ExpectedJSONType: "string",
+							ActualJSONType:   typeErr.Value,
+						},
+					},
+					nil,
+				)
+			}
+			return err
+		}
+		u.kind = OptionalValueKindText
+		u.Text = v
+	default:
+		return newOptionalValueDiscriminatorError(*raw.Type, true)
+	}
+	return nil
+}
+
+func newOptionalValueDiscriminatorError(got string, typePresent bool) error {
+	return tools.NewUnionDiscriminatorError("OptionalValue", got, typePresent, []string{
+		string(OptionalValueKindNumber),
+		string(OptionalValueKindText),
+	})
+}
+
 // Value is a sum-type union.
 type Value struct {
 	kind       ValueKind
