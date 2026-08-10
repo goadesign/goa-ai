@@ -68,6 +68,24 @@ func TestContinuationActionRetainsCanonicalQueryPayload(t *testing.T) {
 	assert.JSONEq(t, `{"query":"alarms","limit":10,"cursor":"second-page"}`, string(result.ToolCalls[0].Payload))
 }
 
+func TestContinuationActionSupportsSourceWithoutModelFields(t *testing.T) {
+	t.Parallel()
+
+	rt, search, continuation := continuationTestRuntime()
+	search.Payload.FieldJSONTypes = nil
+	rt.toolSpecs[search.Name] = search
+	rt.agentToolSpecs["svc.agent"][0] = search
+	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"injected":"secret"}`, "next"),
+	})
+
+	require.NoError(t, err)
+	require.Len(t, actions, 1)
+	assert.Contains(t, actions[0].description, "original input {}")
+	assert.NotContains(t, actions[0].description, "secret")
+	assert.Equal(t, continuation.Name, actions[0].spec.Name)
+}
+
 func TestContinuationActionNameStaysStableAsChainAdvances(t *testing.T) {
 	t.Parallel()
 

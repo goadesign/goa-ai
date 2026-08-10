@@ -423,18 +423,15 @@ func (r *Runtime) publishStepToolSchedule(
 	turnID string,
 	record *stepToolRecord,
 ) error {
-	event := hooks.NewToolCallScheduledEvent(
+	event := newToolCallScheduledEvent(
 		base.RunContext.RunID,
 		input.AgentID,
 		base.RunContext.SessionID,
-		record.call.Name,
-		record.call.ToolCallID,
-		record.call.Payload,
+		record.call,
 		record.scheduleQueue,
 		parentToolCallID(record.call, &base.RunContext),
 		record.expectedChildren,
 	)
-	event.ContinuationRootToolCallID = record.call.ContinuationRootToolCallID
 	return r.publishHook(ctx, event, turnID)
 }
 
@@ -575,13 +572,11 @@ func (l *workflowLoop) recordCapDeniedToolCall(
 	parentID := parentToolCallID(call, &l.base.RunContext)
 	if err := l.r.publishHook(
 		ctx,
-		hooks.NewToolCallScheduledEvent(
+		newToolCallScheduledEvent(
 			l.base.RunContext.RunID,
 			l.input.AgentID,
 			l.base.RunContext.SessionID,
-			call.Name,
-			call.ToolCallID,
-			call.Payload,
+			call,
 			"",
 			parentID,
 			0,

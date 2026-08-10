@@ -228,7 +228,7 @@ func continuationActionName(toolName tools.Ident, rootToolCallID string) tools.I
 // enter dynamic tool descriptions.
 func modelVisibleContinuationQuery(spec tools.ToolSpec, payload rawjson.Message) (rawjson.Message, error) {
 	if spec.Payload.FieldJSONTypes == nil {
-		return nil, fmt.Errorf("generated payload field metadata is missing for %q", spec.Name)
+		return rawjson.Message(`{}`), nil
 	}
 	var canonical map[string]json.RawMessage
 	if err := json.Unmarshal(payload, &canonical); err != nil {

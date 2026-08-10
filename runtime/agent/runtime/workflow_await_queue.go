@@ -95,13 +95,11 @@ func (r *Runtime) waitAwaitConfirmation(
 		deniedResult := it.plan.DeniedResult
 		if err := r.publishHook(
 			ctx,
-			hooks.NewToolCallScheduledEvent(
+			newToolCallScheduledEvent(
 				it.call.RunID,
 				it.call.AgentID,
 				it.call.SessionID,
-				it.call.Name,
-				it.call.ToolCallID,
-				it.call.Payload,
+				it.call,
 				"",
 				it.call.ParentToolCallID,
 				expectedChildren,
@@ -350,13 +348,15 @@ func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *pla
 		), turnID); err != nil {
 			return err
 		}
-		return r.publishHook(ctx, hooks.NewToolCallScheduledEvent(
+		return r.publishHook(ctx, newToolCallScheduledEvent(
 			base.RunContext.RunID,
 			input.AgentID,
 			base.RunContext.SessionID,
-			c.ToolName,
-			c.ToolCallID,
-			c.Payload,
+			planner.ToolRequest{
+				Name:       c.ToolName,
+				ToolCallID: c.ToolCallID,
+				Payload:    c.Payload,
+			},
 			"",
 			base.RunContext.ParentToolCallID,
 			0,
@@ -395,13 +395,15 @@ func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *pla
 		), turnID); err != nil {
 			return err
 		}
-		return r.publishHook(ctx, hooks.NewToolCallScheduledEvent(
+		return r.publishHook(ctx, newToolCallScheduledEvent(
 			base.RunContext.RunID,
 			input.AgentID,
 			base.RunContext.SessionID,
-			q.ToolName,
-			q.ToolCallID,
-			q.Payload,
+			planner.ToolRequest{
+				Name:       q.ToolName,
+				ToolCallID: q.ToolCallID,
+				Payload:    q.Payload,
+			},
 			"",
 			base.RunContext.ParentToolCallID,
 			0,
@@ -441,13 +443,11 @@ func (r *Runtime) admitAwaitItem(ctx context.Context, input *RunInput, base *pla
 			return err
 		}
 		for _, call := range awaitCalls {
-			if err := r.publishHook(ctx, hooks.NewToolCallScheduledEvent(
+			if err := r.publishHook(ctx, newToolCallScheduledEvent(
 				base.RunContext.RunID,
 				input.AgentID,
 				base.RunContext.SessionID,
-				call.Name,
-				call.ToolCallID,
-				call.Payload,
+				call,
 				"",
 				base.RunContext.ParentToolCallID,
 				0,
