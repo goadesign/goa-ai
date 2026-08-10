@@ -69,16 +69,17 @@ func (r *Runtime) buildPlannerToolOutputRecords(ctx context.Context, records []s
 		call := record.call
 		result := record.result
 		output := &planner.ToolOutput{
-			Name:                call.Name,
-			ToolCallID:          call.ToolCallID,
-			Payload:             append(rawjson.Message(nil), call.Payload...),
-			ResultBytes:         result.ResultBytes,
-			ResultOmitted:       result.ResultOmitted,
-			ResultOmittedReason: result.ResultOmittedReason,
-			ServerData:          append(rawjson.Message(nil), result.ServerData...),
-			Bounds:              result.Bounds,
-			Failure:             planner.CloneToolFailure(result.Failure),
-			Telemetry:           result.Telemetry,
+			Name:                       call.Name,
+			ToolCallID:                 call.ToolCallID,
+			ContinuationRootToolCallID: call.ContinuationRootToolCallID,
+			Payload:                    append(rawjson.Message(nil), call.Payload...),
+			ResultBytes:                result.ResultBytes,
+			ResultOmitted:              result.ResultOmitted,
+			ResultOmittedReason:        result.ResultOmittedReason,
+			ServerData:                 append(rawjson.Message(nil), result.ServerData...),
+			Bounds:                     result.Bounds,
+			Failure:                    planner.CloneToolFailure(result.Failure),
+			Telemetry:                  result.Telemetry,
 		}
 		if !result.ResultOmitted {
 			resultJSON, err := r.marshalToolValue(ctx, call.Name, result.Result, result.Bounds)

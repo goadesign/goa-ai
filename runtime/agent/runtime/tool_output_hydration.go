@@ -93,16 +93,17 @@ func plannerToolOutputFromCanonicalEvents(runID, toolCallID string, events *cano
 	}
 
 	output := &planner.ToolOutput{
-		Name:                events.scheduled.ToolName,
-		ToolCallID:          toolCallID,
-		Payload:             append(rawjson.Message(nil), events.scheduled.Payload...),
-		ResultBytes:         events.result.ResultBytes,
-		ResultOmitted:       events.result.ResultOmitted,
-		ResultOmittedReason: events.result.ResultOmittedReason,
-		ServerData:          append(rawjson.Message(nil), events.result.ServerData...),
-		Bounds:              events.result.Bounds,
-		Failure:             events.result.Failure,
-		Telemetry:           events.result.Telemetry,
+		Name:                       events.scheduled.ToolName,
+		ToolCallID:                 toolCallID,
+		ContinuationRootToolCallID: events.scheduled.ContinuationRootToolCallID,
+		Payload:                    append(rawjson.Message(nil), events.scheduled.Payload...),
+		ResultBytes:                events.result.ResultBytes,
+		ResultOmitted:              events.result.ResultOmitted,
+		ResultOmittedReason:        events.result.ResultOmittedReason,
+		ServerData:                 append(rawjson.Message(nil), events.result.ServerData...),
+		Bounds:                     events.result.Bounds,
+		Failure:                    events.result.Failure,
+		Telemetry:                  events.result.Telemetry,
 	}
 	if events.result.Failure == nil && !output.ResultOmitted {
 		if len(events.result.ResultJSON) != output.ResultBytes {

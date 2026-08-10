@@ -681,12 +681,15 @@ runtime metadata routes the next page. `Cursor` on the originating tool remains
 available only for APIs where callers must intentionally repeat the original
 query. This keeps correlation state in the issuing system instead of asking a
 model to reproduce it. Parallel source invocations are valid. The runtime
-exposes the no-argument continuation only when exactly one live head can be
-selected without model-authored execution state, and accepts at most one call
-to that continuation in a planner result. Successful continuation payloads
-consume their predecessor by exact opaque-cursor equality, leaving one live
-chain head across sequential pages. Multiple live heads make the continuation
-unavailable rather than being resolved by call order.
+derives one temporary no-argument action for each live source invocation. Each
+action has a stable model-facing name and describes the original model-visible
+query, while execution retains the canonical continuation tool name. Selecting
+an action binds the exact source tool-call identity and cursor into the
+executable request. Successful continuation results carry that source identity
+through the durable tool-call record, so repeated equal queries, equal opaque
+cursors, sequential pages, and parallel batches remain independent. The model
+chooses which semantic query to continue but never reproduces a cursor or
+correlation identifier.
 
 For each tool with a non-empty payload, the plugin derives JSON Schema from the
 Goa attribute using Goa's `openapi.Schema` type for complete JSON Schema draft

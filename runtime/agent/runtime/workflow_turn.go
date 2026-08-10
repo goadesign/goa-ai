@@ -423,21 +423,19 @@ func (r *Runtime) publishStepToolSchedule(
 	turnID string,
 	record *stepToolRecord,
 ) error {
-	return r.publishHook(
-		ctx,
-		hooks.NewToolCallScheduledEvent(
-			base.RunContext.RunID,
-			input.AgentID,
-			base.RunContext.SessionID,
-			record.call.Name,
-			record.call.ToolCallID,
-			record.call.Payload,
-			record.scheduleQueue,
-			parentToolCallID(record.call, &base.RunContext),
-			record.expectedChildren,
-		),
-		turnID,
+	event := hooks.NewToolCallScheduledEvent(
+		base.RunContext.RunID,
+		input.AgentID,
+		base.RunContext.SessionID,
+		record.call.Name,
+		record.call.ToolCallID,
+		record.call.Payload,
+		record.scheduleQueue,
+		parentToolCallID(record.call, &base.RunContext),
+		record.expectedChildren,
 	)
+	event.ContinuationRootToolCallID = record.call.ContinuationRootToolCallID
+	return r.publishHook(ctx, event, turnID)
 }
 
 // publishStepToolResult closes the canonical lifecycle for a result synthesized

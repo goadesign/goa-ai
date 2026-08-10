@@ -230,6 +230,10 @@ type ToolRequest struct {
 	// ParentToolCallID is the identifier of the parent tool call when this invocation
 	// is nested (for example, a tool launched by an agent-as-tool).
 	ParentToolCallID string
+
+	// ContinuationRootToolCallID identifies the original bounded query advanced
+	// by a synthetic continuation action. It is empty for ordinary tool calls.
+	ContinuationRootToolCallID string
 }
 
 // TranscriptName returns the model-facing tool name recorded in provider
@@ -334,6 +338,11 @@ type ToolOutput struct {
 
 	// ToolCallID is the correlation identifier for this tool invocation.
 	ToolCallID string
+
+	// ContinuationRootToolCallID identifies the original bounded query advanced
+	// by this continuation result. It is empty for source queries and ordinary
+	// tool calls.
+	ContinuationRootToolCallID string
 
 	// Payload is the canonical JSON payload passed to the tool.
 	Payload rawjson.Message

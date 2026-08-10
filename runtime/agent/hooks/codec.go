@@ -302,7 +302,9 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", ToolCallScheduled, err)
 		}
-		evt = NewToolCallScheduledEvent(input.RunID, input.AgentID, input.SessionID, p.ToolName, p.ToolCallID, p.Payload, p.Queue, p.ParentToolCallID, p.ExpectedChildrenTotal)
+		scheduled := NewToolCallScheduledEvent(input.RunID, input.AgentID, input.SessionID, p.ToolName, p.ToolCallID, p.Payload, p.Queue, p.ParentToolCallID, p.ExpectedChildrenTotal)
+		scheduled.ContinuationRootToolCallID = p.ContinuationRootToolCallID
+		evt = scheduled
 
 	case ToolCallUpdated:
 		var p ToolCallUpdatedEvent

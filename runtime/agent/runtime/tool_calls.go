@@ -302,6 +302,7 @@ func (e *toolBatchExec) publishToolResultReceived(
 
 func (e *toolBatchExec) publishToolCallScheduled(ctx context.Context, call planner.ToolRequest, queue string) error {
 	ev := hooks.NewToolCallScheduledEvent(e.runID, e.agentID, e.sessionID, call.Name, call.ToolCallID, call.Payload, queue, call.ParentToolCallID, e.expectedChildren)
+	ev.ContinuationRootToolCallID = call.ContinuationRootToolCallID
 	return e.r.publishHook(ctx, ev, e.turnID)
 }
 

@@ -7,275 +7,269 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-const firstCursorValue = "first"
-
-func TestBindContinuationCursorFromCanonicalHistory(t *testing.T) {
+func TestContinuationActionBindsExactChainWithoutExposingCursor(t *testing.T) {
 	t.Parallel()
 
-	const cursor = "opaque-next-page"
-	search, continuation := continuationTestSpecs()
-	rt := &Runtime{toolSpecs: map[tools.Ident]tools.ToolSpec{
-		search.Name:       search,
-		continuation.Name: continuation,
-	}}
+	rt, search, continuation := continuationTestRuntime()
+	outputs := []*planner.ToolOutput{sourceContinuationOutput(
+		search.Name,
+		"source-1",
+		`{"query":"alarms","limit":10,"injected":"secret"}`,
+		"opaque-next-page",
+	)}
+
+	actions, err := rt.availableContinuationActions("svc.agent", outputs)
+	require.NoError(t, err)
+	require.Len(t, actions, 1)
+	assert.Contains(t, actions[0].description, `{"limit":10,"query":"alarms"}`)
+	assert.NotContains(t, actions[0].description, "secret")
+	assert.NotContains(t, actions[0].description, "opaque-next-page")
+
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    continuation.Name,
+		Name:    actions[0].modelName,
 		Payload: rawjson.Message(`{}`),
 	}}}
-	outputs := []*planner.ToolOutput{{
-		Name: search.Name,
-		Bounds: &agent.Bounds{
-			Truncated:  true,
-			NextCursor: pointer(cursor),
-		},
-	}}
-
-	err := rt.bindContinuationCursors(result, outputs)
-	require.NoError(t, err)
-	assert.JSONEq(t, `{}`, string(result.ToolCalls[0].ModelPayload))
-	assert.JSONEq(t, `{"cursor":"opaque-next-page"}`, string(result.ToolCalls[0].Payload))
+	require.NoError(t, rt.bindContinuationCursors(result, actions))
+	call := result.ToolCalls[0]
+	assert.Equal(t, continuation.Name, call.Name)
+	assert.Equal(t, actions[0].modelName, call.ModelName)
+	assert.Equal(t, "source-1", call.ContinuationRootToolCallID)
+	assert.JSONEq(t, `{}`, string(call.ModelPayload))
+	assert.JSONEq(t, `{"cursor":"opaque-next-page"}`, string(call.Payload))
 }
 
-func TestBindContinuationRetainsCanonicalQueryPayload(t *testing.T) {
+func TestContinuationActionRetainsCanonicalQueryPayload(t *testing.T) {
 	t.Parallel()
 
-	search, continuation := continuationTestSpecs()
+	rt, search, continuation := continuationTestRuntime()
 	continuation.Bounds.Paging.ReplayPayload = true
-	rt := &Runtime{toolSpecs: map[tools.Ident]tools.ToolSpec{
-		search.Name:       search,
-		continuation.Name: continuation,
-	}}
+	rt.toolSpecs[continuation.Name] = continuation
+	rt.agentToolSpecs["svc.agent"][1] = continuation
+	outputs := []*planner.ToolOutput{sourceContinuationOutput(
+		search.Name,
+		"source-1",
+		`{"query":"alarms","limit":10}`,
+		"second-page",
+	)}
+	actions, err := rt.availableContinuationActions("svc.agent", outputs)
+	require.NoError(t, err)
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    continuation.Name,
+		Name:    actions[0].modelName,
 		Payload: rawjson.Message(`{}`),
 	}}}
-	cursor := "second-page"
-	outputs := []*planner.ToolOutput{{
-		Name:    search.Name,
-		Payload: rawjson.Message(`{"query":"alarms","limit":10}`),
-		Bounds:  &agent.Bounds{Truncated: true, NextCursor: &cursor},
-	}}
 
-	err := rt.bindContinuationCursors(result, outputs)
-	require.NoError(t, err)
-	assert.JSONEq(t, `{}`, string(result.ToolCalls[0].ModelPayload))
+	require.NoError(t, rt.bindContinuationCursors(result, actions))
 	assert.JSONEq(t, `{"query":"alarms","limit":10,"cursor":"second-page"}`, string(result.ToolCalls[0].Payload))
 }
 
-func TestContinuationAvailabilityAdvancesSequentialChain(t *testing.T) {
+func TestContinuationActionNameStaysStableAsChainAdvances(t *testing.T) {
 	t.Parallel()
 
-	search, continuation := continuationTestSpecs()
-	rt := &Runtime{
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			search.Name:       search,
-			continuation.Name: continuation,
-		},
-		agentToolSpecs: map[agent.Ident][]tools.ToolSpec{
-			"svc.agent": {search, continuation},
-		},
-	}
-	firstCursor := firstCursorValue
-	secondCursor := "second"
-	outputs := []*planner.ToolOutput{{
-		Name:   search.Name,
-		Bounds: &agent.Bounds{Truncated: true, NextCursor: &firstCursor},
-	}, {
-		Name:    continuation.Name,
-		Payload: rawjson.Message(`{"cursor":"first"}`),
-		Bounds:  &agent.Bounds{Truncated: true, NextCursor: &secondCursor},
-	}}
-
-	available, err := rt.availableContinuationTools("svc.agent", outputs)
+	rt, search, continuation := continuationTestRuntime()
+	outputs := make([]*planner.ToolOutput, 0, 2)
+	outputs = append(outputs, sourceContinuationOutput(
+		search.Name,
+		"source-1",
+		`{"query":"alarms"}`,
+		"first",
+	))
+	first, err := rt.availableContinuationActions("svc.agent", outputs)
 	require.NoError(t, err)
-	assert.Contains(t, available, continuation.Name)
+
+	outputs = append(outputs, &planner.ToolOutput{
+		Name:                       continuation.Name,
+		ToolCallID:                 "continue-1",
+		ContinuationRootToolCallID: "source-1",
+		Payload:                    rawjson.Message(`{"cursor":"first"}`),
+		Bounds:                     &agent.Bounds{Returned: 10, Truncated: true, NextCursor: pointer("second")},
+	})
+	second, err := rt.availableContinuationActions("svc.agent", outputs)
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	assert.Equal(t, first[0].modelName, second[0].modelName)
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    continuation.Name,
+		Name:    second[0].modelName,
 		Payload: rawjson.Message(`{}`),
 	}}}
-	require.NoError(t, rt.bindContinuationCursors(result, outputs))
+	require.NoError(t, rt.bindContinuationCursors(result, second))
 	assert.JSONEq(t, `{"cursor":"second"}`, string(result.ToolCalls[0].Payload))
 }
 
-func TestContinuationAvailabilityClosesTerminalChain(t *testing.T) {
+func TestContinuationActionsKeepParallelChainsIndependent(t *testing.T) {
 	t.Parallel()
 
-	search, continuation := continuationTestSpecs()
-	rt := &Runtime{
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			search.Name:       search,
-			continuation.Name: continuation,
-		},
-		agentToolSpecs: map[agent.Ident][]tools.ToolSpec{
-			"svc.agent": {search, continuation},
+	rt, search, continuation := continuationTestRuntime()
+	outputs := []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"query":"may"}`, "same-cursor"),
+		sourceContinuationOutput(search.Name, "source-2", `{"query":"june"}`, "same-cursor"),
+	}
+	actions, err := rt.availableContinuationActions("svc.agent", outputs)
+	require.NoError(t, err)
+	require.Len(t, actions, 2)
+	assert.NotEqual(t, actions[0].modelName, actions[1].modelName)
+
+	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
+		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
+		{Name: actions[1].modelName, Payload: rawjson.Message(`{}`)},
+	}}
+	require.NoError(t, rt.bindContinuationCursors(result, actions))
+	assert.Equal(t, continuation.Name, result.ToolCalls[0].Name)
+	assert.Equal(t, "source-1", result.ToolCalls[0].ContinuationRootToolCallID)
+	assert.Equal(t, "source-2", result.ToolCalls[1].ContinuationRootToolCallID)
+}
+
+func TestContinuationCompletionRemovesOnlyCompletedChain(t *testing.T) {
+	t.Parallel()
+
+	rt, search, continuation := continuationTestRuntime()
+	outputs := []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"query":"may"}`, "may-next"),
+		sourceContinuationOutput(search.Name, "source-2", `{"query":"june"}`, "june-next"),
+		{
+			Name:                       continuation.Name,
+			ToolCallID:                 "continue-1",
+			ContinuationRootToolCallID: "source-1",
+			Payload:                    rawjson.Message(`{"cursor":"may-next"}`),
+			Bounds:                     &agent.Bounds{Truncated: false},
 		},
 	}
-	firstCursor := firstCursorValue
-	outputs := []*planner.ToolOutput{{
-		Name:   search.Name,
-		Bounds: &agent.Bounds{Truncated: true, NextCursor: &firstCursor},
-	}, {
-		Name:    continuation.Name,
-		Payload: rawjson.Message(`{"cursor":"first"}`),
-		Bounds:  &agent.Bounds{Truncated: false},
-	}}
 
-	available, err := rt.availableContinuationTools("svc.agent", outputs)
+	actions, err := rt.availableContinuationActions("svc.agent", outputs)
 	require.NoError(t, err)
-	assert.NotContains(t, available, continuation.Name)
+	require.Len(t, actions, 1)
+	assert.Contains(t, actions[0].description, `"june"`)
 }
 
-func TestContinuationAvailabilityWithholdsAmbiguousParallelChainHeads(t *testing.T) {
+func TestContinuationHistoryRejectsMissingCorrelation(t *testing.T) {
 	t.Parallel()
 
-	search, continuation := continuationTestSpecs()
-	rt := &Runtime{
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			search.Name:       search,
-			continuation.Name: continuation,
-		},
-		agentToolSpecs: map[agent.Ident][]tools.ToolSpec{
-			"svc.agent": {search, continuation},
+	rt, _, continuation := continuationTestRuntime()
+	outputs := []*planner.ToolOutput{{
+		Name:       continuation.Name,
+		ToolCallID: "continue-1",
+		Payload:    rawjson.Message(`{"cursor":"first"}`),
+		Bounds:     &agent.Bounds{Truncated: false},
+	}}
+
+	_, err := rt.availableContinuationActions("svc.agent", outputs)
+	assert.ErrorContains(t, err, "history has no source tool call id")
+}
+
+func TestContinuationHistoryRejectsWrongCursor(t *testing.T) {
+	t.Parallel()
+
+	rt, search, continuation := continuationTestRuntime()
+	outputs := []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "first"),
+		{
+			Name:                       continuation.Name,
+			ToolCallID:                 "continue-1",
+			ContinuationRootToolCallID: "source-1",
+			Payload:                    rawjson.Message(`{"cursor":"other"}`),
+			Bounds:                     &agent.Bounds{Truncated: false},
 		},
 	}
-	firstCursor := firstCursorValue
-	secondCursor := "second"
-	outputs := []*planner.ToolOutput{{
-		Name:   search.Name,
-		Bounds: &agent.Bounds{Truncated: true, NextCursor: &firstCursor},
-	}, {
-		Name:   search.Name,
-		Bounds: &agent.Bounds{Truncated: true, NextCursor: &secondCursor},
-	}}
 
-	available, err := rt.availableContinuationTools("svc.agent", outputs)
+	_, err := rt.availableContinuationActions("svc.agent", outputs)
+	assert.ErrorContains(t, err, "with the wrong cursor")
+}
+
+func TestPlannerToolOutputHydrationPreservesContinuationRoot(t *testing.T) {
+	t.Parallel()
+
+	scheduled := hooks.NewToolCallScheduledEvent(
+		"run-1",
+		"agent-1",
+		"session-1",
+		tools.Ident("tools.continue_search"),
+		"continue-1",
+		rawjson.Message(`{"cursor":"next"}`),
+		"tools",
+		"",
+		0,
+	)
+	scheduled.ContinuationRootToolCallID = "source-1"
+	output, err := plannerToolOutputFromCanonicalEvents("run-1", "continue-1", &canonicalToolEvents{
+		scheduled: scheduled,
+		result: &hooks.ToolResultReceivedEvent{
+			ToolName:    scheduled.ToolName,
+			ToolCallID:  scheduled.ToolCallID,
+			ResultJSON:  rawjson.Message(`{}`),
+			ResultBytes: 2,
+		},
+	})
 	require.NoError(t, err)
-	assert.NotContains(t, available, continuation.Name)
+	assert.Equal(t, "source-1", output.ContinuationRootToolCallID)
 }
 
-func TestContinuationAvailabilityRejectsMalformedCanonicalHistory(t *testing.T) {
+func TestBindContinuationRejectsDuplicateActionCalls(t *testing.T) {
 	t.Parallel()
 
-	search, continuation := continuationTestSpecs()
-	rt := &Runtime{agentToolSpecs: map[agent.Ident][]tools.ToolSpec{
-		"svc.agent": {search, continuation},
-	}}
-	outputs := []*planner.ToolOutput{{
-		Name:    continuation.Name,
-		Payload: rawjson.Message(`{}`),
-		Bounds:  &agent.Bounds{Truncated: false},
-	}}
-
-	_, err := rt.availableContinuationTools("svc.agent", outputs)
-	assert.ErrorContains(t, err, `canonical payload is missing cursor field "cursor"`)
-}
-
-func TestContinuationAvailabilityRejectsDuplicateConsumption(t *testing.T) {
-	t.Parallel()
-
-	search, continuation := continuationTestSpecs()
-	rt := &Runtime{agentToolSpecs: map[agent.Ident][]tools.ToolSpec{
-		"svc.agent": {search, continuation},
-	}}
-	outputs := []*planner.ToolOutput{{
-		Name:    continuation.Name,
-		Payload: rawjson.Message(`{"cursor":"first"}`),
-		Bounds:  &agent.Bounds{Truncated: false},
-	}, {
-		Name:    continuation.Name,
-		Payload: rawjson.Message(`{"cursor":"first"}`),
-		Bounds:  &agent.Bounds{Truncated: false},
-	}}
-
-	_, err := rt.availableContinuationTools("svc.agent", outputs)
-	assert.ErrorContains(t, err, "cursor was consumed more than once")
-}
-
-func TestBindContinuationAllowsParallelSourceCalls(t *testing.T) {
-	t.Parallel()
-
-	search, continuation := continuationTestSpecs()
-	rt := &Runtime{toolSpecs: map[tools.Ident]tools.ToolSpec{
-		search.Name:       search,
-		continuation.Name: continuation,
-	}}
+	rt, search, _ := continuationTestRuntime()
+	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
+	})
+	require.NoError(t, err)
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: search.Name, Payload: rawjson.Message(`{"query":"first"}`)},
-		{Name: search.Name, Payload: rawjson.Message(`{"query":"second"}`)},
+		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
+		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
 	}}
 
-	require.NoError(t, rt.bindContinuationCursors(result, nil))
-	assert.Len(t, result.ToolCalls, 2)
-}
-
-func TestBindContinuationRejectsDuplicateContinuationCalls(t *testing.T) {
-	t.Parallel()
-
-	search, continuation := continuationTestSpecs()
-	rt := &Runtime{toolSpecs: map[tools.Ident]tools.ToolSpec{
-		search.Name:       search,
-		continuation.Name: continuation,
-	}}
-	cursor := "next"
-	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: continuation.Name, Payload: rawjson.Message(`{}`)},
-		{Name: continuation.Name, Payload: rawjson.Message(`{}`)},
-	}}
-
-	err := rt.bindContinuationCursors(result, []*planner.ToolOutput{{
-		Name:   search.Name,
-		Bounds: &agent.Bounds{Truncated: true, NextCursor: &cursor},
-	}})
+	err = rt.bindContinuationCursors(result, actions)
 	assert.ErrorContains(t, err, "cannot be called more than once")
 }
 
-func TestContinuationToolIsAdvertisedOnlyWhenAvailable(t *testing.T) {
+func TestContinuationActionsAreAdvertisedInsteadOfCanonicalTool(t *testing.T) {
 	t.Parallel()
 
-	search, continuation := continuationTestSpecs()
-	rt := &Runtime{agentToolSpecs: map[agent.Ident][]tools.ToolSpec{
-		"svc.agent": {search, continuation},
-	}}
+	rt, search, _ := continuationTestRuntime()
+	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
+	})
+	require.NoError(t, err)
 	hidden := &simplePlannerContext{rt: rt, agent: "svc.agent"}
-	visible := &simplePlannerContext{
-		rt:                     rt,
-		agent:                  "svc.agent",
-		availableContinuations: map[tools.Ident]struct{}{continuation.Name: {}},
-	}
+	visible := &simplePlannerContext{rt: rt, agent: "svc.agent", continuationActions: actions}
 
-	assert.Len(t, hidden.AdvertisedToolDefinitions(), 1)
-	assert.Len(t, visible.AdvertisedToolDefinitions(), 2)
+	require.Len(t, hidden.AdvertisedToolDefinitions(), 1)
+	require.Len(t, visible.AdvertisedToolDefinitions(), 2)
+	assert.Equal(t, actions[0].modelName.String(), visible.AdvertisedToolDefinitions()[1].Name)
 }
 
-func TestBindContinuationRejectsModelArguments(t *testing.T) {
+func TestBindContinuationRejectsCanonicalToolAndModelArguments(t *testing.T) {
 	t.Parallel()
 
-	search, continuation := continuationTestSpecs()
-	rt := &Runtime{toolSpecs: map[tools.Ident]tools.ToolSpec{
-		search.Name:       search,
-		continuation.Name: continuation,
-	}}
-	cursor := "next"
-	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+	rt, search, continuation := continuationTestRuntime()
+	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
+	})
+	require.NoError(t, err)
+
+	canonical := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
 		Name:    continuation.Name,
+		Payload: rawjson.Message(`{}`),
+	}}}
+	require.ErrorContains(t, rt.bindContinuationCursors(canonical, actions), "is not model-callable")
+
+	withArguments := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:    actions[0].modelName,
 		Payload: rawjson.Message(`{"cursor":"model-authored"}`),
 	}}}
-
-	err := rt.bindContinuationCursors(result, []*planner.ToolOutput{{
-		Name:   search.Name,
-		Bounds: &agent.Bounds{Truncated: true, NextCursor: &cursor},
-	}})
-	assert.ErrorContains(t, err, "unknown field \"cursor\"")
+	assert.ErrorContains(t, rt.bindContinuationCursors(withArguments, actions), `unknown field "cursor"`)
 }
 
 func continuationTestSpecs() (tools.ToolSpec, tools.ToolSpec) {
 	search := newAnyJSONSpec("tools.search", "svc.tools")
+	search.Payload.FieldJSONTypes = map[string]string{
+		"limit": "integer",
+		"query": "string",
+	}
 	search.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{
 		ContinueTool:    "tools.continue_search",
 		CursorField:     "cursor",
@@ -289,6 +283,37 @@ func continuationTestSpecs() (tools.ToolSpec, tools.ToolSpec) {
 		NextCursorField: "next_cursor",
 	}}
 	return search, continuation
+}
+
+func continuationTestRuntime() (*Runtime, tools.ToolSpec, tools.ToolSpec) {
+	search, continuation := continuationTestSpecs()
+	return &Runtime{
+		toolSpecs: map[tools.Ident]tools.ToolSpec{
+			search.Name:       search,
+			continuation.Name: continuation,
+		},
+		agentToolSpecs: map[agent.Ident][]tools.ToolSpec{
+			"svc.agent": {search, continuation},
+		},
+	}, search, continuation
+}
+
+func sourceContinuationOutput(
+	name tools.Ident,
+	toolCallID string,
+	payload string,
+	cursor string,
+) *planner.ToolOutput {
+	return &planner.ToolOutput{
+		Name:       name,
+		ToolCallID: toolCallID,
+		Payload:    rawjson.Message(payload),
+		Bounds: &agent.Bounds{
+			Returned:   10,
+			Truncated:  true,
+			NextCursor: pointer(cursor),
+		},
+	}
 }
 
 func pointer[T any](value T) *T {
