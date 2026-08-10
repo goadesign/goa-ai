@@ -272,7 +272,7 @@ func MarshalEchoPayload(v *EchoPayload) ([]byte, error) {
 		u.SetStructured((*toolhttp.StructuredValueTransport)(obj))
 		out.Value = u
 	}
-	if in.OptionalValue != nil && in.OptionalValue.Kind() != "" {
+	if in.OptionalValue != nil {
 		var optionalValueValue toolhttp.OptionalValue2
 		switch string(in.OptionalValue.Kind()) {
 		case "number":
@@ -337,7 +337,7 @@ func UnmarshalEchoPayload(data []byte) (*EchoPayload, error) {
 		u.SetStructured((*StructuredValue)(obj))
 		out.Value = u
 	}
-	if in.OptionalValue != nil && in.OptionalValue.Kind() != "" {
+	if in.OptionalValue != nil {
 		var optionalValueValue OptionalValue
 		switch string(in.OptionalValue.Kind()) {
 		case "number":
@@ -393,7 +393,7 @@ func MarshalEchoResult(v *EchoResult) ([]byte, error) {
 		u.SetStructured((*toolhttp.StructuredValueTransport)(obj))
 		out.Value = u
 	}
-	if in.OptionalValue != nil && in.OptionalValue.Kind() != "" {
+	if in.OptionalValue != nil {
 		var optionalValueValue toolhttp.OptionalValue2
 		switch string(in.OptionalValue.Kind()) {
 		case "number":
@@ -458,7 +458,7 @@ func UnmarshalEchoResult(data []byte) (*EchoResult, error) {
 		u.SetStructured((*StructuredValue)(obj))
 		out.Value = u
 	}
-	if in.OptionalValue != nil && in.OptionalValue.Kind() != "" {
+	if in.OptionalValue != nil {
 		var optionalValueValue OptionalValue
 		switch string(in.OptionalValue.Kind()) {
 		case "number":

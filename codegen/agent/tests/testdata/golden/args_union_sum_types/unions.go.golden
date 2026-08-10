@@ -81,7 +81,7 @@ func (u OptionalValue) Kind() OptionalValueKind {
 	return u.kind
 }
 
-// NewOptionalValueNumber constructs a OptionalValue with the number branch set.
+// NewOptionalValueNumber constructs OptionalValue with the number branch set.
 func NewOptionalValueNumber(v OptionalValueNumber) OptionalValue {
 	return OptionalValue{
 		kind:   OptionalValueKindNumber,
@@ -103,7 +103,7 @@ func (u *OptionalValue) SetNumber(v OptionalValueNumber) {
 	u.Number = v
 }
 
-// NewOptionalValueText constructs a OptionalValue with the text branch set.
+// NewOptionalValueText constructs OptionalValue with the text branch set.
 func NewOptionalValueText(v OptionalValueText) OptionalValue {
 	return OptionalValue{
 		kind: OptionalValueKindText,
@@ -270,7 +270,7 @@ func (u Value) Kind() ValueKind {
 	return u.kind
 }
 
-// NewValueNumber constructs a Value with the number branch set.
+// NewValueNumber constructs Value with the number branch set.
 func NewValueNumber(v ValueNumber) Value {
 	return Value{
 		kind:   ValueKindNumber,
@@ -292,7 +292,7 @@ func (u *Value) SetNumber(v ValueNumber) {
 	u.Number = v
 }
 
-// NewValueText constructs a Value with the text branch set.
+// NewValueText constructs Value with the text branch set.
 func NewValueText(v ValueText) Value {
 	return Value{
 		kind: ValueKindText,
@@ -314,7 +314,7 @@ func (u *Value) SetText(v ValueText) {
 	u.Text = v
 }
 
-// NewValueStructured constructs a Value with the structured branch set.
+// NewValueStructured constructs Value with the structured branch set.
 func NewValueStructured(v *StructuredValue) Value {
 	return Value{
 		kind:       ValueKindStructured,

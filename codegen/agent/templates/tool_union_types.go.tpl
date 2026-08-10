@@ -70,7 +70,7 @@ func (u {{ $u.Name }}) Kind() {{ $u.KindName }} {
 }
 
 {{- range $u.Fields }}
-// New{{ $u.Name }}{{ .FieldName }} constructs a {{ $u.Name }} with the {{ .Name }} branch set.
+// New{{ $u.Name }}{{ .FieldName }} constructs {{ $u.Name }} with the {{ .Name }} branch set.
 func New{{ $u.Name }}{{ .FieldName }}(v {{ .FieldType }}) {{ $u.Name }} {
 	return {{ $u.Name }}{
 		kind: {{ .KindConst }},
