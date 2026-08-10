@@ -169,21 +169,18 @@ The runtime keeps execution policy and planner intent separate:
 
 This order makes recovery explicit rather than presence-based. `ToolFailure`
 classifies why execution failed independently from its `RecoveryDirective`:
-`correct_call` narrows the next planner activity to one failed tool and requires
-changed payloads that satisfy every correction obligation for that tool.
-Distinct failed tools are queued in canonical failure order, while provider
-adapters continue to project historical canonical tool names independently of
-the narrowed current catalog. `replan` removes the failed tool from the
-recovery turn and permits another advertised capability or final answer, and
-`finish` forbids more tools. The runtime validates and enforces those
-transitions. When the same tool has both correction and replan failures in one
-batch, correction takes precedence and keeps only that tool available until its
-correction obligations are satisfied. A correction turn may pause for missing
-user input; the same obligations remain active when planning resumes after the
-answer. Replan does not permit a clarification pause.
-`SynthesizeAfterTools` from the original batch or a later correction turn
-survives while a queue contains only `correct_call` obligations; `replan` or
-`finish` clears that intent.
+`correct_call` keeps the failed tool available and attaches its generated
+validation issues, rejected input, and example to the next planner activity.
+The planner may retry fewer, equal, or more calls, combine work, use another
+advertised capability, await input, or answer. Provider adapters continue to
+project historical canonical tool names independently of the current catalog.
+`replan` removes the failed tool from the recovery turn while permitting another
+advertised action, input request, or answer. `finish` forbids more tools. When
+the same tool has both correction and replan failures in one batch, the
+correctable failure keeps that tool available. A recovery turn may pause for
+input; its evidence remains available when planning resumes after the answer.
+A failed batch does not preserve its earlier `SynthesizeAfterTools`
+intent; a planner that retries work selects synthesis again on that new batch.
 Synthesis-after-tools batches must contain at least one budgeted tool and cannot
 contain a `TerminalRun` tool, ensuring the existing step classification always
 reaches the appropriate planner resume. The resume activity validates the
@@ -522,9 +519,7 @@ redeploys.
   prose final answer. The runtime executes only `TerminalRun()` tools in that
   path (`TerminalRun()` implies bookkeeping), keeps them inside the remaining
   hard-deadline window, and closes the run only if every terminal side effect
-  succeeds. Correct-call restrictions use the stable run-policy envelope and
-  are scoped to one normal recovery activity; queued tools receive separate
-  turns. Recovery call IDs extend the planner activity payload and select the
+  succeeds. Recovery call IDs extend the planner activity payload and select the
   canonical failed outputs that shape both reminders and the advertised catalog.
   Empty recovery IDs are omitted for compatibility. Deployments must stop or
   drain every old worker before recovery turns are scheduled by the new code:
@@ -598,11 +593,11 @@ that UIs and stream bridges can consume without heuristics.
     - `error`: **user-safe** message suitable for direct display
     - `debug_error`: raw error string for logs/diagnostics (not for UI)
   - Tool-execution events carry a `ToolFailure` with an independent failure kind
-    and recovery action. `correct_call` permits a runtime-constrained turn
-    containing only one failed tool and queues other failed tools, `replan`
-    removes the failed tool from the next turn's caller-allowed catalog, and
-    `finish` is terminal for tool execution. A same-tool `correct_call`
-    obligation takes precedence over a parallel `replan`.
+    and recovery action. `correct_call` keeps the failed tool available and
+    supplies structured correction evidence without requiring a retry,
+    `replan` removes the failed tool from the next turn's caller-allowed
+    catalog, and `finish` is terminal for tool execution. A same-tool
+    `correct_call` keeps that tool available alongside a parallel `replan`.
 
 - **Terminal identity**
   - `RunCompletedEvent.Labels` carries the run-scoped labels provided at run

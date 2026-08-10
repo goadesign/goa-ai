@@ -765,12 +765,13 @@ type PlanResult struct {
 ```
 
 `SynthesizeAfterTools` is batch intent, not recovery policy. Failed results
-carry `ToolFailure.Recovery`: `correct_call` receives a turn whose advertised
-catalog contains exactly one failed tool, with distinct failed tools queued in
-canonical order; `replan` receives the caller-allowed catalog without the failed
-tool, and `finish` requires tool-free synthesis. Otherwise the runtime carries
-the batch intent as `SynthesisOnly`, which rejects additional tool calls. `Finalize`
-remains reserved for runtime-forced cap or deadline termination.
+carry `ToolFailure.Recovery`: `correct_call` keeps the failed tool available and
+supplies structured correction evidence without requiring a retry; `replan`
+receives the caller-allowed catalog without the failed tool; and `finish`
+requires tool-free synthesis. The planner may combine corrected work, choose
+another advertised tool, await input, or answer. Otherwise the runtime carries
+the batch intent as `SynthesisOnly`, which rejects additional tool calls.
+`Finalize` remains reserved for runtime-forced cap or deadline termination.
 
 ### PlannerContext
 
@@ -962,11 +963,10 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 | `WithTagPolicyClauses([]TagPolicyClause)` | Compose explicit tag clauses |
 | `WithTiming(Timing)`                    | Set multiple timing overrides |
 
-Runtime-owned correct-call restrictions constrain exactly one recovery activity
-and queue parallel failures from distinct tools for separate turns. They use
-the stable policy envelope and do not constrain replan or forced-finalization
-turns; caller `WithRestrictToTool` policy remains run-scoped and must admit each
-correction tool.
+Recovery activities preserve the caller-authorized catalog for `correct_call`
+failures and remove tools selected only by `replan` failures. Caller
+`WithRestrictToTool` policy remains run-scoped and continues to define the
+maximum available catalog.
 
 `WithTiming(Timing)` sets semantic run/planner/tool budgets. It does not expose
 engine-level queue-wait or heartbeat tuning.

@@ -528,10 +528,9 @@ Workflow step boundary:
   bookkeeping), executes them inside the remaining hard-deadline window, stamps
   generated tool-call IDs with the finalization attempt, and requires every
   terminal side effect in the batch to complete successfully,
-- correct-call restrictions are scoped to one normal recovery activity, queue
-  distinct failed tools for separate turns, and do not constrain this validated
-  terminal bookkeeping path; caller-supplied `WithRestrictToTool` remains
-  run-scoped and still applies,
+- recoverable failures supply one normal planner activity with their structured
+  evidence and do not constrain this validated terminal bookkeeping path;
+  caller-supplied `WithRestrictToTool` remains run-scoped and still applies,
 - deadline checks happen before admitting new work; in-flight tool batches
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.
@@ -583,22 +582,17 @@ The runtime applies them in this order:
 | Otherwise | Normal continuation turn |
 
 `SynthesizeAfterTools` therefore does not create a second recovery policy.
-`ToolFailure.Recovery` is the single transition contract: `correct_call`
-advertises one tool with outstanding correction obligations and requires
-changed payloads that satisfy every failed call for that tool. Distinct failed
-tools are queued in canonical order. Historical tool calls retain deterministic
-provider-name projection even while the current correction turn advertises one
-tool. A correction may pause for missing user input; answering resumes the same
-restricted correction turn. `replan` removes the failed tool from the recovery
-turn while permitting another advertised tool or final answer, but not a
-clarification pause. `finish` forbids more tools.
-When the same tool has both correction and replan failures in one batch,
-correction takes precedence and keeps only that tool available until its
-correction obligations are satisfied.
-Synthesis intent requested by
-the original batch or a later correction turn survives a queue containing only
-`correct_call` obligations; `replan` or `finish` clears it. Successful batches
-proceed to the requested answer.
+`ToolFailure.Recovery` is the single transition contract: `correct_call` keeps
+the failed tool available and attaches generated correction evidence without
+requiring a retry. The planner may combine work, call any advertised tool, await
+input, or answer. Historical tool calls retain deterministic provider-name
+projection independently of the current catalog. `replan` removes the failed
+tool while permitting another advertised action, input request, or answer;
+`finish` forbids more tools. When the same tool has both correction and replan
+failures in one batch, the correctable failure keeps that tool available. A
+recovery turn may pause for input; answering retains the selected failure
+evidence. A failed batch clears its earlier
+synthesis intent; a new retry batch may request `SynthesizeAfterTools` again.
 
 The workflow selects current recovery outputs by stable call ID in
 `PlanActivityInput`. Empty recovery IDs are omitted from canonical JSON.
@@ -647,8 +641,8 @@ type PlannerContext interface {
 Use `AdvertisedToolDefinitions()` when constructing provider requests inside planners. The
 runtime filters registered tool specs before the planner/model sees them and strips tag metadata
 from the model-facing `ToolDefinition` values. Provider adapters still encode
-historical tool-use and tool-result blocks from the transcript when a
-correct-call turn narrows the current definitions.
+historical tool-use and tool-result blocks from the transcript independently of
+the tools currently advertised.
 
 Generated tool definitions also carry precomputed provider projections. The
 DSL-authored top-level Goa `Example(...)` on a payload becomes the only

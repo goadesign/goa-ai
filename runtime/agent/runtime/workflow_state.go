@@ -52,16 +52,6 @@ type (
 		// activity that produced Result. Presence activates workflow-side
 		// enforcement; absence preserves histories created before this contract.
 		PendingRecoveryCatalog *RecoveryCatalog
-
-		// QueuedRecovery contains failures for other tools while correct-call
-		// recovery narrows each planner turn to one tool. The workflow drains the
-		// queue in canonical failure order.
-		QueuedRecovery []*planner.ToolOutput
-
-		// SynthesizeAfterRecovery preserves synthesis intent from any completed
-		// tool turn while correction obligations remain queued. Replan or finish
-		// recovery clears it because the prior plan can no longer complete.
-		SynthesizeAfterRecovery bool
 	}
 )
 

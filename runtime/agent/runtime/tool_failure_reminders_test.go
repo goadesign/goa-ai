@@ -33,7 +33,7 @@ func TestToolFailureReminderCarriesCorrectionContract(t *testing.T) {
 		},
 	}, map[string]string{"dataset": "Data source to query."})
 
-	assert.Contains(t, got, "Call the same tool again with corrected arguments.")
+	assert.Contains(t, got, "failed tool remains available with correction guidance")
 	assert.Contains(t, got, `"field":"parameters"`)
 	assert.Contains(t, got, `Field guidance: {"dataset":"Data source to query."}`)
 	assert.Contains(t, got, `Example input: {"dataset":"alarms"}`)
@@ -93,7 +93,7 @@ func TestToolRemindersUseProviderVisibleToolNames(t *testing.T) {
 	}, "svc.read.continue_events", "cursor")
 
 	assert.Contains(t, failure, "Tool: svc_read_get_status")
-	assert.Contains(t, failure, "The failed tool is unavailable for this turn.")
+	assert.Contains(t, failure, "Do not repeat this rejected request.")
 	assert.NotContains(t, failure, "Change the request")
 	assert.NotContains(t, failure, "svc.read.get_status")
 	assert.Contains(t, bounds, "Tool: svc_read_list_events")
@@ -137,33 +137,4 @@ func TestSelectRecoveryOutputsRejectsInvalidSelectors(t *testing.T) {
 			require.ErrorContains(t, err, tt.want)
 		})
 	}
-}
-
-func TestDominantRecoveryOutputSetKeepsCorrectionGuidance(t *testing.T) {
-	t.Parallel()
-
-	outputs := []*planner.ToolOutput{
-		{
-			Name:       "svc.read.get_status",
-			ToolCallID: "replan",
-			Failure: testToolFailure(
-				planner.FailureDomainRejection,
-				planner.RecoveryReplan,
-				"use another capability",
-			),
-		},
-		{
-			Name:       "svc.read.get_status",
-			ToolCallID: "correct",
-			Failure: testToolFailure(
-				planner.FailureInvalidCall,
-				planner.RecoveryCorrectCall,
-				"fix the input",
-			),
-		},
-	}
-
-	selected := dominantRecoveryOutputSet(outputs)
-	require.Len(t, selected, 1)
-	assert.Equal(t, "correct", selected[0].ToolCallID)
 }
