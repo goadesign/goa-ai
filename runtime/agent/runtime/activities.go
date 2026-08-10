@@ -128,7 +128,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 			return nil, err
 		}
 		if automatic {
-			return act.output(result)
+			return act.output(ctx, result)
 		}
 	}
 	planInput := &planner.PlanResumeInput{
