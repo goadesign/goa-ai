@@ -3,9 +3,12 @@
 package tests
 
 import (
+	"io"
+	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/testhelpers"
 	"goa.design/goa-ai/testutil"
 	gcodegen "goa.design/goa/v3/codegen"
@@ -30,6 +33,37 @@ func buildAndGenerateExample(t *testing.T, design func()) []*gcodegen.File {
 func fileContent(t *testing.T, files []*gcodegen.File, wantPath string) string {
 	t.Helper()
 	return testhelpers.FileContent(t, files, wantPath)
+}
+
+// renderedFileContent renders one generated file through Goa's formatting and
+// unused-import cleanup before returning the final source.
+func renderedFileContent(t *testing.T, files []*gcodegen.File, wantPath string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, file := range files {
+		if filepath.ToSlash(file.Path) != wantPath {
+			continue
+		}
+		path, err := file.Render(root)
+		require.NoError(t, err)
+		rootDir, err := os.OpenRoot(root)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, rootDir.Close())
+		})
+		rel, err := filepath.Rel(root, path)
+		require.NoError(t, err)
+		rendered, err := rootDir.Open(rel)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, rendered.Close())
+		})
+		content, err := io.ReadAll(rendered)
+		require.NoError(t, err)
+		return string(content)
+	}
+	t.Fatalf("generated file %q not found", wantPath)
+	return ""
 }
 
 // fileExists reports whether the generated file list contains wantPath.

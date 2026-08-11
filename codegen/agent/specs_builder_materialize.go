@@ -391,17 +391,16 @@ func (b *toolSpecBuilder) ensureNestedLocalTransportTypes(scope *codegen.NameSco
 		if _, exists := b.types[key]; exists {
 			continue
 		}
-		// Match Goa’s validation behavior: only treat values as pointers for
-		// validation purposes when the type is non-primitive (objects/unions, etc.).
-		// Alias primitives (e.g. type Time string) must validate as values, otherwise
-		// Goa’s ValidationCode will emit nil checks and dereferences that can’t compile.
-		httpctx := codegen.NewAttributeContext(!goaexpr.IsPrimitive(ut), false, false, "", scope)
+		// Primitive aliases are values at the root; objects and unions retain
+		// pointer presence until generated validation completes.
+		httpctx := modelJSONTransportContext(scope, !goaexpr.IsPrimitive(ut), "")
 		vcode := codegen.ValidationCode(ut.AttributeExpr, ut, httpctx, true, goaexpr.IsAlias(ut), false, "body")
 		var vlines []string
 		if strings.TrimSpace(vcode) != "" {
 			vlines = strings.Split(vcode, "\n")
 		}
 		tref := scope.GoTypeRef(&goaexpr.AttributeExpr{Type: ut})
+		transportCtx := modelJSONTransportContext(scope, true, "")
 		b.types[key] = &typeData{
 			Key:                    key,
 			TypeName:               name,
@@ -411,7 +410,7 @@ func (b *toolSpecBuilder) ensureNestedLocalTransportTypes(scope *codegen.NameSco
 			GenerateCodec:          false,
 			TypeImports:            shared.GatherAttributeImports(b.genpkg, ut.AttributeExpr),
 			TransportTypeName:      name,
-			TransportDef:           name + " " + scope.GoTypeDef(ut.AttributeExpr, true, false),
+			TransportDef:           name + " " + transportTypeDef(scope, ut.AttributeExpr, transportCtx),
 			TransportImports:       shared.GatherAttributeImports(b.genpkg, ut.AttributeExpr),
 			TransportValidationSrc: vlines,
 			TransportTypeRef:       tref,

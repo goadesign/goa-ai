@@ -146,21 +146,23 @@ func MarshalDraftFromTranscriptResult(v *DraftFromTranscriptResult) ([]byte, err
 	out = &toolhttp.DraftFromTranscriptResultTransport{
 		AssistantText: &in.AssistantText,
 	}
+	var draftValue toolhttp.Draft2
 	switch string(in.Draft.Kind()) {
 	case "new_task":
 		actual, _ := in.Draft.AsNewTask()
 		obj := encodeCompletionDraftToToolhttpCompletionDraftTransport(actual)
-		u := out.Draft
+		u := draftValue
 		u.SetNewTask((*toolhttp.CompletionDraftTransport)(obj))
-		out.Draft = u
+		draftValue = u
 	case "existing_task_id":
 		actual, _ := in.Draft.AsExistingTaskID()
 		obj := toolhttp.DraftExistingTaskIDTransport(actual)
 
-		u := out.Draft
+		u := draftValue
 		u.SetExistingTaskID((toolhttp.DraftExistingTaskIDTransport)(obj))
-		out.Draft = u
+		draftValue = u
 	}
+	out.Draft = &draftValue
 	return json.Marshal(out)
 }
 

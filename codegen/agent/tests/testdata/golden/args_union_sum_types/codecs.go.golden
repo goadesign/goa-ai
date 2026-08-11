@@ -250,29 +250,31 @@ func MarshalEchoPayload(v *EchoPayload) ([]byte, error) {
 	out = &toolhttp.EchoPayloadTransport{
 		ID: &in.ID,
 	}
+	var valueValue toolhttp.Value2
 	switch string(in.Value.Kind()) {
 	case "number":
 		actual, _ := in.Value.AsNumber()
 		obj := toolhttp.ValueNumberTransport(actual)
 
-		u := out.Value
+		u := valueValue
 		u.SetNumber((toolhttp.ValueNumberTransport)(obj))
-		out.Value = u
+		valueValue = u
 	case "text":
 		actual, _ := in.Value.AsText()
 		obj := toolhttp.ValueTextTransport(actual)
 
-		u := out.Value
+		u := valueValue
 		u.SetText((toolhttp.ValueTextTransport)(obj))
-		out.Value = u
+		valueValue = u
 	case "structured":
 		actual, _ := in.Value.AsStructured()
 		obj := encodeStructuredValueToToolhttpStructuredValueTransport(actual)
-		u := out.Value
+		u := valueValue
 		u.SetStructured((*toolhttp.StructuredValueTransport)(obj))
-		out.Value = u
+		valueValue = u
 	}
-	if in.OptionalValue != nil {
+	out.Value = &valueValue
+	if in.OptionalValue.Kind() != "" {
 		var optionalValueValue toolhttp.OptionalValue2
 		switch string(in.OptionalValue.Kind()) {
 		case "number":
@@ -338,24 +340,22 @@ func UnmarshalEchoPayload(data []byte) (*EchoPayload, error) {
 		out.Value = u
 	}
 	if in.OptionalValue != nil {
-		var optionalValueValue OptionalValue
 		switch string(in.OptionalValue.Kind()) {
 		case "number":
 			actual, _ := in.OptionalValue.AsNumber()
 			obj := OptionalValueNumber(actual)
 
-			u := optionalValueValue
+			u := out.OptionalValue
 			u.SetNumber((OptionalValueNumber)(obj))
-			optionalValueValue = u
+			out.OptionalValue = u
 		case "text":
 			actual, _ := in.OptionalValue.AsText()
 			obj := OptionalValueText(actual)
 
-			u := optionalValueValue
+			u := out.OptionalValue
 			u.SetText((OptionalValueText)(obj))
-			optionalValueValue = u
+			out.OptionalValue = u
 		}
-		out.OptionalValue = &optionalValueValue
 	}
 	return out, nil
 }
@@ -371,29 +371,31 @@ func MarshalEchoResult(v *EchoResult) ([]byte, error) {
 	out = &toolhttp.EchoResultTransport{
 		ID: &in.ID,
 	}
+	var valueValue toolhttp.Value2
 	switch string(in.Value.Kind()) {
 	case "number":
 		actual, _ := in.Value.AsNumber()
 		obj := toolhttp.ValueNumberTransport(actual)
 
-		u := out.Value
+		u := valueValue
 		u.SetNumber((toolhttp.ValueNumberTransport)(obj))
-		out.Value = u
+		valueValue = u
 	case "text":
 		actual, _ := in.Value.AsText()
 		obj := toolhttp.ValueTextTransport(actual)
 
-		u := out.Value
+		u := valueValue
 		u.SetText((toolhttp.ValueTextTransport)(obj))
-		out.Value = u
+		valueValue = u
 	case "structured":
 		actual, _ := in.Value.AsStructured()
 		obj := encodeStructuredValueToToolhttpStructuredValueTransport(actual)
-		u := out.Value
+		u := valueValue
 		u.SetStructured((*toolhttp.StructuredValueTransport)(obj))
-		out.Value = u
+		valueValue = u
 	}
-	if in.OptionalValue != nil {
+	out.Value = &valueValue
+	if in.OptionalValue.Kind() != "" {
 		var optionalValueValue toolhttp.OptionalValue2
 		switch string(in.OptionalValue.Kind()) {
 		case "number":
@@ -459,24 +461,22 @@ func UnmarshalEchoResult(data []byte) (*EchoResult, error) {
 		out.Value = u
 	}
 	if in.OptionalValue != nil {
-		var optionalValueValue OptionalValue
 		switch string(in.OptionalValue.Kind()) {
 		case "number":
 			actual, _ := in.OptionalValue.AsNumber()
 			obj := OptionalValueNumber(actual)
 
-			u := optionalValueValue
+			u := out.OptionalValue
 			u.SetNumber((OptionalValueNumber)(obj))
-			optionalValueValue = u
+			out.OptionalValue = u
 		case "text":
 			actual, _ := in.OptionalValue.AsText()
 			obj := OptionalValueText(actual)
 
-			u := optionalValueValue
+			u := out.OptionalValue
 			u.SetText((OptionalValueText)(obj))
-			optionalValueValue = u
+			out.OptionalValue = u
 		}
-		out.OptionalValue = &optionalValueValue
 	}
 	return out, nil
 }

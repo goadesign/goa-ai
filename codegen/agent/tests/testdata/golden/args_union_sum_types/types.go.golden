@@ -12,14 +12,14 @@ type (
 		// Request identifier
 		ID            string
 		Value         Value
-		OptionalValue *OptionalValue
+		OptionalValue OptionalValue
 	}
 	// EchoResult defines the JSON result for the union.echo tool.
 	EchoResult = struct {
 		// Request identifier
 		ID            string
 		Value         Value
-		OptionalValue *OptionalValue
+		OptionalValue OptionalValue
 	}
 	// OptionalValueNumber is a helper type materialized for nested references.
 	OptionalValueNumber = int32

@@ -208,9 +208,10 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	if owner.Kind == contractTypeOwnerCompletion {
 		doc = fmt.Sprintf("%s defines the JSON %s for the completion %s.", typeName, usage, owner.QualifiedName)
 	}
-	transportDef := transportTypeName + " " + scope.GoTypeDef(transportAttr, true, false)
+	transportCtx := modelJSONTransportContext(scope, true, "")
+	transportDef := transportTypeName + " " + transportTypeDef(scope, transportAttr, transportCtx)
 	transportImports := shared.GatherAttributeImports(b.genpkg, transportAttr)
-	httpctx := codegen.NewAttributeContext(!goaexpr.IsPrimitive(schemaAttr.Type), false, false, "", scope)
+	httpctx := modelJSONTransportContext(scope, !goaexpr.IsPrimitive(schemaAttr.Type), "")
 	transportValidation := validationCodeWithContext(schemaAttr, nil, httpctx, true, false, false, "body", owner, usage, "transport")
 	var transportValidationSrc []string
 	if strings.TrimSpace(transportValidation) != "" {
@@ -233,14 +234,14 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 			TypeName:      typeName,
 		},
 	}
-	srcCtx := codegen.NewAttributeContext(true, false, false, "toolhttp", scope)
+	srcCtx := modelJSONTransportContext(scope, true, "toolhttp")
 	tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, "", scope)
 	decodeBody, decodeHelpers, err := codegen.GoTransform(src, dst, "in", "out", srcCtx, tgtCtx, "decode", false)
 	if err != nil {
 		return nil, err
 	}
 	encSrcCtx := codegen.NewAttributeContextForConversion(false, false, true, "", scope)
-	encTgtCtx := codegen.NewAttributeContext(true, false, false, "toolhttp", scope)
+	encTgtCtx := modelJSONTransportContext(scope, true, "toolhttp")
 	encodeBody, encodeHelpers, err := codegen.GoTransform(dst, src, "in", "out", encSrcCtx, encTgtCtx, "encode", false)
 	if err != nil {
 		return nil, err
