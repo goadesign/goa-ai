@@ -278,6 +278,7 @@ Your agents can do useful work by calling other parts of your system. Here's how
 
 When your tool maps to a service method (via `BindTo`), Goa-AI generates:
 - Typed tool specs/codecs under `gen/<svc>/agents/<agent>/specs/<toolset>/`
+- One typed descriptor per tool (for example `SummarizeDocTool`) pairing the tool identifier with its payload and result codecs, so planners, executors, and eval hooks decode tool JSON without restating the name-to-codec pairing fixed by the design
 - Transform helpers (when shapes are compatible): `transforms.go`
 - An application-owned executor stub under `internal/agents/<agent>/toolsets/<toolset>/execute.go`
 
@@ -293,7 +294,7 @@ if err != nil { panic(err) }
 
 Implement the executor's `Execute` function to:
 - Switch on `call.Name` for each tool
-- Decode `call.Payload` to typed args using the generated codec
+- Decode `call.Payload` to typed args with the generated typed descriptor (`specs.<Tool>Tool.Payload.FromJSON`) — the name-to-codec pairing is fixed at generation time and compile-checked, no type assertion needed
 - Optionally use `ToMethodPayload_<Tool>`/`ToToolReturn_<Tool>` transforms
 - Call your service client and return a `planner.ToolResult`
 
@@ -315,19 +316,10 @@ import (
 
 func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
     switch call.Name {
-    case "<svc>.<toolset>.<tool>":
-        // Decode payload using generated codec
-        spec, ok := specs.Spec(call.Name)
-        if !ok {
-            return runtime.Executed(&planner.ToolResult{
-                Failure: &planner.ToolFailure{
-                    Kind: planner.FailureInternal,
-                    Error: planner.NewToolError("payload codec not found"),
-                    Recovery: planner.RecoveryDirective{Action: planner.RecoveryFinish},
-                },
-            }), nil
-        }
-        args, err := spec.Payload.Codec.FromJSON(call.Payload)
+    case specs.<Tool>:
+        // Decode with the generated typed descriptor: args is the typed
+        // payload (e.g. *specs.<ToolPayload>), no type assertion needed.
+        args, err := specs.<Tool>Tool.Payload.FromJSON(call.Payload)
         if err != nil {
             var issuer interface {
                 Issues() []*tools.FieldIssue
@@ -345,17 +337,14 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
                         Action: planner.RecoveryCorrectCall,
                         Issues: issues,
                         PriorInput: append(rawjson.Message(nil), call.Payload...),
-                        ExampleJSON: append(rawjson.Message(nil), spec.Payload.ExampleJSON...),
+                        ExampleJSON: append(rawjson.Message(nil), specs.Spec<Tool>.Payload.ExampleJSON...),
                     },
                 },
             }), nil
         }
-        // Type-assert to the generated payload type:
-        // typedArgs := args.(*specs.<ToolPayload>)
-        // Optionally use transforms: mp, _ := specs.ToMethodPayload_<Tool>(typedArgs)
+        // Optionally use transforms: mp, _ := specs.ToMethodPayload_<Tool>(args)
         // Call your service client, map result via specs.ToToolReturn_<Tool>
         // Or build a typed tool return directly:
-        // res := &specs.<ToolReturn>{Status: "ok"}
         return runtime.Executed(&planner.ToolResult{
 			Name:   call.Name,
 			Result: &specs.<ToolReturn>{
@@ -630,8 +619,35 @@ Everything typed lives in `gen/evals/{{ .Name }}/`: a `Hooks` interface with one
 
 Implement each hook to run the real agent, then return the evidence to grade:
 
-* **Checks** are deterministic facts you compute yourself: which tools were called, with which arguments, whether pagination completed.
+* **Checks** are deterministic facts: which tools were called, with which arguments, whether the run completed.
 * **Claims** are plain-language statements about the reply ("the answer names the capital of Japan") graded by a model judge.
+
+Don't recompute trajectory facts by hand. Bridge the runtime's event bus into
+an `evidence.Collector` (package `goa.design/goa-ai/eval/evidence`) while the
+agent runs, then declare expectations with the generated typed tool
+descriptors — the predicates are compile-checked against the tool's actual
+payload and result types:
+
+```go
+collector := evidence.NewCollector()
+sub, err := streambridge.Register(rt.Bus, sink) // sink filters the scenario's session and calls collector.Consume
+// ... run the agent ...
+ev, err := collector.Finish()
+expect := evidence.Expect{
+    Tools: []evidence.Tool{
+        evidence.ExpectCall(specs.<Tool>Tool,
+            func(p *specs.<ToolPayload>) error { /* assert arguments */ return nil },
+            func(r *specs.<ToolReturn>) error { /* assert result */ return nil },
+        ),
+    },
+}
+return eval.Result{Checks: expect.Checks(ev), Claims: claims, Output: ev.Answer}, nil
+```
+
+`Expect` grades the causal trajectory (in-order subsequence by default,
+`Exact: true` for call-for-call equality), forbidden tools, failure
+classifications (`evidence.ExpectFailure`), pending operator confirmations
+(`evidence.ExpectConfirmation`), and the terminal workflow phase.
 
 ```bash
 go run ./cmd/{{ .Name }}-evals                    # run every scenario, JSON report on stdout

@@ -155,7 +155,11 @@ func scenarioInputs() {{ .ExampleAlias }}.Inputs {
 }
 
 {{- range .Scenarios }}
-// {{ .Method }} executes the {{ .RawID }} scenario.
+// {{ .Method }} executes the {{ .RawID }} scenario. Run the product flow,
+// then grade it: collect run evidence with goa.design/goa-ai/eval/evidence
+// (bridge the runtime bus into an evidence.Collector, declare expectations
+// with evidence.ExpectCall and the generated typed tool descriptors) and
+// return deterministic checks plus semantic claims.
 func (*hooks) {{ .Method }}(context.Context{{ if .HasInput }}, {{ .ExampleInputRef }}{{ end }}) (eval.Result, error) {
 	return eval.Result{}, errors.New("TODO: implement {{ .RawID }}")
 }

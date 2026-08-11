@@ -113,13 +113,29 @@ goa example example.com/quickstart/design
 ```
 
 This creates:
-- **`gen/`** - Generated code (never edit by hand)
+- **`gen/`** - Generated code (never edit by hand), including one typed
+  descriptor per tool (`helpers.AnswerTool`) pairing the tool identifier with
+  its payload and result codecs
 - **`cmd/orchestrator/main.go`** - Runnable example using the bootstrap
-- **`internal/agents/bootstrap/bootstrap.go`** - Wires runtime and registers agents
-- **`internal/agents/chat/planner/planner.go`** - Stub planner (edit to connect your LLM)
+- **`internal/agents/bootstrap/bootstrap.go`** - Wires runtime, registers agents and toolset executors
+- **`internal/agents/chat/planner/planner.go`** - Application-owned planner (edit to connect your LLM)
 - **`gen/<service>/completions/`** - Generated typed direct-completion helpers
 - **`gen/evals/chat_quality/`** - Typed evaluation harness (hooks interface, validated inputs, tool contracts)
 - **`cmd/chat_quality-evals/main.go`** - Application-owned eval command (created once, never overwritten)
+
+This quickstart's application-owned files are already filled in to demonstrate
+the full agent loop deterministically, with no model or external service:
+
+- The planner (`internal/agents/chat/planner/planner.go`) requests the
+  `helpers.answer` tool with the user's question on `PlanStart`, then decodes
+  the tool result with the typed descriptor (`helpers.AnswerTool.Result`) and
+  finalizes with the answer on `PlanResume`.
+- The executor (`internal/agents/chat/toolsets/helpers/execute.go`) decodes
+  the payload with `helpers.AnswerTool.Payload` and returns a typed
+  `AnswerResult`. Invalid payloads come back as classified invalid-call
+  failures with structured correction guidance.
+- The bootstrap registers the executor with the generated
+  `RegisterUsedToolsets` helper, which fails fast when an executor is missing.
 
 ### Typed Direct Completion
 
@@ -167,11 +183,14 @@ Expected output:
 
 ```
 RunID: orchestrator-chat-...
-Assistant: Hello from example planner.
+Assistant: Deterministic demo answer to: Hello
 Completion draft_task: ...
 Completion delta draft_task: ...
 Completion stream draft_task: ...
 ```
+
+The assistant reply proves the whole loop ran: planner → helpers.answer tool
+→ executor → planner resume → final response.
 
 The generated example uses the in-memory engine, so no Temporal is needed for development.
 
@@ -181,9 +200,33 @@ The `Suite` in the design generates a typed evaluation harness under
 `gen/evals/chat_quality`: one hook method per scenario, validated typed inputs,
 and `MustToolContract`, a lookup over the tool contracts reachable from the
 agent. `goa example` scaffolds `cmd/chat_quality-evals` once; the hook bodies
-are yours and survive regeneration. This quickstart's hooks run the real chat
-agent on the in-memory engine and assert on the reply and the generated
-`helpers.answer` contract — see `cmd/chat_quality-evals/main.go`.
+are yours and survive regeneration.
+
+This quickstart's `greeting_reply` hook demonstrates the framework evidence
+flow (see `cmd/chat_quality-evals/main.go`): it bridges the runtime's event
+bus into an `evidence.Collector` (package `goa.design/goa-ai/eval/evidence`)
+while the real chat agent runs on the in-memory engine, then grades the run
+with declarative expectations built from the generated typed tool descriptor:
+
+```go
+expect := evidence.Expect{
+    Tools: []evidence.Tool{
+        evidence.ExpectCall(genhelpers.AnswerTool,
+            func(p *genhelpers.AnswerPayload) error { /* assert arguments */ return nil },
+            func(r *genhelpers.AnswerResult) error { /* assert result */ return nil },
+        ),
+    },
+}
+return eval.Result{Checks: expect.Checks(ev), Output: ev.Answer}, nil
+```
+
+The descriptor fixes the tool-name-to-codec pairing at generation time, so
+the predicates are compile-checked against the tool's actual payload and
+result types — a design change that renames or retypes a field breaks the
+suite at compile time instead of silently never matching. `Expect` grades the
+causal trajectory, failure classifications (`evidence.ExpectFailure`),
+pending confirmations (`evidence.ExpectConfirmation`), forbidden tools, and
+the terminal workflow phase.
 
 ```bash
 go run ./cmd/chat_quality-evals              # whole suite
@@ -198,7 +241,7 @@ outcomes) and exits non-zero when anything fails:
 {
   "suite_id": "chat_quality",
   "scenarios": [
-    {"id": "greeting_reply", "result": {"checks": [{"name": "final_reply_present", "passed": true}]}, "passed": true},
+    {"id": "greeting_reply", "result": {"checks": [{"name": "trajectory", "passed": true}, {"name": "terminal", "passed": true}], "output": "Deterministic demo answer to: What is the capital of Japan?"}, "passed": true},
     {"id": "helpers_contract", "result": {"checks": [{"name": "answer_payload_schema_present", "passed": true}]}, "passed": true}
   ],
   "passed": true
@@ -242,16 +285,20 @@ rt := agentsruntime.New(agentsruntime.WithEngine(eng))
 
 ## 7) Customize the planner
 
-Edit `internal/agents/chat/planner/planner.go` to connect your LLM:
+The planner in `internal/agents/chat/planner/planner.go` already demonstrates
+both planner decisions deterministically: `PlanStart` returns tool calls
+(encoding the payload with `helpers.AnswerTool.Payload`), and `PlanResume`
+decodes the executed tool result and finalizes. To make the agent smart,
+replace the deterministic decisions with LLM calls:
 
 ```go
-func (p *examplePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+func (p *chatPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
     // 1. Get LLM client from runtime
-    // mc, _ := in.Agent.ModelClient("openai")
-    
+    // mc, _ := in.Agent.PlannerModelClient("openai")
+
     // 2. Build prompt from in.Messages
-    
-    // 3. Decide: call tools or give final response
+
+    // 3. Let the model decide: return ToolCalls or a FinalResponse
     return &planner.PlanResult{
         FinalResponse: &planner.FinalResponse{
             Message: &model.Message{
