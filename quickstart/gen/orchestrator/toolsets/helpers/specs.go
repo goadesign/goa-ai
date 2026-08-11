@@ -30,8 +30,8 @@ var (
 		Tags:        []string{},
 		Payload: tools.TypeSpec{
 			Name:                     "AnswerPayload",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"question\":{\"type\":\"string\",\"description\":\"User question to answer\",\"example\":\"Labore natus exercitationem et omnis.\"}},\"example\":{\"question\":\"What is the capital of Japan?\"},\"required\":[\"question\"]}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"question\":{\"type\":\"string\",\"description\":\"User question to answer\",\"example\":\"Labore natus exercitationem et omnis.\"}},\"required\":[\"question\"]}"),
+			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"example\":{\"question\":\"What is the capital of Japan?\"},\"properties\":{\"question\":{\"description\":\"User question to answer\",\"type\":\"string\"}},\"required\":[\"question\"],\"type\":\"object\"}"),
+			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"question\":{\"description\":\"User question to answer\",\"type\":\"string\"}},\"required\":[\"question\"],\"type\":\"object\"}"),
 			ExampleJSON:              tools.RawJSON("{\"question\":\"What is the capital of Japan?\"}"),
 			FieldDescriptions:        AnswerPayloadFieldDescs,
 			FieldJSONTypes:           AnswerPayloadFieldJSONTypes,
@@ -39,8 +39,8 @@ var (
 		},
 		Result: tools.TypeSpec{
 			Name:                     "AnswerResult",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Answer text\",\"example\":\"Dolor ea vel quia vero quo.\"}},\"required\":[\"text\"]}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Answer text\",\"example\":\"Dolor ea vel quia vero quo.\"}},\"required\":[\"text\"]}"),
+			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"text\":{\"description\":\"Answer text\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
+			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"text\":{\"description\":\"Answer text\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 			FieldDescriptions:        AnswerResultFieldDescs,
 			FieldJSONTypes:           AnswerResultFieldJSONTypes,
 			Codec:                    answerResultCodec,
@@ -62,6 +62,13 @@ var (
 		Answer,
 	}
 )
+
+// RequiredLabels lists the run label keys this toolset's Inject-populated
+// tools require to be present via WithLabels(...) at run start. The runtime
+// validates coverage across every toolset an agent uses before starting a
+// run, so a missing label fails fast instead of surfacing mid-run as a tool
+// call error.
+var RequiredLabels = []string{}
 
 // Names returns the identifiers of all generated tools.
 func Names() []tools.Ident {

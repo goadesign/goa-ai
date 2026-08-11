@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"sort"
 	"strings"
 
 	toolhttp "example.com/quickstart/gen/orchestrator/toolsets/helpers/http"
@@ -71,6 +73,16 @@ var AnswerPayloadFieldJSONTypes = map[string]string{
 var AnswerResultFieldJSONTypes = map[string]string{
 	"$payload": "object",
 	"text":     "string",
+}
+var AnswerPayloadFieldAllowedObjectKeys = map[string][]string{
+	"": {
+		"question",
+	},
+}
+var AnswerResultFieldAllowedObjectKeys = map[string][]string{
+	"": {
+		"text",
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -241,7 +253,7 @@ func UnmarshalAnswerPayload(data []byte) (*AnswerPayload, error) {
 		return nil, fmt.Errorf("answerPayload JSON is empty")
 	}
 	var tv toolhttp.AnswerPayloadTransport
-	if err := decodeStrictJSON(data, &tv); err != nil {
+	if err := decodeKnownJSON(data, &tv, AnswerPayloadFieldAllowedObjectKeys); err != nil {
 		return nil, invalidAnswerPayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateAnswerPayloadTransport(&tv); err != nil {
@@ -278,7 +290,7 @@ func UnmarshalAnswerResult(data []byte) (*AnswerResult, error) {
 		return nil, fmt.Errorf("answerResult JSON is empty")
 	}
 	var tv toolhttp.AnswerResultTransport
-	if err := json.Unmarshal(data, &tv); err != nil {
+	if err := decodeKnownJSON(data, &tv, AnswerResultFieldAllowedObjectKeys); err != nil {
 		return nil, invalidAnswerResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateAnswerResultTransport(&tv); err != nil {
@@ -307,4 +319,79 @@ func decodeStrictJSON(data []byte, v any) error {
 		return fmt.Errorf("multiple JSON documents")
 	}
 	return nil
+}
+
+// decodeKnownJSON decodes one JSON document after rejecting fields outside the
+// generated closed-object payload/result contracts. It preserves open map/object
+// fields by only validating paths present in allowed.
+func decodeKnownJSON(data []byte, v any, allowed map[string][]string) error {
+	if err := validateKnownJSONFields(data, allowed); err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
+}
+
+func validateKnownJSONFields(data []byte, allowed map[string][]string) error {
+	var root any
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(&root); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON documents")
+	}
+	return validateKnownJSONValue("", root, allowed)
+}
+
+func validateKnownJSONValue(path string, value any, allowed map[string][]string) error {
+	switch v := value.(type) {
+	case []any:
+		for _, item := range v {
+			if err := validateKnownJSONValue(path, item, allowed); err != nil {
+				return err
+			}
+		}
+		return nil
+	case map[string]any:
+		allowedKeys, ok := allowed[path]
+		if !ok {
+			return nil
+		}
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if !slices.Contains(allowedKeys, key) {
+				return unknownJSONFieldError(path, key, allowedKeys)
+			}
+			childPath := key
+			if path != "" {
+				childPath = path + "." + key
+			}
+			if err := validateKnownJSONValue(childPath, v[key], allowed); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func unknownJSONFieldError(path, field string, allowed []string) error {
+	issueField := field
+	if path != "" {
+		issueField = path + "." + field
+	}
+	return tools.NewValidationError(
+		fmt.Sprintf("unknown field %q", issueField),
+		[]*tools.FieldIssue{
+			{
+				Field:      issueField,
+				Constraint: "unknown_field",
+				Allowed:    append([]string(nil), allowed...),
+			},
+		},
+		nil,
+	)
 }

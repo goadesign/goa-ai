@@ -2,6 +2,7 @@ package design
 
 import (
 	. "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/eval/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -59,6 +60,23 @@ var _ = Service("orchestrator", func() {
 		RunPolicy(func() {
 			DefaultCaps(MaxToolCalls(2), MaxConsecutiveFailedToolCalls(1))
 			TimeBudget("15s")
+		})
+
+		// Evaluation suite: goa gen emits one typed hook per scenario under
+		// gen/evals/chat_quality and goa example scaffolds an application-owned
+		// cmd/chat_quality-evals command once.
+		Suite("chat_quality", func() {
+			Description("Evaluates the chat agent end to end against the in-memory runtime.")
+			Timeout("30s")
+			Scenario("greeting_reply", func() {
+				Description("The agent produces a final assistant reply to a user question.")
+				Input(AskPayload)
+				Tags("smoke")
+			})
+			Scenario("helpers_contract", func() {
+				Description("The helpers.answer tool contract is reachable from the agent.")
+				Tags("contract")
+			})
 		})
 	})
 })

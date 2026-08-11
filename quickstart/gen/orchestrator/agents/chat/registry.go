@@ -70,6 +70,7 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 		},
 		Specs:              specs.Specs,
 		ToolMetadataLookup: specs.MetadataByName,
+		RequiredLabels:     specs.RequiredLabels,
 		Policy: agentsruntime.RunPolicy{
 			MaxToolCalls:                  2,
 			MaxConsecutiveFailedToolCalls: 1,
