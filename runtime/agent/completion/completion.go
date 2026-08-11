@@ -171,10 +171,10 @@ func assistantJSONText(message model.Message) (string, error) {
 	for _, part := range message.Parts {
 		switch actual := part.(type) {
 		case model.TextPart:
-			if body != "" {
-				return "", errors.New("completion response contained multiple content parts")
-			}
-			body = actual.Text
+			// Providers may chunk one logical answer into adjacent text
+			// parts; concatenation is transport normalization, not content
+			// repair.
+			body += actual.Text
 		case model.CitationsPart:
 			if body != "" {
 				return "", errors.New("completion response contained multiple content parts")
@@ -217,6 +217,14 @@ func prepareRequest[T any](req *model.Request, spec Spec[T], stream bool) (*mode
 		return nil, err
 	}
 	cloned := *req
+	if cloned.Thinking == nil {
+		// Typed completions are single-shot JSON transactions: provider
+		// thinking spends the output budget on thoughts and fragments the
+		// response into parts the strict decoder rejects. Absent an explicit
+		// caller preference, request thinking off; providers whose models
+		// cannot disable it simply ignore the hint.
+		cloned.Thinking = &model.ThinkingOptions{Enable: false}
+	}
 	cloned.Stream = stream
 	cloned.StructuredOutput = structuredOutput
 	return &cloned, nil
