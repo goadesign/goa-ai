@@ -132,6 +132,11 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 - Write release notes for a capable junior engineer who may not know goa-ai's
   runtime, registry, or code generator. Use short sentences and define a term
   before relying on it.
+- Open with one short paragraph that names the subsystem or package the
+  release touches (for example "the `eval` package that runs generated
+  evaluation suites") and explains what it does, before describing any
+  change. A reader must never have to infer the affected area from the
+  change description.
 - Derive the notes from the commits and diff since the previous release tag.
   Describe only behavior that is included in the release.
 - Lead with the outcome for framework users. Group changes by capability or
