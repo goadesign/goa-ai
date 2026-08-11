@@ -21,7 +21,7 @@ go get goa.design/goa-ai@latest
 ## 2) Add a tiny design (design/design.go)
 
 This declares one service (`orchestrator`) with a single agent (`chat`), a tiny
-helper toolset, and a typed direct completion.
+helper toolset, a typed direct completion, and an evaluation suite.
 
 ```go
 package design
@@ -29,6 +29,7 @@ package design
 import (
     . "goa.design/goa/v3/dsl"
     . "goa.design/goa-ai/dsl"
+    . "goa.design/goa-ai/eval/dsl"
 )
 
 var _ = API("orchestrator", func() {})
@@ -86,6 +87,20 @@ var _ = Service("orchestrator", func() {
             DefaultCaps(MaxToolCalls(2), MaxConsecutiveFailedToolCalls(1))
             TimeBudget("15s")
         })
+
+        Suite("chat_quality", func() {
+            Description("Evaluates the chat agent end to end against the in-memory runtime.")
+            Timeout("30s")
+            Scenario("greeting_reply", func() {
+                Description("The agent produces a final assistant reply to a user question.")
+                Input(AskPayload)
+                Tags("smoke")
+            })
+            Scenario("helpers_contract", func() {
+                Description("The helpers.answer tool contract is reachable from the agent.")
+                Tags("contract")
+            })
+        })
     })
 })
 ```
@@ -103,6 +118,8 @@ This creates:
 - **`internal/agents/bootstrap/bootstrap.go`** - Wires runtime and registers agents
 - **`internal/agents/chat/planner/planner.go`** - Stub planner (edit to connect your LLM)
 - **`gen/<service>/completions/`** - Generated typed direct-completion helpers
+- **`gen/evals/chat_quality/`** - Typed evaluation harness (hooks interface, validated inputs, tool contracts)
+- **`cmd/chat_quality-evals/main.go`** - Application-owned eval command (created once, never overwritten)
 
 ### Typed Direct Completion
 
@@ -158,7 +175,43 @@ Completion stream draft_task: ...
 
 The generated example uses the in-memory engine, so no Temporal is needed for development.
 
-## 5) (Optional) Connect to Temporal for production
+## 5) Evaluate your agent
+
+The `Suite` in the design generates a typed evaluation harness under
+`gen/evals/chat_quality`: one hook method per scenario, validated typed inputs,
+and `MustToolContract`, a lookup over the tool contracts reachable from the
+agent. `goa example` scaffolds `cmd/chat_quality-evals` once; the hook bodies
+are yours and survive regeneration. This quickstart's hooks run the real chat
+agent on the in-memory engine and assert on the reply and the generated
+`helpers.answer` contract — see `cmd/chat_quality-evals/main.go`.
+
+```bash
+go run ./cmd/chat_quality-evals              # whole suite
+go run ./cmd/chat_quality-evals --tag smoke  # by tag
+go run ./cmd/chat_quality-evals --scenario greeting_reply
+```
+
+The command prints a JSON report (scenarios in declaration order, per-check
+outcomes) and exits non-zero when anything fails:
+
+```json
+{
+  "suite_id": "chat_quality",
+  "scenarios": [
+    {"id": "greeting_reply", "result": {"checks": [{"name": "final_reply_present", "passed": true}]}, "passed": true},
+    {"id": "helpers_contract", "result": {"checks": [{"name": "answer_payload_schema_present", "passed": true}]}, "passed": true}
+  ],
+  "passed": true
+}
+```
+
+This suite is deterministic, so the runner takes a nil judge. When your hooks
+return semantic `eval.Claims` about model output, pass an `eval.Judge` instead
+— `eval/judge.New(modelClient)` wraps any `model.Client` in a strict,
+calibration-checked LLM judge. See `docs/evals.md` in the goa-ai repository
+for the complete contract.
+
+## 6) (Optional) Connect to Temporal for production
 
 For production, start Temporal and configure the runtime:
 
@@ -187,7 +240,7 @@ eng, _ := temporal.NewWorker(temporal.Options{
 rt := agentsruntime.New(agentsruntime.WithEngine(eng))
 ```
 
-## 6) Customize the planner
+## 7) Customize the planner
 
 Edit `internal/agents/chat/planner/planner.go` to connect your LLM:
 

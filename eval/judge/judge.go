@@ -1,6 +1,8 @@
 // Package judge implements strict semantic claim classification over Goa-AI's
-// provider-neutral model client. It makes one structured, tool-free request per
-// batch and never retries, repairs, or substitutes model output.
+// provider-neutral model client. The judge contract is a framework-owned typed
+// completion: a canonical raw JSON schema plus a strict codec executed by the
+// shared completion runtime. The judge never retries, repairs, or substitutes
+// model output.
 package judge
 
 import (
@@ -12,7 +14,9 @@ import (
 	"io"
 
 	aieval "goa.design/goa-ai/eval"
+	"goa.design/goa-ai/runtime/agent/completion"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -40,6 +44,12 @@ type (
 )
 
 const (
+	// maxTokensPerJudgment budgets output tokens for one judgment: a label,
+	// a concise rationale, and its share of JSON envelope overhead. Provider
+	// boundaries such as Anthropic and AURA's inference engine require an
+	// explicit positive cap; truncation surfaces as a strict decode error.
+	maxTokensPerJudgment = 256
+
 	judgePrompt = `Classify each assertion independently using only its output and claim.
 Return entailed when the output establishes the claim, contradicted when it establishes the claim is false, not_addressed when it does neither, and indeterminate only when ambiguity prevents classification.
 Return exactly one judgment for every claim_id. Do not add, remove, merge, or rename claim IDs.`
@@ -68,6 +78,22 @@ Return exactly one judgment for every claim_id. Do not add, remove, merge, or re
 }`
 )
 
+// spec is the framework-owned typed completion contract for judge output. The
+// schema is the canonical raw JSON contract and the codec owns strict boundary
+// decoding, exactly like generated completion specs.
+var spec = completion.Spec[responseBody]{
+	Name:        "eval_judgments",
+	Description: "One semantic label and rationale for every supplied claim ID.",
+	Result: tools.TypeSpec{
+		Name:   "responseBody",
+		Schema: tools.RawJSON(responseSchema),
+	},
+	Codec: tools.JSONCodec[responseBody]{
+		ToJSON:   func(value responseBody) ([]byte, error) { return json.Marshal(value) },
+		FromJSON: decodeResponse,
+	},
+}
+
 // New creates a strict semantic judge backed by client.
 func New(client model.Client) *Judge {
 	return &Judge{client: client}
@@ -82,7 +108,7 @@ func (j *Judge) Judge(ctx context.Context, assertions []aieval.Assertion) ([]aie
 	if err != nil {
 		return nil, fmt.Errorf("encode judge assertions: %w", err)
 	}
-	response, err := j.client.Complete(ctx, &model.Request{
+	response, err := completion.Complete(ctx, j.client, &model.Request{
 		ModelClass: model.ModelClassHighReasoning,
 		Messages: []*model.Message{
 			{
@@ -95,25 +121,13 @@ func (j *Judge) Judge(ctx context.Context, assertions []aieval.Assertion) ([]aie
 			},
 		},
 		Temperature: 0,
-		StructuredOutput: &model.StructuredOutput{
-			Name:        "eval_judgments",
-			Description: "One semantic label and rationale for every supplied claim ID.",
-			Schema:      []byte(responseSchema),
-		},
-	})
+		MaxTokens:   maxTokensPerJudgment * len(assertions),
+	}, spec)
 	if err != nil {
 		return nil, fmt.Errorf("judge assertions: %w", err)
 	}
-	body, err := responseJSON(response)
-	if err != nil {
-		return nil, err
-	}
-	decoded, err := decodeResponse(body)
-	if err != nil {
-		return nil, err
-	}
-	judgments := make([]aieval.Judgment, len(decoded.Judgments))
-	for i, item := range decoded.Judgments {
+	judgments := make([]aieval.Judgment, len(response.Value.Judgments))
+	for i, item := range response.Value.Judgments {
 		judgments[i] = aieval.Judgment{
 			ClaimID:   item.ClaimID,
 			Label:     item.Label,
@@ -130,38 +144,6 @@ func (j *Judge) Judge(ctx context.Context, assertions []aieval.Assertion) ([]aie
 	return judgments, nil
 }
 
-// responseJSON accepts the one canonical assistant JSON content part and
-// rejects tool calls, multiple messages, or mixed content at the model boundary.
-func responseJSON(response *model.Response) ([]byte, error) {
-	if response == nil {
-		return nil, errors.New("judge response is nil")
-	}
-	if err := model.ValidateResponse(response); err != nil {
-		return nil, fmt.Errorf("invalid judge model response: %w", err)
-	}
-	if len(response.Content) != 1 {
-		return nil, fmt.Errorf("judge expected exactly one assistant message, got %d", len(response.Content))
-	}
-	var body string
-	for _, part := range response.Content[0].Parts {
-		switch actual := part.(type) {
-		case model.TextPart:
-			if body != "" {
-				return nil, errors.New("judge response contains multiple content parts")
-			}
-			body = actual.Text
-		case model.ThinkingPart, model.CacheCheckpointPart:
-			continue
-		default:
-			return nil, fmt.Errorf("judge response contains unsupported part %T", part)
-		}
-	}
-	if body == "" {
-		return nil, errors.New("judge response contains no JSON")
-	}
-	return []byte(body), nil
-}
-
 // decodeResponse strictly decodes the provider JSON and rejects unknown fields
 // or any trailing value instead of repairing model output.
 func decodeResponse(data []byte) (responseBody, error) {
@@ -169,13 +151,13 @@ func decodeResponse(data []byte) (responseBody, error) {
 	decoder.DisallowUnknownFields()
 	var response responseBody
 	if err := decoder.Decode(&response); err != nil {
-		return responseBody{}, fmt.Errorf("decode judge response: %w", err)
+		return responseBody{}, err
 	}
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return responseBody{}, errors.New("decode judge response: trailing JSON value")
+			return responseBody{}, errors.New("trailing JSON value")
 		}
-		return responseBody{}, fmt.Errorf("decode judge response: %w", err)
+		return responseBody{}, err
 	}
 	return response, nil
 }

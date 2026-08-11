@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,12 +31,51 @@ func TestEvalConsumer(t *testing.T) {
 		"gen",
 		"example.com/evalconsumer/design",
 	)
+	runGoCommand(
+		t,
+		consumerRoot,
+		"run",
+		"goa.design/goa/v3/cmd/goa",
+		"example",
+		"example.com/evalconsumer/design",
+	)
+	scaffoldPath := filepath.Join(consumerRoot, "cmd", "chat_quality-evals", "main.go")
+	// #nosec G304 -- scaffoldPath is rooted in the test's temporary fixture.
+	scaffold, err := os.ReadFile(scaffoldPath)
+	require.NoError(t, err)
+	require.Equal(t, 21, strings.Count(string(scaffold), "TODO: implement "))
+	require.Contains(t, string(scaffold), "BroadRefrigerationTaskPreview")
+	require.Contains(t, string(scaffold), "AlarmActivationSnapshotSummary")
+	scaffold = append(scaffold, []byte("\n// application-owned marker\n")...)
+	// #nosec G703 -- scaffoldPath is rooted in the test's temporary fixture.
+	require.NoError(t, os.WriteFile(scaffoldPath, scaffold, 0600))
+	runGoCommand(
+		t,
+		consumerRoot,
+		"run",
+		"goa.design/goa/v3/cmd/goa",
+		"example",
+		"example.com/evalconsumer/design",
+	)
+	// #nosec G304 -- scaffoldPath is rooted in the test's temporary fixture.
+	preserved, err := os.ReadFile(scaffoldPath)
+	require.NoError(t, err)
+	require.Equal(t, scaffold, preserved)
+	testPackage := filepath.Join(consumerRoot, "evalconsumer")
+	require.NoError(t, os.MkdirAll(testPackage, 0750))
 	require.NoError(t, os.Rename(
 		filepath.Join(consumerRoot, "eval_test.go.txt"),
-		filepath.Join(consumerRoot, "eval_test.go"),
+		filepath.Join(testPackage, "eval_test.go"),
 	))
 	runGoCommand(t, consumerRoot, "mod", "tidy")
-	runGoCommand(t, consumerRoot, "test", "./...")
+	runGoCommand(
+		t,
+		consumerRoot,
+		"test",
+		"./evalconsumer",
+		"./gen/...",
+		"./cmd/chat_quality-evals",
+	)
 }
 
 // runGoCommand fails with the complete command output so generation and consumer

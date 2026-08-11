@@ -9,6 +9,9 @@ import (
 
 	goacodegen "goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
+	goaexpr "goa.design/goa/v3/expr"
+
+	agentexpr "goa.design/goa-ai/expr/agent"
 )
 
 type (
@@ -25,21 +28,25 @@ type (
 		Name string
 		// Description explains the evaluated capability.
 		Description string
+		// Agent is the optional agent whose compile-time tool contracts are
+		// reachable from the suite.
+		Agent *agentexpr.AgentExpr
 		// Timeout applies to every scenario in the suite.
 		Timeout time.Duration
 		// Scenarios are the suite cases in declaration order.
 		Scenarios []*ScenarioExpr
 	}
 
-	// ScenarioExpr describes one text-input application scenario.
+	// ScenarioExpr describes one application scenario.
 	ScenarioExpr struct {
 		eval.DSLFunc
 		// Name is the stable scenario identifier.
 		Name string
 		// Description explains the evaluated behavior.
 		Description string
-		// Input is passed unchanged to the generated hook method.
-		Input string
+		// Input declares the optional typed value passed to the generated
+		// hook method.
+		Input *goaexpr.AttributeExpr
 		// Tags classify the scenario for runner selection.
 		Tags []string
 		// Timeout overrides the suite timeout when non-zero.
@@ -67,10 +74,9 @@ func (r *RootExpr) EvalName() string {
 	return "evaluation suites root"
 }
 
-// DependsOn implements eval.Root. Generic suites do not depend on Goa service
-// expressions or application-specific design roots.
+// DependsOn implements eval.Root.
 func (r *RootExpr) DependsOn() []eval.Root {
-	return nil
+	return []eval.Root{goaexpr.Root, agentexpr.Root}
 }
 
 // Packages identifies the DSL package for source-aware diagnostics.
@@ -133,6 +139,21 @@ func (s *SuiteExpr) Validate() error {
 	return verr
 }
 
+// SetDescription implements expr.DescriptionHolder.
+func (s *SuiteExpr) SetDescription(description string) {
+	s.Description = description
+}
+
+// SetTimeout implements expr.TimeoutHolder.
+func (s *SuiteExpr) SetTimeout(duration string) error {
+	timeout, err := parseTimeout(duration)
+	if err != nil {
+		return err
+	}
+	s.Timeout = timeout
+	return nil
+}
+
 // EvalName implements eval.Expression.
 func (s *ScenarioExpr) EvalName() string {
 	return fmt.Sprintf("scenario %q in suite %q", s.Name, s.Suite.Name)
@@ -145,11 +166,11 @@ func (s *ScenarioExpr) Validate() error {
 	if s.Description == "" {
 		verr.Add(s, "scenario description is required")
 	}
-	if s.Input == "" {
-		verr.Add(s, "scenario input is required")
+	if s.Input != nil && s.Input.Type == goaexpr.Empty {
+		verr.Add(s, "scenario input must define at least one attribute")
 	}
-	if s.Timeout < 0 {
-		verr.Add(s, "scenario timeout must be greater than zero")
+	if inputContainsUnion(s.Input, make(map[string]struct{})) {
+		verr.Add(s, "scenario input does not support OneOf")
 	}
 	tags := make(map[string]struct{}, len(s.Tags))
 	for _, tag := range s.Tags {
@@ -162,10 +183,68 @@ func (s *ScenarioExpr) Validate() error {
 	return verr
 }
 
+// SetDescription implements expr.DescriptionHolder.
+func (s *ScenarioExpr) SetDescription(description string) {
+	s.Description = description
+}
+
+// SetTimeout implements expr.TimeoutHolder.
+func (s *ScenarioExpr) SetTimeout(duration string) error {
+	timeout, err := parseTimeout(duration)
+	if err != nil {
+		return err
+	}
+	s.Timeout = timeout
+	return nil
+}
+
 // validateID reports identifiers outside the canonical lower_snake_case
 // vocabulary used for stable selection, reporting, and generated paths.
 func validateID(verr *eval.ValidationErrors, expression eval.Expression, kind, value string) {
 	if !idRE.MatchString(value) {
 		verr.Add(expression, "%s name %q must be lower_snake_case", kind, value)
 	}
+}
+
+// parseTimeout parses a Go duration literal and rejects non-positive values,
+// which have no meaning as evaluation deadlines.
+func parseTimeout(duration string) (time.Duration, error) {
+	timeout, err := time.ParseDuration(duration)
+	if err != nil {
+		return 0, err
+	}
+	if timeout <= 0 {
+		return 0, fmt.Errorf("evaluation timeout must be greater than zero")
+	}
+	return timeout, nil
+}
+
+// inputContainsUnion reports whether an input schema requires Goa's separate
+// sum-type generation pipeline.
+func inputContainsUnion(attribute *goaexpr.AttributeExpr, seen map[string]struct{}) bool {
+	if attribute == nil {
+		return false
+	}
+	switch actual := attribute.Type.(type) {
+	case goaexpr.UserType:
+		if _, ok := seen[actual.ID()]; ok {
+			return false
+		}
+		seen[actual.ID()] = struct{}{}
+		return inputContainsUnion(actual.Attribute(), seen)
+	case *goaexpr.Object:
+		for _, named := range *actual {
+			if inputContainsUnion(named.Attribute, seen) {
+				return true
+			}
+		}
+	case *goaexpr.Array:
+		return inputContainsUnion(actual.ElemType, seen)
+	case *goaexpr.Map:
+		return inputContainsUnion(actual.KeyType, seen) ||
+			inputContainsUnion(actual.ElemType, seen)
+	case *goaexpr.Union:
+		return true
+	}
+	return false
 }

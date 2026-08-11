@@ -259,8 +259,11 @@ package <toolset>
 
 import (
     "context"
+    "errors"
     "goa.design/goa-ai/runtime/agent/planner"
+    "goa.design/goa-ai/runtime/agent/rawjson"
     "goa.design/goa-ai/runtime/agent/runtime"
+    "goa.design/goa-ai/runtime/agent/tools"
     specs "<module>/gen/<svc>/agents/<agent>/specs/<toolset>"
 )
 
@@ -268,13 +271,38 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
     switch call.Name {
     case "<svc>.<toolset>.<tool>":
         // Decode payload using generated codec
-        pc, ok := specs.PayloadCodec(string(call.Name))
+        spec, ok := specs.Spec(call.Name)
         if !ok {
-            return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("payload codec not found")}), nil
+            return runtime.Executed(&planner.ToolResult{
+                Failure: &planner.ToolFailure{
+                    Kind: planner.FailureInternal,
+                    Error: planner.NewToolError("payload codec not found"),
+                    Recovery: planner.RecoveryDirective{Action: planner.RecoveryFinish},
+                },
+            }), nil
         }
-        args, err := pc.FromJSON(call.Payload)
+        args, err := spec.Payload.Codec.FromJSON(call.Payload)
         if err != nil {
-            return runtime.Executed(&planner.ToolResult{Error: planner.NewToolError("invalid payload: " + err.Error())}), nil
+            var issuer interface {
+                Issues() []*tools.FieldIssue
+            }
+            var issues []*tools.FieldIssue
+            if errors.As(err, &issuer) {
+                issues = issuer.Issues()
+            }
+            return runtime.Executed(&planner.ToolResult{
+                Name: call.Name,
+                Failure: &planner.ToolFailure{
+                    Kind: planner.FailureInvalidCall,
+                    Error: planner.ToolErrorFromError(err),
+                    Recovery: planner.RecoveryDirective{
+                        Action: planner.RecoveryCorrectCall,
+                        Issues: issues,
+                        PriorInput: append(rawjson.Message(nil), call.Payload...),
+                        ExampleJSON: append(rawjson.Message(nil), spec.Payload.ExampleJSON...),
+                    },
+                },
+            }), nil
         }
         // Type-assert to the generated payload type:
         // typedArgs := args.(*specs.<ToolPayload>)
@@ -290,7 +318,12 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
 		}), nil
     }
     return runtime.Executed(&planner.ToolResult{
-		Error: planner.NewToolError("unknown tool"),
+        Name: call.Name,
+        Failure: &planner.ToolFailure{
+            Kind: planner.FailureInvalidCall,
+            Error: planner.NewToolError("unknown tool"),
+            Recovery: planner.RecoveryDirective{Action: planner.RecoveryReplan},
+        },
 	}), nil
 }
 ```
@@ -358,7 +391,36 @@ if err := rt.RegisterToolset(reg); err != nil { panic(err) }
 
 ---
 
-## 8. Ready for Prime Time: Advanced Features 🔭
+## 8. 🧪 Evaluating Your Agents
+
+An evaluation suite is a set of stable scenarios that exercise your agent and grade the outcome, so you can catch regressions before your users do. Your design declares the following suite:
+
+### Suite `chat_quality` (agent `orchestrator.chat`)
+
+Evaluates the chat agent end to end against the in-memory runtime.
+
+* **`greeting_reply`** (tags: `smoke`): The agent produces a final assistant reply to a user question. Supply its typed input when constructing the suite in `cmd/chat_quality-evals`.
+
+* **`helpers_contract`** (tags: `contract`): The helpers.answer tool contract is reachable from the agent.
+
+Everything typed lives in `gen/evals/chat_quality/`: a `Hooks` interface with one method per scenario, an `Inputs` struct for typed inputs, and (for agent-attached suites) `MustToolContract` to assert against the agent's reachable tool contracts. `goa example` scaffolds an application-owned command at `cmd/chat_quality-evals/main.go` **once**; it is yours to edit and is never overwritten.
+
+Implement each hook to run the real agent, then return the evidence to grade:
+
+* **Checks** are deterministic facts you compute yourself: which tools were called, with which arguments, whether pagination completed.
+* **Claims** are plain-language statements about the reply ("the answer names the capital of Japan") graded by a model judge.
+
+```bash
+go run ./cmd/chat_quality-evals                    # run every scenario, JSON report on stdout
+go run ./cmd/chat_quality-evals -scenario <id>     # run selected scenarios (repeatable)
+go run ./cmd/chat_quality-evals -tag <tag>         # run by tag (repeatable)
+```
+
+The command exits non-zero when any scenario fails, so it drops straight into CI. Deterministic-only suites can pass a `nil` judge; as soon as a hook returns claims, wire a real judge (see `goa.design/goa-ai/eval/judge`) backed by your model client.
+
+---
+
+## 9. Ready for Prime Time: Advanced Features 🔭
 
 * **Sessions & Runs:** Sessions are explicit. Create them with `rt.CreateSession(ctx, sessionID)` and end them with `rt.DeleteSession(ctx, sessionID)`. Runs (`client.Run`/`client.Start`) require an active session.
 * **Session-Owned Streaming (for UIs):** In production, stream consumers should attach to the **session-owned stream** (`session/<session_id>`) and filter by `run_id`. Close SSE when you observe a `run_stream_end` event for the attached run ID. Nested agent runs emit `child_run_linked` links and their own `run_stream_end`; parent runs only emit `run_stream_end` after all child runs have ended.
@@ -403,7 +465,7 @@ defer eng.Close()
 
 ---
 
-## 9. 📜 The Golden Rules: Working with Codegen
+## 10. 📜 The Golden Rules: Working with Codegen
 
 * ✍️ **Design First:** Always make changes in your `design/*.go` files.
 * 🔄 **Regenerate:** Run `goa gen <module>/design` to apply your changes.
@@ -411,7 +473,7 @@ defer eng.Close()
 
 ---
 
-## 10. 🤔 Stuck? Common Questions & Fixes
+## 11. 🤔 Stuck? Common Questions & Fixes
 
 * **Error: "runtime not initialized"**
 * **Fix:** Ensure you register agents with the same runtime instance you use to start runs.

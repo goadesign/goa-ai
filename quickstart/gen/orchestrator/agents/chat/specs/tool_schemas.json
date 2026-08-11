@@ -10,37 +10,35 @@
         "name": "AnswerPayload",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "type": "object",
-          "properties": {
-            "question": {
-              "type": "string",
-              "description": "User question to answer",
-              "example": "Ut possimus impedit facilis tempora ut."
-            }
-          },
           "example": {
             "question": "What is the capital of Japan?"
           },
+          "properties": {
+            "question": {
+              "description": "User question to answer",
+              "type": "string"
+            }
+          },
           "required": [
             "question"
-          ]
+          ],
+          "type": "object"
         }
       },
       "result": {
         "name": "AnswerResult",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
-          "type": "object",
           "properties": {
             "text": {
-              "type": "string",
               "description": "Answer text",
-              "example": "Ut provident."
+              "type": "string"
             }
           },
           "required": [
             "text"
-          ]
+          ],
+          "type": "object"
         }
       }
     }

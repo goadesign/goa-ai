@@ -3,25 +3,70 @@
 package dsl
 
 import (
-	"time"
-
 	_ "goa.design/goa-ai/eval/codegen"
 	evalexpr "goa.design/goa-ai/eval/expr"
+	agentexpr "goa.design/goa-ai/expr/agent"
+	"goa.design/goa-ai/internal/dslshape"
 	"goa.design/goa/v3/eval"
 )
 
-// Suite defines a generic text-input evaluation suite at the design top level.
+// Suite defines an evaluation suite of stable scenarios. goa gen emits one
+// typed hook method per scenario together with input types, validation, and a
+// validating constructor under gen/evals/<name>. goa example creates an
+// application-owned cmd/<name>-evals command once.
+//
+// Suite must appear at the design top level or in Agent. When Suite appears in
+// Agent the generated package also exposes MustToolContract, a lookup over the
+// tool contracts statically reachable from that agent.
+//
+// Suite accepts two arguments: the suite name in lower_snake_case and the
+// defining DSL function.
+//
+// Example:
+//
+//	var _ = Service("chat_agent", func() {
+//	    Agent("chat", "Answers product questions.", func() {
+//	        Suite("chat_quality", func() {
+//	            Description("Exercises production chat outcomes.")
+//	            Timeout("2m")
+//	            Scenario("alarm_inventory", func() {
+//	                Description("Retrieves every alarm in a fixed window.")
+//	                Input(ChatEvalInput)
+//	                Tags("production", "alarm")
+//	            })
+//	        })
+//	    })
+//	})
 func Suite(name string, fn func()) *evalexpr.SuiteExpr {
-	if eval.Current() != eval.Top {
+	current := eval.Current()
+	agent, attached := current.(*agentexpr.AgentExpr)
+	if current != eval.Top && !attached {
 		eval.IncompatibleDSL()
 		return nil
 	}
-	suite := &evalexpr.SuiteExpr{Name: name, DSLFunc: fn}
+	suite := &evalexpr.SuiteExpr{Name: name, Agent: agent, DSLFunc: fn}
 	evalexpr.Root.Suites = append(evalexpr.Root.Suites, suite)
 	return suite
 }
 
-// Scenario defines one application-owned behavior within the current suite.
+// Scenario defines one evaluation case. Each scenario generates one hook
+// method that the application implements to execute the real product and
+// return deterministic checks and semantic claims.
+//
+// Scenario must appear in Suite.
+//
+// Scenario accepts two arguments: the scenario name in lower_snake_case and
+// the defining DSL function. The DSL function requires Description and may set
+// Input, Tags, and a Timeout overriding the suite timeout.
+//
+// Example:
+//
+//	Scenario("alarm_inventory", func() {
+//	    Description("Retrieves every alarm in a fixed window.")
+//	    Input(ChatEvalInput)
+//	    Tags("production", "alarm")
+//	    Timeout("3m")
+//	})
 func Scenario(name string, fn func()) *evalexpr.ScenarioExpr {
 	suite, ok := eval.Current().(*evalexpr.SuiteExpr)
 	if !ok {
@@ -33,56 +78,42 @@ func Scenario(name string, fn func()) *evalexpr.ScenarioExpr {
 	return scenario
 }
 
-// Description sets the current suite or scenario description.
-func Description(value string) {
-	switch current := eval.Current().(type) {
-	case *evalexpr.SuiteExpr:
-		current.Description = value
-	case *evalexpr.ScenarioExpr:
-		current.Description = value
-	default:
-		eval.IncompatibleDSL()
-	}
-}
-
-// Timeout sets the current suite default or scenario-specific timeout from a
-// Go duration literal.
-func Timeout(value string) {
-	duration, err := time.ParseDuration(value)
-	if err != nil {
-		eval.ReportError("invalid evaluation timeout %q: %s", value, err)
-		return
-	}
-	if duration <= 0 {
-		eval.ReportError("evaluation timeout %q must be greater than zero", value)
-		return
-	}
-	switch current := eval.Current().(type) {
-	case *evalexpr.SuiteExpr:
-		current.Timeout = duration
-	case *evalexpr.ScenarioExpr:
-		current.Timeout = duration
-	default:
-		eval.IncompatibleDSL()
-	}
-}
-
-// Input sets the text passed unchanged to the current scenario hook.
-func Input(value string) {
+// Input declares the typed value passed to the generated scenario hook. Input
+// declares a schema, not a fixture value: application code supplies the
+// concrete value through the generated Inputs constructor, which validates it
+// before any scenario runs. A scenario without Input generates a hook that
+// receives only a context.
+//
+// Input must appear in Scenario.
+//
+// Input accepts the same forms as tool Args: a user type, a primitive, array,
+// or map type, or an inline attribute function, optionally followed by a
+// description string and a DSL function customizing the type. A customized
+// user type generates a scenario-specific copy. OneOf is not supported in
+// evaluation inputs.
+//
+// Example:
+//
+//	// User type:
+//	Input(ChatEvalInput)
+//
+//	// Customized user type:
+//	Input(ChatEvalInput, func() {
+//	    Required("prompt")
+//	})
+//
+//	// Inline object:
+//	Input(func() {
+//	    Attribute("prompt", String, "User message.", func() {
+//	        MinLength(1)
+//	    })
+//	    Required("prompt")
+//	})
+func Input(value any, args ...any) {
 	scenario, ok := eval.Current().(*evalexpr.ScenarioExpr)
 	if !ok {
 		eval.IncompatibleDSL()
 		return
 	}
-	scenario.Input = value
-}
-
-// Tags classifies the current scenario for explicit runner selection.
-func Tags(values ...string) {
-	scenario, ok := eval.Current().(*evalexpr.ScenarioExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
-	}
-	scenario.Tags = append(scenario.Tags, values...)
+	scenario.Input = dslshape.Build(scenario.Name, "Input", value, args...)
 }

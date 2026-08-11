@@ -564,21 +564,31 @@ unknown, duplicate, audience-mismatched, or invalid items fail the result.
 
 ### Generated Evaluation Suites
 
-Goa-AI can generate application-owned evaluation hooks from a generic suite DSL:
+An evaluation is a repeatable test that runs the real product — usually an
+agent — and checks that the outcome is still correct. The design declares each
+test case and the shape of its input; the application supplies real values and
+the code that calls the product:
 
 ```go
-Suite("chat", func() {
-	Description("Exercises complete Chat outcomes.")
-	Timeout("2m")
-	Scenario("alarm_inventory", func() {
-		Description("Retrieves the complete alarm inventory.")
-		Input("List every alarm in the requested window.")
-		Tags("production")
+var ChatEvalInput = Type("ChatEvalInput", func() {
+	Attribute("prompt", String, "User message.", func() { MinLength(1) })
+	Required("prompt")
+})
+
+Agent("chat", "Answers product questions.", func() {
+	Suite("chat", func() {
+		Description("Exercises complete Chat outcomes.")
+		Timeout("2m")
+		Scenario("alarm_inventory", func() {
+			Description("Retrieves the complete alarm inventory.")
+			Input(ChatEvalInput)
+			Tags("production")
+		})
 	})
 })
 ```
 
-Code generation emits one direct method per scenario and a suite constructor. The application implements those methods on a normal struct whose fields own system targets, execution, exact checks, answer claims, and artifacts. A runner validates exact scenario or tag selection, verifies all four semantic labels before using a judge, executes scenarios with an explicit concurrency limit, and returns declaration-ordered reports with complete durations. There are no registries, reflection, YAML parsers, or framework-specific application adapters. See [`docs/evals.md`](docs/evals.md).
+`goa gen` turns each scenario into a typed Go interface method, so a scenario added to the design breaks the build until the application implements it, and input values are validated against the design rules before anything runs. Suites declared inside an `Agent` can also look up the generated contract of every tool that agent can reach, to decode and check recorded tool calls exactly. `goa example` creates a runnable `cmd/<suite>-evals` command once; the application fills in real input values, calls the product, and returns exact pass/fail checks plus plain-English claims about the model's answer. A shared runner selects scenarios by name or tag, limits how many run at once, grades claims with a model-backed judge that must first prove it can tell correct from incorrect answers, and writes a JSON report in design order. See [`docs/evals.md`](docs/evals.md).
 
 ### Bookkeeping and Terminal Tools
 

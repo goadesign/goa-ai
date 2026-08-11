@@ -15,6 +15,46 @@ import (
 
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
+
+	evalexpr "goa.design/goa-ai/eval/expr"
+)
+
+type (
+	// quickstartData feeds the AGENTS_QUICKSTART.md template. It bundles the
+	// agent-bearing services with the evaluation suites declared in the design
+	// so the generated guide documents both.
+	quickstartData struct {
+		*GeneratorData
+		// Suites lists the declared evaluation suites in declaration order.
+		Suites []*quickstartSuiteData
+	}
+
+	// quickstartSuiteData describes one declared evaluation suite for the
+	// generated guide.
+	quickstartSuiteData struct {
+		// Name is the suite identifier, e.g. "chat_quality".
+		Name string
+		// Description explains the evaluated capability.
+		Description string
+		// Agent is the qualified agent the suite is attached to, e.g.
+		// "orchestrator.chat". Empty for top-level suites.
+		Agent string
+		// Scenarios lists the suite cases in declaration order.
+		Scenarios []*quickstartScenarioData
+	}
+
+	// quickstartScenarioData describes one evaluation scenario for the
+	// generated guide.
+	quickstartScenarioData struct {
+		// Name is the scenario identifier.
+		Name string
+		// Description explains the evaluated behavior.
+		Description string
+		// Tags classify the scenario for runner selection.
+		Tags []string
+		// HasInput reports whether the scenario hook receives a typed input.
+		HasInput bool
+	}
 )
 
 // GenerateExample appends a service-local bootstrap helper and planner stub(s)
@@ -237,17 +277,18 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 
 // quickstartReadmeFile builds the contextual quickstart README at the module
 // root. The file is named AGENTS_QUICKSTART.md and is generated unless disabled
-// via DSL.
-func quickstartReadmeFile(data *GeneratorData) *codegen.File {
-	quickstartData := agentQuickstartData(data)
-	if quickstartData == nil {
+// via DSL. It documents the design's agents plus any declared evaluation
+// suites, so roots must include the evaluated eval DSL root when present.
+func quickstartReadmeFile(data *GeneratorData, roots []eval.Root) *codegen.File {
+	docData := agentQuickstartData(data, roots)
+	if docData == nil {
 		return nil
 	}
 	sections := []*codegen.SectionTemplate{
 		{
 			Name:    "agents-quickstart",
 			Source:  agentsTemplates.Read(quickstartReadmeT),
-			Data:    quickstartData,
+			Data:    docData,
 			FuncMap: templateFuncMap(),
 		},
 	}
@@ -255,22 +296,60 @@ func quickstartReadmeFile(data *GeneratorData) *codegen.File {
 }
 
 // agentQuickstartData filters generator data down to the services that actually
-// declare agents so agent quickstart docs never assume agentless services.
-func agentQuickstartData(data *GeneratorData) *GeneratorData {
+// declare agents so agent quickstart docs never assume agentless services, and
+// gathers the evaluation suites declared in the design.
+func agentQuickstartData(data *GeneratorData, roots []eval.Root) *quickstartData {
 	if data == nil {
 		return nil
 	}
-	quickstartData := &GeneratorData{Genpkg: data.Genpkg}
+	doc := &quickstartData{GeneratorData: &GeneratorData{Genpkg: data.Genpkg}}
 	for _, svc := range data.Services {
 		if svc == nil || len(svc.Agents) == 0 {
 			continue
 		}
-		quickstartData.Services = append(quickstartData.Services, svc)
+		doc.Services = append(doc.Services, svc)
 	}
-	if len(quickstartData.Services) == 0 {
+	if len(doc.Services) == 0 {
 		return nil
 	}
-	return quickstartData
+	doc.Suites = quickstartSuites(roots)
+	return doc
+}
+
+// quickstartSuites projects the evaluated eval DSL root, when present, into
+// the per-suite facts the quickstart guide renders.
+func quickstartSuites(roots []eval.Root) []*quickstartSuiteData {
+	var root *evalexpr.RootExpr
+	for _, r := range roots {
+		if er, ok := r.(*evalexpr.RootExpr); ok {
+			root = er
+			break
+		}
+	}
+	if root == nil {
+		return nil
+	}
+	suites := make([]*quickstartSuiteData, 0, len(root.Suites))
+	for _, suite := range root.Suites {
+		doc := &quickstartSuiteData{
+			Name:        suite.Name,
+			Description: suite.Description,
+			Scenarios:   make([]*quickstartScenarioData, 0, len(suite.Scenarios)),
+		}
+		if suite.Agent != nil {
+			doc.Agent = suite.Agent.Service.Name + "." + suite.Agent.Name
+		}
+		for _, scenario := range suite.Scenarios {
+			doc.Scenarios = append(doc.Scenarios, &quickstartScenarioData{
+				Name:        scenario.Name,
+				Description: scenario.Description,
+				Tags:        scenario.Tags,
+				HasInput:    scenario.Input != nil,
+			})
+		}
+		suites = append(suites, doc)
+	}
+	return suites
 }
 
 // emitCmdMain patches cmd/<service>/main.go for services that expose runnable

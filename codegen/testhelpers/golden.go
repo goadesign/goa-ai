@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	codegen "goa.design/goa-ai/codegen/agent"
+	evalsExpr "goa.design/goa-ai/eval/expr"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	"goa.design/goa-ai/testutil"
 	gcodegen "goa.design/goa/v3/codegen"
@@ -27,6 +28,8 @@ func SetupEvalRoots(t *testing.T) {
 	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
 	agentsExpr.Root = &agentsExpr.RootExpr{}
 	require.NoError(t, eval.Register(agentsExpr.Root))
+	evalsExpr.Root = new(evalsExpr.RootExpr)
+	require.NoError(t, eval.Register(evalsExpr.Root))
 }
 
 // RunDesign prepares roots for generation by executing the DSL.
@@ -36,7 +39,7 @@ func RunDesign(t *testing.T, design func()) (string, []eval.Root) {
 	ok := eval.Execute(design, nil)
 	require.True(t, ok, eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	return "goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root}
+	return "goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root, evalsExpr.Root}
 }
 
 // BuildAndGenerate executes the DSL, runs codegen and returns generated files.
@@ -55,7 +58,7 @@ func BuildAndGenerateWithPkg(t *testing.T, genpkg string, design func()) []*gcod
 	ok := eval.Execute(design, nil)
 	require.True(t, ok, eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	files, err := codegen.Generate(genpkg, []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
+	files, err := codegen.Generate(genpkg, []eval.Root{goaexpr.Root, agentsExpr.Root, evalsExpr.Root}, nil)
 	require.NoError(t, err)
 	return files
 }

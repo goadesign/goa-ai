@@ -113,8 +113,22 @@ surface for structured model I/O.
 ## Generated Evaluations
 
 Applications define stable evaluation scenarios with `eval/dsl` beside their
-normal Goa v3 service design. `goa gen` emits one typed hook method per scenario.
-The application implements those methods to call the real product and return:
+normal Goa v3 service design. A scenario `Input` is a Goa schema; concrete
+users, facilities, prompts, and other fixture values remain application code.
+`goa gen` emits local input types, Goa validation, one typed hook method per
+scenario, and a constructor that validates all supplied values before any live
+call. A scenario without `Input` receives only `context.Context`.
+
+Suites may be generic top-level declarations or nested inside an agent.
+Agent-attached suites receive a generated lookup over the static tool specs
+reachable through that agent and its nested generated agents. The lookup
+delegates to canonical generated `ToolSpec` values and codecs; it does not
+reconstruct schemas or include registry-discovered contracts.
+
+`goa example` emits `cmd/<suite>-evals/main.go` once. This application-owned
+scaffold exposes every input and hook TODO but is not overwritten after product
+logic is added. The application implements those hooks to call the real product
+and return:
 
 - deterministic checks for exact facts such as IDs, counts, and tool calls;
 - semantic claims for meaning that requires reading a model answer; and
@@ -124,7 +138,11 @@ The runner owns execution mechanics. Callers choose all scenarios, exact
 scenario IDs, or tags through separate methods. Selection is validated before
 any product or model call. An explicit positive concurrency limit bounds work;
 failures do not stop unrelated scenarios; reports remain in declaration order.
-Application hooks and the judge support concurrent calls up to that limit.
+Progressive reporter callbacks expose starts and finishes without moving
+scheduling into the application. Caller cancellation stops new hooks, cancels
+in-flight contexts, and returns a partial report plus the context error.
+Application hooks, reporters, and the judge support concurrent calls up to the
+configured limit.
 
 When semantic claims are present, a provider-neutral judge classifies each one
 as `entailed`, `contradicted`, `not_addressed`, or `indeterminate`. Before any
