@@ -9,6 +9,12 @@ import (
 
 // Build constructs the attribute declared by a schema-bearing Goa-AI DSL
 // function. ownerName and suffix identify customized copies of user types.
+//
+// Build mirrors Goa's method DSL semantics for user types: a customization DSL
+// runs against a duplicate of the type, and the duplicate is renamed to
+// "<type>_<owner>_<suffix>" only when the customization changes requiredness.
+// Customizations that leave requiredness intact (descriptions, examples) keep
+// the original type identity so the type stays shared across declarations.
 func Build(ownerName, suffix string, value any, args ...any) *goaexpr.AttributeExpr {
 	if len(args) > 2 {
 		eval.TooManyArgError()
@@ -18,6 +24,7 @@ func Build(ownerName, suffix string, value any, args ...any) *goaexpr.AttributeE
 		att         *goaexpr.AttributeExpr
 		description string
 		customize   func()
+		original    goaexpr.UserType
 	)
 	switch len(args) {
 	case 1:
@@ -52,20 +59,15 @@ func Build(ownerName, suffix string, value any, args ...any) *goaexpr.AttributeE
 		customize = actual
 		att = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
 	case goaexpr.UserType:
-		if customize == nil {
-			return &goaexpr.AttributeExpr{
-				Type:        actual,
-				Description: description,
-			}
+		if len(args) == 0 {
+			// Not customized: share the original type instance.
+			return &goaexpr.AttributeExpr{Type: actual}
 		}
-		dupped := goaexpr.Dup(actual)
-		att = &goaexpr.AttributeExpr{Type: dupped}
-		renamer, ok := dupped.(interface{ Rename(string) })
-		if !ok {
-			eval.ReportError("customized user type %q cannot be renamed", actual.Name())
-			return nil
-		}
-		renamer.Rename(actual.Name() + "_" + ownerName + "_" + suffix)
+		// Any customization, including a description, operates on a private
+		// duplicate so downstream processing never mutates the shared
+		// original type instance.
+		original = actual
+		att = &goaexpr.AttributeExpr{Type: goaexpr.Dup(actual)}
 	case goaexpr.DataType:
 		att = &goaexpr.AttributeExpr{Type: actual}
 	default:
@@ -73,10 +75,20 @@ func Build(ownerName, suffix string, value any, args ...any) *goaexpr.AttributeE
 		return nil
 	}
 	att.Description = description
-	if customize != nil {
-		eval.Execute(customize, att)
-		if obj, ok := att.Type.(*goaexpr.Object); ok && len(*obj) == 0 {
-			att.Type = goaexpr.Empty
+	if customize == nil {
+		return att
+	}
+	numreqs := 0
+	if att.Validation != nil {
+		numreqs = len(att.Validation.Required)
+	}
+	eval.Execute(customize, att)
+	if obj, ok := att.Type.(*goaexpr.Object); ok && len(*obj) == 0 {
+		att.Type = goaexpr.Empty
+	}
+	if original != nil && att.Validation != nil && len(att.Validation.Required) != numreqs {
+		if renamer, ok := att.Type.(interface{ Rename(string) }); ok {
+			renamer.Rename(original.Name() + "_" + ownerName + "_" + suffix)
 		}
 	}
 	return att

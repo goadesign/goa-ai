@@ -73,6 +73,65 @@ func TestInputCustomizationExecutesOnce(t *testing.T) {
 	assert.Equal(t, "Input_answer_Input", input.Name())
 }
 
+// A customization that does not change requiredness must keep the original
+// type identity so the type stays shared across declarations, mirroring Goa's
+// method DSL semantics. Regression test for goa-ai v0.75.1, which renamed
+// every customized duplicate and split shared types per declaration.
+func TestInputCustomizationWithoutRequirednessChangeKeepsTypeIdentity(t *testing.T) {
+	setup(t)
+	design := func() {
+		input := goadsl.Type("SharedInput", func() {
+			goadsl.Attribute("prompt", goadsl.String, "User message.")
+			goadsl.Required("prompt")
+		})
+		Suite("chat", func() {
+			goadsl.Description("Evaluates chat behavior.")
+			goadsl.Timeout("1m")
+			Scenario("answer", func() {
+				goadsl.Description("Answers one prompt.")
+				Input(input, func() {
+					goadsl.Description("Prompt for the answer scenario.")
+				})
+			})
+		})
+	}
+
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+	input := evalexpr.Root.Suites[0].Scenarios[0].Input.Type.(goaexpr.UserType)
+	assert.Equal(t, "SharedInput", input.Name())
+}
+
+// A declaration with a description string must operate on a duplicate of the
+// user type so downstream processing never mutates the shared original
+// instance. Regression test for goa-ai v0.75.1, which returned the original
+// type and let tool processing mutations leak into every other use of the
+// type, changing generated type placement in multi-service designs.
+func TestInputWithDescriptionDuplicatesType(t *testing.T) {
+	setup(t)
+	var original goaexpr.UserType
+	design := func() {
+		original = goadsl.Type("SharedInput", func() {
+			goadsl.Attribute("prompt", goadsl.String, "User message.")
+			goadsl.Required("prompt")
+		})
+		Suite("chat", func() {
+			goadsl.Description("Evaluates chat behavior.")
+			goadsl.Timeout("1m")
+			Scenario("answer", func() {
+				goadsl.Description("Answers one prompt.")
+				Input(original, "Prompt for the answer scenario.")
+			})
+		})
+	}
+
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+	input := evalexpr.Root.Suites[0].Scenarios[0].Input.Type.(goaexpr.UserType)
+	assert.Equal(t, "SharedInput", input.Name())
+	assert.NotSame(t, original, input)
+}
+
 func TestInputRejectsMalformedShapeArguments(t *testing.T) {
 	tests := []struct {
 		name    string
