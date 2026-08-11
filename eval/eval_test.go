@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 )
 
 type scriptedJudge struct {
+	mu        sync.Mutex
 	responses [][]Judgment
 	errors    []error
 	requests  [][]Assertion
@@ -19,12 +21,69 @@ type scriptedJudge struct {
 }
 
 func (j *scriptedJudge) Judge(_ context.Context, assertions []Assertion) ([]Judgment, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	if j.onJudge != nil {
 		j.onJudge()
 	}
 	j.requests = append(j.requests, assertions)
 	index := len(j.requests) - 1
 	return j.responses[index], j.errors[index]
+}
+
+type recordingReporter struct {
+	mu       sync.Mutex
+	started  []string
+	finished []ScenarioReport
+}
+
+func (r *recordingReporter) ScenarioStarted(id string, _ time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.started = append(r.started, id)
+}
+
+func (r *recordingReporter) ScenarioFinished(report ScenarioReport) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.finished = append(r.finished, report)
+}
+
+// deadlineJudge records whether the calibration call carried a deadline and
+// answers every batch with valid calibration judgments.
+type deadlineJudge struct {
+	sawDeadline bool
+}
+
+func (j *deadlineJudge) Judge(ctx context.Context, _ []Assertion) ([]Judgment, error) {
+	_, j.sawDeadline = ctx.Deadline()
+	return calibrationJudgments(), nil
+}
+
+type concurrentJudge struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (j *concurrentJudge) Judge(ctx context.Context, assertions []Assertion) ([]Judgment, error) {
+	if len(assertions) == 4 && assertions[0].ClaimID == "calibration_entailed" {
+		return calibrationJudgments(), nil
+	}
+	j.started <- struct{}{}
+	select {
+	case <-j.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	judgments := make([]Judgment, len(assertions))
+	for index, assertion := range assertions {
+		judgments[index] = Judgment{
+			ClaimID:   assertion.ClaimID,
+			Label:     Entailed,
+			Rationale: "The output states the claim.",
+		}
+	}
+	return judgments, nil
 }
 
 func TestValidateResult(t *testing.T) {
@@ -94,7 +153,7 @@ func TestValidateResult(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := ValidateResult(test.result)
+			err := validateResult(test.result)
 			if test.wantErr == "" {
 				assert.NoError(t, err)
 				return
@@ -147,6 +206,14 @@ func TestValidateJudgments(t *testing.T) {
 			},
 			wantErr: "invalid label",
 		},
+		{
+			name: "missing rationale",
+			judgments: []Judgment{
+				{ClaimID: "first", Label: Entailed},
+				{ClaimID: "second", Label: Entailed, Rationale: "Explicit."},
+			},
+			wantErr: "requires a rationale",
+		},
 	}
 
 	for _, test := range tests {
@@ -175,6 +242,14 @@ func TestNewRunnerRequiresPositiveConcurrency(t *testing.T) {
 	assert.ErrorContains(t, err, "greater than zero")
 }
 
+func TestRunnerRejectsEmptySuite(t *testing.T) {
+	report, err := mustRunner(t, nil, 1).Run(context.Background(), Suite{ID: "empty"})
+
+	require.ErrorContains(t, err, "contains no scenarios")
+	assert.Contains(t, report.Error, "contains no scenarios")
+	assert.Empty(t, report.Scenarios)
+}
+
 func TestRunnerCalibratesEveryLabelThenRuns(t *testing.T) {
 	judge := &scriptedJudge{
 		responses: [][]Judgment{
@@ -188,9 +263,9 @@ func TestRunnerCalibratesEveryLabelThenRuns(t *testing.T) {
 		ID: "chat",
 		Scenarios: []Scenario{
 			{
-				ID: "first", Input: "one", Tags: []string{"smoke"}, Timeout: time.Second,
-				Run: func(_ context.Context, input string) (Result, error) {
-					order = append(order, input)
+				ID: "first", Tags: []string{"smoke"}, Timeout: time.Second,
+				Run: func(context.Context) (Result, error) {
+					order = append(order, "one")
 					return Result{
 						Checks: []Check{{Name: "typed", Passed: true}},
 						Claims: []Claim{{ID: "answer", Text: "The answer is correct."}},
@@ -199,9 +274,9 @@ func TestRunnerCalibratesEveryLabelThenRuns(t *testing.T) {
 				},
 			},
 			{
-				ID: "second", Input: "two", Tags: []string{"extended"}, Timeout: time.Second,
-				Run: func(_ context.Context, input string) (Result, error) {
-					order = append(order, input)
+				ID: "second", Tags: []string{"extended"}, Timeout: time.Second,
+				Run: func(context.Context) (Result, error) {
+					order = append(order, "two")
 					return Result{Checks: []Check{{Name: "typed", Passed: true}}}, nil
 				},
 			},
@@ -238,6 +313,27 @@ func TestRunnerCalibratesEveryLabelThenRuns(t *testing.T) {
 	assert.Equal(t, "Correct.", judge.requests[1][0].Output)
 }
 
+func TestRunnerBoundsCalibrationWithDeadline(t *testing.T) {
+	judge := &deadlineJudge{}
+	suite := Suite{
+		ID: "chat",
+		Scenarios: []Scenario{
+			{
+				ID: "first", Timeout: time.Second,
+				Run: func(context.Context) (Result, error) {
+					return Result{Checks: []Check{{Name: "typed", Passed: true}}}, nil
+				},
+			},
+		},
+	}
+
+	runner := mustRunner(t, judge, 1)
+	_, err := runner.Run(context.Background(), suite)
+
+	require.NoError(t, err)
+	assert.True(t, judge.sawDeadline, "calibration must run under a bounded context")
+}
+
 func TestRunnerRejectsJudgeThatCollapsesLabels(t *testing.T) {
 	judge := &scriptedJudge{
 		responses: [][]Judgment{{
@@ -253,7 +349,7 @@ func TestRunnerRejectsJudgeThatCollapsesLabels(t *testing.T) {
 		ID: "chat",
 		Scenarios: []Scenario{{
 			ID: "case", Timeout: time.Second,
-			Run: func(context.Context, string) (Result, error) {
+			Run: func(context.Context) (Result, error) {
 				run = true
 				return Result{}, nil
 			},
@@ -266,6 +362,96 @@ func TestRunnerRejectsJudgeThatCollapsesLabels(t *testing.T) {
 	assert.False(t, report.Passed)
 	assert.Contains(t, report.Error, "judge calibration failed")
 	assert.False(t, run)
+}
+
+func TestRunnerRecordsNonEntailedSemanticOutcome(t *testing.T) {
+	judge := &scriptedJudge{
+		responses: [][]Judgment{
+			calibrationJudgments(),
+			{{ClaimID: "complete", Label: Contradicted, Rationale: "The answer states the opposite."}},
+		},
+		errors: []error{nil, nil},
+	}
+	suite := Suite{ID: "chat", Scenarios: []Scenario{{
+		ID: "case", Timeout: time.Second,
+		Run: func(context.Context) (Result, error) {
+			return Result{
+				Claims: []Claim{{ID: "complete", Text: "The inventory is complete."}},
+				Output: "The inventory is incomplete.",
+			}, nil
+		},
+	}}}
+
+	report, err := mustRunner(t, judge, 1).Run(context.Background(), suite)
+
+	require.NoError(t, err)
+	require.Len(t, report.Scenarios, 1)
+	assert.False(t, report.Passed)
+	assert.Empty(t, report.Scenarios[0].Error)
+	assert.Equal(t, Contradicted, report.Scenarios[0].Judgments[0].Label)
+}
+
+func TestRunnerRecordsJudgeErrorsAtOwningBoundary(t *testing.T) {
+	t.Run("calibration", func(t *testing.T) {
+		want := errors.New("judge unavailable")
+		judge := &scriptedJudge{responses: [][]Judgment{nil}, errors: []error{want}}
+		hookCalled := false
+		suite := Suite{ID: "chat", Scenarios: []Scenario{{
+			ID: "case", Timeout: time.Second,
+			Run: func(context.Context) (Result, error) {
+				hookCalled = true
+				return Result{Checks: []Check{{Name: "ok", Passed: true}}}, nil
+			},
+		}}}
+
+		report, err := mustRunner(t, judge, 1).Run(context.Background(), suite)
+
+		require.ErrorIs(t, err, errCalibration)
+		require.ErrorIs(t, err, want)
+		assert.Contains(t, report.Error, want.Error())
+		assert.False(t, hookCalled)
+	})
+
+	t.Run("calibration protocol", func(t *testing.T) {
+		judge := &scriptedJudge{
+			responses: [][]Judgment{{
+				{ClaimID: "calibration_entailed", Label: Entailed, Rationale: "Exact."},
+			}},
+			errors: []error{nil},
+		}
+
+		report, err := mustRunner(t, judge, 1).Run(
+			context.Background(),
+			Suite{ID: "chat", Scenarios: selectionSuite().Scenarios[:1]},
+		)
+
+		require.ErrorIs(t, err, errCalibration)
+		assert.Contains(t, report.Error, "got 1 judgments for 4 claims")
+	})
+
+	t.Run("scenario", func(t *testing.T) {
+		want := errors.New("judge unavailable")
+		judge := &scriptedJudge{
+			responses: [][]Judgment{calibrationJudgments(), nil},
+			errors:    []error{nil, want},
+		}
+		suite := Suite{ID: "chat", Scenarios: []Scenario{{
+			ID: "case", Timeout: time.Second,
+			Run: func(context.Context) (Result, error) {
+				return Result{
+					Claims: []Claim{{ID: "complete", Text: "The inventory is complete."}},
+					Output: "Complete.",
+				}, nil
+			},
+		}}}
+
+		report, err := mustRunner(t, judge, 1).Run(context.Background(), suite)
+
+		require.NoError(t, err)
+		require.Len(t, report.Scenarios, 1)
+		assert.Equal(t, want.Error(), report.Scenarios[0].Error)
+		assert.False(t, report.Passed)
+	})
 }
 
 func TestRunnerValidatesExactScenarioSelection(t *testing.T) {
@@ -341,7 +527,7 @@ func TestRunnerRejectsSelectionBeforeJudgeOrHooks(t *testing.T) {
 	hookCalled := false
 	suite := Suite{ID: "chat", Scenarios: []Scenario{{
 		ID: "known", Timeout: time.Second,
-		Run: func(context.Context, string) (Result, error) {
+		Run: func(context.Context) (Result, error) {
 			hookCalled = true
 			return Result{Checks: []Check{{Name: "ok", Passed: true}}}, nil
 		},
@@ -363,7 +549,7 @@ func TestRunnerBoundsConcurrencyAndPreservesReportOrder(t *testing.T) {
 		scenarios[index] = Scenario{
 			ID:      fmt.Sprintf("case_%d", index),
 			Timeout: time.Second,
-			Run: func(context.Context, string) (Result, error) {
+			Run: func(context.Context) (Result, error) {
 				started <- struct{}{}
 				<-release
 				return Result{Checks: []Check{{Name: "ok", Passed: true}}}, nil
@@ -386,13 +572,116 @@ func TestRunnerBoundsConcurrencyAndPreservesReportOrder(t *testing.T) {
 	select {
 	case <-started:
 		t.Fatal("runner exceeded the configured concurrency limit")
-	case <-time.After(20 * time.Millisecond):
+	default:
 	}
 	close(release)
 	outcome := <-finished
 	require.NoError(t, outcome.err)
 	assert.Equal(t, []string{"case_0", "case_1", "case_2", "case_3"}, reportScenarioIDs(outcome.report))
 	assert.True(t, outcome.report.Passed)
+}
+
+func TestRunnerJudgesIndependentScenariosConcurrently(t *testing.T) {
+	judge := &concurrentJudge{
+		started: make(chan struct{}, 2),
+		release: make(chan struct{}),
+	}
+	scenarios := make([]Scenario, 2)
+	for index := range scenarios {
+		id := fmt.Sprintf("case_%d", index)
+		scenarios[index] = Scenario{
+			ID:      id,
+			Timeout: time.Second,
+			Run: func(context.Context) (Result, error) {
+				return Result{
+					Claims: []Claim{{ID: id, Text: "The answer is complete."}},
+					Output: "The answer is complete.",
+				}, nil
+			},
+		}
+	}
+	type runOutcome struct {
+		report Report
+		err    error
+	}
+	runner := mustRunner(t, judge, 2)
+	finished := make(chan runOutcome, 1)
+	go func() {
+		report, err := runner.Run(
+			context.Background(),
+			Suite{ID: "chat", Scenarios: scenarios},
+		)
+		finished <- runOutcome{report: report, err: err}
+	}()
+
+	for range 2 {
+		select {
+		case <-judge.started:
+		case <-time.After(time.Second):
+			close(judge.release)
+			t.Fatal("runner did not invoke independent scenario judgments concurrently")
+		}
+	}
+	close(judge.release)
+	outcome := <-finished
+	require.NoError(t, outcome.err)
+	assert.True(t, outcome.report.Passed)
+}
+
+func TestRunnerCancellationStopsNewHooksAndReportsLifecycle(t *testing.T) {
+	reporter := new(recordingReporter)
+	runner, err := NewRunner(nil, RunnerConfig{MaxConcurrency: 2, Reporter: reporter})
+	require.NoError(t, err)
+
+	hookStarted := make(chan struct{}, 3)
+	scenarios := make([]Scenario, 3)
+	for index := range scenarios {
+		scenarios[index] = Scenario{
+			ID:      fmt.Sprintf("case_%d", index),
+			Timeout: time.Minute,
+			Run: func(ctx context.Context) (Result, error) {
+				hookStarted <- struct{}{}
+				<-ctx.Done()
+				return Result{}, ctx.Err()
+			},
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	type runOutcome struct {
+		report Report
+		err    error
+	}
+	finished := make(chan runOutcome, 1)
+	go func() {
+		report, err := runner.Run(ctx, Suite{ID: "chat", Scenarios: scenarios})
+		finished <- runOutcome{report: report, err: err}
+	}()
+
+	<-hookStarted
+	<-hookStarted
+	cancel()
+	outcome := <-finished
+
+	require.ErrorIs(t, outcome.err, context.Canceled)
+	assert.Equal(t, context.Canceled.Error(), outcome.report.Error)
+	require.Len(t, outcome.report.Scenarios, 3)
+	notStarted := 0
+	for _, report := range outcome.report.Scenarios {
+		assert.Equal(t, context.Canceled.Error(), report.Error)
+		if report.StartedAt.IsZero() {
+			notStarted++
+		}
+	}
+	assert.Equal(t, 1, notStarted)
+	reporter.mu.Lock()
+	defer reporter.mu.Unlock()
+	assert.Len(t, reporter.started, 2)
+	require.Len(t, reporter.finished, 3)
+	finishedIDs := make([]string, len(reporter.finished))
+	for index, report := range reporter.finished {
+		finishedIDs[index] = report.ID
+	}
+	assert.ElementsMatch(t, []string{"case_0", "case_1", "case_2"}, finishedIDs)
 }
 
 func TestRunnerContinuesAfterScenarioFailure(t *testing.T) {
@@ -402,13 +691,13 @@ func TestRunnerContinuesAfterScenarioFailure(t *testing.T) {
 		Scenarios: []Scenario{
 			{
 				ID: "failed", Timeout: time.Second,
-				Run: func(context.Context, string) (Result, error) {
+				Run: func(context.Context) (Result, error) {
 					return Result{}, want
 				},
 			},
 			{
 				ID: "passed", Timeout: time.Second,
-				Run: func(context.Context, string) (Result, error) {
+				Run: func(context.Context) (Result, error) {
 					return Result{Checks: []Check{{Name: "ok", Passed: true}}}, nil
 				},
 			},
@@ -428,19 +717,19 @@ func TestRunnerClassifiesHookAndProtocolErrors(t *testing.T) {
 	hookErr := errors.New("chat stream failed")
 	tests := []struct {
 		name    string
-		run     func(context.Context, string) (Result, error)
+		run     func(context.Context) (Result, error)
 		wantErr string
 	}{
 		{
 			name: "hook error",
-			run: func(context.Context, string) (Result, error) {
+			run: func(context.Context) (Result, error) {
 				return Result{}, hookErr
 			},
 			wantErr: hookErr.Error(),
 		},
 		{
 			name: "invalid result",
-			run: func(context.Context, string) (Result, error) {
+			run: func(context.Context) (Result, error) {
 				return Result{}, nil
 			},
 			wantErr: "result must contain at least one check or claim",
@@ -465,7 +754,7 @@ func TestRunnerRequiresJudgeForSemanticAssertions(t *testing.T) {
 	t.Run("scenario claim", func(t *testing.T) {
 		suite := Suite{ID: "chat", Scenarios: []Scenario{{
 			ID: "case", Timeout: time.Second,
-			Run: func(context.Context, string) (Result, error) {
+			Run: func(context.Context) (Result, error) {
 				return Result{
 					Output: "On.",
 					Claims: []Claim{{ID: "on", Text: "It is on."}},
@@ -497,7 +786,7 @@ func TestScenarioDurationIncludesSemanticJudging(t *testing.T) {
 	}
 	scenario := Scenario{
 		ID: "case", Timeout: time.Minute,
-		Run: func(context.Context, string) (Result, error) {
+		Run: func(context.Context) (Result, error) {
 			now = now.Add(time.Second)
 			return Result{
 				Output: "Complete.",
@@ -536,7 +825,7 @@ func reportScenarioIDs(report Report) []string {
 }
 
 func selectionSuite() Suite {
-	passing := func(context.Context, string) (Result, error) {
+	passing := func(context.Context) (Result, error) {
 		return Result{Checks: []Check{{Name: "ok", Passed: true}}}, nil
 	}
 	return Suite{

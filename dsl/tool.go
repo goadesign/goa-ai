@@ -6,8 +6,10 @@ import (
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 
+	evalexpr "goa.design/goa-ai/eval/expr"
 	agentsexpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/dslshape"
 )
 
 // Tool declares a tool for agents or MCP servers. It has two distinct use cases:
@@ -417,9 +419,11 @@ func AudienceEvidence() {
 	Audience(ServerDataAudienceEvidence)
 }
 
-// Tags attaches metadata labels to a tool for categorization and filtering. Tags
-// can be used by agents, planners, or monitoring systems to organize and discover
-// tools based on their capabilities or domains.
+// Tags attaches metadata labels for categorization and filtering. Tags on
+// tools and toolsets let agents, planners, and monitoring systems organize and
+// discover tools. Tags on evaluation scenarios drive explicit runner selection.
+//
+// Tags must appear in Tool, Toolset, or Scenario.
 //
 // Tags accepts a variadic list of strings. Each tag should be a simple lowercase
 // identifier or category name. Common patterns include:
@@ -443,6 +447,13 @@ func AudienceEvidence() {
 //	    Tags("filesystem", "write", "destructive")
 //	})
 //
+// Example (evaluation scenario selection tags):
+//
+//	Scenario("alarm_inventory", func() {
+//	    Description("Retrieves every alarm in a fixed window.")
+//	    Tags("production", "alarm")
+//	})
+//
 // Tags are optional. Tools without tags are still fully functional but may be
 // harder to organize in systems with many available tools.
 func Tags(values ...string) {
@@ -450,6 +461,8 @@ func Tags(values ...string) {
 	case *agentsexpr.ToolExpr:
 		cur.Tags = append(cur.Tags, values...)
 	case *agentsexpr.ToolsetExpr:
+		cur.Tags = append(cur.Tags, values...)
+	case *evalexpr.ScenarioExpr:
 		cur.Tags = append(cur.Tags, values...)
 	default:
 		eval.IncompatibleDSL()
@@ -846,70 +859,10 @@ func Bookkeeping() {
 
 // toolDSL mirrors Goa's method DSL helpers to define tool shapes.
 func toolDSL(m *agentsexpr.ToolExpr, suffix string, p any, args ...any) *goaexpr.AttributeExpr {
-	return shapeDSL(m.Name, suffix, p, args...)
+	return dslshape.Build(m.Name, suffix, p, args...)
 }
 
 // completionDSL mirrors toolDSL for service-owned completion contracts.
 func completionDSL(c *agentsexpr.CompletionExpr, suffix string, p any, args ...any) *goaexpr.AttributeExpr {
-	return shapeDSL(c.Name, suffix, p, args...)
-}
-
-// shapeDSL mirrors Goa's method DSL helpers to define model-facing contract
-// shapes for tools and completions.
-func shapeDSL(ownerName, suffix string, p any, args ...any) *goaexpr.AttributeExpr {
-	var (
-		att *goaexpr.AttributeExpr
-		fn  func()
-	)
-	switch actual := p.(type) {
-	case func():
-		fn = actual
-		att = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
-	case goaexpr.UserType:
-		if len(args) == 0 {
-			// Do not duplicate type if it is not customized
-			return &goaexpr.AttributeExpr{Type: actual}
-		}
-		dupped := goaexpr.Dup(actual)
-		att = &goaexpr.AttributeExpr{Type: dupped}
-		if f, ok := args[len(args)-1].(func()); ok {
-			numreqs := 0
-			if att.Validation != nil {
-				numreqs = len(att.Validation.Required)
-			}
-			eval.Execute(f, att)
-			if att.Validation != nil && len(att.Validation.Required) != numreqs {
-				// If the DSL modifies the type attributes "requiredness"
-				// then rename the type to avoid collisions.
-				if renamer, ok := dupped.(interface{ Rename(string) }); ok {
-					renamer.Rename(actual.Name() + "_" + ownerName + "_" + suffix)
-				}
-			}
-		}
-	case goaexpr.DataType:
-		att = &goaexpr.AttributeExpr{Type: actual}
-	default:
-		eval.InvalidArgError("type or function", p)
-		return nil
-	}
-	if len(args) >= 1 {
-		if f, ok := args[len(args)-1].(func()); ok {
-			if fn != nil {
-				eval.InvalidArgError("(type), (func), (type, func), (type, desc) or (type, desc, func)", f)
-			}
-			fn = f
-		}
-		if d, ok := args[0].(string); ok {
-			att.Description = d
-		}
-	}
-	if fn != nil {
-		eval.Execute(fn, att)
-		if obj, ok := att.Type.(*goaexpr.Object); ok {
-			if len(*obj) == 0 {
-				att.Type = goaexpr.Empty
-			}
-		}
-	}
-	return att
+	return dslshape.Build(c.Name, suffix, p, args...)
 }
