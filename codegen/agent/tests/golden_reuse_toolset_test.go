@@ -11,5 +11,7 @@ func TestGolden_ReUse(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.ReUse())
 	// With per-toolset specs, ensure aggregation works; check aggregated specs package.
 	specs := fileContent(t, files, "gen/alpha/agents/scribe/specs/specs.go")
+	transportTypes := renderedFileContent(t, files, "gen/alpha/toolsets/shared/http/types.go")
 	assertGoldenGo(t, "reuse_toolset", "specs.go.golden", specs)
+	assertGoldenGo(t, "reuse_toolset", "transport_types.go.golden", transportTypes)
 }

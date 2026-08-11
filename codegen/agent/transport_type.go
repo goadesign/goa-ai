@@ -76,7 +76,12 @@ func transportTypeDef(
 		}
 		fields = append(fields, "}")
 		return strings.Join(fields, "\n")
-	case goaexpr.UserType, *goaexpr.Union:
+	case goaexpr.UserType:
+		if actual == goaexpr.Empty {
+			return "struct {}"
+		}
+		return scope.GoTypeName(att)
+	case *goaexpr.Union:
 		return scope.GoTypeName(att)
 	default:
 		panic(fmt.Sprintf("agent/codegen: unsupported transport data type %T", actual))
