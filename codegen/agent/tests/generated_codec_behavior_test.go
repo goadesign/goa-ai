@@ -305,17 +305,14 @@ func TestGeneratedServerDataCanonicalizer(t *testing.T) {
 }
 
 func TestGeneratedCodecUnionInvalidFieldTypeBehavior(t *testing.T) {
-	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local", testscenarios.ArgsUnionSumTypes()))
-	writeGeneratedPackageTest(t, root, "alpha/toolsets/union/http/validate_stub.go", `package http
-
-func ValidateEchoPayloadTransport(v *EchoPayloadTransport) error {
-	return nil
-}
-
-func ValidateEchoResultTransport(v *EchoResultTransport) error {
-	return nil
-}
-`)
+	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local", testscenarios.ArgsUnionSumTypes())
+	root := writeGeneratedModule(t, files)
+	writeGeneratedPackageTest(
+		t,
+		root,
+		"alpha/toolsets/union/http/validate.go",
+		renderedFileContent(t, files, "gen/alpha/toolsets/union/http/validate.go"),
+	)
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/union/codecs_behavior_test.go", `package union
 
 import (
@@ -383,6 +380,21 @@ func TestUnmarshalEchoPayloadRejectsMissingUnionValue(t *testing.T) {
 	}
 }
 
+func TestUnmarshalEchoPayloadRejectsMissingRequiredUnion(t *testing.T) {
+	_, err := UnmarshalEchoPayload([]byte(`+"`"+`{"id":"req_1"}`+"`"+`))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var validation *tools.ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("expected ValidationError, got %T: %v", err, err)
+	}
+	issues := validation.Issues()
+	if len(issues) != 1 || issues[0].Field != "value" || issues[0].Constraint != "missing_field" {
+		t.Fatalf("unexpected issues: %#v", issues)
+	}
+}
+
 func TestUnmarshalEchoPayloadRejectsNullUnionValue(t *testing.T) {
 	_, err := UnmarshalEchoPayload([]byte(`+"`"+`{"id":"req_1","value":{"type":"structured","value":null}}`+"`"+`))
 	if err == nil {
@@ -418,6 +430,13 @@ func TestValueValidateRejectsNilSelectedBranch(t *testing.T) {
 	}
 }
 
+func TestMarshalEchoPayloadRejectsMissingRequiredUnion(t *testing.T) {
+	_, err := MarshalEchoPayload(&EchoPayload{ID: "req_1"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestOptionalUnionOmissionAndRoundTrip(t *testing.T) {
 	payload := &EchoPayload{
 		ID:    "req_1",
@@ -434,12 +453,12 @@ func TestOptionalUnionOmissionAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.OptionalValue != nil {
+	if decoded.OptionalValue.Kind() != "" {
 		t.Fatalf("omitted optional union became present: %#v", decoded.OptionalValue)
 	}
 
 	optional := NewOptionalValueNumber(7)
-	payload.OptionalValue = &optional
+	payload.OptionalValue = optional
 	data, err = MarshalEchoPayload(payload)
 	if err != nil {
 		t.Fatal(err)
@@ -448,7 +467,7 @@ func TestOptionalUnionOmissionAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.OptionalValue == nil {
+	if decoded.OptionalValue.Kind() == "" {
 		t.Fatal("present optional union was omitted")
 	}
 	got, ok := decoded.OptionalValue.AsNumber()
@@ -457,15 +476,21 @@ func TestOptionalUnionOmissionAndRoundTrip(t *testing.T) {
 	}
 }
 
-func TestOptionalUnionRejectsPresentValueWithoutBranch(t *testing.T) {
+func TestOptionalUnionZeroValueIsOmitted(t *testing.T) {
 	payload := &EchoPayload{
 		ID:            "req_1",
 		Value:         NewValueText("required"),
-		OptionalValue: &OptionalValue{},
+		OptionalValue: OptionalValue{},
 	}
-	if _, err := MarshalEchoPayload(payload); err == nil {
-		t.Fatal("expected malformed in-memory optional union to fail")
+	data, err := MarshalEchoPayload(payload)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if strings.Contains(string(data), "optional_value") {
+		t.Fatalf("zero optional union was serialized: %s", data)
+	}
+
+	// A present JSON object is not omission and must still select one branch.
 	if _, err := UnmarshalEchoPayload([]byte("{\"id\":\"req_1\",\"value\":{\"type\":\"text\",\"value\":\"required\"},\"optional_value\":{}}")); err == nil {
 		t.Fatal("expected malformed JSON optional union to fail")
 	}

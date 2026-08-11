@@ -23,7 +23,7 @@ require (
 	go.temporal.io/sdk v1.44.1
 	go.temporal.io/sdk/contrib/opentelemetry v0.7.0
 	goa.design/clue v1.2.6
-	goa.design/goa/v3 v3.29.2-0.20260810233746-5e98ce171a49
+	goa.design/goa/v3 v3.29.2-0.20260811021529-654fe1efea0f
 	goa.design/pulse v1.10.1
 	golang.org/x/time v0.15.0
 	google.golang.org/genai v1.62.0

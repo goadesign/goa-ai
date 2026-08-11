@@ -14,7 +14,7 @@ import (
 //
 // Transport types are model-facing: they must encode/decode using the JSON
 // schema property names and must preserve missing-vs-zero semantics via pointer
-// primitives (controlled by NameScope.GoTypeDef's ptr flag, not by this helper).
+// fields (controlled by modelJSONTransportContext, not by this helper).
 //
 // Existing HTTP/public transport JSON tag metadata is ignored because Goa
 // generators can attach it to shared design expressions. The only preserved JSON
