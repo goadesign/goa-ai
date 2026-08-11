@@ -44,11 +44,12 @@ type (
 		// Confirmation is the pending operator confirmation when the run
 		// stopped at an await_confirmation boundary.
 		Confirmation *Confirmation
-		// TerminalPhase is the root run's final workflow phase: "completed",
-		// "failed", "canceled", or "" when the stream ended without one.
-		TerminalPhase string
+		// TerminalPhase is the root run's final workflow phase
+		// (run.PhaseCompleted, run.PhaseFailed, or run.PhaseCanceled), or ""
+		// when the stream ended without one.
+		TerminalPhase run.Phase
 		// TerminalFailure is the canonical failure payload when TerminalPhase
-		// is "failed".
+		// is run.PhaseFailed.
 		TerminalFailure *run.Failure
 	}
 

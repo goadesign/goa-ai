@@ -222,6 +222,20 @@ type (
 		// FromJSON decodes the JSON payload into the typed value.
 		FromJSON func([]byte) (T, error)
 	}
+
+	// TypedTool binds a tool identifier to the generated typed codecs for its
+	// payload and result. Code generation exports one descriptor per tool in
+	// the toolset specs package (for example helpers.SummarizeDocTool) so
+	// consumers decode tool JSON without restating the name-to-codec pairing
+	// that the design already fixed.
+	TypedTool[P, R any] struct {
+		// Name is the globally unique tool identifier (`toolset.tool`).
+		Name Ident
+		// Payload decodes and encodes the tool's canonical payload JSON.
+		Payload JSONCodec[P]
+		// Result decodes and encodes the tool's canonical result JSON.
+		Result JSONCodec[R]
+	}
 )
 
 const (

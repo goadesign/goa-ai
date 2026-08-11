@@ -48,6 +48,15 @@ var (
 	}
 )
 
+// AnswerTool pairs the helpers.answer identifier with its generated
+// typed payload and result codecs so consumers decode tool JSON without
+// restating the name-to-codec pairing fixed by the design.
+var AnswerTool = tools.TypedTool[*AnswerPayload, *AnswerResult]{
+	Name:    Answer,
+	Payload: AnswerPayloadCodec,
+	Result:  AnswerResultCodec,
+}
+
 var (
 	metadata = []policy.ToolMetadata{
 		{

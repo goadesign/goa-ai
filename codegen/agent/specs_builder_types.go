@@ -52,6 +52,11 @@ type (
 		// ConstName is the Go constant identifier for this tool's ID, computed
 		// using the name scope to ensure uniqueness within the package.
 		ConstName string
+		// TypedToolVar is the exported typed descriptor variable name (e.g.,
+		// "SummarizeDocTool") pairing the tool identifier with its typed
+		// payload and result codecs. Empty when the tool lacks a payload or
+		// result type, in which case no descriptor is generated.
+		TypedToolVar string
 		// Title is the human-friendly display title.
 		Title string
 		// Service name that owns the tool.

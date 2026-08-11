@@ -47,6 +47,15 @@ var (
 	}
 )
 
+// SummarizeDocTool pairs the helpers.summarize_doc identifier with its generated
+// typed payload and result codecs so consumers decode tool JSON without
+// restating the name-to-codec pairing fixed by the design.
+var SummarizeDocTool = tools.TypedTool[*SummarizeDocPayload, *SummarizeDocResult]{
+	Name:    SummarizeDoc,
+	Payload: SummarizeDocPayloadCodec,
+	Result:  SummarizeDocResultCodec,
+}
+
 var (
 	metadata = []policy.ToolMetadata{
 		{

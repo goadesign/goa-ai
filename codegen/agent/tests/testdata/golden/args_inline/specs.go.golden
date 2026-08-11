@@ -47,6 +47,15 @@ var (
 	}
 )
 
+// AddTool pairs the math.add identifier with its generated
+// typed payload and result codecs so consumers decode tool JSON without
+// restating the name-to-codec pairing fixed by the design.
+var AddTool = tools.TypedTool[*AddPayload, *AddResult]{
+	Name:    Add,
+	Payload: AddPayloadCodec,
+	Result:  AddResultCodec,
+}
+
 var (
 	metadata = []policy.ToolMetadata{
 		{

@@ -47,6 +47,15 @@ var (
 	}
 )
 
+// StoreTool pairs the docs.store identifier with its generated
+// typed payload and result codecs so consumers decode tool JSON without
+// restating the name-to-codec pairing fixed by the design.
+var StoreTool = tools.TypedTool[*StorePayload, *StoreResult]{
+	Name:    Store,
+	Payload: StorePayloadCodec,
+	Result:  StoreResultCodec,
+}
+
 var (
 	metadata = []policy.ToolMetadata{
 		{

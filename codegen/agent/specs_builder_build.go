@@ -94,7 +94,30 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 	sort.Slice(data.tools, func(i, j int) bool {
 		return data.tools[i].Name < data.tools[j].Name
 	})
+	assignTypedToolVars(data)
 	return data, nil
+}
+
+// assignTypedToolVars names the exported typed tool descriptor for every tool
+// that has both a payload and a result codec. Descriptor names derive from the
+// tool constant plus a "Tool" suffix and are made unique against every other
+// package-level identifier the specs package emits (tool constants and
+// materialized type names), so a design type that happens to Goify to the same
+// identifier cannot collide.
+func assignTypedToolVars(data *toolSpecsData) {
+	scope := codegen.NewNameScope()
+	for _, entry := range data.tools {
+		scope.Unique(entry.ConstName)
+	}
+	for _, info := range data.typesList() {
+		scope.Unique(info.TypeName)
+	}
+	for _, entry := range data.tools {
+		if entry.Payload == nil || entry.Result == nil {
+			continue
+		}
+		entry.TypedToolVar = scope.Unique(entry.ConstName + "Tool")
+	}
 }
 
 // newToolContractTypeOwner projects a tool into the minimal owner metadata

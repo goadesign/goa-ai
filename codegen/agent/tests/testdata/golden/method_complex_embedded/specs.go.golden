@@ -47,6 +47,15 @@ var (
 	}
 )
 
+// UpsertTool pairs the profiles.upsert identifier with its generated
+// typed payload and result codecs so consumers decode tool JSON without
+// restating the name-to-codec pairing fixed by the design.
+var UpsertTool = tools.TypedTool[*UpsertPayload, *UpsertResult]{
+	Name:    Upsert,
+	Payload: UpsertPayloadCodec,
+	Result:  UpsertResultCodec,
+}
+
 var (
 	metadata = []policy.ToolMetadata{
 		{

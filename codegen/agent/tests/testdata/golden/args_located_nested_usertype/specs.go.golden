@@ -47,6 +47,15 @@ var (
 	}
 )
 
+// SetStepStatusTool pairs the progress.set_step_status identifier with its generated
+// typed payload and result codecs so consumers decode tool JSON without
+// restating the name-to-codec pairing fixed by the design.
+var SetStepStatusTool = tools.TypedTool[*SetStepStatusPayload, *SetStepStatusResult]{
+	Name:    SetStepStatus,
+	Payload: SetStepStatusPayloadCodec,
+	Result:  SetStepStatusResultCodec,
+}
+
 var (
 	metadata = []policy.ToolMetadata{
 		{

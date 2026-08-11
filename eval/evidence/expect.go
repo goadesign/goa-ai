@@ -15,6 +15,7 @@ import (
 	"goa.design/goa-ai/eval"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -37,13 +38,17 @@ type (
 	}
 
 	// Assert applies one deterministic assertion to a canonical JSON payload.
-	// Nil error means the payload satisfies the assertion. Build asserts with
-	// Decoded and the generated typed codec; write a raw Assert by hand only
-	// for registry-discovered tools that have no generated types.
+	// Nil error means the payload satisfies the assertion. ExpectCall,
+	// ExpectFailure, and ExpectConfirmation build asserts from the generated
+	// typed tool descriptors; write a raw Assert by hand only for
+	// registry-discovered tools that have no generated types.
 	Assert func(rawjson.Message) error
 
-	// Tool constrains one declared tool call and its result. Use the
-	// generated toolset constants for Name so references are compile-checked.
+	// Tool constrains one declared tool call and its result. Build Tool
+	// values with ExpectCall or ExpectFailure and the generated typed tool
+	// descriptor (for example helpers.SummarizeDocTool) so the tool name and
+	// payload/result codecs cannot be mispaired; declare a bare Tool by hand
+	// only for tools without generated descriptors.
 	Tool struct {
 		// Name is the fully qualified tool identifier.
 		Name tools.Ident
@@ -75,10 +80,55 @@ type (
 	}
 )
 
+// ExpectCall declares an expectation for one successful call of the tool
+// described by the generated typed descriptor (for example
+// helpers.SummarizeDocTool). The descriptor fixes the name-to-codec pairing at
+// generation time, so the compiler checks both predicates against the tool's
+// actual payload and result types. Nil predicates leave that side
+// unconstrained. Attempt policies (RequireAllAttemptsSuccessful,
+// ForbidFailureKinds) can be set on the returned Tool.
+func ExpectCall[P, R any](tool tools.TypedTool[P, R], args func(P) error, result func(R) error) Tool {
+	expectation := Tool{Name: tool.Name}
+	if args != nil {
+		expectation.Args = Decoded(tool.Payload, args)
+	}
+	if result != nil {
+		expectation.Result = Decoded(tool.Result, result)
+	}
+	return expectation
+}
+
+// ExpectFailure declares an expectation for one call of the described tool
+// that must end as a classified failure of exactly the given kind. Failed
+// calls carry no result payload, so only an argument predicate applies; the
+// Result-versus-FailureKind contradiction is unrepresentable through this
+// constructor.
+func ExpectFailure[P, R any](tool tools.TypedTool[P, R], kind planner.FailureKind, args func(P) error) Tool {
+	expectation := Tool{Name: tool.Name, FailureKind: kind}
+	if args != nil {
+		expectation.Args = Decoded(tool.Payload, args)
+	}
+	return expectation
+}
+
+// ExpectConfirmation declares the pending confirmation boundary for the
+// described tool. The pending payload is the tool's canonical arguments, so
+// the predicate is checked against the tool's payload type. A nil predicate
+// leaves the payload unconstrained.
+func ExpectConfirmation[P, R any](tool tools.TypedTool[P, R], args func(P) error) *ExpectedConfirmation {
+	confirmation := &ExpectedConfirmation{Tool: tool.Name}
+	if args != nil {
+		confirmation.Args = Decoded(tool.Payload, args)
+	}
+	return confirmation
+}
+
 // Decoded adapts a typed predicate into an Assert by decoding the canonical
 // payload with the tool's generated codec (for example
 // helpers.AnswerPayloadCodec). The codec owns JSON boundary validation, and
-// the compiler checks the predicate against the codec's value type.
+// the compiler checks the predicate against the codec's value type. Prefer
+// ExpectCall with the generated typed descriptor; use Decoded directly only
+// when declaring a bare Tool by hand.
 func Decoded[T any](codec tools.JSONCodec[T], assert func(T) error) Assert {
 	return func(raw rawjson.Message) error {
 		value, err := codec.FromJSON(raw)
@@ -151,7 +201,7 @@ func (e Expect) evaluateTerminal(evidence *Evidence) []string {
 		}
 		return failures
 	}
-	if evidence.TerminalPhase != "completed" {
+	if evidence.TerminalPhase != run.PhaseCompleted {
 		diagnostic := fmt.Sprintf("run terminal phase: got %q, want completed", evidence.TerminalPhase)
 		if evidence.TerminalFailure != nil {
 			diagnostic += fmt.Sprintf(" (failure: %s)", evidence.TerminalFailure.Message)

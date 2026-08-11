@@ -220,6 +220,58 @@ func TestExpectTerminalSemantics(t *testing.T) {
 	})
 }
 
+func TestTypedConstructorsBindDescriptorPairing(t *testing.T) {
+	descriptor := tools.TypedTool[*listPayload, *listResult]{
+		Name:    "svc.read.list",
+		Payload: listPayloadCodec,
+		Result:  listResultCodec,
+	}
+
+	t.Run("ExpectCall checks both sides against the descriptor codecs", func(t *testing.T) {
+		expectation := ExpectCall(descriptor,
+			func(p *listPayload) error {
+				if p.Kind != "pump" {
+					return fmt.Errorf("kind: got %q, want pump", p.Kind)
+				}
+				return nil
+			},
+			func(r *listResult) error {
+				if len(r.Items) == 0 {
+					return errors.New("no items")
+				}
+				return nil
+			},
+		)
+		assert.Equal(t, tools.Ident("svc.read.list"), expectation.Name)
+		require.NotNil(t, expectation.Args)
+		require.NotNil(t, expectation.Result)
+		require.NoError(t, expectation.Args(rawjson.Message(`{"kind":"pump","limit":1}`)))
+		require.ErrorContains(t, expectation.Args(rawjson.Message(`{"kind":"fan","limit":1}`)), "want pump")
+		require.ErrorContains(t, expectation.Result(rawjson.Message(`{"items":[]}`)), "no items")
+	})
+	t.Run("ExpectCall leaves nil predicates unconstrained", func(t *testing.T) {
+		expectation := ExpectCall(descriptor, nil, nil)
+		assert.Nil(t, expectation.Args)
+		assert.Nil(t, expectation.Result)
+	})
+	t.Run("ExpectFailure declares the kind without a result assertion", func(t *testing.T) {
+		expectation := ExpectFailure(descriptor, planner.FailureInvalidCall, nil)
+		assert.Equal(t, planner.FailureInvalidCall, expectation.FailureKind)
+		assert.Nil(t, expectation.Result)
+	})
+	t.Run("ExpectConfirmation checks the pending payload", func(t *testing.T) {
+		confirmation := ExpectConfirmation(descriptor, func(p *listPayload) error {
+			if p.Limit != 7 {
+				return fmt.Errorf("limit: got %d, want 7", p.Limit)
+			}
+			return nil
+		})
+		assert.Equal(t, tools.Ident("svc.read.list"), confirmation.Tool)
+		require.NoError(t, confirmation.Args(rawjson.Message(`{"kind":"pump","limit":7}`)))
+		require.ErrorContains(t, confirmation.Args(rawjson.Message(`{"kind":"pump","limit":9}`)), "want 7")
+	})
+}
+
 func TestDecodedReportsCodecRejections(t *testing.T) {
 	assert := Decoded(listPayloadCodec, func(*listPayload) error { return nil })
 	err := assert(rawjson.Message(`{"kind":`))

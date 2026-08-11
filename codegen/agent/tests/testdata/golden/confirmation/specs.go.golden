@@ -52,6 +52,15 @@ var (
 	}
 )
 
+// DangerousWriteTool pairs the atlas.commands.dangerous_write identifier with its generated
+// typed payload and result codecs so consumers decode tool JSON without
+// restating the name-to-codec pairing fixed by the design.
+var DangerousWriteTool = tools.TypedTool[*DangerousWritePayload, *DangerousWriteResult]{
+	Name:    DangerousWrite,
+	Payload: DangerousWritePayloadCodec,
+	Result:  DangerousWriteResultCodec,
+}
+
 var (
 	metadata = []policy.ToolMetadata{
 		{

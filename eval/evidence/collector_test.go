@@ -43,7 +43,7 @@ func TestCollectorProjectsRunTreeIntoEvidence(t *testing.T) {
 	assert.Equal(t, "root", evidence.RunID)
 	assert.Equal(t, "session", evidence.SessionID)
 	assert.Equal(t, "The answer is 42.", evidence.Answer)
-	assert.Equal(t, "completed", evidence.TerminalPhase)
+	assert.Equal(t, run.PhaseCompleted, evidence.TerminalPhase)
 
 	// Causal order groups the nested call immediately after its parent.
 	names := make([]string, len(evidence.ToolCalls))
@@ -73,7 +73,7 @@ func TestCollectorRecordsFailureAndTerminalFailure(t *testing.T) {
 	call := evidence.ToolCalls[0]
 	require.NotNil(t, call.Failure)
 	assert.Equal(t, planner.FailureInvalidCall, call.Failure.Kind)
-	assert.Equal(t, "failed", evidence.TerminalPhase)
+	assert.Equal(t, run.PhaseFailed, evidence.TerminalPhase)
 	require.NotNil(t, evidence.TerminalFailure)
 	assert.Equal(t, "boom", evidence.TerminalFailure.Message)
 }

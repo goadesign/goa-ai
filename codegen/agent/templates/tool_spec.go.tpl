@@ -135,6 +135,20 @@ var (
 )
 
 {{- range .Tools }}
+{{- if .TypedToolVar }}
+
+// {{ .TypedToolVar }} pairs the {{ .Name }} identifier with its generated
+// typed payload and result codecs so consumers decode tool JSON without
+// restating the name-to-codec pairing fixed by the design.
+var {{ .TypedToolVar }} = tools.TypedTool[{{ if .Payload.Pointer }}*{{ end }}{{ .Payload.FullRef }}, {{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}]{
+    Name:    {{ .ConstName }},
+    Payload: {{ .Payload.ExportedCodec }},
+    Result:  {{ .Result.ExportedCodec }},
+}
+{{- end }}
+{{- end }}
+
+{{- range .Tools }}
 {{- if .ServerData }}
 
 // canonicalize{{ .GoName }}ServerData validates the server-only payloads

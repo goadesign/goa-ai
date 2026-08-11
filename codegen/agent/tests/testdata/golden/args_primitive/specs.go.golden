@@ -47,6 +47,15 @@ var (
 	}
 )
 
+// EchoTool pairs the ops.echo identifier with its generated
+// typed payload and result codecs so consumers decode tool JSON without
+// restating the name-to-codec pairing fixed by the design.
+var EchoTool = tools.TypedTool[*EchoPayload, EchoResult]{
+	Name:    Echo,
+	Payload: EchoPayloadCodec,
+	Result:  EchoResultCodec,
+}
+
 var (
 	metadata = []policy.ToolMetadata{
 		{

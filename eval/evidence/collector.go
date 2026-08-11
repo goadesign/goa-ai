@@ -9,6 +9,7 @@ package evidence
 import (
 	"fmt"
 
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -71,9 +72,9 @@ func (c *Collector) Consume(event stream.Event) error {
 		if e.RunID() != c.evidence.RunID {
 			return nil
 		}
-		switch e.Data.Phase {
-		case "completed", "failed", "canceled":
-			c.evidence.TerminalPhase = e.Data.Phase
+		phase := run.Phase(e.Data.Phase)
+		if phase == run.PhaseCompleted || phase == run.PhaseFailed || phase == run.PhaseCanceled {
+			c.evidence.TerminalPhase = phase
 			c.evidence.TerminalFailure = e.Data.Failure
 		}
 	case stream.AwaitConfirmation:
