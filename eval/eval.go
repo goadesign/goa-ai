@@ -48,7 +48,9 @@ type (
 		Checks []Check `json:"checks,omitempty"`
 		// Claims are semantic assertions to judge against Output.
 		Claims []Claim `json:"claims,omitempty"`
-		// Output is the model-authored answer evaluated by Claims.
+		// Output is the model-authored answer evaluated by Claims. An empty
+		// Output neither establishes nor contradicts any claim, so the runner
+		// labels every claim not_addressed without consulting the judge.
 		Output string `json:"output,omitempty"`
 		// Artifacts link durable evidence used to diagnose this result.
 		Artifacts []Artifact `json:"artifacts,omitempty"`
@@ -219,9 +221,6 @@ func validateResult(result Result) error {
 		if !check.Passed && check.Diagnostic == "" {
 			return fmt.Errorf("failed check %q requires a diagnostic", check.Name)
 		}
-	}
-	if len(result.Claims) > 0 && result.Output == "" {
-		return errors.New("claims require output")
 	}
 	claims := make(map[string]struct{}, len(result.Claims))
 	for _, claim := range result.Claims {

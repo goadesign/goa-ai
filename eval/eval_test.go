@@ -126,9 +126,8 @@ func TestValidateResult(t *testing.T) {
 			wantErr: "duplicate check",
 		},
 		{
-			name:    "claims without output",
-			result:  Result{Claims: []Claim{{ID: "complete", Text: "Complete."}}},
-			wantErr: "claims require output",
+			name:   "claims without output",
+			result: Result{Claims: []Claim{{ID: "complete", Text: "Complete."}}},
 		},
 		{
 			name: "duplicate claims",
@@ -389,6 +388,33 @@ func TestRunnerRecordsNonEntailedSemanticOutcome(t *testing.T) {
 	assert.False(t, report.Passed)
 	assert.Empty(t, report.Scenarios[0].Error)
 	assert.Equal(t, Contradicted, report.Scenarios[0].Judgments[0].Label)
+}
+
+func TestRunnerLabelsClaimsNotAddressedWhenOutputEmpty(t *testing.T) {
+	// Only the calibration response is scripted: judging an empty output
+	// would exhaust the script and fail, proving the runner labels the
+	// claims itself.
+	judge := &scriptedJudge{responses: [][]Judgment{calibrationJudgments()}, errors: []error{nil}}
+	suite := Suite{ID: "chat", Scenarios: []Scenario{{
+		ID: "case", Timeout: time.Second,
+		Run: func(context.Context) (Result, error) {
+			return Result{
+				Checks: []Check{{Name: "terminal", Passed: false, Diagnostic: "run failed"}},
+				Claims: []Claim{{ID: "complete", Text: "The inventory is complete."}},
+			}, nil
+		},
+	}}}
+
+	report, err := mustRunner(t, judge, 1).Run(context.Background(), suite)
+
+	require.NoError(t, err)
+	require.Len(t, report.Scenarios, 1)
+	scenario := report.Scenarios[0]
+	assert.False(t, scenario.Passed)
+	assert.Empty(t, scenario.Error)
+	require.Len(t, scenario.Judgments, 1)
+	assert.Equal(t, NotAddressed, scenario.Judgments[0].Label)
+	assert.NotEmpty(t, scenario.Judgments[0].Rationale)
 }
 
 func TestRunnerRecordsJudgeErrorsAtOwningBoundary(t *testing.T) {

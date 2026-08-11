@@ -316,20 +316,8 @@ func (r *Runner) runScenario(ctx context.Context, scenario Scenario) (report Sce
 			report.Error = "semantic judge is required"
 			return report
 		}
-		assertions := make([]Assertion, len(result.Claims))
-		for i, claim := range result.Claims {
-			assertions[i] = Assertion{ClaimID: claim.ID, Output: result.Output, Claim: claim.Text}
-		}
-		judgments, err := r.judge.Judge(scenarioCtx, assertions)
+		judgments, err := r.judgeClaims(scenarioCtx, result)
 		if err != nil {
-			report.Error = err.Error()
-			return report
-		}
-		if err := scenarioCtx.Err(); err != nil {
-			report.Error = err.Error()
-			return report
-		}
-		if err := ValidateJudgments(result.Claims, judgments); err != nil {
 			report.Error = err.Error()
 			return report
 		}
@@ -340,6 +328,39 @@ func (r *Runner) runScenario(ctx context.Context, scenario Scenario) (report Sce
 	}
 	report.Passed = passed
 	return report
+}
+
+// judgeClaims labels every claim of a validated result. An empty output
+// neither establishes nor contradicts any claim, so the runner labels each
+// claim not_addressed itself; otherwise it batches the claims to the semantic
+// judge and validates the one-to-one response.
+func (r *Runner) judgeClaims(ctx context.Context, result Result) ([]Judgment, error) {
+	if result.Output == "" {
+		judgments := make([]Judgment, len(result.Claims))
+		for i, claim := range result.Claims {
+			judgments[i] = Judgment{
+				ClaimID:   claim.ID,
+				Label:     NotAddressed,
+				Rationale: "the scenario produced no output to judge",
+			}
+		}
+		return judgments, nil
+	}
+	assertions := make([]Assertion, len(result.Claims))
+	for i, claim := range result.Claims {
+		assertions[i] = Assertion{ClaimID: claim.ID, Output: result.Output, Claim: claim.Text}
+	}
+	judgments, err := r.judge.Judge(ctx, assertions)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := ValidateJudgments(result.Claims, judgments); err != nil {
+		return nil, err
+	}
+	return judgments, nil
 }
 
 // runScenarios consumes scenario indexes from jobs and writes each index once
