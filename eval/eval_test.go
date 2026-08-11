@@ -567,16 +567,23 @@ func TestRunnerRejectsSelectionBeforeJudgeOrHooks(t *testing.T) {
 	assert.Empty(t, report.Scenarios)
 }
 
-func TestRunnerBoundsConcurrencyAndPreservesReportOrder(t *testing.T) {
-	started := make(chan struct{}, 4)
+func TestRunnerSchedulesLongestConcurrentScenariosFirstAndPreservesReportOrder(t *testing.T) {
+	started := make(chan string, 4)
 	release := make(chan struct{})
+	timeouts := []time.Duration{
+		time.Second,
+		4 * time.Second,
+		2 * time.Second,
+		3 * time.Second,
+	}
 	scenarios := make([]Scenario, 4)
 	for index := range scenarios {
+		id := fmt.Sprintf("case_%d", index)
 		scenarios[index] = Scenario{
-			ID:      fmt.Sprintf("case_%d", index),
-			Timeout: time.Second,
+			ID:      id,
+			Timeout: timeouts[index],
 			Run: func(context.Context) (Result, error) {
-				started <- struct{}{}
+				started <- id
 				<-release
 				return Result{Checks: []Check{{Name: "ok", Passed: true}}}, nil
 			},
@@ -593,8 +600,9 @@ func TestRunnerBoundsConcurrencyAndPreservesReportOrder(t *testing.T) {
 		finished <- runOutcome{report: report, err: err}
 	}()
 
-	<-started
-	<-started
+	first := <-started
+	second := <-started
+	assert.ElementsMatch(t, []string{"case_1", "case_3"}, []string{first, second})
 	select {
 	case <-started:
 		t.Fatal("runner exceeded the configured concurrency limit")
@@ -605,6 +613,32 @@ func TestRunnerBoundsConcurrencyAndPreservesReportOrder(t *testing.T) {
 	require.NoError(t, outcome.err)
 	assert.Equal(t, []string{"case_0", "case_1", "case_2", "case_3"}, reportScenarioIDs(outcome.report))
 	assert.True(t, outcome.report.Passed)
+}
+
+func TestRunnerPreservesDeclarationOrderWhenSerial(t *testing.T) {
+	var started []string
+	scenarios := []Scenario{
+		{
+			ID: "short", Timeout: time.Second,
+			Run: func(context.Context) (Result, error) {
+				started = append(started, "short")
+				return Result{Checks: []Check{{Name: "ok", Passed: true}}}, nil
+			},
+		},
+		{
+			ID: "long", Timeout: time.Minute,
+			Run: func(context.Context) (Result, error) {
+				started = append(started, "long")
+				return Result{Checks: []Check{{Name: "ok", Passed: true}}}, nil
+			},
+		},
+	}
+
+	report, err := mustRunner(t, nil, 1).Run(context.Background(), Suite{ID: "chat", Scenarios: scenarios})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"short", "long"}, started)
+	assert.Equal(t, []string{"short", "long"}, reportScenarioIDs(report))
 }
 
 func TestRunnerJudgesIndependentScenariosConcurrently(t *testing.T) {
