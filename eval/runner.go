@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -58,8 +59,9 @@ func (r *Runner) Run(ctx context.Context, suite Suite) (Report, error) {
 	return r.run(ctx, suite, suite.Scenarios)
 }
 
-// RunScenarios executes the named scenarios in suite declaration order. It
-// rejects an empty selection, duplicate IDs, and IDs absent from the suite.
+// RunScenarios executes the named scenarios and reports them in suite
+// declaration order. It rejects an empty selection, duplicate IDs, and IDs
+// absent from the suite.
 func (r *Runner) RunScenarios(ctx context.Context, suite Suite, ids ...string) (Report, error) {
 	selected, err := selectScenarios(suite.Scenarios, ids)
 	if err != nil {
@@ -68,8 +70,9 @@ func (r *Runner) RunScenarios(ctx context.Context, suite Suite, ids ...string) (
 	return r.run(ctx, suite, selected)
 }
 
-// RunTags executes scenarios carrying at least one requested tag in suite
-// declaration order. It rejects empty, duplicate, and unknown tags.
+// RunTags executes scenarios carrying at least one requested tag and reports
+// them in suite declaration order. It rejects empty, duplicate, and unknown
+// tags.
 func (r *Runner) RunTags(ctx context.Context, suite Suite, tags ...string) (Report, error) {
 	selected, err := selectTags(suite.Scenarios, tags)
 	if err != nil {
@@ -192,7 +195,9 @@ func validateKnownSelectors(kind string, values []string, known map[string]struc
 }
 
 // run validates the judge, executes selected scenarios with bounded
-// concurrency, and records reports in suite declaration order.
+// concurrency, and records reports in suite declaration order. Concurrent
+// runs start scenarios with larger declared timeouts first so long cases do
+// not leave the worker pool idle at the end.
 func (r *Runner) run(ctx context.Context, suite Suite, selected []Scenario) (Report, error) {
 	started := r.now()
 	report := Report{SuiteID: suite.ID, StartedAt: started}
@@ -209,6 +214,7 @@ func (r *Runner) run(ctx context.Context, suite Suite, selected []Scenario) (Rep
 	}
 
 	report.Scenarios = make([]ScenarioReport, len(selected))
+	schedule := scenarioSchedule(selected, r.maxConcurrency)
 	jobs := make(chan int)
 	workerCount := min(r.maxConcurrency, len(selected))
 	var workers sync.WaitGroup
@@ -217,11 +223,11 @@ func (r *Runner) run(ctx context.Context, suite Suite, selected []Scenario) (Rep
 		go r.runScenarios(ctx, selected, report.Scenarios, jobs, &workers)
 	}
 dispatch:
-	for index := range selected {
+	for position, index := range schedule {
 		select {
 		case jobs <- index:
 		case <-ctx.Done():
-			for pending := index; pending < len(selected); pending++ {
+			for _, pending := range schedule[position:] {
 				report.Scenarios[pending] = r.canceledScenarioReport(selected[pending].ID, ctx.Err())
 			}
 			break dispatch
@@ -361,6 +367,23 @@ func (r *Runner) judgeClaims(ctx context.Context, result Result) ([]Judgment, er
 		return nil, err
 	}
 	return judgments, nil
+}
+
+// scenarioSchedule returns report-slot indexes in dispatch order. Serial runs
+// retain declaration order; concurrent runs use stable longest-timeout-first
+// scheduling while reports continue to use their original slots.
+func scenarioSchedule(scenarios []Scenario, maxConcurrency int) []int {
+	schedule := make([]int, len(scenarios))
+	for index := range scenarios {
+		schedule[index] = index
+	}
+	if maxConcurrency == 1 {
+		return schedule
+	}
+	sort.SliceStable(schedule, func(left, right int) bool {
+		return scenarios[schedule[left]].Timeout > scenarios[schedule[right]].Timeout
+	})
+	return schedule
 }
 
 // runScenarios consumes scenario indexes from jobs and writes each index once
