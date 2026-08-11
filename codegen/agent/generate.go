@@ -89,7 +89,7 @@ func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codeg
 
 	// Emit contextual quickstart README at module root unless disabled via DSL.
 	if !agentsExpr.Root.DisableAgentDocs {
-		if qf := quickstartReadmeFile(data); qf != nil {
+		if qf := quickstartReadmeFile(data, roots); qf != nil {
 			generated = append(generated, qf)
 		}
 	}

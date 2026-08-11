@@ -374,7 +374,7 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
 }
 ```
 
-{{- if hasServiceSideProviders . }}
+{{- if hasServiceSideProviders .GeneratorData }}
 ---
 
 #### Service-Side Tool Providers (Registry-Routed Execution)
@@ -611,7 +611,61 @@ if err := rt.RegisterToolset(reg); err != nil { panic(err) }
 
 ---
 
-## 8. Ready for Prime Time: Advanced Features 🔭
+## 8. 🧪 Evaluating Your Agents
+{{- if .Suites }}
+
+An evaluation suite is a set of stable scenarios that exercise your agent and grade the outcome, so you can catch regressions before your users do. Your design declares the following suite{{ if gt (len .Suites) 1 }}s{{ end }}:
+{{- range .Suites }}
+
+### Suite `{{ .Name }}`{{ if .Agent }} (agent `{{ .Agent }}`){{ end }}
+
+{{ .Description }}
+{{- $suite := . }}
+{{- range .Scenarios }}
+
+* **`{{ .Name }}`**{{ if .Tags }} (tags: {{ range $i, $t := .Tags }}{{ if $i }}, {{ end }}`{{ $t }}`{{ end }}){{ end }}: {{ .Description }}{{ if .HasInput }} Supply its typed input when constructing the suite in `cmd/{{ $suite.Name }}-evals`.{{ end }}
+{{- end }}
+
+Everything typed lives in `gen/evals/{{ .Name }}/`: a `Hooks` interface with one method per scenario, an `Inputs` struct for typed inputs, and (for agent-attached suites) `MustToolContract` to assert against the agent's reachable tool contracts. `goa example` scaffolds an application-owned command at `cmd/{{ .Name }}-evals/main.go` **once**; it is yours to edit and is never overwritten.
+
+Implement each hook to run the real agent, then return the evidence to grade:
+
+* **Checks** are deterministic facts you compute yourself: which tools were called, with which arguments, whether pagination completed.
+* **Claims** are plain-language statements about the reply ("the answer names the capital of Japan") graded by a model judge.
+
+```bash
+go run ./cmd/{{ .Name }}-evals                    # run every scenario, JSON report on stdout
+go run ./cmd/{{ .Name }}-evals -scenario <id>     # run selected scenarios (repeatable)
+go run ./cmd/{{ .Name }}-evals -tag <tag>         # run by tag (repeatable)
+```
+
+The command exits non-zero when any scenario fails, so it drops straight into CI. Deterministic-only suites can pass a `nil` judge; as soon as a hook returns claims, wire a real judge (see `goa.design/goa-ai/eval/judge`) backed by your model client.
+{{- end }}
+{{- else }}
+
+Your design doesn't declare any evaluation suites yet. An evaluation suite is a set of stable scenarios that exercise your agent and grade the outcome, so you can catch regressions before your users do. Declare one inside an `Agent` block:
+
+```go
+import . "goa.design/goa-ai/eval/dsl"
+
+Agent("chat", "Friendly Q&A assistant", func() {
+    // ... toolsets ...
+    Suite("chat_quality", func() {
+        Description("Evaluates the chat agent end to end.")
+        Scenario("greeting_reply", func() {
+            Description("The agent produces a final reply to a greeting.")
+            Tags("smoke")
+        })
+    })
+})
+```
+
+Rerun `goa gen` to get a typed harness under `gen/evals/<suite>/` (one hook per scenario) and `goa example` to scaffold a runnable `cmd/<suite>-evals` command. Each hook runs your real agent and returns deterministic checks plus model-graded claims.
+{{- end }}
+
+---
+
+## 9. Ready for Prime Time: Advanced Features 🔭
 
 * **Sessions & Runs:** Sessions are explicit. Create them with `rt.CreateSession(ctx, sessionID)` and end them with `rt.DeleteSession(ctx, sessionID)`. Runs (`client.Run`/`client.Start`) require an active session.
 * **Session-Owned Streaming (for UIs):** In production, stream consumers should attach to the **session-owned stream** (`session/<session_id>`) and filter by `run_id`. Close SSE when you observe a `run_stream_end` event for the attached run ID. Nested agent runs emit `child_run_linked` links and their own `run_stream_end`; parent runs only emit `run_stream_end` after all child runs have ended.
@@ -656,7 +710,7 @@ defer eng.Close()
 
 ---
 
-## 9. 📜 The Golden Rules: Working with Codegen
+## 10. 📜 The Golden Rules: Working with Codegen
 
 * ✍️ **Design First:** Always make changes in your `design/*.go` files.
 * 🔄 **Regenerate:** Run `goa gen <module>/design` to apply your changes.
@@ -664,7 +718,7 @@ defer eng.Close()
 
 ---
 
-## 10. 🤔 Stuck? Common Questions & Fixes
+## 11. 🤔 Stuck? Common Questions & Fixes
 
 * **Error: "runtime not initialized"**
 * **Fix:** Ensure you register agents with the same runtime instance you use to start runs.

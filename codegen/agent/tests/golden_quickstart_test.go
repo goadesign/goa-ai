@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 	. "goa.design/goa-ai/dsl"
+	evaldsl "goa.design/goa-ai/eval/dsl"
 	"goa.design/goa-ai/testutil"
 	goadsl "goa.design/goa/v3/dsl"
 )
@@ -37,6 +38,64 @@ func TestQuickstart_Renders_Minimal(t *testing.T) {
 	require.Contains(t, content, "[]*model.Message{")
 	require.Contains(t, content, "## 4. 🧠 The Planner:")
 	require.NotContains(t, content, "Service-Side Tool Providers (Registry-Routed Execution)")
+
+	// No suites declared: the evaluation section renders the teaser only.
+	require.Contains(t, content, "## 8. 🧪 Evaluating Your Agents")
+	require.Contains(t, content, "doesn't declare any evaluation suites yet")
+	require.NotContains(t, content, "### Suite `")
+}
+
+func TestQuickstart_DocumentsDeclaredEvalSuites(t *testing.T) {
+	design := func() {
+		goadsl.Service("calc", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("add", "Add two numbers", func() {
+						Args(func() {
+							goadsl.Attribute("a", goadsl.Int, "Left operand")
+							goadsl.Attribute("b", goadsl.Int, "Right operand")
+							goadsl.Required("a", "b")
+						})
+						Return(func() {
+							goadsl.Attribute("sum", goadsl.Int, "Sum of the operands")
+							goadsl.Required("sum")
+						})
+					})
+				})
+				evaldsl.Suite("math_quality", func() {
+					goadsl.Description("Evaluates arithmetic answers end to end.")
+					goadsl.Timeout("30s")
+					evaldsl.Scenario("simple_sum", func() {
+						goadsl.Description("The agent answers a simple addition question.")
+						evaldsl.Input(func() {
+							goadsl.Attribute("question", goadsl.String, "Question to ask")
+							goadsl.Required("question")
+						})
+						Tags("smoke")
+					})
+					evaldsl.Scenario("tool_contract", func() {
+						goadsl.Description("The add tool contract is reachable from the agent.")
+						Tags("contract")
+					})
+				})
+			})
+		})
+	}
+	files := buildAndGenerate(t, design)
+
+	content := fileContent(t, files, "AGENTS_QUICKSTART.md")
+	require.Contains(t, content, "## 8. 🧪 Evaluating Your Agents")
+	require.Contains(t, content, "### Suite `math_quality` (agent `calc.scribe`)")
+	require.Contains(t, content, "Evaluates arithmetic answers end to end.")
+	require.Contains(t, content, "**`simple_sum`** (tags: `smoke`): The agent answers a simple addition question. Supply its typed input when constructing the suite in `cmd/math_quality-evals`.")
+	require.Contains(t, content, "**`tool_contract`** (tags: `contract`): The add tool contract is reachable from the agent.")
+	require.Contains(t, content, "gen/evals/math_quality/")
+	require.Contains(t, content, "go run ./cmd/math_quality-evals")
+	require.NotContains(t, content, "doesn't declare any evaluation suites yet")
+	// Sections after the inserted one keep sequential numbering.
+	require.Contains(t, content, "## 9. Ready for Prime Time")
+	require.Contains(t, content, "## 10. 📜 The Golden Rules")
+	require.Contains(t, content, "## 11. 🤔 Stuck?")
 }
 
 func TestQuickstart_Disabled(t *testing.T) {
