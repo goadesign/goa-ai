@@ -65,7 +65,12 @@ func NewAnthropicClient(ctx context.Context, opts AnthropicOptions) (model.Clien
 	if strings.TrimSpace(opts.DefaultModel) == "" {
 		return nil, errors.New("vertex: default model is required")
 	}
-	client := sdk.NewClient(sdkvertex.WithGoogleAuth(ctx, opts.Region, opts.ProjectID))
+	// The scope must be passed explicitly: for workload-identity-federation
+	// credentials (type external_account with service-account impersonation,
+	// the shape CI runners use) the impersonation call forwards the caller's
+	// scopes verbatim and the IAM Credentials API rejects an empty list.
+	// User ADC and service-account keys work with or without it.
+	client := sdk.NewClient(sdkvertex.WithGoogleAuth(ctx, opts.Region, opts.ProjectID, "https://www.googleapis.com/auth/cloud-platform"))
 	// Vertex serves the same provider-native tool contract as the direct
 	// API: input_examples are delivered to the model with no beta
 	// activation, and the conditional anthropic-beta header the adapter
