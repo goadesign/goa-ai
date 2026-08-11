@@ -142,7 +142,8 @@ func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 		config.ResponseMIMEType = "application/json"
 		config.ResponseJsonSchema = schema
 	}
-	if req.Thinking != nil && req.Thinking.Enable {
+	switch {
+	case req.Thinking != nil && req.Thinking.Enable:
 		budget := req.Thinking.BudgetTokens
 		if budget == 0 {
 			budget = c.opts.ThinkingBudget
@@ -152,6 +153,11 @@ func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 			tc.ThinkingBudget = genai.Ptr(int32(budget)) //nolint:gosec // genai requires int32; goa-ai thinking budgets fit comfortably
 		}
 		config.ThinkingConfig = tc
+	case req.Thinking != nil:
+		// Explicit off: models that think by default (Gemini Flash) accept a
+		// zero budget as "do not think". Models with a mandatory minimum
+		// ignore it server-side, which is the closest honest interpretation.
+		config.ThinkingConfig = &genai.ThinkingConfig{ThinkingBudget: genai.Ptr(int32(0))}
 	}
 	return &preparedRequest{
 		modelID:          c.opts.resolveModelID(req),

@@ -592,7 +592,22 @@ func TestDecodeResponseRejectsMultipleAssistantMessages(t *testing.T) {
 	assert.Contains(t, err.Error(), "expected exactly 1 assistant message")
 }
 
-func TestDecodeResponseRejectsMultipleContentParts(t *testing.T) {
+func TestDecodeResponseConcatenatesChunkedTextParts(t *testing.T) {
+	value, err := DecodeResponse(&model.Response{
+		Content: []model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.TextPart{Text: `{"assistant_`},
+				model.TextPart{Text: `text":"joined"}`},
+			},
+		}},
+		StopReason: "stop",
+	}, testCompletionSpec())
+	require.NoError(t, err)
+	assert.Equal(t, testCompletionResult{AssistantText: "joined"}, value)
+}
+
+func TestDecodeResponseRejectsTwoCompleteJSONValues(t *testing.T) {
 	_, err := DecodeResponse(&model.Response{
 		Content: []model.Message{{
 			Role: model.ConversationRoleAssistant,
@@ -604,7 +619,6 @@ func TestDecodeResponseRejectsMultipleContentParts(t *testing.T) {
 		StopReason: "stop",
 	}, testCompletionSpec())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "multiple content parts")
 }
 
 func TestDecodeChunkIgnoresPreviewChunks(t *testing.T) {
