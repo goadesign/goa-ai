@@ -123,3 +123,11 @@ func modelResponse(body string) *model.Response {
 		StopReason: "end_turn",
 	}
 }
+
+func TestWithModelClassOverridesRequestClass(t *testing.T) {
+	client := &recordingClient{err: errors.New("stop")}
+	j := New(client, WithModelClass(model.ModelClassSmall))
+	_, _ = j.Judge(context.Background(), []aieval.Assertion{{ClaimID: "c1", Output: "o", Claim: "c"}})
+	require.NotNil(t, client.request)
+	assert.Equal(t, model.ModelClassSmall, client.request.ModelClass)
+}

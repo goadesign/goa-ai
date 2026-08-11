@@ -22,8 +22,12 @@ import (
 type (
 	// Judge classifies semantic assertions using provider-enforced structured output.
 	Judge struct {
-		client model.Client
+		client     model.Client
+		modelClass model.ModelClass
 	}
+
+	// Option customizes a Judge.
+	Option func(*Judge)
 
 	// requestBody is the canonical user-message representation of an assertion batch.
 	requestBody struct {
@@ -94,12 +98,25 @@ var spec = completion.Spec[responseBody]{
 	},
 }
 
-// New creates a strict semantic judge backed by client.
-func New(client model.Client) *Judge {
-	return &Judge{client: client}
+// New creates a strict semantic judge backed by client. By default the judge
+// requests the high-reasoning model class; deployments whose high-reasoning
+// provider cannot serve structured completions select a capable class with
+// WithModelClass.
+func New(client model.Client, opts ...Option) *Judge {
+	judge := &Judge{client: client, modelClass: model.ModelClassHighReasoning}
+	for _, opt := range opts {
+		opt(judge)
+	}
+	return judge
 }
 
-// Judge classifies all assertions in one high-reasoning structured completion.
+// WithModelClass selects the model class judge requests use.
+func WithModelClass(class model.ModelClass) Option {
+	return func(j *Judge) { j.modelClass = class }
+}
+
+// Judge classifies all assertions in one structured completion using the
+// configured model class.
 func (j *Judge) Judge(ctx context.Context, assertions []aieval.Assertion) ([]aieval.Judgment, error) {
 	if len(assertions) == 0 {
 		return nil, errors.New("judge requires at least one assertion")
@@ -109,7 +126,7 @@ func (j *Judge) Judge(ctx context.Context, assertions []aieval.Assertion) ([]aie
 		return nil, fmt.Errorf("encode judge assertions: %w", err)
 	}
 	response, err := completion.Complete(ctx, j.client, &model.Request{
-		ModelClass: model.ModelClassHighReasoning,
+		ModelClass: j.modelClass,
 		Messages: []*model.Message{
 			{
 				Role:  model.ConversationRoleSystem,
