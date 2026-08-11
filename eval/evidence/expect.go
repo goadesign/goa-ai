@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"goa.design/goa-ai/eval"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -60,6 +61,12 @@ type (
 		// successful calls; declaring both Result and FailureKind is a
 		// contradiction the engine reports as a failure.
 		Result Assert
+		// Bounds asserts against the bounded-result metadata carried beside
+		// the typed result. Nil leaves bounds unconstrained. Use this for
+		// returned/total counts, truncation, and continuation cursors: these
+		// transport facts are intentionally not fields of generated domain
+		// result types.
+		Bounds func(*agent.Bounds) error
 		// FailureKind requires the call to end as a classified failure of
 		// exactly this kind. Empty requires a successful result.
 		FailureKind planner.FailureKind
@@ -380,6 +387,11 @@ func evaluateCall(call ToolCall, expected Tool) []string {
 		return append(failures, fmt.Sprintf(
 			"%s result: failed with kind %s: %s", call.Name, call.Failure.Kind, call.Failure.Error.Error(),
 		))
+	}
+	if expected.Bounds != nil {
+		if err := expected.Bounds(call.Bounds); err != nil {
+			failures = append(failures, fmt.Sprintf("%s bounds: %v", call.Name, err))
+		}
 	}
 	if expected.Result != nil {
 		if err := expected.Result(call.Result); err != nil {

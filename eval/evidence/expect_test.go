@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/eval"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -47,6 +48,7 @@ func TestExpectTrajectorySemantics(t *testing.T) {
 		ToolCallID: "call-1",
 		Args:       rawjson.Message(`{"kind":"pump","limit":10}`),
 		Result:     rawjson.Message(`{"items":[{"id":"a"},{"id":"b"}]}`),
+		Bounds:     &agent.Bounds{Returned: 2, Total: intPointer(3), Truncated: true},
 		Completed:  true,
 	}
 	failedList := completedList
@@ -89,6 +91,33 @@ func TestExpectTrajectorySemantics(t *testing.T) {
 				{Name: "svc.read.detail"},
 			}},
 			evidence: Evidence{ToolCalls: []ToolCall{completedList, detail}, TerminalPhase: "completed"},
+		},
+		{
+			name: "contains trajectory checks bounded-result metadata",
+			expect: Expect{Tools: []Tool{{
+				Name: "svc.read.list",
+				Bounds: func(bounds *agent.Bounds) error {
+					if bounds == nil {
+						return errors.New("bounds are missing")
+					}
+					if bounds.Returned != 2 || bounds.Total == nil || *bounds.Total != 3 || !bounds.Truncated {
+						return fmt.Errorf("got %+v, want returned=2 total=3 truncated=true", bounds)
+					}
+					return nil
+				},
+			}}},
+			evidence: Evidence{ToolCalls: []ToolCall{completedList}, TerminalPhase: "completed"},
+		},
+		{
+			name: "contains trajectory reports bounded-result mismatch",
+			expect: Expect{Tools: []Tool{{
+				Name: "svc.read.list",
+				Bounds: func(bounds *agent.Bounds) error {
+					return fmt.Errorf("returned: got %d, want 3", bounds.Returned)
+				},
+			}}},
+			evidence:    Evidence{ToolCalls: []ToolCall{completedList}, TerminalPhase: "completed"},
+			wantFailure: "svc.read.list bounds: returned: got 2, want 3",
 		},
 		{
 			name:        "exact trajectory rejects extra call",
@@ -286,6 +315,10 @@ func unmarshalJSON[T any](data []byte) (*T, error) {
 		return nil, err
 	}
 	return &value, nil
+}
+
+func intPointer(value int) *int {
+	return &value
 }
 
 // findCheck returns the named check and fails the test when it is missing.
