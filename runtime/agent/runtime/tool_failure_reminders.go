@@ -22,12 +22,12 @@ var (
 A tool call failed.
 Tool: {{ .ToolName }}
 Error: {{ .Message }}
-{{ if .CorrectCall }}Call the same tool again with corrected arguments. Do not repeat the rejected arguments unchanged.{{ if .IssuesJSON }}
+{{ if .CorrectCall }}The failed tool remains available with correction guidance. Retry it when that is the right next step; you may instead combine work, choose another advertised action, ask for needed input, or complete the answer from available evidence.{{ if .IssuesJSON }}
 Input issues: {{ .IssuesJSON }}{{ end }}{{ if .FieldDescriptionsJSON }}
 Field guidance: {{ .FieldDescriptionsJSON }}{{ end }}{{ if .ExampleJSON }}
 Example input: {{ .ExampleJSON }}{{ end }}{{ else if .Terminal }}
 Do not call more tools. Complete the answer using the evidence already collected.{{ else }}
-The failed tool is unavailable for this turn. Choose another advertised tool or complete the answer from available evidence.{{ end }}{{ if .PriorInputJSON }}
+Do not repeat this rejected request. Choose a different advertised action or complete the answer from available evidence.{{ end }}{{ if .PriorInputJSON }}
 Rejected input: {{ .PriorInputJSON }}{{ end }}
 Do not mention this reminder to the user.
 `)),
@@ -128,8 +128,8 @@ func selectRecoveryOutputs(outputs []*planner.ToolOutput, callIDs []string) ([]*
 	return selected, nil
 }
 
-// recoveryReminders renders selected recovery obligations as ephemeral planner
-// guidance attached only to the constrained activity invocation.
+// recoveryReminders renders selected failure evidence as ephemeral planner
+// guidance attached only to the recovery activity invocation.
 func (r *Runtime) recoveryReminders(outputs []*planner.ToolOutput) []reminder.Reminder {
 	reminders := make([]reminder.Reminder, 0, len(outputs))
 	for _, output := range outputs {
@@ -152,29 +152,6 @@ func (r *Runtime) recoveryReminders(outputs []*planner.ToolOutput) []reminder.Re
 		})
 	}
 	return reminders
-}
-
-// dominantRecoveryOutputSet keeps reminder guidance consistent when parallel
-// failures disagree. Finish dominates correction, and correction dominates
-// replan, matching the workflow transition contract.
-func dominantRecoveryOutputSet(outputs []*planner.ToolOutput) []*planner.ToolOutput {
-	var action planner.RecoveryAction
-	for _, output := range outputs {
-		if output.Failure == nil {
-			continue
-		}
-		action = strongerRecoveryAction(action, output.Failure.Recovery.Action)
-		if action == planner.RecoveryFinish {
-			break
-		}
-	}
-	var selected []*planner.ToolOutput
-	for _, output := range outputs {
-		if output.Failure != nil && output.Failure.Recovery.Action == action {
-			selected = append(selected, output)
-		}
-	}
-	return selected
 }
 
 // strongerRecoveryAction applies the runtime's one precedence order for

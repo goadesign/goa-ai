@@ -101,10 +101,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return nil, err
 	}
-	if err := validateRecoveryPolicy(recoveryOutputs, input.Policy); err != nil {
-		return nil, err
-	}
-	recoveryReminders := r.recoveryReminders(dominantRecoveryOutputSet(recoveryOutputs))
+	recoveryReminders := r.recoveryReminders(recoveryOutputs)
 	var continuationActions []continuationAction
 	if input.Finalize == nil && !input.SynthesisOnly {
 		continuationActions, err = r.availableContinuationActions(input.AgentID, toolOutputs)
@@ -170,31 +167,6 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		output.RecoveryCatalog = &RecoveryCatalog{Tools: advertised}
 	}
 	return output, nil
-}
-
-// validateRecoveryPolicy proves that correction restrictions and selected
-// canonical failures describe the same turn. Replan recovery needs no policy
-// restriction because its catalog is derived directly from the selected
-// outputs.
-func validateRecoveryPolicy(outputs []*planner.ToolOutput, policy *PolicyOverrides) error {
-	correctTools := correctCallToolCounts(outputs)
-	if len(correctTools) == 0 {
-		return nil
-	}
-	if len(correctTools) != 1 {
-		return errors.New("recovery activity contains multiple correction tools")
-	}
-	var correctionTool tools.Ident
-	for tool := range correctTools {
-		correctionTool = tool
-	}
-	if policy == nil || policy.RestrictToTool != correctionTool {
-		return fmt.Errorf(
-			"recovery activity for %q is missing its matching tool restriction",
-			correctionTool,
-		)
-	}
-	return nil
 }
 
 // preparePlannerActivity constructs all shared planner activity state before

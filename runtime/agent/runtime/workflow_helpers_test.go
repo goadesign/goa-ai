@@ -369,7 +369,7 @@ func TestRecoveryReminderIsEphemeralPlannerInput(t *testing.T) {
 	require.Len(t, reminders, 1)
 	require.Contains(t, reminders[0].Text, "A tool call failed.")
 	require.Contains(t, reminders[0].Text, "Tool: svc_read_aggregate")
-	require.Contains(t, reminders[0].Text, "Call the same tool again with corrected arguments.")
+	require.Contains(t, reminders[0].Text, "failed tool remains available with correction guidance")
 }
 
 func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
@@ -416,7 +416,7 @@ func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
 	require.Equal(t, "call-2", bookkeeping.ToolUseID)
 }
 
-func TestRecoveryRemindersFollowCurrentQueuedTurn(t *testing.T) {
+func TestRecoveryRemindersDescribeSelectedTransition(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(
 		rt,
@@ -451,11 +451,11 @@ func TestRecoveryRemindersFollowCurrentQueuedTurn(t *testing.T) {
 	finishReminders := rt.recoveryReminders(outputs[1:])
 	require.Len(t, finishReminders, 1)
 	require.Contains(t, finishReminders[0].Text, "Do not call more tools.")
-	require.NotContains(t, finishReminders[0].Text, "Call the same tool again")
+	require.NotContains(t, finishReminders[0].Text, "remains available")
 
 	correctionReminders := rt.recoveryReminders(outputs[:1])
 	require.Len(t, correctionReminders, 1)
-	require.Contains(t, correctionReminders[0].Text, "Call the same tool again")
+	require.Contains(t, correctionReminders[0].Text, "failed tool remains available")
 }
 
 func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T) {

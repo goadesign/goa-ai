@@ -316,8 +316,8 @@ type (
 		ToolOutputs []*ToolOutputRef
 
 		// RecoveryToolCallIDs selects the failed outputs whose recovery directives
-		// constrain this planner turn. The activity uses these stable identities to
-		// derive both its advertised tools and ephemeral recovery guidance from
+		// shape this planner turn. The activity uses these stable identities to
+		// derive its executable catalog and ephemeral recovery guidance from
 		// canonical run-log outputs. Omitting the empty field keeps PlanStart and
 		// ordinary PlanResume payloads compatible with earlier activity workers.
 		RecoveryToolCallIDs []string `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.

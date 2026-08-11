@@ -76,11 +76,14 @@ const (
 	// FailureInternal means an internal invariant or implementation failed.
 	FailureInternal FailureKind = "internal"
 
-	// RecoveryCorrectCall requires a corrected call to the same tool. The next
-	// planner step may await clarification instead when user input is required.
+	// RecoveryCorrectCall keeps the failed tool available and supplies its
+	// structured correction evidence to the next planner turn. The planner may
+	// retry, combine work, choose another advertised action, await input, or
+	// finish from the evidence already collected.
 	RecoveryCorrectCall RecoveryAction = "correct_call"
-	// RecoveryReplan permits another advertised capability or a final answer.
-	// The failed tool is unavailable on the recovery turn.
+	// RecoveryReplan makes the failed tool unavailable on the next planner turn.
+	// The planner may choose another advertised capability, await input, or
+	// finish from the evidence already collected.
 	RecoveryReplan RecoveryAction = "replan"
 	// RecoveryFinish forbids further tool execution and requires final synthesis
 	// from evidence already collected.
