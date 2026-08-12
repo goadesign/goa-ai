@@ -200,3 +200,31 @@ func (r *Runtime) rewriteUnknownToolCalls(calls []planner.ToolRequest) ([]planne
 	}
 	return out, nil
 }
+
+// rewriteRecoveryCatalogToolCalls converts direct model calls excluded from the
+// active recovery catalog into typed unavailable-tool calls. Planner-owned
+// await barriers remain subject to strict catalog validation because they
+// encode runtime suspension, not a raw model tool request.
+func (r *Runtime) rewriteRecoveryCatalogToolCalls(catalog *RecoveryCatalog, result *planner.PlanResult) error {
+	if catalog == nil || result == nil || len(result.ToolCalls) == 0 {
+		return nil
+	}
+	allowed := make(map[tools.Ident]struct{}, len(catalog.Tools))
+	for _, tool := range catalog.Tools {
+		allowed[tool] = struct{}{}
+	}
+	for i, call := range result.ToolCalls {
+		if call.Name == tools.ToolUnavailable {
+			continue
+		}
+		if _, ok := allowed[call.Name]; ok {
+			continue
+		}
+		rewritten, err := r.rewriteToolCallUnavailable(call)
+		if err != nil {
+			return err
+		}
+		result.ToolCalls[i] = rewritten
+	}
+	return nil
+}

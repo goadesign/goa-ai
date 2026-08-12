@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -41,7 +42,10 @@ type plannerActivityInvocation struct {
 // beginning of a run to produce the initial plan. The activity creates an
 // agent context with memory access and delegates to the planner's PlanStart
 // implementation.
-func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInput) (_ *PlanActivityOutput, retErr error) {
+	defer func() {
+		retErr = hooks.WrapTemporalProviderError(retErr)
+	}()
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
@@ -84,7 +88,10 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 // execution to produce the next plan. The activity creates an agent context,
 // loads canonical tool outputs from the run log, and delegates to the planner's
 // PlanResume implementation.
-func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInput) (_ *PlanActivityOutput, retErr error) {
+	defer func() {
+		retErr = hooks.WrapTemporalProviderError(retErr)
+	}()
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 

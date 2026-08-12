@@ -123,6 +123,9 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 			return nil, err
 		}
 
+		if err := l.r.rewriteRecoveryCatalogToolCalls(l.st.PendingRecoveryCatalog, l.st.Result); err != nil {
+			return nil, err
+		}
 		program, err := l.r.normalizeStep(l.st.Result)
 		if err != nil {
 			return nil, err

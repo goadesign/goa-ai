@@ -623,7 +623,12 @@ caller-authorized catalog and attaches correction guidance for every selected
 failed call. Historical tool calls remain in the provider transcript for
 replay but never restore executable definitions. A `replan` failure removes its
 failed tool for that turn unless another selected failure for the same tool is
-correctable. Caller `WithRestrictToTool` policy remains run-scoped.
+correctable. If the planner still requests an excluded tool, the runtime
+executes the existing `runtime.tool_unavailable` typed failure instead, preserving
+the original call identity and payload while allowing valid sibling calls to
+continue. Planner-owned await barriers remain strict because they encode
+suspension rather than a direct model tool request. Caller `WithRestrictToTool`
+policy remains run-scoped.
 
 The workflow runtime evaluates one admitted planner result as one step: it executes tool and await work, records durable and planner-facing outputs through one canonical path, then applies one transition policy to resume, finish, or finalize. A terminal payload may only accompany successful, non-terminal bookkeeping side effects; budgeted tools, failed bookkeeping tools, terminal tools, and awaits must be separate planner decisions. Bookkeeping calls remain in the provider transcript so signed responses are never edited.
 

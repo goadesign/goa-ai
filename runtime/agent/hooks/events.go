@@ -694,10 +694,10 @@ func newRunCancellation(cancellation *run.Cancellation) *run.Cancellation {
 	}
 }
 
-// WrapRunCompletionError encodes provider failures into a Temporal application
-// error envelope so Wait()/Get()-based terminal paths can recover structured
-// provider metadata after the workflow engine serializes the error.
-func WrapRunCompletionError(err error) error {
+// WrapTemporalProviderError encodes provider failures into a Temporal
+// application error with their exact retryability and metadata. Workflow and
+// activity boundaries call it before Temporal serializes the error.
+func WrapTemporalProviderError(err error) error {
 	if _, alreadyWrapped := providerErrorFromTemporalEnvelope(err); alreadyWrapped {
 		return err
 	}

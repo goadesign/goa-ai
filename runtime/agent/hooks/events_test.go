@@ -24,7 +24,7 @@ func TestNewRunCompletedEventPreservesTemporalProviderErrorEnvelope(t *testing.T
 		errors.New("throttled"),
 	)
 
-	err := WrapRunCompletionError(providerErr)
+	err := WrapTemporalProviderError(providerErr)
 	var appErr *temporal.ApplicationError
 	require.ErrorAs(t, err, &appErr)
 	require.False(t, appErr.NonRetryable())
