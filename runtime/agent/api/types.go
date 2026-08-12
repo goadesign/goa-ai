@@ -327,7 +327,8 @@ type (
 		// synthesis-after-tools batch has no recoverable failure.
 		SynthesisOnly bool
 
-		// Finalize requests a final turn with no further tool calls.
+		// Finalize requests a terminal turn with no further domain tool work.
+		// The planner may return a final response or terminal bookkeeping calls.
 		Finalize *planner.Termination
 	}
 

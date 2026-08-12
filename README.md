@@ -636,8 +636,9 @@ directive first. `correct_call` supplies structured correction evidence while
 leaving the planner free to retry, combine work, select another advertised
 capability, await input, or answer. `replan` removes the failed tool from the
 recovery turn while permitting another advertised action, input request, or
-answer. `finish` requires a tool-free synthesis turn. The runtime
-enforces the advertised catalog, generated payload contracts, and execution
+answer. `finish` enters finalization and forbids further domain work. The
+planner may return a final response or registered terminal bookkeeping calls.
+The runtime enforces the advertised catalog, generated payload contracts, and execution
 caps; it does not infer how many semantic operations the planner must repeat.
 When one tool has both correction and replan failures in the same batch, the
 correctable failure keeps that tool available.

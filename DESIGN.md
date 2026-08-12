@@ -181,8 +181,9 @@ The runtime keeps execution policy and planner intent separate:
 | --- | --- |
 | A cap or deadline requires finalization | `PlanResumeInput.Finalize` |
 | A successful `TerminalRun` tool completed | End the run without another planner turn |
+| Any failed tool requires `finish` recovery | `PlanResumeInput.Finalize` with reason `tool_failure` |
 | Any failed tool has a `ToolFailure` whose recovery action permits tools | Runtime-enforced correction or replan turn |
-| `SynthesizeAfterTools` is true and no failure permits tools | `PlanResumeInput.SynthesisOnly` |
+| A successful batch has `SynthesizeAfterTools` set | `PlanResumeInput.SynthesisOnly` |
 | Otherwise | Normal continuation turn |
 
 This order makes recovery explicit rather than presence-based. `ToolFailure`
@@ -193,12 +194,15 @@ The planner may retry fewer, equal, or more calls, combine work, use another
 advertised capability, await input, or answer. Provider adapters continue to
 project historical canonical tool names independently of the current catalog.
 `replan` removes the failed tool from the recovery turn while permitting another
-advertised action, input request, or answer. `finish` forbids more tools. When
+advertised action, input request, or answer. `finish` forbids more domain work
+and enters finalization. The finalizer may return a final response or registered
+terminal bookkeeping calls, such as committing a Task report. When
 the same tool has both correction and replan failures in one batch, the
 correctable failure keeps that tool available. A recovery turn may pause for
 input; its evidence remains available when planning resumes after the answer.
-A failed batch does not preserve its earlier `SynthesizeAfterTools`
-intent; a planner that retries work selects synthesis again on that new batch.
+A failed batch never enters `SynthesisOnly` and does not preserve its earlier
+`SynthesizeAfterTools` intent; a planner that retries work selects synthesis
+again on that new batch.
 Synthesis-after-tools batches must contain at least one budgeted tool and cannot
 contain a `TerminalRun` tool, ensuring the existing step classification always
 reaches the appropriate planner resume. The resume activity validates the
@@ -529,9 +533,10 @@ redeploys.
   Successful bookkeeping results are omitted only from compact `ToolOutputs`
   and do not force another planner turn. Every failed bookkeeping result enters
   the recovery transition: `correct_call` and `replan` may repair through tools,
-  while `finish` resumes without tools so the planner can synthesize the
-  terminal outcome. A successful bookkeeping-only turn must otherwise resolve
-  in the same turn via a terminal outcome or an await/pause handshake.
+  while `finish` enters finalization so the planner can synthesize the terminal
+  outcome or invoke a terminal bookkeeping action. A successful
+  bookkeeping-only turn must otherwise resolve in the same turn via a terminal
+  outcome or an await/pause handshake.
 - **Forced finalization control plane**: when runtime caps or deadlines force
   finalization, planners may return terminal bookkeeping tools instead of a
   prose final answer. The runtime executes only `TerminalRun()` tools in that
