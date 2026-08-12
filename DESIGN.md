@@ -194,9 +194,13 @@ The planner may retry fewer, equal, or more calls, combine work, use another
 advertised capability, await input, or answer. Provider adapters continue to
 project historical canonical tool names independently of the current catalog.
 `replan` removes the failed tool from the recovery turn while permitting another
-advertised action, input request, or answer. `finish` forbids more domain work
-and enters finalization. The finalizer may return a final response or registered
-terminal bookkeeping calls, such as committing a Task report. When
+advertised action, input request, or answer. A direct model call to an excluded
+tool becomes the runtime-owned `runtime.tool_unavailable` typed failure; the
+runtime preserves the original call identity and payload and continues valid
+sibling calls. Planner-owned tool-backed awaits remain strict because they
+encode suspension rather than a raw model request. `finish` forbids more domain
+work and enters finalization. The finalizer may return a final response or
+registered terminal bookkeeping calls, such as committing a Task report. When
 the same tool has both correction and replan failures in one batch, the
 correctable failure keeps that tool available. A recovery turn may pause for
 input; its evidence remains available when planning resumes after the answer.
@@ -624,6 +628,10 @@ that UIs and stream bridges can consume without heuristics.
     `replan` removes the failed tool from the next turn's caller-allowed
     catalog, and `finish` is terminal for tool execution. A same-tool
     `correct_call` keeps that tool available alongside a parallel `replan`.
+  - Planner activities preserve `ProviderError.Retryable()` in Temporal
+    application errors. Invalid requests and authentication failures therefore
+    stop immediately, while throttling and transient provider failures retain
+    activity retries.
 
 - **Terminal identity**
   - `RunCompletedEvent.Labels` carries the run-scoped labels provided at run

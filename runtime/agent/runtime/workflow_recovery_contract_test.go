@@ -261,6 +261,71 @@ func TestRunLoopRepeatedInvalidCallsReachFailureFinalization(t *testing.T) {
 	assert.Len(t, out.ToolEvents, 2)
 }
 
+func TestRunLoopRecoveryCatalogRewritesExcludedCallAndExecutesSibling(t *testing.T) {
+	search := newAnyJSONSpec("catalog.search", "catalog")
+	list := newAnyJSONSpec("catalog.list", "catalog")
+	var listCalls, searchCalls, resumes int
+	h := newRecoveryHarness(
+		t,
+		"excluded-call",
+		[]tools.ToolSpec{search, list},
+		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			switch call.Name {
+			case list.Name:
+				listCalls++
+				return &planner.ToolResult{
+					Name:       call.Name,
+					ToolCallID: call.ToolCallID,
+					Failure: testToolFailure(
+						planner.FailureDomainRejection,
+						planner.RecoveryReplan,
+						"list query is too broad",
+					),
+				}, nil
+			case search.Name:
+				searchCalls++
+				return successfulToolResult(call), nil
+			case tools.ToolUnavailable:
+				require.FailNow(t, "runtime unavailable tool reached catalog executor")
+				return nil, nil
+			default:
+				require.FailNow(t, "unexpected catalog tool", call.Name)
+				return nil, nil
+			}
+		},
+		func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			resumes++
+			switch resumes {
+			case 1:
+				assertAdvertisedTools(t, input, search.Name)
+				return &planner.PlanResult{ToolCalls: []planner.ToolRequest{
+					{Name: list.Name, Payload: rawjson.Message(`{"page":2}`)},
+					{Name: search.Name, Payload: rawjson.Message(`{"query":"fallback"}`)},
+				}}, nil
+			case 2:
+				return finalPlannerResult("recovered with search"), nil
+			default:
+				require.FailNow(t, "unexpected planner resume")
+				return nil, nil
+			}
+		},
+	)
+
+	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name: list.Name, Payload: rawjson.Message(`{"page":1}`),
+	}}}, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "recovered with search", agentMessageText(out.Final))
+	assert.Equal(t, 1, listCalls)
+	assert.Equal(t, 1, searchCalls)
+	require.Len(t, out.ToolEvents, 3)
+	assert.Equal(t, list.Name, out.ToolEvents[0].Name)
+	assert.Equal(t, tools.ToolUnavailable, out.ToolEvents[1].Name)
+	assert.Equal(t, search.Name, out.ToolEvents[2].Name)
+}
+
 func TestRecoveryCatalogAndMixedFailureContracts(t *testing.T) {
 	t.Parallel()
 
@@ -290,6 +355,24 @@ func TestRecoveryCatalogAndMixedFailureContracts(t *testing.T) {
 		result,
 	), "outside the advertised recovery catalog")
 	require.NoError(t, validateRecoveryCatalog(nil, result), "legacy histories have no catalog")
+	excluded := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:       search.Name,
+		ToolCallID: "search-1",
+		Payload:    rawjson.Message(`{"query":"stale"}`),
+	}}}
+	require.NoError(t, rt.rewriteRecoveryCatalogToolCalls(
+		&RecoveryCatalog{Tools: []tools.Ident{list.Name}},
+		excluded,
+	))
+	require.Len(t, excluded.ToolCalls, 1)
+	assert.Equal(t, tools.ToolUnavailable, excluded.ToolCalls[0].Name)
+	assert.Equal(t, "search-1", excluded.ToolCalls[0].ToolCallID)
+	assert.Equal(t, search.Name, excluded.ToolCalls[0].ModelName)
+	assert.JSONEq(t, `{"query":"stale"}`, string(excluded.ToolCalls[0].ModelPayload))
+	require.NoError(t, validateRecoveryCatalog(
+		&RecoveryCatalog{Tools: []tools.Ident{list.Name}},
+		excluded,
+	))
 
 	plainClarification := &planner.PlanResult{Await: planner.NewAwait(
 		planner.AwaitClarificationItem(&planner.AwaitClarification{

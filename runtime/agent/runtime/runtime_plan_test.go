@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/sdk/temporal"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -200,6 +201,36 @@ func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, called)
 	require.NotNil(t, out.Result.FinalResponse)
+}
+
+func TestPlanStartActivityDoesNotRetryProviderInvalidRequest(t *testing.T) {
+	providerErr := model.NewProviderError(
+		"anthropic",
+		"count_tokens",
+		400,
+		model.ProviderErrorKindInvalidRequest,
+		"",
+		"invalid tool ID",
+		"req-1",
+		false,
+		nil,
+	)
+	pl := &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+		return nil, providerErr
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+
+	out, err := rt.PlanStartActivity(context.Background(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		Messages:   []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}},
+		RunContext: run.Context{RunID: "run-123"},
+	})
+
+	require.Nil(t, out)
+	var applicationErr *temporal.ApplicationError
+	require.ErrorAs(t, err, &applicationErr)
+	require.True(t, applicationErr.NonRetryable())
 }
 
 func TestPlanStartActivityAdvertisesPolicyFilteredTools(t *testing.T) {

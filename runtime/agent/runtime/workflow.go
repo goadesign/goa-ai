@@ -42,7 +42,7 @@ const (
 // the engine.
 func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput) (_ *RunOutput, retErr error) {
 	defer func() {
-		retErr = hooks.WrapRunCompletionError(retErr)
+		retErr = hooks.WrapTemporalProviderError(retErr)
 	}()
 	if r.logger != nil {
 		r.logger.Info(wfCtx.Context(), "ExecuteWorkflow called", "agent_id", input.AgentID, "run_id", input.RunID)

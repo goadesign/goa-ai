@@ -636,9 +636,10 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 }
 
 // validateRecoveryCatalog rejects every executable tool call outside the exact
-// catalog advertised by the activity that produced the planner result. This
-// includes calls embedded in tool-backed awaits. A nil catalog denotes a
-// workflow history recorded before this enforcement contract.
+// catalog advertised by the activity that produced the planner result. Direct
+// model calls have already been rewritten to ToolUnavailable; this guard keeps
+// planner-owned awaits and future execution shapes strict. A nil catalog
+// denotes a workflow history recorded before this enforcement contract.
 func validateRecoveryCatalog(catalog *RecoveryCatalog, result *planner.PlanResult) error {
 	if catalog == nil {
 		return nil
