@@ -525,19 +525,18 @@ type (
 		model.TokenUsage
 	}
 
-	// HardProtectionEvent signals that the runtime applied a hard protection to
-	// avoid a pathological loop or expensive no-op behavior. For example, when
-	// an agent-as-tool produced zero child tool calls, the runtime finalizes
-	// instead of resuming.
+	// HardProtectionEvent is a historical record written when the runtime
+	// treated an agent-tool result with no children as terminal. The runtime no
+	// longer emits this event; it remains readable in durable run history.
+	//
+	// Deprecated: New runtime versions do not emit this event.
 	HardProtectionEvent struct {
 		baseEvent
-		// Reason is a fixed string describing the protection that was applied.
-		// Example: "agent_tool_no_children".
+		// Reason is the fixed string describing the retired protection.
 		Reason string
 		// ExecutedAgentTools is the number of agent-as-tool executions in the turn.
 		ExecutedAgentTools int
-		// ChildrenTotal is the total number of child tool calls produced by those
-		// agent tools (typically zero when this event fires).
+		// ChildrenTotal is the total number of child tool calls those agent tools produced.
 		ChildrenTotal int
 		// ToolNames lists the agent-tool identifiers executed in the turn.
 		ToolNames []tools.Ident
@@ -975,7 +974,9 @@ func NewUsageEvent(runID string, agentID agent.Ident, sessionID string, usage mo
 	}
 }
 
-// NewHardProtectionEvent constructs a HardProtectionEvent.
+// NewHardProtectionEvent reconstructs a historical HardProtectionEvent from durable run history.
+//
+// Deprecated: New runtime versions do not emit HardProtectionEvent.
 func NewHardProtectionEvent(runID string, agentID agent.Ident, sessionID string, reason string, executedAgentTools, childrenTotal int, toolNames []tools.Ident) *HardProtectionEvent {
 	names := make([]tools.Ident, len(toolNames))
 	copy(names, toolNames)

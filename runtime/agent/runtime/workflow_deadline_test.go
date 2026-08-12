@@ -113,6 +113,84 @@ func TestAdvanceStepBudgetDeadline(t *testing.T) {
 	}
 }
 
+func TestAdvanceStepUsesAgentToolResultContractWhenNoChildrenRan(t *testing.T) {
+	agentTool := newAnyJSONSpec("specialist.inspect", "specialist")
+	agentTool.IsAgentTool = true
+	nativeTool := newAnyJSONSpec("catalog.lookup", "catalog")
+
+	tests := []struct {
+		name            string
+		records         []stepToolRecord
+		wantRecoveryIDs []string
+	}{
+		{
+			name: "correctable agent failure with successful sibling",
+			records: []stepToolRecord{
+				{
+					call: planner.ToolRequest{Name: agentTool.Name, ToolCallID: "agent-call"},
+					result: &planner.ToolResult{
+						Name:       agentTool.Name,
+						ToolCallID: "agent-call",
+						Failure: testToolFailure(
+							planner.FailureInvalidCall,
+							planner.RecoveryCorrectCall,
+							"correct the agent call",
+						),
+					},
+				},
+				{
+					call: planner.ToolRequest{Name: nativeTool.Name, ToolCallID: "native-call"},
+					result: &planner.ToolResult{
+						Name:       nativeTool.Name,
+						ToolCallID: "native-call",
+						Result:     map[string]any{"ok": true},
+					},
+				},
+			},
+			wantRecoveryIDs: []string{"agent-call"},
+		},
+		{
+			name:            "successful agent result",
+			wantRecoveryIDs: []string{},
+			records: []stepToolRecord{{
+				call: planner.ToolRequest{Name: agentTool.Name, ToolCallID: "agent-call"},
+				result: &planner.ToolResult{
+					Name:       agentTool.Name,
+					ToolCallID: "agent-call",
+					Result:     map[string]any{"ok": true},
+				},
+			}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var resumes int
+			loop, _ := newResumeDeadlineTestLoop(
+				t,
+				func() time.Time { return time.Unix(100, 0) },
+				runDeadlines{},
+				func(_ context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+					resumes++
+					require.Nil(t, input.Finalize)
+					require.Equal(t, test.wantRecoveryIDs, input.RecoveryToolCallIDs)
+					return deadlineTestFinalOutput(), nil
+				},
+			)
+			seedTestToolSpecs(loop.r, agentTool, nativeTool)
+			batch := deadlineTestResumeBatch()
+			batch.records = test.records
+			batch.recorded = len(test.records)
+
+			out, err := loop.advanceStep(batch)
+
+			require.NoError(t, err)
+			require.Nil(t, out)
+			require.Equal(t, 1, resumes)
+		})
+	}
+}
+
 func TestExecuteWorkflowFinalizesPlanStartAtBudget(t *testing.T) {
 	const (
 		timeBudget     = 20 * time.Second
