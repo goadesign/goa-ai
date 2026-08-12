@@ -18,6 +18,7 @@ import (
 
 	"goa.design/goa-ai/features/model/internal/claudebeta"
 	"goa.design/goa-ai/features/model/internal/claudecaps"
+	"goa.design/goa-ai/features/model/internal/tooluseid"
 	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -378,6 +379,7 @@ func toolExampleOptions(toolParams []sdk.ToolUnionParam) []option.RequestOption 
 }
 
 func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfterSystem bool) ([]sdk.MessageParam, []sdk.TextBlockParam, error) {
+	toolUseIDs := tooluseid.NewMapper(msgs)
 	conversation := make([]sdk.MessageParam, 0, len(msgs))
 	system := make([]sdk.TextBlockParam, 0, len(msgs))
 
@@ -439,11 +441,11 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 				if err != nil {
 					return nil, nil, fmt.Errorf("anthropic: %w", err)
 				}
-				blocks = append(blocks, sdk.NewToolUseBlock(v.ID, v.Input, providerName))
+				blocks = append(blocks, sdk.NewToolUseBlock(toolUseIDs.ID(v.ID), v.Input, providerName))
 				continue
 			}
 			if v, ok := part.(model.ToolResultPart); ok {
-				result, err := encodeToolResult(v)
+				result, err := encodeToolResult(v, toolUseIDs.ID(v.ToolUseID))
 				if err != nil {
 					return nil, nil, err
 				}
@@ -473,7 +475,7 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 	return conversation, system, nil
 }
 
-func encodeToolResult(v model.ToolResultPart) (sdk.ContentBlockParamUnion, error) {
+func encodeToolResult(v model.ToolResultPart, providerToolUseID string) (sdk.ContentBlockParamUnion, error) {
 	var content string
 	switch c := v.Content.(type) {
 	case nil:
@@ -489,7 +491,7 @@ func encodeToolResult(v model.ToolResultPart) (sdk.ContentBlockParamUnion, error
 		}
 		content = string(data)
 	}
-	return sdk.NewToolResultBlock(v.ToolUseID, content, v.IsError), nil
+	return sdk.NewToolResultBlock(providerToolUseID, content, v.IsError), nil
 }
 
 func encodeTools(ctx context.Context, defs []*model.ToolDefinition, cacheAfterTools bool) ([]sdk.ToolUnionParam, map[string]string, map[string]string, error) {

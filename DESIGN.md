@@ -500,7 +500,10 @@ redeploys.
   runtime-owned `RunID`.
 - **Durable replay**: The runtime persists canonical transcript deltas as
   runlog records so providers, replay tooling, and future backends can
-  reconstruct the exact message order generically.
+  reconstruct the exact message order generically. Canonical tool-call IDs
+  remain opaque and unchanged; adapters whose wire protocol restricts ID syntax
+  assign request-local aliases and use the same alias for each matching tool
+  result.
 - **Planner-transparent provenance**: Each model call produces an isolated
   canonical response and ordered presentation before planner code observes
   completion. Streams expose only closed typed chunks and carry the canonical

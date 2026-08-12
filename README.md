@@ -709,6 +709,10 @@ Planners keep the existing obligation to preserve model tool-call identities
 and, when compiling synthetic tools, `ModelName`/`ModelPayload`; they never
 manage transcript identities. The workflow commits the selected response once
 after atomic admission and before effects. Usage includes all attempts.
+Canonical tool-call IDs remain opaque and unchanged in durable transcripts.
+Provider adapters translate IDs only while encoding a request when the target
+wire protocol imposes narrower syntax, and apply the same request-local alias
+to each matching tool result.
 
 ---
 

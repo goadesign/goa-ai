@@ -45,6 +45,34 @@ func TestEncodeMessagesProjectsHistoryOnlyToolName(t *testing.T) {
 	require.JSONEq(t, `{"from":"2026-02-06T00:00:00Z"}`, string(input))
 }
 
+func TestEncodeMessagesMapsToolUseIDsBijectively(t *testing.T) {
+	messages, _, err := encodeMessages([]*model.Message{
+		{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.ToolUsePart{ID: "run/turn/call", Name: "lookup", Input: rawjson.Message(`{}`)},
+				model.ToolUsePart{ID: "t1", Name: "lookup", Input: rawjson.Message(`{}`)},
+			},
+		},
+		{
+			Role: model.ConversationRoleUser,
+			Parts: []model.Part{
+				model.ToolResultPart{ToolUseID: "run/turn/call", Content: "first"},
+				model.ToolResultPart{ToolUseID: "t1", Content: "second"},
+			},
+		},
+	}, nil, false)
+	require.NoError(t, err)
+	require.Len(t, messages, 2)
+	require.Len(t, messages[0].Content, 2)
+	require.Len(t, messages[1].Content, 2)
+
+	require.Equal(t, "t2", messages[0].Content[0].OfToolUse.ID)
+	require.Equal(t, "t1", messages[0].Content[1].OfToolUse.ID)
+	require.Equal(t, "t2", messages[1].Content[0].OfToolResult.ToolUseID)
+	require.Equal(t, "t1", messages[1].Content[1].OfToolResult.ToolUseID)
+}
+
 func TestEncodeMessagesThinkingVariants(t *testing.T) {
 	tests := []struct {
 		name    string

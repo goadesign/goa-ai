@@ -269,6 +269,43 @@ func TestCountTokensUsesCanonicalAnthropicRequest(t *testing.T) {
 	assert.Equal(t, "ephemeral", string(stub.lastCountParams.Tools[0].OfTool.CacheControl.Type))
 }
 
+func TestCountTokensMapsCanonicalToolUseID(t *testing.T) {
+	stub := &stubMessagesClient{
+		countResp: &sdk.MessageTokensCount{InputTokens: 42},
+	}
+	client, err := New(stub, Options{DefaultModel: "anthropic.claude-sonnet-5"})
+	require.NoError(t, err)
+
+	_, err = client.CountTokens(context.Background(), &model.Request{
+		Messages: []*model.Message{
+			{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "start"}},
+			},
+			{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{model.ToolUsePart{
+					ID:    "run/turn/attempt-1/tool/0",
+					Name:  "lookup",
+					Input: rawjson.Message(`{}`),
+				}},
+			},
+			{
+				Role: model.ConversationRoleUser,
+				Parts: []model.Part{model.ToolResultPart{
+					ToolUseID: "run/turn/attempt-1/tool/0",
+					Content:   "done",
+				}},
+			},
+		},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, stub.lastCountParams.Messages, 3)
+	require.Equal(t, "t1", stub.lastCountParams.Messages[1].Content[0].OfToolUse.ID)
+	require.Equal(t, "t1", stub.lastCountParams.Messages[2].Content[0].OfToolResult.ToolUseID)
+}
+
 // Counting is exempt from completion policy: a client that relies on
 // per-request MaxTokens for completions (Options.MaxTokens unset) must still
 // count, because the count API carries no max_tokens at all.

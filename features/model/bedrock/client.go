@@ -26,6 +26,7 @@ import (
 
 	"goa.design/goa-ai/features/model/internal/claudebeta"
 	"goa.design/goa-ai/features/model/internal/claudecaps"
+	"goa.design/goa-ai/features/model/internal/tooluseid"
 	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -714,15 +715,7 @@ func (c *Client) effectiveTemperature(requested float32) float32 {
 }
 
 func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfterSystem bool) ([]brtypes.Message, []brtypes.SystemContentBlock, error) {
-	// toolUseIDMap tracks a per-request mapping from canonical tool_use IDs used
-	// in transcripts (which may be long or contain slashes) to provider-safe
-	// IDs that conform to Bedrock constraints ([a-zA-Z0-9_-]+, <=64 chars). The
-	// mapping is local to this encode pass; it is not persisted or surfaced to
-	// callers. This ensures we never send internal correlation IDs (for example,
-	// long RunID-based strings) as Bedrock toolUseId values.
-	toolUseIDMap := make(map[string]string)
-	usedToolUseIDs := reservedToolUseIDs(msgs)
-	nextToolUseID := 0
+	toolUseIDs := tooluseid.NewMapper(msgs)
 
 	// docNameMap ensures provider-safe document names are stable and unique
 	// within a single request. Bedrock enforces strict filename rules for
@@ -900,7 +893,7 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 					tb.Name = aws.String(providerName)
 				}
 				if v.ID != "" {
-					if id := toolUseIDFor(v.ID, toolUseIDMap, usedToolUseIDs, &nextToolUseID); id != "" {
+					if id := toolUseIDs.ID(v.ID); id != "" {
 						tb.ToolUseId = aws.String(id)
 					}
 				}
@@ -916,7 +909,7 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 				// Bedrock expects tool_result blocks in user messages, correlated to a prior tool_use.
 				// Encode content as text when Content is a string; otherwise as a JSON document.
 				tr := brtypes.ToolResultBlock{}
-				if id := toolUseIDFor(v.ToolUseID, toolUseIDMap, usedToolUseIDs, &nextToolUseID); id != "" {
+				if id := toolUseIDs.ID(v.ToolUseID); id != "" {
 					tr.ToolUseId = aws.String(id)
 				}
 				if s, ok := v.Content.(string); ok {
@@ -1338,52 +1331,6 @@ func sanitizeDocumentName(in string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// reservedToolUseIDs reserves every provider-safe canonical ID before unsafe
-// IDs are assigned aliases, making the request-wide mapping bijective.
-func reservedToolUseIDs(messages []*model.Message) map[string]struct{} {
-	used := make(map[string]struct{})
-	for _, message := range messages {
-		if message == nil {
-			continue
-		}
-		for _, part := range message.Parts {
-			use, ok := part.(model.ToolUsePart)
-			if ok && isProviderSafeToolUseID(use.ID) {
-				used[use.ID] = struct{}{}
-			}
-		}
-	}
-	return used
-}
-
-func toolUseIDFor(
-	canonical string,
-	toolUseIDMap map[string]string,
-	usedToolUseIDs map[string]struct{},
-	nextToolUseID *int,
-) string {
-	if canonical == "" {
-		return ""
-	}
-	if isProviderSafeToolUseID(canonical) {
-		return canonical
-	}
-	if id, ok := toolUseIDMap[canonical]; ok {
-		return id
-	}
-	var id string
-	for {
-		*nextToolUseID++
-		id = fmt.Sprintf("t%d", *nextToolUseID)
-		if _, exists := usedToolUseIDs[id]; !exists {
-			break
-		}
-	}
-	toolUseIDMap[canonical] = id
-	usedToolUseIDs[id] = struct{}{}
-	return id
-}
-
 func docNameFor(original string, docNameMap map[string]string, usedDocNames map[string]struct{}, nextDocNameID *int) string {
 	if original == "" {
 		return "document"
@@ -1536,31 +1483,6 @@ func smithyDocumentValue(value any) (any, error) {
 	default:
 		return value, nil
 	}
-}
-
-// isProviderSafeToolUseID reports whether id conforms to Bedrock's documented
-// toolUseId constraints: pattern [a-zA-Z0-9_-]+ and length <= 64. The check is
-// intentionally strict so internal correlation IDs (for example, run-scoped
-// paths containing slashes) are never forwarded directly to the provider.
-func isProviderSafeToolUseID(id string) bool {
-	if id == "" {
-		return false
-	}
-	if len(id) > 64 {
-		return false
-	}
-	for _, r := range id {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '_':
-		case r == '-':
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 // translateResponse converts a Bedrock Converse output into the canonical
