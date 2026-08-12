@@ -121,55 +121,6 @@ func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 	}
 }
 
-func TestSynthesisOnlyAfterToolBatch(t *testing.T) {
-	t.Parallel()
-
-	success := &planner.ToolResult{}
-	terminalFailure := &planner.ToolResult{
-		Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "failed"),
-	}
-	timeout := &planner.ToolResult{
-		Failure: testToolFailure(planner.FailureTimeout, planner.RecoveryFinish, "timed out"),
-	}
-	recoverableFailure := &planner.ToolResult{
-		Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "invalid input"),
-	}
-	correctableFailure := &planner.ToolResult{
-		Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryCorrectCall, "invalid input"),
-	}
-	tests := []struct {
-		name      string
-		requested bool
-		results   []*planner.ToolResult
-		want      bool
-	}{
-		{name: "ordinary continuation", results: []*planner.ToolResult{success}, want: false},
-		{name: "successful final batch", requested: true, results: []*planner.ToolResult{success}, want: true},
-		{name: "terminal failure", requested: true, results: []*planner.ToolResult{terminalFailure}, want: true},
-		{name: "timeout", requested: true, results: []*planner.ToolResult{timeout}, want: true},
-		{name: "recoverable failure", requested: true, results: []*planner.ToolResult{recoverableFailure}, want: false},
-		{name: "finish dominates replan", results: []*planner.ToolResult{recoverableFailure, terminalFailure}, want: true},
-		{name: "finish dominates correction", results: []*planner.ToolResult{correctableFailure, terminalFailure}, want: true},
-		{name: "correction dominates replan", results: []*planner.ToolResult{recoverableFailure, correctableFailure}, want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			records := make([]stepToolRecord, len(tt.results))
-			for i, result := range tt.results {
-				records[i].result = result
-			}
-			batch := stepBatch{
-				program: stepProgram{
-					result: &planner.PlanResult{SynthesizeAfterTools: tt.requested},
-				},
-				records: records,
-			}
-			assert.Equal(t, tt.want, synthesisOnlyAfterToolBatch(batch))
-		})
-	}
-}
-
 func TestBookkeepingFailureAlwaysRequiresResume(t *testing.T) {
 	t.Parallel()
 

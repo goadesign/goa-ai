@@ -619,11 +619,15 @@ const (
 
 	// TerminationReasonFailureCap indicates the run exceeded its allowed consecutive failure count.
 	TerminationReasonFailureCap TerminationReason = "failure_cap"
+
+	// TerminationReasonToolFailure indicates a tool required the run to stop
+	// domain work and finalize from the evidence already collected.
+	TerminationReasonToolFailure TerminationReason = "tool_failure"
 )
 
 // Termination carries a runtime-initiated finalize request.
 type Termination struct {
-	// Reason explains which policy cap triggered termination.
+	// Reason explains which runtime condition required finalization.
 	Reason TerminationReason
 
 	// Message is optional additional context suitable for logging or diagnostics.
@@ -672,12 +676,12 @@ type PlanResumeInput struct {
 	ToolOutputs []*ToolOutput
 
 	// SynthesisOnly requires this turn to produce a final response without new
-	// tool calls. The workflow sets it after a successful tool batch whose
-	// PlanResult requested SynthesizeAfterTools or after a failed result whose
-	// recovery action is finish.
+	// tool calls. The workflow sets it only after a successful tool batch whose
+	// PlanResult requested SynthesizeAfterTools.
 	SynthesisOnly bool
 
-	// Finalize is non-nil when the runtime forces termination and requests a final response.
+	// Finalize is non-nil when the runtime forbids further domain work and asks
+	// the planner for either a final response or terminal bookkeeping calls.
 	Finalize *Termination
 
 	// Reminders contains the active system reminders for this planner turn.

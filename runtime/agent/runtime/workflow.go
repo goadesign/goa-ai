@@ -235,6 +235,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 				model.TokenUsage{},
 				planInput.RunContext.Attempt+1,
 				turnID,
+				nil,
 				planner.TerminationReasonTimeBudget,
 				hardDeadline,
 			)

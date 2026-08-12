@@ -39,6 +39,7 @@ func (r *Runtime) finalizeWithPlanner(
 	aggUsage model.TokenUsage,
 	nextAttempt int,
 	turnID string,
+	recovery []*planner.ToolOutput,
 	reason planner.TerminationReason,
 	hardDeadline time.Time,
 ) (*RunOutput, error) {
@@ -69,6 +70,8 @@ func (r *Runtime) finalizeWithPlanner(
 		hint = "FINALIZE NOW: tool budget exhausted.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If further tool calls would be needed, describe them briefly and provide the best provisional answer."
 	case planner.TerminationReasonFailureCap:
 		hint = "FINALIZE NOW: too many tool failures.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If tools failed due to invalid arguments, summarize the failure and provide a corrected plan/payload shape (without actually calling tools), then provide the best provisional answer."
+	case planner.TerminationReasonToolFailure:
+		hint = "FINALIZE NOW: a tool could not complete the requested work.\n\n- Do not retry the failed operation or gather more information.\n- Use only the information already available in the conversation and tool results.\n- Provide the best final result possible, clearly stating what could not be completed.\n- If this workflow requires one final submission action, use only that action."
 	default:
 		hint = "FINALIZE NOW.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If more work is needed, describe it succinctly and provide the best provisional answer."
 	}
@@ -95,13 +98,14 @@ func (r *Runtime) finalizeWithPlanner(
 		return nil, err
 	}
 	req := PlanActivityInput{
-		AgentID:     input.AgentID,
-		RunID:       base.RunContext.RunID,
-		Messages:    messages,
-		RunContext:  resumeCtx,
-		Policy:      clonePolicyOverrides(input.Policy),
-		ToolOutputs: encodedToolOutputs,
-		Finalize:    &planner.Termination{Reason: reason, Message: hint},
+		AgentID:             input.AgentID,
+		RunID:               base.RunContext.RunID,
+		Messages:            messages,
+		RunContext:          resumeCtx,
+		Policy:              clonePolicyOverrides(input.Policy),
+		ToolOutputs:         encodedToolOutputs,
+		RecoveryToolCallIDs: recoveryToolCallIDs(recovery),
+		Finalize:            &planner.Termination{Reason: reason, Message: hint},
 	}
 	if err := enforcePlanActivityInputBudget(req); err != nil {
 		return nil, err
@@ -147,6 +151,8 @@ func (r *Runtime) finalizeWithPlanner(
 			return "tool call cap exceeded"
 		case planner.TerminationReasonFailureCap:
 			return "consecutive failed tool call cap exceeded"
+		case planner.TerminationReasonToolFailure:
+			return "tool required finalization"
 		default:
 			return "finalization failed"
 		}
@@ -514,7 +520,7 @@ func (r *Runtime) handleInterrupts(
 // handleMissingFieldsPolicy inspects generated validation issues for missing
 // required fields and applies the agent RunPolicy.OnMissingFields behavior:
 //
-//   - MissingFieldsFinalize: immediately finalize by requesting a tool-free final answer
+//   - MissingFieldsFinalize: immediately request a terminal planner result
 //     from the planner. Returns a non-nil RunOutput to short-circuit the loop.
 //   - MissingFieldsAwaitClarification: when durable (interrupt controller present), emit
 //     an await_clarification event, pause the run, and wait indefinitely for operator input.
@@ -583,6 +589,7 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			aggUsage,
 			*nextAttempt,
 			turnID,
+			nil,
 			planner.TerminationReasonFailureCap,
 			deadlines.Hard,
 		)

@@ -598,21 +598,17 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 
 	action, failed := dominantRecoveryAction(batch.records)
-	var pendingRecovery []*planner.ToolOutput
-	if !failed || action != planner.RecoveryFinish {
-		pendingRecovery = append(pendingRecoveryOutputs(batch.records), l.st.PendingRecovery...)
-	}
-	synthesisOnly := len(pendingRecovery) == 0 && synthesisOnlyAfterToolBatch(batch)
-	reminderRecovery := pendingRecovery
 	if failed && action == planner.RecoveryFinish {
-		reminderRecovery = dominantRecoveryOutputs(batch.records)
+		return l.finalizeRecoveryStep(dominantRecoveryOutputs(batch.records))
 	}
+	pendingRecovery := append(pendingRecoveryOutputs(batch.records), l.st.PendingRecovery...)
+	synthesisOnly := !failed && batch.program.result.SynthesizeAfterTools
 	resumeReq, err := l.r.buildNextResumeRequest(
 		l.input.AgentID,
 		l.base,
 		l.input.Policy,
 		l.st.ToolOutputs,
-		reminderRecovery,
+		pendingRecovery,
 		synthesisOnly,
 		&l.st.NextAttempt,
 	)
@@ -724,8 +720,8 @@ func pendingRecoveryOutputs(records []stepToolRecord) []*planner.ToolOutput {
 }
 
 // dominantRecoveryOutputs selects the failed calls whose recovery action owns
-// the next transition. Finish failures use this projection to guide the
-// synthesis-only activity without making more tools executable.
+// the next transition. Finish failures use this projection to correlate the
+// terminal finalization turn with its exact causes.
 func dominantRecoveryOutputs(records []stepToolRecord) []*planner.ToolOutput {
 	action, failed := dominantRecoveryAction(records)
 	if !failed {
@@ -770,18 +766,6 @@ func (l *workflowLoop) recordUnrecordedStepToolResults(batch *stepBatch) error {
 	return nil
 }
 
-// synthesisOnlyAfterToolBatch derives the next legal turn from tool failures.
-// A finish directive forces synthesis; a correct-call or replan directive keeps
-// tool planning available. In the absence of failures, the planner's explicit
-// success transition applies.
-func synthesisOnlyAfterToolBatch(batch stepBatch) bool {
-	action, failed := dominantRecoveryAction(batch.records)
-	if failed {
-		return action == planner.RecoveryFinish
-	}
-	return batch.program.result.SynthesizeAfterTools
-}
-
 // dominantRecoveryAction combines parallel failures without allowing one result
 // to weaken another: finish dominates correction, and correction dominates
 // replanning.
@@ -812,7 +796,27 @@ func (l *workflowLoop) finalizeStep(reason planner.TerminationReason) (*RunOutpu
 		l.st.AggUsage,
 		l.st.NextAttempt,
 		l.turnID,
+		nil,
 		reason,
+		l.deadlines.Hard,
+	)
+}
+
+// finalizeRecoveryStep ends domain work after a tool's finish directive while
+// preserving the exact failed calls as finalizer guidance.
+func (l *workflowLoop) finalizeRecoveryStep(recovery []*planner.ToolOutput) (*RunOutput, error) {
+	return l.r.finalizeWithPlanner(
+		l.wfCtx,
+		l.reg,
+		l.input,
+		l.base,
+		l.st.ToolEvents,
+		l.st.ToolOutputs,
+		l.st.AggUsage,
+		l.st.NextAttempt,
+		l.turnID,
+		recovery,
+		planner.TerminationReasonToolFailure,
 		l.deadlines.Hard,
 	)
 }

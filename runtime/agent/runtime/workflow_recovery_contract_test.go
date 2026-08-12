@@ -315,30 +315,49 @@ func TestRecoveryCatalogAndMixedFailureContracts(t *testing.T) {
 	), "outside the advertised recovery catalog")
 }
 
-func TestFinishFailureStillForcesToolFreeSynthesis(t *testing.T) {
-	t.Parallel()
-
-	records := []stepToolRecord{
-		{
-			call: planner.ToolRequest{Name: "catalog.search"},
-			result: &planner.ToolResult{Failure: testToolFailure(
-				planner.FailureInvalidCall,
-				planner.RecoveryCorrectCall,
-				"search input is invalid",
-			)},
+func TestFinishFailureFinalizesWithExactCause(t *testing.T) {
+	search := newAnyJSONSpec("catalog.search", "catalog")
+	load := newAnyJSONSpec("catalog.load", "catalog")
+	var resumes int
+	h := newRecoveryHarness(
+		t,
+		"finish",
+		[]tools.ToolSpec{search, load},
+		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			if call.Name == load.Name {
+				return &planner.ToolResult{
+					Name:       call.Name,
+					ToolCallID: call.ToolCallID,
+					Failure: testToolFailure(
+						planner.FailureInternal,
+						planner.RecoveryFinish,
+						"load failed",
+					),
+				}, nil
+			}
+			return invalidCallResult(call), nil
 		},
-		{
-			call: planner.ToolRequest{Name: "catalog.load"},
-			result: &planner.ToolResult{Failure: testToolFailure(
-				planner.FailureInternal,
-				planner.RecoveryFinish,
-				"load failed",
-			)},
+		func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			resumes++
+			require.False(t, input.SynthesisOnly)
+			require.NotNil(t, input.Finalize)
+			assert.Equal(t, planner.TerminationReasonToolFailure, input.Finalize.Reason)
+			require.Len(t, input.Reminders, 1)
+			assert.Contains(t, input.Reminders[0].Text, "load failed")
+			return finalPlannerResult("partial result"), nil
 		},
-	}
+	)
 
-	assert.Empty(t, pendingRecoveryOutputs(records))
-	assert.True(t, synthesisOnlyAfterToolBatch(stepBatch{records: records}))
+	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{
+		{Name: search.Name, ToolCallID: "search-call", Payload: rawjson.Message(`{"query":"bad"}`)},
+		{Name: load.Name, ToolCallID: "load-call", Payload: rawjson.Message(`{"id":"one"}`)},
+	}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4}, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "partial result", agentMessageText(out.Final))
+	assert.Equal(t, 1, resumes)
+	assert.Equal(t, []string{"load-call"}, h.workflow.lastPlannerCall.Input.RecoveryToolCallIDs)
 }
 
 // newRecoveryHarness assembles one in-memory workflow whose planner and tool

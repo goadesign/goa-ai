@@ -85,8 +85,8 @@ const (
 	// The planner may choose another advertised capability, await input, or
 	// finish from the evidence already collected.
 	RecoveryReplan RecoveryAction = "replan"
-	// RecoveryFinish forbids further tool execution and requires final synthesis
-	// from evidence already collected.
+	// RecoveryFinish forbids further domain tool execution and requires the run
+	// to finalize from evidence already collected.
 	RecoveryFinish RecoveryAction = "finish"
 )
 

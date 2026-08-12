@@ -724,6 +724,7 @@ func TestFinalizeWithPlannerTerminalToolStopsAtHard(t *testing.T) {
 		model.TokenUsage{},
 		2,
 		"turn-1",
+		nil,
 		planner.TerminationReasonTimeBudget,
 		hard,
 	)
@@ -772,6 +773,7 @@ func TestFinalizeWithPlannerRejectsTerminalPayloadWithToolCalls(t *testing.T) {
 		model.TokenUsage{},
 		2,
 		input.TurnID,
+		nil,
 		planner.TerminationReasonFailureCap,
 		time.Time{},
 	)
@@ -862,6 +864,7 @@ func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
 		model.TokenUsage{},
 		2,
 		"turn-1",
+		nil,
 		planner.TerminationReasonFailureCap,
 		time.Time{},
 	)
@@ -905,6 +908,7 @@ func runTerminalFinalization(t *testing.T, runPolicy *PolicyOverrides) (*RunOutp
 		model.TokenUsage{},
 		2,
 		"turn-1",
+		nil,
 		planner.TerminationReasonFailureCap,
 		time.Time{},
 	)
