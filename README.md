@@ -648,6 +648,11 @@ caps; it does not infer how many semantic operations the planner must repeat.
 When one tool has both correction and replan failures in the same batch, the
 correctable failure keeps that tool available.
 
+Agent-as-tool results use this same typed transition contract. The number of
+child tools observed during the nested run is telemetry for linked progress;
+zero children does not turn a success or correctable failure into run
+finalization.
+
 Recovery turns carry the selected failed call IDs in `PlanActivityInput`.
 Empty IDs are omitted, so start and ordinary resume activities retain their
 previous JSON shape. An upgrade that can execute a recovery turn must drain or

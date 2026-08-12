@@ -11,7 +11,6 @@ import (
 	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -276,48 +275,6 @@ func (r *Runtime) toolResultContent(call *planner.ToolRequest, tr *planner.ToolR
 		preview,
 		errorMessage,
 	)
-}
-
-// hardProtectionIfNeeded emits a protection event and signals finalization when
-// agent-as-tool calls produced no child tool calls.
-func (r *Runtime) hardProtectionIfNeeded(
-	ctx context.Context,
-	agentID agent.Ident,
-	base *planner.PlanInput,
-	vals []*planner.ToolResult,
-	turnID string,
-) (bool, error) {
-	var agentToolCount int
-	var totalChildren int
-	toolNames := make([]tools.Ident, 0, len(vals))
-	for _, tr := range vals {
-		if spec, ok := r.toolSpec(tr.Name); ok && spec.IsAgentTool {
-			agentToolCount++
-			toolNames = append(toolNames, tr.Name)
-			if tr.ChildrenCount > 0 {
-				totalChildren += tr.ChildrenCount
-			}
-		}
-	}
-	if agentToolCount > 0 && totalChildren == 0 {
-		if err := r.publishHook(
-			ctx,
-			hooks.NewHardProtectionEvent(
-				base.RunContext.RunID,
-				agentID,
-				base.RunContext.SessionID,
-				"agent_tool_no_children",
-				agentToolCount,
-				totalChildren,
-				toolNames,
-			),
-			turnID,
-		); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
-	return false, nil
 }
 
 // appendToolOutputRecords records canonical planner tool outputs from paired

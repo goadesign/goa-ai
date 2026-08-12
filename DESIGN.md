@@ -207,6 +207,10 @@ input; its evidence remains available when planning resumes after the answer.
 A failed batch never enters `SynthesisOnly` and does not preserve its earlier
 `SynthesizeAfterTools` intent; a planner that retries work selects synthesis
 again on that new batch.
+An agent-as-tool result follows the same typed success or failure transition as
+every other tool. Its observed child-tool count is run-link telemetry, not an
+outcome signal: validation may reject the request before a child tool runs, and
+a child agent may return a valid result without invoking another tool.
 Synthesis-after-tools batches must contain at least one budgeted tool and cannot
 contain a `TerminalRun` tool, ensuring the existing step classification always
 reaches the appropriate planner resume. The resume activity validates the

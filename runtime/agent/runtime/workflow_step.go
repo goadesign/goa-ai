@@ -575,14 +575,6 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		return out, nil
 	}
 
-	protected, err := l.r.hardProtectionIfNeeded(l.wfCtx.Context(), l.input.AgentID, l.base, results, l.turnID)
-	if err != nil {
-		return nil, err
-	}
-	if protected {
-		return l.finalizeStep(planner.TerminationReasonFailureCap)
-	}
-
 	if batch.awaited {
 		if err := l.r.publishHook(
 			l.wfCtx.Context(),

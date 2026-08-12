@@ -146,9 +146,12 @@ const (
 	// Usage reports token usage for a model invocation within a run.
 	Usage EventType = "usage"
 
-	// HardProtectionTriggered fires when a runtime hard protection is applied to
-	// avoid pathological behavior (e.g., agent-tool produced no child calls).
-	// Payload is a HardProtectionEvent.
+	// HardProtectionTriggered identifies historical records written when the
+	// runtime treated an agent-tool result with no children as terminal. The
+	// runtime no longer emits this event; the type remains so durable run history
+	// can be decoded.
+	//
+	// Deprecated: New runtime versions do not emit this event.
 	HardProtectionTriggered EventType = "hard_protection_triggered"
 
 	// RunPhaseChanged fires when a run transitions between lifecycle phases
