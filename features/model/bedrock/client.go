@@ -327,6 +327,9 @@ func (c *Client) prepareRequest(req *model.Request) (*requestParts, error) {
 	if err != nil {
 		return nil, err
 	}
+	if useToolFallback {
+		enableStrictStructuredOutputTool(toolConfig)
+	}
 	var outputConfig *brtypes.OutputConfig
 	if req.StructuredOutput != nil && !useToolFallback {
 		outputConfig, err = encodeOutputConfig(req.StructuredOutput)
@@ -517,10 +520,9 @@ func encodeOutputConfig(output *model.StructuredOutput) (*brtypes.OutputConfig, 
 // OutputConfig.TextFormat into Anthropic's own (unsupported-on-Converse)
 // output_config.format field before forwarding it to Anthropic models, and the
 // model then rejects it with "Extra inputs are not permitted" — a documented
-// AWS/Anthropic incompatibility, not a request bug. Forcing a single tool call
-// is the well-supported alternative that Bedrock validates against the same
-// JSON Schema with the same guarantee, so callers see no difference in the
-// canonical model.Response.
+// AWS/Anthropic incompatibility, not a request bug. A strict single tool call
+// is the supported alternative: Bedrock constrains its arguments to the
+// normalized schema before the canonical codec validates the complete contract.
 func structuredOutputUsesToolFallback(modelID string, output *model.StructuredOutput) bool {
 	return output != nil && isAnthropicBedrockModel(modelID)
 }
@@ -537,11 +539,23 @@ func structuredOutputToolDefinition(output *model.StructuredOutput) (*model.Tool
 	if output.Name == "" {
 		return nil, errors.New("bedrock: structured output requires a name")
 	}
+	schema, err := normalizeStructuredOutputSchemaForBedrock(output.Schema)
+	if err != nil {
+		return nil, err
+	}
 	return &model.ToolDefinition{
 		Name:        output.Name,
 		Description: output.Description,
-		Input:       model.ToolInputFromSchema(rawjson.Message(output.Schema)),
+		Input:       model.ToolInputFromSchema(rawjson.Message(schema)),
 	}, nil
+}
+
+// enableStrictStructuredOutputTool enables grammar-constrained generation on
+// the one synthetic tool produced by structuredOutputToolDefinition. Its schema
+// has already been normalized to Bedrock's supported subset.
+func enableStrictStructuredOutputTool(config *brtypes.ToolConfiguration) {
+	spec := config.Tools[0].(*brtypes.ToolMemberToolSpec)
+	spec.Value.Strict = aws.Bool(true)
 }
 
 // reifyStructuredOutputToolFallback rewrites the forced tool_use response
