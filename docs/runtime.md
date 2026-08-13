@@ -156,6 +156,7 @@ DSL and regenerate.
 `goa gen` emits a service-owned package at `gen/<service>/completions` with:
 
 - result schemas and typed result/union types
+- canonical JSON for an authored root `Example(...)`, when present
 - generated JSON codecs and validation helpers
 - typed `completion.Spec` values
 - generated `Complete<Name>(ctx, client, req)` helpers
@@ -182,6 +183,25 @@ if err != nil {
 
 fmt.Println(resp.Value.Name)
 ```
+
+Unary completion is one typed transaction with at most two model calls. The
+first response is decoded with the generated codec. If its JSON violates the
+completion contract, the helper appends that exact assistant response and one
+correction message containing the codec error, generated field issues and
+descriptions, and the authored example when present. The corrected response is
+decoded once; another invalid value is terminal. Provider errors and malformed
+response envelopes are returned immediately rather than retried.
+`completion.Response.Attempts` contains each model response in invocation order.
+It therefore has one entry for an immediately valid completion and two entries
+for a corrected completion, preserving the rejected output and both
+per-invocation token-usage records. When an error occurs after a model response
+arrives, the helper returns that response record alongside the error.
+
+Only root examples explicitly authored with Goa `Example(...)` are shown to
+models. Codegen emits the annotated schema, the schema without its root example,
+and standalone canonical example JSON. Adapters use the provider-native
+structured-output example field when one exists; they never promote synthesized
+Goa examples.
 
 Streaming completions stay on the raw `model.Streamer` surface and decode the
 final canonical `completion` chunk only:
@@ -222,7 +242,9 @@ Typed completion helpers are intentionally strict:
 - Completion names are validated at the DSL boundary: 1-64 ASCII characters,
   letters/digits/`_`/`-` only, and must start with a letter or digit.
 - Unary and streaming helpers reject tool-enabled requests and caller-supplied `StructuredOutput`.
-- Streaming providers emit `completion_delta*` preview fragments plus exactly one canonical `completion` chunk, or reject the request explicitly.
+- Unary helpers make exactly one correction attempt after a generated codec rejects model-authored JSON.
+- Streaming providers may emit `completion_delta*` preview fragments and emit exactly one canonical `completion` chunk, or reject the request explicitly.
+- Streaming helpers never restart after exposing preview chunks; an invalid final payload is terminal.
 - `Decode<Name>Chunk` ignores preview chunks and decodes only the final `completion`.
 - Completion streams stay on the direct `model.Streamer` path; do not route them through planner streaming helpers, which are for assistant transcript text/tool execution events.
 - Providers that do not implement structured output surface `model.ErrStructuredOutputUnsupported`.

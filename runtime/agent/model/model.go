@@ -421,6 +421,16 @@ type (
 		// Schema constrains the assistant response as JSON Schema.
 		Schema []byte
 
+		// SchemaWithoutRootExample is Schema without its root example annotation.
+		// Adapters with a provider-native example field use this projection so the
+		// example is not sent twice.
+		SchemaWithoutRootExample []byte
+
+		// ExampleJSON is the canonical authored example for the structured response.
+		// Adapters forward it through provider-native output or synthetic-tool
+		// example fields when supported.
+		ExampleJSON rawjson.Message
+
 		// Name is an optional provider-facing schema identifier.
 		Name string
 
@@ -665,7 +675,8 @@ type (
 	// Implementations translate Requests into provider calls and adapt
 	// Responses and Chunks back into the generic types used by planners.
 	Client interface {
-		// Complete performs a non-streaming model invocation.
+		// Complete performs a non-streaming model invocation. Implementations
+		// return a non-nil Response only when err is nil.
 		Complete(ctx context.Context, req *Request) (*Response, error)
 
 		// Stream performs a streaming model invocation when supported.
@@ -1131,7 +1142,10 @@ func requestCharacterCount(req *Request) int {
 	}
 	if req.StructuredOutput != nil {
 		count += len(req.StructuredOutput.Name)
-		count += len(req.StructuredOutput.Schema)
+		count += len(req.StructuredOutput.Description)
+		annotated := len(req.StructuredOutput.Schema)
+		split := len(req.StructuredOutput.SchemaWithoutRootExample) + len(req.StructuredOutput.ExampleJSON)
+		count += max(annotated, split)
 	}
 	return count
 }
