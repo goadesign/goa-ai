@@ -4,6 +4,7 @@ package tools
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // FieldIssue represents a single validation issue for a payload.
@@ -145,6 +146,42 @@ func CloneFieldIssues(in []*FieldIssue) []*FieldIssue {
 		out = append(out, &clone)
 	}
 	return out
+}
+
+// FieldDescriptionsForIssues selects descriptions for fields named by
+// validation issues. Description maps are consulted in order. Allowed values
+// identify sibling fields only for unknown_field issues; for enum failures they
+// are legal values, not field names. Nested sibling names are qualified with
+// the rejected field's parent path.
+func FieldDescriptionsForIssues(
+	issues []*FieldIssue,
+	descriptions ...map[string]string,
+) map[string]string {
+	selected := make(map[string]string)
+	for _, issue := range issues {
+		fields := []string{issue.Field}
+		if issue.Constraint == "unknown_field" {
+			prefix := ""
+			if separator := strings.LastIndexByte(issue.Field, '.'); separator >= 0 {
+				prefix = issue.Field[:separator+1]
+			}
+			for _, allowed := range issue.Allowed {
+				fields = append(fields, prefix+allowed)
+			}
+		}
+		for _, field := range fields {
+			for _, source := range descriptions {
+				if description := source[field]; description != "" {
+					selected[field] = description
+					break
+				}
+			}
+		}
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+	return selected
 }
 
 // cloneStringMap copies field descriptions so errors own their metadata.

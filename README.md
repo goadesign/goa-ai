@@ -388,6 +388,10 @@ Use `Completion(...)` when the model should return a typed value directly instea
 var Draft = Type("Draft", func() {
 	Attribute("name", String, "Task name")
 	Attribute("goal", String, "Outcome-style goal")
+	Example(map[string]any{
+		"name": "Investigate startup alarms",
+		"goal": "Explain every alarm observed during startup.",
+	})
 	Required("name", "goal")
 })
 
@@ -398,9 +402,9 @@ var _ = Service("tasks", func() {
 })
 ```
 
-`goa gen` emits `gen/<service>/completions/` with schemas, codecs, `completion.Spec` values, `Complete<Name>(...)`, `StreamComplete<Name>(...)`, and `Decode<Name>Chunk(...)`. Completion names are part of the contract: 1-64 ASCII characters, letters/digits/`_`/`-`, starting with a letter or digit.
+`goa gen` emits `gen/<service>/completions/` with schemas, authored examples, codecs, `completion.Spec` values, `Complete<Name>(...)`, `StreamComplete<Name>(...)`, and `Decode<Name>Chunk(...)`. Completion names are part of the contract: 1-64 ASCII characters, letters/digits/`_`/`-`, starting with a letter or digit.
 
-Unary helpers request provider-enforced structured output and decode with generated codecs. Streaming helpers expose preview `completion_delta` chunks but decode only the final canonical `completion` chunk. Providers that cannot preserve the structured-output contract fail explicitly with `model.ErrStructuredOutputUnsupported`.
+Unary helpers request provider-enforced structured output and decode with generated codecs. When the return type has an authored root `Example(...)`, adapters forward its canonical JSON through provider-native example fields where available. If the provider returns JSON that the generated codec rejects, the unary helper supplies the codec error and example in one correction turn; a second invalid response is terminal. `completion.Response.Attempts` retains every model response in invocation order so corrected calls preserve the rejected output and its token usage. Streaming providers may expose preview `completion_delta` chunks and never restart after emitting them. Providers that cannot preserve the structured-output contract fail explicitly with `model.ErrStructuredOutputUnsupported`.
 
 ### Agent-as-Tool Composition
 

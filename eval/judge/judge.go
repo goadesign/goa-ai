@@ -1,8 +1,8 @@
 // Package judge implements strict semantic claim classification over Goa-AI's
 // provider-neutral model client. The judge contract is a framework-owned typed
 // completion: a canonical raw JSON schema plus a strict codec executed by the
-// shared completion runtime. The judge never retries, repairs, or substitutes
-// model output.
+// shared completion runtime. The runtime may ask once for a corrected value when
+// the codec rejects model-authored JSON; it never repairs or substitutes output.
 package judge
 
 import (
@@ -36,14 +36,7 @@ type (
 
 	// responseBody is the only structured response shape accepted from the model.
 	responseBody struct {
-		Judgments []judgment `json:"judgments"`
-	}
-
-	// judgment mirrors the provider JSON contract before conversion to runtime types.
-	judgment struct {
-		ClaimID   string       `json:"claim_id"`
-		Label     aieval.Label `json:"label"`
-		Rationale string       `json:"rationale"`
+		Judgments []aieval.Judgment `json:"judgments"`
 	}
 )
 
@@ -82,10 +75,10 @@ Return exactly one judgment for every claim_id. Do not add, remove, merge, or re
 }`
 )
 
-// spec is the framework-owned typed completion contract for judge output. The
-// schema is the canonical raw JSON contract and the codec owns strict boundary
-// decoding, exactly like generated completion specs.
-var spec = completion.Spec[responseBody]{
+// baseSpec is the framework-owned typed completion contract for judge output.
+// Each request binds its claim IDs into the codec before invoking the shared
+// completion runtime.
+var baseSpec = completion.Spec[responseBody]{
 	Name:        "eval_judgments",
 	Description: "One semantic label and rationale for every supplied claim ID.",
 	Result: tools.TypeSpec{
@@ -125,6 +118,10 @@ func (j *Judge) Judge(ctx context.Context, assertions []aieval.Assertion) ([]aie
 	if err != nil {
 		return nil, fmt.Errorf("encode judge assertions: %w", err)
 	}
+	claims := make([]aieval.Claim, len(assertions))
+	for i, assertion := range assertions {
+		claims[i] = aieval.Claim{ID: assertion.ClaimID, Text: assertion.Claim}
+	}
 	response, err := completion.Complete(ctx, j.client, &model.Request{
 		ModelClass: j.modelClass,
 		Messages: []*model.Message{
@@ -139,26 +136,11 @@ func (j *Judge) Judge(ctx context.Context, assertions []aieval.Assertion) ([]aie
 		},
 		Temperature: 0,
 		MaxTokens:   maxTokensPerJudgment * len(assertions),
-	}, spec)
+	}, specForClaims(claims))
 	if err != nil {
 		return nil, fmt.Errorf("judge assertions: %w", err)
 	}
-	judgments := make([]aieval.Judgment, len(response.Value.Judgments))
-	for i, item := range response.Value.Judgments {
-		judgments[i] = aieval.Judgment{
-			ClaimID:   item.ClaimID,
-			Label:     item.Label,
-			Rationale: item.Rationale,
-		}
-	}
-	claims := make([]aieval.Claim, len(assertions))
-	for i, assertion := range assertions {
-		claims[i] = aieval.Claim{ID: assertion.ClaimID, Text: assertion.Claim}
-	}
-	if err := aieval.ValidateJudgments(claims, judgments); err != nil {
-		return nil, fmt.Errorf("invalid judge response: %w", err)
-	}
-	return judgments, nil
+	return response.Value.Judgments, nil
 }
 
 // decodeResponse strictly decodes the provider JSON and rejects unknown fields
@@ -177,4 +159,25 @@ func decodeResponse(data []byte) (responseBody, error) {
 		return responseBody{}, err
 	}
 	return response, nil
+}
+
+// specForClaims binds request-specific claim identity and cardinality to the
+// completion codec so semantic contract failures participate in correction.
+func specForClaims(claims []aieval.Claim) completion.Spec[responseBody] {
+	spec := baseSpec
+	spec.Codec.FromJSON = decodeResponseForClaims(claims)
+	return spec
+}
+
+func decodeResponseForClaims(claims []aieval.Claim) func([]byte) (responseBody, error) {
+	return func(data []byte) (responseBody, error) {
+		response, err := decodeResponse(data)
+		if err != nil {
+			return responseBody{}, err
+		}
+		if err := aieval.ValidateJudgments(claims, response.Judgments); err != nil {
+			return responseBody{}, fmt.Errorf("invalid judge response: %w", err)
+		}
+		return response, nil
+	}
 }

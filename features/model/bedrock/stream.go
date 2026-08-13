@@ -691,6 +691,12 @@ func (p *chunkProcessor) handleCompletionDelta(idx int, delta string) error {
 		)
 	}
 	p.completion.fragments = append(p.completion.fragments, delta)
+	if p.toolFallbackName != "" {
+		// Synthetic-tool fragments contain Bedrock's private object wrapper.
+		// Completion previews are optional, so do not expose that provider
+		// representation through the provider-neutral stream.
+		return nil
+	}
 	return p.emit(model.CompletionDeltaChunk{
 		Delta: model.CompletionDelta{
 			Name:  p.completion.name,
@@ -708,6 +714,16 @@ func (p *chunkProcessor) finalizeCompletion(idx int) error {
 	payload, err := p.completion.finalPayload()
 	if err != nil {
 		return fmt.Errorf("bedrock stream: structured output %q: %w", p.output.Name, err)
+	}
+	if p.toolFallbackName != "" {
+		payload, err = unwrapStructuredOutputValue(payload)
+		if err != nil {
+			return fmt.Errorf(
+				"bedrock stream: structured output tool fallback %q: %w",
+				p.toolFallbackName,
+				err,
+			)
+		}
 	}
 	completion := p.completion
 	p.completion = nil

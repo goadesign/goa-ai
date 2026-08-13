@@ -113,12 +113,21 @@ Completion names are part of the structured-output contract. They must be
 start with a letter or digit.
 
 Codegen emits a dedicated package at `gen/<service>/completions/` with the result
-types, unions, JSON codecs, schemas, and typed completion helpers. Unary
-helpers request provider-enforced structured output and decode the final
+types, unions, JSON codecs, schemas, explicitly authored root examples, and
+typed completion helpers. Adapters send an authored Goa `Example(...)` through
+provider-native structured-output example fields when available.
+
+Unary helpers request provider-enforced structured output and decode the final
 assistant response through the generated codec instead of hand-parsing JSON.
-Streaming helpers stay on the raw `model.Streamer` surface: `completion_delta`
-chunks are preview-only, exactly one final `completion` chunk is canonical, and
-generated `Decode<Name>Chunk(...)` helpers decode only that final payload.
+When the codec rejects model-authored JSON, the helper makes one correction
+attempt with the exact error, generated field guidance, and authored example.
+`completion.Response.Attempts` preserves every response and its token usage; a
+second invalid value is terminal.
+
+Streaming helpers stay on the raw `model.Streamer` surface. Providers may emit
+preview `completion_delta` chunks, exactly one final `completion` chunk is
+canonical, and generated `Decode<Name>Chunk(...)` helpers decode only that final
+payload. Streaming never restarts after exposing output.
 Providers that do not implement structured output fail explicitly with
 `model.ErrStructuredOutputUnsupported`.
 The generated schema remains the canonical service contract; model adapters may

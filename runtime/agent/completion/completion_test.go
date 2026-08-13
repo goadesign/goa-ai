@@ -22,8 +22,17 @@ func testCompletionSpec() Spec[testCompletionResult] {
 		Name:        "draft_from_transcript",
 		Description: "Synthesize task draft",
 		Result: tools.TypeSpec{
-			Name:   "DraftFromTranscriptResult",
-			Schema: tools.RawJSON(`{"type":"object","required":["assistant_text"]}`),
+			Name:                     "DraftFromTranscriptResult",
+			Schema:                   tools.RawJSON(`{"type":"object","required":["assistant_text"]}`),
+			SchemaWithoutRootExample: tools.RawJSON(`{"type":"object","required":["assistant_text"]}`),
+			ExampleJSON:              tools.RawJSON(`{"assistant_text":"Created a draft."}`),
+			FieldDescriptions: map[string]string{
+				"assistant_text": "Short explanation of the generated draft",
+			},
+			FieldJSONTypes: map[string]string{
+				"$payload":       "object",
+				"assistant_text": "string",
+			},
 		},
 		Codec: tools.JSONCodec[testCompletionResult]{
 			ToJSON:   marshalTestCompletionResult,
@@ -44,7 +53,9 @@ func unmarshalTestCompletionResult(data []byte) (testCompletionResult, error) {
 
 type recordingCompletionClient struct {
 	request   *model.Request
+	requests  []*model.Request
 	response  *model.Response
+	responses []*model.Response
 	streamer  model.Streamer
 	err       error
 	streamErr error
@@ -52,6 +63,10 @@ type recordingCompletionClient struct {
 
 func (c *recordingCompletionClient) Complete(_ context.Context, req *model.Request) (*model.Response, error) {
 	c.request = req
+	c.requests = append(c.requests, req)
+	if len(c.responses) >= len(c.requests) {
+		return c.responses[len(c.requests)-1], nil
+	}
 	return c.response, c.err
 }
 
@@ -102,6 +117,16 @@ func (s *scriptedStreamer) Response() *model.Response {
 	return s.response
 }
 
+func completionResponse(body string) *model.Response {
+	return &model.Response{
+		Content: []model.Message{{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: body}},
+		}},
+		StopReason: "stop",
+	}
+}
+
 func TestCompleteSetsStructuredOutputAndDecodesTypedValue(t *testing.T) {
 	spec := testCompletionSpec()
 	client := &recordingCompletionClient{
@@ -127,11 +152,126 @@ func TestCompleteSetsStructuredOutputAndDecodesTypedValue(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, testCompletionResult{AssistantText: "created a draft"}, resp.Value)
+	assert.Equal(t, []*model.Response{client.response}, resp.Attempts)
 	require.NotNil(t, client.request)
 	require.NotNil(t, client.request.StructuredOutput)
 	assert.Equal(t, "draft_from_transcript", client.request.StructuredOutput.Name)
 	assert.JSONEq(t, `{"type":"object","required":["assistant_text"]}`, string(client.request.StructuredOutput.Schema))
+	assert.JSONEq(
+		t,
+		`{"type":"object","required":["assistant_text"]}`,
+		string(client.request.StructuredOutput.SchemaWithoutRootExample),
+	)
+	assert.JSONEq(t, `{"assistant_text":"Created a draft."}`, string(client.request.StructuredOutput.ExampleJSON))
 	assert.Nil(t, req.StructuredOutput)
+}
+
+func TestCompleteCorrectsCodecFailureOnce(t *testing.T) {
+	spec := testCompletionSpec()
+	spec.Codec.FromJSON = func(data []byte) (testCompletionResult, error) {
+		if string(data) == `{"assistant_text":42}` {
+			return testCompletionResult{}, tools.NewValidationError(
+				"assistant_text must be a string",
+				[]*tools.FieldIssue{{
+					Field:            "assistant_text",
+					Constraint:       "invalid_field_type",
+					ExpectedJSONType: "string",
+					ActualJSONType:   "number",
+				}},
+				nil,
+			)
+		}
+		return unmarshalTestCompletionResult(data)
+	}
+	rejectedResponse := completionResponse(`{"assistant_text":42}`)
+	rejectedResponse.Usage = model.TokenUsage{TotalTokens: 10}
+	acceptedResponse := completionResponse(`{"assistant_text":"Created a draft."}`)
+	acceptedResponse.Usage = model.TokenUsage{TotalTokens: 12}
+	client := &recordingCompletionClient{
+		responses: []*model.Response{rejectedResponse, acceptedResponse},
+	}
+	req := &model.Request{Messages: []*model.Message{{
+		Role:  model.ConversationRoleUser,
+		Parts: []model.Part{model.TextPart{Text: "create a task"}},
+	}}}
+
+	response, err := Complete(context.Background(), client, req, spec)
+
+	require.NoError(t, err)
+	assert.Equal(t, testCompletionResult{AssistantText: "Created a draft."}, response.Value)
+	assert.Equal(t, []*model.Response{rejectedResponse, acceptedResponse}, response.Attempts)
+	require.Len(t, client.requests, 2)
+	require.Len(t, client.requests[1].Messages, 3)
+	rejected := client.requests[1].Messages[1]
+	assert.Equal(t, model.ConversationRoleAssistant, rejected.Role)
+	assert.Equal(t, `{"assistant_text":42}`, rejected.Parts[0].(model.TextPart).Text)
+	correction := client.requests[1].Messages[2]
+	assert.Equal(t, model.ConversationRoleUser, correction.Role)
+	correctionText := correction.Parts[0].(model.TextPart).Text
+	assert.Contains(t, correctionText, "assistant_text must be a string")
+	assert.Contains(t, correctionText, `"expected_json_type":"string"`)
+	assert.Contains(t, correctionText, `"assistant_text":"Short explanation of the generated draft"`)
+	assert.Contains(
+		t,
+		correctionText,
+		`JSON shape example (replace example values with values that satisfy this request): {"assistant_text":"Created a draft."}`,
+	)
+	assert.Contains(t, correctionText, "Return the complete corrected JSON value.")
+	require.Len(t, req.Messages, 1)
+	assert.Nil(t, req.StructuredOutput)
+}
+
+func TestCompleteStopsAfterOneCorrection(t *testing.T) {
+	client := &recordingCompletionClient{responses: []*model.Response{
+		completionResponse(`{"assistant_text":42}`),
+		completionResponse(`{"assistant_text":42}`),
+	}}
+
+	response, err := Complete(context.Background(), client, &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "create a task"}},
+		}},
+	}, testCompletionSpec())
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, `remained invalid after 1 correction`)
+	require.Len(t, response.Attempts, 2)
+	assert.Len(t, client.requests, 2)
+}
+
+func TestCompleteDoesNotCorrectProviderOrEnvelopeFailures(t *testing.T) {
+	t.Run("provider error", func(t *testing.T) {
+		client := &recordingCompletionClient{err: assert.AnError}
+		_, err := Complete(context.Background(), client, &model.Request{
+			Messages: []*model.Message{{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "create a task"}},
+			}},
+		}, testCompletionSpec())
+		require.ErrorIs(t, err, assert.AnError)
+		assert.Len(t, client.requests, 1)
+	})
+
+	t.Run("invalid response envelope", func(t *testing.T) {
+		client := &recordingCompletionClient{response: &model.Response{
+			Content: []model.Message{
+				{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: `{}`}}},
+				{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: `{}`}}},
+			},
+			StopReason: "stop",
+		}}
+		response, err := Complete(context.Background(), client, &model.Request{
+			Messages: []*model.Message{{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "create a task"}},
+			}},
+		}, testCompletionSpec())
+		require.Error(t, err)
+		require.ErrorContains(t, err, "expected exactly 1 assistant message")
+		assert.Equal(t, []*model.Response{client.response}, response.Attempts)
+		assert.Len(t, client.requests, 1)
+	})
 }
 
 func TestCompleteRejectsStreamingRequests(t *testing.T) {
@@ -143,6 +283,21 @@ func TestCompleteRejectsStreamingRequests(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not support streaming")
+}
+
+func TestCompleteRejectsExampleWithoutSplitSchema(t *testing.T) {
+	spec := testCompletionSpec()
+	spec.Result.SchemaWithoutRootExample = nil
+
+	_, err := Complete(
+		context.Background(),
+		&recordingCompletionClient{},
+		&model.Request{},
+		spec,
+	)
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "result example requires a schema without the root example")
 }
 
 func TestCompleteRejectsToolDefinitions(t *testing.T) {

@@ -53,3 +53,33 @@ func TestTokenEstimatorCountsLargestToolProjection(t *testing.T) {
 	require.False(t, count.Exact)
 	require.Equal(t, chars+1, count.InputTokens)
 }
+
+func TestTokenEstimatorCountsLargestStructuredOutputProjection(t *testing.T) {
+	output := &StructuredOutput{
+		Name:                     "draft",
+		Description:              "Return a draft.",
+		Schema:                   []byte(`{"type":"object","example":{"title":"Inspect"},"properties":{"title":{"type":"string"}}}`),
+		SchemaWithoutRootExample: []byte(`{"type":"object","properties":{"title":{"type":"string"}}}`),
+		ExampleJSON:              rawjson.Message(`{"title":"Inspect"}`),
+	}
+	req := &Request{
+		Messages: []*Message{{
+			Role:  ConversationRoleUser,
+			Parts: []Part{TextPart{Text: "question"}},
+		}},
+		StructuredOutput: output,
+	}
+
+	annotated := len(output.Schema)
+	split := len(output.SchemaWithoutRootExample) + len(output.ExampleJSON)
+	projection := max(annotated, split)
+	chars := len(ConversationRoleUser) + len("question") +
+		len(output.Name) + len(output.Description) + projection
+
+	estimator := TokenEstimator{CharactersPerToken: 1, OverheadTokens: 1}
+	count, err := estimator.CountTokens(context.Background(), req)
+
+	require.NoError(t, err)
+	require.False(t, count.Exact)
+	require.Equal(t, chars+1, count.InputTokens)
+}

@@ -110,6 +110,10 @@ contract owned by the service itself:
 var Draft = Type("Draft", func() {
 	Attribute("name", String, "Task name")
 	Attribute("goal", String, "Outcome-style goal")
+	Example(map[string]any{
+		"name": "Investigate startup alarms",
+		"goal": "Explain every alarm observed during startup.",
+	})
 	Required("name", "goal")
 })
 
@@ -147,6 +151,7 @@ Running `goa gen` emits a service-owned package under `gen/<service>/completions
 that contains:
 
 - completion result types and unions
+- canonical root examples explicitly authored with Goa `Example(...)`
 - generated JSON codecs and validation helpers
 - typed `completion.Spec` values
 - generated `Complete<Name>(ctx, client, req)` helpers that request provider-enforced
@@ -154,9 +159,17 @@ structured output and decode the assistant response through the generated codec
 - generated `StreamComplete<Name>(ctx, client, req)` and `Decode<Name>Chunk(...)`
 helpers for typed completion streaming
 
-Streaming helpers stay on the raw `model.Streamer` surface: `completion_delta`
-chunks are preview-only, exactly one final `completion` chunk is canonical, and
-`Decode<Name>Chunk(...)` decodes only that final payload.
+Provider adapters send an authored root example through the provider's native
+structured-output example field when available. Unary helpers make one
+correction attempt when the generated codec rejects model-authored JSON. The
+correction includes the exact codec error, generated field guidance, and the
+authored example. `completion.Response.Attempts` retains every model response
+and its token usage in invocation order; a second invalid value is terminal.
+
+Streaming helpers stay on the raw `model.Streamer` surface. Providers may emit
+preview `completion_delta` chunks, exactly one final `completion` chunk is
+canonical, and `Decode<Name>Chunk(...)` decodes only that final payload.
+Streaming never restarts after exposing output.
 
 ### Agent‑as‑Tool Composition (Child Workflows)
 

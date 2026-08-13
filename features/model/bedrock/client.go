@@ -528,8 +528,9 @@ func structuredOutputUsesToolFallback(modelID string, output *model.StructuredOu
 // structuredOutputToolDefinition adapts a provider-neutral structured-output
 // request into the single forced tool definition used by
 // structuredOutputUsesToolFallback. The tool name and description are the
-// request's own Name/Description so the response's tool_use block reifies
-// back to the same structured-output identity in reifyStructuredOutputToolFallback.
+// request's own Name/Description. Its object-shaped input privately wraps the
+// declared completion value because Bedrock tools cannot accept an array or
+// primitive as their top-level input.
 func structuredOutputToolDefinition(output *model.StructuredOutput) (*model.ToolDefinition, error) {
 	if len(output.Schema) == 0 {
 		return nil, errors.New("bedrock: structured output requires a schema")
@@ -537,10 +538,14 @@ func structuredOutputToolDefinition(output *model.StructuredOutput) (*model.Tool
 	if output.Name == "" {
 		return nil, errors.New("bedrock: structured output requires a name")
 	}
+	input, err := structuredOutputToolInput(output)
+	if err != nil {
+		return nil, fmt.Errorf("bedrock: structured output %q: %w", output.Name, err)
+	}
 	return &model.ToolDefinition{
 		Name:        output.Name,
 		Description: output.Description,
-		Input:       model.ToolInputFromSchema(rawjson.Message(output.Schema)),
+		Input:       input,
 	}, nil
 }
 
@@ -560,7 +565,11 @@ func reifyStructuredOutputToolFallback(resp *model.Response, toolName string) er
 	if !ok || toolUse.Name != toolName {
 		return fmt.Errorf("bedrock: structured output tool fallback did not return the forced tool call %q", toolName)
 	}
-	resp.Content[0].Parts = []model.Part{model.TextPart{Text: string(toolUse.Input)}}
+	payload, err := unwrapStructuredOutputValue(toolUse.Input)
+	if err != nil {
+		return fmt.Errorf("bedrock: structured output tool fallback %q: %w", toolName, err)
+	}
+	resp.Content[0].Parts = []model.Part{model.TextPart{Text: string(payload)}}
 	return nil
 }
 

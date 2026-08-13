@@ -64,16 +64,18 @@ func smithyDocumentFromJSON(t *testing.T, raw string) document.Interface {
 // same canonical single-text shape either way.
 
 func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
-	client := &Client{defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"}
+	client := &Client{defaultModel: "us.anthropic.claude-opus-5"}
 	req := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "draft the task"}},
 		}},
 		StructuredOutput: &model.StructuredOutput{
-			Name:        "complete_draft",
-			Description: "Return the completed task draft.",
-			Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
+			Name:                     "complete_draft",
+			Description:              "Return the completed task draft.",
+			Schema:                   []byte(`{"type":"object","example":{"title":"Inspect evaporator"},"required":["title"],"properties":{"title":{"type":"string"}}}`),
+			SchemaWithoutRootExample: []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
+			ExampleJSON:              []byte(`{"title":"Inspect evaporator"}`),
 		},
 	}
 
@@ -90,6 +92,25 @@ func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
 	spec, ok := parts.toolConfig.Tools[0].(*brtypes.ToolMemberToolSpec)
 	require.True(t, ok)
 	require.Equal(t, "Return the completed task draft.", *spec.Value.Description)
+	require.Equal(t, []string{"tool-examples-2025-10-29"}, parts.additionalModelFields["anthropic_beta"])
+	tools, ok := parts.additionalModelFields["tools"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	require.Equal(t, []map[string]any{{
+		"value": map[string]any{"title": "Inspect evaporator"},
+	}}, tools[0]["input_examples"])
+	require.Equal(t, map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []any{"value"},
+		"properties": map[string]any{
+			"value": map[string]any{
+				"type":       "object",
+				"required":   []any{"title"},
+				"properties": map[string]any{"title": map[string]any{"type": "string"}},
+			},
+		},
+	}, tools[0]["input_schema"])
 }
 
 func TestPrepareRequestNovaStructuredOutputUsesNativeOutputConfig(t *testing.T) {
@@ -113,7 +134,7 @@ func TestPrepareRequestNovaStructuredOutputUsesNativeOutputConfig(t *testing.T) 
 }
 
 func TestPrepareRequestStructuredOutputRejectsExplicitTools(t *testing.T) {
-	client := &Client{defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"}
+	client := &Client{defaultModel: "us.anthropic.claude-opus-5"}
 	req := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
@@ -144,12 +165,12 @@ func TestCompleteAnthropicStructuredOutputReifiesToolCall(t *testing.T) {
 				Content: []brtypes.ContentBlock{&brtypes.ContentBlockMemberToolUse{Value: brtypes.ToolUseBlock{
 					ToolUseId: strPtr("tooluse_1"),
 					Name:      strPtr("complete_draft"),
-					Input:     smithyDocumentFromJSON(t, `{"title":"Inspect evaporator"}`),
+					Input:     smithyDocumentFromJSON(t, `{"value":{"title":"Inspect evaporator"}}`),
 				}}},
 			}},
 		},
 	}
-	client := &Client{defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0", runtime: runtime}
+	client := &Client{defaultModel: "us.anthropic.claude-opus-5", runtime: runtime}
 	req := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
@@ -173,9 +194,9 @@ func TestCompleteAnthropicStructuredOutputReifiesToolCall(t *testing.T) {
 }
 
 // TestChunkProcessorStructuredOutputToolFallbackEmitsCompletion proves the
-// streaming decoder routes the forced tool_use block through the same
-// completion-delta/completion contract as native OutputConfig streaming, so
-// runtime/agent/completion.Stream's DecodeChunk works unmodified either way.
+// streaming decoder removes the private tool envelope and emits the same final
+// completion payload as native OutputConfig streaming. It suppresses preview
+// deltas because the synthetic tool fragments contain the private envelope.
 func TestChunkProcessorStructuredOutputToolFallbackEmitsCompletion(t *testing.T) {
 	idx := int32(0)
 	var chunks []model.Chunk
@@ -211,7 +232,7 @@ func TestChunkProcessorStructuredOutputToolFallbackEmitsCompletion(t *testing.T)
 		Value: brtypes.ContentBlockDeltaEvent{
 			ContentBlockIndex: &idx,
 			Delta: &brtypes.ContentBlockDeltaMemberToolUse{
-				Value: brtypes.ToolUseBlockDelta{Input: strPtr(`{"title":"Inspect evaporator"}`)},
+				Value: brtypes.ToolUseBlockDelta{Input: strPtr(`{"value":{"title":"Inspect evaporator"}}`)},
 			},
 		},
 	}))
@@ -225,12 +246,8 @@ func TestChunkProcessorStructuredOutputToolFallbackEmitsCompletion(t *testing.T)
 		Value: brtypes.ConverseStreamMetadataEvent{},
 	}))
 
-	require.Len(t, chunks, 3)
-	delta, ok := chunks[0].(model.CompletionDeltaChunk)
-	require.True(t, ok, "expected a completion delta, not a tool call delta")
-	require.Equal(t, "complete_draft", delta.Delta.Name)
-
-	completion, ok := chunks[1].(model.CompletionChunk)
+	require.Len(t, chunks, 2)
+	completion, ok := chunks[0].(model.CompletionChunk)
 	require.True(t, ok, "expected a canonical completion, not a tool call")
 	require.JSONEq(t, `{"title":"Inspect evaporator"}`, string(completion.Completion.Payload))
 

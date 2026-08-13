@@ -181,17 +181,7 @@ func compactFieldIssuesJSON(issues []*tools.FieldIssue) string {
 // correctionFieldDescriptionsJSON renders generated descriptions for rejected
 // and allowed fields named by the structured issues shown to the model.
 func correctionFieldDescriptionsJSON(issues []*tools.FieldIssue, descriptions map[string]string) string {
-	selected := make(map[string]string)
-	for _, issue := range issues {
-		if description := descriptions[issue.Field]; description != "" {
-			selected[issue.Field] = description
-		}
-		for _, allowed := range issue.Allowed {
-			if description := descriptions[allowed]; description != "" {
-				selected[allowed] = description
-			}
-		}
-	}
+	selected := tools.FieldDescriptionsForIssues(issues, descriptions)
 	if len(selected) == 0 {
 		return ""
 	}
