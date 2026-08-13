@@ -401,10 +401,6 @@ var _ = Service("tasks", func() {
 `goa gen` emits `gen/<service>/completions/` with schemas, codecs, `completion.Spec` values, `Complete<Name>(...)`, `StreamComplete<Name>(...)`, and `Decode<Name>Chunk(...)`. Completion names are part of the contract: 1-64 ASCII characters, letters/digits/`_`/`-`, starting with a letter or digit.
 
 Unary helpers request provider-enforced structured output and decode with generated codecs. Streaming helpers expose preview `completion_delta` chunks but decode only the final canonical `completion` chunk. Providers that cannot preserve the structured-output contract fail explicitly with `model.ErrStructuredOutputUnsupported`.
-For Anthropic models on Bedrock, configure `bedrock.Options.StructuredModel`
-with a model that supports structured output. The adapter routes typed
-completions to that model, uses one forced strict tool call with a
-provider-normalized schema, then applies the complete generated codec.
 
 ### Agent-as-Tool Composition
 

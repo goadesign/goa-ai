@@ -1293,9 +1293,6 @@ type BedrockConfig struct {
 	HighModel string
 	// SmallModel is the model identifier used for small/cheap requests.
 	SmallModel string
-	// StructuredModel is the model identifier used for provider-enforced
-	// structured output.
-	StructuredModel string
 	// MaxTokens is the default completion token cap.
 	MaxTokens int
 	// ThinkingBudget is the default Bedrock thinking-token budget.
@@ -1351,15 +1348,14 @@ type VertexConfig struct {
 // Callers must supply the complete canonical transcript in Request.Messages.
 func (r *Runtime) NewBedrockModelClient(awsrt *bedrockruntime.Client, cfg BedrockConfig) (model.Client, error) {
 	opts := bedrock.Options{
-		Runtime:         awsrt,
-		DefaultModel:    cfg.DefaultModel,
-		HighModel:       cfg.HighModel,
-		SmallModel:      cfg.SmallModel,
-		StructuredModel: cfg.StructuredModel,
-		MaxTokens:       cfg.MaxTokens,
-		ThinkingBudget:  cfg.ThinkingBudget,
-		Temperature:     cfg.Temperature,
-		Logger:          r.logger,
+		Runtime:        awsrt,
+		DefaultModel:   cfg.DefaultModel,
+		HighModel:      cfg.HighModel,
+		SmallModel:     cfg.SmallModel,
+		MaxTokens:      cfg.MaxTokens,
+		ThinkingBudget: cfg.ThinkingBudget,
+		Temperature:    cfg.Temperature,
+		Logger:         r.logger,
 	}
 	return bedrock.New(awsrt, opts)
 }

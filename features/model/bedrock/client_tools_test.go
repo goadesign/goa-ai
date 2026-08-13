@@ -27,8 +27,6 @@ func TestEncodeTools_NoChoice(t *testing.T) {
 	require.Nil(t, cfg.ToolChoice)
 	require.Len(t, canonToSan, 1)
 	require.Len(t, sanToCanon, 1)
-	spec := cfg.Tools[0].(*brtypes.ToolMemberToolSpec)
-	require.Nil(t, spec.Value.Strict)
 }
 
 func TestEncodeTools_ModeAny(t *testing.T) {

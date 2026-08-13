@@ -64,10 +64,7 @@ func smithyDocumentFromJSON(t *testing.T, raw string) document.Interface {
 // same canonical single-text shape either way.
 
 func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
-	client := &Client{
-		defaultModel:    "us.anthropic.claude-opus-5",
-		structuredModel: "global.anthropic.claude-opus-4-6-v1",
-	}
+	client := &Client{defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"}
 	req := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
@@ -76,29 +73,12 @@ func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
 		StructuredOutput: &model.StructuredOutput{
 			Name:        "complete_draft",
 			Description: "Return the completed task draft.",
-			Schema: []byte(`{
-				"type":"object",
-				"additionalProperties":false,
-				"required":["judgments"],
-				"properties":{
-					"judgments":{
-						"type":"array",
-						"minItems":1,
-						"items":{
-							"type":"object",
-							"additionalProperties":false,
-							"required":["claim_id"],
-							"properties":{"claim_id":{"type":"string","minLength":1}}
-						}
-					}
-				}
-			}`),
+			Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
 		},
 	}
 
 	parts, err := client.prepareRequest(req)
 	require.NoError(t, err)
-	require.Equal(t, "global.anthropic.claude-opus-4-6-v1", parts.modelID)
 	require.Nil(t, parts.outputConfig, "must not use native OutputConfig for Anthropic models")
 	require.NotNil(t, parts.toolConfig, "must force a single tool call instead")
 	require.Len(t, parts.toolConfig.Tools, 1)
@@ -110,83 +90,6 @@ func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
 	spec, ok := parts.toolConfig.Tools[0].(*brtypes.ToolMemberToolSpec)
 	require.True(t, ok)
 	require.Equal(t, "Return the completed task draft.", *spec.Value.Description)
-	require.NotNil(t, spec.Value.Strict)
-	require.True(t, *spec.Value.Strict)
-	schema, err := decodeDocument(spec.Value.InputSchema.(*brtypes.ToolInputSchemaMemberJson).Value)
-	require.NoError(t, err)
-	require.JSONEq(t, `{
-		"type":"object",
-		"additionalProperties":false,
-		"required":["judgments"],
-		"properties":{
-			"judgments":{
-				"type":"array",
-				"minItems":1,
-				"items":{
-					"type":"object",
-					"additionalProperties":false,
-					"required":["claim_id"],
-					"properties":{"claim_id":{"type":"string"}}
-				}
-			}
-		}
-	}`, string(schema))
-}
-
-func TestPrepareRequestOrdinaryCallKeepsClassModel(t *testing.T) {
-	client := &Client{
-		defaultModel:    "us.anthropic.claude-opus-5",
-		structuredModel: "global.anthropic.claude-opus-4-6-v1",
-	}
-
-	parts, err := client.prepareRequest(&model.Request{Messages: []*model.Message{{
-		Role:  model.ConversationRoleUser,
-		Parts: []model.Part{model.TextPart{Text: "answer normally"}},
-	}}})
-
-	require.NoError(t, err)
-	require.Equal(t, "us.anthropic.claude-opus-5", parts.modelID)
-	require.Nil(t, parts.toolConfig)
-	require.Nil(t, parts.outputConfig)
-}
-
-func TestPrepareRequestRejectsUnsupportedAnthropicStructuredModel(t *testing.T) {
-	client := &Client{defaultModel: "us.anthropic.claude-opus-5"}
-
-	_, err := client.prepareRequest(&model.Request{
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "classify"}},
-		}},
-		StructuredOutput: &model.StructuredOutput{
-			Name:   "result",
-			Schema: []byte(`{"type":"object"}`),
-		},
-	})
-
-	require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
-	require.ErrorContains(t, err, "us.anthropic.claude-opus-5")
-}
-
-func TestAnthropicStrictStructuredOutputSupportIsExplicit(t *testing.T) {
-	testCases := []struct {
-		modelID string
-		want    bool
-	}{
-		{modelID: "global.anthropic.claude-opus-4-6-v1", want: true},
-		{modelID: "us.anthropic.claude-opus-4-5-20251101-v1:0", want: true},
-		{modelID: "global.anthropic.claude-sonnet-4-5-20250929-v1:0", want: true},
-		{modelID: "us.anthropic.claude-haiku-4-5-20251001-v1:0", want: true},
-		{modelID: "us.anthropic.claude-opus-5", want: false},
-		{modelID: "global.anthropic.claude-sonnet-5", want: false},
-		{modelID: "amazon.nova-pro-v1:0", want: false},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.modelID, func(t *testing.T) {
-			require.Equal(t, tc.want, anthropicStrictStructuredOutputSupported(tc.modelID))
-		})
-	}
 }
 
 func TestPrepareRequestNovaStructuredOutputUsesNativeOutputConfig(t *testing.T) {

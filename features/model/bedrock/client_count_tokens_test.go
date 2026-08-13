@@ -100,39 +100,6 @@ func TestCountTokens_UsesConverseRequestPreparation(t *testing.T) {
 	require.NotNil(t, converse.Value.ToolConfig)
 }
 
-func TestCountTokens_StructuredOutputUsesStructuredModel(t *testing.T) {
-	rt := &countTokensRuntimeClient{}
-	client := &Client{
-		runtime:         rt,
-		defaultModel:    "global.anthropic.claude-sonnet-5",
-		structuredModel: "global.anthropic.claude-opus-4-6-v1",
-		think:           defaultThinkingBudget,
-	}
-
-	count, err := client.CountTokens(context.Background(), &model.Request{
-		ModelClass: model.ModelClassSmall,
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "classify"}},
-		}},
-		StructuredOutput: &model.StructuredOutput{
-			Name:        "judgments",
-			Description: "Return judgments.",
-			Schema:      []byte(`{"type":"object","properties":{"judgments":{"type":"array"}}}`),
-		},
-	})
-
-	require.NoError(t, err)
-	require.Equal(t, "global.anthropic.claude-opus-4-6-v1", count.Model)
-	require.Equal(t, model.ModelClassSmall, count.ModelClass)
-	require.Equal(t, "anthropic.claude-opus-4-6-v1", *rt.input.ModelId)
-	converse := rt.input.Input.(*brtypes.CountTokensInputMemberConverse)
-	require.Len(t, converse.Value.ToolConfig.Tools, 1)
-	spec := converse.Value.ToolConfig.Tools[0].(*brtypes.ToolMemberToolSpec)
-	require.NotNil(t, spec.Value.Strict)
-	require.True(t, *spec.Value.Strict)
-}
-
 // TestCountTokens_SendsFoundationModelID verifies that a count configured with
 // a cross-region inference profile sends the backing foundation model ID on the
 // wire (Runtime CountTokens rejects the profile ID), while the returned
