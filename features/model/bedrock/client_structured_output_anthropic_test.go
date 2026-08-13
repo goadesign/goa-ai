@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
@@ -153,8 +154,8 @@ func TestPrepareRequestStructuredOutputRejectsExplicitTools(t *testing.T) {
 }
 
 // TestCompleteAnthropicStructuredOutputReifiesToolCall proves the forced
-// tool_use response Bedrock returns for the fallback is rewritten into the
-// same single-TextPart shape callers get from the native OutputConfig path, so
+// tool_use response Bedrock returns for the fallback is rewritten into
+// completion text while provider-issued thinking is preserved, so
 // runtime/agent/completion.DecodeResponse works unmodified either way.
 func TestCompleteAnthropicStructuredOutputReifiesToolCall(t *testing.T) {
 	runtime := &recordingConverseRuntime{
@@ -162,11 +163,21 @@ func TestCompleteAnthropicStructuredOutputReifiesToolCall(t *testing.T) {
 			StopReason: brtypes.StopReasonToolUse,
 			Output: &brtypes.ConverseOutputMemberMessage{Value: brtypes.Message{
 				Role: brtypes.ConversationRoleAssistant,
-				Content: []brtypes.ContentBlock{&brtypes.ContentBlockMemberToolUse{Value: brtypes.ToolUseBlock{
-					ToolUseId: strPtr("tooluse_1"),
-					Name:      strPtr("complete_draft"),
-					Input:     smithyDocumentFromJSON(t, `{"value":{"title":"Inspect evaporator"}}`),
-				}}},
+				Content: []brtypes.ContentBlock{
+					&brtypes.ContentBlockMemberReasoningContent{
+						Value: &brtypes.ReasoningContentBlockMemberReasoningText{
+							Value: brtypes.ReasoningTextBlock{
+								Text:      aws.String("reasoning"),
+								Signature: aws.String("signature"),
+							},
+						},
+					},
+					&brtypes.ContentBlockMemberToolUse{Value: brtypes.ToolUseBlock{
+						ToolUseId: strPtr("tooluse_1"),
+						Name:      strPtr("complete_draft"),
+						Input:     smithyDocumentFromJSON(t, `{"value":{"title":"Inspect evaporator"}}`),
+					}},
+				},
 			}},
 		},
 	}
@@ -186,8 +197,9 @@ func TestCompleteAnthropicStructuredOutputReifiesToolCall(t *testing.T) {
 	resp, err := client.Complete(t.Context(), req)
 	require.NoError(t, err)
 	require.Len(t, resp.Content, 1)
-	require.Len(t, resp.Content[0].Parts, 1)
-	text, ok := resp.Content[0].Parts[0].(model.TextPart)
+	require.Len(t, resp.Content[0].Parts, 2)
+	require.Equal(t, model.ThinkingPart{Text: "reasoning", Signature: "signature", Final: true}, resp.Content[0].Parts[0])
+	text, ok := resp.Content[0].Parts[1].(model.TextPart)
 	require.True(t, ok, "forced tool call must be reified into a TextPart")
 	require.JSONEq(t, `{"title":"Inspect evaporator"}`, text.Text)
 	require.Empty(t, resp.ToolCalls(), "the canonical response must not surface tool calls")

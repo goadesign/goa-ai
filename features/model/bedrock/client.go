@@ -550,26 +550,41 @@ func structuredOutputToolDefinition(output *model.StructuredOutput) (*model.Tool
 }
 
 // reifyStructuredOutputToolFallback rewrites the forced tool_use response
-// produced by structuredOutputUsesToolFallback into the canonical single-text
-// shape every model.Client caller expects for structured output, regardless of
-// which wire mechanism the provider adapter used to obtain it.
+// produced by structuredOutputUsesToolFallback into canonical completion text.
+// Provider-issued thinking remains in place; exactly one matching tool call is
+// required and every other content part is rejected.
 func reifyStructuredOutputToolFallback(resp *model.Response, toolName string) error {
 	if len(resp.Content) != 1 {
 		return fmt.Errorf("bedrock: structured output tool fallback expected exactly one assistant message, got %d", len(resp.Content))
 	}
 	parts := resp.Content[0].Parts
-	if len(parts) != 1 {
-		return fmt.Errorf("bedrock: structured output tool fallback expected exactly one content part, got %d", len(parts))
+	canonical := make([]model.Part, 0, len(parts))
+	found := false
+	for _, part := range parts {
+		switch value := part.(type) {
+		case model.ThinkingPart:
+			canonical = append(canonical, value)
+		case model.ToolUsePart:
+			if found {
+				return fmt.Errorf("bedrock: structured output tool fallback returned multiple tool calls")
+			}
+			if value.Name != toolName {
+				return fmt.Errorf("bedrock: structured output tool fallback did not return the forced tool call %q", toolName)
+			}
+			payload, err := unwrapStructuredOutputValue(value.Input)
+			if err != nil {
+				return fmt.Errorf("bedrock: structured output tool fallback %q: %w", toolName, err)
+			}
+			canonical = append(canonical, model.TextPart{Text: string(payload)})
+			found = true
+		default:
+			return fmt.Errorf("bedrock: structured output tool fallback returned unexpected content part %T", part)
+		}
 	}
-	toolUse, ok := parts[0].(model.ToolUsePart)
-	if !ok || toolUse.Name != toolName {
+	if !found {
 		return fmt.Errorf("bedrock: structured output tool fallback did not return the forced tool call %q", toolName)
 	}
-	payload, err := unwrapStructuredOutputValue(toolUse.Input)
-	if err != nil {
-		return fmt.Errorf("bedrock: structured output tool fallback %q: %w", toolName, err)
-	}
-	resp.Content[0].Parts = []model.Part{model.TextPart{Text: string(payload)}}
+	resp.Content[0].Parts = canonical
 	return nil
 }
 
