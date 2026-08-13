@@ -110,6 +110,43 @@ func TestNewUnionDiscriminatorErrorDistinguishesMissingAndEmpty(t *testing.T) {
 	assert.Equal(t, []string{"schedule"}, explicitEmpty.Issues()[0].Allowed)
 }
 
+func TestFieldDescriptionsForIssuesDistinguishesFieldsFromEnumValues(t *testing.T) {
+	descriptions := map[string]string{
+		"mode":     "Execution mode",
+		"schedule": "Schedule payload",
+		"timeout":  "Timeout payload",
+	}
+
+	enumDescriptions := FieldDescriptionsForIssues([]*FieldIssue{{
+		Field:      "mode",
+		Constraint: "invalid_enum_value",
+		Allowed:    []string{"schedule"},
+	}}, descriptions)
+	unknownDescriptions := FieldDescriptionsForIssues([]*FieldIssue{{
+		Field:      "unexpected",
+		Constraint: "unknown_field",
+		Allowed:    []string{"schedule", "timeout"},
+	}}, descriptions)
+	nestedDescriptions := FieldDescriptionsForIssues([]*FieldIssue{{
+		Field:      "profile.extra",
+		Constraint: "unknown_field",
+		Allowed:    []string{"name", "timezone"},
+	}}, map[string]string{
+		"profile.name":     "Profile name",
+		"profile.timezone": "Profile timezone",
+	})
+
+	assert.Equal(t, map[string]string{"mode": "Execution mode"}, enumDescriptions)
+	assert.Equal(t, map[string]string{
+		"schedule": "Schedule payload",
+		"timeout":  "Timeout payload",
+	}, unknownDescriptions)
+	assert.Equal(t, map[string]string{
+		"profile.name":     "Profile name",
+		"profile.timezone": "Profile timezone",
+	}, nestedDescriptions)
+}
+
 func TestNewUnionDiscriminatorErrorPanicsOnInvalidConstruction(t *testing.T) {
 	tests := []struct {
 		name string

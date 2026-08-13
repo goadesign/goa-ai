@@ -12,13 +12,19 @@ import (
 )
 
 type recordingClient struct {
-	request  *model.Request
-	response *model.Response
-	err      error
+	request   *model.Request
+	requests  []*model.Request
+	response  *model.Response
+	responses []*model.Response
+	err       error
 }
 
 func (c *recordingClient) Complete(_ context.Context, request *model.Request) (*model.Response, error) {
 	c.request = request
+	c.requests = append(c.requests, request)
+	if len(c.responses) >= len(c.requests) {
+		return c.responses[len(c.requests)-1], nil
+	}
 	return c.response, c.err
 }
 
@@ -51,9 +57,64 @@ func TestJudgeUsesStrictHighReasoningRequest(t *testing.T) {
 	require.NotNil(t, client.request.StructuredOutput)
 	assert.Equal(t, "eval_judgments", client.request.StructuredOutput.Name)
 	assert.JSONEq(t, responseSchema, string(client.request.StructuredOutput.Schema))
+	assert.Empty(t, client.request.StructuredOutput.SchemaWithoutRootExample)
+	assert.Empty(t, client.request.StructuredOutput.ExampleJSON)
 	require.Len(t, client.request.Messages, 2)
 	user := client.request.Messages[1].Parts[0].(model.TextPart).Text
 	assert.JSONEq(t, `{"assertions":[{"claim_id":"complete","output":"Every alarm is listed.","claim":"The answer is complete."}]}`, user)
+}
+
+func TestJudgeCorrectsSchemaInvalidResponse(t *testing.T) {
+	client := &recordingClient{responses: []*model.Response{
+		modelResponse(`{"judgments":"not an array"}`),
+		modelResponse(`{"judgments":[
+			{"claim_id":"complete","label":"entailed","rationale":"The output directly establishes the claim."}
+		]}`),
+	}}
+
+	judgments, err := New(client).Judge(context.Background(), []aieval.Assertion{{
+		ClaimID: "complete",
+		Output:  "Every alarm is listed.",
+		Claim:   "The answer is complete.",
+	}})
+
+	require.NoError(t, err)
+	require.Len(t, judgments, 1)
+	assert.Equal(t, aieval.Entailed, judgments[0].Label)
+	require.Len(t, client.requests, 2)
+	require.Len(t, client.requests[1].Messages, 4)
+	rejected := client.requests[1].Messages[2].Parts[0].(model.TextPart).Text
+	assert.JSONEq(t, `{"judgments":"not an array"}`, rejected)
+	correction := client.requests[1].Messages[3].Parts[0].(model.TextPart).Text
+	assert.Contains(t, correction, "cannot unmarshal string")
+	assert.NotContains(t, correction, "JSON shape example")
+}
+
+func TestJudgeCorrectsClaimContractFailure(t *testing.T) {
+	client := &recordingClient{responses: []*model.Response{
+		modelResponse(`{"judgments":[
+			{"claim_id":"other","label":"entailed","rationale":"The output establishes another claim."}
+		]}`),
+		modelResponse(`{"judgments":[
+			{"claim_id":"complete","label":"entailed","rationale":"The output directly establishes the claim."}
+		]}`),
+	}}
+
+	judgments, err := New(client).Judge(context.Background(), []aieval.Assertion{{
+		ClaimID: "complete",
+		Output:  "Every alarm is listed.",
+		Claim:   "The answer is complete.",
+	}})
+
+	require.NoError(t, err)
+	assert.Equal(t, []aieval.Judgment{{
+		ClaimID:   "complete",
+		Label:     aieval.Entailed,
+		Rationale: "The output directly establishes the claim.",
+	}}, judgments)
+	require.Len(t, client.requests, 2)
+	correction := client.requests[1].Messages[3].Parts[0].(model.TextPart).Text
+	assert.Contains(t, correction, `judgment references unknown claim "other"`)
 }
 
 func TestJudgeRejectsInvalidResponses(t *testing.T) {
@@ -100,7 +161,8 @@ func TestJudgeRejectsInvalidResponses(t *testing.T) {
 			_, err := New(client).Judge(context.Background(), []aieval.Assertion{{
 				ClaimID: "complete", Output: "Done.", Claim: "Complete.",
 			}})
-			assert.ErrorContains(t, err, test.wantErr)
+			require.ErrorContains(t, err, test.wantErr)
+			assert.Len(t, client.requests, 2)
 		})
 	}
 }

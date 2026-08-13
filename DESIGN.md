@@ -73,6 +73,10 @@ it explicitly with `Completion(...)` on a service:
 var Draft = Type("Draft", func() {
     Attribute("name", String, "Task name")
     Attribute("goal", String, "Outcome-style goal")
+    Example(map[string]any{
+        "name": "Investigate startup alarms",
+        "goal": "Explain every alarm observed during startup.",
+    })
     Required("name", "goal")
 })
 
@@ -90,12 +94,13 @@ start with a letter or digit.
 This generates a service-owned completions package with:
 
 - the completion result schema
+- the canonical authored root example, when the return type declares one
 - generated result codecs and validation helpers
 - typed `completion.Spec` values
 - unary helpers that request provider-enforced structured output and decode the
   assistant response through the generated codec
-- streaming helpers that surface preview `completion_delta` fragments plus one
-  canonical final `completion` payload
+- streaming helpers that may surface preview `completion_delta` fragments and
+  always expose one canonical final `completion` payload
 
 Streaming completions stay on the raw `model.Streamer` surface, and generated
 `Decode<Name>Chunk(...)` helpers decode only the final canonical payload.
@@ -104,6 +109,17 @@ Providers that do not implement structured output fail explicitly with
 Generated schemas stay provider-neutral. Provider adapters may normalize that
 canonical schema to a provider-specific subset for constrained decoding, but
 they must fail explicitly instead of redefining the service contract.
+Adapters with provider-native structured-output examples receive the generated
+root example separately from the schema. Unary helpers ask the model once for a
+corrected value when the generated codec rejects its JSON, supplying the exact
+codec error, structured field issues, field descriptions, and authored example
+that code generation already owns. `completion.Response.Attempts` retains both
+model responses and their per-invocation token usage. A second invalid response
+is terminal.
+Streaming helpers do not correct invalid output because callers may already have
+observed preview chunks. Provider adapters may suppress previews when their wire
+representation contains private framing that is absent from the completion
+contract.
 
 The design intentionally keeps completions separate from toolsets: toolsets model
 callable capabilities, while completions model final assistant answers. Both reuse

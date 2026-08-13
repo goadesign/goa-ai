@@ -33,12 +33,14 @@ type (
 		Codec tools.JSONCodec[T]
 	}
 
-	// Response contains the raw model response plus the decoded typed value.
+	// Response contains every model response plus the decoded typed value.
 	Response[T any] struct {
 		// Value is the decoded typed completion result.
 		Value T
-		// Raw is the original provider-agnostic model response.
-		Raw *model.Response
+		// Attempts contains provider-agnostic model responses in invocation order.
+		// A successful first response produces one entry; a corrected completion
+		// produces the rejected response followed by the accepted response.
+		Attempts []*model.Response
 	}
 
 	// completionStream validates the typed completion streaming contract on top of
@@ -71,14 +73,33 @@ func Complete[T any](ctx context.Context, client model.Client, req *model.Reques
 	if err != nil {
 		return nil, err
 	}
-	value, err := DecodeResponse(raw, spec)
+	response := &Response[T]{Attempts: []*model.Response{raw}}
+	payload, err := completionPayload(raw, spec)
 	if err != nil {
-		return nil, err
+		return response, err
 	}
-	return &Response[T]{
-		Value: value,
-		Raw:   raw,
-	}, nil
+	value, err := decodePayload(payload, spec)
+	if err != nil {
+		corrected, correctionErr := correctionRequest(cloned, raw.Content[0], err, spec)
+		if correctionErr != nil {
+			return response, correctionErr
+		}
+		raw, correctionErr = client.Complete(ctx, corrected)
+		if correctionErr != nil {
+			return response, correctionErr
+		}
+		response.Attempts = append(response.Attempts, raw)
+		value, correctionErr = DecodeResponse(raw, spec)
+		if correctionErr != nil {
+			return response, fmt.Errorf(
+				"completion %q remained invalid after 1 correction: %w",
+				spec.Name,
+				correctionErr,
+			)
+		}
+	}
+	response.Value = value
+	return response, nil
 }
 
 // Stream starts a typed completion stream using the provided generated spec.
@@ -108,20 +129,31 @@ func Stream[T any](ctx context.Context, client model.Client, req *model.Request,
 // typed codec from the completion spec.
 func DecodeResponse[T any](resp *model.Response, spec Spec[T]) (T, error) {
 	var zero T
+	payload, err := completionPayload(resp, spec)
+	if err != nil {
+		return zero, err
+	}
+	return decodePayload(payload, spec)
+}
+
+// completionPayload validates the provider response envelope separately from
+// the generated payload codec. Only codec failures are correctable by asking the
+// model for another structured value.
+func completionPayload[T any](resp *model.Response, spec Spec[T]) ([]byte, error) {
 	if resp == nil {
-		return zero, errors.New("completion response is nil")
+		return nil, errors.New("completion response is nil")
 	}
 	if err := model.ValidateResponse(resp); err != nil {
-		return zero, fmt.Errorf("completion %q response is invalid: %w", spec.Name, err)
+		return nil, fmt.Errorf("completion %q response is invalid: %w", spec.Name, err)
 	}
 	if len(resp.ToolCalls()) > 0 {
-		return zero, fmt.Errorf("completion %q returned tool calls", spec.Name)
+		return nil, fmt.Errorf("completion %q returned tool calls", spec.Name)
 	}
 	payload, err := responseJSON(resp)
 	if err != nil {
-		return zero, fmt.Errorf("decode completion %q: %w", spec.Name, err)
+		return nil, fmt.Errorf("decode completion %q: %w", spec.Name, err)
 	}
-	return decodePayload(payload, spec)
+	return payload, nil
 }
 
 // DecodeChunk decodes the canonical final completion chunk from a typed
@@ -241,6 +273,73 @@ func decodePayload[T any](payload []byte, spec Spec[T]) (T, error) {
 	return value, nil
 }
 
+// correctionRequest appends the rejected assistant response and one
+// framework-owned correction turn. Generated validation issues and examples
+// remain structured until this model-facing boundary.
+func correctionRequest[T any](
+	req *model.Request,
+	rejected model.Message,
+	decodeErr error,
+	spec Spec[T],
+) (*model.Request, error) {
+	text, err := correctionText(decodeErr, spec.Result)
+	if err != nil {
+		return nil, fmt.Errorf("build completion %q correction: %w", spec.Name, err)
+	}
+	rejected.Parts = append([]model.Part(nil), rejected.Parts...)
+	messages := make([]*model.Message, 0, len(req.Messages)+2)
+	messages = append(messages, req.Messages...)
+	messages = append(messages,
+		&rejected,
+		&model.Message{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: text}},
+		},
+	)
+	corrected := *req
+	corrected.Messages = messages
+	return &corrected, nil
+}
+
+// correctionText renders codec-owned validation evidence without parsing the
+// JSON Schema or inventing a second validation language.
+func correctionText(decodeErr error, result tools.TypeSpec) (string, error) {
+	var text strings.Builder
+	text.WriteString("The previous structured response did not match the required JSON contract.\n")
+	fmt.Fprintf(&text, "Validation error: %s\n", decodeErr)
+
+	var validation *tools.ValidationError
+	if errors.As(decodeErr, &validation) {
+		issues := validation.Issues()
+		issuesJSON, err := json.Marshal(issues)
+		if err != nil {
+			return "", fmt.Errorf("encode validation issues: %w", err)
+		}
+		fmt.Fprintf(&text, "Field issues: %s\n", issuesJSON)
+		descriptions := tools.FieldDescriptionsForIssues(
+			issues,
+			validation.Descriptions(),
+			result.FieldDescriptions,
+		)
+		if len(descriptions) > 0 {
+			descriptionsJSON, err := json.Marshal(descriptions)
+			if err != nil {
+				return "", fmt.Errorf("encode field guidance: %w", err)
+			}
+			fmt.Fprintf(&text, "Field guidance: %s\n", descriptionsJSON)
+		}
+	}
+	if example := bytes.TrimSpace(result.ExampleJSON); len(example) > 0 {
+		fmt.Fprintf(
+			&text,
+			"JSON shape example (replace example values with values that satisfy this request): %s\n",
+			example,
+		)
+	}
+	text.WriteString("Return the complete corrected JSON value. Do not discuss the correction.")
+	return text.String(), nil
+}
+
 // newCompletionStream wraps a provider-neutral streamer with the typed
 // completion streaming contract.
 func newCompletionStream[T any](inner model.Streamer, spec Spec[T]) model.Streamer {
@@ -269,10 +368,18 @@ func structuredOutputFor[T any](spec Spec[T]) (*model.StructuredOutput, error) {
 	if spec.Codec.FromJSON == nil || spec.Codec.ToJSON == nil {
 		return nil, fmt.Errorf("completion %q requires a bidirectional result codec", spec.Name)
 	}
+	if len(spec.Result.ExampleJSON) > 0 && len(spec.Result.SchemaWithoutRootExample) == 0 {
+		return nil, fmt.Errorf(
+			"completion %q result example requires a schema without the root example",
+			spec.Name,
+		)
+	}
 	return &model.StructuredOutput{
-		Name:        string(spec.Name),
-		Schema:      append([]byte(nil), spec.Result.Schema...),
-		Description: spec.Description,
+		Name:                     string(spec.Name),
+		Schema:                   append([]byte(nil), spec.Result.Schema...),
+		SchemaWithoutRootExample: append([]byte(nil), spec.Result.SchemaWithoutRootExample...),
+		ExampleJSON:              append(tools.RawJSON(nil), spec.Result.ExampleJSON...),
+		Description:              spec.Description,
 	}, nil
 }
 
