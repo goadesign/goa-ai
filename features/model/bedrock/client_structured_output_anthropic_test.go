@@ -80,6 +80,7 @@ func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
 				"properties":{
 					"judgments":{
 						"type":"array",
+						"minItems":1,
 						"items":{
 							"type":"object",
 							"additionalProperties":false,
@@ -116,6 +117,7 @@ func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
 		"properties":{
 			"judgments":{
 				"type":"array",
+				"minItems":1,
 				"items":{
 					"type":"object",
 					"additionalProperties":false,

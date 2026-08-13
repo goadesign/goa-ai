@@ -64,6 +64,7 @@ Return exactly one judgment for every claim_id. Do not add, remove, merge, or re
   "properties": {
     "judgments": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
         "additionalProperties": false,
