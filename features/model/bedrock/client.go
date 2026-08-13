@@ -320,6 +320,13 @@ func (c *Client) prepareRequest(req *model.Request) (*requestParts, error) {
 	toolDefs, toolChoice := req.Tools, req.ToolChoice
 	useToolFallback := structuredOutputUsesToolFallback(modelID, req.StructuredOutput)
 	if useToolFallback {
+		if !anthropicStrictStructuredOutputSupported(modelID) {
+			return nil, fmt.Errorf(
+				"bedrock: model %q does not support strict structured output: %w",
+				modelID,
+				model.ErrStructuredOutputUnsupported,
+			)
+		}
 		if len(req.Tools) > 0 || req.ToolChoice != nil {
 			return nil, errors.New("bedrock: structured output cannot be combined with request tool definitions")
 		}
@@ -335,9 +342,6 @@ func (c *Client) prepareRequest(req *model.Request) (*requestParts, error) {
 		return nil, err
 	}
 	if useToolFallback {
-		if !anthropicStrictStructuredOutputSupported(modelID) {
-			additionalModelFields = addAnthropicBeta(additionalModelFields, claudebeta.StructuredOutputs)
-		}
 		enableStrictStructuredOutputTool(toolConfig)
 	}
 	var outputConfig *brtypes.OutputConfig
@@ -485,7 +489,7 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Reques
 			}
 			fields["thinking"] = thinkingCfg
 			if thinking.interleaved {
-				fields = addAnthropicBeta(fields, "interleaved-thinking-2025-05-14")
+				addAnthropicBeta(fields, "interleaved-thinking-2025-05-14")
 			}
 		}
 	}
@@ -720,19 +724,15 @@ func additionalModelFieldsForRequest(fields map[string]any, req *model.Request) 
 	return out
 }
 
-func addAnthropicBeta(fields map[string]any, beta string) map[string]any {
+func addAnthropicBeta(fields map[string]any, beta string) {
 	if beta == "" {
-		return fields
-	}
-	if fields == nil {
-		fields = make(map[string]any)
+		return
 	}
 	values, _ := fields["anthropic_beta"].([]string)
 	if slices.Contains(values, beta) {
-		return fields
+		return
 	}
 	fields["anthropic_beta"] = append(values, beta)
-	return fields
 }
 
 func removeAnthropicBeta(fields map[string]any, beta string) {
@@ -1332,7 +1332,7 @@ func anthropicToolExampleFields(tools []map[string]any, hasExamples bool, choice
 			}
 		}
 	}
-	fields = addAnthropicBeta(fields, claudebeta.ToolExamples)
+	addAnthropicBeta(fields, claudebeta.ToolExamples)
 	return fields
 }
 
