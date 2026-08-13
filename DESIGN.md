@@ -746,10 +746,13 @@ query. This keeps correlation state in the issuing system instead of asking a
 model to reproduce it. Parallel source invocations are valid. When a live page
 returns zero items and a next cursor, the runtime advances that chain before
 planning because no semantic evidence exists for the model to judge. Once a
-page returns items, the runtime derives one temporary no-argument action for
-that live source invocation. Each action has a stable model-facing name and
-describes the original model-visible query, while execution retains the
-canonical continuation tool name. Selecting an action binds the exact source
+page returns items with a next cursor, the runtime derives one temporary
+no-argument action for that live source invocation. A truncated result without
+a cursor exposes its refinement hint instead. Each action has a stable
+model-facing name and describes the original model-visible query, while execution retains the
+canonical continuation tool name. The bounded-result reminder names that same
+temporary action, never the hidden canonical tool, so the prompt and advertised
+catalog cannot disagree. Selecting an action binds the exact source
 tool-call identity and cursor into the executable request. Successful
 continuation results carry that source identity through the durable tool-call
 record, so repeated equal queries, equal opaque cursors, sequential pages, and

@@ -196,6 +196,26 @@ func TestEnforceToolResultContractsRejectsTruncatedBoundsWithoutContinuation(t *
 	require.Contains(t, err.Error(), "truncated result without next_cursor or refinement_hint")
 }
 
+func TestEnforceToolResultContractsRejectsEmptyNextCursor(t *testing.T) {
+	spec := newAnyJSONSpec("tool", "svc.ts")
+	spec.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{
+		CursorField: "cursor", NextCursorField: "next_cursor",
+	}}
+	cursor := ""
+	err := (&Runtime{}).enforceToolResultContracts(spec, planner.ToolRequest{
+		Name: "tool", ToolCallID: "tool-1",
+	}, &planner.ToolResult{
+		Name: "tool", Result: map[string]any{"ok": true},
+		Bounds: &agent.Bounds{
+			Truncated:      true,
+			NextCursor:     &cursor,
+			RefinementHint: "narrow the query",
+		},
+	})
+
+	require.ErrorContains(t, err, "empty next_cursor")
+}
+
 func TestEnforceToolResultContractsRejectsCursorWithoutTruncation(t *testing.T) {
 	spec := newAnyJSONSpec("tool", "svc.ts")
 	spec.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{
