@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
+	"goa.design/goa-ai/features/model/internal/claudebeta"
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
@@ -64,10 +65,7 @@ func smithyDocumentFromJSON(t *testing.T, raw string) document.Interface {
 // same canonical single-text shape either way.
 
 func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
-	client := &Client{
-		defaultModel:    "us.anthropic.claude-opus-5",
-		structuredModel: "global.anthropic.claude-opus-4-6-v1",
-	}
+	client := &Client{defaultModel: "us.anthropic.claude-opus-5"}
 	req := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
@@ -98,7 +96,8 @@ func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
 
 	parts, err := client.prepareRequest(req)
 	require.NoError(t, err)
-	require.Equal(t, "global.anthropic.claude-opus-4-6-v1", parts.modelID)
+	require.Equal(t, "us.anthropic.claude-opus-5", parts.modelID)
+	require.Equal(t, []string{claudebeta.StructuredOutputs}, parts.additionalModelFields["anthropic_beta"])
 	require.Nil(t, parts.outputConfig, "must not use native OutputConfig for Anthropic models")
 	require.NotNil(t, parts.toolConfig, "must force a single tool call instead")
 	require.Len(t, parts.toolConfig.Tools, 1)
@@ -148,24 +147,6 @@ func TestPrepareRequestOrdinaryCallKeepsClassModel(t *testing.T) {
 	require.Equal(t, "us.anthropic.claude-opus-5", parts.modelID)
 	require.Nil(t, parts.toolConfig)
 	require.Nil(t, parts.outputConfig)
-}
-
-func TestPrepareRequestRejectsUnsupportedAnthropicStructuredModel(t *testing.T) {
-	client := &Client{defaultModel: "us.anthropic.claude-opus-5"}
-
-	_, err := client.prepareRequest(&model.Request{
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "classify"}},
-		}},
-		StructuredOutput: &model.StructuredOutput{
-			Name:   "result",
-			Schema: []byte(`{"type":"object"}`),
-		},
-	})
-
-	require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
-	require.ErrorContains(t, err, "us.anthropic.claude-opus-5")
 }
 
 func TestAnthropicStrictStructuredOutputSupportIsExplicit(t *testing.T) {
