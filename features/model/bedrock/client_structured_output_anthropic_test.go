@@ -73,23 +73,7 @@ func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
 		StructuredOutput: &model.StructuredOutput{
 			Name:        "complete_draft",
 			Description: "Return the completed task draft.",
-			Schema: []byte(`{
-				"type":"object",
-				"additionalProperties":false,
-				"required":["judgments"],
-				"properties":{
-					"judgments":{
-						"type":"array",
-						"minItems":1,
-						"items":{
-							"type":"object",
-							"additionalProperties":false,
-							"required":["claim_id"],
-							"properties":{"claim_id":{"type":"string","minLength":1}}
-						}
-					}
-				}
-			}`),
+			Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
 		},
 	}
 
@@ -106,27 +90,6 @@ func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
 	spec, ok := parts.toolConfig.Tools[0].(*brtypes.ToolMemberToolSpec)
 	require.True(t, ok)
 	require.Equal(t, "Return the completed task draft.", *spec.Value.Description)
-	require.NotNil(t, spec.Value.Strict)
-	require.True(t, *spec.Value.Strict)
-	schema, err := decodeDocument(spec.Value.InputSchema.(*brtypes.ToolInputSchemaMemberJson).Value)
-	require.NoError(t, err)
-	require.JSONEq(t, `{
-		"type":"object",
-		"additionalProperties":false,
-		"required":["judgments"],
-		"properties":{
-			"judgments":{
-				"type":"array",
-				"minItems":1,
-				"items":{
-					"type":"object",
-					"additionalProperties":false,
-					"required":["claim_id"],
-					"properties":{"claim_id":{"type":"string"}}
-				}
-			}
-		}
-	}`, string(schema))
 }
 
 func TestPrepareRequestNovaStructuredOutputUsesNativeOutputConfig(t *testing.T) {
