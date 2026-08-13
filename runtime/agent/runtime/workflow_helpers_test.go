@@ -333,6 +333,100 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 	require.Contains(t, txt.Text, "Next cursor: opaque-cursor")
 }
 
+func TestAppendUserToolResults_UsesContinuationActionNameInBoundsReminder(t *testing.T) {
+	search, continuation := continuationTestSpecs()
+
+	tests := []struct {
+		name string
+		call planner.ToolRequest
+	}{
+		{
+			name: "source page",
+			call: planner.ToolRequest{
+				Name:       search.Name,
+				ToolCallID: "source-call",
+			},
+		},
+		{
+			name: "continued page",
+			call: planner.ToolRequest{
+				Name:                       continuation.Name,
+				ToolCallID:                 "page-call",
+				ContinuationRootToolCallID: "source-call",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rt := New()
+			seedTestToolSpecs(rt, search, continuation)
+			base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+			cursor := "opaque-cursor"
+			result := &planner.ToolResult{
+				Name:       test.call.Name,
+				ToolCallID: test.call.ToolCallID,
+				Result:     map[string]any{"items": []any{"result"}},
+				Bounds: &agent.Bounds{
+					Returned:   1,
+					Truncated:  true,
+					NextCursor: &cursor,
+				},
+			}
+
+			appendUserToolResultsForTest(
+				t,
+				rt,
+				"agent-1",
+				base,
+				[]planner.ToolRequest{test.call},
+				[]*planner.ToolResult{result},
+			)
+
+			reminder := base.Messages[1].Parts[0].(model.TextPart).Text
+			want := continuationActionName(continuation.Name, "source-call").String()
+			require.Contains(t, reminder, "call "+want)
+			require.NotContains(t, reminder, "call tools_continue_search")
+			require.NotContains(t, reminder, "page-call")
+		})
+	}
+}
+
+func TestAppendUserToolResults_UsesRefinementWithoutContinuationCursor(t *testing.T) {
+	search, continuation := continuationTestSpecs()
+	rt := New()
+	seedTestToolSpecs(rt, search, continuation)
+	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	call := planner.ToolRequest{
+		Name:       search.Name,
+		ToolCallID: "source-call",
+	}
+	result := &planner.ToolResult{
+		Name:       call.Name,
+		ToolCallID: call.ToolCallID,
+		Result:     map[string]any{"items": []any{"result"}},
+		Bounds: &agent.Bounds{
+			Returned:       1,
+			Truncated:      true,
+			RefinementHint: "Narrow the time window.",
+		},
+	}
+
+	appendUserToolResultsForTest(
+		t,
+		rt,
+		"agent-1",
+		base,
+		[]planner.ToolRequest{call},
+		[]*planner.ToolResult{result},
+	)
+
+	reminder := base.Messages[1].Parts[0].(model.TextPart).Text
+	require.Contains(t, reminder, "Refinement hint: Narrow the time window.")
+	require.NotContains(t, reminder, "More matching results are available.")
+	require.NotContains(t, reminder, "call continue_")
+}
+
 func TestRecoveryReminderIsEphemeralPlannerInput(t *testing.T) {
 	rt := New()
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}

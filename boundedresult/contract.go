@@ -59,5 +59,5 @@ func OptionalFieldNames(nextCursorField string) []string {
 // HasContinuation reports whether a truncated result carries either a paging
 // cursor or refinement guidance.
 func HasContinuation(nextCursor *string, refinementHint string) bool {
-	return nextCursor != nil || refinementHint != ""
+	return (nextCursor != nil && *nextCursor != "") || refinementHint != ""
 }

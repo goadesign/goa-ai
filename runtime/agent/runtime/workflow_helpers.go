@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -164,7 +163,17 @@ func (r *Runtime) appendUserToolRecordResults(
 			cursorField := ""
 			if spec.Bounds != nil && spec.Bounds.Paging != nil {
 				cursorField = spec.Bounds.Paging.CursorField
-				continueTool = toolname.Sanitize(string(spec.Bounds.Paging.ContinueTool))
+				if spec.Bounds.Paging.ContinueTool != "" &&
+					tr.Bounds != nil && tr.Bounds.NextCursor != nil {
+					rootToolCallID := call.ToolCallID
+					if isDedicatedContinuationSpec(spec) {
+						rootToolCallID = call.ContinuationRootToolCallID
+					}
+					continueTool = continuationActionName(
+						spec.Bounds.Paging.ContinueTool,
+						rootToolCallID,
+					).String()
+				}
 			}
 			if rem := boundsReminder(tr, continueTool, cursorField); rem != "" {
 				reminders = append(reminders, rem)
