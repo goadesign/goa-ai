@@ -104,6 +104,10 @@ Providers that do not implement structured output fail explicitly with
 Generated schemas stay provider-neutral. Provider adapters may normalize that
 canonical schema to a provider-specific subset for constrained decoding, but
 they must fail explicitly instead of redefining the service contract.
+Bedrock Anthropic models express structured output as one forced tool call.
+The adapter normalizes the schema to Bedrock's supported subset and enables
+strict tool use, so Bedrock constrains the generated arguments before the
+canonical codec enforces the complete service contract.
 
 The design intentionally keeps completions separate from toolsets: toolsets model
 callable capabilities, while completions model final assistant answers. Both reuse
