@@ -72,6 +72,11 @@ type Options struct {
 	// SmallModel is the small/cheap model identifier (e.g., Haiku).
 	SmallModel string
 
+	// StructuredModel is the model identifier used for requests that require
+	// provider-enforced structured output. When empty, structured requests use
+	// the model selected by Model or ModelClass.
+	StructuredModel string
+
 	// MaxTokens sets the default completion cap when a request does not specify
 	// MaxTokens. When zero or negative, the client omits MaxTokens so Bedrock
 	// uses its own default.
@@ -92,14 +97,15 @@ type Options struct {
 
 // Client implements model.Client on top of AWS Bedrock Converse.
 type Client struct {
-	runtime      RuntimeClient
-	defaultModel string
-	highModel    string
-	smallModel   string
-	maxTok       int
-	temp         float32
-	think        int
-	logger       telemetry.Logger
+	runtime         RuntimeClient
+	defaultModel    string
+	highModel       string
+	smallModel      string
+	structuredModel string
+	maxTok          int
+	temp            float32
+	think           int
+	logger          telemetry.Logger
 }
 
 type requestParts struct {
@@ -153,14 +159,15 @@ func New(aws *bedrockruntime.Client, opts Options) (*Client, error) {
 		logger = telemetry.NewNoopLogger()
 	}
 	c := &Client{
-		runtime:      opts.Runtime,
-		defaultModel: opts.DefaultModel,
-		highModel:    opts.HighModel,
-		smallModel:   opts.SmallModel,
-		maxTok:       maxTokens,
-		temp:         opts.Temperature,
-		think:        thinkBudget,
-		logger:       logger,
+		runtime:         opts.Runtime,
+		defaultModel:    opts.DefaultModel,
+		highModel:       opts.HighModel,
+		smallModel:      opts.SmallModel,
+		structuredModel: opts.StructuredModel,
+		maxTok:          maxTokens,
+		temp:            opts.Temperature,
+		think:           thinkBudget,
+		logger:          logger,
 	}
 	return c, nil
 }
@@ -313,6 +320,13 @@ func (c *Client) prepareRequest(req *model.Request) (*requestParts, error) {
 	toolDefs, toolChoice := req.Tools, req.ToolChoice
 	useToolFallback := structuredOutputUsesToolFallback(modelID, req.StructuredOutput)
 	if useToolFallback {
+		if !anthropicStrictStructuredOutputSupported(modelID) {
+			return nil, fmt.Errorf(
+				"bedrock: model %q does not support strict structured output: %w",
+				modelID,
+				model.ErrStructuredOutputUnsupported,
+			)
+		}
 		if len(req.Tools) > 0 || req.ToolChoice != nil {
 			return nil, errors.New("bedrock: structured output cannot be combined with request tool definitions")
 		}
@@ -377,6 +391,9 @@ func (c *Client) prepareRequest(req *model.Request) (*requestParts, error) {
 func (c *Client) resolveModelID(req *model.Request) string {
 	if s := req.Model; s != "" {
 		return s
+	}
+	if req.StructuredOutput != nil && c.structuredModel != "" {
+		return c.structuredModel
 	}
 	switch string(req.ModelClass) {
 	case string(model.ModelClassHighReasoning):
@@ -525,6 +542,28 @@ func encodeOutputConfig(output *model.StructuredOutput) (*brtypes.OutputConfig, 
 // normalized schema before the canonical codec validates the complete contract.
 func structuredOutputUsesToolFallback(modelID string, output *model.StructuredOutput) bool {
 	return output != nil && isAnthropicBedrockModel(modelID)
+}
+
+// anthropicStrictStructuredOutputSupported reports the Claude model families
+// for which Bedrock documents grammar-constrained structured output. Unknown
+// families fail closed so Strict never weakens into provider-dependent
+// best-effort JSON.
+func anthropicStrictStructuredOutputSupported(modelID string) bool {
+	foundationID, err := FoundationModelID(modelID)
+	if err != nil {
+		return false
+	}
+	for _, prefix := range []string{
+		"anthropic.claude-sonnet-4-5-",
+		"anthropic.claude-haiku-4-5-",
+		"anthropic.claude-opus-4-5-",
+		"anthropic.claude-opus-4-6-",
+	} {
+		if strings.HasPrefix(foundationID, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // structuredOutputToolDefinition adapts a provider-neutral structured-output
