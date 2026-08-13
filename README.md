@@ -545,13 +545,15 @@ Use `ContinueWith` when the cursor already carries the resolved query: the
 originating tool keeps an honest semantic payload, the required cursor-only
 sibling resumes it, and the runtime tracks each unfinished query independently.
 A page with zero returned items is advanced automatically because it contains
-no evidence for a model to evaluate. After a page returns items, the runtime
-advertises a temporary no-argument action describing the original model-visible
-input, so the model can choose among parallel result sets without copying a
-cursor or call ID. The runtime maps the chosen action to the generated
-continuation tool, binds its exact cursor and, when required, retains the prior
-canonical query payload for execution. Continuation cursors must advance on
-every successful page.
+no evidence for a model to evaluate. After a page returns items with a next
+cursor, the runtime advertises a temporary no-argument action describing the
+original model-visible input. A truncated result without a cursor exposes its
+refinement hint instead. The bounded-result reminder names that same temporary
+action, so the model sees one truthful continuation name. The model can choose among parallel
+result sets without copying a cursor or call ID. The runtime maps the chosen
+action to the generated continuation tool, binds its exact cursor and, when
+required, retains the prior canonical query payload for execution. Continuation
+cursors must advance on every successful page.
 
 Use `Cursor` directly only when repeating the original arguments is part of the
 public contract. Truncated results must carry a continuation: bound method
