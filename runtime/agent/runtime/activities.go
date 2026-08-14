@@ -100,7 +100,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	} else if ended {
 		return &PlanActivityOutput{SessionEnded: true}, nil
 	}
-	toolOutputs, err := r.loadPlannerToolOutputs(ctx, input.RunID, input.ToolOutputs)
+	toolOutputs, err := r.loadPlannerToolOutputs(ctx, input.ToolOutputs)
 	if err != nil {
 		return nil, err
 	}
@@ -468,7 +468,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 			execResult.ToolResult.Telemetry = tel
 		}
 	}
-	result, resultJSON, pause, err := r.materializeToolExecutionResult(ctx, call, execResult)
+	result, resultJSON, clarification, err := r.materializeToolExecutionResult(ctx, call, execResult)
 	if err != nil {
 		return nil, err
 	}
@@ -481,8 +481,8 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if result.Failure != nil {
 		out.Failure = result.Failure
 	}
-	if pause != nil {
-		out.Pause = pause
+	if clarification != nil {
+		out.Clarification = clarification
 	}
 	return out, nil
 }

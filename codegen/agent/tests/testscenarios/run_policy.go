@@ -5,7 +5,7 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-// RunPolicyBasic returns a DSL design with caps, time budget, and interrupts.
+// RunPolicyBasic returns a DSL design with caps and a time budget.
 func RunPolicyBasic() func() {
 	return func() {
 		API("alpha", func() {})
@@ -14,7 +14,6 @@ func RunPolicyBasic() func() {
 				RunPolicy(func() {
 					DefaultCaps(MaxToolCalls(5), MaxConsecutiveFailedToolCalls(2))
 					TimeBudget("30s")
-					InterruptsAllowed(true)
 				})
 				Use("helpers", func() {
 					Tool("noop", "Noop", func() {})

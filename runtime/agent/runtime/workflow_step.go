@@ -16,8 +16,8 @@ import (
 	"fmt"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -41,6 +41,8 @@ type (
 	stepToolRecord struct {
 		call             planner.ToolRequest
 		result           *planner.ToolResult
+		callRunID        string
+		resultRunID      string
 		resultJSON       rawjson.Message
 		resultPublished  bool
 		resultRecord     *RecordActivityInput
@@ -49,7 +51,8 @@ type (
 		scheduleExact    bool
 		expectedChildren int
 		duration         time.Duration
-		pause            *ToolPause
+		clarification    *ToolClarification
+		childSuspension  *api.RunSuspension
 		requiresResume   bool
 	}
 
@@ -63,6 +66,8 @@ type (
 		confirmations int
 		awaitItems    int
 		finalize      *stepFinalization
+		suspension    *RunOutput
+		pending       []checkpointPendingInput
 	}
 
 	stepFinalization struct {
@@ -306,9 +311,6 @@ func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
 	if err := validatePlanResultToolCallIDs(program.result); err != nil {
 		return nil, err
 	}
-	if len(program.awaitItems) > 0 && l.ctrl == nil {
-		return nil, errors.New("planner await requires interrupts")
-	}
 	for _, call := range awaitToolRequests(program.awaitItems) {
 		spec, ok := l.r.toolSpec(call.Name)
 		if !ok {
@@ -339,6 +341,9 @@ func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
 	batch, err := l.executeStepProgram(program)
 	if err != nil {
 		return nil, err
+	}
+	if batch.suspension != nil {
+		return batch.suspension, nil
 	}
 	return l.advanceStep(batch)
 }
@@ -416,17 +421,21 @@ func (l *workflowLoop) executeStepProgram(program stepProgram) (stepBatch, error
 		if err != nil {
 			return stepBatch{}, l.failCommittedStep(&batch, err)
 		}
-		// Tool-owned pauses occur after their tool result and must expose that
+		// Tool-authored clarifications occur after their tool result and must expose that
 		// result before the user's answer. Planner-authored awaits remain behind
 		// the step barrier so all tool uses receive one correlated result message.
 		if len(confirmations) == 0 && len(program.awaitItems) == 0 && len(items) > 0 {
-			if err := l.recordUnrecordedStepToolResults(&batch); err != nil {
-				return stepBatch{}, err
+			// A suspended child has no tool result yet, so the step barrier must
+			// remain intact until every pending child and tool-owned request has
+			// been answered.
+			if len(batch.pending) == 0 {
+				if err := l.recordUnrecordedStepToolResults(&batch); err != nil {
+					return stepBatch{}, err
+				}
 			}
 		}
-		if len(confirmations) > 0 || len(items) > 0 {
+		if len(confirmations) > 0 || len(items) > 0 || len(batch.pending) > 0 {
 			if err := l.handleAwaitQueue(
-				program.result.ExpectedChildren,
 				confirmations,
 				items,
 				&batch,
@@ -441,7 +450,6 @@ func (l *workflowLoop) executeStepProgram(program stepProgram) (stepBatch, error
 		return stepBatch{}, errors.New("workflow step has neither terminal payload nor executable work")
 	}
 	if err := l.handleAwaitQueue(
-		0,
 		nil,
 		program.awaitItems,
 		&batch,
@@ -556,7 +564,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		return l.finalizeStep(planner.TerminationReasonFailureCap)
 	}
 
-	if out, err := l.r.handleMissingFieldsPolicy(
+	if out, await, err := l.r.applyMissingFieldsPolicy(
 		l.wfCtx,
 		l.reg,
 		l.input,
@@ -567,26 +575,18 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		l.st.AggUsage,
 		&l.st.NextAttempt,
 		l.turnID,
-		l.ctrl,
 		&l.deadlines,
 	); err != nil {
 		return nil, err
 	} else if out != nil {
 		return out, nil
-	}
-
-	if batch.awaited {
-		if err := l.r.publishHook(
-			l.wfCtx.Context(),
-			hooks.NewRunResumedEvent(l.base.RunContext.RunID, l.input.AgentID, l.base.RunContext.SessionID, "await_completed", "runtime", map[string]string{
-				"resumed_by":    "await_queue",
-				"confirmations": fmt.Sprintf("%d", batch.confirmations),
-				"items":         fmt.Sprintf("%d", batch.awaitItems),
-			}, 0),
-			l.turnID,
-		); err != nil {
+	} else if await != nil {
+		if err := l.r.publishAwaitToolUses(l.wfCtx.Context(), l.input, l.base, l.turnID, *await, 0); err != nil {
 			return nil, err
 		}
+		batch.awaited = true
+		batch.awaitItems++
+		return l.suspendRun(batch, nil, []planner.AwaitItem{*await})
 	}
 
 	action, failed := dominantRecoveryAction(batch.records)
@@ -818,8 +818,8 @@ func (l *workflowLoop) finalizeRecoveryStep(recovery []*planner.ToolOutput) (*Ru
 // tool-terminal step completed successfully and without runtime-owned awaits.
 func validateToolTerminalBatch(records []stepToolRecord) error {
 	for _, record := range records {
-		if record.pause != nil {
-			return fmt.Errorf("workflow step terminal payload cannot accompany pause from tool %q", record.call.Name)
+		if record.clarification != nil {
+			return fmt.Errorf("workflow step terminal payload cannot accompany clarification from tool %q", record.call.Name)
 		}
 		if record.result == nil {
 			return fmt.Errorf("workflow step terminal payload missing result for tool %q", record.call.Name)
@@ -878,7 +878,8 @@ func stepToolRecordsFromExecutions(calls []planner.ToolRequest, outcomes []*Tool
 		record := stepToolRecord{
 			call:             call,
 			result:           outcome.ToolResult,
-			pause:            outcome.Pause,
+			clarification:    outcome.Clarification,
+			childSuspension:  outcome.childSuspension,
 			resultPublished:  outcome.resultPublished,
 			resultRecord:     outcome.resultRecord,
 			scheduleRequired: !outcome.schedulePublished,
@@ -938,7 +939,8 @@ func stepToolRecordsAfterExecution(
 		record := stepToolRecord{
 			call:             call,
 			result:           outcome.ToolResult,
-			pause:            outcome.Pause,
+			clarification:    outcome.Clarification,
+			childSuspension:  outcome.childSuspension,
 			resultPublished:  outcome.resultPublished,
 			resultRecord:     outcome.resultRecord,
 			scheduleRequired: !outcome.schedulePublished,
@@ -1025,18 +1027,18 @@ func canonicalStepToolRecords(calls []planner.ToolRequest, records []stepToolRec
 	return ordered, nil
 }
 
-// toolPausesFromRecords extracts current-step pause signals in canonical call
-// order.
-func toolPausesFromRecords(records []stepToolRecord) []*ToolPause {
+// toolClarificationsFromRecords extracts current-step user questions in
+// canonical call order.
+func toolClarificationsFromRecords(records []stepToolRecord) []*ToolClarification {
 	if len(records) == 0 {
 		return nil
 	}
-	pauses := make([]*ToolPause, 0, len(records))
+	clarifications := make([]*ToolClarification, 0, len(records))
 	for _, record := range records {
-		if record.pause == nil {
+		if record.clarification == nil {
 			continue
 		}
-		pauses = append(pauses, record.pause)
+		clarifications = append(clarifications, record.clarification)
 	}
-	return pauses
+	return clarifications
 }

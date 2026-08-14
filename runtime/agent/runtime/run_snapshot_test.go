@@ -108,6 +108,51 @@ func TestGetRunSnapshotReadsThroughStore(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestNewRunSnapshotRetainsPendingRequestWhenSuspended(t *testing.T) {
+	t.Parallel()
+
+	await := hooks.NewAwaitClarificationEvent(
+		"run-1",
+		"svc.agent",
+		"sess-1",
+		"question-1",
+		"Which unit?",
+		nil,
+		"",
+		nil,
+	)
+	suspended := hooks.NewRunSuspendedEvent(
+		"run-1",
+		"svc.agent",
+		"sess-1",
+		"suspension-1",
+		"v1",
+		1,
+		nil,
+	)
+	events := make([]*runlog.Event, 0, 2)
+	for i, event := range []hooks.Event{await, suspended} {
+		input, err := hooks.EncodeToRecordInput(event, hooks.EncodeOptions{
+			TurnID:      "turn-1",
+			EventKey:    fmt.Sprintf("evt-%d", i),
+			TimestampMS: int64(i + 1),
+		})
+		require.NoError(t, err)
+		events = append(events, &runlog.Event{
+			EventKey: input.EventKey, RunID: input.RunID, AgentID: input.AgentID,
+			SessionID: input.SessionID, TurnID: input.TurnID, Type: input.Type,
+			Payload: input.Payload, Timestamp: time.UnixMilli(input.TimestampMS).UTC(),
+		})
+	}
+
+	snapshot, err := newRunSnapshot(events)
+	require.NoError(t, err)
+	require.Equal(t, run.StatusSuspended, snapshot.Status)
+	require.Equal(t, run.PhaseSuspended, snapshot.Phase)
+	require.NotNil(t, snapshot.Await)
+	require.Equal(t, "question-1", snapshot.Await.ID)
+}
+
 func TestNewRunSnapshotIncludesCanonicalTranscript(t *testing.T) {
 	t.Parallel()
 

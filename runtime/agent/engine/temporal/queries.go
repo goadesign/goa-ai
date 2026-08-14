@@ -63,7 +63,7 @@ func (e *Engine) QueryRunCompletion(ctx context.Context, workflowID string) (*ap
 
 // queryRunStatusFromInfo maps Temporal execution info into the engine's coarse
 // lifecycle contract. Closed executions retain Temporal's terminal outcome so
-// cross-process repair can synthesize the correct RunCompleted event.
+// cross-process repair can recover the exact completed or suspended result.
 func queryRunStatusFromInfo(info *workflowpb.WorkflowExecutionInfo) engine.RunStatus {
 	if info == nil {
 		return engine.RunStatusPending
@@ -102,9 +102,9 @@ func mapDescribeWorkflowExecutionError(err error) error {
 	return err
 }
 
-// mapSignalError normalizes Temporal signaling failures into engine-level
-// contract errors consumed by runtime callers.
-func mapSignalError(err error) error {
+// mapWorkflowMutationError normalizes Temporal workflow mutation failures into
+// engine-level contract errors consumed by runtime callers.
+func mapWorkflowMutationError(err error) error {
 	if err == nil {
 		return nil
 	}

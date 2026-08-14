@@ -7,7 +7,7 @@ package runtime
 // (await_confirmation). The runtime enforces this by splitting candidate tool
 // calls into two sets:
 // - calls that may execute immediately, and
-// - calls that must pause the workflow at an await boundary before execution.
+// - calls that require confirmation in a later workflow before execution.
 //
 // This file is pure policy + rendering:
 // - It decides whether a given tool call requires confirmation (design-time

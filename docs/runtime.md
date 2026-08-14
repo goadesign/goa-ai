@@ -46,7 +46,7 @@ The runtime operates on three layers:
 | Concept | Purpose |
 |---------|---------|
 | **Runtime** | Central registry and coordinator. Holds agents, toolsets, models, hooks, and stores. |
-| **Engine** | Workflow backend (Temporal or in-memory). Provides durable execution, activities, and signals. |
+| **Engine** | Workflow backend (Temporal or in-memory). Provides durable execution, activities, terminal-result queries, and cancellation. |
 | **Planner** | Decision-maker. Analyzes messages and returns tool calls or a final response. |
 | **Toolset** | Collection of tools with shared execution logic. Generated from DSL or registered manually. |
 | **Completion** | Service-owned typed direct assistant output. Generated under `gen/<service>/completions` with unary and streaming helpers backed by generated codecs. |
@@ -530,8 +530,8 @@ Bookkeeping exception:
 - except when a bookkeeping tool fails with a `ToolFailure` whose
   `AllowsToolTurn()` method returns true: that recoverable failure enters
   `ToolOutputs` so the next resume turn can repair and resend the tool call,
-- bookkeeping tools may still drive an await handshake in the same turn (for
-  example a runtime-owned `ToolPause`); that control-plane await remains legal
+- bookkeeping tools may still request a clarification in the same turn through
+  `ToolExecutionResult.Clarification`; that external-input request remains legal
   even when no successful bookkeeping result requires a resume.
 
 Workflow step boundary:
@@ -566,7 +566,7 @@ type PlanResult struct {
     FinalResponse *FinalResponse   // Terminal assistant message
     FinalToolResult *FinalToolResult // Terminal tool result for nested agent runs
     Streamed      bool             // True if text was already streamed via Events
-    Await         *Await           // Pause for clarification or external tools
+    Await         *Await           // Request clarification or external tool results
     ExpectedChildren int           // Optional hint for nested child results
     Notes         []PlannerAnnotation
 }
@@ -612,15 +612,16 @@ projection independently of the current catalog. `replan` removes the failed
 tool while permitting another advertised action, input request, or answer;
 `finish` forbids more tools. When the same tool has both correction and replan
 failures in one batch, the correctable failure keeps that tool available. A
-recovery turn may pause for input; answering retains the selected failure
+recovery turn may end with an input suspension; continuing retains the selected failure
 evidence. A failed batch clears its earlier
 synthesis intent; a new retry batch may request `SynthesizeAfterTools` again.
 
 The workflow selects current recovery outputs by stable call ID in
 `PlanActivityInput`. Empty recovery IDs are omitted from canonical JSON.
-Upgrades must drain or stop every old worker before starting the new worker
-bundle: old activities reject the new recovery input and old workflows reject
-the new recovery output.
+Use Temporal Worker Deployment Versioning for rolling upgrades. An in-flight
+workflow remains on its compatible worker version until it completes or
+suspends; a later continuation is a new workflow and may run on the new
+version after `ValidateContinuation` accepts its checkpoint and tool schemas.
 
 Bookkeeping turn invariant:
 
@@ -629,7 +630,7 @@ Bookkeeping turn invariant:
 - if a planner turn emits only successful bookkeeping tool calls, the same `PlanResult`
   must also resolve that turn without another reasoning resume: either a
   terminal outcome (`TerminalRun` tool or `FinalResponse` / `FinalToolResult`),
-  or an await/pause control-plane handshake,
+  or an external-input suspension,
 - failed bookkeeping results are the planner-visible exception: the runtime
   resumes through the typed recovery transition; `correct_call` and `replan`
   may use tools, while `finish` resumes without tools for terminal synthesis,
@@ -1665,28 +1666,47 @@ runtime.FinalizerFunc(func(ctx, input FinalizerInput) (ToolResult, error) {
 
 ---
 
-## Human-in-the-Loop
+## External Input and Workflow Continuations
 
-Runs can pause and resume via interrupt signals, enabling approval workflows,
-clarification requests, and external tool integration.
+Clarification, confirmation, structured questions, and external tool requests
+end the current workflow successfully. The returned `api.RunSuspension`
+contains the visible pending requests plus a private checkpoint. No workflow
+waits while a person or external system prepares the answer.
 
-### Pause and Resume
+Before completing the workflow, the runtime persists the suspension in its
+configured session store under the completed run ID. The checkpoint can contain
+private planner messages and tool state; do not send it to an untrusted client.
+The owning service must atomically accept one answer before starting the
+continuation, so concurrent answers cannot start two workflows from the same
+state. When one answer is ready, start a new workflow with the completed run ID,
+a new run ID, and a new turn ID:
 
 ```go
-// Pause a run (from outside the workflow)
-err := rt.PauseRun(ctx, interrupt.PauseRequest{
-    RunID:       "run-123",
-    Reason:      "human_review",
-    RequestedBy: "policy-engine",
-})
-
-// Resume after approval
-err := rt.ResumeRun(ctx, interrupt.ResumeRequest{
-    RunID:       "run-123",
-    Notes:       "Approved by admin",
-    Messages:    additionalMessages, // Optional
-})
+next, err := client.Continue(
+    ctx,
+    "session-1",
+    previous.RunID,
+    "run-124",
+    "turn-2",
+    response,
+)
 ```
+
+One continuation consumes only the first item in `Suspension.Pending`. If more
+input remains, the new workflow ends with another suspension. The checkpoint
+restores the original messages, policy, labels, nested-tool identity, remaining
+active-time budget, and exact call/result provenance; callers cannot override
+those values. The runtime loads the suspension by predecessor run ID and checks
+the checkpoint version, public pending requests, and required tool names before routing. The receiving
+worker restores saved payloads and results through its current generated codecs;
+compatible tool evolution continues, while an incompatible saved value fails at
+that typed boundary.
+
+Ending a session stops future work but retains its run metadata for inspection.
+When the owning application permanently deletes the session's customer data, it
+must wait for in-flight workflow and stream work to settle and then call
+`Runtime.PurgeSession`. Purging removes the session, every owned run record, and
+all private checkpoints. It is idempotent and rejects an active session.
 
 ### Clarification Requests
 
@@ -1705,19 +1725,20 @@ return &planner.PlanResult{
 }
 ```
 
-The runtime pauses the workflow and emits an `AwaitClarification` event. Callers
-respond via:
+The runtime emits an `AwaitClarification` event and returns a suspension.
+Callers start the next workflow with:
 
 ```go
-err := rt.ProvideClarification(ctx, interrupt.ClarificationAnswer{
-    RunID:  "run-123",
-    ID:     "clarify-device",
-    Answer: "Device ID is ABC-123",
-})
+response := &api.PendingInputResponse{
+    Clarification: &api.ClarificationAnswer{
+        ID:     "clarify-device",
+        Answer: "Device ID is ABC-123",
+    },
+}
 ```
 
 When a model-authored tool collects free text, use the distinct tool-bound
-clarification branch. It preserves the exact provider call across the pause and
+clarification branch. It preserves the exact provider call across the workflow boundary and
 correlates the human answer as that call's generated `{\"answer\": string}`
 result:
 
@@ -1735,10 +1756,10 @@ return &planner.PlanResult{
 }
 ```
 
-The runtime emits the same `AwaitClarification` event for the UI, waits for
-`ProvideClarification`, decodes the answer with the registered generated result
-codec, and resumes with a provider-valid `tool_use` / `tool_result` pair. Do not
-replace this correlation with a reminder or a copied user message.
+The runtime emits the same `AwaitClarification` event for the UI. The next
+workflow decodes the answer with the registered generated result codec and
+restores a provider-valid `tool_use` / `tool_result` pair. Do not replace this
+correlation with a reminder or a copied user message.
 
 ### External Tools
 
@@ -1759,23 +1780,24 @@ return &planner.PlanResult{
 }
 ```
 
-Callers provide results via:
+Callers start the next workflow with the exact result set:
 
 ```go
-err := rt.ProvideToolResults(ctx, &api.ToolResultsSet{
-    RunID: "run-123",
-    ID:    "external-1",
-    Results: []*api.ProvidedToolResult{
-        {
-            ToolCallID: "toolcall-1",
-            Name:       tools.Ident("chat.ask_question.ask_question"),
-            Success: &api.ProvidedToolSuccess{
-                // Contract: canonical JSON bytes matching the tool's Return schema.
-                Result: json.RawMessage(`{"answers":[{"question_id":"...","selected_ids":["approve"]}]}`),
+response := &api.PendingInputResponse{
+    ToolResults: &api.ToolResultsSet{
+        ID: "external-1",
+        Results: []*api.ProvidedToolResult{
+            {
+                ToolCallID: "toolcall-1",
+                Name:       tools.Ident("chat.ask_question.ask_question"),
+                Success: &api.ProvidedToolSuccess{
+                    // Canonical JSON matching the tool's Return schema.
+                    Result: json.RawMessage(`{"answers":[{"question_id":"...","selected_ids":["approve"]}]}`),
+                },
             },
         },
     },
-})
+}
 ```
 
 Provided tool results are strict boundary inputs:
@@ -1808,8 +1830,8 @@ At execution time, the workflow:
 
 - Emits an out-of-band confirmation request (using `AwaitConfirmation`) before executing the
   target tool call.
-- Waits for a user approval/denial decision.
-- Executes the tool only when approved.
+- Ends with a suspension containing that confirmation request.
+- Executes the tool in the continuation workflow only when approved.
 - When denied, synthesizes a **schema-compliant** tool result (so the transcript remains valid and
   the planner can react to the denial deterministically).
 
@@ -1831,29 +1853,29 @@ decision before executing a confirmed tool.
   }
   ```
 
-- **Provide decision** (using `ProvideConfirmation`):
+- **Continuation response**:
 
   ```go
-  err := rt.ProvideConfirmation(ctx, interrupt.ConfirmationDecision{
-      RunID:       "run-123",
-      ID:         "await-1",
-      Approved:    true,              // or false
-      RequestedBy: "user:123",        // optional, for audit
-      Labels:      map[string]string{"source": "front-ui"},
-      Metadata:    map[string]any{"ticket_id": "INC-42"},
-  })
+  response := &api.PendingInputResponse{
+      Confirmation: &api.ConfirmationDecision{
+          ID:          "await-1",
+          Approved:    true, // or false
+          RequestedBy: "user:123",
+          Labels:      map[string]string{"source": "front-ui"},
+          Metadata:    map[string]any{"ticket_id": "INC-42"},
+      },
+  }
   ```
 
-Consumers should treat confirmation as a **runtime protocol**, not as a user-defined tool:
-
-- Use the accompanying `RunPaused` reason (`await_confirmation`) to decide when to display a confirmation UI.
-- Do not couple UI behavior to a specific confirmation tool name; treat it as an internal transport detail.
+Consumers should treat confirmation as a **runtime protocol**, not as a
+user-defined tool. Render the first `Suspension.Pending` item when its kind is
+`confirmation`; do not couple UI behavior to a specific tool name.
 
 This keeps the runtime generic: any UI/system can implement a compatible confirmation transport.
 
 ### Tool authorization events
 
-When a decision is provided via `ProvideConfirmation`, the runtime emits a first-class authorization event:
+When the continuation consumes a decision, the runtime emits a first-class authorization event:
 
 - **Hook event**: `hooks.ToolAuthorization`
 - **Stream event type**: `tool_authorization`
@@ -1864,7 +1886,7 @@ This event is emitted exactly once per confirmed tool call and captures the dura
 - `tool_call_id`: the tool call identifier
 - `approved`: true/false decision
 - `summary`: deterministic runtime-rendered summary (derived from the confirmation prompt)
-- `approved_by`: copied from `interrupt.ConfirmationDecision.RequestedBy` and intended to be a stable principal identifier (for example, `user:<id>`)
+- `approved_by`: copied from `api.ConfirmationDecision.RequestedBy` and intended to be a stable principal identifier (for example, `user:<id>`)
 
 The event is emitted immediately after the decision is received:
 
@@ -1877,8 +1899,9 @@ Consumers (UIs, audit stores, session recorders) should rely on `tool_authorizat
 
 The runtime treats confirmation as a boundary and validates:
 
-- The confirmation `ID` matches the pending await identifier when provided.
-- The decision object is well-formed (non-empty `RunID`, boolean `Approved` value).
+- The confirmation `ID` exactly matches the first pending identifier.
+- Exactly one continuation response variant is present.
+- `RequestedBy` is non-empty.
 
 Notes:
 
@@ -1910,7 +1933,7 @@ non-workflow code publish directly.
 |-------|------|
 | `RunStarted` | Run begins (carries `RunContext`, including run labels) |
 | `RunCompleted` | Run finishes (success, failed, canceled); carries the run's start labels |
-| `RunPaused` / `RunResumed` | Human-in-the-loop transitions |
+| `RunSuspended` | Workflow ended with a versioned checkpoint and ordered pending input |
 | `RunPhaseChanged` | Phase transitions (planning, executing_tools, etc.) |
 | `PromptRendered` | Runtime resolves and renders a prompt spec |
 | `ToolCallScheduled` | Tool activity scheduled |
@@ -1918,7 +1941,7 @@ non-workflow code publish directly.
 | `ToolCallUpdated` | Parent tool discovers more children |
 | `AssistantMessage` | Final assistant response |
 | `PlannerNote` / `ThinkingBlock` | Planner reasoning |
-| `AwaitClarification` / `AwaitExternalTools` | Pause requests |
+| `AwaitClarification` / `AwaitExternalTools` | External-input requests |
 | `PolicyDecision` | Policy evaluation result |
 | `Usage` | Token usage report |
 | `ChildRunLinked` | Agent-as-tool child run link |
@@ -1988,20 +2011,23 @@ stream.MetricsProfile()
 The runtime emits:
 
 - `RunPhaseChanged` hook events for **non-terminal** phase transitions (`planning`, `executing_tools`, `synthesizing`, etc.)
-- a single `RunCompleted` hook event per run for the **terminal** lifecycle state
+- one terminal hook event per workflow: `RunCompleted` for completion, failure,
+  or cancellation, and `RunSuspended` for external input
 
 The stream subscriber translates these into `workflow` stream events:
 
 - **Non-terminal updates** (from `RunPhaseChanged`): `phase` only.
-- **Terminal update** (from `RunCompleted`): `status` + terminal `phase`.
+- **Terminal update** (from `RunCompleted` or `RunSuspended`): `status` +
+  terminal `phase`, followed by `run_stream_end`.
 
-`RunCompleted` also carries `Labels`: the run-scoped labels provided when the
+`RunCompleted` carries `Labels`: the run-scoped labels provided when the
 run started (`RunInput.Labels`), nil when the run had none. Completion
 subscribers can attribute the terminal outcome (for example, call back into the
 service that owns the run's source entity) without maintaining their own
 runID-to-identity map. The same labels are exposed on `run.Snapshot.Labels` for
 polling readers, replayed from the durable `RunStarted` record, so the identity
-survives process restarts on both engines. Labels merged by policy decisions
+also remains available for suspended workflows and survives process restarts
+on both engines. Labels merged by policy decisions
 mid-run are not included; they remain observable via `PolicyDecision` events.
 
 Terminal status mapping:
@@ -2009,6 +2035,7 @@ Terminal status mapping:
 - `status="success"` → `phase="completed"`
 - `status="failed"` → `phase="failed"`
 - `status="canceled"` → `phase="canceled"`
+- `status="suspended"` → `phase="suspended"`
 
 Cancellation is not an error:
 
@@ -2085,8 +2112,8 @@ client.Run(ctx, "session-1", msgs,
 )
 ```
 
-`TimeBudget` counts active planner and tool work. External-input waits pause
-that budget. `FinalizerGrace` extends the Budget deadline into the Hard
+`TimeBudget` counts active planner and tool work. Time between a suspension and
+its continuation does not consume that budget. `FinalizerGrace` extends the Budget deadline into the Hard
 deadline. A final planner activity that starts when Budget expires therefore
 has at most that grace; earlier policy-triggered finalization may also use the
 remaining Budget. Terminal event persistence runs afterward under its own
@@ -2107,7 +2134,6 @@ err := rt.OverridePolicy(agent.Ident("service.chat"), runtime.RunPolicy{
     MaxToolCalls:                  10,
     MaxConsecutiveFailedToolCalls: 2,
     TimeBudget:                    5 * time.Minute,
-    InterruptsAllowed:             true,
 })
 ```
 
@@ -2472,6 +2498,7 @@ type Engine interface {
     RegisterExecuteToolActivity(ctx, name, opts, fn) error
     StartWorkflow(ctx, req WorkflowStartRequest) (WorkflowHandle, error)
     QueryRunStatus(ctx, runID string) (RunStatus, error)
+    QueryRunCompletion(ctx, runID string) (*api.RunOutput, error)
 }
 ```
 
@@ -2492,11 +2519,6 @@ type WorkflowContext interface {
     ExecuteToolActivityAsync(call engine.ToolActivityCall) (Future[*api.ToolOutput], error)
     NewTimer(ctx context.Context, d time.Duration) (Future[time.Time], error)
     Await(condition func() bool) error
-    PauseRequests() Receiver[*api.PauseRequest]
-    ResumeRequests() Receiver[*api.ResumeRequest]
-    ClarificationAnswers() Receiver[*api.ClarificationAnswer]
-    ExternalToolResults() Receiver[*api.ToolResultsSet]
-    ConfirmationDecisions() Receiver[*api.ConfirmationDecision]
     StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error)
     Detached() WorkflowContext
     WithCancel() (WorkflowContext, func())
@@ -2552,7 +2574,7 @@ eng, _ := temporal.NewWorker(temporal.Options{
 })
 ```
 
-**Temporal client** — Start/query/signal without local polling:
+**Temporal client** — Start/query/cancel without local polling:
 
 ```go
 eng, _ := temporal.NewClient(temporal.Options{
@@ -2930,7 +2952,7 @@ the request a bounded number of times before surfacing the failure.
 |------|------------|
 | **Run** | A single workflow execution. Has a unique RunID. |
 | **Session** | Groups related runs (e.g., multi-turn conversation). |
-| **Turn** | A user message → agent response cycle. May span multiple runs if interrupted. |
+| **Turn** | One user message or submitted external-input response and the agent work performed by one run. |
 | **Planner** | Decision-maker that analyzes messages and returns tool calls or final responses. |
 | **Toolset** | Collection of related tools with shared execution logic. |
 | **Tool Spec** | Metadata and JSON codecs for a tool (name, schema, codec functions). |

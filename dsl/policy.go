@@ -19,7 +19,6 @@ import (
 // The DSL function may use:
 //   - DefaultCaps to set capability limits (tool calls, consecutive failures)
 //   - TimeBudget to set maximum execution duration
-//   - InterruptsAllowed to enable or disable user interruptions
 //   - OnMissingFields to configure validation behavior
 //   - History to configure how conversation history is truncated or compressed
 //   - Cache to configure prompt caching hints for supported providers
@@ -30,7 +29,6 @@ import (
 //	    RunPolicy(func() {
 //	        DefaultCaps(MaxToolCalls(10), MaxConsecutiveFailedToolCalls(3))
 //	        TimeBudget("5m")
-//	        InterruptsAllowed(true)
 //	        OnMissingFields("await_clarification")
 //	        History(func() {
 //	            KeepRecentTurns(20)
@@ -118,37 +116,15 @@ func TimeBudget(duration string) {
 	policy.TimeBudget = dur
 }
 
-// InterruptsAllowed configures whether user interruptions are permitted during
-// agent execution. When enabled, users can interrupt running agents to provide
-// guidance or stop execution.
-//
-// InterruptsAllowed must appear in a RunPolicy expression.
-//
-// InterruptsAllowed takes a single boolean argument.
-//
-// Example:
-//
-//	RunPolicy(func() {
-//	    InterruptsAllowed(true)
-//	})
-func InterruptsAllowed(allowed bool) {
-	policy, ok := eval.Current().(*expragents.RunPolicyExpr)
-	if !ok {
-		eval.IncompatibleDSL()
-		return
-	}
-	policy.InterruptsAllowed = allowed
-}
-
 // OnMissingFields configures how the agent responds when tool invocation
 // validation detects missing required fields. This allows you to control
-// whether the agent should stop, wait for user input, or continue execution.
+// whether the agent should stop, request user input, or continue execution.
 //
 // OnMissingFields must appear in a RunPolicy expression.
 //
 // OnMissingFields takes a single string argument. Valid values:
 //   - "finalize": stop execution when required fields are missing
-//   - "await_clarification": pause and wait for user to provide missing information
+//   - "await_clarification": end with a request for the missing information
 //   - "resume": continue execution despite missing fields
 //   - "" (empty): let the planner decide based on context
 //

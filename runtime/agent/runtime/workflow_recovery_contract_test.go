@@ -12,8 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/api"
-	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -75,7 +73,7 @@ func TestRunLoopCombinesFailedCallsIntoFewerCorrections(t *testing.T) {
 		{Name: search.Name, Payload: rawjson.Message(`{"query":"bad-2"}`)},
 		{Name: search.Name, Payload: rawjson.Message(`{"query":"bad-3"}`)},
 		{Name: search.Name, Payload: rawjson.Message(`{"query":"bad-4"}`)},
-	}}, policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 10}, nil)
+	}}, policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 10})
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -155,7 +153,7 @@ func TestRunLoopCorrectionMayChooseAnotherToolOrAnswer(t *testing.T) {
 
 			out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
 				Name: search.Name, Payload: rawjson.Message(`{"query":"bad"}`),
-			}}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4}, nil)
+			}}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4})
 
 			require.NoError(t, err)
 			require.NotNil(t, out)
@@ -210,17 +208,13 @@ func TestRunLoopPreservesCorrectionEvidenceAcrossClarification(t *testing.T) {
 			}
 		},
 	)
-	h.workflow.ensureSignals()
-	ctrl := interrupt.NewController(h.workflow)
-	h.workflow.clarifyCh <- &api.ClarificationAnswer{ID: "clarify-query", Answer: "Use good."}
-
 	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
 		Name: search.Name, Payload: rawjson.Message(`{"query":"bad"}`),
-	}}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4}, ctrl)
+	}}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4})
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "clarified", agentMessageText(out.Final))
+	require.NotNil(t, out.Suspension)
 }
 
 func TestRunLoopRepeatedInvalidCallsReachFailureFinalization(t *testing.T) {
@@ -252,7 +246,7 @@ func TestRunLoopRepeatedInvalidCallsReachFailureFinalization(t *testing.T) {
 		RemainingToolCalls:                  5,
 		MaxConsecutiveFailedToolCalls:       2,
 		RemainingConsecutiveFailedToolCalls: 2,
-	}, nil)
+	})
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -313,7 +307,7 @@ func TestRunLoopRecoveryCatalogRewritesExcludedCallAndExecutesSibling(t *testing
 
 	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
 		Name: list.Name, Payload: rawjson.Message(`{"page":1}`),
-	}}}, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}, nil)
+	}}}, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5})
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -434,7 +428,7 @@ func TestFinishFailureFinalizesWithExactCause(t *testing.T) {
 	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{
 		{Name: search.Name, ToolCallID: "search-call", Payload: rawjson.Message(`{"query":"bad"}`)},
 		{Name: load.Name, ToolCallID: "load-call", Payload: rawjson.Message(`{"id":"one"}`)},
-	}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4}, nil)
+	}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4})
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -509,7 +503,6 @@ func newRecoveryHarness(
 func (h *recoveryHarness) run(
 	initial *planner.PlanResult,
 	caps policy.CapsState,
-	ctrl *interrupt.Controller,
 ) (*RunOutput, error) {
 	return h.runtime.runLoop(
 		h.workflow,
@@ -521,7 +514,7 @@ func (h *recoveryHarness) run(
 		time.Time{},
 		time.Time{},
 		h.input.TurnID,
-		ctrl,
+		nil,
 	)
 }
 

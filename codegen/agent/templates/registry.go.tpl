@@ -77,9 +77,6 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
 {{- if gt .RunPolicy.TimeBudget 0 }}
             TimeBudget: time.Duration({{ printf "%d" .RunPolicy.TimeBudget }}),
 {{- end }}
-{{- if .RunPolicy.InterruptsAllowed }}
-            InterruptsAllowed: true,
-{{- end }}
 {{- if .RunPolicy.OnMissingFields }}
             {{- if eq .RunPolicy.OnMissingFields "finalize" }}
             OnMissingFields: agentsruntime.MissingFieldsFinalize,

@@ -66,9 +66,14 @@ func (r *Runtime) buildPlannerToolOutputRecords(ctx context.Context, records []s
 	}
 	out := make([]*planner.ToolOutput, 0, len(records))
 	for _, record := range records {
+		if record.callRunID == "" || record.resultRunID == "" {
+			return nil, fmt.Errorf("build planner tool output: missing call or result run id for tool_call_id %s", record.call.ToolCallID)
+		}
 		call := record.call
 		result := record.result
 		output := &planner.ToolOutput{
+			CallRunID:                  record.callRunID,
+			ResultRunID:                record.resultRunID,
 			Name:                       call.Name,
 			ToolCallID:                 call.ToolCallID,
 			ContinuationRootToolCallID: call.ContinuationRootToolCallID,
@@ -108,7 +113,14 @@ func encodePlannerToolOutputs(outputs []*planner.ToolOutput) ([]*api.ToolOutputR
 		if output.ToolCallID == "" {
 			return nil, fmt.Errorf("encode planner tool outputs: missing tool_call_id")
 		}
-		out = append(out, &api.ToolOutputRef{ToolCallID: output.ToolCallID})
+		if output.CallRunID == "" || output.ResultRunID == "" {
+			return nil, fmt.Errorf("encode planner tool outputs: missing call or result run id for tool_call_id %s", output.ToolCallID)
+		}
+		out = append(out, &api.ToolOutputRef{
+			CallRunID:   output.CallRunID,
+			ResultRunID: output.ResultRunID,
+			ToolCallID:  output.ToolCallID,
+		})
 	}
 	return out, nil
 }

@@ -1,4 +1,4 @@
-// Package runtime records cancellation provenance before signaling the engine.
+// Package runtime records cancellation provenance before requesting engine cancellation.
 //
 // Durable repair paths use the stored reason to rebuild canonical terminal run
 // outcomes after restarts instead of inferring intent from a bare
@@ -31,7 +31,7 @@ type (
 )
 
 // recordRunCancellation persists cancellation provenance on an active run before
-// the engine is signaled so terminal repair can later reconstruct the canonical
+// cancellation is sent to the engine so terminal repair can later reconstruct the canonical
 // outcome. It returns the pre-write run metadata when it changed durable state
 // so callers can roll the write back if cancellation never reaches the engine.
 func (r *Runtime) recordRunCancellation(
@@ -139,7 +139,7 @@ func isTerminalSessionRunStatus(status session.RunStatus) bool {
 	switch status {
 	case session.RunStatusPending, session.RunStatusRunning, session.RunStatusPaused:
 		return false
-	case session.RunStatusCompleted, session.RunStatusFailed, session.RunStatusCanceled:
+	case session.RunStatusCompleted, session.RunStatusFailed, session.RunStatusCanceled, session.RunStatusSuspended:
 		return true
 	}
 	panic("runtime: unsupported session run status: " + string(status))

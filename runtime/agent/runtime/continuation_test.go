@@ -272,7 +272,7 @@ func TestPlannerToolOutputHydrationPreservesContinuationRoot(t *testing.T) {
 		0,
 	)
 	scheduled.ContinuationRootToolCallID = "source-1"
-	output, err := plannerToolOutputFromCanonicalEvents("run-1", "continue-1", &canonicalToolEvents{
+	events := &canonicalToolEvents{
 		scheduled: scheduled,
 		result: &hooks.ToolResultReceivedEvent{
 			ToolName:    scheduled.ToolName,
@@ -280,7 +280,8 @@ func TestPlannerToolOutputHydrationPreservesContinuationRoot(t *testing.T) {
 			ResultJSON:  rawjson.Message(`{}`),
 			ResultBytes: 2,
 		},
-	})
+	}
+	output, err := plannerToolOutputFromCanonicalEvents("run-1", "run-1", "continue-1", events, events)
 	require.NoError(t, err)
 	assert.Equal(t, "source-1", output.ContinuationRootToolCallID)
 }

@@ -174,19 +174,12 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		}
 		evt = NewPromptRenderedEvent(input.RunID, input.AgentID, input.SessionID, p.PromptID, p.Version, p.Scope)
 
-	case RunPaused:
-		var p RunPausedEvent
+	case RunSuspended:
+		var p RunSuspendedEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
-			return nil, fmt.Errorf("decode %s payload: %w", RunPaused, err)
+			return nil, fmt.Errorf("decode %s payload: %w", RunSuspended, err)
 		}
-		evt = NewRunPausedEvent(input.RunID, input.AgentID, input.SessionID, p.Reason, p.RequestedBy, p.Labels, p.Metadata)
-
-	case RunResumed:
-		var p RunResumedEvent
-		if err := json.Unmarshal(input.Payload, &p); err != nil {
-			return nil, fmt.Errorf("decode %s payload: %w", RunResumed, err)
-		}
-		evt = NewRunResumedEvent(input.RunID, input.AgentID, input.SessionID, p.Notes, p.RequestedBy, p.Labels, p.MessageCount)
+		evt = NewRunSuspendedEvent(input.RunID, input.AgentID, input.SessionID, p.SuspensionID, p.Version, p.PendingCount, p.RequiredTools)
 
 	case RunCompleted:
 		var p runCompletedPayload

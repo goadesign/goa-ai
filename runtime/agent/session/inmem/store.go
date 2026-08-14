@@ -5,6 +5,7 @@
 package inmem
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -18,17 +19,19 @@ type (
 	// Store is an in-memory implementation of session.Store.
 	// It is safe for concurrent use.
 	Store struct {
-		mu       sync.RWMutex
-		sessions map[string]session.Session
-		runs     map[string]session.RunMeta
+		mu          sync.RWMutex
+		sessions    map[string]session.Session
+		runs        map[string]session.RunMeta
+		suspensions map[string]session.RunSuspension
 	}
 )
 
 // New returns an empty Store.
 func New() *Store {
 	return &Store{
-		sessions: make(map[string]session.Session),
-		runs:     make(map[string]session.RunMeta),
+		sessions:    make(map[string]session.Session),
+		runs:        make(map[string]session.RunMeta),
+		suspensions: make(map[string]session.RunSuspension),
 	}
 }
 
@@ -102,6 +105,24 @@ func (s *Store) EndSession(_ context.Context, sessionID string, endedAt time.Tim
 	existing.EndedAt = &at
 	s.sessions[sessionID] = existing
 	return cloneSession(existing), nil
+}
+
+// PurgeSession implements session.Store.
+func (s *Store) PurgeSession(_ context.Context, sessionID string) error {
+	if sessionID == "" {
+		return errors.New("session id is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, sessionID)
+	for runID, run := range s.runs {
+		if run.SessionID != sessionID {
+			continue
+		}
+		delete(s.runs, runID)
+		delete(s.suspensions, runID)
+	}
+	return nil
 }
 
 // UpsertRun implements session.Store.
@@ -189,6 +210,43 @@ func (s *Store) LoadRun(_ context.Context, runID string) (session.RunMeta, error
 	return cloneRunMeta(run), nil
 }
 
+// SaveRunSuspension implements session.Store.
+func (s *Store) SaveRunSuspension(_ context.Context, runID string, suspension session.RunSuspension) error {
+	if runID == "" || suspension.ID == "" || len(suspension.Data) == 0 {
+		return errors.New("run suspension requires run id, suspension id, and data")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.runs[runID]; !ok {
+		return session.ErrRunNotFound
+	}
+	if existing, ok := s.suspensions[runID]; ok {
+		if existing.ID == suspension.ID && bytes.Equal(existing.Data, suspension.Data) {
+			return nil
+		}
+		return session.ErrRunSuspensionConflict
+	}
+	s.suspensions[runID] = cloneRunSuspension(suspension)
+	return nil
+}
+
+// LoadRunSuspension implements session.Store.
+func (s *Store) LoadRunSuspension(_ context.Context, runID string) (session.RunSuspension, error) {
+	if runID == "" {
+		return session.RunSuspension{}, errors.New("run id is required")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.runs[runID]; !ok {
+		return session.RunSuspension{}, session.ErrRunNotFound
+	}
+	suspension, ok := s.suspensions[runID]
+	if !ok {
+		return session.RunSuspension{}, session.ErrRunSuspensionNotFound
+	}
+	return cloneRunSuspension(suspension), nil
+}
+
 // ListRunsBySession implements session.Store.
 func (s *Store) ListRunsBySession(_ context.Context, sessionID string, statuses []session.RunStatus) ([]session.RunMeta, error) {
 	if sessionID == "" {
@@ -250,6 +308,11 @@ func cloneRunMeta(in session.RunMeta) session.RunMeta {
 		}
 	}
 	return out
+}
+
+// cloneRunSuspension keeps callers from mutating stored checkpoint bytes.
+func cloneRunSuspension(in session.RunSuspension) session.RunSuspension {
+	return session.RunSuspension{ID: in.ID, Data: append([]byte(nil), in.Data...)}
 }
 
 func appendUniqueRunID(runIDs []string, runID string) []string {

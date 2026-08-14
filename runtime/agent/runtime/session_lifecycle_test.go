@@ -125,6 +125,57 @@ func TestDeleteSessionEndsSessionDespiteCancellationFailure(t *testing.T) {
 	assert.Equal(t, session.StatusEnded, ended.Status)
 }
 
+func TestPurgeSessionRequiresEndedSessionAndRemovesRuntimeState(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	runtime := New()
+	_, err := runtime.CreateSession(ctx, "sess-1")
+	require.NoError(t, err)
+	require.NoError(t, runtime.SessionStore.UpsertRun(ctx, session.RunMeta{
+		RunID: "run-1", AgentID: "agent.chat", SessionID: "sess-1",
+	}))
+	require.NoError(t, runtime.SessionStore.SaveRunSuspension(ctx, "run-1", session.RunSuspension{
+		ID: "suspension-1", Data: []byte(`{}`),
+	}))
+
+	err = runtime.PurgeSession(ctx, "sess-1")
+	require.EqualError(t, err, "runtime: session must be ended before purge")
+	_, err = runtime.DeleteSession(ctx, "sess-1")
+	require.NoError(t, err)
+	require.NoError(t, runtime.PurgeSession(ctx, "sess-1"))
+	require.NoError(t, runtime.PurgeSession(ctx, "sess-1"))
+	_, err = runtime.SessionStore.LoadSession(ctx, "sess-1")
+	require.ErrorIs(t, err, session.ErrSessionNotFound)
+	_, err = runtime.SessionStore.LoadRunSuspension(ctx, "run-1")
+	require.ErrorIs(t, err, session.ErrRunNotFound)
+}
+
+func TestPurgeSessionRejectsActiveRuns(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	runtime := New()
+	now := time.Now().UTC()
+	_, err := runtime.SessionStore.CreateSession(ctx, "sess-active", now)
+	require.NoError(t, err)
+	require.NoError(t, runtime.SessionStore.UpsertRun(ctx, session.RunMeta{
+		AgentID:   "agent",
+		RunID:     "run-active",
+		SessionID: "sess-active",
+		Status:    session.RunStatusRunning,
+	}))
+	_, err = runtime.SessionStore.EndSession(ctx, "sess-active", now.Add(time.Second))
+	require.NoError(t, err)
+
+	err = runtime.PurgeSession(ctx, "sess-active")
+	require.EqualError(t, err, "runtime: session has active runs")
+	_, err = runtime.SessionStore.LoadSession(ctx, "sess-active")
+	require.NoError(t, err)
+	_, err = runtime.SessionStore.LoadRun(ctx, "run-active")
+	require.NoError(t, err)
+}
+
 // The planner activity is the turn-boundary lifecycle gate: a run whose
 // durable session was ended must not plan another turn, and the refusal
 // records the canonical cancellation provenance so the terminal RunCompleted

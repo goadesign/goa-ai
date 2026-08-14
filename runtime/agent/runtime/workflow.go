@@ -14,9 +14,9 @@ import (
 	"fmt"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -44,6 +44,9 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	defer func() {
 		retErr = hooks.WrapTemporalProviderError(retErr)
 	}()
+	if err := validateWorkflowRunInput(input); err != nil {
+		return nil, err
+	}
 	if r.logger != nil {
 		r.logger.Info(wfCtx.Context(), "ExecuteWorkflow called", "agent_id", input.AgentID, "run_id", input.RunID)
 	}
@@ -60,8 +63,18 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	if !ok {
 		return nil, fmt.Errorf("agent %q is not registered", input.AgentID)
 	}
+	var checkpoint *workflowCheckpoint
+	if input.Continuation != nil {
+		var err error
+		checkpoint, err = r.decodeWorkflowCheckpoint(input.Continuation.Suspension)
+		if err != nil {
+			return nil, err
+		}
+		if err := restoreContinuationRunInput(input, checkpoint); err != nil {
+			return nil, err
+		}
+	}
 	r.logger.Info(wfCtx.Context(), "Agent found, executing plan activity", "agent_id", input.AgentID)
-	ctrl := interrupt.NewController(wfCtx)
 	// Policy decisions merge additional labels into input.Labels in place during
 	// the run loop; the terminal RunCompleted event must carry the run-scoped
 	// labels as provided at start, so capture them before the loop runs.
@@ -83,7 +96,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	turnID := input.TurnID
 	if err := r.publishHook(
 		wfCtx.Context(),
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, *input),
+		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, runStartedHookInput(input)),
 		turnID,
 	); err != nil {
 		return nil, err
@@ -97,22 +110,44 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		return nil, err
 	}
 	finalStatus := runStatusSuccess
-	var finalErr error
+	var (
+		finalErr        error
+		finalSuspension *api.RunSuspension
+	)
 	defer func() {
-		phase := terminalRunPhaseForStatus(finalStatus)
 		// Use a fresh context with timeout for terminal events. The workflow
 		// engine supplies a replay-aware context so subscribers can avoid
 		// re-applying side effects during history replay while still allowing
-		// session stores and UIs to observe a single terminal phase.
+		// session stores and UIs to observe one terminal phase.
 		//
-		// Emit only RunCompletedEvent (which carries both status and phase).
-		// Emitting a separate RunPhaseChangedEvent before RunCompleted causes
+		// Emit only RunCompletedEvent or RunSuspendedEvent (each carries its
+		// terminal phase). Emitting a separate RunPhaseChangedEvent first causes
 		// two terminal workflow events to reach subscribers, which can trigger
 		// race conditions in frontends that close streams on the first
 		// terminal event.
 		detached := wfCtx.Detached()
 		termCtx, cancel := context.WithTimeout(detached.Context(), 10*time.Second)
 		defer cancel()
+		if finalSuspension != nil {
+			if err := r.publishHookWithOptions(
+				termCtx,
+				hooks.NewRunSuspendedEvent(
+					input.RunID,
+					input.AgentID,
+					input.SessionID,
+					finalSuspension.ID,
+					finalSuspension.Version,
+					len(finalSuspension.Pending),
+					finalSuspension.RequiredTools,
+				),
+				turnID,
+				engine.ActivityOptions{ScheduleToCloseTimeout: 10 * time.Second},
+			); err != nil {
+				r.logWarn(termCtx, "run suspended hook failed", err, "run_id", input.RunID, "agent_id", input.AgentID)
+			}
+			return
+		}
+		phase := terminalRunPhaseForStatus(finalStatus)
 		completed, buildErr := r.buildRunCompletedEvent(
 			termCtx,
 			input.RunID,
@@ -138,6 +173,25 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			r.logWarn(termCtx, "run completed hook failed", err, "run_id", input.RunID, "agent_id", input.AgentID)
 		}
 	}()
+	if checkpoint != nil {
+		if err := r.publishHook(
+			wfCtx.Context(),
+			hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhaseExecutingTools),
+			turnID,
+		); err != nil {
+			finalErr = err
+			finalStatus = terminalRunStatusForError(err)
+			return nil, err
+		}
+		out, err := r.resumeSuspendedWorkflow(wfCtx, reg, input, checkpoint)
+		if err != nil {
+			finalErr = err
+			finalStatus = terminalRunStatusForError(err)
+			return nil, err
+		}
+		finalSuspension = out.Suspension
+		return out, nil
+	}
 
 	planInput := &planner.PlanInput{
 		Messages:   input.Messages,
@@ -315,7 +369,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		hardDeadline,
 		turnID,
 		parentTracker,
-		ctrl,
 	)
 	if err != nil {
 		finalErr = err
@@ -325,6 +378,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	// Successful completion.
 	finalStatus = runStatusSuccess
 	finalErr = nil
+	finalSuspension = out.Suspension
 	return out, nil
 }
 
@@ -338,7 +392,6 @@ func (r *Runtime) runLoopWithState(
 	hardDeadline time.Time,
 	turnID string,
 	parentTracker *childTracker,
-	ctrl *interrupt.Controller,
 ) (*RunOutput, error) {
 	if base == nil {
 		return nil, errors.New("base plan input is required")
@@ -391,7 +444,6 @@ func (r *Runtime) runLoopWithState(
 		base,
 		st,
 		turnID,
-		ctrl,
 		parentTracker,
 		runDeadlines{
 			Budget: budgetDeadline,
@@ -401,17 +453,4 @@ func (r *Runtime) runLoopWithState(
 		toolOpts,
 	)
 	return loop.run()
-}
-
-// timeoutUntil returns the remaining duration until deadline, relative to now.
-// The ok result is false when deadline is non-zero and has already elapsed.
-func timeoutUntil(deadline, now time.Time) (time.Duration, bool) {
-	if deadline.IsZero() {
-		return 0, true
-	}
-	rem := deadline.Sub(now)
-	if rem <= 0 {
-		return 0, false
-	}
-	return rem, true
 }

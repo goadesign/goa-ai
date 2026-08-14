@@ -84,21 +84,33 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 	if err := errors.Join(executionErr, resultErr); err != nil {
 		return nil, nil, err
 	}
-	if err := l.r.validateTerminalToolPauses(records); err != nil {
+	if err := l.r.validateTerminalToolClarifications(records); err != nil {
 		return nil, nil, err
 	}
 
-	toolPauses := toolPausesFromRecords(records)
-	if len(program.awaitItems) > 0 && len(toolPauses) > 0 {
-		return nil, nil, errors.New("planner await and tool pause cannot both be present in the same turn")
+	toolClarifications := toolClarificationsFromRecords(records)
+	for i := range records {
+		if records[i].childSuspension == nil {
+			continue
+		}
+		if err := validatePublicRunSuspension(records[i].childSuspension); err != nil {
+			return nil, nil, fmt.Errorf("validate suspended child %s: %w", records[i].call.ToolCallID, err)
+		}
+		batch.pending = append(batch.pending, checkpointPendingInput{Child: &checkpointChildContinuation{
+			ToolCallID: records[i].call.ToolCallID,
+			Suspension: records[i].childSuspension,
+		}})
+	}
+	if len(program.awaitItems) > 0 && len(toolClarifications) > 0 {
+		return nil, nil, errors.New("planner await and tool clarification cannot both be present in the same turn")
 	}
 	items := append([]planner.AwaitItem(nil), program.awaitItems...)
-	if len(toolPauses) > 0 {
-		pauseItems, err := toolPauseAwaitItems(toolPauses)
+	if len(toolClarifications) > 0 {
+		clarificationItems, err := toolClarificationAwaitItems(toolClarifications)
 		if err != nil {
 			return nil, nil, err
 		}
-		items = append(items, pauseItems...)
+		items = append(items, clarificationItems...)
 	}
 	if program.kind == stepKindToolTerminal && len(items) > 0 {
 		return nil, nil, errors.New("workflow step terminal payload cannot accompany await work")
@@ -195,9 +207,6 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 	if err != nil {
 		return err
 	}
-	if len(confirmations) > 0 && l.ctrl == nil {
-		return errors.New("confirmation required but interrupts are not available")
-	}
 	if program.kind == stepKindToolTerminal && len(confirmations) > 0 {
 		return errors.New("workflow step terminal payload cannot accompany confirmation-gated tools")
 	}
@@ -252,11 +261,11 @@ func (r *Runtime) validateTerminalRunBatch(calls []planner.ToolRequest) error {
 	return nil
 }
 
-// validateTerminalToolPauses rejects an external-input continuation after a
-// tool has declared that its successful side effect ends the run.
-func (r *Runtime) validateTerminalToolPauses(records []stepToolRecord) error {
+// validateTerminalToolClarifications rejects a user-input request after a tool
+// has declared that its successful side effect ends the run.
+func (r *Runtime) validateTerminalToolClarifications(records []stepToolRecord) error {
 	for _, record := range records {
-		if record.pause == nil {
+		if record.clarification == nil {
 			continue
 		}
 		spec, ok := r.toolSpec(record.call.Name)
@@ -264,7 +273,7 @@ func (r *Runtime) validateTerminalToolPauses(records []stepToolRecord) error {
 			return fmt.Errorf("unknown tool %q", record.call.Name)
 		}
 		if spec.TerminalRun {
-			return fmt.Errorf("terminal tool %q cannot pause", record.call.Name)
+			return fmt.Errorf("terminal tool %q cannot request clarification", record.call.Name)
 		}
 	}
 	return nil
@@ -397,11 +406,17 @@ func (r *Runtime) recordStepToolResults(
 			}
 			record.scheduleRequired = false
 		}
+		if record.callRunID == "" {
+			record.callRunID = record.call.RunID
+		}
 		if !record.resultPublished {
 			if err := r.publishStepToolResult(ctx, input, base, turnID, record); err != nil {
 				return err
 			}
 			record.resultPublished = true
+		}
+		if record.resultRunID == "" {
+			record.resultRunID = record.resultRecord.RunID
 		}
 	}
 	results := stepToolResults(records)
@@ -619,20 +634,20 @@ func (l *workflowLoop) recordCapDeniedToolCall(
 	return true, prepared, err
 }
 
-// toolPauseAwaitItems projects runtime-owned tool pauses into the existing await
-// queue item model.
-func toolPauseAwaitItems(pauses []*ToolPause) ([]planner.AwaitItem, error) {
-	if len(pauses) == 0 {
+// toolClarificationAwaitItems projects tool-authored user questions into the
+// planner-independent await item model.
+func toolClarificationAwaitItems(clarifications []*ToolClarification) ([]planner.AwaitItem, error) {
+	if len(clarifications) == 0 {
 		return nil, nil
 	}
-	items := make([]planner.AwaitItem, 0, len(pauses))
-	for i, pause := range pauses {
-		if pause == nil || pause.Clarification == nil {
-			return nil, fmt.Errorf("tool pause %d is invalid", i)
+	items := make([]planner.AwaitItem, 0, len(clarifications))
+	for i, clarification := range clarifications {
+		if clarification == nil {
+			return nil, fmt.Errorf("tool clarification %d is nil", i)
 		}
 		items = append(items, planner.AwaitClarificationItem(&planner.AwaitClarification{
-			ID:       pause.Clarification.ID,
-			Question: pause.Clarification.Question,
+			ID:       clarification.ID,
+			Question: clarification.Question,
 		}))
 	}
 	return items, nil

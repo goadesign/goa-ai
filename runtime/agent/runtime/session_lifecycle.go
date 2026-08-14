@@ -69,6 +69,41 @@ func (r *Runtime) DeleteSession(ctx context.Context, sessionID string) (session.
 	return ended, nil
 }
 
+// PurgeSession permanently removes an ended session's runtime metadata and
+// continuation checkpoints. It rejects sessions with active runs so a later
+// workflow activity cannot recreate run data after the session is gone.
+func (r *Runtime) PurgeSession(ctx context.Context, sessionID string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	id := strings.TrimSpace(sessionID)
+	if id == "" {
+		return ErrMissingSessionID
+	}
+	sess, err := r.SessionStore.LoadSession(ctx, id)
+	if errors.Is(err, session.ErrSessionNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if sess.Status != session.StatusEnded {
+		return errors.New("runtime: session must be ended before purge")
+	}
+	active, err := r.SessionStore.ListRunsBySession(ctx, id, []session.RunStatus{
+		session.RunStatusPending,
+		session.RunStatusRunning,
+		session.RunStatusPaused,
+	})
+	if err != nil {
+		return err
+	}
+	if len(active) > 0 {
+		return errors.New("runtime: session has active runs")
+	}
+	return r.SessionStore.PurgeSession(ctx, id)
+}
+
 func (r *Runtime) cancelSessionRuns(ctx context.Context, sessionID string) error {
 	runs, err := r.SessionStore.ListRunsBySession(ctx, sessionID, []session.RunStatus{
 		session.RunStatusPending,

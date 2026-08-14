@@ -206,7 +206,7 @@ type (
 		Data UsagePayload
 	}
 
-	// Workflow signals lifecycle phases for a run. Emitted at least once at the end
+	// Workflow reports lifecycle phases for a run. Emitted at least once at the end
 	// of a run with Phase set to "completed" on success, or "failed"/"canceled"
 	// on non-successful terminations.
 	Workflow struct {
@@ -313,7 +313,7 @@ type (
 	}
 
 	// AwaitQuestions streams a structured multiple-choice prompt that must be
-	// answered out-of-band before the run can resume.
+	// answered before a successor run can continue the work.
 	AwaitQuestions struct {
 		Base
 		Data AwaitQuestionsPayload
@@ -487,10 +487,10 @@ type (
 		Payload rawjson.Message `json:"payload,omitempty"`
 	}
 
-	// AwaitQuestionsPayload describes a structured multiple-choice prompt that must
-	// be answered out-of-band (typically by a UI) and resumed via ProvideToolResults.
+	// AwaitQuestionsPayload describes a structured multiple-choice prompt whose
+	// answers are submitted in the next workflow continuation.
 	AwaitQuestionsPayload struct {
-		// ID correlates this await with a subsequent provide_tool_results call.
+		// ID correlates this request with the continuation response.
 		ID string `json:"id"`
 		// ToolName identifies the tool awaiting user answers.
 		ToolName string `json:"tool_name"`
@@ -521,8 +521,8 @@ type (
 		// ID correlates this await with a subsequent provide_tool_results
 		// call from the orchestrator or UI.
 		ID string `json:"id"`
-		// Items enumerates the external tool calls that must be satisfied
-		// before the run can resume.
+		// Items enumerates the external tool calls whose results let a successor
+		// run continue the work.
 		Items []AwaitToolPayload `json:"items"`
 	}
 
@@ -606,11 +606,11 @@ type (
 	WorkflowPayload struct {
 		// Name is an optional human-readable workflow name.
 		Name string `json:"name,omitempty"`
-		// Phase is the lifecycle phase, e.g., "completed", "failed", "canceled".
+		// Phase is the lifecycle phase, e.g., "completed", "failed", "canceled", "suspended".
 		Phase string `json:"phase"`
 		// Status is the coarse-grained terminal status when known
-		// (typically "success", "failed", or "canceled"). It is populated
-		// on terminal updates derived from RunCompletedEvent and may be
+		// ("success", "failed", "canceled", or "suspended"). It is populated
+		// on terminal updates derived from RunCompletedEvent or RunSuspendedEvent and may be
 		// empty for non-terminal phase transitions.
 		Status string `json:"status,omitempty"`
 		// Failure carries the canonical failure payload for failed terminal updates.

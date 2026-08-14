@@ -7,8 +7,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/api"
-	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -175,8 +173,6 @@ func TestRunLoopRejectsTerminalToolWithPlannerAwait(t *testing.T) {
 		Specs: []tools.ToolSpec{terminal},
 	}))
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
-	wfCtx.ensureSignals()
-	ctrl := interrupt.NewController(wfCtx)
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
 	base := &planner.PlanInput{RunContext: run.Context{
@@ -199,7 +195,7 @@ func TestRunLoopRejectsTerminalToolWithPlannerAwait(t *testing.T) {
 		time.Time{},
 		time.Time{},
 		input.TurnID,
-		ctrl,
+		nil,
 	)
 
 	require.Nil(t, out)
@@ -255,7 +251,7 @@ func TestPolicyRewriteRejectsTerminalPayloadBeforeTranscriptCommit(t *testing.T)
 	require.Empty(t, base.Messages)
 }
 
-func TestRunLoopRejectsTerminalToolPause(t *testing.T) {
+func TestRunLoopRejectsTerminalToolClarification(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 	terminal := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
 	terminal.Bookkeeping = true
@@ -269,10 +265,10 @@ func TestRunLoopRejectsTerminalToolPause(t *testing.T) {
 					Result:     map[string]any{"ok": true},
 					ToolCallID: call.ToolCallID,
 				},
-				Pause: &ToolPause{Clarification: &ToolPauseClarification{
+				Clarification: &ToolClarification{
 					ID:       "clarification-1",
 					Question: "Continue?",
-				}},
+				},
 			}, nil
 		},
 		Specs: []tools.ToolSpec{terminal},
@@ -304,12 +300,12 @@ func TestRunLoopRejectsTerminalToolPause(t *testing.T) {
 	)
 
 	require.Nil(t, out)
-	require.ErrorContains(t, err, `terminal tool "svc.complete" cannot pause`)
+	require.ErrorContains(t, err, `terminal tool "svc.complete" cannot request clarification`)
 	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
 	require.Len(t, base.Messages, 2)
 }
 
-func TestRunLoopRecordsConfirmedTerminalToolBeforeRejectingPause(t *testing.T) {
+func TestRunLoopRecordsConfirmedTerminalToolBeforeRejectingClarification(t *testing.T) {
 	terminal := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
 	terminal.Bookkeeping = true
 	terminal.TerminalRun = true
@@ -337,18 +333,15 @@ func TestRunLoopRecordsConfirmedTerminalToolBeforeRejectingPause(t *testing.T) {
 					Result:     map[string]any{"ok": true},
 					ToolCallID: call.ToolCallID,
 				},
-				Pause: &ToolPause{Clarification: &ToolPauseClarification{
+				Clarification: &ToolClarification{
 					ID:       "clarification-1",
 					Question: "Continue?",
-				}},
+				},
 			}, nil
 		},
 		Specs: []tools.ToolSpec{terminal},
 	}))
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
-	wfCtx.ensureSignals()
-	wfCtx.confirmCh <- &api.ConfirmationDecision{Approved: true, RequestedBy: "operator"}
-	ctrl := interrupt.NewController(wfCtx)
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
 	base := &planner.PlanInput{RunContext: run.Context{
@@ -371,13 +364,12 @@ func TestRunLoopRecordsConfirmedTerminalToolBeforeRejectingPause(t *testing.T) {
 		time.Time{},
 		time.Time{},
 		input.TurnID,
-		ctrl,
+		nil,
 	)
 
-	require.Nil(t, out)
-	require.ErrorContains(t, err, `terminal tool "svc.complete" cannot pause`)
-	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
-	require.Len(t, base.Messages, 2)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.Suspension)
 }
 
 func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {

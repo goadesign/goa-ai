@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -13,7 +15,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"time"
 
 	"go.temporal.io/sdk/temporal"
 )
@@ -89,7 +90,7 @@ type (
 		Input any
 	}
 
-	// RunCompletedEvent fires after a run finishes, whether
+	// RunCompletedEvent fires after a run finishes without a suspension, whether
 	// successfully or with a failure.
 	RunCompletedEvent struct {
 		baseEvent
@@ -114,48 +115,24 @@ type (
 		Labels map[string]string
 	}
 
-	// RunPausedEvent fires when a run is intentionally paused.
-	RunPausedEvent struct {
+	// RunSuspendedEvent is the terminal lifecycle event for a workflow that
+	// produced a versioned continuation checkpoint.
+	RunSuspendedEvent struct {
 		baseEvent
-		// Reason provides a human-readable explanation for why the run was paused.
-		// Examples: "user_requested", "approval_required", "manual_review_needed".
-		// Subscribers can use this to categorize pause events and display appropriate
-		// messages to end users.
-		Reason string
-		// RequestedBy identifies the actor who initiated the pause (e.g., user ID,
-		// service name, or "policy_engine"). This enables audit logging and attribution
-		// for governance workflows.
-		RequestedBy string
-		// Labels carries optional key-value metadata for categorizing the pause event.
-		// These labels are propagated from the pause request and can be used for filtering,
-		// reporting, or triggering downstream workflows. Nil if no labels were provided.
-		Labels map[string]string
-		// Metadata holds arbitrary structured data attached to the pause request for audit
-		// trails or workflow-specific logic (e.g., approval ticket IDs, escalation reasons).
-		// The runtime persists this alongside the run status. Nil if no metadata was provided.
-		Metadata map[string]any
-	}
 
-	// RunResumedEvent fires when a paused run resumes.
-	RunResumedEvent struct {
-		baseEvent
-		// Notes carries optional human-readable context provided when resuming the run.
-		// This might include instructions for the planner ("focus on X"), approval
-		// summaries, or other guidance. Empty if no notes were provided with the resume request.
-		Notes string
-		// RequestedBy identifies the actor who initiated the resume (e.g., user ID,
-		// service name, or "approval_system"). This enables audit logging and attribution
-		// for governance workflows.
-		RequestedBy string
-		// Labels carries optional key-value metadata for categorizing the resume event.
-		// These labels are propagated from the resume request and can be used for filtering,
-		// reporting, or triggering downstream workflows. Nil if no labels were provided.
-		Labels map[string]string
-		// MessageCount indicates how many new conversational messages were injected when
-		// resuming the run. When greater than zero, these messages are appended to the
-		// planner's context before execution continues. Subscribers can use this to track
-		// human-in-the-loop interventions.
-		MessageCount int
+		// SuspensionID identifies the exact checkpoint that ended this workflow.
+		SuspensionID string
+
+		// Version identifies the checkpoint schema required to continue.
+		Version string
+
+		// PendingCount is the number of ordered external inputs still required.
+		PendingCount int
+
+		// RequiredTools lists the tool names referenced by this workflow's saved
+		// state. The owning worker uses its generated codecs to validate the
+		// concrete saved payloads and results before starting a continuation.
+		RequiredTools []tools.Ident
 	}
 
 	// ChildRunLinkedEvent links a parent run/tool call to a spawned child agent run.
@@ -418,7 +395,7 @@ type (
 	// clarification before continuing execution.
 	AwaitClarificationEvent struct {
 		baseEvent
-		// ID correlates this await with a subsequent ProvideClarification.
+		// ID correlates this request with the continuation response.
 		ID string
 		// Question is the prompt to present to the user.
 		Question string
@@ -449,10 +426,10 @@ type (
 	}
 
 	// AwaitQuestionsEvent indicates the planner requested structured multiple-choice
-	// answers to be provided out-of-band (typically by a UI) before the run can resume.
+	// answers before a successor run can continue the work.
 	AwaitQuestionsEvent struct {
 		baseEvent
-		// ID correlates this await with a subsequent ProvideToolResults.
+		// ID correlates this request with the continuation response.
 		ID string
 		// ToolName identifies the tool awaiting user answers.
 		ToolName tools.Ident
@@ -502,7 +479,7 @@ type (
 	// AwaitExternalToolsEvent indicates the planner requested external tool execution.
 	AwaitExternalToolsEvent struct {
 		baseEvent
-		// ID correlates this await with a subsequent ProvideToolResults.
+		// ID correlates this request with the continuation response.
 		ID string
 		// Items enumerate the external tool calls to be satisfied.
 		Items []AwaitToolItem
@@ -757,29 +734,16 @@ func NewPromptRenderedEvent(runID string, agentID agent.Ident, sessionID string,
 	}
 }
 
-// NewRunPausedEvent constructs a RunPausedEvent with provided metadata.
-func NewRunPausedEvent(runID string, agentID agent.Ident, sessionID, reason, requestedBy string, labels map[string]string, metadata map[string]any) *RunPausedEvent {
+// NewRunSuspendedEvent constructs the terminal event emitted with a suspension result.
+func NewRunSuspendedEvent(runID string, agentID agent.Ident, sessionID, suspensionID, version string, pendingCount int, requiredTools []tools.Ident) *RunSuspendedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
-	return &RunPausedEvent{
-		baseEvent:   be,
-		Reason:      reason,
-		RequestedBy: requestedBy,
-		Labels:      labels,
-		Metadata:    metadata,
-	}
-}
-
-// NewRunResumedEvent constructs a RunResumedEvent with provided metadata.
-func NewRunResumedEvent(runID string, agentID agent.Ident, sessionID, notes, requestedBy string, labels map[string]string, messageCount int) *RunResumedEvent {
-	be := newBaseEvent(runID, agentID)
-	be.sessionID = sessionID
-	return &RunResumedEvent{
-		baseEvent:    be,
-		Notes:        notes,
-		RequestedBy:  requestedBy,
-		Labels:       labels,
-		MessageCount: messageCount,
+	return &RunSuspendedEvent{
+		baseEvent:     be,
+		SuspensionID:  suspensionID,
+		Version:       version,
+		PendingCount:  pendingCount,
+		RequiredTools: append([]tools.Ident(nil), requiredTools...),
 	}
 }
 
@@ -1175,8 +1139,7 @@ func newBaseEvent(runID string, agentID agent.Ident) baseEvent {
 
 func (e *RunStartedEvent) Type() EventType         { return RunStarted }
 func (e *RunCompletedEvent) Type() EventType       { return RunCompleted }
-func (e *RunPausedEvent) Type() EventType          { return RunPaused }
-func (e *RunResumedEvent) Type() EventType         { return RunResumed }
+func (e *RunSuspendedEvent) Type() EventType       { return RunSuspended }
 func (e *ToolCallScheduledEvent) Type() EventType  { return ToolCallScheduled }
 func (e *ToolResultReceivedEvent) Type() EventType { return ToolResultReceived }
 func (e *ToolCallUpdatedEvent) Type() EventType    { return ToolCallUpdated }

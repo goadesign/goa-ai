@@ -49,6 +49,9 @@ func (r *Runtime) recordActivity(ctx context.Context, input *RecordActivityInput
 	if input == nil {
 		return errors.New("runtime: record input is nil")
 	}
+	if input.Type == runSuspensionRecordType {
+		return r.saveRunSuspension(ctx, input)
+	}
 
 	if input.Type == transcript.RunLogMessagesSeeded || input.Type == transcript.RunLogMessagesAppended {
 		return r.appendTranscriptRunLogMessages(ctx, input)
@@ -124,7 +127,7 @@ func (r *Runtime) recordActivity(ctx context.Context, input *RecordActivityInput
 			r.logWarn(ctx, "hook publish failed", err, "event", evt.Type())
 		}
 	}
-	if input.Type == hooks.RunCompleted {
+	if isTerminalRunEventType(input.Type) {
 		r.storeWorkflowHandle(input.RunID, nil)
 	}
 	return nil
@@ -339,10 +342,8 @@ func (r *Runtime) updateRunMetaFromHookEvent(ctx context.Context, evt hooks.Even
 			SessionID: e.SessionID(),
 			Status:    session.RunStatusPending,
 		})
-	case *hooks.RunPausedEvent:
-		return r.updateRunStatus(ctx, e.RunID(), session.RunStatusPaused)
-	case *hooks.RunResumedEvent:
-		return r.updateRunStatus(ctx, e.RunID(), session.RunStatusRunning)
+	case *hooks.RunSuspendedEvent:
+		return r.updateRunStatus(ctx, e.RunID(), session.RunStatusSuspended)
 	case *hooks.RunCompletedEvent:
 		switch e.Status {
 		case "success":

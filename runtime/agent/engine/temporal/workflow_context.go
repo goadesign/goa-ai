@@ -4,7 +4,6 @@
 // The runtime uses it to:
 // - execute typed planner/tool/record activities with engine-owned defaults,
 // - access deterministic time/timers and workflow cancellation,
-// - receive external signals in a replay-safe way,
 // - start child workflows by explicit name and queue.
 //
 // Contract:
@@ -63,11 +62,6 @@ type (
 
 	immediateFuture[T any] struct {
 		v T
-	}
-
-	temporalReceiver[T any] struct {
-		ctx workflow.Context
-		ch  workflow.ReceiveChannel
 	}
 )
 
@@ -249,46 +243,6 @@ func (w *temporalWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActiv
 	actx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(call.Name, call.Options))
 	fut := workflow.ExecuteActivity(actx, call.Name, call.Input)
 	return &temporalFuture[*api.ToolOutput]{future: fut, ctx: actx}, nil
-}
-
-func (w *temporalWorkflowContext) PauseRequests() engine.Receiver[*api.PauseRequest] {
-	ch := workflow.GetSignalChannel(w.ctx, api.SignalPause)
-	return &temporalReceiver[*api.PauseRequest]{
-		ctx: w.ctx,
-		ch:  ch,
-	}
-}
-
-func (w *temporalWorkflowContext) ResumeRequests() engine.Receiver[*api.ResumeRequest] {
-	ch := workflow.GetSignalChannel(w.ctx, api.SignalResume)
-	return &temporalReceiver[*api.ResumeRequest]{
-		ctx: w.ctx,
-		ch:  ch,
-	}
-}
-
-func (w *temporalWorkflowContext) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
-	ch := workflow.GetSignalChannel(w.ctx, api.SignalProvideClarification)
-	return &temporalReceiver[*api.ClarificationAnswer]{
-		ctx: w.ctx,
-		ch:  ch,
-	}
-}
-
-func (w *temporalWorkflowContext) ExternalToolResults() engine.Receiver[*api.ToolResultsSet] {
-	ch := workflow.GetSignalChannel(w.ctx, api.SignalProvideToolResults)
-	return &temporalReceiver[*api.ToolResultsSet]{
-		ctx: w.ctx,
-		ch:  ch,
-	}
-}
-
-func (w *temporalWorkflowContext) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
-	ch := workflow.GetSignalChannel(w.ctx, api.SignalProvideConfirmation)
-	return &temporalReceiver[*api.ConfirmationDecision]{
-		ctx: w.ctx,
-		ch:  ch,
-	}
 }
 
 func (w *temporalWorkflowContext) Logger() telemetry.Logger {
@@ -487,120 +441,6 @@ func (f immediateFuture[T]) Get(ctx context.Context) (T, error) {
 
 func (f immediateFuture[T]) IsReady() bool {
 	return true
-}
-
-// Receive blocks until a signal value is delivered and returns it.
-//
-// Temporal receives signals on the workflow context (not the provided ctx), so
-// cancellation must also observe the workflow context's Done channel. Without
-// that, a canceled workflow can remain stuck forever on a blocking signal wait.
-func (r *temporalReceiver[T]) Receive(ctx context.Context) (T, error) {
-	if err := ctx.Err(); err != nil {
-		var zero T
-		return zero, err
-	}
-	if err := normalizeTemporalError(r.ctx.Err()); err != nil {
-		var zero T
-		return zero, err
-	}
-
-	var out T
-	if ok := r.ch.ReceiveAsync(&out); ok {
-		return out, nil
-	}
-
-	var canceled bool
-	sel := workflow.NewSelector(r.ctx)
-	sel.AddReceive(r.ch, func(c workflow.ReceiveChannel, _ bool) {
-		c.Receive(r.ctx, &out)
-	})
-	sel.AddReceive(r.ctx.Done(), func(workflow.ReceiveChannel, bool) {
-		canceled = true
-	})
-	sel.Select(r.ctx)
-
-	if canceled {
-		var zero T
-		if err := normalizeTemporalError(r.ctx.Err()); err != nil {
-			return zero, err
-		}
-		return zero, context.Canceled
-	}
-	return out, nil
-}
-
-// ReceiveWithTimeout blocks until a signal value is delivered or the timeout elapses.
-//
-// This is implemented using a workflow timer so it is replay-safe and allows runtime
-// code to enforce global run budgets while awaiting external signals.
-func (r *temporalReceiver[T]) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (T, error) {
-	if err := ctx.Err(); err != nil {
-		var zero T
-		return zero, err
-	}
-	if err := normalizeTemporalError(r.ctx.Err()); err != nil {
-		var zero T
-		return zero, err
-	}
-	if timeout <= 0 {
-		var zero T
-		return zero, context.DeadlineExceeded
-	}
-
-	var (
-		out      T
-		canceled bool
-		got      bool
-		timedOut bool
-	)
-	if ok := r.ch.ReceiveAsync(&out); ok {
-		return out, nil
-	}
-
-	timerCtx, cancel := workflow.WithCancel(r.ctx)
-	timer := workflow.NewTimer(timerCtx, timeout)
-	sel := workflow.NewSelector(r.ctx)
-	sel.AddReceive(r.ch, func(c workflow.ReceiveChannel, _ bool) {
-		cancel()
-		c.Receive(r.ctx, &out)
-		got = true
-	})
-	sel.AddReceive(r.ctx.Done(), func(workflow.ReceiveChannel, bool) {
-		cancel()
-		canceled = true
-	})
-	sel.AddFuture(timer, func(workflow.Future) {
-		timedOut = true
-	})
-	sel.Select(r.ctx)
-	cancel()
-
-	if got {
-		return out, nil
-	}
-	if canceled {
-		var zero T
-		if err := normalizeTemporalError(r.ctx.Err()); err != nil {
-			return zero, err
-		}
-		return zero, context.Canceled
-	}
-	if timedOut {
-		var zero T
-		return zero, context.DeadlineExceeded
-	}
-
-	var zero T
-	return zero, errors.New("temporal receiver: select returned without signal or timeout")
-}
-
-// ReceiveAsync attempts to receive a signal value without blocking.
-func (r *temporalReceiver[T]) ReceiveAsync() (T, bool) {
-	var out T
-	if ok := r.ch.ReceiveAsync(&out); ok {
-		return out, true
-	}
-	return out, false
 }
 
 func (e *Engine) activityDefaultsFor(name string) engine.ActivityOptions {

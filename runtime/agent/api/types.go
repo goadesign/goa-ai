@@ -16,7 +16,7 @@ import (
 )
 
 type (
-	// RunInput captures everything a workflow needs to start or resume a run.
+	// RunInput captures everything an initial or continuation workflow needs.
 	// It includes the full conversational context plus caller-provided labels and
 	// metadata.
 	RunInput struct {
@@ -77,6 +77,21 @@ type (
 		// These options allow callers to set caps and tool filters without modifying
 		// the agent registration defaults.
 		Policy *PolicyOverrides
+
+		// Continuation restores a run that previously ended because it required
+		// external input. It is nil for the first workflow in a turn chain.
+		Continuation *RunContinuationInput
+	}
+
+	// RunContinuationInput starts a new workflow from one exact suspended run.
+	// The runtime validates Response against the first pending request before it
+	// decodes Checkpoint or schedules additional work.
+	RunContinuationInput struct {
+		// Suspension is the terminal result returned by the preceding workflow.
+		Suspension *RunSuspension
+
+		// Response satisfies the first request in Suspension.Pending.
+		Response *PendingInputResponse
 	}
 
 	// WorkflowOptions mirrors a subset of engine start options exposed through the runtime.
@@ -157,13 +172,10 @@ type (
 		// FinalizerGrace extends the active TimeBudget deadline into the Hard
 		// deadline available to finalization and bookkeeping.
 		FinalizerGrace time.Duration
-
-		// InterruptsAllowed enables interrupt/pause behavior for the run when supported by the engine.
-		InterruptsAllowed bool
 	}
 
-	// RunOutput represents the final outcome returned by a run workflow, including
-	// the concluding assistant message (when the planner authored one) plus tool
+	// RunOutput represents the terminal outcome returned by one workflow,
+	// including either a completed result or a suspension plus accumulated tool
 	// traces and planner notes for callers.
 	RunOutput struct {
 		// AgentID echoes the agent that produced the result.
@@ -200,6 +212,87 @@ type (
 
 		// Usage aggregates model-reported token usage during the run when available.
 		Usage *model.TokenUsage
+
+		// Suspension is set instead of Final when the run ended because it needs
+		// external input. The caller continues by starting a new workflow with this
+		// value and one matching PendingInputResponse.
+		Suspension *RunSuspension
+	}
+
+	// RunSuspension is the complete workflow-safe result of stopping for external
+	// input. Applications must keep the complete value in trusted server-side
+	// storage; Checkpoint may contain private transcript and execution state and
+	// may only be decoded by goa-ai.
+	RunSuspension struct {
+		// ID uniquely identifies the exact checkpoint and visible pending requests.
+		ID string
+
+		// Version identifies the checkpoint schema understood by the runtime.
+		Version string
+
+		// Checkpoint contains canonical JSON owned exclusively by the runtime. It
+		// must never be sent to an untrusted client.
+		Checkpoint rawjson.Message
+
+		// Pending lists required inputs in the exact order they must be supplied.
+		Pending []*PendingInput
+
+		// RequiredTools lists the registered tools referenced by the saved state.
+		// A continuation worker must register every name; its generated codecs then
+		// validate the concrete saved payloads and results during restoration.
+		RequiredTools []tools.Ident
+	}
+
+	// PendingInputKind identifies the one response shape accepted for a pending
+	// external-input request.
+	PendingInputKind string
+
+	// PendingInput describes one exact external input requested by the runtime.
+	// Exactly one payload field must be set and must match Kind.
+	PendingInput struct {
+		// Kind selects the required response shape.
+		Kind PendingInputKind
+
+		// Confirmation is set for a tool authorization decision.
+		Confirmation *PendingConfirmation
+
+		// Await is set for planner-authored clarification, questions, or external tools.
+		Await *planner.AwaitItem
+	}
+
+	// PendingConfirmation describes one tool call that cannot execute until a
+	// person explicitly approves or denies it.
+	PendingConfirmation struct {
+		// ID uniquely identifies this request.
+		ID string
+
+		// Title is the short heading displayed with the decision.
+		Title string
+
+		// Prompt explains the decision being requested.
+		Prompt string
+
+		// ToolName is the exact tool awaiting authorization.
+		ToolName tools.Ident
+
+		// ToolCallID is the model-authored correlation identifier.
+		ToolCallID string
+
+		// Payload is the exact canonical tool input awaiting authorization.
+		Payload rawjson.Message
+	}
+
+	// PendingInputResponse supplies exactly one response to the first pending
+	// request in a RunSuspension. Exactly one field must be set.
+	PendingInputResponse struct {
+		// Clarification supplies free-form user text.
+		Clarification *ClarificationAnswer
+
+		// Confirmation supplies an approval or denial decision.
+		Confirmation *ConfirmationDecision
+
+		// ToolResults supplies structured question answers or external tool results.
+		ToolResults *ToolResultsSet
 	}
 
 	// ToolEvent is the workflow-boundary safe representation of a tool result emitted by a run.
@@ -273,6 +366,12 @@ type (
 	// - The runtime hydrates all planner-visible tool state from canonical run-log
 	//   events before invoking planners.
 	ToolOutputRef struct {
+		// CallRunID identifies the run log containing ToolCallScheduled.
+		CallRunID string
+
+		// ResultRunID identifies the run log containing ToolResultReceived.
+		ResultRunID string
+
 		// ToolCallID is the correlation identifier for this tool invocation.
 		ToolCallID string
 	}
@@ -420,76 +519,29 @@ type (
 		// result.
 		Failure *planner.ToolFailure
 
-		// Pause carries an optional runtime-owned pause signal emitted by the tool
-		// from the current execution batch.
+		// Clarification carries an optional user question emitted with this tool
+		// result.
 		//
 		// Contract:
-		//   - This survives the tool activity boundary so the workflow thread can
-		//     pause before the next planner resume.
+		//   - This survives the tool activity boundary so the workflow can end with
+		//     a continuation request before the next planner call.
 		//   - The runtime consumes it from the current batch only and does not
 		//     persist it into cumulative planner ToolOutputs history.
-		Pause *ToolPause
+		Clarification *ToolClarification
 	}
 
-	// ToolPause describes one runtime-owned pause request emitted by a tool.
-	//
-	// Exactly one payload field must be set.
-	ToolPause struct {
-		Clarification *ToolPauseClarification
-	}
-
-	// ToolPauseClarification requests free-form operator input before the runtime
-	// resumes planning.
-	ToolPauseClarification struct {
-		// ID uniquely identifies this pause request.
+	// ToolClarification requests free-form user input after a tool result and
+	// before the runtime's next planner call.
+	ToolClarification struct {
+		// ID uniquely identifies this clarification request.
 		ID string
 
 		// Question is the operator-facing prompt to present.
 		Question string
 	}
 
-	// PauseRequest carries metadata attached to a pause signal.
-	PauseRequest struct {
-		// RunID identifies the run to pause.
-		RunID string
-
-		// Reason describes why the run is being paused (for example, "user_requested").
-		Reason string
-
-		// RequestedBy identifies the logical actor requesting the pause (for example, a user ID, service name,
-		// or "policy_engine").
-		RequestedBy string
-
-		// Labels carries optional key-value metadata associated with the pause request.
-		Labels map[string]string
-
-		// Metadata carries arbitrary structured data attached to the pause request.
-		Metadata map[string]any
-	}
-
-	// ResumeRequest carries metadata attached to a resume signal.
-	ResumeRequest struct {
-		// RunID identifies the run to resume.
-		RunID string
-
-		// Notes carries optional human-readable context provided when resuming the run.
-		Notes string
-
-		// RequestedBy identifies the logical actor requesting the resume.
-		RequestedBy string
-
-		// Labels carries optional key-value metadata associated with the resume request.
-		Labels map[string]string
-
-		// Messages allows human or policy actors to inject new conversational messages before the planner resumes execution.
-		Messages []*model.Message
-	}
-
-	// ClarificationAnswer carries a typed answer for a paused clarification request.
+	// ClarificationAnswer carries a typed answer for a suspended clarification request.
 	ClarificationAnswer struct {
-		// RunID identifies the run associated with the clarification.
-		RunID string
-
 		// ID is the clarification await identifier.
 		ID string
 
@@ -502,9 +554,6 @@ type (
 
 	// ConfirmationDecision carries a typed decision for a confirmation await.
 	ConfirmationDecision struct {
-		// RunID identifies the run associated with the confirmation.
-		RunID string
-
 		// ID is the confirmation await identifier.
 		ID string
 
@@ -521,12 +570,12 @@ type (
 		Metadata map[string]any
 	}
 
-	// ProvidedToolResult carries one externally supplied tool result across the
-	// await-resume workflow boundary.
+	// ProvidedToolResult carries one externally supplied tool result into a
+	// continuation workflow.
 	//
 	// Contract:
-	// - This is a raw input envelope from an external actor (for example, a UI or
-	//   bridge service), not the runtime's canonical `ToolEvent` representation.
+	// - This is a raw input envelope from an external actor (for example, a
+	//   user-interface service), not the runtime's canonical `ToolEvent` representation.
 	// - Result bytes must use the tool's generated result codec and remain
 	//   canonical JSON, but server-only sidecars are never provided here; the
 	//   runtime materializes them after decoding.
@@ -574,39 +623,34 @@ type (
 		Issues []*tools.FieldIssue
 	}
 
-	// ToolResultsSet carries results for an external tools await request.
+	// ToolResultsSet carries results for an external-tools or structured-question
+	// input request.
 	ToolResultsSet struct {
-		// RunID identifies the run associated with the external tool results.
-		RunID string
-
 		// ID is the await identifier corresponding to the original AwaitExternalTools event.
 		ID string
 
 		// Results contains the tool results provided by an external system.
 		//
 		// Contract:
-		// - This field crosses a workflow signal boundary. It must be wire-safe and must
+		// - This field crosses a workflow continuation boundary. It must be wire-safe and must
 		//   not embed planner.ToolResult (which contains `any`) or the runtime-owned
 		//   `ToolEvent` envelope.
 		// - The runtime owns decoding, result materialization, canonicalization,
-		//   and server-side sidecar attachment after this signal is received.
+		//   and server-side sidecar attachment after the continuation is received.
 		Results []*ProvidedToolResult
 	}
 )
 
 const (
-	// SignalPause is the workflow signal name used to pause a run.
-	SignalPause = "goaai.runtime.pause"
+	// PendingInputKindClarification requires a Clarification response.
+	PendingInputKindClarification PendingInputKind = "clarification"
 
-	// SignalResume is the workflow signal name used to resume a paused run.
-	SignalResume = "goaai.runtime.resume"
+	// PendingInputKindConfirmation requires a Confirmation response.
+	PendingInputKindConfirmation PendingInputKind = "confirmation"
 
-	// SignalProvideClarification delivers a ClarificationAnswer to a waiting run.
-	SignalProvideClarification = "goaai.runtime.provide.clarification"
+	// PendingInputKindToolResults requires a ToolResults response.
+	PendingInputKindToolResults PendingInputKind = "tool_results"
 
-	// SignalProvideToolResults delivers external tool results to a waiting run.
-	SignalProvideToolResults = "goaai.runtime.provide.toolresults"
-
-	// SignalProvideConfirmation delivers a ConfirmationDecision to a waiting run.
-	SignalProvideConfirmation = "goaai.runtime.provide.confirmation"
+	// RunSuspensionVersion is the checkpoint schema emitted by this runtime.
+	RunSuspensionVersion = "goa-ai.run-suspension.v1"
 )

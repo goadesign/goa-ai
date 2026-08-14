@@ -16,7 +16,6 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -110,38 +109,6 @@ func (r *Runtime) finalizeWithPlanner(
 	if err := enforcePlanActivityInputBudget(req); err != nil {
 		return nil, err
 	}
-	// Emit a pause/resume pair to indicate a finalization turn began.
-	if err := r.publishHook(
-		ctx,
-		hooks.NewRunPausedEvent(
-			base.RunContext.RunID,
-			input.AgentID,
-			base.RunContext.SessionID,
-			"finalize",
-			"runtime",
-			map[string]string{"reason": string(reason)},
-			nil,
-		),
-		turnID,
-	); err != nil {
-		return nil, err
-	}
-	if err := r.publishHook(
-		ctx,
-		hooks.NewRunResumedEvent(
-			base.RunContext.RunID,
-			input.AgentID,
-			base.RunContext.SessionID,
-			"finalize",
-			base.RunContext.RunID,
-			nil,
-			0,
-		),
-		turnID,
-	); err != nil {
-		return nil, err
-	}
-
 	// Human‑readable reason strings for error contexts when finalization fails.
 	reasonText := func() string {
 		switch reason {
@@ -295,7 +262,6 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		st,
 		turnID,
 		nil,
-		nil,
 		runDeadlines{
 			Budget: hardDeadline,
 			Hard:   hardDeadline,
@@ -337,7 +303,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		return nil, fmt.Errorf("finalization terminal tool step timed out: %w", context.DeadlineExceeded)
 	}
 	if len(confirmations) > 0 || len(items) > 0 {
-		return nil, errors.New("finalization terminal tool step cannot pause")
+		return nil, errors.New("finalization terminal tool step cannot request clarification")
 	}
 	if err := r.validateFinalizationTerminalToolRecords(batch.records); err != nil {
 		return nil, err
@@ -376,8 +342,8 @@ func (r *Runtime) validateFinalizationTerminalToolRecords(records []stepToolReco
 		if err := validateStepToolRecord("finalization terminal tool step", record); err != nil {
 			return err
 		}
-		if record.pause != nil {
-			return fmt.Errorf("finalization terminal tool step cannot pause on tool %q", record.call.Name)
+		if record.clarification != nil {
+			return fmt.Errorf("finalization terminal tool step cannot request clarification from tool %q", record.call.Name)
 		}
 		if record.result.Failure != nil {
 			return fmt.Errorf("finalization terminal tool step failed on tool %q: %w", record.call.Name, record.result.Failure.Error)
@@ -393,145 +359,21 @@ func (r *Runtime) validateFinalizationTerminalToolRecords(records []stepToolReco
 	return nil
 }
 
-// handleInterrupts drains pause signals and blocks until a resume signal arrives.
-// When budgetDeadline is reached, it returns nil so the caller can finalize cleanly.
-func (r *Runtime) handleInterrupts(
-	wfCtx engine.WorkflowContext,
-	input *RunInput,
-	base *planner.PlanInput,
-	turnID string,
-	ctrl *interrupt.Controller,
-	nextAttempt *int,
-	budgetDeadline time.Time,
-) error {
-	if ctrl == nil {
-		return nil
-	}
-	ctx := wfCtx.Context()
-	for {
-		req, ok := ctrl.PollPause()
-		if !ok {
-			break
-		}
-		if req == nil {
-			return errors.New("pause: received nil pause request")
-		}
-		if err := r.publishHook(
-			ctx,
-			hooks.NewRunPausedEvent(
-				input.RunID,
-				input.AgentID,
-				input.SessionID,
-				req.Reason,
-				req.RequestedBy,
-				req.Labels,
-				req.Metadata,
-			),
-			turnID,
-		); err != nil {
-			return err
-		}
-
-		timeout, ok := timeoutUntil(budgetDeadline, wfCtx.Now())
-		if !ok {
-			if err := r.publishHook(
-				ctx,
-				hooks.NewRunResumedEvent(
-					input.RunID,
-					input.AgentID,
-					input.SessionID,
-					"deadline_exceeded",
-					"runtime",
-					map[string]string{"resumed_by": "deadline_exceeded"},
-					0,
-				),
-				turnID,
-			); err != nil {
-				return err
-			}
-			return nil
-		}
-		resumeReq, err := ctrl.WaitResume(ctx, timeout)
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				if err := r.publishHook(
-					ctx,
-					hooks.NewRunResumedEvent(
-						input.RunID,
-						input.AgentID,
-						input.SessionID,
-						"deadline_exceeded",
-						"runtime",
-						map[string]string{"resumed_by": "deadline_exceeded"},
-						0,
-					),
-					turnID,
-				); err != nil {
-					return err
-				}
-				return nil
-			}
-			if err2 := r.publishHook(
-				ctx,
-				hooks.NewRunResumedEvent(
-					input.RunID,
-					input.AgentID,
-					input.SessionID,
-					"resume_error",
-					"runtime",
-					map[string]string{"resumed_by": "resume_error"},
-					0,
-				),
-				turnID,
-			); err2 != nil {
-				return err2
-			}
-			return err
-		}
-		if resumeReq == nil {
-			return errors.New("resume: received nil resume request")
-		}
-		if len(resumeReq.Messages) > 0 {
-			if err := r.appendTranscriptMessages(ctx, input.AgentID, base, turnID, resumeReq.Messages); err != nil {
-				return err
-			}
-		}
-		base.RunContext.Attempt = *nextAttempt
-		*nextAttempt++
-		if err := r.publishHook(
-			ctx,
-			hooks.NewRunResumedEvent(
-				input.RunID,
-				input.AgentID,
-				input.SessionID,
-				resumeReq.Notes,
-				resumeReq.RequestedBy,
-				resumeReq.Labels,
-				len(resumeReq.Messages),
-			),
-			turnID,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// handleMissingFieldsPolicy inspects generated validation issues for missing
+// applyMissingFieldsPolicy inspects generated validation issues for missing
 // required fields and applies the agent RunPolicy.OnMissingFields behavior:
 //
 //   - MissingFieldsFinalize: immediately request a terminal planner result
 //     from the planner. Returns a non-nil RunOutput to short-circuit the loop.
-//   - MissingFieldsAwaitClarification: when durable (interrupt controller present), emit
-//     an await_clarification event, pause the run, and wait indefinitely for operator input.
-//     On resume, append the user answer to base PlanInput so the next turn can proceed.
+//   - MissingFieldsAwaitClarification: return one typed await item so the workflow
+//     can publish the request and end with a continuation checkpoint.
 //   - MissingFieldsResume (or unspecified): do nothing; the planner will see the
 //     correction directive and may choose how to proceed. Returns handled=false.
 //
 // The function returns:
 //   - out: non-nil only when finalization occurred
-//   - err: any error encountered while pausing/resuming
-func (r *Runtime) handleMissingFieldsPolicy(
+//   - await: non-nil only when the workflow must suspend for clarification
+//   - err: any error encountered while applying the configured policy
+func (r *Runtime) applyMissingFieldsPolicy(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
 	input *RunInput,
@@ -542,13 +384,11 @@ func (r *Runtime) handleMissingFieldsPolicy(
 	aggUsage model.TokenUsage,
 	nextAttempt *int,
 	turnID string,
-	ctrl *interrupt.Controller,
 	deadlines *runDeadlines,
-) (*RunOutput, error) {
-	if ctrl == nil || reg.Policy.OnMissingFields == "" {
-		return nil, nil
+) (*RunOutput, *planner.AwaitItem, error) {
+	if reg.Policy.OnMissingFields == "" {
+		return nil, nil, nil
 	}
-	ctx := wfCtx.Context()
 	// Find the first same-tool correction with generated missing-field issues.
 	var (
 		missing     []string
@@ -575,11 +415,11 @@ func (r *Runtime) handleMissingFieldsPolicy(
 		}
 	}
 	if len(missing) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	switch reg.Policy.OnMissingFields {
 	case MissingFieldsFinalize:
-		return r.finalizeWithPlanner(
+		out, err := r.finalizeWithPlanner(
 			wfCtx,
 			reg,
 			input,
@@ -593,99 +433,24 @@ func (r *Runtime) handleMissingFieldsPolicy(
 			planner.TerminationReasonFailureCap,
 			deadlines.Hard,
 		)
+		return out, nil, err
 	case MissingFieldsAwaitClarification:
 		// Generate deterministic await ID for correlation safety.
 		awaitID := generateDeterministicAwaitID(base.RunContext.RunID, base.RunContext.TurnID, triggerTool, triggerCall)
 		question, err := r.missingFieldsQuestion(triggerTool, missing)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if err := r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
-			base.RunContext.RunID,
-			input.AgentID,
-			base.RunContext.SessionID,
-			awaitID,
-			question,
-			missing,
-			triggerTool,
-			example,
-		), turnID); err != nil {
-			return nil, err
-		}
-		if err := r.publishHook(
-			ctx,
-			hooks.NewRunPausedEvent(
-				base.RunContext.RunID,
-				input.AgentID,
-				base.RunContext.SessionID,
-				"await_clarification",
-				"runtime",
-				nil,
-				nil,
-			),
-			turnID,
-		); err != nil {
-			return nil, err
-		}
-		waitStartedAt := wfCtx.Now()
-		ans, err := ctrl.WaitProvideClarification(ctx, 0)
-		if deadlines != nil {
-			if delta := wfCtx.Now().Sub(waitStartedAt); delta > 0 {
-				// Awaiting clarification is external wait time; it must not consume run budget.
-				// Extend both deadlines so only active planner/tool execution counts.
-				deadlines.pause(delta)
-			}
-		}
-		if err != nil {
-			if err2 := r.publishHook(
-				ctx,
-				hooks.NewRunResumedEvent(
-					base.RunContext.RunID,
-					input.AgentID,
-					base.RunContext.SessionID,
-					"clarification_error",
-					"runtime",
-					map[string]string{
-						"resumed_by": "clarification_error",
-						"await_id":   awaitID,
-					},
-					0,
-				),
-				turnID,
-			); err2 != nil {
-				return nil, err2
-			}
-			return nil, err
-		}
-		if ans == nil {
-			return nil, errors.New("await_clarification: received nil clarification answer")
-		}
-		// Validate correlation when ID is present on the answer.
-		if ans.ID != "" && ans.ID != awaitID {
-			return nil, fmt.Errorf("unexpected await ID for clarification")
-		}
-		if ans.Answer != "" {
-			if err := r.appendTranscriptMessages(ctx, input.AgentID, base, turnID, []*model.Message{{
-				Role:  model.ConversationRoleUser,
-				Parts: []model.Part{model.TextPart{Text: ans.Answer}},
-			}}); err != nil {
-				return nil, err
-			}
-		}
-		if err := r.publishHook(ctx, hooks.NewRunResumedEvent(
-			base.RunContext.RunID,
-			input.AgentID,
-			base.RunContext.SessionID,
-			"clarification_provided",
-			input.RunID,
-			ans.Labels,
-			1,
-		), turnID); err != nil {
-			return nil, err
-		}
-		return nil, nil
+		item := planner.AwaitClarificationItem(&planner.AwaitClarification{
+			ID:             awaitID,
+			Question:       question,
+			MissingFields:  missing,
+			RestrictToTool: triggerTool,
+			ExampleJSON:    example,
+		})
+		return nil, &item, nil
 	case MissingFieldsResume:
-		return nil, nil
+		return nil, nil, nil
 	}
 	panic("unreachable missing-fields action")
 }

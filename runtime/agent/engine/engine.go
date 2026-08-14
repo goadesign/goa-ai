@@ -10,18 +10,15 @@
 //     The runtime calls Engine methods during agent registration and run submission.
 //
 //   - WorkflowContext: Provides deterministic operations inside workflow handlers.
-//     Generated workflow code uses this to schedule activities, handle signals,
-//     and start child workflows. Implementations must ensure replay-safe behavior.
+//     Generated workflow code uses this to schedule activities and start child
+//     workflows. Implementations must ensure replay-safe behavior.
 //
 //   - WorkflowHandle: Represents a running workflow. Callers use handles to wait
-//     for completion, send signals, or cancel execution.
+//     for completion or cancel execution.
 //
 //   - Future[T]: Represents a pending activity result. Enables parallel execution
 //     by allowing workflows to launch multiple activities and collect results later,
 //     without reflection-based assignment.
-//
-//   - Receiver[T]: Delivers typed signals to workflows in a deterministic way.
-//     Used for pause/resume, clarification answers, and external tool results.
 //
 // # Available Implementations
 //
@@ -40,7 +37,7 @@
 //
 //   - Providing Now() instead of time.Now() for workflow time
 //   - Requiring activities for all I/O operations
-//   - Using replay-safe signal channels
+//   - Starting child workflows through the replay-safe workflow context
 //
 // Activities (planner calls, tool execution) are NOT deterministic and can
 // perform arbitrary I/O. The engine records activity inputs/outputs and replays
@@ -87,7 +84,7 @@ const (
 	RunStatusFailed RunStatus = "failed"
 	// RunStatusCanceled indicates the workflow was canceled externally.
 	RunStatusCanceled RunStatus = "canceled"
-	// RunStatusPaused indicates execution is paused awaiting external intervention.
+	// RunStatusPaused indicates the workflow engine reports a paused execution.
 	RunStatusPaused RunStatus = "paused"
 )
 
@@ -98,7 +95,8 @@ var (
 	ErrPlannerActivityDeadlineExceeded = errors.New("planner activity deadline exceeded")
 	// ErrWorkflowNotFound indicates that no workflow execution exists for the given identifier.
 	ErrWorkflowNotFound = errors.New("workflow not found")
-	// ErrWorkflowCompleted indicates that a workflow exists but no longer accepts signals.
+	// ErrWorkflowCompleted indicates that a requested workflow mutation arrived
+	// after the workflow had already completed.
 	ErrWorkflowCompleted = errors.New("workflow completed")
 )
 
@@ -134,28 +132,11 @@ type (
 		// workflow status. Returns an error if the workflow does not exist or if
 		// querying fails.
 		QueryRunStatus(ctx context.Context, workflowID string) (RunStatus, error)
-	}
 
-	// Signaler provides direct signaling by workflow ID/run ID without relying on
-	// in-process workflow handles. Engines that support out-of-process signaling
-	// (e.g., Temporal) should implement this interface so the runtime can deliver
-	// Provide*/Pause/Resume signals across process restarts.
-	Signaler interface {
-		// SignalByID sends a signal to the given workflow identified by workflowID
-		// and optional runID. The payload is engine-specific and must be
-		// serializable by the engine client.
-		SignalByID(ctx context.Context, workflowID, runID, name string, payload any) error
-	}
-
-	// CompletionQuerier allows runtimes to recover the same terminal output/error
-	// that WorkflowHandle.Wait would have returned, but by run identifier after a
-	// restart or detached starter. Callers should query lifecycle first and invoke
-	// this only once the engine reports a terminal status, because implementations
-	// may otherwise block waiting for completion.
-	CompletionQuerier interface {
 		// QueryRunCompletion returns the workflow output for successful runs or the
 		// terminal error for failed/timed-out/canceled runs, addressed by
-		// workflowID.
+		// workflowID. The runtime calls this only after QueryRunStatus reports a
+		// terminal state so implementations may wait for result delivery.
 		QueryRunCompletion(ctx context.Context, workflowID string) (*api.RunOutput, error)
 	}
 
@@ -199,16 +180,16 @@ type (
 	// WorkflowContext exposes engine operations to workflow handlers within the
 	// deterministic execution environment of a workflow. It wraps engine-specific
 	// contexts (Temporal workflow.Context, in-memory contexts, etc.) and provides
-	// a uniform API for activity execution, signal handling, and observability.
+	// a uniform API for activity execution and observability.
 	//
 	// Implementations must ensure deterministic replay: operations that interact
-	// with the workflow engine (planner/tool activities and signal receivers)
+	// with the workflow engine (planner/tool activities and child workflows)
 	// must produce deterministic results when replayed. Direct I/O, random number
 	// generation, or system time access within workflows violates determinism and
 	// causes workflow failures.
 	//
 	// Thread-safety: WorkflowContext is bound to a single workflow execution and
-	// must not be shared across goroutines. Activity and signal operations are
+	// must not be shared across goroutines. Workflow operations are
 	// serialized by the workflow engine.
 	//
 	// Lifecycle: Created by the engine when a workflow starts and remains valid
@@ -253,21 +234,6 @@ type (
 		// so workflows can run multiple tools concurrently and collect results later.
 		ExecuteToolActivityAsync(call ToolActivityCall) (Future[*api.ToolOutput], error)
 
-		// PauseRequests returns a typed receiver for pause signals.
-		PauseRequests() Receiver[*api.PauseRequest]
-
-		// ResumeRequests returns a typed receiver for resume signals.
-		ResumeRequests() Receiver[*api.ResumeRequest]
-
-		// ClarificationAnswers returns a typed receiver for clarification answers.
-		ClarificationAnswers() Receiver[*api.ClarificationAnswer]
-
-		// ExternalToolResults returns a typed receiver for external tool results.
-		ExternalToolResults() Receiver[*api.ToolResultsSet]
-
-		// ConfirmationDecisions returns a typed receiver for tool confirmation decisions.
-		ConfirmationDecisions() Receiver[*api.ConfirmationDecision]
-
 		// Now returns the current workflow time in a deterministic manner. Implementations
 		// must return a time source that is replay-safe (e.g., Temporal's workflow.Now).
 		Now() time.Time
@@ -303,8 +269,8 @@ type (
 		// Detached returns a derived WorkflowContext whose cancellation is disconnected
 		// from the parent workflow scope.
 		//
-		// This is intended for cleanup/terminal work (e.g., emitting RunCompleted
-		// hooks) that should still be attempted even when the main workflow context is
+		// This is intended for cleanup/terminal work (e.g., emitting RunCompleted or
+		// RunSuspended hooks) that should still be attempted even when the main workflow context is
 		// canceled.
 		Detached() WorkflowContext
 
@@ -338,30 +304,6 @@ type (
 		// IsReady returns true if the activity has completed (success or failure) and Get()
 		// will not block. This allows workflows to poll or implement custom waiting strategies.
 		IsReady() bool
-	}
-
-	// Receiver exposes typed workflow signal delivery in an engine-agnostic way.
-	// Implementations wrap engine-specific channels (Temporal signal channels,
-	// in-process Go channels, etc.) and provide blocking and non-blocking receive
-	// helpers so workflow code can react to external events deterministically.
-	Receiver[T any] interface {
-		// Receive blocks until a signal value is delivered and returns it.
-		// Implementations should respect ctx when possible; for engines that do not
-		// support context cancellation, Receive may ignore ctx and rely on workflow
-		// cancellation semantics instead.
-		Receive(ctx context.Context) (T, error)
-
-		// ReceiveWithTimeout blocks until a signal value is delivered or the timeout
-		// elapses and returns an error. A non-positive timeout must return
-		// context.DeadlineExceeded immediately.
-		//
-		// This method is required so workflow code can enforce global run deadlines
-		// while awaiting external signals (pause/resume, confirmations, clarifications,
-		// external tool results) without relying on engine-level timeouts.
-		ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (T, error)
-
-		// ReceiveAsync attempts to receive a signal without blocking.
-		ReceiveAsync() (T, bool)
 	}
 
 	// ActivityOptions configures retry and timeouts for an activity.
@@ -458,17 +400,12 @@ type (
 	}
 
 	// WorkflowHandle allows callers to interact with a running workflow. Returned
-	// by Engine.StartWorkflow, it provides methods to wait for completion, send
-	// signals, or cancel execution.
+	// by Engine.StartWorkflow, it provides methods to wait for completion or cancel
+	// execution.
 	WorkflowHandle interface {
 		// Wait blocks until the workflow completes and returns the typed result.
 		// Returns an error if the workflow fails or is cancelled.
 		Wait(ctx context.Context) (*api.RunOutput, error)
-
-		// Signal sends an asynchronous message to the workflow. The workflow can listen
-		// for signals using engine-specific APIs. Returns an error if the signal cannot
-		// be delivered (e.g., workflow already completed).
-		Signal(ctx context.Context, name string, payload any) error
 
 		// Cancel requests cancellation of the workflow. The workflow's context will be
 		// cancelled, and in-flight activities may be cancelled depending on the engine.

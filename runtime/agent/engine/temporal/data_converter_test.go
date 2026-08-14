@@ -23,8 +23,7 @@ func TestNewAgentDataConverterDecodesToolResultsSetIntoSinglePointer(t *testing.
 	toolName := tools.Ident("test.tool")
 	dc := NewAgentDataConverter()
 	p, err := dc.ToPayload(&api.ToolResultsSet{
-		RunID: "run-123",
-		ID:    "await-123",
+		ID: "await-123",
 		Results: []*api.ProvidedToolResult{
 			{
 				Name:       toolName,

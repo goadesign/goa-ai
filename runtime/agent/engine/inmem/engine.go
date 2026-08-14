@@ -35,21 +35,18 @@ type (
 
 		// statuses tracks workflow status by run ID (inmem uses workflow ID as run ID).
 		statuses map[string]engine.RunStatus
+		// handles retain terminal results so runtime repair can recover the exact
+		// workflow output by ID after its original caller detaches.
+		handles map[string]*handle
 	}
 
-	// wfCtx adapts context.Context plus in-memory signal channels into engine.WorkflowContext.
+	// wfCtx adapts context.Context into engine.WorkflowContext.
 	wfCtx struct {
 		ctx   context.Context
 		id    string
 		runID string
 		eng   *eng
 		seq   *sequenceCounter
-
-		pauseCh       chan *api.PauseRequest
-		resumeCh      chan *api.ResumeRequest
-		clarifyCh     chan *api.ClarificationAnswer
-		toolResultsCh chan *api.ToolResultsSet
-		confirmCh     chan *api.ConfirmationDecision
 	}
 
 	// handle is the in-memory implementation of engine.WorkflowHandle.
@@ -58,7 +55,6 @@ type (
 		done   chan struct{}
 		err    error
 		result *api.RunOutput
-		wfCtx  *wfCtx
 	}
 
 	// childHandle adapts an in-memory WorkflowHandle to engine.ChildWorkflowHandle.
@@ -92,11 +88,6 @@ type (
 		result T
 		err    error
 	}
-
-	// receiver is a typed in-memory signal receiver.
-	receiver[T any] struct {
-		ch chan T
-	}
 )
 
 var (
@@ -120,6 +111,7 @@ func (s *sequenceCounter) Next() uint64 {
 func New() engine.Engine {
 	return &eng{
 		statuses: make(map[string]engine.RunStatus),
+		handles:  make(map[string]*handle),
 	}
 }
 
@@ -227,15 +219,9 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 		runID: req.ID,
 		eng:   e,
 		seq:   &sequenceCounter{},
-
-		pauseCh:       make(chan *api.PauseRequest, 1),
-		resumeCh:      make(chan *api.ResumeRequest, 1),
-		clarifyCh:     make(chan *api.ClarificationAnswer, 1),
-		toolResultsCh: make(chan *api.ToolResultsSet, 1),
-		confirmCh:     make(chan *api.ConfirmationDecision, 1),
 	}
 
-	h := &handle{done: make(chan struct{}), wfCtx: wctx}
+	h := &handle{done: make(chan struct{})}
 
 	// Track workflow as running.
 	e.mu.Lock()
@@ -243,6 +229,7 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 		e.statuses = make(map[string]engine.RunStatus)
 	}
 	e.statuses[req.ID] = engine.RunStatusRunning
+	e.handles[req.ID] = h
 	e.mu.Unlock()
 
 	go func() {
@@ -283,6 +270,21 @@ func (e *eng) QueryRunStatus(_ context.Context, workflowID string) (engine.RunSt
 	return status, nil
 }
 
+// QueryRunCompletion returns the exact terminal result produced by the
+// in-process workflow handler.
+func (e *eng) QueryRunCompletion(ctx context.Context, workflowID string) (*api.RunOutput, error) {
+	if workflowID == "" {
+		return nil, errors.New("workflow id is required")
+	}
+	e.mu.RLock()
+	h, ok := e.handles[workflowID]
+	e.mu.RUnlock()
+	if !ok {
+		return nil, engine.ErrWorkflowNotFound
+	}
+	return h.Wait(ctx)
+}
+
 func (e *eng) CancelByID(_ context.Context, _ string) error {
 	// In-memory: best-effort cancellation is not wired. The runtime may use this
 	// in tests; returning nil preserves no-op semantics.
@@ -297,48 +299,6 @@ func (h *handle) Wait(ctx context.Context) (*api.RunOutput, error) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		return h.result, h.err
-	}
-}
-
-func (h *handle) Signal(ctx context.Context, name string, payload any) error {
-	switch name {
-	case api.SignalPause:
-		req, ok := payload.(*api.PauseRequest)
-		if !ok {
-			return fmt.Errorf("signal %q expects api.PauseRequest, got %T", name, payload)
-		}
-		return sendSignal(ctx, h.done, h.wfCtx.pauseCh, req)
-
-	case api.SignalResume:
-		req, ok := payload.(*api.ResumeRequest)
-		if !ok {
-			return fmt.Errorf("signal %q expects api.ResumeRequest, got %T", name, payload)
-		}
-		return sendSignal(ctx, h.done, h.wfCtx.resumeCh, req)
-
-	case api.SignalProvideClarification:
-		req, ok := payload.(*api.ClarificationAnswer)
-		if !ok {
-			return fmt.Errorf("signal %q expects api.ClarificationAnswer, got %T", name, payload)
-		}
-		return sendSignal(ctx, h.done, h.wfCtx.clarifyCh, req)
-
-	case api.SignalProvideToolResults:
-		req, ok := payload.(*api.ToolResultsSet)
-		if !ok {
-			return fmt.Errorf("signal %q expects api.ToolResultsSet, got %T", name, payload)
-		}
-		return sendSignal(ctx, h.done, h.wfCtx.toolResultsCh, req)
-
-	case api.SignalProvideConfirmation:
-		req, ok := payload.(*api.ConfirmationDecision)
-		if !ok {
-			return fmt.Errorf("signal %q expects api.ConfirmationDecision, got %T", name, payload)
-		}
-		return sendSignal(ctx, h.done, h.wfCtx.confirmCh, req)
-
-	default:
-		return fmt.Errorf("unknown signal %q", name)
 	}
 }
 
@@ -552,73 +512,6 @@ func (w *wfCtx) ExecuteToolActivityAsync(call engine.ToolActivityCall) (engine.F
 	return fut, nil
 }
 
-func (w *wfCtx) PauseRequests() engine.Receiver[*api.PauseRequest] {
-	return receiver[*api.PauseRequest]{ch: w.pauseCh}
-}
-
-func (w *wfCtx) ResumeRequests() engine.Receiver[*api.ResumeRequest] {
-	return receiver[*api.ResumeRequest]{ch: w.resumeCh}
-}
-
-func (w *wfCtx) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
-	return receiver[*api.ClarificationAnswer]{ch: w.clarifyCh}
-}
-
-func (w *wfCtx) ExternalToolResults() engine.Receiver[*api.ToolResultsSet] {
-	return receiver[*api.ToolResultsSet]{ch: w.toolResultsCh}
-}
-
-func (w *wfCtx) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
-	return receiver[*api.ConfirmationDecision]{ch: w.confirmCh}
-}
-
-// Receive blocks until a signal value is delivered and returns it.
-func (r receiver[T]) Receive(ctx context.Context) (T, error) {
-	select {
-	case <-ctx.Done():
-		var zero T
-		return zero, ctx.Err()
-	case val := <-r.ch:
-		return val, nil
-	}
-}
-
-// ReceiveWithTimeout blocks until a signal value is delivered or the timeout
-// elapses and returns context.DeadlineExceeded.
-func (r receiver[T]) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (T, error) {
-	if err := ctx.Err(); err != nil {
-		var zero T
-		return zero, err
-	}
-	if timeout <= 0 {
-		var zero T
-		return zero, context.DeadlineExceeded
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		var zero T
-		return zero, ctx.Err()
-	case <-timer.C:
-		var zero T
-		return zero, context.DeadlineExceeded
-	case val := <-r.ch:
-		return val, nil
-	}
-}
-
-// ReceiveAsync attempts to receive a signal value without blocking.
-func (r receiver[T]) ReceiveAsync() (T, bool) {
-	select {
-	case val := <-r.ch:
-		return val, true
-	default:
-		var zero T
-		return zero, false
-	}
-}
-
 func (f *future[T]) Get(ctx context.Context) (T, error) {
 	select {
 	case <-ctx.Done():
@@ -635,17 +528,6 @@ func (f *future[T]) IsReady() bool {
 		return true
 	default:
 		return false
-	}
-}
-
-func sendSignal[T any](ctx context.Context, done <-chan struct{}, ch chan<- T, payload T) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-done:
-		return engine.ErrWorkflowCompleted
-	case ch <- payload:
-		return nil
 	}
 }
 

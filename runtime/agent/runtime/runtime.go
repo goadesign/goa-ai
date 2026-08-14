@@ -46,7 +46,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -152,7 +151,7 @@ type (
 		runHandles map[string]engine.WorkflowHandle
 
 		// completionRepairMu serializes no-handle terminal repair so concurrent
-		// readers cannot append duplicate RunCompleted events for the same missing
+		// readers cannot append duplicate terminal events for the same missing
 		// canonical completion window.
 		completionRepairMu sync.Mutex
 
@@ -301,7 +300,7 @@ type (
 		// ToolMetadataLookup resolves canonical policy metadata for the tools
 		// declared in Specs.
 		ToolMetadataLookup ToolMetadataLookup
-		// Policy configures caps/time budget/interrupt settings for the agent.
+		// Policy configures caps, time budgets, and missing-field behavior for the agent.
 		Policy RunPolicy
 
 		// RequiredLabels lists, sorted and deduplicated, the run label keys
@@ -335,8 +334,8 @@ type (
 		ToolMetadataLookup ToolMetadataLookup
 
 		// Execute invokes the concrete tool implementation for a given tool call.
-		// Returns the durable tool result plus an optional current-batch pause
-		// signal owned by the runtime.
+		// Returns the durable tool result plus an optional current-batch user
+		// clarification request owned by the runtime.
 		//
 		// For service-based tools, codegen generates this function to call service clients.
 		// For agent-tools (Exports), generated registrations set Inline=true and
@@ -391,7 +390,7 @@ type (
 		AgentTool *AgentToolConfig
 	}
 
-	// RunPolicy configures per-agent runtime behavior (caps, time budgets, interrupts).
+	// RunPolicy configures per-agent runtime behavior (caps and time budgets).
 	// These values are evaluated during workflow execution to enforce limits and prevent
 	// runaway tool loops or budget overruns.
 	RunPolicy struct {
@@ -405,15 +404,13 @@ type (
 
 		// TimeBudget is the active-time budget for planner and tool work within
 		// the run (0 = unlimited). The workflow runtime enforces this deadline;
-		// external-input waits pause it and no engine run timeout is derived.
+		// time between continuation workflows does not consume it and no engine
+		// run timeout is derived.
 		TimeBudget time.Duration
 
 		// FinalizerGrace reserves time to produce a last assistant message after
 		// TimeBudget is exhausted. Zero uses the runtime default.
 		FinalizerGrace time.Duration
-
-		// InterruptsAllowed indicates whether the workflow can be paused and resumed.
-		InterruptsAllowed bool
 
 		// OnMissingFields controls behavior when validation indicates missing fields:
 		// "finalize" | "await_clarification" | "resume"
@@ -452,9 +449,9 @@ const (
 	// MissingFieldsFinalize instructs the runtime to finalize immediately
 	// when fields are missing.
 	MissingFieldsFinalize MissingFieldsAction = "finalize"
-	// MissingFieldsAwaitClarification instructs the runtime to pause and await user clarification.
+	// MissingFieldsAwaitClarification ends the workflow with a user clarification request.
 	MissingFieldsAwaitClarification MissingFieldsAction = "await_clarification"
-	// MissingFieldsResume instructs the runtime to continue without pausing; surface hints to the planner.
+	// MissingFieldsResume instructs the runtime to continue and surface hints to the planner.
 	MissingFieldsResume MissingFieldsAction = "resume"
 )
 
@@ -628,8 +625,8 @@ func WithRunMaxConsecutiveFailedToolCalls(n int) RunOption {
 }
 
 // WithRunTimeBudget sets the active-time budget for planner and tool work.
-// External-input waits pause the budget, and the runtime does not derive an
-// engine run timeout. Zero means no override.
+// Time between continuation workflows does not consume the budget, and the
+// runtime does not derive an engine run timeout. Zero means no override.
 func WithRunTimeBudget(d time.Duration) RunOption {
 	return func(in *RunInput) {
 		if in.Policy == nil {
@@ -647,17 +644,6 @@ func WithRunFinalizerGrace(d time.Duration) RunOption {
 			in.Policy = &PolicyOverrides{}
 		}
 		in.Policy.FinalizerGrace = d
-	}
-}
-
-// WithRunInterruptsAllowed enables human-in-the-loop interruptions for this run.
-// When false, no override is applied and the agent registration policy governs.
-func WithRunInterruptsAllowed(allowed bool) RunOption {
-	return func(in *RunInput) {
-		if in.Policy == nil {
-			in.Policy = &PolicyOverrides{}
-		}
-		in.Policy.InterruptsAllowed = allowed
 	}
 }
 
@@ -774,26 +760,14 @@ func newFromOptions(opts Options) *Runtime {
 					Metadata:  nil,
 					StartedAt: time.Time{},
 				})
-			case *hooks.RunPausedEvent:
-				status = session.RunStatusPaused
+			case *hooks.RunSuspendedEvent:
+				status = session.RunStatusSuspended
 				return rt.SessionStore.UpsertRun(ctx, session.RunMeta{
 					AgentID:   evt.AgentID(),
 					RunID:     evt.RunID(),
 					SessionID: evt.SessionID(),
 					Status:    status,
 					UpdatedAt: ts,
-					Labels:    evt.Labels,
-					Metadata:  evt.Metadata,
-				})
-			case *hooks.RunResumedEvent:
-				status = session.RunStatusRunning
-				return rt.SessionStore.UpsertRun(ctx, session.RunMeta{
-					AgentID:   evt.AgentID(),
-					RunID:     evt.RunID(),
-					SessionID: evt.SessionID(),
-					Status:    status,
-					UpdatedAt: ts,
-					Labels:    evt.Labels,
 				})
 			case *hooks.RunCompletedEvent:
 				switch evt.Status {
@@ -1479,11 +1453,14 @@ func (r *Runtime) ExecuteAgentChildWithRoute(
 	if err != nil {
 		return nil, err
 	}
+	if err := validateWorkflowOutput(out, route.ID, input.RunID); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
 // StartRun launches the agent workflow asynchronously and returns a workflow handle
-// so callers can wait, signal, or cancel execution. The RunID is generated if not
+// so callers can wait or cancel execution. The RunID is generated if not
 // provided in the input. Returns an error if the agent is not registered or if the
 // workflow fails to start.
 func (r *Runtime) startRun(ctx context.Context, input *RunInput) (engine.WorkflowHandle, error) {
@@ -1569,7 +1546,20 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		return nil, fmt.Errorf("runtime: invalid transcript: %w", err)
 	}
 	reg, _ := r.agentByID(input.AgentID)
-	if err := validateRequiredLabels(reg, input.Labels); err != nil {
+	runLabels := input.Labels
+	runMetadata := input.Metadata
+	if input.Continuation != nil {
+		checkpoint, err := decodeWorkflowCheckpointState(input.Continuation.Suspension)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateContinuationIdentity(input, checkpoint); err != nil {
+			return nil, err
+		}
+		runLabels = checkpoint.Labels
+		runMetadata = checkpoint.Metadata
+	}
+	if err := validateRequiredLabels(reg, runLabels); err != nil {
 		return nil, err
 	}
 	req := engine.WorkflowStartRequest{
@@ -1579,10 +1569,9 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		Input:     input,
 		// RunTimeout is intentionally left zero (engine-unbounded): active-time
 		// enforcement is owned by the workflow's Budget and Hard deadlines
-		// (run_timing.go, workflow_loop.go), which correctly exempt indefinite
-		// external-input awaits. An engine-level ceiling here would race those
-		// deadlines and can force-close the workflow mid-await with no chance to
-		// finalize.
+		// (run_timing.go, workflow_loop.go). External-input requests end the
+		// workflow and store the remaining durations for the next workflow, so an
+		// engine-level ceiling would only add a competing mid-turn deadline.
 	}
 	if opts := input.WorkflowOptions; opts != nil {
 		if opts.TaskQueue != "" {
@@ -1612,8 +1601,8 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 			Status:    session.RunStatusPending,
 			StartedAt: now,
 			UpdatedAt: now,
-			Labels:    cloneLabels(input.Labels),
-			Metadata:  cloneMetadata(input.Metadata),
+			Labels:    cloneLabels(runLabels),
+			Metadata:  cloneMetadata(runMetadata),
 		}); err != nil {
 			return nil, err
 		}
@@ -1627,7 +1616,7 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		return nil, fmt.Errorf("%w: %w", ErrWorkflowStartFailed, err)
 	}
 	if r.RunEventStore != nil {
-		observed := newObservedWorkflowHandle(r, input, handle)
+		observed := newObservedWorkflowHandle(r, input, runLabels, handle)
 		handle = observed
 	}
 	r.storeWorkflowHandle(input.RunID, handle)
@@ -1699,125 +1688,6 @@ func (r *Runtime) CancelRun(ctx context.Context, req CancelRequest) error {
 	return nil
 }
 
-// PauseRun requests the underlying workflow to pause via the standard pause signal.
-// Returns an error if the run is unknown or signaling fails.
-func (r *Runtime) PauseRun(ctx context.Context, req interrupt.PauseRequest) error {
-	if req == nil {
-		return errors.New("pause request is required")
-	}
-	if req.RunID == "" {
-		return errors.New("run id is required")
-	}
-	return r.signalRun(ctx, req.RunID, interrupt.SignalPause, req, false)
-}
-
-// ResumeRun notifies the workflow that execution can continue. The resume payload
-// can include optional annotations/messages for the planner to consume.
-func (r *Runtime) ResumeRun(ctx context.Context, req interrupt.ResumeRequest) error {
-	if req == nil {
-		return errors.New("resume request is required")
-	}
-	if req.RunID == "" {
-		return errors.New("run id is required")
-	}
-	return r.signalRun(ctx, req.RunID, interrupt.SignalResume, req, false)
-}
-
-// ProvideClarification sends a typed clarification answer to a waiting run.
-func (r *Runtime) ProvideClarification(ctx context.Context, ans interrupt.ClarificationAnswer) error {
-	if ans == nil {
-		return errors.New("clarification answer is required")
-	}
-	if ans.RunID == "" {
-		return errors.New("run id is required")
-	}
-	return r.signalRun(ctx, ans.RunID, interrupt.SignalProvideClarification, ans, true)
-}
-
-// ProvideToolResults sends a set of external tool results to a waiting run.
-func (r *Runtime) ProvideToolResults(ctx context.Context, rs interrupt.ToolResultsSet) error {
-	if rs == nil {
-		return errors.New("tool results set is required")
-	}
-	if rs.RunID == "" {
-		return errors.New("run id is required")
-	}
-	return r.signalRun(ctx, rs.RunID, interrupt.SignalProvideToolResults, rs, true)
-}
-
-// ProvideConfirmation sends a typed confirmation decision to a waiting run.
-func (r *Runtime) ProvideConfirmation(ctx context.Context, dec interrupt.ConfirmationDecision) error {
-	if dec == nil {
-		return errors.New("confirmation decision is required")
-	}
-	if dec.RunID == "" {
-		return errors.New("run id is required")
-	}
-	return r.signalRun(ctx, dec.RunID, interrupt.SignalProvideConfirmation, dec, true)
-}
-
-// signalRun dispatches a workflow signal through the engine Signaler when
-// available, otherwise through the locally tracked workflow handle.
-func (r *Runtime) signalRun(ctx context.Context, runID string, signal string, payload any, mapAwait bool) error {
-	if s, ok := r.Engine.(engine.Signaler); ok {
-		err := s.SignalByID(ctx, runID, "", signal, payload)
-		if mapAwait {
-			return r.mapAwaitSignalError(ctx, runID, err)
-		}
-		return err
-	}
-	handle, ok := r.workflowHandle(runID)
-	if !ok {
-		if mapAwait {
-			return r.mapAwaitSignalError(ctx, runID, engine.ErrWorkflowNotFound)
-		}
-		return fmt.Errorf("run %q not found", runID)
-	}
-	err := handle.Signal(ctx, signal, payload)
-	if mapAwait {
-		return r.mapAwaitSignalError(ctx, runID, err)
-	}
-	return err
-}
-
-// mapAwaitSignalError converts engine signal-delivery errors into typed runtime
-// await-resume errors that callers can classify with errors.Is/errors.As.
-func (r *Runtime) mapAwaitSignalError(ctx context.Context, runID string, err error) error {
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, engine.ErrWorkflowCompleted) {
-		return &RunNotAwaitableError{
-			RunID:  runID,
-			Reason: RunNotAwaitableCompletedRun,
-			Cause:  err,
-		}
-	}
-	if !errors.Is(err, engine.ErrWorkflowNotFound) {
-		return err
-	}
-
-	status, statusErr := r.Engine.QueryRunStatus(ctx, runID)
-	if statusErr == nil {
-		if isTerminalRunStatus(status) {
-			return &RunNotAwaitableError{
-				RunID:  runID,
-				Reason: RunNotAwaitableCompletedRun,
-				Cause:  err,
-			}
-		}
-		return err
-	}
-	if errors.Is(statusErr, engine.ErrWorkflowNotFound) {
-		return &RunNotAwaitableError{
-			RunID:  runID,
-			Reason: RunNotAwaitableUnknownRun,
-			Cause:  err,
-		}
-	}
-	return fmt.Errorf("query run status after signal failure: %w", statusErr)
-}
-
 // isTerminalRunStatus reports whether the run lifecycle is permanently closed.
 func isTerminalRunStatus(status engine.RunStatus) bool {
 	switch status {
@@ -1839,8 +1709,7 @@ func (r *Runtime) ListRunEvents(ctx context.Context, runID, cursor string, limit
 		return page, nil
 	}
 	if err := r.repairTerminalRunCompletion(ctx, runID); err != nil {
-		r.logWarn(ctx, "run completion repair skipped for event read", err, "run_id", runID)
-		return page, nil
+		return runlog.Page{}, fmt.Errorf("repair terminal run %s before listing events: %w", runID, err)
 	}
 	repaired, err := r.RunEventStore.List(ctx, runID, cursor, limit)
 	if err != nil {
@@ -1853,7 +1722,7 @@ func (r *Runtime) ListRunEvents(ctx context.Context, runID, cursor string, limit
 	if err != nil {
 		return runlog.Page{}, err
 	}
-	if len(delta.Events) == 0 || delta.Events[0].Type != hooks.RunCompleted {
+	if len(delta.Events) == 0 || !isTerminalRunEventType(delta.Events[0].Type) {
 		return repaired, nil
 	}
 	events := append([]*runlog.Event(nil), page.Events...)
@@ -1871,8 +1740,7 @@ func (r *Runtime) GetRunSnapshot(ctx context.Context, runID string) (*run.Snapsh
 	if err != nil {
 		if errors.Is(err, run.ErrNotFound) {
 			if repairErr := r.repairTerminalRunCompletion(ctx, runID); repairErr != nil {
-				r.logWarn(ctx, "run completion repair skipped for missing snapshot", repairErr, "run_id", runID)
-				return nil, err
+				return nil, fmt.Errorf("repair terminal run %s before loading snapshot: %w", runID, repairErr)
 			}
 			return r.loadRunSnapshot(ctx, runID)
 		}
@@ -1880,12 +1748,12 @@ func (r *Runtime) GetRunSnapshot(ctx context.Context, runID string) (*run.Snapsh
 	}
 	if snapshot.Status == run.StatusCompleted ||
 		snapshot.Status == run.StatusFailed ||
-		snapshot.Status == run.StatusCanceled {
+		snapshot.Status == run.StatusCanceled ||
+		snapshot.Status == run.StatusSuspended {
 		return snapshot, nil
 	}
 	if err := r.repairTerminalRunCompletion(ctx, runID); err != nil {
-		r.logWarn(ctx, "run completion repair skipped for snapshot read", err, "run_id", runID)
-		return snapshot, nil
+		return nil, fmt.Errorf("repair terminal run %s before loading snapshot: %w", runID, err)
 	}
 	return r.loadRunSnapshot(ctx, runID)
 }
@@ -1914,7 +1782,7 @@ func (r *Runtime) loadRunSnapshot(ctx context.Context, runID string) (*run.Snaps
 }
 
 // runEventPageNeedsTerminalRepair reports whether a caller is currently reading
-// the durable tail of the run log without a canonical RunCompleted event.
+// the durable tail of the run log without a canonical terminal event.
 func runEventPageNeedsTerminalRepair(page runlog.Page) bool {
 	if page.NextCursor != "" {
 		return false
@@ -1922,7 +1790,7 @@ func runEventPageNeedsTerminalRepair(page runlog.Page) bool {
 	if len(page.Events) == 0 {
 		return true
 	}
-	return page.Events[len(page.Events)-1].Type != hooks.RunCompleted
+	return !isTerminalRunEventType(page.Events[len(page.Events)-1].Type)
 }
 
 // repairedTailNeedsCompletionDelta reports whether repair appended a terminal
@@ -1935,7 +1803,13 @@ func repairedTailNeedsCompletionDelta(original, repaired runlog.Page) bool {
 	if repaired.NextCursor == "" {
 		return false
 	}
-	return repaired.Events[len(repaired.Events)-1].Type != hooks.RunCompleted
+	return !isTerminalRunEventType(repaired.Events[len(repaired.Events)-1].Type)
+}
+
+// isTerminalRunEventType reports the two durable events that permanently end
+// one workflow execution.
+func isTerminalRunEventType(eventType runlog.Type) bool {
+	return eventType == hooks.RunCompleted || eventType == hooks.RunSuspended
 }
 
 // addToolsetLocked registers a toolset, specs, metadata, and hints without
@@ -2073,7 +1947,7 @@ func (r *Runtime) ToolSchema(name tools.Ident) (map[string]any, bool) {
 }
 
 // OverridePolicy applies a best-effort in-process override of the registered agent policy.
-// Only non-zero fields are applied (and InterruptsAllowed when true). Overrides affect
+// Only non-zero fields are applied. Overrides affect
 // subsequent runs and are local to this runtime instance.
 func (r *Runtime) OverridePolicy(agentID agent.Ident, delta RunPolicy) error {
 	r.mu.Lock()
@@ -2093,9 +1967,6 @@ func (r *Runtime) OverridePolicy(agentID agent.Ident, delta RunPolicy) error {
 	}
 	if delta.FinalizerGrace > 0 {
 		reg.Policy.FinalizerGrace = delta.FinalizerGrace
-	}
-	if delta.InterruptsAllowed {
-		reg.Policy.InterruptsAllowed = true
 	}
 	r.agents[agentID] = reg
 	return nil

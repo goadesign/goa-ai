@@ -12,15 +12,14 @@ import (
 )
 
 type (
-	RunInput               = api.RunInput
-	PlanActivityInput      = api.PlanActivityInput
-	PlanActivityOutput     = api.PlanActivityOutput
-	RecoveryCatalog        = api.RecoveryCatalog
-	RecordActivityInput    = api.RecordActivityInput
-	ToolInput              = api.ToolInput
-	ToolOutput             = api.ToolOutput
-	ToolPause              = api.ToolPause
-	ToolPauseClarification = api.ToolPauseClarification
+	RunInput            = api.RunInput
+	PlanActivityInput   = api.PlanActivityInput
+	PlanActivityOutput  = api.PlanActivityOutput
+	RecoveryCatalog     = api.RecoveryCatalog
+	RecordActivityInput = api.RecordActivityInput
+	ToolInput           = api.ToolInput
+	ToolOutput          = api.ToolOutput
+	ToolClarification   = api.ToolClarification
 
 	// WorkflowOptions mirrors the subset of engine start options we expose through
 	// the runtime. Memo and SearchAttributes remain generic visibility metadata so
@@ -96,11 +95,12 @@ type (
 	// Contract:
 	// - ToolResult is required and carries the durable planner-visible tool
 	//   outcome for transcript, hooks, and cumulative ToolOutputs history.
-	// - Pause is optional and is consumed only by the current execution batch.
-	// - Pause is never copied into cumulative planner ToolOutputs history.
+	// - Clarification is optional and is consumed only by the current execution batch.
+	// - Clarification is never copied into cumulative planner ToolOutputs history.
 	ToolExecutionResult struct {
 		ToolResult        *planner.ToolResult
-		Pause             *ToolPause
+		Clarification     *ToolClarification
+		childSuspension   *api.RunSuspension
 		resultPublished   bool
 		resultRecord      *RecordActivityInput
 		duration          time.Duration
@@ -152,7 +152,7 @@ func (f ToolCallExecutorFunc) Execute(ctx context.Context, meta *ToolCallMeta, c
 	return f(ctx, meta, call)
 }
 
-// Executed wraps a durable tool result with no current-batch pause.
+// Executed wraps a durable tool result with no current-batch clarification.
 func Executed(result *planner.ToolResult) *ToolExecutionResult {
 	return &ToolExecutionResult{ToolResult: result}
 }

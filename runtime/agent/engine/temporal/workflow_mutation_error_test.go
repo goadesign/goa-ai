@@ -9,7 +9,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 )
 
-func TestMapSignalError(t *testing.T) {
+func TestMapWorkflowMutationError(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -37,7 +37,7 @@ func TestMapSignalError(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := mapSignalError(tc.err)
+			got := mapWorkflowMutationError(tc.err)
 			if tc.want == nil {
 				require.NoError(t, got)
 				return
@@ -47,10 +47,10 @@ func TestMapSignalError(t *testing.T) {
 	}
 }
 
-func TestMapSignalError_PassesThroughUnknownErrors(t *testing.T) {
+func TestMapWorkflowMutationErrorPassesThroughUnknownErrors(t *testing.T) {
 	t.Parallel()
 
-	want := errors.New("signal transport unavailable")
-	got := mapSignalError(want)
+	want := errors.New("workflow transport unavailable")
+	got := mapWorkflowMutationError(want)
 	require.ErrorIs(t, got, want)
 }

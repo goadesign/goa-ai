@@ -512,15 +512,15 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 				continue
 			}
 			duration := wfCtx.Now().Sub(start)
-			result, resultJSON, pause, err := e.r.materializeToolExecutionResult(ctx, call, execResult)
+			result, resultJSON, clarification, err := e.r.materializeToolExecutionResult(ctx, call, execResult)
 			if err != nil {
 				executionErr = errors.Join(executionErr, err)
 				continue
 			}
 			b.inlineByID[call.ToolCallID] = &ToolExecutionResult{
-				ToolResult: result,
-				Pause:      pause,
-				duration:   duration,
+				ToolResult:    result,
+				Clarification: clarification,
+				duration:      duration,
 			}
 			outcome := b.inlineByID[call.ToolCallID]
 			outcome.resultRecord, err = e.publishToolResultReceived(ctx, call, result, resultJSON, duration)
@@ -687,13 +687,13 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 	if err := e.r.enforceToolResultContracts(spec, info.call, toolRes); err != nil {
 		return nil, err
 	}
-	if err := validateToolPauseContract(info.call, toolRes, out.Pause); err != nil {
+	if err := validateToolClarificationContract(info.call, toolRes, out.Clarification); err != nil {
 		return nil, err
 	}
 	result := &ToolExecutionResult{
-		ToolResult: toolRes,
-		Pause:      out.Pause,
-		duration:   duration,
+		ToolResult:    toolRes,
+		Clarification: out.Clarification,
+		duration:      duration,
 	}
 	var err error
 	result.resultRecord, err = e.publishToolResultReceived(ctx, info.call, toolRes, out.Payload, duration)
@@ -747,6 +747,21 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 				}
 				if synthErr != nil {
 					executionErr = errors.Join(executionErr, synthErr)
+				}
+				continue
+			}
+			if err := validateWorkflowOutput(outPtr, info.cfg.Route.ID, info.nestedRun.RunID); err != nil {
+				executionErr = errors.Join(executionErr, err)
+				continue
+			}
+			if outPtr != nil && outPtr.Suspension != nil {
+				out[info.call.ToolCallID] = &ToolExecutionResult{
+					ToolResult: &planner.ToolResult{
+						Name:       info.call.Name,
+						ToolCallID: info.call.ToolCallID,
+					},
+					childSuspension: outPtr.Suspension,
+					duration:        wfCtx.Now().Sub(info.startTime),
 				}
 				continue
 			}

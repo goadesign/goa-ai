@@ -44,7 +44,7 @@ type (
 		// transcript delta records when they are present in the run log.
 		Transcript []*model.Message
 
-		// Await describes the current await state when the run is paused awaiting input.
+		// Await describes the input request that ended a suspended run.
 		Await *AwaitSnapshot
 
 		// ToolCalls summarizes observed tool calls (scheduled, updated, completed).

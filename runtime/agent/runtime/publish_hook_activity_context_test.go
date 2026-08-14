@@ -64,26 +64,6 @@ func (panicWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActivityCal
 	return nil, nil
 }
 
-func (panicWorkflowContext) PauseRequests() engine.Receiver[*api.PauseRequest] {
-	return nil
-}
-
-func (panicWorkflowContext) ResumeRequests() engine.Receiver[*api.ResumeRequest] {
-	return nil
-}
-
-func (panicWorkflowContext) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
-	return nil
-}
-
-func (panicWorkflowContext) ExternalToolResults() engine.Receiver[*api.ToolResultsSet] {
-	return nil
-}
-
-func (panicWorkflowContext) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
-	return nil
-}
-
 func (panicWorkflowContext) Now() time.Time {
 	return time.Unix(0, 0).UTC()
 }
@@ -357,26 +337,6 @@ func (w *cancelOnPlannerWorkflowContext) ExecuteToolActivity(call engine.ToolAct
 
 func (w *cancelOnPlannerWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
 	return nil, errors.New("unexpected tool activity")
-}
-
-func (w *cancelOnPlannerWorkflowContext) PauseRequests() engine.Receiver[*api.PauseRequest] {
-	return nil
-}
-
-func (w *cancelOnPlannerWorkflowContext) ResumeRequests() engine.Receiver[*api.ResumeRequest] {
-	return nil
-}
-
-func (w *cancelOnPlannerWorkflowContext) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
-	return nil
-}
-
-func (w *cancelOnPlannerWorkflowContext) ExternalToolResults() engine.Receiver[*api.ToolResultsSet] {
-	return nil
-}
-
-func (w *cancelOnPlannerWorkflowContext) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
-	return nil
 }
 
 func (w *cancelOnPlannerWorkflowContext) Now() time.Time {

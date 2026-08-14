@@ -253,62 +253,6 @@ func TestNormalizeTemporalPlannerError(t *testing.T) {
 	}
 }
 
-func TestTemporalReceiverReceiveReturnsCanceledBeforeLaterSignal(t *testing.T) {
-	t.Parallel()
-
-	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
-	const signalName = "receiver.signal"
-
-	env.RegisterDelayedCallback(func() {
-		env.CancelWorkflow()
-	}, time.Second)
-	env.RegisterDelayedCallback(func() {
-		env.SignalWorkflow(signalName, "late-value")
-	}, 2*time.Second)
-
-	env.ExecuteWorkflow(func(ctx workflow.Context) error {
-		recv := &temporalReceiver[string]{
-			ctx: ctx,
-			ch:  workflow.GetSignalChannel(ctx, signalName),
-		}
-		_, err := recv.Receive(context.Background())
-		return err
-	})
-
-	err := env.GetWorkflowError()
-	require.Error(t, err)
-	require.ErrorContains(t, err, "canceled")
-}
-
-func TestTemporalReceiverReceiveWithTimeoutReturnsCanceledBeforeLaterSignal(t *testing.T) {
-	t.Parallel()
-
-	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
-	const signalName = "receiver.timeout.signal"
-
-	env.RegisterDelayedCallback(func() {
-		env.CancelWorkflow()
-	}, time.Second)
-	env.RegisterDelayedCallback(func() {
-		env.SignalWorkflow(signalName, "late-value")
-	}, 2*time.Second)
-
-	env.ExecuteWorkflow(func(ctx workflow.Context) error {
-		recv := &temporalReceiver[string]{
-			ctx: ctx,
-			ch:  workflow.GetSignalChannel(ctx, signalName),
-		}
-		_, err := recv.ReceiveWithTimeout(context.Background(), 10*time.Second)
-		return err
-	})
-
-	err := env.GetWorkflowError()
-	require.Error(t, err)
-	require.ErrorContains(t, err, "canceled")
-}
-
 func temporalActivityTimeoutError(timeoutType enumspb.TimeoutType, retryState enumspb.RetryState) error {
 	return temporalsdk.GetDefaultFailureConverter().FailureToError(&failurepb.Failure{
 		Message: "planner activity failed",
