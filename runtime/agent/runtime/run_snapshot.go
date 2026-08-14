@@ -115,9 +115,6 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 			}
 			s.Phase = p.Phase
 
-		case hooks.RunResumed:
-			s.Await = nil
-
 		case hooks.AssistantMessage:
 			var p hooks.AssistantMessageEvent
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
@@ -220,6 +217,9 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 			default:
 				return nil, fmt.Errorf("unsupported run completion status %q", p.Status)
 			}
+		case hooks.RunSuspended:
+			s.Status = run.StatusSuspended
+			s.Phase = run.PhaseSuspended
 		default:
 			// Most event types do not affect the snapshot; they remain available via ListRunEvents.
 		}

@@ -34,6 +34,8 @@ func TestBuildNextResumeRequestKeepsLargePayloadAndResultsOffWire(t *testing.T) 
 	serverData := rawjson.Message([]byte(`[{"kind":"test.kind","data":"` + strings.Repeat("x", maxPlanActivityInputBytes) + `"}]`))
 	toolOutputs := []*planner.ToolOutput{
 		{
+			CallRunID:   "run-1",
+			ResultRunID: "run-1",
 			Name:        "svc.ts.big",
 			ToolCallID:  "tc-1",
 			Payload:     payload,

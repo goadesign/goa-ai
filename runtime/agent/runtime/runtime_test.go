@@ -15,7 +15,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -204,7 +203,6 @@ func TestRunLoopWithStateAcceptsInitialFinalToolResult(t *testing.T) {
 		time.Time{},
 		time.Time{},
 		"turn-1",
-		nil,
 		nil,
 	)
 	require.NoError(t, err)
@@ -593,8 +591,8 @@ func TestOneShotRunRejectsSessionSearchAttribute(t *testing.T) {
 // TestStartRunNeverSetsEngineRunTimeout proves that no policy shape (a
 // generous budget, no budget at all) ever projects onto the engine-level
 // WorkflowStartRequest.RunTimeout. Active-time enforcement belongs solely to
-// the workflow's own Hard deadline so that an indefinite external-input await
-// (see workflow_await_queue.go) can never be cut short by an engine ceiling.
+// the workflow's Budget and Hard deadlines; a suspension carries their
+// remaining durations into the continuation workflow.
 func TestStartRunNeverSetsEngineRunTimeout(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -819,30 +817,6 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 	require.Equal(t, "sess-1", inPtr.SessionID)
 	require.Equal(t, "turn-1", inPtr.TurnID)
 	require.Equal(t, meta, inPtr.Metadata)
-}
-
-func TestRuntimePauseRunSignalsWorkflow(t *testing.T) {
-	rt := &Runtime{
-		runHandles: make(map[string]engine.WorkflowHandle),
-	}
-	handle := &stubWorkflowHandle{}
-	rt.storeWorkflowHandle("run-1", handle)
-
-	req := &api.PauseRequest{RunID: "run-1", Reason: "human_review"}
-	require.NoError(t, rt.PauseRun(context.Background(), req))
-	require.Equal(t, interrupt.SignalPause, handle.lastSignal)
-}
-
-func TestRuntimeResumeRunSignalsWorkflow(t *testing.T) {
-	rt := &Runtime{
-		runHandles: make(map[string]engine.WorkflowHandle),
-	}
-	handle := &stubWorkflowHandle{}
-	rt.storeWorkflowHandle("run-1", handle)
-
-	req := &api.ResumeRequest{RunID: "run-1", Notes: "resume"}
-	require.NoError(t, rt.ResumeRun(context.Background(), req))
-	require.Equal(t, interrupt.SignalResume, handle.lastSignal)
 }
 
 func TestConsecutiveFailureBreaker(t *testing.T) {

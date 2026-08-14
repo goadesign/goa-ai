@@ -4,8 +4,8 @@ package runtime
 // run log after compact planner activity inputs cross the workflow boundary.
 //
 // Contract:
-// - `api.ToolOutputRef` carries only tool-call identity across the plan activity
-//   boundary.
+// - `api.ToolOutputRef` carries the exact recording run and tool-call identity
+//   across the plan activity boundary.
 // - Canonical tool payload lives in the durable run log via
 //   `ToolCallScheduledEvent`.
 // - Canonical planner-visible tool outcome state lives in the durable run log
@@ -32,7 +32,7 @@ type canonicalToolEvents struct {
 
 // loadPlannerToolOutputs hydrates canonical planner-facing tool outputs from the
 // run log using workflow-safe tool-output references.
-func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, runID string, refs []*api.ToolOutputRef) ([]*planner.ToolOutput, error) {
+func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOutputRef) ([]*planner.ToolOutput, error) {
 	if len(refs) == 0 {
 		return nil, nil
 	}
@@ -40,7 +40,8 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, runID string, refs
 		return nil, fmt.Errorf("runtime: run event store is nil")
 	}
 
-	wanted := make(map[string]struct{}, len(refs))
+	wantedByRun := make(map[string]map[string]struct{})
+	seen := make(map[string]struct{}, len(refs))
 	for idx, ref := range refs {
 		if ref == nil {
 			return nil, fmt.Errorf("runtime: nil tool output ref at index %d", idx)
@@ -48,20 +49,42 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, runID string, refs
 		if ref.ToolCallID == "" {
 			return nil, fmt.Errorf("runtime: tool output ref at index %d is missing tool_call_id", idx)
 		}
-		if _, ok := wanted[ref.ToolCallID]; ok {
-			return nil, fmt.Errorf("runtime: duplicate tool output ref for tool_call_id %s", ref.ToolCallID)
+		if ref.CallRunID == "" || ref.ResultRunID == "" {
+			return nil, fmt.Errorf("runtime: tool output ref at index %d is missing call_run_id or result_run_id", idx)
 		}
-		wanted[ref.ToolCallID] = struct{}{}
+		key := ref.CallRunID + "\x00" + ref.ResultRunID + "\x00" + ref.ToolCallID
+		if _, ok := seen[key]; ok {
+			return nil, fmt.Errorf("runtime: duplicate tool output ref for call_run_id=%s result_run_id=%s tool_call_id=%s", ref.CallRunID, ref.ResultRunID, ref.ToolCallID)
+		}
+		seen[key] = struct{}{}
+		for _, sourceRunID := range []string{ref.CallRunID, ref.ResultRunID} {
+			wanted := wantedByRun[sourceRunID]
+			if wanted == nil {
+				wanted = make(map[string]struct{})
+				wantedByRun[sourceRunID] = wanted
+			}
+			wanted[ref.ToolCallID] = struct{}{}
+		}
 	}
 
-	events, err := r.loadCanonicalToolEvents(ctx, runID, wanted)
-	if err != nil {
-		return nil, err
+	eventsByRun := make(map[string]map[string]*canonicalToolEvents, len(wantedByRun))
+	for sourceRunID, wanted := range wantedByRun {
+		events, err := r.loadCanonicalToolEvents(ctx, sourceRunID, wanted)
+		if err != nil {
+			return nil, err
+		}
+		eventsByRun[sourceRunID] = events
 	}
 
 	outputs := make([]*planner.ToolOutput, 0, len(refs))
 	for _, ref := range refs {
-		output, err := plannerToolOutputFromCanonicalEvents(runID, ref.ToolCallID, events[ref.ToolCallID])
+		output, err := plannerToolOutputFromCanonicalEvents(
+			ref.CallRunID,
+			ref.ResultRunID,
+			ref.ToolCallID,
+			eventsByRun[ref.CallRunID][ref.ToolCallID],
+			eventsByRun[ref.ResultRunID][ref.ToolCallID],
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -72,51 +95,54 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, runID string, refs
 
 // plannerToolOutputFromCanonicalEvents constructs one planner ToolOutput from
 // canonical scheduled/result events in the run log.
-func plannerToolOutputFromCanonicalEvents(runID, toolCallID string, events *canonicalToolEvents) (*planner.ToolOutput, error) {
-	if events == nil {
-		return nil, fmt.Errorf("runtime: missing canonical tool history in run log (run_id=%s tool_call_id=%s)", runID, toolCallID)
+func plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID string, callEvents, resultEvents *canonicalToolEvents) (*planner.ToolOutput, error) {
+	if callEvents == nil {
+		return nil, fmt.Errorf("runtime: missing canonical tool history in run log (run_id=%s tool_call_id=%s)", callRunID, toolCallID)
 	}
-	if events.scheduled == nil {
-		return nil, fmt.Errorf("runtime: missing canonical tool payload in run log (run_id=%s tool_call_id=%s)", runID, toolCallID)
+	if callEvents.scheduled == nil {
+		return nil, fmt.Errorf("runtime: missing canonical tool payload in run log (run_id=%s tool_call_id=%s)", callRunID, toolCallID)
 	}
-	if events.result == nil {
-		return nil, fmt.Errorf("runtime: missing canonical tool result in run log (run_id=%s tool_call_id=%s tool=%s)", runID, toolCallID, events.scheduled.ToolName)
+	if resultEvents == nil || resultEvents.result == nil {
+		return nil, fmt.Errorf("runtime: missing canonical tool result in run log (run_id=%s tool_call_id=%s tool=%s)", resultRunID, toolCallID, callEvents.scheduled.ToolName)
 	}
-	if events.result.ToolName != events.scheduled.ToolName {
+	if resultEvents.result.ToolName != callEvents.scheduled.ToolName {
 		return nil, fmt.Errorf(
-			"runtime: canonical tool result mismatch (run_id=%s tool_call_id=%s tool=%s event_tool=%s)",
-			runID,
+			"runtime: canonical tool result mismatch (call_run_id=%s result_run_id=%s tool_call_id=%s tool=%s event_tool=%s)",
+			callRunID,
+			resultRunID,
 			toolCallID,
-			events.scheduled.ToolName,
-			events.result.ToolName,
+			callEvents.scheduled.ToolName,
+			resultEvents.result.ToolName,
 		)
 	}
 
 	output := &planner.ToolOutput{
-		Name:                       events.scheduled.ToolName,
+		CallRunID:                  callRunID,
+		ResultRunID:                resultRunID,
+		Name:                       callEvents.scheduled.ToolName,
 		ToolCallID:                 toolCallID,
-		ContinuationRootToolCallID: events.scheduled.ContinuationRootToolCallID,
-		Payload:                    append(rawjson.Message(nil), events.scheduled.Payload...),
-		ResultBytes:                events.result.ResultBytes,
-		ResultOmitted:              events.result.ResultOmitted,
-		ResultOmittedReason:        events.result.ResultOmittedReason,
-		ServerData:                 append(rawjson.Message(nil), events.result.ServerData...),
-		Bounds:                     events.result.Bounds,
-		Failure:                    events.result.Failure,
-		Telemetry:                  events.result.Telemetry,
+		ContinuationRootToolCallID: callEvents.scheduled.ContinuationRootToolCallID,
+		Payload:                    append(rawjson.Message(nil), callEvents.scheduled.Payload...),
+		ResultBytes:                resultEvents.result.ResultBytes,
+		ResultOmitted:              resultEvents.result.ResultOmitted,
+		ResultOmittedReason:        resultEvents.result.ResultOmittedReason,
+		ServerData:                 append(rawjson.Message(nil), resultEvents.result.ServerData...),
+		Bounds:                     resultEvents.result.Bounds,
+		Failure:                    resultEvents.result.Failure,
+		Telemetry:                  resultEvents.result.Telemetry,
 	}
-	if events.result.Failure == nil && !output.ResultOmitted {
-		if len(events.result.ResultJSON) != output.ResultBytes {
+	if resultEvents.result.Failure == nil && !output.ResultOmitted {
+		if len(resultEvents.result.ResultJSON) != output.ResultBytes {
 			return nil, fmt.Errorf(
 				"runtime: canonical tool result size mismatch (run_id=%s tool_call_id=%s tool=%s got=%d want=%d)",
-				runID,
+				resultRunID,
 				toolCallID,
 				output.Name,
-				len(events.result.ResultJSON),
+				len(resultEvents.result.ResultJSON),
 				output.ResultBytes,
 			)
 		}
-		output.Result = append(rawjson.Message(nil), events.result.ResultJSON...)
+		output.Result = append(rawjson.Message(nil), resultEvents.result.ResultJSON...)
 	}
 	return output, nil
 }

@@ -23,7 +23,6 @@ Here’s a map of what Goa-AI just built for you based on your `design/*.go` fil
             * Max Tool Calls: `0`
             * Max Consecutive Failures: `0`
             * Time Budget: `0s`
-            * Interrupts Allowed: `false`
     * **Direct Completions:***none*
 
 ---

@@ -194,8 +194,6 @@ type (
 		PlanTimeout time.Duration
 		// ToolTimeout sets the default ExecuteTool StartToClose timeout when set.
 		ToolTimeout time.Duration
-		// InterruptsAllowed indicates whether human interrupts are honored.
-		InterruptsAllowed bool
 		// Caps enumerates max tool-call limits.
 		Caps CapsData
 		// OnMissingFields controls behavior when validation indicates missing

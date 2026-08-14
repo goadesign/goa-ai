@@ -13,11 +13,11 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/runlog"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -63,7 +63,7 @@ func (r *Runtime) runLoop(
 	budgetDeadline time.Time,
 	hardDeadline time.Time,
 	turnID string,
-	ctrl *interrupt.Controller,
+	_ any,
 ) (*RunOutput, error) {
 	st := newRunLoopState(initialResult, nil, model.TokenUsage{}, caps, 2)
 	return r.runLoopWithState(
@@ -76,7 +76,6 @@ func (r *Runtime) runLoop(
 		hardDeadline,
 		turnID,
 		nil,
-		ctrl,
 	)
 }
 
@@ -139,15 +138,9 @@ type testWorkflowContext struct {
 	lastToolCall    engine.ToolActivityCall
 
 	asyncResult  ToolOutput
+	sequenceMu   sync.Mutex
 	nextSequence uint64
 	workflowID   string
-
-	sigMu         sync.Mutex
-	pauseCh       chan *api.PauseRequest
-	resumeCh      chan *api.ResumeRequest
-	clarifyCh     chan *api.ClarificationAnswer
-	toolResultsCh chan *api.ToolResultsSet
-	confirmCh     chan *api.ConfirmationDecision
 
 	planResult    *planner.PlanResult
 	hasPlanResult bool
@@ -275,8 +268,8 @@ func (t *testWorkflowContext) Now() time.Time {
 
 func (t *testWorkflowContext) NextSequence() uint64 {
 	root := t.root()
-	root.sigMu.Lock()
-	defer root.sigMu.Unlock()
+	root.sequenceMu.Lock()
+	defer root.sequenceMu.Unlock()
 	root.nextSequence++
 	return root.nextSequence
 }
@@ -332,7 +325,10 @@ func (t *testWorkflowContext) StartChildWorkflow(ctx context.Context, req engine
 	if t.controlledChildHandles != nil {
 		h := &controlledChildHandle{
 			ready: make(chan struct{}),
-			out:   &api.RunOutput{},
+			out: &api.RunOutput{
+				AgentID: req.Input.AgentID,
+				RunID:   req.Input.RunID,
+			},
 		}
 		t.controlledChildHandles <- h
 		return h, nil
@@ -422,56 +418,6 @@ func (t *testWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActivityC
 	result := t.asyncResult
 	fut.result = &result
 	return fut, nil
-}
-
-func (t *testWorkflowContext) PauseRequests() engine.Receiver[*api.PauseRequest] {
-	root := t.root()
-	root.ensureSignals()
-	return testReceiver[*api.PauseRequest]{ch: root.pauseCh}
-}
-
-func (t *testWorkflowContext) ResumeRequests() engine.Receiver[*api.ResumeRequest] {
-	root := t.root()
-	root.ensureSignals()
-	return testReceiver[*api.ResumeRequest]{ch: root.resumeCh}
-}
-
-func (t *testWorkflowContext) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
-	root := t.root()
-	root.ensureSignals()
-	return testReceiver[*api.ClarificationAnswer]{ch: root.clarifyCh}
-}
-
-func (t *testWorkflowContext) ExternalToolResults() engine.Receiver[*api.ToolResultsSet] {
-	root := t.root()
-	root.ensureSignals()
-	return testReceiver[*api.ToolResultsSet]{ch: root.toolResultsCh}
-}
-
-func (t *testWorkflowContext) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
-	root := t.root()
-	root.ensureSignals()
-	return testReceiver[*api.ConfirmationDecision]{ch: root.confirmCh}
-}
-
-func (t *testWorkflowContext) ensureSignals() {
-	t.sigMu.Lock()
-	defer t.sigMu.Unlock()
-	if t.pauseCh == nil {
-		t.pauseCh = make(chan *api.PauseRequest, 1)
-	}
-	if t.resumeCh == nil {
-		t.resumeCh = make(chan *api.ResumeRequest, 1)
-	}
-	if t.clarifyCh == nil {
-		t.clarifyCh = make(chan *api.ClarificationAnswer, 1)
-	}
-	if t.toolResultsCh == nil {
-		t.toolResultsCh = make(chan *api.ToolResultsSet, 1)
-	}
-	if t.confirmCh == nil {
-		t.confirmCh = make(chan *api.ConfirmationDecision, 1)
-	}
 }
 
 type controlledTimeFuture struct {
@@ -597,52 +543,6 @@ func (h *controlledChildHandle) wasCanceled() bool {
 	return h.canceled
 }
 
-type testReceiver[T any] struct{ ch chan T }
-
-func (r testReceiver[T]) Receive(ctx context.Context) (T, error) {
-	select {
-	case <-ctx.Done():
-		var zero T
-		return zero, ctx.Err()
-	case val := <-r.ch:
-		return val, nil
-	}
-}
-
-// ReceiveWithTimeout blocks until a value is delivered or the timeout elapses.
-func (r testReceiver[T]) ReceiveWithTimeout(ctx context.Context, timeout time.Duration) (T, error) {
-	if err := ctx.Err(); err != nil {
-		var zero T
-		return zero, err
-	}
-	if timeout <= 0 {
-		var zero T
-		return zero, context.DeadlineExceeded
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		var zero T
-		return zero, ctx.Err()
-	case <-timer.C:
-		var zero T
-		return zero, context.DeadlineExceeded
-	case val := <-r.ch:
-		return val, nil
-	}
-}
-
-func (r testReceiver[T]) ReceiveAsync() (T, bool) {
-	select {
-	case val := <-r.ch:
-		return val, true
-	default:
-		var zero T
-		return zero, false
-	}
-}
-
 // routeWorkflowContext routes activity execution through registered handlers so tests can call
 // runtime helpers without standing up a workflow engine.
 type routeWorkflowContext struct {
@@ -656,14 +556,8 @@ type routeWorkflowContext struct {
 	lastHookCall    engine.RecordActivityCall
 	lastPlannerCall engine.PlannerActivityCall
 	lastToolCall    engine.ToolActivityCall
+	sequenceMu      sync.Mutex
 	nextSequence    uint64
-
-	sigMu         sync.Mutex
-	pauseCh       chan *api.PauseRequest
-	resumeCh      chan *api.ResumeRequest
-	clarifyCh     chan *api.ClarificationAnswer
-	toolResultsCh chan *api.ToolResultsSet
-	confirmCh     chan *api.ConfirmationDecision
 
 	hookRuntime  *Runtime // optional runtime for record activity execution
 	childRuntime *Runtime // optional runtime for child workflow execution
@@ -754,8 +648,8 @@ func (r *routeWorkflowContext) Now() time.Time {
 
 func (r *routeWorkflowContext) NextSequence() uint64 {
 	root := r.root()
-	root.sigMu.Lock()
-	defer root.sigMu.Unlock()
+	root.sequenceMu.Lock()
+	defer root.sequenceMu.Unlock()
 	root.nextSequence++
 	return root.nextSequence
 }
@@ -850,56 +744,6 @@ func (r *routeWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActivity
 	return fut, nil
 }
 
-func (r *routeWorkflowContext) PauseRequests() engine.Receiver[*api.PauseRequest] {
-	root := r.root()
-	root.ensureSignals()
-	return testReceiver[*api.PauseRequest]{ch: root.pauseCh}
-}
-
-func (r *routeWorkflowContext) ResumeRequests() engine.Receiver[*api.ResumeRequest] {
-	root := r.root()
-	root.ensureSignals()
-	return testReceiver[*api.ResumeRequest]{ch: root.resumeCh}
-}
-
-func (r *routeWorkflowContext) ClarificationAnswers() engine.Receiver[*api.ClarificationAnswer] {
-	root := r.root()
-	root.ensureSignals()
-	return testReceiver[*api.ClarificationAnswer]{ch: root.clarifyCh}
-}
-
-func (r *routeWorkflowContext) ExternalToolResults() engine.Receiver[*api.ToolResultsSet] {
-	root := r.root()
-	root.ensureSignals()
-	return testReceiver[*api.ToolResultsSet]{ch: root.toolResultsCh}
-}
-
-func (r *routeWorkflowContext) ConfirmationDecisions() engine.Receiver[*api.ConfirmationDecision] {
-	root := r.root()
-	root.ensureSignals()
-	return testReceiver[*api.ConfirmationDecision]{ch: root.confirmCh}
-}
-
-func (r *routeWorkflowContext) ensureSignals() {
-	r.sigMu.Lock()
-	defer r.sigMu.Unlock()
-	if r.pauseCh == nil {
-		r.pauseCh = make(chan *api.PauseRequest, 1)
-	}
-	if r.resumeCh == nil {
-		r.resumeCh = make(chan *api.ResumeRequest, 1)
-	}
-	if r.clarifyCh == nil {
-		r.clarifyCh = make(chan *api.ClarificationAnswer, 1)
-	}
-	if r.toolResultsCh == nil {
-		r.toolResultsCh = make(chan *api.ToolResultsSet, 1)
-	}
-	if r.confirmCh == nil {
-		r.confirmCh = make(chan *api.ConfirmationDecision, 1)
-	}
-}
-
 type stubPlanner struct {
 	start  func(context.Context, *planner.PlanInput) (*planner.PlanResult, error)
 	resume func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error)
@@ -918,21 +762,6 @@ func (s *stubPlanner) PlanResume(ctx context.Context, input *planner.PlanResumeI
 	}
 	return &planner.PlanResult{}, nil
 }
-
-type stubWorkflowHandle struct {
-	lastSignal string
-	payload    any
-}
-
-func (h *stubWorkflowHandle) Wait(context.Context) (*api.RunOutput, error) {
-	return &api.RunOutput{}, nil
-}
-func (h *stubWorkflowHandle) Signal(ctx context.Context, name string, payload any) error {
-	h.lastSignal = name
-	h.payload = payload
-	return nil
-}
-func (h *stubWorkflowHandle) Cancel(context.Context) error { return nil }
 
 type stubEngine struct {
 	last                             engine.WorkflowStartRequest
@@ -974,6 +803,10 @@ func (s *stubEngine) QueryRunStatus(context.Context, string) (engine.RunStatus, 
 	return engine.RunStatusCompleted, nil
 }
 
+func (s *stubEngine) QueryRunCompletion(context.Context, string) (*api.RunOutput, error) {
+	return &api.RunOutput{}, nil
+}
+
 func (s *stubEngine) SealRegistration(context.Context) error {
 	s.sealCalls++
 	if len(s.sealErrors) == 0 {
@@ -992,7 +825,6 @@ func (s *stubEngine) SealRegistration(context.Context) error {
 type noopWorkflowHandle struct{}
 
 func (noopWorkflowHandle) Wait(context.Context) (*api.RunOutput, error) { return &api.RunOutput{}, nil }
-func (noopWorkflowHandle) Signal(context.Context, string, any) error    { return nil }
 func (noopWorkflowHandle) Cancel(context.Context) error                 { return nil }
 
 func newTestRuntimeWithPlanner(agentID agent.Ident, pl planner.Planner) *Runtime {
@@ -1028,6 +860,18 @@ func (r *recordingHooks) Publish(ctx context.Context, event hooks.Event) error {
 
 func (r *recordingHooks) Register(h hooks.Subscriber) (hooks.Subscription, error) {
 	return noopSubscription{}, nil
+}
+
+// countRunEventsByType returns the number of canonical events of one type in a
+// run-log page so suspension tests can prove prompt ownership by run ID.
+func countRunEventsByType(page runlog.Page, eventType runlog.Type) int {
+	count := 0
+	for _, event := range page.Events {
+		if event.Type == eventType {
+			count++
+		}
+	}
+	return count
 }
 
 type noopHooks struct{}
@@ -1069,7 +913,10 @@ func (h *testChildHandle) Get(ctx context.Context) (*api.RunOutput, error) {
 		// Execute the nested agent workflow
 		return h.runtime.ExecuteWorkflow(h.wfCtx, h.request.Input)
 	}
-	return &api.RunOutput{}, nil
+	return &api.RunOutput{
+		AgentID: h.request.Input.AgentID,
+		RunID:   h.request.Input.RunID,
+	}, nil
 }
 
 func (h *testChildHandle) IsReady() bool {

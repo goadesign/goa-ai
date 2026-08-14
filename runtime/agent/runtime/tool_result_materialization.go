@@ -4,8 +4,8 @@ package runtime
 // enrichment path.
 //
 // Contract:
-// - All successful tool results, whether executed directly or provided
-//   externally through an await signal, are materialized before canonical JSON
+// - All successful tool results, whether executed directly or provided in a
+//   continuation response, are materialized before canonical JSON
 //   encoding and hook publication.
 // - Toolset-owned server-only sidecars must be attached here so streamed
 //   `tool_result` events and durable run logs observe the same canonical result
@@ -78,13 +78,13 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call planner.ToolRe
 }
 
 // materializeToolExecutionResult validates the runtime-owned execution wrapper,
-// materializes the durable tool result, and returns the current-batch pause
-// signal separately from planner-visible history.
+// materializes the durable tool result, and returns the current-batch user
+// question separately from planner-visible history.
 func (r *Runtime) materializeToolExecutionResult(
 	ctx context.Context,
 	call planner.ToolRequest,
 	exec *ToolExecutionResult,
-) (*planner.ToolResult, rawjson.Message, *ToolPause, error) {
+) (*planner.ToolResult, rawjson.Message, *ToolClarification, error) {
 	if exec == nil {
 		return nil, nil, nil, fmt.Errorf("tool %q returned nil execution result", call.Name)
 	}
@@ -95,10 +95,10 @@ func (r *Runtime) materializeToolExecutionResult(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if err := validateToolPauseContract(call, exec.ToolResult, exec.Pause); err != nil {
+	if err := validateToolClarificationContract(call, exec.ToolResult, exec.Clarification); err != nil {
 		return nil, nil, nil, err
 	}
-	return exec.ToolResult, resultJSON, exec.Pause, nil
+	return exec.ToolResult, resultJSON, exec.Clarification, nil
 }
 
 // applyResultMaterializer invokes the toolset-owned typed result materializer

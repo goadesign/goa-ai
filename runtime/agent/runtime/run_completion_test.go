@@ -13,6 +13,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
@@ -44,10 +46,6 @@ func (h *controlledWaitHandle) Wait(ctx context.Context) (*api.RunOutput, error)
 	}
 }
 
-func (h *controlledWaitHandle) Signal(context.Context, string, any) error {
-	return nil
-}
-
 func (h *controlledWaitHandle) Cancel(context.Context) error {
 	return nil
 }
@@ -59,14 +57,6 @@ type controlledWaitEngine struct {
 	queryErr       error
 	completionOut  *api.RunOutput
 	completionErr  error
-}
-
-type signalerWaitEngine struct {
-	controlledWaitEngine
-}
-
-func (e *signalerWaitEngine) SignalByID(context.Context, string, string, string, any) error {
-	return nil
 }
 
 type repairRaceRunlog struct {
@@ -311,6 +301,43 @@ func TestStartRunSynthesizesTerminalCompletionWhenWorkflowClosesWithoutHook(t *t
 	require.Equal(t, labels, completed.Labels)
 }
 
+func TestStartRunRecordsSuspensionAsTerminalOutcome(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	suspension := validPublicTestSuspension()
+	handle := &controlledWaitHandle{
+		ready: make(chan struct{}),
+		out: &api.RunOutput{
+			AgentID: "service.agent", RunID: "run-1", Suspension: suspension,
+		},
+	}
+	rt := newObservedHandleTestRuntime(handle)
+	_, err := rt.CreateSession(ctx, "sess-1")
+	require.NoError(t, err)
+
+	wfHandle, err := rt.MustClient(agent.Ident("service.agent")).Start(
+		ctx,
+		"sess-1",
+		nil,
+		WithRunID("run-1"),
+		WithTurnID("turn-1"),
+	)
+	require.NoError(t, err)
+	close(handle.ready)
+
+	out, err := wfHandle.Wait(ctx)
+	require.NoError(t, err)
+	require.Same(t, suspension, out.Suspension)
+	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
+	require.NoError(t, err)
+	require.Equal(t, run.StatusSuspended, snapshot.Status)
+	require.Equal(t, run.PhaseSuspended, snapshot.Phase)
+	meta, err := rt.SessionStore.LoadRun(ctx, "run-1")
+	require.NoError(t, err)
+	require.Equal(t, session.RunStatusSuspended, meta.Status)
+}
+
 func TestStartRunDoesNotWaitForCompletionUntilObserved(t *testing.T) {
 	t.Parallel()
 
@@ -522,6 +549,82 @@ func TestGetRunSnapshotRepairsTerminalCompletionWithoutObservedHandle(t *testing
 	require.NoError(t, err)
 	require.NotEmpty(t, page.Events)
 	require.Equal(t, hooks.RunCompleted, page.Events[len(page.Events)-1].Type)
+}
+
+func TestGetRunSnapshotRepairsSuspensionWithoutObservedHandle(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	rt := newObservedHandleTestRuntime(&controlledWaitHandle{ready: make(chan struct{})})
+	engineRuntime, ok := rt.Engine.(*controlledWaitEngine)
+	require.True(t, ok)
+	engineRuntime.reportedStatus = engine.RunStatusCompleted
+	engineRuntime.completionOut = &api.RunOutput{
+		AgentID: "service.agent", RunID: "run-1", Suspension: validPublicTestSuspension(),
+	}
+	_, err := rt.CreateSession(ctx, "sess-1")
+	require.NoError(t, err)
+	input := RunInput{AgentID: "service.agent", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	err = rt.publishHookErr(ctx, hooks.NewRunStartedEvent("run-1", input.AgentID, run.Context{
+		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
+	}, input), "turn-1")
+	require.NoError(t, err)
+
+	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
+	require.NoError(t, err)
+	require.Equal(t, run.StatusSuspended, snapshot.Status)
+	require.Equal(t, run.PhaseSuspended, snapshot.Phase)
+	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
+	require.NoError(t, err)
+	require.Equal(t, hooks.RunSuspended, page.Events[len(page.Events)-1].Type)
+}
+
+func TestGetRunSnapshotRejectsMismatchedQueriedWorkflowOutput(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	rt := newObservedHandleTestRuntime(&controlledWaitHandle{ready: make(chan struct{})})
+	engineRuntime, ok := rt.Engine.(*controlledWaitEngine)
+	require.True(t, ok)
+	engineRuntime.reportedStatus = engine.RunStatusCompleted
+	engineRuntime.completionOut = &api.RunOutput{
+		AgentID: "other.agent", RunID: "run-1", Suspension: validPublicTestSuspension(),
+	}
+	_, err := rt.CreateSession(ctx, "sess-1")
+	require.NoError(t, err)
+	input := RunInput{AgentID: "service.agent", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	err = rt.publishHookErr(ctx, hooks.NewRunStartedEvent("run-1", input.AgentID, run.Context{
+		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
+	}, input), "turn-1")
+	require.NoError(t, err)
+
+	_, err = rt.GetRunSnapshot(ctx, "run-1")
+	require.ErrorContains(t, err, "workflow output agent mismatch")
+}
+
+func validPublicTestSuspension() *api.RunSuspension {
+	await := planner.AwaitClarificationItem(&planner.AwaitClarification{
+		ID: "clarification-1", Question: "Which facility?",
+	})
+	return &api.RunSuspension{
+		ID: "suspension-1", Version: api.RunSuspensionVersion,
+		Checkpoint: rawjson.Message(`{}`),
+		Pending: []*api.PendingInput{{
+			Kind: api.PendingInputKindClarification, Await: &await,
+		}},
+	}
+}
+
+func TestRunEventPageTreatsSuspensionAsTerminal(t *testing.T) {
+	t.Parallel()
+
+	page := runlog.Page{Events: []*runlog.Event{{Type: hooks.RunSuspended}}}
+	require.False(t, runEventPageNeedsTerminalRepair(page))
+	page.NextCursor = "cursor"
+	require.False(t, repairedTailNeedsCompletionDelta(
+		runlog.Page{Events: []*runlog.Event{{Type: hooks.RunStarted}}},
+		page,
+	))
 }
 
 func TestGetRunSnapshotRepairsTimedOutRunWithTimeoutPublicError(t *testing.T) {
@@ -779,7 +882,7 @@ func TestGetRunSnapshotRepairsTerminalCompletionOnceAcrossConcurrentReaders(t *t
 	require.Equal(t, 1, completed)
 }
 
-func TestWaitAndLazyRepairPublishSingleTerminalCompletionForSignalerEngines(t *testing.T) {
+func TestWaitAndLazyRepairPublishSingleTerminalCompletion(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -788,11 +891,9 @@ func TestWaitAndLazyRepairPublishSingleTerminalCompletionForSignalerEngines(t *t
 		err:   context.DeadlineExceeded,
 	}
 	rt := newObservedHandleTestRuntime(handle)
-	rt.Engine = &signalerWaitEngine{
-		controlledWaitEngine: controlledWaitEngine{
-			handle:         handle,
-			reportedStatus: engine.RunStatusFailed,
-		},
+	rt.Engine = &controlledWaitEngine{
+		handle:         handle,
+		reportedStatus: engine.RunStatusFailed,
 	}
 	rt.RunEventStore = newWaitLazyRepairRaceRunlog()
 
@@ -981,7 +1082,7 @@ func TestListRunEventsRepairsTerminalCompletionForFullTailPage(t *testing.T) {
 	require.Equal(t, hooks.RunCompleted, page.Events[len(page.Events)-1].Type)
 }
 
-func TestRunCompletedHookClearsStoredHandleWhenEngineSignalsByID(t *testing.T) {
+func TestRunCompletedHookClearsStoredHandle(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -989,10 +1090,8 @@ func TestRunCompletedHookClearsStoredHandleWhenEngineSignalsByID(t *testing.T) {
 		ready: make(chan struct{}),
 	}
 	rt := newObservedHandleTestRuntime(handle)
-	rt.Engine = &signalerWaitEngine{
-		controlledWaitEngine: controlledWaitEngine{
-			handle: handle,
-		},
+	rt.Engine = &controlledWaitEngine{
+		handle: handle,
 	}
 
 	_, err := rt.CreateSession(ctx, "sess-1")
@@ -1022,7 +1121,7 @@ func TestRunCompletedHookClearsStoredHandleWhenEngineSignalsByID(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestGetRunSnapshotUsesObservedHandleBeforeSynthesizingForSignalerEngines(t *testing.T) {
+func TestGetRunSnapshotUsesObservedHandleBeforeSynthesizing(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1031,11 +1130,9 @@ func TestGetRunSnapshotUsesObservedHandleBeforeSynthesizingForSignalerEngines(t 
 		err:   context.DeadlineExceeded,
 	}
 	rt := newObservedHandleTestRuntime(handle)
-	rt.Engine = &signalerWaitEngine{
-		controlledWaitEngine: controlledWaitEngine{
-			handle:         handle,
-			reportedStatus: engine.RunStatusFailed,
-		},
+	rt.Engine = &controlledWaitEngine{
+		handle:         handle,
+		reportedStatus: engine.RunStatusFailed,
 	}
 
 	_, err := rt.CreateSession(ctx, "sess-1")
@@ -1081,7 +1178,7 @@ func TestGetRunSnapshotUsesObservedHandleBeforeSynthesizingForSignalerEngines(t 
 	require.Equal(t, hooks.ErrorKindTimeout, completed.Failure.Kind)
 }
 
-func TestGetRunSnapshotReturnsStoredStateWhenRepairStatusQueryFails(t *testing.T) {
+func TestGetRunSnapshotReturnsRepairStatusQueryFailure(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1114,12 +1211,11 @@ func TestGetRunSnapshotReturnsStoredStateWhenRepairStatusQueryFails(t *testing.T
 	)
 	require.NoError(t, err)
 
-	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
-	require.NoError(t, err)
-	require.Equal(t, run.StatusRunning, snapshot.Status)
+	_, err = rt.GetRunSnapshot(ctx, "run-1")
+	require.ErrorContains(t, err, "temporal unavailable")
 }
 
-func TestListRunEventsReturnsStoredPageWhenRepairStatusQueryFails(t *testing.T) {
+func TestListRunEventsReturnsRepairStatusQueryFailure(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -1156,7 +1252,6 @@ func TestListRunEventsReturnsStoredPageWhenRepairStatusQueryFails(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, firstPage.Events, 1)
 
-	page, err := rt.ListRunEvents(ctx, "run-1", firstPage.Events[0].ID, 10)
-	require.NoError(t, err)
-	require.Empty(t, page.Events)
+	_, err = rt.ListRunEvents(ctx, "run-1", firstPage.Events[0].ID, 10)
+	require.ErrorContains(t, err, "temporal unavailable")
 }

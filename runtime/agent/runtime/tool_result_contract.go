@@ -52,26 +52,23 @@ func validateToolResultContract(spec tools.ToolSpec, call planner.ToolRequest, t
 	return validateToolBoundsContract(spec, call, tr.Failure != nil, tr.Bounds)
 }
 
-// validateToolPauseContract enforces the runtime-owned pause contract for one
-// executed tool result after the durable tool-result contract has been validated.
-func validateToolPauseContract(call planner.ToolRequest, tr *planner.ToolResult, pause *ToolPause) error {
-	if pause == nil {
+// validateToolClarificationContract enforces the runtime-owned user-question
+// contract after the durable tool-result contract has been validated.
+func validateToolClarificationContract(call planner.ToolRequest, tr *planner.ToolResult, clarification *ToolClarification) error {
+	if clarification == nil {
 		return nil
 	}
 	if tr == nil {
-		return fmt.Errorf("tool %q pause is invalid: missing tool result (tool_call_id=%s)", call.Name, call.ToolCallID)
+		return fmt.Errorf("tool %q clarification is invalid: missing tool result (tool_call_id=%s)", call.Name, call.ToolCallID)
 	}
 	if tr.Failure != nil {
-		return fmt.Errorf("tool %q pause is invalid: pause and failure are both set (tool_call_id=%s)", call.Name, call.ToolCallID)
+		return fmt.Errorf("tool %q clarification is invalid: clarification and failure are both set (tool_call_id=%s)", call.Name, call.ToolCallID)
 	}
-	if pause.Clarification == nil {
-		return fmt.Errorf("tool %q pause is invalid: missing clarification payload (tool_call_id=%s)", call.Name, call.ToolCallID)
+	if clarification.ID == "" {
+		return fmt.Errorf("tool %q clarification is invalid: id is required (tool_call_id=%s)", call.Name, call.ToolCallID)
 	}
-	if pause.Clarification.ID == "" {
-		return fmt.Errorf("tool %q pause is invalid: clarification id is required (tool_call_id=%s)", call.Name, call.ToolCallID)
-	}
-	if pause.Clarification.Question == "" {
-		return fmt.Errorf("tool %q pause is invalid: clarification question is required (tool_call_id=%s)", call.Name, call.ToolCallID)
+	if clarification.Question == "" {
+		return fmt.Errorf("tool %q clarification is invalid: question is required (tool_call_id=%s)", call.Name, call.ToolCallID)
 	}
 	return nil
 }

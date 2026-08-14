@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
-	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -107,12 +106,6 @@ func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
 		now:     func() time.Time { return current },
 		runtime: rt,
 	}
-	wfCtx.ensureSignals()
-	wfCtx.confirmCh <- &api.ConfirmationDecision{
-		Approved:    true,
-		RequestedBy: "operator",
-	}
-	ctrl := interrupt.NewController(wfCtx)
 	base := &planner.PlanInput{
 		RunContext: run.Context{
 			RunID:     input.RunID,
@@ -138,12 +131,15 @@ func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
 		current,
 		current.Add(time.Minute),
 		input.TurnID,
-		ctrl,
+		nil,
 	)
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.Equal(t, 1, executions)
+	require.NotNil(t, out.Suspension)
+	require.Len(t, out.Suspension.Pending, 1)
+	require.Equal(t, api.PendingInputKindConfirmation, out.Suspension.Pending[0].Kind)
+	require.Zero(t, executions)
 	require.Empty(t, wfCtx.lastPlannerCall.Name)
 }
 
@@ -175,8 +171,6 @@ func TestTerminalPayloadConfirmationIsRejectedBeforeTranscriptCommit(t *testing.
 		Specs: []tools.ToolSpec{bookkeeping},
 	}))
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
-	wfCtx.ensureSignals()
-	ctrl := interrupt.NewController(wfCtx)
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
 	base := &planner.PlanInput{RunContext: run.Context{
@@ -199,7 +193,7 @@ func TestTerminalPayloadConfirmationIsRejectedBeforeTranscriptCommit(t *testing.
 		time.Time{},
 		time.Time{},
 		input.TurnID,
-		ctrl,
+		nil,
 	)
 
 	require.Nil(t, out)
@@ -278,9 +272,6 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 		}},
 		hasPlanResult: true,
 	}
-	wfCtx.ensureSignals()
-	wfCtx.confirmCh <- &api.ConfirmationDecision{Approved: true, RequestedBy: "operator"}
-	ctrl := interrupt.NewController(wfCtx)
 	base := &planner.PlanInput{
 		RunContext: run.Context{
 			RunID:     input.RunID,
@@ -306,16 +297,14 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 		current,
 		current.Add(time.Minute),
 		input.TurnID,
-		ctrl,
+		nil,
 	)
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.Equal(t, []tools.Ident{bookkeeping.Name}, executed)
-	require.Len(t, out.ToolEvents, 2)
-	require.Equal(t, planner.FailureTimeout, out.ToolEvents[0].Failure.Kind)
-	require.Nil(t, out.ToolEvents[1].Failure)
-	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
+	require.NotNil(t, out.Suspension)
+	require.Empty(t, executed)
+	require.Empty(t, wfCtx.lastPlannerCall.Name)
 }
 
 func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
@@ -347,9 +336,6 @@ func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
 		Specs: []tools.ToolSpec{first, second},
 	}))
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
-	wfCtx.ensureSignals()
-	wfCtx.confirmCh <- &api.ConfirmationDecision{Approved: true}
-	ctrl := interrupt.NewController(wfCtx)
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
 	base := &planner.PlanInput{RunContext: run.Context{
@@ -370,14 +356,13 @@ func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
 		time.Time{},
 		time.Time{},
 		input.TurnID,
-		ctrl,
+		nil,
 	)
 
-	require.Nil(t, out)
-	require.ErrorContains(t, err, "confirmation decision missing requested_by")
-	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
-	require.GreaterOrEqual(t, len(base.Messages), 2)
-	require.Len(t, base.Messages[1].Parts, 2)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.Suspension)
+	require.Len(t, out.Suspension.Pending, 2)
 }
 
 func TestImmediateErrorCompletesUnenteredConfirmation(t *testing.T) {
@@ -405,8 +390,6 @@ func TestImmediateErrorCompletesUnenteredConfirmation(t *testing.T) {
 		Specs: []tools.ToolSpec{immediate, confirmed},
 	}))
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
-	wfCtx.ensureSignals()
-	ctrl := interrupt.NewController(wfCtx)
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
 	base := &planner.PlanInput{RunContext: run.Context{
@@ -427,7 +410,7 @@ func TestImmediateErrorCompletesUnenteredConfirmation(t *testing.T) {
 		time.Time{},
 		time.Time{},
 		input.TurnID,
-		ctrl,
+		nil,
 	)
 
 	require.Nil(t, out)
@@ -502,12 +485,6 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 		hasPlanResult: true,
 		hookRuntime:   rt,
 	}
-	wfCtx.ensureSignals()
-	ctrl := interrupt.NewController(wfCtx)
-	wfCtx.confirmCh <- &api.ConfirmationDecision{
-		Approved:    true,
-		RequestedBy: "operator",
-	}
 
 	initial := &planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{
@@ -526,28 +503,10 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 		time.Time{},
 		time.Time{},
 		"turn-1",
-		ctrl,
+		nil,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
-
-	messages := wfCtx.lastPlannerCall.Input.Messages
-	require.Len(t, messages, 2)
-	require.Equal(t, model.ConversationRoleAssistant, messages[0].Role)
-	require.Len(t, messages[0].Parts, 2)
-	firstUse, ok := messages[0].Parts[0].(model.ToolUsePart)
-	require.True(t, ok)
-	require.Equal(t, string(confirm.Name), firstUse.Name)
-	secondUse, ok := messages[0].Parts[1].(model.ToolUsePart)
-	require.True(t, ok)
-	require.Equal(t, string(lookup.Name), secondUse.Name)
-	require.Equal(t, model.ConversationRoleUser, messages[1].Role)
-	require.Len(t, messages[1].Parts, 2)
-	firstResult, ok := messages[1].Parts[0].(model.ToolResultPart)
-	require.True(t, ok)
-	require.Equal(t, firstUse.ID, firstResult.ToolUseID)
-	secondResult, ok := messages[1].Parts[1].(model.ToolResultPart)
-	require.True(t, ok)
-	require.Equal(t, secondUse.ID, secondResult.ToolUseID)
+	require.NotNil(t, out.Suspension)
+	require.Empty(t, wfCtx.lastPlannerCall.Name)
 }

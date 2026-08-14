@@ -1,20 +1,20 @@
 package temporal
 
-// runtime_execute_workflow_test.go exercises Runtime.ExecuteWorkflow on top of
-// Temporal's workflow test suite so await-question cancellation is verified
-// through the real Temporal signal receiver.
+// runtime_execute_workflow_test.go verifies that a user-input request closes a
+// real Temporal workflow with a continuation checkpoint instead of waiting for
+// a second workflow.
 
 import (
 	"context"
 	"encoding/json"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
+
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -22,13 +22,14 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
-	"goa.design/goa-ai/runtime/agent/run"
 	agentruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
-func TestExecuteWorkflowCancelsAwaitQuestionsBeforeLateResults(t *testing.T) {
+const runSuspensionType = "runtime.run_suspension"
+
+func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -38,127 +39,75 @@ func TestExecuteWorkflowCancelsAwaitQuestionsBeforeLateResults(t *testing.T) {
 		resumeActivityName  = "service.resume"
 		executeActivityName = "service.execute"
 		turnID              = "turn-1"
-		runID               = "run-await-questions-cancel"
+		runID               = "run-await-questions"
 		sessionID           = "session-1"
 		awaitID             = "await-1"
-		questionToolCallID  = "tool-call-1"
+		toolCallID          = "tool-call-1"
 	)
 
 	agentID := agent.Ident("service.agent")
 	questionTool := tools.Ident("chat.ask_question.ask_question")
-
-	pl := &awaitQuestionsPlanner{
-		awaitID:    awaitID,
-		toolName:   questionTool,
-		toolCallID: questionToolCallID,
-	}
-	rt := agentruntime.New()
-	_, err := rt.CreateSession(context.Background(), sessionID)
+	plannerStub := &awaitQuestionsPlanner{awaitID: awaitID, toolName: questionTool, toolCallID: toolCallID}
+	runtime := agentruntime.New()
+	_, err := runtime.CreateSession(context.Background(), sessionID)
 	require.NoError(t, err)
-	require.NoError(t, rt.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
+	require.NoError(t, runtime.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
 		ID:      agentID,
-		Planner: pl,
+		Planner: plannerStub,
 		Workflow: engine.WorkflowDefinition{
 			Name:      workflowName,
 			TaskQueue: taskQueue,
 			Handler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-				return rt.ExecuteWorkflow(wfCtx, input)
+				return runtime.ExecuteWorkflow(wfCtx, input)
 			},
 		},
 		PlanActivityName:    planActivityName,
 		ResumeActivityName:  resumeActivityName,
 		ExecuteToolActivity: executeActivityName,
-		Specs: []tools.ToolSpec{
-			anyJSONToolSpec(questionTool, "chat.await"),
-		},
+		Specs:               []tools.ToolSpec{anyJSONToolSpec(questionTool, "chat.await")},
 	}))
 
 	recorder := &hookRecorder{}
-	eng := &Engine{
-		defaultQueue:    taskQueue,
-		activityOptions: make(map[string]engine.ActivityOptions),
-	}
+	eng := &Engine{defaultQueue: taskQueue, activityOptions: make(map[string]engine.ActivityOptions)}
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	env.RegisterActivityWithOptions(recorder.Record, activity.RegisterOptions{Name: "runtime.record_event"})
-	env.RegisterActivityWithOptions(rt.PlanStartActivity, activity.RegisterOptions{Name: planActivityName})
-	env.RegisterActivityWithOptions(rt.PlanResumeActivity, activity.RegisterOptions{Name: resumeActivityName})
-
-	env.RegisterDelayedCallback(func() {
-		env.CancelWorkflow()
-	}, time.Second)
-	env.RegisterDelayedCallback(func() {
-		env.SignalWorkflow(api.SignalProvideToolResults, &api.ToolResultsSet{
-			RunID: runID,
-			ID:    awaitID,
-			Results: []*api.ProvidedToolResult{
-				{
-					Name:       questionTool,
-					ToolCallID: questionToolCallID,
-					Success: &api.ProvidedToolSuccess{
-						Result: rawjson.Message([]byte(`{"answers":[{"question_id":"q1","selected_option_ids":["yes"]}]}`)),
-					},
-				},
-			},
-		})
-	}, 2*time.Second)
-
-	runLabels := map[string]string{"household_id": "house-42"}
+	env.RegisterActivityWithOptions(runtime.PlanStartActivity, activity.RegisterOptions{Name: planActivityName})
+	env.RegisterActivityWithOptions(runtime.PlanResumeActivity, activity.RegisterOptions{Name: resumeActivityName})
 	env.ExecuteWorkflow(func(ctx workflow.Context) (*api.RunOutput, error) {
-		return rt.ExecuteWorkflow(NewWorkflowContext(eng, ctx), &agentruntime.RunInput{
-			AgentID:   agentID,
-			RunID:     runID,
-			SessionID: sessionID,
-			TurnID:    turnID,
-			Labels:    runLabels,
+		return runtime.ExecuteWorkflow(NewWorkflowContext(eng, ctx), &agentruntime.RunInput{
+			AgentID: agentID, RunID: runID, SessionID: sessionID, TurnID: turnID,
 		})
 	})
 
-	err = env.GetWorkflowError()
-	require.Error(t, err)
-	require.ErrorContains(t, err, "canceled")
-	require.Zero(t, pl.ResumeCalls(), "cancel should win before late tool results resume the run")
+	require.NoError(t, env.GetWorkflowError())
+	var out *api.RunOutput
+	require.NoError(t, env.GetWorkflowResult(&out))
+	require.NotNil(t, out)
+	require.NotNil(t, out.Suspension)
+	require.Len(t, out.Suspension.Pending, 1)
+	require.Equal(t, api.PendingInputKindToolResults, out.Suspension.Pending[0].Kind)
+	require.True(t, recorder.SuspensionPersisted())
+	require.Zero(t, plannerStub.ResumeCalls())
 
 	events := recorder.Snapshot()
 	require.NotEmpty(t, events)
-
-	var (
-		awaitEvent     *hooks.AwaitQuestionsEvent
-		completedEvent *hooks.RunCompletedEvent
-		sawPaused      bool
-		sawResumed     bool
-		sawToolResult  bool
-	)
-	for _, evt := range events {
-		switch e := evt.(type) {
+	var awaitEvent *hooks.AwaitQuestionsEvent
+	for _, event := range events {
+		switch event := event.(type) {
 		case *hooks.AwaitQuestionsEvent:
-			awaitEvent = e
-		case *hooks.RunPausedEvent:
-			sawPaused = true
-		case *hooks.RunResumedEvent:
-			sawResumed = true
-		case *hooks.ToolResultReceivedEvent:
-			sawToolResult = true
+			awaitEvent = event
 		case *hooks.RunCompletedEvent:
-			completedEvent = e
+			require.Fail(t, "suspended workflow emitted RunCompleted")
 		}
 	}
-
-	require.NotNil(t, awaitEvent, "expected await_questions event before cancellation")
+	require.NotNil(t, awaitEvent)
 	require.Equal(t, awaitID, awaitEvent.ID)
 	require.Equal(t, questionTool, awaitEvent.ToolName)
-	require.Equal(t, questionToolCallID, awaitEvent.ToolCallID)
-	require.True(t, sawPaused, "expected run to pause while awaiting user answers")
-	require.False(t, sawResumed, "canceled await should not emit a resume event")
-	require.False(t, sawToolResult, "late tool results should not be consumed after cancellation")
-
-	require.NotNil(t, completedEvent, "expected terminal run completion event")
-	require.Equal(t, "canceled", completedEvent.Status)
-	require.Equal(t, run.PhaseCanceled, completedEvent.Phase)
-	require.Equal(t, runLabels, completedEvent.Labels)
-	lastEvent, ok := events[len(events)-1].(*hooks.RunCompletedEvent)
-	require.True(t, ok, "terminal completion should be the final hook")
-	require.Equal(t, "canceled", lastEvent.Status)
+	require.Equal(t, toolCallID, awaitEvent.ToolCallID)
+	suspended, ok := events[len(events)-1].(*hooks.RunSuspendedEvent)
+	require.True(t, ok)
+	require.Equal(t, out.Suspension.ID, suspended.SuspensionID)
 }
 
 type awaitQuestionsPlanner struct {
@@ -171,44 +120,25 @@ type awaitQuestionsPlanner struct {
 
 func (p *awaitQuestionsPlanner) PlanStart(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
 	title := "Questions"
-	return &planner.PlanResult{
-		Await: planner.NewAwait(planner.AwaitQuestionsItem(&planner.AwaitQuestions{
-			ID:         p.awaitID,
-			ToolName:   p.toolName,
-			ToolCallID: p.toolCallID,
-			Payload:    rawjson.Message([]byte(`{"title":"Questions"}`)),
-			Title:      &title,
-			Questions: []planner.AwaitQuestion{
-				{
-					ID:     "q1",
-					Prompt: "Choose one answer",
-					Options: []planner.AwaitQuestionOption{
-						{ID: "yes", Label: "Yes"},
-						{ID: "no", Label: "No"},
-					},
-				},
-			},
-		})),
-	}, nil
+	return &planner.PlanResult{Await: planner.NewAwait(planner.AwaitQuestionsItem(&planner.AwaitQuestions{
+		ID: p.awaitID, ToolName: p.toolName, ToolCallID: p.toolCallID,
+		Payload: rawjson.Message(`{"title":"Questions"}`), Title: &title,
+		Questions: []planner.AwaitQuestion{{
+			ID: "q1", Prompt: "Choose one answer",
+			Options: []planner.AwaitQuestionOption{{ID: "yes", Label: "Yes"}, {ID: "no", Label: "No"}},
+		}},
+	}))}, nil
 }
 
 func (p *awaitQuestionsPlanner) PlanResume(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	p.mu.Lock()
 	p.resumeCalls++
 	p.mu.Unlock()
-	return &planner.PlanResult{
-		FinalResponse: &planner.FinalResponse{
-			Message: &model.Message{
-				Role: model.ConversationRoleAssistant,
-				Parts: []model.Part{
-					model.TextPart{Text: "unexpected resume"},
-				},
-			},
-		},
-	}, nil
+	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{
+		Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "resumed"}},
+	}}}, nil
 }
 
-// ResumeCalls reports how many times the workflow resumed after the await barrier.
 func (p *awaitQuestionsPlanner) ResumeCalls() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -216,32 +146,41 @@ func (p *awaitQuestionsPlanner) ResumeCalls() int {
 }
 
 type hookRecorder struct {
-	mu     sync.Mutex
-	events []hooks.Event
+	mu                  sync.Mutex
+	events              []hooks.Event
+	suspensionPersisted bool
 }
 
-// Record decodes the runtime record payload so the test can assert on emitted hook events.
 func (r *hookRecorder) Record(_ context.Context, input *api.RecordActivityInput) error {
 	if input.Type == transcript.RunLogMessagesSeeded || input.Type == transcript.RunLogMessagesAppended {
 		return nil
 	}
-	evt, err := hooks.DecodeFromRecordInput(input)
+	if input.Type == runSuspensionType {
+		r.mu.Lock()
+		r.suspensionPersisted = true
+		r.mu.Unlock()
+		return nil
+	}
+	event, err := hooks.DecodeFromRecordInput(input)
 	if err != nil {
 		return err
 	}
 	r.mu.Lock()
-	r.events = append(r.events, evt)
+	r.events = append(r.events, event)
 	r.mu.Unlock()
 	return nil
 }
 
-// Snapshot returns a stable copy of the recorded hook sequence.
 func (r *hookRecorder) Snapshot() []hooks.Event {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := make([]hooks.Event, len(r.events))
-	copy(out, r.events)
-	return out
+	return append([]hooks.Event(nil), r.events...)
+}
+
+func (r *hookRecorder) SuspensionPersisted() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.suspensionPersisted
 }
 
 func anyJSONToolSpec(name tools.Ident, toolset string) tools.ToolSpec {
@@ -256,8 +195,7 @@ func anyJSONToolSpec(name tools.Ident, toolset string) tools.ToolSpec {
 		},
 	}
 	return tools.ToolSpec{
-		Name:    name,
-		Toolset: toolset,
+		Name: name, Toolset: toolset,
 		Payload: tools.TypeSpec{Name: string(name) + "_payload", Codec: codec},
 		Result:  tools.TypeSpec{Name: string(name) + "_result", Codec: codec},
 	}

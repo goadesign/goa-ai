@@ -77,7 +77,6 @@ func TestBuildGeneratorData(t *testing.T) {
 	require.Equal(t, 5, agent.RunPolicy.Caps.MaxToolCalls)
 	require.Equal(t, 2, agent.RunPolicy.Caps.MaxConsecutiveFailedToolCalls)
 	require.Equal(t, 45*time.Second, agent.RunPolicy.TimeBudget)
-	require.True(t, agent.RunPolicy.InterruptsAllowed)
 
 	require.Len(t, agent.UsedToolsets, 1)
 	require.Len(t, agent.ExportedToolsets, 1)
@@ -243,7 +242,6 @@ func runAgentDesign(t *testing.T) []eval.Root {
 						MaxConsecutiveFailedToolCalls(2),
 					)
 					TimeBudget("45s")
-					InterruptsAllowed(true)
 				})
 			})
 		})

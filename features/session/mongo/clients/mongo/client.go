@@ -4,6 +4,7 @@ package mongo
 //go:generate cmg gen .
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"time"
@@ -33,10 +34,13 @@ type Client interface {
 	CreateSession(ctx context.Context, sessionID string, createdAt time.Time) (session.Session, error)
 	LoadSession(ctx context.Context, sessionID string) (session.Session, error)
 	EndSession(ctx context.Context, sessionID string, endedAt time.Time) (session.Session, error)
+	PurgeSession(ctx context.Context, sessionID string) error
 
 	UpsertRun(ctx context.Context, run session.RunMeta) error
 	LinkChildRun(ctx context.Context, parentRunID string, child session.RunMeta) error
 	LoadRun(ctx context.Context, runID string) (session.RunMeta, error)
+	SaveRunSuspension(ctx context.Context, runID string, suspension session.RunSuspension) error
+	LoadRunSuspension(ctx context.Context, runID string) (session.RunSuspension, error)
 	ListRunsBySession(ctx context.Context, sessionID string, statuses []session.RunStatus) ([]session.RunMeta, error)
 }
 
@@ -202,6 +206,39 @@ func (c *client) EndSession(ctx context.Context, sessionID string, endedAt time.
 	return c.LoadSession(ctx, sessionID)
 }
 
+// PurgeSession removes a session and all of its run records. Production uses a
+// transaction so private checkpoints cannot outlive a successfully purged
+// session.
+func (c *client) PurgeSession(ctx context.Context, sessionID string) error {
+	if sessionID == "" {
+		return errors.New("session id is required")
+	}
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	if c.mongo == nil {
+		return c.purgeSession(ctx, sessionID)
+	}
+	sessionCtx, err := c.mongo.StartSession()
+	if err != nil {
+		return err
+	}
+	defer sessionCtx.EndSession(ctx)
+	_, err = sessionCtx.WithTransaction(ctx, func(txCtx context.Context) (any, error) {
+		return nil, c.purgeSession(txCtx, sessionID)
+	})
+	return err
+}
+
+// purgeSession applies the complete removal under its caller's transaction or
+// test context.
+func (c *client) purgeSession(ctx context.Context, sessionID string) error {
+	if _, err := c.runs.DeleteMany(ctx, bson.M{"session_id": sessionID}); err != nil {
+		return err
+	}
+	_, err := c.sessions.DeleteOne(ctx, bson.M{"session_id": sessionID})
+	return err
+}
+
 func (c *client) UpsertRun(ctx context.Context, run session.RunMeta) error {
 	if run.RunID == "" {
 		return errors.New("run id is required")
@@ -315,6 +352,68 @@ func (c *client) LoadRun(ctx context.Context, runID string) (session.RunMeta, er
 	return doc.toRunMeta(), nil
 }
 
+// SaveRunSuspension stores one immutable suspension beside its run metadata.
+// Exact activity retries are idempotent; a different value for the same run is
+// a runtime corruption error.
+func (c *client) SaveRunSuspension(ctx context.Context, runID string, suspension session.RunSuspension) error {
+	if runID == "" || suspension.ID == "" || len(suspension.Data) == 0 {
+		return errors.New("run suspension requires run id, suspension id, and data")
+	}
+	doc := runSuspensionDocument{ID: suspension.ID, Data: append([]byte(nil), suspension.Data...)}
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	result, err := c.runs.UpdateOne(ctx, bson.M{
+		"run_id":         runID,
+		"run_suspension": bson.M{"$exists": false},
+	}, bson.M{"$set": bson.M{"run_suspension": doc}})
+	if err != nil {
+		return err
+	}
+	if result.MatchedCount == 1 {
+		return nil
+	}
+	var current struct {
+		Suspension *runSuspensionDocument `bson:"run_suspension,omitempty"`
+	}
+	err = c.runs.FindOne(ctx, bson.M{"run_id": runID}, options.FindOne().SetProjection(bson.M{"run_suspension": 1})).Decode(&current)
+	if errors.Is(err, mongodriver.ErrNoDocuments) {
+		return session.ErrRunNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if current.Suspension != nil && current.Suspension.ID == suspension.ID && bytes.Equal(current.Suspension.Data, suspension.Data) {
+		return nil
+	}
+	return session.ErrRunSuspensionConflict
+}
+
+// LoadRunSuspension returns the opaque checkpoint bytes stored for one run.
+func (c *client) LoadRunSuspension(ctx context.Context, runID string) (session.RunSuspension, error) {
+	if runID == "" {
+		return session.RunSuspension{}, errors.New("run id is required")
+	}
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+	var current struct {
+		Suspension *runSuspensionDocument `bson:"run_suspension,omitempty"`
+	}
+	err := c.runs.FindOne(ctx, bson.M{"run_id": runID}, options.FindOne().SetProjection(bson.M{"run_suspension": 1})).Decode(&current)
+	if errors.Is(err, mongodriver.ErrNoDocuments) {
+		return session.RunSuspension{}, session.ErrRunNotFound
+	}
+	if err != nil {
+		return session.RunSuspension{}, err
+	}
+	if current.Suspension == nil {
+		return session.RunSuspension{}, session.ErrRunSuspensionNotFound
+	}
+	return session.RunSuspension{
+		ID:   current.Suspension.ID,
+		Data: append([]byte(nil), current.Suspension.Data...),
+	}, nil
+}
+
 func (c *client) ListRunsBySession(ctx context.Context, sessionID string, statuses []session.RunStatus) ([]session.RunMeta, error) {
 	if sessionID == "" {
 		return nil, errors.New("session id is required")
@@ -357,16 +456,24 @@ func (c *client) withTimeout(ctx context.Context) (context.Context, context.Canc
 }
 
 type runDocument struct {
-	RunID       string             `bson:"run_id"`
-	AgentID     string             `bson:"agent_id"`
-	SessionID   string             `bson:"session_id,omitempty"`
-	Status      session.RunStatus  `bson:"status"`
-	StartedAt   time.Time          `bson:"started_at"`
-	UpdatedAt   time.Time          `bson:"updated_at"`
-	Labels      map[string]string  `bson:"labels,omitempty"`
-	PromptRefs  []prompt.PromptRef `bson:"prompt_refs,omitempty"`
-	ChildRunIDs []string           `bson:"child_run_ids,omitempty"`
-	Metadata    map[string]any     `bson:"metadata,omitempty"`
+	RunID       string                 `bson:"run_id"`
+	AgentID     string                 `bson:"agent_id"`
+	SessionID   string                 `bson:"session_id,omitempty"`
+	Status      session.RunStatus      `bson:"status"`
+	StartedAt   time.Time              `bson:"started_at"`
+	UpdatedAt   time.Time              `bson:"updated_at"`
+	Labels      map[string]string      `bson:"labels,omitempty"`
+	PromptRefs  []prompt.PromptRef     `bson:"prompt_refs,omitempty"`
+	ChildRunIDs []string               `bson:"child_run_ids,omitempty"`
+	Metadata    map[string]any         `bson:"metadata,omitempty"`
+	Suspension  *runSuspensionDocument `bson:"run_suspension,omitempty"`
+}
+
+// runSuspensionDocument preserves the runtime-owned JSON bytes without
+// interpreting the checkpoint in the persistence layer.
+type runSuspensionDocument struct {
+	ID   string `bson:"id"`
+	Data []byte `bson:"data"`
 }
 
 type sessionDocument struct {
@@ -520,6 +627,8 @@ func newClientWithCollections(mongoClient *mongodriver.Client, sessionsColl, run
 }
 
 type collection interface {
+	DeleteMany(ctx context.Context, filter any, opts ...options.Lister[options.DeleteManyOptions]) (*mongodriver.DeleteResult, error)
+	DeleteOne(ctx context.Context, filter any, opts ...options.Lister[options.DeleteOneOptions]) (*mongodriver.DeleteResult, error)
 	FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult
 	Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error)
 	UpdateOne(ctx context.Context, filter any, update any,
@@ -545,6 +654,14 @@ type cursor interface {
 
 type mongoCollection struct {
 	coll *mongodriver.Collection
+}
+
+func (c mongoCollection) DeleteMany(ctx context.Context, filter any, opts ...options.Lister[options.DeleteManyOptions]) (*mongodriver.DeleteResult, error) {
+	return c.coll.DeleteMany(ctx, filter, opts...)
+}
+
+func (c mongoCollection) DeleteOne(ctx context.Context, filter any, opts ...options.Lister[options.DeleteOneOptions]) (*mongodriver.DeleteResult, error) {
+	return c.coll.DeleteOne(ctx, filter, opts...)
 }
 
 func (c mongoCollection) FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult {

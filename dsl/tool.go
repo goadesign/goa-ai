@@ -829,7 +829,7 @@ func TerminalRun() {
 //
 // A bookkeeping-only planner turn is therefore only valid when the same turn
 // already resolves without another reasoning resume: either a TerminalRun tool,
-// a FinalResponse/FinalToolResult, or an await/pause control-plane handshake.
+// a FinalResponse/FinalToolResult, or an external-input suspension.
 // Use Bookkeeping for structured progress, status, transition declarations,
 // findings, and terminal-commit tools whose success must not independently
 // schedule another planner turn.

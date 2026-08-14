@@ -30,7 +30,6 @@ func TestAgentDSLExample(t *testing.T) {
 						MaxConsecutiveFailedToolCalls(2),
 					)
 					TimeBudget("30s")
-					InterruptsAllowed(true)
 				})
 			})
 		})
@@ -526,25 +525,6 @@ func TestCacheConfiguration(t *testing.T) {
 	require.NotNil(t, policy.Cache)
 	require.True(t, policy.Cache.AfterSystem)
 	require.True(t, policy.Cache.AfterTools)
-}
-
-// TestInterruptsAllowed verifies InterruptsAllowed DSL.
-func TestInterruptsAllowed(t *testing.T) {
-	runDSL(t, func() {
-		API("test", func() {})
-		Service("svc", func() {
-			Agent("agent", "desc", func() {
-				RunPolicy(func() {
-					InterruptsAllowed(true)
-				})
-			})
-		})
-	})
-
-	require.Len(t, agentsexpr.Root.Agents, 1)
-	policy := agentsexpr.Root.Agents[0].RunPolicy
-	require.NotNil(t, policy)
-	require.True(t, policy.InterruptsAllowed)
 }
 
 // TestOnMissingFields verifies OnMissingFields DSL.

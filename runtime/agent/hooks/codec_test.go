@@ -185,6 +185,33 @@ func TestDecodeFromRecordInput_RunCompletedRoundTripsLabels(t *testing.T) {
 	require.Equal(t, labels, got.Labels)
 }
 
+func TestDecodeFromRecordInputRunSuspendedRoundTrip(t *testing.T) {
+	event := NewRunSuspendedEvent(
+		testRunID,
+		agent.Ident("agent-1"),
+		testSessionID,
+		"suspension-1",
+		"v1",
+		2,
+		[]tools.Ident{"svc.read", "svc.write"},
+	)
+	record, err := EncodeToRecordInput(event, EncodeOptions{
+		TurnID:      "turn-1",
+		EventKey:    "evt-run-suspended",
+		TimestampMS: 105,
+	})
+	require.NoError(t, err)
+
+	decoded, err := DecodeFromRecordInput(record)
+	require.NoError(t, err)
+	got, ok := decoded.(*RunSuspendedEvent)
+	require.True(t, ok)
+	require.Equal(t, "suspension-1", got.SuspensionID)
+	require.Equal(t, "v1", got.Version)
+	require.Equal(t, 2, got.PendingCount)
+	require.Equal(t, []tools.Ident{"svc.read", "svc.write"}, got.RequiredTools)
+}
+
 func TestDecodeFromRecordInput_RunCompletedRejectsFailedPayloadWithoutFailure(t *testing.T) {
 	payload, err := json.Marshal(runCompletedPayload{
 		Status: "failed",

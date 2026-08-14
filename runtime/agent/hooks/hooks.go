@@ -64,12 +64,13 @@ const (
 	// typically contains the initial RunContext and input parameters.
 	RunStarted EventType = "run_started"
 
-	// RunCompleted fires after a run finishes, whether successfully
-	// or with a failure. The Payload contains final status and any error details.
+	// RunCompleted fires after a run finishes without requesting more external
+	// input. The payload contains final status and any error details.
 	RunCompleted EventType = "run_completed"
 
-	// RunPaused fires when execution is suspended awaiting external action.
-	RunPaused EventType = "run_paused"
+	// RunSuspended fires when a workflow ends successfully because external
+	// input is required before execution can continue in a new workflow.
+	RunSuspended EventType = "run_suspended"
 
 	// AwaitClarification fires when the planner requests a human clarification.
 	AwaitClarification EventType = "await_clarification"
@@ -86,9 +87,6 @@ const (
 	// ToolAuthorization fires when an operator provides an explicit approval/denial
 	// decision for a pending tool call.
 	ToolAuthorization EventType = "tool_authorization"
-
-	// RunResumed fires when a previously paused run resumes execution.
-	RunResumed EventType = "run_resumed"
 
 	// ToolCallScheduled fires when the runtime schedules a tool activity for
 	// execution. The Payload contains the tool name, arguments, and queue metadata.

@@ -102,7 +102,6 @@
 //   - [RunPolicy] configures execution constraints
 //   - [DefaultCaps] sets resource limits using [MaxToolCalls] and [MaxConsecutiveFailedToolCalls]
 //   - [TimeBudget] limits active planner and tool work; external waits pause it
-//   - [InterruptsAllowed] enables user interruption handling
 //   - [OnMissingFields] configures validation behavior
 //   - [History] configures conversation history management
 //   - [Cache] configures prompt caching hints

@@ -4,15 +4,16 @@
 // The workflow loop (workflow_loop.go) is the sole owner of run-duration
 // enforcement. TimeBudget forms the Budget deadline for active planner/tool
 // work. FinalizerGrace extends that into a Hard deadline for one final planner
-// activity. Time spent blocked on external input (clarification, confirmation,
-// provided tool results) extends both deadlines via (*runDeadlines).pause, so
-// an operator response never burns the run's active-time budget.
+// activity. An external-input request ends the workflow with the remaining
+// Budget and Hard durations in its checkpoint. A continuation starts new
+// deadlines from those durations, so user response time never burns the
+// run's active-time budget.
 //
 // The engine (e.g. Temporal WorkflowRunTimeout) must never impose a second,
 // competing wall-clock ceiling on top of this: unlike the workflow's own
 // deadline check, an engine-level timeout force-closes the run from outside
-// application code, so it can fire mid-await and permanently strand the run
-// without ever emitting a RunCompleted event. Engine run-timeout fields exist
+// application code, so it can fire mid-turn before the runtime emits a
+// canonical terminal event. Engine run-timeout fields exist
 // for engines/callers that want one, but this runtime intentionally leaves
 // them unset for every run it starts.
 package runtime
@@ -32,9 +33,9 @@ type runTiming struct {
 //     active-time budget (the run finalizes only via caps or a terminal tool).
 //   - FinalizerGrace is the exact extension from Budget to Hard. Finalization
 //     that starts before Budget may use the remaining Budget plus this grace.
-//   - Neither value is ever projected onto an engine-level run timeout: see the
-//     package comment for why that would undermine indefinite external-input
-//     awaits.
+//   - Neither value is ever projected onto an engine-level run timeout. Saved
+//     continuations carry remaining active durations into a new workflow, so a
+//     separate engine deadline would compete with this contract.
 func resolveRunTiming(reg AgentRegistration, input *RunInput) runTiming {
 	var timing runTiming
 	if reg.Policy.TimeBudget > 0 {

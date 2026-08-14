@@ -24,11 +24,10 @@ func newRunPolicyData(expr *agentsExpr.RunPolicyExpr) RunPolicyData {
 		return RunPolicyData{}
 	}
 	rp := RunPolicyData{
-		TimeBudget:        expr.TimeBudget,
-		PlanTimeout:       expr.PlanTimeout,
-		ToolTimeout:       expr.ToolTimeout,
-		InterruptsAllowed: expr.InterruptsAllowed,
-		OnMissingFields:   expr.OnMissingFields,
+		TimeBudget:      expr.TimeBudget,
+		PlanTimeout:     expr.PlanTimeout,
+		ToolTimeout:     expr.ToolTimeout,
+		OnMissingFields: expr.OnMissingFields,
 	}
 	if expr.History != nil {
 		h := &HistoryData{

@@ -3,11 +3,16 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	agent "goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	"goa.design/goa-ai/runtime/agent/session"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
@@ -100,6 +105,69 @@ func TestStartRunRejectsMissingRequiredLabels(t *testing.T) {
 	_, err = client.Start(context.Background(), "s1", nil, WithLabels(map[string]string{"household_id": "h1"}))
 	require.NoError(t, err)
 	require.Equal(t, "service.workflow", eng.last.Workflow)
+}
+
+// TestStartContinuationUsesCheckpointRequiredLabels proves a continuation does
+// not require callers to repeat trusted labels that the worker restores from
+// the preceding workflow's checkpoint.
+func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
+	eng := &stubEngine{}
+	rt := &Runtime{
+		Engine:        eng,
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		SessionStore:  sessioninmem.New(),
+		agents: map[agent.Ident]AgentRegistration{
+			"svc.agent": {
+				ID:             "svc.agent",
+				RequiredLabels: []string{"household_id"},
+				Workflow:       engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"},
+			},
+		},
+	}
+	spec := newAnyJSONSpec("svc.lookup", "svc")
+	seedTestToolSpecs(rt, spec)
+	_, err := rt.CreateSession(context.Background(), "session-1")
+	require.NoError(t, err)
+	suspension := suspensionContractFixtureWithContext(
+		t, spec.Name, "svc.agent", "run-1",
+		map[string]string{"household_id": "house-42"},
+		map[string]any{"request_id": "request-42"},
+	)
+	now := time.Now().UTC()
+	require.NoError(t, rt.SessionStore.UpsertRun(context.Background(), session.RunMeta{
+		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+		Status: session.RunStatusSuspended, StartedAt: now, UpdatedAt: now,
+	}))
+	data, err := json.Marshal(suspension)
+	require.NoError(t, err)
+	require.NoError(t, rt.SessionStore.SaveRunSuspension(context.Background(), "run-1", session.RunSuspension{
+		ID: suspension.ID, Data: data,
+	}))
+
+	client := rt.MustClient(agent.Ident("svc.agent"))
+	handle, err := client.StartContinuation(
+		context.Background(),
+		"session-1",
+		"run-1",
+		"run-2",
+		"turn-2",
+		&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
+			ID: "clarification-1", Answer: "Building A",
+		}},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "service.workflow", eng.last.Workflow)
+	require.Empty(t, eng.last.Input.Labels)
+	run, err := rt.SessionStore.LoadRun(context.Background(), "run-2")
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"household_id": "house-42"}, run.Labels)
+	require.Equal(t, map[string]any{"request_id": "request-42"}, run.Metadata)
+	observed, ok := handle.(*observedWorkflowHandle)
+	require.True(t, ok)
+	require.Equal(t, map[string]string{"household_id": "house-42"}, observed.labels)
 }
 
 // TestStartOneShotRejectsMissingRequiredLabels proves the same run-start

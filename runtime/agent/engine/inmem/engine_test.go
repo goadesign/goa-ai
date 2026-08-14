@@ -68,6 +68,28 @@ func TestPlannerActivityTypedExecution(t *testing.T) {
 	}
 }
 
+func TestQueryRunCompletionReturnsExactWorkflowOutput(t *testing.T) {
+	eng := New()
+	want := &api.RunOutput{RunID: "run-1", Suspension: &api.RunSuspension{
+		ID: "suspension-1", Version: api.RunSuspensionVersion,
+	}}
+	err := eng.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{
+		Name: "test_workflow",
+		Handler: func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
+			return want, nil
+		},
+	})
+	require.NoError(t, err)
+	_, err = eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
+		ID: "run-1", Workflow: "test_workflow", Input: &api.RunInput{},
+	})
+	require.NoError(t, err)
+
+	got, err := eng.QueryRunCompletion(t.Context(), "run-1")
+	require.NoError(t, err)
+	require.Same(t, want, got)
+}
+
 func TestPlannerActivityTimeoutOwnership(t *testing.T) {
 	waitForCancellation := func(ctx context.Context, _ *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
 		<-ctx.Done()
@@ -211,54 +233,6 @@ func TestToolActivityFutureTypedExecution(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("start workflow: %v", err)
-	}
-
-	_, err = handle.Wait(ctx)
-	if err != nil {
-		t.Fatalf("workflow failed: %v", err)
-	}
-}
-
-func TestSignalTypedDelivery(t *testing.T) {
-	eng := New()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err := eng.RegisterWorkflow(ctx, engine.WorkflowDefinition{
-		Name: "test_workflow",
-		Handler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-			req, err2 := wfCtx.PauseRequests().Receive(wfCtx.Context())
-			if err2 != nil {
-				return nil, err2
-			}
-			if req == nil {
-				t.Fatal("pause request is nil")
-			}
-			if req.RunID != "test-run-1" || req.Reason != "human" {
-				t.Errorf("unexpected pause request: %+v", req)
-			}
-			return &api.RunOutput{}, nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("register workflow: %v", err)
-	}
-
-	handle, err := eng.StartWorkflow(ctx, engine.WorkflowStartRequest{
-		ID:       "test-run-1",
-		Workflow: "test_workflow",
-		Input:    &api.RunInput{},
-	})
-	if err != nil {
-		t.Fatalf("start workflow: %v", err)
-	}
-
-	err = handle.Signal(ctx, api.SignalPause, &api.PauseRequest{
-		RunID:  "test-run-1",
-		Reason: "human",
-	})
-	if err != nil {
-		t.Fatalf("signal workflow: %v", err)
 	}
 
 	_, err = handle.Wait(ctx)

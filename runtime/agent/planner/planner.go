@@ -333,6 +333,14 @@ type ToolResult struct {
 //     canonical run log before invoking planner code.
 //   - This type intentionally does not carry decoded `any` values.
 type ToolOutput struct {
+	// CallRunID identifies the run log containing the canonical scheduled call.
+	// Planners must treat it as opaque execution metadata.
+	CallRunID string
+
+	// ResultRunID identifies the run log containing the canonical result. It can
+	// differ from CallRunID when external input crosses a workflow suspension.
+	ResultRunID string
+
 	// Name is the fully-qualified tool identifier that was executed.
 	Name tools.Ident
 
@@ -433,10 +441,11 @@ type PlannerAnnotation struct {
 // before the runtime resumes planning.
 //
 // Contract:
-//   - Await is a single barrier per planner result: the runtime pauses once for
-//     the full await set.
+//   - Await is one ordered barrier per planner result: the workflow ends with
+//     the complete set in a suspension.
 //   - Await.Items preserves order. Callers may present items as a wizard; the
-//     runtime resumes planning only after all items are satisfied.
+//     runtime consumes one item per continuation workflow and resumes planning
+//     only after all items are satisfied.
 //   - Items may mix kinds (clarification, questions, external tools).
 type Await struct {
 	Items []AwaitItem
@@ -516,7 +525,7 @@ type AwaitClarification struct {
 //
 // Contract: the tool result is an object with one required string field named
 // "answer". ToolName, ToolCallID, and Payload must remain exact so provider
-// transcript correlation survives the external-input pause.
+// transcript correlation survives the external-input workflow boundary.
 type AwaitToolClarification struct {
 	// ID uniquely identifies this clarification request.
 	ID string
@@ -536,11 +545,10 @@ type AwaitToolClarification struct {
 
 // AwaitQuestions requests structured multiple-choice answers from the user.
 //
-// Contract: AwaitQuestions represents a single paused tool invocation that must
-// be satisfied out-of-band by the caller (typically a UI) and resumed via the
-// runtime's ProvideToolResults mechanism using ToolCallID. When the model
-// authored the invocation, ToolName, ToolCallID, and Payload must remain exact;
-// place multiple questions in that one payload rather than merging calls.
+// Contract: AwaitQuestions represents one tool invocation whose answers arrive
+// in the next workflow continuation. When the model authored the invocation,
+// ToolName, ToolCallID, and Payload must remain exact; place multiple questions
+// in that one payload rather than merging calls.
 type AwaitQuestions struct {
 	// ID uniquely identifies this questions request.
 	ID string
@@ -712,7 +720,7 @@ type PlanResult struct {
 	// FinalResponse to prevent duplicate assistant messages.
 	Streamed bool
 
-	// Await requests the runtime to pause the run and wait for additional input.
+	// Await requests that the current workflow end with required external input.
 	Await *Await
 
 	// ExpectedChildren is an optional hint for how many nested tool results a planner expects.

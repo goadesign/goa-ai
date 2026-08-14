@@ -14,7 +14,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 )
 
-func TestAdmitAwaitItemQuestionsDoesNotDuplicateCommittedResponse(t *testing.T) {
+func TestPublishAwaitToolUsesQuestionsDoesNotDuplicateCommittedResponse(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(rt, newAnyJSONSpec("chat.ask_question", "chat"))
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1", SessionID: "sess-1"}}
@@ -38,7 +38,7 @@ func TestAdmitAwaitItemQuestionsDoesNotDuplicateCommittedResponse(t *testing.T) 
 	}}
 
 	require.NoError(t, rt.appendSelectedModelResponse(t.Context(), input.AgentID, base, "turn-1", result, transcript))
-	require.NoError(t, rt.admitAwaitItem(t.Context(), input, base, "turn-1", item, 0))
+	require.NoError(t, rt.publishAwaitToolUses(t.Context(), input, base, "turn-1", item, 0))
 
 	require.Len(t, base.Messages, 1)
 	require.Len(t, base.Messages[0].Parts, 1)
@@ -48,7 +48,7 @@ func TestAdmitAwaitItemQuestionsDoesNotDuplicateCommittedResponse(t *testing.T) 
 	require.Equal(t, "opaque-provider-signature", use.ThoughtSignature)
 }
 
-func TestAdmitAwaitItemExternalToolsDoesNotRecordAssistantResponse(t *testing.T) {
+func TestPublishAwaitToolUsesExternalToolsDoesNotRecordAssistantResponse(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.a", "svc.tools"), newAnyJSONSpec("svc.tools.b", "svc.tools"))
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1", SessionID: "sess-1"}}
@@ -61,6 +61,6 @@ func TestAdmitAwaitItemExternalToolsDoesNotRecordAssistantResponse(t *testing.T)
 		},
 	})
 
-	require.NoError(t, rt.admitAwaitItem(t.Context(), input, base, "turn-1", item, 0))
+	require.NoError(t, rt.publishAwaitToolUses(t.Context(), input, base, "turn-1", item, 0))
 	require.Empty(t, base.Messages)
 }

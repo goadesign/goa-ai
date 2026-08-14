@@ -367,6 +367,12 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		if err != nil {
 			return nil, fmt.Errorf("execute agent: %w", err)
 		}
+		if outPtr != nil && outPtr.Suspension != nil {
+			return &ToolExecutionResult{
+				ToolResult:      &planner.ToolResult{Name: call.Name, ToolCallID: call.ToolCallID},
+				childSuspension: outPtr.Suspension,
+			}, nil
+		}
 		result, err := rt.adaptAgentChildOutput(ctx, &cfg, call, nestedRunCtx, outPtr)
 		if err != nil {
 			return nil, err
@@ -584,10 +590,6 @@ func (r *Runtime) buildPromptTemplateData(ctx context.Context, toolName tools.Id
 //
 // In all cases the returned ToolResult is linked back to the child run.
 func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfig, call *planner.ToolRequest, nestedRunCtx run.Context, outPtr *RunOutput) (*planner.ToolResult, error) {
-	if outPtr == nil {
-		return nil, fmt.Errorf("execute agent returned no output")
-	}
-
 	handle := &run.Handle{
 		RunID:            nestedRunCtx.RunID,
 		AgentID:          cfg.AgentID,

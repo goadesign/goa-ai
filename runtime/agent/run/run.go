@@ -11,8 +11,8 @@
 // TurnID (Application Layer):
 //   - Represents a conversational turn (user message → agent response)
 //   - Used for conversation tracking, UI rendering, session timeline
-//   - Unique within a session, groups events for display
-//   - Lifespan: Logical grouping that may span multiple workflow executions
+//   - Unique within a session and belongs to exactly one workflow execution
+//   - A response to suspended external input starts a new run and turn
 //
 // SessionID (Conversation Layer):
 //   - Groups related runs/turns into a conversation or interaction thread
@@ -26,10 +26,10 @@
 //	    └─ Turn "turn-1" → Run "chat-123-run-1"
 //	    └─ Turn "turn-2" → Run "chat-123-run-2"
 //
-//	Interrupted execution (1 turn = multiple runs):
+//	External-input continuation (each turn is a new run):
 //	  Session "task-456"
-//	    └─ Turn "turn-1" → Run "task-456-run-1" (interrupted)
-//	                    → Run "task-456-run-1-resumed" (same turn, new workflow)
+//	    └─ Turn "turn-1" → Run "task-456-run-1" (asks a question and ends)
+//	    └─ Turn "turn-2" → Run "task-456-run-2" (continues with the answer)
 //
 //	Streaming with tool discovery (1 turn = 1 run, multiple events):
 //	  Session "research-789"
@@ -79,8 +79,8 @@ type (
 
 		// TurnID identifies a conversational turn within a session (application layer).
 		// Optional. When set, groups all events produced during this turn for UI
-		// rendering and conversation tracking. Multiple runs may share the same TurnID
-		// if a turn requires pause/resume or retry with a new workflow execution.
+		// rendering and conversation tracking. A continuation response starts a new
+		// workflow with a new RunID and TurnID.
 		// Format: typically "turn-1", "turn-2", etc. within a session.
 		TurnID string
 
@@ -155,8 +155,10 @@ const (
 	StatusFailed Status = "failed"
 	// StatusCanceled indicates the run was canceled externally.
 	StatusCanceled Status = "canceled"
-	// StatusPaused indicates execution is paused awaiting external intervention.
+	// StatusPaused reports an engine-level paused workflow.
 	StatusPaused Status = "paused"
+	// StatusSuspended indicates the workflow ended with a continuation checkpoint.
+	StatusSuspended Status = "suspended"
 
 	// PhasePrompted indicates that input has been received and the run is
 	// about to begin planning.
@@ -176,4 +178,6 @@ const (
 	PhaseFailed Phase = "failed"
 	// PhaseCanceled indicates the run was canceled.
 	PhaseCanceled Phase = "canceled"
+	// PhaseSuspended indicates the workflow ended while awaiting external input.
+	PhaseSuspended Phase = "suspended"
 )

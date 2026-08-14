@@ -59,7 +59,6 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 			MaxToolCalls:                  5,
 			MaxConsecutiveFailedToolCalls: 2,
 			TimeBudget:                    time.Duration(30000000000),
-			InterruptsAllowed:             true,
 		},
 	}); err != nil {
 		return err

@@ -37,6 +37,11 @@ func (s *Store) EndSession(ctx context.Context, sessionID string, endedAt time.T
 	return s.client.EndSession(ctx, sessionID, endedAt)
 }
 
+// PurgeSession implements session.Store.
+func (s *Store) PurgeSession(ctx context.Context, sessionID string) error {
+	return s.client.PurgeSession(ctx, sessionID)
+}
+
 // UpsertRun implements session.Store.
 func (s *Store) UpsertRun(ctx context.Context, run session.RunMeta) error {
 	return s.client.UpsertRun(ctx, run)
@@ -50,6 +55,16 @@ func (s *Store) LinkChildRun(ctx context.Context, parentRunID string, child sess
 // LoadRun implements session.Store.
 func (s *Store) LoadRun(ctx context.Context, runID string) (session.RunMeta, error) {
 	return s.client.LoadRun(ctx, runID)
+}
+
+// SaveRunSuspension implements session.Store.
+func (s *Store) SaveRunSuspension(ctx context.Context, runID string, suspension session.RunSuspension) error {
+	return s.client.SaveRunSuspension(ctx, runID, suspension)
+}
+
+// LoadRunSuspension implements session.Store.
+func (s *Store) LoadRunSuspension(ctx context.Context, runID string) (session.RunSuspension, error) {
+	return s.client.LoadRunSuspension(ctx, runID)
 }
 
 // ListRunsBySession implements session.Store.

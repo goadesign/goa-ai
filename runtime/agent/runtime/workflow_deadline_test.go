@@ -13,7 +13,6 @@ import (
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -467,7 +466,6 @@ func TestMissingFieldsFinalizationUsesHardDeadline(t *testing.T) {
 		},
 	)
 	loop.reg.Policy.OnMissingFields = MissingFieldsFinalize
-	loop.ctrl = interrupt.NewController(wfCtx)
 	batch := deadlineTestResumeBatch()
 	batch.recorded = 1
 	batch.records = []stepToolRecord{{
@@ -490,19 +488,6 @@ func TestMissingFieldsFinalizationUsesHardDeadline(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Equal(t, hard.Sub(current), wfCtx.lastPlannerCall.Options.ScheduleToCloseTimeout)
-}
-
-func TestRunDeadlinesPauseExtendsBudgetAndHard(t *testing.T) {
-	start := time.Unix(100, 0)
-	deadlines := runDeadlines{
-		Budget: start.Add(time.Minute),
-		Hard:   start.Add(90 * time.Second),
-	}
-
-	deadlines.pause(10 * time.Minute)
-
-	require.Equal(t, start.Add(11*time.Minute), deadlines.Budget)
-	require.Equal(t, start.Add(11*time.Minute+30*time.Second), deadlines.Hard)
 }
 
 func newResumeDeadlineTestLoop(
@@ -558,7 +543,6 @@ func newResumeDeadlineTestLoop(
 		base,
 		state,
 		"turn-1",
-		nil,
 		nil,
 		deadlines,
 		activityOptions,

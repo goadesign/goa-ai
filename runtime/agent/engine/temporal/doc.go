@@ -74,7 +74,6 @@
 //   - PublishRecord schedules record persistence outside the workflow thread
 //   - ExecutePlannerActivity runs planner activities
 //   - ExecuteToolActivity/ExecuteToolActivityAsync run tool activities
-//   - PauseRequests/ResumeRequests/... return typed signal receivers
 //   - StartChildWorkflow starts nested workflows
 //
 // Planners and tool executors run inside activities, which are not constrained

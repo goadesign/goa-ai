@@ -24,9 +24,6 @@ type (
 		PlanTimeout time.Duration
 		// ToolTimeout is the default ExecuteTool activity timeout when set.
 		ToolTimeout time.Duration
-		// InterruptsAllowed indicates whether the agent can be
-		// interrupted during execution.
-		InterruptsAllowed bool
 		// OnMissingFields controls behavior when validation indicates
 		// missing fields.  Allowed values: "finalize" |
 		// "await_clarification" | "resume". Empty means unspecified.
@@ -123,9 +120,6 @@ func (r *RunPolicyExpr) Validate() error {
 			// ok
 		default:
 			verr.Add(r, "invalid OnMissingFields value %q (allowed: finalize, await_clarification, resume)", r.OnMissingFields)
-		}
-		if r.OnMissingFields == "await_clarification" && !r.InterruptsAllowed {
-			verr.Add(r, "OnMissingFields(\"await_clarification\") requires InterruptsAllowed(true)")
 		}
 	}
 	if r.History != nil {

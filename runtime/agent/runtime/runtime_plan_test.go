@@ -299,7 +299,7 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 	serverData := rawjson.Message([]byte(`[{"kind":"evidence"}]`))
 	total := 17
 	bounds := &agent.Bounds{Returned: 10, Total: &total, Truncated: true, RefinementHint: "narrow the window"}
-	toolOutputs := []*api.ToolOutputRef{{ToolCallID: "call-1"}}
+	toolOutputs := []*api.ToolOutputRef{{CallRunID: "run-123", ResultRunID: "run-123", ToolCallID: "call-1"}}
 	pl := &stubPlanner{resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 		called = true
 		require.NotNil(t, input)
@@ -434,7 +434,9 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
 		ToolOutputs: []*api.ToolOutputRef{{
-			ToolCallID: "source-1",
+			CallRunID:   "run-123",
+			ResultRunID: "run-123",
+			ToolCallID:  "source-1",
 		}},
 	})
 	require.NoError(t, err)
@@ -517,8 +519,8 @@ func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) 
 		RunContext: run.Context{RunID: "run-123", Attempt: 2},
 		Policy:     &PolicyOverrides{RestrictToTool: first.Name},
 		ToolOutputs: []*api.ToolOutputRef{
-			{ToolCallID: "call-1"},
-			{ToolCallID: "call-2"},
+			{CallRunID: "run-123", ResultRunID: "run-123", ToolCallID: "call-1"},
+			{CallRunID: "run-123", ResultRunID: "run-123", ToolCallID: "call-2"},
 		},
 	})
 	require.NoError(t, err)
@@ -572,7 +574,7 @@ func TestPlanResumeActivityFailsWhenCanonicalToolResultIsMissing(t *testing.T) {
 			RunID:   "run-123",
 			Attempt: 1,
 		},
-		ToolOutputs: []*api.ToolOutputRef{{ToolCallID: "call-1"}},
+		ToolOutputs: []*api.ToolOutputRef{{CallRunID: "run-123", ResultRunID: "run-123", ToolCallID: "call-1"}},
 	}
 
 	_, err := rt.PlanResumeActivity(context.Background(), &input)
@@ -639,7 +641,7 @@ func TestPlanResumeActivityHydratesOmittedResultMetadataFromCanonicalRunlog(t *t
 		AgentID:     "service.agent",
 		RunID:       "run-123",
 		RunContext:  run.Context{RunID: "run-123", Attempt: 2},
-		ToolOutputs: []*api.ToolOutputRef{{ToolCallID: "call-1"}},
+		ToolOutputs: []*api.ToolOutputRef{{CallRunID: "run-123", ResultRunID: "run-123", ToolCallID: "call-1"}},
 	}
 
 	_, err := rt.PlanResumeActivity(context.Background(), &input)
@@ -649,6 +651,7 @@ func TestPlanResumeActivityHydratesOmittedResultMetadataFromCanonicalRunlog(t *t
 
 func TestBuildPlannerToolOutputRecordsPreservesOmittedResultMetadata(t *testing.T) {
 	t.Parallel()
+	const runID = "run-123"
 
 	rt := &Runtime{
 		logger:  telemetry.NoopLogger{},
@@ -677,6 +680,8 @@ func TestBuildPlannerToolOutputRecordsPreservesOmittedResultMetadata(t *testing.
 			},
 		},
 	)
+	records[0].callRunID = runID
+	records[0].resultRunID = runID
 	outputs, err := rt.buildPlannerToolOutputRecords(context.Background(), records)
 	require.NoError(t, err)
 	require.Len(t, outputs, 1)
@@ -689,6 +694,7 @@ func TestBuildPlannerToolOutputRecordsPreservesOmittedResultMetadata(t *testing.
 
 func TestBuildPlannerToolOutputRecordsSkipsBookkeepingResults(t *testing.T) {
 	t.Parallel()
+	const runID = "run-123"
 
 	rt := &Runtime{
 		logger:  telemetry.NoopLogger{},
@@ -732,6 +738,10 @@ func TestBuildPlannerToolOutputRecordsSkipsBookkeepingResults(t *testing.T) {
 			},
 		},
 	)
+	for i := range records {
+		records[i].callRunID = runID
+		records[i].resultRunID = runID
+	}
 	outputs, err := rt.buildPlannerToolOutputRecords(context.Background(), records)
 	require.NoError(t, err)
 	require.Len(t, outputs, 1)

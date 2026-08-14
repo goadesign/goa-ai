@@ -243,6 +243,24 @@ func TestStreamSubscriber_WorkflowFromRunCompleted(t *testing.T) {
 	require.Equal(t, "r1", end.RunID())
 }
 
+func TestStreamSubscriberWorkflowFromRunSuspended(t *testing.T) {
+	sink := &mockSink{}
+	subscriber, err := NewSubscriber(sink)
+	require.NoError(t, err)
+	event := hooks.NewRunSuspendedEvent(
+		"r1", agent.Ident("agent1"), "session-1", "suspension-1", "v1", 1, nil,
+	)
+
+	require.NoError(t, subscriber.HandleEvent(t.Context(), event))
+	require.Len(t, sink.events, 2)
+	workflow, ok := sink.events[0].(Workflow)
+	require.True(t, ok)
+	require.Equal(t, "suspended", workflow.Data.Phase)
+	require.Equal(t, "suspended", workflow.Data.Status)
+	_, ok = sink.events[1].(RunStreamEnd)
+	require.True(t, ok)
+}
+
 func TestStreamSubscriber_WorkflowFromRunCompleted_FailedHasPublicAndDebugErrors(t *testing.T) {
 	sink := &mockSink{}
 	sub, err := NewSubscriber(sink)

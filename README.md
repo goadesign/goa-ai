@@ -38,7 +38,7 @@ You describe the agent system in the same design-first style as Goa services. `g
 | If you care about... | Goa-AI gives you... |
 | --- | --- |
 | Strong tool contracts | Goa types, validations, examples, generated JSON Schema, generated codecs |
-| Durable agent execution | A plan/execute/resume workflow loop with retries, budgets, cancellation, and Temporal support |
+| Durable agent execution | Plan/execute workflows with retries, budgets, cancellation, typed input checkpoints, and Temporal support |
 | Existing service logic | `BindTo` and generated transforms that connect tools to Goa service methods |
 | Structured final answers | Service-owned `Completion(...)` contracts with unary and streaming helpers |
 | Repeatable agent checks | Generated evaluation hooks, exact scenario selection, bounded concurrency, and calibrated semantic judging |
@@ -429,6 +429,9 @@ Agent("coordinator", "Delegates specialist work", func() {
 ```
 
 Parent runs receive a tool result with a child run link. Streams emit `child_run_linked` so UIs can render nested runs without losing identity, logs, or telemetry.
+If a child asks for external input, the parent workflow ends with the same
+visible request. Continuing the parent starts a new child workflow from the
+child checkpoint; the parent tool call stays open until that child finishes.
 
 ### Runtime Policies, Tags, and Timing
 
@@ -443,7 +446,6 @@ Agent("operator", "Production operations agent", func() {
 			Plan("45s")
 			Tools("90s")
 		})
-		InterruptsAllowed(true)
 		OnMissingFields("await_clarification")
 		History(func() {
 			KeepRecentTurns(20)
@@ -490,9 +492,46 @@ out, err := client.Run(ctx, "session-1", messages,
 )
 ```
 
-### Human-in-the-Loop and Confirmation
+### External Input and Continuations
 
-Planners can pause for clarification or external tool results. Sensitive tools can require approval before execution.
+Clarifications, structured questions, external tool results, and confirmations
+end the current workflow with `RunOutput.Suspension`. No workflow remains open
+while a person is deciding. Before that workflow completes, the runtime stores
+the suspension in its configured session store under the completed run ID. The
+application atomically accepts one answer, so concurrent requests cannot
+continue the same state twice. Then start a new workflow with the completed run
+ID and one response to its first pending request:
+
+```go
+out, err := client.Run(ctx, "session-1", messages)
+if err != nil {
+	return err
+}
+if out.Suspension != nil {
+	pending := out.Suspension.Pending[0]
+	out, err = client.Continue(
+		ctx,
+		"session-1",
+		out.RunID,
+		"new-run-id",
+		"new-turn-id",
+		&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
+			ID:     pending.Await.Clarification.ID,
+			Answer: "Unit 7",
+		}},
+	)
+}
+```
+
+The checkpoint is opaque and may contain private planner state. The runtime's
+session store keeps it; callers pass only the completed run ID and the user's
+typed response. Before routing a continuation, the runtime verifies the
+checkpoint version, visible pending requests, and required tool names. The receiving worker restores
+saved payloads and results through its current generated codecs, so compatible
+tool evolution continues while incompatible saved values fail at the codec
+boundary.
+
+Sensitive tools can require approval before execution:
 
 ```go
 Tool("change_setpoint", "Change a device setpoint", func() {
@@ -506,7 +545,11 @@ Tool("change_setpoint", "Change a device setpoint", func() {
 })
 ```
 
-At runtime, the workflow emits an await-confirmation event, waits for `ProvideConfirmation`, records a durable authorization event, and only then executes the tool. Denials produce schema-compliant tool results so planners and transcripts remain deterministic.
+The first workflow emits an await-confirmation event and ends with a
+confirmation suspension. A new workflow consumes an exact
+`api.ConfirmationDecision`, records the durable authorization event, and only
+then executes the tool. Denials produce schema-compliant tool results so
+planners and transcripts remain deterministic.
 
 ### Bounded Results and Server Data
 
@@ -661,9 +704,11 @@ finalization.
 
 Recovery turns carry the selected failed call IDs in `PlanActivityInput`.
 Empty IDs are omitted, so start and ordinary resume activities retain their
-previous JSON shape. An upgrade that can execute a recovery turn must drain or
-stop every old worker before starting the new worker bundle: old activities
-reject the new input and old workflows reject the new output.
+previous JSON shape. Temporal deployments use Worker Deployment Versioning so
+an active workflow remains on its compatible worker until it completes or
+suspends. A continuation is a new workflow and may start on the current
+deployment after `ValidateContinuation` accepts its saved checkpoint and tool
+schemas.
 
 The flag is valid only on a tool-only result, keeping execution and answer
 synthesis as separate turns without relying on process-local state. The batch

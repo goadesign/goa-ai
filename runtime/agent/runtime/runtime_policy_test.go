@@ -220,7 +220,7 @@ func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
 	// Finalization plan activities rehydrate tool outputs from the canonical
 	// run log by tool_call_id; before the fix this failed with "missing
 	// canonical tool history in run log".
-	outputs, err := rt.loadPlannerToolOutputs(context.Background(), input.RunID, []*api.ToolOutputRef{{ToolCallID: "call-cap-denied"}})
+	outputs, err := rt.loadPlannerToolOutputs(context.Background(), []*api.ToolOutputRef{{CallRunID: input.RunID, ResultRunID: input.RunID, ToolCallID: "call-cap-denied"}})
 	require.NoError(t, err)
 	require.Len(t, outputs, 1)
 	require.Equal(t, toolSpec.Name, outputs[0].Name)

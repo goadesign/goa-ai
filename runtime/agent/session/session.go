@@ -63,7 +63,18 @@ type (
 		Metadata map[string]any
 	}
 
-	// Store persists session lifecycle state and run metadata.
+	// RunSuspension is the opaque runtime-owned value needed to continue one
+	// completed run. Session stores preserve Data byte-for-byte and use ID to
+	// reject conflicting writes for the same run.
+	RunSuspension struct {
+		// ID identifies the exact suspension encoded in Data.
+		ID string
+		// Data contains the canonical JSON encoding owned by the agent runtime.
+		Data []byte
+	}
+
+	// Store persists session lifecycle state, run metadata, and private
+	// continuation checkpoints.
 	//
 	// Store implementations must be durable: failures are surfaced to callers so
 	// workflows can fail fast when session/run metadata is unavailable.
@@ -80,6 +91,9 @@ type (
 		// EndSession ends a session and returns its terminal state.
 		// Idempotent: ending an already-ended session returns the stored session.
 		EndSession(ctx context.Context, sessionID string, endedAt time.Time) (Session, error)
+		// PurgeSession permanently removes one session and every run record it
+		// owns, including private continuation checkpoints. It is idempotent.
+		PurgeSession(ctx context.Context, sessionID string) error
 
 		// UpsertRun inserts or updates run metadata.
 		UpsertRun(ctx context.Context, run RunMeta) error
@@ -95,6 +109,14 @@ type (
 		LinkChildRun(ctx context.Context, parentRunID string, child RunMeta) error
 		// LoadRun loads run metadata. Returns ErrRunNotFound when missing.
 		LoadRun(ctx context.Context, runID string) (RunMeta, error)
+		// SaveRunSuspension durably stores the one suspension produced by runID.
+		// Repeating the exact ID and bytes is idempotent; any other value returns
+		// ErrRunSuspensionConflict.
+		SaveRunSuspension(ctx context.Context, runID string, suspension RunSuspension) error
+		// LoadRunSuspension loads the exact bytes previously stored for runID.
+		// It returns ErrRunNotFound when the run is absent and
+		// ErrRunSuspensionNotFound when the run exists without a suspension.
+		LoadRunSuspension(ctx context.Context, runID string) (RunSuspension, error)
 		// ListRunsBySession lists runs for the given session. When statuses is
 		// non-empty, only runs whose status matches one of the provided values
 		// are returned.
@@ -118,8 +140,11 @@ const (
 	RunStatusPending RunStatus = "pending"
 	// RunStatusRunning indicates the run is actively executing.
 	RunStatusRunning RunStatus = "running"
-	// RunStatusPaused indicates the run is waiting for external input (pause/await).
+	// RunStatusPaused reports an engine-level paused workflow. External-input
+	// requests use RunStatusSuspended because their workflow has ended.
 	RunStatusPaused RunStatus = "paused"
+	// RunStatusSuspended indicates the workflow ended and can continue in a new run.
+	RunStatusSuspended RunStatus = "suspended"
 	// RunStatusCompleted indicates the run finished successfully.
 	RunStatusCompleted RunStatus = "completed"
 	// RunStatusFailed indicates the run failed permanently.
@@ -135,6 +160,10 @@ var (
 	ErrSessionEnded = errors.New("session ended")
 	// ErrRunNotFound indicates run metadata does not exist in the store.
 	ErrRunNotFound = errors.New("run not found")
+	// ErrRunSuspensionNotFound indicates the run has no stored suspension.
+	ErrRunSuspensionNotFound = errors.New("run suspension not found")
+	// ErrRunSuspensionConflict indicates a run already owns another suspension.
+	ErrRunSuspensionConflict = errors.New("run suspension conflict")
 	// ErrParentRunIDRequired indicates a child-link operation is missing parent run ID.
 	ErrParentRunIDRequired = errors.New("parent run id is required")
 	// ErrChildRunIDRequired indicates a child-link operation is missing child run ID.

@@ -1,6 +1,6 @@
 // Package temporal implements the engine.Engine adapter backed by Temporal.
 // It registers workflows and activities, manages per-queue workers, starts
-// executions, and exposes workflow handles for waiting, signaling, and
+// executions, and exposes workflow handles for waiting and
 // cancellation. The adapter wires OpenTelemetry tracing/metrics and keeps
 // Temporal-specific worker lifecycle inside this package.
 package temporal
@@ -28,7 +28,7 @@ import (
 //
 // Use NewWorker when the process will register workflows/activities and poll task
 // queues locally. Use NewClient when the process only needs Temporal client
-// capabilities such as starting workflows, querying status, or signaling runs.
+// capabilities such as starting workflows, querying status, or canceling runs.
 type Options struct {
 	// Client is an optional pre-configured Temporal client. If nil, the adapter
 	// creates a lazy client using ClientOptions, allowing automatic OTEL interceptor
@@ -188,7 +188,7 @@ type Engine struct {
 }
 
 // NewClient constructs a Temporal engine for client-only processes. Client-mode
-// engines can start workflows, query status, and signal runs, but they reject
+// engines can start workflows, query status and completion, and cancel runs, but they reject
 // workflow/activity registration because they do not own workers.
 func NewClient(opts Options) (*Engine, error) {
 	return newEngine(opts, false)
@@ -379,7 +379,7 @@ func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opt
 // The workflow's task queue is resolved in order: req.TaskQueue → def.TaskQueue →
 // engine.defaultQueue. A base context is stored for activity execution correlation.
 //
-// Returns a WorkflowHandle for waiting, signaling, or cancelling the execution.
+// Returns a WorkflowHandle for waiting or cancelling the execution.
 // Returns an error if the workflow name is not registered, the ID conflicts with
 // an existing workflow, or if Temporal client execution fails.
 //

@@ -177,9 +177,10 @@ step shapes.
 
 External input does not weaken provider transcript identity. A model-authored
 free-text interaction uses the tool-clarification await branch, which retains
-the exact tool name, call ID, and payload and resumes with the human answer as
-that tool's generated result. Runtime-owned clarification prompts remain a
-separate branch that resumes as a user message. This distinction prevents
+the exact tool name, call ID, and payload. The successor run supplies the human
+answer as that tool's generated result. Runtime-owned clarification prompts
+remain a separate branch whose successor supplies a user message. This
+distinction prevents
 prompt reminders or presence-dependent fields from standing in for a real
 `tool_use` / `tool_result` exchange.
 
@@ -218,8 +219,9 @@ encode suspension rather than a raw model request. `finish` forbids more domain
 work and enters finalization. The finalizer may return a final response or
 registered terminal bookkeeping calls, such as committing a Task report. When
 the same tool has both correction and replan failures in one batch, the
-correctable failure keeps that tool available. A recovery turn may pause for
-input; its evidence remains available when planning resumes after the answer.
+correctable failure keeps that tool available. A recovery turn may end with an
+input suspension; its evidence remains available when a new workflow continues
+after the answer.
 A failed batch never enters `SynthesisOnly` and does not preserve its earlier
 `SynthesizeAfterTools` intent; a planner that retries work selects synthesis
 again on that new batch.
@@ -233,16 +235,48 @@ reaches the appropriate planner resume. The resume activity validates the
 returned planner result, so ignoring `SynthesisOnly` fails at the activity
 boundary rather than reopening execution.
 
-### Run Timing and Indefinite Awaits
+### Run Timing and Workflow Continuations
 
 The workflow loop is the sole owner of run-duration enforcement. `TimeBudget`
 becomes the deterministic Budget deadline for active planner and tool work.
 The Hard deadline is Budget plus `FinalizerGrace`; it bounds the final planner
 activity after budget exhaustion. Terminal hook persistence uses its own
 completion context after planner execution. Time spent blocked on an
-external-input await (`await_clarification`, `await_confirmation`, provided
-tool results) extends both deadlines, so an operator can take arbitrarily long
-to respond without burning the run's active-time budget.
+external-input request (`await_clarification`, `await_confirmation`, or
+provided tool results) consumes neither deadline. The workflow ends with the
+remaining Budget and Hard durations in a trusted checkpoint. A continuation
+starts a new workflow and rebuilds both deadlines from those durations, so a
+person can take arbitrarily long to respond without burning active work time or
+keeping a workflow assigned to an old deployment.
+
+The terminal `RunOutput.Suspension` contains an ordered public request list and
+an opaque private checkpoint. Before returning that result, the runtime stores
+the complete suspension beside its run metadata in the configured session
+store. Exact activity retries are idempotent; a different suspension for the
+same run is rejected as corruption. The application exposes only the public
+request to clients and must atomically accept one response before it starts the
+next workflow, so concurrent submissions cannot continue the same state twice
+under different run IDs. A continuation supplies the completed run ID and
+exactly one typed response for the first request; the runtime loads its own
+checkpoint. If requests remain, that workflow stores and returns a new
+suspension. The checkpoint
+restores the transcript, planner state, labels, policy, nested-agent identity,
+and exact tool-call/result provenance. Required tool names are recorded, and
+`Runtime.ValidateContinuation` rejects a checkpoint when the new worker does
+not register one of them. Restoration passes every concrete saved payload and
+result through the current generated codec. Compatible tool evolution can
+therefore continue across releases, while a value the new contract cannot
+decode fails at that typed boundary. A tool call created in an earlier workflow
+retains that workflow's run ID while its result records the new workflow's run
+ID. When a nested agent suspends, the parent ends with the same request;
+continuing the parent starts a new child workflow from the child's saved
+checkpoint. Sessionless one-shot runs reject external-input requests because
+they have no continuation API.
+
+`DeleteSession` ends execution but intentionally retains run metadata.
+Applications that permanently delete customer data call `PurgeSession` after
+workflow and stream settlement; the session store then removes the session,
+all of its run records, and every private checkpoint in one owned operation.
 
 Planner activities project the active deadline onto
 `ScheduleToCloseTimeout`, which limits the complete queue/retry/backoff
@@ -260,11 +294,10 @@ before transcript commit, and runtime bookkeeping completes inside Hard.
 Engines must never impose a second, competing wall-clock ceiling (for
 example Temporal's `WorkflowRunTimeout`) on top of this. Unlike the
 workflow's own deadline check, an engine-level timeout force-closes the run
-from outside application code, so it can fire mid-await and permanently
-strand the run without ever emitting a `RunCompleted` event — exactly the
-failure this design avoids. `resolveRunTiming` therefore never derives an
-engine run timeout from policy; engine start requests leave that field
-unset.
+from outside application code, so it can fire during active work without the
+runtime emitting its canonical terminal event. `resolveRunTiming` therefore
+never derives an engine run timeout from policy; engine start requests leave
+that field unset.
 
 ## Registry Integration
 
@@ -563,7 +596,7 @@ redeploys.
   while `finish` enters finalization so the planner can synthesize the terminal
   outcome or invoke a terminal bookkeeping action. A successful
   bookkeeping-only turn must otherwise resolve in the same turn via a terminal
-  outcome or an await/pause handshake.
+  outcome or an external-input suspension.
 - **Forced finalization control plane**: when runtime caps or deadlines force
   finalization, planners may return terminal bookkeeping tools instead of a
   prose final answer. The runtime executes only `TerminalRun()` tools in that
@@ -571,9 +604,11 @@ redeploys.
   hard-deadline window, and closes the run only if every terminal side effect
   succeeds. Recovery call IDs extend the planner activity payload and select the
   canonical failed outputs that shape both reminders and the advertised catalog.
-  Empty recovery IDs are omitted for compatibility. Deployments must stop or
-  drain every old worker before recovery turns are scheduled by the new code:
-  old activities reject the new input and old workflows reject the new output.
+  Empty recovery IDs are omitted for compatibility. Temporal deployments use
+  Worker Deployment Versioning so an active workflow stays on its compatible
+  worker until it completes or suspends. A continuation is a new workflow and
+  may start on the current deployment after `ValidateContinuation` accepts the
+  saved checkpoint and tool schemas.
   These restrictions never constrain forced finalization. Caller
   `WithRestrictToTool` policy remains run-scoped and still applies to every
   tool.
@@ -623,14 +658,17 @@ No custom streaming templates. When your methods stream, Goa's JSON-RPC generato
 
 ## Agent run lifecycle streaming contract
 
-The runtime emits a single terminal lifecycle event per run via `hooks.RunCompletedEvent`.
-The stream subscriber translates it into a `workflow` stream event (`stream.WorkflowPayload`)
-that UIs and stream bridges can consume without heuristics.
+The runtime emits one terminal lifecycle event per workflow: `RunCompleted` for
+success, failure, or cancellation, and `RunSuspended` when external input is
+required. The stream subscriber translates both into a `workflow` stream event
+(`stream.WorkflowPayload`) followed by `run_stream_end`, so UIs and other stream
+consumers know exactly when to stop reading.
 
 - **Terminal status**
   - `status="success"` → `phase="completed"`
   - `status="failed"` → `phase="failed"`
   - `status="canceled"` → `phase="canceled"`
+  - `status="suspended"` → `phase="suspended"`
 
 - **Cancellation is not an error**
   - For `status="canceled"`, the stream payload **must not** include a user-facing `error`.
@@ -656,9 +694,9 @@ that UIs and stream bridges can consume without heuristics.
 - **Terminal identity**
   - `RunCompletedEvent.Labels` carries the run-scoped labels provided at run
     start (`RunInput.Labels`, nil when the run had none) so completion
-    subscribers can attribute the outcome without tracking run identity out of
-    band. `run.Snapshot.Labels` exposes the same identity to polling readers,
-    replayed from the durable `RunStarted` record.
+    subscribers can attribute that outcome without tracking run identity out
+    of band. Suspended runs and polling readers obtain the same labels from the
+    durable `RunStarted` record through `run.Snapshot.Labels`.
 
 This keeps consumers simple: render `error`, gate “Retry” on `retryable`, and treat `canceled` as non-error.
 

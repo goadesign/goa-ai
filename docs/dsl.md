@@ -369,9 +369,10 @@ Tool("dangerous_write", "Write a stateful change", func() {
 
 Notes:
 
-- The runtime owns how confirmation is requested. The built-in confirmation protocol uses a dedicated
-`AwaitConfirmation` await and a `ProvideConfirmation` decision call. See `docs/runtime.md` for the
-expected payloads and flow.
+- The runtime owns how confirmation is requested. The built-in protocol ends
+  the current workflow with a dedicated `AwaitConfirmation` request. The next
+  workflow starts with the returned suspension and one typed confirmation
+  decision. See `docs/runtime.md` for the expected payloads and flow.
 - Confirmation templates (`PromptTemplate` and `DeniedResultTemplate`) are Go `text/template` strings
 executed with `missingkey=error`. In addition to the standard template functions (e.g. `printf`),
 Goa-AI provides:
@@ -391,7 +392,6 @@ can also require confirmation dynamically for additional tools via `runtime.With
 | `MaxToolCalls(n)`                  | Argument to `DefaultCaps` | Maximum budgeted (non-bookkeeping) tool invocations                          |
 | `MaxConsecutiveFailedToolCalls(n)` | Argument to `DefaultCaps` | Maximum consecutive failures before stopping                                 |
 | `TimeBudget(duration)`             | Inside `RunPolicy`        | Active-time budget for planner and tool work (e.g., "5m")                    |
-| `InterruptsAllowed(bool)`          | Inside `RunPolicy`        | Enables user interruption handling                                           |
 | `OnMissingFields(action)`          | Inside `RunPolicy`        | Validation behavior: `""`, `"finalize"`, `"await_clarification"`, `"resume"` |
 
 
@@ -1148,8 +1148,8 @@ Runtime contract:
 
 This means a successful bookkeeping-only planner turn is only valid when the same turn
 already resolves without another reasoning resume (a `TerminalRun` tool, a
-`FinalResponse` / `FinalToolResult`, or an await/pause control-plane
-handshake). Every failed bookkeeping result remains planner-visible and resumes
+`FinalResponse` / `FinalToolResult`, or an external-input suspension). Every
+failed bookkeeping result remains planner-visible and resumes
 through its typed recovery transition. `correct_call` and `replan` may use
 tools; `finish` resumes without tools so the planner can synthesize the
 terminal outcome.
@@ -1203,8 +1203,7 @@ RunPolicy(func() {
         Tools("2m")     // Default tool timeout
     })
     
-    // Behavior
-    InterruptsAllowed(true)
+    // Missing model-authored tool fields may request user clarification.
     OnMissingFields("await_clarification")
     
     // History management
@@ -1306,8 +1305,9 @@ liveness. Those deployment concerns belong in the selected engine adapter (for
 example `temporal.Options.ActivityDefaults` for the Temporal engine).
 `Budget(...)` sets the active-time budget for planner and tool work. The
 workflow runtime enforces it directly and reserves a separate finalizer window;
-it does not set an engine run timeout, so external-input waits remain
-unbounded.
+it does not set an engine run timeout. An external-input request ends that
+workflow, and the time before a later continuation workflow starts does not
+consume the active-time budget.
 
 ---
 
@@ -1470,7 +1470,7 @@ override when you need a specific identifier for cross-platform compatibility.
 
 The DSL re-exports standardized agent API types for use in Goa service designs:
 
-- `AgentRunPayload`: input for agent run/start/resume endpoints
+- `AgentRunPayload`: input for agent run/start/continuation endpoints
 - `AgentRunResult`: terminal result for non-streaming endpoints
 - `AgentRunChunk`: streaming progress events
 - Supporting types: `AgentMessage`, `AgentToolEvent`, `AgentToolError`,

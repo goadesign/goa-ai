@@ -1,5 +1,5 @@
 // Package runtime coordinates lazy workflow-handle waiting and terminal hook
-// repair so durable runs still emit one canonical RunCompleted event without
+// repair so durable runs still emit one canonical terminal event without
 // forcing every starter process to block on workflow completion.
 package runtime
 
@@ -31,10 +31,11 @@ type (
 		turnID    string
 		labels    map[string]string
 
-		waitOnce sync.Once
-		waitDone chan struct{}
-		out      *api.RunOutput
-		err      error
+		waitOnce  sync.Once
+		waitDone  chan struct{}
+		out       *api.RunOutput
+		err       error
+		repairErr error
 	}
 
 	// runCompletionIdentity carries the durable run identity required to
@@ -50,7 +51,7 @@ type (
 
 // newObservedWorkflowHandle wraps an engine handle so explicit Wait callers and
 // on-demand snapshot repair share one underlying Wait call.
-func newObservedWorkflowHandle(runtime *Runtime, input *RunInput, inner engine.WorkflowHandle) *observedWorkflowHandle {
+func newObservedWorkflowHandle(runtime *Runtime, input *RunInput, labels map[string]string, inner engine.WorkflowHandle) *observedWorkflowHandle {
 	return &observedWorkflowHandle{
 		inner:     inner,
 		runtime:   runtime,
@@ -58,7 +59,7 @@ func newObservedWorkflowHandle(runtime *Runtime, input *RunInput, inner engine.W
 		agentID:   input.AgentID,
 		sessionID: input.SessionID,
 		turnID:    input.TurnID,
-		labels:    cloneLabels(input.Labels),
+		labels:    cloneLabels(labels),
 		waitDone:  make(chan struct{}),
 	}
 }
@@ -70,20 +71,19 @@ func (h *observedWorkflowHandle) Wait(ctx context.Context) (*api.RunOutput, erro
 	return h.out, h.err
 }
 
-func (h *observedWorkflowHandle) Signal(ctx context.Context, name string, payload any) error {
-	return h.inner.Signal(ctx, name, payload)
-}
-
 func (h *observedWorkflowHandle) Cancel(ctx context.Context) error {
 	return h.inner.Cancel(ctx)
 }
 
 // Repair waits for the shared workflow completion path, then converges the
-// canonical RunCompleted hook without surfacing the run's terminal error.
+// canonical terminal hook without surfacing the run's terminal error.
 // Runtime snapshot/event readers use this after the engine reports the
 // workflow is already closed.
 func (h *observedWorkflowHandle) Repair(ctx context.Context) error {
-	return h.waitForWaitResult(ctx)
+	if err := h.waitForWaitResult(ctx); err != nil {
+		return err
+	}
+	return h.repairErr
 }
 
 // waitForWaitResult blocks until the shared underlying Wait call completes or
@@ -113,10 +113,10 @@ func (h *observedWorkflowHandle) ensureWait() {
 func (h *observedWorkflowHandle) awaitCompletion() {
 	h.out, h.err = h.inner.Wait(context.Background())
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	err := h.runtime.repairObservedTerminalRunCompletion(ctx, h.runID, h.agentID, h.sessionID, h.turnID, h.labels, h.err)
+	h.repairErr = h.runtime.repairObservedTerminalRunCompletion(ctx, h.runID, h.agentID, h.sessionID, h.turnID, h.labels, h.out, h.err)
 	cancel()
-	if err != nil {
-		h.runtime.logWarn(context.Background(), "run completion repair failed", err, "run_id", h.runID, "agent_id", h.agentID)
+	if h.repairErr != nil {
+		h.runtime.logWarn(context.Background(), "run completion repair failed", h.repairErr, "run_id", h.runID, "agent_id", h.agentID)
 	}
 	close(h.waitDone)
 	h.runtime.storeWorkflowHandle(h.runID, nil)
@@ -146,16 +146,39 @@ func (r *Runtime) buildRunCompletedEvent(
 
 // repairObservedTerminalRunCompletion publishes the canonical terminal hook for
 // a workflow handle that has already completed locally. It shares the same
-// serialized repair gate as lazy no-handle repair so only one RunCompleted
-// event can be appended per run.
+// serialized repair gate as lazy no-handle repair so only one terminal event
+// can be appended per run.
 func (r *Runtime) repairObservedTerminalRunCompletion(
 	ctx context.Context,
 	runID string,
 	agentID agent.Ident,
 	sessionID, turnID string,
 	labels map[string]string,
+	out *api.RunOutput,
 	waitErr error,
 ) error {
+	if waitErr == nil {
+		if err := validateWorkflowOutput(out, agentID, runID); err != nil {
+			return err
+		}
+	}
+	if out != nil && out.Suspension != nil {
+		if waitErr != nil {
+			return errors.New("runtime: suspended workflow returned an error")
+		}
+		evt := hooks.NewRunSuspendedEvent(
+			runID,
+			agentID,
+			sessionID,
+			out.Suspension.ID,
+			out.Suspension.Version,
+			len(out.Suspension.Pending),
+			out.Suspension.RequiredTools,
+		)
+		return r.withSerializedTerminalRepair(ctx, runID, func(ctx context.Context) error {
+			return r.publishHookErr(ctx, evt, turnID)
+		})
+	}
 	status := terminalRunStatusForError(waitErr)
 	phase := terminalRunPhaseForStatus(status)
 	evt, err := r.buildRunCompletedEvent(ctx, runID, agentID, sessionID, status, phase, labels, waitErr)
@@ -168,7 +191,7 @@ func (r *Runtime) repairObservedTerminalRunCompletion(
 }
 
 // repairTerminalRunCompletion blocks only when the workflow is already terminal
-// in the engine but the canonical run log still lacks RunCompleted. This keeps
+// in the engine but the canonical run log still lacks a terminal event. This keeps
 // repair lazy for long-lived runs while still converging snapshots on demand.
 func (r *Runtime) repairTerminalRunCompletion(ctx context.Context, runID string) error {
 	if ctx == nil {
@@ -201,12 +224,7 @@ func (r *Runtime) repairTerminalRunCompletion(ctx context.Context, runID string)
 			return observed.Repair(repairCtx)
 		}
 	}
-	if querier, ok := r.Engine.(engine.CompletionQuerier); ok {
-		return r.repairQueriedTerminalRunCompletion(ctx, runID, querier)
-	}
-	return r.withSerializedTerminalRepair(ctx, runID, func(ctx context.Context) error {
-		return r.synthesizeTerminalRunCompletion(ctx, runID, status)
-	})
+	return r.repairQueriedTerminalRunCompletion(ctx, runID)
 }
 
 // withSerializedTerminalRepair runs repair at most once for a run by checking
@@ -229,8 +247,8 @@ func (r *Runtime) withSerializedTerminalRepair(ctx context.Context, runID string
 	return repair(ctx)
 }
 
-// runHasTerminalSnapshot reports whether the canonical run log already contains a
-// terminal RunCompleted event for the given run.
+// runHasTerminalSnapshot reports whether the canonical run log already contains
+// a terminal completion or suspension event for the given run.
 func (r *Runtime) runHasTerminalSnapshot(ctx context.Context, runID string) (bool, error) {
 	snapshot, err := r.loadRunSnapshot(ctx, runID)
 	if err != nil {
@@ -240,7 +258,7 @@ func (r *Runtime) runHasTerminalSnapshot(ctx context.Context, runID string) (boo
 		return false, err
 	}
 	switch snapshot.Status {
-	case run.StatusCompleted, run.StatusFailed, run.StatusCanceled:
+	case run.StatusCompleted, run.StatusFailed, run.StatusCanceled, run.StatusSuspended:
 		return true, nil
 	case run.StatusPending, run.StatusRunning, run.StatusPaused:
 		return false, nil
@@ -248,37 +266,40 @@ func (r *Runtime) runHasTerminalSnapshot(ctx context.Context, runID string) (boo
 	panic("runtime: unsupported run snapshot status for terminal detection: " + string(snapshot.Status))
 }
 
-// synthesizeTerminalRunCompletion publishes a canonical RunCompleted event using
-// the durable engine status when no in-process observed workflow handle remains
-// to surface the original wait error.
-func (r *Runtime) synthesizeTerminalRunCompletion(ctx context.Context, runID string, status engine.RunStatus) error {
-	identity, err := r.runCompletionMetadata(ctx, runID)
-	if err != nil {
-		return err
-	}
-	publicStatus := terminalRunStatusForEngineStatus(status)
-	evt, err := r.buildRunCompletedEvent(ctx, runID, identity.AgentID, identity.SessionID, publicStatus, terminalRunPhaseForStatus(publicStatus), identity.Labels, terminalRunErrorForStatus(status))
-	if err != nil {
-		return err
-	}
-	return r.publishHookErr(
-		ctx,
-		evt,
-		identity.TurnID,
-	)
-}
-
 // repairQueriedTerminalRunCompletion rebuilds the terminal hook from the
 // engine's durable terminal output/error when no local observed handle remains.
-func (r *Runtime) repairQueriedTerminalRunCompletion(ctx context.Context, runID string, querier engine.CompletionQuerier) error {
+func (r *Runtime) repairQueriedTerminalRunCompletion(ctx context.Context, runID string) error {
 	return r.withSerializedTerminalRepair(ctx, runID, func(ctx context.Context) error {
-		_, waitErr := querier.QueryRunCompletion(ctx, runID)
+		out, waitErr := r.Engine.QueryRunCompletion(ctx, runID)
 		if errors.Is(waitErr, engine.ErrWorkflowNotFound) {
 			return waitErr
 		}
 		identity, err := r.runCompletionMetadata(ctx, runID)
 		if err != nil {
 			return err
+		}
+		if waitErr == nil {
+			if err := validateWorkflowOutput(out, identity.AgentID, runID); err != nil {
+				return err
+			}
+		}
+		if out != nil && out.Suspension != nil {
+			if waitErr != nil {
+				return errors.New("runtime: suspended workflow returned an error")
+			}
+			return r.publishHookErr(
+				ctx,
+				hooks.NewRunSuspendedEvent(
+					runID,
+					identity.AgentID,
+					identity.SessionID,
+					out.Suspension.ID,
+					out.Suspension.Version,
+					len(out.Suspension.Pending),
+					out.Suspension.RequiredTools,
+				),
+				identity.TurnID,
+			)
 		}
 		status := terminalRunStatusForError(waitErr)
 		evt, err := r.buildRunCompletedEvent(
@@ -361,40 +382,6 @@ func terminalRunStatusForError(err error) string {
 		return runStatusCanceled
 	default:
 		return runStatusFailed
-	}
-}
-
-func terminalRunStatusForEngineStatus(status engine.RunStatus) string {
-	switch status {
-	case engine.RunStatusCompleted:
-		return runStatusSuccess
-	case engine.RunStatusTimedOut:
-		return runStatusFailed
-	case engine.RunStatusFailed:
-		return runStatusFailed
-	case engine.RunStatusCanceled:
-		return runStatusCanceled
-	case engine.RunStatusPending, engine.RunStatusRunning, engine.RunStatusPaused:
-		panic("runtime: non-terminal engine run status cannot map to terminal repair: " + string(status))
-	default:
-		panic("runtime: unexpected engine run status for terminal repair: " + string(status))
-	}
-}
-
-func terminalRunErrorForStatus(status engine.RunStatus) error {
-	switch status {
-	case engine.RunStatusCompleted:
-		return nil
-	case engine.RunStatusTimedOut:
-		return context.DeadlineExceeded
-	case engine.RunStatusFailed:
-		return errors.New("workflow failed before runtime emitted RunCompleted")
-	case engine.RunStatusCanceled:
-		return context.Canceled
-	case engine.RunStatusPending, engine.RunStatusRunning, engine.RunStatusPaused:
-		panic("runtime: non-terminal engine run status cannot map to terminal error: " + string(status))
-	default:
-		panic("runtime: unexpected engine run status for terminal error mapping: " + string(status))
 	}
 }
 

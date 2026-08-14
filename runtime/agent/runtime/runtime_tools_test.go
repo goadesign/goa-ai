@@ -14,7 +14,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -22,8 +21,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
-	"goa.design/goa-ai/runtime/agent/session"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolserverdata"
@@ -560,77 +557,6 @@ func TestActivityToolExecutorExecute(t *testing.T) {
 	require.Equal(t, []byte("123"), []byte(out.Payload))
 }
 
-func TestRunLoopPauseResumeEmitsEvents(t *testing.T) {
-	recorder := &recordingHooks{}
-	toolSpec := newAnyJSONSpec("tool", "svc.ts")
-	rt := &Runtime{
-		Bus:           recorder,
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		SessionStore:  sessioninmem.New(),
-		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
-			return &planner.ToolResult{
-				Name: call.Name,
-			}, nil
-		})}},
-	}
-	seedTestToolSpecs(rt, toolSpec)
-	wfCtx := &testWorkflowContext{
-		ctx:         context.Background(),
-		hookRuntime: rt,
-		asyncResult: ToolOutput{Payload: []byte("null")},
-		barrier:     make(chan struct{}, 1),
-	}
-	wfCtx.ensureSignals()
-	// Allow tests to enqueue pause/resume before async completes
-	go func() {
-		time.Sleep(5 * time.Millisecond)
-		wfCtx.pauseCh <- &api.PauseRequest{RunID: "run-1", Reason: "human"}
-		wfCtx.resumeCh <- &api.ResumeRequest{RunID: "run-1", Notes: "resume"}
-		wfCtx.barrier <- struct{}{}
-	}()
-	wfCtx.hasPlanResult = true
-	wfCtx.planResult = &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}
-	input := &RunInput{AgentID: "svc.agent", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
-	_, err := rt.CreateSession(context.Background(), input.SessionID)
-	require.NoError(t, err)
-	now := time.Now().UTC()
-	require.NoError(t, rt.SessionStore.UpsertRun(context.Background(), session.RunMeta{
-		AgentID:   string(input.AgentID),
-		RunID:     input.RunID,
-		SessionID: input.SessionID,
-		Status:    session.RunStatusRunning,
-		StartedAt: now,
-		UpdatedAt: now,
-	}))
-	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    tools.Ident("tool"),
-		Payload: rawjson.Message(`{}`),
-	}}}
-	ctrl := interrupt.NewController(wfCtx)
-	_, err = rt.runLoop(wfCtx, AgentRegistration{
-		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
-		ExecuteToolActivity: "execute",
-		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, input.TurnID, ctrl)
-	require.NoError(t, err)
-	var sawPause, sawResume bool
-	for _, evt := range recorder.events {
-		switch evt.(type) {
-		case *hooks.RunPausedEvent:
-			sawPause = true
-		case *hooks.RunResumedEvent:
-			sawResume = true
-		}
-	}
-	require.True(t, sawPause)
-	require.True(t, sawResume)
-}
-
 func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 	recorder := &recordingHooks{}
 	toolSpec := newAnyJSONSpec("svc.tools.fetch_time_series", "svc.tools")
@@ -788,8 +714,7 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 		base,
 		"turn-1",
 		&api.ToolResultsSet{
-			RunID: "run-1",
-			ID:    "await-1",
+			ID: "await-1",
 			Results: []*api.ProvidedToolResult{
 				{
 					Name:       tools.Ident("svc.tools.example"),

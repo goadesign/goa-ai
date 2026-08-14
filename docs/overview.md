@@ -425,21 +425,28 @@ The hook bus publishes events (`tool_start`, `tool_result`, `assistant_message`,
 | Engine        | Best For                                                       |
 |---------------|----------------------------------------------------------------|
 | **In‑memory** | Fast dev loops, no external dependencies                       |
-| **Temporal**  | Durable execution, replay, retries, signals, horizontal scaling |
+| **Temporal**  | Durable execution, replay, retries, terminal-result queries, horizontal scaling |
 
-### Human‑in‑the‑Loop (Pause & Resume)
+### External Input (End & Continue)
 
-Agents can pause mid‑run to request human input or external tool results:
+Agents can request human input or external tool results without keeping a
+workflow open:
 
 - **Await Clarification** — Planner returns `Await.Clarification` when it needs user input
-  (missing fields, ambiguous request). The runtime publishes an event and pauses.
-- **Await External Tools** — Planner requests out‑of‑band tool execution; the runtime pauses
-  until results arrive via signal.
-- **Pause/Resume Signals** — Workflows accept `SignalPause` and `SignalResume` for manual
-  intervention. Use `SignalProvideClarification` or `SignalProvideToolResults` to deliver answers.
+  (missing fields, ambiguous request). The runtime publishes an event and ends
+  the workflow with a typed suspension.
+- **Await External Tools** — Planner requests out‑of‑band tool execution and the
+  workflow ends with the exact calls awaiting results.
+- **Continue** — The runtime stores the opaque suspension in its configured
+  session store before the workflow completes. The caller atomically accepts
+  one answer and passes the completed run ID to `AgentClient.Continue`;
+  multiple pending requests are consumed in order, one workflow per answer.
 
-The `interrupt` package (`runtime/agent/interrupt`) provides the `Controller` that drains signals
-and exposes helpers for the workflow loop.
+The suspension records the remaining active-time budget and the tool names
+needed by the next worker. The next worker validates the concrete saved values
+through its generated codecs, allowing compatible tool changes without
+accepting data the new contract cannot decode. A child agent request propagates
+through its parent, so neither workflow remains open while the user is deciding.
 
 ### Hook Bus (Internal Event Backbone)
 
@@ -523,8 +530,7 @@ the toolsets with the runtime.
 | `DefaultCaps(opts...)` | Configure resource limits |
 | `MaxToolCalls(n)` | Cap budgeted (non-bookkeeping) tool invocations per run |
 | `MaxConsecutiveFailedToolCalls(n)` | Cap sequential failures before aborting |
-| `TimeBudget(duration)` | Set the active planner/tool work budget; external waits pause it |
-| `InterruptsAllowed(bool)` | Enable/disable user interruptions |
+| `TimeBudget(duration)` | Set the active planner/tool work budget; time between workflows does not consume it |
 | `OnMissingFields(action)` | Configure validation behavior |
 
 ### History Management
@@ -665,38 +671,19 @@ out, err := handle.Wait(ctx)
 // Cancel a running workflow
 err := rt.CancelRun(ctx, runID)
 
-// Pause for human intervention
-err := rt.PauseRun(ctx, interrupt.PauseRequest{
-    RunID:       runID,
-    Reason:      "approval_required",
-    RequestedBy: "policy_engine",
-})
-
-// Resume after intervention
-err := rt.ResumeRun(ctx, interrupt.ResumeRequest{
-    RunID:  runID,
-    Notes:  "Approved by admin",
-})
-
-// Provide clarification for awaiting run
-err := rt.ProvideClarification(ctx, interrupt.ClarificationAnswer{
-    RunID:   runID,
-    Message: "The user meant X",
-})
-
-// Provide external tool results
-err := rt.ProvideToolResults(ctx, &api.ToolResultsSet{
-    RunID: runID,
-    ID:    "external-1",
-    Results: []*api.ToolEvent{
-        {
-            ToolCallID: "tc-ext-1",
-            Name:       tools.Ident("external.fetch"),
-            Result:     json.RawMessage(`{"status":"ok"}`),
-        },
-    },
-})
-
+// Continue after the preceding workflow requested clarification.
+pending := out.Suspension.Pending[0]
+next, err := client.Continue(
+    ctx,
+    "session-1",
+    out.RunID,
+    "run-2",
+    "turn-2",
+    &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
+        ID:     pending.Await.Clarification.ID,
+        Answer: "The user meant Unit 7",
+    }},
+)
 ```
 
 ### Introspection
@@ -949,7 +936,8 @@ For those who want the full picture of how execution flows through the system.
 Use the generated `NewClient(rt)` to get a `runtime.AgentClient`, then:
 
 - **Synchronous**: `Run(ctx, sessionID, messages, ...opts)` — start and wait
-- **Asynchronous**: `Start(ctx, sessionID, messages, ...opts)` → `engine.WorkflowHandle` → `Wait/Signal/Cancel`
+- **Asynchronous**: `Start(ctx, sessionID, messages, ...opts)` → `engine.WorkflowHandle` → `Wait/Cancel`
+- **Continuation**: `Continue(ctx, sessionID, predecessorRunID, newRunID, newTurnID, response)` — start a new workflow from one stored request
 
 The `sessionID` argument is required and must be a non-empty, non-whitespace string.
 
@@ -967,7 +955,6 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 | `WithRunMaxToolCalls(int)`              | Cap total tool calls         |
 | `WithRunTimeBudget(duration)`           | Set time limits              |
 | `WithRunFinalizerGrace(duration)`       | Reserve time for final message |
-| `WithRunInterruptsAllowed(bool)`        | Enable human-in-the-loop     |
 | `WithRestrictToTool(tools.Ident)`       | Limit available tools        |
 | `WithTagPolicyClauses([]TagPolicyClause)` | Compose explicit tag clauses |
 | `WithTiming(Timing)`                    | Set multiple timing overrides |
@@ -990,7 +977,7 @@ engine-level queue-wait or heartbeat tuning.
 - `TaskQueue`, `Input` (`*runtime.RunInput`)
 - Optional `Memo`, `SearchAttributes`, `RetryPolicy`
 
-`Engine.StartWorkflow` returns an `engine.WorkflowHandle` for later signaling.
+`Engine.StartWorkflow` returns an `engine.WorkflowHandle` for waiting or cancellation.
 
 ### 3. Worker Execution
 
@@ -1008,11 +995,11 @@ The engine invokes the workflow handler, which calls `rt.ExecuteWorkflow`.
 `ExecuteWorkflow(wfCtx, *RunInput)`:
 
 1. Publishes `run_started`, initializes caps/time budget
-2. Calls `runPlanActivity` for the first planner turn
+2. Either restores a suspension or calls `runPlanActivity` for the first planner turn
 3. Enters `runLoop`:
-   - Enforce time budget and interrupts
+   - Enforce the active-time budget
    - If `ToolCalls` present → `executeToolCalls`
-   - If `Await` present → publish and pause for signals
+   - If `Await` present → publish, checkpoint, and return `RunOutput.Suspension`
    - If `FinalResponse` present → complete
 
 ### 5. Tool Execution
@@ -1113,14 +1100,14 @@ as child workflows, enabling linked streams and run links.
 
 - `runtime.RegisterAgent`, `runtime.RegisterToolset`
 - `runtime.Client`, `runtime.ClientFor`, `runtime.MustClient`, `runtime.MustClientFor`
-- `runtime.AgentClient` with `Run/Start`
+- `runtime.AgentClient` with `Run/Start/Continue/StartContinuation`
 - `engine.Engine`, `engine.WorkflowDefinition`, `engine.ActivityDefinition`, `engine.WorkflowHandle`
 - Activities: `PlanStartActivity`, `PlanResumeActivity`, `ExecuteToolActivity`
 - Child composition: `runtime.ExecuteAgentChildWithRoute`
 - Tool infrastructure: `tools.ToolSpec`, `tools.JSONCodec`
 - Tool errors: `toolerrors.ToolError` for structured error reporting
 - Hooks: `hooks.Bus`, `hooks.Subscriber`, `hooks.Event` for runtime observability
-- Interrupts: `interrupt.Controller` for pause/resume signal handling
+- Continuations: `api.RunSuspension`, ordered pending requests, and one typed response per new workflow
 
 ---
 

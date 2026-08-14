@@ -220,6 +220,67 @@ func TestLoadRequiresID(t *testing.T) {
 	require.EqualError(t, err, "run id is required")
 }
 
+func TestSaveAndLoadRunSuspension(t *testing.T) {
+	client := mustNewTestClient()
+	require.NoError(t, client.UpsertRun(context.Background(), session.RunMeta{
+		RunID: "run-1", AgentID: "agent.chat", SessionID: "session-1",
+	}))
+	suspension := session.RunSuspension{ID: "suspension-1", Data: []byte(`{"checkpoint":"one"}`)}
+	require.NoError(t, client.SaveRunSuspension(context.Background(), "run-1", suspension))
+	require.NoError(t, client.SaveRunSuspension(context.Background(), "run-1", suspension))
+
+	loaded, err := client.LoadRunSuspension(context.Background(), "run-1")
+	require.NoError(t, err)
+	require.Equal(t, suspension, loaded)
+
+	err = client.SaveRunSuspension(context.Background(), "run-1", session.RunSuspension{
+		ID: "suspension-2", Data: []byte(`{"checkpoint":"two"}`),
+	})
+	require.ErrorIs(t, err, session.ErrRunSuspensionConflict)
+}
+
+func TestRunSuspensionMissingStates(t *testing.T) {
+	client := mustNewTestClient()
+	_, err := client.LoadRunSuspension(context.Background(), "missing")
+	require.ErrorIs(t, err, session.ErrRunNotFound)
+	err = client.SaveRunSuspension(context.Background(), "missing", session.RunSuspension{
+		ID: "suspension-1", Data: []byte(`{}`),
+	})
+	require.ErrorIs(t, err, session.ErrRunNotFound)
+
+	require.NoError(t, client.UpsertRun(context.Background(), session.RunMeta{
+		RunID: "run-1", AgentID: "agent.chat", SessionID: "session-1",
+	}))
+	_, err = client.LoadRunSuspension(context.Background(), "run-1")
+	require.ErrorIs(t, err, session.ErrRunSuspensionNotFound)
+}
+
+func TestPurgeSessionRemovesOnlyOwnedRunsAndSuspensions(t *testing.T) {
+	client := mustNewTestClient()
+	now := time.Now().UTC()
+	for _, sessionID := range []string{"session-1", "session-2"} {
+		_, err := client.CreateSession(context.Background(), sessionID, now)
+		require.NoError(t, err)
+		require.NoError(t, client.UpsertRun(context.Background(), session.RunMeta{
+			RunID: "run-" + sessionID, AgentID: "agent.chat", SessionID: sessionID,
+		}))
+		require.NoError(t, client.SaveRunSuspension(context.Background(), "run-"+sessionID, session.RunSuspension{
+			ID: "suspension-" + sessionID, Data: []byte(`{}`),
+		}))
+	}
+
+	require.NoError(t, client.PurgeSession(context.Background(), "session-1"))
+	require.NoError(t, client.PurgeSession(context.Background(), "session-1"))
+	_, err := client.LoadSession(context.Background(), "session-1")
+	require.ErrorIs(t, err, session.ErrSessionNotFound)
+	_, err = client.LoadRun(context.Background(), "run-session-1")
+	require.ErrorIs(t, err, session.ErrRunNotFound)
+	_, err = client.LoadRunSuspension(context.Background(), "run-session-1")
+	require.ErrorIs(t, err, session.ErrRunNotFound)
+	_, err = client.LoadRunSuspension(context.Background(), "run-session-2")
+	require.NoError(t, err)
+}
+
 func mustNewTestClient() *client {
 	sessions := newFakeSessionsCollection()
 	runs := newFakeRunsCollection()
@@ -234,6 +295,24 @@ type fakeRunsCollection struct {
 	mu           sync.Mutex
 	indexCreated int
 	docs         map[string]runDocument
+}
+
+func (c *fakeRunsCollection) DeleteMany(_ context.Context, filter any, _ ...options.Lister[options.DeleteManyOptions]) (*mongodriver.DeleteResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sessionID := filter.(bson.M)["session_id"].(string)
+	var deleted int64
+	for runID, doc := range c.docs {
+		if doc.SessionID == sessionID {
+			delete(c.docs, runID)
+			deleted++
+		}
+	}
+	return &mongodriver.DeleteResult{DeletedCount: deleted}, nil
+}
+
+func (c *fakeRunsCollection) DeleteOne(context.Context, any, ...options.Lister[options.DeleteOneOptions]) (*mongodriver.DeleteResult, error) {
+	return nil, errors.New("unexpected run DeleteOne")
 }
 
 func newFakeRunsCollection() *fakeRunsCollection {
@@ -289,6 +368,22 @@ func (c *fakeRunsCollection) UpdateOne(ctx context.Context, filter any, update a
 	defer c.mu.Unlock()
 	runID := filter.(bson.M)["run_id"].(string)
 	doc, ok := c.docs[runID]
+	upsert := false
+	if len(opts) > 0 && opts[0] != nil {
+		updateOpts := new(options.UpdateOneOptions)
+		for _, apply := range opts[0].List() {
+			if err := apply(updateOpts); err != nil {
+				panic(err)
+			}
+		}
+		upsert = updateOpts.Upsert != nil && *updateOpts.Upsert
+	}
+	if !ok && !upsert {
+		return &mongodriver.UpdateResult{}, nil
+	}
+	if _, requiresMissingSuspension := filter.(bson.M)["run_suspension"]; requiresMissingSuspension && doc.Suspension != nil {
+		return &mongodriver.UpdateResult{}, nil
+	}
 	if !ok {
 		doc = runDocument{}
 	}
@@ -323,6 +418,9 @@ func (c *fakeRunsCollection) UpdateOne(ctx context.Context, filter any, update a
 		}
 		if v, ok := set["child_run_ids"].([]string); ok {
 			doc.ChildRunIDs = v
+		}
+		if v, ok := set["run_suspension"].(runSuspensionDocument); ok {
+			doc.Suspension = &v
 		}
 	default:
 		return nil, errors.New("unsupported $set payload")
@@ -368,7 +466,11 @@ func (r fakeSingleResult) Decode(val any) error {
 	case *sessionDocument:
 		*typed = *(r.doc.(*sessionDocument))
 	default:
-		return errors.New("unsupported target")
+		data, err := bson.Marshal(r.doc)
+		if err != nil {
+			return err
+		}
+		return bson.Unmarshal(data, val)
 	}
 	return nil
 }
@@ -377,6 +479,21 @@ type fakeSessionsCollection struct {
 	mu           sync.Mutex
 	indexCreated int
 	docs         map[string]sessionDocument
+}
+
+func (c *fakeSessionsCollection) DeleteMany(context.Context, any, ...options.Lister[options.DeleteManyOptions]) (*mongodriver.DeleteResult, error) {
+	return nil, errors.New("unexpected session DeleteMany")
+}
+
+func (c *fakeSessionsCollection) DeleteOne(_ context.Context, filter any, _ ...options.Lister[options.DeleteOneOptions]) (*mongodriver.DeleteResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	sessionID := filter.(bson.M)["session_id"].(string)
+	if _, ok := c.docs[sessionID]; !ok {
+		return &mongodriver.DeleteResult{}, nil
+	}
+	delete(c.docs, sessionID)
+	return &mongodriver.DeleteResult{DeletedCount: 1}, nil
 }
 
 func newFakeSessionsCollection() *fakeSessionsCollection {

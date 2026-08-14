@@ -3,8 +3,10 @@ package runtime
 
 import (
 	"context"
+	"errors"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 )
@@ -30,9 +32,18 @@ type (
 		// Start starts one sessionful workflow and returns immediately with a
 		// workflow handle for asynchronous coordination.
 		//
-		// Callers use the handle to wait, signal, or cancel. Start does not block
+		// Callers use the handle to wait or cancel. Start does not block
 		// on workflow completion.
 		Start(ctx context.Context, sessionID string, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error)
+
+		// Continue loads one exact predecessor suspension, starts a new sessionful
+		// workflow with its first pending response, and blocks until completion.
+		Continue(ctx context.Context, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (*RunOutput, error)
+
+		// StartContinuation starts a new sessionful workflow from one exact
+		// suspension and returns immediately. RunID and TurnID are required caller-
+		// owned identities for the new workflow and conversational turn.
+		StartContinuation(ctx context.Context, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (engine.WorkflowHandle, error)
 
 		// StartOneShot starts one sessionless workflow and returns immediately with
 		// a workflow handle for asynchronous coordination.
@@ -149,6 +160,22 @@ func (c *agentClient) Start(ctx context.Context, sessionID string, messages []*m
 	return c.r.startRun(ctx, &input)
 }
 
+func (c *agentClient) Continue(ctx context.Context, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (*RunOutput, error) {
+	handle, err := c.StartContinuation(ctx, sessionID, predecessorRunID, runID, turnID, response)
+	if err != nil {
+		return nil, err
+	}
+	return handle.Wait(ctx)
+}
+
+func (c *agentClient) StartContinuation(ctx context.Context, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (engine.WorkflowHandle, error) {
+	input, err := c.r.buildStoredContinuationRunInput(ctx, c.id, sessionID, predecessorRunID, runID, turnID, response)
+	if err != nil {
+		return nil, err
+	}
+	return c.r.startRun(ctx, input)
+}
+
 func (c *agentClient) StartOneShot(ctx context.Context, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error) {
 	input := buildOneShotRunInput(c.id, messages, opts)
 	return c.r.startOneShotRun(ctx, &input)
@@ -173,6 +200,22 @@ func (c *agentClientRoute) Run(ctx context.Context, sessionID string, messages [
 func (c *agentClientRoute) Start(ctx context.Context, sessionID string, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error) {
 	input := buildSessionRunInput(c.route.ID, sessionID, messages, opts)
 	return c.r.startRunWithRoute(ctx, &input, c.route)
+}
+
+func (c *agentClientRoute) Continue(ctx context.Context, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (*RunOutput, error) {
+	handle, err := c.StartContinuation(ctx, sessionID, predecessorRunID, runID, turnID, response)
+	if err != nil {
+		return nil, err
+	}
+	return handle.Wait(ctx)
+}
+
+func (c *agentClientRoute) StartContinuation(ctx context.Context, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (engine.WorkflowHandle, error) {
+	input, err := c.r.buildStoredContinuationRunInput(ctx, c.route.ID, sessionID, predecessorRunID, runID, turnID, response)
+	if err != nil {
+		return nil, err
+	}
+	return c.r.startRunWithRoute(ctx, input, c.route)
 }
 
 func (c *agentClientRoute) StartOneShot(ctx context.Context, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error) {
@@ -209,6 +252,67 @@ func buildOneShotRunInput(agentID agent.Ident, messages []*model.Message, opts [
 	}
 	applyRunOptions(&input, opts)
 	return input
+}
+
+// buildContinuationRunInput constructs the only legal input shape for a
+// suspended sessionful run. Policy, labels, tool context, and transcript state
+// are restored from the opaque checkpoint by the worker.
+func buildContinuationRunInput(agentID agent.Ident, sessionID, runID, turnID string, suspension *api.RunSuspension, response *api.PendingInputResponse) (*RunInput, error) {
+	if sessionID == "" {
+		return nil, ErrMissingSessionID
+	}
+	if runID == "" {
+		return nil, errors.New("continuation run id is required")
+	}
+	if turnID == "" {
+		return nil, errors.New("continuation turn id is required")
+	}
+	if suspension == nil {
+		return nil, errors.New("run suspension is required")
+	}
+	if response == nil {
+		return nil, errors.New("pending input response is required")
+	}
+	if err := validatePendingInputResponse(response); err != nil {
+		return nil, err
+	}
+	return &RunInput{
+		AgentID:   agentID,
+		RunID:     runID,
+		SessionID: sessionID,
+		TurnID:    turnID,
+		Continuation: &api.RunContinuationInput{
+			Suspension: suspension,
+			Response:   response,
+		},
+	}, nil
+}
+
+// buildStoredContinuationRunInput loads the exact predecessor checkpoint from
+// durable runtime storage so callers provide only domain response and run IDs.
+func (r *Runtime) buildStoredContinuationRunInput(ctx context.Context, agentID agent.Ident, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (*RunInput, error) {
+	if predecessorRunID == "" {
+		return nil, errors.New("predecessor run id is required")
+	}
+	suspension, err := r.LoadRunSuspension(ctx, predecessorRunID)
+	if err != nil {
+		return nil, err
+	}
+	input, err := buildContinuationRunInput(agentID, sessionID, runID, turnID, suspension, response)
+	if err != nil {
+		return nil, err
+	}
+	checkpoint, err := decodeWorkflowCheckpointState(suspension)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateContinuationIdentity(input, checkpoint); err != nil {
+		return nil, err
+	}
+	if checkpoint.BaseContext.RunID != predecessorRunID {
+		return nil, errors.New("predecessor run id does not match stored suspension")
+	}
+	return input, nil
 }
 
 // applyRunOptions mutates input with non-nil run options in the order supplied

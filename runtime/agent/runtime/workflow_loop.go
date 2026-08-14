@@ -4,7 +4,7 @@ package runtime
 // workflow implementation.
 //
 // The original workflow implementation threaded many values (workflow context,
-// registration, run input/base, deadlines, activity options, interrupt controller,
+// registration, run input/base, deadlines, activity options,
 // parent tracking, etc.) through long helper signatures. That style is brittle:
 // it is easy to mis-thread values (e.g., budget vs hard deadline) and hard to
 // evolve without propagating parameters everywhere.
@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/interrupt"
 	"goa.design/goa-ai/runtime/agent/planner"
 )
 
@@ -36,7 +35,6 @@ type (
 		st    *runLoopState
 
 		turnID        string
-		ctrl          *interrupt.Controller
 		parentTracker *childTracker
 		deadlines     runDeadlines
 		resumeOpts    engine.ActivityOptions
@@ -44,8 +42,7 @@ type (
 	}
 
 	runDeadlines struct {
-		// Budget bounds active planner and budgeted tool work. External-input
-		// waits extend it through (*runDeadlines).pause.
+		// Budget bounds active planner and budgeted tool work.
 		Budget time.Time
 
 		// Hard bounds final planner work and completion-owned bookkeeping after
@@ -62,7 +59,6 @@ func newWorkflowLoop(
 	base *planner.PlanInput,
 	st *runLoopState,
 	turnID string,
-	ctrl *interrupt.Controller,
 	parentTracker *childTracker,
 	deadlines runDeadlines,
 	resumeOpts engine.ActivityOptions,
@@ -76,29 +72,10 @@ func newWorkflowLoop(
 		base:          base,
 		st:            st,
 		turnID:        turnID,
-		ctrl:          ctrl,
 		parentTracker: parentTracker,
 		deadlines:     deadlines,
 		resumeOpts:    resumeOpts,
 		toolOpts:      toolOpts,
-	}
-}
-
-// pause extends the run deadlines by delta to account for time spent waiting on
-// external input (clarifications, confirmations, UI-provided tool results).
-//
-// Contract:
-// - delta must be derived from workflow time (wfCtx.Now()) so it is deterministic.
-// - When deadlines are zero (no time budget configured), this is a no-op.
-func (d *runDeadlines) pause(delta time.Duration) {
-	if delta <= 0 {
-		return
-	}
-	if !d.Budget.IsZero() {
-		d.Budget = d.Budget.Add(delta)
-	}
-	if !d.Hard.IsZero() {
-		d.Hard = d.Hard.Add(delta)
 	}
 }
 
@@ -111,18 +88,6 @@ func (d runDeadlines) shouldFinalize(now time.Time) bool {
 func (l *workflowLoop) run() (*RunOutput, error) {
 	ctx := l.wfCtx.Context()
 	for {
-		if err := l.r.handleInterrupts(
-			l.wfCtx,
-			l.input,
-			l.base,
-			l.turnID,
-			l.ctrl,
-			&l.st.NextAttempt,
-			l.deadlines.Budget,
-		); err != nil {
-			return nil, err
-		}
-
 		if err := l.r.rewriteRecoveryCatalogToolCalls(l.st.PendingRecoveryCatalog, l.st.Result); err != nil {
 			return nil, err
 		}

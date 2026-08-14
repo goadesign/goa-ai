@@ -371,23 +371,22 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Failure:      evt.Failure,
 			Cancellation: evt.Cancellation,
 		}
-		if err := s.sink.Send(ctx, Workflow{
-			Base: newBaseFromHook(evt, EventWorkflow, payload),
-			Data: payload,
-		}); err != nil {
-			return err
+		return s.sendTerminalWorkflow(ctx, evt, payload)
+	case *hooks.RunSuspendedEvent:
+		if !s.profile.Workflow {
+			return nil
 		}
-		return s.sink.Send(ctx, RunStreamEnd{
-			Base: newBaseFromHook(evt, EventRunStreamEnd, RunStreamEndPayload{}),
-			Data: RunStreamEndPayload{},
+		return s.sendTerminalWorkflow(ctx, evt, WorkflowPayload{
+			Phase:  string(run.PhaseSuspended),
+			Status: string(run.StatusSuspended),
 		})
 	case *hooks.RunPhaseChangedEvent:
 		if !s.profile.Workflow {
 			return nil
 		}
-		// Terminal lifecycle is streamed via RunCompletedEvent (which also carries status).
+		// Terminal lifecycle is streamed via RunCompletedEvent or RunSuspendedEvent.
 		// Avoid emitting a second terminal workflow event for the same run.
-		if evt.Phase == run.PhaseCompleted || evt.Phase == run.PhaseFailed || evt.Phase == run.PhaseCanceled {
+		if evt.Phase == run.PhaseCompleted || evt.Phase == run.PhaseFailed || evt.Phase == run.PhaseCanceled || evt.Phase == run.PhaseSuspended {
 			return nil
 		}
 		payload := WorkflowPayload{
@@ -400,6 +399,21 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 	default:
 		return nil
 	}
+}
+
+// sendTerminalWorkflow emits the final workflow state followed by the marker
+// that tells a run-scoped stream consumer to close.
+func (s *Subscriber) sendTerminalWorkflow(ctx context.Context, event hooks.Event, payload WorkflowPayload) error {
+	if err := s.sink.Send(ctx, Workflow{
+		Base: newBaseFromHook(event, EventWorkflow, payload),
+		Data: payload,
+	}); err != nil {
+		return err
+	}
+	return s.sink.Send(ctx, RunStreamEnd{
+		Base: newBaseFromHook(event, EventRunStreamEnd, RunStreamEndPayload{}),
+		Data: RunStreamEndPayload{},
+	})
 }
 
 func newBaseFromHook(evt hooks.Event, eventType EventType, payload any) Base {
