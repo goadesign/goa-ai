@@ -616,6 +616,7 @@ func TestCallToolMapsPreAdmissionHealthFailures(t *testing.T) {
 				toolset,
 			)
 			require.NoError(t, err)
+			svc.executionTimeout = 10 * time.Millisecond
 
 			payload := &genregistry.CallToolPayload{
 				Toolset:             "toolset-1",
@@ -645,6 +646,110 @@ func TestCallToolMapsPreAdmissionHealthFailures(t *testing.T) {
 			assert.Equal(t, message, serviceErr.Message)
 		})
 	}
+}
+
+func TestCallToolWaitsForHealthyProviderBeforeAdmission(t *testing.T) {
+	t.Parallel()
+
+	toolset := &genregistry.Toolset{
+		Name: "toolset-1",
+		Tools: []*genregistry.ToolSchema{{
+			Name:          "lookup",
+			PayloadSchema: []byte(`{"type":"object"}`),
+			ResultSchema:  []byte(`{"type":"object"}`),
+		}},
+		RegisteredAt: "2024-01-15T10:30:00Z",
+	}
+	health := newMockHealthTracker()
+	health.healthy = false
+	health.healthyAfterChecks = 2
+	streams := newMockStreamManagerForService()
+	pulseClient := mockpulse.NewClient(t)
+	resultStream := mockpulse.NewStream(t)
+	resultStream.SetOpen(func(context.Context) error {
+		return nil
+	})
+	pulseClient.AddStream(func(string, ...streamopts.Stream) (clientspulse.Stream, error) {
+		return resultStream, nil
+	})
+	svc, err := newTestServiceForServiceTests(
+		pulseClient,
+		streams,
+		health,
+		toolset,
+	)
+	require.NoError(t, err)
+	svc.executionTimeout = time.Second
+
+	result, err := svc.CallTool(context.Background(), &genregistry.CallToolPayload{
+		Toolset:             toolset.Name,
+		Tool:                "lookup",
+		PayloadJSON:         []byte(`{}`),
+		WireProtocolVersion: toolregistry.WireProtocolVersion,
+		Meta: &genregistry.ToolCallMeta{
+			RunID:      "run-1",
+			SessionID:  "session-1",
+			ToolCallID: "call-during-provider-handoff",
+		},
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, result.RegistrationToken)
+	assert.Equal(t, 2, health.healthChecks)
+	require.Len(t, streams.messages[toolset.Name], 1)
+}
+
+func TestCallToolCancellationDoesNotRejectWaitingCall(t *testing.T) {
+	t.Parallel()
+
+	toolset := &genregistry.Toolset{
+		Name: "toolset-1",
+		Tools: []*genregistry.ToolSchema{{
+			Name:          "lookup",
+			PayloadSchema: []byte(`{"type":"object"}`),
+			ResultSchema:  []byte(`{"type":"object"}`),
+		}},
+		RegisteredAt: "2024-01-15T10:30:00Z",
+	}
+	health := newMockHealthTracker()
+	health.healthy = false
+	streams := newMockStreamManagerForService()
+	pulseClient := mockpulse.NewClient(t)
+	resultStream := mockpulse.NewStream(t)
+	resultStream.SetOpen(func(context.Context) error {
+		return nil
+	})
+	pulseClient.AddStream(func(string, ...streamopts.Stream) (clientspulse.Stream, error) {
+		return resultStream, nil
+	})
+	svc, err := newTestServiceForServiceTests(pulseClient, streams, health, toolset)
+	require.NoError(t, err)
+	svc.executionTimeout = time.Second
+	payload := &genregistry.CallToolPayload{
+		Toolset:             toolset.Name,
+		Tool:                "lookup",
+		PayloadJSON:         []byte(`{}`),
+		WireProtocolVersion: toolregistry.WireProtocolVersion,
+		Meta: &genregistry.ToolCallMeta{
+			RunID:      "run-1",
+			SessionID:  "session-1",
+			ToolCallID: "canceled-provider-handoff",
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err = svc.CallTool(ctx, payload)
+	var serviceErr *goa.ServiceError
+	require.ErrorAs(t, err, &serviceErr)
+	assert.Equal(t, "service_unavailable", serviceErr.Name)
+
+	// Cancellation belongs to this transport attempt. The same call identity
+	// remains eligible for admission when its provider becomes healthy.
+	health.healthy = true
+	result, err := svc.CallTool(context.Background(), payload)
+	require.NoError(t, err)
+	assert.NotEmpty(t, result.RegistrationToken)
+	require.Len(t, streams.messages[toolset.Name], 1)
 }
 
 func TestNewServiceRejectsUnsafeRetentionAndLeaseDurations(t *testing.T) {
@@ -866,6 +971,8 @@ var _ StreamManager = (*mockStreamManagerForService)(nil)
 // mockHealthTracker is a mock HealthTracker for service tests.
 type mockHealthTracker struct {
 	healthy            bool
+	healthyAfterChecks int
+	healthChecks       int
 	startedToolsets    []string
 	registrationTokens []string
 	registerErr        error
@@ -903,7 +1010,12 @@ func (m *mockHealthTracker) Health(ctx context.Context, toolset, registrationTok
 	if m.healthErr != nil {
 		return ToolsetHealth{}, m.healthErr
 	}
-	return ToolsetHealth{Healthy: m.healthy}, nil
+	m.healthChecks++
+	healthy := m.healthy
+	if m.healthyAfterChecks > 0 && m.healthChecks >= m.healthyAfterChecks {
+		healthy = true
+	}
+	return ToolsetHealth{Healthy: healthy}, nil
 }
 
 func (m *mockHealthTracker) RemoveGeneration(ctx context.Context, toolset, registrationToken string) error {

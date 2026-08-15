@@ -122,11 +122,26 @@ type (
 		meta              *toolregistry.ToolCallMeta
 		admissionDigest   string
 	}
+
+	// providerUnavailableError reports a valid tool call that cannot yet be
+	// published because its active toolset has no healthy provider lease.
+	providerUnavailableError struct {
+		toolset            string
+		stalenessThreshold time.Duration
+		lastPong           time.Time
+		age                time.Duration
+	}
 )
 
-// DefaultProviderLeaseDuration is the application-level provider membership
-// lifetime when the registry Config does not specify one.
-const DefaultProviderLeaseDuration = 2 * time.Minute
+const (
+	// DefaultProviderLeaseDuration is the application-level provider membership
+	// lifetime when the registry Config does not specify one.
+	DefaultProviderLeaseDuration = 2 * time.Minute
+
+	// providerHealthRetryInterval bounds how long a waiting call takes to
+	// observe that an active toolset has regained a healthy provider.
+	providerHealthRetryInterval = 100 * time.Millisecond
+)
 
 // Compile-time check that Service implements the generated interface.
 var _ genregistry.Service = (*Service)(nil)
@@ -413,43 +428,13 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		if admission.terminal || admission.published {
 			return s.replayCallToolResult(ctx, prepared.toolUseID, prepared.resultStreamID, admission)
 		}
-		return s.resumeUnpublishedToolCall(ctx, prepared, admission)
+		return s.routeUnpublishedToolCall(ctx, prepared, admission.executionDeadline)
 	}
 	if !errors.Is(err, errCallAdmissionNotFound) {
 		return nil, callDecisionError(err)
 	}
 
-	registration, err := s.activeRegistration(ctx, p.Toolset)
-	if err != nil {
-		return s.rejectPreparedToolCall(ctx, prepared, err)
-	}
-	if err := s.validatePreparedToolCall(ctx, prepared, registration); err != nil {
-		return s.rejectPreparedToolCall(ctx, prepared, err)
-	}
-	admission, _, err = s.callAdmissions.Ensure(
-		ctx,
-		prepared.toolset,
-		prepared.toolUseID,
-		registration.RegistrationToken,
-		prepared.admissionDigest,
-		s.executionTimeout,
-		s.resultStreamTTL,
-		outcomeUnknownPayload(registration.RegistrationToken, prepared.toolUseID),
-	)
-	if err != nil {
-		return nil, callDecisionError(err)
-	}
-	prepared.registrationToken = admission.registrationToken
-	if admission.terminal || admission.published {
-		return s.replayCallToolResult(ctx, prepared.toolUseID, prepared.resultStreamID, admission)
-	}
-	if admission.registrationToken != registration.RegistrationToken {
-		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
-			"retained unpublished call belongs to inactive registration %q",
-			admission.registrationToken,
-		))
-	}
-	return s.routeInitialToolCall(ctx, prepared, admission)
+	return s.routeUnpublishedToolCall(ctx, prepared, time.Now().Add(s.executionTimeout))
 }
 
 // RetryTool republishes only the exact original admission after a provider
@@ -509,7 +494,7 @@ func (s *Service) RetryTool(ctx context.Context, p *genregistry.RetryToolPayload
 		)))
 	}
 	if err := s.validatePreparedToolCall(ctx, prepared, registration); err != nil {
-		return s.retryTerminalOrError(ctx, prepared, err)
+		return s.retryTerminalOrError(ctx, prepared, toolCallRoutingError(err))
 	}
 	return s.retryPreparedToolCall(ctx, prepared, admission)
 }
@@ -676,53 +661,54 @@ func (s *Service) ClaimToolCall(
 	return &genregistry.ClaimToolCallResult{Disposition: string(disposition)}, nil
 }
 
-// resumeUnpublishedToolCall retries initial publication only while the
-// admission that owns the retained call remains the active routing generation.
-func (s *Service) resumeUnpublishedToolCall(
+// routeUnpublishedToolCall waits for a healthy provider and publishes the call
+// before its one absolute execution deadline. A provider change may replace
+// the assignment only while Redis still proves that publication never began.
+func (s *Service) routeUnpublishedToolCall(
 	ctx context.Context,
 	prepared preparedToolCall,
-	admission callAdmission,
+	deadline time.Time,
 ) (*genregistry.CallToolResult, error) {
-	registration, err := s.activeRegistration(ctx, prepared.toolset)
-	if err != nil {
-		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
-			"resume admitted tool call: %w",
-			err,
-		))
+	for {
+		registration, executionTimeout, err := s.waitForHealthyProvider(ctx, prepared, deadline)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, genregistry.MakeServiceUnavailable(err)
+			}
+			return s.rejectPreparedToolCall(ctx, prepared, err)
+		}
+		admission, _, err := s.callAdmissions.Ensure(
+			ctx,
+			prepared.toolset,
+			prepared.toolUseID,
+			registration.RegistrationToken,
+			prepared.admissionDigest,
+			executionTimeout,
+			s.resultStreamTTL,
+			outcomeUnknownPayload(registration.RegistrationToken, prepared.toolUseID),
+		)
+		if err != nil {
+			return nil, callDecisionError(err)
+		}
+		prepared.registrationToken = admission.registrationToken
+		if admission.terminal || admission.published {
+			return s.replayCallToolResult(ctx, prepared.toolUseID, prepared.resultStreamID, admission)
+		}
+		err = s.publishPreparedToolCall(ctx, prepared, admission, "")
+		if errors.Is(err, errCallAdmissionChanged) || errors.Is(err, errRoutingUnavailable) {
+			continue
+		}
+		if err != nil {
+			return nil, genregistry.MakeServiceUnavailable(err)
+		}
+		if err := s.ensureResultStream(ctx, prepared.resultStreamID, admission.expiresAt); err != nil {
+			return nil, err
+		}
+		return callToolResult(
+			prepared.toolUseID,
+			admission,
+		), nil
 	}
-	if registration.RegistrationToken != admission.registrationToken {
-		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
-			"retained unpublished call belongs to inactive registration %q",
-			admission.registrationToken,
-		))
-	}
-	if err := s.validatePreparedToolCall(ctx, prepared, registration); err != nil {
-		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
-			"resume admitted tool call: %w",
-			err,
-		))
-	}
-	prepared.registrationToken = admission.registrationToken
-	return s.routeInitialToolCall(ctx, prepared, admission)
-}
-
-// routeInitialToolCall publishes an admitted request only when its exact
-// admission has not already completed initial publication.
-func (s *Service) routeInitialToolCall(
-	ctx context.Context,
-	prepared preparedToolCall,
-	admission callAdmission,
-) (*genregistry.CallToolResult, error) {
-	if err := s.ensureResultStream(ctx, prepared.resultStreamID, admission.expiresAt); err != nil {
-		return nil, err
-	}
-	if err := s.publishPreparedToolCall(ctx, prepared, admission, ""); err != nil {
-		return nil, genregistry.MakeServiceUnavailable(err)
-	}
-	return callToolResult(
-		prepared.toolUseID,
-		admission,
-	), nil
 }
 
 // retryPreparedToolCall republishes only when retained exact history ends in
@@ -859,9 +845,6 @@ func (s *Service) publishAdmittedCall(
 		case <-timer.C:
 		}
 	}
-	if err := s.callAdmissions.InitializeResultStream(ctx, admission, resultStreamID); err != nil {
-		return fmt.Errorf("initialize result stream %q: %w", resultStreamID, err)
-	}
 	if err := s.streamManager.PublishAdmittedToolCall(
 		ctx,
 		toolset,
@@ -871,7 +854,62 @@ func (s *Service) publishAdmittedCall(
 	); err != nil {
 		return fmt.Errorf("publish tool call: %w", err)
 	}
+	if err := s.callAdmissions.InitializeResultStream(ctx, admission, resultStreamID); err != nil {
+		return fmt.Errorf("initialize result stream %q: %w", resultStreamID, err)
+	}
 	return nil
+}
+
+// waitForHealthyProvider holds an unpublished call while its active toolset has
+// no healthy provider. The returned timeout is the part of the original
+// execution budget that remains when a healthy provider becomes available.
+func (s *Service) waitForHealthyProvider(
+	ctx context.Context,
+	prepared preparedToolCall,
+	deadline time.Time,
+) (catalogEntry, time.Duration, error) {
+	remaining := time.Until(deadline)
+	if remaining < time.Millisecond {
+		return catalogEntry{}, 0, genregistry.MakeServiceUnavailable(
+			fmt.Errorf("provider availability wait exhausted the tool execution deadline"),
+		)
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	ticker := time.NewTicker(providerHealthRetryInterval)
+	defer ticker.Stop()
+
+	var unavailable *providerUnavailableError
+	for {
+		registration, err := s.activeRegistration(ctx, prepared.toolset)
+		if err != nil {
+			return catalogEntry{}, 0, err
+		}
+		err = s.validatePreparedToolCall(ctx, prepared, registration)
+		if err == nil {
+			remaining = time.Until(deadline)
+			if remaining >= time.Millisecond {
+				return registration, remaining, nil
+			}
+			return catalogEntry{}, 0, genregistry.MakeServiceUnavailable(
+				fmt.Errorf("provider availability wait exhausted the tool execution deadline"),
+			)
+		}
+		if !errors.As(err, &unavailable) {
+			return catalogEntry{}, 0, err
+		}
+
+		select {
+		case <-ctx.Done():
+			return catalogEntry{}, 0, ctx.Err()
+		case <-timer.C:
+			return catalogEntry{}, 0, genregistry.MakeServiceUnavailable(fmt.Errorf(
+				"provider availability wait exhausted the tool execution deadline: %w",
+				unavailable,
+			))
+		case <-ticker.C:
+		}
+	}
 }
 
 // activeRegistration loads the exact catalog generation used for validation
@@ -960,7 +998,9 @@ func (s *Service) rejectPreparedToolCall(
 	if admission.terminal || admission.published {
 		return s.replayCallToolResult(ctx, prepared.toolUseID, prepared.resultStreamID, admission)
 	}
-	return s.resumeUnpublishedToolCall(ctx, prepared, admission)
+	return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
+		"reject tool call returned an unpublished admission",
+	))
 }
 
 // prepareToolCallIdentity derives the token-independent immutable request
@@ -1043,19 +1083,39 @@ func (s *Service) validatePreparedToolCall(
 		))
 	}
 	if !health.Healthy {
-		lastPong := "missing"
-		if !health.LastPong.IsZero() {
-			lastPong = health.LastPong.UTC().Format(time.RFC3339Nano)
+		return &providerUnavailableError{
+			toolset:            prepared.toolset,
+			stalenessThreshold: health.StalenessThreshold,
+			lastPong:           health.LastPong,
+			age:                health.Age,
 		}
-		return genregistry.MakeServiceUnavailable(fmt.Errorf(
-			"no healthy providers for toolset %q (staleness_threshold=%s, last_pong=%s, age=%s)",
-			prepared.toolset,
-			health.StalenessThreshold,
-			lastPong,
-			health.Age,
-		))
 	}
 	return nil
+}
+
+// toolCallRoutingError maps private provider availability onto the generated
+// registry error used by retained admissions and explicit retries.
+func toolCallRoutingError(err error) error {
+	var unavailable *providerUnavailableError
+	if errors.As(err, &unavailable) {
+		return genregistry.MakeServiceUnavailable(unavailable)
+	}
+	return err
+}
+
+// Error describes the health evidence observed for an unavailable provider.
+func (e *providerUnavailableError) Error() string {
+	lastPong := "missing"
+	if !e.lastPong.IsZero() {
+		lastPong = e.lastPong.UTC().Format(time.RFC3339Nano)
+	}
+	return fmt.Sprintf(
+		"no healthy providers for toolset %q (staleness_threshold=%s, last_pong=%s, age=%s)",
+		e.toolset,
+		e.stalenessThreshold,
+		lastPong,
+		e.age,
+	)
 }
 
 // toolUseIDForCall returns the stable transport identity for a registry-routed

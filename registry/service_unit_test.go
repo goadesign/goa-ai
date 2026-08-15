@@ -25,11 +25,14 @@ type (
 	recordingCallAdmissions struct {
 		registrationToken string
 		attached          *callAdmission
+		initializations   int
 	}
 
 	// unitStreamManager records admitted publication without Redis.
 	unitStreamManager struct {
-		message toolregistry.ToolCallMessage
+		message       toolregistry.ToolCallMessage
+		publishErrors []error
+		publications  int
 	}
 
 	// unitHealthTracker reports healthy provider routing without background work.
@@ -144,8 +147,12 @@ func TestCallToolEnsuresAdmissionWithActiveRegistrationToken(t *testing.T) {
 	pulseClient.SetStream(func(string, ...streamopts.Stream) (clientspulse.Stream, error) {
 		return resultStream, nil
 	})
-	admissions := &recordingCallAdmissions{}
-	streams := &unitStreamManager{}
+	oldToken := strings.Repeat("b", 64)
+	admissions := &recordingCallAdmissions{attached: &callAdmission{
+		executionDeadline: time.Now().Add(toolregistry.MaxToolCallWait),
+		registrationToken: oldToken,
+	}}
+	streams := &unitStreamManager{publishErrors: []error{errRoutingUnavailable}}
 	svc := &Service{
 		catalog:               catalog,
 		validator:             newSchemaValidator(),
@@ -171,12 +178,15 @@ func TestCallToolEnsuresAdmissionWithActiveRegistrationToken(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.True(t, streamOpened)
+	assert.NotEqual(t, oldToken, registration.RegistrationToken)
+	assert.Equal(t, 2, streams.publications)
+	assert.Equal(t, 1, admissions.initializations)
 	assert.Equal(t, registration.RegistrationToken, admissions.registrationToken)
 	assert.Equal(t, registration.RegistrationToken, result.RegistrationToken)
 	assert.Equal(t, registration.RegistrationToken, streams.message.RegistrationToken)
 }
 
-func TestCallToolDoesNotReplanAfterAdmission(t *testing.T) {
+func TestCallToolRejectsUnpublishedCallWithoutProvider(t *testing.T) {
 	t.Parallel()
 
 	admission := &callAdmission{
@@ -204,7 +214,7 @@ func TestCallToolDoesNotReplanAfterAdmission(t *testing.T) {
 
 	var serviceErr *goa.ServiceError
 	require.ErrorAs(t, err, &serviceErr)
-	assert.Equal(t, "service_unavailable", serviceErr.Name)
+	assert.Equal(t, "call_not_admitted", serviceErr.Name)
 }
 
 func TestPrepareToolCallIdentityRejectsMalformedJSON(t *testing.T) {
@@ -448,6 +458,7 @@ func (r *recordingCallAdmissions) Attach(context.Context, string, string, string
 }
 
 func (r *recordingCallAdmissions) InitializeResultStream(context.Context, callAdmission, string) error {
+	r.initializations++
 	return nil
 }
 
@@ -506,7 +517,11 @@ func (m *unitStreamManager) PublishAdmittedToolCall(
 	_ callAdmission,
 	_ string,
 ) error {
+	m.publications++
 	m.message = message
+	if m.publications <= len(m.publishErrors) {
+		return m.publishErrors[m.publications-1]
+	}
 	return nil
 }
 

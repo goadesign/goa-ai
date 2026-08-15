@@ -352,6 +352,14 @@ end
 if decision ~= "admitted" then
   return redis.error_reply("CALLDECISIONINVALID")
 end
+if redis.call("HGET", KEYS[1], "published") == "0"
+and redis.call("HGET", KEYS[1], "terminal") == "0" then
+  redis.call(
+    "HSET", KEYS[1],
+    "registration_token", ARGV[3],
+    "outcome_unknown_payload", ARGV[6]
+  )
+end
 return {0, digest}
 `)
 	rejectCallAdmissionScript = redis.NewScript(`
@@ -372,7 +380,12 @@ if redis.call("EXISTS", KEYS[1]) == 1 then
   if decision ~= "admitted" then
     return redis.error_reply("CALLDECISIONINVALID")
   end
-  return {0, digest}
+  if redis.call("HGET", KEYS[1], "published") == "0"
+  and redis.call("HGET", KEYS[1], "terminal") == "0" then
+    redis.call("DEL", KEYS[1])
+  else
+    return {0, digest}
+  end
 end
 local now = redis.call("TIME")
 local now_millis = (tonumber(now[1]) * 1000) + math.floor(tonumber(now[2]) / 1000)
@@ -458,8 +471,11 @@ func (s *callAdmissionStore) Attach(
 	return admission, nil
 }
 
-// Ensure atomically creates or attaches to one immutable call decision. A
-// rejected decision returns callRejectedError instead.
+// Ensure atomically creates or attaches to one call decision. Before initial
+// publication, a concurrent caller may move the decision to the currently
+// healthy provider because Redis still proves that no external effect began.
+// Published decisions remain immutable. A rejected decision returns
+// callRejectedError instead.
 func (s *callAdmissionStore) Ensure(
 	ctx context.Context,
 	toolset, toolUseID, registrationToken, digest string,
@@ -515,9 +531,10 @@ func (s *callAdmissionStore) Ensure(
 	return admission, true, nil
 }
 
-// Reject atomically fences a tool-use identity from provider execution or
-// returns the admitted decision that won the race. Exact retries replay the
-// winning decision until the normal call-retention deadline.
+// Reject atomically fences a tool-use identity from provider execution. An
+// admitted but unpublished decision is still safe to reject because Redis
+// proves no provider received it. Published decisions win the race and replay
+// until the normal call-retention deadline.
 func (s *callAdmissionStore) Reject(
 	ctx context.Context,
 	toolset, toolUseID, digest string,

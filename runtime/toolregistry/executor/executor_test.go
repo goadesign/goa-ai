@@ -590,6 +590,41 @@ func TestExecutorTransportFailureClassifiesToolUnavailable(t *testing.T) {
 	assert.Equal(t, "toolcall-transport", res.ToolResult.ToolCallID)
 }
 
+func TestExecutorAllowsRegistryAdmissionDecisionToReachCaller(t *testing.T) {
+	t.Parallel()
+
+	var callDeadline time.Time
+	before := time.Now()
+	exec := New(
+		fakeRegistryClient{
+			err:          errors.New("registry unavailable"),
+			callDeadline: &callDeadline,
+		},
+		fakePulseClient{},
+		fakeSpecs{spec: &tools.ToolSpec{
+			Name:    "atlas.read.get_time_series",
+			Toolset: "atlas.read",
+			Result:  tools.TypeSpec{},
+			Payload: tools.TypeSpec{},
+		}},
+	)
+
+	_, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+		RunID:      "run",
+		SessionID:  "session",
+		ToolCallID: "call",
+	}, &planner.ToolRequest{
+		Name:    "atlas.read.get_time_series",
+		Payload: []byte(`{}`),
+	})
+	after := time.Now()
+
+	require.NoError(t, err)
+	wait := toolregistry.MaxToolCallWait + toolregistry.ResultStreamTransportBudget
+	assert.False(t, callDeadline.Before(before.Add(wait)))
+	assert.False(t, callDeadline.After(after.Add(wait)))
+}
+
 func TestExecutorClassifiesTypedPreAdmissionFailures(t *testing.T) {
 	t.Parallel()
 
@@ -1441,17 +1476,21 @@ type fakeRegistryClient struct {
 	executionDeadline  time.Time
 	resultStreamTTL    time.Duration
 	err                error
+	callDeadline       *time.Time
 	calls              *atomic.Int64
 	retryExpectedToken *string
 }
 
 func (c fakeRegistryClient) CallTool(
-	context.Context,
-	string,
-	tools.Ident,
-	[]byte,
-	toolregistry.ToolCallMeta,
+	ctx context.Context,
+	_ string,
+	_ tools.Ident,
+	_ []byte,
+	_ toolregistry.ToolCallMeta,
 ) (toolregistry.ToolCallRef, error) {
+	if c.callDeadline != nil {
+		*c.callDeadline, _ = ctx.Deadline()
+	}
 	if c.calls != nil {
 		c.calls.Add(1)
 	}
