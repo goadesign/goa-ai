@@ -122,11 +122,26 @@ type (
 		meta              *toolregistry.ToolCallMeta
 		admissionDigest   string
 	}
+
+	// providerUnavailableError reports a valid tool call that cannot yet be
+	// admitted because its active toolset has no healthy provider lease.
+	providerUnavailableError struct {
+		toolset            string
+		stalenessThreshold time.Duration
+		lastPong           time.Time
+		age                time.Duration
+	}
 )
 
-// DefaultProviderLeaseDuration is the application-level provider membership
-// lifetime when the registry Config does not specify one.
-const DefaultProviderLeaseDuration = 2 * time.Minute
+const (
+	// DefaultProviderLeaseDuration is the application-level provider membership
+	// lifetime when the registry Config does not specify one.
+	DefaultProviderLeaseDuration = 2 * time.Minute
+
+	// providerHealthRetryInterval bounds how long a waiting call takes to
+	// observe that an active toolset has regained a healthy provider.
+	providerHealthRetryInterval = 100 * time.Millisecond
+)
 
 // Compile-time check that Service implements the generated interface.
 var _ genregistry.Service = (*Service)(nil)
@@ -419,11 +434,11 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		return nil, callDecisionError(err)
 	}
 
-	registration, err := s.activeRegistration(ctx, p.Toolset)
+	registration, executionTimeout, err := s.waitForHealthyProvider(ctx, prepared)
 	if err != nil {
-		return s.rejectPreparedToolCall(ctx, prepared, err)
-	}
-	if err := s.validatePreparedToolCall(ctx, prepared, registration); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, genregistry.MakeServiceUnavailable(err)
+		}
 		return s.rejectPreparedToolCall(ctx, prepared, err)
 	}
 	admission, _, err = s.callAdmissions.Ensure(
@@ -432,7 +447,7 @@ func (s *Service) CallTool(ctx context.Context, p *genregistry.CallToolPayload) 
 		prepared.toolUseID,
 		registration.RegistrationToken,
 		prepared.admissionDigest,
-		s.executionTimeout,
+		executionTimeout,
 		s.resultStreamTTL,
 		outcomeUnknownPayload(registration.RegistrationToken, prepared.toolUseID),
 	)
@@ -509,7 +524,7 @@ func (s *Service) RetryTool(ctx context.Context, p *genregistry.RetryToolPayload
 		)))
 	}
 	if err := s.validatePreparedToolCall(ctx, prepared, registration); err != nil {
-		return s.retryTerminalOrError(ctx, prepared, err)
+		return s.retryTerminalOrError(ctx, prepared, toolCallRoutingError(err))
 	}
 	return s.retryPreparedToolCall(ctx, prepared, admission)
 }
@@ -874,6 +889,52 @@ func (s *Service) publishAdmittedCall(
 	return nil
 }
 
+// waitForHealthyProvider holds an unadmitted call while its active toolset has
+// no healthy provider. The returned timeout is the part of the original
+// execution budget that remains when a healthy provider becomes available.
+func (s *Service) waitForHealthyProvider(
+	ctx context.Context,
+	prepared preparedToolCall,
+) (catalogEntry, time.Duration, error) {
+	deadline := time.Now().Add(s.executionTimeout)
+	timer := time.NewTimer(s.executionTimeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(providerHealthRetryInterval)
+	defer ticker.Stop()
+
+	var unavailable *providerUnavailableError
+	for {
+		registration, err := s.activeRegistration(ctx, prepared.toolset)
+		if err != nil {
+			return catalogEntry{}, 0, err
+		}
+		err = s.validatePreparedToolCall(ctx, prepared, registration)
+		if err == nil {
+			remaining := time.Until(deadline)
+			if remaining >= time.Millisecond {
+				return registration, remaining, nil
+			}
+			return catalogEntry{}, 0, genregistry.MakeServiceUnavailable(
+				fmt.Errorf("provider availability wait exhausted the tool execution deadline"),
+			)
+		}
+		if !errors.As(err, &unavailable) {
+			return catalogEntry{}, 0, err
+		}
+
+		select {
+		case <-ctx.Done():
+			return catalogEntry{}, 0, ctx.Err()
+		case <-timer.C:
+			return catalogEntry{}, 0, genregistry.MakeServiceUnavailable(fmt.Errorf(
+				"provider availability wait exhausted the tool execution deadline: %w",
+				unavailable,
+			))
+		case <-ticker.C:
+		}
+	}
+}
+
 // activeRegistration loads the exact catalog generation used for validation
 // and maps catalog failures onto the public registry contract.
 func (s *Service) activeRegistration(ctx context.Context, toolset string) (catalogEntry, error) {
@@ -1043,19 +1104,39 @@ func (s *Service) validatePreparedToolCall(
 		))
 	}
 	if !health.Healthy {
-		lastPong := "missing"
-		if !health.LastPong.IsZero() {
-			lastPong = health.LastPong.UTC().Format(time.RFC3339Nano)
+		return &providerUnavailableError{
+			toolset:            prepared.toolset,
+			stalenessThreshold: health.StalenessThreshold,
+			lastPong:           health.LastPong,
+			age:                health.Age,
 		}
-		return genregistry.MakeServiceUnavailable(fmt.Errorf(
-			"no healthy providers for toolset %q (staleness_threshold=%s, last_pong=%s, age=%s)",
-			prepared.toolset,
-			health.StalenessThreshold,
-			lastPong,
-			health.Age,
-		))
 	}
 	return nil
+}
+
+// toolCallRoutingError maps private provider availability onto the generated
+// registry error used by retained admissions and explicit retries.
+func toolCallRoutingError(err error) error {
+	var unavailable *providerUnavailableError
+	if errors.As(err, &unavailable) {
+		return genregistry.MakeServiceUnavailable(unavailable)
+	}
+	return err
+}
+
+// Error describes the health evidence observed for an unavailable provider.
+func (e *providerUnavailableError) Error() string {
+	lastPong := "missing"
+	if !e.lastPong.IsZero() {
+		lastPong = e.lastPong.UTC().Format(time.RFC3339Nano)
+	}
+	return fmt.Sprintf(
+		"no healthy providers for toolset %q (staleness_threshold=%s, last_pong=%s, age=%s)",
+		e.toolset,
+		e.stalenessThreshold,
+		lastPong,
+		e.age,
+	)
 }
 
 // toolUseIDForCall returns the stable transport identity for a registry-routed

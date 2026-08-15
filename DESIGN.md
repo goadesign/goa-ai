@@ -237,6 +237,10 @@ boundary rather than reopening execution.
 
 ### Run Timing and Workflow Continuations
 
+Each accepted user input starts one top-level workflow for that turn. The
+workflow ends with either that turn's final result or an external-input
+suspension. Nested agents retain their linked child workflows.
+
 The workflow loop is the sole owner of run-duration enforcement. `TimeBudget`
 becomes the deterministic Budget deadline for active planner and tool work.
 The Hard deadline is Budget plus `FinalizerGrace`; it bounds the final planner
@@ -274,6 +278,33 @@ received the external answer. When a nested agent suspends, the parent ends
 with the same request; continuing the parent starts a new child workflow from
 the child's saved checkpoint. Sessionless one-shot runs reject external-input
 requests because they have no continuation API.
+
+#### Deployment ownership
+
+Goa-AI owns workflow replay, suspension persistence, continuation validation,
+and exact call/result provenance. The consuming application owns Temporal
+worker versions and release routing. Production consumers must give every
+worker release an immutable build ID, use pinned Worker Deployment Versioning,
+make a release current only after its workers are ready, and retain each old
+version until Temporal reports it drained. Temporal then routes an existing
+workflow to the code that started it; it does not transfer that workflow to the
+new release.
+
+A continuation deliberately starts a new workflow and may use the current
+worker version. `ValidateContinuation` protects the Goa-AI boundary by checking
+the checkpoint and registered tool contracts, but it cannot make an
+incompatible persisted value compatible. Consumers must preserve compatible
+checkpoint codecs and required tools across the release or migrate saved
+checkpoints before promotion.
+
+Worker versioning does not own ordinary service availability. If one process
+serves an API and polls Temporal, external traffic must select only the current
+ready version while retained pods continue polling their pinned work. Services
+called by activities must keep a ready, API-compatible endpoint throughout
+their own rollout. These responsibilities stay outside Goa-AI because the
+consumer owns its process layout, traffic router, persistence, and downstream
+services. The operational checklist is in
+[docs/runtime.md](docs/runtime.md#transparent-temporal-rollouts).
 
 `DeleteSession` ends execution but intentionally retains run metadata.
 Applications that permanently delete customer data call `PurgeSession` after
@@ -423,9 +454,15 @@ compaction is safe without another immutable authority that can prove
 non-resurrection.
 
 Same-token scaling and RollingUpdate require no deployment token persistence.
-A different wire protocol, schema, or admission revision requires Kubernetes
-Recreate so incompatible providers never overlap: graceful releases permit
-immediate server-owned handoff, while crashes delay handoff until lease expiry.
+A different schema or admission revision may use the same RollingUpdate: the
+new pod stays blocked at registration while the old admission drains, so
+incompatible providers never execute concurrently. A new call that observes no
+healthy provider waits without creating an admission decision until the
+replacement becomes healthy or the existing execution deadline expires.
+Graceful releases permit immediate server-owned handoff, while crashes delay
+handoff until lease expiry. A wire protocol change remains a coordinated hard
+cutover because registry servers and consumers do not negotiate envelope
+versions.
 `Unregister` is not rollout orchestration; it intentionally changes active to
 retired while preserving leases. Same-token retirement retry succeeds, a stale
 expected token returns `admission_conflict`, retired toolsets are unavailable to
@@ -499,8 +536,12 @@ metadata plus the admitted registration token. `CallTool` attaches to this
 record before current catalog or health lookup; an exact retained retry therefore
 returns its original token and deadlines after retirement or replacement.
 For a new call, the registry atomically stores one admitted or rejected state in
-the tool-use record. Catalog and provider-health failures commit the rejected
-state or observe an admission that won the race. A rejected state returns typed
+the tool-use record. A valid call that finds no healthy provider waits before
+that decision and subtracts the wait from its execution budget. Provider
+recovery admits the call normally; deadline expiry commits the rejected state.
+Other catalog and health failures commit the rejected state or observe an
+admission that won the race. The registry does not infer whether a no-provider
+interval came from a deployment or an outage. A rejected state returns typed
 `call_not_admitted` and prevents every exact retry from executing while that
 run-scoped decision is retained, so the executor may safely replan. Generated
 `not_found` and `validation_error` preserve their actionable types in the same

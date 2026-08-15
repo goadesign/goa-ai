@@ -1115,11 +1115,19 @@ unclaimed old-generation request. Redis owns liveness.
 Handlers still must honor context cancellation and return promptly; otherwise
 `Serve` reports worker settlement failure and withholds lease release.
 
-Use RollingUpdate only when every replica derives the same token. A wire
-protocol, schema, or admission-revision change requires Recreate so
-incompatible admissions never overlap. Graceful release permits immediate
-server-owned handoff; a crash delays handoff until lease expiry. No deployment
-component persists registration tokens or calls `Unregister` during rollout.
+Use RollingUpdate for provider releases. Replicas with the same token overlap
+normally. When the schema or admission revision changes, the replacement pod
+retries registration while the old admission drains, so the two admissions do
+not execute concurrently. Calls that arrive after the old route stops wait
+inside `CallTool` until the replacement is healthy; that wait consumes the
+call's existing execution deadline and does not create a model-visible retry.
+A registry cannot distinguish a release handoff from another interval with no
+healthy provider, so the same bounded wait applies to both rather than guessing
+from version or process state.
+A crash may extend the wait until the old lease expires. A wire protocol change
+remains a coordinated hard cutover because registry servers and consumers do
+not negotiate envelope versions. No deployment component persists registration
+tokens or calls `Unregister` during rollout.
 `Unregister` is reserved for
 intentional retirement: exact active becomes retired while preserving leases,
 same-token retry succeeds, stale token returns `admission_conflict`, and the
@@ -1668,6 +1676,10 @@ runtime.FinalizerFunc(func(ctx, input FinalizerInput) (ToolResult, error) {
 
 ## External Input and Workflow Continuations
 
+Each accepted user input starts one top-level workflow for that turn. The
+workflow ends with either that turn's final result or an external-input
+suspension. Nested agents still run as linked child workflows.
+
 Clarification, confirmation, structured questions, and external tool requests
 end the current workflow successfully. The returned `api.RunSuspension`
 contains the visible pending requests plus a private checkpoint. No workflow
@@ -1703,6 +1715,95 @@ compatible tool evolution continues, while an incompatible saved value fails at
 that typed boundary. If the response closes a tool call created by the previous
 workflow, the `tool_end` event belongs to the new result run and its required
 `call_run_id` identifies the run that emitted the matching `tool_start`.
+
+### Transparent Temporal Rollouts
+
+Temporal preserves a workflow's history, but a consumer deployment must ensure
+that compatible code remains available to replay it. Configure the Temporal Go
+worker passed through `temporal.WorkerOptions.Options` with Worker Deployment
+Versioning, an immutable build ID, and pinned workflow behavior:
+
+```go
+import (
+	runtimetemporal "goa.design/goa-ai/runtime/agent/engine/temporal"
+	temporalclient "go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
+)
+
+const releaseBuildID = "git-sha-or-image-digest"
+
+eng, err := runtimetemporal.NewWorker(runtimetemporal.Options{
+	ClientOptions: &temporalclient.Options{
+		HostPort:  "temporal:7233",
+		Namespace: "production",
+	},
+	WorkerOptions: runtimetemporal.WorkerOptions{
+		TaskQueue: "orchestrator.chat",
+		Options: worker.Options{
+			DeploymentOptions: worker.DeploymentOptions{
+				UseVersioning: true,
+				Version: worker.WorkerDeploymentVersion{
+					DeploymentName: "assistant",
+					BuildID:        releaseBuildID,
+				},
+				DefaultVersioningBehavior: workflow.VersioningBehaviorPinned,
+			},
+		},
+	},
+})
+if err != nil {
+	panic(err)
+}
+```
+
+`releaseBuildID` must identify one immutable worker binary or container image.
+Do not use a mutable tag such as `latest`, a pod name, or a value shared by
+different workflow code. See Temporal's [Worker Deployment Versioning
+guide](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning)
+for version promotion and drainage operations.
+
+Release one version with this sequence:
+
+1. Start the new workers beside every retained version. Do not stop the old
+   workers.
+2. Wait for process readiness and successful Temporal worker registration.
+3. Make the new Worker Deployment Version current. New workflows can now start
+   there; existing workflows remain pinned to their starting version.
+4. If the same process also serves an API, route external requests only to the
+   current ready build. Retained pods must remain available to Temporal without
+   receiving ordinary API traffic. Splitting API and worker processes is an
+   alternative, not a Goa-AI requirement.
+5. Remove an old worker version only after Temporal reports it drained. Pod
+   termination alone is not drainage evidence.
+
+An external-input suspension completes its workflow, so it no longer needs the
+old worker while a person is deciding. The accepted answer starts a new
+workflow on the current version. That is safe only while the current generated
+codecs and tool registrations accept the saved checkpoint. Deploy an explicit
+checkpoint migration before promotion when that contract must change.
+
+Worker Deployment Versioning protects workflow-code replay. It does not make
+the rest of the system transparent automatically. Every service called by an
+activity must keep at least one ready endpoint throughout its replacement and
+must accept requests from retained and current workers. Database changes must
+support both releases during their overlap. A `Recreate` deployment, a Service
+with no ready endpoint, an incompatible downstream API, or an incompatible
+checkpoint can still interrupt work even when Temporal routing is correct.
+
+For a transparent release, verify all of the following before removing the old
+version:
+
+- the new worker is ready, registered, and current;
+- new workflows are assigned to its immutable build ID;
+- a workflow started before promotion completes on its original build;
+- a saved external-input request can continue as a new workflow on the current
+  build;
+- external API traffic reaches only the current ready build;
+- retained worker pods stay healthy until Temporal reports them drained;
+- downstream Services never lose all ready endpoints; and
+- no new workflow failures, container restarts, or readiness gaps appear during
+  the observation window.
 
 Ending a session stops future work but retains its run metadata for inspection.
 When the owning application permanently deletes the session's customer data, it
