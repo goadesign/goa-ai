@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -22,6 +23,8 @@ import (
 
 func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
+	events := &recordingHooks{}
+	rt.Bus = events
 	tool := newAnyJSONSpec(tools.Ident("chat.ask_clarification"), "chat")
 	seedTestToolSpecs(rt, tool)
 
@@ -73,6 +76,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	require.NoError(t, err)
 	continuedCtx := &testWorkflowContext{
 		ctx:           t.Context(),
+		hookRuntime:   rt,
 		planResult:    &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}},
 		hasPlanResult: true,
 	}
@@ -104,6 +108,15 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	require.Len(t, continuedCtx.lastPlannerCall.Input.ToolOutputs, 1)
 	require.Equal(t, "run-1", continuedCtx.lastPlannerCall.Input.ToolOutputs[0].CallRunID)
 	require.Equal(t, "run-2", continuedCtx.lastPlannerCall.Input.ToolOutputs[0].ResultRunID)
+	var hookResult *hooks.ToolResultReceivedEvent
+	for _, event := range events.events {
+		if candidate, ok := event.(*hooks.ToolResultReceivedEvent); ok {
+			hookResult = candidate
+		}
+	}
+	require.NotNil(t, hookResult)
+	require.Equal(t, "run-1", hookResult.CallRunID)
+	require.Equal(t, "run-2", hookResult.RunID())
 
 	assistant := continuedCtx.lastPlannerCall.Input.Messages[0]
 	require.Equal(t, model.ConversationRoleAssistant, assistant.Role)

@@ -61,6 +61,7 @@ func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *tes
 		testRunID,
 		agentID,
 		testSessionID,
+		"call-run",
 		toolName,
 		toolCallID,
 		"",
@@ -89,6 +90,7 @@ func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *tes
 	tr, ok := decoded.(*ToolResultReceivedEvent)
 	require.True(t, ok)
 	require.Equal(t, toolName, tr.ToolName)
+	require.Equal(t, "call-run", tr.CallRunID)
 	require.Equal(t, toolCallID, tr.ToolCallID)
 	require.Equal(t, len(resultJSON), tr.ResultBytes)
 	require.False(t, tr.ResultOmitted)

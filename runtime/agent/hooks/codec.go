@@ -48,6 +48,7 @@ type (
 	}
 
 	toolResultReceivedPayload struct {
+		CallRunID           string                   `json:"call_run_id"`
 		ToolCallID          string                   `json:"tool_call_id"`
 		ParentToolCallID    string                   `json:"parent_tool_call_id,omitempty"`
 		ToolName            tools.Ident              `json:"tool_name"`
@@ -106,6 +107,7 @@ func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, 
 		payload = rawjson.Message(b)
 	case *ToolResultReceivedEvent:
 		p := toolResultReceivedPayload{
+			CallRunID:           e.CallRunID,
 			ToolCallID:          e.ToolCallID,
 			ParentToolCallID:    e.ParentToolCallID,
 			ToolName:            e.ToolName,
@@ -315,6 +317,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			input.RunID,
 			input.AgentID,
 			input.SessionID,
+			p.CallRunID,
 			p.ToolName,
 			p.ToolCallID,
 			p.ParentToolCallID,

@@ -1700,7 +1700,9 @@ those values. The runtime loads the suspension by predecessor run ID and checks
 the checkpoint version, public pending requests, and required tool names before routing. The receiving
 worker restores saved payloads and results through its current generated codecs;
 compatible tool evolution continues, while an incompatible saved value fails at
-that typed boundary.
+that typed boundary. If the response closes a tool call created by the previous
+workflow, the `tool_end` event belongs to the new result run and its required
+`call_run_id` identifies the run that emitted the matching `tool_start`.
 
 Ending a session stops future work but retains its run metadata for inspection.
 When the owning application permanently deletes the session's customer data, it
@@ -1978,7 +1980,7 @@ type Sink interface {
 |-------|---------|
 | `prompt_rendered` | `PromptRenderedPayload` (`prompt_id`, `version`, `scope`) |
 | `tool_start` | `ToolStartPayload` (tool_call_id, tool_name, payload) |
-| `tool_end` | `ToolEndPayload` (result, error, duration, telemetry) |
+| `tool_end` | `ToolEndPayload` (`call_run_id`, result, error, duration, telemetry) |
 | `tool_update` | `ToolUpdatePayload` (expected_children_total) |
 | `assistant_reply` | `AssistantReplyPayload` (text) |
 | `planner_thought` | `PlannerThoughtPayload` (note, thinking blocks) |

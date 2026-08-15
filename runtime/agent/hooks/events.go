@@ -206,6 +206,10 @@ type (
 	// a result or error.
 	ToolResultReceivedEvent struct {
 		baseEvent
+		// CallRunID identifies the workflow run that emitted the matching
+		// ToolCallScheduledEvent. It differs from RunID when external input ends
+		// one workflow and the supplied result starts its continuation.
+		CallRunID string
 		// ToolCallID uniquely identifies the tool invocation that produced this result.
 		ToolCallID string
 		// ParentToolCallID identifies the parent tool call if this tool was invoked by another tool.
@@ -879,15 +883,16 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 	}
 }
 
-// NewToolResultReceivedEvent constructs a ToolResultReceivedEvent. The canonical
-// result JSON and server-side sidecars are stored exactly once here; duration is
-// the wall-clock execution time; telemetry carries structured observability
-// metadata (nil if not collected).
-func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, resultBytes int, resultOmitted bool, resultOmittedReason string, serverData rawjson.Message, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, failure *planner.ToolFailure) *ToolResultReceivedEvent {
+// NewToolResultReceivedEvent constructs a ToolResultReceivedEvent. callRunID
+// identifies the exact run that emitted the matching scheduled-call event;
+// runID identifies the run emitting this result. The canonical result JSON and
+// server-side data are stored exactly once here.
+func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID, callRunID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, resultBytes int, resultOmitted bool, resultOmittedReason string, serverData rawjson.Message, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, failure *planner.ToolFailure) *ToolResultReceivedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &ToolResultReceivedEvent{
 		baseEvent:           be,
+		CallRunID:           callRunID,
 		ToolCallID:          toolCallID,
 		ParentToolCallID:    parentToolCallID,
 		ToolName:            toolName,

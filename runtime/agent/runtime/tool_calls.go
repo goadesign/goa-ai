@@ -279,6 +279,7 @@ func (e *toolBatchExec) publishToolResultReceived(
 		e.runID,
 		e.agentID,
 		e.sessionID,
+		call.RunID,
 		call.Name,
 		call.ToolCallID,
 		parentID,
