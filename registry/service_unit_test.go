@@ -21,7 +21,7 @@ import (
 )
 
 type (
-	// recordingCallAdmissions captures the immutable token selected by CallTool.
+	// recordingCallAdmissions captures the provider token selected by CallTool.
 	recordingCallAdmissions struct {
 		registrationToken string
 		attached          *callAdmission

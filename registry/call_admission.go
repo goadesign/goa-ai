@@ -2,9 +2,10 @@
 //
 // One expiring Redis hash per transport identity stores the admitted or
 // rejected decision. An admitted record binds retries to one immutable request,
-// provider token, absolute result-history expiration, and terminal state.
-// Request and terminal-result publication each commit into that record in the
-// same Redis operation as their stream append.
+// absolute result-history expiration, and terminal state. Its provider token
+// may change before publication and becomes permanent when the request is
+// appended. Request and terminal-result publication each commit into that
+// record in the same Redis operation as their stream append.
 package registry
 
 import (
@@ -785,9 +786,9 @@ func (s *callAdmissionStore) SettleLostClaimsForLease(
 	return nil
 }
 
-// callKey derives the one authoritative Redis record for a global
-// transport identity. The admitted token is immutable data in that record,
-// not part of the key, so an admission rollover cannot republish the same call.
+// callKey derives the one authoritative Redis record for a global transport
+// identity. Keeping the provider token out of the key lets an unpublished call
+// move to the current provider without creating a second call record.
 func (s *callAdmissionStore) callKey(toolUseID string) string {
 	sum := sha256.Sum256([]byte(toolUseID))
 	return s.prefix + hex.EncodeToString(sum[:])
