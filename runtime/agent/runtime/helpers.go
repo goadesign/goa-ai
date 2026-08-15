@@ -3,6 +3,8 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -24,10 +26,12 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 const (
-	unknownID = "unknown"
+	unknownID                     = "unknown"
+	generatedToolCallIDHashDomain = "goa-ai/runtime-tool-call-id/v1\x00"
 	// maxHookPayloadBytes is a safety bound on the serialized hook payload passed
 	// across the workflow/activity boundary. Exceeding Temporal's payload limit
 	// terminates the workflow task; failing early keeps failures explicit and
@@ -145,7 +149,9 @@ func nestedRunIDSuffix(toolCallID string) string {
 // tool batches within a single logical turn (for example when callers set TurnID
 // to a constant run identifier). The workflow stamps RunContext.Attempt with the
 // planner turn attempt before executing that turn's generated tool calls, so
-// generated IDs remain unique within the run.
+// generated IDs remain unique within the run. Readable IDs are preserved when
+// they satisfy registry metadata limits; oversized IDs use a deterministic
+// digest of that same identity so nested runs cannot exceed the wire contract.
 func generateDeterministicToolCallID(runID, turnID string, attempt int, toolName tools.Ident, index int) string {
 	if runID == "" {
 		runID = unknownID
@@ -159,7 +165,15 @@ func generateDeterministicToolCallID(runID, turnID string, attempt int, toolName
 	if tid == "" {
 		tid = "no-turn"
 	}
-	return strings.Join([]string{runID, tid, fmt.Sprintf("attempt-%d", attempt), safeTool, strconv.Itoa(index)}, "/")
+	readable := strings.Join(
+		[]string{runID, tid, fmt.Sprintf("attempt-%d", attempt), safeTool, strconv.Itoa(index)},
+		"/",
+	)
+	if len(readable) <= toolregistry.MaxToolCallMetaIDLength {
+		return readable
+	}
+	sum := sha256.Sum256([]byte(generatedToolCallIDHashDomain + readable))
+	return "call-" + hex.EncodeToString(sum[:])
 }
 
 // generateDeterministicAwaitID creates a replay-safe await identifier using the runID,
