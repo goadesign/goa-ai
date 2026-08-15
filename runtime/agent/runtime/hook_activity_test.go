@@ -138,6 +138,7 @@ func TestGenAITimelineSubscriberEmitsSpans(t *testing.T) {
 		"run-1",
 		"svc.agent",
 		"sess-1",
+		"run-1",
 		"svc.tools.search",
 		"call-1",
 		"",

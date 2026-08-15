@@ -268,10 +268,12 @@ result through the current generated codec. Compatible tool evolution can
 therefore continue across releases, while a value the new contract cannot
 decode fails at that typed boundary. A tool call created in an earlier workflow
 retains that workflow's run ID while its result records the new workflow's run
-ID. When a nested agent suspends, the parent ends with the same request;
-continuing the parent starts a new child workflow from the child's saved
-checkpoint. Sessionless one-shot runs reject external-input requests because
-they have no continuation API.
+ID. The tool-result hook and `tool_end` stream payload carry the original call
+run ID explicitly; the result event's own run ID identifies the workflow that
+received the external answer. When a nested agent suspends, the parent ends
+with the same request; continuing the parent starts a new child workflow from
+the child's saved checkpoint. Sessionless one-shot runs reject external-input
+requests because they have no continuation API.
 
 `DeleteSession` ends execution but intentionally retains run metadata.
 Applications that permanently delete customer data call `PurgeSession` after

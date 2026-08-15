@@ -65,7 +65,7 @@ func TestNewRunSnapshotDerivesToolStateAndCompletion(t *testing.T) {
 		}, nil)),
 		mk(t1, hooks.NewRunPhaseChangedEvent(runID, agentID, sessionID, run.PhasePlanning)),
 		mk(t2, hooks.NewToolCallScheduledEvent(runID, agentID, sessionID, tools.Ident("svc.tools.search"), "call-1", []byte(`{"q":"x"}`), "q", "", 0)),
-		mk(t3, hooks.NewToolResultReceivedEvent(runID, agentID, sessionID, tools.Ident("svc.tools.search"), "call-1", "", nil, 0, false, "", nil, "", nil, 250*time.Millisecond, nil, testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom"))),
+		mk(t3, hooks.NewToolResultReceivedEvent(runID, agentID, sessionID, runID, tools.Ident("svc.tools.search"), "call-1", "", nil, 0, false, "", nil, "", nil, 250*time.Millisecond, nil, testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom"))),
 		mk(t4, hooks.NewRunCompletedEvent(runID, agentID, sessionID, "failed", run.PhaseFailed, labels, errors.New("run failed"), nil)),
 	}
 

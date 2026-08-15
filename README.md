@@ -529,7 +529,11 @@ typed response. Before routing a continuation, the runtime verifies the
 checkpoint version, visible pending requests, and required tool names. The receiving worker restores
 saved payloads and results through its current generated codecs, so compatible
 tool evolution continues while incompatible saved values fail at the codec
-boundary.
+boundary. When an external answer completes a tool call from the previous
+workflow, the emitted `tool_end` keeps the current result run as its event run
+ID and carries the original call run in `call_run_id`. Stream consumers can
+therefore pair the result with the exact `tool_start` without searching prior
+runs.
 
 Sensitive tools can require approval before execution:
 

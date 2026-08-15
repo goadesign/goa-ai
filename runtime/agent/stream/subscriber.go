@@ -304,6 +304,9 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if !s.profile.ToolEnd {
 			return nil
 		}
+		if evt.CallRunID == "" {
+			return errors.New("stream: tool_end missing call_run_id")
+		}
 		if evt.ToolCallID == "" {
 			return errors.New("stream: tool_end missing tool_call_id")
 		}
@@ -311,6 +314,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			return errors.New("stream: tool_end missing tool_name")
 		}
 		payload := ToolEndPayload{
+			CallRunID:           evt.CallRunID,
 			ToolCallID:          evt.ToolCallID,
 			ParentToolCallID:    evt.ParentToolCallID,
 			ToolName:            string(evt.ToolName),

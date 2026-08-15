@@ -390,6 +390,10 @@ type (
 	// ToolEndPayload carries the result metadata for a completed tool invocation.
 	// This structure is JSON-serialized when sent over the wire (SSE, WebSocket, Pulse).
 	ToolEndPayload struct {
+		// CallRunID identifies the workflow run whose ToolStart event opened this
+		// tool invocation. It differs from the enclosing event's run ID when a
+		// continuation workflow supplies an externally produced result.
+		CallRunID string `json:"call_run_id"`
 		// ToolCallID uniquely identifies the tool invocation that completed. Clients use this
 		// to correlate with the original ToolStart event, enabling UIs to match completion
 		// events with their corresponding progress indicators and display results in the

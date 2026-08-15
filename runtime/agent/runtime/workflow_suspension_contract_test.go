@@ -140,7 +140,7 @@ func TestLoadPlannerToolOutputsCombinesDifferentRunLogs(t *testing.T) {
 	), "turn-1"))
 	result := rawjson.Message(`{"value":"42"}`)
 	require.NoError(t, runtime.publishHookErr(t.Context(), hooks.NewToolResultReceivedEvent(
-		"run-result", "svc.agent", "session-1", spec.Name, "call-1", "",
+		"run-result", "svc.agent", "session-1", "run-call", spec.Name, "call-1", "",
 		result, len(result), false, "", nil, "", nil, 0, nil, nil,
 	), "turn-1"))
 

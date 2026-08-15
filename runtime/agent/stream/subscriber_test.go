@@ -96,9 +96,10 @@ func TestStreamSubscriber_ToolEnd_EmitsServerData(t *testing.T) {
 
 	server := rawjson.Message([]byte(`[{"kind":"example.evidence","data":[{"uri":"example://points/123"}]}]`))
 	evt := hooks.NewToolResultReceivedEvent(
-		"r1",
+		"result-run",
 		agent.Ident("agent1"),
 		"session-1",
+		"call-run",
 		tools.Ident("svc.tool"),
 		"call-1",
 		"",
@@ -118,6 +119,8 @@ func TestStreamSubscriber_ToolEnd_EmitsServerData(t *testing.T) {
 	require.Equal(t, EventToolEnd, sink.events[0].Type())
 	end, ok := sink.events[0].(ToolEnd)
 	require.True(t, ok)
+	require.Equal(t, "result-run", end.RunID())
+	require.Equal(t, "call-run", end.Data.CallRunID)
 	require.JSONEq(t, string(server), string(end.ServerData))
 }
 
@@ -131,6 +134,7 @@ func TestStreamSubscriber_ToolEnd_AllowsMissingResult(t *testing.T) {
 		"r1",
 		agent.Ident("agent1"),
 		"session-1",
+		"r1",
 		tools.Ident("svc.tool"),
 		"call-1",
 		"",
@@ -153,6 +157,34 @@ func TestStreamSubscriber_ToolEnd_AllowsMissingResult(t *testing.T) {
 	require.True(t, end.Data.ResultOmitted)
 	require.Equal(t, "workflow_budget", end.Data.ResultOmittedReason)
 	require.Equal(t, 4096, end.Data.ResultBytes)
+}
+
+func TestStreamSubscriber_ToolEnd_RejectsMissingCallRunID(t *testing.T) {
+	sink := &mockSink{}
+	sub, err := NewSubscriber(sink)
+	require.NoError(t, err)
+
+	evt := hooks.NewToolResultReceivedEvent(
+		"result-run",
+		agent.Ident("agent1"),
+		"session-1",
+		"",
+		tools.Ident("svc.tool"),
+		"call-1",
+		"",
+		nil,
+		0,
+		false,
+		"",
+		nil,
+		"",
+		nil,
+		0,
+		nil,
+		nil,
+	)
+	require.ErrorContains(t, sub.HandleEvent(context.Background(), evt), "missing call_run_id")
+	require.Empty(t, sink.events)
 }
 
 func TestStreamSubscriber_ToolUpdate(t *testing.T) {
@@ -429,6 +461,7 @@ func TestStreamSubscriber_ToolEndPrecedesRunStreamEnd(t *testing.T) {
 		"r1",
 		agent.Ident("agent1"),
 		"session-1",
+		"r1",
 		tools.Ident("svc.tool"),
 		"call-1",
 		"",
