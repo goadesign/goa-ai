@@ -608,7 +608,11 @@ redeploys.
   reconstruct the exact message order generically. Canonical tool-call IDs
   remain opaque and unchanged; adapters whose wire protocol restricts ID syntax
   assign request-local aliases and use the same alias for each matching tool
-  result.
+  result. For planner calls without provider IDs, the runtime derives the
+  canonical ID from the run, turn, attempt, tool, and batch index. It preserves
+  the readable form when it fits registry metadata and uses a domain-separated
+  SHA-256 form only when that same identity exceeds the 256-byte contract.
+  Both forms are deterministic across workflow replay.
 - **Planner-transparent provenance**: Each model call produces an isolated
   canonical response and ordered presentation before planner code observes
   completion. Streams expose only closed typed chunks and carry the canonical

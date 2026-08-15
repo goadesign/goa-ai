@@ -1167,9 +1167,16 @@ runtime-owned version therefore fences both producers of protocol bytes while
 the version-bound registration token continues to fence provider generations.
 Incoming `run_id`, `session_id`, `turn_id`, `tool_call_id`, and
 `parent_tool_call_id` values are bounded to 256
-characters and reject NUL at the generated transport boundary; provider and
+bytes and reject NUL at the generated transport boundary; provider and
 incarnation IDs reject NUL as well. An invalid identifier is rejected before
 any tool-call publication.
+Planner tool calls without provider IDs use a runtime-generated identifier from
+the run, turn, attempt, tool name, and batch index. The runtime preserves that
+readable identifier when it fits the 256-byte limit. If it is longer, the
+runtime emits `call-` plus lowercase SHA-256 over
+`goa-ai/runtime-tool-call-id/v1\0` and the complete readable identifier. The
+opaque overflow form is deterministic across workflow replay and still changes
+when any identity input changes.
 The gateway requires `tool_call_id` and derives the global transport
 `tool_use_id` as lowercase SHA-256 over the domain
 `goa-ai/tool-registry-use/v1\0` plus uint64-length-delimited `run_id` and
