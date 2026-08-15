@@ -68,7 +68,6 @@ if redis.call("HGET", KEYS[1], "digest") ~= ARGV[1] then
   return redis.error_reply("CALLADMISSIONCHANGED")
 end
 if redis.call("HGET", KEYS[1], "terminal") == "1"
-or redis.call("HGET", KEYS[1], "published") == "1"
 or redis.call("XLEN", KEYS[2]) > 0 then
   return 0
 end
@@ -464,9 +463,9 @@ func newCallAdmissionStore(redisClient *redis.Client, registryName string) *call
 	}
 }
 
-// InitializeResultStream creates one bounded pre-publication event only while
-// the call remains unpublished and nonterminal. Concurrent initial callers and
-// overload retries cannot append initialization after terminal commitment.
+// InitializeResultStream creates one bounded initialization event after the
+// request publication commits and only while no provider output exists.
+// Concurrent callers and overload retries cannot append another event.
 func (s *callAdmissionStore) InitializeResultStream(
 	ctx context.Context,
 	admission callAdmission,

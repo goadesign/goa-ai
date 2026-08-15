@@ -1121,6 +1121,10 @@ retries registration while the old admission drains, so the two admissions do
 not execute concurrently. Calls that arrive after the old route stops wait
 inside `CallTool` until the replacement is healthy; that wait consumes the
 call's existing execution deadline and does not create a model-visible retry.
+Request publication rechecks the provider in the same Redis operation that
+appends the call. If the old provider started draining after the health check,
+the unpublished call selects the replacement and tries again within the same
+deadline. A published call never moves to another provider.
 A registry cannot distinguish a release handoff from another interval with no
 healthy provider, so the same bounded wait applies to both rather than guessing
 from version or process state.
@@ -1202,18 +1206,21 @@ registry/Pulse infrastructure maps to retryable tool-unavailable.
 `stale_registration` remains a retryable terminal outcome.
 
 Call publication and result retention have one owner. The registry atomically
-stores one decision for each global `tool_use_id`. The authoritative record
-contains an immutable token-independent request digest and an explicit
-`admitted` or `rejected` state. An admitted record also stores its registration
-token. A rejected record preserves the exact typed pre-publication error, so
-retries cannot execute while the record is retained. `CallTool` reads that
-decision before consulting current routing or health, so rejected calls replay
-their error and admitted calls return their original token and deadlines after
-retirement, replacement, or temporary loss of current health. CallTool owns
-initial admission and publication. RetryTool owns overload republication and
-requires the existing admission plus its original still-active token; it cannot
-create missing admission state. Each initial or overload request append and its
-admission marker commit in one Redis operation. Concurrent attempts and retries
+stores one record for each global `tool_use_id`. The record contains an
+immutable token-independent request digest and an explicit `admitted` or
+`rejected` state. Before initial publication, an admitted record's provider
+token may move to the current healthy registration because Redis proves no
+provider received the call. Publication checks and fixes that token in the same
+operation that appends the request. A rejected record preserves the exact typed
+pre-publication error, so retries cannot execute while the record is retained.
+`CallTool` reads the record before consulting current routing or health, so
+rejected calls replay their error and published calls return their original
+token and deadlines after retirement, replacement, or temporary loss of
+current health. CallTool owns initial admission and publication. RetryTool owns
+overload republication and requires the published admission plus its original
+still-active token; it cannot create missing admission state. Each initial or
+overload request append and its publication marker commit in one Redis
+operation. Concurrent attempts and retries
 after an ambiguous Redis response therefore resolve to the original request
 event instead of appending a duplicate; publication ownership cannot expire
 mid-operation. The call record computes a Redis-time absolute execution

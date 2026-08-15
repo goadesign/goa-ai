@@ -189,7 +189,10 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 		ToolCallID:       meta.ToolCallID,
 		ParentToolCallID: meta.ParentToolCallID,
 	}
-	admissionCtx, cancelAdmission := context.WithTimeout(ctx, toolregistry.MaxToolCallWait)
+	admissionCtx, cancelAdmission := context.WithTimeout(
+		ctx,
+		toolregistry.MaxToolCallWait+toolregistry.ResultStreamTransportBudget,
+	)
 	callRef, err := e.client.CallTool(admissionCtx, toolsetID, call.Name, call.Payload, tmeta)
 	cancelAdmission()
 	if err != nil {

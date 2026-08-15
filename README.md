@@ -58,15 +58,15 @@ results. The registry
 owns graceful admission handoff: same-token replicas
 scale or roll together. During a different-token rolling deployment, the new
 provider retries registration while the old admission drains. New calls wait
-without being admitted until the replacement is healthy, using that wait as
+without being published until the replacement is healthy, using that wait as
 part of their existing execution deadline. `Serve` generates one UUID incarnation, so
 a delayed release from an old process cannot delete its replacement. Lease
 membership, health epoch, and last pong live in one CAS catalog record. Every
 retirement and replacement permanently retains the prior token; this set grows
 with distinct admissions and cannot be truncated safely. The gateway derives a
 global transport `ToolUseID` from required run plus call identity. Its global
-call record stores a token-independent request digest, the immutable admitted
-token, overload state, and the complete canonical terminal. Exact retained calls
+call record stores a token-independent request digest, the provider token that
+becomes immutable at publication, overload state, and the complete canonical terminal. Exact retained calls
 replay before current routing or health lookup after a generation changes.
 Transport readers remain independent and oldest-first. Queue saturation emits
 top-level retry control with reason `provider_overloaded`, bounded delay, and no
@@ -85,15 +85,17 @@ that lease disappears, registry-owned settlement publishes `outcome_unknown`
 because the effect may have occurred; execution never transfers to another
 provider and the canonical terminal remains retained.
 Registry startup strictly validates every authoritative catalog record and
-fails before serving if any persisted value uses an incompatible shape. A new
-call stores one admitted or rejected state. An active toolset with no healthy
-provider does not choose either state: the call waits for availability until
-its execution deadline. This covers a release handoff without guessing whether
-the absence came from a deployment or an outage. If the deadline expires, the
-registry commits the rejected state before returning typed
-`call_not_admitted`. Exact
+fails before serving if any persisted value uses an incompatible shape. An
+active toolset with no healthy provider waits until its execution deadline.
+Publication then atomically rechecks the selected provider. If that provider
+started draining, the still-unpublished call waits for and selects the current
+healthy provider without extending its deadline. The provider assignment
+becomes immutable when request publication commits. If the deadline expires
+first, the registry commits the rejected state before returning typed
+`call_not_admitted`. This covers a release handoff without guessing whether the
+absence came from a deployment or an outage. Exact
 retries cannot execute that identity while the run-scoped decision is retained,
-so executors may safely replan; only admitted calls with ambiguous execution
+so executors may safely replan; only published calls with ambiguous execution
 become `outcome_unknown`.
 This decision contract is wire protocol version 8. Quiesce traffic, drain calls
 and providers, stop version 7 registries, and remove version 7 catalog entries

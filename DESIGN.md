@@ -457,8 +457,11 @@ Same-token scaling and RollingUpdate require no deployment token persistence.
 A different schema or admission revision may use the same RollingUpdate: the
 new pod stays blocked at registration while the old admission drains, so
 incompatible providers never execute concurrently. A new call that observes no
-healthy provider waits without creating an admission decision until the
-replacement becomes healthy or the existing execution deadline expires.
+healthy provider waits until the replacement becomes healthy or the existing
+execution deadline expires. Request publication atomically checks that the
+selected provider is still routable. If draining won that race, the
+unpublished call selects the replacement and tries publication again; only a
+published call has an immutable provider assignment.
 Graceful releases permit immediate server-owned handoff, while crashes delay
 handoff until lease expiry. A wire protocol change remains a coordinated hard
 cutover because registry servers and consumers do not negotiate envelope
@@ -530,22 +533,24 @@ most once per retained overload event across replicas. It never creates retry
 state or republishes through a replacement provider. Provider ping intake remains
 available while the retry waits.
 
-The registry atomically admits each global `ToolUseID` once. The authoritative
+The registry atomically records each global `ToolUseID` once. The authoritative
 record stores a token-independent digest of toolset, tool, payload, and call
-metadata plus the admitted registration token. `CallTool` attaches to this
-record before current catalog or health lookup; an exact retained retry therefore
-returns its original token and deadlines after retirement or replacement.
-For a new call, the registry atomically stores one admitted or rejected state in
-the tool-use record. A valid call that finds no healthy provider waits before
-that decision and subtracts the wait from its execution budget. Provider
-recovery admits the call normally; deadline expiry commits the rejected state.
+metadata. Before request publication, its provider token may move to the
+current healthy registration because no provider can have started the call.
+Publication atomically verifies that token and makes the positive assignment
+immutable. `CallTool` attaches to this record before current catalog or health
+lookup; an exact retry of a published call therefore returns its original token
+and deadlines after retirement or replacement. A valid unpublished call that
+finds no healthy provider waits and subtracts the wait from its original
+execution budget. Provider recovery publishes the call normally; deadline
+expiry atomically replaces the unpublished state with the rejected decision.
 Other catalog and health failures commit the rejected state or observe an
 admission that won the race. The registry does not infer whether a no-provider
 interval came from a deployment or an outage. A rejected state returns typed
 `call_not_admitted` and prevents every exact retry from executing while that
 run-scoped decision is retained, so the executor may safely replan. Generated
 `not_found` and `validation_error` preserve their actionable types in the same
-decision record. Errors after an admitted decision remain ambiguous and produce
+decision record. Errors after request publication remain ambiguous and produce
 `outcome_unknown`, which forbids replacement execution because an effect may
 have occurred.
 The explicit decision record is wire protocol version 8. Version 7 and version

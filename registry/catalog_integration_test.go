@@ -476,6 +476,150 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 	assert.Equal(t, callClaimExpired, disposition)
 }
 
+func TestUnpublishedCallMovesToReplacementProvider(t *testing.T) {
+	ctx := context.Background()
+	name := fmt.Sprintf("call-handoff-%d", time.Now().UnixNano())
+	store := newCallAdmissionStore(testRedisClient, name)
+	catalogMap, err := rmap.Join(ctx, name+":toolsets", testRedisClient)
+	require.NoError(t, err)
+	t.Cleanup(catalogMap.Close)
+	catalog := newToolsetCatalog(
+		authoritativeCatalogMap{Map: catalogMap, rdb: testRedisClient},
+		newRedisTimeSource(testRedisClient),
+	)
+	const (
+		toolset   = "call-handoff-test"
+		toolUseID = "unpublished-call"
+		digest    = "unpublished-digest"
+		streamID  = "toolset:call-handoff-test:requests"
+	)
+	toolsetSchema := testCatalogToolset(toolset, "provider handoff", nil)
+	oldRegistration, err := catalog.Register(
+		ctx,
+		toolsetSchema,
+		testAdmissionRevisionA,
+		"old-provider",
+		testIncarnationA,
+		time.Minute,
+	)
+	require.NoError(t, err)
+	oldAdmission, created, err := store.Ensure(
+		ctx,
+		toolset,
+		toolUseID,
+		oldRegistration.RegistrationToken,
+		digest,
+		time.Minute,
+		5*time.Minute,
+		outcomeUnknownPayload(oldRegistration.RegistrationToken, toolUseID),
+	)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	require.NoError(t, catalog.DrainProvider(
+		ctx,
+		toolset,
+		"old-provider",
+		testIncarnationA,
+		oldRegistration.RegistrationToken,
+		time.Minute,
+	))
+	_, err = publishAdmittedBounded(
+		ctx,
+		testRedisClient,
+		streamID,
+		maxQueuedToolCalls,
+		string(toolregistry.MessageTypeCall),
+		[]byte(`{"type":"call"}`),
+		oldAdmission,
+		"",
+	)
+	require.ErrorIs(t, err, errRoutingUnavailable)
+	require.NoError(t, catalog.ReleaseProvider(
+		ctx,
+		toolset,
+		"old-provider",
+		testIncarnationA,
+		oldRegistration.RegistrationToken,
+	))
+	newRegistration, err := catalog.Register(
+		ctx,
+		toolsetSchema,
+		testAdmissionRevisionB,
+		"new-provider",
+		testIncarnationB,
+		time.Minute,
+	)
+	require.NoError(t, err)
+	rebound, created, err := store.Ensure(
+		ctx,
+		toolset,
+		toolUseID,
+		newRegistration.RegistrationToken,
+		digest,
+		time.Minute,
+		5*time.Minute,
+		outcomeUnknownPayload(newRegistration.RegistrationToken, toolUseID),
+	)
+	require.NoError(t, err)
+	assert.False(t, created)
+	assert.Equal(t, oldAdmission.executionDeadline, rebound.executionDeadline)
+	assert.Equal(t, newRegistration.RegistrationToken, rebound.registrationToken)
+
+	_, err = publishAdmittedBounded(
+		ctx,
+		testRedisClient,
+		streamID,
+		maxQueuedToolCalls,
+		string(toolregistry.MessageTypeCall),
+		[]byte(`{"type":"call"}`),
+		oldAdmission,
+		"",
+	)
+	require.ErrorIs(t, err, errCallAdmissionChanged)
+	_, err = publishAdmittedBounded(
+		ctx,
+		testRedisClient,
+		streamID,
+		maxQueuedToolCalls,
+		string(toolregistry.MessageTypeCall),
+		[]byte(`{"type":"call"}`),
+		rebound,
+		"",
+	)
+	require.NoError(t, err)
+
+	published, err := store.Reject(
+		ctx,
+		toolset,
+		toolUseID,
+		digest,
+		callRejection{
+			kind:    callRejectionUnavailable,
+			message: "provider disappeared after publication",
+		},
+		5*time.Minute,
+	)
+	require.NoError(t, err)
+	assert.True(t, published.published)
+	assert.Equal(t, newRegistration.RegistrationToken, published.registrationToken)
+	assertStoredCallDecision(t, ctx, store, toolUseID, true)
+
+	replayed, _, err := store.Ensure(
+		ctx,
+		toolset,
+		toolUseID,
+		oldRegistration.RegistrationToken,
+		digest,
+		time.Minute,
+		5*time.Minute,
+		outcomeUnknownPayload(oldRegistration.RegistrationToken, toolUseID),
+	)
+	require.NoError(t, err)
+	assert.True(t, replayed.published)
+	assert.Equal(t, newRegistration.RegistrationToken, replayed.registrationToken)
+}
+
 func TestCallAdmissionRetryCannotCreateExpiredAdmission(t *testing.T) {
 	ctx := context.Background()
 	name := fmt.Sprintf("call-admission-attach-%d", time.Now().UnixNano())
@@ -562,7 +706,7 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 	assert.Positive(t, ttlAfter)
 	assert.LessOrEqual(t, ttlAfter, ttlBefore)
 
-	replayed, err := secondStore.Reject(
+	_, err = secondStore.Reject(
 		ctx,
 		toolset,
 		"admit-first",
@@ -570,9 +714,9 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 		rejection,
 		5*time.Second,
 	)
-	require.NoError(t, err)
-	require.Equal(t, admitted, replayed)
-	assertStoredCallDecision(t, ctx, firstStore, "admit-first", true)
+	require.ErrorAs(t, err, &rejected)
+	require.Equal(t, rejection, rejected.rejection)
+	assertStoredCallDecision(t, ctx, firstStore, "admit-first", false)
 
 	fractionalLegacyID := "fractional-legacy"
 	_, _, err = firstStore.Ensure(
@@ -827,15 +971,13 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 		close(start)
 		first := <-results
 		second := <-results
-		require.Equal(t, first.admitted, second.admitted)
-		if first.admitted {
-			require.NoError(t, first.err)
-			require.NoError(t, second.err)
-			assertStoredCallDecision(t, ctx, firstStore, toolUseID, true)
-			continue
+		require.False(t, first.admitted && second.admitted)
+		for _, result := range []decisionResult{first, second} {
+			if result.err != nil {
+				require.ErrorAs(t, result.err, &rejected)
+				require.Equal(t, rejection, rejected.rejection)
+			}
 		}
-		require.ErrorAs(t, first.err, &rejected)
-		require.ErrorAs(t, second.err, &rejected)
 		assertStoredCallDecision(t, ctx, firstStore, toolUseID, false)
 	}
 }

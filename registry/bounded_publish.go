@@ -32,6 +32,9 @@ const (
 var (
 	// errToolsetQueueFull reports that every retryable publication slot is taken.
 	errToolsetQueueFull = errors.New("toolset call queue is full")
+	// errCallAdmissionChanged reports that another exact caller changed an
+	// unpublished provider assignment before this publication could commit.
+	errCallAdmissionChanged = errors.New("tool call admission changed before publication")
 	// errRoutingUnavailable reports that the selected admission has no
 	// non-draining provider at the publication linearization point.
 	errRoutingUnavailable = errors.New("toolset has no routable provider")
@@ -53,7 +56,9 @@ var (
 var boundedPublishScript = redis.NewScript(`
 local admitted = ARGV[4] ~= ""
 if admitted then
-    if redis.call("HGET", KEYS[2], "digest") ~= ARGV[4] then
+    if redis.call("HGET", KEYS[2], "decision") ~= "admitted"
+    or redis.call("HGET", KEYS[2], "digest") ~= ARGV[4]
+    or redis.call("HGET", KEYS[2], "registration_token") ~= ARGV[7] then
         return redis.error_reply("CALLADMISSIONCHANGED")
     end
     local published = redis.call("HGET", KEYS[2], "published")
@@ -247,7 +252,7 @@ func publishAdmittedBounded(
 	if err != nil {
 		switch {
 		case redis.HasErrorPrefix(err, "CALLADMISSIONCHANGED"):
-			return "", errors.New("call admission changed before publication")
+			return "", errCallAdmissionChanged
 		case redis.HasErrorPrefix(err, "ROUTINGUNAVAILABLE"):
 			return "", errRoutingUnavailable
 		}
