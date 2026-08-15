@@ -3,7 +3,7 @@
 package registry
 
 // These live-Redis tests pin global call identity across admission transitions.
-// Current routing may change or disappear, but a retained call keeps its
+// Current routing may change or disappear, but a published call keeps its
 // original token and terminal stream while provider authority remains a
 // separate catalog fact.
 

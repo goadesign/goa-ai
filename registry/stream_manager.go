@@ -30,7 +30,7 @@ type StreamManager interface {
 	PublishToolCall(ctx context.Context, toolset string, msg toolregistry.ToolCallMessage) error
 
 	// PublishAdmittedToolCall atomically publishes one exact initial or overload
-	// attempt and commits it in the immutable call admission.
+	// attempt and makes its provider assignment permanent in the call record.
 	PublishAdmittedToolCall(
 		ctx context.Context,
 		toolset string,

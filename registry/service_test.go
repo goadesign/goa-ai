@@ -679,7 +679,7 @@ func TestCallToolWaitsForHealthyProviderBeforeAdmission(t *testing.T) {
 		toolset,
 	)
 	require.NoError(t, err)
-	svc.executionTimeout = time.Second
+	svc.executionTimeout = 2 * time.Second
 
 	result, err := svc.CallTool(context.Background(), &genregistry.CallToolPayload{
 		Toolset:             toolset.Name,

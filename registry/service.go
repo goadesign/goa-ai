@@ -139,8 +139,9 @@ const (
 	DefaultProviderLeaseDuration = 2 * time.Minute
 
 	// providerHealthRetryInterval bounds how long a waiting call takes to
-	// observe that an active toolset has regained a healthy provider.
-	providerHealthRetryInterval = 100 * time.Millisecond
+	// observe that an active toolset has regained a healthy provider without
+	// making every waiting call poll Redis aggressively during a handoff.
+	providerHealthRetryInterval = time.Second
 )
 
 // Compile-time check that Service implements the generated interface.

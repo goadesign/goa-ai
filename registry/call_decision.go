@@ -1,7 +1,7 @@
 // Package registry makes each routed tool-use identity choose exactly one
-// pre-publication outcome across all registry replicas. The first atomic Redis
-// write admits the immutable request or stores a typed rejection; exact retries
-// can only observe that winning decision until it expires.
+// request or rejection across all registry replicas. Before publication, the
+// admitted request may move to the current healthy provider. Publication makes
+// that assignment permanent; exact retries then observe it until it expires.
 package registry
 
 import (
