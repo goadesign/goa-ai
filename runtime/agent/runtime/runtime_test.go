@@ -447,6 +447,120 @@ func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testi
 	require.Equal(t, "done", agentMessageText(appended[0]))
 }
 
+func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := runloginmem.New()
+	sessions := sessioninmem.New()
+	_, err := sessions.CreateSession(ctx, "sess-1", time.Now().UTC())
+	require.NoError(t, err)
+	tool := newAnyJSONSpec(tools.Ident("chat.ask_clarification"), "chat")
+	rt := &Runtime{
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: store,
+		SessionStore:  sessions,
+		Bus:           noopHooks{},
+	}
+	seedTestToolSpecs(rt, tool)
+	rt.agents = map[agent.Ident]AgentRegistration{
+		"svc.agent": {
+			ID: "svc.agent",
+			Planner: &stubPlanner{resume: func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+				require.NoError(t, transcript.ValidatePlannerTranscript(input.Messages))
+				return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "done"}},
+				}}}, nil
+			}},
+			ResumeActivityName: "resume",
+		},
+	}
+
+	firstInput := &RunInput{
+		AgentID:   "svc.agent",
+		RunID:     "run-1",
+		SessionID: "sess-1",
+		TurnID:    "turn-1",
+	}
+	seedRunMeta(t, rt, firstInput)
+	firstContext := &testWorkflowContext{
+		ctx:         ctx,
+		runtime:     rt,
+		hookRuntime: rt,
+	}
+	first, err := rt.runLoop(
+		firstContext,
+		AgentRegistration{ResumeActivityName: "resume"},
+		firstInput,
+		&planner.PlanInput{RunContext: run.Context{
+			RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
+		}},
+		&planner.PlanResult{Await: planner.NewAwait(
+			planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
+				ID:         "clarification-1",
+				ToolName:   tool.Name,
+				ToolCallID: "call-1",
+				Payload:    rawjson.Message(`{"question":"Which facility?"}`),
+				Question:   "Which facility?",
+			}),
+		)},
+		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		time.Time{},
+		time.Time{},
+		"turn-1",
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, first.Suspension)
+
+	secondContext := &testWorkflowContext{
+		ctx:         ctx,
+		runtime:     rt,
+		hookRuntime: rt,
+	}
+	out, err := rt.ExecuteWorkflow(secondContext, &RunInput{
+		AgentID:   "svc.agent",
+		RunID:     "run-2",
+		SessionID: "sess-1",
+		TurnID:    "turn-2",
+		Continuation: &api.RunContinuationInput{
+			Suspension: first.Suspension,
+			Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
+				ID:     "clarification-1",
+				Answer: "Building A",
+			}},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "done", agentMessageText(out.Final))
+
+	page, err := store.List(ctx, "run-2", "", 20)
+	require.NoError(t, err)
+	var (
+		transcriptEvents []*runlog.Event
+		messages         []*model.Message
+	)
+	for _, event := range page.Events {
+		if event.Type != transcript.RunLogMessagesSeeded && event.Type != transcript.RunLogMessagesAppended {
+			continue
+		}
+		transcriptEvents = append(transcriptEvents, event)
+		delta, err := transcript.DecodeRunLogDelta(event.Payload)
+		require.NoError(t, err)
+		messages = append(messages, delta...)
+	}
+	require.NotEmpty(t, transcriptEvents)
+	require.Equal(t, transcript.RunLogMessagesSeeded, transcriptEvents[0].Type)
+	require.NoError(t, transcript.ValidatePlannerTranscript(messages))
+	require.Len(t, messages, 3)
+	require.Equal(t, model.ConversationRoleAssistant, messages[0].Role)
+	require.Equal(t, model.ConversationRoleUser, messages[1].Role)
+	require.Equal(t, model.ConversationRoleAssistant, messages[2].Role)
+}
+
 func TestExecuteWorkflowEmitsRunLabelsOnTerminalCompletion(t *testing.T) {
 	t.Parallel()
 

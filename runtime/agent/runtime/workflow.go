@@ -174,6 +174,24 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		}
 	}()
 	if checkpoint != nil {
+		if len(checkpoint.BaseMessages) > 0 {
+			// A continuation starts a distinct run from the complete planner
+			// transcript restored from the predecessor checkpoint. Record that
+			// transcript as this run's seed before appending the external
+			// response so the successor remains independently replayable.
+			if err := r.publishTranscriptSeed(
+				wfCtx.Context(),
+				input.RunID,
+				input.AgentID,
+				input.SessionID,
+				turnID,
+				checkpoint.BaseMessages,
+			); err != nil {
+				finalErr = err
+				finalStatus = terminalRunStatusForError(err)
+				return nil, err
+			}
+		}
 		if err := r.publishHook(
 			wfCtx.Context(),
 			hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhaseExecutingTools),
