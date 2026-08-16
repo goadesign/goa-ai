@@ -262,10 +262,13 @@ request to clients and must atomically accept one response before it starts the
 next workflow, so concurrent submissions cannot continue the same state twice
 under different run IDs. A continuation supplies the completed run ID and
 exactly one typed response for the first request; the runtime loads its own
-checkpoint. If requests remain, that workflow stores and returns a new
-suspension. The checkpoint
-restores the transcript, planner state, labels, policy, nested-agent identity,
-and exact tool-call/result provenance. Required tool names are recorded, and
+checkpoint. The application may also supply engine options for the new
+workflow, such as memo and search attributes used for ownership and
+observability. These options do not alter the saved execution contract. If
+requests remain, that workflow stores and returns a new suspension. The
+checkpoint restores the transcript, planner state, labels, policy,
+nested-agent identity, and exact tool-call/result provenance. Required tool
+names are recorded, and
 `Runtime.ValidateContinuation` rejects a checkpoint when the new worker does
 not register one of them. Restoration passes every concrete saved payload and
 result through the current generated codec. Compatible tool evolution can

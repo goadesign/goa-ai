@@ -148,6 +148,10 @@ func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 	}))
 
 	client := rt.MustClient(agent.Ident("svc.agent"))
+	workflowOptions := &WorkflowOptions{
+		Memo:             map[string]any{"owner": "house-42"},
+		SearchAttributes: map[string]any{"tenant": "house-42"},
+	}
 	handle, err := client.StartContinuation(
 		context.Background(),
 		"session-1",
@@ -157,9 +161,12 @@ func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 		&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
 			ID: "clarification-1", Answer: "Building A",
 		}},
+		workflowOptions,
 	)
 	require.NoError(t, err)
 	require.Equal(t, "service.workflow", eng.last.Workflow)
+	require.Equal(t, workflowOptions.Memo, eng.last.Memo)
+	require.Equal(t, workflowOptions.SearchAttributes, eng.last.SearchAttributes)
 	require.Empty(t, eng.last.Input.Labels)
 	run, err := rt.SessionStore.LoadRun(context.Background(), "run-2")
 	require.NoError(t, err)

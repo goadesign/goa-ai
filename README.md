@@ -531,15 +531,21 @@ if out.Suspension != nil {
 			ID:     pending.Await.Clarification.ID,
 			Answer: "Unit 7",
 		}},
+		&runtime.WorkflowOptions{
+			Memo: map[string]any{"account_id": "account-42"},
+		},
 	)
 }
 ```
 
 The checkpoint is opaque and may contain private planner state. The runtime's
 session store keeps it; callers pass only the completed run ID and the user's
-typed response. Before routing a continuation, the runtime verifies the
-checkpoint version, visible pending requests, and required tool names. The receiving worker restores
-saved payloads and results through its current generated codecs, so compatible
+typed response. Callers may also attach memo, search attributes, or other
+engine start options to the new workflow; these options do not override the
+checkpoint's planner policy or execution state. Before routing a continuation,
+the runtime verifies the checkpoint version, visible pending requests, and
+required tool names. The receiving worker restores saved payloads and results
+through its current generated codecs, so compatible
 tool evolution continues while incompatible saved values fail at the codec
 boundary. When an external answer completes a tool call from the previous
 workflow, the emitted `tool_end` keeps the current result run as its event run
