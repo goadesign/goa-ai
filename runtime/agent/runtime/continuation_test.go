@@ -285,19 +285,23 @@ func TestContinuationActionNameStaysStableAsChainAdvances(t *testing.T) {
 	assert.JSONEq(t, `{"cursor":"second"}`, string(result.ToolCalls[0].Payload))
 }
 
-func TestContinuationActionNameShape(t *testing.T) {
+func TestGeneratedContinuationToolNameFormat(t *testing.T) {
 	t.Parallel()
 
-	require.True(t, isContinuationActionName(
-		continuationActionName("tools.continue_search", "source-1").String(),
+	require.True(t, IsGeneratedContinuationToolName(
+		continuationActionName("tools.continue_search", "source-1"),
 	))
-	for _, name := range []string{
+	for _, name := range []tools.Ident{
+		"continue_",
 		"continue_search",
 		"continue_9ce1cab750fa5b0523c1363",
 		"continue_9ce1cab750fa5b0523c13632f",
 		"continue_9ce1cab750fa5b0523c1363z",
+		"continue_9CE1CAB750FA5B0523C13632",
+		"tools.continue_search",
+		"continued_search",
 	} {
-		assert.False(t, isContinuationActionName(name), name)
+		assert.False(t, IsGeneratedContinuationToolName(name), name)
 	}
 }
 

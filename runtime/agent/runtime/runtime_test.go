@@ -853,6 +853,64 @@ func TestRegisterAgentRejectsTerminalSpecWithoutBookkeeping(t *testing.T) {
 	require.ErrorContains(t, err, "terminal tool \"tasks.complete\" must also declare bookkeeping")
 }
 
+func TestRegistrationRejectsGeneratedContinuationToolName(t *testing.T) {
+	reservedName := continuationActionName("svc.tools.continue_results", "source-1")
+	spec := newAnyJSONSpec(reservedName, "svc.tools")
+
+	t.Run("agent", func(t *testing.T) {
+		rt := New(WithEngine(&stubEngine{}))
+		err := rt.RegisterAgent(t.Context(), AgentRegistration{
+			ID:      "service.agent",
+			Planner: &stubPlanner{},
+			Workflow: engine.WorkflowDefinition{
+				Name:      "service.workflow",
+				TaskQueue: "service.queue",
+				Handler:   rt.ExecuteWorkflow,
+			},
+			PlanActivityName:    "service.agent.plan",
+			ResumeActivityName:  "service.agent.resume",
+			ExecuteToolActivity: "service.agent.executetool",
+			Specs:               []tools.ToolSpec{spec},
+		})
+
+		require.ErrorIs(t, err, ErrInvalidConfig)
+		require.ErrorContains(t, err, fmt.Sprintf(
+			`tool name %q matches the runtime-generated continuation format "continue_" followed by 24 lowercase hexadecimal characters`,
+			reservedName,
+		))
+	})
+
+	t.Run("toolset", func(t *testing.T) {
+		rt := New()
+		err := rt.RegisterToolset(ToolsetRegistration{
+			Name: "svc.tools",
+			Execute: wrapExecute(func(context.Context, *planner.ToolRequest) (*planner.ToolResult, error) {
+				return &planner.ToolResult{}, nil
+			}),
+			Specs: []tools.ToolSpec{spec},
+		})
+
+		require.ErrorIs(t, err, ErrInvalidConfig)
+		require.ErrorContains(t, err, fmt.Sprintf(
+			`tool name %q matches the runtime-generated continuation format "continue_" followed by 24 lowercase hexadecimal characters`,
+			reservedName,
+		))
+	})
+
+	t.Run("similar authored name", func(t *testing.T) {
+		rt := New()
+		err := rt.RegisterToolset(ToolsetRegistration{
+			Name: "svc.tools",
+			Execute: wrapExecute(func(context.Context, *planner.ToolRequest) (*planner.ToolResult, error) {
+				return &planner.ToolResult{}, nil
+			}),
+			Specs: []tools.ToolSpec{newAnyJSONSpec("continue_authored_tool", "svc.tools")},
+		})
+
+		require.NoError(t, err)
+	})
+}
+
 func TestRegisterToolsetRejectsEmptyToolMetadataTitle(t *testing.T) {
 	rt := New()
 	toolID := tools.Ident("svc.tools.fetch")

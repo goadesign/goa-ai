@@ -877,7 +877,11 @@ selects the latest result heuristically. Completed chains remain absent, while
 multiple unfinished chains retain distinct action names derived from their
 source call identities. The configured run-log store must implement
 `runlog.SessionReader` for a session-backed transcript containing dedicated
-continuation calls.
+continuation calls. Tool names matching `continue_` followed by exactly 24
+lowercase hexadecimal characters are reserved for runtime-generated
+continuation tools. Agent and toolset registration reject that exact format;
+similar names such as `continue_search` and qualified canonical tools such as
+`tools.continue_search` remain valid.
 
 For each tool with a non-empty payload, the plugin derives JSON Schema from the
 Goa attribute using Goa's `openapi.Schema` type for complete JSON Schema draft

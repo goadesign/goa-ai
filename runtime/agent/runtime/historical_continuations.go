@@ -14,6 +14,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/runlog"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 const historicalContinuationPageSize = 256
@@ -165,7 +166,7 @@ func historicalContinuationToolCallIDs(
 				continue
 			}
 			if _, canonical := canonicalNames[toolUse.Name]; !canonical &&
-				!isContinuationActionName(toolUse.Name) {
+				!IsGeneratedContinuationToolName(tools.Ident(toolUse.Name)) {
 				continue
 			}
 			if toolUse.ID == "" {

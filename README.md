@@ -638,7 +638,11 @@ structured transcript, the runtime reconstructs still-live actions from the
 transcript's tool-call IDs and its canonical session run log. The action keeps
 the same model-facing name across turns without persisting or exposing a second
 cursor copy. Session-backed runtimes therefore require their run-log store to
-implement `runlog.SessionReader`.
+implement `runlog.SessionReader`. Names matching `continue_` plus exactly 24
+lowercase hexadecimal characters are reserved for these runtime-generated
+tools; agent and toolset registration reject them. Similar authored names such
+as `continue_search` and qualified names such as `tools.continue_search` remain
+valid.
 
 Use `Cursor` directly only when repeating the original arguments is part of the
 public contract. Truncated results must carry a continuation: bound method
