@@ -1,15 +1,21 @@
 package runtime
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/runlog"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -42,6 +48,126 @@ func TestContinuationActionBindsExactChainWithoutExposingCursor(t *testing.T) {
 	assert.Equal(t, "source-1", call.ContinuationRootToolCallID)
 	assert.JSONEq(t, `{}`, string(call.ModelPayload))
 	assert.JSONEq(t, `{"cursor":"opaque-next-page"}`, string(call.Payload))
+}
+
+func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
+	t.Parallel()
+
+	rt, search, continuation := continuationTestRuntime()
+	store := runloginmem.New()
+	rt.RunEventStore = store
+	const (
+		sessionID = "session-1"
+		agentID   = "svc.agent"
+	)
+	sourceCall := hooks.NewToolCallScheduledEvent(
+		"run-1",
+		agentID,
+		sessionID,
+		search.Name,
+		"source-1",
+		rawjson.Message(`{"query":"alarms"}`),
+		"",
+		"",
+		0,
+	)
+	appendHistoricalHookEvent(t, store, sourceCall, "source-call", 1)
+	firstCursor := "first"
+	appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
+		"run-1",
+		agentID,
+		sessionID,
+		"run-1",
+		search.Name,
+		"source-1",
+		"",
+		rawjson.Message(`{"items":["page-1"]}`),
+		len(`{"items":["page-1"]}`),
+		false,
+		"",
+		nil,
+		"page 1",
+		&agent.Bounds{Returned: 1, Truncated: true, NextCursor: &firstCursor},
+		time.Second,
+		nil,
+		nil,
+	), "source-result", 2)
+
+	continueCall := hooks.NewToolCallScheduledEvent(
+		"run-1",
+		agentID,
+		sessionID,
+		continuation.Name,
+		"continue-1",
+		rawjson.Message(`{"cursor":"first"}`),
+		"",
+		"",
+		0,
+	)
+	continueCall.ContinuationRootToolCallID = "source-1"
+	appendHistoricalHookEvent(t, store, continueCall, "continue-call", 3)
+	secondCursor := "second"
+	appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
+		"run-1",
+		agentID,
+		sessionID,
+		"run-1",
+		continuation.Name,
+		"continue-1",
+		"",
+		rawjson.Message(`{"items":["page-2"]}`),
+		len(`{"items":["page-2"]}`),
+		false,
+		"",
+		nil,
+		"page 2",
+		&agent.Bounds{Returned: 1, Truncated: true, NextCursor: &secondCursor},
+		time.Second,
+		nil,
+		nil,
+	), "continue-result", 4)
+
+	input := &PlanActivityInput{
+		AgentID: agentID,
+		Messages: []*model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.ToolUsePart{
+					ID:    "source-1",
+					Name:  search.Name.String(),
+					Input: rawjson.Message(`{"query":"alarms"}`),
+				},
+				model.ToolUsePart{
+					ID:    "continue-1",
+					Name:  continuationActionName(continuation.Name, "source-1").String(),
+					Input: rawjson.Message(`{}`),
+				},
+			},
+		}},
+		RunContext: run.Context{
+			SessionID: sessionID,
+		},
+	}
+
+	outputs, err := rt.loadHistoricalContinuationOutputs(t.Context(), input)
+	require.NoError(t, err)
+	require.Len(t, outputs, 2)
+	actions, err := rt.availableContinuationActions(agentID, outputs)
+	require.NoError(t, err)
+	require.Len(t, actions, 1)
+	assert.Equal(t, continuationActionName(continuation.Name, "source-1"), actions[0].modelName)
+	assert.NotContains(t, actions[0].description, firstCursor)
+	assert.NotContains(t, actions[0].description, secondCursor)
+
+	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:    actions[0].modelName,
+		Payload: rawjson.Message(`{}`),
+	}}}
+	require.NoError(t, rt.bindContinuationCursors(result, actions))
+	require.Len(t, result.ToolCalls, 1)
+	assert.Equal(t, continuation.Name, result.ToolCalls[0].Name)
+	assert.Equal(t, "source-1", result.ToolCalls[0].ContinuationRootToolCallID)
+	assert.JSONEq(t, `{"cursor":"second"}`, string(result.ToolCalls[0].Payload))
 }
 
 func TestContinuationActionRetainsCanonicalQueryPayload(t *testing.T) {
@@ -157,6 +283,22 @@ func TestContinuationActionNameStaysStableAsChainAdvances(t *testing.T) {
 	}}}
 	require.NoError(t, rt.bindContinuationCursors(result, second))
 	assert.JSONEq(t, `{"cursor":"second"}`, string(result.ToolCalls[0].Payload))
+}
+
+func TestContinuationActionNameShape(t *testing.T) {
+	t.Parallel()
+
+	require.True(t, isContinuationActionName(
+		continuationActionName("tools.continue_search", "source-1").String(),
+	))
+	for _, name := range []string{
+		"continue_search",
+		"continue_9ce1cab750fa5b0523c1363",
+		"continue_9ce1cab750fa5b0523c13632f",
+		"continue_9ce1cab750fa5b0523c1363z",
+	} {
+		assert.False(t, isContinuationActionName(name), name)
+	}
 }
 
 func TestContinuationActionsKeepParallelChainsIndependent(t *testing.T) {
@@ -395,4 +537,33 @@ func sourceContinuationOutput(
 
 func pointer[T any](value T) *T {
 	return &value
+}
+
+// appendHistoricalHookEvent records one canonical event in the session log used
+// by the cross-run continuation reconstruction test.
+func appendHistoricalHookEvent(
+	t *testing.T,
+	store runlog.Store,
+	event hooks.Event,
+	eventKey string,
+	timestampMS int64,
+) {
+	t.Helper()
+	input, err := hooks.EncodeToRecordInput(event, hooks.EncodeOptions{
+		TurnID:      "turn-1",
+		EventKey:    eventKey,
+		TimestampMS: timestampMS,
+	})
+	require.NoError(t, err)
+	_, err = store.Append(context.Background(), &runlog.Event{
+		EventKey:  input.EventKey,
+		RunID:     input.RunID,
+		AgentID:   input.AgentID,
+		SessionID: input.SessionID,
+		TurnID:    input.TurnID,
+		Type:      input.Type,
+		Payload:   input.Payload,
+		Timestamp: time.UnixMilli(input.TimestampMS).UTC(),
+	})
+	require.NoError(t, err)
 }

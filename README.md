@@ -633,7 +633,12 @@ action, so the model sees one truthful continuation name. The model can choose a
 result sets without copying a cursor or call ID. The runtime maps the chosen
 action to the generated continuation tool, binds its exact cursor and, when
 required, retains the prior canonical query payload for execution. Continuation
-cursors must advance on every successful page.
+cursors must advance on every successful page. When a later run receives the
+structured transcript, the runtime reconstructs still-live actions from the
+transcript's tool-call IDs and its canonical session run log. The action keeps
+the same model-facing name across turns without persisting or exposing a second
+cursor copy. Session-backed runtimes therefore require their run-log store to
+implement `runlog.SessionReader`.
 
 Use `Cursor` directly only when repeating the original arguments is part of the
 public contract. Truncated results must carry a continuation: bound method

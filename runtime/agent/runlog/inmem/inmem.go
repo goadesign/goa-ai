@@ -24,15 +24,18 @@ type (
 		events map[string][]*runlog.Event
 		// per-run stable event identities.
 		eventsByKey map[string]map[string]*runlog.Event
+		// per-session append order across runs.
+		sessionEvents map[string][]*runlog.Event
 	}
 )
 
 // New returns a new in-memory run log store.
 func New() *Store {
 	return &Store{
-		nextSeq:     make(map[string]int64),
-		events:      make(map[string][]*runlog.Event),
-		eventsByKey: make(map[string]map[string]*runlog.Event),
+		nextSeq:       make(map[string]int64),
+		events:        make(map[string][]*runlog.Event),
+		eventsByKey:   make(map[string]map[string]*runlog.Event),
+		sessionEvents: make(map[string][]*runlog.Event),
 	}
 }
 
@@ -71,6 +74,9 @@ func (s *Store) Append(_ context.Context, e *runlog.Event) (runlog.AppendResult,
 	ev := *e
 	s.events[e.RunID] = append(s.events[e.RunID], &ev)
 	byKey[e.EventKey] = &ev
+	if e.SessionID != "" {
+		s.sessionEvents[e.SessionID] = append(s.sessionEvents[e.SessionID], &ev)
+	}
 	return runlog.AppendResult{ID: ev.ID, Inserted: true}, nil
 }
 
@@ -120,6 +126,43 @@ func (s *Store) List(_ context.Context, runID string, cursor string, limit int) 
 		next = events[len(events)-1].ID
 	}
 
+	return runlog.Page{
+		Events:     events,
+		NextCursor: next,
+	}, nil
+}
+
+// ListSession implements runlog.SessionReader.
+func (s *Store) ListSession(_ context.Context, sessionID string, cursor string, limit int) (runlog.Page, error) {
+	if sessionID == "" {
+		return runlog.Page{}, fmt.Errorf("session_id is required")
+	}
+	if limit <= 0 {
+		return runlog.Page{}, fmt.Errorf("limit must be > 0")
+	}
+
+	var start int
+	if cursor != "" {
+		parsed, err := strconv.Atoi(cursor)
+		if err != nil {
+			return runlog.Page{}, fmt.Errorf("invalid cursor %q: %w", cursor, err)
+		}
+		start = parsed
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	all := s.sessionEvents[sessionID]
+	if start >= len(all) {
+		return runlog.Page{}, nil
+	}
+	end := min(start+limit, len(all))
+	events := append([]*runlog.Event(nil), all[start:end]...)
+	next := ""
+	if end < len(all) {
+		next = strconv.Itoa(end)
+	}
 	return runlog.Page{
 		Events:     events,
 		NextCursor: next,

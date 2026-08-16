@@ -258,6 +258,17 @@ func continuationActionName(toolName tools.Ident, rootToolCallID string) tools.I
 	return tools.Ident("continue_" + hex.EncodeToString(sum[:12]))
 }
 
+// isContinuationActionName reports whether name has the exact provider-safe
+// shape emitted by continuationActionName.
+func isContinuationActionName(name string) bool {
+	const prefix = "continue_"
+	if len(name) != len(prefix)+24 || name[:len(prefix)] != prefix {
+		return false
+	}
+	_, err := hex.DecodeString(name[len(prefix):])
+	return err == nil
+}
+
 // modelVisibleContinuationQuery retains only generated model-facing fields
 // from a canonical source payload. Runtime-injected fields therefore never
 // enter dynamic tool descriptions.
