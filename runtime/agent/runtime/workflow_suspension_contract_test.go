@@ -36,6 +36,57 @@ func TestValidateContinuationAcceptsCompatibleToolSchemaChange(t *testing.T) {
 	require.NoError(t, runtime.ValidateContinuation(suspension))
 }
 
+func TestContinuationCarriesLegacyServerDataOnlyByRunLogReference(t *testing.T) {
+	runtime := New()
+	spec := newAnyJSONSpec("svc.lookup", "svc")
+	canonicalizerCalled := false
+	spec.CanonicalizeServerData = func(rawjson.Message) (rawjson.Message, error) {
+		canonicalizerCalled = true
+		return nil, errors.New("legacy server data lacks the current descriptor")
+	}
+	seedTestToolSpecs(runtime, spec)
+	suspension := suspensionContractFixture(t, spec.Name)
+	legacyServerData := rawjson.Message(
+		`[{"kind":"svc.chart","audience":"timeline","data":{"legacy_field":true}}]`,
+	)
+	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+		checkpoint.State.ToolEvents = []*api.ToolEvent{{
+			Name:       spec.Name,
+			Result:     rawjson.Message(`{"value":"complete"}`),
+			ServerData: legacyServerData,
+			ToolCallID: "legacy-call",
+		}}
+		checkpoint.State.ToolOutputs = []*planner.ToolOutput{{
+			CallRunID:   "run-1",
+			ResultRunID: "run-1",
+			Name:        spec.Name,
+			ToolCallID:  "legacy-call",
+			Payload:     rawjson.Message(`{"query":"status"}`),
+			Result:      rawjson.Message(`{"value":"complete"}`),
+			ServerData:  legacyServerData,
+		}}
+	})
+
+	require.NoError(t, runtime.ValidateContinuation(suspension))
+	require.False(t, canonicalizerCalled)
+	checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
+	require.NoError(t, err)
+	state, err := runtime.restoreCheckpointState(t.Context(), checkpoint.State)
+	require.NoError(t, err)
+	require.False(t, canonicalizerCalled)
+	require.Equal(t, legacyServerData, state.ToolOutputs[0].ServerData)
+
+	refs, err := encodePlannerToolOutputs(state.ToolOutputs)
+	require.NoError(t, err)
+	require.Len(t, refs, 1)
+	require.Equal(t, "run-1", refs[0].CallRunID)
+	require.Equal(t, "run-1", refs[0].ResultRunID)
+	require.Equal(t, "legacy-call", refs[0].ToolCallID)
+	encoded, err := json.Marshal(refs)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "legacy_field")
+}
+
 func TestValidateContinuationRejectsRemovedTool(t *testing.T) {
 	runtime := New()
 	spec := newAnyJSONSpec("svc.lookup", "svc")
