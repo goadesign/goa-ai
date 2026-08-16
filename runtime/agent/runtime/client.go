@@ -38,12 +38,26 @@ type (
 
 		// Continue loads one exact predecessor suspension, starts a new sessionful
 		// workflow with its first pending response, and blocks until completion.
-		Continue(ctx context.Context, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (*RunOutput, error)
+		// WorkflowOptions apply only to the new engine workflow; the predecessor
+		// checkpoint remains the sole owner of planner policy and execution state.
+		Continue(
+			ctx context.Context,
+			sessionID, predecessorRunID, runID, turnID string,
+			response *api.PendingInputResponse,
+			workflowOptions *WorkflowOptions,
+		) (*RunOutput, error)
 
 		// StartContinuation starts a new sessionful workflow from one exact
 		// suspension and returns immediately. RunID and TurnID are required caller-
 		// owned identities for the new workflow and conversational turn.
-		StartContinuation(ctx context.Context, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (engine.WorkflowHandle, error)
+		// WorkflowOptions let trusted callers attach engine visibility metadata
+		// such as memo and search attributes to the new workflow.
+		StartContinuation(
+			ctx context.Context,
+			sessionID, predecessorRunID, runID, turnID string,
+			response *api.PendingInputResponse,
+			workflowOptions *WorkflowOptions,
+		) (engine.WorkflowHandle, error)
 
 		// StartOneShot starts one sessionless workflow and returns immediately with
 		// a workflow handle for asynchronous coordination.
@@ -160,16 +174,26 @@ func (c *agentClient) Start(ctx context.Context, sessionID string, messages []*m
 	return c.r.startRun(ctx, &input)
 }
 
-func (c *agentClient) Continue(ctx context.Context, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (*RunOutput, error) {
-	handle, err := c.StartContinuation(ctx, sessionID, predecessorRunID, runID, turnID, response)
+func (c *agentClient) Continue(
+	ctx context.Context,
+	sessionID, predecessorRunID, runID, turnID string,
+	response *api.PendingInputResponse,
+	workflowOptions *WorkflowOptions,
+) (*RunOutput, error) {
+	handle, err := c.StartContinuation(ctx, sessionID, predecessorRunID, runID, turnID, response, workflowOptions)
 	if err != nil {
 		return nil, err
 	}
 	return handle.Wait(ctx)
 }
 
-func (c *agentClient) StartContinuation(ctx context.Context, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (engine.WorkflowHandle, error) {
-	input, err := c.r.buildStoredContinuationRunInput(ctx, c.id, sessionID, predecessorRunID, runID, turnID, response)
+func (c *agentClient) StartContinuation(
+	ctx context.Context,
+	sessionID, predecessorRunID, runID, turnID string,
+	response *api.PendingInputResponse,
+	workflowOptions *WorkflowOptions,
+) (engine.WorkflowHandle, error) {
+	input, err := c.r.buildStoredContinuationRunInput(ctx, c.id, sessionID, predecessorRunID, runID, turnID, response, workflowOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -202,16 +226,26 @@ func (c *agentClientRoute) Start(ctx context.Context, sessionID string, messages
 	return c.r.startRunWithRoute(ctx, &input, c.route)
 }
 
-func (c *agentClientRoute) Continue(ctx context.Context, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (*RunOutput, error) {
-	handle, err := c.StartContinuation(ctx, sessionID, predecessorRunID, runID, turnID, response)
+func (c *agentClientRoute) Continue(
+	ctx context.Context,
+	sessionID, predecessorRunID, runID, turnID string,
+	response *api.PendingInputResponse,
+	workflowOptions *WorkflowOptions,
+) (*RunOutput, error) {
+	handle, err := c.StartContinuation(ctx, sessionID, predecessorRunID, runID, turnID, response, workflowOptions)
 	if err != nil {
 		return nil, err
 	}
 	return handle.Wait(ctx)
 }
 
-func (c *agentClientRoute) StartContinuation(ctx context.Context, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (engine.WorkflowHandle, error) {
-	input, err := c.r.buildStoredContinuationRunInput(ctx, c.route.ID, sessionID, predecessorRunID, runID, turnID, response)
+func (c *agentClientRoute) StartContinuation(
+	ctx context.Context,
+	sessionID, predecessorRunID, runID, turnID string,
+	response *api.PendingInputResponse,
+	workflowOptions *WorkflowOptions,
+) (engine.WorkflowHandle, error) {
+	input, err := c.r.buildStoredContinuationRunInput(ctx, c.route.ID, sessionID, predecessorRunID, runID, turnID, response, workflowOptions)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +324,13 @@ func buildContinuationRunInput(agentID agent.Ident, sessionID, runID, turnID str
 
 // buildStoredContinuationRunInput loads the exact predecessor checkpoint from
 // durable runtime storage so callers provide only domain response and run IDs.
-func (r *Runtime) buildStoredContinuationRunInput(ctx context.Context, agentID agent.Ident, sessionID, predecessorRunID, runID, turnID string, response *api.PendingInputResponse) (*RunInput, error) {
+func (r *Runtime) buildStoredContinuationRunInput(
+	ctx context.Context,
+	agentID agent.Ident,
+	sessionID, predecessorRunID, runID, turnID string,
+	response *api.PendingInputResponse,
+	workflowOptions *WorkflowOptions,
+) (*RunInput, error) {
 	if predecessorRunID == "" {
 		return nil, errors.New("predecessor run id is required")
 	}
@@ -312,6 +352,7 @@ func (r *Runtime) buildStoredContinuationRunInput(ctx context.Context, agentID a
 	if checkpoint.BaseContext.RunID != predecessorRunID {
 		return nil, errors.New("predecessor run id does not match stored suspension")
 	}
+	input.WorkflowOptions = workflowOptions
 	return input, nil
 }
 

@@ -75,6 +75,7 @@ func TestStartContinuationRejectsIdentityMismatchBeforeWorkflowStart(t *testing.
 				&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
 					ID: "clarification-1", Answer: "Building A",
 				}},
+				nil,
 			)
 			require.ErrorContains(t, err, tt.wantError)
 			require.Empty(t, eng.last.Workflow)
