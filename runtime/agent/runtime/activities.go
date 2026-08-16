@@ -54,7 +54,18 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	} else if ended {
 		return &PlanActivityOutput{SessionEnded: true}, nil
 	}
-	act, err := r.preparePlannerActivity(ctx, input, nil, nil)
+	var continuationActions []continuationAction
+	if input.Finalize == nil && !input.SynthesisOnly {
+		historicalOutputs, err := r.loadHistoricalContinuationOutputs(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		continuationActions, err = r.availableContinuationActions(input.AgentID, historicalOutputs)
+		if err != nil {
+			return nil, err
+		}
+	}
+	act, err := r.preparePlannerActivity(ctx, input, continuationActions, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +81,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 		act.notePlannerRateLimit(ctx, err)
 		return nil, err
 	}
-	if err := r.bindContinuationCursors(result, nil); err != nil {
+	if err := r.bindContinuationCursors(result, continuationActions); err != nil {
 		return nil, err
 	}
 	r.logger.Info(ctx, "PlanStartActivity returning PlanResult", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)

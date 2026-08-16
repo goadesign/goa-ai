@@ -58,6 +58,38 @@ func TestStoreListValidation(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestStoreListSessionPreservesCrossRunAppendOrder(t *testing.T) {
+	t.Parallel()
+
+	s := New()
+	ctx := context.Background()
+	for i, runID := range []string{"run-1", "run-2", "run-1"} {
+		_, err := s.Append(ctx, &runlog.Event{
+			EventKey:  "evt-" + time.Unix(int64(i+1), 0).UTC().Format(time.RFC3339Nano),
+			RunID:     runID,
+			SessionID: "sess-1",
+			TurnID:    "turn-1",
+			Type:      "event",
+			Payload:   []byte(`{}`),
+			Timestamp: time.Unix(int64(i+1), 0).UTC(),
+		})
+		require.NoError(t, err)
+	}
+
+	first, err := s.ListSession(ctx, "sess-1", "", 2)
+	require.NoError(t, err)
+	require.Len(t, first.Events, 2)
+	require.Equal(t, "run-1", first.Events[0].RunID)
+	require.Equal(t, "run-2", first.Events[1].RunID)
+	require.NotEmpty(t, first.NextCursor)
+
+	second, err := s.ListSession(ctx, "sess-1", first.NextCursor, 2)
+	require.NoError(t, err)
+	require.Len(t, second.Events, 1)
+	require.Equal(t, "run-1", second.Events[0].RunID)
+	require.Empty(t, second.NextCursor)
+}
+
 func TestStoreAppendDeduplicatesEventKey(t *testing.T) {
 	t.Parallel()
 
@@ -99,4 +131,8 @@ func TestStoreAppendDeduplicatesEventKey(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Events, 1)
 	require.Equal(t, "evt-1", page.Events[0].EventKey)
+
+	sessionPage, err := s.ListSession(ctx, "sess-1", "", 10)
+	require.NoError(t, err)
+	require.Len(t, sessionPage.Events, 1)
 }

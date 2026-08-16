@@ -17,6 +17,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -201,6 +202,94 @@ func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, called)
 	require.NotNil(t, out.Result.FinalResponse)
+}
+
+func TestPlanStartActivityAdvertisesHistoricalContinuation(t *testing.T) {
+	search, continuation := continuationTestSpecs()
+	actionName := continuationActionName(continuation.Name, "source-1")
+	pl := &stubPlanner{start: func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		definitions := input.Agent.AdvertisedToolDefinitions()
+		require.Len(t, definitions, 2)
+		require.Equal(t, actionName.String(), definitions[1].Name)
+		require.Equal(
+			t,
+			`Continue the unfinished tools.search query with original input {"query":"alarms"}. The latest page returned 1 items.`,
+			definitions[1].Description,
+		)
+		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+			Name:    actionName,
+			Payload: rawjson.Message(`{}`),
+		}}}, nil
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	seedTestToolSpecs(rt, search, continuation)
+	rt.agentToolSpecs = make(map[agent.Ident][]tools.ToolSpec)
+	rt.agentToolSpecs["service.agent"] = []tools.ToolSpec{search, continuation}
+	store := runloginmem.New()
+	rt.RunEventStore = store
+	_, err := rt.SessionStore.CreateSession(t.Context(), "session-1", time.Now().UTC())
+	require.NoError(t, err)
+
+	appendHistoricalHookEvent(t, store, hooks.NewToolCallScheduledEvent(
+		"run-1",
+		"service.agent",
+		"session-1",
+		search.Name,
+		"source-1",
+		rawjson.Message(`{"query":"alarms"}`),
+		"",
+		"",
+		0,
+	), "source-call", 1)
+	cursor := "opaque-next"
+	appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
+		"run-1",
+		"service.agent",
+		"session-1",
+		"run-1",
+		search.Name,
+		"source-1",
+		"",
+		rawjson.Message(`{"items":["page-1"]}`),
+		len(`{"items":["page-1"]}`),
+		false,
+		"",
+		nil,
+		"page 1",
+		&agent.Bounds{Returned: 1, Truncated: true, NextCursor: &cursor},
+		time.Second,
+		nil,
+		nil,
+	), "source-result", 2)
+
+	input := &PlanActivityInput{
+		AgentID: "service.agent",
+		RunID:   "run-2",
+		Messages: []*model.Message{
+			{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Search alarms."}}},
+			{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{
+				ID: "source-1", Name: search.Name.String(), Input: rawjson.Message(`{"query":"alarms"}`),
+			}}},
+			{Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{
+				ToolUseID: "source-1", Content: map[string]any{"items": []any{"page-1"}},
+			}}},
+			{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "First page."}}},
+			{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Show the next page."}}},
+		},
+		RunContext: run.Context{
+			RunID:     "run-2",
+			SessionID: "session-1",
+		},
+	}
+
+	out, err := rt.PlanStartActivity(t.Context(), input)
+
+	require.NoError(t, err)
+	require.Len(t, out.Result.ToolCalls, 1)
+	require.Equal(t, continuation.Name, out.Result.ToolCalls[0].Name)
+	require.Equal(t, actionName, out.Result.ToolCalls[0].ModelName)
+	require.Equal(t, "source-1", out.Result.ToolCalls[0].ContinuationRootToolCallID)
+	require.JSONEq(t, `{"cursor":"opaque-next"}`, string(out.Result.ToolCalls[0].Payload))
 }
 
 func TestPlanStartActivityDoesNotRetryProviderInvalidRequest(t *testing.T) {

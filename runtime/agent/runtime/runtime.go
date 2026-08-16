@@ -1199,6 +1199,15 @@ func validateToolsetSpecs(ts ToolsetRegistration) error {
 
 func validateSpecs(specs []tools.ToolSpec, lookup ToolMetadataLookup) error {
 	for _, spec := range specs {
+		if IsGeneratedContinuationToolName(spec.Name) {
+			return fmt.Errorf(
+				"%w: tool name %q matches the runtime-generated continuation format %q followed by %d lowercase hexadecimal characters",
+				ErrInvalidConfig,
+				spec.Name,
+				continuationToolNamePrefix,
+				continuationToolNameHexLength,
+			)
+		}
 		if spec.TerminalRun && !spec.Bookkeeping {
 			return fmt.Errorf("%w: terminal tool %q must also declare bookkeeping", ErrInvalidConfig, spec.Name)
 		}

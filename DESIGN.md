@@ -870,6 +870,19 @@ cursor violates the paging contract and fails immediately. The model chooses
 which semantic query with returned evidence to continue but never reproduces a
 cursor or correlation identifier.
 
+A new run reconstructs still-live continuation actions from structured
+transcript tool-call IDs and canonical scheduled/result events in the session
+run log. It never trusts a cursor copied through the transcript and never
+selects the latest result heuristically. Completed chains remain absent, while
+multiple unfinished chains retain distinct action names derived from their
+source call identities. The configured run-log store must implement
+`runlog.SessionReader` for a session-backed transcript containing dedicated
+continuation calls. Tool names matching `continue_` followed by exactly 24
+lowercase hexadecimal characters are reserved for runtime-generated
+continuation tools. Agent and toolset registration reject that exact format;
+similar names such as `continue_search` and qualified canonical tools such as
+`tools.continue_search` remain valid.
+
 For each tool with a non-empty payload, the plugin derives JSON Schema from the
 Goa attribute using Goa's `openapi.Schema` type for complete JSON Schema draft
 2020-12 support. The generated tool spec is the canonical model-facing contract:

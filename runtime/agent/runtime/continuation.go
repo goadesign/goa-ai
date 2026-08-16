@@ -12,11 +12,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
+)
+
+const (
+	continuationToolNamePrefix      = "continue_"
+	continuationToolNameDigestBytes = 12
+	continuationToolNameHexLength   = continuationToolNameDigestBytes * 2
 )
 
 type (
@@ -39,6 +46,24 @@ type (
 		returned       int
 	}
 )
+
+// IsGeneratedContinuationToolName reports whether name has the exact format
+// reserved for runtime-generated pagination tools: "continue_" followed by 24
+// lowercase hexadecimal characters. RegisterAgent and RegisterToolset reject
+// authored tool names for which this function returns true.
+func IsGeneratedContinuationToolName(name tools.Ident) bool {
+	value := name.String()
+	if len(value) != len(continuationToolNamePrefix)+continuationToolNameHexLength ||
+		!strings.HasPrefix(value, continuationToolNamePrefix) {
+		return false
+	}
+	for _, char := range value[len(continuationToolNamePrefix):] {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
+}
 
 // availableContinuationActions returns one empty-input model action for every
 // unfinished bounded query. Each action has a stable model name derived from
@@ -255,7 +280,10 @@ func newContinuationAction(spec tools.ToolSpec, state continuationState) (contin
 // continuation tool and the source query's tool-call identity.
 func continuationActionName(toolName tools.Ident, rootToolCallID string) tools.Ident {
 	sum := sha256.Sum256([]byte(toolName.String() + "\x00" + rootToolCallID))
-	return tools.Ident("continue_" + hex.EncodeToString(sum[:12]))
+	return tools.Ident(
+		continuationToolNamePrefix +
+			hex.EncodeToString(sum[:continuationToolNameDigestBytes]),
+	)
 }
 
 // modelVisibleContinuationQuery retains only generated model-facing fields
