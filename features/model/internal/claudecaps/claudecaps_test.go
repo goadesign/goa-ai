@@ -71,9 +71,10 @@ func TestTemperatureSupported(t *testing.T) {
 
 // AdaptiveThinkingRequired must match every Bedrock inference profile scope
 // (in-region, geo cross-region, global cross-region) for the Opus versions
-// that require adaptive thinking. Misclassifying these models causes an
-// adapter to send the legacy type:"enabled" + budget_tokens config, which
-// produces unreliable signatures on Opus 4.6 and a 400 error on Opus 4.7+.
+// and Sonnet versions that require adaptive thinking. Misclassifying these
+// models causes an adapter to send the legacy type:"enabled" + budget_tokens
+// config, which produces unreliable signatures on Opus 4.6 and a 400 error on
+// Opus 4.7+ and Sonnet 5.
 func TestAdaptiveThinkingRequired(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -88,6 +89,11 @@ func TestAdaptiveThinkingRequired(t *testing.T) {
 		{"opus-4-7 us geo", "us.anthropic.claude-opus-4-7", true},
 		{"opus-4-8", "us.anthropic.claude-opus-4-8", true},
 		{"future opus-5", "claude-opus-5", true},
+		{"sonnet-5 in-region", "anthropic.claude-sonnet-5", true},
+		{"sonnet-5 us geo", "us.anthropic.claude-sonnet-5", true},
+		{"sonnet-5 global", "global.anthropic.claude-sonnet-5", true},
+		{"sonnet-5 suffixed", "global.anthropic.claude-sonnet-5-v1:0", true},
+		{"future sonnet-6", "claude-sonnet-6", true},
 		{"fable-5 in-region", "anthropic.claude-fable-5", true},
 		{"fable-5 us geo", "us.anthropic.claude-fable-5", true},
 		{"fable-5 global", "global.anthropic.claude-fable-5", true},
@@ -96,6 +102,7 @@ func TestAdaptiveThinkingRequired(t *testing.T) {
 		{"opus-4-5 legacy config", "anthropic.claude-opus-4-5-20251101-v1", false},
 		{"opus-4-0 dated (date is not a minor)", "claude-opus-4-20250514", false},
 		{"sonnet-4-5", "us.anthropic.claude-sonnet-4-5-20250929-v1:0", false},
+		{"sonnet-4-6", "global.anthropic.claude-sonnet-4-6", false},
 		{"haiku-4-5", "global.anthropic.claude-haiku-4-5-20251001-v1:0", false},
 		{"mythos-preview", "claude-mythos-preview", false},
 		{"empty", "", false},

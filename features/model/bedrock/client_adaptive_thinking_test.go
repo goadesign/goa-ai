@@ -76,6 +76,51 @@ func TestBuildConverseStreamInputOpus47AndLaterUsesAdaptiveThinking(t *testing.T
 	}
 }
 
+// Claude Sonnet 5 thinks adaptively on every Bedrock request and rejects the
+// legacy budgeted thinking shape. When a caller asks to receive thinking, the
+// adapter must request summarized display explicitly because Bedrock otherwise
+// returns an empty signed thinking block.
+func TestBuildConverseStreamInputSonnet5UsesVisibleAdaptiveThinking(t *testing.T) {
+	client := &Client{
+		defaultModel: "global.anthropic.claude-sonnet-5",
+		maxTok:       32,
+		think:        defaultThinkingBudget,
+	}
+	req := &model.Request{
+		ModelClass: model.ModelClassDefault,
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "inspect the facility"}},
+		}},
+		Thinking: &model.ThinkingOptions{
+			Enable:       true,
+			Interleaved:  true,
+			BudgetTokens: 8192,
+		},
+	}
+
+	parts, err := client.prepareRequest(req)
+	require.NoError(t, err)
+
+	thinking := client.resolveThinking(req, parts)
+	require.True(t, thinking.enable)
+	require.True(t, thinking.adaptive)
+	require.Zero(t, thinking.budget)
+	require.False(t, thinking.interleaved)
+
+	input := client.buildConverseStreamInput(parts, req, thinking)
+	require.NotNil(t, input.AdditionalModelRequestFields)
+	raw, err := input.AdditionalModelRequestFields.MarshalSmithyDocument()
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(raw, &fields))
+
+	assert.Equal(t, map[string]any{
+		"type":    "adaptive",
+		"display": "summarized",
+	}, fields["thinking"])
+}
+
 // Bedrock adaptive thinking is valid even without tools. The adapter must not
 // silently drop thinking config just because the request is a plain message
 // turn, otherwise Opus 4.7 falls back to omitted reasoning text again.
