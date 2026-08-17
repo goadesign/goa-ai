@@ -75,11 +75,14 @@ func TemperatureSupported(modelID string) bool {
 // where the model dynamically decides when and how deeply to reason.
 // Interleaved thinking is automatic in adaptive mode — no beta header is
 // needed. On Opus 4.7+ the legacy config is removed entirely and returns a
-// 400 error. On the Claude 5 generation (Fable/Mythos) thinking is always
-// on; only type:"adaptive" is accepted and the legacy config likewise
-// returns a 400 error.
+// 400 error. Claude Sonnet 5 and the Claude 5 generation (Fable/Mythos) keep
+// thinking always on; only type:"adaptive" is accepted and the legacy config
+// likewise returns a 400 error.
 func AdaptiveThinkingRequired(modelID string) bool {
 	if IsFableGeneration(modelID) {
+		return true
+	}
+	if gen, _, _, ok := familyVersion(modelID, "claude-sonnet-"); ok && gen >= 5 {
 		return true
 	}
 	gen, minor, hasMinor, ok := familyVersion(modelID, "claude-opus-")

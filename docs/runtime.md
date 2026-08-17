@@ -2499,10 +2499,11 @@ complete provider-ready transcript in `model.Request.Messages`, and the runtime
 persists canonical transcript deltas so they can be replayed from the durable
 runlog when needed.
 
-For Bedrock adaptive Claude models, the Bedrock adapter explicitly requests
-summarized reasoning display so streamed `thinking` chunks stay visible instead
-of falling back to signature-only omitted reasoning blocks on models such as
-Claude Opus 4.7.
+When `model.Request.Thinking.Enable` is true for a Bedrock adaptive Claude
+model, the Bedrock adapter requests summarized reasoning display explicitly so
+streamed `thinking` chunks stay visible. This includes Claude Sonnet 5, whose
+always-on adaptive thinking otherwise defaults to a signature-only block with
+no display text, as well as Claude Opus 4.7 and later adaptive revisions.
 
 Gemini 3-class models attach an opaque thought signature to `functionCall`
 parts (not just to thought parts). The `features/model/vertex` adapter

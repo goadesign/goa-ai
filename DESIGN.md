@@ -667,10 +667,11 @@ redeploys.
   These restrictions never constrain forced finalization. Caller
   `WithRestrictToTool` policy remains run-scoped and still applies to every
   tool.
-- **Visible reasoning contract**: Bedrock adaptive-thinking requests ask for
-  summarized reasoning display explicitly so streamed `thinking` events remain
-  visible across Claude adaptive model revisions whose provider defaults may
-  otherwise omit the reasoning text payload.
+- **Visible reasoning contract**: when a caller enables thinking for a Bedrock
+  adaptive Claude model, the adapter asks for summarized reasoning display
+  explicitly so streamed `thinking` events contain text. This includes Claude
+  Sonnet 5, whose always-on thinking otherwise returns only an opaque signature,
+  and later adaptive model revisions with the same omitted-display default.
 
 ## MCP Server Definition
 
