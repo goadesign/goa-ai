@@ -621,6 +621,9 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[st
 		if len(variants) != 1 || variants[0] != nat.Name || !ok {
 			return fmt.Errorf("union schema variant %d for %q does not match %q", i, union.TypeName, nat.Name)
 		}
+		if nat.Attribute.Description != "" {
+			branch["description"] = nat.Attribute.Description
+		}
 		if err := specializeUnionSchemaNode(nat.Attribute, valueSchema, defs, seen); err != nil {
 			return err
 		}

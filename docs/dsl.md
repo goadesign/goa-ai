@@ -140,8 +140,10 @@ examples.
 Generated JSON Schemas expose `OneOf` values through the same discriminated
 envelope the codecs accept: `{ "type": "<variant>", "value": <typed-payload> }`.
 Each schema variant fixes `type` to exactly one enum value and gives `value` the
-variant payload schema, so model-facing contracts do not advertise untyped
-`anyOf` payloads or raw string shortcuts.
+variant payload schema. The description authored on each Goa `Field` is emitted
+on that variant's schema branch, so models receive the meaning of each legal
+choice alongside its shape. Model-facing contracts therefore do not advertise
+untyped `anyOf` payloads or raw string shortcuts.
 
 Completion names are part of the structured-output contract. They must be
 1-64 ASCII characters, may contain letters, digits, `_`, and `-`, and must

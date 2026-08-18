@@ -229,8 +229,10 @@ func TestBuildToolSpecsData_UnionSchemasUseCanonicalEnvelope(t *testing.T) {
 	require.Equal(t, "object", value["type"])
 	oneOf := value["oneOf"].([]any)
 	require.Len(t, oneOf, 2)
+	descriptions := []string{"Numeric value", "Text value"}
 	for i, name := range []string{"number", "text"} {
 		branch := oneOf[i].(map[string]any)
+		require.Equal(t, descriptions[i], branch["description"])
 		require.Equal(t, []any{"type", "value"}, branch["required"])
 		branchProperties := branch["properties"].(map[string]any)
 		require.Equal(t, []any{name}, branchProperties["type"].(map[string]any)["enum"])
