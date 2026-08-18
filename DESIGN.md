@@ -621,12 +621,14 @@ redeploys.
   completion. Streams expose only closed typed chunks and carry the canonical
   response separately through gateways. The runtime identifies tool turns from
   unchanged model-facing calls and terminal turns from the canonical provider
-  message returned by its response helpers. It publishes only the selected
-  response's text, thinking, and tool-argument deltas, while usage accounts for
-  every invocation. It commits the complete selected response once after atomic
-  admission and before effects. Planners never manage transcript handles or
-  provider replay metadata, and uncertain ownership fails instead of selecting
-  by call order or visible text.
+  message returned by its response helpers. It publishes the selected response's
+  thinking and tool-argument deltas, but publishes assistant text only when the
+  selected message contains no tool use. Tool-bearing text remains exact in the
+  provider transcript while tool and await events present that nonterminal step.
+  Usage accounts for every invocation. The runtime commits the complete selected
+  response once after atomic admission and before effects. Planners never manage
+  transcript handles or provider replay metadata, and uncertain ownership fails
+  instead of selecting by call order or visible text.
 - **History compression**: Agent designs may declare compression defaults with
   `CompressAtTurns`, `CompressAtMaxInputTokens`, `KeepMaxTurns`, and
   `KeepMaxInputTokens`. The runtime evaluates token budgets with the configured

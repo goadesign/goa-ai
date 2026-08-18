@@ -242,7 +242,7 @@ func (r *Runtime) appendTranscriptRunLogMessages(ctx context.Context, input *Rec
 		return nil
 	}
 	for i, msg := range messages {
-		if msg == nil || msg.Role != model.ConversationRoleAssistant || agentMessageText(msg) == "" {
+		if !isPresentableAssistantTurn(msg) {
 			continue
 		}
 		evt := hooks.NewAssistantTurnCommittedEvent(input.RunID, input.AgentID, input.SessionID, msg)
@@ -254,6 +254,22 @@ func (r *Runtime) appendTranscriptRunLogMessages(ctx context.Context, input *Rec
 		}
 	}
 	return nil
+}
+
+// isPresentableAssistantTurn reports whether a canonical assistant message is a
+// terminal user-facing answer. Tool-bearing messages remain intact in the
+// provider transcript, but their text is model context for a nonterminal step;
+// the corresponding tool and await stream events own its presentation.
+func isPresentableAssistantTurn(msg *model.Message) bool {
+	if msg == nil || msg.Role != model.ConversationRoleAssistant || agentMessageText(msg) == "" {
+		return false
+	}
+	for _, part := range msg.Parts {
+		if _, ok := part.(model.ToolUsePart); ok {
+			return false
+		}
+	}
+	return true
 }
 
 // committedAssistantTurnEventKey derives a stable event key for one assistant

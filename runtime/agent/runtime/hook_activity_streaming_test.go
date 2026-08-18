@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
@@ -244,6 +245,58 @@ func TestRecordActivity_TranscriptDeltaStreamsCommittedAssistantTurns(t *testing
 	require.NoError(t, err)
 	require.Len(t, rl.events, 1)
 	require.Equal(t, 1, sink.count)
+}
+
+func TestRecordActivity_TranscriptDeltaDoesNotStreamToolTurnText(t *testing.T) {
+	t.Parallel()
+
+	rl := &recordingRunlog{}
+	store := sessioninmem.New()
+	sink := &countingStreamSink{}
+	sub, err := stream.NewSubscriber(sink)
+	require.NoError(t, err)
+
+	rt := &Runtime{
+		RunEventStore:    rl,
+		Bus:              hooks.NewBus(),
+		SessionStore:     store,
+		streamSubscriber: sub,
+	}
+	_, err = store.CreateSession(context.Background(), "sess-1", time.Now().UTC())
+	require.NoError(t, err)
+
+	payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{
+			model.TextPart{Text: "I will look that up."},
+			model.ToolUsePart{
+				ID:    "call-1",
+				Name:  "svc.lookup",
+				Input: rawjson.Message(`{"query":"status"}`),
+			},
+		},
+	}})
+	require.NoError(t, err)
+
+	err = rt.recordActivity(context.Background(), &runlog.ActivityInput{
+		Type:        transcript.RunLogMessagesAppended,
+		EventKey:    "evt-transcript-tool-turn",
+		RunID:       "run-1",
+		AgentID:     "svc.agent",
+		SessionID:   "sess-1",
+		TurnID:      "turn-1",
+		TimestampMS: 1,
+		Payload:     payload,
+	})
+	require.NoError(t, err)
+	require.Len(t, rl.events, 1)
+	require.Equal(t, 0, sink.count)
+
+	stored, err := transcript.DecodeRunLogDelta(rl.events[0].Payload)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	require.Equal(t, "I will look that up.", agentMessageText(stored[0]))
+	require.IsType(t, model.ToolUsePart{}, stored[0].Parts[1])
 }
 
 func TestRecordActivity_TranscriptDeltaStreamsCommittedAssistantCitationsTurns(t *testing.T) {

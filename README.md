@@ -808,6 +808,12 @@ response independently from planner-facing chunks, and terminal helpers return
 the selected provider message without exposing transcript identity. Future
 session turns retain provider-authored thinking without inferring ownership from
 visible text.
+
+Selected tool responses remain exact in the durable provider transcript, but
+their assistant text is not published as a user answer. Tool and await events
+present nonterminal work; only an assistant message without a tool call is
+published as committed assistant text.
+
 Planners keep the existing obligation to preserve model tool-call identities
 and, when compiling synthetic tools, `ModelName`/`ModelPayload`; they never
 manage transcript identities. The workflow commits the selected response once
