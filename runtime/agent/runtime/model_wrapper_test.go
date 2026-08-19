@@ -6,6 +6,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/internal/provenance"
@@ -295,6 +296,93 @@ func TestPlannerModelClientIsSingleUseAndSelectsCanonicalResponse(t *testing.T) 
 	})
 	require.NoError(t, err)
 	require.Equal(t, "selected", transcript[0].Parts[0].(model.TextPart).Text)
+}
+
+func TestModelInvocationExportPreservesAdditivePlannerMetadata(t *testing.T) {
+	invocations := &modelInvocationJournal{}
+	originalParts := []model.Part{
+		model.ThinkingPart{
+			Text:      "provider reasoning",
+			Signature: "opaque-provider-signature",
+			Index:     0,
+			Final:     true,
+		},
+		model.TextPart{Text: "provider answer"},
+	}
+	client := newModelInvocationClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			return testModelResponse([]model.Message{{
+				Role:  model.ConversationRoleAssistant,
+				Parts: originalParts,
+				Meta: map[string]any{
+					"provider": map[string]any{"request_id": "req-1"},
+				},
+			}}), nil
+		},
+	}, invocations)
+
+	response, err := client.Complete(t.Context(), &model.Request{})
+	require.NoError(t, err)
+	response.Content[0].Parts = []model.Part{model.TextPart{Text: "planner rewrite"}}
+	response.Content[0].Meta["aura.assistant_citations.v1"] =
+		`[{"index":1,"file_id":"document-1"}]`
+
+	transcript, err := invocations.exportModelInvocation(&planner.PlanResult{
+		FinalResponse: &planner.FinalResponse{Message: &response.Content[0]},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, transcript, 1)
+	assert.Equal(t, originalParts, transcript[0].Parts)
+	assert.Equal(t, map[string]any{
+		"provider":                    map[string]any{"request_id": "req-1"},
+		"aura.assistant_citations.v1": `[{"index":1,"file_id":"document-1"}]`,
+	}, transcript[0].Meta)
+}
+
+func TestModelInvocationExportRejectsProviderMetadataChanges(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{
+			name: "change",
+			mutate: func(meta map[string]any) {
+				meta["provider"] = map[string]any{"request_id": "changed"}
+			},
+		},
+		{
+			name: "delete",
+			mutate: func(meta map[string]any) {
+				delete(meta, "provider")
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			invocations := &modelInvocationJournal{}
+			client := newModelInvocationClient(stubModelClient{
+				complete: func(context.Context, *model.Request) (*model.Response, error) {
+					return testModelResponse([]model.Message{{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{model.TextPart{Text: "provider answer"}},
+						Meta: map[string]any{
+							"provider": map[string]any{"request_id": "req-1"},
+						},
+					}}), nil
+				},
+			}, invocations)
+			response, err := client.Complete(t.Context(), &model.Request{})
+			require.NoError(t, err)
+			test.mutate(response.Content[0].Meta)
+
+			_, err = invocations.exportModelInvocation(&planner.PlanResult{
+				FinalResponse: &planner.FinalResponse{Message: &response.Content[0]},
+			})
+
+			assert.EqualError(t, err, "planner result modified provider-owned message metadata")
+		})
+	}
 }
 
 func TestDesignatedModelInvocationWinsIdenticalProbeToolCalls(t *testing.T) {
