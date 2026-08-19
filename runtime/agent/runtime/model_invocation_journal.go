@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 
 	"goa.design/goa-ai/runtime/agent/internal/provenance"
@@ -52,13 +53,20 @@ type (
 		payload rawjson.Message
 	}
 
+	// modelInvocationMessageOwner identifies one message in a captured provider
+	// response so additive planner metadata returns to that exact transcript row.
+	modelInvocationMessageOwner struct {
+		invocationID modelInvocationID
+		messageIndex int
+	}
+
 	// modelInvocationJournal owns all tentative model responses for one planner
 	// activity and implements modelInvocationSink independently from planner
 	// event publication.
 	modelInvocationJournal struct {
 		mu           sync.Mutex
 		invocations  map[modelInvocationID]*modelInvocationCandidate
-		messageOwner map[*model.Message]modelInvocationID
+		messageOwner map[*model.Message]modelInvocationMessageOwner
 		designated   modelInvocationID
 		selected     modelInvocationID
 		usageEvents  []model.TokenUsage
@@ -129,10 +137,13 @@ func (j *modelInvocationJournal) recordModelResponse(
 		}
 	}
 	if j.messageOwner == nil {
-		j.messageOwner = make(map[*model.Message]modelInvocationID)
+		j.messageOwner = make(map[*model.Message]modelInvocationMessageOwner)
 	}
 	for i := range response.Content {
-		j.messageOwner[&response.Content[i]] = invocationID
+		j.messageOwner[&response.Content[i]] = modelInvocationMessageOwner{
+			invocationID: invocationID,
+			messageIndex: i,
+		}
 	}
 	if !candidate.usageSeen {
 		j.usage = addTokenUsage(j.usage, response.Usage)
@@ -194,7 +205,7 @@ func (j *modelInvocationJournal) exportModelInvocation(
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	calls := planResultModelToolCalls(result)
-	var owner modelInvocationID
+	var owner modelInvocationMessageOwner
 	var hasOwner bool
 	if result != nil && result.FinalResponse != nil {
 		owner, hasOwner = j.messageOwner[result.FinalResponse.Message]
@@ -211,7 +222,7 @@ func (j *modelInvocationJournal) exportModelInvocation(
 		if !j.designated.IsZero() && !hasOwner && id != j.designated {
 			continue
 		}
-		matches := (hasOwner && id == owner && modelInvocationMatches(candidate, calls)) ||
+		matches := (hasOwner && id == owner.invocationID && modelInvocationMatches(candidate, calls)) ||
 			(!hasOwner && len(calls) > 0 && modelInvocationMatches(candidate, calls))
 		if !matches {
 			continue
@@ -243,6 +254,21 @@ func (j *modelInvocationJournal) exportModelInvocation(
 	captured, err := model.CloneResponse(selected.response)
 	if err != nil {
 		return nil, err
+	}
+	if hasOwner {
+		providerMeta := captured.Content[owner.messageIndex].Meta
+		plannerMeta := result.FinalResponse.Message.Meta
+		for key, value := range providerMeta {
+			plannerValue, ok := plannerMeta[key]
+			if !ok || !reflect.DeepEqual(value, plannerValue) {
+				return nil, errors.New("planner result modified provider-owned message metadata")
+			}
+		}
+		enriched, err := model.CloneMessages([]*model.Message{result.FinalResponse.Message})
+		if err != nil {
+			return nil, err
+		}
+		captured.Content[owner.messageIndex].Meta = enriched[0].Meta
 	}
 	messages := make([]*model.Message, len(captured.Content))
 	for i := range captured.Content {
