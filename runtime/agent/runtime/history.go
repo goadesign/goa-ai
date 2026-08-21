@@ -13,18 +13,17 @@ import (
 )
 
 type (
-	// HistoryPolicy changes saved messages before planning. Implementations
+	// HistoryPolicy transforms message history before planning. Implementations
 	// must:
 	//   - Preserve the System Prompt (typically the first message(s) with
 	//     system role).
-	//   - Keep each user message with its assistant response.
-	//   - Keep every tool result immediately after its matching tool call.
+	//   - Respect turn boundaries (User + Assistant pairs).
+	//   - Maintain ToolUse/ToolResult integrity (never orphan a result without
+	//     its call).
 	//
-	// Goa-AI applies the policy before PlanStart and PlanResume receive saved
-	// messages. PlanLimitFinalization can return a final result before this step
-	// because it receives only the run ID, planning attempt, current
-	// policy-adjusted labels, and reason work stopped. If the policy returns an
-	// error, Goa-AI cannot produce a valid message sequence and fails the run.
+	// Policies are applied by the runtime before each planner invocation
+	// (PlanStart and PlanResume). Policy errors mean the runtime cannot construct a
+	// contract-valid planner transcript and should fail the run.
 	HistoryPolicy func(ctx context.Context, msgs []*model.Message, tools []*model.ToolDefinition) ([]*model.Message, error)
 
 	// CompressOption configures the Compress history policy.

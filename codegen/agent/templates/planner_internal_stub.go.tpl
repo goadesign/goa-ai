@@ -52,11 +52,6 @@ func (p *examplePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 	}, nil
 }
 
-// PlanLimitFinalization asks Goa-AI to load saved messages before PlanResume.
-func (p *examplePlanner) PlanLimitFinalization(context.Context, *planner.LimitFinalizationInput) (planner.LimitFinalizationDecision, error) {
-	return planner.HistoryRequiredLimitFinalization(), nil
-}
-
 func (p *examplePlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{

@@ -97,6 +97,47 @@ func TestValidateContinuationRejectsRemovedTool(t *testing.T) {
 	require.ErrorContains(t, runtime.ValidateContinuation(suspension), `requires unregistered tool "svc.lookup"`)
 }
 
+func TestValidateContinuationChecksSavedLimitTerminalPlans(t *testing.T) {
+	runtime := New()
+	lookup := newAnyJSONSpec("svc.lookup", "svc")
+	terminal := strictLimitTerminalSpec()
+	seedTestToolSpecs(runtime, lookup, terminal)
+	runtime.agents["svc.agent"] = AgentRegistration{
+		ID:    "svc.agent",
+		Specs: []tools.ToolSpec{lookup, terminal},
+	}
+	suspension := suspensionContractFixture(t, lookup.Name)
+	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+		checkpoint.Policy = &PolicyOverrides{
+			LimitTerminalPlans: testLimitTerminalPlans(terminal.Name),
+		}
+		checkpoint.RequiredTools = requiredCheckpointToolNames(checkpoint)
+		suspension.RequiredTools = append([]tools.Ident(nil), checkpoint.RequiredTools...)
+	})
+
+	require.Contains(t, suspension.RequiredTools, terminal.Name)
+	require.NoError(t, runtime.ValidateContinuation(suspension))
+
+	t.Run("removed tool", func(t *testing.T) {
+		delete(runtime.toolSpecs, terminal.Name)
+		require.ErrorContains(t, runtime.ValidateContinuation(suspension), `requires unregistered tool "service.tools.complete"`)
+		runtime.toolSpecs[terminal.Name] = terminal
+	})
+	t.Run("changed payload", func(t *testing.T) {
+		changed := terminal
+		changed.Payload.Codec = tools.JSONCodec[any]{
+			FromJSON: func([]byte) (any, error) {
+				return nil, errors.New("result contract changed")
+			},
+		}
+		runtime.agents["svc.agent"] = AgentRegistration{
+			ID:    "svc.agent",
+			Specs: []tools.ToolSpec{lookup, changed},
+		}
+		require.ErrorContains(t, runtime.ValidateContinuation(suspension), "result contract changed")
+	})
+}
+
 func TestValidateContinuationRejectsIncompatibleSavedResult(t *testing.T) {
 	runtime := New()
 	spec := newAnyJSONSpec("svc.lookup", "svc")

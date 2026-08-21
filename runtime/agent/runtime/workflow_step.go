@@ -776,10 +776,10 @@ func dominantRecoveryAction(records []stepToolRecord) (planner.RecoveryAction, b
 	return action, action != ""
 }
 
-// finalizeStep invokes the required final planner transition after budgeted
-// tool work is forbidden.
+// finalizeStep closes a run through its configured fixed call or saved-message
+// planner turn after budgeted tool work is forbidden.
 func (l *workflowLoop) finalizeStep(reason planner.TerminationReason) (*RunOutput, error) {
-	return l.r.finalizeWithPlanner(
+	return l.r.finalizeRun(
 		l.wfCtx,
 		l.reg,
 		l.input,
@@ -795,10 +795,10 @@ func (l *workflowLoop) finalizeStep(reason planner.TerminationReason) (*RunOutpu
 	)
 }
 
-// finalizeRecoveryStep ends domain work after a tool's finish directive while
-// preserving the exact failed calls as finalizer guidance.
+// finalizeRecoveryStep asks the planner to end domain work after a tool's
+// finish directive while preserving the exact failed calls as guidance.
 func (l *workflowLoop) finalizeRecoveryStep(recovery []*planner.ToolOutput) (*RunOutput, error) {
-	return l.r.finalizeWithPlanner(
+	return l.r.finalizeRun(
 		l.wfCtx,
 		l.reg,
 		l.input,

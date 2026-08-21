@@ -155,6 +155,12 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 	if err != nil {
 		return err
 	}
+	for i := range allowed {
+		allowed[i].Labels = mergeLabels(
+			cloneLabels(l.base.RunContext.Labels),
+			allowed[i].Labels,
+		)
+	}
 	if len(allowed) == 0 {
 		l.r.logger.Error(
 			ctx,

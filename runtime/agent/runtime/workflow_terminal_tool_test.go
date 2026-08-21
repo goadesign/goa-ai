@@ -1,5 +1,8 @@
 package runtime
 
+// This file checks how terminal tools complete runs, publish final values, and
+// reject contradictory planner results.
+
 import (
 	"context"
 	"testing"
@@ -703,7 +706,7 @@ func TestFinalizeWithPlannerTerminalToolStopsAtHard(t *testing.T) {
 		TurnID:    "turn-1",
 	}
 
-	out, err := rt.finalizeWithPlanner(
+	out, err := rt.finalizeRun(
 		wfCtx,
 		AgentRegistration{
 			ExecuteToolActivity: "execute",
@@ -755,7 +758,7 @@ func TestFinalizeWithPlannerRejectsTerminalPayloadWithToolCalls(t *testing.T) {
 	}}
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 
-	out, err := rt.finalizeWithPlanner(
+	out, err := rt.finalizeRun(
 		wfCtx,
 		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
 		input,
@@ -822,9 +825,6 @@ func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
 				}, nil
 			},
 		},
-		limitRoutes: map[string]func(context.Context, *LimitFinalizationActivityInput) (*LimitFinalizationActivityOutput, error){
-			"resume.limit_finalization": historyRequiredLimitActivity,
-		},
 		toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
 			"execute": func(ctx context.Context, input *ToolInput) (*ToolOutput, error) {
 				return rt.ExecuteToolActivity(ctx, input)
@@ -846,7 +846,7 @@ func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
 		TurnID:    "turn-1",
 	}
 
-	out, err := rt.finalizeWithPlanner(
+	out, err := rt.finalizeRun(
 		wfCtx,
 		AgentRegistration{
 			ExecuteToolActivity: "execute",
@@ -890,7 +890,7 @@ func runTerminalFinalization(t *testing.T, runPolicy *PolicyOverrides) (*RunOutp
 		TurnID:    "turn-1",
 		Policy:    runPolicy,
 	}
-	out, err := rt.finalizeWithPlanner(
+	out, err := rt.finalizeRun(
 		wfCtx,
 		AgentRegistration{
 			ExecuteToolActivity: "execute",
@@ -948,9 +948,6 @@ func newTerminalFinalizationRuntime(t *testing.T) (*Runtime, tools.ToolSpec, *ro
 					},
 				}, nil
 			},
-		},
-		limitRoutes: map[string]func(context.Context, *LimitFinalizationActivityInput) (*LimitFinalizationActivityOutput, error){
-			"resume.limit_finalization": historyRequiredLimitActivity,
 		},
 		toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
 			"execute": func(ctx context.Context, input *ToolInput) (*ToolOutput, error) {

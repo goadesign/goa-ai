@@ -117,10 +117,6 @@ type (
 		// PlanResume) that accepts *api.PlanActivityInput and returns *api.PlanActivityOutput.
 		RegisterPlannerActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error)) error
 
-		// RegisterLimitFinalizationActivity registers the activity that asks a
-		// planner how to finish before saved messages are loaded.
-		RegisterLimitFinalizationActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.LimitFinalizationActivityInput) (*api.LimitFinalizationActivityOutput, error)) error
-
 		// RegisterExecuteToolActivity registers a typed execute_tool activity that
 		// accepts *api.ToolInput and returns *api.ToolOutput.
 		RegisterExecuteToolActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.ToolInput) (*api.ToolOutput, error)) error
@@ -229,10 +225,6 @@ type (
 		// ErrPlannerActivityDeadlineExceeded only when ScheduleToCloseTimeout expires;
 		// queue, attempt, heartbeat, and activity errors retain their original cause.
 		ExecutePlannerActivity(call PlannerActivityCall) (*api.PlanActivityOutput, error)
-
-		// ExecuteLimitFinalizationActivity asks the registered activity for a final
-		// result or an instruction to load saved messages.
-		ExecuteLimitFinalizationActivity(call LimitFinalizationActivityCall) (*api.LimitFinalizationActivityOutput, error)
 
 		// ExecuteToolActivity schedules a tool execution activity and blocks until it
 		// completes. This is useful for sequential execution (finalizers, single tools).
@@ -360,19 +352,6 @@ type (
 
 		// Input is the typed payload passed to the activity handler.
 		Input *api.PlanActivityInput
-
-		// Options overrides the registered activity defaults for this invocation.
-		Options ActivityOptions
-	}
-
-	// LimitFinalizationActivityCall tells the engine which activity to run, what
-	// values to pass, and how long it may run.
-	LimitFinalizationActivityCall struct {
-		// Name identifies the registered limit-finalization activity.
-		Name string
-
-		// Input identifies the planner, session, run, and reason work stopped.
-		Input *api.LimitFinalizationActivityInput
 
 		// Options overrides the registered activity defaults for this invocation.
 		Options ActivityOptions

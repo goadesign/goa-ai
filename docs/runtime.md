@@ -481,52 +481,13 @@ activities and feeds results back into the workflow loop.
 ```go
 type Planner interface {
     PlanStart(ctx context.Context, input *PlanInput) (*PlanResult, error)
-    PlanLimitFinalization(
-        ctx context.Context,
-        input *LimitFinalizationInput,
-    ) (LimitFinalizationDecision, error)
     PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error)
-}
-
-type LimitFinalizationInput struct {
-    RunID   string
-    Attempt int
-    Labels  map[string]string
-    Reason  LimitTerminationReason
 }
 ```
 
 **PlanStart** receives the initial messages; **PlanResume** receives messages plus
 recent tool results. Both return a `PlanResult` containing tool calls, a final
 response, or an await request.
-
-**PlanLimitFinalization** is required. Goa-AI calls it in a separate activity
-before it loads, copies, checks, or compresses saved messages. The activity
-receives the registered agent ID, session ID, run ID, planning attempt, current
-run labels, and one of three reasons: `time_budget`, `tool_cap`, or
-`failure_cap`. Current run labels include values added or replaced by the
-application's runtime policy. The planner receives only the run ID, attempt,
-labels, and reason. It never receives saved messages, tool arguments, or
-application metadata.
-
-The method returns one of two constructors:
-
-- `TerminalLimitFinalization(result)` supplies the final response or final tool
-  calls without loading saved messages.
-- `HistoryRequiredLimitFinalization()` asks Goa-AI to load saved messages and
-  call `PlanResume`.
-
-`tool_failure` never enters this activity because its final response may depend
-on the failed operation and prior results. Adding the dedicated activity is a
-worker-contract change and requires pinned Temporal Worker Deployment
-Versioning for overlapping releases. Start the new immutable worker version
-beside retained versions, then promote it; new workflows use the new activity
-while existing workflows remain pinned to the code that started them. Enabling
-versioning does not retroactively pin workflows started by unversioned workers.
-For those workflows, pause new starts and keep the old workers running until
-every open workflow has completed before replacing the fleet. Stopping old
-workers is not drainage. Temporal workflow patching is the alternative when
-that quiescent cutover is not possible.
 
 ### PlanInput and PlanResumeInput
 
@@ -551,13 +512,12 @@ type PlanResumeInput struct {
 }
 ```
 
-Planners receive complete `ToolOutputs`, but workflow activities do not copy
-raw tool payloads or result bodies into their inputs.
-`PlanActivityInput.ToolOutputs` carries only the IDs needed to find each call
-and result. `PlanResumeActivity` uses those IDs to load `Payload`, `Result`,
-`ServerData`, and planner-visible result metadata from the saved run events
-before it calls `PlanResume`. `PlanLimitFinalization` runs earlier and receives
-only the run ID, planning attempt, current run labels, and reason work stopped.
+Planners receive fully hydrated `ToolOutputs`, but the workflow/activity wire
+format no longer carries raw tool payloads or result bodies inline.
+`PlanActivityInput.ToolOutputs` ships tool-call references only, and the runtime
+rehydrates `Payload`, `Result`, `ServerData`, and planner-visible result
+metadata from the canonical run log inside `PlanResumeActivity` before invoking
+the planner.
 
 Bookkeeping exception:
 
@@ -584,18 +544,34 @@ Workflow step boundary:
   terminal-tool finish, or forced finalization,
 - terminal planner payloads are exclusive except for hidden, non-terminal
   bookkeeping side effects that complete successfully in the same step,
-- when forced finalization is active (`PlanResumeInput.Finalize != nil`), a
-  planner may close through terminal bookkeeping tools instead of prose; the
-  runtime admits only `TerminalRun()` calls (`TerminalRun()` implies
-  bookkeeping), executes them inside the remaining hard-deadline window, stamps
-  generated tool-call IDs with the finalization attempt, and requires every
-  terminal side effect in the batch to complete successfully,
+- a run may supply `LimitTerminalPlans`, one payload-only `TerminalRun()` call
+  for each of the time, tool-call, and consecutive failed-call limits; before
+  the first planner activity, the runtime validates the complete set against
+  the agent's registered generated codecs and rejects tools that require
+  confirmation,
+- when one of those limits is reached, the workflow selects the matching call
+  without loading saved messages, adds current run identifiers and labels,
+  writes the reason to `runtime.LimitReasonLabel`, and executes the call through
+  the existing terminal-tool path,
+- when the run omitted `LimitTerminalPlans`, or a tool failure requires
+  finalization, `PlanResumeInput.Finalize` is non-nil and the planner may close
+  through terminal bookkeeping tools instead of prose; the runtime admits only
+  `TerminalRun()` calls (`TerminalRun()` implies bookkeeping), executes them
+  inside the remaining hard-deadline window, stamps generated tool-call IDs
+  with the finalization attempt, and requires every terminal side effect in the
+  batch to complete successfully,
 - recoverable failures supply one normal planner activity with their structured
   evidence and do not constrain this validated terminal bookkeeping path;
   caller-supplied `WithRestrictToTool` remains run-scoped and still applies,
 - deadline checks happen before admitting new work; in-flight tool batches
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.
+
+Non-nil `LimitTerminalPlans` adds a field to the Temporal workflow input.
+Deploy this runtime with pinned Temporal Worker Deployment Versioning and route
+new workflows that use the field only after every worker in the new deployment
+runs the same code. Old strict decoders reject the field, so mixed old and new
+workers on one unversioned task queue cannot run workflows that set it.
 
 ### Planner step and failed-result contracts
 
@@ -631,13 +607,14 @@ These fields answer different questions:
 | `ToolOutput.Failure.Recovery.Action` | One failed result | Must the planner correct this call, replan, or finish without tools? |
 | `PlanResult.SynthesizeAfterTools` | One selected batch | If the batch has no recoverable failure, must the next turn answer? |
 | `PlanResumeInput.SynthesisOnly` | One planner activity | Must this planner result be terminal and tool-free? |
-| `PlanResumeInput.Finalize` | Finishing after saved messages are loaded | Did a failed operation or explicit limit decision require the prior messages? |
+| `PlanResumeInput.Finalize` | Runtime-forced planner termination | Did an unconfigured cap or deadline, or one tool failure, require the planner to finish? |
 
 The runtime applies them in this order:
 
 | Completed step | Next state |
 | --- | --- |
-| Cap or deadline exhausted | Call `PlanLimitFinalization`; either finish now or load saved messages and call `PlanResume` |
+| Cap or deadline exhausted with `LimitTerminalPlans` | Execute the matching terminal call |
+| Cap or deadline exhausted without `LimitTerminalPlans` | Forced `Finalize` turn |
 | Successful `TerminalRun` tool | End immediately |
 | Any failure permits tools | Runtime-enforced correction or replan turn |
 | `SynthesizeAfterTools` requested | `SynthesisOnly` turn |

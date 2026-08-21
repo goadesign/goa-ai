@@ -224,28 +224,6 @@ func (w *temporalWorkflowContext) ExecutePlannerActivity(call engine.PlannerActi
 	return out, nil
 }
 
-// ExecuteLimitFinalizationActivity schedules the activity that asks a planner
-// how to finish, then decodes either its final result or its instruction to load
-// saved messages.
-func (w *temporalWorkflowContext) ExecuteLimitFinalizationActivity(
-	call engine.LimitFinalizationActivityCall,
-) (*api.LimitFinalizationActivityOutput, error) {
-	if call.Name == "" {
-		return nil, errors.New("limit finalization activity name is required")
-	}
-	if call.Input == nil {
-		return nil, errors.New("limit finalization activity input is required")
-	}
-
-	actx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(call.Name, call.Options))
-	fut := workflow.ExecuteActivity(actx, call.Name, call.Input)
-	var out *api.LimitFinalizationActivityOutput
-	if err := fut.Get(actx, &out); err != nil {
-		return nil, normalizeTemporalPlannerError(err)
-	}
-	return out, nil
-}
-
 func (w *temporalWorkflowContext) ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error) {
 	fut, err := w.ExecuteToolActivityAsync(call)
 	if err != nil {

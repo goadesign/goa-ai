@@ -1,6 +1,9 @@
 //nolint:lll // allow long lines in test literals for readability
 package runtime
 
+// This file provides planner, workflow, tool, and event-log fixtures shared by
+// focused runtime contract tests.
+
 import (
 	"bytes"
 	"context"
@@ -23,18 +26,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
-
-// historyRequiredLimitActivity returns the explicit first-stage decision used
-// by tests whose final response still comes from the ordinary resume callback.
-func historyRequiredLimitActivity(
-	ctx context.Context,
-	_ *LimitFinalizationActivityInput,
-) (*LimitFinalizationActivityOutput, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return api.HistoryRequiredLimitFinalizationActivityOutput(), nil
-}
 
 func testToolFailure(kind planner.FailureKind, action planner.RecoveryAction, message string) *planner.ToolFailure {
 	var priorInput rawjson.Message
@@ -147,7 +138,6 @@ type testWorkflowContext struct {
 
 	lastHookCall    engine.RecordActivityCall
 	lastPlannerCall engine.PlannerActivityCall
-	lastLimitCall   engine.LimitFinalizationActivityCall
 	lastToolCall    engine.ToolActivityCall
 
 	asyncResult  ToolOutput
@@ -395,16 +385,6 @@ func (t *testWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivity
 	}, nil
 }
 
-func (t *testWorkflowContext) ExecuteLimitFinalizationActivity(
-	call engine.LimitFinalizationActivityCall,
-) (*api.LimitFinalizationActivityOutput, error) {
-	t.lastLimitCall = call
-	if t.runtime != nil {
-		return t.runtime.PlanLimitFinalizationActivity(t.Context(), call.Input)
-	}
-	return api.HistoryRequiredLimitFinalizationActivityOutput(), nil
-}
-
 func (t *testWorkflowContext) ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error) {
 	fut, err := t.ExecuteToolActivityAsync(call)
 	if err != nil {
@@ -567,9 +547,8 @@ func (h *controlledChildHandle) wasCanceled() bool {
 }
 
 type stubPlanner struct {
-	start         func(context.Context, *planner.PlanInput) (*planner.PlanResult, error)
-	resume        func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error)
-	limitFinalize func(context.Context, *planner.LimitFinalizationInput) (planner.LimitFinalizationDecision, error)
+	start  func(context.Context, *planner.PlanInput) (*planner.PlanResult, error)
+	resume func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error)
 }
 
 func (s *stubPlanner) PlanStart(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
@@ -586,21 +565,10 @@ func (s *stubPlanner) PlanResume(ctx context.Context, input *planner.PlanResumeI
 	return &planner.PlanResult{}, nil
 }
 
-func (s *stubPlanner) PlanLimitFinalization(
-	ctx context.Context,
-	input *planner.LimitFinalizationInput,
-) (planner.LimitFinalizationDecision, error) {
-	if s.limitFinalize != nil {
-		return s.limitFinalize(ctx, input)
-	}
-	return planner.HistoryRequiredLimitFinalization(), nil
-}
-
 type stubEngine struct {
 	last                             engine.WorkflowStartRequest
 	registeredRecordActivityOptions  map[string]engine.ActivityOptions
 	registeredPlannerActivityOptions map[string]engine.ActivityOptions
-	registeredLimitActivityOptions   map[string]engine.ActivityOptions
 	registeredExecuteActivityOptions map[string]engine.ActivityOptions
 	sealCalls                        int
 	sealErrors                       []error
@@ -619,13 +587,6 @@ func (s *stubEngine) RegisterPlannerActivity(_ context.Context, name string, opt
 		s.registeredPlannerActivityOptions = make(map[string]engine.ActivityOptions)
 	}
 	s.registeredPlannerActivityOptions[name] = opts
-	return nil
-}
-func (s *stubEngine) RegisterLimitFinalizationActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.LimitFinalizationActivityInput) (*api.LimitFinalizationActivityOutput, error)) error {
-	if s.registeredLimitActivityOptions == nil {
-		s.registeredLimitActivityOptions = make(map[string]engine.ActivityOptions)
-	}
-	s.registeredLimitActivityOptions[name] = opts
 	return nil
 }
 func (s *stubEngine) RegisterExecuteToolActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.ToolInput) (*api.ToolOutput, error)) error {

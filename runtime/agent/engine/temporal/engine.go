@@ -349,27 +349,6 @@ func (e *Engine) RegisterPlannerActivity(_ context.Context, name string, opts en
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
 
-// RegisterLimitFinalizationActivity registers the Temporal activity that asks a
-// planner how to finish before saved messages are loaded.
-func (e *Engine) RegisterLimitFinalizationActivity(
-	_ context.Context,
-	name string,
-	opts engine.ActivityOptions,
-	fn func(context.Context, *api.LimitFinalizationActivityInput) (*api.LimitFinalizationActivityOutput, error),
-) error {
-	if err := e.requireWorkerMode("register limit finalization activities"); err != nil {
-		return err
-	}
-	opts = e.applyActivityClassDefaults(activityKindPlanner, opts)
-	wrapped := func(
-		ctx context.Context,
-		in *api.LimitFinalizationActivityInput,
-	) (*api.LimitFinalizationActivityOutput, error) {
-		return fn(e.injectWorkflowContextIntoActivity(ctx), in)
-	}
-	return e.registerActivityWithCtx(name, opts, wrapped)
-}
-
 // RegisterExecuteToolActivity registers a typed execute_tool activity with the
 // Temporal engine.  This method binds a Go function that accepts *api.ToolInput
 // and returns *api.ToolOutput to a logical activity name for use within agent

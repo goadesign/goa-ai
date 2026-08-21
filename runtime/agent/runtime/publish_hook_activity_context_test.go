@@ -1,5 +1,8 @@
 package runtime
 
+// This file checks that lifecycle hooks receive workflow-owned activity
+// context, identifiers, ordering, and error handling.
+
 import (
 	"context"
 	"encoding/json"
@@ -53,10 +56,6 @@ func (panicWorkflowContext) PublishRecord(call engine.RecordActivityCall) error 
 }
 
 func (panicWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
-	return nil, nil
-}
-
-func (panicWorkflowContext) ExecuteLimitFinalizationActivity(call engine.LimitFinalizationActivityCall) (*api.LimitFinalizationActivityOutput, error) {
 	return nil, nil
 }
 
@@ -333,11 +332,6 @@ func (w *cancelOnPlannerWorkflowContext) PublishRecord(call engine.RecordActivit
 }
 
 func (w *cancelOnPlannerWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
-	w.cancel()
-	return nil, context.Canceled
-}
-
-func (w *cancelOnPlannerWorkflowContext) ExecuteLimitFinalizationActivity(call engine.LimitFinalizationActivityCall) (*api.LimitFinalizationActivityOutput, error) {
 	w.cancel()
 	return nil, context.Canceled
 }

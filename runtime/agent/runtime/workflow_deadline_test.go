@@ -231,9 +231,6 @@ func TestExecuteWorkflowFinalizesPlanStartAtBudget(t *testing.T) {
 				return finalOutput, finalErr
 			},
 		},
-		limitRoutes: map[string]func(context.Context, *LimitFinalizationActivityInput) (*LimitFinalizationActivityOutput, error){
-			"resume.limit_finalization": historyRequiredLimitActivity,
-		},
 	}
 
 	out, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
@@ -465,10 +462,28 @@ func TestMissingFieldsFinalizationUsesHardDeadline(t *testing.T) {
 		},
 		func(_ context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
 			require.NotNil(t, input.Finalize)
+			require.Equal(t, planner.TerminationReasonToolFailure, input.Finalize.Reason)
+			require.Len(t, input.ToolOutputs, 1)
+			require.Equal(t, "call-1", input.ToolOutputs[0].ToolCallID)
 			return finalOutput, finalErr
 		},
 	)
 	loop.reg.Policy.OnMissingFields = MissingFieldsFinalize
+	loop.input.Policy = &PolicyOverrides{
+		LimitTerminalPlans: testLimitTerminalPlans("service.tools.complete"),
+	}
+	loop.st.ToolOutputs = []*planner.ToolOutput{{
+		CallRunID:   "run-1",
+		ResultRunID: "run-1",
+		Name:        "tool",
+		ToolCallID:  "call-1",
+		Payload:     rawjson.Message(`{}`),
+		Failure: testToolFailure(
+			planner.FailureInvalidCall,
+			planner.RecoveryCorrectCall,
+			"missing field",
+		),
+	}}
 	batch := deadlineTestResumeBatch()
 	batch.recorded = 1
 	batch.records = []stepToolRecord{{
@@ -508,9 +523,6 @@ func newResumeDeadlineTestLoop(
 		now:   now,
 		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
 			"resume": resume,
-		},
-		limitRoutes: map[string]func(context.Context, *LimitFinalizationActivityInput) (*LimitFinalizationActivityOutput, error){
-			"resume.limit_finalization": historyRequiredLimitActivity,
 		},
 	}
 	base := &planner.PlanInput{

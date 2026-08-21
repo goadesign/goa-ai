@@ -37,9 +37,6 @@ func TestQuickstart_Renders_Minimal(t *testing.T) {
 	require.Contains(t, content, "client := scribe.NewClient(rt)")
 	require.Contains(t, content, "[]*model.Message{")
 	require.Contains(t, content, "## 4. 🧠 The Planner:")
-	require.Equal(t, 2, strings.Count(content, "PlanLimitFinalization(ctx context.Context"))
-	require.Contains(t, content, "UseVersioning: true")
-	require.Contains(t, content, "DefaultVersioningBehavior: workflow.VersioningBehaviorPinned")
 	require.NotContains(t, content, "Service-Side Tool Providers (Registry-Routed Execution)")
 
 	// No suites declared: the evaluation section renders the teaser only.

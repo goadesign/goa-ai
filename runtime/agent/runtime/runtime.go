@@ -461,7 +461,6 @@ const (
 	defaultResumeActivityTimeout      = 2 * time.Minute
 	defaultExecuteToolActivityTimeout = 2 * time.Minute
 	defaultRecordActivityTimeout      = 15 * time.Second
-	limitFinalizationActivitySuffix   = ".limit_finalization"
 )
 
 // defaultRetriedActivityPolicy returns the runtime's standard infrastructure
@@ -592,6 +591,17 @@ func WithTiming(t Timing) RunOption {
 				in.Policy.PerToolTimeout[k] = v
 			}
 		}
+	}
+}
+
+// WithLimitTerminalPlans sets the complete terminal tool-call set used when
+// this run reaches a configured time, tool-call, or failed-call limit.
+func WithLimitTerminalPlans(plans LimitTerminalPlans) RunOption {
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.LimitTerminalPlans = cloneLimitTerminalPlans(&plans)
 	}
 }
 
@@ -1080,8 +1090,7 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if err := r.Engine.RegisterWorkflow(ctx, reg.Workflow); err != nil {
 		return err
 	}
-	// Register activities for the first planner call, limit handling before
-	// saved messages are loaded, later planner calls, and tool execution.
+	// Register typed activities for planner (start/resume) and execute_tool.
 	if reg.PlanActivityName != "" {
 		if err := r.Engine.RegisterPlannerActivity(ctx,
 			reg.PlanActivityName,
@@ -1095,13 +1104,6 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 			reg.ResumeActivityName,
 			reg.ResumeActivityOptions,
 			r.PlanResumeActivity,
-		); err != nil {
-			return err
-		}
-		if err := r.Engine.RegisterLimitFinalizationActivity(ctx,
-			reg.ResumeActivityName+limitFinalizationActivitySuffix,
-			reg.ResumeActivityOptions,
-			r.PlanLimitFinalizationActivity,
 		); err != nil {
 			return err
 		}
@@ -1543,6 +1545,9 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	if err := r.Seal(ctx); err != nil {
 		return nil, err
 	}
+	if err := validateWorkflowRunInput(input); err != nil {
+		return nil, err
+	}
 	if input.RunID == "" {
 		input.RunID = generateRunID(string(input.AgentID))
 	}
@@ -1579,6 +1584,11 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	}
 	if err := validateRequiredLabels(reg, runLabels); err != nil {
 		return nil, err
+	}
+	if reg.ID != "" && input.Policy != nil {
+		if err := r.validateLimitTerminalPlans(reg, input.Policy.LimitTerminalPlans); err != nil {
+			return nil, err
+		}
 	}
 	req := engine.WorkflowStartRequest{
 		ID:        input.RunID,

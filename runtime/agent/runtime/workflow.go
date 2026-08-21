@@ -74,6 +74,11 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			return nil, err
 		}
 	}
+	if input.Policy != nil {
+		if err := r.validateLimitTerminalPlans(reg, input.Policy.LimitTerminalPlans); err != nil {
+			return nil, err
+		}
+	}
 	r.logger.Info(wfCtx.Context(), "Agent found, executing plan activity", "agent_id", input.AgentID)
 	// Policy decisions merge additional labels into input.Labels in place during
 	// the run loop; the terminal RunCompleted event must carry the run-scoped
@@ -297,7 +302,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	if err != nil {
 		if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) &&
 			!budgetDeadline.IsZero() {
-			out, finalizeErr := r.finalizeWithPlanner(
+			out, finalizeErr := r.finalizeRun(
 				wfCtx,
 				reg,
 				input,

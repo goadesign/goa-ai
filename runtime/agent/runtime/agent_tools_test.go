@@ -1,5 +1,8 @@
 package runtime
 
+// This file checks registration and execution contracts for agents exposed as
+// tools, including child workflow routing and result conversion.
+
 import (
 	"context"
 	"encoding/json"
@@ -35,11 +38,6 @@ func (p *capturePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 	p.msgs = append([]*model.Message{}, in.Messages...)
 	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 }
-
-func (p *capturePlanner) PlanLimitFinalization(context.Context, *planner.LimitFinalizationInput) (planner.LimitFinalizationDecision, error) {
-	return planner.HistoryRequiredLimitFinalization(), nil
-}
-
 func (p *capturePlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "done"}}}}}, nil
 }

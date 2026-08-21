@@ -740,7 +740,7 @@ type PlanResumeInput struct {
     Events      PlannerEvents
     ToolOutputs []*ToolOutput      // Canonical executed tool-call history
     SynthesisOnly bool             // Final response required; tools forbidden
-    Finalize    *Termination       // Non-nil when runtime forces finalization
+    Finalize    *Termination       // Non-nil for saved-message finalization
     Reminders   []reminder.Reminder
 }
 ```
@@ -767,7 +767,10 @@ receives the caller-allowed catalog without the failed tool; and `finish`
 requires tool-free synthesis. The planner may combine corrected work, choose
 another advertised tool, await input, or answer. Otherwise the runtime carries
 the batch intent as `SynthesisOnly`, which rejects additional tool calls.
-`Finalize` remains reserved for runtime-forced cap or deadline termination.
+`Finalize` marks saved-message finalization after a runtime limit or a tool's
+`finish` recovery directive. Runs configured with `WithLimitTerminalPlans`
+execute the matching fixed terminal call at a time, tool-call, or failed-call
+limit without calling `PlanResume`.
 
 ### PlannerContext
 
@@ -955,6 +958,7 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 | `WithRunMaxToolCalls(int)`              | Cap total tool calls         |
 | `WithRunTimeBudget(duration)`           | Set time limits              |
 | `WithRunFinalizerGrace(duration)`       | Reserve time for final message |
+| `WithLimitTerminalPlans(plans)`         | Fix terminal calls for runtime limits |
 | `WithRestrictToTool(tools.Ident)`       | Limit available tools        |
 | `WithTagPolicyClauses([]TagPolicyClause)` | Compose explicit tag clauses |
 | `WithTiming(Timing)`                    | Set multiple timing overrides |
@@ -985,8 +989,7 @@ During registration, generated code calls `rt.RegisterAgent(ctx, runtime.AgentRe
 which:
 
 - Registers the workflow via `engine.WorkflowDefinition`
-- Registers activities: `PlanStartActivityHandler`,
-  `PlanLimitFinalizationActivityHandler`, `PlanResumeActivityHandler`, and
+- Registers activities: `PlanStartActivityHandler`, `PlanResumeActivityHandler`,
   `ExecuteToolActivityHandler`
 
 The engine invokes the workflow handler, which calls `rt.ExecuteWorkflow`.
@@ -1002,6 +1005,8 @@ The engine invokes the workflow handler, which calls `rt.ExecuteWorkflow`.
    - If `ToolCalls` present → `executeToolCalls`
    - If `Await` present → publish, checkpoint, and return `RunOutput.Suspension`
    - If `FinalResponse` present → complete
+   - At a configured limit, execute its fixed terminal call when present;
+     otherwise ask `PlanResume` to finish from saved messages
 
 ### 5. Tool Execution
 
@@ -1081,8 +1086,7 @@ as child workflows, enabling linked streams and run links.
 
 ### Your Code
 
-- Implement `planner.Planner` (`PlanStart`, `PlanLimitFinalization`, and
-  `PlanResume`)
+- Implement `planner.Planner` (`PlanStart`, `PlanResume`)
 - Provide tool executors via `runtime.ToolCallExecutor`
 - Configure runtime: `runtime.New(WithEngine, WithMemoryStore, WithHooks, WithStream,
   WithLogger, WithMetrics, WithTracer, WithWorker)`
@@ -1104,8 +1108,7 @@ as child workflows, enabling linked streams and run links.
 - `runtime.Client`, `runtime.ClientFor`, `runtime.MustClient`, `runtime.MustClientFor`
 - `runtime.AgentClient` with `Run/Start/Continue/StartContinuation`
 - `engine.Engine`, `engine.WorkflowDefinition`, `engine.ActivityDefinition`, `engine.WorkflowHandle`
-- Activities: `PlanStartActivity`, `PlanLimitFinalizationActivity`,
-  `PlanResumeActivity`, and `ExecuteToolActivity`
+- Activities: `PlanStartActivity`, `PlanResumeActivity`, `ExecuteToolActivity`
 - Child composition: `runtime.ExecuteAgentChildWithRoute`
 - Tool infrastructure: `tools.ToolSpec`, `tools.JSONCodec`
 - Tool errors: `toolerrors.ToolError` for structured error reporting

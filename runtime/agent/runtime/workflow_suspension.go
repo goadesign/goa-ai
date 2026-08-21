@@ -373,6 +373,12 @@ func checkpointToolRecordRunIDs(record stepToolRecord) (string, string, error) {
 
 func requiredCheckpointToolNames(checkpoint *workflowCheckpoint) []tools.Ident {
 	set := make(map[tools.Ident]struct{})
+	if checkpoint.Policy != nil && checkpoint.Policy.LimitTerminalPlans != nil {
+		plans := checkpoint.Policy.LimitTerminalPlans
+		set[plans.TimeBudget.Name] = struct{}{}
+		set[plans.ToolCallCap.Name] = struct{}{}
+		set[plans.FailedToolCallCap.Name] = struct{}{}
+	}
 	for _, output := range checkpoint.State.ToolOutputs {
 		set[output.Name] = struct{}{}
 	}

@@ -1,5 +1,8 @@
 package inmem
 
+// This file checks in-memory workflow and activity execution, cancellation,
+// timeout, and worker registration behavior.
+
 import (
 	"context"
 	"errors"
@@ -66,46 +69,6 @@ func TestPlannerActivityTypedExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workflow failed: %v", err)
 	}
-}
-
-func TestLimitFinalizationActivityTypedExecution(t *testing.T) {
-	eng := New()
-	ctx := t.Context()
-	err := eng.RegisterLimitFinalizationActivity(
-		ctx,
-		"test_limit_finalization",
-		engine.ActivityOptions{},
-		func(
-			context.Context,
-			*api.LimitFinalizationActivityInput,
-		) (*api.LimitFinalizationActivityOutput, error) {
-			return api.HistoryRequiredLimitFinalizationActivityOutput(), nil
-		},
-	)
-	require.NoError(t, err)
-	err = eng.RegisterWorkflow(ctx, engine.WorkflowDefinition{
-		Name: "test_limit_workflow",
-		Handler: func(wfCtx engine.WorkflowContext, _ *api.RunInput) (*api.RunOutput, error) {
-			out, executeErr := wfCtx.ExecuteLimitFinalizationActivity(
-				engine.LimitFinalizationActivityCall{
-					Name:  "test_limit_finalization",
-					Input: &api.LimitFinalizationActivityInput{},
-				},
-			)
-			require.NoError(t, executeErr)
-			require.Equal(t, api.LimitFinalizationDispositionHistoryRequired, out.Disposition())
-			return &api.RunOutput{}, nil
-		},
-	})
-	require.NoError(t, err)
-	handle, err := eng.StartWorkflow(ctx, engine.WorkflowStartRequest{
-		ID:       "test-limit-run",
-		Workflow: "test_limit_workflow",
-		Input:    &api.RunInput{},
-	})
-	require.NoError(t, err)
-	_, err = handle.Wait(ctx)
-	require.NoError(t, err)
 }
 
 func TestQueryRunCompletionReturnsExactWorkflowOutput(t *testing.T) {

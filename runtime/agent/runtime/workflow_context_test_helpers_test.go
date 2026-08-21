@@ -20,12 +20,10 @@ type routeWorkflowContext struct {
 	now   func() time.Time
 
 	plannerRoutes map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error)
-	limitRoutes   map[string]func(context.Context, *LimitFinalizationActivityInput) (*LimitFinalizationActivityOutput, error)
 	toolRoutes    map[string]func(context.Context, *ToolInput) (*ToolOutput, error)
 
 	lastHookCall    engine.RecordActivityCall
 	lastPlannerCall engine.PlannerActivityCall
-	lastLimitCall   engine.LimitFinalizationActivityCall
 	lastToolCall    engine.ToolActivityCall
 	sequenceMu      sync.Mutex
 	nextSequence    uint64
@@ -77,19 +75,17 @@ func (r *routeWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 // contexts at the root sequence counter used by assertions.
 func (r *routeWorkflowContext) withContext(ctx context.Context) *routeWorkflowContext {
 	return &routeWorkflowContext{
-		ctx:              ctx,
-		runID:            r.runID,
-		now:              r.now,
-		plannerRoutes:    r.plannerRoutes,
-		limitRoutes:      r.limitRoutes,
-		toolRoutes:       r.toolRoutes,
-		lastHookCall:     r.lastHookCall,
-		lastPlannerCall:  r.lastPlannerCall,
-		lastLimitCall:    r.lastLimitCall,
-		lastToolCall:     r.lastToolCall,
-		hookRuntime:      r.hookRuntime,
-		childRuntime:     r.childRuntime,
-		parent:           r.root(),
+		ctx:             ctx,
+		runID:           r.runID,
+		now:             r.now,
+		plannerRoutes:   r.plannerRoutes,
+		toolRoutes:      r.toolRoutes,
+		lastHookCall:    r.lastHookCall,
+		lastPlannerCall: r.lastPlannerCall,
+		lastToolCall:    r.lastToolCall,
+		hookRuntime:     r.hookRuntime,
+		childRuntime:    r.childRuntime,
+		parent:          r.root(),
 	}
 }
 
@@ -178,17 +174,6 @@ func (r *routeWorkflowContext) ExecutePlannerActivity(
 	handler, ok := r.plannerRoutes[call.Name]
 	if !ok {
 		return nil, fmt.Errorf("no planner route for activity %q", call.Name)
-	}
-	return handler(r.Context(), call.Input)
-}
-
-func (r *routeWorkflowContext) ExecuteLimitFinalizationActivity(
-	call engine.LimitFinalizationActivityCall,
-) (*api.LimitFinalizationActivityOutput, error) {
-	r.lastLimitCall = call
-	handler, ok := r.limitRoutes[call.Name]
-	if !ok {
-		return nil, fmt.Errorf("no limit finalization route for activity %q", call.Name)
 	}
 	return handler(r.Context(), call.Input)
 }

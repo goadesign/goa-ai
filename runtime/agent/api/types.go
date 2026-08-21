@@ -1,5 +1,5 @@
-// Package api defines the values that Goa-AI workflows send to activities and
-// receive back.
+// Package api defines shared types that cross workflow/activity boundaries in the
+// agent runtime.
 package api
 
 import (
@@ -13,20 +13,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
-)
-
-const (
-	// LimitFinalizationDispositionTerminalPlan means Result contains the final
-	// response or final tool calls selected before saved messages were loaded.
-	LimitFinalizationDispositionTerminalPlan LimitFinalizationDisposition = "terminal_plan"
-
-	// LimitFinalizationDispositionHistoryRequired means Goa-AI must load saved
-	// messages and call PlanResume.
-	LimitFinalizationDispositionHistoryRequired LimitFinalizationDisposition = "history_required"
-
-	// LimitFinalizationDispositionSessionEnded means the saved session was
-	// already ended before the planner ran.
-	LimitFinalizationDispositionSessionEnded LimitFinalizationDisposition = "session_ended"
 )
 
 type (
@@ -186,6 +172,36 @@ type (
 		// FinalizerGrace extends the active TimeBudget deadline into the Hard
 		// deadline available to finalization and bookkeeping.
 		FinalizerGrace time.Duration
+
+		// LimitTerminalPlans supplies one terminal tool call for each way a run
+		// can exhaust its configured limits. When nil, the planner writes the
+		// final response from saved messages.
+		LimitTerminalPlans *LimitTerminalPlans
+	}
+
+	// LimitTerminalPlans contains the complete set of calls a workflow may
+	// select after normal work reaches a configured limit.
+	LimitTerminalPlans struct {
+		// TimeBudget runs when active planner and tool work exhausts TimeBudget.
+		TimeBudget LimitTerminalCall
+
+		// ToolCallCap runs when budgeted tool calls exhaust MaxToolCalls.
+		ToolCallCap LimitTerminalCall
+
+		// FailedToolCallCap runs when consecutive failed tool batches exhaust
+		// MaxConsecutiveFailedToolCalls.
+		FailedToolCallCap LimitTerminalCall
+	}
+
+	// LimitTerminalCall contains only the application-selected terminal tool
+	// and its validated JSON payload. Goa-AI adds run identifiers, labels, the
+	// limit reason, and a tool-call identifier when it executes the call.
+	LimitTerminalCall struct {
+		// Name identifies a registered terminal bookkeeping tool.
+		Name tools.Ident
+
+		// Payload is canonical JSON for the tool's generated payload type.
+		Payload rawjson.Message
 	}
 
 	// RunOutput represents the terminal outcome returned by one workflow,
@@ -443,25 +459,6 @@ type (
 		// Finalize requests a terminal turn with no further domain tool work.
 		// The planner may return a final response or terminal bookkeeping calls.
 		Finalize *planner.Termination
-	}
-
-	// LimitFinalizationDisposition identifies what Goa-AI does after asking a
-	// planner how to finish a run stopped by a runtime limit.
-	LimitFinalizationDisposition string
-
-	// LimitFinalizationActivityInput tells an activity which planner to call,
-	// which session to check, and which run limit stopped normal work. It does
-	// not contain saved messages, tool arguments, or application metadata.
-	LimitFinalizationActivityInput struct {
-		// AgentID identifies which registered planner makes the decision.
-		AgentID agent.Ident
-
-		// SessionID identifies the durable session whose ended state cancels
-		// planning before the planner is invoked.
-		SessionID string
-
-		// PlannerInput is passed unchanged to the registered planner.
-		PlannerInput planner.LimitFinalizationInput
 	}
 
 	// PlanActivityOutput wraps the planner result produced by a plan/resume activity.

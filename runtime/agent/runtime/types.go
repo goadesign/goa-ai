@@ -1,5 +1,8 @@
 package runtime
 
+// This file exposes the runtime input, output, policy, and registration values
+// used by generated agents, callers, and workflow workers.
+
 import (
 	"context"
 	"errors"
@@ -12,16 +15,14 @@ import (
 )
 
 type (
-	RunInput                        = api.RunInput
-	PlanActivityInput               = api.PlanActivityInput
-	PlanActivityOutput              = api.PlanActivityOutput
-	LimitFinalizationActivityInput  = api.LimitFinalizationActivityInput
-	LimitFinalizationActivityOutput = api.LimitFinalizationActivityOutput
-	RecoveryCatalog                 = api.RecoveryCatalog
-	RecordActivityInput             = api.RecordActivityInput
-	ToolInput                       = api.ToolInput
-	ToolOutput                      = api.ToolOutput
-	ToolClarification               = api.ToolClarification
+	RunInput            = api.RunInput
+	PlanActivityInput   = api.PlanActivityInput
+	PlanActivityOutput  = api.PlanActivityOutput
+	RecoveryCatalog     = api.RecoveryCatalog
+	RecordActivityInput = api.RecordActivityInput
+	ToolInput           = api.ToolInput
+	ToolOutput          = api.ToolOutput
+	ToolClarification   = api.ToolClarification
 
 	// WorkflowOptions mirrors the subset of engine start options we expose through
 	// the runtime. Memo and SearchAttributes remain generic visibility metadata so
@@ -31,6 +32,14 @@ type (
 	// PolicyOverrides configures per-run policy constraints.
 	// All fields are optional; zero values mean no override.
 	PolicyOverrides = api.PolicyOverrides
+
+	// LimitTerminalPlans contains the terminal tool calls selected when a run
+	// reaches its time, tool-call, or failed-call limit.
+	LimitTerminalPlans = api.LimitTerminalPlans
+
+	// LimitTerminalCall contains one terminal tool name and its canonical JSON
+	// payload. Goa-AI supplies all execution identifiers and labels.
+	LimitTerminalCall = api.LimitTerminalCall
 
 	// TagPolicyClause describes one tag-policy clause applied to advertised and
 	// executable tools for a run.

@@ -1,9 +1,13 @@
 package api
 
+// This file checks JSON and clone behavior for public run input and policy
+// values passed between callers and runtime workers.
+
 import (
 	"bytes"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -11,6 +15,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -31,7 +36,30 @@ type (
 		Usage        model.TokenUsage
 		SessionEnded bool
 	}
+
+	legacyPolicyOverrides struct {
+		RestrictToTool                tools.Ident
+		TagClauses                    []TagPolicyClause
+		MaxToolCalls                  int
+		MaxConsecutiveFailedToolCalls int
+		TimeBudget                    time.Duration
+		PlanTimeout                   time.Duration
+		ToolTimeout                   time.Duration
+		PerToolTimeout                map[tools.Ident]time.Duration
+		FinalizerGrace                time.Duration
+	}
 )
+
+func TestPolicyOverridesRequireHardWorkerCutover(t *testing.T) {
+	payload, err := json.Marshal(PolicyOverrides{})
+	require.NoError(t, err)
+
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var legacy legacyPolicyOverrides
+	err = decoder.Decode(&legacy)
+	require.ErrorContains(t, err, `unknown field "LimitTerminalPlans"`)
+}
 
 func TestPlanActivityOutputUnmarshalJSON(t *testing.T) {
 	t.Run("canonical transcript", func(t *testing.T) {
@@ -108,7 +136,7 @@ func TestPlanActivityInputOmitsEmptyRecoveryIdentity(t *testing.T) {
 	require.Contains(t, string(payload), `"RecoveryToolCallIDs":["call-1"]`)
 }
 
-func TestRecoveryFieldsRejectLegacyPlannerActivityDecoders(t *testing.T) {
+func TestRecoveryActivityFieldsRequireHardWorkerCutover(t *testing.T) {
 	t.Parallel()
 
 	ordinaryInput, err := json.Marshal(PlanActivityInput{RunID: "run-1"})
@@ -131,27 +159,6 @@ func TestRecoveryFieldsRejectLegacyPlannerActivityDecoders(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.ErrorContains(t, strictJSONDecode(recoveryOutput, &legacyPlanActivityOutput{}), "unknown field")
-}
-
-func TestLimitFinalizationActivityRejectsLegacyPlannerActivityDecoders(t *testing.T) {
-	t.Parallel()
-
-	input, err := json.Marshal(LimitFinalizationActivityInput{
-		AgentID: "agent-1",
-		PlannerInput: planner.LimitFinalizationInput{
-			RunID:  "run-1",
-			Reason: planner.LimitTerminationReasonFailureCap,
-		},
-	})
-	require.NoError(t, err)
-	require.NotContains(t, string(input), "Messages")
-	require.NotContains(t, string(input), "ToolOutputs")
-	require.NotContains(t, string(input), "Finalize")
-	require.ErrorContains(t, strictJSONDecode(input, &legacyPlanActivityInput{}), "unknown field")
-
-	output, err := json.Marshal(HistoryRequiredLimitFinalizationActivityOutput())
-	require.NoError(t, err)
-	require.ErrorContains(t, strictJSONDecode(output, &legacyPlanActivityOutput{}), "unknown field")
 }
 
 // strictJSONDecode mirrors the Temporal payload decoder's unknown-field
