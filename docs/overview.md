@@ -985,7 +985,8 @@ During registration, generated code calls `rt.RegisterAgent(ctx, runtime.AgentRe
 which:
 
 - Registers the workflow via `engine.WorkflowDefinition`
-- Registers activities: `PlanStartActivityHandler`, `PlanResumeActivityHandler`,
+- Registers activities: `PlanStartActivityHandler`,
+  `PlanLimitFinalizationActivityHandler`, `PlanResumeActivityHandler`, and
   `ExecuteToolActivityHandler`
 
 The engine invokes the workflow handler, which calls `rt.ExecuteWorkflow`.
@@ -1080,7 +1081,8 @@ as child workflows, enabling linked streams and run links.
 
 ### Your Code
 
-- Implement `planner.Planner` (`PlanStart`, `PlanResume`)
+- Implement `planner.Planner` (`PlanStart`, `PlanLimitFinalization`, and
+  `PlanResume`)
 - Provide tool executors via `runtime.ToolCallExecutor`
 - Configure runtime: `runtime.New(WithEngine, WithMemoryStore, WithHooks, WithStream,
   WithLogger, WithMetrics, WithTracer, WithWorker)`
@@ -1102,7 +1104,8 @@ as child workflows, enabling linked streams and run links.
 - `runtime.Client`, `runtime.ClientFor`, `runtime.MustClient`, `runtime.MustClientFor`
 - `runtime.AgentClient` with `Run/Start/Continue/StartContinuation`
 - `engine.Engine`, `engine.WorkflowDefinition`, `engine.ActivityDefinition`, `engine.WorkflowHandle`
-- Activities: `PlanStartActivity`, `PlanResumeActivity`, `ExecuteToolActivity`
+- Activities: `PlanStartActivity`, `PlanLimitFinalizationActivity`,
+  `PlanResumeActivity`, and `ExecuteToolActivity`
 - Child composition: `runtime.ExecuteAgentChildWithRoute`
 - Tool infrastructure: `tools.ToolSpec`, `tools.JSONCodec`
 - Tool errors: `toolerrors.ToolError` for structured error reporting

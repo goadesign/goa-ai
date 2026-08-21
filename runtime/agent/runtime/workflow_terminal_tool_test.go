@@ -822,6 +822,9 @@ func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
 				}, nil
 			},
 		},
+		limitRoutes: map[string]func(context.Context, *LimitFinalizationActivityInput) (*LimitFinalizationActivityOutput, error){
+			"resume.limit_finalization": historyRequiredLimitActivity,
+		},
 		toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
 			"execute": func(ctx context.Context, input *ToolInput) (*ToolOutput, error) {
 				return rt.ExecuteToolActivity(ctx, input)
@@ -945,6 +948,9 @@ func newTerminalFinalizationRuntime(t *testing.T) (*Runtime, tools.ToolSpec, *ro
 					},
 				}, nil
 			},
+		},
+		limitRoutes: map[string]func(context.Context, *LimitFinalizationActivityInput) (*LimitFinalizationActivityOutput, error){
+			"resume.limit_finalization": historyRequiredLimitActivity,
 		},
 		toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
 			"execute": func(ctx context.Context, input *ToolInput) (*ToolOutput, error) {

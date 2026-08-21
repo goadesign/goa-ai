@@ -45,6 +45,11 @@ func (p *nestedPlannerStub) PlanStart(ctx context.Context, in *planner.PlanInput
 		{Name: tools.Ident("child2"), Payload: rawjson.Message(`{}`)},
 	}}, nil
 }
+
+func (p *nestedPlannerStub) PlanLimitFinalization(context.Context, *planner.LimitFinalizationInput) (planner.LimitFinalizationDecision, error) {
+	return planner.HistoryRequiredLimitFinalization(), nil
+}
+
 func (p *nestedPlannerStub) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	p.iter++
 	if p.iter == 1 {
@@ -808,6 +813,12 @@ func TestRegisterAgentAppliesWorkerQueueOverride(t *testing.T) {
 	require.Zero(t, resumeOpts.ScheduleToStartTimeout)
 	require.Zero(t, resumeOpts.HeartbeatTimeout)
 
+	limitOpts := eng.registeredLimitActivityOptions["service.agent.resume.limit_finalization"]
+	require.Equal(t, "custom.queue", limitOpts.Queue)
+	require.Equal(t, time.Minute, limitOpts.StartToCloseTimeout)
+	require.Zero(t, limitOpts.ScheduleToStartTimeout)
+	require.Zero(t, limitOpts.HeartbeatTimeout)
+
 	executeOpts := eng.registeredExecuteActivityOptions["service.agent.executetool"]
 	require.Equal(t, "custom.queue", executeOpts.Queue)
 	require.Equal(t, 2*time.Minute, executeOpts.StartToCloseTimeout)
@@ -993,24 +1004,34 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 
 func TestConsecutiveFailureBreaker(t *testing.T) {
 	failSpec := newAnyJSONSpec("fail", "svc.tools")
-	rt := &Runtime{
-		toolsets: map[string]ToolsetRegistration{
-			"svc.tools": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
-				return &planner.ToolResult{
-					Name:    call.Name,
-					Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom"),
-				}, nil
-			})},
+	var gotReason planner.LimitTerminationReason
+	testPlanner := &stubPlanner{
+		limitFinalize: func(
+			_ context.Context,
+			input *planner.LimitFinalizationInput,
+		) (planner.LimitFinalizationDecision, error) {
+			gotReason = input.Reason
+			return planner.TerminalLimitFinalization(*finalPlannerResult("stopped after tool failures")), nil
 		},
-		Bus:     noopHooks{},
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+	}
+	rt := New()
+	rt.agents["svc.agent"] = AgentRegistration{
+		ID:      "svc.agent",
+		Planner: testPlanner,
+	}
+	rt.toolsets["svc.tools"] = ToolsetRegistration{
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
+				Name:    call.Name,
+				Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom"),
+			}, nil
+		}),
 	}
 	seedTestToolSpecs(rt, failSpec)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		asyncResult: ToolOutput{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom")},
+		runtime:     rt,
 	}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
@@ -1018,15 +1039,16 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 		Name:    tools.Ident("fail"),
 		Payload: rawjson.Message(`{}`),
 	}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{
+	output, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
+		Planner:             testPlanner,
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 		Policy:              RunPolicy{MaxConsecutiveFailedToolCalls: 1},
 	}, input, base, initial, initialCaps(RunPolicy{MaxConsecutiveFailedToolCalls: 1}), time.Time{}, time.Time{}, "", nil)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "consecutive failed tool call cap exceeded")
+	require.NoError(t, err)
+	require.NotNil(t, output)
+	require.Equal(t, planner.LimitTerminationReasonFailureCap, gotReason)
 }
 
 func TestStartRunForwardsWorkflowOptions(t *testing.T) {
@@ -1187,33 +1209,49 @@ func TestSealRetriesAfterActivationFailure(t *testing.T) {
 
 func TestTimeBudgetExceeded(t *testing.T) {
 	toolSpec := newAnyJSONSpec("tool", "svc.ts")
-	rt := &Runtime{
-		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+	var gotReason planner.LimitTerminationReason
+	testPlanner := &stubPlanner{
+		limitFinalize: func(
+			_ context.Context,
+			input *planner.LimitFinalizationInput,
+		) (planner.LimitFinalizationDecision, error) {
+			gotReason = input.Reason
+			return planner.TerminalLimitFinalization(*finalPlannerResult("stopped at time budget")), nil
+		},
+	}
+	rt := New()
+	rt.agents["svc.agent"] = AgentRegistration{
+		ID:      "svc.agent",
+		Planner: testPlanner,
+	}
+	rt.toolsets["svc.ts"] = ToolsetRegistration{
+		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name: call.Name,
 			}, nil
-		})}},
-		Bus:     noopHooks{},
-		logger:  telemetry.NoopLogger{},
-		metrics: telemetry.NoopMetrics{},
-		tracer:  telemetry.NoopTracer{},
+		}),
 	}
 	seedTestToolSpecs(rt, toolSpec)
-	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}}
+	wfCtx := &testWorkflowContext{
+		ctx:         context.Background(),
+		asyncResult: ToolOutput{Payload: []byte("null")},
+		runtime:     rt,
+	}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
 		Name:    tools.Ident("tool"),
 		Payload: rawjson.Message(`{}`),
 	}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{
+	output, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
+		Planner:             testPlanner,
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, wfCtx.Now().Add(-time.Second), wfCtx.Now().Add(-time.Second), "", nil)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "time budget exceeded")
+	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, wfCtx.Now().Add(-time.Second), wfCtx.Now().Add(time.Second), "", nil)
+	require.NoError(t, err)
+	require.NotNil(t, output)
+	require.Equal(t, planner.LimitTerminationReasonTimeBudget, gotReason)
 }
 
 func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
@@ -1529,6 +1567,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		},
 		Labels: map[string]string{
 			"policy_engine": "basic",
+			"account":       "policy-account",
 		},
 		Metadata: map[string]any{
 			"engine": "basic",
@@ -1648,4 +1687,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	require.Equal(t, decision.Metadata, policyEvent.Metadata)
 	require.Equal(t, decision.Caps, policyEvent.Caps)
 	require.Equal(t, decision.Labels, policyEvent.Labels)
+	require.Equal(t, "policy-account", base.RunContext.Labels["account"])
+	require.Equal(t, "basic", base.RunContext.Labels["policy_engine"])
+	require.Equal(t, base.RunContext.Labels, input.Labels)
 }

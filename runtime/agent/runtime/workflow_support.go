@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -46,99 +47,73 @@ func (r *Runtime) finalizeWithPlanner(
 		return nil, errors.New("base plan input is required")
 	}
 	ctx := wfCtx.Context()
-	// Transition to synthesizing phase while we obtain a final answer without
-	// scheduling additional budgeted tools.
-	if err := r.publishHook(
-		ctx,
-		hooks.NewRunPhaseChangedEvent(
-			base.RunContext.RunID,
-			input.AgentID,
-			base.RunContext.SessionID,
-			run.PhaseSynthesizing,
-		),
-		turnID,
-	); err != nil {
-		return nil, err
-	}
-	// Prepare a brief message to steer planners that incorporate system messages.
-	var hint string
-	switch reason {
-	case planner.TerminationReasonTimeBudget:
-		hint = "FINALIZE NOW: time budget reached.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools or that you will \"try\" another approach.\n- If additional tool calls would be needed, explain what you would have retrieved and how it would change the answer, then provide the best provisional answer."
-	case planner.TerminationReasonToolCap:
-		hint = "FINALIZE NOW: tool budget exhausted.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If further tool calls would be needed, describe them briefly and provide the best provisional answer."
-	case planner.TerminationReasonFailureCap:
-		hint = "FINALIZE NOW: too many tool failures.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If tools failed due to invalid arguments, summarize the failure and provide a corrected plan/payload shape (without actually calling tools), then provide the best provisional answer."
-	case planner.TerminationReasonToolFailure:
-		hint = "FINALIZE NOW: a tool could not complete the requested work.\n\n- Do not retry the failed operation or gather more information.\n- Use only the information already available in the conversation and tool results.\n- Provide the best final result possible, clearly stating what could not be completed.\n- If this workflow requires one final submission action, use only that action."
-	default:
-		hint = "FINALIZE NOW.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If more work is needed, describe it succinctly and provide the best provisional answer."
-	}
-	messages, err := model.CloneMessages(base.Messages)
+	limitReason, limit, err := limitTerminationReason(reason)
 	if err != nil {
 		return nil, err
 	}
-	if err := transcript.ValidatePlannerTranscript(messages); err != nil {
-		return nil, fmt.Errorf("cannot finalize invalid planner transcript: %w", err)
-	}
-
-	if hint != "" {
-		messages = append(messages, &model.Message{
-			Role:  model.ConversationRoleSystem,
-			Parts: []model.Part{model.TextPart{Text: hint}},
-		})
-	}
+	reasonText := fmt.Sprintf("%s finalization", reason)
 	resumeCtx := base.RunContext
 	resumeCtx.Attempt = nextAttempt
 	// Signal zero remaining duration for any prompt engineering that uses MaxDuration.
 	resumeCtx.MaxDuration = "0s"
-	encodedToolOutputs, err := encodePlannerToolOutputs(allToolOutputs)
-	if err != nil {
-		return nil, err
-	}
-	req := PlanActivityInput{
-		AgentID:             input.AgentID,
-		RunID:               base.RunContext.RunID,
-		Messages:            messages,
-		RunContext:          resumeCtx,
-		Policy:              clonePolicyOverrides(input.Policy),
-		ToolOutputs:         encodedToolOutputs,
-		RecoveryToolCallIDs: recoveryToolCallIDs(recovery),
-		Finalize:            &planner.Termination{Reason: reason, Message: hint},
-	}
-	if err := enforcePlanActivityInputBudget(req); err != nil {
-		return nil, err
-	}
-	// Human‑readable reason strings for error contexts when finalization fails.
-	reasonText := func() string {
-		switch reason {
-		case planner.TerminationReasonTimeBudget:
-			return "time budget exceeded"
-		case planner.TerminationReasonToolCap:
-			return "tool call cap exceeded"
-		case planner.TerminationReasonFailureCap:
-			return "consecutive failed tool call cap exceeded"
-		case planner.TerminationReasonToolFailure:
-			return "tool required finalization"
-		default:
-			return "finalization failed"
-		}
-	}()
 
 	// Apply run-level Plan timeout override to Resume if present.
 	resumeOpts := reg.ResumeActivityOptions
 	if input.Policy != nil && input.Policy.PlanTimeout > 0 {
 		resumeOpts.StartToCloseTimeout = input.Policy.PlanTimeout
 	}
-	output, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, req, hardDeadline)
+	var output *PlanActivityOutput
+	if limit {
+		terminalPlan, historyRequired, limitErr := r.runLimitFinalizationActivity(
+			wfCtx,
+			reg.ResumeActivityName+limitFinalizationActivitySuffix,
+			resumeOpts,
+			LimitFinalizationActivityInput{
+				AgentID:   input.AgentID,
+				SessionID: resumeCtx.SessionID,
+				PlannerInput: planner.LimitFinalizationInput{
+					RunID:   resumeCtx.RunID,
+					Attempt: resumeCtx.Attempt,
+					Labels:  cloneLabels(resumeCtx.Labels),
+					Reason:  limitReason,
+				},
+			},
+			hardDeadline,
+		)
+		if limitErr != nil {
+			return nil, fmt.Errorf("%s: %w", reasonText, limitErr)
+		}
+		if historyRequired {
+			output, err = r.runHistoryBackedFinalization(
+				wfCtx,
+				reg,
+				input,
+				base,
+				allToolOutputs,
+				recovery,
+				resumeCtx,
+				resumeOpts,
+				reason,
+				hardDeadline,
+			)
+		} else {
+			output = &PlanActivityOutput{Result: terminalPlan}
+		}
+	} else {
+		output, err = r.runHistoryBackedFinalization(
+			wfCtx,
+			reg,
+			input,
+			base,
+			allToolOutputs,
+			recovery,
+			resumeCtx,
+			resumeOpts,
+			reason,
+			hardDeadline,
+		)
+	}
 	if err != nil {
-		// Surface the termination reason prominently; include underlying error for observability.
-		return nil, fmt.Errorf("%s: %w", reasonText, err)
-	}
-	if output == nil || output.Result == nil {
-		return nil, errors.New(reasonText)
-	}
-	if err := validateFinalizationPlanResult(output.Result); err != nil {
 		return nil, fmt.Errorf("%s: %w", reasonText, err)
 	}
 	aggUsage = addTokenUsage(aggUsage, output.Usage)
@@ -182,8 +157,121 @@ func (r *Runtime) finalizeWithPlanner(
 	return out, nil
 }
 
-// validateFinalizationPlanResult enforces the finalizer's closed result union:
-// one terminal payload, or terminal bookkeeping calls to execute.
+// runHistoryBackedFinalization loads and checks saved messages, adds the reason
+// normal work stopped, and calls PlanResume. Goa-AI calls it for a tool error or
+// when PlanLimitFinalization explicitly asks for saved messages.
+func (r *Runtime) runHistoryBackedFinalization(
+	wfCtx engine.WorkflowContext,
+	reg AgentRegistration,
+	input *RunInput,
+	base *planner.PlanInput,
+	allToolOutputs []*planner.ToolOutput,
+	recovery []*planner.ToolOutput,
+	resumeCtx run.Context,
+	resumeOpts engine.ActivityOptions,
+	reason planner.TerminationReason,
+	hardDeadline time.Time,
+) (*PlanActivityOutput, error) {
+	if err := r.publishHook(
+		wfCtx.Context(),
+		hooks.NewRunPhaseChangedEvent(
+			base.RunContext.RunID,
+			input.AgentID,
+			base.RunContext.SessionID,
+			run.PhaseSynthesizing,
+		),
+		resumeCtx.TurnID,
+	); err != nil {
+		return nil, err
+	}
+	hint, err := finalizationPrompt(reason)
+	if err != nil {
+		return nil, err
+	}
+	messages, err := model.CloneMessages(base.Messages)
+	if err != nil {
+		return nil, err
+	}
+	if err := transcript.ValidatePlannerTranscript(messages); err != nil {
+		return nil, fmt.Errorf("cannot finalize invalid planner transcript: %w", err)
+	}
+	messages = append(messages, &model.Message{
+		Role:  model.ConversationRoleSystem,
+		Parts: []model.Part{model.TextPart{Text: hint}},
+	})
+	encodedToolOutputs, err := encodePlannerToolOutputs(allToolOutputs)
+	if err != nil {
+		return nil, err
+	}
+	req := PlanActivityInput{
+		AgentID:             input.AgentID,
+		RunID:               base.RunContext.RunID,
+		Messages:            messages,
+		RunContext:          resumeCtx,
+		Policy:              clonePolicyOverrides(input.Policy),
+		ToolOutputs:         encodedToolOutputs,
+		RecoveryToolCallIDs: recoveryToolCallIDs(recovery),
+		Finalize:            &planner.Termination{Reason: reason, Message: hint},
+	}
+	if err := enforcePlanActivityInputBudget(req); err != nil {
+		return nil, err
+	}
+	output, err := r.runPlanActivity(
+		wfCtx,
+		reg.ResumeActivityName,
+		resumeOpts,
+		req,
+		hardDeadline,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateFinalizationPlanResult(output.Result); err != nil {
+		return nil, err
+	}
+	return output, nil
+}
+
+// finalizationPrompt returns the instruction added to saved messages for each
+// allowed reason that normal work stopped.
+func finalizationPrompt(reason planner.TerminationReason) (string, error) {
+	switch reason {
+	case planner.TerminationReasonTimeBudget:
+		return "FINALIZE NOW: time budget reached.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools or that you will \"try\" another approach.\n- If additional tool calls would be needed, explain what you would have retrieved and how it would change the answer, then provide the best provisional answer.",
+			nil
+	case planner.TerminationReasonToolCap:
+		return "FINALIZE NOW: tool budget exhausted.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If further tool calls would be needed, describe them briefly and provide the best provisional answer.",
+			nil
+	case planner.TerminationReasonFailureCap:
+		return "FINALIZE NOW: too many tool failures.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If tools failed due to invalid arguments, summarize the failure and provide a corrected plan/payload shape (without actually calling tools), then provide the best provisional answer.",
+			nil
+	case planner.TerminationReasonToolFailure:
+		return "FINALIZE NOW: a tool could not complete the requested work.\n\n- Do not retry the failed operation or gather more information.\n- Use only the information already available in the conversation and tool results.\n- Provide the best final result possible, clearly stating what could not be completed.\n- If this workflow requires one final submission action, use only that action.",
+			nil
+	default:
+		return "", fmt.Errorf("unsupported termination reason %q", reason)
+	}
+}
+
+// validateHistoryFreeFinalizationResult checks a final result produced before
+// saved messages were loaded. It rejects malformed tool JSON, invalid final
+// messages, streamed output, and any request for more work.
+func validateHistoryFreeFinalizationResult(result *planner.PlanResult) error {
+	if err := validatePlannerResultPayloads(result); err != nil {
+		return err
+	}
+	if err := validatePlannerAuthoredFinalResponse(result); err != nil {
+		return err
+	}
+	if result.Streamed {
+		return errors.New("history-free limit finalization cannot return a streamed result")
+	}
+	return validateFinalizationPlanResult(result)
+}
+
+// validateFinalizationPlanResult accepts exactly one way to finish: a final
+// response, a final tool result, or one or more registered tools that end the
+// run.
 func validateFinalizationPlanResult(result *planner.PlanResult) error {
 	if result == nil {
 		return errors.New("finalization planner returned nil result")
@@ -430,7 +518,7 @@ func (r *Runtime) applyMissingFieldsPolicy(
 			*nextAttempt,
 			turnID,
 			nil,
-			planner.TerminationReasonFailureCap,
+			planner.TerminationReasonToolFailure,
 			deadlines.Hard,
 		)
 		return out, nil, err
@@ -494,23 +582,85 @@ func (r *Runtime) runPlanActivity(
 	input PlanActivityInput,
 	deadline time.Time,
 ) (*PlanActivityOutput, error) {
-	if activityName == "" {
-		return nil, errors.New("plan activity not registered")
+	out, err := r.executePlannerActivity(wfCtx, activityName, options, input, deadline)
+	if err != nil {
+		return nil, err
 	}
-	callOpts := options
-	// Schedule-to-close owns the complete queue, retry, and backoff lifetime.
-	// Queue and attempt bounds retain their distinct failure semantics.
-	if !deadline.IsZero() {
-		rem := deadline.Sub(wfCtx.Now())
-		if rem <= 0 {
-			return nil, fmt.Errorf(
-				"plan activity %q deadline exceeded: %w: %w",
-				activityName,
-				engine.ErrPlannerActivityDeadlineExceeded,
-				context.DeadlineExceeded,
-			)
+	if out.Result == nil {
+		return nil, errors.New("runPlanActivity received nil PlanResult")
+	}
+	if len(out.Result.ToolCalls) == 0 &&
+		out.Result.FinalResponse == nil &&
+		out.Result.FinalToolResult == nil &&
+		out.Result.Await == nil {
+		return nil, errors.New("runPlanActivity received PlanResult with no ToolCalls, FinalResponse, FinalToolResult, or Await")
+	}
+	r.logger.Info(wfCtx.Context(),
+		"runPlanActivity received PlanResult",
+		"tool_calls",
+		len(out.Result.ToolCalls),
+		"final_response",
+		out.Result.FinalResponse != nil,
+		"final_tool_result",
+		out.Result.FinalToolResult != nil,
+		"await",
+		out.Result.Await != nil,
+	)
+	return out, nil
+}
+
+// runLimitFinalizationActivity asks a planner how to finish before loading
+// saved messages. It returns either a checked final result or an instruction
+// to load messages and call PlanResume.
+func (r *Runtime) runLimitFinalizationActivity(
+	wfCtx engine.WorkflowContext,
+	activityName string,
+	options engine.ActivityOptions,
+	input LimitFinalizationActivityInput,
+	deadline time.Time,
+) (terminalPlan *planner.PlanResult, historyRequired bool, err error) {
+	callOpts, err := plannerActivityCallOptions(wfCtx, activityName, options, deadline)
+	if err != nil {
+		return nil, false, err
+	}
+	out, err := wfCtx.ExecuteLimitFinalizationActivity(engine.LimitFinalizationActivityCall{
+		Name:    activityName,
+		Input:   &input,
+		Options: callOpts,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if out == nil {
+		return nil, false, errors.New("limit finalization activity returned nil output")
+	}
+	switch out.Disposition() {
+	case api.LimitFinalizationDispositionSessionEnded:
+		return nil, false, errRunSessionEnded
+	case api.LimitFinalizationDispositionHistoryRequired:
+		return nil, true, nil
+	case api.LimitFinalizationDispositionTerminalPlan:
+		if err := validateHistoryFreeFinalizationResult(out.TerminalPlan()); err != nil {
+			return nil, false, fmt.Errorf("limit finalization planner result: %w", err)
 		}
-		callOpts.ScheduleToCloseTimeout = rem
+		return out.TerminalPlan(), false, nil
+	default:
+		return nil, false, fmt.Errorf("unknown limit finalization disposition %q", out.Disposition())
+	}
+}
+
+// executePlannerActivity gives a planner activity its remaining time and
+// returns the activity result without deciding what that result means.
+func (r *Runtime) executePlannerActivity(
+	wfCtx engine.WorkflowContext,
+	activityName string,
+	options engine.ActivityOptions,
+	input PlanActivityInput,
+	deadline time.Time,
+) (*PlanActivityOutput, error) {
+	callOpts, err := plannerActivityCallOptions(wfCtx, activityName, options, deadline)
+	if err != nil {
+		return nil, err
 	}
 
 	out, err := wfCtx.ExecutePlannerActivity(engine.PlannerActivityCall{
@@ -527,25 +677,34 @@ func (r *Runtime) runPlanActivity(
 	if out.SessionEnded {
 		return nil, errRunSessionEnded
 	}
-	if out.Result == nil {
-		return nil, fmt.Errorf("runPlanActivity received nil PlanResult")
-	}
-	if len(out.Result.ToolCalls) == 0 &&
-		out.Result.FinalResponse == nil &&
-		out.Result.FinalToolResult == nil &&
-		out.Result.Await == nil {
-		return nil, fmt.Errorf("runPlanActivity received PlanResult with no ToolCalls, FinalResponse, FinalToolResult, or Await")
-	}
-	r.logger.Info(wfCtx.Context(),
-		"runPlanActivity received PlanResult",
-		"tool_calls",
-		len(out.Result.ToolCalls),
-		"final_response",
-		out.Result.FinalResponse != nil,
-		"final_tool_result",
-		out.Result.FinalToolResult != nil,
-		"await",
-		out.Result.Await != nil,
-	)
 	return out, nil
+}
+
+// plannerActivityCallOptions limits a planner activity to the time remaining
+// for the run while preserving its queue, retry count, and per-attempt timeout.
+func plannerActivityCallOptions(
+	wfCtx engine.WorkflowContext,
+	activityName string,
+	options engine.ActivityOptions,
+	deadline time.Time,
+) (engine.ActivityOptions, error) {
+	if activityName == "" {
+		return engine.ActivityOptions{}, errors.New("plan activity not registered")
+	}
+	if deadline.IsZero() {
+		return options, nil
+	}
+	rem := deadline.Sub(wfCtx.Now())
+	if rem <= 0 {
+		return engine.ActivityOptions{}, fmt.Errorf(
+			"plan activity %q deadline exceeded: %w: %w",
+			activityName,
+			engine.ErrPlannerActivityDeadlineExceeded,
+			context.DeadlineExceeded,
+		)
+	}
+	// Schedule-to-close owns the complete queue, retry, and backoff lifetime.
+	// Queue and attempt bounds retain their distinct failure semantics.
+	options.ScheduleToCloseTimeout = rem
+	return options, nil
 }

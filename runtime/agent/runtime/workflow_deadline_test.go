@@ -231,6 +231,9 @@ func TestExecuteWorkflowFinalizesPlanStartAtBudget(t *testing.T) {
 				return finalOutput, finalErr
 			},
 		},
+		limitRoutes: map[string]func(context.Context, *LimitFinalizationActivityInput) (*LimitFinalizationActivityOutput, error){
+			"resume.limit_finalization": historyRequiredLimitActivity,
+		},
 	}
 
 	out, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
@@ -505,6 +508,9 @@ func newResumeDeadlineTestLoop(
 		now:   now,
 		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
 			"resume": resume,
+		},
+		limitRoutes: map[string]func(context.Context, *LimitFinalizationActivityInput) (*LimitFinalizationActivityOutput, error){
+			"resume.limit_finalization": historyRequiredLimitActivity,
 		},
 	}
 	base := &planner.PlanInput{

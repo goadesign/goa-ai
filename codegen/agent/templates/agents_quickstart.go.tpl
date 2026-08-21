@@ -110,6 +110,9 @@ func (p *StubPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*pl
 		},
 	}, nil
 }
+func (p *StubPlanner) PlanLimitFinalization(ctx context.Context, in *planner.LimitFinalizationInput) (planner.LimitFinalizationDecision, error) {
+    return planner.HistoryRequiredLimitFinalization(), nil
+}
 func (p *StubPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
@@ -249,6 +252,12 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 			},
         },
     }, nil
+}
+
+// PlanLimitFinalization is called after a time, tool-call, or failed-call limit.
+// This implementation asks Goa-AI to load saved messages before PlanResume.
+func (p *MySmartPlanner) PlanLimitFinalization(ctx context.Context, in *planner.LimitFinalizationInput) (planner.LimitFinalizationDecision, error) {
+    return planner.HistoryRequiredLimitFinalization(), nil
 }
 
 // PlanResume is called after tools have run, giving the agent new information.
@@ -706,7 +715,11 @@ Example: constructing a Temporal worker engine:
 import (
     "goa.design/goa-ai/runtime/agent/engine/temporal"
     "go.temporal.io/sdk/client"
+    "go.temporal.io/sdk/worker"
+    "go.temporal.io/sdk/workflow"
 )
+
+const releaseBuildID = "git-sha-or-image-digest"
 
 eng, err := temporal.NewWorker(temporal.Options{
     ClientOptions: &client.Options{
@@ -715,6 +728,16 @@ eng, err := temporal.NewWorker(temporal.Options{
     },
     WorkerOptions: temporal.WorkerOptions{
         TaskQueue: "<service>_<agent>_workflow",
+        Options: worker.Options{
+            DeploymentOptions: worker.DeploymentOptions{
+                UseVersioning: true,
+                Version: worker.WorkerDeploymentVersion{
+                    DeploymentName: "<service>_<agent>",
+                    BuildID:        releaseBuildID,
+                },
+                DefaultVersioningBehavior: workflow.VersioningBehaviorPinned,
+            },
+        },
     },
 })
 if err != nil {

@@ -130,6 +130,10 @@ func (p *awaitQuestionsPlanner) PlanStart(context.Context, *planner.PlanInput) (
 	}))}, nil
 }
 
+func (p *awaitQuestionsPlanner) PlanLimitFinalization(context.Context, *planner.LimitFinalizationInput) (planner.LimitFinalizationDecision, error) {
+	return planner.HistoryRequiredLimitFinalization(), nil
+}
+
 func (p *awaitQuestionsPlanner) PlanResume(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	p.mu.Lock()
 	p.resumeCalls++

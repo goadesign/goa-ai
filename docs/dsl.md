@@ -485,7 +485,8 @@ shape it will send to the provider.
 registration with:
 
 - A workflow definition and Temporal activity handlers
-- PlanStart/PlanResume activities with DSL-derived retry/timeout options
+- PlanStart, PlanLimitFinalization, and PlanResume activities with
+  DSL-derived retry and timeout options
 - A `Register<Agent>` helper that registers workflows, activities, and toolsets
 
 ```go

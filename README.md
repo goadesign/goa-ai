@@ -237,23 +237,51 @@ or terminal tool result. During runtime-forced finalization, planners may also
 close through terminal bookkeeping tools; the runtime executes only
 `TerminalRun()` tools in that path (`TerminalRun()` implies bookkeeping) and
 requires the terminal side effects to succeed inside the remaining
-hard-deadline window. A `correct_call` failure keeps the failed tool available
-and supplies its rejected input and generated validation issues to the next
-planner turn. The planner may retry one or more calls, combine work, use another
-advertised tool, ask for input, or finish from evidence already collected.
+hard-deadline window. Every planner implements `PlanLimitFinalization`. The
+runtime invokes it through a separate activity carrying only the registered
+agent ID, session ID, run ID, planning attempt, current run labels, and one
+allowed limit reason. Current run labels include values added or replaced by
+the application's runtime policy. Goa-AI does this before loading saved
+messages.
+The planner either returns the final response or final tool calls, or asks
+Goa-AI to load saved messages and call `PlanResume`. Finishing after a tool
+error always loads saved messages. A
+`correct_call` failure keeps the failed tool available and supplies its rejected
+input and generated validation issues to the next planner turn. The planner may
+retry one or more calls, combine work, use another advertised tool, ask for
+input, or finish from evidence already collected.
 Caller `WithRestrictToTool` policy remains run-scoped and still applies to every
 tool. Tool executors decide how work is performed.
 
 ```go
 func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
-	mc, ok := in.Agent.PlannerModelClient("default")
+	return p.plan(ctx, in.Agent, in.Messages)
+}
+
+func (p *Planner) PlanLimitFinalization(
+	ctx context.Context,
+	in *planner.LimitFinalizationInput,
+) (planner.LimitFinalizationDecision, error) {
+	return planner.HistoryRequiredLimitFinalization(), nil
+}
+
+func (p *Planner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
+	return p.plan(ctx, in.Agent, in.Messages)
+}
+
+func (p *Planner) plan(
+	ctx context.Context,
+	agent planner.PlannerContext,
+	messages []*model.Message,
+) (*planner.PlanResult, error) {
+	mc, ok := agent.PlannerModelClient("default")
 	if !ok {
 		return nil, errors.New("model client default is not registered")
 	}
 
 	summary, err := mc.Stream(ctx, &model.Request{
-		Messages: in.Messages,
-		Tools:    in.Agent.AdvertisedToolDefinitions(),
+		Messages: messages,
+		Tools:    agent.AdvertisedToolDefinitions(),
 		Stream:   true,
 	})
 	if err != nil {

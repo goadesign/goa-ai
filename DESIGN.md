@@ -196,7 +196,7 @@ The runtime keeps execution policy and planner intent separate:
 
 | Completed step | Next state |
 | --- | --- |
-| A cap or deadline requires finalization | `PlanResumeInput.Finalize` |
+| A cap or deadline requires finalization | `PlanLimitFinalization`; terminal plan or explicit history-backed `PlanResumeInput.Finalize` |
 | A successful `TerminalRun` tool completed | End the run without another planner turn |
 | Any failed tool requires `finish` recovery | `PlanResumeInput.Finalize` with reason `tool_failure` |
 | Any failed tool has a `ToolFailure` whose recovery action permits tools | Runtime-enforced correction or replan turn |
@@ -225,6 +225,17 @@ after the answer.
 A failed batch never enters `SynthesisOnly` and does not preserve its earlier
 `SynthesizeAfterTools` intent; a planner that retries work selects synthesis
 again on that new batch.
+
+When a time, tool-call, or failed-call limit stops normal work, Goa-AI schedules
+a separate activity before loading saved messages. `PlanLimitFinalization`
+receives the run ID, planning attempt, current run labels, and the reason work
+stopped. Current run labels include values added or replaced by the
+application's runtime policy. It never receives saved messages, tool arguments,
+or application metadata. The planner either returns the final response or final
+tool calls, or asks Goa-AI to load saved messages and call `PlanResume`. A
+single tool error skips this activity because explaining that failure may
+require the saved messages and typed tool results.
+
 An agent-as-tool result follows the same typed success or failure transition as
 every other tool. Its observed child-tool count is run-link telemetry, not an
 outcome signal: validation may reject the request before a child tool runs, and
@@ -652,13 +663,16 @@ redeploys.
   outcome or invoke a terminal bookkeeping action. A successful
   bookkeeping-only turn must otherwise resolve in the same turn via a terminal
   outcome or an external-input suspension.
-- **Forced finalization control plane**: when runtime caps or deadlines force
-  finalization, planners may return terminal bookkeeping tools instead of a
-  prose final answer. The runtime executes only `TerminalRun()` tools in that
-  path (`TerminalRun()` implies bookkeeping), keeps them inside the remaining
-  hard-deadline window, and closes the run only if every terminal side effect
-  succeeds. Recovery call IDs extend the planner activity payload and select the
-  canonical failed outputs that shape both reminders and the advertised catalog.
+- **Finishing after a runtime limit**: when a cap or deadline stops normal work,
+  planners may return `TerminalRun()` tools instead of a prose final answer.
+  Every planner implements `PlanLimitFinalization`. It receives the current run
+  labels, including values added or replaced by application policy, before
+  Goa-AI loads saved messages. It either returns the final result or asks Goa-AI
+  to load messages and call `PlanResume`. Goa-AI executes only `TerminalRun()`
+  tools from the immediate result, limits them to the time reserved for
+  finishing, and closes the run only if every tool succeeds. Recovery call IDs
+  identify the exact failed outputs supplied to reminders and to the next
+  planner call.
   Empty recovery IDs are omitted for compatibility. Temporal deployments use
   Worker Deployment Versioning so an active workflow stays on its compatible
   worker until it completes or suspends. A continuation is a new workflow and
@@ -933,7 +947,8 @@ A contextual quickstart file `AGENTS_QUICKSTART.md` is emitted at the module roo
 The `goa example` phase generates application-owned scaffold under `internal/agents/`:
 
 - `internal/agents/bootstrap/bootstrap.go`: constructs a minimal runtime and registers generated agents
-- `internal/agents/<agent>/planner/planner.go`: planner stub implementing `PlanStart`/`PlanResume`
+- `internal/agents/<agent>/planner/planner.go`: planner stub implementing
+  `PlanStart`, `PlanLimitFinalization`, and `PlanResume`
 - `internal/agents/<agent>/toolsets/<toolset>/adapter.go`: stubs for mapping method-backed tools
 
 ## Security considerations
