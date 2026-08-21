@@ -594,6 +594,17 @@ func WithTiming(t Timing) RunOption {
 	}
 }
 
+// WithLimitTerminalPlans sets the complete terminal tool-call set used when
+// this run reaches a configured time, tool-call, or failed-call limit.
+func WithLimitTerminalPlans(plans LimitTerminalPlans) RunOption {
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.LimitTerminalPlans = cloneLimitTerminalPlans(&plans)
+	}
+}
+
 // WithRunMaxToolCalls sets a per-run cap on total tool executions.
 // The caller must supply a positive override value; omit the option to use the
 // agent's design default.
@@ -1534,6 +1545,9 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	if err := r.Seal(ctx); err != nil {
 		return nil, err
 	}
+	if err := validateWorkflowRunInput(input); err != nil {
+		return nil, err
+	}
 	if input.RunID == "" {
 		input.RunID = generateRunID(string(input.AgentID))
 	}
@@ -1570,6 +1584,11 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	}
 	if err := validateRequiredLabels(reg, runLabels); err != nil {
 		return nil, err
+	}
+	if reg.ID != "" && input.Policy != nil {
+		if err := r.validateLimitTerminalPlans(reg, input.Policy.LimitTerminalPlans); err != nil {
+			return nil, err
+		}
 	}
 	req := engine.WorkflowStartRequest{
 		ID:        input.RunID,

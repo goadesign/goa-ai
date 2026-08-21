@@ -196,12 +196,26 @@ The runtime keeps execution policy and planner intent separate:
 
 | Completed step | Next state |
 | --- | --- |
-| A cap or deadline requires finalization | `PlanResumeInput.Finalize` |
+| A cap or deadline requires finalization and the run supplied `LimitTerminalPlans` | Execute the matching terminal call without loading saved messages |
+| A cap or deadline requires finalization and the run omitted `LimitTerminalPlans` | `PlanResumeInput.Finalize` |
 | A successful `TerminalRun` tool completed | End the run without another planner turn |
 | Any failed tool requires `finish` recovery | `PlanResumeInput.Finalize` with reason `tool_failure` |
 | Any failed tool has a `ToolFailure` whose recovery action permits tools | Runtime-enforced correction or replan turn |
 | A successful batch has `SynthesizeAfterTools` set | `PlanResumeInput.SynthesisOnly` |
 | Otherwise | Normal continuation turn |
+
+`LimitTerminalPlans` is one optional run-policy value containing exactly three
+payload-only calls: time budget, tool-call cap, and consecutive failed-call cap.
+Before the first planner call, the runtime requires every payload to pass the
+registered generated codec and every target to be a `TerminalRun` bookkeeping
+tool owned by the agent that does not require confirmation. At a matching limit,
+the workflow adds its current identifiers and labels, records the reason in
+`runtime.LimitReasonLabel`, and executes the call through the normal
+terminal-tool path. The individual `tool_failure` termination case never
+selects these calls because its final result may depend on saved tool evidence.
+The additional workflow-input field requires a pinned Temporal Worker
+Deployment cutover: old and new strict decoders cannot share one unversioned
+task queue during rollout.
 
 This order makes recovery explicit rather than presence-based. `ToolFailure`
 classifies why execution failed independently from its `RecoveryDirective`:
@@ -664,9 +678,9 @@ redeploys.
   worker until it completes or suspends. A continuation is a new workflow and
   may start on the current deployment after `ValidateContinuation` accepts the
   saved checkpoint and tool schemas.
-  These restrictions never constrain forced finalization. Caller
-  `WithRestrictToTool` policy remains run-scoped and still applies to every
-  tool.
+  Current run policy still applies while the fixed terminal call is prepared.
+  For example, `WithRestrictToTool` can reject that call because the
+  restriction applies to every tool in the run.
 - **Visible reasoning contract**: when a caller enables thinking for a Bedrock
   adaptive Claude model, the adapter asks for summarized reasoning display
   explicitly so streamed `thinking` events contain text. This includes Claude

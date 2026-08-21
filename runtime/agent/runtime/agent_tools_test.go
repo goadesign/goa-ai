@@ -1,5 +1,8 @@
 package runtime
 
+// This file checks registration and execution contracts for agents exposed as
+// tools, including child workflow routing and result conversion.
+
 import (
 	"context"
 	"encoding/json"

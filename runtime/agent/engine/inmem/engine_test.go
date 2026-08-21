@@ -1,5 +1,8 @@
 package inmem
 
+// This file checks in-memory workflow and activity execution, cancellation,
+// timeout, and worker registration behavior.
+
 import (
 	"context"
 	"errors"

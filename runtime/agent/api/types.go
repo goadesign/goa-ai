@@ -172,6 +172,36 @@ type (
 		// FinalizerGrace extends the active TimeBudget deadline into the Hard
 		// deadline available to finalization and bookkeeping.
 		FinalizerGrace time.Duration
+
+		// LimitTerminalPlans supplies one terminal tool call for each way a run
+		// can exhaust its configured limits. When nil, the planner writes the
+		// final response from saved messages.
+		LimitTerminalPlans *LimitTerminalPlans
+	}
+
+	// LimitTerminalPlans contains the complete set of calls a workflow may
+	// select after normal work reaches a configured limit.
+	LimitTerminalPlans struct {
+		// TimeBudget runs when active planner and tool work exhausts TimeBudget.
+		TimeBudget LimitTerminalCall
+
+		// ToolCallCap runs when budgeted tool calls exhaust MaxToolCalls.
+		ToolCallCap LimitTerminalCall
+
+		// FailedToolCallCap runs when consecutive failed tool batches exhaust
+		// MaxConsecutiveFailedToolCalls.
+		FailedToolCallCap LimitTerminalCall
+	}
+
+	// LimitTerminalCall contains only the application-selected terminal tool
+	// and its validated JSON payload. Goa-AI adds run identifiers, labels, the
+	// limit reason, and a tool-call identifier when it executes the call.
+	LimitTerminalCall struct {
+		// Name identifies a registered terminal bookkeeping tool.
+		Name tools.Ident
+
+		// Payload is canonical JSON for the tool's generated payload type.
+		Payload rawjson.Message
 	}
 
 	// RunOutput represents the terminal outcome returned by one workflow,

@@ -1,9 +1,13 @@
 package api
 
+// This file checks JSON and clone behavior for public run input and policy
+// values passed between callers and runtime workers.
+
 import (
 	"bytes"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -11,6 +15,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -31,7 +36,30 @@ type (
 		Usage        model.TokenUsage
 		SessionEnded bool
 	}
+
+	legacyPolicyOverrides struct {
+		RestrictToTool                tools.Ident
+		TagClauses                    []TagPolicyClause
+		MaxToolCalls                  int
+		MaxConsecutiveFailedToolCalls int
+		TimeBudget                    time.Duration
+		PlanTimeout                   time.Duration
+		ToolTimeout                   time.Duration
+		PerToolTimeout                map[tools.Ident]time.Duration
+		FinalizerGrace                time.Duration
+	}
 )
+
+func TestPolicyOverridesRequireHardWorkerCutover(t *testing.T) {
+	payload, err := json.Marshal(PolicyOverrides{})
+	require.NoError(t, err)
+
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var legacy legacyPolicyOverrides
+	err = decoder.Decode(&legacy)
+	require.ErrorContains(t, err, `unknown field "LimitTerminalPlans"`)
+}
 
 func TestPlanActivityOutputUnmarshalJSON(t *testing.T) {
 	t.Run("canonical transcript", func(t *testing.T) {

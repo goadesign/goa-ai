@@ -43,6 +43,15 @@ func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*work
 			return nil, fmt.Errorf("run suspension requires unregistered tool %q", name)
 		}
 	}
+	if checkpoint.Policy != nil && checkpoint.Policy.LimitTerminalPlans != nil {
+		reg, ok := r.agentByID(agent.Ident(checkpoint.AgentID))
+		if !ok {
+			return nil, fmt.Errorf("run suspension requires unregistered agent %q", checkpoint.AgentID)
+		}
+		if err := r.validateLimitTerminalPlans(reg, checkpoint.Policy.LimitTerminalPlans); err != nil {
+			return nil, fmt.Errorf("validate suspended limit terminal plans: %w", err)
+		}
+	}
 	program, err := r.normalizeStep(checkpoint.Batch.Result)
 	if err != nil {
 		return nil, fmt.Errorf("validate suspended planner result: %w", err)

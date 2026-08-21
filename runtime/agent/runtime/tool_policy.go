@@ -49,6 +49,7 @@ func clonePolicyOverrides(overrides *PolicyOverrides) *PolicyOverrides {
 	if len(overrides.PerToolTimeout) > 0 {
 		cloned.PerToolTimeout = maps.Clone(overrides.PerToolTimeout)
 	}
+	cloned.LimitTerminalPlans = cloneLimitTerminalPlans(overrides.LimitTerminalPlans)
 	return &cloned
 }
 

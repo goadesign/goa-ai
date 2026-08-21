@@ -544,18 +544,34 @@ Workflow step boundary:
   terminal-tool finish, or forced finalization,
 - terminal planner payloads are exclusive except for hidden, non-terminal
   bookkeeping side effects that complete successfully in the same step,
-- when forced finalization is active (`PlanResumeInput.Finalize != nil`), a
-  planner may close through terminal bookkeeping tools instead of prose; the
-  runtime admits only `TerminalRun()` calls (`TerminalRun()` implies
-  bookkeeping), executes them inside the remaining hard-deadline window, stamps
-  generated tool-call IDs with the finalization attempt, and requires every
-  terminal side effect in the batch to complete successfully,
+- a run may supply `LimitTerminalPlans`, one payload-only `TerminalRun()` call
+  for each of the time, tool-call, and consecutive failed-call limits; before
+  the first planner activity, the runtime validates the complete set against
+  the agent's registered generated codecs and rejects tools that require
+  confirmation,
+- when one of those limits is reached, the workflow selects the matching call
+  without loading saved messages, adds current run identifiers and labels,
+  writes the reason to `runtime.LimitReasonLabel`, and executes the call through
+  the existing terminal-tool path,
+- when the run omitted `LimitTerminalPlans`, or a tool failure requires
+  finalization, `PlanResumeInput.Finalize` is non-nil and the planner may close
+  through terminal bookkeeping tools instead of prose; the runtime admits only
+  `TerminalRun()` calls (`TerminalRun()` implies bookkeeping), executes them
+  inside the remaining hard-deadline window, stamps generated tool-call IDs
+  with the finalization attempt, and requires every terminal side effect in the
+  batch to complete successfully,
 - recoverable failures supply one normal planner activity with their structured
   evidence and do not constrain this validated terminal bookkeeping path;
   caller-supplied `WithRestrictToTool` remains run-scoped and still applies,
 - deadline checks happen before admitting new work; in-flight tool batches
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.
+
+Non-nil `LimitTerminalPlans` adds a field to the Temporal workflow input.
+Deploy this runtime with pinned Temporal Worker Deployment Versioning and route
+new workflows that use the field only after every worker in the new deployment
+runs the same code. Old strict decoders reject the field, so mixed old and new
+workers on one unversioned task queue cannot run workflows that set it.
 
 ### Planner step and failed-result contracts
 
@@ -591,13 +607,14 @@ These fields answer different questions:
 | `ToolOutput.Failure.Recovery.Action` | One failed result | Must the planner correct this call, replan, or finish without tools? |
 | `PlanResult.SynthesizeAfterTools` | One selected batch | If the batch has no recoverable failure, must the next turn answer? |
 | `PlanResumeInput.SynthesisOnly` | One planner activity | Must this planner result be terminal and tool-free? |
-| `PlanResumeInput.Finalize` | Runtime-forced termination | Did a cap or deadline prohibit normal work? |
+| `PlanResumeInput.Finalize` | Runtime-forced planner termination | Did an unconfigured cap or deadline, or one tool failure, require the planner to finish? |
 
 The runtime applies them in this order:
 
 | Completed step | Next state |
 | --- | --- |
-| Cap or deadline exhausted | Forced `Finalize` turn |
+| Cap or deadline exhausted with `LimitTerminalPlans` | Execute the matching terminal call |
+| Cap or deadline exhausted without `LimitTerminalPlans` | Forced `Finalize` turn |
 | Successful `TerminalRun` tool | End immediately |
 | Any failure permits tools | Runtime-enforced correction or replan turn |
 | `SynthesizeAfterTools` requested | `SynthesisOnly` turn |

@@ -233,16 +233,19 @@ out, err = client.OneShotRun(ctx, []*model.Message{{
 ### 5. Replace the Stub Planner
 
 Planners decide what happens next: final response, tool calls, await human input,
-or terminal tool result. During runtime-forced finalization, planners may also
-close through terminal bookkeeping tools; the runtime executes only
-`TerminalRun()` tools in that path (`TerminalRun()` implies bookkeeping) and
-requires the terminal side effects to succeed inside the remaining
-hard-deadline window. A `correct_call` failure keeps the failed tool available
-and supplies its rejected input and generated validation issues to the next
-planner turn. The planner may retry one or more calls, combine work, use another
-advertised tool, ask for input, or finish from evidence already collected.
-Caller `WithRestrictToTool` policy remains run-scoped and still applies to every
-tool. Tool executors decide how work is performed.
+or terminal tool result. By default, a run that reaches a time or call limit
+loads saved messages and asks the planner to finish. Applications whose terminal
+result is a fixed structured record may instead supply `LimitTerminalPlans`:
+one payload-only terminal call for each configured limit. The runtime validates
+all three calls before planning, then executes the matching `TerminalRun()` tool
+without loading saved messages. The individual `tool_failure` termination case
+always uses saved messages because its final response may depend on the failed
+result. A `correct_call` failure keeps the failed tool available and supplies
+its rejected input and generated validation issues to the next planner turn.
+The planner may retry one or more calls, combine work, use another advertised
+tool, ask for input, or finish from evidence already collected. Caller
+`WithRestrictToTool` policy remains run-scoped and still applies to every tool.
+Tool executors decide how work is performed.
 
 ```go
 func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
@@ -492,6 +495,27 @@ Per-run options can further restrict execution:
 ```go
 out, err := client.Run(ctx, "session-1", messages,
 	runtime.WithRunTimeBudget(2*time.Minute),
+	runtime.WithLimitTerminalPlans(runtime.LimitTerminalPlans{
+		TimeBudget: runtime.LimitTerminalCall{
+			Name: "jobs.complete",
+			Payload: rawjson.Message(`{"outcome":"time_limit"}`),
+		},
+		ToolCallCap: runtime.LimitTerminalCall{
+			Name: "jobs.complete",
+			Payload: rawjson.Message(`{"outcome":"tool_limit"}`),
+		},
+		FailedToolCallCap: runtime.LimitTerminalCall{
+			Name: "jobs.complete",
+			Payload: rawjson.Message(`{"outcome":"failed_tool_limit"}`),
+		},
+	}),
+)
+```
+
+Tool filters remain independent run options:
+
+```go
+out, err := client.Run(ctx, "session-2", messages,
 	runtime.WithRestrictToTool("docs.search"),
 	runtime.WithTagPolicyClauses([]runtime.TagPolicyClause{
 		{AllowedAny: []string{"read", "safe"}},

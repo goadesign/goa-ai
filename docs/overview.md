@@ -740,7 +740,7 @@ type PlanResumeInput struct {
     Events      PlannerEvents
     ToolOutputs []*ToolOutput      // Canonical executed tool-call history
     SynthesisOnly bool             // Final response required; tools forbidden
-    Finalize    *Termination       // Non-nil when runtime forces finalization
+    Finalize    *Termination       // Non-nil for saved-message finalization
     Reminders   []reminder.Reminder
 }
 ```
@@ -767,7 +767,10 @@ receives the caller-allowed catalog without the failed tool; and `finish`
 requires tool-free synthesis. The planner may combine corrected work, choose
 another advertised tool, await input, or answer. Otherwise the runtime carries
 the batch intent as `SynthesisOnly`, which rejects additional tool calls.
-`Finalize` remains reserved for runtime-forced cap or deadline termination.
+`Finalize` marks saved-message finalization after a runtime limit or a tool's
+`finish` recovery directive. Runs configured with `WithLimitTerminalPlans`
+execute the matching fixed terminal call at a time, tool-call, or failed-call
+limit without calling `PlanResume`.
 
 ### PlannerContext
 
@@ -955,6 +958,7 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 | `WithRunMaxToolCalls(int)`              | Cap total tool calls         |
 | `WithRunTimeBudget(duration)`           | Set time limits              |
 | `WithRunFinalizerGrace(duration)`       | Reserve time for final message |
+| `WithLimitTerminalPlans(plans)`         | Fix terminal calls for runtime limits |
 | `WithRestrictToTool(tools.Ident)`       | Limit available tools        |
 | `WithTagPolicyClauses([]TagPolicyClause)` | Compose explicit tag clauses |
 | `WithTiming(Timing)`                    | Set multiple timing overrides |
@@ -1001,6 +1005,8 @@ The engine invokes the workflow handler, which calls `rt.ExecuteWorkflow`.
    - If `ToolCalls` present → `executeToolCalls`
    - If `Await` present → publish, checkpoint, and return `RunOutput.Suspension`
    - If `FinalResponse` present → complete
+   - At a configured limit, execute its fixed terminal call when present;
+     otherwise ask `PlanResume` to finish from saved messages
 
 ### 5. Tool Execution
 
