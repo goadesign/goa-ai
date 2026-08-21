@@ -8,7 +8,11 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -49,7 +53,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
-	if ended, err := r.sessionEndedForPlanning(ctx, input); err != nil {
+	if ended, err := r.sessionEndedForPlanning(ctx, input.RunID, input.RunContext.SessionID); err != nil {
 		return nil, err
 	} else if ended {
 		return &PlanActivityOutput{SessionEnded: true}, nil
@@ -88,6 +92,86 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	return act.output(ctx, result)
 }
 
+// PlanLimitFinalizationActivity asks the registered planner how to finish a run
+// stopped by a time, tool-call, or failed-call limit. It does this before Goa-AI
+// loads saved messages. The activity returns either the final response or tool
+// calls, or an instruction to load messages and call PlanResume.
+func (r *Runtime) PlanLimitFinalizationActivity(
+	ctx context.Context,
+	input *LimitFinalizationActivityInput,
+) (_ *LimitFinalizationActivityOutput, retErr error) {
+	defer func() {
+		retErr = hooks.WrapTemporalProviderError(retErr)
+	}()
+	stopHeartbeat := startActivityHeartbeat(ctx)
+	defer stopHeartbeat()
+
+	tracer := r.tracer
+	if tracer == nil {
+		tracer = telemetry.NoopTracer{}
+	}
+	ctx, span := tracer.Start(ctx, "planner.plan_limit_finalization")
+	disposition := "error"
+	defer func() {
+		span.SetAttributes(
+			attribute.String("planner.limit_reason", string(input.PlannerInput.Reason)),
+			attribute.String("planner.limit_disposition", disposition),
+		)
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		}
+		span.End()
+	}()
+
+	reg, ok := r.agentByID(input.AgentID)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrAgentNotFound, input.AgentID)
+	}
+	reason, limit, err := limitTerminationReason(planner.TerminationReason(input.PlannerInput.Reason))
+	if err != nil {
+		return nil, err
+	}
+	if !limit {
+		return nil, errors.New("tool-failure finalization requires message history")
+	}
+	if ended, err := r.sessionEndedForPlanning(
+		ctx,
+		input.PlannerInput.RunID,
+		input.SessionID,
+	); err != nil {
+		return nil, err
+	} else if ended {
+		disposition = string(api.LimitFinalizationDispositionSessionEnded)
+		return api.SessionEndedLimitFinalizationActivityOutput(), nil
+	}
+	plannerInput := input.PlannerInput
+	plannerInput.Reason = reason
+	decision, err := reg.Planner.PlanLimitFinalization(ctx, &plannerInput)
+	if err != nil {
+		return nil, err
+	}
+	if decision == nil {
+		return nil, errors.New("limit finalization planner returned a nil decision")
+	}
+	if decision.RequiresHistory() {
+		if decision.TerminalPlan() != nil {
+			return nil, errors.New("history-required limit finalization also contains a terminal plan")
+		}
+		disposition = string(api.LimitFinalizationDispositionHistoryRequired)
+		return api.HistoryRequiredLimitFinalizationActivityOutput(), nil
+	}
+	result := decision.TerminalPlan()
+	if result == nil {
+		return nil, errors.New("terminal limit finalization is missing its plan")
+	}
+	if err := validateHistoryFreeFinalizationResult(result); err != nil {
+		return nil, fmt.Errorf("limit finalization planner result: %w", err)
+	}
+	disposition = string(api.LimitFinalizationDispositionTerminalPlan)
+	return api.TerminalLimitFinalizationActivityOutput(*result), nil
+}
+
 // PlanResumeActivity executes the planner's PlanResume method.
 //
 // Advanced & generated integration
@@ -106,7 +190,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
-	if ended, err := r.sessionEndedForPlanning(ctx, input); err != nil {
+	if ended, err := r.sessionEndedForPlanning(ctx, input.RunID, input.RunContext.SessionID); err != nil {
 		return nil, err
 	} else if ended {
 		return &PlanActivityOutput{SessionEnded: true}, nil
@@ -185,6 +269,23 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		output.RecoveryCatalog = &RecoveryCatalog{Tools: advertised}
 	}
 	return output, nil
+}
+
+// limitTerminationReason validates and narrows the runtime termination reason
+// before exposing it to a planner that cannot read message history.
+func limitTerminationReason(reason planner.TerminationReason) (planner.LimitTerminationReason, bool, error) {
+	switch reason {
+	case planner.TerminationReasonTimeBudget:
+		return planner.LimitTerminationReasonTimeBudget, true, nil
+	case planner.TerminationReasonToolCap:
+		return planner.LimitTerminationReasonToolCap, true, nil
+	case planner.TerminationReasonFailureCap:
+		return planner.LimitTerminationReasonFailureCap, true, nil
+	case planner.TerminationReasonToolFailure:
+		return "", false, nil
+	default:
+		return "", false, fmt.Errorf("unsupported termination reason %q", reason)
+	}
 }
 
 // preparePlannerActivity constructs all shared planner activity state before
@@ -267,6 +368,36 @@ func validatePlannerResultPayloads(result *planner.PlanResult) error {
 			StopReason: "planner_final",
 		}); err != nil {
 			return fmt.Errorf("planner final response: %w", err)
+		}
+	}
+	if final := result.FinalToolResult; final != nil {
+		resultJSON := bytes.TrimSpace(final.Result)
+		serverJSON := bytes.TrimSpace(final.ServerData)
+		if len(resultJSON) > 0 && !json.Valid(resultJSON) {
+			return errors.New("planner final tool result is not valid JSON")
+		}
+		if len(serverJSON) > 0 && !json.Valid(serverJSON) {
+			return errors.New("planner final tool server data is not valid JSON")
+		}
+		if final.ResultBytes < 0 {
+			return errors.New("planner final tool result byte count cannot be negative")
+		}
+		if final.Failure != nil {
+			if len(resultJSON) > 0 || final.ResultOmitted {
+				return errors.New("planner final tool result contains both a failure and a result")
+			}
+		} else if !final.ResultOmitted && len(resultJSON) == 0 {
+			return errors.New("planner final tool result is missing its result")
+		}
+		if final.ResultOmitted {
+			if len(resultJSON) > 0 {
+				return errors.New("planner final tool result is marked omitted but contains a result")
+			}
+			if final.ResultOmittedReason == "" {
+				return errors.New("planner final tool result is marked omitted without a reason")
+			}
+		} else if final.ResultOmittedReason != "" {
+			return errors.New("planner final tool result has an omission reason but is not omitted")
 		}
 	}
 	for index, call := range result.ToolCalls {
@@ -553,8 +684,7 @@ func buildToolFailureFromAgentToolRequestError(err error, input rawjson.Message,
 // CancelRun rolls its provisional reason back in exactly that case. One-shot
 // runs (empty SessionID) intentionally bypass SessionStore and are never
 // gated.
-func (r *Runtime) sessionEndedForPlanning(ctx context.Context, input *PlanActivityInput) (bool, error) {
-	sessionID := input.RunContext.SessionID
+func (r *Runtime) sessionEndedForPlanning(ctx context.Context, runID, sessionID string) (bool, error) {
 	if sessionID == "" {
 		return false, nil
 	}
@@ -566,10 +696,10 @@ func (r *Runtime) sessionEndedForPlanning(ctx context.Context, input *PlanActivi
 		return false, nil
 	}
 	if _, _, err := r.recordRunCancellation(ctx, CancelRequest{
-		RunID:  input.RunID,
+		RunID:  runID,
 		Reason: run.CancellationReasonSessionEnded,
 	}); err != nil {
-		return false, fmt.Errorf("record session-ended cancellation for run %q: %w", input.RunID, err)
+		return false, fmt.Errorf("record session-ended cancellation for run %q: %w", runID, err)
 	}
 	return true, nil
 }

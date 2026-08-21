@@ -24,6 +24,18 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+// historyRequiredLimitActivity returns the explicit first-stage decision used
+// by tests whose final response still comes from the ordinary resume callback.
+func historyRequiredLimitActivity(
+	ctx context.Context,
+	_ *LimitFinalizationActivityInput,
+) (*LimitFinalizationActivityOutput, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return api.HistoryRequiredLimitFinalizationActivityOutput(), nil
+}
+
 func testToolFailure(kind planner.FailureKind, action planner.RecoveryAction, message string) *planner.ToolFailure {
 	var priorInput rawjson.Message
 	if action == planner.RecoveryCorrectCall {
@@ -135,6 +147,7 @@ type testWorkflowContext struct {
 
 	lastHookCall    engine.RecordActivityCall
 	lastPlannerCall engine.PlannerActivityCall
+	lastLimitCall   engine.LimitFinalizationActivityCall
 	lastToolCall    engine.ToolActivityCall
 
 	asyncResult  ToolOutput
@@ -382,6 +395,16 @@ func (t *testWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivity
 	}, nil
 }
 
+func (t *testWorkflowContext) ExecuteLimitFinalizationActivity(
+	call engine.LimitFinalizationActivityCall,
+) (*api.LimitFinalizationActivityOutput, error) {
+	t.lastLimitCall = call
+	if t.runtime != nil {
+		return t.runtime.PlanLimitFinalizationActivity(t.Context(), call.Input)
+	}
+	return api.HistoryRequiredLimitFinalizationActivityOutput(), nil
+}
+
 func (t *testWorkflowContext) ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error) {
 	fut, err := t.ExecuteToolActivityAsync(call)
 	if err != nil {
@@ -543,210 +566,10 @@ func (h *controlledChildHandle) wasCanceled() bool {
 	return h.canceled
 }
 
-// routeWorkflowContext routes activity execution through registered handlers so tests can call
-// runtime helpers without standing up a workflow engine.
-type routeWorkflowContext struct {
-	ctx   context.Context
-	runID string
-	now   func() time.Time
-
-	plannerRoutes map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error)
-	toolRoutes    map[string]func(context.Context, *ToolInput) (*ToolOutput, error)
-
-	lastHookCall    engine.RecordActivityCall
-	lastPlannerCall engine.PlannerActivityCall
-	lastToolCall    engine.ToolActivityCall
-	sequenceMu      sync.Mutex
-	nextSequence    uint64
-
-	hookRuntime  *Runtime // optional runtime for record activity execution
-	childRuntime *Runtime // optional runtime for child workflow execution
-
-	parent *routeWorkflowContext
-}
-
-func (r *routeWorkflowContext) root() *routeWorkflowContext {
-	if r.parent != nil {
-		return r.parent
-	}
-	return r
-}
-
-func (r *routeWorkflowContext) Context() context.Context {
-	if r.ctx == nil {
-		panic("routeWorkflowContext.ctx is nil")
-	}
-	return engine.WithWorkflowContext(r.ctx, r)
-}
-
-func (r *routeWorkflowContext) WorkflowID() string {
-	return "wf"
-}
-
-func (r *routeWorkflowContext) RunID() string {
-	return r.runID
-}
-
-func (r *routeWorkflowContext) Detached() engine.WorkflowContext {
-	if r.ctx == nil {
-		panic("routeWorkflowContext.ctx is nil")
-	}
-	cctx := context.WithoutCancel(r.ctx)
-	root := r.root()
-	sub := &routeWorkflowContext{
-		ctx:   cctx,
-		runID: r.runID,
-		now:   r.now,
-
-		plannerRoutes: r.plannerRoutes,
-		toolRoutes:    r.toolRoutes,
-
-		lastHookCall:    r.lastHookCall,
-		lastPlannerCall: r.lastPlannerCall,
-		lastToolCall:    r.lastToolCall,
-
-		hookRuntime:  r.hookRuntime,
-		childRuntime: r.childRuntime,
-
-		parent: root,
-	}
-	return sub
-}
-
-func (r *routeWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
-	if r.ctx == nil {
-		panic("routeWorkflowContext.ctx is nil")
-	}
-	cctx, cancel := context.WithCancel(r.ctx)
-	root := r.root()
-	sub := &routeWorkflowContext{
-		ctx:   cctx,
-		runID: r.runID,
-		now:   r.now,
-
-		plannerRoutes: r.plannerRoutes,
-		toolRoutes:    r.toolRoutes,
-
-		lastHookCall:    r.lastHookCall,
-		lastPlannerCall: r.lastPlannerCall,
-		lastToolCall:    r.lastToolCall,
-
-		hookRuntime:  r.hookRuntime,
-		childRuntime: r.childRuntime,
-
-		parent: root,
-	}
-	return sub, cancel
-}
-
-func (r *routeWorkflowContext) Now() time.Time {
-	if r.now != nil {
-		return r.now()
-	}
-	return time.Unix(0, 0)
-}
-
-func (r *routeWorkflowContext) NextSequence() uint64 {
-	root := r.root()
-	root.sequenceMu.Lock()
-	defer root.sequenceMu.Unlock()
-	root.nextSequence++
-	return root.nextSequence
-}
-
-func (r *routeWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (engine.Future[time.Time], error) {
-	now := time.Now()
-	if d <= 0 {
-		fut := &controlledTimeFuture{ready: make(chan struct{}), v: now}
-		close(fut.ready)
-		return fut, nil
-	}
-	fireAt := now.Add(d)
-	fut := &controlledTimeFuture{ready: make(chan struct{}), v: fireAt}
-	go func() {
-		defer close(fut.ready)
-		select {
-		case <-ctx.Done():
-			fut.err = ctx.Err()
-		case <-time.After(d):
-		}
-	}()
-	return fut, nil
-}
-
-func (r *routeWorkflowContext) Await(condition func() bool) error {
-	if condition == nil {
-		return fmt.Errorf("await condition is required")
-	}
-	ticker := time.NewTicker(1 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if condition() {
-			return nil
-		}
-		select {
-		case <-r.ctx.Done():
-			return r.ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
-func (r *routeWorkflowContext) SetQueryHandler(name string, handler any) error {
-	return nil
-}
-
-func (r *routeWorkflowContext) StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
-	return &testChildHandle{
-		runtime: r.childRuntime,
-		request: req,
-		wfCtx:   r,
-	}, nil
-}
-
-func (r *routeWorkflowContext) PublishRecord(call engine.RecordActivityCall) error {
-	r.lastHookCall = call
-	if call.Name != recordActivityName {
-		return fmt.Errorf("unexpected record activity name %q", call.Name)
-	}
-	if r.hookRuntime == nil {
-		return nil
-	}
-	return r.hookRuntime.recordActivity(r.Context(), call.Input)
-}
-
-func (r *routeWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
-	r.lastPlannerCall = call
-	handler, ok := r.plannerRoutes[call.Name]
-	if !ok {
-		return nil, fmt.Errorf("no planner route for activity %q", call.Name)
-	}
-	return handler(r.Context(), call.Input)
-}
-
-func (r *routeWorkflowContext) ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error) {
-	fut, err := r.ExecuteToolActivityAsync(call)
-	if err != nil {
-		return nil, err
-	}
-	return fut.Get(r.Context())
-}
-
-func (r *routeWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActivityCall) (engine.Future[*api.ToolOutput], error) {
-	r.lastToolCall = call
-	handler, ok := r.toolRoutes[call.Name]
-	if !ok {
-		return nil, fmt.Errorf("no tool route for activity %q", call.Name)
-	}
-
-	fut := &testToolFuture{}
-	fut.result, fut.err = handler(r.Context(), call.Input)
-	return fut, nil
-}
-
 type stubPlanner struct {
-	start  func(context.Context, *planner.PlanInput) (*planner.PlanResult, error)
-	resume func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error)
+	start         func(context.Context, *planner.PlanInput) (*planner.PlanResult, error)
+	resume        func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error)
+	limitFinalize func(context.Context, *planner.LimitFinalizationInput) (planner.LimitFinalizationDecision, error)
 }
 
 func (s *stubPlanner) PlanStart(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
@@ -763,10 +586,21 @@ func (s *stubPlanner) PlanResume(ctx context.Context, input *planner.PlanResumeI
 	return &planner.PlanResult{}, nil
 }
 
+func (s *stubPlanner) PlanLimitFinalization(
+	ctx context.Context,
+	input *planner.LimitFinalizationInput,
+) (planner.LimitFinalizationDecision, error) {
+	if s.limitFinalize != nil {
+		return s.limitFinalize(ctx, input)
+	}
+	return planner.HistoryRequiredLimitFinalization(), nil
+}
+
 type stubEngine struct {
 	last                             engine.WorkflowStartRequest
 	registeredRecordActivityOptions  map[string]engine.ActivityOptions
 	registeredPlannerActivityOptions map[string]engine.ActivityOptions
+	registeredLimitActivityOptions   map[string]engine.ActivityOptions
 	registeredExecuteActivityOptions map[string]engine.ActivityOptions
 	sealCalls                        int
 	sealErrors                       []error
@@ -785,6 +619,13 @@ func (s *stubEngine) RegisterPlannerActivity(_ context.Context, name string, opt
 		s.registeredPlannerActivityOptions = make(map[string]engine.ActivityOptions)
 	}
 	s.registeredPlannerActivityOptions[name] = opts
+	return nil
+}
+func (s *stubEngine) RegisterLimitFinalizationActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.LimitFinalizationActivityInput) (*api.LimitFinalizationActivityOutput, error)) error {
+	if s.registeredLimitActivityOptions == nil {
+		s.registeredLimitActivityOptions = make(map[string]engine.ActivityOptions)
+	}
+	s.registeredLimitActivityOptions[name] = opts
 	return nil
 }
 func (s *stubEngine) RegisterExecuteToolActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.ToolInput) (*api.ToolOutput, error)) error {

@@ -29,9 +29,10 @@ type (
 
 		workflows map[string]engine.WorkflowDefinition
 
-		recordActivities  map[string]recordActivityDef
-		plannerActivities map[string]plannerActivityDef
-		toolActivities    map[string]toolActivityDef
+		recordActivities            map[string]recordActivityDef
+		plannerActivities           map[string]plannerActivityDef
+		limitFinalizationActivities map[string]limitFinalizationActivityDef
+		toolActivities              map[string]toolActivityDef
 
 		// statuses tracks workflow status by run ID (inmem uses workflow ID as run ID).
 		statuses map[string]engine.RunStatus
@@ -74,6 +75,11 @@ type (
 
 	plannerActivityDef struct {
 		handler func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error)
+		opts    engine.ActivityOptions
+	}
+
+	limitFinalizationActivityDef struct {
+		handler func(context.Context, *api.LimitFinalizationActivityInput) (*api.LimitFinalizationActivityOutput, error)
 		opts    engine.ActivityOptions
 	}
 
@@ -172,6 +178,35 @@ func (e *eng) RegisterPlannerActivity(_ context.Context, name string, opts engin
 		return fmt.Errorf("planner activity %q already registered", name)
 	}
 	e.plannerActivities[name] = plannerActivityDef{
+		handler: fn,
+		opts:    opts,
+	}
+	return nil
+}
+
+// RegisterLimitFinalizationActivity registers the activity that asks a planner
+// how to finish before saved messages are loaded.
+func (e *eng) RegisterLimitFinalizationActivity(
+	_ context.Context,
+	name string,
+	opts engine.ActivityOptions,
+	fn func(context.Context, *api.LimitFinalizationActivityInput) (*api.LimitFinalizationActivityOutput, error),
+) error {
+	if name == "" {
+		return errors.New("limit finalization activity name is required")
+	}
+	if fn == nil {
+		return errors.New("limit finalization activity handler is required")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.limitFinalizationActivities == nil {
+		e.limitFinalizationActivities = make(map[string]limitFinalizationActivityDef)
+	}
+	if _, dup := e.limitFinalizationActivities[name]; dup {
+		return fmt.Errorf("limit finalization activity %q already registered", name)
+	}
+	e.limitFinalizationActivities[name] = limitFinalizationActivityDef{
 		handler: fn,
 		opts:    opts,
 	}
@@ -461,10 +496,41 @@ func (w *wfCtx) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.Pl
 	if !ok {
 		return nil, fmt.Errorf("planner activity %q not registered", call.Name)
 	}
-	timeout, totalDeadline := activityTimeout(call.Options, def.opts)
-	actCtx, cancel, activityDeadline := withOptionalTimeout(w.ctx, timeout)
+	return executeBoundedPlannerActivity(w.ctx, call.Input, call.Options, def.opts, def.handler)
+}
+
+// ExecuteLimitFinalizationActivity runs the registered activity and waits for
+// its result.
+func (w *wfCtx) ExecuteLimitFinalizationActivity(
+	call engine.LimitFinalizationActivityCall,
+) (*api.LimitFinalizationActivityOutput, error) {
+	if call.Name == "" {
+		return nil, errors.New("limit finalization activity name is required")
+	}
+	if call.Input == nil {
+		return nil, errors.New("limit finalization activity input is required")
+	}
+	w.eng.mu.RLock()
+	def, ok := w.eng.limitFinalizationActivities[call.Name]
+	w.eng.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("limit finalization activity %q not registered", call.Name)
+	}
+	return executeBoundedPlannerActivity(w.ctx, call.Input, call.Options, def.opts, def.handler)
+}
+
+// executeBoundedPlannerActivity runs either planner activity with the configured
+// timeout and returns a deadline error if the activity does not finish in time.
+func executeBoundedPlannerActivity[Input, Output any](
+	ctx context.Context,
+	input *Input,
+	callOpts, registeredOpts engine.ActivityOptions,
+	handler func(context.Context, *Input) (*Output, error),
+) (*Output, error) {
+	timeout, totalDeadline := activityTimeout(callOpts, registeredOpts)
+	actCtx, cancel, activityDeadline := withOptionalTimeout(ctx, timeout)
 	defer cancel()
-	out, err := def.handler(actCtx, call.Input)
+	out, err := handler(actCtx, input)
 	if totalDeadline && activityDeadline &&
 		errors.Is(actCtx.Err(), context.DeadlineExceeded) {
 		return nil, fmt.Errorf("%w: %w", engine.ErrPlannerActivityDeadlineExceeded, actCtx.Err())

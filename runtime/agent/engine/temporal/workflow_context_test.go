@@ -15,6 +15,8 @@ import (
 	"go.temporal.io/sdk/workflow"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 func TestApplyActivityDefaultsUsesTemporalPlannerDefaults(t *testing.T) {
@@ -184,6 +186,122 @@ func TestExecutePlannerActivityBoundsRetriesByScheduleToClose(t *testing.T) {
 	require.Error(t, activityErr)
 	require.Greater(t, attempts, 1)
 	require.Less(t, attempts, 100)
+}
+
+func TestExecuteLimitFinalizationActivityUsesDedicatedWireType(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetDataConverter(NewAgentDataConverter())
+	var gotReason planner.LimitTerminationReason
+	var output *api.LimitFinalizationActivityOutput
+	var activityErr error
+	env.RegisterActivityWithOptions(
+		func(
+			_ context.Context,
+			input *api.LimitFinalizationActivityInput,
+		) (*api.LimitFinalizationActivityOutput, error) {
+			gotReason = input.PlannerInput.Reason
+			return api.HistoryRequiredLimitFinalizationActivityOutput(), nil
+		},
+		activity.RegisterOptions{Name: "limit_finalization"},
+	)
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		output, activityErr = wfCtx.ExecuteLimitFinalizationActivity(
+			engine.LimitFinalizationActivityCall{
+				Name: "limit_finalization",
+				Input: &api.LimitFinalizationActivityInput{
+					PlannerInput: planner.LimitFinalizationInput{
+						Reason: planner.LimitTerminationReasonFailureCap,
+					},
+				},
+			},
+		)
+		return nil
+	})
+
+	require.NoError(t, env.GetWorkflowError())
+	require.NoError(t, activityErr)
+	require.Equal(t, planner.LimitTerminationReasonFailureCap, gotReason)
+	require.Equal(t, api.LimitFinalizationDispositionHistoryRequired, output.Disposition())
+}
+
+func TestExecuteLimitFinalizationActivityTransportsTerminalToolCall(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetDataConverter(NewAgentDataConverter())
+	var output *api.LimitFinalizationActivityOutput
+	var activityErr error
+	env.RegisterActivityWithOptions(
+		func(
+			_ context.Context,
+			input *api.LimitFinalizationActivityInput,
+		) (*api.LimitFinalizationActivityOutput, error) {
+			require.Equal(t, "run-1", input.PlannerInput.RunID)
+			require.Equal(t, "task", input.PlannerInput.Labels["run_kind"])
+			return api.TerminalLimitFinalizationActivityOutput(planner.PlanResult{
+				ToolCalls: []planner.ToolRequest{{
+					Name:    "tasks.progress.complete",
+					Payload: rawjson.Message(`{"status":"failed"}`),
+					Labels:  map[string]string{"system_failure": "true"},
+				}},
+			}), nil
+		},
+		activity.RegisterOptions{Name: "limit_finalization"},
+	)
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		output, activityErr = wfCtx.ExecuteLimitFinalizationActivity(
+			engine.LimitFinalizationActivityCall{
+				Name: "limit_finalization",
+				Input: &api.LimitFinalizationActivityInput{
+					SessionID: "session-1",
+					PlannerInput: planner.LimitFinalizationInput{
+						RunID: "run-1",
+						Labels: map[string]string{
+							"run_kind": "task",
+						},
+						Reason: planner.LimitTerminationReasonTimeBudget,
+					},
+				},
+			},
+		)
+		return nil
+	})
+
+	require.NoError(t, env.GetWorkflowError())
+	require.NoError(t, activityErr)
+	require.Equal(t, api.LimitFinalizationDispositionTerminalPlan, output.Disposition())
+	require.Len(t, output.TerminalPlan().ToolCalls, 1)
+	call := output.TerminalPlan().ToolCalls[0]
+	require.Equal(t, rawjson.Message(`{"status":"failed"}`), call.Payload)
+	require.Equal(t, "true", call.Labels["system_failure"])
+}
+
+func TestExecuteLimitFinalizationActivityRejectsMalformedActivityResult(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetDataConverter(NewAgentDataConverter())
+	var activityErr error
+	env.RegisterActivityWithOptions(
+		func(context.Context, *api.LimitFinalizationActivityInput) (map[string]any, error) {
+			return map[string]any{"disposition": "terminal_plan"}, nil
+		},
+		activity.RegisterOptions{Name: "limit_finalization"},
+	)
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		_, activityErr = wfCtx.ExecuteLimitFinalizationActivity(
+			engine.LimitFinalizationActivityCall{
+				Name:  "limit_finalization",
+				Input: &api.LimitFinalizationActivityInput{},
+			},
+		)
+		return nil
+	})
+
+	require.NoError(t, env.GetWorkflowError())
+	require.ErrorContains(t, activityErr, "missing its plan")
 }
 
 // TestNormalizeTemporalPlannerError builds the failure envelope emitted by

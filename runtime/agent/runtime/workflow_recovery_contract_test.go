@@ -424,6 +424,14 @@ func TestFinishFailureFinalizesWithExactCause(t *testing.T) {
 			return finalPlannerResult("partial result"), nil
 		},
 	)
+	limitCalls := 0
+	h.workflow.limitRoutes["resume.limit_finalization"] = func(
+		ctx context.Context,
+		input *LimitFinalizationActivityInput,
+	) (*LimitFinalizationActivityOutput, error) {
+		limitCalls++
+		return historyRequiredLimitActivity(ctx, input)
+	}
 
 	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{
 		{Name: search.Name, ToolCallID: "search-call", Payload: rawjson.Message(`{"query":"bad"}`)},
@@ -434,6 +442,7 @@ func TestFinishFailureFinalizesWithExactCause(t *testing.T) {
 	require.NotNil(t, out)
 	assert.Equal(t, "partial result", agentMessageText(out.Final))
 	assert.Equal(t, 1, resumes)
+	assert.Zero(t, limitCalls)
 	assert.Equal(t, []string{"load-call"}, h.workflow.lastPlannerCall.Input.RecoveryToolCallIDs)
 }
 
@@ -476,6 +485,9 @@ func newRecoveryHarness(
 		hookRuntime: rt,
 		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
 			"resume": rt.PlanResumeActivity,
+		},
+		limitRoutes: map[string]func(context.Context, *LimitFinalizationActivityInput) (*LimitFinalizationActivityOutput, error){
+			"resume.limit_finalization": rt.PlanLimitFinalizationActivity,
 		},
 		toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
 			"execute": rt.ExecuteToolActivity,
