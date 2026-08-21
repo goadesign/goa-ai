@@ -56,6 +56,10 @@ func (panicWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCa
 	return nil, nil
 }
 
+func (panicWorkflowContext) ExecuteLimitFinalizationActivity(call engine.LimitFinalizationActivityCall) (*api.LimitFinalizationActivityOutput, error) {
+	return nil, nil
+}
+
 func (panicWorkflowContext) ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error) {
 	return nil, nil
 }
@@ -329,6 +333,11 @@ func (w *cancelOnPlannerWorkflowContext) PublishRecord(call engine.RecordActivit
 }
 
 func (w *cancelOnPlannerWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
+	w.cancel()
+	return nil, context.Canceled
+}
+
+func (w *cancelOnPlannerWorkflowContext) ExecuteLimitFinalizationActivity(call engine.LimitFinalizationActivityCall) (*api.LimitFinalizationActivityOutput, error) {
 	w.cancel()
 	return nil, context.Canceled
 }

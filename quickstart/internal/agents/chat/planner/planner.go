@@ -42,6 +42,15 @@ func (p *chatPlanner) PlanStart(_ context.Context, in *planner.PlanInput) (*plan
 	}, nil
 }
 
+// PlanLimitFinalization asks Goa-AI to load saved messages before PlanResume
+// because the final answer summarizes an earlier answer-tool result.
+func (p *chatPlanner) PlanLimitFinalization(
+	context.Context,
+	*planner.LimitFinalizationInput,
+) (planner.LimitFinalizationDecision, error) {
+	return planner.HistoryRequiredLimitFinalization(), nil
+}
+
 // PlanResume decodes the helpers.answer result from the executed tool history
 // and finalizes the run with the answer text.
 func (p *chatPlanner) PlanResume(_ context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {

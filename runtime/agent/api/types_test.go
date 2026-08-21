@@ -108,7 +108,7 @@ func TestPlanActivityInputOmitsEmptyRecoveryIdentity(t *testing.T) {
 	require.Contains(t, string(payload), `"RecoveryToolCallIDs":["call-1"]`)
 }
 
-func TestRecoveryActivityFieldsRequireHardWorkerCutover(t *testing.T) {
+func TestRecoveryFieldsRejectLegacyPlannerActivityDecoders(t *testing.T) {
 	t.Parallel()
 
 	ordinaryInput, err := json.Marshal(PlanActivityInput{RunID: "run-1"})
@@ -131,6 +131,27 @@ func TestRecoveryActivityFieldsRequireHardWorkerCutover(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.ErrorContains(t, strictJSONDecode(recoveryOutput, &legacyPlanActivityOutput{}), "unknown field")
+}
+
+func TestLimitFinalizationActivityRejectsLegacyPlannerActivityDecoders(t *testing.T) {
+	t.Parallel()
+
+	input, err := json.Marshal(LimitFinalizationActivityInput{
+		AgentID: "agent-1",
+		PlannerInput: planner.LimitFinalizationInput{
+			RunID:  "run-1",
+			Reason: planner.LimitTerminationReasonFailureCap,
+		},
+	})
+	require.NoError(t, err)
+	require.NotContains(t, string(input), "Messages")
+	require.NotContains(t, string(input), "ToolOutputs")
+	require.NotContains(t, string(input), "Finalize")
+	require.ErrorContains(t, strictJSONDecode(input, &legacyPlanActivityInput{}), "unknown field")
+
+	output, err := json.Marshal(HistoryRequiredLimitFinalizationActivityOutput())
+	require.NoError(t, err)
+	require.ErrorContains(t, strictJSONDecode(output, &legacyPlanActivityOutput{}), "unknown field")
 }
 
 // strictJSONDecode mirrors the Temporal payload decoder's unknown-field

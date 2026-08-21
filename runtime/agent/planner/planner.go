@@ -3,14 +3,16 @@
 // analyze conversation history and either request tool calls or produce a final
 // assistant response.
 //
-// The runtime invokes planners through two entry points:
+// The runtime invokes planners through three entry points:
 //   - PlanStart: Called once at run start with the initial messages
+//   - PlanLimitFinalization: Called at a runtime limit before Goa-AI loads saved
+//     messages
 //   - PlanResume: Called after each batch of tool calls with their results
 //
 // Planners have read-only access to runtime services (memory, models, telemetry)
 // through PlannerContext, and can emit streaming events through PlannerEvents.
-// The runtime handles workflow orchestration, policy enforcement, and tool
-// execution; planners focus purely on decision-making.
+// The runtime starts activities, checks run limits, saves messages, and executes
+// tools; planners choose the next response or tool calls.
 //
 // Implementing a Planner:
 //
@@ -23,9 +25,17 @@
 //	    // - Request external input: &PlanResult{Await: NewAwait(AwaitClarificationItem(...))}
 //	}
 //
+//	func (p *MyPlanner) PlanLimitFinalization(
+//	    ctx context.Context,
+//	    input *LimitFinalizationInput,
+//	) (LimitFinalizationDecision, error) {
+//	    // Ask Goa-AI to load saved messages before writing the final answer.
+//	    return HistoryRequiredLimitFinalization(), nil
+//	}
+//
 //	func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error) {
-//	    // Process input.ToolResults and decide next step
-//	    // The Finalize field is non-nil when runtime forces termination
+//	    // Process input.ToolOutputs and decide the next step
+//	    // Finalize is non-nil when Goa-AI asks this call to finish the run
 //	}
 package planner
 
@@ -55,29 +65,92 @@ import (
 // storing per-run state in the Planner struct; use PlannerContext.State() for
 // ephemeral per-run data if needed.
 //
-// Retry safety: PlanStart and PlanResume are activity handlers. A workflow has
-// one logical call per planner turn, but an engine may execute that call more
-// than once under its retry policy. Implementations must not perform
-// non-idempotent side effects outside runtime-owned planner output.
+// Retry safety: PlanStart, PlanLimitFinalization, and PlanResume are activity
+// handlers. A workflow has one logical call per planner turn, but an engine may
+// execute that call more than once under its retry policy. Implementations must
+// not perform non-idempotent side effects outside runtime-owned planner output.
 //
 // Error handling: Planner errors terminate the run with a failed status. An
-// engine-owned PlanStart budget expiry instead enters the explicit PlanResume
-// finalization turn. Failed tools return ToolFailure as part of their ToolResult;
-// the runtime enforces its recovery transition on the next turn.
+// engine-owned PlanStart budget expiry first invokes PlanLimitFinalization.
+// Failed tools return ToolFailure as part of their ToolResult; the runtime
+// enforces its recovery transition on the next turn.
 type Planner interface {
 	// PlanStart receives the initial messages and returns the first decision.
 	// This is one logical call at the start of each run; its activity may retry.
 	PlanStart(ctx context.Context, input *PlanInput) (*PlanResult, error)
 
+	// PlanLimitFinalization decides whether a time, tool-call, or failed-call
+	// limit can end the run before Goa-AI loads and copies saved messages.
+	PlanLimitFinalization(ctx context.Context, input *LimitFinalizationInput) (LimitFinalizationDecision, error)
+
 	// PlanResume receives messages plus tool results from the previous turn.
 	// This is called after each batch of tool executions until the planner
 	// returns a FinalResponse or the runtime terminates due to policy limits.
-	// When the runtime forces termination (caps exhausted, time budget expired),
-	// the Finalize field is set and the planner should produce a final response.
-	// A time-budget finalization may be the first completed planner turn when
-	// PlanStart exhausted its activity deadline.
+	// Finalize is set when the runtime decides a tool failure must end normal
+	// work and when PlanLimitFinalization asks Goa-AI to load saved messages. If
+	// PlanStart runs out of time, PlanResume may be the first planner call that
+	// receives those messages.
 	PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error)
 }
+
+type (
+	// LimitFinalizationDecision gives the planner exactly two choices after a
+	// runtime limit: return the final result now, or ask Goa-AI to load saved
+	// messages and call PlanResume.
+	LimitFinalizationDecision interface {
+		TerminalPlan() *PlanResult
+		RequiresHistory() bool
+		limitFinalizationDecision()
+	}
+
+	// terminalLimitFinalization carries the final result that Goa-AI can execute
+	// without loading saved messages.
+	terminalLimitFinalization struct {
+		result *PlanResult
+	}
+
+	// historyRequiredLimitFinalization asks Goa-AI to load saved messages before
+	// it calls PlanResume.
+	historyRequiredLimitFinalization struct{}
+)
+
+// TerminalLimitFinalization ends a stopped run without loading saved messages.
+// Goa-AI checks the result before it executes any requested tool.
+func TerminalLimitFinalization(result PlanResult) LimitFinalizationDecision {
+	return &terminalLimitFinalization{result: &result}
+}
+
+// HistoryRequiredLimitFinalization asks Goa-AI to load saved messages and call
+// PlanResume.
+func HistoryRequiredLimitFinalization() LimitFinalizationDecision {
+	return historyRequiredLimitFinalization{}
+}
+
+// TerminalPlan returns the final response or final tool calls selected before
+// Goa-AI loads saved messages.
+func (d *terminalLimitFinalization) TerminalPlan() *PlanResult {
+	return d.result
+}
+
+// RequiresHistory reports that Goa-AI does not need to load saved messages.
+func (d *terminalLimitFinalization) RequiresHistory() bool {
+	return false
+}
+
+func (*terminalLimitFinalization) limitFinalizationDecision() {}
+
+// TerminalPlan returns nil because Goa-AI must load saved messages first.
+func (historyRequiredLimitFinalization) TerminalPlan() *PlanResult {
+	return nil
+}
+
+// RequiresHistory reports that Goa-AI must load saved messages before it calls
+// PlanResume.
+func (historyRequiredLimitFinalization) RequiresHistory() bool {
+	return true
+}
+
+func (historyRequiredLimitFinalization) limitFinalizationDecision() {}
 
 // PlannerContext exposes runtime services to planners.
 type PlannerContext interface {
@@ -615,8 +688,14 @@ type AwaitToolItem struct {
 	Payload rawjson.Message
 }
 
-// TerminationReason indicates why the runtime forced finalization.
-type TerminationReason string
+type (
+	// TerminationReason indicates why the runtime forced finalization.
+	TerminationReason string
+
+	// LimitTerminationReason is one of the three runtime limits that may be
+	// handled before Goa-AI loads saved messages.
+	LimitTerminationReason string
+)
 
 const (
 	// TerminationReasonTimeBudget indicates the run exceeded its time budget.
@@ -631,6 +710,15 @@ const (
 	// TerminationReasonToolFailure indicates a tool required the run to stop
 	// domain work and finalize from the evidence already collected.
 	TerminationReasonToolFailure TerminationReason = "tool_failure"
+
+	// LimitTerminationReasonTimeBudget indicates that active run time expired.
+	LimitTerminationReasonTimeBudget LimitTerminationReason = "time_budget"
+
+	// LimitTerminationReasonToolCap indicates that the run used every allowed tool call.
+	LimitTerminationReasonToolCap LimitTerminationReason = "tool_cap"
+
+	// LimitTerminationReasonFailureCap indicates that consecutive failed tool calls reached their limit.
+	LimitTerminationReasonFailureCap LimitTerminationReason = "failure_cap"
 )
 
 // Termination carries a runtime-initiated finalize request.
@@ -640,6 +728,24 @@ type Termination struct {
 
 	// Message is optional additional context suitable for logging or diagnostics.
 	Message string
+}
+
+// LimitFinalizationInput contains the run ID, planning attempt, current run
+// labels, and one allowed reason that normal work stopped. Current run labels
+// include values added or replaced by the application's runtime policy. This
+// input never contains saved messages, tool arguments, or application metadata.
+type LimitFinalizationInput struct {
+	// RunID identifies the ending run.
+	RunID string
+
+	// Attempt is the planner iteration at which normal work stopped.
+	Attempt int
+
+	// Labels are the current run labels after the application's runtime policy.
+	Labels map[string]string
+
+	// Reason explains which runtime limit ended normal work.
+	Reason LimitTerminationReason
 }
 
 // PlanInput carries the initial messages and context into PlanStart.

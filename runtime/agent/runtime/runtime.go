@@ -461,6 +461,7 @@ const (
 	defaultResumeActivityTimeout      = 2 * time.Minute
 	defaultExecuteToolActivityTimeout = 2 * time.Minute
 	defaultRecordActivityTimeout      = 15 * time.Second
+	limitFinalizationActivitySuffix   = ".limit_finalization"
 )
 
 // defaultRetriedActivityPolicy returns the runtime's standard infrastructure
@@ -1079,7 +1080,8 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if err := r.Engine.RegisterWorkflow(ctx, reg.Workflow); err != nil {
 		return err
 	}
-	// Register typed activities for planner (start/resume) and execute_tool.
+	// Register activities for the first planner call, limit handling before
+	// saved messages are loaded, later planner calls, and tool execution.
 	if reg.PlanActivityName != "" {
 		if err := r.Engine.RegisterPlannerActivity(ctx,
 			reg.PlanActivityName,
@@ -1093,6 +1095,13 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 			reg.ResumeActivityName,
 			reg.ResumeActivityOptions,
 			r.PlanResumeActivity,
+		); err != nil {
+			return err
+		}
+		if err := r.Engine.RegisterLimitFinalizationActivity(ctx,
+			reg.ResumeActivityName+limitFinalizationActivitySuffix,
+			reg.ResumeActivityOptions,
+			r.PlanLimitFinalizationActivity,
 		); err != nil {
 			return err
 		}
