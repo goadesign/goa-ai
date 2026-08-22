@@ -25,14 +25,8 @@ jobs:
           go mod download
           go build ./...
 
-      - name: Install protoc (for make tools)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
-
       - name: Install developer tools
-        run: |
-          make tools
+        run: ./scripts/setup
 
       - name: Install Goa CLI
         run: |
@@ -61,21 +55,8 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
-      # make itest only requires protoc on PATH (see the Makefile protoc-check
-      # target), and the sole proto in this repo is plain proto3, so the
-      # distribution compiler is sufficient. Resolving "latest" through the
-      # unauthenticated GitHub API instead made this lane fail whenever the
-      # API rate-limited the runner: the version resolved empty and the
-      # download was an error page rather than an archive.
-      - name: Install protoc
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
-
-      - name: Install protoc plugins
-        run: |
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.35.1
-          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+      - name: Install developer tools
+        run: ./scripts/setup
 
       # The Makefile itest target is the single source of truth for the
       # integration lane: end-to-end scenarios plus Docker-backed tests.

@@ -1141,6 +1141,10 @@ be distinguished safely from planner code returning a timeout-shaped error.
 
 Issues and PRs are welcome. Include a Goa design, a failing test, or a clear reproduction when reporting behavior. See [`AGENTS.md`](AGENTS.md) for repository guidelines.
 
+Run `make setup` once after cloning or when `.tool-versions` or `.go-install`
+changes. It installs the exact protobuf compiler and Go generators used by CI.
+Normal `make` targets verify those versions before building or generating code.
+
 ## License
 
 MIT License (C) Raphael Simon and the [Goa community](https://goa.design).

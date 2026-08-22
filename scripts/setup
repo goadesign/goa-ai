@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# This script installs the exact protobuf compiler and Go generators used by
+# local development and CI. Version-controlled files own every version so a
+# clean checkout always regenerates the same code.
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+PROTOC_VERSION="$(awk '$1 == "protoc" { print $2; exit }' "$REPO_ROOT/.tool-versions")"
+INSTALLED_PROTOC_VERSION="$(protoc --version 2>/dev/null | awk '{ print $2 }' || true)"
+
+if [[ "$INSTALLED_PROTOC_VERSION" != "$PROTOC_VERSION" ]]; then
+  case "$(uname -s)" in
+    Darwin)
+      archive="protoc-${PROTOC_VERSION}-osx-universal_binary.zip"
+      ;;
+    Linux)
+      archive="protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+      ;;
+    *)
+      echo "unsupported operating system: $(uname -s)" >&2
+      exit 1
+      ;;
+  esac
+
+  temp_dir="$(mktemp -d)"
+  trap 'rm -rf "$temp_dir"' EXIT
+  curl -fsSL \
+    "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/${archive}" \
+    -o "$temp_dir/$archive"
+  sudo unzip -oq "$temp_dir/$archive" -d /usr/local bin/protoc 'include/*'
+fi
+
+go mod download
+while IFS= read -r target; do
+  go install "$target"
+done < <(grep -Ev '^\s*(#|$)' "$REPO_ROOT/.go-install")
+
+gobin="${GOBIN:-$(go env GOPATH)/bin}"
+export PATH="$gobin:$PATH"
+if [[ -n "${GITHUB_PATH:-}" ]]; then
+  echo "$gobin" >> "$GITHUB_PATH"
+fi
+
+make tools

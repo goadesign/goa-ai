@@ -1,0 +1,2 @@
+# asdf plugin-add protoc https://github.com/paxosglobal/asdf-protoc.git
+protoc 36.0
