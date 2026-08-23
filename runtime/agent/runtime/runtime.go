@@ -159,6 +159,10 @@ type (
 		// construction time.
 		workers map[agent.Ident]WorkerConfig
 
+		// registrationMu serializes agent and toolset registration so one global
+		// tool name cannot change contract between validation and storage.
+		registrationMu sync.Mutex
+
 		// registrationClosed prevents late agent/toolset registration after the
 		// runtime has been explicitly sealed or the first run has been submitted,
 		// avoiding dynamic handler registration on active workers.
@@ -1003,6 +1007,9 @@ func WithQueue(name string) WorkerOption {
 // later RegisterAgent/RegisterToolset calls fail fast even if activation later
 // fails. Callers may retry Seal after a context-limited activation failure.
 func (r *Runtime) Seal(ctx context.Context) error {
+	r.registrationMu.Lock()
+	defer r.registrationMu.Unlock()
+
 	r.mu.Lock()
 	alreadyActivated := r.activationComplete
 	r.registrationClosed = true
@@ -1041,6 +1048,9 @@ func (r *Runtime) Seal(ctx context.Context) error {
 // All agents must be registered before workflows can be started. Generated code
 // calls this during initialization.
 func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) error {
+	r.registrationMu.Lock()
+	defer r.registrationMu.Unlock()
+
 	r.mu.RLock()
 	if r.registrationClosed {
 		r.mu.RUnlock()
@@ -1069,6 +1079,22 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 		return err
 	}
 	if err := validateSpecs(reg.Specs, reg.ToolMetadataLookup); err != nil {
+		return err
+	}
+	registrations := []toolSpecRegistration{{
+		specs:  reg.Specs,
+		lookup: reg.ToolMetadataLookup,
+	}}
+	for _, ts := range reg.Toolsets {
+		if err := validateToolsetSpecs(ts); err != nil {
+			return err
+		}
+		registrations = append(registrations, toolSpecRegistration{
+			specs:  ts.Specs,
+			lookup: ts.ToolMetadataLookup,
+		})
+	}
+	if err := r.validateToolSpecRegistrations(registrations...); err != nil {
 		return err
 	}
 	if r.Engine == nil {
@@ -1144,10 +1170,6 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 		r.agentToolSpecs[reg.ID] = cp
 	}
 	for _, ts := range reg.Toolsets {
-		if err := validateToolsetSpecs(ts); err != nil {
-			r.mu.Unlock()
-			return err
-		}
 		r.addToolsetLocked(ts)
 	}
 	r.mu.Unlock()
@@ -1183,6 +1205,9 @@ func (r *Runtime) ensureRecordActivityRegistered(ctx context.Context) error {
 // feature modules that expose shared toolsets. Returns an error if required fields
 // (Name, Execute) are missing.
 func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
+	r.registrationMu.Lock()
+	defer r.registrationMu.Unlock()
+
 	r.mu.RLock()
 	if r.registrationClosed {
 		r.mu.RUnlock()
@@ -1196,6 +1221,12 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 		return errors.New("toolset execute function is required")
 	}
 	if err := validateToolsetSpecs(ts); err != nil {
+		return err
+	}
+	if err := r.validateToolSpecRegistrations(toolSpecRegistration{
+		specs:  ts.Specs,
+		lookup: ts.ToolMetadataLookup,
+	}); err != nil {
 		return err
 	}
 	r.mu.Lock()

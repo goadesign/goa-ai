@@ -57,6 +57,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		TurnID:           msg.Meta.TurnID,
 		ToolCallID:       msg.Meta.ToolCallID,
 		ParentToolCallID: msg.Meta.ParentToolCallID,
+		Labels:           msg.Meta.Labels,
 	}
 {{- end }}
 
@@ -72,7 +73,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
 {{- if .Injected }}
-		if err := Inject{{ .ConstName }}(args, meta, nil); err != nil {
+		if err := Inject{{ .ConstName }}(args, meta, meta.Labels); err != nil {
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
 {{- end }}

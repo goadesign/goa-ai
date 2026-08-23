@@ -353,6 +353,8 @@ func TestCompletionToolPolicyRejectsUnexecutableTools(t *testing.T) {
 	terminal := newAnyJSONSpec("briefs.publish", "briefs")
 	terminal.Bookkeeping = true
 	terminal.TerminalRun = true
+	confirmed := newAnyJSONSpec("briefs.confirmed", "briefs")
+	confirmed.Confirmation = &tools.ConfirmationSpec{}
 	foreign := newAnyJSONSpec("foreign.persist", "foreign")
 
 	rt := New()
@@ -361,7 +363,7 @@ func TestCompletionToolPolicyRejectsUnexecutableTools(t *testing.T) {
 		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
 			return successfulToolResult(call), nil
 		}),
-		Specs: []tools.ToolSpec{persist, lookup, audit, terminal},
+		Specs: []tools.ToolSpec{persist, lookup, audit, terminal, confirmed},
 	}))
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "foreign",
@@ -372,7 +374,7 @@ func TestCompletionToolPolicyRejectsUnexecutableTools(t *testing.T) {
 	}))
 	reg := AgentRegistration{
 		ID:    "briefs.writer",
-		Specs: []tools.ToolSpec{persist, lookup, audit, terminal},
+		Specs: []tools.ToolSpec{persist, lookup, audit, terminal, confirmed},
 	}
 
 	tests := []struct {
@@ -399,6 +401,11 @@ func TestCompletionToolPolicyRejectsUnexecutableTools(t *testing.T) {
 			name:   "terminal",
 			policy: &PolicyOverrides{CompletionTool: terminal.Name},
 			want:   `completion tool "briefs.publish" must not be a terminal tool`,
+		},
+		{
+			name:   "confirmation required",
+			policy: &PolicyOverrides{CompletionTool: confirmed.Name},
+			want:   `completion tool "briefs.confirmed" cannot require confirmation`,
 		},
 		{
 			name: "excluded by restriction",

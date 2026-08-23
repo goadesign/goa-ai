@@ -198,55 +198,18 @@ func TestValidateContinuationChecksSavedCompletionToolPolicy(t *testing.T) {
 	}
 }
 
-func TestValidateContinuationAcceptsPreviousSuspensionVersion(t *testing.T) {
+func TestValidateContinuationRejectsNoncurrentSuspensionVersion(t *testing.T) {
 	runtime := New()
 	spec := newAnyJSONSpec("svc.lookup", "svc")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
-		checkpoint.Version = previousRunSuspensionVersion
+		checkpoint.Version = "goa-ai.run-suspension.v1"
 	})
-	suspension.Version = previousRunSuspensionVersion
+	suspension.Version = "goa-ai.run-suspension.v1"
 
-	require.NoError(t, runtime.ValidateContinuation(suspension))
-}
-
-func TestValidateContinuationMigratesPreviousGeneratedClarificationPhase(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
-	seedTestToolSpecs(runtime, spec)
-	suspension := suspensionContractFixture(t, spec.Name)
-	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
-		checkpoint.Version = previousRunSuspensionVersion
-		checkpoint.Batch.AwaitCount = 1
-		checkpoint.Batch.ResumePlannerAfterPending = false
-	})
-	suspension.Version = previousRunSuspensionVersion
-
-	checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
-	require.NoError(t, err)
-	require.True(t, checkpoint.Batch.ResumePlannerAfterPending)
-}
-
-func TestValidateContinuationRejectsCompletionPolicyInPreviousSuspensionVersion(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.persist", "svc")
-	seedTestToolSpecs(runtime, spec)
-	runtime.agents["svc.agent"] = AgentRegistration{ID: "svc.agent", Specs: []tools.ToolSpec{spec}}
-	suspension := suspensionContractFixture(t, spec.Name)
-	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
-		checkpoint.Version = previousRunSuspensionVersion
-		checkpoint.Policy = &PolicyOverrides{CompletionTool: spec.Name}
-		checkpoint.RequiredTools = requiredCheckpointToolNames(checkpoint)
-		suspension.RequiredTools = append([]tools.Ident(nil), checkpoint.RequiredTools...)
-	})
-	suspension.Version = previousRunSuspensionVersion
-
-	require.EqualError(
-		t,
-		runtime.ValidateContinuation(suspension),
-		"run suspension version v1 cannot contain a completion tool policy",
-	)
+	require.EqualError(t, runtime.ValidateContinuation(suspension),
+		`unsupported run suspension version "goa-ai.run-suspension.v1"`)
 }
 
 func TestValidateContinuationChecksSavedCompletionPlan(t *testing.T) {

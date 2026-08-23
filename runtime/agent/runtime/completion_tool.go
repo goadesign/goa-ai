@@ -33,6 +33,9 @@ func (r *Runtime) validateCompletionToolPolicy(reg AgentRegistration, runPolicy 
 	if spec.Bookkeeping {
 		return fmt.Errorf("completion tool %q must be budgeted", completion)
 	}
+	if spec.Confirmation != nil {
+		return fmt.Errorf("completion tool %q cannot require confirmation", completion)
+	}
 	compiled := compileToolPolicy(runPolicy)
 	if !compiled.allowsTool(completion, toolPolicyFacts{tags: spec.Tags}) {
 		return fmt.Errorf("completion tool %q is excluded by the run tool policy", completion)

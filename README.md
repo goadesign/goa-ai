@@ -245,6 +245,9 @@ its rejected input and generated validation issues to the next planner turn.
 The planner may retry one or more calls, combine work, use another advertised
 tool, ask for input, or finish from evidence already collected. Caller
 `WithRestrictToTool` policy remains run-scoped and still applies to every tool.
+For side-effect-owned operations, `WithRunCompletionTool` instead requires one
+declared non-terminal tool to succeed; planner text and limit finalization
+cannot substitute for that success.
 Tool executors decide how work is performed.
 
 ```go

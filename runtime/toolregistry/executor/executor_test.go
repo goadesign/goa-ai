@@ -92,13 +92,16 @@ func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 		stream:   stream,
 	}
 
+	var dispatchedMeta toolregistry.ToolCallMeta
 	exec := New(fakeRegistryClient{
 		toolUseID: toolUseID,
+		meta:      &dispatchedMeta,
 	}, pc, specs)
 
 	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
 		RunID:     "run",
 		SessionID: "sess",
+		Labels:    map[string]string{"scope": "detached"},
 	}, &planner.ToolRequest{
 		Name:    "todos.update_todos",
 		Payload: []byte(`{}`),
@@ -108,6 +111,7 @@ func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 	assert.NotNil(t, res)
 	require.NotNil(t, res.ToolResult)
 	assert.Equal(t, tools.Ident("todos.update_todos"), res.ToolResult.Name)
+	assert.Equal(t, map[string]string{"scope": "detached"}, dispatchedMeta.Labels)
 	assert.False(t, stream.destroyed)
 }
 
@@ -1479,6 +1483,7 @@ type fakeRegistryClient struct {
 	callDeadline       *time.Time
 	calls              *atomic.Int64
 	retryExpectedToken *string
+	meta               *toolregistry.ToolCallMeta
 }
 
 func (c fakeRegistryClient) CallTool(
@@ -1486,13 +1491,16 @@ func (c fakeRegistryClient) CallTool(
 	_ string,
 	_ tools.Ident,
 	_ []byte,
-	_ toolregistry.ToolCallMeta,
+	meta toolregistry.ToolCallMeta,
 ) (toolregistry.ToolCallRef, error) {
 	if c.callDeadline != nil {
 		*c.callDeadline, _ = ctx.Deadline()
 	}
 	if c.calls != nil {
 		c.calls.Add(1)
+	}
+	if c.meta != nil {
+		*c.meta = meta
 	}
 	if c.err != nil {
 		return toolregistry.ToolCallRef{}, c.err
@@ -1522,7 +1530,7 @@ func (c fakeRegistryClient) RetryTool(
 	_ string,
 	_ tools.Ident,
 	_ []byte,
-	_ toolregistry.ToolCallMeta,
+	meta toolregistry.ToolCallMeta,
 	expectedRegistrationToken string,
 ) (toolregistry.ToolCallRef, error) {
 	if c.calls != nil {
@@ -1530,6 +1538,9 @@ func (c fakeRegistryClient) RetryTool(
 	}
 	if c.retryExpectedToken != nil {
 		*c.retryExpectedToken = expectedRegistrationToken
+	}
+	if c.meta != nil {
+		*c.meta = meta
 	}
 	if c.err != nil {
 		return toolregistry.ToolCallRef{}, c.err

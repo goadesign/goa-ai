@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"time"
@@ -188,6 +189,7 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 		TurnID:           meta.TurnID,
 		ToolCallID:       meta.ToolCallID,
 		ParentToolCallID: meta.ParentToolCallID,
+		Labels:           maps.Clone(meta.Labels),
 	}
 	admissionCtx, cancelAdmission := context.WithTimeout(
 		ctx,

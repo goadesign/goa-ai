@@ -48,8 +48,9 @@ func TestInjectMetaBackedBoundToolBackwardCompatible(t *testing.T) {
 	require.NotContains(t, provider, "methodIn.SessionID = msg.Meta.SessionID",
 		"provider.go must retire its own inline meta assignment in favor of the shared Inject<Tool> function")
 	require.Contains(t, provider, "meta := runtime.ToolCallMeta{")
-	require.Contains(t, provider, "if err := InjectGetData(args, meta, nil); err != nil {",
-		"registry-served (bound) tools never carry labels, so the shared Inject fn is called with a nil labels map")
+	require.Contains(t, provider, "Labels:           msg.Meta.Labels,")
+	require.Contains(t, provider, "if err := InjectGetData(args, meta, meta.Labels); err != nil {",
+		"registry-served bound tools receive the same immutable run labels as local executors")
 
 	specs := fileContent(t, files, "gen/atlas/toolsets/helpers/specs.go")
 	require.NotContains(t, specs, `"session_id"`, "session_id must stay hidden from the model-facing schema")
