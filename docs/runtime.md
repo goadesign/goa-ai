@@ -896,10 +896,18 @@ type ToolsetRegistration struct {
     Inline      bool                       // Execute in workflow context
     CallHints   map[tools.Ident]*template.Template   // Tool call DisplayHint templates (typed payload only)
     ResultHints map[tools.Ident]*template.Template   // Success result preview templates (typed result only)
-    ResultAdapter  func(...)               // Post-encode transformation
+    ResultMaterializer ResultMaterializer  // Typed result enrichment before encoding
     AgentTool   *AgentToolConfig           // Agent-as-tool configuration
 }
 ```
+
+Generated `RegisterUsedToolsets` helpers remain the sole owner of each
+service-backed toolset registration. Applications provide the required
+executor with `With<Toolset>Executor`. When a typed result needs deterministic
+application-owned enrichment before canonical encoding—for example, attaching
+server-only display data—provide
+`With<Toolset>ResultMaterializer` in the same registration call. Do not
+register the toolset a second time.
 
 ### Tool Call Display Hints (DisplayHint)
 
