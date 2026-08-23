@@ -40,10 +40,7 @@ const (
 // and runtime hooks. Returns the final agent output or an error if the workflow
 // fails. Generated code calls this from the workflow handler registered with
 // the engine.
-func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput) (_ *RunOutput, retErr error) {
-	defer func() {
-		retErr = hooks.WrapTemporalProviderError(retErr)
-	}()
+func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
 	if err := validateWorkflowRunInput(input); err != nil {
 		return nil, err
 	}

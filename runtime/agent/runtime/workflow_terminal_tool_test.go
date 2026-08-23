@@ -28,7 +28,7 @@ func TestRunLoopStopsAfterTerminalTool(t *testing.T) {
 	terminalTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				Result:     map[string]any{"ok": true},
@@ -57,11 +57,12 @@ func TestRunLoopStopsAfterTerminalTool(t *testing.T) {
 		TurnID:    "turn-1",
 		Messages:  nil,
 	}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{
 			{
-				Name:    terminalTool.Name,
-				Payload: rawjson.Message(`{}`),
+				ToolCallID: "terminal-call",
+				Name:       terminalTool.Name,
+				Payload:    rawjson.Message(`{}`),
 			},
 		},
 	}
@@ -105,7 +106,7 @@ func TestRunLoopRejectsMixedTerminalAndNonTerminalTools(t *testing.T) {
 			executions := 0
 			require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 				Name: "svc",
-				Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 					executions++
 					return &planner.ToolResult{
 						Name:       call.Name,
@@ -133,9 +134,9 @@ func TestRunLoopRejectsMixedTerminalAndNonTerminalTools(t *testing.T) {
 				TurnID:    input.TurnID,
 				Attempt:   1,
 			}}
-			initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-				{Name: terminal.Name, Payload: rawjson.Message(`{}`)},
-				{Name: ordinary.Name, Payload: rawjson.Message(`{}`)},
+			initial := &PlanResult{ToolCalls: []ToolCall{
+				{ToolCallID: "terminal-call", Name: terminal.Name, Payload: rawjson.Message(`{}`)},
+				{ToolCallID: "ordinary-call", Name: ordinary.Name, Payload: rawjson.Message(`{}`)},
 			}}
 
 			out, err := rt.runLoop(
@@ -167,7 +168,7 @@ func TestRunLoopRejectsTerminalToolWithPlannerAwait(t *testing.T) {
 	executed := false
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
-		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			executed = true
 			return &planner.ToolResult{
 				Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"ok": true},
@@ -181,8 +182,12 @@ func TestRunLoopRejectsTerminalToolWithPlannerAwait(t *testing.T) {
 	base := &planner.PlanInput{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{Name: terminal.Name, Payload: rawjson.Message(`{}`)}},
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "terminal-call",
+			Name:       terminal.Name,
+			Payload:    rawjson.Message(`{}`),
+		}},
 		Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{
 			ID: "clarify-1", Question: "Continue?",
 		})),
@@ -207,13 +212,13 @@ func TestRunLoopRejectsTerminalToolWithPlannerAwait(t *testing.T) {
 	require.Empty(t, base.Messages)
 }
 
-func TestPolicyRewriteRejectsTerminalPayloadBeforeTranscriptCommit(t *testing.T) {
+func TestPolicyExcludedToolRejectsTerminalPayloadBeforeTranscriptCommit(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
-		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"ok": true},
 			}, nil
@@ -229,8 +234,12 @@ func TestPolicyRewriteRejectsTerminalPayloadBeforeTranscriptCommit(t *testing.T)
 	base := &planner.PlanInput{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)}},
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "bookkeeping-call",
+			Name:       bookkeeping.Name,
+			Payload:    rawjson.Message(`{}`),
+		}},
 		FinalResponse: &planner.FinalResponse{Message: &model.Message{
 			Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}},
 		}},
@@ -250,7 +259,7 @@ func TestPolicyRewriteRejectsTerminalPayloadBeforeTranscriptCommit(t *testing.T)
 	)
 
 	require.Nil(t, out)
-	require.ErrorContains(t, err, `terminal payload cannot accompany budgeted tool "runtime.tool_unavailable"`)
+	require.ErrorContains(t, err, `planner called tool "svc.record" excluded from this run`)
 	require.Empty(t, base.Messages)
 }
 
@@ -261,7 +270,7 @@ func TestRunLoopRejectsTerminalToolClarification(t *testing.T) {
 	terminal.TerminalRun = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
-		Execute: func(_ context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+		Execute: func(_ context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 			return &ToolExecutionResult{
 				ToolResult: &planner.ToolResult{
 					Name:       call.Name,
@@ -285,8 +294,8 @@ func TestRunLoopRejectsTerminalToolClarification(t *testing.T) {
 		TurnID:    input.TurnID,
 		Attempt:   1,
 	}}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name: terminal.Name, Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{ToolCalls: []ToolCall{{
+		ToolCallID: "terminal-call", Name: terminal.Name, Payload: rawjson.Message(`{}`),
 	}}}
 
 	out, err := rt.runLoop(
@@ -317,10 +326,10 @@ func TestRunLoopRecordsConfirmedTerminalToolBeforeRejectingClarification(t *test
 		WithToolConfirmation(&ToolConfirmationConfig{
 			Confirm: map[tools.Ident]*ToolConfirmation{
 				terminal.Name: {
-					Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+					Prompt: func(context.Context, *ToolCall) (string, error) {
 						return "Confirm completion", nil
 					},
-					DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+					DeniedResult: func(context.Context, *ToolCall) (any, error) {
 						return map[string]any{"approved": false}, nil
 					},
 				},
@@ -329,7 +338,7 @@ func TestRunLoopRecordsConfirmedTerminalToolBeforeRejectingClarification(t *test
 	)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
-		Execute: func(_ context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+		Execute: func(_ context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 			return &ToolExecutionResult{
 				ToolResult: &planner.ToolResult{
 					Name:       call.Name,
@@ -353,8 +362,8 @@ func TestRunLoopRecordsConfirmedTerminalToolBeforeRejectingClarification(t *test
 		TurnID:    input.TurnID,
 		Attempt:   1,
 	}}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name: terminal.Name, Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{ToolCalls: []ToolCall{{
+		ToolCallID: "terminal-call", Name: terminal.Name, Payload: rawjson.Message(`{}`),
 	}}}
 
 	out, err := rt.runLoop(
@@ -383,7 +392,7 @@ func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 	terminalTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				Result:     map[string]any{"ok": true},
@@ -413,10 +422,11 @@ func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
 	}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
-			Name:    terminalTool.Name,
-			Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "terminal-call",
+			Name:       terminalTool.Name,
+			Payload:    rawjson.Message(`{}`),
 		}},
 	}
 	caps := policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0}
@@ -450,7 +460,7 @@ func TestRunLoopTerminalResponseBookkeepingExecutesAtBudget(t *testing.T) {
 	executions := 0
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			executions++
 			return &planner.ToolResult{
 				Name:       call.Name,
@@ -485,10 +495,11 @@ func TestRunLoopTerminalResponseBookkeepingExecutesAtBudget(t *testing.T) {
 		Role:  model.ConversationRoleAssistant,
 		Parts: []model.Part{model.TextPart{Text: "done"}},
 	}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
-			Name:    bookkeepingTool.Name,
-			Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "bookkeeping-call",
+			Name:       bookkeepingTool.Name,
+			Payload:    rawjson.Message(`{}`),
 		}},
 		FinalResponse: &planner.FinalResponse{
 			Message: final,
@@ -525,7 +536,7 @@ func TestRunLoopMixedToolCallsUseOwnedDeadlinesAtBudget(t *testing.T) {
 	executed := make([]tools.Ident, 0, 1)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
-		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			executed = append(executed, call.Name)
 			return &planner.ToolResult{
 				Name:       call.Name,
@@ -541,7 +552,7 @@ func TestRunLoopMixedToolCallsUseOwnedDeadlinesAtBudget(t *testing.T) {
 		ctx:     context.Background(),
 		now:     func() time.Time { return current },
 		runtime: rt,
-		planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{
+		planResult: &PlanResult{FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
 				Role:  model.ConversationRoleAssistant,
 				Parts: []model.Part{model.TextPart{Text: "finalized"}},
@@ -561,7 +572,7 @@ func TestRunLoopMixedToolCallsUseOwnedDeadlinesAtBudget(t *testing.T) {
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 		Planner: &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
-			return wfCtx.planResult, nil
+			return &planner.PlanResult{FinalResponse: wfCtx.planResult.FinalResponse}, nil
 		}},
 	}
 	rt.agents[input.AgentID] = reg
@@ -573,10 +584,10 @@ func TestRunLoopMixedToolCallsUseOwnedDeadlinesAtBudget(t *testing.T) {
 			Attempt:   1,
 		},
 	}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{
-			{Name: budgeted.Name, Payload: rawjson.Message(`{}`)},
-			{Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)},
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{
+			{ToolCallID: "budgeted-call", Name: budgeted.Name, Payload: rawjson.Message(`{}`)},
+			{ToolCallID: "bookkeeping-call", Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)},
 		},
 	}
 
@@ -610,7 +621,7 @@ func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
 	terminalTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				Result:     map[string]any{"ok": true},
@@ -638,10 +649,11 @@ func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
 	}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
-			Name:    terminalTool.Name,
-			Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "terminal-call",
+			Name:       terminalTool.Name,
+			Payload:    rawjson.Message(`{}`),
 		}},
 	}
 
@@ -673,7 +685,7 @@ func TestFinalizeWithPlannerExecutesTerminalToolCall(t *testing.T) {
 	require.Nil(t, out.Final)
 	require.Len(t, out.ToolEvents, 1)
 	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
-	require.Equal(t, "run-1/turn-1/attempt-2/tasks-progress-complete/0", out.ToolEvents[0].ToolCallID)
+	require.Equal(t, "terminal-final-call", out.ToolEvents[0].ToolCallID)
 	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
 	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
 	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
@@ -738,7 +750,7 @@ func TestFinalizeWithPlannerTerminalToolHonorsCallerRestriction(t *testing.T) {
 
 	require.Nil(t, out)
 	require.Error(t, err)
-	require.ErrorContains(t, err, `finalization terminal tool plan cannot call budgeted tool "runtime.tool_unavailable"`)
+	require.ErrorContains(t, err, `planner called tool "tasks.progress.complete" excluded from this run`)
 	require.Empty(t, base.Messages)
 }
 
@@ -746,12 +758,19 @@ func TestFinalizeWithPlannerRejectsTerminalPayloadWithToolCalls(t *testing.T) {
 	rt, terminalTool, wfCtx := newTerminalFinalizationRuntime(t)
 	var plannerErr error
 	wfCtx.plannerRoutes["resume"] = func(_ context.Context, _ *PlanActivityInput) (*PlanActivityOutput, error) {
-		return &PlanActivityOutput{Result: &planner.PlanResult{
-			ToolCalls: []planner.ToolRequest{{Name: terminalTool.Name, Payload: rawjson.Message(`{}`)}},
-			FinalResponse: &planner.FinalResponse{Message: &model.Message{
-				Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}},
-			}},
-		}}, plannerErr
+		return &PlanActivityOutput{
+			PublicationBatchID: testPublicationBatchID,
+			Result: &PlanResult{
+				ToolCalls: []ToolCall{{
+					ToolCallID: "terminal-final-call",
+					Name:       terminalTool.Name,
+					Payload:    rawjson.Message(`{}`),
+				}},
+				FinalResponse: &planner.FinalResponse{Message: &model.Message{
+					Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}},
+				}},
+			},
+		}, plannerErr
 	}
 	base := &planner.PlanInput{RunContext: run.Context{
 		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
@@ -774,7 +793,7 @@ func TestFinalizeWithPlannerRejectsTerminalPayloadWithToolCalls(t *testing.T) {
 	)
 
 	require.Nil(t, out)
-	require.ErrorContains(t, err, "cannot combine tool calls with a terminal payload")
+	require.ErrorContains(t, err, "terminal payload cannot accompany terminal tool")
 	require.Empty(t, wfCtx.lastToolCall.Name)
 	require.Empty(t, base.Messages)
 }
@@ -790,7 +809,7 @@ func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
 	completeTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			if call.Name == failTool.Name {
 				return &planner.ToolResult{
 					Name:       call.Name,
@@ -816,10 +835,11 @@ func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
 					return nil, context.Canceled
 				}
 				return &PlanActivityOutput{
-					Result: &planner.PlanResult{
-						ToolCalls: []planner.ToolRequest{
-							{Name: failTool.Name, Payload: rawjson.Message(`{}`)},
-							{Name: completeTool.Name, Payload: rawjson.Message(`{}`)},
+					PublicationBatchID: testPublicationBatchID,
+					Result: &PlanResult{
+						ToolCalls: []ToolCall{
+							{ToolCallID: "fail-call", Name: failTool.Name, Payload: rawjson.Message(`{}`)},
+							{ToolCallID: "complete-call", Name: completeTool.Name, Payload: rawjson.Message(`{}`)},
 						},
 					},
 				}, nil
@@ -921,7 +941,7 @@ func newTerminalFinalizationRuntime(t *testing.T) (*Runtime, tools.ToolSpec, *ro
 	terminalTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				Result:     map[string]any{"ok": true},
@@ -940,10 +960,12 @@ func newTerminalFinalizationRuntime(t *testing.T) (*Runtime, tools.ToolSpec, *ro
 					return nil, context.Canceled
 				}
 				return &PlanActivityOutput{
-					Result: &planner.PlanResult{
-						ToolCalls: []planner.ToolRequest{{
-							Name:    terminalTool.Name,
-							Payload: rawjson.Message(`{}`),
+					PublicationBatchID: testPublicationBatchID,
+					Result: &PlanResult{
+						ToolCalls: []ToolCall{{
+							ToolCallID: "terminal-final-call",
+							Name:       terminalTool.Name,
+							Payload:    rawjson.Message(`{}`),
 						}},
 					},
 				}, nil

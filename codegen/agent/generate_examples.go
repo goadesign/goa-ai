@@ -135,16 +135,35 @@ func emitInternalBootstrap(svc *ServiceAgentsData, moduleBase string) *codegen.F
 		{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "agentsruntime"},
 	}
 	needsMCP := svc.HasMCP
-	if needsMCP {
+	needsExampleExecutor := false
+	for _, ag := range svc.Agents {
+		for _, ts := range ag.UsedToolsets {
+			if ts != nil && !ts.IsRegistryBacked && ts.MCP == nil {
+				needsExampleExecutor = true
+			}
+		}
+	}
+	if needsMCP || needsExampleExecutor {
 		imports = append(imports, &codegen.ImportSpec{Path: "fmt"})
+	}
+	if needsExampleExecutor {
+		imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/planner"})
+	}
+	if needsMCP {
 		imports = append(imports, &codegen.ImportSpec{Path: "flag"})
 		imports = append(imports, &codegen.ImportSpec{Name: "mcpruntime", Path: "goa.design/goa-ai/runtime/mcp"})
 	}
 	// Import generated agent registration packages and per-agent planner packages.
 	type toolsetImport struct{ Alias, Path string }
+	type exampleToolsetImport struct {
+		Alias   string
+		Toolset *ToolsetData
+		Tools   []*toolEntry
+	}
 	type agentImport struct {
 		Alias, Path, PlannerAlias, PlannerPath string
 		Toolsets                               []toolsetImport
+		ExampleToolsets                        []exampleToolsetImport
 		Agent                                  *AgentData
 	}
 	agents := make([]agentImport, 0, len(svc.Agents))
@@ -161,13 +180,45 @@ func emitInternalBootstrap(svc *ServiceAgentsData, moduleBase string) *codegen.F
 			imports = append(imports, &codegen.ImportSpec{Path: tpath, Name: talias})
 			tsImports = append(tsImports, toolsetImport{Alias: talias, Path: tpath})
 		}
+		var exampleToolsets []exampleToolsetImport
+		for _, ts := range ag.UsedToolsets {
+			if ts == nil || ts.IsRegistryBacked || ts.MCP != nil || ts.SpecsImportPath == "" {
+				continue
+			}
+			hasMethod := false
+			for _, tool := range ts.Tools {
+				if tool != nil && tool.IsMethodBacked {
+					hasMethod = true
+					break
+				}
+			}
+			if hasMethod {
+				continue
+			}
+			serviceData := ts.SourceService
+			if serviceData == nil {
+				serviceData = ag.Service
+			}
+			specs, err := buildToolSpecsDataFor(ag.Genpkg, serviceData, ts.Tools)
+			if err != nil || len(specs.tools) == 0 {
+				continue
+			}
+			alias := "gentool" + ag.PathName + ts.PathName
+			imports = append(imports, &codegen.ImportSpec{Path: ts.SpecsImportPath, Name: alias})
+			exampleToolsets = append(exampleToolsets, exampleToolsetImport{
+				Alias:   alias,
+				Toolset: ts,
+				Tools:   specs.tools,
+			})
+		}
 		agents = append(agents, agentImport{
-			Alias:        ag.PackageName,
-			Path:         ag.ImportPath,
-			PlannerAlias: palias,
-			PlannerPath:  ppath,
-			Toolsets:     tsImports,
-			Agent:        ag,
+			Alias:           ag.PackageName,
+			Path:            ag.ImportPath,
+			PlannerAlias:    palias,
+			PlannerPath:     ppath,
+			Toolsets:        tsImports,
+			ExampleToolsets: exampleToolsets,
+			Agent:           ag,
 		})
 	}
 	path := filepath.Join("internal", "agents", "bootstrap", "bootstrap.go")
@@ -197,9 +248,43 @@ func emitPlannerInternalStub(_ string, ag *AgentData) *codegen.File {
 		{Path: "goa.design/goa-ai/runtime/agent/model", Name: "model"},
 		{Path: "goa.design/goa-ai/runtime/agent/planner"},
 	}
+	var exampleTool *toolEntry
+	var exampleToolset *ToolsetData
+	for _, toolset := range ag.UsedToolsets {
+		if toolset == nil || toolset.IsRegistryBacked || toolset.MCP != nil || toolset.SpecsImportPath == "" {
+			continue
+		}
+		serviceData := toolset.SourceService
+		if serviceData == nil {
+			serviceData = ag.Service
+		}
+		specs, err := buildToolSpecsDataFor(ag.Genpkg, serviceData, toolset.Tools)
+		if err != nil || len(specs.tools) == 0 {
+			continue
+		}
+		exampleTool = specs.tools[0]
+		exampleToolset = toolset
+		imports = append(imports,
+			&codegen.ImportSpec{Path: "fmt"},
+			&codegen.ImportSpec{
+				Path: toolset.SpecsImportPath,
+				Name: "gentool",
+			},
+		)
+		break
+	}
+	data := struct {
+		Agent   *AgentData
+		Toolset *ToolsetData
+		Tool    *toolEntry
+	}{
+		Agent:   ag,
+		Toolset: exampleToolset,
+		Tool:    exampleTool,
+	}
 	sections := []*codegen.SectionTemplate{
 		codegen.Header("Planner stub for "+ag.StructName, "planner", imports),
-		{Name: "planner-internal-stub", Source: agentsTemplates.Read(plannerInternalStubT), Data: ag},
+		{Name: "planner-internal-stub", Source: agentsTemplates.Read(plannerInternalStubT), Data: data},
 	}
 	path := filepath.Join("internal", "agents", ag.PathName, "planner", "planner.go")
 	return &codegen.File{Path: path, SectionTemplates: sections}

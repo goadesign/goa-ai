@@ -39,7 +39,7 @@ func Register(ctx context.Context, rt *runtime.Runtime) error {
 
 // Execute demonstrates per-tool branching with typed decode. Replace placeholders
 // with client calls and optional transforms from the specs package (transforms.go).
-func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
+func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
 	if call == nil {
 		return nil, errors.New("tool request is nil")
 	}

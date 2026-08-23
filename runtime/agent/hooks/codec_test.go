@@ -2,12 +2,14 @@ package hooks
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -47,6 +49,169 @@ func TestToolCallScheduledCodecPreservesContinuationRoot(t *testing.T) {
 	scheduled, ok := decoded.(*ToolCallScheduledEvent)
 	require.True(t, ok)
 	assert.Equal(t, "source-1", scheduled.ContinuationRootToolCallID)
+}
+
+func TestModelOutputRejectedCodecPreservesBoundedResponseFingerprint(t *testing.T) {
+	t.Parallel()
+
+	const (
+		reasonDigest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+		modelDigest  = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	)
+	event, err := NewModelOutputRejectedEvent(
+		testRunID,
+		"agent-1",
+		testSessionID,
+		reasonDigest,
+		47,
+		true,
+		api.ModelResponseFingerprintVersionV1,
+		modelDigest,
+		42,
+	)
+	require.NoError(t, err)
+
+	record, err := EncodeToRecordInput(event, EncodeOptions{
+		EventKey:    "event-1",
+		TimestampMS: 1,
+	})
+	require.NoError(t, err)
+	decoded, err := DecodeFromRecordInput(record)
+	require.NoError(t, err)
+
+	rejected, ok := decoded.(*ModelOutputRejectedEvent)
+	require.True(t, ok)
+	assert.Equal(t, reasonDigest, rejected.ReasonSHA256)
+	assert.EqualValues(t, 47, rejected.ReasonSize)
+	assert.True(t, rejected.ModelResponsePresent)
+	assert.Equal(t, api.ModelResponseFingerprintVersionV1, rejected.ModelResponseFingerprintVersion)
+	assert.Equal(t, modelDigest, rejected.ModelResponseSHA256)
+	assert.EqualValues(t, 42, rejected.ModelResponseSize)
+}
+
+func TestNewModelOutputRejectedEventRepresentsAbsentCompleteResponse(t *testing.T) {
+	const reasonDigest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+	event, err := NewModelOutputRejectedEvent(
+		testRunID,
+		"agent-1",
+		testSessionID,
+		reasonDigest,
+		47,
+		false,
+		"",
+		"",
+		0,
+	)
+
+	require.NoError(t, err)
+	assert.False(t, event.ModelResponsePresent)
+	assert.Empty(t, event.ModelResponseFingerprintVersion)
+	assert.Empty(t, event.ModelResponseSHA256)
+	assert.Zero(t, event.ModelResponseSize)
+}
+
+func TestNewModelOutputRejectedEventRequiresVersionExactlyWithDigest(t *testing.T) {
+	const (
+		reasonDigest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+		modelDigest  = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	)
+	tests := []struct {
+		name    string
+		version string
+		digest  string
+		size    int64
+	}{
+		{
+			name:    "version without digest",
+			version: api.ModelResponseFingerprintVersionV1,
+		},
+		{
+			name:   "digest without version",
+			digest: modelDigest,
+			size:   42,
+		},
+		{
+			name:    "digest with zero response size",
+			version: api.ModelResponseFingerprintVersionV1,
+			digest:  modelDigest,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			event, err := NewModelOutputRejectedEvent(
+				testRunID,
+				"agent-1",
+				testSessionID,
+				reasonDigest,
+				47,
+				true,
+				test.version,
+				test.digest,
+				test.size,
+			)
+
+			require.Nil(t, event)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestPlannerOutputRejectedCodecPreservesBoundedReason(t *testing.T) {
+	const reasonDigest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	event, err := NewPlannerOutputRejectedEvent(
+		testRunID,
+		"agent-1",
+		testSessionID,
+		reasonDigest,
+		47,
+	)
+	require.NoError(t, err)
+	record, err := EncodeToRecordInput(event, EncodeOptions{
+		EventKey:    "event-1",
+		TimestampMS: 1,
+	})
+	require.NoError(t, err)
+
+	decoded, err := DecodeFromRecordInput(record)
+
+	require.NoError(t, err)
+	rejected, ok := decoded.(*PlannerOutputRejectedEvent)
+	require.True(t, ok)
+	assert.Equal(t, reasonDigest, rejected.ReasonSHA256)
+	assert.EqualValues(t, 47, rejected.ReasonSize)
+}
+
+func TestPlannerOutputRejectedAcceptsEmptyReasonFingerprint(t *testing.T) {
+	const emptyReasonDigest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+	event, err := NewPlannerOutputRejectedEvent(
+		testRunID,
+		"agent-1",
+		testSessionID,
+		emptyReasonDigest,
+		0,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, emptyReasonDigest, event.ReasonSHA256)
+	assert.EqualValues(t, 0, event.ReasonSize)
+}
+
+func TestPlannerOutputRejectedRejectsFalseEmptyReasonFingerprint(t *testing.T) {
+	_, err := NewPlannerOutputRejectedEvent(
+		testRunID,
+		"agent-1",
+		testSessionID,
+		strings.Repeat("0", 64),
+		0,
+	)
+
+	require.EqualError(
+		t,
+		err,
+		"planner output rejected event reason: SHA-256 digest does not identify an empty reason",
+	)
 }
 
 func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *testing.T) {

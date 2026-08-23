@@ -24,7 +24,7 @@ func TestExecuteToolCalls_ChildTrackerUpdateEmittedOnIncrease(t *testing.T) {
 		toolsets: map[string]ToolsetRegistration{
 			"inline.ts": {
 				Inline: true,
-				Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 					return &planner.ToolResult{
 						Name:       call.Name,
 						ToolCallID: call.ToolCallID,
@@ -55,8 +55,8 @@ func TestExecuteToolCalls_ChildTrackerUpdateEmittedOnIncrease(t *testing.T) {
 		ParentAgentID: "parent-agent",
 	}
 
-	call := func(id string) planner.ToolRequest {
-		return planner.ToolRequest{
+	call := func(id string) ToolCall {
+		return ToolCall{
 			Name:       tools.Ident("inline.ts.t"),
 			RunID:      runCtx.RunID,
 			SessionID:  runCtx.SessionID,
@@ -66,15 +66,15 @@ func TestExecuteToolCalls_ChildTrackerUpdateEmittedOnIncrease(t *testing.T) {
 	}
 
 	// First batch discovers 2 child IDs => one update event with total=2.
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, nil, []planner.ToolRequest{call("c1"), call("c2")}, 0, parentTracker, time.Time{})
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, nil, []ToolCall{call("c1"), call("c2")}, 0, parentTracker, time.Time{})
 	require.NoError(t, err)
 
 	// Second batch discovers no new IDs => no additional update event.
-	_, _, err = rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, nil, []planner.ToolRequest{call("c1"), call("c2")}, 0, parentTracker, time.Time{})
+	_, _, err = rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, nil, []ToolCall{call("c1"), call("c2")}, 0, parentTracker, time.Time{})
 	require.NoError(t, err)
 
 	// Third batch discovers a new ID => second update event with total=3.
-	_, _, err = rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, nil, []planner.ToolRequest{call("c1"), call("c2"), call("c3")}, 0, parentTracker, time.Time{})
+	_, _, err = rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, nil, []ToolCall{call("c1"), call("c2"), call("c3")}, 0, parentTracker, time.Time{})
 	require.NoError(t, err)
 
 	var updates []*hooks.ToolCallUpdatedEvent

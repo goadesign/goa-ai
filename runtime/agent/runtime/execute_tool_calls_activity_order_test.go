@@ -10,7 +10,6 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -39,14 +38,14 @@ func TestExecuteToolCalls_ServiceToolsPublishResultsAsComplete(t *testing.T) {
 		toolFutures: map[string]*controlledToolFuture{},
 	}
 
-	callSlow := planner.ToolRequest{
+	callSlow := ToolCall{
 		Name:       tools.Ident("svc.tools.slow"),
 		RunID:      "run-1",
 		SessionID:  "sess-1",
 		TurnID:     "turn-1",
 		ToolCallID: "call-slow",
 	}
-	callFast := planner.ToolRequest{
+	callFast := ToolCall{
 		Name:       tools.Ident("svc.tools.fast"),
 		RunID:      "run-1",
 		SessionID:  "sess-1",
@@ -68,7 +67,7 @@ func TestExecuteToolCalls_ServiceToolsPublishResultsAsComplete(t *testing.T) {
 		close(futSlow.ready)
 	}()
 
-	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), &run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}, nil, []planner.ToolRequest{callSlow, callFast}, 0, nil, time.Time{})
+	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), &run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}, nil, []ToolCall{callSlow, callFast}, 0, nil, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 
@@ -113,7 +112,7 @@ func TestExecuteToolCalls_ServiceToolErrorDoesNotAbortRun(t *testing.T) {
 		toolFutures: map[string]*controlledToolFuture{},
 	}
 
-	callFail := planner.ToolRequest{
+	callFail := ToolCall{
 		Name:       tools.Ident("svc.tools.fail"),
 		RunID:      "run-1",
 		SessionID:  "sess-1",
@@ -128,7 +127,7 @@ func TestExecuteToolCalls_ServiceToolErrorDoesNotAbortRun(t *testing.T) {
 	wfCtx.toolFutures[callFail.ToolCallID] = futFail
 	close(futFail.ready)
 
-	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), &run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}, nil, []planner.ToolRequest{callFail}, 0, nil, time.Time{})
+	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), &run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}, nil, []ToolCall{callFail}, 0, nil, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.NotNil(t, results[0].ToolResult)

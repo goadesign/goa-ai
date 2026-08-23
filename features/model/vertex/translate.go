@@ -47,8 +47,15 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 				if err != nil {
 					return nil, err
 				}
+				name, ok := toolIdent(part.FunctionCall.Name, provToCanon)
+				if !ok {
+					return nil, fmt.Errorf(
+						"vertex: response function call returned unadvertised name %q",
+						part.FunctionCall.Name,
+					)
+				}
 				msg.Parts = append(msg.Parts, model.ToolUsePart{
-					Name:             string(toolIdent(part.FunctionCall.Name, provToCanon)),
+					Name:             string(name),
 					Input:            payload,
 					ID:               part.FunctionCall.ID,
 					ThoughtSignature: encodeThoughtSignature(part.ThoughtSignature),
@@ -78,9 +85,6 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 		}
 	}
 	out.Usage = translateUsage(resp.UsageMetadata, modelID, class)
-	if err := model.ValidateResponse(out); err != nil {
-		return nil, fmt.Errorf("vertex: invalid response: %w", err)
-	}
 	return out, nil
 }
 
@@ -186,18 +190,17 @@ func groundingCitation(chunks []*genai.GroundingChunk, index int) (model.Citatio
 	}
 }
 
-// canonicalToolName reverses sanitization; names never advertised this
-// request pass through unchanged so the runtime can flag the unknown tool.
-func canonicalToolName(prov string, provToCanon map[string]string) string {
-	if canon, ok := provToCanon[prov]; ok {
-		return canon
-	}
-	return prov
+// canonicalToolName reverses sanitization only for a tool advertised by this
+// request.
+func canonicalToolName(prov string, provToCanon map[string]string) (string, bool) {
+	canon, ok := provToCanon[prov]
+	return canon, ok
 }
 
 // toolIdent maps a provider tool name back to its canonical ident.
-func toolIdent(prov string, provToCanon map[string]string) tools.Ident {
-	return tools.Ident(canonicalToolName(prov, provToCanon))
+func toolIdent(prov string, provToCanon map[string]string) (tools.Ident, bool) {
+	canonical, ok := canonicalToolName(prov, provToCanon)
+	return tools.Ident(canonical), ok
 }
 
 // marshalArgs encodes Gemini function-call args as a JSON payload.

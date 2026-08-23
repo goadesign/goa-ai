@@ -196,9 +196,10 @@ func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 
 		specImports := []*codegen.ImportSpec{
 			{Path: "context"},
+			{Path: "slices"},
 			{Path: "goa.design/goa-ai/runtime/agent/completion"},
 			{Path: "goa.design/goa-ai/runtime/agent/model"},
-			{Path: "goa.design/goa-ai/runtime/agent/tools"},
+			{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
 		}
 		specSections := []*codegen.SectionTemplate{
 			codegen.Header(svc.Service.Name+" completion specs", packageName, specImports),

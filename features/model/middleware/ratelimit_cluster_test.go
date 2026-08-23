@@ -79,7 +79,7 @@ func TestClusterLimiter_BackoffUpdatesSharedMap(t *testing.T) {
 	client := &fakeClient{
 		completeErr: model.ErrRateLimited,
 	}
-	wrapped := lim.Middleware()(client)
+	wrapped := limitedTestClient(t, lim, client)
 
 	req := model.Request{
 		Messages: []*model.Message{

@@ -15,8 +15,10 @@ import (
 	"strings"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -30,10 +32,11 @@ type (
 	// continuationAction is one model-visible action bound to one unfinished
 	// bounded query. The executable tool and cursor remain runtime-owned.
 	continuationAction struct {
-		modelName   tools.Ident
-		description string
-		spec        tools.ToolSpec
-		state       continuationState
+		modelName         tools.Ident
+		description       string
+		spec              tools.ToolSpec
+		state             continuationState
+		executablePayload rawjson.Message
 	}
 
 	// continuationState is the successful page available to a dedicated
@@ -84,6 +87,10 @@ func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*p
 			if err != nil {
 				return nil, err
 			}
+			action.executablePayload, err = r.continuationPayload(spec, state)
+			if err != nil {
+				return nil, fmt.Errorf("runtime: build continuation action %q: %w", action.modelName, err)
+			}
 			if _, exists := names[action.modelName]; exists {
 				return nil, fmt.Errorf("runtime: duplicate continuation action name %q", action.modelName)
 			}
@@ -97,71 +104,82 @@ func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*p
 	return actions, nil
 }
 
-// bindContinuationCursors converts model-authored empty continuation actions
-// into executable cursor payloads while preserving the empty model payload for
-// transcript replay.
-func (r *Runtime) bindContinuationCursors(result *planner.PlanResult, actions []continuationAction) error {
-	if result == nil {
-		return errors.New("runtime: cannot bind continuation cursor on nil planner result")
-	}
+// compilePlannerToolCalls converts validated planner intent into runtime-owned
+// execution calls. It preserves provider transcript identity and binds private
+// continuation cursors without exposing either field to planner code.
+func (r *Runtime) compilePlannerToolCalls(
+	requests []planner.ToolRequest,
+	actions []continuationAction,
+	modelCalls map[string]model.ToolCall,
+) ([]ToolCall, error) {
 	byName := make(map[tools.Ident]continuationAction, len(actions))
 	for _, action := range actions {
 		byName[action.modelName] = action
 	}
 	bound := make(map[tools.Ident]struct{})
-	for i := range result.ToolCalls {
-		call := &result.ToolCalls[i]
+	calls := make([]ToolCall, len(requests))
+	for i, request := range requests {
+		call := ToolCall{
+			Name:       request.Name,
+			Payload:    append(rawjson.Message(nil), request.Payload...),
+			ToolCallID: request.ToolCallID,
+		}
+		if source, ok := modelCalls[request.ToolCallID]; ok {
+			call.ModelName = source.Name
+			call.ModelPayload = append(rawjson.Message(nil), source.Payload...)
+		}
 		action, ok := byName[call.Name]
 		if !ok {
 			if spec, registered := r.toolSpec(call.Name); registered && isDedicatedContinuationSpec(spec) {
-				return fmt.Errorf("runtime: canonical continuation tool %q is not model-callable", call.Name)
+				return nil, planner.NewOutputContractError(
+					fmt.Errorf("runtime: canonical continuation tool %q is not model-callable", call.Name),
+				)
 			}
+			calls[i] = call
 			continue
 		}
 		if _, exists := bound[call.Name]; exists {
-			return fmt.Errorf("runtime: continuation tool %q cannot be called more than once in one planner result", call.Name)
+			return nil, planner.NewOutputContractError(
+				fmt.Errorf("runtime: continuation tool %q cannot be called more than once in one planner result", call.Name),
+			)
 		}
 		bound[call.Name] = struct{}{}
 		if err := validateEmptyContinuationPayload(call.Payload); err != nil {
-			return fmt.Errorf("runtime: continuation tool %q payload: %w", call.Name, err)
-		}
-		executable, err := r.continuationPayload(action.spec, action.state)
-		if err != nil {
-			return fmt.Errorf("runtime: bind continuation tool %q payload: %w", call.Name, err)
+			return nil, planner.NewOutputContractError(
+				fmt.Errorf("runtime: continuation tool %q payload: %w", call.Name, err),
+			)
 		}
 		call.ModelName = call.Name
 		call.ModelPayload = append(rawjson.Message(nil), call.Payload...)
 		call.Name = action.spec.Name
-		call.Payload = executable
+		call.Payload = append(rawjson.Message(nil), action.executablePayload...)
 		call.ContinuationRootToolCallID = action.state.rootToolCallID
+		calls[i] = call
 	}
-	return nil
+	return calls, nil
 }
 
 // automaticContinuationPlan advances empty live pages before asking the model
 // to make another decision. A zero-item page contains no semantic evidence, so
 // the generated continuation and its runtime-owned cursor determine the only
 // useful next action.
-func (r *Runtime) automaticContinuationPlan(actions []continuationAction) (*planner.PlanResult, bool, error) {
-	calls := make([]planner.ToolRequest, 0, len(actions))
+func (r *Runtime) automaticContinuationPlan(runCtx run.Context, actions []continuationAction) (*PlanResult, bool) {
+	calls := make([]ToolCall, 0, len(actions))
 	for _, action := range actions {
 		if action.state.returned != 0 {
 			continue
 		}
-		payload, err := r.continuationPayload(action.spec, action.state)
-		if err != nil {
-			return nil, false, fmt.Errorf("runtime: build automatic continuation for %q: %w", action.spec.Name, err)
-		}
-		calls = append(calls, planner.ToolRequest{
+		calls = append(calls, ToolCall{
 			Name:                       action.spec.Name,
-			Payload:                    payload,
+			ToolCallID:                 generateDeterministicToolCallID(runCtx.RunID, runCtx.TurnID, runCtx.Attempt, action.spec.Name, len(calls)),
+			Payload:                    append(rawjson.Message(nil), action.executablePayload...),
 			ContinuationRootToolCallID: action.state.rootToolCallID,
 		})
 	}
 	if len(calls) == 0 {
-		return nil, false, nil
+		return nil, false
 	}
-	return &planner.PlanResult{ToolCalls: calls}, true, nil
+	return &PlanResult{ToolCalls: calls}, true
 }
 
 // continuationStates reconstructs one live head per source tool call. A

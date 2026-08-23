@@ -256,7 +256,6 @@ func agentRegistryFile(agent *AgentData) *codegen.File {
 		{Path: "errors"},
 		{Path: "fmt"},
 		{Path: "goa.design/goa-ai/runtime/agent/engine"},
-		{Path: "goa.design/goa-ai/runtime/agent/planner"},
 		{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "agentsruntime"},
 	}
 	// fmt needed for error messages in registry (used in both MCP and Used toolsets paths)

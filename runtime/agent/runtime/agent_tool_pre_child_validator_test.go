@@ -68,10 +68,11 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 			TurnID:    "turn-1",
 		},
 		nil,
-		[]planner.ToolRequest{
+		[]ToolCall{
 			{
-				Name:    "svc.tools.do",
-				Payload: rawjson.Message([]byte(`{"sources":["x"]}`)),
+				ToolCallID: "call-1",
+				Name:       "svc.tools.do",
+				Payload:    rawjson.Message([]byte(`{"sources":["x"]}`)),
 			},
 		},
 		0,

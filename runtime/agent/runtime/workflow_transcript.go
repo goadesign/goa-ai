@@ -58,7 +58,7 @@ func (r *Runtime) appendSelectedModelResponse(
 	agentID agent.Ident,
 	base *planner.PlanInput,
 	turnID string,
-	result *planner.PlanResult,
+	result *PlanResult,
 	transcript []*model.Message,
 ) error {
 	messages := transcript
@@ -74,7 +74,7 @@ func (r *Runtime) appendSelectedModelResponse(
 
 // commitSelectedModelResponse performs the workflow's sole transition from an
 // uncommitted planner result to a durable provider transcript.
-func (l *workflowLoop) commitSelectedModelResponse(result *planner.PlanResult) error {
+func (l *workflowLoop) commitSelectedModelResponse(result *PlanResult) error {
 	if l.st.ResponseCommitted {
 		return errors.New("workflow planner response was committed more than once")
 	}
@@ -94,7 +94,7 @@ func (l *workflowLoop) commitSelectedModelResponse(result *planner.PlanResult) e
 
 // plannerAuthoredResponseMessages builds the transcript shape for a result
 // that did not select a provider response.
-func plannerAuthoredResponseMessages(result *planner.PlanResult) ([]*model.Message, error) {
+func plannerAuthoredResponseMessages(result *PlanResult) ([]*model.Message, error) {
 	if result == nil {
 		return nil, nil
 	}
@@ -106,7 +106,7 @@ func plannerAuthoredResponseMessages(result *planner.PlanResult) ([]*model.Messa
 			return nil, err
 		}
 	}
-	calls := planResultModelToolCalls(result)
+	calls := runtimePlanResultModelToolCalls(result)
 	if len(calls) == 0 {
 		return messages, nil
 	}

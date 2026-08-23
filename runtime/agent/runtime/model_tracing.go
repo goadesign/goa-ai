@@ -2,6 +2,8 @@
 //
 // Contract:
 //   - Each complete or stream request owns exactly one client span.
+//   - Unary responses have already passed the inner model-invocation boundary;
+//     tracing observes them without claiming or repeating validation.
 //   - Stream spans aggregate token usage across chunks and end at most once.
 //   - A non-nil error marks the span failed only when telemetry classifies it as
 //     a real operation failure instead of a context-driven termination.
@@ -23,8 +25,8 @@ import (
 )
 
 type (
-	tracedClient struct {
-		inner  model.Client
+	tracedProvider struct {
+		inner  model.Provider
 		tracer telemetry.Tracer
 		logger telemetry.Logger
 
@@ -33,85 +35,58 @@ type (
 		captureMessages bool
 	}
 
+	tracedCall struct {
+		provider   *tracedProvider
+		span       telemetry.Span
+		ctx        context.Context
+		startedAt  time.Time
+		finishOnce sync.Once
+	}
+
 	tracedStream struct {
-		inner model.Streamer
-		span  telemetry.Span
-		ctx   context.Context
+		span telemetry.Span
+		ctx  context.Context
 
-		mu    sync.Mutex
-		usage model.TokenUsage
-
-		// output accumulates streamed assistant parts so a single
-		// gen_ai.output.messages attribute can be emitted at stream end.
-		output *genAIStreamAccumulator
+		mu       sync.Mutex
+		usage    model.TokenUsage
+		response *model.Response
 
 		startedAt          time.Time
 		firstChunkRecorded bool
 		sawUsageDelta      bool
-		endOnce            sync.Once
+		captureMessages    bool
+		statusOnce         sync.Once
 	}
 )
 
 func newTracedClient(inner model.Client, tracer telemetry.Tracer, logger telemetry.Logger, modelID string, genAI telemetry.GenAIContext, captureMessages bool) model.Client {
-	if inner == nil {
-		return nil
-	}
 	if tracer == nil {
 		tracer = telemetry.NewNoopTracer()
 	}
 	if logger == nil {
 		logger = telemetry.NewNoopLogger()
 	}
-	return &tracedClient{
-		inner:  inner,
-		tracer: tracer,
-		logger: logger,
+	return mustWrapModelClient(inner, func(provider model.Provider) model.Provider {
+		return &tracedProvider{
+			inner:  provider,
+			tracer: tracer,
+			logger: logger,
 
-		modelID:         modelID,
-		genAI:           genAI,
-		captureMessages: captureMessages,
-	}
-}
-
-func (c *tracedClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	ctx = telemetry.WithGenAIContext(ctx, c.genAI)
-	ctx, span := c.tracer.Start(
-		ctx,
-		modelSpanName(req),
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(modelSpanAttrs(ctx, req)...),
-	)
-	defer span.End()
-	c.recordInputMessages(span, req.Messages)
-
-	resp, err := c.inner.Complete(ctx, req)
-	if err != nil {
-		if !telemetry.ShouldRecordSpanError(ctx, err) {
-			span.SetStatus(codes.Unset, "")
-			return resp, err
+			modelID:         modelID,
+			genAI:           genAI,
+			captureMessages: captureMessages,
 		}
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "model complete failed")
-		c.logger.Error(
-			ctx,
-			"model complete failed",
-			"model_id", c.modelID,
-			"err", err,
-		)
-		return resp, err
-	}
-	if (resp.Usage != model.TokenUsage{}) {
-		span.SetAttributes(modelUsageAttrs(resp.Usage)...)
-	}
-	if resp.StopReason != "" {
-		span.SetAttributes(telemetry.AttrGenAIResponseFinishReasons.StringSlice([]string{resp.StopReason}))
-	}
-	c.recordOutputMessages(span, responseOutputMessages(resp), resp.StopReason)
-	span.SetStatus(codes.Ok, "ok")
-	return resp, nil
+	})
 }
 
-func (c *tracedClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+// PrepareClientCall starts the client span before provider execution. The
+// returned observer closes it after canonical output validation.
+//
+//nolint:unparam // The observer interface permits setup failures used by journaling middleware.
+func (c *tracedProvider) PrepareClientCall(
+	ctx context.Context,
+	req *model.Request,
+) (context.Context, model.ClientCallObserver, error) {
 	startedAt := time.Now()
 	ctx = telemetry.WithGenAIContext(ctx, c.genAI)
 	ctx, span := c.tracer.Start(
@@ -121,58 +96,124 @@ func (c *tracedClient) Stream(ctx context.Context, req *model.Request) (model.St
 		trace.WithAttributes(modelSpanAttrs(ctx, req)...),
 	)
 	c.recordInputMessages(span, req.Messages)
-
-	st, err := c.inner.Stream(ctx, req)
-	if err != nil {
-		if !telemetry.ShouldRecordSpanError(ctx, err) {
-			span.SetStatus(codes.Unset, "")
-			span.End()
-			return nil, err
-		}
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "model stream failed")
-		span.End()
-		c.logger.Error(
-			ctx,
-			"model stream failed",
-			"model_id", c.modelID,
-			"err", err,
-		)
-		return nil, err
-	}
-	ts := &tracedStream{
-		inner:     st,
+	return ctx, &tracedCall{
+		provider:  c,
 		span:      span,
 		ctx:       ctx,
 		startedAt: startedAt,
-	}
-	if c.captureMessages {
-		ts.output = newGenAIStreamAccumulator()
-	}
-	return ts, nil
+	}, nil
 }
 
-func (s *tracedStream) Recv() (model.Chunk, error) {
-	ch, err := s.inner.Recv()
+// Complete forwards the translated raw response beneath final validation.
+func (c *tracedProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	return c.inner.Complete(ctx, req)
+}
+
+// Stream forwards the translated raw stream beneath final validation.
+func (c *tracedProvider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+	return c.inner.Stream(ctx, req)
+}
+
+// ObserveClientComplete records one final validated unary result.
+func (c *tracedCall) ObserveClientComplete(resp *model.Response, err error) error {
+	if err != nil {
+		if !telemetry.ShouldRecordSpanError(c.ctx, err) {
+			c.span.SetStatus(codes.Unset, "")
+			return nil
+		}
+		c.span.RecordError(err)
+		c.span.SetStatus(codes.Error, "model complete failed")
+		c.provider.logger.Error(
+			c.ctx,
+			"model complete failed",
+			"model_id", c.provider.modelID,
+			"err", err,
+		)
+		return nil
+	}
+	if (resp.Usage != model.TokenUsage{}) {
+		c.span.SetAttributes(modelUsageAttrs(resp.Usage)...)
+	}
+	if resp.StopReason != "" {
+		c.span.SetAttributes(telemetry.AttrGenAIResponseFinishReasons.StringSlice([]string{resp.StopReason}))
+	}
+	c.provider.recordOutputMessages(c.span, responseOutputMessages(resp), resp.StopReason)
+	c.span.SetStatus(codes.Ok, "ok")
+	return nil
+}
+
+// ObserveClientStream returns tracing behavior for a canonically validated
+// stream. The model client attaches it to the exact stream.
+func (c *tracedCall) ObserveClientStream(err error) (model.StreamObserver, error) {
+	if err != nil {
+		if !telemetry.ShouldRecordSpanError(c.ctx, err) {
+			c.span.SetStatus(codes.Unset, "")
+			return nil, nil
+		}
+		c.span.RecordError(err)
+		c.span.SetStatus(codes.Error, "model stream failed")
+		c.provider.logger.Error(
+			c.ctx,
+			"model stream failed",
+			"model_id", c.provider.modelID,
+			"err", err,
+		)
+		return nil, nil
+	}
+	return &tracedStream{
+		span:            c.span,
+		ctx:             c.ctx,
+		startedAt:       c.startedAt,
+		captureMessages: c.provider.captureMessages,
+	}, nil
+}
+
+// Finish ends the span after unary observation, failed stream setup, or the
+// exact validated stream's close callback.
+func (c *tracedCall) Finish(error) error {
+	c.finishOnce.Do(func() {
+		c.span.End()
+	})
+	return nil
+}
+
+// Abort records a later observer's preparation failure and ends the span.
+func (c *tracedCall) Abort(err error) error {
+	if err != nil {
+		if !telemetry.ShouldRecordSpanError(c.ctx, err) {
+			c.span.SetStatus(codes.Unset, "")
+		} else {
+			c.span.RecordError(err)
+			c.span.SetStatus(codes.Error, "model observer setup failed")
+		}
+	}
+	return c.Finish(err)
+}
+
+// ObserveStreamRecv records timing, usage, and span outcome from one exact
+// validated stream result.
+func (s *tracedStream) ObserveStreamRecv(observation model.StreamObservation) error {
+	err := observation.Err
 	if err != nil {
 		if errors.Is(err, io.EOF) {
 			s.mu.Lock()
 			if !s.sawUsageDelta {
-				s.usage = s.inner.Response().Usage
+				s.usage = observation.Response.Usage
 			}
+			s.response = observation.Response
 			s.mu.Unlock()
 			s.end(codes.Ok, "eof")
-			return ch, err
+			return nil
 		}
 		if !telemetry.ShouldRecordSpanError(s.ctx, err) {
 			s.end(codes.Unset, "")
-			return ch, err
+			return nil
 		}
 		s.span.RecordError(err)
 		s.end(codes.Error, "stream recv failed")
-		return ch, err
+		return nil
 	}
-	if usage, ok := ch.(model.UsageChunk); ok {
+	if usage, ok := observation.Chunk.(model.UsageChunk); ok {
 		s.mu.Lock()
 		s.sawUsageDelta = true
 		if s.usage.Model == "" {
@@ -188,57 +229,44 @@ func (s *tracedStream) Recv() (model.Chunk, error) {
 		s.usage.CacheWriteTokens += usage.Usage.CacheWriteTokens
 		s.mu.Unlock()
 	}
-	if isFirstGenAIOutputChunk(ch.Kind()) {
+	if isFirstGenAIOutputChunk(observation.Chunk.Kind()) {
 		s.recordFirstChunk()
 	}
-	s.recordOutputChunk(ch)
-	if stop, ok := ch.(model.StopChunk); ok && stop.Reason != "" {
+	if stop, ok := observation.Chunk.(model.StopChunk); ok && stop.Reason != "" {
 		s.span.SetAttributes(telemetry.AttrGenAIResponseFinishReasons.StringSlice([]string{stop.Reason}))
 	}
-	return ch, nil
+	return nil
 }
 
-func (s *tracedStream) Close() error {
-	err := s.inner.Close()
+// ObserveStreamClose records the result after the exact validated stream has
+// released its provider resources.
+func (s *tracedStream) ObserveStreamClose(err error) error {
 	if err != nil {
 		if !telemetry.ShouldRecordSpanError(s.ctx, err) {
 			s.end(codes.Unset, "")
-			return err
+			return nil
 		}
 		s.span.RecordError(err)
 		s.end(codes.Error, "stream close failed")
-		return err
+		return nil
 	}
 	s.end(codes.Ok, "closed")
 	return nil
 }
 
-func (s *tracedStream) Response() *model.Response {
-	return s.inner.Response()
-}
-
 func (s *tracedStream) end(code codes.Code, desc string) {
-	s.endOnce.Do(func() {
+	s.statusOnce.Do(func() {
 		s.mu.Lock()
 		usage := s.usage
-		var (
-			outputMessages []model.Message
-			stopReason     string
-			haveOutput     bool
-		)
-		if s.output != nil {
-			outputMessages, stopReason, haveOutput = s.output.finish()
-		}
 		s.mu.Unlock()
 
 		if (usage != model.TokenUsage{}) {
 			s.span.SetAttributes(modelUsageAttrs(usage)...)
 		}
-		if haveOutput {
-			s.applyOutputMessages(outputMessages, stopReason)
+		if response := s.response; s.captureMessages && response != nil {
+			s.applyOutputMessages(response.Content, response.StopReason)
 		}
 		s.span.SetStatus(code, desc)
-		s.span.End()
 	})
 }
 
@@ -314,7 +342,7 @@ func isFirstGenAIOutputChunk(chunkType string) bool {
 
 // recordInputMessages stamps the chat-turn span with the provider-ready input
 // transcript when sensitive GenAI message capture is enabled.
-func (c *tracedClient) recordInputMessages(span telemetry.Span, messages []*model.Message) {
+func (c *tracedProvider) recordInputMessages(span telemetry.Span, messages []*model.Message) {
 	if !c.captureMessages {
 		return
 	}
@@ -324,7 +352,7 @@ func (c *tracedClient) recordInputMessages(span telemetry.Span, messages []*mode
 
 // recordOutputMessages stamps the chat-turn span with the complete non-streaming
 // assistant response when sensitive GenAI message capture is enabled.
-func (c *tracedClient) recordOutputMessages(span telemetry.Span, messages []model.Message, stopReason string) {
+func (c *tracedProvider) recordOutputMessages(span telemetry.Span, messages []model.Message, stopReason string) {
 	if !c.captureMessages {
 		return
 	}
@@ -332,9 +360,8 @@ func (c *tracedClient) recordOutputMessages(span telemetry.Span, messages []mode
 	setGenAIMessagesAttr(span, attr, ok, err, "output")
 }
 
-// applyOutputMessages stamps the chat-turn span with the buffered streaming
-// assistant output. It is called once at stream end; s.output is nil unless
-// capture is enabled, so the default hot path is unchanged.
+// applyOutputMessages stamps the chat-turn span with the validated complete
+// provider response.
 func (s *tracedStream) applyOutputMessages(messages []model.Message, stopReason string) {
 	attr, ok, err := telemetry.GenAIOutputMessagesAttr(messages, stopReason)
 	setGenAIMessagesAttr(s.span, attr, ok, err, "output")
@@ -352,83 +379,8 @@ func setGenAIMessagesAttr(span telemetry.Span, attr attribute.KeyValue, ok bool,
 	}
 }
 
-// recordOutputChunk feeds a streamed chunk to the accumulator so a single
-// output message can be emitted at stream end. No-op when capture is disabled.
-func (s *tracedStream) recordOutputChunk(chunk model.Chunk) {
-	if s.output == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.output.recordChunk(chunk)
-}
-
 // responseOutputMessages returns the canonical ordered provider response used
 // by chat-turn spans.
 func responseOutputMessages(resp *model.Response) []model.Message {
 	return resp.Content
-}
-
-// genAIStreamAccumulator coalesces streamed assistant chunks into one canonical
-// output message: adjacent text deltas merge into a single text part, tool
-// calls and completions are captured, reasoning chunks are dropped entirely,
-// and the terminal stop reason is recorded.
-type genAIStreamAccumulator struct {
-	parts      []model.Part
-	stopReason string
-}
-
-func newGenAIStreamAccumulator() *genAIStreamAccumulator {
-	return &genAIStreamAccumulator{}
-}
-
-func (a *genAIStreamAccumulator) recordChunk(chunk model.Chunk) {
-	switch actual := chunk.(type) {
-	case model.TextChunk:
-		a.appendOutputParts(actual.Message.Parts)
-	case model.ToolCallChunk:
-		a.parts = append(a.parts, model.ToolUsePart{
-			ID:    actual.ToolCall.ID,
-			Name:  string(actual.ToolCall.Name),
-			Input: actual.ToolCall.Payload,
-		})
-	case model.CompletionChunk:
-		a.parts = append(a.parts, model.TextPart{Text: string(actual.Completion.Payload)})
-	case model.StopChunk:
-		a.stopReason = actual.Reason
-	}
-}
-
-// finish returns the coalesced assistant message and stop reason. It reports
-// ok=false when no output parts were observed so callers can skip emitting an
-// empty gen_ai.output.messages attribute.
-func (a *genAIStreamAccumulator) finish() ([]model.Message, string, bool) {
-	if len(a.parts) == 0 {
-		return nil, a.stopReason, false
-	}
-	return []model.Message{{
-		Role:  model.ConversationRoleAssistant,
-		Parts: a.parts,
-	}}, a.stopReason, true
-}
-
-func (a *genAIStreamAccumulator) appendOutputParts(parts []model.Part) {
-	for _, part := range parts {
-		text, ok := part.(model.TextPart)
-		if !ok {
-			a.parts = append(a.parts, part)
-			continue
-		}
-		if text.Text == "" {
-			continue
-		}
-		if len(a.parts) > 0 {
-			if last, ok := a.parts[len(a.parts)-1].(model.TextPart); ok {
-				last.Text += text.Text
-				a.parts[len(a.parts)-1] = last
-				continue
-			}
-		}
-		a.parts = append(a.parts, text)
-	}
 }

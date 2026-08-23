@@ -27,6 +27,7 @@ lint: tools
 
 test: tools
 	$(GO) test -race -covermode=atomic -coverprofile=cover.out `$(GO) list ./... | grep -v '/integration_tests'`
+	cd quickstart && $(GO) test ./...
 
 # Run integration tests: end-to-end scenarios under integration_tests/ and
 # Docker-backed tests guarded by the `integration` build tag (registry health

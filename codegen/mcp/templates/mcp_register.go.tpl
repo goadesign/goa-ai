@@ -100,7 +100,7 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 		return errors.New("mcp caller is required")
 	}
 
-	exec := func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+	exec := func(ctx context.Context, call agentsruntime.ToolCall) (planner.ToolResult, error) {
 		fullName := call.Name
 		toolName := string(fullName)
 		const suitePrefix = {{ printf "%q" .Register.SuiteQualifiedName }} + "."
@@ -153,7 +153,7 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 	return rt.RegisterToolset(agentsruntime.ToolsetRegistration{
 		Name:        {{ printf "%q" .Register.SuiteQualifiedName }},
 		Description: {{ printf "%q" .Register.Description }},
-		Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
+		Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
 			if call == nil {
 				return nil, errors.New("tool request is nil")
 			}

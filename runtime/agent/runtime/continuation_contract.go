@@ -69,7 +69,7 @@ func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*work
 	if program.kind != checkpoint.Batch.Kind {
 		return nil, errors.New("run suspension step kind does not match saved planner result")
 	}
-	if !slices.EqualFunc(program.calls, checkpoint.Batch.Calls, func(a, b planner.ToolRequest) bool {
+	if !slices.EqualFunc(program.calls, checkpoint.Batch.Calls, func(a, b ToolCall) bool {
 		return reflect.DeepEqual(a, b)
 	}) {
 		return nil, errors.New("run suspension tool calls do not match saved planner result")
@@ -142,7 +142,7 @@ func (r *Runtime) validateCheckpointToolValues(checkpoint *workflowCheckpoint) e
 
 // validateCheckpointToolRequest decodes one saved executable payload through
 // the current generated input codec without executing the tool.
-func (r *Runtime) validateCheckpointToolRequest(ctx context.Context, call planner.ToolRequest) error {
+func (r *Runtime) validateCheckpointToolRequest(ctx context.Context, call ToolCall) error {
 	if _, err := r.unmarshalToolValue(ctx, call.Name, call.Payload.RawMessage(), true); err != nil {
 		return fmt.Errorf("decode suspended tool payload for %s: %w", call.Name, err)
 	}
@@ -254,6 +254,13 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 		if output == nil {
 			return fmt.Errorf("run suspension checkpoint recovery output %d is nil", i)
 		}
+	}
+	if err := validateRecoveryCatalog(
+		checkpoint.State.PendingRecovery,
+		checkpoint.State.PendingRecoveryCatalog,
+		checkpoint.Batch.Result,
+	); err != nil {
+		return fmt.Errorf("run suspension checkpoint recovery state: %w", err)
 	}
 	for i, event := range checkpoint.State.ToolEvents {
 		if event == nil {

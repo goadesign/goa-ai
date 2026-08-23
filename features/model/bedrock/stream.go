@@ -39,6 +39,7 @@ type bedrockStreamer struct {
 	modelClass       model.ModelClass
 	output           *model.StructuredOutput
 	toolFallbackName string
+	contract         *model.RequestContract
 }
 
 // newBedrockStreamer adapts a Bedrock ConverseStream to model.Streamer.
@@ -54,8 +55,13 @@ func newBedrockStreamer(
 	modelClass model.ModelClass,
 	output *model.StructuredOutput,
 	toolFallbackName string,
+	contracts ...*model.RequestContract,
 ) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
+	var contract *model.RequestContract
+	if len(contracts) > 0 {
+		contract = contracts[0]
+	}
 	bs := &bedrockStreamer{
 		ctx:              cctx,
 		cancel:           cancel,
@@ -66,6 +72,7 @@ func newBedrockStreamer(
 		modelClass:       modelClass,
 		output:           output,
 		toolFallbackName: toolFallbackName,
+		contract:         contract,
 	}
 	go bs.run()
 	return bs
@@ -142,13 +149,9 @@ func (s *bedrockStreamer) run() {
 						processor.started,
 					))
 				} else if err := processor.finishStream(); err != nil {
-					s.setErr(err)
+					s.setErr(s.outputError(processor.rejectedUsage(), err))
 				} else {
 					response := processor.response()
-					if err := model.ValidateResponse(response); err != nil {
-						s.setErr(fmt.Errorf("bedrock: invalid streamed response: %w", err))
-						return
-					}
 					s.responseMu.Lock()
 					s.response = response
 					s.responseMu.Unlock()
@@ -156,11 +159,30 @@ func (s *bedrockStreamer) run() {
 				return
 			}
 			if err := processor.Handle(event); err != nil {
-				s.setErr(err)
+				s.setErr(s.outputError(processor.rejectedUsage(), err))
 				return
 			}
 		}
 	}
+}
+
+// outputError preserves provider and caller flow-control errors while marking
+// malformed Bedrock stream data as output validation.
+func (s *bedrockStreamer) outputError(usage model.TokenUsage, err error) error {
+	if s.contract == nil ||
+		err == nil ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	if _, ok := model.AsProviderError(err); ok {
+		return err
+	}
+	var validationErr *model.OutputValidationError
+	if errors.As(err, &validationErr) {
+		return err
+	}
+	return s.contract.RejectProviderOutput(&usage, err)
 }
 
 func (s *bedrockStreamer) emitChunk(chunk model.Chunk) error {
@@ -213,6 +235,8 @@ type chunkProcessor struct {
 	started         bool
 	complete        bool
 	terminalEmitted bool
+	retainedBytes   int
+	retainedValues  int
 }
 
 // newChunkProcessor builds the stream event decoder. toolFallbackName is
@@ -287,16 +311,14 @@ func (p *chunkProcessor) Handle(event any) error {
 				return fmt.Errorf("bedrock stream: tool use block %q missing name", id)
 			}
 			raw := *toolUse.Value.Name
-			name := normalizeToolName(raw)
-			// Bedrock tool_use blocks echo back the provider-visible tool name. The
-			// adapter normally translates that provider name back to the canonical
-			// tool ID via the per-request reverse map. When the model hallucinates a
-			// tool name that was not advertised in this request, the reverse map will
-			// not contain it. This is not a transport/protocol failure: it is normal
-			// model behavior and must be handled by the runtime as a tool error so
-			// the model can recover on the next resume turn.
-			if canonical, ok := p.toolNameMap[name]; ok {
-				name = canonical
+			providerName := normalizeToolName(raw)
+			name, ok := p.toolNameMap[providerName]
+			if !ok {
+				return fmt.Errorf(
+					"bedrock stream: tool use block %q returned unadvertised name %q",
+					id,
+					raw,
+				)
 			}
 			if p.output != nil {
 				if p.toolFallbackName == "" || name != p.toolFallbackName {
@@ -347,15 +369,18 @@ func (p *chunkProcessor) Handle(event any) error {
 			if delta.Value == "" {
 				return nil
 			}
+			if p.output != nil {
+				return p.handleCompletionDelta(idx, delta.Value)
+			}
+			if err := p.retainString(delta.Value); err != nil {
+				return err
+			}
 			buffer := p.textBlocks[idx]
 			if buffer == nil {
 				buffer = &strings.Builder{}
 				p.textBlocks[idx] = buffer
 			}
 			buffer.WriteString(delta.Value)
-			if p.output != nil {
-				return p.handleCompletionDelta(idx, delta.Value)
-			}
 			return p.emit(model.TextChunk{
 				Message: model.Message{
 					Role:  "assistant",
@@ -366,6 +391,9 @@ func (p *chunkProcessor) Handle(event any) error {
 		case *brtypes.ContentBlockDeltaMemberCitation:
 			citation, err := translateCitationDelta(delta.Value)
 			if err != nil {
+				return err
+			}
+			if err := p.retainCitation(citation); err != nil {
 				return err
 			}
 			p.citationBlocks[idx] = append(p.citationBlocks[idx], citation)
@@ -383,6 +411,9 @@ func (p *chunkProcessor) Handle(event any) error {
 				if v.Value == "" {
 					return nil
 				}
+				if err := p.retainString(v.Value); err != nil {
+					return err
+				}
 				rb.text.WriteString(v.Value)
 				// Stream incremental thinking text for UX; final part is emitted on stop.
 				return p.emit(model.ThinkingChunk{
@@ -397,11 +428,17 @@ func (p *chunkProcessor) Handle(event any) error {
 				})
 			case *brtypes.ReasoningContentBlockDeltaMemberRedactedContent:
 				if len(v.Value) > 0 {
+					if err := p.retainBytes(len(v.Value)); err != nil {
+						return err
+					}
 					rb.redacted = append(rb.redacted, v.Value...)
 				}
 				return nil
 			case *brtypes.ReasoningContentBlockDeltaMemberSignature:
 				if v.Value != "" {
+					if err := p.retainString(v.Value); err != nil {
+						return err
+					}
 					rb.signature = v.Value
 				}
 				return nil
@@ -426,7 +463,10 @@ func (p *chunkProcessor) Handle(event any) error {
 				if fragment == "" {
 					return nil
 				}
-				tb.fragments = append(tb.fragments, fragment)
+				if err := p.retainString(fragment); err != nil {
+					return err
+				}
+				tb.fragments.WriteString(fragment)
 				if tb.id == "" {
 					return fmt.Errorf("bedrock stream: tool JSON delta missing tool call id")
 				}
@@ -591,6 +631,19 @@ func (p *chunkProcessor) Handle(event any) error {
 	}
 }
 
+// rejectedUsage returns scalar usage with resolved identity even when content
+// translation fails before the provider emits metadata.
+func (p *chunkProcessor) rejectedUsage() model.TokenUsage {
+	usage := p.canonical.Usage
+	if usage.Model == "" {
+		usage.Model = p.modelID
+	}
+	if usage.ModelClass == "" {
+		usage.ModelClass = p.modelClass
+	}
+	return usage
+}
+
 // response returns the canonical provider response assembled from the completed
 // stream. The provider event loop calls it only after message stop.
 func (p *chunkProcessor) response() *model.Response {
@@ -629,7 +682,7 @@ func (p *chunkProcessor) finishStream() error {
 type toolBuffer struct {
 	name      string
 	id        string
-	fragments []string
+	fragments strings.Builder
 }
 
 // completionBuffer accumulates one structured-output content block until the
@@ -637,35 +690,20 @@ type toolBuffer struct {
 type completionBuffer struct {
 	name      string
 	index     int
-	fragments []string
+	fragments strings.Builder
 }
 
 func (tb *toolBuffer) finalInput() string {
-	if len(tb.fragments) == 0 {
-		return "{}"
-	}
-	joined := strings.Join(tb.fragments, "")
-	if joined == "" {
-		return "{}"
-	}
-	return joined
+	return tb.fragments.String()
 }
 
 // finalPayload returns the canonical JSON payload for the structured completion
 // block. Unlike tool payloads, typed completions do not use fallbacks: invalid
 // or empty JSON is a hard provider contract violation.
 func (cb *completionBuffer) finalPayload() (rawjson.Message, error) {
-	if len(cb.fragments) == 0 {
-		return nil, errors.New("structured completion payload is empty")
-	}
-	joined := strings.Join(cb.fragments, "")
-	trimmed := strings.TrimSpace(joined)
-	if trimmed == "" {
-		return nil, errors.New("structured completion payload is empty")
-	}
-	data := []byte(trimmed)
+	data := []byte(cb.fragments.String())
 	if !json.Valid(data) {
-		return nil, fmt.Errorf("structured completion payload is not valid JSON: %q", trimmed)
+		return nil, errors.New("structured completion payload is not valid JSON")
 	}
 	return rawjson.Message(data), nil
 }
@@ -690,7 +728,10 @@ func (p *chunkProcessor) handleCompletionDelta(idx int, delta string) error {
 			idx,
 		)
 	}
-	p.completion.fragments = append(p.completion.fragments, delta)
+	if err := p.retainString(delta); err != nil {
+		return err
+	}
+	p.completion.fragments.WriteString(delta)
 	if p.toolFallbackName != "" {
 		// Synthetic-tool fragments contain Bedrock's private object wrapper.
 		// Completion previews are optional, so do not expose that provider
@@ -744,15 +785,72 @@ func contentIndex(idx *int32) (int, error) {
 }
 
 func decodeToolPayload(raw string) (rawjson.Message, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return rawjson.Message([]byte("{}")), nil
-	}
-	data := []byte(trimmed)
+	data := []byte(raw)
 	if !json.Valid(data) {
 		return nil, errors.New("tool payload is not valid JSON")
 	}
 	return rawjson.Message(data), nil
+}
+
+// retainString charges one provider string before private stream state grows.
+func (p *chunkProcessor) retainString(value string) error {
+	return p.retainBytes(len(value))
+}
+
+// retainValue charges one provider-controlled retained element.
+func (p *chunkProcessor) retainValue() error {
+	if p.retainedValues >= 100_000 {
+		return errors.New("bedrock stream: retained output exceeds 100000 values")
+	}
+	p.retainedValues++
+	return nil
+}
+
+// retainBytes charges one provider-controlled value and its bytes.
+func (p *chunkProcessor) retainBytes(size int) error {
+	if err := p.retainValue(); err != nil {
+		return err
+	}
+	if size > 16<<20-p.retainedBytes {
+		return errors.New("bedrock stream: retained output exceeds 16777216 bytes")
+	}
+	p.retainedBytes += size
+	return nil
+}
+
+// retainCitation charges every provider-controlled value copied into one
+// canonical citation before the citation slice grows.
+func (p *chunkProcessor) retainCitation(citation model.Citation) error {
+	if err := p.retainValue(); err != nil {
+		return err
+	}
+	if err := p.retainString(citation.Title); err != nil {
+		return err
+	}
+	if err := p.retainString(citation.Source); err != nil {
+		return err
+	}
+	for _, content := range citation.SourceContent {
+		if err := p.retainString(content); err != nil {
+			return err
+		}
+	}
+	if citation.Location.DocumentChar != nil {
+		if err := p.retainValue(); err != nil {
+			return err
+		}
+	}
+	if citation.Location.DocumentChunk != nil {
+		if err := p.retainValue(); err != nil {
+			return err
+		}
+	}
+	if citation.Location.DocumentPage != nil {
+		if err := p.retainValue(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func translateCitationDelta(delta brtypes.CitationsDelta) (model.Citation, error) {

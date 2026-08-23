@@ -263,6 +263,9 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 		if client == nil {
 			return msgs, errors.New("runtime: history compression model is required")
 		}
+		if err := model.ValidateClient(client); err != nil {
+			return msgs, fmt.Errorf("runtime: history compression model: %w", err)
+		}
 		if len(msgs) == 0 {
 			return msgs, nil
 		}
@@ -510,11 +513,7 @@ func countMessages(
 ) (model.TokenCount, error) {
 	counter := cfg.tokenCounter
 	if counter == nil {
-		var ok bool
-		counter, ok = client.(model.TokenCounter)
-		if !ok {
-			return model.TokenCount{}, errors.New("runtime: history compression token counter is required for token budgets")
-		}
+		counter = client
 	}
 	req := &model.Request{
 		ModelClass: cfg.modelClass,
@@ -523,6 +522,12 @@ func countMessages(
 	}
 	count, err := counter.CountTokens(ctx, req)
 	if err != nil {
+		if errors.Is(err, model.ErrTokenCountingUnsupported) {
+			return model.TokenCount{}, fmt.Errorf(
+				"runtime: history compression requires a model provider with token counting: %w",
+				model.ErrTokenCountingUnsupported,
+			)
+		}
 		return model.TokenCount{}, err
 	}
 	if !count.Exact {

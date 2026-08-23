@@ -22,11 +22,10 @@ func TestBuildConverseStreamInputOpus47AndLaterUsesAdaptiveThinking(t *testing.T
 		"us.anthropic.claude-fable-5",
 	} {
 		t.Run(highModel, func(t *testing.T) {
-			client := &Client{
+			client := &provider{
 				defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 				highModel:    highModel,
 				maxTok:       32,
-				think:        defaultThinkingBudget,
 			}
 
 			req := &model.Request{
@@ -38,7 +37,7 @@ func TestBuildConverseStreamInputOpus47AndLaterUsesAdaptiveThinking(t *testing.T
 				Tools: []*model.ToolDefinition{{
 					Name:        "search",
 					Description: "search the workspace",
-					Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+					Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 				}},
 				Thinking: &model.ThinkingOptions{
 					Enable:       true,
@@ -56,7 +55,8 @@ func TestBuildConverseStreamInputOpus47AndLaterUsesAdaptiveThinking(t *testing.T
 			require.Zero(t, thinking.budget, "adaptive mode must not carry a token budget")
 			require.False(t, thinking.interleaved, "adaptive mode must not set the interleaved beta header")
 
-			input := client.buildConverseStreamInput(parts, req, thinking)
+			input, err := client.buildConverseStreamInput(parts, req, thinking)
+			require.NoError(t, err)
 			require.NotNil(t, input.AdditionalModelRequestFields)
 
 			raw, err := input.AdditionalModelRequestFields.MarshalSmithyDocument()
@@ -81,10 +81,9 @@ func TestBuildConverseStreamInputOpus47AndLaterUsesAdaptiveThinking(t *testing.T
 // adapter must request summarized display explicitly because Bedrock otherwise
 // returns an empty signed thinking block.
 func TestBuildConverseStreamInputSonnet5UsesVisibleAdaptiveThinking(t *testing.T) {
-	client := &Client{
+	client := &provider{
 		defaultModel: "global.anthropic.claude-sonnet-5",
 		maxTok:       32,
-		think:        defaultThinkingBudget,
 	}
 	req := &model.Request{
 		ModelClass: model.ModelClassDefault,
@@ -108,7 +107,8 @@ func TestBuildConverseStreamInputSonnet5UsesVisibleAdaptiveThinking(t *testing.T
 	require.Zero(t, thinking.budget)
 	require.False(t, thinking.interleaved)
 
-	input := client.buildConverseStreamInput(parts, req, thinking)
+	input, err := client.buildConverseStreamInput(parts, req, thinking)
+	require.NoError(t, err)
 	require.NotNil(t, input.AdditionalModelRequestFields)
 	raw, err := input.AdditionalModelRequestFields.MarshalSmithyDocument()
 	require.NoError(t, err)
@@ -121,15 +121,59 @@ func TestBuildConverseStreamInputSonnet5UsesVisibleAdaptiveThinking(t *testing.T
 	}, fields["thinking"])
 }
 
+func TestBuildConverseStreamInputThinkingBudget(t *testing.T) {
+	tests := []struct {
+		name       string
+		budget     int
+		wantBudget any
+	}{
+		{name: "zero uses provider default"},
+		{name: "positive remains exact", budget: 4096, wantBudget: float64(4096)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &provider{
+				defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+				maxTok:       32,
+			}
+			req := &model.Request{
+				Messages: []*model.Message{{
+					Role:  model.ConversationRoleUser,
+					Parts: []model.Part{model.TextPart{Text: "reason"}},
+				}},
+				Thinking: &model.ThinkingOptions{
+					Enable:       true,
+					BudgetTokens: test.budget,
+				},
+			}
+			parts, err := client.prepareRequest(req)
+			require.NoError(t, err)
+			input, err := client.buildConverseStreamInput(parts, req, client.resolveThinking(req, parts))
+			require.NoError(t, err)
+			require.NotNil(t, input.AdditionalModelRequestFields)
+			raw, err := input.AdditionalModelRequestFields.MarshalSmithyDocument()
+			require.NoError(t, err)
+			var fields map[string]any
+			require.NoError(t, json.Unmarshal(raw, &fields))
+			thinking := fields["thinking"].(map[string]any)
+			require.Equal(t, "enabled", thinking["type"])
+			if test.wantBudget == nil {
+				require.NotContains(t, thinking, "budget_tokens")
+				return
+			}
+			require.Equal(t, test.wantBudget, thinking["budget_tokens"])
+		})
+	}
+}
+
 // Bedrock adaptive thinking is valid even without tools. The adapter must not
 // silently drop thinking config just because the request is a plain message
 // turn, otherwise Opus 4.7 falls back to omitted reasoning text again.
 func TestResolveThinkingOpus47WithoutTools(t *testing.T) {
-	client := &Client{
+	client := &provider{
 		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 		highModel:    "us.anthropic.claude-opus-4-7",
 		maxTok:       32,
-		think:        defaultThinkingBudget,
 	}
 
 	req := &model.Request{
@@ -160,11 +204,10 @@ func TestResolveThinkingOpus47WithoutTools(t *testing.T) {
 // The adapter owns that provider representability rule so planners can express
 // the stronger semantic constraint without knowing the transport quirk.
 func TestResolveThinkingOpus47ForcedToolDisablesThinking(t *testing.T) {
-	client := &Client{
+	client := &provider{
 		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 		highModel:    "us.anthropic.claude-opus-4-7",
 		maxTok:       32,
-		think:        defaultThinkingBudget,
 	}
 
 	req := &model.Request{
@@ -176,7 +219,7 @@ func TestResolveThinkingOpus47ForcedToolDisablesThinking(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "tasks.progress.complete",
 			Description: "complete the task",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeTool,
@@ -195,7 +238,8 @@ func TestResolveThinkingOpus47ForcedToolDisablesThinking(t *testing.T) {
 	thinking := client.resolveThinking(req, parts)
 	require.False(t, thinking.enable)
 
-	input := client.buildConverseStreamInput(parts, req, thinking)
+	input, err := client.buildConverseStreamInput(parts, req, thinking)
+	require.NoError(t, err)
 	if input.AdditionalModelRequestFields != nil {
 		raw, err := input.AdditionalModelRequestFields.MarshalSmithyDocument()
 		require.NoError(t, err)
@@ -206,11 +250,10 @@ func TestResolveThinkingOpus47ForcedToolDisablesThinking(t *testing.T) {
 }
 
 func TestResolveThinkingOpus47AnyToolDisablesThinking(t *testing.T) {
-	client := &Client{
+	client := &provider{
 		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 		highModel:    "us.anthropic.claude-opus-4-7",
 		maxTok:       32,
-		think:        defaultThinkingBudget,
 	}
 
 	req := &model.Request{
@@ -222,7 +265,7 @@ func TestResolveThinkingOpus47AnyToolDisablesThinking(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "tasks.progress.update",
 			Description: "update task progress",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeAny,
@@ -275,11 +318,10 @@ func TestFableRejectsForcedToolChoice(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			client := &Client{
+			client := &provider{
 				defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 				highModel:    "us.anthropic.claude-fable-5",
 				maxTok:       32,
-				think:        defaultThinkingBudget,
 			}
 
 			req := &model.Request{
@@ -291,7 +333,7 @@ func TestFableRejectsForcedToolChoice(t *testing.T) {
 				Tools: []*model.ToolDefinition{{
 					Name:        "tasks.progress.complete",
 					Description: "complete the task",
-					Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+					Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 				}},
 				ToolChoice: tc.toolChoice,
 			}
@@ -310,11 +352,10 @@ func TestFableRejectsForcedToolChoice(t *testing.T) {
 // Opus models keep the legacy escape hatch: forced tool choice is allowed and
 // the adapter drops thinking for that turn instead of erroring.
 func TestOpusStillAllowsForcedToolChoice(t *testing.T) {
-	client := &Client{
+	client := &provider{
 		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 		highModel:    "us.anthropic.claude-opus-4-8",
 		maxTok:       32,
-		think:        defaultThinkingBudget,
 	}
 
 	req := &model.Request{
@@ -326,7 +367,7 @@ func TestOpusStillAllowsForcedToolChoice(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "tasks.progress.complete",
 			Description: "complete the task",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeTool,
@@ -379,7 +420,7 @@ func TestOpus47AndLaterOmitsTemperatureFromInferenceConfig(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			client := &Client{
+			client := &provider{
 				defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 				highModel:    tc.highModel,
 				smallModel:   "global.anthropic.claude-haiku-4-5-20251001-v1:0",
@@ -397,7 +438,8 @@ func TestOpus47AndLaterOmitsTemperatureFromInferenceConfig(t *testing.T) {
 			parts, err := client.prepareRequest(req)
 			require.NoError(t, err)
 
-			input := client.buildConverseInput(parts, req)
+			input, err := client.buildConverseInput(parts, req)
+			require.NoError(t, err)
 			if tc.wantTemp {
 				require.NotNil(t, input.InferenceConfig)
 				require.NotNil(t, input.InferenceConfig.Temperature)
@@ -431,7 +473,7 @@ func TestSonnet5OmitsTemperatureOnBedrock(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			client := &Client{defaultModel: tc.defaultModel}
+			client := &provider{defaultModel: tc.defaultModel}
 
 			req := &model.Request{
 				Temperature: 0.2,
@@ -444,7 +486,8 @@ func TestSonnet5OmitsTemperatureOnBedrock(t *testing.T) {
 			parts, err := client.prepareRequest(req)
 			require.NoError(t, err)
 
-			input := client.buildConverseInput(parts, req)
+			input, err := client.buildConverseInput(parts, req)
+			require.NoError(t, err)
 			if tc.wantTemp {
 				require.NotNil(t, input.InferenceConfig)
 				require.NotNil(t, input.InferenceConfig.Temperature)

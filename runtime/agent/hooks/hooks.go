@@ -144,6 +144,14 @@ const (
 	// Usage reports token usage for a model invocation within a run.
 	Usage EventType = "usage"
 
+	// ModelOutputRejected records provider response or stream output rejected by
+	// the model boundary.
+	ModelOutputRejected EventType = "model_output_rejected"
+
+	// PlannerOutputRejected records a planner result that failed the runtime
+	// contract after model output had already been accepted.
+	PlannerOutputRejected EventType = "planner_output_rejected"
+
 	// HardProtectionTriggered identifies historical records written when the
 	// runtime treated an agent-tool result with no children as terminal. The
 	// runtime no longer emits this event; the type remains so durable run history

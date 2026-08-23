@@ -1,4 +1,4 @@
-// New returns a minimal planner implementation for {{ .GoName }} used by example bootstrap.
+// New returns a minimal planner implementation for {{ .Agent.GoName }} used by example bootstrap.
 // Replace with your production planner integrating your LLM of choice.
 func New() planner.Planner { return &examplePlanner{} }
 
@@ -7,14 +7,14 @@ func New() planner.Planner { return &examplePlanner{} }
 // conversation messages, decides whether to request tool executions, and produces
 // final assistant responses. Production planners typically invoke LLMs via
 // registered planner-scoped model clients (in.Agent.PlannerModelClient(...)) or
-// pair the raw ModelClient stream with planner.ConsumeStream / explicit
-// PlannerEvents emission, then integrate tool results in PlanResume.
+// pair ModelClient with planner.ConsumeStream, which only drains the validated
+// stream. The runtime journal publishes selected presentation and usage.
 type examplePlanner struct{}
 
 func (p *examplePlanner) Decide(ctx context.Context, tool string) string {
-	{{- if .Methods }}
+	{{- if .Agent.Methods }}
 	switch tool {
-	{{- range .Methods }}
+	{{- range .Agent.Methods }}
 	case "{{ .Name }}":
 		{{- if .Passthrough }}
 		return "passthrough"
@@ -41,7 +41,17 @@ func (p *examplePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 			// This stub just falls through to the default response.
 		}
 	}
-
+	{{- if .Tool }}
+	args, err := gentool.{{ .Tool.Payload.ExportedCodec }}.FromJSON(gentool.Spec{{ .Tool.ConstName }}.Payload.ExampleJSON)
+	if err != nil {
+		return nil, fmt.Errorf("decode generated {{ .Tool.Name }} example: %w", err)
+	}
+	return &planner.PlanResult{
+		ToolCalls: []planner.ToolRequest{
+			gentool.New{{ .Tool.GoName }}Call("quickstart-{{ .Tool.Name }}", args),
+		},
+	}, nil
+	{{- else }}
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
@@ -50,14 +60,30 @@ func (p *examplePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 			},
 		},
 	}, nil
+	{{- end }}
 }
 
 func (p *examplePlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
+	{{- if .Tool }}
+	if len(in.ToolOutputs) != 1 {
+		return nil, fmt.Errorf("expected one {{ .Tool.Name }} result, got %d", len(in.ToolOutputs))
+	}
+	output := in.ToolOutputs[0]
+	if output.Name != gentool.{{ .Tool.ConstName }} || output.ToolCallID != "quickstart-{{ .Tool.Name }}" {
+		return nil, fmt.Errorf("unexpected tool result %s (%s)", output.Name, output.ToolCallID)
+	}
+	if output.Failure != nil {
+		return nil, fmt.Errorf("{{ .Tool.Name }} failed: %s", output.Failure.Error.Message)
+	}
+	answer := fmt.Sprintf("Tool %s returned %s", output.Name, output.Result)
+	{{- else }}
+	answer := "Done."
+	{{- end }}
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
 				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "Done."}},
+				Parts: []model.Part{model.TextPart{Text: answer}},
 			},
 		},
 	}, nil

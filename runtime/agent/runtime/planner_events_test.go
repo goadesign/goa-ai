@@ -1,15 +1,17 @@
 package runtime
 
-// planner_events_test.go tests transparent model invocation matching and
-// tool-call provenance independently from model-client wrapping.
+// planner_events_test.go checks how saved model responses are matched to the
+// exact planner result that selected them.
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestRuntimePlannerEventsExportsNoTranscriptWithoutModelInvocation(t *testing.T) {
@@ -22,7 +24,7 @@ func TestRuntimePlannerEventsExportsNoTranscriptWithoutModelInvocation(t *testin
 
 func TestRuntimePlannerEventsMatchesEarlierInvocationByExactToolCall(t *testing.T) {
 	e := &modelInvocationJournal{}
-	first := e.beginModelInvocation()
+	first := mustBeginModelInvocation(t, e)
 	mustRecordModelResponse(t, e, first, testModelResponse([]model.Message{{
 		Role:  model.ConversationRoleAssistant,
 		Parts: []model.Part{model.TextPart{Text: "first"}},
@@ -34,7 +36,7 @@ func TestRuntimePlannerEventsMatchesEarlierInvocationByExactToolCall(t *testing.
 			ThoughtSignature: "sig-1",
 		},
 	))
-	second := e.beginModelInvocation()
+	second := mustBeginModelInvocation(t, e)
 	mustRecordModelResponse(t, e, second, testModelResponse(nil,
 		model.ToolCall{
 			ID:               "call-2",
@@ -67,7 +69,7 @@ func TestRuntimePlannerEventsMatchesEarlierInvocationByExactToolCall(t *testing.
 
 func TestRuntimePlannerEventsTerminalResultNeedsNoInvocationReplay(t *testing.T) {
 	e := &modelInvocationJournal{}
-	e.beginModelInvocation()
+	mustBeginModelInvocation(t, e)
 
 	transcript, err := e.exportModelInvocation(&planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{Message: &model.Message{
@@ -82,7 +84,7 @@ func TestRuntimePlannerEventsTerminalResultNeedsNoInvocationReplay(t *testing.T)
 
 func TestRuntimePlannerEventsMatchesStreamedFinalResponse(t *testing.T) {
 	e := &modelInvocationJournal{}
-	invocation := e.beginModelInvocation()
+	invocation := mustBeginModelInvocation(t, e)
 	response := &model.Response{
 		Content: []model.Message{{
 			Role: model.ConversationRoleAssistant,
@@ -107,7 +109,7 @@ func TestRuntimePlannerEventsMatchesStreamedFinalResponse(t *testing.T) {
 
 func TestRuntimePlannerEventsMatchesCompleteFinalResponse(t *testing.T) {
 	e := &modelInvocationJournal{}
-	invocation := e.beginModelInvocation()
+	invocation := mustBeginModelInvocation(t, e)
 	response := &model.Response{
 		Content: []model.Message{{
 			Role: model.ConversationRoleAssistant,
@@ -131,7 +133,7 @@ func TestRuntimePlannerEventsMatchesCompleteFinalResponse(t *testing.T) {
 
 func TestRuntimePlannerEventsRejectsFinalResponseThatDiscardsToolCalls(t *testing.T) {
 	e := &modelInvocationJournal{}
-	invocation := e.beginModelInvocation()
+	invocation := mustBeginModelInvocation(t, e)
 	response := testModelResponse(nil, model.ToolCall{
 		ID:      "call-1",
 		Name:    "svc.lookup",
@@ -149,7 +151,7 @@ func TestRuntimePlannerEventsRejectsFinalResponseThatDiscardsToolCalls(t *testin
 
 func TestRuntimePlannerEventsMatchesAllAssistantResponseContent(t *testing.T) {
 	e := &modelInvocationJournal{}
-	invocation := e.beginModelInvocation()
+	invocation := mustBeginModelInvocation(t, e)
 	response := &model.Response{
 		Content: []model.Message{
 			{
@@ -173,11 +175,41 @@ func TestRuntimePlannerEventsMatchesAllAssistantResponseContent(t *testing.T) {
 	require.Len(t, transcript, 2)
 }
 
-func TestRuntimePlannerEventsPreservesCanonicalResponseForModifiedPresentation(t *testing.T) {
+func TestRuntimePlannerEventsDistinguishesIdenticalMessagesByOrigin(t *testing.T) {
+	e := &modelInvocationJournal{}
+	invocation := mustBeginModelInvocation(t, e)
+	response := &model.Response{
+		Content: []model.Message{
+			{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "same"}},
+			},
+			{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "same"}},
+			},
+		},
+		StopReason: "end_turn",
+	}
+	mustRecordModelResponse(t, e, invocation, response)
+	result := &planner.PlanResult{
+		FinalResponse: &planner.FinalResponse{Message: &response.Content[1]},
+		Streamed:      true,
+	}
+
+	transcript, err := e.exportModelInvocation(result)
+
+	require.NoError(t, err)
+	require.Len(t, transcript, 2)
+	require.False(t, model.SameMessageOrigin(transcript[0], result.FinalResponse.Message))
+	require.True(t, model.SameMessageOrigin(transcript[1], result.FinalResponse.Message))
+}
+
+func TestRuntimePlannerEventsRejectsModifiedProviderContent(t *testing.T) {
 	for _, streamed := range []bool{false, true} {
 		t.Run(map[bool]string{false: "complete", true: "streamed"}[streamed], func(t *testing.T) {
 			e := &modelInvocationJournal{}
-			invocation := e.beginModelInvocation()
+			invocation := mustBeginModelInvocation(t, e)
 			response := &model.Response{
 				Content: []model.Message{{
 					Role:  model.ConversationRoleAssistant,
@@ -194,16 +226,48 @@ func TestRuntimePlannerEventsPreservesCanonicalResponseForModifiedPresentation(t
 				Streamed:      streamed,
 			})
 
-			require.NoError(t, err)
-			require.Equal(t, "original", transcript[0].Parts[0].(model.TextPart).Text)
+			require.EqualError(t, err, "planner result modified provider-owned message content")
+			require.Nil(t, transcript)
 		})
 	}
 }
 
+func TestPresentationFromChunkIncludesCitationText(t *testing.T) {
+	presentation := presentationFromChunk(model.TextChunk{Message: model.Message{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{
+			model.TextPart{Text: "plain "},
+			model.CitationsPart{
+				Text:      "cited",
+				Citations: []model.Citation{{Title: "source"}},
+			},
+		},
+	}})
+
+	require.Len(t, presentation, 1)
+	require.Equal(t, "plain cited", presentation[0].text)
+}
+
+func TestPresentationFromChunkOwnsReasoningBytes(t *testing.T) {
+	redacted := []byte("original")
+	presentation := presentationFromChunk(model.ThinkingChunk{Message: model.Message{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{model.ThinkingPart{
+			Redacted: redacted,
+			Final:    true,
+		}},
+	}})
+
+	redacted[0] = 'X'
+
+	require.Len(t, presentation, 1)
+	require.Equal(t, []byte("original"), presentation[0].thinking.Redacted)
+}
+
 func TestRuntimePlannerEventsRejectsCallsMixedAcrossInvocations(t *testing.T) {
 	e := &modelInvocationJournal{}
-	first := e.beginModelInvocation()
-	second := e.beginModelInvocation()
+	first := mustBeginModelInvocation(t, e)
+	second := mustBeginModelInvocation(t, e)
 	mustRecordModelResponse(t, e, first, testModelResponse(nil, model.ToolCall{
 		ID: "call-1", Name: "svc.lookup", Payload: []byte(`{}`),
 	}))
@@ -223,7 +287,7 @@ func TestRuntimePlannerEventsRejectsCallsMixedAcrossInvocations(t *testing.T) {
 
 func TestRuntimePlannerEventsMatchesAwaitCallTransparently(t *testing.T) {
 	e := &modelInvocationJournal{}
-	invocation := e.beginModelInvocation()
+	invocation := mustBeginModelInvocation(t, e)
 	mustRecordModelResponse(t, e, invocation, testModelResponse(nil, model.ToolCall{
 		ID:      "question-1",
 		Name:    "chat.ask_question",
@@ -243,7 +307,7 @@ func TestRuntimePlannerEventsMatchesAwaitCallTransparently(t *testing.T) {
 
 func TestRuntimePlannerEventsMatchesToolClarificationCallTransparently(t *testing.T) {
 	e := &modelInvocationJournal{}
-	invocation := e.beginModelInvocation()
+	invocation := mustBeginModelInvocation(t, e)
 	mustRecordModelResponse(t, e, invocation, testModelResponse(nil, model.ToolCall{
 		ID:      "clarification-1",
 		Name:    "chat.ask_clarification",
@@ -266,29 +330,36 @@ func TestRuntimePlannerEventsMatchesToolClarificationCallTransparently(t *testin
 	require.Equal(t, "clarification-1", toolUse.ID)
 }
 
-func TestRuntimePlannerEventsRejectsModifiedModelToolCall(t *testing.T) {
+func TestRuntimePlannerEventsRecordsOriginalPayloadForCompiledToolCall(t *testing.T) {
 	e := &modelInvocationJournal{}
-	invocation := e.beginModelInvocation()
+	invocation := mustBeginModelInvocation(t, e)
 	mustRecordModelResponse(t, e, invocation, testModelResponse(nil, model.ToolCall{
 		ID:      "call-1",
 		Name:    "svc.lookup",
 		Payload: []byte(`{"query":"original"}`),
 	}))
 
-	_, err := e.exportModelInvocation(&planner.PlanResult{
+	result := &planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{{
 			ToolCallID: "call-1",
 			Name:       "svc.lookup",
 			Payload:    []byte(`{"query":"modified"}`),
 		}},
-	})
+	}
+	_, err := e.exportModelInvocation(result)
 
-	require.EqualError(t, err, "planner result modified or mixed model-authored tool calls")
+	require.NoError(t, err)
+	bindings, err := e.selectedCompiledModelCalls(result)
+	require.NoError(t, err)
+	calls, err := (&Runtime{}).compilePlannerToolCalls(result.ToolCalls, nil, bindings)
+	require.NoError(t, err)
+	require.Equal(t, tools.Ident("svc.lookup"), calls[0].ModelName)
+	require.JSONEq(t, `{"query":"original"}`, string(calls[0].ModelPayload))
 }
 
 func TestRuntimePlannerEventsPreservesProviderOrderWhenPlannerGroupsCalls(t *testing.T) {
 	e := &modelInvocationJournal{}
-	invocation := e.beginModelInvocation()
+	invocation := mustBeginModelInvocation(t, e)
 	mustRecordModelResponse(t, e, invocation, testModelResponse(nil,
 		model.ToolCall{ID: "call-1", Name: "svc.first", Payload: []byte(`{}`)},
 		model.ToolCall{ID: "call-2", Name: "svc.second", Payload: []byte(`{}`)},
@@ -307,7 +378,7 @@ func TestRuntimePlannerEventsPreservesProviderOrderWhenPlannerGroupsCalls(t *tes
 
 func TestRuntimePlannerEventsRejectsDuplicatePlannerToolCallIdentity(t *testing.T) {
 	e := &modelInvocationJournal{}
-	invocation := e.beginModelInvocation()
+	invocation := mustBeginModelInvocation(t, e)
 	mustRecordModelResponse(t, e, invocation, testModelResponse(nil,
 		model.ToolCall{ID: "call-1", Name: "svc.first", Payload: []byte(`{}`)},
 		model.ToolCall{ID: "call-2", Name: "svc.second", Payload: []byte(`{}`)},
@@ -325,30 +396,42 @@ func TestRuntimePlannerEventsRejectsDuplicatePlannerToolCallIdentity(t *testing.
 
 func TestRuntimePlannerEventsMatchesCompiledToolByModelIdentity(t *testing.T) {
 	e := &modelInvocationJournal{}
-	invocation := e.beginModelInvocation()
+	invocation := mustBeginModelInvocation(t, e)
 	mustRecordModelResponse(t, e, invocation, testModelResponse(nil, model.ToolCall{
 		ID:      "call-1",
 		Name:    "planner.resolve",
 		Payload: []byte(`{"scope":"all"}`),
 	}))
 
-	_, err := e.exportModelInvocation(&planner.PlanResult{
+	result := &planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{{
-			ToolCallID:   "call-1",
-			Name:         "service.execute",
-			Payload:      []byte(`{"compiled":true}`),
-			ModelName:    "planner.resolve",
-			ModelPayload: []byte(`{"scope":"all"}`),
+			ToolCallID: "call-1",
+			Name:       "service.execute",
+			Payload:    []byte(`{"compiled":true}`),
 		}},
-	})
+	}
+	transcript, err := e.exportModelInvocation(result)
 
 	require.NoError(t, err)
+	bindings, err := e.selectedCompiledModelCalls(result)
+	require.NoError(t, err)
+	calls, err := (&Runtime{}).compilePlannerToolCalls(result.ToolCalls, nil, bindings)
+	require.NoError(t, err)
+	require.Equal(t, tools.Ident("planner.resolve"), calls[0].ModelName)
+	require.JSONEq(t, `{"scope":"all"}`, string(calls[0].ModelPayload))
+	require.Len(t, transcript, 1)
+	require.Len(t, transcript[0].Parts, 1)
+	toolUse, ok := transcript[0].Parts[0].(model.ToolUsePart)
+	require.True(t, ok)
+	require.Equal(t, "call-1", toolUse.ID)
+	require.Equal(t, "planner.resolve", toolUse.Name)
+	require.JSONEq(t, `{"scope":"all"}`, string(toolUse.Input))
 }
 
 func TestRuntimePlannerEventsRejectsAmbiguousInvocation(t *testing.T) {
 	e := &modelInvocationJournal{}
-	first := e.beginModelInvocation()
-	second := e.beginModelInvocation()
+	first := mustBeginModelInvocation(t, e)
+	second := mustBeginModelInvocation(t, e)
 	response := testModelResponse(nil, model.ToolCall{
 		ID: "call-1", Name: "svc.lookup", Payload: []byte(`{}`),
 	})
@@ -364,7 +447,7 @@ func TestRuntimePlannerEventsRejectsAmbiguousInvocation(t *testing.T) {
 
 func TestRuntimePlannerEventsCanonicalResponseReplacesStreamDeltas(t *testing.T) {
 	e := &modelInvocationJournal{}
-	invocation := e.beginModelInvocation()
+	invocation := mustBeginModelInvocation(t, e)
 	require.NoError(t, e.recordModelChunk(invocation, model.TextChunk{
 		Message: model.Message{
 			Role:  model.ConversationRoleAssistant,
@@ -392,27 +475,39 @@ func TestRuntimePlannerEventsCanonicalResponseReplacesStreamDeltas(t *testing.T)
 	require.Equal(t, map[string]any{"provider_item": "item-1"}, transcript[0].Meta)
 }
 
-func TestRuntimePlannerEventsIgnoresIncompleteAndInvalidAttempts(t *testing.T) {
+func TestRuntimePlannerEventsRejectsCallsAfterMalformedResponse(t *testing.T) {
 	e := &modelInvocationJournal{}
-	incomplete := e.beginModelInvocation()
+	incomplete := mustBeginModelInvocation(t, e)
 	require.NoError(t, e.recordModelChunk(incomplete, model.ToolCallChunk{
 		ToolCall: model.ToolCall{ID: "incomplete", Name: "svc.lookup", Payload: []byte(`{}`)},
 	}))
-	invalid := e.beginModelInvocation()
-	require.EqualError(t, e.recordModelResponse(invalid, testModelResponse(nil,
+	invalid := mustBeginModelInvocation(t, e)
+	response := testModelResponse(nil,
 		model.ToolCall{ID: "duplicate", Name: "svc.lookup", Payload: []byte(`{}`)},
 		model.ToolCall{ID: "duplicate", Name: "svc.lookup", Payload: []byte(`{}`)},
-	)), `model: response content 0 part 1: duplicate tool call ID "duplicate"`)
-	accepted := e.beginModelInvocation()
-	mustRecordModelResponse(t, e, accepted, testModelResponse(nil, model.ToolCall{
-		ID: "accepted", Name: "svc.lookup", Payload: []byte(`{}`),
-	}))
+	)
+	validationErr := model.ValidateResponse(response)
+	require.Error(t, validationErr)
+	err := e.recordRejectedModelResponse(
+		invalid,
+		model.ResponseEvidence{Present: true},
+		outputcontract.NewWithOrigin(
+			validationErr,
+			planner.OutputContractOriginModel,
+		),
+	)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.ErrorContains(t, err, `duplicate tool call ID "duplicate"`)
+	_, err = e.beginModelInvocation("", "", func() {})
+	require.ErrorIs(t, err, outputErr)
+}
 
-	_, err := e.exportModelInvocation(&planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{ToolCallID: "accepted", Name: "svc.lookup", Payload: []byte(`{}`)}},
-	})
-
+func mustBeginModelInvocation(t *testing.T, events *modelInvocationJournal) modelInvocationID {
+	t.Helper()
+	invocationID, err := events.beginModelInvocation("", "", func() {})
 	require.NoError(t, err)
+	return invocationID
 }
 
 func mustRecordModelResponse(
@@ -422,5 +517,21 @@ func mustRecordModelResponse(
 	response *model.Response,
 ) {
 	t.Helper()
-	require.NoError(t, events.recordModelResponse(invocationID, response))
+	calls := response.ToolCalls()
+	toolNames := make([]string, 0, len(calls))
+	seen := make(map[string]struct{}, len(calls))
+	for _, call := range calls {
+		name := string(call.Name)
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		toolNames = append(toolNames, name)
+	}
+	contract, err := model.NewRequestContract(testModelRequest(toolNames...))
+	require.NoError(t, err)
+	owned, err := contract.ValidateResponse(response)
+	require.NoError(t, err)
+	*response = *owned
+	require.NoError(t, events.recordValidatedModelResponse(invocationID, response))
 }

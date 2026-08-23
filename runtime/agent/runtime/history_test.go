@@ -26,6 +26,10 @@ type historyCountingClient struct {
 	toolTokens int
 }
 
+type historyNonCountingProvider struct {
+	inner *historyCountingClient
+}
+
 func (c *historyCountingClient) Complete(_ context.Context, req *model.Request) (*model.Response, error) {
 	c.summarized = req
 	text := c.summaryText
@@ -39,11 +43,20 @@ func (c *historyCountingClient) Complete(_ context.Context, req *model.Request) 
 				Parts: []model.Part{model.TextPart{Text: text}},
 			},
 		},
+		StopReason: "stop",
 	}, nil
 }
 
 func (c *historyCountingClient) Stream(context.Context, *model.Request) (model.Streamer, error) {
 	return nil, model.ErrStreamingUnsupported
+}
+
+func (p historyNonCountingProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	return p.inner.Complete(ctx, req)
+}
+
+func (p historyNonCountingProvider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+	return p.inner.Stream(ctx, req)
 }
 
 func (c *historyCountingClient) CountTokens(_ context.Context, req *model.Request) (model.TokenCount, error) {
@@ -60,9 +73,16 @@ func (c *historyCountingClient) CountTokens(_ context.Context, req *model.Reques
 	}, nil
 }
 
+func historyTestClient(t *testing.T, provider model.Provider) model.Client {
+	t.Helper()
+	client, err := model.NewClient(provider)
+	require.NoError(t, err)
+	return client
+}
+
 func TestCompressPropagatesTokenCountError(t *testing.T) {
 	client := &historyCountingClient{countErr: errors.New("count failed")}
-	policy := Compress(client, HistoryCompressionConfig{
+	policy := Compress(historyTestClient(t, client), HistoryCompressionConfig{
 		CompressAtMaxInputTokens: 10,
 		KeepMaxTurns:             1,
 	})
@@ -76,9 +96,7 @@ func TestCompressPropagatesTokenCountError(t *testing.T) {
 }
 
 func TestCompressRequiresTokenCounterForTokenBudgets(t *testing.T) {
-	client := struct {
-		model.Client
-	}{Client: &historyCountingClient{}}
+	client := historyTestClient(t, historyNonCountingProvider{inner: &historyCountingClient{}})
 	policy := Compress(client, HistoryCompressionConfig{
 		CompressAtMaxInputTokens: 10,
 		KeepMaxTurns:             1,
@@ -88,13 +106,13 @@ func TestCompressRequiresTokenCounterForTokenBudgets(t *testing.T) {
 		userMsg("question"),
 		assistantTextMsg("answer"),
 	}, nil)
-	require.ErrorContains(t, err, "history compression token counter is required")
+	require.ErrorIs(t, err, model.ErrTokenCountingUnsupported)
 	require.Len(t, out, 2)
 }
 
 func TestCompressRequiresExactTokenCounts(t *testing.T) {
 	client := &historyCountingClient{inexactCount: true}
-	policy := Compress(client, HistoryCompressionConfig{
+	policy := Compress(historyTestClient(t, client), HistoryCompressionConfig{
 		CompressAtMaxInputTokens: 10,
 		KeepMaxTurns:             1,
 	})
@@ -125,7 +143,7 @@ func TestCompressRequiresHistoryModel(t *testing.T) {
 
 func TestCompressRejectsEmptySummary(t *testing.T) {
 	client := &historyCountingClient{emptySummary: true}
-	policy := Compress(client, HistoryCompressionConfig{
+	policy := Compress(historyTestClient(t, client), HistoryCompressionConfig{
 		CompressAtTurns: 2,
 		KeepMaxTurns:    1,
 	})
@@ -137,13 +155,13 @@ func TestCompressRejectsEmptySummary(t *testing.T) {
 	}
 
 	out, err := policy(context.Background(), msgs, nil)
-	require.ErrorContains(t, err, "history compression model returned empty summary")
+	require.ErrorContains(t, err, "text is empty")
 	assert.Same(t, msgs[0], out[0])
 }
 
 func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 	client := &historyCountingClient{}
-	policy := Compress(client, HistoryCompressionConfig{
+	policy := Compress(historyTestClient(t, client), HistoryCompressionConfig{
 		CompressAtMaxInputTokens: 80,
 		// The keep budget is anchored on the newest tail: adding turn 2 to the
 		// newest turn costs 20 tokens, which exceeds this budget, so only the
@@ -166,7 +184,7 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Looks up cursor-backed data.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object","properties":{"id":{"type":"string"}}}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object","properties":{"id":{"type":"string"}}}`)),
 		},
 	}
 
@@ -206,7 +224,7 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 // for tool-bearing transcripts without the tool config.
 func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
 	client := &historyCountingClient{toolTokens: 1000}
-	policy := Compress(client, HistoryCompressionConfig{
+	policy := Compress(historyTestClient(t, client), HistoryCompressionConfig{
 		CompressAtMaxInputTokens: 1050,
 		KeepMaxInputTokens:       25,
 	})
@@ -223,7 +241,7 @@ func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Looks up data.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		},
 	}
 
@@ -260,7 +278,7 @@ func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
 // re-trigger compression forever.
 func TestCompress_ErrsWhenNewestTurnCannotFitCompressTrigger(t *testing.T) {
 	client := &historyCountingClient{toolTokens: 1000}
-	policy := Compress(client, HistoryCompressionConfig{
+	policy := Compress(historyTestClient(t, client), HistoryCompressionConfig{
 		CompressAtMaxInputTokens: 1025,
 		KeepMaxInputTokens:       25,
 	})
@@ -275,7 +293,7 @@ func TestCompress_ErrsWhenNewestTurnCannotFitCompressTrigger(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Looks up data.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		},
 	}
 
@@ -344,7 +362,7 @@ func textPart(t *testing.T, msg *model.Message) string {
 // history cannot expand the executable catalog used for token counting.
 func TestCompressDoesNotAdvertiseHistoricalUnavailableTool(t *testing.T) {
 	client := &historyCountingClient{}
-	policy := Compress(client, HistoryCompressionConfig{
+	policy := Compress(historyTestClient(t, client), HistoryCompressionConfig{
 		CompressAtMaxInputTokens: 30,
 		KeepMaxInputTokens:       40,
 	})

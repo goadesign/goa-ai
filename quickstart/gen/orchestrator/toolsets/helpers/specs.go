@@ -8,6 +8,7 @@
 package helpers
 
 import (
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -55,6 +56,23 @@ var AnswerTool = tools.TypedTool[*AnswerPayload, *AnswerResult]{
 	Name:    Answer,
 	Payload: AnswerPayloadCodec,
 	Result:  AnswerResultCodec,
+}
+
+// NewAnswerCall builds a planner request for helpers.answer from its typed
+// generated payload. toolCallID must be nonempty and unique within the plan.
+func NewAnswerCall(toolCallID string, args *AnswerPayload) planner.ToolRequest {
+	if toolCallID == "" {
+		panic("helpers.answer tool call ID is required")
+	}
+	payload, err := AnswerPayloadCodec.ToJSON(args)
+	if err != nil {
+		panic(err)
+	}
+	return planner.ToolRequest{
+		Name:       Answer,
+		Payload:    payload,
+		ToolCallID: toolCallID,
+	}
 }
 
 var (

@@ -38,7 +38,6 @@ func TestToolCallThoughtSignatureRoundTripsProviderChunkToTranscript(t *testing.
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 
 	// Step 1+2: provider chunk observed and captured at the client boundary.
-	events := &runtimePlannerEvents{}
 	invocations := &modelInvocationJournal{}
 	streamer := &chunkStreamer{
 		chunks: []model.Chunk{
@@ -59,19 +58,20 @@ func TestToolCallThoughtSignatureRoundTripsProviderChunkToTranscript(t *testing.
 			ThoughtSignature: "opaque-provider-signature",
 		}),
 	}
-	client := newModelInvocationClient(stubModelClient{
+	client := newTestModelInvocationClient(stubModelClient{
 		stream: func(context.Context, *model.Request) (model.Streamer, error) {
 			return streamer, nil
 		},
 	}, invocations)
 
-	st, err := client.Stream(context.Background(), &model.Request{})
+	request := testModelRequest("svc.tools.read")
+	st, err := client.Stream(context.Background(), request)
 	require.NoError(t, err)
 
 	// Step 3: the planner drains the wrapped stream via ConsumeStream, exactly
 	// as a raw-client planner would. The resulting ToolRequest carries no
 	// signature.
-	summary, err := planner.ConsumeStream(context.Background(), st, &model.Request{}, events)
+	summary, err := planner.ConsumeStream(context.Background(), st)
 	require.NoError(t, err)
 	require.Len(t, summary.ToolCalls, 1)
 
@@ -82,7 +82,13 @@ func TestToolCallThoughtSignatureRoundTripsProviderChunkToTranscript(t *testing.
 	}
 	selected, err := invocations.exportModelInvocation(result)
 	require.NoError(t, err)
-	require.NoError(t, rt.appendSelectedModelResponse(context.Background(), agentID, base, "turn-1", result, selected))
+	bindings, err := invocations.selectedCompiledModelCalls(result)
+	require.NoError(t, err)
+	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, nil, bindings)
+	require.NoError(t, err)
+	require.NoError(t, rt.appendSelectedModelResponse(
+		context.Background(), agentID, base, "turn-1", &PlanResult{ToolCalls: calls}, selected,
+	))
 	require.Len(t, base.Messages, 1)
 
 	// Step 5: the workflow serialization hop must preserve the signature.

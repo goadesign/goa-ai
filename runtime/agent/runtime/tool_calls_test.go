@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -19,7 +18,7 @@ func TestNewToolCallScheduledEventPreservesRuntimeCorrelation(t *testing.T) {
 		"run-1",
 		"svc.agent",
 		"session-1",
-		planner.ToolRequest{
+		ToolCall{
 			Name:                       "tools.continue_search",
 			ToolCallID:                 "continue-1",
 			Payload:                    rawjson.Message(`{"cursor":"next"}`),
@@ -62,9 +61,10 @@ func TestDispatchToolCallsPropagatesLabelsToActivityInput(t *testing.T) {
 		},
 	}
 
-	_, err := exec.dispatchToolCalls(wfCtx, []planner.ToolRequest{{
-		Name:    tools.Ident("search"),
-		Payload: rawjson.Message([]byte(`{"query":"status"}`)),
+	_, err := exec.dispatchToolCalls(wfCtx, []ToolCall{{
+		ToolCallID: "search-call",
+		Name:       tools.Ident("search"),
+		Payload:    rawjson.Message([]byte(`{"query":"status"}`)),
 	}})
 	require.NoError(t, err)
 	require.NotNil(t, wfCtx.lastToolCall.Input)

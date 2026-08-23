@@ -38,11 +38,13 @@ func TestContinuationActionBindsExactChainWithoutExposingCursor(t *testing.T) {
 	assert.NotContains(t, actions[0].description, "opaque-next-page")
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    actions[0].modelName,
-		Payload: rawjson.Message(`{}`),
+		ToolCallID: "continue-call",
+		Name:       actions[0].modelName,
+		Payload:    rawjson.Message(`{}`),
 	}}}
-	require.NoError(t, rt.bindContinuationCursors(result, actions))
-	call := result.ToolCalls[0]
+	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
+	require.NoError(t, err)
+	call := calls[0]
 	assert.Equal(t, continuation.Name, call.Name)
 	assert.Equal(t, actions[0].modelName, call.ModelName)
 	assert.Equal(t, "source-1", call.ContinuationRootToolCallID)
@@ -160,14 +162,16 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 	assert.NotContains(t, actions[0].description, secondCursor)
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    actions[0].modelName,
-		Payload: rawjson.Message(`{}`),
+		ToolCallID: "continue-call",
+		Name:       actions[0].modelName,
+		Payload:    rawjson.Message(`{}`),
 	}}}
-	require.NoError(t, rt.bindContinuationCursors(result, actions))
-	require.Len(t, result.ToolCalls, 1)
-	assert.Equal(t, continuation.Name, result.ToolCalls[0].Name)
-	assert.Equal(t, "source-1", result.ToolCalls[0].ContinuationRootToolCallID)
-	assert.JSONEq(t, `{"cursor":"second"}`, string(result.ToolCalls[0].Payload))
+	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
+	require.NoError(t, err)
+	require.Len(t, calls, 1)
+	assert.Equal(t, continuation.Name, calls[0].Name)
+	assert.Equal(t, "source-1", calls[0].ContinuationRootToolCallID)
+	assert.JSONEq(t, `{"cursor":"second"}`, string(calls[0].Payload))
 }
 
 func TestContinuationActionRetainsCanonicalQueryPayload(t *testing.T) {
@@ -186,12 +190,14 @@ func TestContinuationActionRetainsCanonicalQueryPayload(t *testing.T) {
 	actions, err := rt.availableContinuationActions("svc.agent", outputs)
 	require.NoError(t, err)
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    actions[0].modelName,
-		Payload: rawjson.Message(`{}`),
+		ToolCallID: "continue-call",
+		Name:       actions[0].modelName,
+		Payload:    rawjson.Message(`{}`),
 	}}}
 
-	require.NoError(t, rt.bindContinuationCursors(result, actions))
-	assert.JSONEq(t, `{"query":"alarms","limit":10,"cursor":"second-page"}`, string(result.ToolCalls[0].Payload))
+	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"query":"alarms","limit":10,"cursor":"second-page"}`, string(calls[0].Payload))
 }
 
 func TestContinuationActionSupportsSourceWithoutModelFields(t *testing.T) {
@@ -225,8 +231,11 @@ func TestAutomaticContinuationAdvancesOnlyEmptyLiveChains(t *testing.T) {
 	actions, err := rt.availableContinuationActions("svc.agent", outputs)
 	require.NoError(t, err)
 
-	result, automatic, err := rt.automaticContinuationPlan(actions)
-	require.NoError(t, err)
+	result, automatic := rt.automaticContinuationPlan(run.Context{
+		RunID:   "run-1",
+		TurnID:  "turn-1",
+		Attempt: 1,
+	}, actions)
 	require.True(t, automatic)
 	require.Len(t, result.ToolCalls, 1)
 	call := result.ToolCalls[0]
@@ -245,8 +254,11 @@ func TestAutomaticContinuationLeavesNonEmptyPagesForModelDecision(t *testing.T) 
 	})
 	require.NoError(t, err)
 
-	result, automatic, err := rt.automaticContinuationPlan(actions)
-	require.NoError(t, err)
+	result, automatic := rt.automaticContinuationPlan(run.Context{
+		RunID:   "run-1",
+		TurnID:  "turn-1",
+		Attempt: 1,
+	}, actions)
 	assert.False(t, automatic)
 	assert.Nil(t, result)
 }
@@ -278,11 +290,13 @@ func TestContinuationActionNameStaysStableAsChainAdvances(t *testing.T) {
 	assert.Equal(t, first[0].modelName, second[0].modelName)
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    second[0].modelName,
-		Payload: rawjson.Message(`{}`),
+		ToolCallID: "continue-call",
+		Name:       second[0].modelName,
+		Payload:    rawjson.Message(`{}`),
 	}}}
-	require.NoError(t, rt.bindContinuationCursors(result, second))
-	assert.JSONEq(t, `{"cursor":"second"}`, string(result.ToolCalls[0].Payload))
+	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, second, nil)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"cursor":"second"}`, string(calls[0].Payload))
 }
 
 func TestGeneratedContinuationToolNameFormat(t *testing.T) {
@@ -319,13 +333,14 @@ func TestContinuationActionsKeepParallelChainsIndependent(t *testing.T) {
 	assert.NotEqual(t, actions[0].modelName, actions[1].modelName)
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
-		{Name: actions[1].modelName, Payload: rawjson.Message(`{}`)},
+		{ToolCallID: "continue-call-1", Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
+		{ToolCallID: "continue-call-2", Name: actions[1].modelName, Payload: rawjson.Message(`{}`)},
 	}}
-	require.NoError(t, rt.bindContinuationCursors(result, actions))
-	assert.Equal(t, continuation.Name, result.ToolCalls[0].Name)
-	assert.Equal(t, "source-1", result.ToolCalls[0].ContinuationRootToolCallID)
-	assert.Equal(t, "source-2", result.ToolCalls[1].ContinuationRootToolCallID)
+	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
+	require.NoError(t, err)
+	assert.Equal(t, continuation.Name, calls[0].Name)
+	assert.Equal(t, "source-1", calls[0].ContinuationRootToolCallID)
+	assert.Equal(t, "source-2", calls[1].ContinuationRootToolCallID)
 }
 
 func TestContinuationCompletionRemovesOnlyCompletedChain(t *testing.T) {
@@ -441,11 +456,13 @@ func TestBindContinuationRejectsDuplicateActionCalls(t *testing.T) {
 	})
 	require.NoError(t, err)
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
-		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
+		{ToolCallID: "continue-call-1", Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
+		{ToolCallID: "continue-call-2", Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
 	}}
 
-	err = rt.bindContinuationCursors(result, actions)
+	_, err = rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
 	assert.ErrorContains(t, err, "cannot be called more than once")
 }
 
@@ -475,16 +492,23 @@ func TestBindContinuationRejectsCanonicalToolAndModelArguments(t *testing.T) {
 	require.NoError(t, err)
 
 	canonical := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    continuation.Name,
-		Payload: rawjson.Message(`{}`),
+		ToolCallID: "canonical-call",
+		Name:       continuation.Name,
+		Payload:    rawjson.Message(`{}`),
 	}}}
-	require.ErrorContains(t, rt.bindContinuationCursors(canonical, actions), "is not model-callable")
+	_, err = rt.compilePlannerToolCalls(canonical.ToolCalls, actions, nil)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.ErrorContains(t, err, "is not model-callable")
 
 	withArguments := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    actions[0].modelName,
-		Payload: rawjson.Message(`{"cursor":"model-authored"}`),
+		ToolCallID: "continue-call",
+		Name:       actions[0].modelName,
+		Payload:    rawjson.Message(`{"cursor":"model-authored"}`),
 	}}}
-	assert.ErrorContains(t, rt.bindContinuationCursors(withArguments, actions), `unknown field "cursor"`)
+	_, err = rt.compilePlannerToolCalls(withArguments.ToolCalls, actions, nil)
+	require.ErrorAs(t, err, &outputErr)
+	assert.ErrorContains(t, err, `unknown field "cursor"`)
 }
 
 func continuationTestSpecs() (tools.ToolSpec, tools.ToolSpec) {

@@ -15,14 +15,17 @@ import (
 )
 
 type (
-	RunInput            = api.RunInput
-	PlanActivityInput   = api.PlanActivityInput
-	PlanActivityOutput  = api.PlanActivityOutput
-	RecoveryCatalog     = api.RecoveryCatalog
-	RecordActivityInput = api.RecordActivityInput
-	ToolInput           = api.ToolInput
-	ToolOutput          = api.ToolOutput
-	ToolClarification   = api.ToolClarification
+	RunInput              = api.RunInput
+	PlanActivityInput     = api.PlanActivityInput
+	PlanActivityOutput    = api.PlanActivityOutput
+	PlanResult            = api.PlanResult
+	ToolCall              = api.ToolCall
+	OutputContractFailure = api.OutputContractFailure
+	RecoveryCatalog       = api.RecoveryCatalog
+	RecordActivityInput   = api.RecordActivityInput
+	ToolInput             = api.ToolInput
+	ToolOutput            = api.ToolOutput
+	ToolClarification     = api.ToolClarification
 
 	// WorkflowOptions mirrors the subset of engine start options we expose through
 	// the runtime. Memo and SearchAttributes remain generic visibility metadata so
@@ -103,7 +106,7 @@ type (
 	//   may normalize the typed semantic result before canonical encoding.
 	// - Materializers must be deterministic and must not perform I/O when they run
 	//   inside workflow code.
-	ResultMaterializer func(ctx context.Context, meta ToolCallMeta, call *planner.ToolRequest, result *planner.ToolResult) error
+	ResultMaterializer func(ctx context.Context, meta ToolCallMeta, call *ToolCall, result *planner.ToolResult) error
 
 	// ToolExecutionResult captures the runtime-owned outcome of one tool
 	// invocation.
@@ -130,11 +133,11 @@ type (
 	// method-backed tools, MCP tools, and agent-tools. Registrations accept a
 	// ToolCallExecutor and the runtime delegates execution via this interface.
 	ToolCallExecutor interface {
-		Execute(ctx context.Context, meta *ToolCallMeta, call *planner.ToolRequest) (*ToolExecutionResult, error)
+		Execute(ctx context.Context, meta *ToolCallMeta, call *ToolCall) (*ToolExecutionResult, error)
 	}
 
 	// ToolCallExecutorFunc adapts a function to the ToolCallExecutor interface.
-	ToolCallExecutorFunc func(ctx context.Context, meta *ToolCallMeta, call *planner.ToolRequest) (*ToolExecutionResult, error)
+	ToolCallExecutorFunc func(ctx context.Context, meta *ToolCallMeta, call *ToolCall) (*ToolExecutionResult, error)
 
 	// ToolActivityExecutor handles execution of a single tool via workflow
 	// activities. Implementations decide how to schedule and await activity
@@ -164,7 +167,7 @@ type (
 var _ ToolActivityExecutor = (*ActivityToolExecutor)(nil)
 
 // Execute calls f(ctx, meta, call).
-func (f ToolCallExecutorFunc) Execute(ctx context.Context, meta *ToolCallMeta, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+func (f ToolCallExecutorFunc) Execute(ctx context.Context, meta *ToolCallMeta, call *ToolCall) (*ToolExecutionResult, error) {
 	return f(ctx, meta, call)
 }
 

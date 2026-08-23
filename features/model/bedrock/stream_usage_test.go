@@ -380,3 +380,22 @@ func TestChunkProcessorRejectsDuplicateMessageStop(t *testing.T) {
 	require.EqualError(t, err, "bedrock stream: duplicate message stop")
 	require.NotErrorIs(t, err, model.ErrEmptyStream)
 }
+
+// TestChunkProcessorChargesSyntheticCompletionBeforeAppend verifies Bedrock's
+// private completion buffer cannot grow beyond the validated stream budget.
+func TestChunkProcessorChargesSyntheticCompletionBeforeAppend(t *testing.T) {
+	cp := newChunkProcessor(
+		func(model.Chunk) error { return nil },
+		nil,
+		"model",
+		model.ModelClassDefault,
+		&model.StructuredOutput{Name: "answer"},
+		"",
+	)
+	cp.retainedBytes = 16 << 20
+
+	err := cp.handleCompletionDelta(0, "x")
+
+	require.ErrorContains(t, err, "retained output exceeds 16777216 bytes")
+	require.Zero(t, cp.completion.fragments.Len())
+}

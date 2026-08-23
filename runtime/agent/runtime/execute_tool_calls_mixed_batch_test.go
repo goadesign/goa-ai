@@ -28,7 +28,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 			"svc.tools": {},
 			"inline.ts": {
 				Inline: true,
-				Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 					return &planner.ToolResult{
 						Name:       call.Name,
 						ToolCallID: call.ToolCallID,
@@ -82,7 +82,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 
 	runCtx := &run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
-	calls := []planner.ToolRequest{
+	calls := []ToolCall{
 		{Name: tools.Ident("inline.ts.inline"), RunID: runCtx.RunID, SessionID: runCtx.SessionID, TurnID: runCtx.TurnID, ToolCallID: "call-inline"},
 		{Name: tools.Ident("svc.tools.a1"), RunID: runCtx.RunID, SessionID: runCtx.SessionID, TurnID: runCtx.TurnID, ToolCallID: "call-a1"},
 		{Name: tools.Ident("svc.tools.a2"), RunID: runCtx.RunID, SessionID: runCtx.SessionID, TurnID: runCtx.TurnID, ToolCallID: "call-a2"},

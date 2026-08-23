@@ -21,7 +21,7 @@ import (
 // production system the arguments are model-authored, so decode failures
 // return a classified invalid-call failure with structured correction
 // guidance instead of an error.
-func Execute(_ context.Context, _ *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
+func Execute(_ context.Context, _ *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
 	switch call.Name {
 	case genhelpers.Answer:
 		args, err := genhelpers.AnswerTool.Payload.FromJSON(call.Payload)
@@ -52,7 +52,7 @@ func answerFor(question string) string {
 // invalidCall classifies a payload decode failure as a correctable
 // invalid-call tool failure, carrying the generated codec's structured field
 // issues plus the canonical example so the planner can repair the call.
-func invalidCall(call *planner.ToolRequest, err error) *planner.ToolResult {
+func invalidCall(call *runtime.ToolCall, err error) *planner.ToolResult {
 	var issuer interface{ Issues() []*tools.FieldIssue }
 	var issues []*tools.FieldIssue
 	if errors.As(err, &issuer) {

@@ -2,11 +2,16 @@ package hooks
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -19,20 +24,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 )
 
-const providerErrorApplicationType = "goa_ai.provider_error"
-
 type (
-	providerErrorEnvelope struct {
-		Provider   string
-		Operation  string
-		HTTPStatus int
-		Kind       string
-		Code       string
-		Message    string
-		RequestID  string
-		Retryable  bool
-	}
-
 	// Event is the interface all hook events must implement. The runtime publishes
 	// events through the Bus, and subscribers receive them via HandleEvent.
 	// Concrete event types carry typed payloads for each lifecycle phase.
@@ -506,6 +498,41 @@ type (
 		model.TokenUsage
 	}
 
+	// ModelOutputRejectedEvent records that provider output failed before
+	// planner output could be executed or shown.
+	ModelOutputRejectedEvent struct {
+		baseEvent
+		// ReasonSHA256 identifies the exact local validation error without
+		// retaining provider-controlled text in the run event.
+		ReasonSHA256 string
+		// ReasonSize is the number of bytes covered by ReasonSHA256.
+		ReasonSize int64
+		// ModelResponsePresent reports whether the provider returned a complete
+		// response before the rejection.
+		ModelResponsePresent bool
+		// ModelResponseFingerprintVersion identifies the encoding covered by
+		// ModelResponseSHA256.
+		ModelResponseFingerprintVersion string
+		// ModelResponseSHA256 identifies the exact versioned encoding of complete
+		// provider responses. It is empty when no complete response existed or
+		// when invalid metadata could not be encoded;
+		// ModelResponsePresent distinguishes those cases.
+		ModelResponseSHA256 string
+		// ModelResponseSize is the number of bytes covered by
+		// ModelResponseSHA256.
+		ModelResponseSize int64
+	}
+
+	// PlannerOutputRejectedEvent records a planner result that the runtime
+	// refused to execute or show.
+	PlannerOutputRejectedEvent struct {
+		baseEvent
+		// ReasonSHA256 identifies the exact local validation error.
+		ReasonSHA256 string
+		// ReasonSize is the number of bytes covered by ReasonSHA256.
+		ReasonSize int64
+	}
+
 	// HardProtectionEvent is a historical record written when the runtime
 	// treated an agent-tool result with no children as terminal. The runtime no
 	// longer emits this event; it remains readable in durable run history.
@@ -527,6 +554,18 @@ type (
 const (
 	// ErrorKindTimeout indicates the run failed because a required operation timed out.
 	ErrorKindTimeout = "timeout"
+
+	// ErrorKindModelOutput indicates that completed model output did not follow
+	// the required rules.
+	ErrorKindModelOutput = "model_output"
+
+	// ErrorKindPlannerOutput indicates that a completed planner result did not
+	// follow the required rules.
+	ErrorKindPlannerOutput = "planner_output"
+
+	// ErrorKindOutputContract indicates that completed output failed validation
+	// before the runtime could identify its originating component.
+	ErrorKindOutputContract = "output_contract"
 
 	// ErrorKindInternal indicates the run failed for an unclassified reason.
 	ErrorKindInternal = "internal"
@@ -635,9 +674,27 @@ func newRunCompletedEventFromPayload(
 	}
 }
 
-// newRunFailure classifies the terminal error into the canonical failure payload.
+// newRunFailure turns the final error into the failure details saved on the
+// run.
 func newRunFailure(err error) *run.Failure {
-	if pe, ok := providerErrorFromError(err); ok {
+	if temporalerrors.IsOutputContract(err) {
+		kind := ErrorKindOutputContract
+		switch temporalerrors.OutputContractOrigin(err) {
+		case planner.OutputContractOriginModel:
+			kind = ErrorKindModelOutput
+		case planner.OutputContractOriginPlanner:
+			kind = ErrorKindPlannerOutput
+		default:
+			// Errors created before origin classification use the neutral kind.
+		}
+		return &run.Failure{
+			Message:      PublicErrorOutputContract,
+			DebugMessage: err.Error(),
+			Kind:         kind,
+			Retryable:    false,
+		}
+	}
+	if pe, ok := temporalerrors.Provider(err); ok {
 		return &run.Failure{
 			Message:      providerPublicError(pe),
 			DebugMessage: err.Error(),
@@ -672,33 +729,6 @@ func newRunCancellation(cancellation *run.Cancellation) *run.Cancellation {
 	return &run.Cancellation{
 		Reason: cancellation.Reason,
 	}
-}
-
-// WrapTemporalProviderError encodes provider failures into a Temporal
-// application error with their exact retryability and metadata. Workflow and
-// activity boundaries call it before Temporal serializes the error.
-func WrapTemporalProviderError(err error) error {
-	if _, alreadyWrapped := providerErrorFromTemporalEnvelope(err); alreadyWrapped {
-		return err
-	}
-	pe, ok := model.AsProviderError(err)
-	if !ok {
-		return err
-	}
-	envelope := providerErrorEnvelope{
-		Provider:   pe.Provider(),
-		Operation:  pe.Operation(),
-		HTTPStatus: pe.HTTPStatus(),
-		Kind:       string(pe.Kind()),
-		Code:       pe.Code(),
-		Message:    pe.Message(),
-		RequestID:  pe.RequestID(),
-		Retryable:  pe.Retryable(),
-	}
-	if pe.Retryable() {
-		return temporal.NewApplicationErrorWithCause(pe.Error(), providerErrorApplicationType, err, envelope)
-	}
-	return temporal.NewNonRetryableApplicationError(pe.Error(), providerErrorApplicationType, err, envelope)
 }
 
 // NewChildRunLinkedEvent constructs a ChildRunLinkedEvent for the given parent
@@ -943,6 +973,69 @@ func NewUsageEvent(runID string, agentID agent.Ident, sessionID string, usage mo
 	}
 }
 
+// NewModelOutputRejectedEvent constructs durable evidence for one terminal
+// model-output contract failure.
+func NewModelOutputRejectedEvent(
+	runID string,
+	agentID agent.Ident,
+	sessionID, reasonSHA256 string,
+	reasonSize int64,
+	modelResponsePresent bool,
+	modelResponseFingerprintVersion string,
+	modelResponseSHA256 string,
+	modelResponseSize int64,
+) (*ModelOutputRejectedEvent, error) {
+	if err := validateReasonFingerprint(reasonSHA256, reasonSize); err != nil {
+		return nil, fmt.Errorf("model output rejected event reason: %w", err)
+	}
+	if err := validateResponseFingerprint(modelResponseSHA256, modelResponseSize, true); err != nil {
+		return nil, fmt.Errorf("model output rejected event response: %w", err)
+	}
+	if !modelResponsePresent && modelResponseSHA256 != "" {
+		return nil, errors.New("model output rejected event response fingerprint requires a complete response")
+	}
+	validVersion := (modelResponseSHA256 == "" && modelResponseFingerprintVersion == "") ||
+		(modelResponseSHA256 != "" &&
+			modelResponseFingerprintVersion == api.ModelResponseFingerprintVersionV1)
+	if !validVersion {
+		return nil, fmt.Errorf(
+			"model output rejected event response fingerprint version %q is unsupported",
+			modelResponseFingerprintVersion,
+		)
+	}
+	be := newBaseEvent(runID, agentID)
+	be.sessionID = sessionID
+	return &ModelOutputRejectedEvent{
+		baseEvent:                       be,
+		ReasonSHA256:                    reasonSHA256,
+		ReasonSize:                      reasonSize,
+		ModelResponsePresent:            modelResponsePresent,
+		ModelResponseFingerprintVersion: modelResponseFingerprintVersion,
+		ModelResponseSHA256:             modelResponseSHA256,
+		ModelResponseSize:               modelResponseSize,
+	}, nil
+}
+
+// NewPlannerOutputRejectedEvent constructs durable evidence for one terminal
+// planner-result contract failure.
+func NewPlannerOutputRejectedEvent(
+	runID string,
+	agentID agent.Ident,
+	sessionID, reasonSHA256 string,
+	reasonSize int64,
+) (*PlannerOutputRejectedEvent, error) {
+	if err := validateReasonFingerprint(reasonSHA256, reasonSize); err != nil {
+		return nil, fmt.Errorf("planner output rejected event reason: %w", err)
+	}
+	be := newBaseEvent(runID, agentID)
+	be.sessionID = sessionID
+	return &PlannerOutputRejectedEvent{
+		baseEvent:    be,
+		ReasonSHA256: reasonSHA256,
+		ReasonSize:   reasonSize,
+	}, nil
+}
+
 // NewHardProtectionEvent reconstructs a historical HardProtectionEvent from durable run history.
 //
 // Deprecated: New runtime versions do not emit HardProtectionEvent.
@@ -968,7 +1061,7 @@ func NewPlannerNoteEvent(runID string, agentID agent.Ident, sessionID string, no
 	return &PlannerNoteEvent{
 		baseEvent: be,
 		Note:      note,
-		Labels:    labels,
+		Labels:    maps.Clone(labels),
 	}
 }
 
@@ -1034,43 +1127,6 @@ func classifyNonProviderFailure(err error) (kind, publicError string) {
 	return ErrorKindInternal, PublicErrorInternal
 }
 
-func providerErrorFromError(err error) (*model.ProviderError, bool) {
-	pe, ok := model.AsProviderError(err)
-	if ok {
-		return pe, true
-	}
-	return providerErrorFromTemporalEnvelope(err)
-}
-
-func providerErrorFromTemporalEnvelope(err error) (*model.ProviderError, bool) {
-	var appErr *temporal.ApplicationError
-	if !errors.As(err, &appErr) {
-		return nil, false
-	}
-	if appErr.Type() != providerErrorApplicationType {
-		return nil, false
-	}
-	var envelope providerErrorEnvelope
-	decoded := appErr.Details(&envelope) == nil
-	if !decoded {
-		return nil, false
-	}
-	if envelope.Provider == "" || envelope.Kind == "" {
-		return nil, false
-	}
-	return model.NewProviderError(
-		envelope.Provider,
-		envelope.Operation,
-		envelope.HTTPStatus,
-		model.ProviderErrorKind(envelope.Kind),
-		envelope.Code,
-		envelope.Message,
-		envelope.RequestID,
-		envelope.Retryable,
-		appErr,
-	), true
-}
-
 func providerPublicError(pe *model.ProviderError) string {
 	switch pe.Kind() {
 	case model.ProviderErrorKindRateLimited:
@@ -1131,6 +1187,47 @@ func (e *baseEvent) SetEventKey(eventKey string) {
 	e.eventKey = eventKey
 }
 
+// validateResponseFingerprint checks the fixed-size digest and positive byte
+// count stored for a complete model response.
+func validateResponseFingerprint(digest string, size int64, optional bool) error {
+	if digest == "" {
+		if !optional {
+			return errors.New("SHA-256 digest is required")
+		}
+		if size != 0 {
+			return errors.New("size requires a SHA-256 digest")
+		}
+		return nil
+	}
+	decoded, err := hex.DecodeString(digest)
+	if err != nil || len(decoded) != sha256.Size || hex.EncodeToString(decoded) != digest {
+		return errors.New("SHA-256 digest is invalid")
+	}
+	if size <= 0 {
+		return errors.New("size must be positive")
+	}
+	return nil
+}
+
+// validateReasonFingerprint checks a local error digest. Empty error text has
+// a valid digest with a zero byte count.
+func validateReasonFingerprint(digest string, size int64) error {
+	decoded, err := hex.DecodeString(digest)
+	if err != nil || len(decoded) != sha256.Size || hex.EncodeToString(decoded) != digest {
+		return errors.New("SHA-256 digest is invalid")
+	}
+	if size < 0 {
+		return errors.New("size must be nonnegative")
+	}
+	if size == 0 {
+		empty := sha256.Sum256(nil)
+		if digest != hex.EncodeToString(empty[:]) {
+			return errors.New("SHA-256 digest does not identify an empty reason")
+		}
+	}
+	return nil
+}
+
 // newBaseEvent constructs a baseEvent without durable dispatch metadata. The
 // runtime stamps event keys and timestamps when it emits the enclosing record.
 func newBaseEvent(runID string, agentID agent.Ident) baseEvent {
@@ -1154,10 +1251,16 @@ func (e *AssistantMessageEvent) Type() EventType   { return AssistantMessage }
 func (e *AssistantTurnCommittedEvent) Type() EventType {
 	return AssistantTurnCommitted
 }
-func (e *ThinkingBlockEvent) Type() EventType   { return ThinkingBlock }
-func (e *MemoryAppendedEvent) Type() EventType  { return MemoryAppended }
-func (e *PolicyDecisionEvent) Type() EventType  { return PolicyDecision }
-func (e *UsageEvent) Type() EventType           { return Usage }
+func (e *ThinkingBlockEvent) Type() EventType  { return ThinkingBlock }
+func (e *MemoryAppendedEvent) Type() EventType { return MemoryAppended }
+func (e *PolicyDecisionEvent) Type() EventType { return PolicyDecision }
+func (e *UsageEvent) Type() EventType          { return Usage }
+func (e *ModelOutputRejectedEvent) Type() EventType {
+	return ModelOutputRejected
+}
+func (e *PlannerOutputRejectedEvent) Type() EventType {
+	return PlannerOutputRejected
+}
 func (e *HardProtectionEvent) Type() EventType  { return HardProtectionTriggered }
 func (e *RunPhaseChangedEvent) Type() EventType { return RunPhaseChanged }
 func (e *ChildRunLinkedEvent) Type() EventType  { return ChildRunLinked }

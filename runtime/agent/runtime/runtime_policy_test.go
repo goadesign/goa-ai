@@ -17,7 +17,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
-	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -30,8 +29,8 @@ func canonicalMetadataMap(specs ...tools.ToolSpec) map[tools.Ident]policy.ToolMe
 	return metas
 }
 
-func restrictedFinalPlanResult(text string) *planner.PlanResult {
-	return &planner.PlanResult{
+func restrictedFinalPlanResult(text string) *PlanResult {
+	return &PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
 				Role:  model.ConversationRoleAssistant,
@@ -53,7 +52,7 @@ func TestPolicyAllowlistRewritesDeniedCalls(t *testing.T) {
 		rt.policyToolMetadata[name] = metadata
 	}
 	rt.toolsets["svc.tools"] = ToolsetRegistration{
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:   call.Name,
 				Result: map[string]any{"ok": true},
@@ -66,7 +65,7 @@ func TestPolicyAllowlistRewritesDeniedCalls(t *testing.T) {
 		ctx:         context.Background(),
 		hookRuntime: rt,
 		asyncResult: ToolOutput{Payload: []byte("null")},
-		planResult: &planner.PlanResult{
+		planResult: &PlanResult{
 			FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{
 					Role:  "assistant",
@@ -74,13 +73,14 @@ func TestPolicyAllowlistRewritesDeniedCalls(t *testing.T) {
 				},
 			},
 		},
-		hasPlanResult: true,
+		hasPlanResult:   true,
+		recoveryCatalog: &RecoveryCatalog{Tools: []tools.Ident{allowedSpec.Name}},
 	}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: tools.Ident("allowed"), Payload: rawjson.Message(`{}`)},
-		{Name: tools.Ident("blocked"), Payload: rawjson.Message(`{}`)},
+	initial := &PlanResult{ToolCalls: []ToolCall{
+		{ToolCallID: "allowed-call", Name: tools.Ident("allowed"), Payload: rawjson.Message(`{}`)},
+		{ToolCallID: "blocked-call", Name: tools.Ident("blocked"), Payload: rawjson.Message(`{}`)},
 	}}
 	out, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
@@ -103,7 +103,7 @@ func TestPolicyAllowlistRewritesDeniedCalls(t *testing.T) {
 
 func TestRewriteToolCallUnavailablePreservesCompiledModelIdentity(t *testing.T) {
 	rt := New()
-	call := planner.ToolRequest{
+	call := ToolCall{
 		ToolCallID:   "call-1",
 		Name:         "service.execute",
 		Payload:      []byte(`{"compiled":true}`),
@@ -150,9 +150,10 @@ func TestRestrictedRunToolCapFinalizes(t *testing.T) {
 		RunContext: run.Context{RunID: input.RunID},
 		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    toolSpec.Name,
-		Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{ToolCalls: []ToolCall{{
+		ToolCallID: "read-call",
+		Name:       toolSpec.Name,
+		Payload:    rawjson.Message(`{}`),
 	}}}
 
 	out, err := rt.runLoop(wfCtx, AgentRegistration{
@@ -199,7 +200,7 @@ func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
 		RunContext: run.Context{RunID: input.RunID},
 		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+	initial := &PlanResult{ToolCalls: []ToolCall{{
 		Name:       toolSpec.Name,
 		ToolCallID: "call-cap-denied",
 		Payload:    rawjson.Message(`{"q":"x"}`),
@@ -259,9 +260,10 @@ func TestRestrictedRunFailureCapFinalizes(t *testing.T) {
 		RunContext: run.Context{RunID: input.RunID},
 		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    toolSpec.Name,
-		Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{ToolCalls: []ToolCall{{
+		ToolCallID: "read-call",
+		Name:       toolSpec.Name,
+		Payload:    rawjson.Message(`{}`),
 	}}}
 
 	out, err := rt.runLoop(wfCtx, AgentRegistration{
@@ -283,7 +285,7 @@ func TestRestrictedRunFailureCapFinalizes(t *testing.T) {
 	require.Equal(t, planner.TerminationReasonFailureCap, wfCtx.lastPlannerCall.Input.Finalize.Reason)
 }
 
-func TestRestrictedUnknownToolReachesFailureCap(t *testing.T) {
+func TestRestrictedUnknownToolFailsBeforeExecution(t *testing.T) {
 	t.Parallel()
 
 	rt := New(WithRunEventStore(runloginmem.New()))
@@ -303,9 +305,10 @@ func TestRestrictedUnknownToolReachesFailureCap(t *testing.T) {
 		RunContext: run.Context{RunID: input.RunID},
 		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    "svc.tools.missing",
-		Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{ToolCalls: []ToolCall{{
+		ToolCallID: "missing-call",
+		Name:       "svc.tools.missing",
+		Payload:    rawjson.Message(`{}`),
 	}}}
 
 	out, err := rt.runLoop(wfCtx, AgentRegistration{
@@ -319,17 +322,15 @@ func TestRestrictedUnknownToolReachesFailureCap(t *testing.T) {
 		MaxConsecutiveFailedToolCalls:       1,
 		RemainingConsecutiveFailedToolCalls: 1,
 	}, time.Time{}, time.Time{}, "turn-1", nil)
-	require.NoError(t, err)
-	require.NotNil(t, out)
-	require.NotNil(t, out.Final)
-	require.Len(t, out.ToolEvents, 1)
-	require.Equal(t, tools.ToolUnavailable, out.ToolEvents[0].Name)
-	require.NotNil(t, out.ToolEvents[0].Failure)
-	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
-	require.Equal(t, planner.TerminationReasonFailureCap, wfCtx.lastPlannerCall.Input.Finalize.Reason)
+	require.Error(t, err)
+	assert.Nil(t, out)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.ErrorContains(t, err, `planner called unregistered tool "svc.tools.missing"`)
+	assert.Empty(t, wfCtx.lastPlannerCall.Name)
 }
 
-func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
+func TestApplyPerRunOverridesRejectsCallsExcludedByAnyTagClause(t *testing.T) {
 	visibleSpec := func() tools.ToolSpec {
 		spec := newAnyJSONSpec("visible", "svc.tools")
 		spec.Tags = []string{"system", "profile"}
@@ -352,7 +353,7 @@ func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
 		"missing": missingSpec,
 		"denied":  deniedSpec,
 	}
-	rewritten, err := rt.applyPerRunOverrides(
+	allowed, err := rt.applyPerRunOverrides(
 		context.Background(),
 		&RunInput{
 			Policy: &PolicyOverrides{
@@ -363,28 +364,27 @@ func TestApplyPerRunOverridesUsesAllTagClauses(t *testing.T) {
 				},
 			},
 		},
-		[]planner.ToolRequest{
-			{Name: "visible"},
-			{Name: "missing"},
-			{Name: "denied"},
-		},
+		[]ToolCall{{ToolCallID: "visible-call", Name: "visible"}},
 	)
 	require.NoError(t, err)
-	require.Len(t, rewritten, 3)
-	require.Equal(t, tools.Ident("visible"), rewritten[0].Name)
-	require.Equal(t, tools.ToolUnavailable, rewritten[1].Name)
-	require.Equal(t, tools.ToolUnavailable, rewritten[2].Name)
-	require.Equal(t, tools.Ident("missing"), rewritten[1].ModelName)
-	require.Equal(t, tools.Ident("denied"), rewritten[2].ModelName)
-	require.JSONEq(t, `{"requested_tool":"missing"}`, string(rewritten[1].Payload))
-	require.JSONEq(t, `{"requested_tool":"denied"}`, string(rewritten[2].Payload))
+	require.Equal(t, []ToolCall{{ToolCallID: "visible-call", Name: "visible"}}, allowed)
 
-	hintPayload, err := toolUnavailableSpec.Payload.Codec.FromJSON(rewritten[2].Payload.RawMessage())
-	require.NoError(t, err)
-	hint, ok, err := rthints.RenderCallHint(tools.ToolUnavailable, hintPayload)
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, "Tool not available: denied", hint)
+	for _, call := range []ToolCall{
+		{ToolCallID: "missing-call", Name: "missing"},
+		{ToolCallID: "denied-call", Name: "denied"},
+	} {
+		_, err := rt.applyPerRunOverrides(
+			context.Background(),
+			&RunInput{Policy: &PolicyOverrides{TagClauses: []TagPolicyClause{
+				{AllowedAny: []string{"system"}},
+				{AllowedAny: []string{"profile"}},
+				{DeniedAny: []string{"blocked"}},
+			}}},
+			[]ToolCall{call},
+		)
+		var outputErr *planner.OutputContractError
+		require.ErrorAs(t, err, &outputErr)
+	}
 }
 
 func TestTagPolicyAllowsUsesRuntimeClauseSemantics(t *testing.T) {
@@ -418,10 +418,10 @@ func TestValidateRunPolicyRejectsUnknownMissingFieldsAction(t *testing.T) {
 
 func TestFilterToolCallsKeepsToolUnavailable(t *testing.T) {
 	filtered := filterToolCalls(
-		[]planner.ToolRequest{
-			{Name: "allowed"},
-			{Name: tools.ToolUnavailable},
-			{Name: "blocked"},
+		[]ToolCall{
+			{ToolCallID: "allowed-call", Name: "allowed"},
+			{ToolCallID: "unavailable-call", Name: tools.ToolUnavailable},
+			{ToolCallID: "blocked-call", Name: "blocked"},
 		},
 		[]tools.Ident{"allowed"},
 	)
@@ -454,9 +454,10 @@ func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 	require.Len(t, definitions, 1)
 	require.Equal(t, visible.Name.String(), definitions[0].Name)
 	require.Equal(t, visible.Description, definitions[0].Description)
-	require.JSONEq(t, `{"type":"object","properties":{"q":{"type":"string"}}}`, string(definitions[0].Input.JSONSchema()))
-	require.JSONEq(t, `{"type":"object"}`, string(definitions[0].Input.SchemaWithoutRootExample()))
-	require.JSONEq(t, `{"q":"status"}`, string(definitions[0].Input.ExampleJSON()))
+	contract := definitions[0].Input.Contract()
+	require.JSONEq(t, `{"type":"object","properties":{"q":{"type":"string"}}}`, string(contract.Schema))
+	require.JSONEq(t, `{"type":"object"}`, string(contract.SchemaWithoutRootExample))
+	require.JSONEq(t, `{"q":"status"}`, string(contract.ExampleJSON))
 }
 
 func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {
@@ -481,7 +482,7 @@ func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {
 				BudgetClass: policy.ToolBudgetClassBudgeted,
 			}, true
 		},
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{Name: call.Name}, nil
 		}),
 	}))
@@ -494,7 +495,7 @@ func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {
 			Tags:        []string{"generated"},
 			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
-	}, rt.toolMetadata([]planner.ToolRequest{{Name: spec.Name}}))
+	}, rt.toolMetadata([]ToolCall{{ToolCallID: "search-call", Name: spec.Name}}))
 }
 
 func TestPolicyMetadataPanicsWithoutCanonicalMetadata(t *testing.T) {

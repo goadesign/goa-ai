@@ -17,18 +17,12 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
-// toolCodec carries the reversible per-request tool projection state: the
-// sanitized names exchanged with OpenAI in both directions and the canonical
-// input schemas needed to canonicalize strict-mode tool arguments on the way
-// back. Methods tolerate a nil receiver so translation paths need no tool
-// bookkeeping when a request declares no tools.
+// toolCodec carries the reversible per-request tool-name projection used to
+// reject any provider tool name that was not advertised by this request.
 type toolCodec struct {
 	canonicalToProvider map[string]string
 	providerToCanonical map[string]string
-	canonicalSchemas    map[string]rawjson.Message
 }
-
-const structuredOutputDefaultName = "structured_output"
 
 func encodeTools(defs []*model.ToolDefinition) ([]responses.ToolUnionParam, *toolCodec, error) {
 	if len(defs) == 0 {
@@ -42,13 +36,12 @@ func encodeTools(defs []*model.ToolDefinition) ([]responses.ToolUnionParam, *too
 	codec := &toolCodec{
 		canonicalToProvider: canonToProv,
 		providerToCanonical: provToCanon,
-		canonicalSchemas:    make(map[string]rawjson.Message, len(defs)),
 	}
 	for _, def := range defs {
 		if def.Description == "" {
 			return nil, nil, fmt.Errorf("openai: tool %q is missing description", def.Name)
 		}
-		schema := def.Input.JSONSchema()
+		schema := def.Input.Contract().Schema
 		parameters, err := projectStrictSchema(schema)
 		if err != nil {
 			return nil, nil, fmt.Errorf("openai: tool %q schema: %w", def.Name, err)
@@ -61,7 +54,6 @@ func encodeTools(defs []*model.ToolDefinition) ([]responses.ToolUnionParam, *too
 				Strict:      param.NewOpt(true),
 			},
 		})
-		codec.canonicalSchemas[def.Name] = schema
 	}
 	return tools, codec, nil
 }
@@ -125,11 +117,7 @@ func encodeStructuredOutput(output *model.StructuredOutput) (responses.ResponseT
 			"openai: structured output schema is required",
 		)
 	}
-	name := structuredOutputDefaultName
-	if output.Name != "" {
-		name = output.Name
-	}
-	name = toolname.Sanitize(name)
+	name := toolname.Sanitize(output.Name)
 	parameters, err := projectStrictSchema(rawjson.Message(schema))
 	if err != nil {
 		return responses.ResponseTextConfigParam{}, false, fmt.Errorf(
@@ -149,25 +137,14 @@ func encodeStructuredOutput(output *model.StructuredOutput) (responses.ResponseT
 	}, true, nil
 }
 
-// canonicalName maps a provider-visible tool name back to its canonical
-// goa-ai identifier. Unknown names pass through unchanged.
-func (c *toolCodec) canonicalName(providerName string) string {
+// canonicalName maps an advertised provider-visible tool name back to its
+// canonical goa-ai identifier.
+func (c *toolCodec) canonicalName(providerName string) (string, bool) {
 	if c == nil {
-		return providerName
+		return "", false
 	}
-	if canonical, ok := c.providerToCanonical[providerName]; ok {
-		return canonical
-	}
-	return providerName
-}
-
-// canonicalSchema returns the canonical input schema recorded for a canonical
-// tool name, or nil when the request declared no such tool.
-func (c *toolCodec) canonicalSchema(canonicalName string) rawjson.Message {
-	if c == nil {
-		return nil
-	}
-	return c.canonicalSchemas[canonicalName]
+	canonical, ok := c.providerToCanonical[providerName]
+	return canonical, ok
 }
 
 // providerNames returns the canonical-to-provider name mapping used when

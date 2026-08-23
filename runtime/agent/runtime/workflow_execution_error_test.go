@@ -73,7 +73,7 @@ func TestRunLoopRecordsPartialInlineResultsBeforeExecutionError(t *testing.T) {
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name:   "svc",
 		Inline: true,
-		Execute: func(_ context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+		Execute: func(_ context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 			executed = append(executed, call.Name)
 			if call.Name == second.Name {
 				return nil, errors.New("second tool failed")
@@ -92,10 +92,10 @@ func TestRunLoopRecordsPartialInlineResultsBeforeExecutionError(t *testing.T) {
 	base := &planner.PlanInput{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: first.Name, Payload: rawjson.Message(`{}`)},
-		{Name: second.Name, Payload: rawjson.Message(`{}`)},
-		{Name: third.Name, Payload: rawjson.Message(`{}`)},
+	initial := &PlanResult{ToolCalls: []ToolCall{
+		{ToolCallID: "first-call", Name: first.Name, Payload: rawjson.Message(`{}`)},
+		{ToolCallID: "second-call", Name: second.Name, Payload: rawjson.Message(`{}`)},
+		{ToolCallID: "third-call", Name: third.Name, Payload: rawjson.Message(`{}`)},
 	}}
 
 	out, err := rt.runLoop(
@@ -137,7 +137,7 @@ func TestRunLoopPreservesConcreteResultAndContinuesBookkeepingAfterHookError(t *
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name:   "svc",
 		Inline: true,
-		Execute: func(_ context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+		Execute: func(_ context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 			executed = append(executed, call.Name)
 			return Executed(&planner.ToolResult{
 				Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"ok": true},
@@ -158,9 +158,9 @@ func TestRunLoopPreservesConcreteResultAndContinuesBookkeepingAfterHookError(t *
 	base := &planner.PlanInput{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: budgeted.Name, Payload: rawjson.Message(`{}`)},
-		{Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)},
+	initial := &PlanResult{ToolCalls: []ToolCall{
+		{ToolCallID: "budgeted-call", Name: budgeted.Name, Payload: rawjson.Message(`{}`)},
+		{ToolCallID: "bookkeeping-call", Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)},
 	}}
 
 	out, err := rt.runLoop(
@@ -195,7 +195,7 @@ func TestRunLoopRecordsCompleteCapDenialBeforePublicationError(t *testing.T) {
 	second := newAnyJSONSpec(tools.Ident("svc.second"), "svc")
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
-		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"ok": true},
 			}, nil
@@ -214,9 +214,9 @@ func TestRunLoopRecordsCompleteCapDenialBeforePublicationError(t *testing.T) {
 	base := &planner.PlanInput{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: first.Name, Payload: rawjson.Message(`{}`)},
-		{Name: second.Name, Payload: rawjson.Message(`{}`)},
+	initial := &PlanResult{ToolCalls: []ToolCall{
+		{ToolCallID: "first-call", Name: first.Name, Payload: rawjson.Message(`{}`)},
+		{ToolCallID: "second-call", Name: second.Name, Payload: rawjson.Message(`{}`)},
 	}}
 
 	out, err := rt.runLoop(

@@ -58,7 +58,7 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 		ctx:           context.Background(),
 		hookRuntime:   rt,
 		hasPlanResult: true,
-		planResult: &planner.PlanResult{
+		planResult: &PlanResult{
 			FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}},
 			},

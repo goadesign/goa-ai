@@ -278,6 +278,16 @@ func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planne
 Register model clients during bootstrap with `rt.RegisterModel(...)` or runtime
 factories such as `rt.NewOpenAIModelClient(...)`, `rt.NewBedrockModelClient(...)`,
 `rt.NewVertexGeminiModelClient(...)`, and `rt.NewVertexAnthropicModelClient(...)`.
+Provider adapters now separate raw transport work from consumer validation.
+`openai.New`, `anthropic.New`, `bedrock.New`, `vertex.New`, and
+`gateway.NewRemoteClient` return an opaque validated `model.Client`. Use the
+matching `NewProvider` constructor for provider-side middleware, gateways, or
+other code that deliberately operates before canonical output validation. A
+raw `model.Provider` remains directly callable and may return unvalidated
+responses or streams. Pass it to `model.NewClient` before using an API that
+requires canonical model output. External packages cannot implement a valid
+`model.Client`; APIs that accept one verify the package-owned opaque client
+before inference.
 
 ---
 
@@ -416,9 +426,37 @@ var _ = Service("tasks", func() {
 })
 ```
 
-`goa gen` emits `gen/<service>/completions/` with schemas, authored examples, codecs, `completion.Spec` values, `Complete<Name>(...)`, `StreamComplete<Name>(...)`, and `Decode<Name>Chunk(...)`. Completion names are part of the contract: 1-64 ASCII characters, letters/digits/`_`/`-`, starting with a letter or digit.
+`goa gen` emits `gen/<service>/completions/` with schemas, authored examples,
+codecs, `Complete<Name>(...)`, and typed `StreamComplete<Name>(...)` helpers.
+The codec-bearing `completion.Spec` remains private to those wrappers. When a
+caller genuinely needs the authored example, `<Name>Example()` returns an
+isolated raw JSON copy. Completion names are part of the contract: 1-64 ASCII
+characters, letters/digits/`_`/`-`, starting with a letter or digit.
 
-Unary helpers request provider-enforced structured output and decode with generated codecs. When the return type has an authored root `Example(...)`, adapters forward its canonical JSON through provider-native example fields where available. If the provider returns JSON that the generated codec rejects, the unary helper supplies the codec error and example in one correction turn; a second invalid response is terminal. `completion.Response.Attempts` retains every model response in invocation order so corrected calls preserve the rejected output and its token usage. Streaming providers may expose preview `completion_delta` chunks and never restart after emitting them. Providers that cannot preserve the structured-output contract fail explicitly with `model.ErrStructuredOutputUnsupported`.
+Unary helpers install their generated decoder before provider work, request
+provider-enforced structured output, and decode with generated codecs. A
+low-level `model.Request` may use `StructuredOutput` without a local decoder;
+it must set a nonempty `StructuredOutput.Name`, and shared request validation
+rejects a missing name before provider work. The validated client then enforces
+one canonical completion envelope while the provider owns JSON-Schema
+enforcement. Typed completion helpers additionally
+guarantee exact generated decoding. When the return type has an authored root
+`Example(...)`, adapters forward its canonical JSON through provider-native
+example fields where available. Each helper makes one provider request. If the
+provider returns JSON that the generated codec rejects, the helper returns a
+non-retryable `planner.OutputContractError` and does not ask the model again.
+`completion.Response.ModelResponse` contains that exact model response.
+Streaming providers may expose preview `completion_delta` chunks and never
+restart after emitting them. The final typed value is exposed only after the
+stream ends normally and the complete provider response contains exactly the
+same JSON bytes, including surrounding whitespace. Providers that cannot
+preserve the structured-output contract fail explicitly with
+`model.ErrStructuredOutputUnsupported`.
+
+When updating generated completion callers, replace direct `Spec<Name>` access
+with `Complete<Name>(...)` or `StreamComplete<Name>(...)`. Use
+`<Name>Example()` only when the caller needs the authored example; generated
+codecs and schemas are owned by the wrappers.
 
 ### Agent-as-Tool Composition
 
@@ -593,16 +631,14 @@ ID and carries the original call run in `call_run_id`. Stream consumers can
 therefore pair the result with the exact `tool_start` without searching prior
 runs.
 
-Production deployments must preserve both sides of this workflow boundary.
-Configure Temporal Worker Deployment Versioning with an immutable build ID and
-pinned workflow behavior. Start a new worker version beside the old versions,
-wait until it is ready, and only then make it current for new workflows. Keep
-each old version running until Temporal reports that it is drained; Temporal
-routes an existing workflow to its pinned worker rather than moving it to the
-new code. A continuation starts a new workflow on the current version, so its
-generated codecs and tool registrations must still accept the saved checkpoint.
-See [Transparent Temporal rollouts](docs/runtime.md#transparent-temporal-rollouts)
-for the complete consumer deployment contract and its limits.
+Generated agents, completion packages, runtime workers, and their callers form
+one release unit. Regenerate every consumer, stop new work that depends on the
+old generated contract, and deploy the generated code and runtime together.
+`goa-ai.run-suspension.v2` is the only supported suspension schema; older
+persisted shapes are rejected rather than inferred, migrated, or served through
+a compatibility mode. See [Coordinated generated-system
+releases](docs/runtime.md#coordinated-generated-system-releases) for the
+deployment contract.
 
 Sensitive tools can require approval before execution:
 
@@ -754,10 +790,8 @@ caller-authorized catalog and attaches correction guidance for every selected
 failed call. Historical tool calls remain in the provider transcript for
 replay but never restore executable definitions. A `replan` failure removes its
 failed tool for that turn unless another selected failure for the same tool is
-correctable. If the planner still requests an excluded tool, the runtime
-executes the existing `runtime.tool_unavailable` typed failure instead, preserving
-the original call identity and payload while allowing valid sibling calls to
-continue. Planner-owned await barriers remain strict because they encode
+correctable. If the planner still requests an excluded tool, the runtime rejects
+the planner output before any sibling call executes. Planner-owned await barriers remain strict because they encode
 suspension rather than a direct model tool request. Caller `WithRestrictToTool`
 policy remains run-scoped.
 
@@ -786,11 +820,9 @@ finalization.
 
 Recovery turns carry the selected failed call IDs in `PlanActivityInput`.
 Empty IDs are omitted, so start and ordinary resume activities retain their
-previous JSON shape. Temporal deployments use Worker Deployment Versioning so
-an active workflow remains on its compatible worker until it completes or
-suspends. A continuation is a new workflow and may start on the current
-deployment after `ValidateContinuation` accepts its saved checkpoint and tool
-schemas.
+previous JSON shape. Deploy runtime workers, generated packages, and callers as
+one coordinated hard cutover. Mixed versions are unsupported; ongoing
+workflows and saved suspensions may fail against the new contract.
 
 The flag is valid only on a tool-only result, keeping execution and answer
 synthesis as separate turns without relying on process-local state. The batch
@@ -836,10 +868,13 @@ rt := runtime.New(
 For model streaming inside planners, choose one style per planner call:
 
 - `PlannerContext.PlannerModelClient(id)` is recommended for the selected, single model call. It records assistant and thinking output with that invocation and returns a `planner.StreamSummary`; the runtime publishes presentation after the planner selects the response.
-- `PlannerContext.ModelClient(id)` gives you a raw `model.Client`. Pair it with `planner.ConsumeStream` or drain the stream yourself when you need lower-level control.
+- `PlannerContext.ModelClient(id)` gives you direct access to a `model.Client`.
+  Its `Stream` method returns a validated stream; pair that value with
+  `planner.ConsumeStream` or drain it yourself when you need lower-level
+  control.
 
 The runtime captures each model response before planner code sees it. When a
-planner probes through the raw client, goa-ai matches returned model-facing tool
+planner probes through the opaque client, goa-ai matches returned model-facing tool
 calls to the exact response that produced them, publishes only that response's
 presentation, and replays only that transcript. Usage events still include all
 attempts. Every stream exposes closed typed chunks, then makes its canonical
@@ -848,9 +883,11 @@ response independently from planner-facing chunks, and terminal helpers return
 the selected provider message without exposing transcript identity. Future
 session turns retain provider-authored thinking without inferring ownership from
 visible text.
-Planners keep the existing obligation to preserve model tool-call identities
-and, when compiling synthetic tools, `ModelName`/`ModelPayload`; they never
-manage transcript identities. The workflow commits the selected response once
+Planners return only the canonical tool-call ID, name, and payload they received
+from the model. When the runtime turns a temporary model-facing action into its
+executable tool call, it stores that action's name and payload in the runtime's
+private execution record; planners do not populate the record's `ModelName` or
+`ModelPayload` fields. The workflow commits the selected response once
 after atomic admission and before effects. Usage includes all attempts.
 Canonical tool-call IDs remain opaque and unchanged in durable transcripts.
 Provider adapters translate IDs only while encoding a request when the target
@@ -1034,7 +1071,7 @@ Production checklist:
 - Register models, toolsets, agents, stores, streams, policy, and telemetry before the first run.
 - Call `rt.Seal(ctx)` for worker processes before serving traffic; Temporal workers start at the seal boundary.
 - Use `CreateSession` before sessionful `Run`/`Start`, or use `OneShotRun`/`StartOneShot` for sessionless work.
-- Use persistent stores for transcripts, sessions, prompt overrides, and run logs when runs must survive process restarts.
+- Use persistent stores for transcripts, sessions, prompt overrides, and run logs when runs must survive process restarts. A `runlog.Store` also owns exact rejected-model evidence outside bounded Temporal and event payloads.
 - Use stream events rather than polling for UI updates.
 - Put irreversible or operator-sensitive actions behind `Confirmation(...)`.
 - Use `BoundedResult()` and `ServerData(...)` for large data so models see bounded summaries while UIs retain full-fidelity data.
@@ -1048,7 +1085,7 @@ Production checklist:
 | `gen/<service>/agents/<agent>/` | Agent ID, route, typed client, workflow/activity names, registration helpers |
 | `gen/<service>/agents/<agent>/specs/` | Aggregated agent tool catalog and `tool_schemas.json` |
 | `gen/<service>/toolsets/<toolset>/` | Tool payload/result/server-data types, codecs, specs, transforms, provider adapters |
-| `gen/<service>/completions/` | Service-owned structured-output specs, codecs, unary and streaming helpers |
+| `gen/<service>/completions/` | Service-owned typed results, private structured-output specs/codecs, public unary/streaming wrappers, and immutable example accessors |
 | `gen/<service>/registry/<name>/` | Generated registry client and discovery helpers |
 | `gen/mcp_<service>/` | Generated MCP adapter code for services that declare `MCP(...)` |
 | `internal/agents/` | Application-owned scaffold from `goa example`: bootstrap, planner stubs, tool adapters |
@@ -1075,7 +1112,7 @@ Production checklist:
 | `features/model/middleware` | Rate limiting, logging, metrics middleware |
 | `features/memory/mongo` | Mongo-backed transcript memory store |
 | `features/session/mongo` | Mongo-backed session store |
-| `features/runlog/mongo` | Mongo-backed append-only run event store |
+| `features/runlog/mongo` | Mongo-backed append-only run events |
 | `features/prompt/mongo` | Mongo-backed prompt override store |
 | `features/stream/pulse` | Pulse/Redis stream sink and subscribers |
 | `features/policy/basic` | Basic policy engine for tool filtering and caps |

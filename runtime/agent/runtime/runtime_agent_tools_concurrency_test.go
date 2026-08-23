@@ -9,7 +9,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
@@ -81,7 +80,7 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 	}
 	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
 
-	calls := []planner.ToolRequest{
+	calls := []ToolCall{
 		{
 			Name:       tool1,
 			RunID:      runCtx.RunID,

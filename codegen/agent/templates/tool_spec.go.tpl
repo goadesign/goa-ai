@@ -146,6 +146,23 @@ var {{ .TypedToolVar }} = tools.TypedTool[{{ if .Payload.Pointer }}*{{ end }}{{ 
     Result:  {{ .Result.ExportedCodec }},
 }
 {{- end }}
+
+// New{{ .GoName }}Call builds a planner request for {{ .Name }} from its typed
+// generated payload. toolCallID must be nonempty and unique within the plan.
+func New{{ .GoName }}Call(toolCallID string, args {{ if .Payload.Pointer }}*{{ end }}{{ .Payload.FullRef }}) planner.ToolRequest {
+    if toolCallID == "" {
+        panic("{{ .Name }} tool call ID is required")
+    }
+    payload, err := {{ .Payload.ExportedCodec }}.ToJSON(args)
+    if err != nil {
+        panic(err)
+    }
+    return planner.ToolRequest{
+        Name:       {{ .ConstName }},
+        Payload:    payload,
+        ToolCallID: toolCallID,
+    }
+}
 {{- end }}
 
 {{- range .Tools }}

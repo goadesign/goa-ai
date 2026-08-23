@@ -65,12 +65,12 @@ func TestAdmitToolBatchReportsBudgetCost(t *testing.T) {
 		newBookkeepingSpec("book.b"),
 	)
 
-	calls := []planner.ToolRequest{
-		{Name: "ret.a"},
-		{Name: "book.a"},
-		{Name: "term.a"},
-		{Name: "ret.b"},
-		{Name: "book.b"},
+	calls := []ToolCall{
+		{ToolCallID: "ret-a-call", Name: "ret.a"},
+		{ToolCallID: "book-a-call", Name: "book.a"},
+		{ToolCallID: "term-a-call", Name: "term.a"},
+		{ToolCallID: "ret-b-call", Name: "ret.b"},
+		{ToolCallID: "book-b-call", Name: "book.b"},
 	}
 
 	cost, admitted := rt.admitToolBatch(calls, policy.CapsState{})
@@ -89,11 +89,11 @@ func TestToolMetadataIncludesBudgetClass(t *testing.T) {
 		newTerminalSpec("term.a"),
 	)
 
-	metas := rt.toolMetadata([]planner.ToolRequest{
-		{Name: "ret.a"},
-		{Name: "book.a"},
-		{Name: "term.a"},
-		{Name: "unknown"},
+	metas := rt.toolMetadata([]ToolCall{
+		{ToolCallID: "ret-a-call", Name: "ret.a"},
+		{ToolCallID: "book-a-call", Name: "book.a"},
+		{ToolCallID: "term-a-call", Name: "term.a"},
+		{ToolCallID: "unknown-call", Name: "unknown"},
 	})
 	assert.Equal(t, []policy.ToolMetadata{
 		{ID: "ret.a", Title: "A", BudgetClass: policy.ToolBudgetClassBudgeted},
@@ -114,15 +114,17 @@ func TestAdmitToolBatchBookkeepingDoesNotConsumeBudget(t *testing.T) {
 
 	cases := []struct {
 		name         string
-		calls        []planner.ToolRequest
+		calls        []ToolCall
 		caps         policy.CapsState
 		expectedCost int
 		admitted     bool
 	}{
 		{
 			name: "no budget set: passes everything through",
-			calls: []planner.ToolRequest{
-				{Name: "ret.a"}, {Name: "ret.b"}, {Name: "book.a"},
+			calls: []ToolCall{
+				{ToolCallID: "ret-a-call", Name: "ret.a"},
+				{ToolCallID: "ret-b-call", Name: "ret.b"},
+				{ToolCallID: "book-a-call", Name: "book.a"},
 			},
 			caps:         policy.CapsState{MaxToolCalls: 0, RemainingToolCalls: 0},
 			expectedCost: 2,
@@ -130,32 +132,42 @@ func TestAdmitToolBatchBookkeepingDoesNotConsumeBudget(t *testing.T) {
 		},
 		{
 			name: "budget=0, mixed batch: rejects response atomically",
-			calls: []planner.ToolRequest{
-				{Name: "ret.a"}, {Name: "book.a"}, {Name: "ret.b"}, {Name: "book.b"},
+			calls: []ToolCall{
+				{ToolCallID: "ret-a-call", Name: "ret.a"},
+				{ToolCallID: "book-a-call", Name: "book.a"},
+				{ToolCallID: "ret-b-call", Name: "ret.b"},
+				{ToolCallID: "book-b-call", Name: "book.b"},
 			},
 			caps:         policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0},
 			expectedCost: 2,
 		},
 		{
 			name: "budget=1, three retrieval: rejects response atomically",
-			calls: []planner.ToolRequest{
-				{Name: "ret.a"}, {Name: "ret.b"}, {Name: "ret.c"},
+			calls: []ToolCall{
+				{ToolCallID: "ret-a-call", Name: "ret.a"},
+				{ToolCallID: "ret-b-call", Name: "ret.b"},
+				{ToolCallID: "ret-c-call", Name: "ret.c"},
 			},
 			caps:         policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 1},
 			expectedCost: 3,
 		},
 		{
 			name: "budget=1, mixed: bookkeeping does not reduce batch cost",
-			calls: []planner.ToolRequest{
-				{Name: "ret.a"}, {Name: "book.a"}, {Name: "ret.b"}, {Name: "book.b"}, {Name: "ret.c"},
+			calls: []ToolCall{
+				{ToolCallID: "ret-a-call", Name: "ret.a"},
+				{ToolCallID: "book-a-call", Name: "book.a"},
+				{ToolCallID: "ret-b-call", Name: "ret.b"},
+				{ToolCallID: "book-b-call", Name: "book.b"},
+				{ToolCallID: "ret-c-call", Name: "ret.c"},
 			},
 			caps:         policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 1},
 			expectedCost: 3,
 		},
 		{
 			name: "budget=0, all bookkeeping: passes all through",
-			calls: []planner.ToolRequest{
-				{Name: "book.a"}, {Name: "book.b"},
+			calls: []ToolCall{
+				{ToolCallID: "book-a-call", Name: "book.a"},
+				{ToolCallID: "book-b-call", Name: "book.b"},
 			},
 			caps:         policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0},
 			expectedCost: 0,
@@ -179,9 +191,9 @@ func TestAdmitToolBatchTerminalRunDoesNotConsumeBudget(t *testing.T) {
 	)
 
 	cost, admitted := rt.admitToolBatch(
-		[]planner.ToolRequest{
-			{Name: "ret.a"},
-			{Name: "term.a"},
+		[]ToolCall{
+			{ToolCallID: "ret-a-call", Name: "ret.a"},
+			{ToolCallID: "term-a-call", Name: "term.a"},
 		},
 		policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0},
 	)
@@ -189,7 +201,7 @@ func TestAdmitToolBatchTerminalRunDoesNotConsumeBudget(t *testing.T) {
 	assert.False(t, admitted)
 
 	cost, admitted = rt.admitToolBatch(
-		[]planner.ToolRequest{{Name: "term.a"}},
+		[]ToolCall{{ToolCallID: "term-a-call", Name: "term.a"}},
 		policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0},
 	)
 	assert.Zero(t, cost)
@@ -200,7 +212,7 @@ func TestRegisterToolset_RejectsTerminalSpecWithoutBookkeeping(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 	err := rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{Name: call.Name}, nil
 		}),
 		Specs: []tools.ToolSpec{newInvalidTerminalSpec("tasks.complete")},

@@ -76,7 +76,7 @@ func newProjectedResultSpec() tools.ToolSpec {
 }
 
 func TestExecuteToolActivityReturnsFailure(t *testing.T) {
-	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 		require.Equal(t, "tool-1", call.ToolCallID)
 		require.Equal(t, "parent-1", call.ParentToolCallID)
 		require.Equal(t, "run", call.RunID)
@@ -98,7 +98,7 @@ func TestExecuteToolActivityReturnsFailure(t *testing.T) {
 }
 
 func TestExecuteToolActivityPropagatesLabels(t *testing.T) {
-	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 		require.Equal(t, map[string]string{
 			"aura.session.id": "sess-1",
 			"kind":            "brief",
@@ -137,7 +137,7 @@ func TestEnforceToolResultContractsRequiresExplicitBoundsForBoundedTool(t *testi
 		},
 	}
 	rt := &Runtime{}
-	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
+	call := ToolCall{Name: "tool", ToolCallID: "tool-1"}
 
 	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
 		Name:   call.Name,
@@ -157,7 +157,7 @@ func TestEnforceToolResultContractsAcceptsExplicitBoundsForBoundedTool(t *testin
 		},
 	}
 	rt := &Runtime{}
-	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
+	call := ToolCall{Name: "tool", ToolCallID: "tool-1"}
 
 	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
 		Name:   call.Name,
@@ -179,7 +179,7 @@ func TestEnforceToolResultContractsRejectsTruncatedBoundsWithoutContinuation(t *
 		},
 	}
 	rt := &Runtime{}
-	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
+	call := ToolCall{Name: "tool", ToolCallID: "tool-1"}
 
 	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
 		Name:   call.Name,
@@ -199,7 +199,7 @@ func TestEnforceToolResultContractsRejectsEmptyNextCursor(t *testing.T) {
 		CursorField: "cursor", NextCursorField: "next_cursor",
 	}}
 	cursor := ""
-	err := (&Runtime{}).enforceToolResultContracts(spec, planner.ToolRequest{
+	err := (&Runtime{}).enforceToolResultContracts(spec, ToolCall{
 		Name: "tool", ToolCallID: "tool-1",
 	}, &planner.ToolResult{
 		Name: "tool", Result: map[string]any{"ok": true},
@@ -219,7 +219,7 @@ func TestEnforceToolResultContractsRejectsCursorWithoutTruncation(t *testing.T) 
 		CursorField: "cursor", NextCursorField: "next_cursor",
 	}}
 	cursor := "provider"
-	err := (&Runtime{}).enforceToolResultContracts(spec, planner.ToolRequest{
+	err := (&Runtime{}).enforceToolResultContracts(spec, ToolCall{
 		Name: "tool", ToolCallID: "tool-1",
 	}, &planner.ToolResult{
 		Name: "tool", Result: map[string]any{"ok": true},
@@ -232,7 +232,7 @@ func TestEnforceToolResultContractsRejectsCursorWithoutTruncation(t *testing.T) 
 func TestEnforceToolResultContractsRejectsNilToolResultWithoutCriticalPrefix(t *testing.T) {
 	rt := &Runtime{}
 	spec := newAnyJSONSpec("tool", "svc.ts")
-	call := planner.ToolRequest{Name: "tool", ToolCallID: "tool-1"}
+	call := ToolCall{Name: "tool", ToolCallID: "tool-1"}
 
 	err := rt.enforceToolResultContracts(spec, call, nil)
 	require.Error(t, err)
@@ -241,7 +241,7 @@ func TestEnforceToolResultContractsRejectsNilToolResultWithoutCriticalPrefix(t *
 }
 
 func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
-	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 		return &planner.ToolResult{
 			Name:       call.Name,
 			ToolCallID: call.ToolCallID,
@@ -261,7 +261,7 @@ func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 
 func TestExecuteToolActivityRunsResultMaterializer(t *testing.T) {
 	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				ToolCallID: call.ToolCallID,
@@ -270,7 +270,7 @@ func TestExecuteToolActivityRunsResultMaterializer(t *testing.T) {
 				},
 			}, nil
 		}),
-		ResultMaterializer: func(ctx context.Context, meta ToolCallMeta, call *planner.ToolRequest, result *planner.ToolResult) error {
+		ResultMaterializer: func(ctx context.Context, meta ToolCallMeta, call *ToolCall, result *planner.ToolResult) error {
 			require.Equal(t, "tool-1", meta.ToolCallID)
 			require.JSONEq(t, `{"input":"ok"}`, string(call.Payload))
 			result.ServerData = rawjson.Message([]byte(`[{"kind":"example.materialized","audience":"timeline","data":{"source":"runtime"}}]`))
@@ -289,7 +289,7 @@ func TestExecuteToolActivityRunsResultMaterializer(t *testing.T) {
 
 func TestExecuteToolActivityPropagatesBounds(t *testing.T) {
 	total := 9
-	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 		return &planner.ToolResult{
 			Name:       call.Name,
 			ToolCallID: call.ToolCallID,
@@ -361,7 +361,7 @@ func TestEncodeCanonicalToolResultRejectsRuntimeRawJSONResult(t *testing.T) {
 func TestExecuteToolActivityProjectsBoundsIntoEncodedResult(t *testing.T) {
 	total := 9
 	cursor := "next-page"
-	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 		return &planner.ToolResult{
 			Name:       call.Name,
 			ToolCallID: call.ToolCallID,
@@ -395,7 +395,7 @@ func TestExecuteToolActivityProjectsBoundsIntoEncodedResult(t *testing.T) {
 }
 
 func TestExecuteToolActivityDropsStaleOptionalBoundFieldsFromSemanticResult(t *testing.T) {
-	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 		return &planner.ToolResult{
 			Name:       call.Name,
 			ToolCallID: call.ToolCallID,
@@ -446,7 +446,7 @@ func TestPublishToolResultReceivedProjectsBoundsIntoResultPreview(t *testing.T) 
 		turnID:    "turn-1",
 	}
 	total := 9
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       toolName,
 		ToolCallID: "tool-1",
 		Payload:    rawjson.Message(`{"query":"status"}`),
@@ -493,18 +493,19 @@ func TestRegisterToolset_RejectsAgentToolsetWithoutSpecs(t *testing.T) {
 
 func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 	childSpec := newAnyJSONSpec("child", "svc.export")
-	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.export": {TaskQueue: "q1", Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.export": {TaskQueue: "q1", Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 		return &planner.ToolResult{
 			Name: call.Name,
 		}, nil
 	})}}, Bus: noopHooks{}}
 	seedTestToolSpecs(rt, childSpec)
-	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
+	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    tools.Ident("child"),
-		Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{ToolCalls: []ToolCall{{
+		ToolCallID: "child-call",
+		Name:       tools.Ident("child"),
+		Payload:    rawjson.Message(`{}`),
 	}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
@@ -520,17 +521,17 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 
 func TestPreserveModelProvidedToolCallID(t *testing.T) {
 	toolSpec := newAnyJSONSpec("tool", "svc.ts")
-	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 		// Ensure the ID provided by the planner/model flows into the executor unchanged
 		require.Equal(t, "model-123", call.ToolCallID)
 		return &planner.ToolResult{Name: call.Name}, nil
 	})}}, Bus: noopHooks{}}
 	seedTestToolSpecs(rt, toolSpec)
-	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
+	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
 	// Planner supplies an explicit ToolCallID from the model
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+	initial := &PlanResult{ToolCalls: []ToolCall{{
 		Name:       tools.Ident("tool"),
 		ToolCallID: "model-123",
 		Payload:    rawjson.Message(`{}`),
@@ -584,7 +585,7 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 		ParentAgentID:    "parent.agent",
 		ParentToolCallID: "tool-parent",
 	}
-	calls := []planner.ToolRequest{{
+	calls := []ToolCall{{
 		Name:       tools.Ident("svc.tools.fetch_time_series"),
 		ToolCallID: "child-call",
 	}}
@@ -644,7 +645,7 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 		ParentAgentID:    "parent.agent",
 		ParentToolCallID: "tool-parent",
 	}
-	calls := []planner.ToolRequest{{
+	calls := []ToolCall{{
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "child-call",
 	}}
@@ -671,7 +672,7 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 		RunEventStore: runloginmem.New(),
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {
-				ResultMaterializer: func(ctx context.Context, meta ToolCallMeta, call *planner.ToolRequest, result *planner.ToolResult) error {
+				ResultMaterializer: func(ctx context.Context, meta ToolCallMeta, call *ToolCall, result *planner.ToolResult) error {
 					require.Equal(t, "tool-call-1", meta.ToolCallID)
 					require.JSONEq(t, `{"input":"ok"}`, string(call.Payload))
 					result.Result = map[string]any{
@@ -696,7 +697,7 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 			TurnID:    "turn-1",
 		},
 	}
-	allowed := []planner.ToolRequest{
+	allowed := []ToolCall{
 		{
 			Name:       tools.Ident("svc.tools.example"),
 			ToolCallID: "tool-call-1",
@@ -752,7 +753,7 @@ func TestConsumeProvidedToolResultsRejectsAmbiguousSuccessAndFailure(t *testing.
 			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example", "svc.tools"),
 		},
 	}
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "tool-call-1",
 	}
@@ -781,7 +782,7 @@ func TestConsumeProvidedToolResultsRejectsMissingOutcome(t *testing.T) {
 			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example", "svc.tools"),
 		},
 	}
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "tool-call-1",
 	}
@@ -798,7 +799,7 @@ func TestDecodeProvidedToolResultDerivesCorrectionMetadata(t *testing.T) {
 
 	spec := newAnyJSONSpec("svc.tools.example", "svc.tools")
 	spec.Payload.ExampleJSON = rawjson.Message(`{"query":"example"}`)
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       spec.Name,
 		ToolCallID: "tool-call-1",
 		Payload:    rawjson.Message(`{"query":""}`),
@@ -830,7 +831,7 @@ func TestDecodeProvidedToolResultDerivesCorrectionMetadata(t *testing.T) {
 
 func TestEnforceToolResultContractsRejectsAmbiguousErrorAndResult(t *testing.T) {
 	rt := &Runtime{}
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "tool-call-1",
 	}
@@ -866,7 +867,7 @@ func TestConsumeProvidedToolResultsRejectsTruncatedBoundsWithoutContinuation(t *
 			},
 		},
 	}
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "tool-call-1",
 	}
@@ -928,7 +929,7 @@ func TestServiceToolEventsPropagateBounds(t *testing.T) {
 		ParentAgentID:    "parent.agent",
 		ParentToolCallID: "tool-parent",
 	}
-	calls := []planner.ToolRequest{{
+	calls := []ToolCall{{
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "child-call",
 	}}
@@ -965,7 +966,7 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	rt.toolsets = map[string]ToolsetRegistration{
 		"child.tools": {
 			Inline: true,
-			Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 				require.NotNil(t, call)
 				require.Equal(t, tools.Ident("child.get_time_series"), call.Name)
 				require.Equal(t, "tool-parent", call.ToolCallID)
@@ -981,7 +982,7 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
-		planResult: &planner.PlanResult{
+		planResult: &PlanResult{
 			FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{
 					Role:  model.ConversationRoleAssistant,
@@ -996,7 +997,7 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 		RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID},
 		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+	initial := &PlanResult{ToolCalls: []ToolCall{{
 		Name:       tools.Ident("child.get_time_series"),
 		ToolCallID: "tool-parent",
 		Payload:    rawjson.Message(`{}`),

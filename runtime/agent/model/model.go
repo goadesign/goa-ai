@@ -222,6 +222,12 @@ type (
 		//   - Failed results carry plain error text with IsError=true.
 		//   - Runtime/tooling code must not store raw JSON bytes or Go error
 		//     structs here.
+		//   - Values may contain nil, booleans, finite numbers, strings,
+		//     string-keyed maps, slices, and arrays. Structs, pointers,
+		//     functions, channels, unsafe pointers, complex numbers, uintptr
+		//     values, reference cycles, more than 64 nesting levels, more than
+		//     100,000 visited values, or more than 16 MiB of strings, byte
+		//     slices, and map keys are rejected.
 		Content any `json:"content"`
 
 		// IsError reports whether Content represents an error from the tool.
@@ -249,9 +255,18 @@ type (
 		Parts []Part `json:"parts"`
 
 		// Meta carries optional provider- or application-specific metadata
-		// attached to the message.
+		// attached to the message. Values may contain nil, booleans, finite
+		// numbers, strings, string-keyed maps, slices, and arrays. Structs,
+		// pointers, functions, channels, unsafe pointers, complex numbers,
+		// uintptr values, reference cycles, more than 64 nesting levels, more
+		// than 100,000 visited values, or more than 16 MiB of strings, byte
+		// slices, and map keys are rejected.
 		Meta map[string]any `json:"meta"`
+
+		origin *messageOrigin
 	}
+
+	messageOrigin [1]byte
 
 	// ToolDefinition describes a tool exposed to the model.
 	//
@@ -274,6 +289,7 @@ type (
 		jsonSchema               rawjson.Message
 		schemaWithoutRootExample rawjson.Message
 		exampleJSON              rawjson.Message
+		validate                 func(rawjson.Message) error
 	}
 
 	// ToolInputContract is the provider-neutral raw JSON projection of a tool
@@ -303,12 +319,13 @@ type (
 		// Name is the tool identifier requested by the model.
 		Name tools.Ident
 
-		// Payload is the canonical JSON arguments supplied by the model.
+		// Payload is the provider's tool arguments as valid JSON.
 		//
-		// Provider adapters MUST populate this as a valid JSON value. Planners and
-		// runtimes treat it as opaque JSON and rely on codecs for any schema-aware
-		// decoding. The RawJSON type exists to make workflow-boundary encoding safe
-		// (it normalizes empty payloads to JSON null).
+		// An adapter preserves the exact raw bytes when its provider exposes
+		// them. When an SDK exposes only a decoded value, the adapter emits one
+		// canonical JSON encoding of that value; it cannot promise the provider's
+		// original number spelling or whitespace. Planners and runtimes treat the
+		// bytes as opaque. The generated tool codec decides semantic validity.
 		Payload rawjson.Message
 
 		// ID is the adapter-issued opaque identifier for the tool call. Adapters
@@ -431,7 +448,7 @@ type (
 		// example fields when supported.
 		ExampleJSON rawjson.Message
 
-		// Name is an optional provider-facing schema identifier.
+		// Name is the required nonempty provider-facing schema identifier.
 		Name string
 
 		// Description explains the purpose of the structured output to the
@@ -447,7 +464,8 @@ type (
 	TokenUsage struct {
 		// Model is the provider-resolved model identifier that produced this
 		// usage (e.g., "us.anthropic.claude-sonnet-4-20250514-v1:0"). Set by
-		// the model adapter; empty when the adapter does not report it.
+		// the model adapter; empty when the adapter does not report it. Provider
+		// responses and usage chunks limit this value to 512 bytes.
 		Model string
 
 		// ModelClass is the logical model family that was requested (e.g.,
@@ -491,11 +509,12 @@ type (
 		Exact bool
 	}
 
-	// TokenCounter is an optional model-client capability for preflight token
-	// counting. Provider adapters that can count tokens natively should implement
-	// it and set TokenCount.Exact to true. Local estimators should implement the
-	// same contract with Exact=false so callers can distinguish approximation
-	// from provider-authoritative counts.
+	// TokenCounter is an optional raw provider capability for preflight token
+	// counting. NewClient preserves this capability on the validated client and
+	// validates the request before forwarding it. Provider adapters that can
+	// count tokens natively should implement it and set TokenCount.Exact to true.
+	// Local estimators should implement the same contract with Exact=false so
+	// callers can distinguish approximation from provider-authoritative counts.
 	//
 	// Counts measure the durable transcript: implementations exclude replayed
 	// thinking blocks from the counted surface. Thinking signatures only verify
@@ -564,6 +583,10 @@ type (
 
 		// Cache configures prompt caching behavior. Nil means no caching.
 		Cache *CacheOptions
+
+		// completionValidate applies the generated typed completion contract.
+		// Provider adapters ignore this in-process validation hook.
+		completionValidate func(*Response, *Completion) error
 	}
 
 	// Response is the result of a non-streaming invocation.
@@ -670,23 +693,78 @@ type (
 	// Providers map these classes to concrete model identifiers.
 	ModelClass string
 
-	// Client is the provider-agnostic model client.
-	//
-	// Implementations translate Requests into provider calls and adapt
-	// Responses and Chunks back into the generic types used by planners.
-	Client interface {
-		// Complete performs a non-streaming model invocation. Implementations
-		// return a non-nil Response only when err is nil.
+	// Provider translates canonical requests into raw provider operations. It is
+	// deliberately callable for provider adapters, middleware, and gateways.
+	// Its responses and streams have not crossed the canonical output validation
+	// boundary. APIs that require canonical model output accept an opaque Client
+	// returned by NewClient instead.
+	Provider interface {
+		// Complete performs a raw non-streaming provider invocation.
 		Complete(ctx context.Context, req *Request) (*Response, error)
 
-		// Stream performs a streaming model invocation when supported.
+		// Stream performs a raw streaming provider invocation when supported.
+		// Implementations return a non-nil stream exactly when err is nil.
 		Stream(ctx context.Context, req *Request) (Streamer, error)
+	}
+
+	// Client is an opaque validated model client. Only package model constructs
+	// implementations, so every response and stream crosses the same canonical
+	// validation boundary before consumer code can observe it.
+	Client interface {
+		// Complete performs a validated non-streaming model invocation.
+		Complete(ctx context.Context, req *Request) (*Response, error)
+
+		// Stream performs a validated streaming model invocation.
+		Stream(ctx context.Context, req *Request) (*ValidatedStream, error)
+
+		// CountTokens validates the provider input before invoking the optional
+		// raw TokenCounter capability. It returns
+		// ErrTokenCountingUnsupported when the provider has no native counter.
+		CountTokens(ctx context.Context, req *Request) (TokenCount, error)
+
+		validatedModelClient()
+	}
+
+	// ResponseEvidence is bounded evidence captured from the exact complete
+	// provider response before ownership copying or validation.
+	ResponseEvidence struct {
+		// Present reports whether the provider returned a complete response.
+		Present bool
+		// Version identifies the stable encoding covered by SHA256. It is empty
+		// when the response was absent or could not be encoded.
+		Version string
+		// SHA256 is the lowercase hexadecimal digest of the bounded response
+		// encoding. It is empty when the response could not be encoded.
+		SHA256 string
+		// Size is the number of bytes covered by SHA256.
+		Size int64
+	}
+
+	// StreamObservation contains safe copies and bounded evidence from one
+	// validated stream receive operation. RejectedUsage contains only valid
+	// numeric counts from a usage chunk whose identity fields were rejected.
+	StreamObservation struct {
+		// Chunk is a validated copy returned to the stream caller.
+		Chunk Chunk
+		// RejectedUsage contains bounded counts that remain valid even though
+		// the usage chunk itself was rejected.
+		RejectedUsage *TokenUsage
+		// Response is a safe copy of the complete response at EOF or rejection.
+		Response *Response
+		// ResponseEvidence identifies the raw complete response before copying.
+		ResponseEvidence ResponseEvidence
+		// Err is the receive result observed by the stream caller.
+		Err error
 	}
 
 	// Streamer delivers incremental model output.
 	//
 	// Callers must drain the stream until Recv returns io.EOF or another
 	// terminal error, read Response after clean EOF, then call Close.
+	// Recv, Response, and Close must not be called concurrently.
+	// A provider transfers ownership of each returned Chunk before Recv returns
+	// and of the complete Response before returning io.EOF. It must not mutate
+	// either value afterward.
 	Streamer interface {
 		// Recv returns the next streaming chunk or an error.
 		Recv() (Chunk, error)
@@ -707,6 +785,9 @@ type (
 // counts this projection so exact counts agree across providers. The returned
 // request is a shallow clone; req is never mutated.
 func CountingRequest(req *Request) *Request {
+	if req == nil {
+		return nil
+	}
 	counted := *req
 	counted.Messages = messagesWithoutThinking(req.Messages)
 	counted.Thinking = nil
@@ -720,10 +801,11 @@ func (e TokenEstimator) CountTokens(ctx context.Context, req *Request) (TokenCou
 	if err := ctx.Err(); err != nil {
 		return TokenCount{}, err
 	}
+	counted := CountingRequest(req)
 	return TokenCount{
-		Model:       reqModel(req),
-		ModelClass:  reqModelClass(req),
-		InputTokens: e.estimate(req),
+		Model:       reqModel(counted),
+		ModelClass:  reqModelClass(counted),
+		InputTokens: e.estimate(counted),
 		Exact:       false,
 	}, nil
 }
@@ -988,26 +1070,39 @@ func (r *Response) ToolCalls() []ToolCall {
 }
 
 // ToolDefinitionFromSpec converts a generated Goa tool specification into the
-// model-facing tool contract advertised to providers. Generated schema bytes are
-// compile-time artifacts; invalid JSON is an invariant violation and panics.
+// model-facing contract advertised to providers and retains its payload decoder
+// for response validation. Generated schema bytes and codecs are compile-time
+// artifacts; invalid JSON or a missing decoder is an invariant violation and
+// panics.
 func ToolDefinitionFromSpec(spec tools.ToolSpec) *ToolDefinition {
+	if spec.Payload.Codec.FromJSON == nil {
+		panic(fmt.Sprintf("model: generated tool %q payload decoder is required", spec.Name))
+	}
+	input := advertisedToolInputFromSpec(spec.Payload)
+	input.validate = func(payload rawjson.Message) error {
+		_, err := spec.Payload.Codec.FromJSON(payload)
+		return err
+	}
 	return &ToolDefinition{
 		Name:        spec.Name.String(),
 		Description: spec.Description,
-		Input:       ToolInputFromSpec(spec.Payload),
+		Input:       input,
 	}
 }
 
-// ToolInputFromSchema builds an input contract from a caller-authored schema.
-// Use this for local tools whose schema does not come from generated Goa specs.
-func ToolInputFromSchema(schema rawjson.Message) ToolInput {
+// AdvertisedToolInputFromSchema builds the input shape shown to the provider
+// for a caller-authored tool. It does not validate returned payloads. The
+// planner that owns the tool must validate its selected payload before effects.
+// Generated tools should use ToolDefinitionFromSpec so their generated decoder
+// runs at the model boundary.
+func AdvertisedToolInputFromSchema(schema rawjson.Message) ToolInput {
 	return ToolInput{jsonSchema: validatedJSON("caller-authored tool schema", schema)}
 }
 
-// ToolInputFromSpec projects one generated payload type into the model input
-// contract, preserving all generated schema variants and the canonical object
-// example without exposing that wiring at call sites.
-func ToolInputFromSpec(spec tools.TypeSpec) ToolInput {
+// advertisedToolInputFromSpec projects generated documents for
+// ToolDefinitionFromSpec, which attaches the generated decoder before exposing
+// the completed definition.
+func advertisedToolInputFromSpec(spec tools.TypeSpec) ToolInput {
 	return ToolInput{
 		jsonSchema:               validateGeneratedJSON(spec.Name, "payload schema", spec.Schema),
 		schemaWithoutRootExample: validateGeneratedJSON(spec.Name, "schema without root example", spec.SchemaWithoutRootExample),
@@ -1017,7 +1112,7 @@ func ToolInputFromSpec(spec tools.TypeSpec) ToolInput {
 
 // ToolInputFromContract reconstructs a ToolInput from a provider-neutral
 // transport contract. Boundary code uses this after decoding JSON from another
-// process; generated-code callers should prefer ToolInputFromSpec.
+// process; generated-code callers should prefer ToolDefinitionFromSpec.
 func ToolInputFromContract(toolName string, contract ToolInputContract) (ToolInput, error) {
 	if contract.Schema == nil {
 		return ToolInput{}, fmt.Errorf("model: tool %q input schema is required", toolName)
@@ -1048,28 +1143,10 @@ func ToolInputFromContract(toolName string, contract ToolInputContract) (ToolInp
 // The returned values are raw generated JSON documents owned by the caller.
 func (in ToolInput) Contract() ToolInputContract {
 	return ToolInputContract{
-		Schema:                   in.jsonSchema,
-		SchemaWithoutRootExample: in.schemaWithoutRootExample,
-		ExampleJSON:              in.exampleJSON,
+		Schema:                   cloneRawJSON(in.jsonSchema),
+		SchemaWithoutRootExample: cloneRawJSON(in.schemaWithoutRootExample),
+		ExampleJSON:              cloneRawJSON(in.exampleJSON),
 	}
-}
-
-// JSONSchema returns the annotated JSON Schema for providers that consume JSON
-// Schema annotations directly.
-func (in ToolInput) JSONSchema() rawjson.Message {
-	return in.jsonSchema
-}
-
-// SchemaWithoutRootExample returns the JSON Schema without its root example
-// annotation. Providers with top-level example fields use this projection.
-func (in ToolInput) SchemaWithoutRootExample() rawjson.Message {
-	return in.schemaWithoutRootExample
-}
-
-// ExampleJSON returns the canonical JSON input example for providers with
-// top-level input example support.
-func (in ToolInput) ExampleJSON() rawjson.Message {
-	return in.exampleJSON
 }
 
 // messagesWithoutThinking implements the CountingRequest transcript
@@ -1132,8 +1209,9 @@ func requestCharacterCount(req *Request) int {
 		// plus the separate example. Charge the larger of the two so the
 		// estimate stays conservative without summing renderings no provider
 		// combines.
-		annotated := len(tool.Input.JSONSchema())
-		split := len(tool.Input.SchemaWithoutRootExample()) + len(tool.Input.ExampleJSON())
+		input := tool.Input.Contract()
+		annotated := len(input.Schema)
+		split := len(input.SchemaWithoutRootExample) + len(input.ExampleJSON)
 		count += max(annotated, split)
 	}
 	if req.ToolChoice != nil {

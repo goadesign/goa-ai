@@ -3,6 +3,7 @@ package planner
 import (
 	"context"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,10 +12,6 @@ import (
 )
 
 type (
-	recordingEvents struct {
-		usage []model.TokenUsage
-	}
-
 	testStreamer struct {
 		chunks   []model.Chunk
 		response *model.Response
@@ -22,18 +19,6 @@ type (
 		closed   bool
 	}
 )
-
-func (e *recordingEvents) AssistantChunk(context.Context, string) {}
-
-func (e *recordingEvents) ToolCallArgsDelta(context.Context, string, tools.Ident, string) {}
-
-func (e *recordingEvents) PlannerThinkingBlock(context.Context, model.ThinkingPart) {}
-
-func (e *recordingEvents) PlannerThought(context.Context, string, map[string]string) {}
-
-func (e *recordingEvents) UsageDelta(_ context.Context, usage model.TokenUsage) {
-	e.usage = append(e.usage, usage)
-}
 
 func (s *testStreamer) Recv() (model.Chunk, error) {
 	if s.index >= len(s.chunks) {
@@ -67,13 +52,12 @@ func TestConsumeStreamStampsUsageIdentityFromRequest(t *testing.T) {
 			Usage:      model.TokenUsage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5},
 		},
 	}
-	events := &recordingEvents{}
-
 	summary, err := ConsumeStream(
 		context.Background(),
-		streamer,
-		&model.Request{Model: "gpt-5", ModelClass: model.ModelClassHighReasoning},
-		events,
+		mustValidatedStream(t, streamer, &model.Request{
+			Model:      "gpt-5",
+			ModelClass: model.ModelClassHighReasoning,
+		}),
 	)
 
 	require.NoError(t, err)
@@ -83,9 +67,6 @@ func TestConsumeStreamStampsUsageIdentityFromRequest(t *testing.T) {
 	require.Equal(t, 2, summary.Usage.InputTokens)
 	require.Equal(t, 3, summary.Usage.OutputTokens)
 	require.Equal(t, 5, summary.Usage.TotalTokens)
-	require.Len(t, events.usage, 1)
-	require.Equal(t, "gpt-5", events.usage[0].Model)
-	require.Equal(t, model.ModelClassHighReasoning, events.usage[0].ModelClass)
 }
 
 // TestConsumeStreamToolCallOmitsThoughtSignature documents that ConsumeStream
@@ -110,17 +91,17 @@ func TestConsumeStreamToolCallOmitsThoughtSignature(t *testing.T) {
 			Content: []model.Message{{
 				Role: model.ConversationRoleAssistant,
 				Parts: []model.Part{model.ToolUsePart{
-					ID:    "call-1",
-					Name:  "svc.read.get_time_series",
-					Input: []byte(`{}`),
+					ID:               "call-1",
+					Name:             "svc.read.get_time_series",
+					Input:            []byte(`{}`),
+					ThoughtSignature: "opaque-provider-signature",
 				}},
 			}},
 			StopReason: "tool_use",
 		},
 	}
-	events := &recordingEvents{}
-
-	summary, err := ConsumeStream(context.Background(), streamer, &model.Request{}, events)
+	request := modelRequestWithTool("svc.read.get_time_series")
+	summary, err := ConsumeStream(context.Background(), mustValidatedStream(t, streamer, request))
 
 	require.NoError(t, err)
 	require.Len(t, summary.ToolCalls, 1)
@@ -141,9 +122,38 @@ func TestConsumeStreamRejectsRepeatedFinalizedToolCall(t *testing.T) {
 		},
 	}
 
-	_, err := ConsumeStream(context.Background(), streamer, &model.Request{}, &recordingEvents{})
+	request := modelRequestWithTool("svc.lookup")
+	_, err := ConsumeStream(
+		context.Background(),
+		mustValidatedStream(t, streamer, request),
+	)
 
-	require.EqualError(t, err, `planner: model stream repeated finalized tool call "call-1"`)
+	var outputErr *OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.ErrorContains(t, err, `model stream repeated finalized tool call "call-1"`)
+	require.True(t, streamer.closed)
+}
+
+func TestConsumeStreamTextUsesValidatedAggregateBudget(t *testing.T) {
+	text := strings.Repeat("x", (16<<20)/2)
+	streamer := &testStreamer{chunks: []model.Chunk{
+		model.TextChunk{Message: model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: text}},
+		}},
+		model.TextChunk{Message: model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: text}},
+		}},
+	}}
+
+	summary, err := ConsumeStream(
+		context.Background(),
+		mustValidatedStream(t, streamer, &model.Request{}),
+	)
+
+	require.ErrorContains(t, err, "exceeds maximum byte size")
+	require.Len(t, summary.Text, len(text))
 	require.True(t, streamer.closed)
 }
 
@@ -157,9 +167,14 @@ func TestConsumeStreamRejectsTypedCompletionChunks(t *testing.T) {
 		}},
 	}
 
-	_, err := ConsumeStream(context.Background(), streamer, &model.Request{}, &recordingEvents{})
+	_, err := ConsumeStream(
+		context.Background(),
+		mustValidatedStream(t, streamer, &model.Request{}),
+	)
 
-	require.EqualError(t, err, "planner: ConsumeStream does not accept typed completion chunks; use completion.Stream")
+	var outputErr *OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.ErrorContains(t, err, "model stream emitted a completion without a structured output request")
 	require.True(t, streamer.closed)
 }
 
@@ -172,13 +187,12 @@ func TestConsumeStreamUsesCanonicalResponseUsage(t *testing.T) {
 			Usage:      model.TokenUsage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3},
 		},
 	}
-	events := &recordingEvents{}
-
 	summary, err := ConsumeStream(
 		context.Background(),
-		streamer,
-		&model.Request{Model: "gpt-5", ModelClass: model.ModelClassDefault},
-		events,
+		mustValidatedStream(t, streamer, &model.Request{
+			Model:      "gpt-5",
+			ModelClass: model.ModelClassDefault,
+		}),
 	)
 
 	require.NoError(t, err)
@@ -188,17 +202,19 @@ func TestConsumeStreamUsesCanonicalResponseUsage(t *testing.T) {
 	require.Equal(t, 1, summary.Usage.InputTokens)
 	require.Equal(t, 2, summary.Usage.OutputTokens)
 	require.Equal(t, 3, summary.Usage.TotalTokens)
-	require.Len(t, events.usage, 1)
-	require.Equal(t, "gpt-5", events.usage[0].Model)
-	require.Equal(t, model.ModelClassDefault, events.usage[0].ModelClass)
 }
 
 func TestConsumeStreamRequiresCanonicalResponse(t *testing.T) {
-	streamer := &testStreamer{}
+	streamer := &testStreamer{
+		chunks: []model.Chunk{model.StopChunk{Reason: "stop"}},
+	}
 
-	_, err := ConsumeStream(context.Background(), streamer, &model.Request{}, &recordingEvents{})
+	_, err := ConsumeStream(
+		context.Background(),
+		mustValidatedStream(t, streamer, &model.Request{}),
+	)
 
-	require.ErrorContains(t, err, "planner: invalid canonical response")
+	require.ErrorContains(t, err, "invalid canonical response")
 	require.True(t, streamer.closed)
 }
 
@@ -228,4 +244,20 @@ func TestStreamSummaryWithToolCallsHasNoFinalResponse(t *testing.T) {
 		source:    &model.Message{Role: model.ConversationRoleAssistant},
 		ToolCalls: []ToolRequest{{Name: "svc.lookup"}},
 	}).FinalResponse())
+}
+
+func modelRequestWithTool(name string) *model.Request {
+	return &model.Request{Tools: []*model.ToolDefinition{{
+		Name:  name,
+		Input: model.AdvertisedToolInputFromSchema([]byte(`{"type":"object"}`)),
+	}}}
+}
+
+func mustValidatedStream(t *testing.T, streamer model.Streamer, request *model.Request) *model.ValidatedStream {
+	t.Helper()
+	contract, err := model.NewRequestContract(request)
+	require.NoError(t, err)
+	validated, err := contract.ValidateStream(streamer)
+	require.NoError(t, err)
+	return validated
 }

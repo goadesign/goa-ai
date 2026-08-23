@@ -121,26 +121,15 @@ func NewRegistration(
 	return reg, nil
 }
 
-// CallOption customizes planner.ToolRequest values built by the typed helpers
-// below (e.g., setting parent/tool-call IDs for correlation with model calls).
-type CallOption func(*planner.ToolRequest)
-
-// WithParentToolCallID sets the ParentToolCallID on the constructed request.
-func WithParentToolCallID(id string) CallOption {
-	return func(r *planner.ToolRequest) { r.ParentToolCallID = id }
-}
-
-// WithToolCallID sets a model/tool-call identifier on the request. The runtime
-// preserves this ID and echoes it in ToolResult.ToolCallID for correlation.
-func WithToolCallID(id string) CallOption {
-	return func(r *planner.ToolRequest) { r.ToolCallID = id }
-}
-
 // Typed tool-call helpers for each tool in this exported toolset. These helpers
 // enforce use of the generated tool identifier and accept a typed payload that
 // matches the tool schema.
 // NewFindCall builds a planner.ToolRequest for the search.find tool.
-func NewFindCall(args *FindPayload, opts ...CallOption) planner.ToolRequest {
+// toolCallID must be nonempty and unique within the containing planner.PlanResult.
+func NewFindCall(toolCallID string, args *FindPayload) planner.ToolRequest {
+	if toolCallID == "" {
+		panic("search.find tool call ID is required")
+	}
 	var payload []byte
 	if args != nil {
 		// Encode typed payloads into canonical JSON using the generated codec.
@@ -151,13 +140,9 @@ func NewFindCall(args *FindPayload, opts ...CallOption) planner.ToolRequest {
 		payload = b
 	}
 	req := planner.ToolRequest{
-		Name:    Find,
-		Payload: payload,
-	}
-	for _, o := range opts {
-		if o != nil {
-			o(&req)
-		}
+		Name:       Find,
+		Payload:    payload,
+		ToolCallID: toolCallID,
 	}
 	return req
 }

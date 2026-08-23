@@ -114,6 +114,7 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 		newAnyJSONSpec(invokeToolID, toolsetName),
 	}
 	require.NoError(t, rt.RegisterToolset(agentTools))
+	rt.agentToolSpecs["parent.agent"] = agentTools.Specs
 
 	parentPlanner := &stubPlanner{
 		start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {

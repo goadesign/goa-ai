@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -33,10 +34,10 @@ func TestConfirmationPlanOverrideKeepsCanonicalPayload(t *testing.T) {
 	rt.toolConfirmation = &ToolConfirmationConfig{
 		Confirm: map[tools.Ident]*ToolConfirmation{
 			tools.Ident("tool.confirm"): {
-				Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+				Prompt: func(context.Context, *ToolCall) (string, error) {
 					return "Confirm tool", nil
 				},
-				DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+				DeniedResult: func(context.Context, *ToolCall) (any, error) {
 					return map[string]string{
 						"summary": "denied",
 					}, nil
@@ -45,7 +46,7 @@ func TestConfirmationPlanOverrideKeepsCanonicalPayload(t *testing.T) {
 		},
 	}
 
-	call := &planner.ToolRequest{
+	call := &ToolCall{
 		Name:       tools.Ident("tool.confirm"),
 		ToolCallID: "tool-1",
 		Payload:    rawjson.Message(`{"execution":"payload"}`),
@@ -60,6 +61,41 @@ func TestConfirmationPlanOverrideKeepsCanonicalPayload(t *testing.T) {
 	require.Equal(t, map[string]string{"summary": "denied"}, plan.DeniedResult)
 }
 
+func TestConfirmationDecisionRejectsMissingToolCallID(t *testing.T) {
+	t.Parallel()
+
+	for _, approved := range []bool{false, true} {
+		t.Run(fmt.Sprintf("approved=%t", approved), func(t *testing.T) {
+			t.Parallel()
+
+			rt := New()
+			_, _, _, err := rt.resolveConfirmationDecision(
+				&testWorkflowContext{ctx: context.Background()},
+				AgentRegistration{},
+				&RunInput{},
+				&planner.PlanInput{},
+				engine.ActivityOptions{},
+				ToolCall{Name: "tool.confirm"},
+				"confirmation-1",
+				&confirmationPlan{Prompt: "Confirm tool"},
+				&api.ConfirmationDecision{
+					ID:          "confirmation-1",
+					Approved:    approved,
+					RequestedBy: "operator",
+				},
+				0,
+				nil,
+				"turn-1",
+				&runDeadlines{},
+			)
+
+			require.ErrorContains(t, err, `confirmed tool "tool.confirm" is missing tool_call_id`)
+			var outputErr *planner.OutputContractError
+			require.ErrorAs(t, err, &outputErr)
+		})
+	}
+}
+
 func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
 	terminal := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
 	terminal.Bookkeeping = true
@@ -70,10 +106,10 @@ func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
 		WithToolConfirmation(&ToolConfirmationConfig{
 			Confirm: map[tools.Ident]*ToolConfirmation{
 				terminal.Name: {
-					Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+					Prompt: func(context.Context, *ToolCall) (string, error) {
 						return "Confirm completion", nil
 					},
-					DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+					DeniedResult: func(context.Context, *ToolCall) (any, error) {
 						return map[string]any{"ok": false}, nil
 					},
 				},
@@ -82,7 +118,7 @@ func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
 	)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
-		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			executions++
 			return &planner.ToolResult{
 				Name:       call.Name,
@@ -114,10 +150,11 @@ func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
 			Attempt:   1,
 		},
 	}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
-			Name:    terminal.Name,
-			Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "terminal-call",
+			Name:       terminal.Name,
+			Payload:    rawjson.Message(`{}`),
 		}},
 	}
 
@@ -151,10 +188,10 @@ func TestTerminalPayloadConfirmationIsRejectedBeforeTranscriptCommit(t *testing.
 		WithToolConfirmation(&ToolConfirmationConfig{
 			Confirm: map[tools.Ident]*ToolConfirmation{
 				bookkeeping.Name: {
-					Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+					Prompt: func(context.Context, *ToolCall) (string, error) {
 						return "Confirm record", nil
 					},
-					DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+					DeniedResult: func(context.Context, *ToolCall) (any, error) {
 						return map[string]any{"approved": false}, nil
 					},
 				},
@@ -163,7 +200,7 @@ func TestTerminalPayloadConfirmationIsRejectedBeforeTranscriptCommit(t *testing.
 	)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
-		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"ok": true},
 			}, nil
@@ -176,8 +213,12 @@ func TestTerminalPayloadConfirmationIsRejectedBeforeTranscriptCommit(t *testing.
 	base := &planner.PlanInput{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)}},
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "bookkeeping-call",
+			Name:       bookkeeping.Name,
+			Payload:    rawjson.Message(`{}`),
+		}},
 		FinalResponse: &planner.FinalResponse{Message: &model.Message{
 			Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}},
 		}},
@@ -207,10 +248,10 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 	bookkeeping.Bookkeeping = true
 	confirmation := func(name tools.Ident) *ToolConfirmation {
 		return &ToolConfirmation{
-			Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+			Prompt: func(context.Context, *ToolCall) (string, error) {
 				return "Confirm " + string(name), nil
 			},
-			DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+			DeniedResult: func(context.Context, *ToolCall) (any, error) {
 				return map[string]any{"approved": false}, nil
 			},
 		}
@@ -227,7 +268,7 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 	executed := make([]tools.Ident, 0, 1)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
-		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			executed = append(executed, call.Name)
 			return &planner.ToolResult{
 				Name:       call.Name,
@@ -264,7 +305,7 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 		ctx:     context.Background(),
 		now:     func() time.Time { return current },
 		runtime: rt,
-		planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{
+		planResult: &PlanResult{FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
 				Role:  model.ConversationRoleAssistant,
 				Parts: []model.Part{model.TextPart{Text: "finalized"}},
@@ -280,10 +321,10 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 			Attempt:   1,
 		},
 	}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{
-			{Name: budgeted.Name, Payload: rawjson.Message(`{}`)},
-			{Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)},
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{
+			{ToolCallID: "budgeted-call", Name: budgeted.Name, Payload: rawjson.Message(`{}`)},
+			{ToolCallID: "bookkeeping-call", Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)},
 		},
 	}
 
@@ -312,10 +353,10 @@ func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
 	second := newAnyJSONSpec(tools.Ident("svc.second"), "svc")
 	confirmation := func(name tools.Ident) *ToolConfirmation {
 		return &ToolConfirmation{
-			Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+			Prompt: func(context.Context, *ToolCall) (string, error) {
 				return "Confirm " + string(name), nil
 			},
-			DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+			DeniedResult: func(context.Context, *ToolCall) (any, error) {
 				return map[string]any{"approved": false}, nil
 			},
 		}
@@ -328,7 +369,7 @@ func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
 	)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
-		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"ok": true},
 			}, nil
@@ -341,9 +382,9 @@ func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
 	base := &planner.PlanInput{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: first.Name, Payload: rawjson.Message(`{}`)},
-		{Name: second.Name, Payload: rawjson.Message(`{}`)},
+	initial := &PlanResult{ToolCalls: []ToolCall{
+		{ToolCallID: "first-call", Name: first.Name, Payload: rawjson.Message(`{}`)},
+		{ToolCallID: "second-call", Name: second.Name, Payload: rawjson.Message(`{}`)},
 	}}
 
 	out, err := rt.runLoop(
@@ -372,10 +413,10 @@ func TestImmediateErrorCompletesUnenteredConfirmation(t *testing.T) {
 		WithLogger(telemetry.NoopLogger{}),
 		WithToolConfirmation(&ToolConfirmationConfig{Confirm: map[tools.Ident]*ToolConfirmation{
 			confirmed.Name: {
-				Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+				Prompt: func(context.Context, *ToolCall) (string, error) {
 					return "Confirm update", nil
 				},
-				DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+				DeniedResult: func(context.Context, *ToolCall) (any, error) {
 					return map[string]any{"approved": false}, nil
 				},
 			},
@@ -384,7 +425,7 @@ func TestImmediateErrorCompletesUnenteredConfirmation(t *testing.T) {
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name:   "svc",
 		Inline: true,
-		Execute: func(_ context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+		Execute: func(_ context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 			return nil, fmt.Errorf("inline tool %q failed", call.Name)
 		},
 		Specs: []tools.ToolSpec{immediate, confirmed},
@@ -395,9 +436,9 @@ func TestImmediateErrorCompletesUnenteredConfirmation(t *testing.T) {
 	base := &planner.PlanInput{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: immediate.Name, Payload: rawjson.Message(`{}`)},
-		{Name: confirmed.Name, Payload: rawjson.Message(`{}`)},
+	initial := &PlanResult{ToolCalls: []ToolCall{
+		{ToolCallID: "immediate-call", Name: immediate.Name, Payload: rawjson.Message(`{}`)},
+		{ToolCallID: "confirmed-call", Name: confirmed.Name, Payload: rawjson.Message(`{}`)},
 	}}
 
 	out, err := rt.runLoop(
@@ -428,10 +469,10 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 		WithToolConfirmation(&ToolConfirmationConfig{
 			Confirm: map[tools.Ident]*ToolConfirmation{
 				confirm.Name: {
-					Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+					Prompt: func(context.Context, *ToolCall) (string, error) {
 						return "Confirm svc.confirm", nil
 					},
-					DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+					DeniedResult: func(context.Context, *ToolCall) (any, error) {
 						return map[string]any{"approved": false}, nil
 					},
 				},
@@ -440,7 +481,7 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 	)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				ToolCallID: call.ToolCallID,
@@ -474,7 +515,7 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 		asyncResult: ToolOutput{
 			Payload: rawjson.Message(`{"name":"ok"}`),
 		},
-		planResult: &planner.PlanResult{
+		planResult: &PlanResult{
 			FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{
 					Role:  model.ConversationRoleAssistant,
@@ -486,10 +527,10 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 		hookRuntime:   rt,
 	}
 
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{
-			{Name: confirm.Name, Payload: rawjson.Message(`{}`)},
-			{Name: lookup.Name, Payload: rawjson.Message(`{}`)},
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{
+			{ToolCallID: "confirm-call", Name: confirm.Name, Payload: rawjson.Message(`{}`)},
+			{ToolCallID: "lookup-call", Name: lookup.Name, Payload: rawjson.Message(`{}`)},
 		},
 	}
 

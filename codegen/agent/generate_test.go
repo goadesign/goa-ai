@@ -75,3 +75,16 @@ func TestRegistryTemplateValidatesExecutorsBeforeRegistration(t *testing.T) {
 	assert.Contains(t, registry, "ResultMaterializer associates a result materializer")
 	assert.NotContains(t, registry, "no executor registered for toolset")
 }
+
+func TestTypedCallHelperTemplatesRequireExplicitIDs(t *testing.T) {
+	for _, source := range []string{
+		agentsTemplates.Read(agentToolsFileT),
+		agentsTemplates.Read(usedToolsFileT),
+	} {
+		assert.Contains(t, source, "toolCallID string, args *")
+		assert.Contains(t, source, `if toolCallID == ""`)
+		assert.Contains(t, source, "ToolCallID: toolCallID")
+		assert.NotContains(t, source, "CallOption")
+		assert.NotContains(t, source, "WithToolCallID")
+	}
+}

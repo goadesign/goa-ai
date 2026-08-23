@@ -8,13 +8,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+const maxTokenUsageModelBytes = 512
+
 // ValidateResponse verifies a completed model response is canonical and safe
 // for transcript replay.
 func ValidateResponse(response *Response) error {
+	if err := preflightResponse(response, &dynamicValueWalk{}, dynamicCloneCanonical); err != nil {
+		return err
+	}
+	return validateCanonicalResponse(response)
+}
+
+// validateCanonicalResponse checks a response that has already passed complete
+// allocation preflight.
+func validateCanonicalResponse(response *Response) error {
 	if response == nil {
 		return errors.New("model: response is nil")
 	}
@@ -61,6 +73,15 @@ func ValidateResponse(response *Response) error {
 // ValidateChunk verifies one model presentation event follows the canonical
 // union contract.
 func ValidateChunk(chunk Chunk) error {
+	if err := preflightChunk(chunk, &dynamicValueWalk{}); err != nil {
+		return err
+	}
+	return validateCanonicalChunk(chunk)
+}
+
+// validateCanonicalChunk checks one chunk already charged to a unary or
+// stream-wide preflight budget.
+func validateCanonicalChunk(chunk Chunk) error {
 	switch actual := chunk.(type) {
 	case TextChunk:
 		return validateChunkMessage(&actual.Message, false)
@@ -113,7 +134,7 @@ func validateResponseMessage(message *Message) error {
 	if len(message.Parts) == 0 {
 		return errors.New("assistant response message has no parts")
 	}
-	if _, err := cloneMetadata(message.Meta); err != nil {
+	if err := validateCanonicalDynamicValue(reflect.ValueOf(message.Meta)); err != nil {
 		return fmt.Errorf("message metadata: %w", err)
 	}
 	if _, err := MarshalMetadata(message.Meta); err != nil {
@@ -251,6 +272,9 @@ func validateTokenUsage(usage TokenUsage) error {
 	if usage.InputTokens < 0 || usage.OutputTokens < 0 || usage.TotalTokens < 0 ||
 		usage.CacheReadTokens < 0 || usage.CacheWriteTokens < 0 {
 		return errors.New("model: token usage cannot be negative")
+	}
+	if len(usage.Model) > maxTokenUsageModelBytes {
+		return fmt.Errorf("model: token usage model exceeds %d bytes", maxTokenUsageModelBytes)
 	}
 	switch usage.ModelClass {
 	case "", ModelClassDefault, ModelClassHighReasoning, ModelClassSmall:

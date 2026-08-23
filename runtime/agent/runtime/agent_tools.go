@@ -139,7 +139,7 @@ type (
 
 	// AgentToolValidationInput captures the data available to PreChildValidator.
 	AgentToolValidationInput struct {
-		Call      *planner.ToolRequest
+		Call      *ToolCall
 		Payload   any
 		Messages  []*model.Message
 		ParentRun *run.Context
@@ -326,8 +326,8 @@ func PayloadToString(payload any) (string, error) {
 // registrations. It converts the tool payload to messages (respecting per-tool
 // prompts), constructs a nested run context from the current tool call, starts
 // the provider agent as a child workflow, and adapts the result to a ToolResult.
-func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Context, *planner.ToolRequest) (*ToolExecutionResult, error) {
-	return func(ctx context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
+	return func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 		wfCtx := engine.WorkflowContextFromContext(ctx)
 		if wfCtx == nil {
 			return nil, fmt.Errorf("workflow context not found")
@@ -381,7 +381,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 	}
 }
 
-func (r *Runtime) agentToolRequestFailureResult(call planner.ToolRequest, err error) (*planner.ToolResult, error) {
+func (r *Runtime) agentToolRequestFailureResult(call ToolCall, err error) (*planner.ToolResult, error) {
 	spec, ok := r.toolSpec(call.Name)
 	if !ok {
 		return nil, fmt.Errorf("agent tool %s requires a registered ToolSpec", call.Name)
@@ -410,7 +410,7 @@ func attachRunLink(result *planner.ToolResult, handle *run.Handle) {
 // buildAgentChildRequest constructs the nested agent messages and run context for an
 // agent-as-tool invocation based on the tool call and configuration. It decodes the
 // payload for prompt/template rendering and records canonical JSON args for the child.
-func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConfig, call *planner.ToolRequest, messages []*model.Message, parentRun *run.Context) ([]*model.Message, run.Context, error) {
+func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConfig, call *ToolCall, messages []*model.Message, parentRun *run.Context) ([]*model.Message, run.Context, error) {
 	var zeroCtx run.Context
 
 	// Decode payload for prompt/template rendering. Prefer tool codecs when
@@ -501,7 +501,7 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 	// Preserve the canonical payload bytes as child tool args.
 	//
 	// Contract:
-	//   - planner.ToolRequest.Payload is already canonical JSON at this boundary.
+	//   - ToolCall.Payload is already canonical JSON at this boundary.
 	//   - Child run ToolArgs must be exactly the parent payload bytes.
 	//   - Re-encoding through payload codecs here is invalid because payload codecs
 	//     encode typed values, while this boundary carries canonical raw JSON.
@@ -513,7 +513,7 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 }
 
 // renderAgentToolPrompt resolves and renders a configured prompt spec for one tool call.
-func (r *Runtime) renderAgentToolPrompt(ctx context.Context, promptID prompt.Ident, call *planner.ToolRequest, payload any) (string, error) {
+func (r *Runtime) renderAgentToolPrompt(ctx context.Context, promptID prompt.Ident, call *ToolCall, payload any) (string, error) {
 	if promptID == "" {
 		return "", errors.New("prompt id is required")
 	}
@@ -589,7 +589,7 @@ func (r *Runtime) buildPromptTemplateData(ctx context.Context, toolName tools.Id
 //     planner.ToolResult shape.
 //
 // In all cases the returned ToolResult is linked back to the child run.
-func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfig, call *planner.ToolRequest, nestedRunCtx run.Context, outPtr *RunOutput) (*planner.ToolResult, error) {
+func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfig, call *ToolCall, nestedRunCtx run.Context, outPtr *RunOutput) (*planner.ToolResult, error) {
 	handle := &run.Handle{
 		RunID:            nestedRunCtx.RunID,
 		AgentID:          cfg.AgentID,
@@ -618,7 +618,7 @@ func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfi
 // decodeAgentChildFinalToolResult decodes the workflow-safe final tool-result
 // envelope emitted by a nested child run into the parent planner.ToolResult
 // shape.
-func (r *Runtime) decodeAgentChildFinalToolResult(ctx context.Context, call *planner.ToolRequest, event *api.ToolEvent) (*planner.ToolResult, error) {
+func (r *Runtime) decodeAgentChildFinalToolResult(ctx context.Context, call *ToolCall, event *api.ToolEvent) (*planner.ToolResult, error) {
 	if call == nil {
 		return nil, errors.New("agent-tool final result: tool call is required")
 	}

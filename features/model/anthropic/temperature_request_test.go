@@ -29,7 +29,7 @@ func TestPrepareRequestOmitsTemperatureForUnsupportedModels(t *testing.T) {
 	}
 	for _, modelID := range unsupported {
 		t.Run(modelID, func(t *testing.T) {
-			cl := &Client{
+			cl := &provider{
 				defaultModel: modelID,
 				maxTok:       4096,
 			}
@@ -59,7 +59,7 @@ func TestPrepareRequestKeepsTemperatureForSupportedModels(t *testing.T) {
 	}
 	for _, modelID := range supported {
 		t.Run(modelID, func(t *testing.T) {
-			cl := &Client{
+			cl := &provider{
 				defaultModel: modelID,
 				maxTok:       4096,
 			}
@@ -85,7 +85,7 @@ func TestPrepareRequestKeepsTemperatureForSupportedModels(t *testing.T) {
 func TestPrepareRequestOmitsZeroTemperatureRegardlessOfModel(t *testing.T) {
 	for _, modelID := range []string{"claude-opus-4-6", "claude-sonnet-5"} {
 		t.Run(modelID, func(t *testing.T) {
-			cl := &Client{
+			cl := &provider{
 				defaultModel: modelID,
 				maxTok:       4096,
 			}

@@ -15,6 +15,10 @@ var (
 	// PublicErrorInternal is emitted when a run fails for an unclassified reason.
 	PublicErrorInternal = "The request failed. Please retry."
 
+	// PublicErrorOutputContract is shown when completed model or planner output
+	// does not follow its required rules.
+	PublicErrorOutputContract = "The AI response did not meet the required response rules."
+
 	// PublicErrorProviderRateLimited is emitted when the model provider is throttling requests.
 	PublicErrorProviderRateLimited = "The AI provider is rate-limiting requests. Please wait a moment and retry."
 

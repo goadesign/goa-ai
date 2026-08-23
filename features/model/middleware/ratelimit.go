@@ -1,5 +1,6 @@
-// Package middleware provides reusable model.Client middlewares such as
-// adaptive rate limiting.
+// Package middleware provides model.Client middleware such as adaptive rate
+// limiting. Middleware runs around the raw provider beneath the opaque client,
+// then model.NewClient applies final output validation once.
 package middleware
 
 import (
@@ -40,9 +41,14 @@ type (
 		onProbe   func(newTPM float64)
 	}
 
-	limitedClient struct {
-		next    model.Client
+	limitedProvider struct {
+		next    model.Provider
 		limiter *AdaptiveRateLimiter
+	}
+
+	limitedCountingProvider struct {
+		*limitedProvider
+		counter model.TokenCounter
 	}
 
 	// clusterMap is the subset of rmap.Map used by the cluster-aware limiter.
@@ -105,47 +111,61 @@ func newAdaptiveRateLimiter(initialTPM, maxTPM float64) *AdaptiveRateLimiter {
 }
 
 // Middleware returns a model.Client middleware that enforces the adaptive
-// tokens-per-minute limit for both Complete and Stream calls.
-func (l *AdaptiveRateLimiter) Middleware() func(model.Client) model.Client {
-	return func(next model.Client) model.Client {
-		if next == nil {
-			return nil
-		}
-		return &limitedClient{
-			next:    next,
-			limiter: l,
-		}
+// tokens-per-minute limit for both Complete and Stream calls. The returned
+// client retains the input client's optional token-counting capability.
+func (l *AdaptiveRateLimiter) Middleware() func(model.Client) (model.Client, error) {
+	return func(next model.Client) (model.Client, error) {
+		return model.WrapClient(next, func(raw model.Provider) model.Provider {
+			limited := &limitedProvider{
+				next:    raw,
+				limiter: l,
+			}
+			counter, ok := raw.(model.TokenCounter)
+			if !ok {
+				return limited
+			}
+			return &limitedCountingProvider{
+				limitedProvider: limited,
+				counter:         counter,
+			}
+		})
 	}
 }
 
 // Complete enforces the limiter before delegating to the underlying client.
-func (c *limitedClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+func (c *limitedProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
 	if err := c.limiter.wait(ctx, req); err != nil {
 		return nil, err
 	}
 	resp, err := c.next.Complete(ctx, req)
 	c.limiter.observe(err)
-	return resp, err
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // Stream enforces the limiter before delegating to the underlying client.
-func (c *limitedClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+func (c *limitedProvider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
 	if err := c.limiter.wait(ctx, req); err != nil {
 		return nil, err
 	}
 	stream, err := c.next.Stream(ctx, req)
 	c.limiter.observe(err)
-	return stream, err
+	if err != nil {
+		if stream != nil {
+			err = errors.Join(err, stream.Close())
+		}
+		return nil, err
+	}
+	return stream, nil
 }
 
 // CountTokens preserves the optional token-counting capability through the
 // middleware chain. Native counters are delegated so policy code sees the same
 // contract as the wrapped provider client.
-func (c *limitedClient) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
-	if counter, ok := c.next.(model.TokenCounter); ok {
-		return counter.CountTokens(ctx, req)
-	}
-	return model.TokenCount{}, errors.New("model middleware: wrapped client does not support token counting")
+func (c *limitedCountingProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	return c.counter.CountTokens(ctx, req)
 }
 
 func (l *AdaptiveRateLimiter) wait(ctx context.Context, req *model.Request) error {

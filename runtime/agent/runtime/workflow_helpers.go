@@ -25,8 +25,8 @@ import (
 //   - Exact tool-name matches take precedence over prefix matches.
 //   - Among prefix matches, the longest prefix wins.
 //   - Group ordering follows first appearance in the allowed slice.
-func (r *Runtime) groupToolCallsByTimeout(allowed []planner.ToolRequest, input *RunInput, defaultTimeout time.Duration) ([][]planner.ToolRequest, []time.Duration) {
-	var grouped [][]planner.ToolRequest
+func (r *Runtime) groupToolCallsByTimeout(allowed []ToolCall, input *RunInput, defaultTimeout time.Duration) ([][]ToolCall, []time.Duration) {
+	var grouped [][]ToolCall
 	var timeouts []time.Duration
 	if input != nil && input.Policy != nil && len(input.Policy.PerToolTimeout) > 0 {
 		type timeoutRule struct {
@@ -82,7 +82,7 @@ func (r *Runtime) groupToolCallsByTimeout(allowed []planner.ToolRequest, input *
 			grouped[i] = append(grouped[i], call)
 		}
 	} else {
-		grouped = [][]planner.ToolRequest{allowed}
+		grouped = [][]ToolCall{allowed}
 		timeouts = []time.Duration{defaultTimeout}
 	}
 	return grouped, timeouts
@@ -98,7 +98,7 @@ func (r *Runtime) executeGroupedToolCalls(
 	expectedChildren int,
 	parentTracker *childTracker,
 	finishBy time.Time,
-	grouped [][]planner.ToolRequest,
+	grouped [][]ToolCall,
 	timeouts []time.Duration,
 	toolOpts engine.ActivityOptions,
 ) ([]*ToolExecutionResult, bool, error) {
@@ -251,14 +251,14 @@ func validateStepToolRecord(context string, record stepToolRecord) error {
 
 // toolResultRequiresResume reports whether an executed result requires another
 // planner turn.
-func (r *Runtime) toolResultRequiresResume(call planner.ToolRequest, result *planner.ToolResult) bool {
+func (r *Runtime) toolResultRequiresResume(call ToolCall, result *planner.ToolResult) bool {
 	if !r.isBookkeeping(call.Name) {
 		return true
 	}
 	return result != nil && result.Failure != nil
 }
 
-func (r *Runtime) toolResultContent(call *planner.ToolRequest, tr *planner.ToolResult) (any, error) {
+func (r *Runtime) toolResultContent(call *ToolCall, tr *planner.ToolResult) (any, error) {
 	if tr == nil {
 		return nil, nil
 	}

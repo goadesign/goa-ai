@@ -16,13 +16,13 @@ import (
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
-func appendUserToolResultsForTest(t *testing.T, rt *Runtime, agentID agent.Ident, base *planner.PlanInput, calls []planner.ToolRequest, results []*planner.ToolResult) {
+func appendUserToolResultsForTest(t *testing.T, rt *Runtime, agentID agent.Ident, base *planner.PlanInput, calls []ToolCall, results []*planner.ToolResult) {
 	t.Helper()
 	records := stepToolRecordsForTest(t, calls, results)
 	require.NoError(t, rt.appendUserToolRecordResults(t.Context(), agentID, base, records, ""))
 }
 
-func stepToolRecordsForTest(t *testing.T, calls []planner.ToolRequest, results []*planner.ToolResult) []stepToolRecord {
+func stepToolRecordsForTest(t *testing.T, calls []ToolCall, results []*planner.ToolResult) []stepToolRecord {
 	t.Helper()
 	records, err := stepToolRecordsFromCallsAndResults("test step tool records", calls, results)
 	require.NoError(t, err)
@@ -31,7 +31,7 @@ func stepToolRecordsForTest(t *testing.T, calls []planner.ToolRequest, results [
 
 // stepToolRecordsFromCallsAndResults pairs test fixtures by canonical tool-call
 // identity so tests can exercise runtime record consumers directly.
-func stepToolRecordsFromCallsAndResults(context string, calls []planner.ToolRequest, results []*planner.ToolResult) ([]stepToolRecord, error) {
+func stepToolRecordsFromCallsAndResults(context string, calls []ToolCall, results []*planner.ToolResult) ([]stepToolRecord, error) {
 	if len(calls) == 0 && len(results) == 0 {
 		return nil, nil
 	}
@@ -74,7 +74,7 @@ func stepToolRecordsFromCallsAndResults(context string, calls []planner.ToolRequ
 }
 
 func TestStepToolRecordsFromExecutionsRestoresCanonicalCallOrder(t *testing.T) {
-	calls := []planner.ToolRequest{
+	calls := []ToolCall{
 		{Name: "svc.first", ToolCallID: "call-1"},
 		{Name: "svc.second", ToolCallID: "call-2"},
 		{Name: "svc.third", ToolCallID: "call-3"},
@@ -115,7 +115,7 @@ func TestCommitSelectedModelResponsePreservesCanonicalParts(t *testing.T) {
 		agentID,
 		base,
 		"turn-1",
-		&planner.PlanResult{},
+		&PlanResult{},
 		transcript,
 	))
 
@@ -126,7 +126,7 @@ func TestCommitSelectedModelResponseBuildsPlannerAuthoredModelIdentity(t *testin
 	rt := New()
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
-	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+	result := &PlanResult{ToolCalls: []ToolCall{{
 		Name:         "atlas.read.get_time_series",
 		Payload:      rawjson.Message(`{"mode":"chart"}`),
 		ModelName:    "fetch_chart_signal_series",
@@ -149,7 +149,7 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       tools.Ident("svc.commands.adjust_setpoint"),
 		ToolCallID: "tc-1",
 	}
@@ -159,7 +159,7 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 		Failure:    testToolFailure(planner.FailureDomainRejection, planner.RecoveryFinish, "access denied: missing controlleddevices.write privilege"),
 	}
 
-	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
+	appendUserToolResultsForTest(t, rt, agentID, base, []ToolCall{call}, []*planner.ToolResult{tr})
 
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
@@ -184,7 +184,7 @@ func TestAppendUserToolResults_DecodesSuccessfulResultContent(t *testing.T) {
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       tools.Ident("svc.commands.adjust_setpoint"),
 		ToolCallID: "tc-1",
 	}
@@ -196,7 +196,7 @@ func TestAppendUserToolResults_DecodesSuccessfulResultContent(t *testing.T) {
 		},
 	}
 
-	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
+	appendUserToolResultsForTest(t, rt, agentID, base, []ToolCall{call}, []*planner.ToolResult{tr})
 
 	require.Len(t, base.Messages, 1)
 	part, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
@@ -218,7 +218,7 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 		},
 	})
 	agentID := agent.Ident("agent-1")
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       tools.Ident("svc.commands.adjust_setpoint"),
 		ToolCallID: "tc-1",
 	}
@@ -261,7 +261,7 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 
-			appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tc.tr})
+			appendUserToolResultsForTest(t, rt, agentID, base, []ToolCall{call}, []*planner.ToolResult{tc.tr})
 			require.Len(t, base.Messages, 1)
 
 			livePart, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
@@ -304,7 +304,7 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       tools.Ident("svc.read.list_devices"),
 		ToolCallID: "tc-1",
 	}
@@ -321,7 +321,7 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 		},
 	}
 
-	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
+	appendUserToolResultsForTest(t, rt, agentID, base, []ToolCall{call}, []*planner.ToolResult{tr})
 
 	require.Len(t, base.Messages, 2)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
@@ -338,18 +338,18 @@ func TestAppendUserToolResults_UsesContinuationActionNameInBoundsReminder(t *tes
 
 	tests := []struct {
 		name string
-		call planner.ToolRequest
+		call ToolCall
 	}{
 		{
 			name: "source page",
-			call: planner.ToolRequest{
+			call: ToolCall{
 				Name:       search.Name,
 				ToolCallID: "source-call",
 			},
 		},
 		{
 			name: "continued page",
-			call: planner.ToolRequest{
+			call: ToolCall{
 				Name:                       continuation.Name,
 				ToolCallID:                 "page-call",
 				ContinuationRootToolCallID: "source-call",
@@ -379,7 +379,7 @@ func TestAppendUserToolResults_UsesContinuationActionNameInBoundsReminder(t *tes
 				rt,
 				"agent-1",
 				base,
-				[]planner.ToolRequest{test.call},
+				[]ToolCall{test.call},
 				[]*planner.ToolResult{result},
 			)
 
@@ -397,7 +397,7 @@ func TestAppendUserToolResults_UsesRefinementWithoutContinuationCursor(t *testin
 	rt := New()
 	seedTestToolSpecs(rt, search, continuation)
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       search.Name,
 		ToolCallID: "source-call",
 	}
@@ -417,7 +417,7 @@ func TestAppendUserToolResults_UsesRefinementWithoutContinuationCursor(t *testin
 		rt,
 		"agent-1",
 		base,
-		[]planner.ToolRequest{call},
+		[]ToolCall{call},
 		[]*planner.ToolResult{result},
 	)
 
@@ -432,7 +432,7 @@ func TestRecoveryReminderIsEphemeralPlannerInput(t *testing.T) {
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       tools.Ident("svc.read.aggregate"),
 		ToolCallID: "tc-1",
 	}
@@ -450,7 +450,7 @@ func TestRecoveryReminderIsEphemeralPlannerInput(t *testing.T) {
 		},
 	}
 
-	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
+	appendUserToolResultsForTest(t, rt, agentID, base, []ToolCall{call}, []*planner.ToolResult{tr})
 
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
@@ -480,7 +480,7 @@ func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
-	calls := []planner.ToolRequest{
+	calls := []ToolCall{
 		{Name: "svc.tools.read", ToolCallID: "call-1"},
 		{Name: "tasks.progress.set_step_status", ToolCallID: "call-2"},
 	}
@@ -518,7 +518,7 @@ func TestRecoveryRemindersDescribeSelectedTransition(t *testing.T) {
 		newAnyJSONSpec("svc.tools.finish", "svc.tools"),
 	)
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
-	calls := []planner.ToolRequest{
+	calls := []ToolCall{
 		{Name: "svc.tools.correct", ToolCallID: "call-1", Payload: rawjson.Message(`{"bad":true}`)},
 		{Name: "svc.tools.finish", ToolCallID: "call-2", Payload: rawjson.Message(`{}`)},
 	}
@@ -566,7 +566,7 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       "tasks.progress.complete",
 		ToolCallID: "call-1",
 		Payload:    rawjson.Message(`{"title":"Final brief"}`),
@@ -582,7 +582,7 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 		agentID,
 		base,
 		"",
-		&planner.PlanResult{ToolCalls: []planner.ToolRequest{call}},
+		&PlanResult{ToolCalls: []ToolCall{call}},
 		[]*model.Message{{
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{model.ToolUsePart{
@@ -593,7 +593,7 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 			}},
 		}},
 	))
-	appendUserToolResultsForTest(t, rt, agentID, base, []planner.ToolRequest{call}, []*planner.ToolResult{tr})
+	appendUserToolResultsForTest(t, rt, agentID, base, []ToolCall{call}, []*planner.ToolResult{tr})
 
 	require.Len(t, base.Messages, 2)
 	require.Equal(t, model.ConversationRoleAssistant, base.Messages[0].Role)

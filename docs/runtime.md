@@ -155,12 +155,13 @@ DSL and regenerate.
 
 `goa gen` emits a service-owned package at `gen/<service>/completions` with:
 
-- result schemas and typed result/union types
-- canonical JSON for an authored root `Example(...)`, when present
-- generated JSON codecs and validation helpers
-- typed `completion.Spec` values
-- generated `Complete<Name>(ctx, client, req)` helpers
-- generated `StreamComplete<Name>(ctx, client, req)` and `Decode<Name>Chunk(chunk)` helpers
+- typed result and union types
+- private specs containing each result schema and generated codec
+- a narrow `<Name>Example()` accessor that returns an immutable copy of
+  canonical JSON when the result has an authored root `Example(...)`
+- public `Complete<Name>(ctx, client, req)` wrappers that own unary decoding
+- public typed `StreamComplete<Name>(ctx, client, req)` wrappers that own
+  streaming validation and decoding
 
 Services may declare completions without declaring any `Agent(...)`. Agent
 quickstart/example scaffolding is emitted only for services that actually own
@@ -184,18 +185,33 @@ if err != nil {
 fmt.Println(resp.Value.Name)
 ```
 
-Unary completion is one typed transaction with at most two model calls. The
-first response is decoded with the generated codec. If its JSON violates the
-completion contract, the helper appends that exact assistant response and one
-correction message containing the codec error, generated field issues and
-descriptions, and the authored example when present. The corrected response is
-decoded once; another invalid value is terminal. Provider errors and malformed
-response envelopes are returned immediately rather than retried.
-`completion.Response.Attempts` contains each model response in invocation order.
-It therefore has one entry for an immediately valid completion and two entries
-for a corrected completion, preserving the rejected output and both
-per-invocation token-usage records. When an error occurs after a model response
-arrives, the helper returns that response record alongside the error.
+Every low-level `model.StructuredOutput` must also provide a nonempty `Name`.
+The shared request boundary rejects a missing name before any provider call;
+generated completion helpers derive the name from the validated completion DSL.
+
+Unary completion makes exactly one model call. The response is decoded with the
+generated codec. If its JSON violates the completion contract, the helper
+returns a non-retryable `planner.OutputContractError` and does not ask the model
+again. Provider errors and malformed response envelopes are also returned
+immediately. On success, `completion.Response.ModelResponse` contains the exact
+model response and its token usage. On failure, the response is nil, matching
+the `model.Client` contract.
+
+When upgrading existing completion callers:
+
+- replace `completion.Complete(ctx, client, req, completions.Spec<Name>)` with
+  `completions.Complete<Name>(ctx, client, req)`;
+- replace `completion.Stream(ctx, client, req, completions.Spec<Name>)` with
+  `completions.StreamComplete<Name>(ctx, client, req)`;
+- keep reading the unary typed value from `Response.Value`, and replace
+  `Response.Attempts[0]` with `Response.ModelResponse`;
+- replace generated `Decode<Name>` and `Decode<Name>Chunk` calls with the
+  generated unary or streaming wrapper; and
+- use `<Name>Example()` only when application code needs the authored example.
+
+The generated codec and schema no longer have a public accessor. Invalid output
+returns a nil unary response because no accepted typed completion exists. The
+wire format is unchanged.
 
 Only root examples explicitly authored with Goa `Example(...)` are shown to
 models. Codegen emits the annotated schema, the schema without its root example,
@@ -203,8 +219,9 @@ and standalone canonical example JSON. Adapters use the provider-native
 structured-output example field when one exists; they never promote synthesized
 Goa examples.
 
-Streaming completions stay on the raw `model.Streamer` surface and decode the
-final canonical `completion` chunk only:
+Streaming completions return a typed `completion.Streamer[T]`. Preview chunks
+remain available through `Recv`, while `Value` stays unavailable until the
+provider stream ends and its final response matches the final completion chunk:
 
 ```go
 stream, err := taskcompletion.StreamCompleteDraftFromTranscript(ctx, modelClient, &model.Request{
@@ -226,14 +243,14 @@ for {
     if err != nil {
         panic(err)
     }
-    value, ok, err := taskcompletion.DecodeDraftFromTranscriptChunk(chunk)
-    if err != nil {
-        panic(err)
-    }
-    if ok {
-        fmt.Println(value.Name)
-    }
+    // Use preview completion_delta chunks here when useful.
+    _ = chunk
 }
+value, ok := stream.Value()
+if !ok {
+    panic("completion stream ended without a typed value")
+}
+fmt.Println(value.Name)
 ```
 
 Typed completion helpers are intentionally strict:
@@ -242,13 +259,48 @@ Typed completion helpers are intentionally strict:
 - Completion names are validated at the DSL boundary: 1-64 ASCII characters,
   letters/digits/`_`/`-` only, and must start with a letter or digit.
 - Unary and streaming helpers reject tool-enabled requests and caller-supplied `StructuredOutput`.
-- Unary helpers make exactly one correction attempt after a generated codec rejects model-authored JSON.
-- Streaming providers may emit `completion_delta*` preview fragments and emit exactly one canonical `completion` chunk, or reject the request explicitly.
-- Streaming helpers never restart after exposing preview chunks; an invalid final payload is terminal.
-- `Decode<Name>Chunk` ignores preview chunks and decodes only the final `completion`.
-- Completion streams stay on the direct `model.Streamer` path; do not route them through planner streaming helpers, which are for assistant transcript text/tool execution events.
+- Unary helpers make one provider request. A generated-codec rejection returns a
+  non-retryable `planner.OutputContractError` without another model request.
+- Streaming providers may emit `completion_delta*` preview fragments and emit exactly one final `completion` chunk, or reject the request explicitly.
+- Streaming helpers hold the final value until the stream ends normally and
+  the provider's complete response contains the same value. They never restart
+  after exposing previews; an invalid stream returns the same non-retryable
+  output-contract error without exposing the final value.
+- `Value` becomes available only after `Recv` reaches and validates the final
+  completion; there is no separate decoder that can accept an unchecked chunk.
+- Completion streams use their generated typed wrapper directly; do not route
+  them through planner streaming helpers, which are for assistant transcript
+  text and tool execution events.
 - Providers that do not implement structured output surface `model.ErrStructuredOutputUnsupported`.
 - Generated schemas are canonical and provider-neutral; provider adapters may normalize them to a supported subset, but must fail explicitly when they cannot preserve the declared contract.
+
+### Model output bounds and canonical values
+
+Every unary model response is checked before the runtime copies, fingerprints,
+or decodes it. Model-controlled strings, raw JSON, binary data, citation source
+content, metadata keys and values, and tool-result content share one limit of
+16 MiB and 100,000 visited values. Each nested metadata or tool-result value may
+be at most 64 levels deep. Collections are checked before the runtime allocates
+their copies.
+
+A stream applies the same limits to the cumulative chunks and to its complete
+response. The complete response is also bounded independently. Before copying
+it, reconciliation exempts only text, citations, reasoning, tool calls, usage,
+and stop data that exactly repeat accepted chunks. Final-response wrappers,
+metadata, and any new or mismatched data consume the remaining shared budget.
+Internal fingerprints, ownership copies, observer copies, and planner text
+accumulation do not create additional budget charges. A stream that exceeds
+either limit fails before growing chunk accumulators or copying its complete
+response.
+
+Canonical metadata and tool-result values may contain nil, booleans, finite
+numbers, valid UTF-8 strings, byte slices, arrays, slices, and maps with valid
+UTF-8 string keys. Structs and pointers are not canonical values. A bounded
+struct may be retained only inside rejected-response evidence so an observer can
+diagnose the contract failure; pointers are unsupported even there because
+their target cannot be copied safely. Reference cycles, invalid UTF-8, and
+unsupported kinds fail explicitly. The runtime never truncates, coerces,
+repairs, or silently omits model output.
 
 ---
 
@@ -288,7 +340,14 @@ and durable recovery rebuilds that transcript from runlog
 persist or transport that map should use `model.MarshalMetadata` and
 `model.UnmarshalMetadata`: metadata is one JSON object, decoded numbers remain
 `json.Number`, trailing data and non-object roots are rejected, and nil or an
-empty object canonicalizes to nil.
+empty object canonicalizes to nil. Before a response reaches planner code,
+copying and fingerprinting reject metadata with reference cycles, more than 64
+nested values, or more than 100,000 visited values in one metadata object or
+tool-result value. Strings, byte slices, and map keys in one such value may
+total at most 16 MiB. Accepted metadata and tool-result values contain nil,
+booleans, finite numbers, strings, string-keyed maps, slices, and arrays.
+Structs and pointer-shaped values are retained only as bounded rejection
+evidence and are not accepted as canonical model data.
 
 Citation replay remains provider-specific because a canonical citation must not
 be flattened into ordinary text. Bedrock reconstructs assistant
@@ -489,6 +548,13 @@ type Planner interface {
 recent tool results. Both return a `PlanResult` containing tool calls, a final
 response, or an await request.
 
+When the planner receives a reply but rejects it because the reply does not
+follow the required rules, return
+`planner.NewOutputContractError(violation)`. Temporal will not ask for the same
+reply again. Do not use `OutputContractError` for model-provider failures,
+timeouts, canceled work, or network errors; those keep their existing retry
+behavior.
+
 ### PlanInput and PlanResumeInput
 
 ```go
@@ -558,8 +624,9 @@ Workflow step boundary:
   through terminal bookkeeping tools instead of prose; the runtime admits only
   `TerminalRun()` calls (`TerminalRun()` implies bookkeeping), executes them
   inside the remaining hard-deadline window, stamps generated tool-call IDs
-  with the finalization attempt, and requires every terminal side effect in the
-  batch to complete successfully,
+  with an opaque SHA-256 digest of length-delimited run ID, turn ID, attempt,
+  batch index, and exact tool name, and requires every terminal side effect in
+  the batch to complete successfully,
 - recoverable failures supply one normal planner activity with their structured
   evidence and do not constrain this validated terminal bookkeeping path;
   caller-supplied `WithRestrictToTool` remains run-scoped and still applies,
@@ -567,19 +634,12 @@ Workflow step boundary:
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.
 
-Non-nil `LimitTerminalPlans` adds a field to the Temporal workflow input.
-Deploy this runtime with pinned Temporal Worker Deployment Versioning and route
-new workflows that use the field only after every worker in the new deployment
-runs the same code. Old strict decoders reject the field, so mixed old and new
-workers on one unversioned task queue cannot run workflows that set it.
-This version also serializes the new `CompletionTool` field whenever
-`PolicyOverrides` is present, including its empty value. Deploy every worker
-that may decode those workflow inputs before routing new workflows from this
-version to the queue. New suspensions use `goa-ai.run-suspension.v2`, which
-prevents an older worker from silently ignoring the saved completion policy.
-Workers accept only that exact checkpoint version. Complete or discard every
-version-1 suspension before upgrading; the runtime does not infer missing state
-or carry a legacy checkpoint decoder.
+`LimitTerminalPlans` and `CompletionTool` add fields to the Temporal workflow
+input. Deploy the runtime, generated workers, and callers as one coordinated
+cutover. Mixed versions are unsupported. New suspensions use
+`goa-ai.run-suspension.v2`; workers accept only that exact checkpoint version,
+so work and suspensions created by the previous release may fail after the
+cutover.
 
 Run-scoped completion tool:
 
@@ -667,10 +727,9 @@ synthesis intent; a new retry batch may request `SynthesizeAfterTools` again.
 
 The workflow selects current recovery outputs by stable call ID in
 `PlanActivityInput`. Empty recovery IDs are omitted from canonical JSON.
-Use Temporal Worker Deployment Versioning for rolling upgrades. An in-flight
-workflow remains on its compatible worker version until it completes or
-suspends; a later continuation is a new workflow and may run on the new
-version after `ValidateContinuation` accepts its checkpoint and tool schemas.
+Deploy workflow workers and generated callers as one coordinated hard cutover.
+Only the current generated and persisted shapes are supported. Ongoing
+workflows and saved suspensions may therefore fail after the cutover.
 
 Bookkeeping turn invariant:
 
@@ -702,7 +761,7 @@ type PlannerContext interface {
     Tracer() telemetry.Tracer             // Distributed tracing
     State() AgentState                    // Ephemeral per-run key-value store
     AdvertisedToolDefinitions() []*model.ToolDefinition // Runtime-filtered model-facing tools
-    ModelClient(id string) (model.Client, bool)  // Raw LLM client lookup
+    ModelClient(id string) (model.Client, bool)  // Opaque validated model client lookup
     PlannerModelClient(id string) (planner.PlannerModelClient, bool) // Planner-scoped client with selected-response event emission
     RenderPrompt(ctx context.Context, id prompt.Ident, data any) (*prompt.PromptContent, error)
     AddReminder(r reminder.Reminder)      // Register backstage guidance
@@ -728,7 +787,9 @@ adapter chooses a projection.
 
 ### PlannerEvents
 
-`PlannerEvents` emits streaming updates that the runtime captures and publishes:
+`PlannerEvents` lets planner code publish its own semantic progress. Model
+response text, thinking, tool-argument previews, and usage are recorded and
+published by the runtime; `planner.ConsumeStream` never emits events:
 
 ```go
 type PlannerEvents interface {
@@ -784,14 +845,14 @@ func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*Pl
 }
 ```
 
-This is the safest integration style because the planner-scoped client does not
-expose a raw `model.Streamer`, so it cannot be combined accidentally with
-`planner.ConsumeStream`.
+This is the safest integration style because the planner-scoped client drains
+the validated model stream and returns only the planner summary.
 
-### Option 2: ConsumeStream with Raw Client
+### Option 2: ConsumeStream with an Opaque Client
 
-When you want the raw `model.Client`, fetch it from `PlannerContext.ModelClient`
-and pair it with `planner.ConsumeStream`:
+When you want direct control over the validated stream, fetch the opaque
+`model.Client`
+from `PlannerContext.ModelClient` and pair it with `planner.ConsumeStream`:
 
 ```go
 mc, ok := input.Agent.ModelClient("bedrock")
@@ -802,27 +863,41 @@ st, err := mc.Stream(ctx, req)
 if err != nil {
     return nil, err
 }
-sum, err := planner.ConsumeStream(ctx, st, req, input.Events)
+sum, err := planner.ConsumeStream(ctx, st)
 if err != nil {
     return nil, err
 }
 ```
 
-This helper drains the stream, emits events via `PlannerEvents`, and returns a
-`StreamSummary` with accumulated text and tool calls.
+This helper only drains the stream and returns a `StreamSummary` with
+accumulated text and tool calls. The runtime journal owns later presentation
+and usage publication.
 
-Use the raw client path when you need full control over stream consumption or
-want to bypass runtime-owned event emission entirely and manage `input.Events`
-yourself.
+`ConsumeStream` accepts the `*model.ValidatedStream` returned by every public
+model client. Provider and transport adapters capture a `model.RequestContract`
+before inference and pass their internal `model.Streamer` to `ValidateStream`;
+planner code never wraps or revalidates streams.
 
 Each runtime-managed model call creates an isolated response candidate before
 planner code receives the response or stream chunk. The candidate retains its
 ordered text, thinking, and tool-argument deltas until the planner selects a
 response. Every successful stream ends its typed chunks with clean EOF and
-exposes exactly one canonical response through `Streamer.Response()`. The
+exposes exactly one canonical response through `ValidatedStream.Response()`. The
 runtime captures and validates that response before returning EOF to planner
 code, including when the provider is behind a model gateway. Incomplete
-provider content blocks are contract errors.
+provider content blocks are contract errors. A validated stream is tied to the
+model identity, structured-output contract, tool definitions, and generated
+validators copied before provider work begins. Request mutation after that
+point cannot change which output the stream accepts.
+
+Tool definitions built from a generated `tools.ToolSpec` retain that tool's
+generated payload decoder inside the process. Unary responses and final
+streamed tool-call chunks must name a tool present in the request and pass that
+decoder before planner code receives them. A definition built only with
+`model.AdvertisedToolInputFromSchema` has no generated decoder. It may describe
+a planner-owned local tool to the provider, but the model boundary checks only
+that its returned payload is valid JSON. The planner must validate the
+advertised fields and values before selecting effects.
 When `PlanResult` contains tool calls, the runtime
 matches their model-facing IDs, names, and payload bytes to exactly one
 candidate and persists only that response's assistant transcript. Mixed,
@@ -867,12 +942,13 @@ exposing a separate transcript handle.
 
 ### Tool Payload and Result Flow
 
-1. **Model emits tool call** — Provider adapters produce a streamed or final tool call with canonical JSON bytes
-2. **Planner returns `ToolRequest`** — `ToolRequest.Payload` stays as `rawjson.Message`; when a planner compiles a model-facing synthetic tool into a different executable tool, `ModelName`/`ModelPayload` preserve the provider transcript identity
-3. **Runtime decodes payload** — Uses generated codecs to validate and decode canonical JSON
-4. **Executor runs tool** — Receives typed or raw payload depending on configuration
-5. **Runtime encodes result** — Uses generated codecs and persists canonical `ToolOutput` history
-6. **Planner resumes from `ToolOutputs`** — `PlanResumeInput.ToolOutputs` is the canonical execution-history boundary for budgeted tools only
+1. **Model emits tool call** — Provider adapters produce a streamed or final tool call with canonical JSON bytes.
+2. **Model boundary checks generated payload** — The call must name a tool in the exact request. Generated tools are decoded with their generated payload codec before planner code receives the call.
+3. **Planner returns `ToolRequest`** — The planner supplies only `Name`, canonical `Payload`, and the model's `ToolCallID`.
+4. **Runtime checks and compiles the request** — The activity decodes the selected payload with the registered generated codec, correlates the call with the selected model response, and creates a runtime-owned `ToolCall` containing transcript and execution metadata.
+5. **Executor runs tool** — Receives typed or raw payload depending on configuration.
+6. **Runtime encodes result** — Uses generated codecs and persists canonical `ToolOutput` history.
+7. **Planner resumes from `ToolOutputs`** — `PlanResumeInput.ToolOutputs` is the canonical execution-history boundary for budgeted tools only.
 
 Bookkeeping tools follow the same execution and durability path, but not the
 same accounting or planner-resume path: the runtime records their
@@ -890,7 +966,7 @@ type ToolsetRegistration struct {
     Name        string                     // Qualified identifier (service.toolset)
     Description string                     // Human-readable context
     Metadata    policy.ToolMetadata        // Policy metadata
-    Execute     func(ctx, *ToolRequest) (*ToolResult, error)  // Dispatcher
+    Execute     func(ctx, *runtime.ToolCall) (*runtime.ToolExecutionResult, error) // Dispatcher
     Specs       []tools.ToolSpec           // JSON codecs and schemas
     TaskQueue   string                     // Optional queue override
     Inline      bool                       // Execute in workflow context
@@ -1403,7 +1479,7 @@ the shared Pulse wire protocol lives under `goa-ai/runtime/toolregistry`.
 ```go
 reg := runtime.ToolsetRegistration{
     Name: "myservice.helpers",
-    Execute: func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+    Execute: func(ctx context.Context, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
         // Decode payload, execute logic, return result
     },
     Specs: []tools.ToolSpec{...},
@@ -1480,7 +1556,7 @@ the labels map itself.
    - Local (in-process) execution: the generated service executor calls
      `Inject<Tool>` immediately after decoding the tool payload, before any
      `WithPayloadMapper` customization or method-payload conversion, using
-     the run's `ToolCallMeta` and `ToolRequest.Labels`.
+     the run's `ToolCallMeta` and runtime-owned `ToolCall.Labels`.
    - Registry-served (bound) tools: the generated provider (`provider.go`)
      calls the same `Inject<Tool>` function with a `nil` labels map --
      sound only because a `BindTo` tool can never declare a label-backed
@@ -1495,7 +1571,7 @@ the labels map itself.
      `Decode<Tool>` composes both in one call; decoding with the codec alone
      silently leaves injected fields at their Go zero value, because their
      wire tag is `json:"-"` and there is no "missing key" signal. `payload`
-     accepts a `planner.ToolRequest.Payload` (`rawjson.Message`) directly.
+     accepts a `runtime.ToolCall.Payload` (`rawjson.Message`) directly.
 4. Run start: `Runtime.Start`/`StartOneShot` (and their route variants)
    validate the caller-supplied `WithLabels(...)` map against the starting
    agent's aggregated `RequiredLabels` **before** scheduling any workflow or
@@ -1527,7 +1603,7 @@ out, err := client.Run(ctx, sessionID, messages,
 )
 ```
 
-`WithLabels` merges into `RunInput.Labels`, which rides `ToolRequest.Labels`
+`WithLabels` merges into `RunInput.Labels`, which the runtime copies into `ToolCall.Labels`
 unchanged across both engines (inmem and Temporal) down to every tool
 execution in the run. The same labels come back out at the end of the run:
 the terminal `RunCompletedEvent.Labels` and `run.Snapshot.Labels` carry the
@@ -1787,99 +1863,82 @@ active-time budget, and exact call/result provenance; callers cannot override
 those values. The runtime loads the suspension by predecessor run ID and checks
 the checkpoint version, public pending requests, and required tool names before routing. The receiving
 worker restores saved payloads and results through its current generated codecs;
-compatible tool evolution continues, while an incompatible saved value fails at
-that typed boundary. If the response closes a tool call created by the previous
+there is no cross-release compatibility promise, and any saved value outside
+the current contract fails at that typed boundary. If the response closes a tool call created by the previous
 workflow, the `tool_end` event belongs to the new result run and its required
 `call_run_id` identifies the run that emitted the matching `tool_start`.
 
-### Transparent Temporal Rollouts
+### Coordinated Generated-System Releases
 
-Temporal preserves a workflow's history, but a consumer deployment must ensure
-that compatible code remains available to replay it. Configure the Temporal Go
-worker passed through `temporal.WorkerOptions.Options` with Worker Deployment
-Versioning, an immutable build ID, and pinned workflow behavior:
+Generated agents, generated completion packages, runtime workers, and their
+callers use one contract and deploy as one release unit. Goa-AI does not provide
+backward compatibility, mixed-version operation, or suspension migration for
+generated runtime contracts.
 
-```go
-import (
-	runtimetemporal "goa.design/goa-ai/runtime/agent/engine/temporal"
-	temporalclient "go.temporal.io/sdk/client"
-	"go.temporal.io/sdk/worker"
-	"go.temporal.io/sdk/workflow"
-)
+For a release that changes generated or persisted runtime shapes:
 
-const releaseBuildID = "git-sha-or-image-digest"
+1. Regenerate every consumer from the same Goa-AI revision.
+2. Deploy the runtime workers, generated packages, and callers as one release.
+3. Verify every deployed component reports the same revision ready.
 
-eng, err := runtimetemporal.NewWorker(runtimetemporal.Options{
-	ClientOptions: &temporalclient.Options{
-		HostPort:  "temporal:7233",
-		Namespace: "production",
-	},
-	WorkerOptions: runtimetemporal.WorkerOptions{
-		TaskQueue: "orchestrator.chat",
-		Options: worker.Options{
-			DeploymentOptions: worker.DeploymentOptions{
-				UseVersioning: true,
-				Version: worker.WorkerDeploymentVersion{
-					DeploymentName: "assistant",
-					BuildID:        releaseBuildID,
-				},
-				DefaultVersioningBehavior: workflow.VersioningBehaviorPinned,
-			},
-		},
-	},
-})
-if err != nil {
-	panic(err)
-}
-```
+The deployment does not drain or migrate work created by the previous release.
+Ongoing workflows and saved suspensions may fail when they reach the new
+contract. Historical completed-session records remain stored unchanged; this
+release policy does not alter their persistence schema.
 
-`releaseBuildID` must identify one immutable worker binary or container image.
-Do not use a mutable tag such as `latest`, a pod name, or a value shared by
-different workflow code. See Temporal's [Worker Deployment Versioning
-guide](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning)
-for version promotion and drainage operations.
+`goa-ai.run-suspension.v2` is the only supported suspension schema. The runtime
+rejects older persisted shapes; it does not infer missing fields, migrate them,
+or provide a compatibility execution path.
 
-Release one version with this sequence:
+### Upgrade checklist for strict model-output contracts
 
-1. Start the new workers beside every retained version. Do not stop the old
-   workers.
-2. Wait for process readiness and successful Temporal worker registration.
-3. Make the new Worker Deployment Version current. New workflows can now start
-   there; existing workflows remain pinned to their starting version.
-4. If the same process also serves an API, route external requests only to the
-   current ready build. Retained pods must remain available to Temporal without
-   receiving ordinary API traffic. Splitting API and worker processes is an
-   alternative, not a Goa-AI requirement.
-5. Remove an old worker version only after Temporal reports it drained. Pod
-   termination alone is not drainage evidence.
+This release makes the model boundary reject malformed output instead of asking
+the model for a replacement. It also changes source and workflow contracts:
 
-An external-input suspension completes its workflow, so it no longer needs the
-old worker while a person is deciding. The accepted answer starts a new
-workflow on the current version. That is safe only while the current generated
-codecs and tool registrations accept the saved checkpoint. Deploy an explicit
-checkpoint migration before promotion when that contract must change.
+- `model.Client` is now package-owned and `Client.Stream` returns
+  `*model.ValidatedStream`. Replace custom `Client` implementations with
+  `model.Provider`, pass the provider to `model.NewClient`, and install
+  provider-side wrappers with `model.WrapClient`. Direct provider callers use
+  `model.NewRequestContract`; ordinary callers use the opaque client.
+- `planner.ConsumeStream` accepts that validated stream directly. Remove stream
+  wrappers and caller-side validation helpers.
+- `planner.ToolRequest` now contains only `Name`, `Payload`, and `ToolCallID`.
+  Tool executors receive `*runtime.ToolCall`, which contains runtime-assigned
+  labels and execution identifiers. Replace authored request literals and the
+  removed `CallOption` API with generated
+  `New<Tool>Call(toolCallID, args)` helpers.
+- Rate-limit middleware construction now returns `(model.Client, error)`.
+  Check and propagate the setup error instead of treating `Middleware(...)` as
+  an infallible client value.
+- Gateway `NewRemoteClient` now returns `(model.Client, error)`. Check the
+  constructor error before registering or invoking the client.
+- Provider adapters no longer expose concrete clients as the model boundary.
+  Implement `model.Provider`, construct the validated client with
+  `model.NewClient`, and install middleware with `model.WrapClient`.
+- Generated tools must use `model.ToolDefinitionFromSpec` so the generated
+  payload decoder runs before planner code sees a tool call. Caller-authored
+  schema-only tools use `model.AdvertisedToolInputFromSchema`; decoded
+  inter-process contracts use `model.ToolInputFromContract`.
+- Generated completion packages keep codec-bearing specs private. Replace
+  direct `completion.Complete` / `completion.Stream` calls that passed
+  `Spec<Name>` with generated `Complete<Name>` / `StreamComplete<Name>`
+  wrappers. Keep unary value reads on `Response.Value`, replace
+  `Response.Attempts[0]` with `Response.ModelResponse`, and use
+  `<Name>Example()` only for authored example JSON. Regenerate generated agents
+  and completion packages before compiling callers.
+- Invalid model output, invalid planner output, and a planner closing a model
+  stream before EOF end the run with `OutputContractError`. The runtime does not
+  make a correction inference or execute later tool calls. Temporal stores this
+  failure as `goa_ai.output_contract_error`; the earlier planner-specific type
+  is not decoded as a compatibility alias.
+- Planner activity results and accepted planner-event records have new Temporal
+  payload shapes. Suspension schema `goa-ai.run-suspension.v2` is required.
 
-Worker Deployment Versioning protects workflow-code replay. It does not make
-the rest of the system transparent automatically. Every service called by an
-activity must keep at least one ready endpoint throughout its replacement and
-must accept requests from retained and current workers. Database changes must
-support both releases during their overlap. A `Recreate` deployment, a Service
-with no ready endpoint, an incompatible downstream API, or an incompatible
-checkpoint can still interrupt work even when Temporal routing is correct.
-
-For a transparent release, verify all of the following before removing the old
-version:
-
-- the new worker is ready, registered, and current;
-- new workflows are assigned to its immutable build ID;
-- a workflow started before promotion completes on its original build;
-- a saved external-input request can continue as a new workflow on the current
-  build;
-- external API traffic reaches only the current ready build;
-- retained worker pods stay healthy until Temporal reports them drained;
-- downstream Services never lose all ready endpoints; and
-- no new workflow failures, container restarts, or readiness gaps appear during
-  the observation window.
+Regenerate all generated agents and completion packages, then deploy them with
+the runtime as described in [Coordinated generated-system
+releases](#coordinated-generated-system-releases). Do not overlap old and new
+generated contracts or add decoding for the replaced payload shape. No database
+migration is required.
 
 Ending a session stops future work but retains its run metadata for inspection.
 When the owning application permanently deletes the session's customer data, it
@@ -2123,7 +2182,35 @@ non-workflow code publish directly.
 | `AwaitClarification` / `AwaitExternalTools` | External-input requests |
 | `PolicyDecision` | Policy evaluation result |
 | `Usage` | Token usage report |
+| `ModelOutputRejected` | Fingerprints a model-output rejection before execution or presentation |
+| `PlannerOutputRejected` | Fingerprints a planner result rejected after model output was accepted |
 | `ChildRunLinked` | Agent-as-tool child run link |
+
+Every response or stream rejected by the model boundary attempts to publish
+this event. A planner result rejected after model calls finish does not publish
+a model-output event. A durable publication failure is fingerprinted and joined
+to the terminal `planner.OutputContractError`; it does not make inference
+retryable.
+`ModelOutputRejectedEvent.ReasonSHA256` and `ReasonSize` identify the exact local
+validation error without copying provider-controlled text into Temporal or the
+run log. `ModelResponsePresent` distinguishes a complete response from a
+chunk-level failure. `ModelResponseFingerprintVersion` identifies the stable
+encoding when `ModelResponseSHA256` is present; both are empty when no digest
+could be computed. `ModelResponseSHA256` identifies the complete response from
+the earliest-started model call that rejected output, and `ModelResponseSize`
+reports its encoded bytes. Version 1 encodes the raw complete response before
+any ownership copy and covers every `model.Response` field and closed
+`model.Part` variant, including malformed raw tool bytes that JSON cannot
+represent. Ordinary Go field reordering therefore does not change the digest;
+metadata struct fields are ordered by name, and their tags and anonymous-field
+status remain part of the identity. Empty digest and zero size with
+`ModelResponsePresent=true` mean a complete response used metadata outside the
+encodable contract; the terminal rejection is still recorded without treating
+it as a missing response. Valid numeric counts in a rejected usage chunk remain
+part of aggregate usage, while the invalid model identity is discarded. Raw
+model content is not part of the run-log contract; deployments that need it
+capture it through provider observability rather than Temporal payloads, hook
+records, or a second runtime-owned content store.
 
 ### Custom Subscribers
 
@@ -2605,8 +2692,13 @@ rl := mdlmw.NewAdaptiveRateLimiter(
     1_000_000,         // Max TPM
 )
 
-limitedClient := rl.Middleware()(rawClient)
-rt.RegisterModel("bedrock", limitedClient)
+limitedClient, err := rl.Middleware()(modelClient)
+if err != nil {
+    return err
+}
+if err := rt.RegisterModel("bedrock", limitedClient); err != nil {
+    return err
+}
 ```
 
 ---
@@ -2975,7 +3067,54 @@ and “what to retry with” is computed from structured data, not heuristics.
 
 ## Model Middleware
 
-The `features/model/middleware` package provides middleware for model clients.
+The `features/model/middleware` package wraps opaque validated model clients.
+Middleware receives a `model.Client` and returns `(model.Client, error)`;
+always handle both values. The word **raw** is reserved for `model.Provider`
+values and their unvalidated responses or streams.
+
+External packages can no longer implement `model.Client`. Migrate a custom
+client implementation into a provider, put custom wrappers below the validation
+boundary with `model.WrapClient`, and expose only the opaque client returned by
+`model.NewClient`:
+
+```go
+// Before: a custom wrapper implemented model.Client directly.
+type loggingClient struct {
+    next model.Client
+}
+
+// After: provider-side code implements model.Provider.
+type loggingProvider struct {
+    next model.Provider
+}
+
+func (p *loggingProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+    logRequest(req)
+    return p.next.Complete(ctx, req)
+}
+
+func (p *loggingProvider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+    logRequest(req)
+    return p.next.Stream(ctx, req)
+}
+
+provider := newCustomProvider()
+modelClient, err := model.NewClient(provider)
+if err != nil {
+    return err
+}
+modelClient, err = model.WrapClient(modelClient, func(next model.Provider) model.Provider {
+    return &loggingProvider{next: next}
+})
+if err != nil {
+    return err
+}
+```
+
+Code that deliberately calls a `model.Provider` directly may use
+`model.NewRequestContract` to capture and apply the immutable output contract.
+Normal planners, completions, and runtimes should receive an opaque
+`model.Client` instead.
 
 ### Adaptive Rate Limiter
 
@@ -2992,8 +3131,13 @@ rl := mdlmw.NewAdaptiveRateLimiter(
     1_000_000,         // Max TPM
 )
 
-limitedClient := rl.Middleware()(rawClient)
-rt.RegisterModel("bedrock", limitedClient)
+limitedClient, err := rl.Middleware()(modelClient)
+if err != nil {
+    return err
+}
+if err := rt.RegisterModel("bedrock", limitedClient); err != nil {
+    return err
+}
 ```
 
 The rate limiter automatically adjusts throughput based on provider responses and
@@ -3041,7 +3185,7 @@ defer cancel()
 ### Custom Tool Executor
 
 ```go
-executor := runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*planner.ToolResult, error) {
+executor := runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
     // Access explicit metadata
     log.Printf("Executing %s in run %s, session %s", call.Name, meta.RunID, meta.SessionID)
     
@@ -3051,10 +3195,10 @@ executor := runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime
         return nil, err
     }
     
-    return &planner.ToolResult{
+    return runtime.Executed(&planner.ToolResult{
         Name:   call.Name,
         Result: result,
-    }, nil
+    }), nil
 })
 ```
 
@@ -3106,8 +3250,8 @@ the request a bounded number of times before surfacing the failure.
    information and provides compile-time safety.
 
 3. **Choose one streaming path.** Use `PlannerModelClient` for runtime-owned
-   event emission, or use raw `ModelClient` with `planner.ConsumeStream` (or
-   manual draining) when you want explicit control.
+   event emission, or use `ModelClient` with `planner.ConsumeStream` (or manual
+   draining) when you want explicit control over the validated stream.
 
 4. **Set SessionID for sessionful runs.** `Run` and `Start` require a session ID
    for grouping and memory association. `OneShotRun` is explicitly sessionless.

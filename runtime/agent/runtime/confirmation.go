@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -28,11 +27,11 @@ type (
 	// a user denial for a given tool.
 	ToolConfirmation struct {
 		// Prompt returns the deterministic prompt shown to the user for this call.
-		Prompt func(ctx context.Context, call *planner.ToolRequest) (string, error)
+		Prompt func(ctx context.Context, call *ToolCall) (string, error)
 		// DeniedResult constructs a schema-compatible tool result value representing
 		// a user denial. The runtime attaches it to the original tool_call_id with
 		// Error unset.
-		DeniedResult func(ctx context.Context, call *planner.ToolRequest) (any, error)
+		DeniedResult func(ctx context.Context, call *ToolCall) (any, error)
 	}
 )
 

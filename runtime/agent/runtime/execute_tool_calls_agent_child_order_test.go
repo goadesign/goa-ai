@@ -8,7 +8,6 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
@@ -74,7 +73,7 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 		TurnID:    "turn-1",
 	}
 	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
-	calls := []planner.ToolRequest{
+	calls := []ToolCall{
 		{
 			Name:       tool1,
 			RunID:      runCtx.RunID,
@@ -175,7 +174,7 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 		TurnID:    "turn-1",
 	}
 	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
-	calls := []planner.ToolRequest{{
+	calls := []ToolCall{{
 		Name:       tool,
 		RunID:      runCtx.RunID,
 		SessionID:  runCtx.SessionID,

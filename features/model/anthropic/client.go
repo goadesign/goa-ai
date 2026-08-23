@@ -1,5 +1,5 @@
-// Package anthropic provides a model.Client implementation backed by the
-// Anthropic Claude Messages API. It translates goa-ai requests into
+// Package anthropic provides raw and validated adapters backed by the Anthropic
+// Claude Messages API. It translates goa-ai requests into
 // anthropic.Message calls using github.com/anthropics/anthropic-sdk-go and maps
 // responses (text, tools, thinking, usage) back into the generic planner
 // structures.
@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -98,8 +99,8 @@ type (
 		ThinkingBudget int64
 	}
 
-	// Client implements model.Client on top of Anthropic Claude Messages.
-	Client struct {
+	// provider translates canonical requests to Anthropic Claude Messages.
+	provider struct {
 		msg          MessagesClient
 		defaultModel string
 		highModel    string
@@ -114,23 +115,41 @@ type (
 const anthropicProviderName = "anthropic"
 
 var (
-	_ model.Client       = (*Client)(nil)
-	_ model.TokenCounter = (*Client)(nil)
+	_ model.Provider     = (*provider)(nil)
+	_ model.TokenCounter = (*provider)(nil)
 )
 
-// New builds an Anthropic-backed model client from the provided Anthropic
-// Messages client and configuration options.
-func New(msg MessagesClient, opts Options) (*Client, error) {
+// New builds a validated Anthropic-backed model client.
+func New(msg MessagesClient, opts Options) (model.Client, error) {
+	raw, err := NewProvider(msg, opts)
+	if err != nil {
+		return nil, err
+	}
+	return model.NewClient(raw)
+}
+
+// NewProvider builds the raw Anthropic provider used beneath model.NewClient.
+// Callers use it to install provider-side middleware before final validation.
+func NewProvider(msg MessagesClient, opts Options) (model.Provider, error) {
 	if msg == nil {
 		return nil, errors.New("anthropic client is required")
 	}
 	if opts.DefaultModel == "" {
 		return nil, errors.New("default model identifier is required")
 	}
+	if opts.MaxTokens < 0 {
+		return nil, errors.New("anthropic: default max tokens cannot be negative")
+	}
+	if opts.ThinkingBudget < 0 {
+		return nil, errors.New("anthropic: default thinking budget cannot be negative")
+	}
+	if err := validateAnthropicTemperature(opts.Temperature); err != nil {
+		return nil, fmt.Errorf("anthropic: default %w", err)
+	}
 	maxTokens := opts.MaxTokens
 	thinkBudget := opts.ThinkingBudget
 
-	c := &Client{
+	c := &provider{
 		msg:          msg,
 		defaultModel: opts.DefaultModel,
 		highModel:    opts.HighModel,
@@ -142,20 +161,35 @@ func New(msg MessagesClient, opts Options) (*Client, error) {
 	return c, nil
 }
 
-// NewFromAPIKey constructs a client using the default Anthropic HTTP client.
+// NewFromAPIKey constructs a validated client using the default Anthropic HTTP
+// client.
 // It reads ANTHROPIC_API_KEY and related defaults from the environment via
 // sdk.DefaultClientOptions.
-func NewFromAPIKey(apiKey, defaultModel string) (*Client, error) {
+func NewFromAPIKey(apiKey, defaultModel string) (model.Client, error) {
+	raw, err := NewProviderFromAPIKey(apiKey, defaultModel)
+	if err != nil {
+		return nil, err
+	}
+	return model.NewClient(raw)
+}
+
+// NewProviderFromAPIKey constructs a raw provider using the default Anthropic
+// HTTP client.
+func NewProviderFromAPIKey(apiKey, defaultModel string) (model.Provider, error) {
 	if apiKey == "" {
 		return nil, errors.New("api key is required")
 	}
 	ac := sdk.NewClient(option.WithAPIKey(apiKey))
-	return New(&ac.Messages, Options{DefaultModel: defaultModel})
+	return NewProvider(&ac.Messages, Options{DefaultModel: defaultModel})
 }
 
 // Complete issues a non-streaming Messages.New request and translates the
 // response into planner-friendly structures (assistant messages + tool calls).
-func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	contract, err := model.NewRequestContract(req)
+	if err != nil {
+		return nil, err
+	}
 	enc, err := c.encodeRequest(ctx, req)
 	if err != nil {
 		return nil, err
@@ -168,7 +202,13 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 	if err != nil {
 		return nil, wrapAnthropicError("complete", err)
 	}
-	return translateResponse(msg, enc.provToCanon)
+	response, err := translateResponse(msg, enc.provToCanon)
+	if err != nil {
+		usage := translateAnthropicUsage(msg, enc.model, req.ModelClass)
+		return nil, contract.RejectProviderOutput(&usage, err)
+	}
+	response.Usage = translateAnthropicUsage(msg, enc.model, req.ModelClass)
+	return response, nil
 }
 
 // CountTokens asks Anthropic to count the exact provider input built from req.
@@ -176,7 +216,7 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 // policy, so a client without a default MaxTokens counts exactly what an
 // explicit-cap completion would send. Replayed thinking is excluded per the
 // model.TokenCounter contract.
-func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+func (c *provider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
 	enc, err := c.encodeRequest(ctx, model.CountingRequest(req))
 	if err != nil {
 		return model.TokenCount{}, err
@@ -212,7 +252,11 @@ func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.Tok
 
 // Stream invokes Messages.NewStreaming and adapts incremental events into
 // model.Chunks so planners can surface partial responses.
-func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+	contract, err := model.NewRequestContract(req)
+	if err != nil {
+		return nil, err
+	}
 	enc, err := c.encodeRequest(ctx, req)
 	if err != nil {
 		return nil, err
@@ -222,10 +266,13 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 		return nil, err
 	}
 	stream := c.msg.NewStreaming(ctx, *params, enc.opts...)
-	if err := stream.Err(); err != nil {
-		return nil, wrapAnthropicError("stream", err)
+	if stream == nil {
+		return nil, errors.New("anthropic: stream is nil")
 	}
-	return newAnthropicStreamer(ctx, stream, enc.provToCanon), nil
+	if err := stream.Err(); err != nil {
+		return nil, errors.Join(wrapAnthropicError("stream", err), stream.Close())
+	}
+	return newAnthropicStreamer(ctx, stream, enc.provToCanon, enc.model, req.ModelClass, contract), nil
 }
 
 // encodeRequest builds the canonical Anthropic encoding of req: resolved
@@ -233,7 +280,7 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 // tool choice, and the request options the encoded contracts require. It
 // validates only what every call path needs; completion-only requirements
 // live in completionParams.
-func (c *Client) encodeRequest(ctx context.Context, req *model.Request) (*encodedRequest, error) {
+func (c *provider) encodeRequest(ctx context.Context, req *model.Request) (*encodedRequest, error) {
 	if len(req.Messages) == 0 {
 		return nil, errors.New("anthropic: messages are required")
 	}
@@ -282,7 +329,10 @@ func (c *Client) encodeRequest(ctx context.Context, req *model.Request) (*encode
 // positive max_tokens requirement, the default temperature (omitted for
 // models that reject the parameter), and the thinking configuration with its
 // budget validation.
-func (c *Client) completionParams(ctx context.Context, req *model.Request, enc *encodedRequest) (*sdk.MessageNewParams, error) {
+func (c *provider) completionParams(ctx context.Context, req *model.Request, enc *encodedRequest) (*sdk.MessageNewParams, error) {
+	if err := validateAnthropicTemperature(float64(req.Temperature)); err != nil {
+		return nil, fmt.Errorf("anthropic: %w", err)
+	}
 	maxTokens := c.effectiveMaxTokens(req.MaxTokens)
 	if maxTokens <= 0 {
 		return nil, errors.New("anthropic: max_tokens must be positive")
@@ -328,7 +378,7 @@ func (c *Client) completionParams(ctx context.Context, req *model.Request, enc *
 // resolveModelID decides which concrete model ID to use based on Request.Model
 // and Request.ModelClass. Request.Model takes precedence; when empty, the class
 // is mapped to the configured identifiers. Falls back to the default model.
-func (c *Client) resolveModelID(req *model.Request) string {
+func (c *provider) resolveModelID(req *model.Request) string {
 	if s := req.Model; s != "" {
 		return s
 	}
@@ -345,14 +395,23 @@ func (c *Client) resolveModelID(req *model.Request) string {
 	return c.defaultModel
 }
 
-func (c *Client) effectiveMaxTokens(requested int) int {
+// validateAnthropicTemperature enforces the Messages API sampling range before
+// request construction.
+func validateAnthropicTemperature(temperature float64) error {
+	if math.IsNaN(temperature) || math.IsInf(temperature, 0) || temperature < 0 || temperature > 1 {
+		return errors.New("temperature must be between 0 and 1")
+	}
+	return nil
+}
+
+func (c *provider) effectiveMaxTokens(requested int) int {
 	if requested > 0 {
 		return requested
 	}
 	return c.maxTok
 }
 
-func (c *Client) effectiveTemperature(requested float32) float64 {
+func (c *provider) effectiveTemperature(requested float32) float64 {
 	if requested > 0 {
 		return float64(requested)
 	}
@@ -527,16 +586,16 @@ func encodeTools(ctx context.Context, defs []*model.ToolDefinition, cacheAfterTo
 // pairs the schema without that example with input_examples; otherwise the
 // annotated schema travels alone.
 func anthropicToolInput(ctx context.Context, def *model.ToolDefinition) (sdk.ToolInputSchemaParam, []map[string]any, error) {
-	input := def.Input
-	example := input.ExampleJSON()
+	input := def.Input.Contract()
+	example := input.ExampleJSON
 	if example == nil {
-		schema, err := toolInputSchema(ctx, input.JSONSchema())
+		schema, err := toolInputSchema(ctx, input.Schema)
 		return schema, nil, err
 	}
-	if input.SchemaWithoutRootExample() == nil {
+	if input.SchemaWithoutRootExample == nil {
 		return sdk.ToolInputSchemaParam{}, nil, errors.New("example JSON requires schema without root example")
 	}
-	schema, err := toolInputSchema(ctx, input.SchemaWithoutRootExample())
+	schema, err := toolInputSchema(ctx, input.SchemaWithoutRootExample)
 	if err != nil {
 		return sdk.ToolInputSchemaParam{}, nil, err
 	}
@@ -740,12 +799,13 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 			}
 			payload := rawjson.Message(block.Input)
 			raw := block.Name
-			name := raw
-			// When the model hallucinates a tool name that was not advertised in
-			// this request, the reverse map will not contain it. Surface the tool
-			// call as-is and let the runtime return an "unknown tool" error result.
-			if canonical, ok := nameMap[raw]; ok {
-				name = canonical
+			name, ok := nameMap[raw]
+			if !ok {
+				return nil, fmt.Errorf(
+					"anthropic: response tool use block %q returned unadvertised name %q",
+					block.ID,
+					raw,
+				)
 			}
 			assistant.Parts = append(assistant.Parts, model.ToolUsePart{
 				Name:  string(tools.Ident(name)),
@@ -772,10 +832,29 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 	if resp.StopReason == "" {
 		return nil, errors.New("anthropic: response is missing its stop reason")
 	}
-	if err := model.ValidateResponse(resp); err != nil {
-		return nil, fmt.Errorf("anthropic: invalid response: %w", err)
-	}
 	return resp, nil
+}
+
+// translateAnthropicUsage extracts provider usage and resolved model identity
+// before content translation so malformed content cannot erase valid billing
+// evidence.
+func translateAnthropicUsage(msg *sdk.Message, modelID string, modelClass model.ModelClass) model.TokenUsage {
+	if msg == nil {
+		return model.TokenUsage{
+			Model:      modelID,
+			ModelClass: modelClass,
+		}
+	}
+	usage := msg.Usage
+	return model.TokenUsage{
+		Model:            modelID,
+		ModelClass:       modelClass,
+		InputTokens:      int(usage.InputTokens),
+		OutputTokens:     int(usage.OutputTokens),
+		TotalTokens:      int(usage.InputTokens + usage.OutputTokens),
+		CacheReadTokens:  int(usage.CacheReadInputTokens),
+		CacheWriteTokens: int(usage.CacheCreationInputTokens),
+	}
 }
 
 // translateCitations preserves every Anthropic text citation in the canonical

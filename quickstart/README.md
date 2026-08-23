@@ -162,13 +162,13 @@ start with a letter or digit.
 
 Regeneration emits `gen/orchestrator/completions/` with the result schema,
 typed codecs, and generated helpers such as `CompleteDraftTask(...)`,
-`StreamCompleteDraftTask(...)`, and `DecodeDraftTaskChunk(...)`.
+and `StreamCompleteDraftTask(...)`.
 
 The unary helper issues a unary model request with provider-enforced structured
 output and decodes the assistant response through the generated codec. The
-streaming helper stays on the raw `model.Streamer` surface: `completion_delta`
-chunks are preview-only, exactly one final `completion` chunk is canonical, and
-`DecodeDraftTaskChunk(...)` decodes only that final payload. Generated
+streaming helper returns a typed stream: `completion_delta` chunks are
+preview-only, and `Value()` remains unavailable until the provider stream ends
+and its final `completion` chunk matches the complete response. Generated
 completion helpers reject tool-enabled requests and caller-supplied
 `StructuredOutput`. Providers that do not implement structured output return
 `model.ErrStructuredOutputUnsupported`.

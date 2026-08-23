@@ -21,6 +21,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
@@ -320,7 +321,7 @@ func (e *Engine) temporalWorkflowHandler(
 		if cancellationOnly(err) {
 			return out, temporal.NewCanceledError(err.Error())
 		}
-		return out, err
+		return out, temporalerrors.Wrap(err)
 	}
 }
 
@@ -361,7 +362,7 @@ func (e *Engine) RegisterRecordActivity(_ context.Context, name string, opts eng
 	}
 	opts = e.applyActivityClassDefaults(activityKindRecord, opts)
 	wrapped := func(ctx context.Context, in *api.RecordActivityInput) error {
-		return fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		return temporalerrors.Wrap(fn(e.injectWorkflowContextIntoActivity(ctx), in))
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -386,7 +387,8 @@ func (e *Engine) RegisterPlannerActivity(_ context.Context, name string, opts en
 	// Wrap to inject originating WorkflowContext into activity context so runtime code
 	// can start child workflows (agent-as-tool) with engine-owned context.
 	wrapped := func(ctx context.Context, in *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
-		return fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		return output, temporalerrors.Wrap(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -409,7 +411,8 @@ func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opt
 	// Wrap to inject originating WorkflowContext into activity context so runtime code
 	// can start child workflows (agent-as-tool) with engine-owned context.
 	wrapped := func(ctx context.Context, in *api.ToolInput) (*api.ToolOutput, error) {
-		return fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		return output, temporalerrors.Wrap(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }

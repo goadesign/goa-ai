@@ -16,7 +16,6 @@ import (
 	specs "example.com/quickstart/gen/orchestrator/agents/chat/specs"
 	helpers "example.com/quickstart/gen/orchestrator/toolsets/helpers"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 )
 
@@ -119,7 +118,7 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
 			Name:               toolsetID,
 			Specs:              helpers.Specs,
 			ToolMetadataLookup: helpers.MetadataByName,
-			Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
+			Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
 				if call == nil {
 					return nil, fmt.Errorf("tool request is nil")
 				}

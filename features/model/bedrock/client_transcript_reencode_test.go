@@ -219,11 +219,10 @@ func TestEncodeMessages_ReencodeTranscriptOrder(t *testing.T) {
 
 func TestClientPrepareRequestLowersRunlogReplayedTranscriptWithNarrowedTools(t *testing.T) {
 	messages := replayedBedrockToolLoopMessages(t)
-	client := &Client{
+	client := &provider{
 		defaultModel: "test-model",
 		maxTok:       32,
 		temp:         0.0,
-		think:        defaultThinkingBudget,
 	}
 
 	parts, err := client.prepareRequest(&model.Request{
@@ -231,7 +230,7 @@ func TestClientPrepareRequestLowersRunlogReplayedTranscriptWithNarrowedTools(t *
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.correct",
 			Description: "Correct the failed analysis request.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -281,11 +280,10 @@ func TestEncodeMessagesToolUseIDMappingIsBijective(t *testing.T) {
 }
 
 func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
-	client := &Client{
+	client := &provider{
 		defaultModel: "anthropic.claude-3-7-sonnet",
 		maxTok:       32,
 		temp:         0.0,
-		think:        defaultThinkingBudget,
 	}
 
 	_, err := client.prepareRequest(&model.Request{
@@ -314,7 +312,7 @@ func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 		Thinking: &model.ThinkingOptions{
 			Enable: true,
@@ -324,11 +322,10 @@ func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
 }
 
 func TestClientPrepareRequestSanitizesHistoryOnlyToolName(t *testing.T) {
-	client := &Client{
+	client := &provider{
 		defaultModel: "test-model",
 		maxTok:       32,
 		temp:         0.0,
-		think:        defaultThinkingBudget,
 	}
 	messages := []*model.Message{
 		{
@@ -348,7 +345,7 @@ func TestClientPrepareRequestSanitizesHistoryOnlyToolName(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "atlas.read.some_other_tool",
 			Description: "Read another resource.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -363,11 +360,10 @@ func TestClientPrepareRequestSanitizesHistoryOnlyToolName(t *testing.T) {
 }
 
 func TestClientPrepareRequestRejectsHistoricalToolNameCollision(t *testing.T) {
-	client := &Client{
+	client := &provider{
 		defaultModel: "test-model",
 		maxTok:       32,
 		temp:         0.0,
-		think:        defaultThinkingBudget,
 	}
 
 	_, err := client.prepareRequest(&model.Request{
@@ -382,7 +378,7 @@ func TestClientPrepareRequestRejectsHistoricalToolNameCollision(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "ada_unknown_tool",
 			Description: "Current tool with a colliding provider name.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.ErrorContains(t, err, `tool name "ada.unknown_tool" sanitizes to "ada_unknown_tool"`)

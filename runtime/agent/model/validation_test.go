@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -147,6 +148,15 @@ func TestValidateResponse(t *testing.T) {
 			},
 			wantErr: "token usage cannot be negative",
 		},
+		{
+			name: "oversized usage model",
+			response: &Response{
+				Content:    []Message{{Role: ConversationRoleAssistant, Parts: []Part{TextPart{Text: "answer"}}}},
+				StopReason: "end_turn",
+				Usage:      TokenUsage{Model: strings.Repeat("m", maxTokenUsageModelBytes+1)},
+			},
+			wantErr: "token usage model exceeds 512 bytes",
+		},
 	}
 
 	for _, test := range tests {
@@ -213,6 +223,13 @@ func TestValidateChunk(t *testing.T) {
 			name:    "negative usage",
 			chunk:   UsageChunk{Usage: TokenUsage{OutputTokens: -1}},
 			wantErr: "token usage cannot be negative",
+		},
+		{
+			name: "oversized usage model",
+			chunk: UsageChunk{
+				Usage: TokenUsage{Model: strings.Repeat("m", maxTokenUsageModelBytes+1)},
+			},
+			wantErr: "token usage model exceeds 512 bytes",
 		},
 		{
 			name:    "nil chunk",

@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 
 	"golang.org/x/time/rate"
@@ -11,11 +12,31 @@ import (
 )
 
 type fakeClient struct {
+	response    *model.Response
 	completeErr error
 	streamErr   error
+	stream      model.Streamer
 
 	completeCalls int
 	streamCalls   int
+}
+
+type closeTrackingStreamer struct {
+	closed   bool
+	closeErr error
+}
+
+func (*closeTrackingStreamer) Recv() (model.Chunk, error) {
+	return nil, io.EOF
+}
+
+func (s *closeTrackingStreamer) Close() error {
+	s.closed = true
+	return s.closeErr
+}
+
+func (*closeTrackingStreamer) Response() *model.Response {
+	return nil
 }
 
 type fakeCountingClient struct {
@@ -27,12 +48,12 @@ type fakeCountingClient struct {
 
 func (f *fakeClient) Complete(_ context.Context, _ *model.Request) (*model.Response, error) {
 	f.completeCalls++
-	return nil, f.completeErr
+	return f.response, f.completeErr
 }
 
 func (f *fakeClient) Stream(_ context.Context, _ *model.Request) (model.Streamer, error) {
 	f.streamCalls++
-	return nil, f.streamErr
+	return f.stream, f.streamErr
 }
 
 func (f *fakeCountingClient) CountTokens(context.Context, *model.Request) (model.TokenCount, error) {
@@ -52,7 +73,7 @@ func TestAdaptiveRateLimiter_BackoffOnRateLimited(t *testing.T) {
 	client := &fakeClient{
 		completeErr: model.ErrRateLimited,
 	}
-	wrapped := limiter.Middleware()(client)
+	wrapped := limitedTestClient(t, limiter, client)
 
 	req := model.Request{
 		Messages: []*model.Message{
@@ -80,6 +101,29 @@ func TestAdaptiveRateLimiter_BackoffOnRateLimited(t *testing.T) {
 	}
 }
 
+func TestLimitedClientClosesStreamReturnedWithError(t *testing.T) {
+	callErr := errors.New("stream call failed")
+	closeErr := errors.New("stream close failed")
+	raw := &closeTrackingStreamer{closeErr: closeErr}
+	limiter := newAdaptiveRateLimiter(60000, 60000)
+	client := limitedTestClient(t, limiter, &fakeClient{stream: raw, streamErr: callErr})
+
+	got, err := client.Stream(t.Context(), &model.Request{})
+
+	if got != nil {
+		t.Fatalf("stream = %v, want nil", got)
+	}
+	if !errors.Is(err, callErr) {
+		t.Fatalf("error = %v, want call error", err)
+	}
+	if !errors.Is(err, closeErr) {
+		t.Fatalf("error = %v, want close error", err)
+	}
+	if !raw.closed {
+		t.Fatal("stream was not closed")
+	}
+}
+
 func TestAdaptiveRateLimiter_ProbeOnSuccess(t *testing.T) {
 	t.Helper()
 
@@ -90,8 +134,11 @@ func TestAdaptiveRateLimiter_ProbeOnSuccess(t *testing.T) {
 	limiter.recoveryRate = 1000
 	limiter.mu.Unlock()
 
-	client := &fakeClient{}
-	wrapped := limiter.Middleware()(client)
+	client := &fakeClient{response: &model.Response{
+		Content:    []model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "ok"}}}},
+		StopReason: "stop",
+	}}
+	wrapped := limitedTestClient(t, limiter, client)
 
 	req := model.Request{
 		Messages: []*model.Message{
@@ -132,7 +179,7 @@ func TestAdaptiveRateLimiter_RespectsContextWhenQueued(t *testing.T) {
 	limiter.mu.Unlock()
 
 	client := &fakeClient{}
-	wrapped := limiter.Middleware()(client)
+	wrapped := limitedTestClient(t, limiter, client)
 
 	longText := make([]byte, 600)
 	for i := range longText {
@@ -221,7 +268,7 @@ func TestAdaptiveRateLimiterDelegatesTokenCounting(t *testing.T) {
 			Exact:       true,
 		},
 	}
-	wrapped := limiter.Middleware()(client)
+	wrapped := limitedTestClient(t, limiter, client)
 
 	count, err := wrapped.(model.TokenCounter).CountTokens(context.Background(), &model.Request{})
 	if err != nil {
@@ -234,10 +281,41 @@ func TestAdaptiveRateLimiterDelegatesTokenCounting(t *testing.T) {
 
 func TestAdaptiveRateLimiterCountTokensRequiresWrappedCounter(t *testing.T) {
 	limiter := newAdaptiveRateLimiter(60000, 60000)
-	wrapped := limiter.Middleware()(&fakeClient{})
+	wrapped := limitedTestClient(t, limiter, &fakeClient{})
 
 	_, err := wrapped.(model.TokenCounter).CountTokens(context.Background(), &model.Request{})
 	if err == nil {
 		t.Fatal("expected missing token counter error")
 	}
+}
+
+func TestAdaptiveRateLimiterDropsResponseReturnedWithError(t *testing.T) {
+	providerErr := errors.New("provider failed")
+	limiter := newAdaptiveRateLimiter(60000, 60000)
+	wrapped := limitedTestClient(t, limiter, &fakeClient{
+		response:    &model.Response{StopReason: "should-not-escape"},
+		completeErr: providerErr,
+	})
+
+	response, err := wrapped.Complete(t.Context(), &model.Request{})
+
+	if response != nil {
+		t.Fatalf("expected nil response, got %#v", response)
+	}
+	if !errors.Is(err, providerErr) {
+		t.Fatalf("expected provider error, got %v", err)
+	}
+}
+
+func limitedTestClient(t *testing.T, limiter *AdaptiveRateLimiter, provider model.Provider) model.Client {
+	t.Helper()
+	client, err := model.NewClient(provider)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	wrapped, err := limiter.Middleware()(client)
+	if err != nil {
+		t.Fatalf("rate limit middleware: %v", err)
+	}
+	return wrapped
 }

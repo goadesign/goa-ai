@@ -44,6 +44,12 @@ type (
 		recvErr  error
 		closeErr error
 	}
+
+	failingCallPreparationProvider struct {
+		err      error
+		observer model.ClientCallObserver
+		calls    int
+	}
 )
 
 func testGenAIContext() telemetry.GenAIContext {
@@ -54,6 +60,138 @@ func testGenAIContext() telemetry.GenAIContext {
 	}
 }
 
+func TestTracedClientClosesStreamReturnedWithError(t *testing.T) {
+	callErr := errors.New("stream call failed")
+	closeErr := errors.New("stream close failed")
+	request := &model.Request{ModelClass: model.ModelClassDefault}
+	raw := &chunkStreamer{closeErr: closeErr}
+	tracer := &recordingTelemetryTracer{}
+	client := newTracedClient(
+		mustTestModelClient(streamResultClient{stream: raw, err: callErr}),
+		tracer,
+		telemetry.NewNoopLogger(),
+		"bedrock",
+		testGenAIContext(),
+		false,
+	)
+
+	got, err := client.Stream(t.Context(), request)
+
+	require.Nil(t, got)
+	require.ErrorIs(t, err, callErr)
+	require.ErrorIs(t, err, closeErr)
+	require.True(t, raw.closed)
+	require.Len(t, tracer.spans, 1)
+	require.True(t, tracer.spans[0].ended)
+}
+
+func TestPreparedRuntimeObserversAbortWhenInnerPreparationFails(t *testing.T) {
+	setupErr := errors.New("inner observer setup failed")
+	raw := &failingCallPreparationProvider{err: setupErr}
+	sink := &fakeModelInvocationSink{}
+	tracer := &recordingTelemetryTracer{}
+	client := newTracedClient(
+		newModelInvocationClient(mustTestModelClient(raw), sink),
+		tracer,
+		telemetry.NewNoopLogger(),
+		"bedrock",
+		testGenAIContext(),
+		false,
+	)
+
+	response, err := client.Complete(t.Context(), &model.Request{
+		ModelClass: model.ModelClassDefault,
+	})
+
+	require.Nil(t, response)
+	require.ErrorIs(t, err, setupErr)
+	require.Zero(t, raw.calls)
+	require.Len(t, tracer.spans, 1)
+	require.True(t, tracer.spans[0].ended)
+	require.Contains(t, sink.finished, sink.last)
+	require.ErrorIs(t, sink.finished[sink.last], setupErr)
+}
+
+func TestTracedClientRecordsConfiguredCompletionFailure(t *testing.T) {
+	tracer := &recordingTelemetryTracer{}
+	invocations := &modelInvocationJournal{}
+	checked := newModelInvocationClient(mustTestModelClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			return testModelResponse([]model.Message{{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: `"invalid"`}},
+			}}), nil
+		},
+	}), invocations)
+	client := newTracedClient(
+		checked,
+		tracer,
+		telemetry.NewNoopLogger(),
+		"bedrock",
+		testGenAIContext(),
+		false,
+	)
+	request := &model.Request{
+		ModelClass:       model.ModelClassDefault,
+		StructuredOutput: &model.StructuredOutput{Name: "answer"},
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		request,
+		func(*model.Response, *model.Completion) error {
+			return errors.New("typed completion is invalid")
+		},
+	))
+
+	response, err := client.Complete(t.Context(), request)
+
+	require.Nil(t, response)
+	require.ErrorContains(t, err, "typed completion is invalid")
+	require.Len(t, tracer.spans, 1)
+	require.Len(t, tracer.spans[0].errs, 1)
+	require.Equal(t, codes.Error, tracer.spans[0].statusCode)
+}
+
+func TestTracedStreamRecordsConfiguredCompletionFailure(t *testing.T) {
+	tracer := &recordingTelemetryTracer{}
+	checked := newModelInvocationClient(mustTestModelClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			return &stubStreamer{
+				chunks: []model.Chunk{model.TextChunk{Message: model.Message{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "not structured"}},
+				}}},
+			}, nil
+		},
+	}), &modelInvocationJournal{})
+	client := newTracedClient(
+		checked,
+		tracer,
+		telemetry.NewNoopLogger(),
+		"bedrock",
+		testGenAIContext(),
+		false,
+	)
+	request := &model.Request{
+		ModelClass:       model.ModelClassDefault,
+		StructuredOutput: &model.StructuredOutput{Name: "answer"},
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		request,
+		func(*model.Response, *model.Completion) error {
+			return nil
+		},
+	))
+	stream, err := client.Stream(t.Context(), request)
+	require.NoError(t, err)
+
+	_, err = stream.Recv()
+
+	require.ErrorContains(t, err, "text instead of a completion")
+	require.Len(t, tracer.spans, 1)
+	require.Len(t, tracer.spans[0].errs, 1)
+	require.Equal(t, codes.Error, tracer.spans[0].statusCode)
+}
+
 func TestTracedClientStreamIgnoresCanceledStart(t *testing.T) {
 	t.Parallel()
 
@@ -61,11 +199,11 @@ func TestTracedClientStreamIgnoresCanceledStart(t *testing.T) {
 	cancel()
 
 	tracer := &recordingTelemetryTracer{}
-	client := newTracedClient(stubModelClient{
+	client := newTracedClient(mustTestModelClient(stubModelClient{
 		stream: func(context.Context, *model.Request) (model.Streamer, error) {
 			return nil, context.Canceled
 		},
-	}, tracer, telemetry.NewNoopLogger(), "bedrock", testGenAIContext(), false)
+	}), tracer, telemetry.NewNoopLogger(), "bedrock", testGenAIContext(), false)
 
 	stream, err := client.Stream(ctx, &model.Request{
 		ModelClass: model.ModelClassDefault,
@@ -86,11 +224,11 @@ func TestTracedClientCompleteIgnoresContextTermination(t *testing.T) {
 	cancel()
 
 	tracer := &recordingTelemetryTracer{}
-	client := newTracedClient(stubModelClient{
+	client := newTracedClient(mustTestModelClient(stubModelClient{
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
 			return nil, grpcStatus.Error(grpcCodes.Canceled, "context canceled")
 		},
-	}, tracer, telemetry.NewNoopLogger(), "bedrock", testGenAIContext(), false)
+	}), tracer, telemetry.NewNoopLogger(), "bedrock", testGenAIContext(), false)
 
 	resp, err := client.Complete(ctx, &model.Request{ModelClass: model.ModelClassDefault})
 	require.Equal(t, grpcCodes.Canceled, grpcStatus.Code(err))
@@ -101,7 +239,26 @@ func TestTracedClientCompleteIgnoresContextTermination(t *testing.T) {
 	assert.True(t, tracer.spans[0].ended)
 }
 
-func TestTracedStreamRecvIgnoresContextCancellation(t *testing.T) {
+func TestTracedClientDropsResponseReturnedWithError(t *testing.T) {
+	tracer := &recordingTelemetryTracer{}
+	client := newTracedClient(mustTestModelClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			return testModelResponse([]model.Message{{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "failed"}},
+			}}), assert.AnError
+		},
+	}), tracer, telemetry.NewNoopLogger(), "bedrock", testGenAIContext(), false)
+
+	response, err := client.Complete(context.Background(), &model.Request{
+		ModelClass: model.ModelClassDefault,
+	})
+
+	require.Nil(t, response)
+	require.ErrorIs(t, err, assert.AnError)
+}
+
+func TestTracedStreamObserverIgnoresContextCancellation(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -109,43 +266,45 @@ func TestTracedStreamRecvIgnoresContextCancellation(t *testing.T) {
 
 	span := &recordingTelemetrySpan{}
 	stream := &tracedStream{
-		ctx:   ctx,
-		inner: &stubStreamer{recvErr: context.Canceled},
-		span:  span,
+		ctx:  ctx,
+		span: span,
 	}
 
-	_, err := stream.Recv()
-	require.ErrorIs(t, err, context.Canceled)
+	err := stream.ObserveStreamRecv(model.StreamObservation{Err: context.Canceled})
+	require.NoError(t, err)
 	assert.Empty(t, span.errs)
 	assert.Equal(t, codes.Unset, span.statusCode)
-	assert.True(t, span.ended)
+	assert.False(t, span.ended)
 }
 
-func TestTracedStreamRecvRecordsNonCancellationError(t *testing.T) {
+func TestTracedStreamObserverRecordsNonCancellationError(t *testing.T) {
 	t.Parallel()
 
 	wantErr := errors.New("boom")
 	span := &recordingTelemetrySpan{}
 	stream := &tracedStream{
-		ctx:   context.Background(),
-		inner: &stubStreamer{recvErr: wantErr},
-		span:  span,
+		ctx:  context.Background(),
+		span: span,
 	}
 
-	_, err := stream.Recv()
-	require.ErrorIs(t, err, wantErr)
+	err := stream.ObserveStreamRecv(model.StreamObservation{Err: wantErr})
+	require.NoError(t, err)
 	require.Len(t, span.errs, 1)
 	require.ErrorIs(t, span.errs[0], wantErr)
 	assert.Equal(t, codes.Error, span.statusCode)
 	assert.Equal(t, "stream recv failed", span.statusDesc)
-	assert.True(t, span.ended)
+	assert.False(t, span.ended)
 }
 
 func TestTracedClientCompleteEmitsGenAIAttrs(t *testing.T) {
 	tracer := &recordingTelemetryTracer{}
-	client := newTracedClient(stubModelClient{
+	client := newTracedClient(mustTestModelClient(stubModelClient{
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
 			return &model.Response{
+				Content: []model.Message{{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "done"}},
+				}},
 				Usage: model.TokenUsage{
 					Model:            "us.anthropic.claude-sonnet-4",
 					InputTokens:      12,
@@ -156,7 +315,7 @@ func TestTracedClientCompleteEmitsGenAIAttrs(t *testing.T) {
 				StopReason: "stop",
 			}, nil
 		},
-	}, tracer, telemetry.NewNoopLogger(), "primary", telemetry.GenAIContext{
+	}), tracer, telemetry.NewNoopLogger(), "primary", telemetry.GenAIContext{
 		ConversationID: "sess-1",
 		AgentID:        "svc.agent",
 		AgentName:      "svc.agent",
@@ -190,22 +349,20 @@ func TestTracedStreamUsesResponseUsageWhenNoUsageChunk(t *testing.T) {
 	t.Parallel()
 
 	span := &recordingTelemetrySpan{}
+	response := &model.Response{
+		Usage: model.TokenUsage{
+			Model:        "us.anthropic.claude-sonnet-4",
+			InputTokens:  7,
+			OutputTokens: 3,
+		},
+	}
 	stream := &tracedStream{
 		ctx:  context.Background(),
 		span: span,
-		inner: &stubStreamer{
-			response: &model.Response{
-				Usage: model.TokenUsage{
-					Model:        "us.anthropic.claude-sonnet-4",
-					InputTokens:  7,
-					OutputTokens: 3,
-				},
-			},
-		},
 	}
 
-	_, err := stream.Recv()
-	require.ErrorIs(t, err, io.EOF)
+	err := stream.ObserveStreamRecv(model.StreamObservation{Response: response, Err: io.EOF})
+	require.NoError(t, err)
 
 	attrs := attrsByKey(span.attrs)
 	assert.Equal(t, "us.anthropic.claude-sonnet-4", attrs[telemetry.AttrGenAIResponseModel].AsString())
@@ -217,33 +374,30 @@ func TestTracedStreamDoesNotReplaceUsageChunkWithResponseUsage(t *testing.T) {
 	t.Parallel()
 
 	span := &recordingTelemetrySpan{}
+	response := &model.Response{
+		Usage: model.TokenUsage{
+			Model:        "response-model",
+			InputTokens:  99,
+			OutputTokens: 99,
+		},
+	}
 	stream := &tracedStream{
 		ctx:  context.Background(),
 		span: span,
-		inner: &stubStreamer{
-			chunks: []model.Chunk{
-				model.UsageChunk{
-					Usage: model.TokenUsage{
-						Model:        "delta-model",
-						InputTokens:  2,
-						OutputTokens: 4,
-					},
-				},
-			},
-			response: &model.Response{
-				Usage: model.TokenUsage{
-					Model:        "response-model",
-					InputTokens:  99,
-					OutputTokens: 99,
-				},
-			},
-		},
 	}
 
-	_, err := stream.Recv()
+	err := stream.ObserveStreamRecv(model.StreamObservation{
+		Chunk: model.UsageChunk{
+			Usage: model.TokenUsage{
+				Model:        "delta-model",
+				InputTokens:  2,
+				OutputTokens: 4,
+			},
+		},
+	})
 	require.NoError(t, err)
-	_, err = stream.Recv()
-	require.ErrorIs(t, err, io.EOF)
+	err = stream.ObserveStreamRecv(model.StreamObservation{Response: response, Err: io.EOF})
+	require.NoError(t, err)
 
 	attrs := attrsByKey(span.attrs)
 	assert.Equal(t, "delta-model", attrs[telemetry.AttrGenAIResponseModel].AsString())
@@ -255,7 +409,7 @@ func TestTracedClientCompleteRecordsGenAIMessagesWhenEnabled(t *testing.T) {
 	t.Parallel()
 
 	tracer := &recordingTelemetryTracer{}
-	client := newTracedClient(stubModelClient{
+	client := newTracedClient(mustTestModelClient(stubModelClient{
 		complete: func(_ context.Context, _ *model.Request) (*model.Response, error) {
 			return &model.Response{
 				Content: []model.Message{{
@@ -272,13 +426,17 @@ func TestTracedClientCompleteRecordsGenAIMessagesWhenEnabled(t *testing.T) {
 				StopReason: "tool_use",
 			}, nil
 		},
-	}, tracer, telemetry.NewNoopLogger(), "primary", testGenAIContext(), true)
+	}), tracer, telemetry.NewNoopLogger(), "primary", testGenAIContext(), true)
 
 	_, err := client.Complete(context.Background(), &model.Request{
 		ModelClass: model.ModelClassHighReasoning,
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "diagnose pump"}},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:  "atlas.read",
+			Input: model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -322,14 +480,14 @@ func TestTracedClientCompleteSkipsMessagesWhenCaptureDisabled(t *testing.T) {
 	t.Parallel()
 
 	tracer := &recordingTelemetryTracer{}
-	client := newTracedClient(stubModelClient{
+	client := newTracedClient(mustTestModelClient(stubModelClient{
 		complete: func(_ context.Context, _ *model.Request) (*model.Response, error) {
 			return &model.Response{
 				Content:    []model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
 				StopReason: "end_turn",
 			}, nil
 		},
-	}, tracer, telemetry.NewNoopLogger(), "primary", testGenAIContext(), false)
+	}), tracer, telemetry.NewNoopLogger(), "primary", testGenAIContext(), false)
 
 	_, err := client.Complete(context.Background(), &model.Request{
 		ModelClass: model.ModelClassHighReasoning,
@@ -349,7 +507,7 @@ func TestTracedStreamRecordsBufferedOutputMessagesWhenEnabled(t *testing.T) {
 	t.Parallel()
 
 	tracer := &recordingTelemetryTracer{}
-	client := newTracedClient(stubModelClient{
+	client := newTracedClient(mustTestModelClient(stubModelClient{
 		stream: func(_ context.Context, _ *model.Request) (model.Streamer, error) {
 			return &stubStreamer{chunks: []model.Chunk{
 				model.TextChunk{
@@ -367,13 +525,16 @@ func TestTracedStreamRecordsBufferedOutputMessagesWhenEnabled(t *testing.T) {
 				model.StopChunk{Reason: "end_turn"},
 			}, response: &model.Response{
 				Content: []model.Message{{
-					Role:  model.ConversationRoleAssistant,
-					Parts: []model.Part{model.TextPart{Text: "hello"}},
+					Role: model.ConversationRoleAssistant,
+					Parts: []model.Part{
+						model.TextPart{Text: "hello"},
+						model.ThinkingPart{Text: "draft", Final: true},
+					},
 				}},
 				StopReason: "end_turn",
 			}}, nil
 		},
-	}, tracer, telemetry.NewNoopLogger(), "primary", testGenAIContext(), true)
+	}), tracer, telemetry.NewNoopLogger(), "primary", testGenAIContext(), true)
 
 	stream, err := client.Stream(context.Background(), &model.Request{
 		ModelClass: model.ModelClassHighReasoning,
@@ -470,7 +631,35 @@ func (c stubModelClient) Complete(ctx context.Context, req *model.Request) (*mod
 }
 
 func (c stubModelClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+	if c.stream == nil {
+		return nil, errors.New("unexpected Stream call")
+	}
 	return c.stream(ctx, req)
+}
+
+func (p *failingCallPreparationProvider) PrepareClientCall(
+	ctx context.Context,
+	_ *model.Request,
+) (context.Context, model.ClientCallObserver, error) {
+	return ctx, p.observer, p.err
+}
+
+func (p *failingCallPreparationProvider) Complete(context.Context, *model.Request) (*model.Response, error) {
+	p.calls++
+	return nil, errors.New("unexpected Complete call")
+}
+
+func (p *failingCallPreparationProvider) Stream(context.Context, *model.Request) (model.Streamer, error) {
+	p.calls++
+	return nil, errors.New("unexpected Stream call")
+}
+
+func mustTestModelClient(provider model.Provider) model.Client {
+	client, err := model.NewClient(provider)
+	if err != nil {
+		panic(err)
+	}
+	return client
 }
 
 func (s *stubStreamer) Recv() (model.Chunk, error) {

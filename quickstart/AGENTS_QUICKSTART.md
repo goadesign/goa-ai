@@ -51,94 +51,22 @@ This generates:
 
 ### Understanding the Generated Code
 
-The generated `cmd/<service>/main.go` uses the bootstrap to run your agents. Here's what it does under the hood:
+The scaffold demonstrates one complete deterministic agent turn:
 
-```go
-package main
+1. `PlanStart` decodes a generated payload example and builds a typed
+   `New<Tool>Call(toolCallID, args)`.
+2. `bootstrap.New` registers a deterministic example executor for that toolset.
+   The executor validates the payload with the generated codec and returns the
+   generated result example.
+3. The runtime executes the call and invokes `PlanResume` with the correlated
+   result.
+4. `PlanResume` checks the tool name and call ID, then returns the exact
+   canonical tool result in the final assistant message.
 
-import (
-    "context"
-    "fmt"
-
-    // The core Goa-AI runtime and planner interfaces
-    "goa.design/goa-ai/runtime/agent/runtime"
-    "goa.design/goa-ai/runtime/agent/model"
-    "goa.design/goa-ai/runtime/agent/planner"
-
-    // === Your Generated Agent Packages ===
-    // (Goa generated these based on your design)
-    chat "example.com/quickstart/gen/orchestrator/agents/chat"
-)
-
-// A simple "brain" for our agent. It just says hello for now.
-// We'll make this smarter in the next section!
-type StubPlanner struct{}
-func (p *StubPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
-    return &planner.PlanResult{
-		FinalResponse: &planner.FinalResponse{
-			Message: &model.Message{
-				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "Hello!"}},
-			},
-		},
-	}, nil
-}
-func (p *StubPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
-    return &planner.PlanResult{
-		FinalResponse: &planner.FinalResponse{
-			Message: &model.Message{
-				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "Done."}},
-			},
-		},
-	}, nil
-}
-
-func main() {
-    // 1. Create the Runtime
-    // This is the central engine for all your agents.
-    rt := runtime.New()
-
-    // 2. Register Your Agent(s)
-    // Let the runtime know about the agents it can manage.
-    {
-        cfg := chat.ChatAgentConfig{
-            Planner: &StubPlanner{},
-            // We'll add tool configurations here later on.
-        }
-        if err := chat.RegisterChatAgent(context.Background(), rt, cfg); err != nil {
-            panic(err)
-        }
-    }
-
-    // 3. Run it!
-    // Let's invoke our first agent and see what it says using AgentClient.
-    fmt.Println("🚀 Invoking agent...")
-    if _, err := rt.CreateSession(context.Background(), "my-first-session"); err != nil {
-        panic(err)
-    }
-    client := chat.NewClient(rt)
-    out, err := client.Run(
-        context.Background(),
-        "my-first-session",
-        []*model.Message{
-			{ Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Hi there!"}} },
-		},
-    )
-    if err != nil {
-		panic(err)
-	}
-
-    fmt.Println("✅ Success!")
-    fmt.Println("RunID:", out.RunID)
-    // Print first text part (if any)
-    if out.Final != nil && len(out.Final.Parts) > 0 {
-        if tp, ok := out.Final.Parts[0].(model.TextPart); ok {
-            fmt.Println("Assistant says:", tp.Text)
-        }
-    }
-}
-```
+This path exercises the generated schemas, codecs, executor registration,
+runtime tool dispatch, and `PlanStart` → `PlanResume` transition without
+requiring model credentials. Replace the planner and example executor together
+when connecting real model and service implementations.
 
 When a service also declares `Completion(...)` contracts, Goa generates
 `gen/<service>/completions/` and the example main demonstrates both
@@ -207,7 +135,7 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 
 // PlanResume is called after tools have run, giving the agent new information.
 func (p *MySmartPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
-    // 1. Inspect the tool results from in.ToolResults.
+    // 1. Inspect the tool results from in.ToolOutputs.
     // 2. Build a new prompt including the tool results.
     // 3. Call the LLM to decide what to do next.
     return &planner.PlanResult{
@@ -267,7 +195,7 @@ import (
     specs "<module>/gen/<svc>/agents/<agent>/specs/<toolset>"
 )
 
-func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
+func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
     switch call.Name {
     case specs.<Tool>:
         // Decode with the generated typed descriptor: args is the typed
@@ -440,7 +368,7 @@ The command exits non-zero when any scenario fails, so it drops straight into CI
 * **Sessions & Runs:** Sessions are explicit. Create them with `rt.CreateSession(ctx, sessionID)` and end them with `rt.DeleteSession(ctx, sessionID)`. Runs (`client.Run`/`client.Start`) require an active session.
 * **Session-Owned Streaming (for UIs):** In production, stream consumers should attach to the **session-owned stream** (`session/<session_id>`) and filter by `run_id`. Close SSE when you observe a `run_stream_end` event for the attached run ID. Nested agent runs emit `child_run_linked` links and their own `run_stream_end`; parent runs only emit `run_stream_end` after all child runs have ended.
 * **Asynchronous Runs:** Use `client.Start()` to get a workflow handle. This is great for long-running tasks, cancellation, and non-interactive integrations.
-* **Human Input:** Clarifications, confirmations, and external results end the current workflow with a typed suspension. The runtime saves that suspension in its session store before completion. Atomically accept one answer in the owning application, then pass the completed run ID and answer to `client.StartContinuation()` to start the next workflow.
+* **Human Input:** Clarifications, confirmations, and external results end the current workflow with a typed suspension. Keep the complete suspension in trusted server-side storage, atomically claim it once, and submit one answer with `client.StartContinuation()` to start the next workflow.
 * **Policies & Caps:** The `RunPolicy` in your design (max tool calls, time budgets) is automatically enforced by the runtime.
 * **Persistence & Observability:** The `runtime.New` function accepts `runtime.Options` to configure production-grade components like a Temporal engine, MongoDB for memory, and telemetry hooks.
 * **Temporal DataConverter:** The Temporal engine automatically installs its strict data converter when `ClientOptions.DataConverter` is unset. Explicit custom converters remain the caller's responsibility.

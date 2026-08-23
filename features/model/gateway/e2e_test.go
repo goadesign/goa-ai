@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
@@ -127,7 +128,8 @@ func TestE2E_UnaryComplete_WithMiddleware(t *testing.T) {
 		}()
 		return wrapper, nil
 	}
-	client := NewRemoteClient(completeFn, streamFn)
+	client, err := NewRemoteClient(completeFn, streamFn)
+	require.NoError(t, err)
 
 	// call complete
 	resp, err := client.Complete(context.Background(), &model.Request{Model: "m", Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hi"}}}}})
@@ -179,9 +181,19 @@ func TestE2E_Stream_WithMiddleware(t *testing.T) {
 		}()
 		return wrapper, nil
 	}
-	client := NewRemoteClient(nil, streamFn)
+	client, err := NewRemoteClient(
+		func(context.Context, *model.Request) (*model.Response, error) {
+			return nil, errors.New("unexpected complete call")
+		},
+		streamFn,
+	)
+	require.NoError(t, err)
 
-	st, err := client.Stream(context.Background(), &model.Request{Model: "m", Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hi"}}}}})
+	st, err := client.Stream(context.Background(), &model.Request{
+		Model:    "m",
+		Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+		Tools:    []*model.ToolDefinition{advertisedGatewayTool("emit_tool")},
+	})
 	if err != nil {
 		t.Fatalf("Stream: %v", err)
 	}

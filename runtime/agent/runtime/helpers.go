@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -22,16 +22,16 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
-	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 const (
 	unknownID                     = "unknown"
-	generatedToolCallIDHashDomain = "goa-ai/runtime-tool-call-id/v1\x00"
+	generatedToolCallIDHashDomain = "goa-ai/runtime-tool-call-id/v2\x00"
 	// maxHookPayloadBytes is a safety bound on the serialized hook payload passed
 	// across the workflow/activity boundary. Exceeding Temporal's payload limit
 	// terminates the workflow task; failing early keeps failures explicit and
@@ -54,6 +54,7 @@ type (
 	}
 
 	promptRenderHookContextKey struct{}
+	plannerEventCollectorKey   struct{}
 )
 
 // WithPromptRenderHookContext returns ctx stamped with run metadata used by
@@ -78,6 +79,22 @@ func promptRenderHookContextFromContext(ctx context.Context) (PromptRenderHookCo
 		return PromptRenderHookContext{}, false
 	}
 	return meta, true
+}
+
+// withPlannerEventCollector makes prompt-render events part of the accepted
+// planner activity output instead of publishing from the retryable activity.
+func withPlannerEventCollector(ctx context.Context, events *runtimePlannerEvents) context.Context {
+	return context.WithValue(ctx, plannerEventCollectorKey{}, events)
+}
+
+// plannerEventCollectorFromContext returns the planner event batch attached to
+// ctx when prompt rendering is running inside a planner activity.
+func plannerEventCollectorFromContext(ctx context.Context) (*runtimePlannerEvents, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	events, ok := ctx.Value(plannerEventCollectorKey{}).(*runtimePlannerEvents)
+	return events, ok
 }
 
 // hasNonNullJSON reports whether raw contains a non-empty JSON value other than
@@ -142,38 +159,32 @@ func nestedRunIDSuffix(toolCallID string) string {
 }
 
 // generateDeterministicToolCallID creates a replay-safe tool-call ID using the
-// run ID, optional turn ID, attempt counter, sanitized tool name, and the
+// run ID, optional turn ID, attempt counter, exact tool name, and the
 // deterministic index of the tool within the current batch.
 //
 // Attempt is required to avoid ID collisions when the same run executes multiple
 // tool batches within a single logical turn (for example when callers set TurnID
 // to a constant run identifier). The workflow stamps RunContext.Attempt with the
 // planner turn attempt before executing that turn's generated tool calls, so
-// generated IDs remain unique within the run. Readable IDs are preserved when
-// they satisfy registry metadata limits; oversized IDs use a deterministic
-// digest of that same identity so nested runs cannot exceed the wire contract.
+// generated IDs remain unique within the run. Every identity component is
+// length-delimited before hashing, so separators inside strings and distinct
+// dotted tool names cannot produce the same preimage.
 func generateDeterministicToolCallID(runID, turnID string, attempt int, toolName tools.Ident, index int) string {
-	if runID == "" {
-		runID = unknownID
-	}
-	if toolName == "" {
-		toolName = "tool"
-	}
-	safeTool := strings.ReplaceAll(string(toolName), ".", "-")
-	// Format: <runID>/<turnID|no-turn>/attempt-<attempt>/<tool>/<index>
-	tid := turnID
-	if tid == "" {
-		tid = "no-turn"
-	}
-	readable := strings.Join(
-		[]string{runID, tid, fmt.Sprintf("attempt-%d", attempt), safeTool, strconv.Itoa(index)},
-		"/",
-	)
-	if len(readable) <= toolregistry.MaxToolCallMetaIDLength {
-		return readable
-	}
-	sum := sha256.Sum256([]byte(generatedToolCallIDHashDomain + readable))
+	identity := []byte(generatedToolCallIDHashDomain)
+	identity = appendLengthDelimited(identity, runID)
+	identity = appendLengthDelimited(identity, turnID)
+	identity = binary.AppendVarint(identity, int64(attempt))
+	identity = binary.AppendVarint(identity, int64(index))
+	identity = appendLengthDelimited(identity, string(toolName))
+	sum := sha256.Sum256(identity)
 	return "call-" + hex.EncodeToString(sum[:])
+}
+
+// appendLengthDelimited appends one string without allowing neighboring
+// identity components to absorb separators or bytes from each other.
+func appendLengthDelimited(dst []byte, value string) []byte {
+	dst = binary.AppendUvarint(dst, uint64(len(value)))
+	return append(dst, value...)
 }
 
 // generateDeterministicAwaitID creates a replay-safe await identifier using the runID,
@@ -252,6 +263,17 @@ func cloneLabels(src map[string]string) map[string]string {
 	return dst
 }
 
+// cloneToolCall gives an executor ownership of every mutable field while the
+// runtime retains the canonical call for result validation, publication, and
+// continuation correlation.
+func cloneToolCall(src ToolCall) ToolCall {
+	cloned := src
+	cloned.Payload = append(rawjson.Message(nil), src.Payload...)
+	cloned.ModelPayload = append(rawjson.Message(nil), src.ModelPayload...)
+	cloned.Labels = cloneLabels(src.Labels)
+	return cloned
+}
+
 // cloneMetadata creates a defensive copy of an arbitrary metadata map.
 // It returns nil if the source map is empty to avoid unnecessary allocations.
 func cloneMetadata(src map[string]any) map[string]any {
@@ -283,14 +305,48 @@ func cloneToolResults(src []*planner.ToolResult) []*planner.ToolResult {
 	return out
 }
 
-func addTokenUsage(current, delta model.TokenUsage) model.TokenUsage {
-	return model.TokenUsage{
-		InputTokens:      current.InputTokens + delta.InputTokens,
-		OutputTokens:     current.OutputTokens + delta.OutputTokens,
-		TotalTokens:      current.TotalTokens + delta.TotalTokens,
-		CacheReadTokens:  current.CacheReadTokens + delta.CacheReadTokens,
-		CacheWriteTokens: current.CacheWriteTokens + delta.CacheWriteTokens,
+// addTokenUsage combines nonnegative token counts without allowing integer
+// overflow to create invalid durable usage.
+func addTokenUsage(current, delta model.TokenUsage) (model.TokenUsage, error) {
+	input, err := addTokenCount("input", current.InputTokens, delta.InputTokens)
+	if err != nil {
+		return model.TokenUsage{}, err
 	}
+	output, err := addTokenCount("output", current.OutputTokens, delta.OutputTokens)
+	if err != nil {
+		return model.TokenUsage{}, err
+	}
+	total, err := addTokenCount("total", current.TotalTokens, delta.TotalTokens)
+	if err != nil {
+		return model.TokenUsage{}, err
+	}
+	cacheRead, err := addTokenCount("cache read", current.CacheReadTokens, delta.CacheReadTokens)
+	if err != nil {
+		return model.TokenUsage{}, err
+	}
+	cacheWrite, err := addTokenCount("cache write", current.CacheWriteTokens, delta.CacheWriteTokens)
+	if err != nil {
+		return model.TokenUsage{}, err
+	}
+	return model.TokenUsage{
+		InputTokens:      input,
+		OutputTokens:     output,
+		TotalTokens:      total,
+		CacheReadTokens:  cacheRead,
+		CacheWriteTokens: cacheWrite,
+	}, nil
+}
+
+// addTokenCount rejects invalid input and overflow before addition can wrap.
+func addTokenCount(name string, current, delta int) (int, error) {
+	if current < 0 || delta < 0 {
+		return 0, fmt.Errorf("%s token usage cannot be negative", name)
+	}
+	sum := current + delta
+	if sum < current {
+		return 0, fmt.Errorf("%s token usage exceeds the supported integer range", name)
+	}
+	return sum, nil
 }
 
 // mergeLabels merges src labels into dst. When dst is nil, it allocates a new
@@ -618,6 +674,10 @@ func (r *Runtime) onPromptRendered(ctx context.Context, event prompt.RenderEvent
 		event.Version,
 		event.Scope,
 	)
+	if events, ok := plannerEventCollectorFromContext(ctx); ok {
+		events.publish(ctx, hookEvent)
+		return
+	}
 	if err := r.publishHookErr(ctx, hookEvent, meta.TurnID); err != nil {
 		panic(fmt.Errorf(
 			"runtime: prompt_rendered hook publish failed (run_id=%s prompt_id=%s version=%s): %w",
@@ -718,7 +778,7 @@ func mergeCapDown(current int, decision int) int {
 }
 
 // toolHandles converts tool call requests into policy tool handles for policy evaluation.
-func toolHandles(calls []planner.ToolRequest) []tools.Ident {
+func toolHandles(calls []ToolCall) []tools.Ident {
 	handles := make([]tools.Ident, len(calls))
 	for i, call := range calls {
 		handles[i] = call.Name
@@ -757,7 +817,7 @@ func (r *Runtime) isBookkeeping(name tools.Ident) bool {
 // toolMetadata retrieves policy metadata for each tool call by looking up the
 // registered canonical metadata. If the tool is not found, it constructs minimal
 // metadata with the tool name and the default budget class.
-func (r *Runtime) toolMetadata(calls []planner.ToolRequest) []policy.ToolMetadata {
+func (r *Runtime) toolMetadata(calls []ToolCall) []policy.ToolMetadata {
 	metas := make([]policy.ToolMetadata, 0, len(calls))
 	for _, call := range calls {
 		if meta, ok := r.policyMetadata(call.Name); ok {
@@ -849,7 +909,7 @@ func lastSegment(s string, sep rune) string {
 
 // filterToolCalls filters tool calls to only those present in the allowed list.
 // If the allowed list is empty, returns all calls unchanged.
-func filterToolCalls(calls []planner.ToolRequest, allowed []tools.Ident) []planner.ToolRequest {
+func filterToolCalls(calls []ToolCall, allowed []tools.Ident) []ToolCall {
 	if len(allowed) == 0 {
 		return calls
 	}
@@ -857,7 +917,7 @@ func filterToolCalls(calls []planner.ToolRequest, allowed []tools.Ident) []plann
 	for _, id := range allowed {
 		allow[id] = struct{}{}
 	}
-	filtered := make([]planner.ToolRequest, 0, len(calls))
+	filtered := make([]ToolCall, 0, len(calls))
 	for _, call := range calls {
 		if call.Name == tools.ToolUnavailable {
 			filtered = append(filtered, call)

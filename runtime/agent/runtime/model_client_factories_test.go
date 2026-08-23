@@ -2,11 +2,10 @@ package runtime
 
 import (
 	"context"
-	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	openaifeature "goa.design/goa-ai/features/model/openai"
+	"goa.design/goa-ai/runtime/agent/model"
 )
 
 func TestNewOpenAIModelClientRequiresAPIKey(t *testing.T) {
@@ -27,10 +26,7 @@ func TestNewOpenAIModelClientBuildsStatelessClient(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	openaiClient, ok := client.(*openaifeature.Client)
-	require.True(t, ok)
-	value := reflect.ValueOf(openaiClient).Elem()
-	require.Equal(t, "gpt-5", value.FieldByName("defaultModel").String())
+	require.NoError(t, model.ValidateClient(client))
 }
 
 func TestNewVertexGeminiModelClientValidates(t *testing.T) {

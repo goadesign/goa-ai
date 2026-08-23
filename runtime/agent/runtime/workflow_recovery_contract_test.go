@@ -37,7 +37,7 @@ func TestRunLoopCombinesFailedCallsIntoFewerCorrections(t *testing.T) {
 		t,
 		"combine",
 		[]tools.ToolSpec{search, list},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			if string(call.Payload) != `{"query":"combined-a"}` &&
 				string(call.Payload) != `{"query":"combined-b"}` {
 				return invalidCallResult(call), nil
@@ -52,8 +52,8 @@ func TestRunLoopCombinesFailedCallsIntoFewerCorrections(t *testing.T) {
 				require.Len(t, input.Reminders, 4)
 				return &planner.PlanResult{
 					ToolCalls: []planner.ToolRequest{
-						{Name: search.Name, Payload: rawjson.Message(`{"query":"combined-a"}`)},
-						{Name: search.Name, Payload: rawjson.Message(`{"query":"combined-b"}`)},
+						{ToolCallID: "combined-call-a", Name: search.Name, Payload: rawjson.Message(`{"query":"combined-a"}`)},
+						{ToolCallID: "combined-call-b", Name: search.Name, Payload: rawjson.Message(`{"query":"combined-b"}`)},
 					},
 					SynthesizeAfterTools: true,
 				}, nil
@@ -68,11 +68,11 @@ func TestRunLoopCombinesFailedCallsIntoFewerCorrections(t *testing.T) {
 		},
 	)
 
-	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: search.Name, Payload: rawjson.Message(`{"query":"bad-1"}`)},
-		{Name: search.Name, Payload: rawjson.Message(`{"query":"bad-2"}`)},
-		{Name: search.Name, Payload: rawjson.Message(`{"query":"bad-3"}`)},
-		{Name: search.Name, Payload: rawjson.Message(`{"query":"bad-4"}`)},
+	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{
+		{ToolCallID: "bad-call-1", Name: search.Name, Payload: rawjson.Message(`{"query":"bad-1"}`)},
+		{ToolCallID: "bad-call-2", Name: search.Name, Payload: rawjson.Message(`{"query":"bad-2"}`)},
+		{ToolCallID: "bad-call-3", Name: search.Name, Payload: rawjson.Message(`{"query":"bad-3"}`)},
+		{ToolCallID: "bad-call-4", Name: search.Name, Payload: rawjson.Message(`{"query":"bad-4"}`)},
 	}}, policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 10})
 
 	require.NoError(t, err)
@@ -93,7 +93,9 @@ func TestRunLoopCorrectionMayChooseAnotherToolOrAnswer(t *testing.T) {
 			choose: func(_, list tools.ToolSpec) *planner.PlanResult {
 				return &planner.PlanResult{
 					ToolCalls: []planner.ToolRequest{{
-						Name: list.Name, Payload: rawjson.Message(`{"page":1}`),
+						ToolCallID: "list-call",
+						Name:       list.Name,
+						Payload:    rawjson.Message(`{"page":1}`),
 					}},
 					SynthesizeAfterTools: true,
 				}
@@ -106,8 +108,8 @@ func TestRunLoopCorrectionMayChooseAnotherToolOrAnswer(t *testing.T) {
 			choose: func(_, list tools.ToolSpec) *planner.PlanResult {
 				return &planner.PlanResult{
 					ToolCalls: []planner.ToolRequest{
-						{Name: list.Name, Payload: rawjson.Message(`{"page":1}`)},
-						{Name: list.Name, Payload: rawjson.Message(`{"page":2}`)},
+						{ToolCallID: "list-call-1", Name: list.Name, Payload: rawjson.Message(`{"page":1}`)},
+						{ToolCallID: "list-call-2", Name: list.Name, Payload: rawjson.Message(`{"page":2}`)},
 					},
 					SynthesizeAfterTools: true,
 				}
@@ -133,7 +135,7 @@ func TestRunLoopCorrectionMayChooseAnotherToolOrAnswer(t *testing.T) {
 				t,
 				"choice-"+tt.name,
 				[]tools.ToolSpec{search, list},
-				func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 					if call.Name == search.Name {
 						return invalidCallResult(call), nil
 					}
@@ -151,8 +153,10 @@ func TestRunLoopCorrectionMayChooseAnotherToolOrAnswer(t *testing.T) {
 				},
 			)
 
-			out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-				Name: search.Name, Payload: rawjson.Message(`{"query":"bad"}`),
+			out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
+				ToolCallID: "bad-call",
+				Name:       search.Name,
+				Payload:    rawjson.Message(`{"query":"bad"}`),
 			}}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4})
 
 			require.NoError(t, err)
@@ -171,7 +175,7 @@ func TestRunLoopPreservesCorrectionEvidenceAcrossClarification(t *testing.T) {
 		t,
 		"clarification",
 		[]tools.ToolSpec{search, list},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			if string(call.Payload) == `{"query":"bad"}` {
 				return invalidCallResult(call), nil
 			}
@@ -195,7 +199,9 @@ func TestRunLoopPreservesCorrectionEvidenceAcrossClarification(t *testing.T) {
 				require.Len(t, input.Reminders, 1)
 				return &planner.PlanResult{
 					ToolCalls: []planner.ToolRequest{{
-						Name: search.Name, Payload: rawjson.Message(`{"query":"good"}`),
+						ToolCallID: "good-call",
+						Name:       search.Name,
+						Payload:    rawjson.Message(`{"query":"good"}`),
 					}},
 					SynthesizeAfterTools: true,
 				}, nil
@@ -208,8 +214,10 @@ func TestRunLoopPreservesCorrectionEvidenceAcrossClarification(t *testing.T) {
 			}
 		},
 	)
-	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name: search.Name, Payload: rawjson.Message(`{"query":"bad"}`),
+	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
+		ToolCallID: "bad-call",
+		Name:       search.Name,
+		Payload:    rawjson.Message(`{"query":"bad"}`),
 	}}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4})
 
 	require.NoError(t, err)
@@ -224,7 +232,7 @@ func TestRunLoopRepeatedInvalidCallsReachFailureFinalization(t *testing.T) {
 		t,
 		"failure-cap",
 		[]tools.ToolSpec{search},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return invalidCallResult(call), nil
 		},
 		func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
@@ -234,13 +242,17 @@ func TestRunLoopRepeatedInvalidCallsReachFailureFinalization(t *testing.T) {
 			}
 			recoveryTurns++
 			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-				Name: search.Name, Payload: rawjson.Message(`{"query":"still-bad"}`),
+				ToolCallID: "still-bad-call",
+				Name:       search.Name,
+				Payload:    rawjson.Message(`{"query":"still-bad"}`),
 			}}}, nil
 		},
 	)
 
-	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name: search.Name, Payload: rawjson.Message(`{"query":"bad"}`),
+	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
+		ToolCallID: "bad-call",
+		Name:       search.Name,
+		Payload:    rawjson.Message(`{"query":"bad"}`),
 	}}}, policy.CapsState{
 		MaxToolCalls:                        5,
 		RemainingToolCalls:                  5,
@@ -255,7 +267,7 @@ func TestRunLoopRepeatedInvalidCallsReachFailureFinalization(t *testing.T) {
 	assert.Len(t, out.ToolEvents, 2)
 }
 
-func TestRunLoopRecoveryCatalogRewritesExcludedCallAndExecutesSibling(t *testing.T) {
+func TestRunLoopRecoveryCatalogRejectsExcludedCallBeforeExecution(t *testing.T) {
 	search := newAnyJSONSpec("catalog.search", "catalog")
 	list := newAnyJSONSpec("catalog.list", "catalog")
 	var listCalls, searchCalls, resumes int
@@ -263,7 +275,7 @@ func TestRunLoopRecoveryCatalogRewritesExcludedCallAndExecutesSibling(t *testing
 		t,
 		"excluded-call",
 		[]tools.ToolSpec{search, list},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			switch call.Name {
 			case list.Name:
 				listCalls++
@@ -293,8 +305,8 @@ func TestRunLoopRecoveryCatalogRewritesExcludedCallAndExecutesSibling(t *testing
 			case 1:
 				assertAdvertisedTools(t, input, search.Name)
 				return &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-					{Name: list.Name, Payload: rawjson.Message(`{"page":2}`)},
-					{Name: search.Name, Payload: rawjson.Message(`{"query":"fallback"}`)},
+					{Name: list.Name, ToolCallID: "list-excluded", Payload: rawjson.Message(`{"page":2}`)},
+					{Name: search.Name, ToolCallID: "search-valid", Payload: rawjson.Message(`{"query":"fallback"}`)},
 				}}, nil
 			case 2:
 				return finalPlannerResult("recovered with search"), nil
@@ -305,19 +317,16 @@ func TestRunLoopRecoveryCatalogRewritesExcludedCallAndExecutesSibling(t *testing
 		},
 	)
 
-	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name: list.Name, Payload: rawjson.Message(`{"page":1}`),
+	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
+		Name: list.Name, ToolCallID: "list-initial", Payload: rawjson.Message(`{"page":1}`),
 	}}}, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5})
 
-	require.NoError(t, err)
-	require.NotNil(t, out)
-	assert.Equal(t, "recovered with search", agentMessageText(out.Final))
+	require.Error(t, err)
+	assert.Nil(t, out)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
 	assert.Equal(t, 1, listCalls)
-	assert.Equal(t, 1, searchCalls)
-	require.Len(t, out.ToolEvents, 3)
-	assert.Equal(t, list.Name, out.ToolEvents[0].Name)
-	assert.Equal(t, tools.ToolUnavailable, out.ToolEvents[1].Name)
-	assert.Equal(t, search.Name, out.ToolEvents[2].Name)
+	assert.Zero(t, searchCalls)
 }
 
 func TestRecoveryCatalogAndMixedFailureContracts(t *testing.T) {
@@ -339,42 +348,53 @@ func TestRecoveryCatalogAndMixedFailureContracts(t *testing.T) {
 	assert.Contains(t, reminders[0].Text, "remains available")
 	assert.Contains(t, reminders[1].Text, "Do not repeat this rejected request")
 
-	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: search.Name}}}
+	result := &PlanResult{ToolCalls: []ToolCall{{
+		ToolCallID: "search-call",
+		Name:       search.Name,
+	}}}
 	require.NoError(t, validateRecoveryCatalog(
+		outputs,
 		&RecoveryCatalog{Tools: []tools.Ident{search.Name}},
 		result,
 	))
 	require.ErrorContains(t, validateRecoveryCatalog(
+		outputs,
 		&RecoveryCatalog{Tools: []tools.Ident{list.Name}},
 		result,
 	), "outside the advertised recovery catalog")
-	require.NoError(t, validateRecoveryCatalog(nil, result), "legacy histories have no catalog")
-	excluded := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+	require.NoError(t, validateRecoveryCatalog(nil, nil, result))
+	require.ErrorContains(t, validateRecoveryCatalog(
+		outputs,
+		nil,
+		result,
+	), "requires a recovery catalog")
+	require.ErrorContains(t, validateRecoveryCatalog(
+		nil,
+		&RecoveryCatalog{Tools: []tools.Ident{search.Name}},
+		result,
+	), "without pending recovery failures")
+	excluded := &PlanResult{ToolCalls: []ToolCall{{
 		Name:       search.Name,
 		ToolCallID: "search-1",
 		Payload:    rawjson.Message(`{"query":"stale"}`),
 	}}}
-	require.NoError(t, rt.rewriteRecoveryCatalogToolCalls(
+	require.ErrorContains(t, validateRecoveryCatalog(
+		outputs,
 		&RecoveryCatalog{Tools: []tools.Ident{list.Name}},
 		excluded,
-	))
-	require.Len(t, excluded.ToolCalls, 1)
-	assert.Equal(t, tools.ToolUnavailable, excluded.ToolCalls[0].Name)
-	assert.Equal(t, "search-1", excluded.ToolCalls[0].ToolCallID)
-	assert.Equal(t, search.Name, excluded.ToolCalls[0].ModelName)
-	assert.JSONEq(t, `{"query":"stale"}`, string(excluded.ToolCalls[0].ModelPayload))
-	require.NoError(t, validateRecoveryCatalog(
-		&RecoveryCatalog{Tools: []tools.Ident{list.Name}},
-		excluded,
-	))
+	), "outside the advertised recovery catalog")
 
-	plainClarification := &planner.PlanResult{Await: planner.NewAwait(
+	plainClarification := &PlanResult{Await: planner.NewAwait(
 		planner.AwaitClarificationItem(&planner.AwaitClarification{
 			ID: "clarify", Question: "Which catalog?",
 		}),
 	)}
-	require.NoError(t, validateRecoveryCatalog(&RecoveryCatalog{Tools: []tools.Ident{search.Name}}, plainClarification))
-	toolBackedAwait := &planner.PlanResult{Await: planner.NewAwait(
+	require.NoError(t, validateRecoveryCatalog(
+		outputs,
+		&RecoveryCatalog{Tools: []tools.Ident{search.Name}},
+		plainClarification,
+	))
+	toolBackedAwait := &PlanResult{Await: planner.NewAwait(
 		planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
 			ID:         "tool-clarify",
 			ToolName:   list.Name,
@@ -383,10 +403,12 @@ func TestRecoveryCatalogAndMixedFailureContracts(t *testing.T) {
 		}),
 	)}
 	require.NoError(t, validateRecoveryCatalog(
+		outputs,
 		&RecoveryCatalog{Tools: []tools.Ident{list.Name}},
 		toolBackedAwait,
 	))
 	require.ErrorContains(t, validateRecoveryCatalog(
+		outputs,
 		&RecoveryCatalog{Tools: []tools.Ident{search.Name}},
 		toolBackedAwait,
 	), "outside the advertised recovery catalog")
@@ -400,7 +422,7 @@ func TestFinishFailureFinalizesWithExactCause(t *testing.T) {
 		t,
 		"finish",
 		[]tools.ToolSpec{search, load},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			if call.Name == load.Name {
 				return &planner.ToolResult{
 					Name:       call.Name,
@@ -425,7 +447,7 @@ func TestFinishFailureFinalizesWithExactCause(t *testing.T) {
 		},
 	)
 
-	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{
+	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{
 		{Name: search.Name, ToolCallID: "search-call", Payload: rawjson.Message(`{"query":"bad"}`)},
 		{Name: load.Name, ToolCallID: "load-call", Payload: rawjson.Message(`{"id":"one"}`)},
 	}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4})
@@ -444,7 +466,7 @@ func newRecoveryHarness(
 	t *testing.T,
 	name string,
 	specs []tools.ToolSpec,
-	execute func(context.Context, *planner.ToolRequest) (*planner.ToolResult, error),
+	execute func(context.Context, *ToolCall) (*planner.ToolResult, error),
 	resume func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error),
 ) *recoveryHarness {
 	t.Helper()
@@ -501,7 +523,7 @@ func newRecoveryHarness(
 
 // run executes a complete workflow from the selected initial planner result.
 func (h *recoveryHarness) run(
-	initial *planner.PlanResult,
+	initial *PlanResult,
 	caps policy.CapsState,
 ) (*RunOutput, error) {
 	return h.runtime.runLoop(
@@ -520,7 +542,7 @@ func (h *recoveryHarness) run(
 
 // invalidCallResult returns a correctable validation failure while preserving
 // the executed call's identity.
-func invalidCallResult(call *planner.ToolRequest) *planner.ToolResult {
+func invalidCallResult(call *ToolCall) *planner.ToolResult {
 	return &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
@@ -534,7 +556,7 @@ func invalidCallResult(call *planner.ToolRequest) *planner.ToolResult {
 
 // successfulToolResult returns the minimal canonical success used by recovery
 // workflow tests.
-func successfulToolResult(call *planner.ToolRequest) *planner.ToolResult {
+func successfulToolResult(call *ToolCall) *planner.ToolResult {
 	return &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,

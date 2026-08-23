@@ -30,19 +30,19 @@ import (
 
 type confirmationAwait struct {
 	awaitID string
-	call    planner.ToolRequest
+	call    ToolCall
 	plan    *confirmationPlan
 }
 
 // splitConfirmationCalls partitions allowed tool calls into:
 // - calls that may execute immediately, and
 // - calls that require an await_confirmation boundary before execution.
-func (r *Runtime) splitConfirmationCalls(ctx context.Context, base *planner.PlanInput, allowed []planner.ToolRequest) ([]planner.ToolRequest, []confirmationAwait, error) {
+func (r *Runtime) splitConfirmationCalls(ctx context.Context, base *planner.PlanInput, allowed []ToolCall) ([]ToolCall, []confirmationAwait, error) {
 	if len(allowed) == 0 {
 		return nil, nil, nil
 	}
 
-	toExecute := make([]planner.ToolRequest, 0, len(allowed))
+	toExecute := make([]ToolCall, 0, len(allowed))
 	toConfirm := make([]confirmationAwait, 0, 1)
 	for _, call := range allowed {
 		plan, needs, err := r.confirmationPlan(ctx, &call)
@@ -79,7 +79,7 @@ type confirmationPlan struct {
 //   - When confirmation is not required, the returned plan is nil and needs is false.
 //   - Template rendering uses missingkey=error; a missing field is a bug and must
 //     fail loudly to surface incorrect tool schemas/templates.
-func (r *Runtime) confirmationPlan(ctx context.Context, call *planner.ToolRequest) (*confirmationPlan, bool, error) {
+func (r *Runtime) confirmationPlan(ctx context.Context, call *ToolCall) (*confirmationPlan, bool, error) {
 	// Runtime override takes precedence and can require confirmation for tools that
 	// do not declare design-time Confirmation.
 	if r.toolConfirmation != nil && len(r.toolConfirmation.Confirm) > 0 {

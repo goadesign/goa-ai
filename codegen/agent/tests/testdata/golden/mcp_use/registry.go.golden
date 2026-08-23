@@ -14,7 +14,6 @@ import (
 	specs "goa.design/goa-ai/alpha/agents/scribe/specs"
 	core2 "goa.design/goa-ai/calc/toolsets/core"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"time"
 )
@@ -90,11 +89,11 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 			// Use the used-toolset specs package for strong-contract payload/result codecs.
 			Specs:              core2.Specs,
 			ToolMetadataLookup: core2.MetadataByName,
-			Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
+			Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
 				if call == nil {
 					return nil, fmt.Errorf("tool request is nil")
 				}
-				meta := agentsruntime.ToolCallMetaFromRequest(*call)
+				meta := agentsruntime.ToolCallMetaFromCall(*call)
 				result, err := exec.Execute(ctx, &meta, call)
 				if err != nil {
 					return nil, err

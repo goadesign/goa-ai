@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"strings"
 
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
-// strict_schema.go owns the OpenAI strict-mode schema projection and its
-// inverse. The adapter always requests function tools and structured outputs
+// strict_schema.go owns the OpenAI strict-mode schema projection. The adapter
+// always requests function tools and structured outputs
 // with strict:true, and OpenAI only accepts a constrained JSON Schema subset
 // in that mode: every object must set additionalProperties:false and list all
 // of its properties as required, with optionality expressed as a null type
@@ -25,14 +24,10 @@ import (
 // contract explicitly when OpenAI cannot represent it (open objects and
 // map-style additionalProperties).
 //
-// The projection introduces exactly one model-visible artifact: canonically
-// optional members become nullable, so strict decoding emits explicit null
-// for members the model wants to omit. canonicalizeStrictPayload is the exact
-// inverse: it removes null members wherever the canonical schema does not
-// accept null. Those locations are precisely the ones the projection
-// rewrote, so payloads handed to the runtime keep the canonical encoding of
-// absence while members whose canonical contracts accept null pass through
-// untouched.
+// The projection can make canonically optional members nullable because strict
+// mode requires every object member. Returned bytes are never rewritten; the
+// generated codec remains authoritative and rejects explicit null where the
+// canonical contract does not accept it.
 
 const (
 	strictSchemaTypeObject = "object"
@@ -99,46 +94,6 @@ func projectStrictSchema(schema rawjson.Message) (map[string]any, error) {
 		return nil, err
 	}
 	return doc, nil
-}
-
-// canonicalizeStrictPayload restores the canonical encoding of absence in a
-// strict-mode payload: the projection makes optional members nullable, so the
-// model emits explicit null to omit them. Null members are removed exactly
-// where the canonical schema does not accept null; by construction those are
-// the members the projection rewrote. schema is the canonical (unprojected)
-// schema. Payloads without projection artifacts are returned unchanged.
-func canonicalizeStrictPayload(schema, payload rawjson.Message) (rawjson.Message, error) {
-	schemaData := bytes.TrimSpace(schema)
-	payloadData := bytes.TrimSpace(payload)
-	if len(schemaData) == 0 || len(payloadData) == 0 {
-		return payload, nil
-	}
-	if !json.Valid(schemaData) {
-		return nil, errors.New("invalid canonical schema")
-	}
-	if !json.Valid(payloadData) {
-		return nil, errors.New("invalid payload JSON")
-	}
-	var root map[string]any
-	schemaDecoder := json.NewDecoder(bytes.NewReader(schemaData))
-	schemaDecoder.UseNumber()
-	if err := schemaDecoder.Decode(&root); err != nil {
-		return nil, fmt.Errorf("invalid canonical schema: %w", err)
-	}
-	var doc any
-	decoder := json.NewDecoder(bytes.NewReader(payloadData))
-	decoder.UseNumber()
-	if err := decoder.Decode(&doc); err != nil {
-		return nil, fmt.Errorf("invalid payload JSON: %w", err)
-	}
-	if !canonicalizeStrictValue(resolveStrictSchemas(root, root, nil), doc, root) {
-		return payload, nil
-	}
-	normalized, err := json.Marshal(doc)
-	if err != nil {
-		return nil, fmt.Errorf("marshal canonicalized payload: %w", err)
-	}
-	return rawjson.Message(normalized), nil
 }
 
 // projectStrictNode rewrites one schema node in place and recurses through the
@@ -316,143 +271,6 @@ func makeStrictNullable(property map[string]any) {
 	// already accepts null.
 }
 
-// canonicalizeStrictValue walks one payload value alongside the canonical
-// schemas that can govern it, removing null members the canonical contract
-// does not accept. It mutates the payload in place and reports whether it
-// changed anything.
-func canonicalizeStrictValue(candidates []map[string]any, value any, root map[string]any) bool {
-	changed := false
-	switch actual := value.(type) {
-	case map[string]any:
-		for name, member := range actual {
-			memberCandidates := memberStrictSchemas(candidates, name, root)
-			if member == nil {
-				if len(memberCandidates) > 0 && !strictSchemasAcceptNull(memberCandidates) {
-					delete(actual, name)
-					changed = true
-				}
-				continue
-			}
-			if canonicalizeStrictValue(memberCandidates, member, root) {
-				changed = true
-			}
-		}
-	case []any:
-		itemCandidates := itemStrictSchemas(candidates, root)
-		for _, element := range actual {
-			if canonicalizeStrictValue(itemCandidates, element, root) {
-				changed = true
-			}
-		}
-	}
-	return changed
-}
-
-// resolveStrictSchemas expands one schema node into the concrete schemas that
-// can govern an instance location: local $refs are followed and branch
-// keywords contribute their branches independently. Unresolvable references
-// contribute nothing, which keeps unknown contracts untouched.
-func resolveStrictSchemas(node map[string]any, root map[string]any, seen map[string]struct{}) []map[string]any {
-	if node == nil {
-		return nil
-	}
-	if ref, ok := node["$ref"].(string); ok {
-		if _, cycling := seen[ref]; cycling {
-			return nil
-		}
-		target := resolveLocalSchemaRef(root, ref)
-		if target == nil {
-			return nil
-		}
-		next := make(map[string]struct{}, len(seen)+1)
-		for key := range seen {
-			next[key] = struct{}{}
-		}
-		next[ref] = struct{}{}
-		return resolveStrictSchemas(target, root, next)
-	}
-	var out []map[string]any
-	branched := false
-	for _, keyword := range strictChildSchemaListKeywords {
-		branches, ok := node[keyword].([]any)
-		if !ok {
-			continue
-		}
-		branched = true
-		for _, branch := range branches {
-			if branchMap, ok := branch.(map[string]any); ok {
-				out = append(out, resolveStrictSchemas(branchMap, root, seen)...)
-			}
-		}
-	}
-	if hasDirectStrictConstraints(node) || !branched {
-		out = append(out, node)
-	}
-	return out
-}
-
-// memberStrictSchemas returns the resolved schemas governing one object member
-// across all candidate object schemas.
-func memberStrictSchemas(candidates []map[string]any, name string, root map[string]any) []map[string]any {
-	var out []map[string]any
-	for _, candidate := range candidates {
-		properties, ok := candidate["properties"].(map[string]any)
-		if !ok {
-			continue
-		}
-		member, ok := properties[name].(map[string]any)
-		if !ok {
-			continue
-		}
-		out = append(out, resolveStrictSchemas(member, root, nil)...)
-	}
-	return out
-}
-
-// itemStrictSchemas returns the resolved schemas governing array elements
-// across all candidate array schemas.
-func itemStrictSchemas(candidates []map[string]any, root map[string]any) []map[string]any {
-	var out []map[string]any
-	for _, candidate := range candidates {
-		if items, ok := candidate["items"].(map[string]any); ok {
-			out = append(out, resolveStrictSchemas(items, root, nil)...)
-		}
-	}
-	return out
-}
-
-// strictSchemasAcceptNull reports whether any candidate schema accepts null.
-func strictSchemasAcceptNull(candidates []map[string]any) bool {
-	return slices.ContainsFunc(candidates, strictSchemaAcceptsNull)
-}
-
-// strictSchemaAcceptsNull reports whether one resolved schema accepts null.
-// Enums decide when present; otherwise a declared type must include "null".
-// Schemas that declare neither accept every value, including null.
-func strictSchemaAcceptsNull(schema map[string]any) bool {
-	if enum, ok := schema["enum"].([]any); ok {
-		return containsJSONNull(enum)
-	}
-	switch declared := schema["type"].(type) {
-	case string:
-		return declared == strictSchemaTypeNull
-	case []any:
-		return containsSchemaTypeName(declared, strictSchemaTypeNull)
-	}
-	return true
-}
-
-// hasDirectStrictConstraints reports whether the schema node constrains
-// instances directly rather than delegating entirely to branch schemas.
-func hasDirectStrictConstraints(schema map[string]any) bool {
-	for _, keyword := range []string{"type", "enum", "properties", "items"} {
-		if _, ok := schema[keyword]; ok {
-			return true
-		}
-	}
-	return false
-}
-
 // strictBranchesAcceptNull reports whether an anyOf branch list already
 // contains a null-accepting branch.
 func strictBranchesAcceptNull(branches []any) bool {
@@ -460,26 +278,6 @@ func strictBranchesAcceptNull(branches []any) bool {
 		branchMap, ok := branch.(map[string]any)
 		return ok && includesSchemaType(branchMap, strictSchemaTypeNull)
 	})
-}
-
-// resolveLocalSchemaRef walks a document-local JSON pointer reference such as
-// "#/$defs/Name" through the schema document. Unknown or external references
-// return nil.
-func resolveLocalSchemaRef(root map[string]any, ref string) map[string]any {
-	if !strings.HasPrefix(ref, "#/") {
-		return nil
-	}
-	node := any(root)
-	for segment := range strings.SplitSeq(strings.TrimPrefix(ref, "#/"), "/") {
-		segment = strings.ReplaceAll(strings.ReplaceAll(segment, "~1", "/"), "~0", "~")
-		current, ok := node.(map[string]any)
-		if !ok {
-			return nil
-		}
-		node = current[segment]
-	}
-	target, _ := node.(map[string]any)
-	return target
 }
 
 // includesSchemaType reports whether a schema node declares the requested

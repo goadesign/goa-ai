@@ -107,10 +107,15 @@ func TestCompleteStructuredOutputWithoutTools(t *testing.T) {
 	stub := &stubGenerativeClient{resp: textResp(`{}`)}
 	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-pro"})
 	require.NoError(t, err)
-	_, err = cl.Complete(context.Background(), &model.Request{
+	request := &model.Request{
 		Messages:         []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
 		StructuredOutput: &model.StructuredOutput{Name: "out", Schema: []byte(`{"type":"object"}`)},
-	})
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		request,
+		func(*model.Response, *model.Completion) error { return nil },
+	))
+	_, err = cl.Complete(context.Background(), request)
 	require.NoError(t, err)
 	require.NotNil(t, stub.lastConfig)
 	assert.Equal(t, "application/json", stub.lastConfig.ResponseMIMEType)
@@ -122,12 +127,17 @@ func TestCompleteStructuredOutputWithToolsRejected(t *testing.T) {
 	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-pro"})
 	require.NoError(t, err)
 	def := toolDef(t, "a", `{"type":"object"}`)
-	_, err = cl.Complete(context.Background(), &model.Request{
+	request := &model.Request{
 		Messages:         []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
 		Tools:            []*model.ToolDefinition{def},
 		StructuredOutput: &model.StructuredOutput{Name: "out", Schema: []byte(`{"type":"object"}`)},
-	})
-	assert.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		request,
+		func(*model.Response, *model.Completion) error { return nil },
+	))
+	_, err = cl.Complete(context.Background(), request)
+	assert.ErrorContains(t, err, "structured output cannot include tools")
 }
 
 func TestCompleteThinkingConfig(t *testing.T) {

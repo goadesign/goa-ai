@@ -8,7 +8,6 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"testing"
 	"time"
 
@@ -42,12 +41,12 @@ func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 	}
 	cases := []struct {
 		name   string
-		result *planner.PlanResult
+		result *PlanResult
 		want   string
 	}{
 		{
 			name: "terminal plus await",
-			result: &planner.PlanResult{
+			result: &PlanResult{
 				FinalResponse: final,
 				Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{
 					ID:       "clarify-1",
@@ -58,7 +57,7 @@ func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 		},
 		{
 			name: "synthesis without tool calls",
-			result: &planner.PlanResult{
+			result: &PlanResult{
 				FinalResponse:        final,
 				SynthesizeAfterTools: true,
 			},
@@ -66,8 +65,8 @@ func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 		},
 		{
 			name: "synthesis with await",
-			result: &planner.PlanResult{
-				ToolCalls: []planner.ToolRequest{{Name: budgeted.Name}},
+			result: &PlanResult{
+				ToolCalls: []ToolCall{{ToolCallID: "budgeted-call", Name: budgeted.Name}},
 				Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{
 					ID:       "clarify-1",
 					Question: "Which item?",
@@ -78,32 +77,32 @@ func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 		},
 		{
 			name: "synthesis with bookkeeping only",
-			result: &planner.PlanResult{
-				ToolCalls:            []planner.ToolRequest{{Name: bookkeeping.Name}},
+			result: &PlanResult{
+				ToolCalls:            []ToolCall{{ToolCallID: "bookkeeping-call", Name: bookkeeping.Name}},
 				SynthesizeAfterTools: true,
 			},
 			want: "synthesis-after-tools requires at least one budgeted tool",
 		},
 		{
 			name: "synthesis with terminal tool",
-			result: &planner.PlanResult{
-				ToolCalls:            []planner.ToolRequest{{Name: terminalTool.Name}},
+			result: &PlanResult{
+				ToolCalls:            []ToolCall{{ToolCallID: "terminal-call", Name: terminalTool.Name}},
 				SynthesizeAfterTools: true,
 			},
 			want: "synthesis-after-tools cannot include terminal tool",
 		},
 		{
 			name: "terminal plus budgeted tool",
-			result: &planner.PlanResult{
-				ToolCalls:     []planner.ToolRequest{{Name: budgeted.Name}},
+			result: &PlanResult{
+				ToolCalls:     []ToolCall{{ToolCallID: "budgeted-call", Name: budgeted.Name}},
 				FinalResponse: final,
 			},
 			want: "cannot accompany budgeted tool",
 		},
 		{
 			name: "terminal plus terminal tool",
-			result: &planner.PlanResult{
-				ToolCalls:     []planner.ToolRequest{{Name: terminalTool.Name}},
+			result: &PlanResult{
+				ToolCalls:     []ToolCall{{ToolCallID: "terminal-call", Name: terminalTool.Name}},
 				FinalResponse: final,
 			},
 			want: "cannot accompany terminal tool",
@@ -113,6 +112,8 @@ func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := rt.normalizeStep(tt.result)
+			var outputErr *planner.OutputContractError
+			require.ErrorAs(t, err, &outputErr)
 			require.ErrorContains(t, err, tt.want)
 		})
 	}
@@ -125,7 +126,7 @@ func TestBookkeepingFailureAlwaysRequiresResume(t *testing.T) {
 	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
 	bookkeeping.Bookkeeping = true
 	seedTestToolSpecs(rt, bookkeeping)
-	call := planner.ToolRequest{Name: bookkeeping.Name}
+	call := ToolCall{ToolCallID: "bookkeeping-call", Name: bookkeeping.Name}
 
 	assert.False(t, rt.toolResultRequiresResume(call, &planner.ToolResult{}))
 	assert.True(t, rt.toolResultRequiresResume(call, &planner.ToolResult{
@@ -143,7 +144,7 @@ func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) 
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				Result:     map[string]any{"ok": true},
@@ -170,10 +171,11 @@ func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) 
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
 	}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
-			Name:    bookkeeping.Name,
-			Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "bookkeeping-call",
+			Name:       bookkeeping.Name,
+			Payload:    rawjson.Message(`{}`),
 		}},
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
@@ -209,7 +211,7 @@ func TestRunLoopBookkeepingOnlyWithoutTerminalPayloadFailsFast(t *testing.T) {
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				Result:     map[string]any{"ok": true},
@@ -236,10 +238,11 @@ func TestRunLoopBookkeepingOnlyWithoutTerminalPayloadFailsFast(t *testing.T) {
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
 	}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
-			Name:    bookkeeping.Name,
-			Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "bookkeeping-call",
+			Name:       bookkeeping.Name,
+			Payload:    rawjson.Message(`{}`),
 		}},
 	}
 
@@ -269,7 +272,7 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 	terminal.TerminalRun = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				ToolCallID: call.ToolCallID,
@@ -285,7 +288,7 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 			Payload: []byte("null"),
 			Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "brief.summary length must be <= 600"),
 		},
-		planResult: &planner.PlanResult{
+		planResult: &PlanResult{
 			FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{
 					Role:  model.ConversationRoleAssistant,
@@ -293,7 +296,8 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 				},
 			},
 		},
-		hasPlanResult: true,
+		hasPlanResult:   true,
+		recoveryCatalog: &RecoveryCatalog{Tools: []tools.Ident{terminal.Name}},
 	}
 	base := &planner.PlanInput{
 		RunContext: run.Context{
@@ -309,10 +313,11 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
 	}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
-			Name:    terminal.Name,
-			Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "terminal-call",
+			Name:       terminal.Name,
+			Payload:    rawjson.Message(`{}`),
 		}},
 	}
 
@@ -332,208 +337,88 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 	require.NotNil(t, out)
 	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
 	require.Len(t, wfCtx.lastPlannerCall.Input.ToolOutputs, 1)
-	require.Equal(t, "run-1/turn-1/attempt-1/tasks-progress-complete/0", wfCtx.lastPlannerCall.Input.ToolOutputs[0].ToolCallID)
+	require.Equal(t, "terminal-call", wfCtx.lastPlannerCall.Input.ToolOutputs[0].ToolCallID)
 	require.Len(t, wfCtx.lastPlannerCall.Input.Messages, 2)
 	require.Equal(t, model.ConversationRoleAssistant, wfCtx.lastPlannerCall.Input.Messages[0].Role)
 	require.Equal(t, model.ConversationRoleUser, wfCtx.lastPlannerCall.Input.Messages[1].Role)
 }
 
-func TestRunLoopProviderEmptyToolCallIDsAdvanceAcrossResumeAttempts(t *testing.T) {
-	cases := []struct {
-		name string
-		tool tools.Ident
-		want []string
-	}{
-		{
-			name: "tool unavailable resumes",
-			tool: tools.ToolUnavailable,
-			want: []string{
-				"run-1/turn-1/attempt-1/runtime-tool_unavailable/0",
-				"run-1/turn-1/attempt-2/runtime-tool_unavailable/0",
-				"run-1/turn-1/attempt-3/runtime-tool_unavailable/0",
-			},
+func TestRunLoopRejectsProviderToolCallWithoutID(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	_, err := rt.CreateSession(context.Background(), "sess-1")
+	require.NoError(t, err)
+	agentID := agent.Ident("agent-1")
+	resumeAttempts := 0
+	rt.agents[agentID] = AgentRegistration{
+		ID: agentID,
+		Planner: &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			resumeAttempts++
+			t.Fatal("planner must not resume after an invalid initial result")
+			return nil, nil
+		}},
+	}
+	wfCtx := &routeWorkflowContext{
+		ctx:         context.Background(),
+		runID:       "run-1",
+		hookRuntime: rt,
+		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+			"resume": rt.PlanResumeActivity,
 		},
 	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			rt := New(WithLogger(telemetry.NoopLogger{}))
-			_, err := rt.CreateSession(context.Background(), "sess-1")
-			require.NoError(t, err)
-			agentID := agent.Ident("agent-1")
-			var resumeAttempts []int
-			rt.agents[agentID] = AgentRegistration{
-				ID: agentID,
-				Planner: &stubPlanner{resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
-					resumeAttempts = append(resumeAttempts, input.RunContext.Attempt)
-					switch len(resumeAttempts) {
-					case 1, 2:
-						require.Len(t, input.ToolOutputs, len(resumeAttempts))
-						return &planner.PlanResult{
-							ToolCalls: []planner.ToolRequest{{
-								Name:    tc.tool,
-								Payload: rawjson.Message(fmt.Sprintf(`{"requested_tool":"missing.%d"}`, len(resumeAttempts))),
-							}},
-						}, nil
-					case 3:
-						require.Len(t, input.ToolOutputs, len(tc.want))
-						return &planner.PlanResult{
-							FinalResponse: &planner.FinalResponse{
-								Message: &model.Message{
-									Role:  model.ConversationRoleAssistant,
-									Parts: []model.Part{model.TextPart{Text: "done"}},
-								},
-							},
-						}, nil
-					default:
-						require.FailNow(t, "unexpected resume attempt")
-					}
-					return nil, nil
-				}},
-			}
-			wfCtx := &routeWorkflowContext{
-				ctx:         context.Background(),
-				runID:       "run-1",
-				hookRuntime: rt,
-				plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
-					"resume": func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
-						return rt.PlanResumeActivity(ctx, input)
-					},
-				},
-			}
-			base := &planner.PlanInput{
-				RunContext: run.Context{
-					RunID:     "run-1",
-					SessionID: "sess-1",
-					TurnID:    "turn-1",
-					Attempt:   1,
-				},
-			}
-			input := &RunInput{
-				AgentID:   agentID,
-				RunID:     "run-1",
-				SessionID: "sess-1",
-				TurnID:    "turn-1",
-			}
-			initial := &planner.PlanResult{
-				ToolCalls: []planner.ToolRequest{{
-					Name:    tc.tool,
-					Payload: rawjson.Message(`{"requested_tool":"missing.0"}`),
-				}},
-			}
-
-			out, err := rt.runLoop(
-				wfCtx,
-				AgentRegistration{ID: agentID, ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
-				input,
-				base,
-				initial,
-				policy.CapsState{},
-				time.Time{},
-				time.Time{},
-				"turn-1",
-				nil,
-			)
-			require.NoError(t, err)
-			require.NotNil(t, out)
-			require.Equal(t, []int{2, 3, 4}, resumeAttempts)
-			require.Len(t, out.ToolEvents, len(tc.want))
-			for i, want := range tc.want {
-				require.Equal(t, want, out.ToolEvents[i].ToolCallID)
-			}
-			require.NotEqual(t, out.ToolEvents[1].ToolCallID, out.ToolEvents[2].ToolCallID)
-		})
+	base := &planner.PlanInput{RunContext: run.Context{
+		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
+	}}
+	input := &RunInput{
+		AgentID: agentID, RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1",
 	}
+	initial := &PlanResult{ToolCalls: []ToolCall{{
+		Name: tools.ToolUnavailable, Payload: rawjson.Message(`{"requested_tool":"missing.0"}`),
+	}}}
+
+	out, err := rt.runLoop(
+		wfCtx,
+		AgentRegistration{ID: agentID, ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		input,
+		base,
+		initial,
+		policy.CapsState{},
+		time.Time{},
+		time.Time{},
+		"turn-1",
+		nil,
+	)
+
+	require.Nil(t, out)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.Zero(t, resumeAttempts)
 }
 
-func TestRunLoopProviderEmptyToolCallIDsUseBatchIndexes(t *testing.T) {
-	cases := []struct {
-		name  string
-		calls []planner.ToolRequest
-		want  []string
-	}{
-		{
-			name: "two tool unavailable calls",
-			calls: []planner.ToolRequest{
-				{Name: tools.ToolUnavailable, Payload: rawjson.Message(`{"requested_tool":"missing.one"}`)},
-				{Name: tools.ToolUnavailable, Payload: rawjson.Message(`{"requested_tool":"missing.two"}`)},
-			},
-			want: []string{
-				"run-1/turn-1/attempt-1/runtime-tool_unavailable/0",
-				"run-1/turn-1/attempt-1/runtime-tool_unavailable/1",
-			},
-		},
-	}
+func TestRunLoopRejectsMultipleProviderToolCallsWithoutIDs(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	initial := &PlanResult{ToolCalls: []ToolCall{
+		{Name: tools.ToolUnavailable, Payload: rawjson.Message(`{"requested_tool":"missing.one"}`)},
+		{Name: tools.ToolUnavailable, Payload: rawjson.Message(`{"requested_tool":"missing.two"}`)},
+	}}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			rt := New(WithLogger(telemetry.NoopLogger{}))
-			_, err := rt.CreateSession(context.Background(), "sess-1")
-			require.NoError(t, err)
-			agentID := agent.Ident("agent-1")
-			rt.agents[agentID] = AgentRegistration{
-				ID: agentID,
-				Planner: &stubPlanner{resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
-					require.Len(t, input.ToolOutputs, len(tc.want))
-					return &planner.PlanResult{
-						FinalResponse: &planner.FinalResponse{
-							Message: &model.Message{
-								Role:  model.ConversationRoleAssistant,
-								Parts: []model.Part{model.TextPart{Text: "done"}},
-							},
-						},
-					}, nil
-				}},
-			}
-			wfCtx := &routeWorkflowContext{
-				ctx:         context.Background(),
-				runID:       "run-1",
-				hookRuntime: rt,
-				plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
-					"resume": func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
-						return rt.PlanResumeActivity(ctx, input)
-					},
-				},
-			}
-			base := &planner.PlanInput{
-				RunContext: run.Context{
-					RunID:     "run-1",
-					SessionID: "sess-1",
-					TurnID:    "turn-1",
-					Attempt:   1,
-				},
-			}
-			input := &RunInput{
-				AgentID:   agentID,
-				RunID:     "run-1",
-				SessionID: "sess-1",
-				TurnID:    "turn-1",
-			}
-			initial := &planner.PlanResult{
-				ToolCalls: tc.calls,
-			}
-
-			out, err := rt.runLoop(
-				wfCtx,
-				AgentRegistration{ID: agentID, ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
-				input,
-				base,
-				initial,
-				policy.CapsState{},
-				time.Time{},
-				time.Time{},
-				"turn-1",
-				nil,
-			)
-			require.NoError(t, err)
-			require.NotNil(t, out)
-			require.Len(t, out.ToolEvents, len(tc.want))
-			for i, want := range tc.want {
-				require.Equal(t, want, out.ToolEvents[i].ToolCallID)
-			}
-			require.NotEqual(t, out.ToolEvents[0].ToolCallID, out.ToolEvents[1].ToolCallID)
-		})
-	}
+	out, err := rt.runLoop(
+		&testWorkflowContext{ctx: context.Background()},
+		AgentRegistration{ExecuteToolActivity: "execute"},
+		&RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"},
+		&planner.PlanInput{RunContext: run.Context{
+			RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
+		}},
+		initial,
+		policy.CapsState{},
+		time.Time{},
+		time.Time{},
+		"turn-1",
+		nil,
+	)
+	require.Nil(t, out)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.ErrorContains(t, err, `tool "runtime.tool_unavailable" is missing tool_call_id`)
 }
 
 func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
@@ -544,7 +429,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc.tools",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				Result:     map[string]any{"name": call.Name},
@@ -555,7 +440,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 	}))
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				Result:     map[string]any{"ok": true},
@@ -567,7 +452,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 
 	wfCtx := &testWorkflowContext{
 		ctx:           context.Background(),
-		planResult:    &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}},
+		planResult:    &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}},
 		hasPlanResult: true,
 	}
 	base := &planner.PlanInput{
@@ -584,10 +469,10 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
 	}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{
-			{Name: budgeted.Name, Payload: rawjson.Message(`{}`)},
-			{Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)},
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{
+			{ToolCallID: "budgeted-call", Name: budgeted.Name, Payload: rawjson.Message(`{}`)},
+			{ToolCallID: "bookkeeping-call", Name: bookkeeping.Name, Payload: rawjson.Message(`{}`)},
 		},
 		SynthesizeAfterTools: true,
 	}
@@ -609,7 +494,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
 	require.True(t, wfCtx.lastPlannerCall.Input.SynthesisOnly)
 	require.Len(t, wfCtx.lastPlannerCall.Input.ToolOutputs, 1)
-	require.Equal(t, "run-1/turn-1/attempt-1/svc-tools-lookup/0", wfCtx.lastPlannerCall.Input.ToolOutputs[0].ToolCallID)
+	require.Equal(t, "budgeted-call", wfCtx.lastPlannerCall.Input.ToolOutputs[0].ToolCallID)
 }
 
 func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOutput(t *testing.T) {
@@ -619,7 +504,7 @@ func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOu
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: func(ctx context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+		Execute: func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 			return &ToolExecutionResult{
 				ToolResult: &planner.ToolResult{
 					Name:       call.Name,
@@ -646,7 +531,7 @@ func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOu
 				Question: "Which alarm should I investigate?",
 			},
 		},
-		planResult:    &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}},
+		planResult:    &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}},
 		hasPlanResult: true,
 	}
 
@@ -665,10 +550,11 @@ func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOu
 		TurnID:    "turn-1",
 	}
 	seedRunMeta(t, rt, input)
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
-			Name:    bookkeeping.Name,
-			Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "bookkeeping-call",
+			Name:       bookkeeping.Name,
+			Payload:    rawjson.Message(`{}`),
 		}},
 	}
 
@@ -696,7 +582,7 @@ func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testin
 	budgeted := newAnyJSONSpec(tools.Ident("tasks.progress.update"), "tasks.progress")
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: func(ctx context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+		Execute: func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 			return &ToolExecutionResult{
 				ToolResult: &planner.ToolResult{
 					Name:       call.Name,
@@ -723,7 +609,7 @@ func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testin
 				Question: "Which compressor should I investigate?",
 			},
 		},
-		planResult:    &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}},
+		planResult:    &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}},
 		hasPlanResult: true,
 	}
 
@@ -742,10 +628,11 @@ func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testin
 		TurnID:    "turn-1",
 	}
 	seedRunMeta(t, rt, input)
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
-			Name:    budgeted.Name,
-			Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "budgeted-call",
+			Name:       budgeted.Name,
+			Payload:    rawjson.Message(`{}`),
 		}},
 	}
 
@@ -774,7 +661,7 @@ func TestRunLoopBookkeepingToolTerminalRejectsClarification(t *testing.T) {
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: func(ctx context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+		Execute: func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 			return &ToolExecutionResult{
 				ToolResult: &planner.ToolResult{
 					Name:       call.Name,
@@ -818,10 +705,11 @@ func TestRunLoopBookkeepingToolTerminalRejectsClarification(t *testing.T) {
 		TurnID:    "turn-1",
 	}
 	seedRunMeta(t, rt, input)
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
-			Name:    bookkeeping.Name,
-			Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "bookkeeping-call",
+			Name:       bookkeeping.Name,
+			Payload:    rawjson.Message(`{}`),
 		}},
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{

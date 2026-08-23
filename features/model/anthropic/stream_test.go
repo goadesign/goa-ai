@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -143,7 +144,7 @@ func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
 	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](dec, nil)
 	nameMap := map[string]string{"tool_a": "toolset.tool"}
 
-	s := newAnthropicStreamer(context.Background(), stream, nameMap)
+	s := newAnthropicStreamer(context.Background(), stream, nameMap, "claude-test", model.ModelClassDefault)
 	defer func() {
 		_ = s.Close()
 	}()
@@ -185,6 +186,32 @@ func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
 	}
 }
 
+// TestAnthropicStreamerRejectsOversizedSDKSnapshotBeforeAccumulation verifies
+// one oversized event fails before the SDK response accumulator retains it.
+func TestAnthropicStreamerRejectsOversizedSDKSnapshotBeforeAccumulation(t *testing.T) {
+	delta := sdk.MessageStreamEventUnion{}
+	require.NoError(t, json.Unmarshal([]byte(fmt.Sprintf(
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":%q}}`,
+		strings.Repeat("x", (16<<20)+1),
+	)), &delta))
+	decoder := &testDecoder{events: []ssestream.Event{{
+		Type: "content_block_delta",
+		Data: mustJSON(delta),
+	}}}
+	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](decoder, nil)
+	contract, err := model.NewRequestContract(&model.Request{})
+	require.NoError(t, err)
+	validated := newAnthropicStreamer(t.Context(), stream, nil, "claude-test", model.ModelClassDefault, contract)
+	defer func() { require.NoError(t, validated.Close()) }()
+
+	_, err = validated.Recv()
+
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.ErrorContains(t, err, "retained output exceeds 16777216 bytes")
+	require.True(t, validationErr.Evidence().Present)
+}
+
 // TestAnthropicStreamer_MidStream429Classified verifies that an error
 // surfaced by the underlying decoder mid-stream (not just at stream
 // establishment) is classified through the same status-to-kind table, so
@@ -194,7 +221,7 @@ func TestAnthropicStreamer_MidStream429Classified(t *testing.T) {
 	dec := &testDecoder{err: &sdk.Error{StatusCode: http.StatusTooManyRequests}}
 	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](dec, nil)
 
-	s := newAnthropicStreamer(context.Background(), stream, nil)
+	s := newAnthropicStreamer(context.Background(), stream, nil, "claude-test", model.ModelClassDefault)
 	defer func() { _ = s.Close() }()
 
 	_, err := s.Recv()
@@ -213,7 +240,7 @@ func TestAnthropicStreamer_ContextCancelPassthrough(t *testing.T) {
 	dec := &testDecoder{err: cause}
 	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](dec, nil)
 
-	s := newAnthropicStreamer(context.Background(), stream, nil)
+	s := newAnthropicStreamer(context.Background(), stream, nil, "claude-test", model.ModelClassDefault)
 	defer func() { _ = s.Close() }()
 
 	_, err := s.Recv()
@@ -231,7 +258,7 @@ func TestAnthropicStreamerClassifiesEventlessStreamAsEmptyStream(t *testing.T) {
 	dec := &testDecoder{events: nil}
 	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](dec, nil)
 
-	s := newAnthropicStreamer(context.Background(), stream, nil)
+	s := newAnthropicStreamer(context.Background(), stream, nil, "claude-test", model.ModelClassDefault)
 	defer func() { _ = s.Close() }()
 
 	_, err := s.Recv()
@@ -252,7 +279,7 @@ func TestAnthropicStreamerClassifiesMessageStopWithoutStartAsEmptyStream(t *test
 	events := []ssestream.Event{{Type: "message_stop", Data: mustJSON(stop)}}
 	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](&testDecoder{events: events}, nil)
 
-	s := newAnthropicStreamer(context.Background(), stream, nil)
+	s := newAnthropicStreamer(context.Background(), stream, nil, "claude-test", model.ModelClassDefault)
 	defer func() { _ = s.Close() }()
 
 	_, err := s.Recv()
@@ -300,7 +327,7 @@ func TestAnthropicStreamerRejectsMessageStopWithOpenContentBlock(t *testing.T) {
 		events[i] = ssestream.Event{Type: raw.eventType, Data: mustJSON(event)}
 	}
 	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](&testDecoder{events: events}, nil)
-	s := newAnthropicStreamer(context.Background(), stream, nil)
+	s := newAnthropicStreamer(context.Background(), stream, nil, "claude-test", model.ModelClassDefault)
 	defer func() { _ = s.Close() }()
 
 	_, err := s.Recv()

@@ -76,100 +76,22 @@ This generates:
 
 ### Understanding the Generated Code
 
-The generated `cmd/<service>/main.go` uses the bootstrap to run your agents. Here's what it does under the hood:
+The scaffold demonstrates one complete deterministic agent turn:
 
-```go
-package main
+1. `PlanStart` decodes a generated payload example and builds a typed
+   `New<Tool>Call(toolCallID, args)`.
+2. `bootstrap.New` registers a deterministic example executor for that toolset.
+   The executor validates the payload with the generated codec and returns the
+   generated result example.
+3. The runtime executes the call and invokes `PlanResume` with the correlated
+   result.
+4. `PlanResume` checks the tool name and call ID, then returns the exact
+   canonical tool result in the final assistant message.
 
-import (
-    "context"
-    "fmt"
-
-    // The core Goa-AI runtime and planner interfaces
-    "goa.design/goa-ai/runtime/agent/runtime"
-    "goa.design/goa-ai/runtime/agent/model"
-    "goa.design/goa-ai/runtime/agent/planner"
-
-    // === Your Generated Agent Packages ===
-    // (Goa generated these based on your design)
-    {{- range .Services }}{{- range .Agents }}
-    {{ .PackageName }} "{{ .ImportPath }}"
-    {{- end }}{{- end }}
-)
-
-// A simple "brain" for our agent. It just says hello for now.
-// We'll make this smarter in the next section!
-type StubPlanner struct{}
-func (p *StubPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
-    return &planner.PlanResult{
-		FinalResponse: &planner.FinalResponse{
-			Message: &model.Message{
-				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "Hello!"}},
-			},
-		},
-	}, nil
-}
-func (p *StubPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
-    return &planner.PlanResult{
-		FinalResponse: &planner.FinalResponse{
-			Message: &model.Message{
-				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "Done."}},
-			},
-		},
-	}, nil
-}
-
-func main() {
-    // 1. Create the Runtime
-    // This is the central engine for all your agents.
-    rt := runtime.New()
-
-    // 2. Register Your Agent(s)
-    // Let the runtime know about the agents it can manage.
-    {{- $first := true -}}
-    {{- range .Services }}{{- range .Agents }}
-    {
-        cfg := {{ .PackageName }}.{{ .StructName }}Config{
-            Planner: &StubPlanner{},
-            // We'll add tool configurations here later on.
-        }
-        if err := {{ .PackageName }}.Register{{ .StructName }}(context.Background(), rt, cfg); err != nil {
-            panic(err)
-        }
-    }
-    {{- if $first }}{{ $first = false }}{{ end }}
-    {{- end }}{{- end }}
-
-    // 3. Run it!
-    // Let's invoke our first agent and see what it says using AgentClient.
-    fmt.Println("🚀 Invoking agent...")
-    if _, err := rt.CreateSession(context.Background(), "my-first-session"); err != nil {
-        panic(err)
-    }
-    client := {{ (index (index .Services 0).Agents 0).PackageName }}.NewClient(rt)
-    out, err := client.Run(
-        context.Background(),
-        "my-first-session",
-        []*model.Message{
-			{ Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Hi there!"}} },
-		},
-    )
-    if err != nil {
-		panic(err)
-	}
-
-    fmt.Println("✅ Success!")
-    fmt.Println("RunID:", out.RunID)
-    // Print first text part (if any)
-    if out.Final != nil && len(out.Final.Parts) > 0 {
-        if tp, ok := out.Final.Parts[0].(model.TextPart); ok {
-            fmt.Println("Assistant says:", tp.Text)
-        }
-    }
-}
-```
+This path exercises the generated schemas, codecs, executor registration,
+runtime tool dispatch, and `PlanStart` → `PlanResume` transition without
+requiring model credentials. Replace the planner and example executor together
+when connecting real model and service implementations.
 
 When a service also declares `Completion(...)` contracts, Goa generates
 `gen/<service>/completions/` and the example main demonstrates both
@@ -253,7 +175,7 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 
 // PlanResume is called after tools have run, giving the agent new information.
 func (p *MySmartPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
-    // 1. Inspect the tool results from in.ToolResults.
+    // 1. Inspect the tool results from in.ToolOutputs.
     // 2. Build a new prompt including the tool results.
     // 3. Call the LLM to decide what to do next.
     return &planner.PlanResult{
@@ -313,7 +235,7 @@ import (
     specs "<module>/gen/<svc>/agents/<agent>/specs/<toolset>"
 )
 
-func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
+func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
     switch call.Name {
     case specs.<Tool>:
         // Decode with the generated typed descriptor: args is the typed

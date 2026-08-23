@@ -30,7 +30,7 @@ import (
 // materializeToolResult runs the registered typed result materializer, enforces
 // the tool contract, and returns canonical JSON for the final runtime-owned
 // tool result payload.
-func (r *Runtime) materializeToolResult(ctx context.Context, call planner.ToolRequest, result *planner.ToolResult) (rawjson.Message, error) {
+func (r *Runtime) materializeToolResult(ctx context.Context, call ToolCall, result *planner.ToolResult) (rawjson.Message, error) {
 	spec, ok := r.toolSpec(call.Name)
 	if !ok {
 		return nil, fmt.Errorf("tool %q is not registered", call.Name)
@@ -82,7 +82,7 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call planner.ToolRe
 // question separately from planner-visible history.
 func (r *Runtime) materializeToolExecutionResult(
 	ctx context.Context,
-	call planner.ToolRequest,
+	call ToolCall,
 	exec *ToolExecutionResult,
 ) (*planner.ToolResult, rawjson.Message, *ToolClarification, error) {
 	if exec == nil {
@@ -91,6 +91,8 @@ func (r *Runtime) materializeToolExecutionResult(
 	if exec.ToolResult == nil {
 		return nil, nil, nil, fmt.Errorf("tool %q returned nil tool result", call.Name)
 	}
+	exec.ToolResult.Name = call.Name
+	exec.ToolResult.ToolCallID = call.ToolCallID
 	resultJSON, err := r.materializeToolResult(ctx, call, exec.ToolResult)
 	if err != nil {
 		return nil, nil, nil, err
@@ -103,14 +105,14 @@ func (r *Runtime) materializeToolExecutionResult(
 
 // applyResultMaterializer invokes the toolset-owned typed result materializer
 // when the toolset registered one.
-func (r *Runtime) applyResultMaterializer(ctx context.Context, spec tools.ToolSpec, call planner.ToolRequest, result *planner.ToolResult) error {
+func (r *Runtime) applyResultMaterializer(ctx context.Context, spec tools.ToolSpec, call ToolCall, result *planner.ToolResult) error {
 	r.mu.RLock()
 	reg, ok := r.toolsets[spec.Toolset]
 	r.mu.RUnlock()
 	if !ok || reg.ResultMaterializer == nil {
 		return nil
 	}
-	if err := reg.ResultMaterializer(ctx, ToolCallMetaFromRequest(call), &call, result); err != nil {
+	if err := reg.ResultMaterializer(ctx, ToolCallMetaFromCall(call), &call, result); err != nil {
 		return fmt.Errorf("materialize %s tool result: %w", call.Name, err)
 	}
 	return nil
@@ -118,7 +120,7 @@ func (r *Runtime) applyResultMaterializer(ctx context.Context, spec tools.ToolSp
 
 // decodeProvidedToolRecords decodes externally supplied raw tool results in the
 // canonical awaited call order and materializes their runtime-owned sidecars.
-func (r *Runtime) decodeProvidedToolRecords(ctx context.Context, allowed []planner.ToolRequest, provided map[string]*api.ProvidedToolResult) ([]stepToolRecord, error) {
+func (r *Runtime) decodeProvidedToolRecords(ctx context.Context, allowed []ToolCall, provided map[string]*api.ProvidedToolResult) ([]stepToolRecord, error) {
 	if len(allowed) == 0 {
 		return nil, nil
 	}
@@ -150,7 +152,7 @@ func (r *Runtime) decodeProvidedToolRecords(ctx context.Context, allowed []plann
 
 // decodeProvidedToolResult converts one externally supplied raw result into the
 // typed planner result used by the runtime.
-func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolSpec, call planner.ToolRequest, item *api.ProvidedToolResult) (*planner.ToolResult, rawjson.Message, error) {
+func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolSpec, call ToolCall, item *api.ProvidedToolResult) (*planner.ToolResult, rawjson.Message, error) {
 	if item == nil {
 		return nil, nil, fmt.Errorf("await: nil tool result")
 	}
@@ -184,7 +186,7 @@ func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolS
 
 // setMalformedToolResult replaces a nominal success that violated its
 // registered result contract with the terminal failure observed by the model.
-func setMalformedToolResult(result *planner.ToolResult, call planner.ToolRequest, cause error) {
+func setMalformedToolResult(result *planner.ToolResult, call ToolCall, cause error) {
 	result.Name = call.Name
 	result.Result = nil
 	result.Bounds = nil
@@ -206,7 +208,7 @@ func setMalformedToolResult(result *planner.ToolResult, call planner.ToolRequest
 
 // canonicalProvidedToolFailure combines external failure facts with call-owned
 // correction metadata before the canonical result contract is validated.
-func canonicalProvidedToolFailure(spec tools.ToolSpec, call planner.ToolRequest, in *api.ProvidedToolFailure) *planner.ToolFailure {
+func canonicalProvidedToolFailure(spec tools.ToolSpec, call ToolCall, in *api.ProvidedToolFailure) *planner.ToolFailure {
 	if in == nil {
 		return nil
 	}
@@ -227,11 +229,11 @@ func canonicalProvidedToolFailure(spec tools.ToolSpec, call planner.ToolRequest,
 	return failure
 }
 
-// ToolCallMetaFromRequest copies runtime-owned invocation context from a
-// canonical tool request. Generated executor adapters use this function so
+// ToolCallMetaFromCall copies runtime-owned invocation context from a
+// canonical tool call. Generated executor adapters use this function so
 // service, MCP, and custom executors all receive the same immutable labels and
 // correlation identifiers.
-func ToolCallMetaFromRequest(call planner.ToolRequest) ToolCallMeta {
+func ToolCallMetaFromCall(call ToolCall) ToolCallMeta {
 	return ToolCallMeta{
 		RunID:            call.RunID,
 		SessionID:        call.SessionID,

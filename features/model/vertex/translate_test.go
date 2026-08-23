@@ -74,7 +74,12 @@ func TestTranslateResponseFunctionCallWithoutThoughtSignature(t *testing.T) {
 			}},
 		}},
 	}
-	out, err := translateResponse(resp, "gemini-2.5-pro", model.ModelClassDefault, map[string]string{})
+	out, err := translateResponse(
+		resp,
+		"gemini-2.5-pro",
+		model.ModelClassDefault,
+		map[string]string{"feed_find_duplicates": "feed/find_duplicates"},
+	)
 	require.NoError(t, err)
 	require.Len(t, out.ToolCalls(), 1)
 	assert.Empty(t, out.ToolCalls()[0].ThoughtSignature)
@@ -94,7 +99,7 @@ func TestTranslateResponseRejectsMissingToolCallID(t *testing.T) {
 	require.EqualError(t, err, `vertex: response function call "lookup" is missing its ID`)
 }
 
-func TestTranslateResponseUnknownToolPassesThrough(t *testing.T) {
+func TestTranslateResponseRejectsUnknownTool(t *testing.T) {
 	resp := &genai.GenerateContentResponse{
 		Candidates: []*genai.Candidate{{
 			FinishReason: genai.FinishReasonStop,
@@ -103,12 +108,8 @@ func TestTranslateResponseUnknownToolPassesThrough(t *testing.T) {
 			}},
 		}},
 	}
-	out, err := translateResponse(resp, "m", model.ModelClassDefault, map[string]string{})
-	require.NoError(t, err)
-	require.Len(t, out.ToolCalls(), 1)
-	// Unadvertised names surface as-is so the runtime produces an
-	// unknown-tool result instead of the adapter erroring.
-	assert.Equal(t, "never_advertised", string(out.ToolCalls()[0].Name))
+	_, err := translateResponse(resp, "m", model.ModelClassDefault, map[string]string{})
+	require.ErrorContains(t, err, `unadvertised name "never_advertised"`)
 }
 
 func TestTranslateResponseProviderToolCallIDWins(t *testing.T) {
@@ -120,7 +121,12 @@ func TestTranslateResponseProviderToolCallIDWins(t *testing.T) {
 			}},
 		}},
 	}
-	out, err := translateResponse(resp, "m", model.ModelClassSmall, map[string]string{})
+	out, err := translateResponse(
+		resp,
+		"m",
+		model.ModelClassSmall,
+		map[string]string{"feed_find_duplicates": "feed/find_duplicates"},
+	)
 	require.NoError(t, err)
 	require.Len(t, out.ToolCalls(), 1)
 	assert.Equal(t, "call-abc", out.ToolCalls()[0].ID)
@@ -137,7 +143,12 @@ func TestTranslateResponseNilArgsPayloadIsEmptyObject(t *testing.T) {
 			}},
 		}},
 	}
-	out, err := translateResponse(resp, "m", model.ModelClassDefault, map[string]string{})
+	out, err := translateResponse(
+		resp,
+		"m",
+		model.ModelClassDefault,
+		map[string]string{"feed_find_duplicates": "feed/find_duplicates"},
+	)
 	require.NoError(t, err)
 	require.Len(t, out.ToolCalls(), 1)
 	// marshalArgs normalizes nil args to an empty JSON object; a plain

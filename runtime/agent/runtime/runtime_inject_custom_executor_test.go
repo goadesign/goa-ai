@@ -89,7 +89,7 @@ func newCustomLookupHouseholdToolset(t *testing.T, resultHouseholdID *string) To
 	t.Helper()
 	return ToolsetRegistration{
 		Name: "helpers",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			meta := ToolCallMeta{
 				RunID:     call.RunID,
 				SessionID: call.SessionID,
@@ -111,8 +111,8 @@ func newCustomLookupHouseholdToolset(t *testing.T, resultHouseholdID *string) To
 
 // TestCustomExecutorLabelInjection_TypedFieldPopulated is the inmem
 // end-to-end proof: a run label set at the ExecuteToolActivity boundary
-// (mirroring what Runtime.Start/WithLabels thread down to
-// planner.ToolRequest.Labels, see activities.go's ExecuteToolActivity) ends
+// (mirroring what Runtime.Start/WithLabels thread down to the runtime-owned
+// ToolCall.Labels, see activities.go's ExecuteToolActivity) ends
 // up as a validated, typed field on a custom executor's decoded payload.
 func TestCustomExecutorLabelInjection_TypedFieldPopulated(t *testing.T) {
 	rt := New()
@@ -197,7 +197,7 @@ func TestToolCallMetaCopiesRunLabels(t *testing.T) {
 		Labels: map[string]string{"source": "events:7"},
 	}
 
-	meta := ToolCallMetaFromRequest(call)
+	meta := ToolCallMetaFromCall(call)
 	call.Labels["source"] = "events:8"
 
 	require.Equal(t, "events:7", meta.Labels["source"])

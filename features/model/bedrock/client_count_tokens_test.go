@@ -52,14 +52,41 @@ func (c *countTokensRuntimeClient) CountTokens(
 	return &bedrockruntime.CountTokensOutput{InputTokens: &tokens}, nil
 }
 
+func TestCountTokensRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
+	tests := []struct {
+		name    string
+		request *model.Request
+	}{
+		{name: "nil request"},
+		{name: "unsupported model class", request: &model.Request{ModelClass: "unsupported"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime := &countTokensRuntimeClient{}
+			raw := &provider{
+				runtime:      runtime,
+				defaultModel: "anthropic.claude-opus-4-8",
+				maxTok:       10,
+				temp:         0.5,
+			}
+			client, newErr := model.NewClient(raw)
+			require.NoError(t, newErr)
+
+			_, err := client.CountTokens(context.Background(), tt.request)
+
+			require.Error(t, err)
+			require.Nil(t, runtime.input)
+		})
+	}
+}
+
 func TestCountTokens_UsesConverseRequestPreparation(t *testing.T) {
 	rt := &countTokensRuntimeClient{}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "anthropic.claude-opus-4-8",
 		maxTok:       10,
 		temp:         0.5,
-		think:        defaultThinkingBudget,
 	}
 	req := &model.Request{
 		ModelClass: model.ModelClassDefault,
@@ -77,7 +104,7 @@ func TestCountTokens_UsesConverseRequestPreparation(t *testing.T) {
 			{
 				Name:        "lookup",
 				Description: "Look up a value.",
-				Input: model.ToolInputFromSchema(rawjson.Message(
+				Input: model.AdvertisedToolInputFromSchema(rawjson.Message(
 					`{"type":"object","properties":{"id":{"type":"string"}}}`,
 				)),
 			},
@@ -106,10 +133,9 @@ func TestCountTokens_UsesConverseRequestPreparation(t *testing.T) {
 // TokenCount still reports the configured profile ID for observability.
 func TestCountTokens_SendsFoundationModelID(t *testing.T) {
 	rt := &countTokensRuntimeClient{}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "us.anthropic.claude-opus-4-8",
-		think:        defaultThinkingBudget,
 	}
 
 	count, err := client.CountTokens(context.Background(), &model.Request{
@@ -144,10 +170,9 @@ func TestCountTokens_ReturnsExactCountFromPromptTooLong(t *testing.T) {
 			Err:           validationErr,
 		},
 	}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "anthropic.claude-opus-4-8",
-		think:        defaultThinkingBudget,
 	}
 
 	count, err := client.CountTokens(context.Background(), &model.Request{
@@ -189,10 +214,9 @@ func TestCountTokens_PreservesOtherValidationErrors(t *testing.T) {
 			Err:           responseErr,
 		},
 	}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "anthropic.claude-opus-4-8",
-		think:        defaultThinkingBudget,
 	}
 
 	_, err := client.CountTokens(context.Background(), &model.Request{
@@ -225,12 +249,11 @@ func TestCountTokens_PreservesOtherValidationErrors(t *testing.T) {
 // the count input never carries empty content.
 func TestCountTokens_OmitsThinkingBlocks(t *testing.T) {
 	rt := &countTokensRuntimeClient{}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "anthropic.claude-opus-4-8",
 		maxTok:       10,
 		temp:         0.5,
-		think:        defaultThinkingBudget,
 	}
 	req := &model.Request{
 		ModelClass: model.ModelClassDefault,
@@ -263,7 +286,7 @@ func TestCountTokens_OmitsThinkingBlocks(t *testing.T) {
 			{
 				Name:        "lookup",
 				Description: "Look up a value.",
-				Input: model.ToolInputFromSchema(rawjson.Message(
+				Input: model.AdvertisedToolInputFromSchema(rawjson.Message(
 					`{"type":"object","properties":{"id":{"type":"string"}}}`,
 				)),
 			},

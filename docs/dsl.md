@@ -155,23 +155,29 @@ that contains:
 - completion result types and unions
 - canonical root examples explicitly authored with Goa `Example(...)`
 - generated JSON codecs and validation helpers
-- typed `completion.Spec` values
 - generated `Complete<Name>(ctx, client, req)` helpers that request provider-enforced
 structured output and decode the assistant response through the generated codec
-- generated `StreamComplete<Name>(ctx, client, req)` and `Decode<Name>Chunk(...)`
-helpers for typed completion streaming
+- generated typed `StreamComplete<Name>(ctx, client, req)` helpers
+- narrow `<Name>Example()` accessors that return an isolated copy when a caller
+  needs the authored example
+
+Generated codec-bearing completion specs are private to the typed wrappers.
+Existing callers migrate from direct `Spec<Name>` access to
+`Complete<Name>(...)` or `StreamComplete<Name>(...)`; callers that only need an
+authored example use `<Name>Example()`. No public accessor exposes the generated
+codec or mutable schema.
 
 Provider adapters send an authored root example through the provider's native
-structured-output example field when available. Unary helpers make one
-correction attempt when the generated codec rejects model-authored JSON. The
-correction includes the exact codec error, generated field guidance, and the
-authored example. `completion.Response.Attempts` retains every model response
-and its token usage in invocation order; a second invalid value is terminal.
+structured-output example field when available. If the generated codec rejects
+model-authored JSON, unary helpers return a non-retryable
+`planner.OutputContractError` and do not ask the model again.
+`completion.Response.ModelResponse` retains that exact model response and its
+token usage.
 
-Streaming helpers stay on the raw `model.Streamer` surface. Providers may emit
-preview `completion_delta` chunks, exactly one final `completion` chunk is
-canonical, and `Decode<Name>Chunk(...)` decodes only that final payload.
-Streaming never restarts after exposing output.
+Streaming helpers return a typed `completion.Streamer[T]`. Providers may emit
+preview `completion_delta` chunks, but `Value` remains unavailable until the
+stream ends normally and its final `completion` chunk matches the complete
+response. Streaming never restarts after exposing output.
 
 ### Agent‑as‑Tool Composition (Child Workflows)
 

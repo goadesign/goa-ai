@@ -25,6 +25,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/toolserverdata"
 )
 
 type (
@@ -65,8 +66,8 @@ type (
 	}
 
 	checkpointStepBatch struct {
-		Result        *planner.PlanResult
-		Calls         []planner.ToolRequest
+		Result        *PlanResult
+		Calls         []ToolCall
 		AwaitItems    []planner.AwaitItem
 		Kind          stepKind
 		Records       []checkpointToolRecord
@@ -82,7 +83,7 @@ type (
 	}
 
 	checkpointToolRecord struct {
-		Call             planner.ToolRequest
+		Call             ToolCall
 		Result           *api.ToolEvent
 		CallRunID        string
 		ResultRunID      string
@@ -113,7 +114,7 @@ type (
 
 	checkpointConfirmation struct {
 		ID               string
-		Call             planner.ToolRequest
+		Call             ToolCall
 		ExpectedChildren int
 		Title            string
 		Prompt           string
@@ -427,9 +428,24 @@ func (r *Runtime) decodeCheckpointToolEvent(ctx context.Context, event *api.Tool
 	if event == nil {
 		return nil, errors.New("run suspension contains nil tool event")
 	}
+	if event.Failure != nil && len(event.ServerData) > 0 {
+		return nil, fmt.Errorf("suspended failed tool result %s contains server data", event.Name)
+	}
+	serverData := rawjson.Message(nil)
+	if len(event.ServerData) > 0 {
+		spec, ok := r.toolSpec(event.Name)
+		if !ok {
+			return nil, fmt.Errorf("suspended tool result references unregistered tool %q", event.Name)
+		}
+		var err error
+		serverData, err = toolserverdata.Apply(spec.CanonicalizeServerData, event.ServerData)
+		if err != nil {
+			return nil, fmt.Errorf("validate suspended %s server data: %w", event.Name, err)
+		}
+	}
 	result := &planner.ToolResult{
 		Name:                event.Name,
-		ServerData:          append(rawjson.Message(nil), event.ServerData...),
+		ServerData:          serverData,
 		ResultBytes:         event.ResultBytes,
 		ResultOmitted:       event.ResultOmitted,
 		ResultOmittedReason: event.ResultOmittedReason,
@@ -641,19 +657,19 @@ func (r *Runtime) restoreCheckpointBatch(ctx context.Context, checkpoint checkpo
 	}, nil
 }
 
-func retargetPlanResult(result *planner.PlanResult, input *RunInput, runContext *run.Context) {
+func retargetPlanResult(result *PlanResult, input *RunInput, runContext *run.Context) {
 	result.ToolCalls = retargetToolRequests(result.ToolCalls, input, runContext)
 }
 
-func retargetToolRequests(calls []planner.ToolRequest, input *RunInput, runContext *run.Context) []planner.ToolRequest {
-	retargeted := make([]planner.ToolRequest, len(calls))
+func retargetToolRequests(calls []ToolCall, input *RunInput, runContext *run.Context) []ToolCall {
+	retargeted := make([]ToolCall, len(calls))
 	for i, call := range calls {
 		retargeted[i] = retargetToolRequest(call, input, runContext)
 	}
 	return retargeted
 }
 
-func retargetToolRequest(call planner.ToolRequest, input *RunInput, runContext *run.Context) planner.ToolRequest {
+func retargetToolRequest(call ToolCall, input *RunInput, runContext *run.Context) ToolCall {
 	call.AgentID = input.AgentID
 	call.RunID = input.RunID
 	call.SessionID = input.SessionID

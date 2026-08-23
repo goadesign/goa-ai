@@ -137,7 +137,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             panic(fmt.Errorf("service executor missing callers for tools: %s", strings.Join(missing, ", ")))
         }
     }
-    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
+    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
         if call == nil {
             return runtime.Executed(failedServiceToolResult("", errors.New("tool request is nil"))), nil
         }
@@ -328,7 +328,7 @@ func failedServiceToolResult(name tools.Ident, err error) *planner.ToolResult {
 
 // failedServiceCallResult applies a service-owned failure classification at
 // every stage of an admitted call and attaches call-owned correction data.
-func failedServiceCallResult(call *planner.ToolRequest, err error, example rawjson.Message) *planner.ToolResult {
+func failedServiceCallResult(call *runtime.ToolCall, err error, example rawjson.Message) *planner.ToolResult {
     var provider planner.ToolFailureProvider
     if !errors.As(err, &provider) {
         return failedServiceToolResult(call.Name, err)
@@ -346,7 +346,7 @@ func failedServiceCallResult(call *planner.ToolRequest, err error, example rawjs
 
 // invalidServiceToolCall preserves generated validation issues and canonical
 // payload metadata for a same-tool correction turn.
-func invalidServiceToolCall(call *planner.ToolRequest, err error, example rawjson.Message) *planner.ToolResult {
+func invalidServiceToolCall(call *runtime.ToolCall, err error, example rawjson.Message) *planner.ToolResult {
     var issuer interface {
         Issues() []*tools.FieldIssue
     }

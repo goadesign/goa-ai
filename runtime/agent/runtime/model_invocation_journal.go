@@ -1,17 +1,20 @@
 package runtime
 
-// model_invocation_journal.go owns tentative provider responses within one
-// planner activity. The journal validates model-boundary values, isolates
-// concurrent calls, and exports only the unique response identified by the
-// planner's unchanged model-facing result.
+// model_invocation_journal.go keeps each model response private until the
+// planner returns its result. It checks every response, keeps concurrent calls
+// separate, and saves only the response that exactly matches that result.
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 	"sync"
 
+	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/internal/provenance"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -34,15 +37,28 @@ type (
 		toolName   tools.Ident
 	}
 
-	// modelInvocationCandidate is the complete provider-owned state for one
-	// model call. It remains tentative until the journal matches its exact
-	// model-facing result.
+	// modelInvocationCandidate holds one complete model call until the planner
+	// returns the result that selected it.
 	modelInvocationCandidate struct {
-		response     *model.Response
-		presentation []modelPresentationEvent
-		streamed     bool
-		usageSeen    bool
-		err          error
+		response                 *model.Response
+		presentation             []modelPresentationEvent
+		streamed                 bool
+		usageSeen                bool
+		finished                 bool
+		requestModel             string
+		requestModelClass        model.ModelClass
+		cancel                   context.CancelFunc
+		done                     chan struct{}
+		usage                    model.TokenUsage
+		err                      error
+		rejectedResponseEvidence *model.ResponseEvidence
+	}
+
+	// pendingModelInvocation contains the immutable controls seal uses after it
+	// releases the journal lock.
+	pendingModelInvocation struct {
+		cancel context.CancelFunc
+		done   <-chan struct{}
 	}
 
 	// modelFacingToolCall is the provider transcript identity of a planner
@@ -60,17 +76,19 @@ type (
 		messageIndex int
 	}
 
-	// modelInvocationJournal owns all tentative model responses for one planner
-	// activity and implements modelInvocationSink independently from planner
-	// event publication.
+	// modelInvocationJournal keeps every model call made during one planner
+	// activity separate from user-visible event publication.
 	modelInvocationJournal struct {
-		mu           sync.Mutex
-		invocations  map[modelInvocationID]*modelInvocationCandidate
-		messageOwner map[*model.Message]modelInvocationMessageOwner
-		designated   modelInvocationID
-		selected     modelInvocationID
-		usageEvents  []model.TokenUsage
-		usage        model.TokenUsage
+		mu             sync.Mutex
+		invocations    map[modelInvocationID]*modelInvocationCandidate
+		order          []modelInvocationID
+		designated     modelInvocationID
+		selected       modelInvocationID
+		usage          model.TokenUsage
+		usagePublished bool
+		outputErr      error
+		sealed         bool
+		sealedErr      error
 	}
 )
 
@@ -80,16 +98,78 @@ const (
 	modelPresentationToolCallDelta
 )
 
-// beginModelInvocation creates an isolated response candidate.
-func (j *modelInvocationJournal) beginModelInvocation() modelInvocationID {
+// beginModelInvocation creates a place to save one model response and the
+// runtime-owned controls that stop and join it when planning ends.
+func (j *modelInvocationJournal) beginModelInvocation(
+	requestModel string,
+	requestModelClass model.ModelClass,
+	cancel context.CancelFunc,
+) (modelInvocationID, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if err := j.sealedError(); err != nil {
+		return modelInvocationID{}, err
+	}
+	if j.outputErr != nil {
+		return modelInvocationID{}, j.outputErr
+	}
 	id := provenance.New()
 	if j.invocations == nil {
 		j.invocations = make(map[modelInvocationID]*modelInvocationCandidate)
 	}
-	j.invocations[id] = &modelInvocationCandidate{}
-	return id
+	j.invocations[id] = &modelInvocationCandidate{
+		requestModel:      requestModel,
+		requestModelClass: requestModelClass,
+		cancel:            cancel,
+		done:              make(chan struct{}),
+	}
+	j.order = append(j.order, id)
+	return id, nil
+}
+
+// seal prevents new model calls, cancels every unfinished call, and then joins
+// final invocation bookkeeping. The model client owns closing the exact stream
+// when this cancellation reaches its prepared context. An output rejection
+// already recorded by the journal remains the exact terminal error; an
+// unfinished call is planner-origin only when no earlier rejection exists.
+func (j *modelInvocationJournal) seal() error {
+	j.mu.Lock()
+	if j.sealed {
+		err := j.sealedErr
+		j.mu.Unlock()
+		return err
+	}
+	j.sealed = true
+	outputErr := j.outputContractErrorLocked()
+	var pending []pendingModelInvocation
+	for _, id := range j.order {
+		candidate := j.invocations[id]
+		if candidate == nil || candidate.finished {
+			continue
+		}
+		pending = append(pending, pendingModelInvocation{
+			cancel: candidate.cancel,
+			done:   candidate.done,
+		})
+	}
+	if outputErr != nil {
+		j.sealedErr = outputErr
+	} else if len(pending) > 0 {
+		j.sealedErr = outputcontract.NewWithOrigin(
+			errors.New("planner returned while a model invocation was still running"),
+			planner.OutputContractOriginPlanner,
+		)
+	}
+	err := j.sealedErr
+	j.mu.Unlock()
+
+	for _, invocation := range pending {
+		invocation.cancel()
+	}
+	for _, invocation := range pending {
+		<-invocation.done
+	}
+	return err
 }
 
 // designateModelInvocation marks the one invocation owned by
@@ -97,6 +177,9 @@ func (j *modelInvocationJournal) beginModelInvocation() modelInvocationID {
 func (j *modelInvocationJournal) designateModelInvocation(id modelInvocationID) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if err := j.sealedError(); err != nil {
+		return err
+	}
 	if !j.designated.IsZero() {
 		return errors.New("planner activity used PlannerModelClient for multiple model invocations")
 	}
@@ -108,23 +191,105 @@ func (j *modelInvocationJournal) designateModelInvocation(id modelInvocationID) 
 	return nil
 }
 
-// recordModelResponse validates and captures one canonical provider response
-// before planner code can transform it into a decision.
-func (j *modelInvocationJournal) recordModelResponse(
+// recordRejectedModelResponse saves only the provider response evidence carried
+// by the contract failure; the rejected response body remains model-owned.
+func (j *modelInvocationJournal) recordRejectedModelResponse(
+	invocationID modelInvocationID,
+	evidence model.ResponseEvidence,
+	err error,
+) error {
+	if evidence.Present {
+		if recordErr := j.recordRejectedResponseEvidence(invocationID, evidence); recordErr != nil {
+			err = errors.Join(err, recordErr)
+		}
+	}
+	return j.rejectModelInvocation(invocationID, err)
+}
+
+// recordRejectedResponseEvidence saves the bounded identity computed from the
+// raw complete response before ownership copying.
+func (j *modelInvocationJournal) recordRejectedResponseEvidence(
+	invocationID modelInvocationID,
+	evidence model.ResponseEvidence,
+) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if err := j.sealedError(); err != nil {
+		return err
+	}
+	candidate := j.invocations[invocationID]
+	if candidate == nil {
+		return errors.New("rejected model response references an unknown invocation")
+	}
+	copied := evidence
+	candidate.rejectedResponseEvidence = &copied
+	return nil
+}
+
+// recordRejectedModelUsage retains valid counts from a rejected usage chunk
+// and attributes them to the immutable request identity.
+func (j *modelInvocationJournal) recordRejectedModelUsage(
+	invocationID modelInvocationID,
+	rejected model.TokenUsage,
+) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if err := j.sealedError(); err != nil {
+		return err
+	}
+	candidate := j.invocations[invocationID]
+	if candidate == nil {
+		return errors.New("rejected model usage references an unknown invocation")
+	}
+	rejected = candidate.attributeUsage(rejected)
+	activityUsage, err := addTokenUsage(j.usage, rejected)
+	if err != nil {
+		return outputcontract.NewWithOrigin(
+			fmt.Errorf("aggregate rejected model usage: %w", err),
+			planner.OutputContractOriginPlanner,
+		)
+	}
+	invocationUsage, err := addTokenUsage(candidate.usage, rejected)
+	if err != nil {
+		return outputcontract.NewWithOrigin(
+			fmt.Errorf("aggregate rejected invocation usage: %w", err),
+			planner.OutputContractOriginPlanner,
+		)
+	}
+	invocationUsage.Model = rejected.Model
+	invocationUsage.ModelClass = rejected.ModelClass
+	candidate.usageSeen = true
+	j.usage = activityUsage
+	candidate.usage = invocationUsage
+	return nil
+}
+
+// recordValidatedModelResponse saves a stream response already accepted by the
+// model-owned stream boundary.
+func (j *modelInvocationJournal) recordValidatedModelResponse(
 	invocationID modelInvocationID,
 	response *model.Response,
 ) error {
-	if err := model.ValidateResponse(response); err != nil {
-		return err
-	}
+	return j.saveModelResponse(invocationID, response)
+}
+
+// saveModelResponse owns and stores one response for later planner-result
+// matching and delayed event publication.
+func (j *modelInvocationJournal) saveModelResponse(
+	invocationID modelInvocationID,
+	response *model.Response,
+) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if err := j.sealedError(); err != nil {
+		return err
+	}
 	candidate := j.invocations[invocationID]
 	if candidate == nil {
 		return errors.New("model response references an unknown invocation")
 	}
 	if candidate.response != nil {
-		return errors.New("model invocation returned multiple canonical responses")
+		return errors.New("model invocation returned multiple complete responses")
 	}
 	captured, err := model.CloneResponse(response)
 	if err != nil {
@@ -136,85 +301,149 @@ func (j *modelInvocationJournal) recordModelResponse(
 			candidate.presentation = append(candidate.presentation, presentationFromMessage(&response.Content[i])...)
 		}
 	}
-	if j.messageOwner == nil {
-		j.messageOwner = make(map[*model.Message]modelInvocationMessageOwner)
-	}
-	for i := range response.Content {
-		j.messageOwner[&response.Content[i]] = modelInvocationMessageOwner{
-			invocationID: invocationID,
-			messageIndex: i,
+	if !candidate.usageSeen && hasTokenCounts(response.Usage) {
+		responseUsage := candidate.attributeUsage(response.Usage)
+		usage, err := addTokenUsage(j.usage, responseUsage)
+		if err != nil {
+			return outputcontract.NewWithOrigin(
+				fmt.Errorf("aggregate model usage: %w", err),
+				planner.OutputContractOriginPlanner,
+			)
 		}
-	}
-	if !candidate.usageSeen {
-		j.usage = addTokenUsage(j.usage, response.Usage)
-		if response.Usage != (model.TokenUsage{}) {
-			j.usageEvents = append(j.usageEvents, response.Usage)
+		j.usage = usage
+		if responseUsage != (model.TokenUsage{}) {
+			candidate.usage = responseUsage
 		}
 	}
 	return nil
 }
 
-// recordModelChunk validates one provider presentation event and aggregates
-// usage independently from the canonical response captured at EOF.
+// recordModelChunk records one model-owned validated chunk for usage and
+// delayed presentation. The complete response is saved when the stream ends.
 func (j *modelInvocationJournal) recordModelChunk(invocationID modelInvocationID, chunk model.Chunk) error {
-	if err := model.ValidateChunk(chunk); err != nil {
-		return err
-	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if err := j.sealedError(); err != nil {
+		return err
+	}
 	candidate := j.invocations[invocationID]
 	if candidate == nil {
 		return errors.New("model chunk references an unknown invocation")
 	}
 	candidate.streamed = true
 	if usage, ok := chunk.(model.UsageChunk); ok {
+		attributed := candidate.attributeUsage(usage.Usage)
+		activityUsage, err := addTokenUsage(j.usage, attributed)
+		if err != nil {
+			return outputcontract.NewWithOrigin(
+				fmt.Errorf("aggregate model usage: %w", err),
+				planner.OutputContractOriginPlanner,
+			)
+		}
+		accumulated, err := addTokenUsage(candidate.usage, attributed)
+		if err != nil {
+			return outputcontract.NewWithOrigin(
+				fmt.Errorf("aggregate invocation usage: %w", err),
+				planner.OutputContractOriginPlanner,
+			)
+		}
+		accumulated.Model = attributed.Model
+		accumulated.ModelClass = attributed.ModelClass
 		candidate.usageSeen = true
-		j.usage = addTokenUsage(j.usage, usage.Usage)
-		j.usageEvents = append(j.usageEvents, usage.Usage)
+		j.usage = activityUsage
+		candidate.usage = accumulated
 		return nil
 	}
 	candidate.presentation = append(candidate.presentation, presentationFromChunk(chunk)...)
 	return nil
 }
 
-// finishModelInvocation records a failed invocation or verifies that a
-// successful stream supplied its canonical response.
+// finishModelInvocation records a failed call or verifies that a successful
+// stream supplied its complete response. It returns only bookkeeping errors
+// that are additive to the terminal error supplied by the caller.
 func (j *modelInvocationJournal) finishModelInvocation(invocationID modelInvocationID, err error) error {
 	j.mu.Lock()
-	defer j.mu.Unlock()
 	candidate := j.invocations[invocationID]
 	if candidate == nil {
+		j.mu.Unlock()
 		return errors.New("model completion references an unknown invocation")
 	}
+	if candidate.finished {
+		j.mu.Unlock()
+		return nil
+	}
+	candidate.finished = true
+	cancel := candidate.cancel
+	var additionalErr error
 	if err != nil {
 		candidate.err = err
-		return err
+		var outputErr *planner.OutputContractError
+		if j.outputErr == nil && errors.As(err, &outputErr) {
+			j.outputErr = err
+		}
+	} else if candidate.response == nil {
+		candidate.err = outputcontract.NewWithOrigin(
+			errors.New("model stream ended without a complete response"),
+			planner.OutputContractOriginModel,
+		)
+		if j.outputErr == nil {
+			j.outputErr = candidate.err
+		}
+		additionalErr = candidate.err
 	}
-	if candidate.response == nil {
-		candidate.err = errors.New("model stream ended without a canonical response")
-		return candidate.err
+	sealedErr := j.sealedError()
+	close(candidate.done)
+	j.mu.Unlock()
+	cancel()
+	if sealedErr != nil && !errors.Is(err, sealedErr) {
+		additionalErr = errors.Join(additionalErr, sealedErr)
 	}
-	return nil
+	return additionalErr
 }
 
-// exportModelInvocation matches canonical message identity or exact model-facing tool
-// identities and returns the selected response without reconstructing it.
+// exportModelInvocation matches the planner result to the exact saved message
+// or tool calls and returns that response without rebuilding it.
 func (j *modelInvocationJournal) exportModelInvocation(
 	result *planner.PlanResult,
 ) ([]*model.Message, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if j.outputErr != nil {
+		return nil, j.outputErr
+	}
 	calls := planResultModelToolCalls(result)
 	var owner modelInvocationMessageOwner
 	var hasOwner bool
 	if result != nil && result.FinalResponse != nil {
-		owner, hasOwner = j.messageOwner[result.FinalResponse.Message]
+		for id, candidate := range j.invocations {
+			if candidate.response == nil {
+				continue
+			}
+			for messageIndex := range candidate.response.Content {
+				if !model.SameMessageOrigin(
+					&candidate.response.Content[messageIndex],
+					result.FinalResponse.Message,
+				) {
+					continue
+				}
+				if hasOwner {
+					return nil, errors.New("planner result repeats one model message origin")
+				}
+				owner = modelInvocationMessageOwner{
+					invocationID: id,
+					messageIndex: messageIndex,
+				}
+				hasOwner = true
+			}
+		}
 	}
 	if len(j.invocations) == 0 {
 		return nil, nil
 	}
 	var selected *modelInvocationCandidate
 	var selectedID modelInvocationID
+	var selectedOwner modelInvocationMessageOwner
+	var selectedHasOwner bool
 	for id, candidate := range j.invocations {
 		if candidate.response == nil || candidate.err != nil {
 			continue
@@ -222,8 +451,13 @@ func (j *modelInvocationJournal) exportModelInvocation(
 		if !j.designated.IsZero() && !hasOwner && id != j.designated {
 			continue
 		}
-		matches := (hasOwner && id == owner.invocationID && modelInvocationMatches(candidate, calls)) ||
-			(!hasOwner && len(calls) > 0 && modelInvocationMatches(candidate, calls))
+		candidateOwner := owner
+		candidateHasOwner := hasOwner && id == owner.invocationID
+		matches := (candidateHasOwner && modelInvocationMatches(candidate, calls)) ||
+			(!hasOwner &&
+				(result == nil || result.FinalResponse == nil) &&
+				len(calls) > 0 &&
+				modelInvocationMatches(candidate, calls))
 		if !matches {
 			continue
 		}
@@ -232,6 +466,8 @@ func (j *modelInvocationJournal) exportModelInvocation(
 		}
 		selected = candidate
 		selectedID = id
+		selectedOwner = candidateOwner
+		selectedHasOwner = candidateHasOwner
 	}
 	if selected == nil {
 		var zero modelInvocationID
@@ -251,12 +487,20 @@ func (j *modelInvocationJournal) exportModelInvocation(
 		return nil, errors.New("planner result selected a probe after using PlannerModelClient")
 	}
 	j.selected = selectedID
+	owner = selectedOwner
+	hasOwner = selectedHasOwner
 	captured, err := model.CloneResponse(selected.response)
 	if err != nil {
 		return nil, err
 	}
 	if hasOwner {
-		providerMeta := captured.Content[owner.messageIndex].Meta
+		providerMessage := &captured.Content[owner.messageIndex]
+		plannerMessage := result.FinalResponse.Message
+		if providerMessage.Role != plannerMessage.Role ||
+			!reflect.DeepEqual(providerMessage.Parts, plannerMessage.Parts) {
+			return nil, errors.New("planner result modified provider-owned message content")
+		}
+		providerMeta := providerMessage.Meta
 		plannerMeta := result.FinalResponse.Message.Meta
 		for key, value := range providerMeta {
 			plannerValue, ok := plannerMeta[key]
@@ -268,13 +512,84 @@ func (j *modelInvocationJournal) exportModelInvocation(
 		if err != nil {
 			return nil, err
 		}
-		captured.Content[owner.messageIndex].Meta = enriched[0].Meta
+		providerMessage.Meta = enriched[0].Meta
+		result.FinalResponse.Message = providerMessage
 	}
 	messages := make([]*model.Message, len(captured.Content))
 	for i := range captured.Content {
 		messages[i] = &captured.Content[i]
 	}
 	return messages, nil
+}
+
+// selectedCompiledModelCalls returns transcript identity for executable calls
+// that the planner derived one-to-one from the selected provider response.
+// exportModelInvocation must succeed first so selected identifies the accepted
+// response.
+func (j *modelInvocationJournal) selectedCompiledModelCalls(result *planner.PlanResult) (map[string]model.ToolCall, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return compiledModelCalls(j.invocations[j.selected], result, planResultModelToolCalls(result))
+}
+
+// outputContractError returns the earliest-started invocation that rejected
+// model output. Completion order may latch the activity sooner, but it cannot
+// change the terminal reason after concurrent calls finish.
+func (j *modelInvocationJournal) outputContractError() error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.outputContractErrorLocked()
+}
+
+// outputContractErrorLocked returns the earliest-started rejected invocation.
+// The caller must hold j.mu.
+func (j *modelInvocationJournal) outputContractErrorLocked() error {
+	for _, id := range j.order {
+		candidate := j.invocations[id]
+		var outputErr *planner.OutputContractError
+		if candidate != nil && errors.As(candidate.err, &outputErr) {
+			return candidate.err
+		}
+	}
+	return j.outputErr
+}
+
+// rejectedModelResponseEvidence returns complete-response evidence from the
+// same earliest-started rejected invocation used by outputContractError.
+func (j *modelInvocationJournal) rejectedModelResponseEvidence() model.ResponseEvidence {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, id := range j.order {
+		candidate := j.invocations[id]
+		var outputErr *planner.OutputContractError
+		if candidate == nil || !errors.As(candidate.err, &outputErr) {
+			continue
+		}
+		if candidate.rejectedResponseEvidence == nil {
+			return model.ResponseEvidence{}
+		}
+		return *candidate.rejectedResponseEvidence
+	}
+	return model.ResponseEvidence{}
+}
+
+// rejectModelInvocation saves the first malformed response and prevents every
+// later model call in this planner activity.
+func (j *modelInvocationJournal) rejectModelInvocation(invocationID modelInvocationID, err error) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if sealedErr := j.sealedError(); sealedErr != nil {
+		return sealedErr
+	}
+	candidate := j.invocations[invocationID]
+	if candidate == nil {
+		return errors.New("invalid model response references an unknown invocation")
+	}
+	candidate.err = err
+	if j.outputErr == nil {
+		j.outputErr = err
+	}
+	return err
 }
 
 // publishSelectedPresentation emits only the provider output selected by the
@@ -286,7 +601,6 @@ func (j *modelInvocationJournal) publishSelectedPresentation(ctx context.Context
 	if selected := j.invocations[j.selected]; selected != nil {
 		presentation = append(presentation, selected.presentation...)
 	}
-	usageEvents := append([]model.TokenUsage(nil), j.usageEvents...)
 	j.mu.Unlock()
 
 	for _, event := range presentation {
@@ -299,9 +613,49 @@ func (j *modelInvocationJournal) publishSelectedPresentation(ctx context.Context
 			events.ToolCallArgsDelta(ctx, event.toolCallID, event.toolName, event.text)
 		}
 	}
+	j.publishUsage(ctx, events)
+}
+
+// publishUsage emits every provider usage report recorded by this planner
+// activity, including attempts whose output was rejected.
+func (j *modelInvocationJournal) publishUsage(ctx context.Context, events planner.PlannerEvents) {
+	j.mu.Lock()
+	if j.usagePublished {
+		j.mu.Unlock()
+		return
+	}
+	j.usagePublished = true
+	usageEvents := make([]model.TokenUsage, 0, len(j.order))
+	for _, id := range j.order {
+		candidate := j.invocations[id]
+		if candidate != nil && candidate.usage != (model.TokenUsage{}) {
+			usageEvents = append(usageEvents, candidate.usage)
+		}
+	}
+	j.mu.Unlock()
 	for _, usage := range usageEvents {
 		events.UsageDelta(ctx, usage)
 	}
+}
+
+// attributeUsage fills a missing concrete model and always applies the logical
+// model class owned by the immutable request.
+func (c *modelInvocationCandidate) attributeUsage(usage model.TokenUsage) model.TokenUsage {
+	if usage.Model == "" {
+		usage.Model = c.requestModel
+	}
+	usage.ModelClass = c.requestModelClass
+	return usage
+}
+
+// hasTokenCounts reports whether a terminal response actually reported usage
+// rather than carrying only request identity stamped by validation.
+func hasTokenCounts(usage model.TokenUsage) bool {
+	return usage.InputTokens != 0 ||
+		usage.OutputTokens != 0 ||
+		usage.TotalTokens != 0 ||
+		usage.CacheReadTokens != 0 ||
+		usage.CacheWriteTokens != 0
 }
 
 // presentationFromMessage projects unary response parts in provider order.
@@ -329,7 +683,7 @@ func presentationFromMessage(message *model.Message) []modelPresentationEvent {
 		case model.ThinkingPart:
 			presentation = append(presentation, modelPresentationEvent{
 				kind:     modelPresentationThinking,
-				thinking: actual,
+				thinking: ownThinkingPart(actual),
 			})
 		}
 	}
@@ -340,16 +694,19 @@ func presentationFromMessage(message *model.Message) []modelPresentationEvent {
 func presentationFromChunk(chunk model.Chunk) []modelPresentationEvent {
 	switch actual := chunk.(type) {
 	case model.TextChunk:
-		var text string
+		var text strings.Builder
 		for _, part := range actual.Message.Parts {
-			if value, ok := part.(model.TextPart); ok {
-				text += value.Text
+			switch value := part.(type) {
+			case model.TextPart:
+				text.WriteString(value.Text)
+			case model.CitationsPart:
+				text.WriteString(value.Text)
 			}
 		}
-		if text != "" {
+		if text.Len() > 0 {
 			return []modelPresentationEvent{{
 				kind: modelPresentationText,
-				text: text,
+				text: text.String(),
 			}}
 		}
 	case model.ThinkingChunk:
@@ -358,7 +715,7 @@ func presentationFromChunk(chunk model.Chunk) []modelPresentationEvent {
 			if value, ok := part.(model.ThinkingPart); ok {
 				presentation = append(presentation, modelPresentationEvent{
 					kind:     modelPresentationThinking,
-					thinking: value,
+					thinking: ownThinkingPart(value),
 				})
 			}
 		}
@@ -374,9 +731,62 @@ func presentationFromChunk(chunk model.Chunk) []modelPresentationEvent {
 	return nil
 }
 
+// ownThinkingPart copies opaque reasoning bytes retained after the source
+// response or chunk returns to planner code.
+func ownThinkingPart(part model.ThinkingPart) model.ThinkingPart {
+	part.Redacted = slices.Clone(part.Redacted)
+	return part
+}
+
 // planResultModelToolCalls returns every provider-native tool call that the
 // workflow will record from result, including out-of-band await calls.
 func planResultModelToolCalls(result *planner.PlanResult) []modelFacingToolCall {
+	if result == nil {
+		return nil
+	}
+	calls := make([]modelFacingToolCall, 0, len(result.ToolCalls))
+	for _, call := range result.ToolCalls {
+		calls = append(calls, modelFacingToolCall{
+			id:      call.ToolCallID,
+			name:    call.Name,
+			payload: call.Payload,
+		})
+	}
+	if result.Await == nil {
+		return calls
+	}
+	for _, item := range result.Await.Items {
+		switch item.Kind {
+		case planner.AwaitItemKindClarification:
+		case planner.AwaitItemKindToolClarification:
+			calls = append(calls, modelFacingToolCall{
+				id:      item.ToolClarification.ToolCallID,
+				name:    item.ToolClarification.ToolName,
+				payload: item.ToolClarification.Payload,
+			})
+		case planner.AwaitItemKindQuestions:
+			calls = append(calls, modelFacingToolCall{
+				id:      item.Questions.ToolCallID,
+				name:    item.Questions.ToolName,
+				payload: item.Questions.Payload,
+			})
+		case planner.AwaitItemKindExternalTools:
+			for _, call := range item.ExternalTools.Items {
+				calls = append(calls, modelFacingToolCall{
+					id:      call.ToolCallID,
+					name:    call.Name,
+					payload: call.Payload,
+				})
+			}
+		}
+	}
+	return calls
+}
+
+// runtimePlanResultModelToolCalls returns provider-facing identities from a
+// validated runtime result. Executable names and payloads may differ after
+// continuation binding or policy rewrites.
+func runtimePlanResultModelToolCalls(result *PlanResult) []modelFacingToolCall {
 	if result == nil {
 		return nil
 	}
@@ -419,9 +829,10 @@ func planResultModelToolCalls(result *planner.PlanResult) []modelFacingToolCall 
 	return calls
 }
 
-// modelInvocationMatches reports whether calls are exactly the finalized tool
-// calls emitted by candidate. PlanResult grouping cannot change provider order
-// because the selected response itself is persisted.
+// modelInvocationMatches reports whether every finalized call preserves one
+// provider tool-call ID. The runtime compares names and payloads separately so
+// a deterministic one-to-one compiler may replace a model-facing tool without
+// losing the exact provider response that selected it.
 func modelInvocationMatches(candidate *modelInvocationCandidate, calls []modelFacingToolCall) bool {
 	capturedCalls := candidate.response.ToolCalls()
 	if len(capturedCalls) != len(calls) {
@@ -438,13 +849,45 @@ func modelInvocationMatches(candidate *modelInvocationCandidate, calls []modelFa
 		byID[call.ID] = call
 	}
 	for _, call := range calls {
-		captured, ok := byID[call.id]
-		if !ok || captured.Name != call.name || !bytes.Equal(captured.Payload, call.payload) {
+		if _, ok := byID[call.id]; !ok {
 			return false
 		}
 		delete(byID, call.id)
 	}
 	return len(byID) == 0
+}
+
+// compiledModelCalls returns provider names and payloads that differ from the
+// planner-authored executable intent with the same tool-call ID. The runtime
+// copies these values into execution calls after planner validation.
+func compiledModelCalls(
+	candidate *modelInvocationCandidate,
+	result *planner.PlanResult,
+	finalized []modelFacingToolCall,
+) (map[string]model.ToolCall, error) {
+	if candidate == nil || candidate.response == nil || result == nil {
+		return nil, nil
+	}
+	captured := make(map[string]model.ToolCall)
+	for _, call := range candidate.response.ToolCalls() {
+		captured[call.ID] = call
+	}
+	executable := make(map[string]struct{}, len(result.ToolCalls))
+	for _, call := range result.ToolCalls {
+		executable[call.ToolCallID] = struct{}{}
+	}
+	bindings := make(map[string]model.ToolCall)
+	for _, call := range finalized {
+		source := captured[call.id]
+		if source.Name == call.name && bytes.Equal(source.Payload, call.payload) {
+			continue
+		}
+		if _, ok := executable[call.id]; !ok {
+			return nil, errors.New("planner compiled a model call outside executable tool output")
+		}
+		bindings[call.id] = source
+	}
+	return bindings, nil
 }
 
 // modelInvocationOwnsAnyCall reports whether calls contain an ID captured from
@@ -477,4 +920,16 @@ func (j *modelInvocationJournal) exportUsage() model.TokenUsage {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return j.usage
+}
+
+// sealedError reports why provider callbacks can no longer modify the journal.
+// The caller must hold j.mu.
+func (j *modelInvocationJournal) sealedError() error {
+	if !j.sealed {
+		return nil
+	}
+	if j.sealedErr != nil {
+		return j.sealedErr
+	}
+	return errors.New("planner model invocation journal is sealed")
 }

@@ -12,6 +12,7 @@ package runtime
 //   paths.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -27,10 +28,10 @@ type (
 	stepKind uint8
 
 	stepProgram struct {
-		result        *planner.PlanResult
-		calls         []planner.ToolRequest
-		allowed       []planner.ToolRequest
-		immediate     []planner.ToolRequest
+		result        *PlanResult
+		calls         []ToolCall
+		allowed       []ToolCall
+		immediate     []ToolCall
 		confirmations []confirmationAwait
 		awaitItems    []planner.AwaitItem
 		budgetCost    int
@@ -39,7 +40,7 @@ type (
 	}
 
 	stepToolRecord struct {
-		call             planner.ToolRequest
+		call             ToolCall
 		result           *planner.ToolResult
 		callRunID        string
 		resultRunID      string
@@ -103,9 +104,9 @@ func (k stepKind) String() string {
 
 // normalizeStep converts a planner result into the runtime's single-step
 // execution model.
-func (r *Runtime) normalizeStep(result *planner.PlanResult) (stepProgram, error) {
+func (r *Runtime) normalizeStep(result *PlanResult) (stepProgram, error) {
 	if result == nil {
-		return stepProgram{}, errors.New("workflow step received nil PlanResult")
+		return stepProgram{}, planner.NewOutputContractError(errors.New("workflow step received nil PlanResult"))
 	}
 	terminalPayloads := 0
 	if result.FinalResponse != nil {
@@ -115,7 +116,9 @@ func (r *Runtime) normalizeStep(result *planner.PlanResult) (stepProgram, error)
 		terminalPayloads++
 	}
 	if terminalPayloads > 1 {
-		return stepProgram{}, errors.New("workflow step received both FinalResponse and FinalToolResult")
+		return stepProgram{}, planner.NewOutputContractError(
+			errors.New("workflow step received both FinalResponse and FinalToolResult"),
+		)
 	}
 
 	hasCalls := len(result.ToolCalls) > 0
@@ -125,26 +128,33 @@ func (r *Runtime) normalizeStep(result *planner.PlanResult) (stepProgram, error)
 	if hasAwait {
 		awaitItems = result.Await.Items
 		if len(awaitItems) == 0 {
-			return stepProgram{}, errors.New("workflow step received empty await")
+			return stepProgram{}, planner.NewOutputContractError(errors.New("workflow step received empty await"))
 		}
 		if err := validateAwaitItems(awaitItems); err != nil {
-			return stepProgram{}, err
+			return stepProgram{}, planner.NewOutputContractError(err)
+		}
+		if err := r.validateAwaitTools(awaitItems); err != nil {
+			return stepProgram{}, planner.NewOutputContractError(err)
 		}
 	}
 	if !hasCalls && !hasTerminal && !hasAwait {
-		return stepProgram{}, errors.New("workflow step received empty PlanResult")
+		return stepProgram{}, planner.NewOutputContractError(errors.New("workflow step received empty PlanResult"))
 	}
 	if result.SynthesizeAfterTools && (!hasCalls || hasTerminal || hasAwait) {
-		return stepProgram{}, errors.New("workflow step synthesis-after-tools requires only tool calls")
+		return stepProgram{}, planner.NewOutputContractError(
+			errors.New("workflow step synthesis-after-tools requires only tool calls"),
+		)
 	}
 	if result.SynthesizeAfterTools {
 		if err := r.validateSynthesisAfterTools(result.ToolCalls); err != nil {
-			return stepProgram{}, err
+			return stepProgram{}, planner.NewOutputContractError(err)
 		}
 	}
 
 	if hasTerminal && hasAwait {
-		return stepProgram{}, errors.New("workflow step cannot combine terminal payload and await")
+		return stepProgram{}, planner.NewOutputContractError(
+			errors.New("workflow step cannot combine terminal payload and await"),
+		)
 	}
 	if hasTerminal && !hasCalls {
 		return stepProgram{
@@ -154,7 +164,7 @@ func (r *Runtime) normalizeStep(result *planner.PlanResult) (stepProgram, error)
 	}
 	if hasTerminal {
 		if err := r.validateToolTerminalProgram(result.ToolCalls); err != nil {
-			return stepProgram{}, err
+			return stepProgram{}, planner.NewOutputContractError(err)
 		}
 		return stepProgram{
 			result: result,
@@ -175,6 +185,82 @@ func (r *Runtime) normalizeStep(result *planner.PlanResult) (stepProgram, error)
 		awaitItems: awaitItems,
 		kind:       stepKindAwait,
 	}, nil
+}
+
+// normalizePlanResultContract validates the complete runtime-owned structure of
+// one planner result before transcript persistence or step selection.
+func (r *Runtime) normalizePlanResultContract(result *PlanResult) (stepProgram, error) {
+	program, err := r.normalizeStep(result)
+	if err != nil {
+		return stepProgram{}, err
+	}
+	if err := validatePlanResultToolCallIDs(result); err != nil {
+		return stepProgram{}, planner.NewOutputContractError(err)
+	}
+	plannerResult := &planner.PlanResult{
+		ToolCalls:            make([]planner.ToolRequest, len(result.ToolCalls)),
+		SynthesizeAfterTools: result.SynthesizeAfterTools,
+		FinalResponse:        result.FinalResponse,
+		FinalToolResult:      result.FinalToolResult,
+		Streamed:             result.Streamed,
+		Await:                result.Await,
+		ExpectedChildren:     result.ExpectedChildren,
+		Notes:                result.Notes,
+	}
+	for index, call := range result.ToolCalls {
+		plannerResult.ToolCalls[index] = planner.ToolRequest{
+			Name:       call.TranscriptName(),
+			Payload:    call.TranscriptPayload(),
+			ToolCallID: call.ToolCallID,
+		}
+	}
+	if err := validatePlannerResultPayloads(plannerResult); err != nil {
+		return stepProgram{}, planner.NewOutputContractError(err)
+	}
+	return program, nil
+}
+
+// normalizePlanResultForExecution validates generated tool payload contracts
+// before planner events are published or the workflow accepts tool work.
+func (r *Runtime) normalizePlanResultForExecution(ctx context.Context, result *PlanResult) (stepProgram, error) {
+	program, err := r.normalizePlanResultContract(result)
+	if err != nil {
+		return stepProgram{}, err
+	}
+	for index, call := range result.ToolCalls {
+		if err := validatePlannerToolPayloadWithCodec(ctx, r, nil, call.Name, call.Payload); err != nil {
+			return stepProgram{}, planner.NewOutputContractError(
+				fmt.Errorf("workflow step tool call %d payload: %w", index, err),
+			)
+		}
+	}
+	var awaitItems []planner.AwaitItem
+	if result.Await != nil {
+		awaitItems = result.Await.Items
+	}
+	for index, call := range awaitToolRequests(awaitItems) {
+		if err := validatePlannerToolPayloadWithCodec(ctx, r, nil, call.Name, call.Payload); err != nil {
+			return stepProgram{}, planner.NewOutputContractError(
+				fmt.Errorf("workflow step await tool call %d payload: %w", index, err),
+			)
+		}
+	}
+	return program, nil
+}
+
+// validateAwaitTools requires every tool named by an await request to exist and
+// remain available after the user responds.
+func (r *Runtime) validateAwaitTools(items []planner.AwaitItem) error {
+	for _, call := range awaitToolRequests(items) {
+		spec, ok := r.toolSpec(call.Name)
+		if !ok {
+			return fmt.Errorf("planner await references unknown tool %q", call.Name)
+		}
+		if spec.TerminalRun {
+			return fmt.Errorf("terminal tool %q cannot be owned by planner await work", call.Name)
+		}
+	}
+	return nil
 }
 
 // validateAwaitItems proves the await union and its correlation identifiers
@@ -231,24 +317,24 @@ func validateAwaitItems(items []planner.AwaitItem) error {
 
 // awaitToolRequests returns the provider-correlated calls embedded in an await
 // barrier; plain clarification awaits do not create tool uses.
-func awaitToolRequests(items []planner.AwaitItem) []planner.ToolRequest {
-	var calls []planner.ToolRequest
+func awaitToolRequests(items []planner.AwaitItem) []ToolCall {
+	var calls []ToolCall
 	for _, item := range items {
 		switch item.Kind {
 		case planner.AwaitItemKindClarification:
 		case planner.AwaitItemKindToolClarification:
 			q := item.ToolClarification
-			calls = append(calls, planner.ToolRequest{
+			calls = append(calls, ToolCall{
 				Name: q.ToolName, ToolCallID: q.ToolCallID, Payload: q.Payload,
 			})
 		case planner.AwaitItemKindQuestions:
 			q := item.Questions
-			calls = append(calls, planner.ToolRequest{
+			calls = append(calls, ToolCall{
 				Name: q.ToolName, ToolCallID: q.ToolCallID, Payload: q.Payload,
 			})
 		case planner.AwaitItemKindExternalTools:
 			for _, call := range item.ExternalTools.Items {
-				calls = append(calls, planner.ToolRequest{
+				calls = append(calls, ToolCall{
 					Name: call.Name, ToolCallID: call.ToolCallID, Payload: call.Payload,
 				})
 			}
@@ -259,7 +345,7 @@ func awaitToolRequests(items []planner.AwaitItem) []planner.ToolRequest {
 
 // validateSynthesisAfterTools requires a batch whose existing execution
 // classification guarantees a subsequent planner resume.
-func (r *Runtime) validateSynthesisAfterTools(calls []planner.ToolRequest) error {
+func (r *Runtime) validateSynthesisAfterTools(calls []ToolCall) error {
 	for _, call := range calls {
 		spec, ok := r.toolSpec(call.Name)
 		if ok && spec.TerminalRun {
@@ -274,7 +360,7 @@ func (r *Runtime) validateSynthesisAfterTools(calls []planner.ToolRequest) error
 
 // hasBudgetedToolCalls distinguishes active work from runtime bookkeeping,
 // which remains a completion obligation after Budget expires.
-func (r *Runtime) hasBudgetedToolCalls(calls []planner.ToolRequest) bool {
+func (r *Runtime) hasBudgetedToolCalls(calls []ToolCall) bool {
 	for _, call := range calls {
 		if !r.isBookkeeping(call.Name) {
 			return true
@@ -283,7 +369,7 @@ func (r *Runtime) hasBudgetedToolCalls(calls []planner.ToolRequest) bool {
 	return false
 }
 
-func (r *Runtime) hasBookkeepingToolCalls(calls []planner.ToolRequest) bool {
+func (r *Runtime) hasBookkeepingToolCalls(calls []ToolCall) bool {
 	for _, call := range calls {
 		if r.isBookkeeping(call.Name) {
 			return true
@@ -295,8 +381,8 @@ func (r *Runtime) hasBookkeepingToolCalls(calls []planner.ToolRequest) bool {
 // runStep executes one normalized planner result and applies one post-step
 // transition.
 func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
-	if err := validateRecoveryCatalog(l.st.PendingRecoveryCatalog, program.result); err != nil {
-		return nil, err
+	if err := validateRecoveryCatalog(l.st.PendingRecovery, l.st.PendingRecoveryCatalog, program.result); err != nil {
+		return nil, planner.NewOutputContractError(err)
 	}
 	if program.result.Await == nil {
 		l.st.PendingRecovery = nil
@@ -310,18 +396,6 @@ func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
 			l.parentTracker,
 		)
 		program.result.ToolCalls = program.calls
-	}
-	if err := validatePlanResultToolCallIDs(program.result); err != nil {
-		return nil, err
-	}
-	for _, call := range awaitToolRequests(program.awaitItems) {
-		spec, ok := l.r.toolSpec(call.Name)
-		if !ok {
-			return nil, fmt.Errorf("planner await references unknown tool %q", call.Name)
-		}
-		if spec.TerminalRun {
-			return nil, fmt.Errorf("terminal tool %q cannot be owned by planner await work", call.Name)
-		}
 	}
 	if program.kind == stepKindTools &&
 		l.r.hasBudgetedToolCalls(program.calls) &&
@@ -353,9 +427,9 @@ func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
 
 // validatePlanResultToolCallIDs proves that every model-facing call has one
 // stable identity before the selected response is accepted or effects begin.
-func validatePlanResultToolCallIDs(result *planner.PlanResult) error {
+func validatePlanResultToolCallIDs(result *PlanResult) error {
 	seen := make(map[string]struct{})
-	for _, call := range planResultModelToolCalls(result) {
+	for _, call := range runtimePlanResultModelToolCalls(result) {
 		if call.id == "" {
 			return fmt.Errorf("workflow step tool %q is missing tool_call_id", call.name)
 		}
@@ -370,7 +444,7 @@ func validatePlanResultToolCallIDs(result *planner.PlanResult) error {
 // validateToolTerminalProgram enforces the only legal terminal-with-tools
 // shape: non-resuming bookkeeping side effects followed by a terminal planner
 // payload in the same step.
-func (r *Runtime) validateToolTerminalProgram(calls []planner.ToolRequest) error {
+func (r *Runtime) validateToolTerminalProgram(calls []ToolCall) error {
 	for _, call := range calls {
 		spec, ok := r.toolSpec(call.Name)
 		if !ok {
@@ -472,7 +546,7 @@ func (l *workflowLoop) failCommittedStep(batch *stepBatch, stepErr error) error 
 	for _, record := range batch.records {
 		recorded[record.call.ToolCallID] = struct{}{}
 	}
-	allCalls := append([]planner.ToolRequest(nil), batch.program.calls...)
+	allCalls := append([]ToolCall(nil), batch.program.calls...)
 	awaitCalls := awaitToolRequests(batch.program.awaitItems)
 	awaitCalls = l.r.prepareAllowedCallsMetadata(
 		l.input.AgentID,
@@ -481,7 +555,7 @@ func (l *workflowLoop) failCommittedStep(batch *stepBatch, stepErr error) error 
 		l.parentTracker,
 	)
 	allCalls = append(allCalls, awaitCalls...)
-	unresolved := make([]planner.ToolRequest, 0, len(allCalls))
+	unresolved := make([]ToolCall, 0, len(allCalls))
 	for _, call := range allCalls {
 		if _, ok := recorded[call.ToolCallID]; !ok {
 			unresolved = append(unresolved, call)
@@ -642,7 +716,10 @@ func (l *workflowLoop) resumePlanner(pendingRecovery []*planner.ToolOutput, synt
 	if resOutput == nil || resOutput.Result == nil {
 		return nil, errors.New("plan activity returned nil result on resume")
 	}
-	l.st.AggUsage = addTokenUsage(l.st.AggUsage, resOutput.Usage)
+	l.st.AggUsage, err = addTokenUsage(l.st.AggUsage, resOutput.Usage)
+	if err != nil {
+		return nil, fmt.Errorf("aggregate run usage: %w", err)
+	}
 	l.st.Result = resOutput.Result
 	l.st.Transcript = resOutput.Transcript
 	l.st.ResponseCommitted = false
@@ -651,32 +728,35 @@ func (l *workflowLoop) resumePlanner(pendingRecovery []*planner.ToolOutput, synt
 	return nil, nil
 }
 
-// validateRecoveryCatalog rejects every executable tool call outside the exact
-// catalog advertised by the activity that produced the planner result. Direct
-// model calls have already been rewritten to ToolUnavailable; this guard keeps
-// planner-owned awaits and future execution shapes strict. A nil catalog
-// denotes a workflow history recorded before this enforcement contract.
-func validateRecoveryCatalog(catalog *RecoveryCatalog, result *planner.PlanResult) error {
-	if catalog == nil {
+// validateRecoveryCatalog checks the exact tool list shown during a recovery
+// turn. Ordinary turns have neither pending recovery failures nor a recovery
+// catalog. Recovery turns must have both.
+func validateRecoveryCatalog(
+	pendingRecovery []*planner.ToolOutput,
+	catalog *RecoveryCatalog,
+	result *PlanResult,
+) error {
+	if len(pendingRecovery) == 0 {
+		if catalog != nil {
+			return errors.New("planner result has a recovery catalog without pending recovery failures")
+		}
 		return nil
+	}
+	if catalog == nil {
+		return errors.New("planner result with pending recovery failures requires a recovery catalog")
 	}
 	allowed := make(map[tools.Ident]struct{}, len(catalog.Tools))
 	for _, tool := range catalog.Tools {
 		allowed[tool] = struct{}{}
 	}
-	calls := append([]planner.ToolRequest(nil), result.ToolCalls...)
+	calls := append([]ToolCall(nil), result.ToolCalls...)
 	if result.Await != nil {
 		calls = append(calls, awaitToolRequests(result.Await.Items)...)
 	}
 	for _, call := range calls {
-		// ToolUnavailable is the runtime-owned identity for an unknown model
-		// request. It is never advertised, so its existing changed-request and
-		// attempt-cap contract validates it instead of the advertised catalog.
-		if call.Name == tools.ToolUnavailable {
-			continue
-		}
-		if _, ok := allowed[call.Name]; !ok {
-			return fmt.Errorf("planner called tool %q outside the advertised recovery catalog", call.Name)
+		name := call.TranscriptName()
+		if _, ok := allowed[name]; !ok {
+			return fmt.Errorf("planner called tool %q outside the advertised recovery catalog", name)
 		}
 	}
 	return nil
@@ -875,7 +955,7 @@ func stepToolResults(records []stepToolRecord) []*planner.ToolResult {
 // stepToolRecordsFromExecutions pairs execution outcomes by tool-call identity
 // and returns records in canonical call order. Timeout grouping may execute
 // calls in a different order than the provider-authored transcript.
-func stepToolRecordsFromExecutions(calls []planner.ToolRequest, outcomes []*ToolExecutionResult) ([]stepToolRecord, error) {
+func stepToolRecordsFromExecutions(calls []ToolCall, outcomes []*ToolExecutionResult) ([]stepToolRecord, error) {
 	if len(calls) != len(outcomes) {
 		return nil, fmt.Errorf("workflow step execution mismatch: calls=%d outcomes=%d", len(calls), len(outcomes))
 	}
@@ -929,11 +1009,11 @@ func stepToolRecordsFromExecutions(calls []planner.ToolRequest, outcomes []*Tool
 // results are preserved; unresolved calls receive an explicit infrastructure
 // failure before the original execution error is returned.
 func stepToolRecordsAfterExecution(
-	calls []planner.ToolRequest,
+	calls []ToolCall,
 	outcomes []*ToolExecutionResult,
 	executionErr error,
 ) ([]stepToolRecord, error) {
-	callsByID := make(map[string]planner.ToolRequest, len(calls))
+	callsByID := make(map[string]ToolCall, len(calls))
 	for _, call := range calls {
 		callsByID[call.ToolCallID] = call
 	}
@@ -1020,7 +1100,7 @@ func stepToolRecordsAfterExecution(
 // canonicalStepToolRecords restores the provider's call order after calls from
 // different deadline or confirmation classes complete independently. Records
 // created by planner await items follow in their original await order.
-func canonicalStepToolRecords(calls []planner.ToolRequest, records []stepToolRecord) ([]stepToolRecord, error) {
+func canonicalStepToolRecords(calls []ToolCall, records []stepToolRecord) ([]stepToolRecord, error) {
 	byID := make(map[string]stepToolRecord, len(records))
 	for _, record := range records {
 		id := record.call.ToolCallID

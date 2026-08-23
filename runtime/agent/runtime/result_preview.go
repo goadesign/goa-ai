@@ -61,7 +61,7 @@ func formatResultPreview(toolName tools.Ident, args, result any, bounds *agent.B
 
 // formatResultPreviewForCall decodes the original typed payload when available
 // and renders the user-facing tool result preview for call.Name.
-func formatResultPreviewForCall(ctx context.Context, rt *Runtime, call *planner.ToolRequest, result any, bounds *agent.Bounds) (string, error) {
+func formatResultPreviewForCall(ctx context.Context, rt *Runtime, call *ToolCall, result any, bounds *agent.Bounds) (string, error) {
 	if call == nil {
 		return "", nil
 	}
@@ -76,7 +76,7 @@ func formatResultPreviewForCall(ctx context.Context, rt *Runtime, call *planner.
 // formatToolResultPreviewForCall renders a success preview for completed tool
 // results. Error results carry their user-visible failure in ToolError, so result
 // hint templates must not run against nil semantic result data.
-func formatToolResultPreviewForCall(ctx context.Context, rt *Runtime, call *planner.ToolRequest, tr *planner.ToolResult) (string, error) {
+func formatToolResultPreviewForCall(ctx context.Context, rt *Runtime, call *ToolCall, tr *planner.ToolResult) (string, error) {
 	if tr == nil {
 		return "", nil
 	}
@@ -93,7 +93,7 @@ func toolResultHasError(tr *planner.ToolResult) bool {
 // decodeResultPreviewArgs decodes the original tool payload into its typed Go
 // value for result-hint rendering. Preview rendering is best-effort, so decode
 // failures are logged and yield nil args rather than failing execution.
-func decodeResultPreviewArgs(ctx context.Context, rt *Runtime, call *planner.ToolRequest) any {
+func decodeResultPreviewArgs(ctx context.Context, rt *Runtime, call *ToolCall) any {
 	if rt == nil || call == nil || len(call.Payload) == 0 {
 		return nil
 	}

@@ -38,6 +38,70 @@ func TestNewRejectsUnknownThinkingEffort(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported thinking effort")
 }
 
+func TestTranslateToolCallPreservesExactJSONArguments(t *testing.T) {
+	codec := &toolCodec{providerToCanonical: map[string]string{
+		"lookup": "svc.lookup",
+	}}
+	arguments := " {\n  \"value\": 1,\n  \"optional\": null\n} "
+	call, err := translateToolCall(responses.ResponseFunctionToolCall{
+		CallID:    "call-1",
+		Name:      "lookup",
+		Arguments: arguments,
+	}, codec)
+	require.NoError(t, err)
+	require.Equal(t, arguments, string(call.Payload))
+	require.Equal(t, tools.Ident("svc.lookup"), call.Name)
+}
+
+func TestTranslateToolCallRejectsEmptyAndUnknownArguments(t *testing.T) {
+	codec := &toolCodec{providerToCanonical: map[string]string{
+		"lookup": "svc.lookup",
+	}}
+	_, err := translateToolCall(responses.ResponseFunctionToolCall{
+		CallID:    "call-1",
+		Name:      "lookup",
+		Arguments: " \n ",
+	}, codec)
+	require.ErrorContains(t, err, "tool payload is empty")
+
+	_, err = translateToolCall(responses.ResponseFunctionToolCall{
+		CallID:    "call-2",
+		Name:      "invented",
+		Arguments: `{}`,
+	}, codec)
+	require.ErrorContains(t, err, `unadvertised function "invented"`)
+}
+
+func TestStructuredOutputPayloadPreservesExactJSON(t *testing.T) {
+	payload := " {\n  \"value\": 1,\n  \"optional\": null\n} "
+	actual, err := structuredOutputPayload(
+		[]model.Message{{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: payload}},
+		}},
+		&model.StructuredOutput{Name: "answer", Schema: rawjson.Message(`{"type":"object"}`)},
+	)
+	require.NoError(t, err)
+	require.Equal(t, payload, string(actual))
+}
+
+func TestOpenAIChunkProcessorChargesPendingToolDeltaBeforeAppend(t *testing.T) {
+	processor := &openAIChunkProcessor{
+		toolCalls: map[string]*streamToolBuffer{
+			"item-1": {itemID: "item-1"},
+		},
+		retainedBytes: 16 << 20,
+	}
+
+	err := processor.handleToolCallArgumentsDelta(responses.ResponseFunctionCallArgumentsDeltaEvent{
+		ItemID: "item-1",
+		Delta:  "x",
+	})
+
+	require.ErrorContains(t, err, "retained stream output exceeds 16777216 bytes")
+	require.Empty(t, processor.toolCalls["item-1"].pending)
+}
+
 func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 	transport := &mockTransport{
 		completeResponse: mustCompletedResponse(t),
@@ -72,7 +136,7 @@ func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -117,7 +181,7 @@ func TestClientCompleteRejectsUnrepresentableExplicitTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.Error(t, err)
@@ -186,7 +250,7 @@ func TestClientCompleteLowersRunlogReplayedTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -240,7 +304,7 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	resp, err := client.Complete(context.Background(), &model.Request{
+	modelRequest := &model.Request{
 		Messages: []*model.Message{
 			{
 				Role:  model.ConversationRoleUser,
@@ -268,9 +332,10 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
-	})
+	}
+	resp, err := client.Complete(context.Background(), modelRequest)
 	require.NoError(t, err)
 
 	require.Len(t, transport.completeRequests, 1)
@@ -321,7 +386,7 @@ func TestClientCompleteProjectsHistoryOnlyToolName(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = client.Complete(context.Background(), &model.Request{
+	modelRequest := &model.Request{
 		Messages: []*model.Message{{
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{model.ToolUsePart{
@@ -333,9 +398,10 @@ func TestClientCompleteProjectsHistoryOnlyToolName(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        tools.ToolUnavailable.String(),
 			Description: "Report that a previously used tool is unavailable.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
-	})
+	}
+	_, err = client.Complete(context.Background(), modelRequest)
 	require.NoError(t, err)
 
 	require.Len(t, transport.completeRequests, 1)
@@ -550,7 +616,7 @@ func TestClientCompleteEncodesToolResultErrorsExplicitly(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -585,7 +651,7 @@ func TestClientCompleteRejectsAssistantTextAfterToolUse(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.Error(t, err)
@@ -612,11 +678,11 @@ func TestClientCompleteRoutesModelsAndToolChoice(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{Mode: model.ToolChoiceModeAny},
 	})
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "tool choice any")
 
 	require.Len(t, transport.completeRequests, 1)
 	request := transport.completeRequests[0]
@@ -624,7 +690,7 @@ func TestClientCompleteRoutesModelsAndToolChoice(t *testing.T) {
 	assert.Equal(t, responses.ToolChoiceOptionsRequired, request.ToolChoice.OfToolChoiceMode.Value)
 }
 
-func TestClientCompleteProjectsStrictToolSchemasAndCanonicalizesArguments(t *testing.T) {
+func TestClientCompleteProjectsStrictToolSchemasAndPreservesArguments(t *testing.T) {
 	transport := &mockTransport{
 		completeResponse: mustResponse(t, `{
 			"model":"gpt-4o",
@@ -647,7 +713,7 @@ func TestClientCompleteProjectsStrictToolSchemasAndCanonicalizesArguments(t *tes
 	})
 	require.NoError(t, err)
 
-	resp, err := client.Complete(context.Background(), &model.Request{
+	modelRequest := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "Ping"}},
@@ -655,7 +721,7 @@ func TestClientCompleteProjectsStrictToolSchemasAndCanonicalizesArguments(t *tes
 		Tools: []*model.ToolDefinition{{
 			Name:        "helpers.answer",
 			Description: "Answer a simple question.",
-			Input: model.ToolInputFromSchema(rawjson.Message(`{
+			Input: model.AdvertisedToolInputFromSchema(rawjson.Message(`{
 				"$schema": "https://json-schema.org/draft/2020-12/schema",
 				"type": "object",
 				"properties": {
@@ -666,7 +732,8 @@ func TestClientCompleteProjectsStrictToolSchemasAndCanonicalizesArguments(t *tes
 				"required": ["question"]
 			}`)),
 		}},
-	})
+	}
+	resp, err := client.Complete(context.Background(), modelRequest)
 	require.NoError(t, err)
 
 	require.Len(t, transport.completeRequests, 1)
@@ -689,14 +756,14 @@ func TestClientCompleteProjectsStrictToolSchemasAndCanonicalizesArguments(t *tes
 
 	require.Len(t, resp.ToolCalls(), 1)
 	assert.Equal(t, tools.Ident("helpers.answer"), resp.ToolCalls()[0].Name)
-	assert.JSONEq(t, `{"question":"What is the capital of Japan?"}`, string(resp.ToolCalls()[0].Payload))
+	assert.JSONEq(t, `{"question":"What is the capital of Japan?","style":null}`, string(resp.ToolCalls()[0].Payload))
 	require.Len(t, resp.Content, 1)
 	version, err := metaString(resp.Content[0].Meta, openAIFunctionCallVersionMetaKey)
 	require.NoError(t, err)
 	assert.Equal(t, openAIFunctionCallMetadataVersion2, version)
 	agreement, err := metaString(resp.Content[0].Meta, openAIFunctionCallPayloadMetaKey)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"question":"What is the capital of Japan?"}`, agreement)
+	assert.JSONEq(t, `{"question":"What is the capital of Japan?","style":null}`, agreement)
 	replayed, err := encodeAssistantMessage(
 		&resp.Content[0],
 		map[string]string{"catalog.list": "catalog_list"},
@@ -777,7 +844,7 @@ func TestClientCompleteSupportsStructuredOutput(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	resp, err := client.Complete(context.Background(), &model.Request{
+	modelRequest := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "Ping"}},
@@ -786,7 +853,12 @@ func TestClientCompleteSupportsStructuredOutput(t *testing.T) {
 			Name:   "draft_from_transcript",
 			Schema: tools.RawJSON(`{"type":"object","additionalProperties":false}`),
 		},
-	})
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		modelRequest,
+		func(*model.Response, *model.Completion) error { return nil },
+	))
+	resp, err := client.Complete(context.Background(), modelRequest)
 	require.NoError(t, err)
 
 	require.Len(t, transport.completeRequests, 1)
@@ -807,7 +879,7 @@ func TestClientCompleteRejectsUnsupportedThinkingShape(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = client.Complete(context.Background(), &model.Request{
+	modelRequest := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "Ping"}},
@@ -817,7 +889,8 @@ func TestClientCompleteRejectsUnsupportedThinkingShape(t *testing.T) {
 			Interleaved:  true,
 			BudgetTokens: 1024,
 		},
-	})
+	}
+	_, err = client.Complete(context.Background(), modelRequest)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "thinking budgets")
 }
@@ -872,7 +945,7 @@ func TestClientCompleteRejectsStructuredOutputWithTools(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = client.Complete(context.Background(), &model.Request{
+	modelRequest := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "Ping"}},
@@ -880,15 +953,20 @@ func TestClientCompleteRejectsStructuredOutputWithTools(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
 		StructuredOutput: &model.StructuredOutput{
 			Name:   "draft_from_transcript",
 			Schema: tools.RawJSON(`{"type":"object"}`),
 		},
-	})
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		modelRequest,
+		func(*model.Response, *model.Completion) error { return nil },
+	))
+	_, err = client.Complete(context.Background(), modelRequest)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "structured output cannot be combined with tools")
+	assert.Contains(t, err.Error(), "structured output cannot include tools")
 	assert.Empty(t, transport.completeRequests)
 }
 
@@ -901,15 +979,15 @@ func TestClientCompleteRejectsInvalidToolDefinitions(t *testing.T) {
 		{
 			name:    "nil tool definition",
 			tools:   []*model.ToolDefinition{nil},
-			wantErr: "tool[0] is nil",
+			wantErr: "model request contains a nil tool definition",
 		},
 		{
 			name: "missing tool name",
 			tools: []*model.ToolDefinition{{
 				Description: "Run an analysis.",
-				Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+				Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 			}},
-			wantErr: "tool[0] is missing name",
+			wantErr: "model request contains a tool definition with an empty name",
 		},
 	}
 
@@ -934,6 +1012,30 @@ func TestClientCompleteRejectsInvalidToolDefinitions(t *testing.T) {
 			assert.Empty(t, transport.completeRequests)
 		})
 	}
+}
+
+func TestClientCompleteRejectsStructuredOutputWithoutNameBeforeProviderCall(t *testing.T) {
+	transport := &mockTransport{}
+	client, err := New(Options{
+		DefaultModel: "gpt-4o",
+		transport:    transport,
+	})
+	require.NoError(t, err)
+	request := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "Ping"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Schema: tools.RawJSON(`{"type":"object"}`),
+		},
+	}
+
+	response, err := client.Complete(t.Context(), request)
+
+	require.Nil(t, response)
+	require.EqualError(t, err, "model request structured output name is required")
+	require.Empty(t, transport.completeRequests)
 }
 
 func TestOpenAIStreamerEmitsTextToolCallsUsageAndStop(t *testing.T) {
@@ -1024,7 +1126,7 @@ func TestOpenAIStreamerEmitsTextToolCallsUsageAndStop(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	streamer, err := client.Stream(context.Background(), &model.Request{
+	modelRequest := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "Ping"}},
@@ -1032,9 +1134,10 @@ func TestOpenAIStreamerEmitsTextToolCallsUsageAndStop(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
 		}},
-	})
+	}
+	streamer, err := client.Stream(context.Background(), modelRequest)
 	require.NoError(t, err)
 	defer func() {
 		_ = streamer.Close()
@@ -1065,6 +1168,70 @@ func TestOpenAIStreamerEmitsTextToolCallsUsageAndStop(t *testing.T) {
 	require.NotNil(t, response)
 	assert.Equal(t, 15, response.Usage.TotalTokens)
 	assert.Equal(t, "gpt-4o", response.Usage.Model)
+}
+
+func TestOpenAIReasoningStreamSatisfiesModelValidator(t *testing.T) {
+	stream := &mockStream{
+		events: []responses.ResponseStreamEventUnion{
+			mustStreamEvent(t, `{
+				"type":"response.reasoning_summary_text.delta",
+				"sequence_number":1,
+				"item_id":"rs_1",
+				"output_index":0,
+				"summary_index":0,
+				"delta":"Need the sales data first."
+			}`),
+			mustStreamEvent(t, `{
+				"type":"response.completed",
+				"sequence_number":2,
+				"response":{
+					"model":"gpt-5",
+					"status":"completed",
+					"output":[
+						{
+							"id":"rs_1",
+							"type":"reasoning",
+							"status":"completed",
+							"summary":[{"type":"summary_text","text":"Need the sales data first."}]
+						},
+						{
+							"id":"msg_1",
+							"type":"message",
+							"role":"assistant",
+							"status":"completed",
+							"content":[{"type":"output_text","text":"I need the sales data.","annotations":[],"logprobs":[]}]
+						}
+					]
+				}
+			}`),
+		},
+	}
+	client, err := New(Options{
+		DefaultModel: "gpt-5",
+		transport:    &mockTransport{stream: stream},
+	})
+	require.NoError(t, err)
+	request := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "Analyze sales"}},
+		}},
+	}
+	validated, err := client.Stream(context.Background(), request)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, validated.Close())
+	}()
+
+	for {
+		_, err = validated.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+	}
+
+	require.NotNil(t, validated.Response())
 }
 
 func TestOpenAIStreamerHandlesIncompleteResponse(t *testing.T) {
@@ -1103,12 +1270,13 @@ func TestOpenAIStreamerHandlesIncompleteResponse(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	streamer, err := client.Stream(context.Background(), &model.Request{
+	modelRequest := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "Ping"}},
 		}},
-	})
+	}
+	streamer, err := client.Stream(context.Background(), modelRequest)
 	require.NoError(t, err)
 	defer func() {
 		_ = streamer.Close()
@@ -1168,7 +1336,7 @@ func TestOpenAIStreamerStructuredOutput(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	streamer, err := client.Stream(context.Background(), &model.Request{
+	modelRequest := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "Ping"}},
@@ -1177,7 +1345,12 @@ func TestOpenAIStreamerStructuredOutput(t *testing.T) {
 			Name:   "draft_from_transcript",
 			Schema: tools.RawJSON(`{"type":"object"}`),
 		},
-	})
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		modelRequest,
+		func(*model.Response, *model.Completion) error { return nil },
+	))
+	streamer, err := client.Stream(context.Background(), modelRequest)
 	require.NoError(t, err)
 	defer func() {
 		_ = streamer.Close()
@@ -1193,14 +1366,15 @@ func TestOpenAIStreamerStructuredOutput(t *testing.T) {
 		chunks = append(chunks, chunk)
 	}
 
-	require.Len(t, chunks, 3)
+	require.Len(t, chunks, 4)
 	delta := chunks[0].(model.CompletionDeltaChunk).Delta
 	assert.Equal(t, "draft_from_transcript", delta.Name)
 	assert.JSONEq(t, `{"answer":"ok"}`, delta.Delta)
 	completion := chunks[1].(model.CompletionChunk).Completion
 	assert.Equal(t, "draft_from_transcript", completion.Name)
 	assert.JSONEq(t, `{"answer":"ok"}`, string(completion.Payload))
-	assert.Equal(t, "stop", chunks[2].(model.StopChunk).Reason)
+	assert.Equal(t, "gpt-4o", chunks[2].(model.UsageChunk).Usage.Model)
+	assert.Equal(t, "stop", chunks[3].(model.StopChunk).Reason)
 	require.NotNil(t, streamer.Response())
 }
 

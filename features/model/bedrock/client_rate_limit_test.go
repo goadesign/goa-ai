@@ -52,12 +52,11 @@ func TestComplete_WrapsRateLimitedErrors(t *testing.T) {
 	rt := &errorRuntimeClient{
 		converseErr: model.ErrRateLimited,
 	}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "test-model",
 		maxTok:       10,
 		temp:         0.5,
-		think:        defaultThinkingBudget,
 	}
 	req := model.Request{
 		ModelClass: model.ModelClassDefault,
@@ -79,12 +78,11 @@ func TestStream_WrapsRateLimitedErrors(t *testing.T) {
 	rt := &errorRuntimeClient{
 		converseStreamErr: model.ErrRateLimited,
 	}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "test-model",
 		maxTok:       10,
 		temp:         0.5,
-		think:        defaultThinkingBudget,
 	}
 	req := model.Request{
 		ModelClass: model.ModelClassDefault,

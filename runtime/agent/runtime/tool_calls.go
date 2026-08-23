@@ -9,6 +9,7 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -26,7 +27,7 @@ type (
 		// future is the typed engine Future for this tool call.
 		future engine.Future[*ToolOutput]
 		// call is the original tool request that was submitted for execution.
-		call planner.ToolRequest
+		call ToolCall
 		// startTime records when the activity was scheduled, used to calculate tool duration.
 		startTime time.Time
 	}
@@ -38,7 +39,7 @@ type (
 		// handle is the child workflow handle returned by StartChildWorkflow.
 		handle engine.ChildWorkflowHandle
 		// call is the original agent-as-tool request submitted for execution.
-		call planner.ToolRequest
+		call ToolCall
 		// cfg carries the agent-tool configuration used to adapt RunOutput.
 		cfg *AgentToolConfig
 		// nestedRun describes the nested agent run context (run IDs, parents).
@@ -59,7 +60,7 @@ type (
 	// child workflows, and executing inline toolsets) and then consumed during
 	// collection to merge results deterministically in the original call order.
 	toolCallBatch struct {
-		calls []planner.ToolRequest
+		calls []ToolCall
 
 		futures      []futureInfo
 		childFutures []agentChildFutureInfo
@@ -97,7 +98,7 @@ type (
 const canceledByTimeBudgetMessage = "canceled: time budget reached"
 
 // collectToolCallIDs returns the tool call IDs in the same order as calls.
-func collectToolCallIDs(calls []planner.ToolRequest) []string {
+func collectToolCallIDs(calls []ToolCall) []string {
 	ids := make([]string, 0, len(calls))
 	for _, call := range calls {
 		ids = append(ids, call.ToolCallID)
@@ -105,7 +106,7 @@ func collectToolCallIDs(calls []planner.ToolRequest) []string {
 	return ids
 }
 
-func (e *toolBatchExec) normalizeToolCall(call planner.ToolRequest, i int) planner.ToolRequest {
+func (e *toolBatchExec) normalizeToolCall(call ToolCall) ToolCall {
 	if call.SessionID == "" {
 		call.SessionID = e.sessionID
 	}
@@ -114,13 +115,6 @@ func (e *toolBatchExec) normalizeToolCall(call planner.ToolRequest, i int) plann
 	}
 	if call.TurnID == "" {
 		call.TurnID = e.turnID
-	}
-	if call.ToolCallID == "" {
-		attempt := 0
-		if e.runCtx != nil {
-			attempt = e.runCtx.Attempt
-		}
-		call.ToolCallID = generateDeterministicToolCallID(e.runID, call.TurnID, attempt, call.Name, i)
 	}
 	if e.parentTracker != nil && call.ParentToolCallID == "" {
 		call.ParentToolCallID = e.parentTracker.parentToolCallID
@@ -131,7 +125,7 @@ func (e *toolBatchExec) normalizeToolCall(call planner.ToolRequest, i int) plann
 	return call
 }
 
-func parentToolCallID(call planner.ToolRequest, runCtx *run.Context) string {
+func parentToolCallID(call ToolCall, runCtx *run.Context) string {
 	if call.ParentToolCallID != "" {
 		return call.ParentToolCallID
 	}
@@ -148,13 +142,12 @@ func toolFailureFromExecutionError(err error, message string) *planner.ToolFailu
 	kind := planner.FailureInternal
 	action := planner.RecoveryFinish
 	var svcErr *goa.ServiceError
-	if errors.As(err, &svcErr) && svcErr.Name == "service_unavailable" {
+	switch {
+	case errors.As(err, &svcErr) && svcErr.Name == "service_unavailable":
 		kind = planner.FailureUnavailable
 		action = planner.RecoveryReplan
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	case errors.Is(err, context.DeadlineExceeded):
 		kind = planner.FailureTimeout
-		action = planner.RecoveryFinish
 	}
 	return &planner.ToolFailure{
 		Kind:  kind,
@@ -165,11 +158,9 @@ func toolFailureFromExecutionError(err error, message string) *planner.ToolFailu
 	}
 }
 
-// synthesizeToolError creates a ToolResult from an execution error and publishes
-// the corresponding ToolResultReceived event. This is used when activity or
-// child workflow execution fails (e.g., timeout) and we want to convert the
-// error into a tool result rather than failing the workflow.
-func (e *toolBatchExec) synthesizeToolError(ctx context.Context, call planner.ToolRequest, err error, errMsg string, duration time.Duration) (*ToolExecutionResult, error) {
+// synthesizeToolError converts an ordinary tool execution error into a
+// ToolResult and publishes the corresponding ToolResultReceived event.
+func (e *toolBatchExec) synthesizeToolError(ctx context.Context, call ToolCall, err error, errMsg string, duration time.Duration) (*ToolExecutionResult, error) {
 	toolRes := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
@@ -198,7 +189,7 @@ func (e *toolBatchExec) synthesizeToolError(ctx context.Context, call planner.To
 // echoes a tool it saw in prior context but that was not advertised in the current
 // request). This must not fail the workflow: the runtime returns an invalid-call
 // failure that requires the planner to choose an advertised capability.
-func (e *toolBatchExec) synthesizeUnknownToolResult(ctx context.Context, call planner.ToolRequest, duration time.Duration) (*ToolExecutionResult, error) {
+func (e *toolBatchExec) synthesizeUnknownToolResult(ctx context.Context, call ToolCall, duration time.Duration) (*ToolExecutionResult, error) {
 	toolErr := planner.NewToolError(fmt.Sprintf("unknown tool %q", call.Name))
 	tr := &planner.ToolResult{
 		Name:       call.Name,
@@ -224,7 +215,7 @@ func (e *toolBatchExec) synthesizeUnknownToolResult(ctx context.Context, call pl
 
 // synthesizeCanceledExecution records a completed tool handshake for work the
 // runtime stopped waiting on because the finalization window was reached.
-func (e *toolBatchExec) synthesizeCanceledExecution(ctx context.Context, call planner.ToolRequest, duration time.Duration) (*ToolExecutionResult, error) {
+func (e *toolBatchExec) synthesizeCanceledExecution(ctx context.Context, call ToolCall, duration time.Duration) (*ToolExecutionResult, error) {
 	tr := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
@@ -255,13 +246,13 @@ func (e *toolBatchExec) synthesizeCanceledExecution(ctx context.Context, call pl
 	return result, nil
 }
 
-func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call planner.ToolRequest, tr *planner.ToolResult) error {
+func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call ToolCall, tr *planner.ToolResult) error {
 	return validateToolResultContract(spec, call, tr)
 }
 
 func (e *toolBatchExec) publishToolResultReceived(
 	ctx context.Context,
-	call planner.ToolRequest,
+	call ToolCall,
 	tr *planner.ToolResult,
 	resultJSON rawjson.Message,
 	duration time.Duration,
@@ -301,7 +292,7 @@ func (e *toolBatchExec) publishToolResultReceived(
 	return record, e.r.publishPreparedHook(ctx, record, engine.ActivityOptions{})
 }
 
-func (e *toolBatchExec) publishToolCallScheduled(ctx context.Context, call planner.ToolRequest, queue string) error {
+func (e *toolBatchExec) publishToolCallScheduled(ctx context.Context, call ToolCall, queue string) error {
 	ev := newToolCallScheduledEvent(
 		e.runID,
 		e.agentID,
@@ -321,7 +312,7 @@ func newToolCallScheduledEvent(
 	runID string,
 	agentID agent.Ident,
 	sessionID string,
-	call planner.ToolRequest,
+	call ToolCall,
 	queue string,
 	parentToolCallID string,
 	expectedChildren int,
@@ -361,7 +352,7 @@ func computeToolActivityOptions(wfCtx engine.WorkflowContext, base engine.Activi
 	return callOpts
 }
 
-func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []planner.ToolRequest) (*toolCallBatch, error) {
+func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []ToolCall) (*toolCallBatch, error) {
 	ctx := wfCtx.Context()
 
 	b := &toolCallBatch{
@@ -375,7 +366,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 	var executionErr error
 
 	for i, call := range calls {
-		call = e.normalizeToolCall(call, i)
+		call = e.normalizeToolCall(call)
 		b.calls[i] = call
 
 		spec, hasSpec := e.r.toolSpec(call.Name)
@@ -497,7 +488,8 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 
 			start := wfCtx.Now()
 			ctxInline := engine.WithWorkflowContext(ctx, wfCtx)
-			execResult, err := ts.Execute(ctxInline, &call)
+			executorCall := cloneToolCall(call)
+			execResult, err := ts.Execute(ctxInline, &executorCall)
 			if err != nil {
 				executionErr = errors.Join(
 					executionErr,
@@ -744,7 +736,10 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 
 			outPtr, err := info.handle.Get(wfCtx.Context())
 			if err != nil {
-				if isRunCancellationError(err) {
+				if isRunCancellationError(err) || temporalerrors.IsOutputContract(err) {
+					return out, pending, false, err
+				}
+				if _, ok := temporalerrors.Provider(err); ok {
 					return out, pending, false, err
 				}
 				duration := wfCtx.Now().Sub(info.startTime)
@@ -811,7 +806,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 	return out, nil, false, executionErr
 }
 
-func mergeToolExecutionsInCallOrder(calls []planner.ToolRequest, activityByID, inlineByID map[string]*ToolExecutionResult) ([]*ToolExecutionResult, error) {
+func mergeToolExecutionsInCallOrder(calls []ToolCall, activityByID, inlineByID map[string]*ToolExecutionResult) ([]*ToolExecutionResult, error) {
 	results := make([]*ToolExecutionResult, 0, len(calls))
 	for _, call := range calls {
 		if ar, ok := activityByID[call.ToolCallID]; ok {
@@ -829,7 +824,7 @@ func mergeToolExecutionsInCallOrder(calls []planner.ToolRequest, activityByID, i
 
 // availableToolExecutionsInCallOrder preserves every concrete outcome collected
 // before an execution-layer error, leaving unresolved calls to the step boundary.
-func availableToolExecutionsInCallOrder(calls []planner.ToolRequest, activityByID, inlineByID map[string]*ToolExecutionResult) []*ToolExecutionResult {
+func availableToolExecutionsInCallOrder(calls []ToolCall, activityByID, inlineByID map[string]*ToolExecutionResult) []*ToolExecutionResult {
 	results := make([]*ToolExecutionResult, 0, len(activityByID)+len(inlineByID))
 	for _, call := range calls {
 		if result, ok := activityByID[call.ToolCallID]; ok {
@@ -853,9 +848,16 @@ func availableToolExecutionsInCallOrder(calls []planner.ToolRequest, activityByI
 //
 // expectedChildren indicates how many child tools are expected to be discovered dynamically
 // by the tools in this batch (0 if not tracked).
-func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName string, toolActOptions engine.ActivityOptions, agentID agent.Ident, runCtx *run.Context, messages []*model.Message, calls []planner.ToolRequest, expectedChildren int, parentTracker *childTracker, finishBy time.Time) ([]*ToolExecutionResult, bool, error) {
+func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName string, toolActOptions engine.ActivityOptions, agentID agent.Ident, runCtx *run.Context, messages []*model.Message, calls []ToolCall, expectedChildren int, parentTracker *childTracker, finishBy time.Time) ([]*ToolExecutionResult, bool, error) {
 	if runCtx == nil {
 		return nil, false, fmt.Errorf("missing run context")
+	}
+	for _, call := range calls {
+		if call.ToolCallID == "" {
+			return nil, false, planner.NewOutputContractError(
+				fmt.Errorf("tool %q is missing tool_call_id", call.Name),
+			)
+		}
 	}
 	exec := &toolBatchExec{
 		r:                r,
@@ -876,8 +878,8 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 	if !finishBy.IsZero() && !wfCtx.Now().Before(finishBy) {
 		results := make([]*ToolExecutionResult, 0, len(calls))
 		var executionErr error
-		for i, call := range calls {
-			call = exec.normalizeToolCall(call, i)
+		for _, call := range calls {
+			call = exec.normalizeToolCall(call)
 			queue := ""
 			spec, ok := r.toolSpec(call.Name)
 			if ok {

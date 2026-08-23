@@ -159,27 +159,16 @@ func NewRegistration(
     return reg, nil
 }
 
-// CallOption customizes planner.ToolRequest values built by the typed helpers
-// below (e.g., setting parent/tool-call IDs for correlation with model calls).
-type CallOption func(*planner.ToolRequest)
-
-// WithParentToolCallID sets the ParentToolCallID on the constructed request.
-func WithParentToolCallID(id string) CallOption {
-    return func(r *planner.ToolRequest) { r.ParentToolCallID = id }
-}
-
-// WithToolCallID sets a model/tool-call identifier on the request. The runtime
-// preserves this ID and echoes it in ToolResult.ToolCallID for correlation.
-func WithToolCallID(id string) CallOption {
-    return func(r *planner.ToolRequest) { r.ToolCallID = id }
-}
-
 // Typed tool-call helpers for each tool in this exported toolset. These helpers
 // enforce use of the generated tool identifier and accept a typed payload that
 // matches the tool schema.
 {{- range .Toolset.Tools }}
 // New{{ goify .Name true }}Call builds a planner.ToolRequest for the {{ .QualifiedName }} tool.
-func New{{ goify .Name true }}Call(args *{{ goify .Name true }}Payload, opts ...CallOption) planner.ToolRequest {
+// toolCallID must be nonempty and unique within the containing planner.PlanResult.
+func New{{ goify .Name true }}Call(toolCallID string, args *{{ goify .Name true }}Payload) planner.ToolRequest {
+    if toolCallID == "" {
+        panic("{{ .QualifiedName }} tool call ID is required")
+    }
     var payload []byte
     if args != nil {
         // Encode typed payloads into canonical JSON using the generated codec.
@@ -190,13 +179,9 @@ func New{{ goify .Name true }}Call(args *{{ goify .Name true }}Payload, opts ...
         payload = b
     }
     req := planner.ToolRequest{
-        Name:    {{ .ConstName }},
-        Payload: payload,
-    }
-    for _, o := range opts {
-        if o != nil {
-            o(&req)
-        }
+        Name:       {{ .ConstName }},
+        Payload:    payload,
+        ToolCallID: toolCallID,
     }
     return req
 }

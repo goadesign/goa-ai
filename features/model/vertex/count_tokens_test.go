@@ -11,6 +11,30 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
+func TestCountTokensRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
+	tests := []struct {
+		name    string
+		request *model.Request
+	}{
+		{name: "nil request"},
+		{name: "unsupported model class", request: &model.Request{ModelClass: "unsupported"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stub := &stubGenerativeClient{}
+			client, err := New(stub, Options{DefaultModel: "gemini-2.5-pro"})
+			require.NoError(t, err)
+
+			_, err = client.CountTokens(context.Background(), tt.request)
+
+			require.Error(t, err)
+			assert.Empty(t, stub.lastModel)
+			assert.Nil(t, stub.lastContents)
+			assert.Nil(t, stub.lastCountConfig)
+		})
+	}
+}
+
 func TestCountTokens(t *testing.T) {
 	stub := &stubGenerativeClient{countResp: &genai.CountTokensResponse{TotalTokens: 42}}
 	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-pro"})
@@ -60,4 +84,4 @@ func TestCountTokensIncludesSystemInstructionAndTools(t *testing.T) {
 	require.Len(t, stub.lastCountConfig.Tools, 1)
 }
 
-var _ model.TokenCounter = (*Client)(nil)
+var _ model.TokenCounter = (*provider)(nil)

@@ -32,6 +32,18 @@ import (
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
+type forgedRuntimeClient struct {
+	model.Client
+}
+
+func TestRegisterModelRejectsTypedNilClient(t *testing.T) {
+	var client *forgedRuntimeClient
+
+	err := New().RegisterModel("primary", client)
+
+	require.EqualError(t, err, `register model "primary": model client is required`)
+}
+
 // nestedPlannerStub discovers children across iterations: first 2 children,
 // then 1, then final.
 type nestedPlannerStub struct {
@@ -44,16 +56,17 @@ var _ engine.Future[*api.ToolOutput] = (*testToolFuture)(nil)
 func (p *nestedPlannerStub) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
 	p.iter = 0
 	return &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: tools.Ident("child1"), Payload: rawjson.Message(`{}`)},
-		{Name: tools.Ident("child2"), Payload: rawjson.Message(`{}`)},
+		{Name: tools.Ident("child1"), ToolCallID: "child-1", Payload: rawjson.Message(`{}`)},
+		{Name: tools.Ident("child2"), ToolCallID: "child-2", Payload: rawjson.Message(`{}`)},
 	}}, nil
 }
 func (p *nestedPlannerStub) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	p.iter++
 	if p.iter == 1 {
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-			Name:    tools.Ident("child3"),
-			Payload: rawjson.Message(`{}`),
+			Name:       tools.Ident("child3"),
+			ToolCallID: "child-3",
+			Payload:    rawjson.Message(`{}`),
 		}}}, nil
 	}
 	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "nested done"}}}}}, nil
@@ -155,7 +168,7 @@ func TestFinishCurrentPlanResult_UsesPlannerFinalToolResult(t *testing.T) {
 	}
 	st := &runLoopState{
 		ResponseCommitted: true,
-		Result: &planner.PlanResult{
+		Result: &PlanResult{
 			FinalToolResult: &planner.FinalToolResult{
 				Result: rawjson.Message([]byte(`{"status":"ok"}`)),
 			},
@@ -190,7 +203,7 @@ func TestRunLoopWithStateAcceptsInitialFinalToolResult(t *testing.T) {
 		},
 	}
 	st := &runLoopState{
-		Result: &planner.PlanResult{
+		Result: &PlanResult{
 			FinalToolResult: &planner.FinalToolResult{
 				Result: rawjson.Message([]byte(`{"status":"ok"}`)),
 			},
@@ -235,7 +248,7 @@ func TestFinishCurrentPlanResultRejectsDualTerminalOutputs(t *testing.T) {
 	}
 	st := &runLoopState{
 		ResponseCommitted: true,
-		Result: &planner.PlanResult{
+		Result: &PlanResult{
 			FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{
 					Role:  model.ConversationRoleAssistant,
@@ -276,7 +289,7 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscript(t *testing.T) {
 		},
 	}
 	st := &runLoopState{
-		Result: &planner.PlanResult{
+		Result: &PlanResult{
 			FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{
 					Role:  model.ConversationRoleAssistant,
@@ -339,7 +352,7 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *te
 		},
 	}
 	st := &runLoopState{
-		Result: &planner.PlanResult{
+		Result: &PlanResult{
 			FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{
 					Role: model.ConversationRoleAssistant,
@@ -501,7 +514,7 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 		&planner.PlanInput{RunContext: run.Context{
 			RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
 		}},
-		&planner.PlanResult{Await: planner.NewAwait(
+		&PlanResult{Await: planner.NewAwait(
 			planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
 				ID:         "clarification-1",
 				ToolName:   tool.Name,
@@ -887,7 +900,7 @@ func TestRegistrationRejectsGeneratedContinuationToolName(t *testing.T) {
 		rt := New()
 		err := rt.RegisterToolset(ToolsetRegistration{
 			Name: "svc.tools",
-			Execute: wrapExecute(func(context.Context, *planner.ToolRequest) (*planner.ToolResult, error) {
+			Execute: wrapExecute(func(context.Context, *ToolCall) (*planner.ToolResult, error) {
 				return &planner.ToolResult{}, nil
 			}),
 			Specs: []tools.ToolSpec{spec},
@@ -904,7 +917,7 @@ func TestRegistrationRejectsGeneratedContinuationToolName(t *testing.T) {
 		rt := New()
 		err := rt.RegisterToolset(ToolsetRegistration{
 			Name: "svc.tools",
-			Execute: wrapExecute(func(context.Context, *planner.ToolRequest) (*planner.ToolResult, error) {
+			Execute: wrapExecute(func(context.Context, *ToolCall) (*planner.ToolResult, error) {
 				return &planner.ToolResult{}, nil
 			}),
 			Specs: []tools.ToolSpec{newAnyJSONSpec("continue_authored_tool", "svc.tools")},
@@ -919,7 +932,7 @@ func TestRegisterToolsetRejectsEmptyToolMetadataTitle(t *testing.T) {
 	toolID := tools.Ident("svc.tools.fetch")
 	err := rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc.tools",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{}, nil
 		}),
 		Specs: []tools.ToolSpec{newAnyJSONSpec(toolID, "svc.tools")},
@@ -998,7 +1011,7 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 	failSpec := newAnyJSONSpec("fail", "svc.tools")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
-			"svc.tools": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			"svc.tools": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 				return &planner.ToolResult{
 					Name:    call.Name,
 					Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom"),
@@ -1017,9 +1030,10 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 	}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    tools.Ident("fail"),
-		Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{ToolCalls: []ToolCall{{
+		ToolCallID: "fail-call",
+		Name:       tools.Ident("fail"),
+		Payload:    rawjson.Message(`{}`),
 	}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
@@ -1144,7 +1158,7 @@ func TestSealClosesRegistrationAndDelegatesToEngine(t *testing.T) {
 
 	err := rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc.toolset",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{}, nil
 		}),
 	})
@@ -1175,7 +1189,7 @@ func TestSealRetriesAfterActivationFailure(t *testing.T) {
 
 	err = rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc.toolset",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{}, nil
 		}),
 	})
@@ -1191,7 +1205,7 @@ func TestSealRetriesAfterActivationFailure(t *testing.T) {
 func TestTimeBudgetExceeded(t *testing.T) {
 	toolSpec := newAnyJSONSpec("tool", "svc.ts")
 	rt := &Runtime{
-		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name: call.Name,
 			}, nil
@@ -1205,9 +1219,10 @@ func TestTimeBudgetExceeded(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    tools.Ident("tool"),
-		Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{ToolCalls: []ToolCall{{
+		ToolCallID: "tool-call",
+		Name:       tools.Ident("tool"),
+		Payload:    rawjson.Message(`{}`),
 	}}}
 	_, err := rt.runLoop(wfCtx, AgentRegistration{
 		ID:                  input.AgentID,
@@ -1275,13 +1290,14 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 func TestAgentAsToolNestedUpdates(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		Bus:           recorder,
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		SessionStore:  sessioninmem.New(),
-		runHandles:    make(map[string]engine.WorkflowHandle),
+		Bus:            recorder,
+		logger:         telemetry.NoopLogger{},
+		metrics:        telemetry.NoopMetrics{},
+		tracer:         telemetry.NoopTracer{},
+		RunEventStore:  runloginmem.New(),
+		SessionStore:   sessioninmem.New(),
+		runHandles:     make(map[string]engine.WorkflowHandle),
+		agentToolSpecs: make(map[agent.Ident][]tools.ToolSpec),
 	}
 	_, err := rt.CreateSession(context.Background(), "session-1")
 	require.NoError(t, err)
@@ -1289,7 +1305,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	// Register nested tools toolset used by nested agent
 	rt.toolsets = map[string]ToolsetRegistration{
 		"nested.tools": {
-			Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 				return &planner.ToolResult{
 					Name:   call.Name,
 					Result: map[string]string{"ok": "true"},
@@ -1303,6 +1319,11 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		newAnyJSONSpec("child2", "nested.tools"),
 		newAnyJSONSpec("child3", "nested.tools"),
 	)
+	rt.agentToolSpecs["nested.agent"] = []tools.ToolSpec{
+		rt.toolSpecs["child1"],
+		rt.toolSpecs["child2"],
+		rt.toolSpecs["child3"],
+	}
 
 	// Register nested agent (planner + activity names)
 	nestedReg := AgentRegistration{
@@ -1323,7 +1344,8 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		//nolint:unparam // error return is part of map type signature; test stub always succeeds
 		"resume": func(_ context.Context, _ *PlanActivityInput) (*PlanActivityOutput, error) {
 			return &PlanActivityOutput{
-				Result: &planner.PlanResult{
+				PublicationBatchID: testPublicationBatchID,
+				Result: &PlanResult{
 					FinalResponse: &planner.FinalResponse{
 						Message: &model.Message{
 							Role: "assistant",
@@ -1359,7 +1381,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	// Parent agent-tools toolset that invokes nested agent inline
 	agentTools := ToolsetRegistration{
 		Name: "svc.agenttools",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			if call == nil {
 				return nil, fmt.Errorf("tool request is nil")
 			}
@@ -1404,9 +1426,10 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	// Parent run requests a single agent-tool invocation
 	parentInput := &RunInput{AgentID: "parent.agent", RunID: "run-parent", SessionID: "session-1", TurnID: "turn-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: parentInput.RunID, SessionID: parentInput.SessionID, TurnID: parentInput.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: parentInput.AgentID, runID: parentInput.RunID})}
-	initial := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    tools.Ident("invoke"),
-		Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{ToolCalls: []ToolCall{{
+		ToolCallID: "invoke-call",
+		Name:       tools.Ident("invoke"),
+		Payload:    rawjson.Message(`{}`),
 	}}}
 
 	_, err = rt.runLoop(wfCtx, AgentRegistration{
@@ -1475,7 +1498,7 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.export": {
-				Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 					return &planner.ToolResult{
 						Name: call.Name,
 					}, nil
@@ -1495,9 +1518,9 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 		asyncResult: ToolOutput{Payload: []byte("null")},
 	}
 	tracker := newChildTracker("parent-123")
-	calls := []planner.ToolRequest{
-		{Name: tools.Ident("child1")},
-		{Name: tools.Ident("child2")},
+	calls := []ToolCall{
+		{ToolCallID: "child-call-1", Name: tools.Ident("child1")},
+		{ToolCallID: "child-call-2", Name: tools.Ident("child2")},
 	}
 	childCtx := &run.Context{
 		RunID:            "run-1",
@@ -1605,7 +1628,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		ctx:           context.Background(),
 		hookRuntime:   rt,
 		asyncResult:   ToolOutput{Payload: []byte("null")},
-		planResult:    &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "done"}}}}},
+		planResult:    &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "done"}}}}},
 		hasPlanResult: true,
 	}
 
@@ -1616,11 +1639,12 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{
 			{
-				Name:    tools.Ident("search"),
-				Payload: rawjson.Message([]byte(`{"query":"status"}`)),
+				ToolCallID: "search-call",
+				Name:       tools.Ident("search"),
+				Payload:    rawjson.Message([]byte(`{"query":"status"}`)),
 			},
 		},
 	}
