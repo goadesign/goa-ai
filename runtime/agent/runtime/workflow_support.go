@@ -375,7 +375,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	if err := r.validateFinalizationTerminalToolRecords(batch.records); err != nil {
 		return nil, err
 	}
-	return r.finishAfterTerminalToolCalls(wfCtx.Context(), input, &execBase, st)
+	return r.finishAfterSuccessfulToolCompletion(wfCtx.Context(), input, &execBase, st)
 }
 
 // validateFinalizationTerminalToolCalls permits only terminal bookkeeping tools

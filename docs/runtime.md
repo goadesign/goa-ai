@@ -577,8 +577,9 @@ This version also serializes the new `CompletionTool` field whenever
 that may decode those workflow inputs before routing new workflows from this
 version to the queue. New suspensions use `goa-ai.run-suspension.v2`, which
 prevents an older worker from silently ignoring the saved completion policy.
-Current workers still accept version-1 suspensions created before this field
-existed.
+Workers accept only that exact checkpoint version. Complete or discard every
+version-1 suspension before upgrading; the runtime does not infer missing state
+or carry a legacy checkpoint decoder.
 
 Run-scoped completion tool:
 

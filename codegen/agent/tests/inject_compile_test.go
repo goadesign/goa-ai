@@ -117,7 +117,7 @@ func (c *Client) GetData(ctx context.Context, p *GetDataPayload) (*GetDataResult
 // into the generated module, EXECUTES the full generated chain
 // (PayloadCodec.FromJSON -> InjectGetData -> InitGetDataMethodPayload
 // pointer deref -> service call) with `go test`, asserting the bound method
-// payload actually receives msg.Meta.SessionID end to end.
+// payload actually receives session metadata and immutable labels end to end.
 func TestGeneratedBoundMetaInjectPackagesCompile(t *testing.T) {
 	files := buildWithPrepareAndPkg(t, "generated.local/gen", testscenarios.InjectBoundMetaExample())
 	root := writeGeneratedModuleKeepingGen(t, "generated.local", files)
@@ -128,6 +128,7 @@ import "context"
 
 // GetDataPayload mirrors the bound method payload emitted by Goa service codegen.
 type GetDataPayload struct {
+	HouseholdID string
 	SessionID string
 	Query     string
 }
@@ -161,6 +162,7 @@ func (c *Client) GetData(ctx context.Context, p *GetDataPayload) (*GetDataResult
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	atlas "generated.local/gen/atlas"
@@ -180,17 +182,18 @@ func (s *capturingService) GetData(ctx context.Context, p *atlas.GetDataPayload)
 	return &atlas.GetDataResult{OK: true}, nil
 }
 
-// TestHandleToolCallInjectsSessionID executes the full generated chain:
+// TestHandleToolCallInjectsContext executes the full generated chain:
 // GetDataPayloadCodec.FromJSON decodes the wire payload (no session_id on
-// the wire -- it is hidden from the model), InjectGetData assigns
-// &meta.SessionID onto the pointer tool-payload field, and
+// the wire -- injected fields are hidden from the model), InjectGetData assigns
+// the session metadata and immutable household label to pointer payload fields,
+// and
 // InitGetDataMethodPayload derefs it into the required method payload
 // field the service receives.
-func TestHandleToolCallInjectsSessionID(t *testing.T) {
+func TestHandleToolCallInjectsContext(t *testing.T) {
 	svc := &capturingService{}
 	p := NewProvider(svc)
 	ctx := toolregistry.WithToolUseID(context.Background(), "use-1")
-	out, err := p.HandleToolCall(ctx, toolregistry.ToolCallMessage{
+	message := toolregistry.ToolCallMessage{
 		ToolUseID: "use-1",
 		Tool:      GetData,
 		Payload:   []byte("{\"query\":\"weather\"}"),
@@ -199,8 +202,18 @@ func TestHandleToolCallInjectsSessionID(t *testing.T) {
 			SessionID:  "sess-42",
 			TurnID:     "turn-1",
 			ToolCallID: "call-1",
+			Labels:     map[string]string{"household_id": "household-7"},
 		},
-	})
+	}
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		t.Fatalf("marshal ToolCallMessage: %v", err)
+	}
+	var decoded toolregistry.ToolCallMessage
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal ToolCallMessage: %v", err)
+	}
+	out, err := p.HandleToolCall(ctx, decoded)
 	if err != nil {
 		t.Fatalf("HandleToolCall returned error: %v", err)
 	}
@@ -212,6 +225,9 @@ func TestHandleToolCallInjectsSessionID(t *testing.T) {
 	}
 	if svc.got.SessionID != "sess-42" {
 		t.Fatalf("method payload SessionID = %q, want %q (injected from msg.Meta.SessionID)", svc.got.SessionID, "sess-42")
+	}
+	if svc.got.HouseholdID != "household-7" {
+		t.Fatalf("method payload HouseholdID = %q, want %q (injected from msg.Meta.Labels)", svc.got.HouseholdID, "household-7")
 	}
 	if svc.got.Query != "weather" {
 		t.Fatalf("method payload Query = %q, want %q", svc.got.Query, "weather")

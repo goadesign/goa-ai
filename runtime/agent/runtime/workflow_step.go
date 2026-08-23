@@ -551,7 +551,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		return nil, err
 	}
 	if completed {
-		return l.r.finishAfterTerminalToolCalls(l.wfCtx.Context(), l.input, l.base, l.st)
+		return l.r.finishAfterSuccessfulToolCompletion(l.wfCtx.Context(), l.input, l.base, l.st)
 	}
 
 	resolution, err := l.r.classifyStep(batch)
@@ -560,7 +560,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 	switch resolution {
 	case stepTransitionFinishTerminal:
-		return l.r.finishAfterTerminalToolCalls(l.wfCtx.Context(), l.input, l.base, l.st)
+		return l.r.finishAfterSuccessfulToolCompletion(l.wfCtx.Context(), l.input, l.base, l.st)
 	case stepTransitionFinishCurrent:
 		return l.r.finishCurrentPlanResult(l.wfCtx.Context(), l.input, l.base, l.st, l.turnID)
 	case stepTransitionResume:

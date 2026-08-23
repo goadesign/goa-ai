@@ -283,8 +283,6 @@ type (
 		Planner planner.Planner
 		// Workflow describes the durable workflow registered with the engine.
 		Workflow engine.WorkflowDefinition
-		// Toolsets enumerates tool registrations exposed by this agent package.
-		Toolsets []ToolsetRegistration
 		// PlanActivityName names the activity used for PlanStart.
 		PlanActivityName string
 		// PlanActivityOptions describes retry/timeout behavior for the PlanStart activity.
@@ -1081,22 +1079,13 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if err := validateSpecs(reg.Specs, reg.ToolMetadataLookup); err != nil {
 		return err
 	}
-	registrations := []toolSpecRegistration{{
+	if err := r.validateToolSpecRegistrations(toolSpecRegistration{
 		specs:  reg.Specs,
 		lookup: reg.ToolMetadataLookup,
-	}}
-	for _, ts := range reg.Toolsets {
-		if err := validateToolsetSpecs(ts); err != nil {
-			return err
-		}
-		registrations = append(registrations, toolSpecRegistration{
-			specs:  ts.Specs,
-			lookup: ts.ToolMetadataLookup,
-		})
-	}
-	if err := r.validateToolSpecRegistrations(registrations...); err != nil {
+	}); err != nil {
 		return err
 	}
+	reg = cloneAgentRegistration(reg)
 	if r.Engine == nil {
 		return ErrEngineNotConfigured
 	}
@@ -1169,9 +1158,6 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 		copy(cp, reg.Specs)
 		r.agentToolSpecs[reg.ID] = cp
 	}
-	for _, ts := range reg.Toolsets {
-		r.addToolsetLocked(ts)
-	}
 	r.mu.Unlock()
 
 	return nil
@@ -1223,12 +1209,19 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	if err := validateToolsetSpecs(ts); err != nil {
 		return err
 	}
+	r.mu.RLock()
+	_, exists := r.toolsets[ts.Name]
+	r.mu.RUnlock()
+	if exists {
+		return fmt.Errorf("%w: toolset %q is already registered", ErrInvalidConfig, ts.Name)
+	}
 	if err := r.validateToolSpecRegistrations(toolSpecRegistration{
 		specs:  ts.Specs,
 		lookup: ts.ToolMetadataLookup,
 	}); err != nil {
 		return err
 	}
+	ts = cloneToolsetRegistration(ts)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.addToolsetLocked(ts)
@@ -1919,6 +1912,9 @@ func (r *Runtime) addToolSpecsLocked(specs []tools.ToolSpec, lookup ToolMetadata
 		r.policyToolMetadata = make(map[tools.Ident]policy.ToolMetadata)
 	}
 	for _, spec := range specs {
+		if _, exists := r.toolSpecs[spec.Name]; exists {
+			continue
+		}
 		r.toolSpecs[spec.Name] = spec
 		r.policyToolMetadata[spec.Name] = canonicalToolMetadata(spec, lookup)
 	}

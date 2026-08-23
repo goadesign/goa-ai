@@ -286,8 +286,10 @@ checkpoint restores the transcript, planner state, labels, policy,
 nested-agent identity, and exact tool-call/result provenance. Required tool
 names are recorded, and
 `Runtime.ValidateContinuation` rejects a checkpoint when the new worker does
-not register one of them. Restoration passes every concrete saved payload and
-result through the current generated codec. Compatible tool evolution can
+not register one of them. It also rejects every checkpoint version other than
+the worker's current version; deployments must complete or discard older
+suspensions before upgrading. Restoration passes every concrete saved payload
+and result through the current generated codec. Compatible tool evolution can
 therefore continue across releases, while a value the new contract cannot
 decode fails at that typed boundary. A tool call created in an earlier workflow
 retains that workflow's run ID while its result records the new workflow's run

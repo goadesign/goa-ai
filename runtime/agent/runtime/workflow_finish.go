@@ -146,12 +146,12 @@ func validateTerminalPlanResult(result *planner.PlanResult) error {
 	return nil
 }
 
-// finishAfterTerminalToolCalls completes the run after a tool turn whose executed
-// tools are declared terminal (ToolSpec.TerminalRun). It returns a RunOutput with
-// tool events but does not publish an assistant message event or request any
-// follow-up PlanResume/finalization turn. Final remains nil because the run
-// ended by terminal tool contract, not by planner-authored assistant text.
-func (r *Runtime) finishAfterTerminalToolCalls(
+// finishAfterSuccessfulToolCompletion completes the run after either a terminal
+// tool batch or the run's required completion tool succeeds. It returns the tool
+// events without publishing an assistant message or requesting another planner
+// turn. Final remains nil because a tool side effect, not planner-authored text,
+// completed the run.
+func (r *Runtime) finishAfterSuccessfulToolCompletion(
 	ctx context.Context,
 	input *RunInput,
 	base *planner.PlanInput,
