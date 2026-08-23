@@ -700,8 +700,9 @@ redeploys.
   occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
   because they assign different outcomes to the same exhausted limits.
   Completion-aware suspensions use checkpoint version 2 so older runtimes
-  reject, rather than ignore, the saved policy; current runtimes also accept
-  version-1 checkpoints created before this policy existed.
+  reject, rather than ignore, the saved policy. Current runtimes reject
+  version-1 checkpoints; deployments must complete or discard older
+  suspensions before upgrading.
 - **Visible reasoning contract**: when a caller enables thinking for a Bedrock
   adaptive Claude model, the adapter asks for summarized reasoning display
   explicitly so streamed `thinking` events contain text. This includes Claude
