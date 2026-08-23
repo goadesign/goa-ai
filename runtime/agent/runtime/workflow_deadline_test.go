@@ -508,6 +508,42 @@ func TestMissingFieldsFinalizationUsesHardDeadline(t *testing.T) {
 	require.Equal(t, hard.Sub(current), wfCtx.lastPlannerCall.Options.ScheduleToCloseTimeout)
 }
 
+func TestMissingFieldsFinalizationCannotBypassCompletionTool(t *testing.T) {
+	loop, _ := newResumeDeadlineTestLoop(
+		t,
+		func() time.Time { return time.Unix(100, 0) },
+		runDeadlines{},
+		func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error) {
+			require.FailNow(t, "completion run must not enter planner finalization")
+			return nil, nil
+		},
+	)
+	loop.reg.Policy.OnMissingFields = MissingFieldsFinalize
+	loop.input.Policy = &PolicyOverrides{CompletionTool: "service.tools.persist"}
+	batch := deadlineTestResumeBatch()
+	batch.recorded = 1
+	batch.records = []stepToolRecord{{
+		result: &planner.ToolResult{
+			Name: "service.tools.persist",
+			Failure: &planner.ToolFailure{
+				Recovery: planner.RecoveryDirective{
+					Action: planner.RecoveryCorrectCall,
+					Issues: []*tools.FieldIssue{{
+						Field:      "field",
+						Constraint: "missing_field",
+					}},
+				},
+			},
+		},
+	}}
+
+	out, err := loop.advanceStep(batch)
+
+	require.Nil(t, out)
+	require.ErrorContains(t, err, `completion tool "service.tools.persist" did not succeed`)
+	require.ErrorContains(t, err, string(planner.TerminationReasonToolFailure))
+}
+
 func newResumeDeadlineTestLoop(
 	t *testing.T,
 	now func() time.Time,

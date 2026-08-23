@@ -150,14 +150,8 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
                 if call == nil {
                     return nil, fmt.Errorf("tool request is nil")
                 }
-                meta := &agentsruntime.ToolCallMeta{
-                    RunID:            call.RunID,
-                    SessionID:        call.SessionID,
-                    TurnID:           call.TurnID,
-                    ToolCallID:       call.ToolCallID,
-                    ParentToolCallID: call.ParentToolCallID,
-                }
-                result, err := exec.Execute(ctx, meta, call)
+                meta := agentsruntime.ToolCallMetaFromRequest(*call)
+                result, err := exec.Execute(ctx, &meta, call)
                 if err != nil {
                     return nil, err
                 }
@@ -234,14 +228,8 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
                 if call == nil {
                     return nil, fmt.Errorf("tool request is nil")
                 }
-                meta := &agentsruntime.ToolCallMeta{
-                    RunID:            call.RunID,
-                    SessionID:        call.SessionID,
-                    TurnID:           call.TurnID,
-                    ToolCallID:       call.ToolCallID,
-                    ParentToolCallID: call.ParentToolCallID,
-                }
-                result, err := exec.Execute(ctx, meta, call)
+                meta := agentsruntime.ToolCallMetaFromRequest(*call)
+                result, err := exec.Execute(ctx, &meta, call)
                 if err != nil {
                     return nil, err
                 }

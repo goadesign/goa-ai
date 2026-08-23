@@ -24,19 +24,16 @@ func buildWithPrepare(t *testing.T, design func()) []*gcodegen.File {
 	return files
 }
 
-// TestInjectMetaBackedBoundToolBackwardCompatible proves the non-negotiable
-// constraint: a BindTo tool injecting session_id (the historical, only
-// supported case) regenerates to behaviorally identical population -- Task 2
-// retires provider.go's inline `methodIn.SessionID = msg.Meta.SessionID`
-// assignment in favor of calling the topology-shared InjectGetData function
-// (the "one canonical implementation" goal), so session_id still resolves to
-// the same runtime.ToolCallMeta.SessionID value.
-func TestInjectMetaBackedBoundToolBackwardCompatible(t *testing.T) {
+// TestInjectBoundToolUsesGeneratedContext proves a BindTo tool receives
+// metadata-backed and label-backed fields through one generated InjectGetData
+// implementation before the bound service method runs.
+func TestInjectBoundToolUsesGeneratedContext(t *testing.T) {
 	files := buildWithPrepare(t, testscenarios.InjectBoundMetaExample())
 
 	inject := fileContent(t, files, "gen/atlas/toolsets/helpers/inject.go")
 	require.Contains(t, inject, "func InjectGetData(p *GetDataPayload, meta runtime.ToolCallMeta, labels map[string]string) error {")
 	require.Contains(t, inject, "v := meta.SessionID")
+	require.Contains(t, inject, `v, ok := labels["household_id"]`)
 	require.Contains(t, inject, "p.SessionID = &v",
 		"injected fields are pointers on the tool payload (hidden fields are optional in the model-facing contract)")
 	require.Contains(t, inject, "func DecodeGetData(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*GetDataPayload, error) {",
@@ -48,11 +45,13 @@ func TestInjectMetaBackedBoundToolBackwardCompatible(t *testing.T) {
 	require.NotContains(t, provider, "methodIn.SessionID = msg.Meta.SessionID",
 		"provider.go must retire its own inline meta assignment in favor of the shared Inject<Tool> function")
 	require.Contains(t, provider, "meta := runtime.ToolCallMeta{")
-	require.Contains(t, provider, "if err := InjectGetData(args, meta, nil); err != nil {",
-		"registry-served (bound) tools never carry labels, so the shared Inject fn is called with a nil labels map")
+	require.Contains(t, provider, "Labels:           msg.Meta.Labels,")
+	require.Contains(t, provider, "if err := InjectGetData(args, meta, meta.Labels); err != nil {",
+		"registry-served bound tools receive the same immutable run labels as local executors")
 
 	specs := fileContent(t, files, "gen/atlas/toolsets/helpers/specs.go")
 	require.NotContains(t, specs, `"session_id"`, "session_id must stay hidden from the model-facing schema")
+	require.NotContains(t, specs, `\"household_id\"`, "household_id must stay hidden from the model-facing schema")
 }
 
 // TestInjectLocalServiceExecutorCallsGeneratedInject proves the local

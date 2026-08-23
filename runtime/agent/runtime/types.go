@@ -86,6 +86,11 @@ type (
 		// invocation is a child (for example a tool launched by an agent-tool).
 		// UIs and subscribers use it to reconstruct the call tree.
 		ParentToolCallID string
+
+		// Labels is a copy of the immutable run labels attached before the
+		// workflow started. Executors may use it for mechanical context that
+		// must not be supplied by the model.
+		Labels map[string]string
 	}
 
 	// ResultMaterializer enriches a typed tool result before the runtime encodes

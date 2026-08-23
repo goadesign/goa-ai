@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
@@ -117,4 +119,94 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 	require.Equal(t, []string{"field"}, await.Clarification.MissingFields)
 	require.Equal(t, tools.Ident("tool"), await.Clarification.RestrictToTool)
 	require.Empty(t, base.Messages)
+}
+
+func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
+	completion := newAnyJSONSpec("briefs.persist", "catalog")
+	completion.Payload.FieldDescriptions = map[string]string{
+		"title": "The title to save.",
+	}
+	executions := 0
+	resumes := 0
+	h := newRecoveryHarness(
+		t,
+		"missing-fields-continuation",
+		[]tools.ToolSpec{completion},
+		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			executions++
+			if string(call.Payload) == `{"title":"corrected"}` {
+				return successfulToolResult(call), nil
+			}
+			result := invalidCallResult(call)
+			result.Failure.Recovery.Issues = []*tools.FieldIssue{{
+				Field:      "title",
+				Constraint: "missing_field",
+			}}
+			return result, nil
+		},
+		func(_ context.Context, _ *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			resumes++
+			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+				Name: completion.Name, Payload: rawjson.Message(`{"title":"corrected"}`),
+			}}}, nil
+		},
+	)
+	h.registration.Policy = RunPolicy{OnMissingFields: MissingFieldsAwaitClarification}
+	h.registration.Specs = []tools.ToolSpec{completion}
+	h.runtime.agents[h.input.AgentID] = h.registration
+	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
+
+	first, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name: completion.Name, Payload: rawjson.Message(`{}`),
+	}}}, policy.CapsState{
+		MaxToolCalls:                        3,
+		RemainingToolCalls:                  3,
+		MaxConsecutiveFailedToolCalls:       2,
+		RemainingConsecutiveFailedToolCalls: 2,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, first.Suspension)
+	require.Len(t, first.Suspension.Pending, 1)
+
+	checkpoint, err := h.runtime.decodeWorkflowCheckpoint(first.Suspension)
+	require.NoError(t, err)
+	require.True(t, checkpoint.Batch.ResumePlannerAfterPending)
+	require.Equal(t, 2, checkpoint.State.Caps.RemainingToolCalls)
+	require.Equal(t, 1, checkpoint.State.Caps.RemainingConsecutiveFailedToolCalls)
+
+	nextInput := &RunInput{
+		AgentID:   h.input.AgentID,
+		RunID:     "run-missing-fields-continuation-2",
+		SessionID: h.input.SessionID,
+		TurnID:    "turn-missing-fields-continuation-2",
+		Continuation: &api.RunContinuationInput{
+			Suspension: first.Suspension,
+			Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
+				ID:     first.Suspension.Pending[0].Await.Clarification.ID,
+				Answer: "Use the corrected title.",
+			}},
+		},
+	}
+	require.NoError(t, restoreContinuationRunInput(nextInput, checkpoint))
+	seedRunMeta(t, h.runtime, nextInput)
+	nextWorkflow := &routeWorkflowContext{
+		ctx:           t.Context(),
+		runID:         nextInput.RunID,
+		hookRuntime:   h.runtime,
+		plannerRoutes: h.workflow.plannerRoutes,
+		toolRoutes:    h.workflow.toolRoutes,
+	}
+
+	out, err := h.runtime.resumeSuspendedWorkflow(
+		nextWorkflow,
+		h.registration,
+		nextInput,
+		checkpoint,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Nil(t, out.Suspension)
+	require.Nil(t, out.Final)
+	require.Equal(t, 2, executions)
+	require.Equal(t, 1, resumes)
 }

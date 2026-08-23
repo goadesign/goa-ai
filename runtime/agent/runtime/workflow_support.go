@@ -44,6 +44,9 @@ func (r *Runtime) finalizeRun(
 	if base == nil {
 		return nil, errors.New("base plan input is required")
 	}
+	if completion := completionTool(input); completion != "" {
+		return nil, completionToolRequiredError(completion, reason)
+	}
 	var plans *LimitTerminalPlans
 	if input.Policy != nil {
 		plans = input.Policy.LimitTerminalPlans
@@ -372,7 +375,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	if err := r.validateFinalizationTerminalToolRecords(batch.records); err != nil {
 		return nil, err
 	}
-	return r.finishAfterTerminalToolCalls(wfCtx.Context(), input, &execBase, st)
+	return r.finishAfterSuccessfulToolCompletion(wfCtx.Context(), input, &execBase, st)
 }
 
 // validateFinalizationTerminalToolCalls permits only terminal bookkeeping tools

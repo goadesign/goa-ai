@@ -68,6 +68,9 @@ type (
 		finalize      *stepFinalization
 		suspension    *RunOutput
 		pending       []checkpointPendingInput
+		// resumePlannerAfterPending marks a generated clarification emitted
+		// after this batch's caps and failure streak were already applied.
+		resumePlannerAfterPending bool
 	}
 
 	stepFinalization struct {
@@ -392,6 +395,9 @@ func (l *workflowLoop) executeStepProgram(program stepProgram) (stepBatch, error
 		if err != nil {
 			return stepBatch{}, l.failCommittedStep(&batch, err)
 		}
+		if err := validateCompletionToolRecords(batch.records, completionTool(l.input)); err != nil {
+			return stepBatch{}, l.failCommittedStep(&batch, err)
+		}
 		if batch.finalize != nil {
 			awaitCalls := awaitToolRequests(program.awaitItems)
 			awaitCalls = l.r.prepareAllowedCallsMetadata(
@@ -540,6 +546,13 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 
 	l.st.Caps.RemainingToolCalls = decrementCap(l.st.Caps.RemainingToolCalls, batch.budgetCost)
+	completed, err := completionToolSucceeded(batch.records, completionTool(l.input))
+	if err != nil {
+		return nil, err
+	}
+	if completed {
+		return l.r.finishAfterSuccessfulToolCompletion(l.wfCtx.Context(), l.input, l.base, l.st)
+	}
 
 	resolution, err := l.r.classifyStep(batch)
 	if err != nil {
@@ -547,7 +560,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 	switch resolution {
 	case stepTransitionFinishTerminal:
-		return l.r.finishAfterTerminalToolCalls(l.wfCtx.Context(), l.input, l.base, l.st)
+		return l.r.finishAfterSuccessfulToolCompletion(l.wfCtx.Context(), l.input, l.base, l.st)
 	case stepTransitionFinishCurrent:
 		return l.r.finishCurrentPlanResult(l.wfCtx.Context(), l.input, l.base, l.st, l.turnID)
 	case stepTransitionResume:
@@ -584,8 +597,10 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		if err := l.r.publishAwaitToolUses(l.wfCtx.Context(), l.input, l.base, l.turnID, *await, 0); err != nil {
 			return nil, err
 		}
+		l.st.PendingRecovery = append(pendingRecoveryOutputs(batch.records), l.st.PendingRecovery...)
 		batch.awaited = true
 		batch.awaitItems++
+		batch.resumePlannerAfterPending = true
 		return l.suspendRun(batch, nil, []planner.AwaitItem{*await})
 	}
 
@@ -595,6 +610,15 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 	pendingRecovery := append(pendingRecoveryOutputs(batch.records), l.st.PendingRecovery...)
 	synthesisOnly := !failed && batch.program.result.SynthesizeAfterTools
+	if out, err := l.resumePlanner(pendingRecovery, synthesisOnly); err != nil || out != nil {
+		return out, err
+	}
+	return nil, nil
+}
+
+// resumePlanner executes the next planner turn after one fully-accounted step.
+// Callers provide the exact failed outputs that remain eligible for correction.
+func (l *workflowLoop) resumePlanner(pendingRecovery []*planner.ToolOutput, synthesisOnly bool) (*RunOutput, error) {
 	resumeReq, err := l.r.buildNextResumeRequest(
 		l.input.AgentID,
 		l.base,

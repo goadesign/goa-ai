@@ -5,20 +5,19 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-// InjectBoundMetaExample defines a BindTo tool that injects a meta-backed
-// field (session_id) from the bound service method's payload. It exercises
-// the historical population path (the generated registry provider.go, which
-// this task leaves unchanged) alongside the new generated inject.go, proving
-// both resolve session_id identically.
+// InjectBoundMetaExample defines a BindTo tool that injects session_id from
+// call metadata and household_id from immutable run labels. It exercises the
+// complete generated registry provider path for both injection sources.
 func InjectBoundMetaExample() func() {
 	return func() {
 		API("atlas", func() {})
 		Service("atlas", func() {
 			Method("get_data", func() {
 				Payload(func() {
+					Attribute("household_id", String, "Server-injected household identifier.")
 					Attribute("session_id", String, "Server-injected session identifier.")
 					Attribute("query", String, "Search query.")
-					Required("session_id", "query")
+					Required("household_id", "session_id", "query")
 				})
 				Result(func() {
 					Attribute("ok", Boolean, "Whether the lookup succeeded.")
@@ -29,7 +28,7 @@ func InjectBoundMetaExample() func() {
 				Use("helpers", func() {
 					Tool("get_data", "Get data", func() {
 						BindTo("get_data")
-						Inject("session_id")
+						Inject("household_id", "session_id")
 					})
 				})
 			})

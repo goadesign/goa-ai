@@ -76,6 +76,9 @@ type (
 		Confirmations int
 		AwaitCount    int
 		Finalize      *planner.TerminationReason
+		// ResumePlannerAfterPending means the saved batch was fully accounted
+		// before a runtime-generated clarification suspended the workflow.
+		ResumePlannerAfterPending bool
 	}
 
 	checkpointToolRecord struct {
@@ -309,17 +312,18 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 			PendingRecoveryCatalog: l.st.PendingRecoveryCatalog,
 		},
 		Batch: checkpointStepBatch{
-			Result:        batch.program.result,
-			Calls:         batch.program.calls,
-			AwaitItems:    batch.program.awaitItems,
-			Kind:          batch.program.kind,
-			Records:       records,
-			Recorded:      batch.recorded,
-			BudgetCost:    batch.budgetCost,
-			TimedOut:      batch.timedOut,
-			Confirmations: batch.confirmations,
-			AwaitCount:    batch.awaitItems,
-			Finalize:      finalize,
+			Result:                    batch.program.result,
+			Calls:                     batch.program.calls,
+			AwaitItems:                batch.program.awaitItems,
+			Kind:                      batch.program.kind,
+			Records:                   records,
+			Recorded:                  batch.recorded,
+			BudgetCost:                batch.budgetCost,
+			TimedOut:                  batch.timedOut,
+			Confirmations:             batch.confirmations,
+			AwaitCount:                batch.awaitItems,
+			Finalize:                  finalize,
+			ResumePlannerAfterPending: batch.resumePlannerAfterPending,
 		},
 		Pending:    checkpointPending,
 		HasBudget:  !l.deadlines.Budget.IsZero(),
@@ -373,11 +377,16 @@ func checkpointToolRecordRunIDs(record stepToolRecord) (string, string, error) {
 
 func requiredCheckpointToolNames(checkpoint *workflowCheckpoint) []tools.Ident {
 	set := make(map[tools.Ident]struct{})
-	if checkpoint.Policy != nil && checkpoint.Policy.LimitTerminalPlans != nil {
-		plans := checkpoint.Policy.LimitTerminalPlans
-		set[plans.TimeBudget.Name] = struct{}{}
-		set[plans.ToolCallCap.Name] = struct{}{}
-		set[plans.FailedToolCallCap.Name] = struct{}{}
+	if checkpoint.Policy != nil {
+		if checkpoint.Policy.CompletionTool != "" {
+			set[checkpoint.Policy.CompletionTool] = struct{}{}
+		}
+		if checkpoint.Policy.LimitTerminalPlans != nil {
+			plans := checkpoint.Policy.LimitTerminalPlans
+			set[plans.TimeBudget.Name] = struct{}{}
+			set[plans.ToolCallCap.Name] = struct{}{}
+			set[plans.FailedToolCallCap.Name] = struct{}{}
+		}
 	}
 	for _, output := range checkpoint.State.ToolOutputs {
 		set[output.Name] = struct{}{}
@@ -491,6 +500,13 @@ func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg Agen
 	}
 	if len(pending) > 0 {
 		return loop.suspendPendingRun(batch, pending)
+	}
+	if batch.resumePlannerAfterPending {
+		out, err := loop.resumePlanner(state.PendingRecovery, false)
+		if err != nil || out != nil {
+			return out, err
+		}
+		return loop.run()
 	}
 	out, err := loop.advanceStep(batch)
 	if err != nil || out != nil {
@@ -613,14 +629,15 @@ func (r *Runtime) restoreCheckpointBatch(ctx context.Context, checkpoint checkpo
 			awaitItems: checkpoint.AwaitItems,
 			kind:       checkpoint.Kind,
 		},
-		records:       records,
-		recorded:      checkpoint.Recorded,
-		budgetCost:    checkpoint.BudgetCost,
-		timedOut:      checkpoint.TimedOut,
-		awaited:       true,
-		confirmations: checkpoint.Confirmations,
-		awaitItems:    checkpoint.AwaitCount,
-		finalize:      finalize,
+		records:                   records,
+		recorded:                  checkpoint.Recorded,
+		budgetCost:                checkpoint.BudgetCost,
+		timedOut:                  checkpoint.TimedOut,
+		awaited:                   true,
+		confirmations:             checkpoint.Confirmations,
+		awaitItems:                checkpoint.AwaitCount,
+		finalize:                  finalize,
+		resumePlannerAfterPending: checkpoint.ResumePlannerAfterPending,
 	}, nil
 }
 

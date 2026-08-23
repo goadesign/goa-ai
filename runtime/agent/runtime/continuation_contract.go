@@ -43,14 +43,24 @@ func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*work
 			return nil, fmt.Errorf("run suspension requires unregistered tool %q", name)
 		}
 	}
-	if checkpoint.Policy != nil && checkpoint.Policy.LimitTerminalPlans != nil {
+	if checkpoint.Policy != nil &&
+		(checkpoint.Policy.LimitTerminalPlans != nil || checkpoint.Policy.CompletionTool != "") {
 		reg, ok := r.agentByID(agent.Ident(checkpoint.AgentID))
 		if !ok {
 			return nil, fmt.Errorf("run suspension requires unregistered agent %q", checkpoint.AgentID)
 		}
+		if err := r.validateCompletionToolPolicy(reg, checkpoint.Policy); err != nil {
+			return nil, fmt.Errorf("validate suspended completion tool: %w", err)
+		}
 		if err := r.validateLimitTerminalPlans(reg, checkpoint.Policy.LimitTerminalPlans); err != nil {
 			return nil, fmt.Errorf("validate suspended limit terminal plans: %w", err)
 		}
+	}
+	if err := r.validateCompletionToolPlanResult(
+		checkpoint.Batch.Result,
+		completionToolFromPolicy(checkpoint.Policy),
+	); err != nil {
+		return nil, fmt.Errorf("validate suspended completion plan: %w", err)
 	}
 	program, err := r.normalizeStep(checkpoint.Batch.Result)
 	if err != nil {
@@ -222,6 +232,15 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 	}
 	if checkpoint.Batch.BudgetCost < 0 || checkpoint.Batch.Confirmations < 0 || checkpoint.Batch.AwaitCount < 0 {
 		return errors.New("run suspension checkpoint has negative batch accounting")
+	}
+	if checkpoint.Batch.ResumePlannerAfterPending {
+		if checkpoint.Batch.Kind != stepKindTools ||
+			checkpoint.Batch.AwaitCount != 1 ||
+			len(checkpoint.Pending) != 1 ||
+			checkpoint.Pending[0].Await == nil ||
+			checkpoint.Pending[0].Await.Kind != planner.AwaitItemKindClarification {
+			return errors.New("run suspension planner-resume phase requires one generated clarification")
+		}
 	}
 	if checkpoint.State.NextAttempt <= 0 {
 		return errors.New("run suspension checkpoint requires a positive next planner attempt")

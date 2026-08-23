@@ -51,14 +51,18 @@ type (
 )
 
 func TestPolicyOverridesRequireHardWorkerCutover(t *testing.T) {
-	payload, err := json.Marshal(PolicyOverrides{})
-	require.NoError(t, err)
+	for _, field := range []string{"CompletionTool", "LimitTerminalPlans"} {
+		t.Run(field, func(t *testing.T) {
+			payload, err := json.Marshal(map[string]any{field: nil})
+			require.NoError(t, err)
 
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
-	var legacy legacyPolicyOverrides
-	err = decoder.Decode(&legacy)
-	require.ErrorContains(t, err, `unknown field "LimitTerminalPlans"`)
+			decoder := json.NewDecoder(bytes.NewReader(payload))
+			decoder.DisallowUnknownFields()
+			var legacy legacyPolicyOverrides
+			err = decoder.Decode(&legacy)
+			require.EqualError(t, err, `json: unknown field "`+field+`"`)
+		})
+	}
 }
 
 func TestPlanActivityOutputUnmarshalJSON(t *testing.T) {

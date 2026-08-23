@@ -507,7 +507,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		ParentToolCallID: req.ParentToolCallID,
 		ToolCallID:       req.ToolCallID,
 	}
-	meta := toolCallMeta(call)
+	meta := ToolCallMetaFromRequest(call)
 	start := time.Now()
 	execResult, err := reg.Execute(ctx, &call)
 	if err != nil {

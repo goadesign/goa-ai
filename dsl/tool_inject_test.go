@@ -257,11 +257,9 @@ func TestInjectAcceptsFieldOnBothDivergentShapes(t *testing.T) {
 	require.Equal(t, []string{"session_id"}, tool.InjectedFields)
 }
 
-// TestInjectRejectsLabelBackedFieldOnBoundTool locks the topology
-// restriction: registry-served (BindTo) tools may only inject the fixed
-// ToolCallMeta-backed names because the toolregistry wire protocol does not
-// carry run labels yet.
-func TestInjectRejectsLabelBackedFieldOnBoundTool(t *testing.T) {
+// TestInjectAcceptsLabelBackedFieldOnBoundTool proves registry-served BindTo
+// tools may receive immutable run labels through ToolCallMeta.
+func TestInjectAcceptsLabelBackedFieldOnBoundTool(t *testing.T) {
 	err := runDSLWithError(t, func() {
 		API("test", func() {})
 		Service("atlas", func() {
@@ -286,8 +284,9 @@ func TestInjectRejectsLabelBackedFieldOnBoundTool(t *testing.T) {
 		})
 	})
 
-	require.Error(t, err)
-	require.ErrorContains(t, err, `Inject field "household_id" is label-backed, but tool "get_data" is bound to a service method via BindTo`)
+	require.NoError(t, err)
+	tool := agentsexpr.Root.Agents[0].Used.Toolsets[0].Tools[0]
+	require.Equal(t, []string{"household_id"}, tool.InjectedFields)
 }
 
 // TestInjectRejectsMissingFieldOnBoundMethod proves the same generation-time
