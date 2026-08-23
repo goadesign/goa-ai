@@ -517,12 +517,25 @@ Tool filters remain independent run options:
 ```go
 out, err := client.Run(ctx, "session-2", messages,
 	runtime.WithRestrictToTool("docs.search"),
+	runtime.WithRunCompletionTool("docs.search"),
 	runtime.WithTagPolicyClauses([]runtime.TagPolicyClause{
 		{AllowedAny: []string{"read", "safe"}},
 		{DeniedAny: []string{"destructive"}},
 	}),
 )
 ```
+
+`WithRunCompletionTool` is for operations whose success is the tool side effect,
+not a later assistant response. The named tool must belong to the executing
+agent, be budgeted, be non-terminal, and be allowed by the other run policies.
+Its call must be the only action in that planner response: another call or an
+await request is rejected. The run cannot request post-tool synthesis because
+the resulting terminal planner answer cannot satisfy the completion policy. A
+successful call ends the run immediately.
+Correctable failures may retry within the normal caps. Planner text, forced
+finalization, and exhausted caps or deadlines cannot substitute for the
+required tool success; those paths fail the run. Do not combine this option with
+`LimitTerminalPlans`, which assigns a different outcome to exhausted limits.
 
 ### External Input and Continuations
 

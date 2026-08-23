@@ -44,6 +44,9 @@ func (r *Runtime) finalizeRun(
 	if base == nil {
 		return nil, errors.New("base plan input is required")
 	}
+	if completion := completionTool(input); completion != "" {
+		return nil, completionToolRequiredError(completion, reason)
+	}
 	var plans *LimitTerminalPlans
 	if input.Policy != nil {
 		plans = input.Policy.LimitTerminalPlans

@@ -138,6 +138,145 @@ func TestValidateContinuationChecksSavedLimitTerminalPlans(t *testing.T) {
 	})
 }
 
+func TestValidateContinuationChecksSavedCompletionToolPolicy(t *testing.T) {
+	tests := []struct {
+		name          string
+		mutateSpec    func(*tools.ToolSpec)
+		mutate        func(*PolicyOverrides)
+		omitFromAgent bool
+		want          string
+	}{
+		{
+			name:          "removed from agent",
+			mutateSpec:    func(*tools.ToolSpec) {},
+			mutate:        func(*PolicyOverrides) {},
+			omitFromAgent: true,
+			want:          `completion tool "svc.persist" is not registered for agent "svc.agent"`,
+		},
+		{
+			name: "bookkeeping tool",
+			mutateSpec: func(spec *tools.ToolSpec) {
+				spec.Bookkeeping = true
+			},
+			mutate: func(*PolicyOverrides) {},
+			want:   `completion tool "svc.persist" must be budgeted`,
+		},
+		{
+			name:       "conflicting limit policy",
+			mutateSpec: func(*tools.ToolSpec) {},
+			mutate: func(runPolicy *PolicyOverrides) {
+				runPolicy.LimitTerminalPlans = testLimitTerminalPlans("svc.persist")
+			},
+			want: "completion tool and limit terminal plans cannot be combined",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime := New()
+			spec := newAnyJSONSpec("svc.persist", "svc")
+			tt.mutateSpec(&spec)
+			seedTestToolSpecs(runtime, spec)
+			var agentSpecs []tools.ToolSpec
+			if !tt.omitFromAgent {
+				agentSpecs = []tools.ToolSpec{spec}
+			}
+			runtime.agents["svc.agent"] = AgentRegistration{
+				ID:    "svc.agent",
+				Specs: agentSpecs,
+			}
+			suspension := suspensionContractFixture(t, spec.Name)
+			rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+				checkpoint.Policy = &PolicyOverrides{CompletionTool: spec.Name}
+				tt.mutate(checkpoint.Policy)
+				checkpoint.RequiredTools = requiredCheckpointToolNames(checkpoint)
+				suspension.RequiredTools = append([]tools.Ident(nil), checkpoint.RequiredTools...)
+			})
+
+			require.ErrorContains(t, runtime.ValidateContinuation(suspension), tt.want)
+		})
+	}
+}
+
+func TestValidateContinuationAcceptsPreviousSuspensionVersion(t *testing.T) {
+	runtime := New()
+	spec := newAnyJSONSpec("svc.lookup", "svc")
+	seedTestToolSpecs(runtime, spec)
+	suspension := suspensionContractFixture(t, spec.Name)
+	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+		checkpoint.Version = previousRunSuspensionVersion
+	})
+	suspension.Version = previousRunSuspensionVersion
+
+	require.NoError(t, runtime.ValidateContinuation(suspension))
+}
+
+func TestValidateContinuationMigratesPreviousGeneratedClarificationPhase(t *testing.T) {
+	runtime := New()
+	spec := newAnyJSONSpec("svc.lookup", "svc")
+	seedTestToolSpecs(runtime, spec)
+	suspension := suspensionContractFixture(t, spec.Name)
+	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+		checkpoint.Version = previousRunSuspensionVersion
+		checkpoint.Batch.AwaitCount = 1
+		checkpoint.Batch.ResumePlannerAfterPending = false
+	})
+	suspension.Version = previousRunSuspensionVersion
+
+	checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
+	require.NoError(t, err)
+	require.True(t, checkpoint.Batch.ResumePlannerAfterPending)
+}
+
+func TestValidateContinuationRejectsCompletionPolicyInPreviousSuspensionVersion(t *testing.T) {
+	runtime := New()
+	spec := newAnyJSONSpec("svc.persist", "svc")
+	seedTestToolSpecs(runtime, spec)
+	runtime.agents["svc.agent"] = AgentRegistration{ID: "svc.agent", Specs: []tools.ToolSpec{spec}}
+	suspension := suspensionContractFixture(t, spec.Name)
+	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+		checkpoint.Version = previousRunSuspensionVersion
+		checkpoint.Policy = &PolicyOverrides{CompletionTool: spec.Name}
+		checkpoint.RequiredTools = requiredCheckpointToolNames(checkpoint)
+		suspension.RequiredTools = append([]tools.Ident(nil), checkpoint.RequiredTools...)
+	})
+	suspension.Version = previousRunSuspensionVersion
+
+	require.EqualError(
+		t,
+		runtime.ValidateContinuation(suspension),
+		"run suspension version v1 cannot contain a completion tool policy",
+	)
+}
+
+func TestValidateContinuationChecksSavedCompletionPlan(t *testing.T) {
+	runtime := New()
+	completion := newAnyJSONSpec("svc.persist", "svc")
+	lookup := newAnyJSONSpec("svc.lookup", "svc")
+	seedTestToolSpecs(runtime, completion, lookup)
+	runtime.agents["svc.agent"] = AgentRegistration{
+		ID:    "svc.agent",
+		Specs: []tools.ToolSpec{completion, lookup},
+	}
+	suspension := suspensionContractFixture(t, completion.Name)
+	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+		await := planner.AwaitClarificationItem(&planner.AwaitClarification{
+			ID: "extra-action", Question: "Continue?",
+		})
+		checkpoint.Policy = &PolicyOverrides{CompletionTool: completion.Name}
+		checkpoint.Batch.Result.Await = planner.NewAwait(await)
+		checkpoint.Batch.AwaitItems = []planner.AwaitItem{await}
+		checkpoint.RequiredTools = requiredCheckpointToolNames(checkpoint)
+		suspension.RequiredTools = append([]tools.Ident(nil), checkpoint.RequiredTools...)
+	})
+
+	require.ErrorContains(
+		t,
+		runtime.ValidateContinuation(suspension),
+		`completion tool "svc.persist" must be the only action`,
+	)
+}
+
 func TestValidateContinuationRejectsIncompatibleSavedResult(t *testing.T) {
 	runtime := New()
 	spec := newAnyJSONSpec("svc.lookup", "svc")

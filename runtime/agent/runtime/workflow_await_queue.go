@@ -138,6 +138,12 @@ func (r *Runtime) resolveConfirmationDecision(
 			return decisionRecords, nil, false, err
 		}
 		decisionRecords[0].resultPublished = true
+		if completion := completionTool(input); call.Name == completion {
+			return decisionRecords, nil, false, completionToolRequiredError(
+				completion,
+				"execution was denied by confirmation",
+			)
+		}
 		return decisionRecords, nil, false, nil
 	}
 
@@ -169,6 +175,9 @@ func (r *Runtime) resolveConfirmationDecision(
 		executionErr,
 	)
 	if err := errors.Join(executionErr, resultErr); err != nil {
+		return records, nil, timedOut, err
+	}
+	if err := validateCompletionToolRecords(records, completionTool(input)); err != nil {
 		return records, nil, timedOut, err
 	}
 	clarifications := toolClarificationsFromRecords(records)

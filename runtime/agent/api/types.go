@@ -144,6 +144,12 @@ type (
 		// RestrictToTool restricts tool execution to the given tool identifier.
 		RestrictToTool tools.Ident
 
+		// CompletionTool identifies the budgeted tool whose first successful
+		// execution completes this run without a final planner response. The run
+		// fails rather than synthesizing a substitute response if it terminates
+		// before this tool succeeds.
+		CompletionTool tools.Ident
+
 		// TagClauses applies explicit tag-policy clauses using logical AND.
 		TagClauses []TagPolicyClause
 
@@ -682,5 +688,5 @@ const (
 	PendingInputKindToolResults PendingInputKind = "tool_results"
 
 	// RunSuspensionVersion is the checkpoint schema emitted by this runtime.
-	RunSuspensionVersion = "goa-ai.run-suspension.v1"
+	RunSuspensionVersion = "goa-ai.run-suspension.v2"
 )

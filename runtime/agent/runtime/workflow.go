@@ -74,6 +74,12 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			return nil, err
 		}
 	}
+	if err := r.validateCompletionToolPolicy(reg, input.Policy); err != nil {
+		return nil, err
+	}
+	if err := validateCompletionToolWorkflowRetry(input.Policy, input.WorkflowOptions); err != nil {
+		return nil, err
+	}
 	if input.Policy != nil {
 		if err := r.validateLimitTerminalPlans(reg, input.Policy.LimitTerminalPlans); err != nil {
 			return nil, err

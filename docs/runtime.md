@@ -572,6 +572,35 @@ Deploy this runtime with pinned Temporal Worker Deployment Versioning and route
 new workflows that use the field only after every worker in the new deployment
 runs the same code. Old strict decoders reject the field, so mixed old and new
 workers on one unversioned task queue cannot run workflows that set it.
+This version also serializes the new `CompletionTool` field whenever
+`PolicyOverrides` is present, including its empty value. Deploy every worker
+that may decode those workflow inputs before routing new workflows from this
+version to the queue. New suspensions use `goa-ai.run-suspension.v2`, which
+prevents an older worker from silently ignoring the saved completion policy.
+Current workers still accept version-1 suspensions created before this field
+existed.
+
+Run-scoped completion tool:
+
+- `WithRunCompletionTool(tool_name)` makes one successful execution of the
+  named budgeted tool the run's complete result; the runtime ends immediately
+  without asking the planner for a final assistant response,
+- the completion attempt must be the only action in its planner response; it
+  cannot accompany another call or an await request, and no call in a
+  completion-policy run may request post-tool synthesis because the required
+  next terminal answer cannot complete that run,
+- the planner cannot delegate the completion tool through external await work,
+  and denying its execution at a confirmation prompt fails the run,
+- correctable failures return to the planner while the normal tool and failure
+  budgets permit another attempt,
+- a planner-authored final response, a non-recoverable tool failure, exhausted
+  caps, or an exhausted deadline fails the run when the completion tool has not
+  succeeded,
+- the named tool must belong to the executing agent, be non-bookkeeping,
+  non-terminal, and be allowed by every other run tool policy,
+- `CompletionTool` and `LimitTerminalPlans` cannot be set on the same run
+  because they assign conflicting outcomes to exhausted limits. This run-scoped
+  behavior does not change the tool's behavior in runs that omit the option.
 
 ### Planner step and failed-result contracts
 
@@ -613,9 +642,11 @@ The runtime applies them in this order:
 
 | Completed step | Next state |
 | --- | --- |
+| Configured `CompletionTool` executed successfully | End immediately |
+| `CompletionTool` is configured and another terminal condition occurs | Fail because the required tool did not succeed |
 | Cap or deadline exhausted with `LimitTerminalPlans` | Execute the matching terminal call |
-| Cap or deadline exhausted without `LimitTerminalPlans` | Forced `Finalize` turn |
-| Successful `TerminalRun` tool | End immediately |
+| Cap or deadline exhausted without either completion policy | Forced `Finalize` turn |
+| Successful `TerminalRun` tool without `CompletionTool` | End immediately |
 | Any failure permits tools | Runtime-enforced correction or replan turn |
 | `SynthesizeAfterTools` requested | `SynthesisOnly` turn |
 | Otherwise | Normal continuation turn |
@@ -1392,8 +1423,13 @@ type ToolCallMeta struct {
     TurnID           string  // Conversational turn identifier
     ToolCallID       string  // Unique tool invocation ID
     ParentToolCallID string  // Parent tool call (for agent-as-tool)
+    Labels            map[string]string // Copied immutable run labels
 }
 ```
+
+`Labels` exposes server-authored run context to custom executors without
+placing those values in the model payload. Mutating this map does not change
+the workflow's saved labels or another tool call.
 
 ### Injected Fields (`Inject()`)
 

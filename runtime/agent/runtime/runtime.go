@@ -635,6 +635,22 @@ func WithRunMaxConsecutiveFailedToolCalls(n int) RunOption {
 	}
 }
 
+// WithRunCompletionTool requires one budgeted tool to succeed before the run
+// can complete. Its first successful execution ends the run without a final
+// planner response; attempts and correctable failures retain normal cap and
+// recovery semantics.
+func WithRunCompletionTool(id tools.Ident) RunOption {
+	if id == "" {
+		panic("runtime: WithRunCompletionTool requires a tool identifier")
+	}
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.CompletionTool = id
+	}
+}
+
 // WithRunTimeBudget sets the active-time budget for planner and tool work.
 // Time between continuation workflows does not consume the budget, and the
 // runtime does not derive an engine run timeout. Zero means no override.
@@ -1571,6 +1587,7 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	reg, _ := r.agentByID(input.AgentID)
 	runLabels := input.Labels
 	runMetadata := input.Metadata
+	effectivePolicy := input.Policy
 	if input.Continuation != nil {
 		checkpoint, err := decodeWorkflowCheckpointState(input.Continuation.Suspension)
 		if err != nil {
@@ -1581,14 +1598,21 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		}
 		runLabels = checkpoint.Labels
 		runMetadata = checkpoint.Metadata
+		effectivePolicy = checkpoint.Policy
 	}
 	if err := validateRequiredLabels(reg, runLabels); err != nil {
 		return nil, err
 	}
-	if reg.ID != "" && input.Policy != nil {
-		if err := r.validateLimitTerminalPlans(reg, input.Policy.LimitTerminalPlans); err != nil {
+	if reg.ID != "" && effectivePolicy != nil {
+		if err := r.validateCompletionToolPolicy(reg, effectivePolicy); err != nil {
 			return nil, err
 		}
+		if err := r.validateLimitTerminalPlans(reg, effectivePolicy.LimitTerminalPlans); err != nil {
+			return nil, err
+		}
+	}
+	if err := validateCompletionToolWorkflowRetry(effectivePolicy, input.WorkflowOptions); err != nil {
+		return nil, err
 	}
 	req := engine.WorkflowStartRequest{
 		ID:        input.RunID,

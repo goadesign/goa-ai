@@ -20,6 +20,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 )
 
+const previousRunSuspensionVersion = "goa-ai.run-suspension.v1"
+
 // ValidateContinuation verifies that this runtime can decode and execute a
 // suspension without starting a workflow or consuming its pending response.
 func (r *Runtime) ValidateContinuation(suspension *api.RunSuspension) error {
@@ -43,14 +45,24 @@ func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*work
 			return nil, fmt.Errorf("run suspension requires unregistered tool %q", name)
 		}
 	}
-	if checkpoint.Policy != nil && checkpoint.Policy.LimitTerminalPlans != nil {
+	if checkpoint.Policy != nil &&
+		(checkpoint.Policy.LimitTerminalPlans != nil || checkpoint.Policy.CompletionTool != "") {
 		reg, ok := r.agentByID(agent.Ident(checkpoint.AgentID))
 		if !ok {
 			return nil, fmt.Errorf("run suspension requires unregistered agent %q", checkpoint.AgentID)
 		}
+		if err := r.validateCompletionToolPolicy(reg, checkpoint.Policy); err != nil {
+			return nil, fmt.Errorf("validate suspended completion tool: %w", err)
+		}
 		if err := r.validateLimitTerminalPlans(reg, checkpoint.Policy.LimitTerminalPlans); err != nil {
 			return nil, fmt.Errorf("validate suspended limit terminal plans: %w", err)
 		}
+	}
+	if err := r.validateCompletionToolPlanResult(
+		checkpoint.Batch.Result,
+		completionToolFromPolicy(checkpoint.Policy),
+	); err != nil {
+		return nil, fmt.Errorf("validate suspended completion plan: %w", err)
 	}
 	program, err := r.normalizeStep(checkpoint.Batch.Result)
 	if err != nil {
@@ -164,18 +176,27 @@ func decodeWorkflowCheckpointState(suspension *api.RunSuspension) (*workflowChec
 	if err := validatePublicRunSuspension(suspension); err != nil {
 		return nil, err
 	}
-	if suspension.Version != api.RunSuspensionVersion {
+	if suspension.Version != api.RunSuspensionVersion &&
+		suspension.Version != previousRunSuspensionVersion {
 		return nil, fmt.Errorf("unsupported run suspension version %q", suspension.Version)
 	}
 	var checkpoint workflowCheckpoint
 	if err := json.Unmarshal(suspension.Checkpoint, &checkpoint); err != nil {
 		return nil, fmt.Errorf("decode run suspension checkpoint: %w", err)
 	}
+	if suspension.Version == previousRunSuspensionVersion {
+		migratePreviousWorkflowCheckpoint(&checkpoint)
+	}
 	if err := validateWorkflowCheckpoint(&checkpoint); err != nil {
 		return nil, err
 	}
 	if checkpoint.Version != suspension.Version {
 		return nil, fmt.Errorf("run suspension version mismatch: envelope=%q checkpoint=%q", suspension.Version, checkpoint.Version)
+	}
+	if suspension.Version == previousRunSuspensionVersion &&
+		checkpoint.Policy != nil &&
+		checkpoint.Policy.CompletionTool != "" {
+		return nil, errors.New("run suspension version v1 cannot contain a completion tool policy")
 	}
 	digest := sha256.Sum256(suspension.Checkpoint)
 	if suspension.ID != hex.EncodeToString(digest[:16]) {
@@ -192,6 +213,23 @@ func decodeWorkflowCheckpointState(suspension *api.RunSuspension) (*workflowChec
 		return nil, errors.New("run suspension required tools do not match checkpoint")
 	}
 	return &checkpoint, nil
+}
+
+// migratePreviousWorkflowCheckpoint restores state that v1 represented only
+// through its unambiguous batch shape. A tool batch followed by exactly one
+// runtime-generated clarification had already consumed its caps and failure
+// accounting, so continuation must resume the planner instead of accounting
+// that batch a second time.
+func migratePreviousWorkflowCheckpoint(checkpoint *workflowCheckpoint) {
+	if checkpoint == nil ||
+		checkpoint.Batch.Kind != stepKindTools ||
+		checkpoint.Batch.AwaitCount != 1 ||
+		len(checkpoint.Pending) != 1 ||
+		checkpoint.Pending[0].Await == nil ||
+		checkpoint.Pending[0].Await.Kind != planner.AwaitItemKindClarification {
+		return
+	}
+	checkpoint.Batch.ResumePlannerAfterPending = true
 }
 
 // validateWorkflowCheckpoint enforces the private state invariants established
@@ -222,6 +260,15 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 	}
 	if checkpoint.Batch.BudgetCost < 0 || checkpoint.Batch.Confirmations < 0 || checkpoint.Batch.AwaitCount < 0 {
 		return errors.New("run suspension checkpoint has negative batch accounting")
+	}
+	if checkpoint.Batch.ResumePlannerAfterPending {
+		if checkpoint.Batch.Kind != stepKindTools ||
+			checkpoint.Batch.AwaitCount != 1 ||
+			len(checkpoint.Pending) != 1 ||
+			checkpoint.Pending[0].Await == nil ||
+			checkpoint.Pending[0].Await.Kind != planner.AwaitItemKindClarification {
+			return errors.New("run suspension planner-resume phase requires one generated clarification")
+		}
 	}
 	if checkpoint.State.NextAttempt <= 0 {
 		return errors.New("run suspension checkpoint requires a positive next planner attempt")

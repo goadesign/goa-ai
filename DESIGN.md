@@ -196,12 +196,14 @@ The runtime keeps execution policy and planner intent separate:
 
 | Completed step | Next state |
 | --- | --- |
+| The configured `CompletionTool` executed successfully | End the run without another planner turn |
+| `CompletionTool` is configured and another terminal condition occurs | Fail because the required tool did not succeed |
 | A cap or deadline requires finalization and the run supplied `LimitTerminalPlans` | Execute the matching terminal call without loading saved messages |
-| A cap or deadline requires finalization and the run omitted `LimitTerminalPlans` | `PlanResumeInput.Finalize` |
-| A successful `TerminalRun` tool completed | End the run without another planner turn |
-| Any failed tool requires `finish` recovery | `PlanResumeInput.Finalize` with reason `tool_failure` |
+| A cap or deadline requires finalization without either completion policy | `PlanResumeInput.Finalize` |
+| A successful `TerminalRun` tool completed without `CompletionTool` | End the run without another planner turn |
+| Any failed tool requires `finish` recovery without `CompletionTool` | `PlanResumeInput.Finalize` with reason `tool_failure` |
 | Any failed tool has a `ToolFailure` whose recovery action permits tools | Runtime-enforced correction or replan turn |
-| A successful batch has `SynthesizeAfterTools` set | `PlanResumeInput.SynthesisOnly` |
+| A successful batch has `SynthesizeAfterTools` set without `CompletionTool` | `PlanResumeInput.SynthesisOnly` |
 | Otherwise | Normal continuation turn |
 
 `LimitTerminalPlans` is one optional run-policy value containing exactly three
@@ -681,6 +683,23 @@ redeploys.
   Current run policy still applies while the fixed terminal call is prepared.
   For example, `WithRestrictToTool` can reject that call because the
   restriction applies to every tool in the run.
+- **Run-scoped completion operations**: callers use
+  `WithRunCompletionTool(tool_name)` when one successful budgeted tool call is
+  the operation's complete outcome. The serialized run policy survives
+  suspension and continuation. The completion tool must belong to the executing
+  agent, be non-bookkeeping and non-terminal, and be allowed by the run's static
+  tool policy. A planner response containing that tool cannot contain another
+  call or an await request. The run cannot request post-tool synthesis because
+  its required next terminal answer cannot satisfy the completion policy. A
+  successful result closes the run without another planner turn; correctable
+  failures retain ordinary recovery and cap accounting. A planner terminal response,
+  forced-finalization request, exhausted cap, or deadline ends the run with an
+  error instead of fabricating success after the required side effect did not
+  occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
+  because they assign different outcomes to the same exhausted limits.
+  Completion-aware suspensions use checkpoint version 2 so older runtimes
+  reject, rather than ignore, the saved policy; current runtimes also accept
+  version-1 checkpoints created before this policy existed.
 - **Visible reasoning contract**: when a caller enables thinking for a Bedrock
   adaptive Claude model, the adapter asks for summarized reasoning display
   explicitly so streamed `thinking` events contain text. This includes Claude
