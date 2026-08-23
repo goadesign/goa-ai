@@ -288,9 +288,16 @@ func classificationIdentity(err error) (errorIdentity, bool) {
 			return errorIdentity{}, false
 		}
 		return errorIdentity{typ: value.Type(), ptr: value.Pointer()}, true
-	default:
+	case reflect.Invalid,
+		reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64,
+		reflect.Complex64, reflect.Complex128,
+		reflect.Array, reflect.Interface, reflect.String, reflect.Struct:
 		return errorIdentity{}, false
 	}
+	panic(fmt.Sprintf("unhandled reflect kind %s", value.Kind()))
 }
 
 // unwrapChildren reads either standard unwrap shape and converts panics from a

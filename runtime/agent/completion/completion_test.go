@@ -116,7 +116,7 @@ func (c streamResultCompletionClient) Stream(context.Context, *model.Request) (m
 func (p *mutatingCompletionObserverProvider) PrepareClientCall(
 	ctx context.Context,
 	_ *model.Request,
-) (context.Context, model.ClientCallObserver, error) {
+) (context.Context, model.ClientCallObserver, error) { //nolint:unparam // The observer interface reserves setup failure.
 	return ctx, &mutatingCompletionObserverCall{replacement: p.replacement}, nil
 }
 

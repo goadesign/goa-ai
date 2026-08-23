@@ -85,26 +85,35 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 	return nil
 }
 
+type usedToolsetRegistrationOptions struct {
+	executors           map[string]agentsruntime.ToolCallExecutor
+	resultMaterializers map[string]agentsruntime.ResultMaterializer
+}
+
 // RegisterUsedToolsets registers all non-MCP Used toolsets for this agent with
-// the local runtime. Provide executors via typed options for each required toolset.
+// the local runtime. Provide executors for each required toolset and optional
+// result materializers through typed generated options.
 //
 // Example:
 //
 //	err := RegisterUsedToolsets(ctx, rt,
 //	    WithHelpersExecutor(exec),
 //	)
-func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts ...func(map[string]agentsruntime.ToolCallExecutor)) error {
+func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts ...func(*usedToolsetRegistrationOptions)) error {
 	if rt == nil {
 		return errors.New("runtime is required")
 	}
-	execs := make(map[string]agentsruntime.ToolCallExecutor)
+	cfg := &usedToolsetRegistrationOptions{
+		executors:           make(map[string]agentsruntime.ToolCallExecutor),
+		resultMaterializers: make(map[string]agentsruntime.ResultMaterializer),
+	}
 	for _, o := range opts {
 		if o != nil {
-			o(execs)
+			o(cfg)
 		}
 	}
 	var missing []string
-	if execs["orchestrator.helpers"] == nil {
+	if cfg.executors["orchestrator.helpers"] == nil {
 		missing = append(missing, "orchestrator.helpers")
 	}
 	if len(missing) > 0 {
@@ -113,23 +122,18 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
 	// Register non-MCP used toolsets that are not provided by agent-as-tool exports.
 	{
 		const toolsetID = "orchestrator.helpers"
-		exec := execs[toolsetID]
+		exec := cfg.executors[toolsetID]
 		reg := agentsruntime.ToolsetRegistration{
 			Name:               toolsetID,
 			Specs:              helpers.Specs,
 			ToolMetadataLookup: helpers.MetadataByName,
+			ResultMaterializer: cfg.resultMaterializers[toolsetID],
 			Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
 				if call == nil {
 					return nil, fmt.Errorf("tool request is nil")
 				}
-				meta := &agentsruntime.ToolCallMeta{
-					RunID:            call.RunID,
-					SessionID:        call.SessionID,
-					TurnID:           call.TurnID,
-					ToolCallID:       call.ToolCallID,
-					ParentToolCallID: call.ParentToolCallID,
-				}
-				result, err := exec.Execute(ctx, meta, call)
+				meta := agentsruntime.ToolCallMetaFromCall(*call)
+				result, err := exec.Execute(ctx, &meta, call)
 				if err != nil {
 					return nil, err
 				}
@@ -147,8 +151,15 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
 }
 
 // WithHelpersExecutor associates an executor for orchestrator.helpers.
-func WithHelpersExecutor(exec agentsruntime.ToolCallExecutor) func(map[string]agentsruntime.ToolCallExecutor) {
-	return func(m map[string]agentsruntime.ToolCallExecutor) {
-		m["orchestrator.helpers"] = exec
+func WithHelpersExecutor(exec agentsruntime.ToolCallExecutor) func(*usedToolsetRegistrationOptions) {
+	return func(cfg *usedToolsetRegistrationOptions) {
+		cfg.executors["orchestrator.helpers"] = exec
+	}
+}
+
+// WithHelpersResultMaterializer associates a result materializer for orchestrator.helpers.
+func WithHelpersResultMaterializer(materializer agentsruntime.ResultMaterializer) func(*usedToolsetRegistrationOptions) {
+	return func(cfg *usedToolsetRegistrationOptions) {
+		cfg.resultMaterializers["orchestrator.helpers"] = materializer
 	}
 }

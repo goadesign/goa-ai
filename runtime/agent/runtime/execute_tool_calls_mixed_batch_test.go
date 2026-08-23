@@ -139,7 +139,7 @@ func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
 		toolsets: map[string]ToolsetRegistration{
 			"inline.cancel": {
 				Inline: true,
-				Execute: func(context.Context, *planner.ToolRequest) (*ToolExecutionResult, error) {
+				Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
 					return nil, context.Canceled
 				},
 			},
@@ -152,7 +152,7 @@ func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
 	}
 	seedTestToolSpecs(rt, spec)
 	runCtx := &run.Context{RunID: "run-inline-canceled", SessionID: "session-1", TurnID: "turn-1"}
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       spec.Name,
 		RunID:      runCtx.RunID,
 		SessionID:  runCtx.SessionID,
@@ -167,7 +167,7 @@ func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
 		agent.Ident("agent-1"),
 		runCtx,
 		nil,
-		[]planner.ToolRequest{call},
+		[]ToolCall{call},
 		0,
 		nil,
 		time.Time{},
@@ -220,7 +220,7 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 	}
 	runCtx := &run.Context{RunID: "run-child-canceled", SessionID: "session-1", TurnID: "turn-1"}
 	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:       spec.Name,
 		RunID:      runCtx.RunID,
 		SessionID:  runCtx.SessionID,
@@ -240,7 +240,7 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 			agent.Ident("agent-1"),
 			runCtx,
 			nil,
-			[]planner.ToolRequest{call},
+			[]ToolCall{call},
 			0,
 			nil,
 			time.Time{},

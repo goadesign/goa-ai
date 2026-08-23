@@ -9,9 +9,12 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 
 	chat "example.com/quickstart/gen/orchestrator/agents/chat"
+	gentoolchathelpers "example.com/quickstart/gen/orchestrator/toolsets/helpers"
 	plannerchat "example.com/quickstart/internal/agents/chat/planner"
+	"goa.design/goa-ai/runtime/agent/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 )
 
@@ -31,6 +34,34 @@ func New(ctx context.Context) (*agentsruntime.Runtime, func(), error) {
 	{
 		cfg := chat.ChatAgentConfig{Planner: plannerchat.New()}
 		if err := chat.RegisterChatAgent(ctx, rt, cfg); err != nil {
+			return nil, nil, err
+		}
+		// Register deterministic executors so the generated example runs one
+		// complete typed tool round trip before application code is added.
+		if err := chat.RegisterUsedToolsets(ctx, rt,
+			chat.WithHelpersExecutor(agentsruntime.ToolCallExecutorFunc(
+				func(ctx context.Context, _ *agentsruntime.ToolCallMeta, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
+					if call == nil {
+						return nil, fmt.Errorf("tool request is nil")
+					}
+					switch call.Name {
+					case gentoolchathelpers.Answer:
+						if _, err := gentoolchathelpers.SpecAnswer.Payload.Codec.FromJSON(call.Payload); err != nil {
+							return nil, fmt.Errorf("decode helpers.answer example payload: %w", err)
+						}
+						result, err := gentoolchathelpers.AnswerResultCodec.FromJSON(
+							[]byte("{\"text\":\"Tokyo is the capital of Japan.\"}"),
+						)
+						if err != nil {
+							return nil, fmt.Errorf("decode helpers.answer example result: %w", err)
+						}
+						return agentsruntime.Executed(&planner.ToolResult{Name: call.Name, Result: result}), nil
+					default:
+						return nil, fmt.Errorf("unknown example tool %q", call.Name)
+					}
+				},
+			)),
+		); err != nil {
 			return nil, nil, err
 		}
 	}

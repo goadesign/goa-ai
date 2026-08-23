@@ -103,10 +103,10 @@ func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
 		WithLogger(telemetry.NoopLogger{}),
 		WithToolConfirmation(&ToolConfirmationConfig{Confirm: map[tools.Ident]*ToolConfirmation{
 			tool.Name: {
-				Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+				Prompt: func(context.Context, *ToolCall) (string, error) {
 					return "Persist the result?", nil
 				},
-				DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+				DeniedResult: func(context.Context, *ToolCall) (any, error) {
 					return map[string]any{"persisted": false}, nil
 				},
 			},
@@ -114,7 +114,7 @@ func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
 	)
 	require.NoError(t, runtime.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
-		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			executions++
 			return &planner.ToolResult{
 				Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"persisted": true},
@@ -145,7 +145,7 @@ func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
 		&planner.PlanInput{RunContext: run.Context{
 			RunID: firstInput.RunID, SessionID: firstInput.SessionID, TurnID: firstInput.TurnID, Attempt: 1,
 		}},
-		&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		&PlanResult{ToolCalls: []ToolCall{{
 			Name: tool.Name, ToolCallID: "call-1", Payload: rawjson.Message(`{}`),
 		}}},
 		policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1},

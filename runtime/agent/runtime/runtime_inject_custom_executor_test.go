@@ -193,7 +193,7 @@ func TestCustomExecutorLabelInjection_MalformedLabelProducesPreciseToolError(t *
 // TestToolCallMetaCopiesRunLabels proves executors receive immutable run
 // context rather than a map shared with the workflow's tool request.
 func TestToolCallMetaCopiesRunLabels(t *testing.T) {
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Labels: map[string]string{"source": "events:7"},
 	}
 

@@ -62,8 +62,8 @@ func New(ctx context.Context) (*agentsruntime.Runtime, func(), error) {
                             return nil, fmt.Errorf("decode {{ .Name }} example payload: %w", err)
                         }
                         {{- if .Result }}
-                        result, err := {{ $example.Alias }}.Spec{{ .ConstName }}.Result.Codec.FromJSON(
-                            {{ $example.Alias }}.Spec{{ .ConstName }}.Result.ExampleJSON,
+                        result, err := {{ $example.Alias }}.{{ .Result.ExportedCodec }}.FromJSON(
+                            []byte({{ printf "%q" .Result.ScaffoldExampleJSON }}),
                         )
                         if err != nil {
                             return nil, fmt.Errorf("decode {{ .Name }} example result: %w", err)

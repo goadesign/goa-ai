@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -60,7 +59,7 @@ func validateCompletionToolWorkflowRetry(runPolicy *PolicyOverrides, opts *Workf
 // action to the same decision as the completion side effect. A completion
 // attempt must be the sole action in its planner result, while terminal output
 // is never a substitute for the required successful tool result.
-func (r *Runtime) validateCompletionToolPlanResult(result *planner.PlanResult, completion tools.Ident) error {
+func (r *Runtime) validateCompletionToolPlanResult(result *PlanResult, completion tools.Ident) error {
 	if completion == "" {
 		return nil
 	}

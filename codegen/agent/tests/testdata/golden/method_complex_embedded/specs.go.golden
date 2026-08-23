@@ -7,6 +7,7 @@
 package profiles
 
 import (
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -54,6 +55,23 @@ var UpsertTool = tools.TypedTool[*UpsertPayload, *UpsertResult]{
 	Name:    Upsert,
 	Payload: UpsertPayloadCodec,
 	Result:  UpsertResultCodec,
+}
+
+// NewUpsertCall builds a planner request for profiles.upsert from its typed
+// generated payload. toolCallID must be nonempty and unique within the plan.
+func NewUpsertCall(toolCallID string, args *UpsertPayload) planner.ToolRequest {
+	if toolCallID == "" {
+		panic("profiles.upsert tool call ID is required")
+	}
+	payload, err := UpsertPayloadCodec.ToJSON(args)
+	if err != nil {
+		panic(err)
+	}
+	return planner.ToolRequest{
+		Name:       Upsert,
+		Payload:    payload,
+		ToolCallID: toolCallID,
+	}
 }
 
 var (

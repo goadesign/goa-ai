@@ -255,7 +255,11 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 			return fmt.Errorf("run suspension checkpoint recovery output %d is nil", i)
 		}
 	}
-	if err := validateRecoveryCatalog(
+	if checkpoint.Batch.ResumePlannerAfterPending {
+		if checkpoint.State.PendingRecoveryCatalog != nil {
+			return errors.New("run suspension planner-resume phase cannot carry a recovery catalog")
+		}
+	} else if err := validateRecoveryCatalog(
 		checkpoint.State.PendingRecovery,
 		checkpoint.State.PendingRecoveryCatalog,
 		checkpoint.Batch.Result,

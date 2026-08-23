@@ -177,7 +177,7 @@ func main() {
 		out, err := client.Run(ctx, "demo-session", []*model.Message{
 			{
 				Role:  model.ConversationRoleUser,
-				Parts: []model.Part{model.TextPart{Text: "Hello"}},
+				Parts: []model.Part{model.TextPart{Text: "What is the capital of Japan?"}},
 			},
 		})
 		if err != nil {

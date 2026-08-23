@@ -8,9 +8,11 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 	scribe "goa.design/goa-ai/alpha/agents/scribe"
 	plannerscribe "goa.design/goa-ai/internal/agents/scribe/planner"
 	toolsetscribeprofiles "goa.design/goa-ai/internal/agents/scribe/toolsets/profiles"
+	"goa.design/goa-ai/runtime/agent/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 )
 

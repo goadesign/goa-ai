@@ -270,10 +270,10 @@ func TestClientCompleteIsolatesEachObserverAndCallerResponse(t *testing.T) {
 	require.NotSame(t, first.completeResponse, second.completeResponse)
 	require.Equal(t, "tool_use", response.StopReason)
 	require.Equal(t, TextPart{Text: "canonical"}, response.Content[0].Parts[0])
-	require.Equal(t, `{"id":"original"}`, string(response.Content[0].Parts[1].(ToolUsePart).Input))
+	require.JSONEq(t, `{"id":"original"}`, string(response.Content[0].Parts[1].(ToolUsePart).Input))
 	require.Equal(t, "original", response.Content[0].Meta["nested"].(map[string]any)["value"])
 	require.Equal(t, "tool_use", second.completeResponse.StopReason)
 	require.Equal(t, TextPart{Text: "canonical"}, second.completeResponse.Content[0].Parts[0])
-	require.Equal(t, `{"id":"original"}`, string(second.completeResponse.Content[0].Parts[1].(ToolUsePart).Input))
+	require.JSONEq(t, `{"id":"original"}`, string(second.completeResponse.Content[0].Parts[1].(ToolUsePart).Input))
 	require.Equal(t, "original", second.completeResponse.Content[0].Meta["nested"].(map[string]any)["value"])
 }

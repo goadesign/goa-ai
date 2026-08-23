@@ -21,8 +21,8 @@ func New() planner.Planner { return &examplePlanner{} }
 // conversation messages, decides whether to request tool executions, and produces
 // final assistant responses. Production planners typically invoke LLMs via
 // registered planner-scoped model clients (in.Agent.PlannerModelClient(...)) or
-// pair the raw ModelClient stream with planner.ConsumeStream / explicit
-// PlannerEvents emission, then integrate tool results in PlanResume.
+// pair ModelClient with planner.ConsumeStream, which only drains the validated
+// stream. The runtime journal publishes selected presentation and usage.
 type examplePlanner struct{}
 
 func (p *examplePlanner) Decide(ctx context.Context, tool string) string {
@@ -40,7 +40,6 @@ func (p *examplePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 			// This stub just falls through to the default response.
 		}
 	}
-
 	return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
@@ -52,11 +51,12 @@ func (p *examplePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 }
 
 func (p *examplePlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
+	answer := "Done."
 	return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
 				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "Done."}},
+				Parts: []model.Part{model.TextPart{Text: answer}},
 			},
 		},
 	}, nil

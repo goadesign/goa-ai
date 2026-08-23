@@ -281,7 +281,7 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 	require.NoError(t, runtime.RegisterToolset(agentruntime.ToolsetRegistration{
 		Name:  "service.cancel",
 		Specs: []tools.ToolSpec{spec},
-		Execute: func(context.Context, *planner.ToolRequest) (*agentruntime.ToolExecutionResult, error) {
+		Execute: func(context.Context, *agentruntime.ToolCall) (*agentruntime.ToolExecutionResult, error) {
 			return nil, temporal.NewCanceledError("superseded")
 		},
 	}))

@@ -19,7 +19,8 @@ func TestQuickstartCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run quickstart command: %v\n%s", err, output)
 	}
-	if !strings.Contains(string(output), "Assistant:") {
-		t.Fatalf("quickstart output has no assistant answer:\n%s", output)
+	const assistant = `Assistant: Tool helpers.answer returned {"text":"Tokyo is the capital of Japan."}`
+	if !strings.Contains(string(output), assistant) {
+		t.Fatalf("quickstart output has no exact tool round trip %q:\n%s", assistant, output)
 	}
 }

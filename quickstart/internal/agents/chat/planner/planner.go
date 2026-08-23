@@ -9,7 +9,9 @@ package planner
 
 import (
 	"context"
+	"fmt"
 
+	gentool "example.com/quickstart/gen/orchestrator/toolsets/helpers"
 	model "goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 )
@@ -23,8 +25,8 @@ func New() planner.Planner { return &examplePlanner{} }
 // conversation messages, decides whether to request tool executions, and produces
 // final assistant responses. Production planners typically invoke LLMs via
 // registered planner-scoped model clients (in.Agent.PlannerModelClient(...)) or
-// pair the raw ModelClient stream with planner.ConsumeStream / explicit
-// PlannerEvents emission, then integrate tool results in PlanResume.
+// pair ModelClient with planner.ConsumeStream, which only drains the validated
+// stream. The runtime journal publishes selected presentation and usage.
 type examplePlanner struct{}
 
 func (p *examplePlanner) Decide(ctx context.Context, tool string) string {
@@ -42,23 +44,34 @@ func (p *examplePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 			// This stub just falls through to the default response.
 		}
 	}
-
+	args, err := gentool.AnswerPayloadCodec.FromJSON(gentool.SpecAnswer.Payload.ExampleJSON)
+	if err != nil {
+		return nil, fmt.Errorf("decode generated helpers.answer example: %w", err)
+	}
 	return &planner.PlanResult{
-		FinalResponse: &planner.FinalResponse{
-			Message: &model.Message{
-				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "Hello from example planner."}},
-			},
+		ToolCalls: []planner.ToolRequest{
+			gentool.NewAnswerCall("quickstart-helpers.answer", args),
 		},
 	}, nil
 }
 
 func (p *examplePlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
+	if len(in.ToolOutputs) != 1 {
+		return nil, fmt.Errorf("expected one helpers.answer result, got %d", len(in.ToolOutputs))
+	}
+	output := in.ToolOutputs[0]
+	if output.Name != gentool.Answer || output.ToolCallID != "quickstart-helpers.answer" {
+		return nil, fmt.Errorf("unexpected tool result %s (%s)", output.Name, output.ToolCallID)
+	}
+	if output.Failure != nil {
+		return nil, fmt.Errorf("helpers.answer failed: %s", output.Failure.Error.Message)
+	}
+	answer := fmt.Sprintf("Tool %s returned %s", output.Name, output.Result)
 	return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
 				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "Done."}},
+				Parts: []model.Part{model.TextPart{Text: answer}},
 			},
 		},
 	}, nil

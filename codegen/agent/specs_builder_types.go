@@ -170,6 +170,10 @@ type (
 		// available. For payloads, it is derived from Goa examples and can be used
 		// by runtimes to surface concrete examples in correction directives or UI prompts.
 		ExampleJSON []byte
+		// ScaffoldExampleJSON holds an authored result example for generated
+		// application scaffolds. It remains private generator data so tool result
+		// examples do not become model-facing TypeSpec metadata.
+		ScaffoldExampleJSON []byte
 		// Typed codec variable name (e.g., "MyToolPayloadCodec").
 		ExportedCodec string
 		// InjectDecodeFunc is the generated composed decode helper name
