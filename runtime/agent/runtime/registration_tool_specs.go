@@ -117,8 +117,9 @@ func cloneToolSpecs(specs []tools.ToolSpec) []tools.ToolSpec {
 func cloneToolSpec(spec tools.ToolSpec) tools.ToolSpec {
 	spec.Tags = append([]string(nil), spec.Tags...)
 	if spec.Meta != nil {
-		spec.Meta = make(map[string][]string, len(spec.Meta))
-		for key, values := range spec.Meta {
+		meta := spec.Meta
+		spec.Meta = make(map[string][]string, len(meta))
+		for key, values := range meta {
 			spec.Meta[key] = append([]string(nil), values...)
 		}
 	}

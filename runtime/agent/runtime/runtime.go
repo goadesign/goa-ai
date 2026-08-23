@@ -1969,12 +1969,20 @@ func (r *Runtime) ListToolsets() []string {
 	return out
 }
 
-// ToolSpec returns the registered ToolSpec for the given tool name.
+// ToolSpec returns a detached snapshot of the registered ToolSpec for the given
+// tool name. Mutating the returned spec does not change runtime behavior.
 func (r *Runtime) ToolSpec(name tools.Ident) (tools.ToolSpec, bool) {
-	return r.toolSpec(name)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	spec, ok := r.toolSpecs[name]
+	if !ok {
+		return tools.ToolSpec{}, false
+	}
+	return cloneToolSpec(spec), true
 }
 
-// ToolSpecsForAgent returns the ToolSpecs registered by the given agent.
+// ToolSpecsForAgent returns detached snapshots of the ToolSpecs registered by
+// the given agent. Mutating the returned specs does not change runtime behavior.
 func (r *Runtime) ToolSpecsForAgent(agentID agent.Ident) []tools.ToolSpec {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -1982,9 +1990,7 @@ func (r *Runtime) ToolSpecsForAgent(agentID agent.Ident) []tools.ToolSpec {
 	if len(specs) == 0 {
 		return nil
 	}
-	out := make([]tools.ToolSpec, len(specs))
-	copy(out, specs)
-	return out
+	return cloneToolSpecs(specs)
 }
 
 // addReminder registers a reminder for the given run. It is a no-op when the
