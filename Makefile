@@ -6,10 +6,18 @@ HTTP_PORT ?= 8888
 PROTOC := $(shell command -v protoc 2>/dev/null)
 PROTOC_GEN_GO := protoc-gen-go
 PROTOC_GEN_GO_GRPC := protoc-gen-go-grpc
+PROTOC_VERSION := $(shell awk '$$1 == "protoc" { print $$2; exit }' .tool-versions)
+PROTOC_GEN_GO_TARGET := $(shell grep '^google.golang.org/protobuf/cmd/protoc-gen-go@' .go-install)
+PROTOC_GEN_GO_GRPC_TARGET := $(shell grep '^google.golang.org/grpc/cmd/protoc-gen-go-grpc@' .go-install)
+PROTOC_GEN_GO_VERSION := $(word 2,$(subst @, ,$(PROTOC_GEN_GO_TARGET)))
+PROTOC_GEN_GO_GRPC_VERSION := $(word 2,$(subst @, ,$(PROTOC_GEN_GO_GRPC_TARGET)))
 
-.PHONY: all build lint test itest ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example example-gen
+.PHONY: all setup build lint test itest ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example example-gen
 
 all: build lint test
+
+setup:
+	./scripts/setup
 
 build: tools
 	$(GO) build ./...
@@ -36,23 +44,33 @@ ensure-golangci:
 	@$(GO) tool golangci-lint version >/dev/null
 
 ensure-protoc-plugins:
-	@if ! command -v $(PROTOC_GEN_GO) >/dev/null 2>&1; then \
-		echo "Installing protoc-gen-go (latest)..."; \
-		$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@latest; \
-	else \
-		echo "protoc-gen-go found at: $$(command -v $(PROTOC_GEN_GO))"; \
-	fi
-	@if ! command -v $(PROTOC_GEN_GO_GRPC) >/dev/null 2>&1; then \
-		echo "Installing protoc-gen-go-grpc (latest)..."; \
-		$(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest; \
-	else \
-		echo "protoc-gen-go-grpc found at: $$(command -v $(PROTOC_GEN_GO_GRPC))"; \
-	fi
+	@installed="$$(command -v $(PROTOC_GEN_GO) 2>/dev/null || true)"; \
+	version="$$( $(PROTOC_GEN_GO) --version 2>/dev/null | awk '{ print $$2 }' || true)"; \
+	if [ "$$version" != "$(PROTOC_GEN_GO_VERSION)" ]; then \
+		echo "Error: protoc-gen-go $(PROTOC_GEN_GO_VERSION) is required, but $${version:-none} is in PATH."; \
+		echo "Run 'make setup' and ensure GOPATH/bin is in PATH."; \
+		exit 1; \
+	fi; \
+	echo "protoc-gen-go $(PROTOC_GEN_GO_VERSION) found at: $$installed"
+	@installed="$$(command -v $(PROTOC_GEN_GO_GRPC) 2>/dev/null || true)"; \
+	version="$$( $(PROTOC_GEN_GO_GRPC) --version 2>/dev/null | awk '{ print "v" $$2 }' || true)"; \
+	if [ "$$version" != "$(PROTOC_GEN_GO_GRPC_VERSION)" ]; then \
+		echo "Error: protoc-gen-go-grpc $(PROTOC_GEN_GO_GRPC_VERSION) is required, but $${version:-none} is in PATH."; \
+		echo "Run 'make setup' and ensure GOPATH/bin is in PATH."; \
+		exit 1; \
+	fi; \
+	echo "protoc-gen-go-grpc $(PROTOC_GEN_GO_GRPC_VERSION) found at: $$installed"
 
 protoc-check:
 	@if [ -z "$(PROTOC)" ]; then \
 		echo "Error: protoc is not installed or not in PATH."; \
-		echo "Install via your package manager (e.g., 'brew install protobuf' or 'apt-get install protobuf-compiler')."; \
+		echo "Run 'make setup' to install protoc $(PROTOC_VERSION)."; \
+		exit 1; \
+	fi
+	@version="$$(protoc --version | awk '{ print $$2 }')"; \
+	if [ "$$version" != "$(PROTOC_VERSION)" ]; then \
+		echo "Error: protoc $(PROTOC_VERSION) is required, but $$version is in PATH."; \
+		echo "Run 'make setup' to install the required version."; \
 		exit 1; \
 	fi
 
