@@ -765,6 +765,12 @@ consumers know exactly when to stop reading.
 - **Cancellation is not an error**
   - For `status="canceled"`, the stream payload **must not** include a user-facing `error`.
   - Consumers should treat cancellation as a terminal, non-error end state.
+  - Cancellation from a service activity, inline tool, or agent child cancels
+    the owning run and does not synthesize a failed `ToolResult`.
+  - Engine adapters normalize backend cancellation to `context.Canceled` while
+    runtime hooks are recorded, then restore the backend's cancellation type at
+    the workflow boundary. Temporal therefore records the execution as canceled
+    rather than failed.
 
 - **Failures are structured**
   - For `status="failed"`, the stream payload includes:

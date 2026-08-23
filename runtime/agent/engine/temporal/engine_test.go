@@ -2,6 +2,8 @@ package temporal
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -14,6 +16,8 @@ import (
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/testsuite"
 	"google.golang.org/grpc"
 
 	"goa.design/goa-ai/runtime/agent/api"
@@ -48,6 +52,52 @@ func TestRegisterWorkflowRejectsDuplicateBeforeCreatingWorkerForNewQueue(t *test
 	assert.Len(t, eng.workers, 1)
 	_, exists := eng.workers["queue.beta"]
 	assert.False(t, exists)
+}
+
+func TestTemporalWorkflowHandlerPreservesCancellationStatus(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		err          error
+		wantCanceled bool
+	}{
+		{name: "context cancellation", err: context.Canceled, wantCanceled: true},
+		{name: "wrapped context cancellation", err: fmt.Errorf("runtime: %w", context.Canceled), wantCanceled: true},
+		{name: "Temporal cancellation", err: temporal.NewCanceledError("superseded"), wantCanceled: true},
+		{
+			name:         "joined cancellations",
+			err:          errors.Join(context.Canceled, fmt.Errorf("tool: %w", context.Canceled)),
+			wantCanceled: true,
+		},
+		{
+			name: "cancellation joined with failure",
+			err:  errors.Join(context.Canceled, errors.New("persist hook failed")),
+		},
+		{
+			name: "wrapped cancellation joined with failure",
+			err: fmt.Errorf(
+				"runtime: %w",
+				errors.Join(context.Canceled, errors.New("persist hook failed")),
+			),
+		},
+		{name: "ordinary failure", err: errors.New("planner failed")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			eng := newTestEngine(t)
+			handler := eng.temporalWorkflowHandler(
+				func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
+					return nil, test.err
+				},
+			)
+			var suite testsuite.WorkflowTestSuite
+			env := suite.NewTestWorkflowEnvironment()
+
+			env.ExecuteWorkflow(handler, &api.RunInput{RunID: "run-1"})
+
+			err := env.GetWorkflowError()
+			require.Error(t, err)
+			assert.Equal(t, test.wantCanceled, temporal.IsCanceledError(err))
+		})
+	}
 }
 
 func TestRegisterPlannerActivityRejectsDuplicateNameAcrossQueues(t *testing.T) {

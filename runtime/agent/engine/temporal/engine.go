@@ -7,6 +7,7 @@ package temporal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	temporalotel "go.temporal.io/sdk/contrib/opentelemetry"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
@@ -299,14 +301,54 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 	}()
 	bundle := e.workerForQueue(queue)
 
-	bundle.registerWorkflow(def.Name, func(tctx workflow.Context, input *api.RunInput) (*api.RunOutput, error) {
-		wfCtx := newTemporalWorkflowContext(e, tctx)
-		defer e.releaseWorkflowContext(wfCtx.runID)
-		return def.Handler(wfCtx, input)
-	})
+	bundle.registerWorkflow(def.Name, e.temporalWorkflowHandler(def.Handler))
 	e.finishWorkflowRegistration(def)
 	registered = true
 	return nil
+}
+
+// temporalWorkflowHandler restores Temporal's cancellation error at the
+// adapter boundary after the backend-neutral runtime has classified the run.
+// Temporal otherwise records context.Canceled as workflow failure.
+func (e *Engine) temporalWorkflowHandler(
+	handler func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error),
+) func(workflow.Context, *api.RunInput) (*api.RunOutput, error) {
+	return func(tctx workflow.Context, input *api.RunInput) (*api.RunOutput, error) {
+		wfCtx := newTemporalWorkflowContext(e, tctx)
+		defer e.releaseWorkflowContext(wfCtx.runID)
+		out, err := handler(wfCtx, input)
+		if cancellationOnly(err) {
+			return out, temporal.NewCanceledError(err.Error())
+		}
+		return out, err
+	}
+}
+
+// cancellationOnly reports whether every error leaf represents cancellation.
+// A join containing any substantive failure must remain a failed workflow.
+func cancellationOnly(err error) bool {
+	if err == nil {
+		return false
+	}
+	type multiUnwrapper interface {
+		Unwrap() []error
+	}
+	if joined, ok := err.(multiUnwrapper); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !cancellationOnly(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return cancellationOnly(cause)
+	}
+	return errors.Is(err, context.Canceled) || temporal.IsCanceledError(err)
 }
 
 // RegisterRecordActivity registers a typed runtime-record activity with the
