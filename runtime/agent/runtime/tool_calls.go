@@ -625,6 +625,9 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 
 			out, err := info.future.Get(ctx)
 			if err != nil {
+				if isRunCancellationError(err) {
+					return activityByID, pending, false, err
+				}
 				duration := wfCtx.Now().Sub(info.startTime)
 				result, synthErr := e.synthesizeToolError(ctx, info.call, err, "tool activity failed", duration)
 				if result != nil {
@@ -741,6 +744,9 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 
 			outPtr, err := info.handle.Get(wfCtx.Context())
 			if err != nil {
+				if isRunCancellationError(err) {
+					return out, pending, false, err
+				}
 				duration := wfCtx.Now().Sub(info.startTime)
 				result, synthErr := e.synthesizeToolError(ctx, info.call, err, "agent tool execution failed", duration)
 				if result != nil {
@@ -932,13 +938,25 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 	if err := exec.maybePublishChildTrackerUpdate(ctx, batch.discoveredIDs); err != nil {
 		executionErr = errors.Join(executionErr, err)
 	}
+	if isRunCancellationError(executionErr) {
+		cancelExecOnce()
+		return availableToolExecutionsInCallOrder(batch.calls, nil, batch.inlineByID), false, executionErr
+	}
 
 	activityByID, pendingActs, timedOutActs, err := exec.collectActivityResultsAsComplete(wfCtx, batch.futures, finalizeTimer)
+	if isRunCancellationError(err) {
+		cancelExecOnce()
+		return availableToolExecutionsInCallOrder(batch.calls, activityByID, batch.inlineByID), false, err
+	}
 	if err != nil {
 		executionErr = errors.Join(executionErr, err)
 	}
 
 	childByID, pendingChildren, timedOutChildren, err := exec.collectAgentChildResults(wfCtx, batch.childFutures, finalizeTimer)
+	if isRunCancellationError(err) {
+		cancelExecOnce()
+		return availableToolExecutionsInCallOrder(batch.calls, activityByID, batch.inlineByID), false, err
+	}
 	if err != nil {
 		executionErr = errors.Join(executionErr, err)
 	}

@@ -131,3 +131,133 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 	// Child result comes after activities (current behavior).
 	require.Equal(t, "call-child", ends[3].ToolCallID)
 }
+
+func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
+	recorder := &recordingHooks{}
+	spec := newAnyJSONSpec("inline.cancel.cancel", "inline.cancel")
+	rt := &Runtime{
+		toolsets: map[string]ToolsetRegistration{
+			"inline.cancel": {
+				Inline: true,
+				Execute: func(context.Context, *planner.ToolRequest) (*ToolExecutionResult, error) {
+					return nil, context.Canceled
+				},
+			},
+		},
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           recorder,
+	}
+	seedTestToolSpecs(rt, spec)
+	runCtx := &run.Context{RunID: "run-inline-canceled", SessionID: "session-1", TurnID: "turn-1"}
+	call := planner.ToolRequest{
+		Name:       spec.Name,
+		RunID:      runCtx.RunID,
+		SessionID:  runCtx.SessionID,
+		TurnID:     runCtx.TurnID,
+		ToolCallID: "inline-cancel-call",
+	}
+
+	results, _, err := rt.executeToolCalls(
+		&testWorkflowContext{ctx: context.Background(), hookRuntime: rt},
+		"execute",
+		engine.ActivityOptions{},
+		agent.Ident("agent-1"),
+		runCtx,
+		nil,
+		[]planner.ToolRequest{call},
+		0,
+		nil,
+		time.Time{},
+	)
+
+	require.Error(t, err)
+	require.True(t, isRunCancellationError(err))
+	require.Empty(t, results)
+	for _, event := range recorder.events {
+		_, received := event.(*hooks.ToolResultReceivedEvent)
+		require.False(t, received)
+	}
+}
+
+func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
+	recorder := &recordingHooks{}
+	spec := newAnyJSONSpec("agent.cancel.child", "agent.cancel")
+	spec.IsAgentTool = true
+	spec.AgentID = "nested.cancel"
+	rt := &Runtime{
+		toolsets:      make(map[string]ToolsetRegistration),
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+		Bus:           recorder,
+		SessionStore:  sessioninmem.New(),
+	}
+	seedTestToolSpecs(rt, spec)
+	registration := NewAgentToolsetRegistration(rt, AgentToolConfig{
+		AgentID: agent.Ident("nested.cancel"),
+		Name:    "agent.cancel",
+		Route: AgentRoute{
+			ID:               agent.Ident("nested.cancel"),
+			WorkflowName:     "nested.cancel.workflow",
+			DefaultTaskQueue: "nested.cancel.queue",
+		},
+		AgentToolContent: AgentToolContent{
+			Prompt: func(tools.Ident, any) string {
+				return invokePromptText
+			},
+		},
+	})
+	rt.toolsets[registration.Name] = registration
+	childHandles := make(chan *controlledChildHandle, 1)
+	wfCtx := &testWorkflowContext{
+		ctx:                    context.Background(),
+		hookRuntime:            rt,
+		controlledChildHandles: childHandles,
+	}
+	runCtx := &run.Context{RunID: "run-child-canceled", SessionID: "session-1", TurnID: "turn-1"}
+	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
+	call := planner.ToolRequest{
+		Name:       spec.Name,
+		RunID:      runCtx.RunID,
+		SessionID:  runCtx.SessionID,
+		TurnID:     runCtx.TurnID,
+		ToolCallID: "child-cancel-call",
+	}
+	type result struct {
+		results []*ToolExecutionResult
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		results, _, err := rt.executeToolCalls(
+			wfCtx,
+			"execute",
+			engine.ActivityOptions{},
+			agent.Ident("agent-1"),
+			runCtx,
+			nil,
+			[]planner.ToolRequest{call},
+			0,
+			nil,
+			time.Time{},
+		)
+		done <- result{results: results, err: err}
+	}()
+
+	child := waitForChildHandle(t, childHandles, "canceled child handle")
+	child.err = context.Canceled
+	close(child.ready)
+	got := <-done
+
+	require.Error(t, got.err)
+	require.True(t, isRunCancellationError(got.err))
+	require.Empty(t, got.results)
+	for _, event := range recorder.events {
+		_, received := event.(*hooks.ToolResultReceivedEvent)
+		require.False(t, received)
+	}
+}
