@@ -182,8 +182,14 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
 {{- end }}
 {{- end }}
 {{- if $had }}
+type usedToolsetRegistrationOptions struct {
+    executors          map[string]agentsruntime.ToolCallExecutor
+    resultMaterializers map[string]agentsruntime.ResultMaterializer
+}
+
 // RegisterUsedToolsets registers all non-MCP Used toolsets for this agent with
-// the local runtime. Provide executors via typed options for each required toolset.
+// the local runtime. Provide executors for each required toolset and optional
+// result materializers through typed generated options.
 //
 // Example:
 //   err := RegisterUsedToolsets(ctx, rt,
@@ -193,20 +199,23 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
 {{- end }}
 {{- end }}
 //   )
-func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts ...func(map[string]agentsruntime.ToolCallExecutor)) error {
+func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts ...func(*usedToolsetRegistrationOptions)) error {
     if rt == nil {
         return errors.New("runtime is required")
     }
-    execs := make(map[string]agentsruntime.ToolCallExecutor)
+    cfg := &usedToolsetRegistrationOptions{
+        executors:           make(map[string]agentsruntime.ToolCallExecutor),
+        resultMaterializers: make(map[string]agentsruntime.ResultMaterializer),
+    }
     for _, o := range opts {
         if o != nil {
-            o(execs)
+            o(cfg)
         }
     }
     var missing []string
     {{- range .UsedToolsets }}
     {{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
-    if execs[{{ printf "%q" .QualifiedName }}] == nil {
+    if cfg.executors[{{ printf "%q" .QualifiedName }}] == nil {
         missing = append(missing, {{ printf "%q" .QualifiedName }})
     }
     {{- end }}
@@ -219,11 +228,12 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
     {{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
     {
         const toolsetID = {{ printf "%q" .QualifiedName }}
-        exec := execs[toolsetID]
+        exec := cfg.executors[toolsetID]
         reg := agentsruntime.ToolsetRegistration{
-            Name:  toolsetID,
-            Specs: {{ .SpecsPackageName }}.Specs,
+            Name:               toolsetID,
+            Specs:              {{ .SpecsPackageName }}.Specs,
             ToolMetadataLookup: {{ .SpecsPackageName }}.MetadataByName,
+            ResultMaterializer: cfg.resultMaterializers[toolsetID],
             Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
                 if call == nil {
                     return nil, fmt.Errorf("tool request is nil")
@@ -262,9 +272,16 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
     {{- range .UsedToolsets }}
     {{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
 // With{{ goify .PathName true }}Executor associates an executor for {{ .QualifiedName }}.
-func With{{ goify .PathName true }}Executor(exec agentsruntime.ToolCallExecutor) func(map[string]agentsruntime.ToolCallExecutor) {
-    return func(m map[string]agentsruntime.ToolCallExecutor) {
-        m[{{ printf "%q" .QualifiedName }}] = exec
+func With{{ goify .PathName true }}Executor(exec agentsruntime.ToolCallExecutor) func(*usedToolsetRegistrationOptions) {
+    return func(cfg *usedToolsetRegistrationOptions) {
+        cfg.executors[{{ printf "%q" .QualifiedName }}] = exec
+    }
+}
+
+// With{{ goify .PathName true }}ResultMaterializer associates a result materializer for {{ .QualifiedName }}.
+func With{{ goify .PathName true }}ResultMaterializer(materializer agentsruntime.ResultMaterializer) func(*usedToolsetRegistrationOptions) {
+    return func(cfg *usedToolsetRegistrationOptions) {
+        cfg.resultMaterializers[{{ printf "%q" .QualifiedName }}] = materializer
     }
 }
 

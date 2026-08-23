@@ -71,5 +71,7 @@ func TestExecutorTemplatesUseSpecializedDispatch(t *testing.T) {
 func TestRegistryTemplateValidatesExecutorsBeforeRegistration(t *testing.T) {
 	registry := agentsTemplates.Read(registryFileT)
 	assert.Contains(t, registry, `return fmt.Errorf("missing executors for toolsets: %v", missing)`)
+	assert.Contains(t, registry, "ResultMaterializer: cfg.resultMaterializers[toolsetID]")
+	assert.Contains(t, registry, "ResultMaterializer associates a result materializer")
 	assert.NotContains(t, registry, "no executor registered for toolset")
 }
