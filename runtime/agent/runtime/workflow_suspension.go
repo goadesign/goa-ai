@@ -25,31 +25,39 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/toolserverdata"
 )
 
 type (
 	workflowCheckpoint struct {
-		Version       string
-		AgentID       string
-		SessionID     string
-		ParentRunID   string
-		ParentAgentID string
-		ParentToolID  string
-		Tool          tools.Ident
-		ToolArgs      rawjson.Message
-		Labels        map[string]string
-		Metadata      map[string]any
-		Policy        *PolicyOverrides
-		BaseMessages  []*model.Message
-		BaseContext   run.Context
-		State         checkpointRunState
-		Batch         checkpointStepBatch
-		Pending       []checkpointPendingInput
-		RequiredTools []tools.Ident
-		HasBudget     bool
-		HasHard       bool
-		BudgetLeft    time.Duration
-		HardLeft      time.Duration
+		Version        string
+		AgentID        string
+		SessionID      string
+		PreviousRunID  string
+		PreviousTurnID string
+		Policy         *PolicyOverrides
+		BaseMessages   []*model.Message
+		Context        checkpointRunContext
+		State          checkpointRunState
+		Batch          checkpointStepBatch
+		Pending        []checkpointPendingInput
+		RequiredTools  []tools.Ident
+		HasBudget      bool
+		HasHard        bool
+		BudgetLeft     time.Duration
+		HardLeft       time.Duration
+	}
+
+	checkpointRunContext struct {
+		ParentToolCallID string
+		ParentRunID      string
+		ParentAgentID    agent.Ident
+		Tool             tools.Ident
+		ToolArgs         rawjson.Message
+		Attempt          int
+		Labels           map[string]string
+		Metadata         map[string]any
+		MaxDuration      string
 	}
 
 	checkpointRunState struct {
@@ -65,8 +73,8 @@ type (
 	}
 
 	checkpointStepBatch struct {
-		Result        *planner.PlanResult
-		Calls         []planner.ToolRequest
+		Result        *PlanResult
+		Calls         []ToolCall
 		AwaitItems    []planner.AwaitItem
 		Kind          stepKind
 		Records       []checkpointToolRecord
@@ -82,7 +90,7 @@ type (
 	}
 
 	checkpointToolRecord struct {
-		Call             planner.ToolRequest
+		Call             ToolCall
 		Result           *api.ToolEvent
 		CallRunID        string
 		ResultRunID      string
@@ -113,7 +121,7 @@ type (
 
 	checkpointConfirmation struct {
 		ID               string
-		Call             planner.ToolRequest
+		Call             ToolCall
 		ExpectedChildren int
 		Title            string
 		Prompt           string
@@ -286,20 +294,16 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 		reason := batch.finalize.reason
 		finalize = &reason
 	}
+	baseContext := retargetRunContext(l.base.RunContext, l.input)
 	checkpoint := &workflowCheckpoint{
-		Version:       api.RunSuspensionVersion,
-		AgentID:       string(l.input.AgentID),
-		SessionID:     l.input.SessionID,
-		ParentRunID:   l.input.ParentRunID,
-		ParentAgentID: string(l.input.ParentAgentID),
-		ParentToolID:  l.input.ParentToolCallID,
-		Tool:          l.input.Tool,
-		ToolArgs:      append(rawjson.Message(nil), l.input.ToolArgs...),
-		Labels:        cloneLabels(l.input.Labels),
-		Metadata:      cloneMetadata(l.input.Metadata),
-		Policy:        clonePolicyOverrides(l.input.Policy),
-		BaseMessages:  l.base.Messages,
-		BaseContext:   l.base.RunContext,
+		Version:        api.RunSuspensionVersion,
+		AgentID:        string(l.input.AgentID),
+		SessionID:      l.input.SessionID,
+		PreviousRunID:  l.input.RunID,
+		PreviousTurnID: l.input.TurnID,
+		Policy:         clonePolicyOverrides(l.input.Policy),
+		BaseMessages:   l.base.Messages,
+		Context:        checkpointContextFromRun(baseContext),
 		State: checkpointRunState{
 			Caps:                   l.st.Caps,
 			NextAttempt:            l.st.NextAttempt,
@@ -427,9 +431,24 @@ func (r *Runtime) decodeCheckpointToolEvent(ctx context.Context, event *api.Tool
 	if event == nil {
 		return nil, errors.New("run suspension contains nil tool event")
 	}
+	if event.Failure != nil && len(event.ServerData) > 0 {
+		return nil, fmt.Errorf("suspended failed tool result %s contains server data", event.Name)
+	}
+	serverData := rawjson.Message(nil)
+	if len(event.ServerData) > 0 {
+		spec, ok := r.toolSpec(event.Name)
+		if !ok {
+			return nil, fmt.Errorf("suspended tool result references unregistered tool %q", event.Name)
+		}
+		var err error
+		serverData, err = toolserverdata.Apply(spec.CanonicalizeServerData, event.ServerData)
+		if err != nil {
+			return nil, fmt.Errorf("validate suspended %s server data: %w", event.Name, err)
+		}
+	}
 	result := &planner.ToolResult{
 		Name:                event.Name,
-		ServerData:          append(rawjson.Message(nil), event.ServerData...),
+		ServerData:          serverData,
 		ResultBytes:         event.ResultBytes,
 		ResultOmitted:       event.ResultOmitted,
 		ResultOmittedReason: event.ResultOmittedReason,
@@ -454,11 +473,8 @@ func (r *Runtime) decodeCheckpointToolEvent(ctx context.Context, event *api.Tool
 // ExecuteWorkflow has restored and validated the checkpoint-owned input.
 func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg AgentRegistration, input *RunInput, checkpoint *workflowCheckpoint) (*RunOutput, error) {
 	base := &planner.PlanInput{
-		Messages: checkpoint.BaseMessages,
-		RunContext: retargetRunContext(
-			checkpoint.BaseContext,
-			input,
-		),
+		Messages:   checkpoint.BaseMessages,
+		RunContext: restoreCheckpointRunContext(checkpoint.Context, input),
 	}
 	state, err := r.restoreCheckpointState(wfCtx.Context(), checkpoint.State)
 	if err != nil {
@@ -520,13 +536,13 @@ func restoreContinuationRunInput(input *RunInput, checkpoint *workflowCheckpoint
 		return err
 	}
 
-	input.ParentRunID = checkpoint.ParentRunID
-	input.ParentAgentID = agent.Ident(checkpoint.ParentAgentID)
-	input.ParentToolCallID = checkpoint.ParentToolID
-	input.Tool = checkpoint.Tool
-	input.ToolArgs = append(rawjson.Message(nil), checkpoint.ToolArgs...)
-	input.Labels = cloneLabels(checkpoint.Labels)
-	input.Metadata = cloneMetadata(checkpoint.Metadata)
+	input.ParentRunID = checkpoint.Context.ParentRunID
+	input.ParentAgentID = checkpoint.Context.ParentAgentID
+	input.ParentToolCallID = checkpoint.Context.ParentToolCallID
+	input.Tool = checkpoint.Context.Tool
+	input.ToolArgs = append(rawjson.Message(nil), checkpoint.Context.ToolArgs...)
+	input.Labels = cloneLabels(checkpoint.Context.Labels)
+	input.Metadata = cloneMetadata(checkpoint.Context.Metadata)
 	input.Policy = clonePolicyOverrides(checkpoint.Policy)
 	return nil
 }
@@ -540,10 +556,10 @@ func validateContinuationIdentity(input *RunInput, checkpoint *workflowCheckpoin
 	if checkpoint.SessionID != input.SessionID {
 		return fmt.Errorf("run continuation session mismatch: checkpoint=%q input=%q", checkpoint.SessionID, input.SessionID)
 	}
-	if checkpoint.BaseContext.RunID == input.RunID {
+	if checkpoint.PreviousRunID == input.RunID {
 		return fmt.Errorf("run continuation requires a new run id distinct from %q", input.RunID)
 	}
-	if checkpoint.BaseContext.TurnID != "" && checkpoint.BaseContext.TurnID == input.TurnID {
+	if checkpoint.PreviousTurnID != "" && checkpoint.PreviousTurnID == input.TurnID {
 		return fmt.Errorf("run continuation requires a new turn id distinct from %q", input.TurnID)
 	}
 	return nil
@@ -561,6 +577,41 @@ func retargetRunContext(previous run.Context, input *RunInput) run.Context {
 	previous.Labels = input.Labels
 	previous.Metadata = input.Metadata
 	return previous
+}
+
+// checkpointContextFromRun keeps only execution facts that remain valid when a
+// continuation starts a new run and turn.
+func checkpointContextFromRun(context run.Context) checkpointRunContext {
+	return checkpointRunContext{
+		ParentToolCallID: context.ParentToolCallID,
+		ParentRunID:      context.ParentRunID,
+		ParentAgentID:    context.ParentAgentID,
+		Tool:             context.Tool,
+		ToolArgs:         append(rawjson.Message(nil), context.ToolArgs...),
+		Attempt:          context.Attempt,
+		Labels:           cloneLabels(context.Labels),
+		Metadata:         cloneMetadata(context.Metadata),
+		MaxDuration:      context.MaxDuration,
+	}
+}
+
+// restoreCheckpointRunContext combines saved stable facts with the new run and
+// turn identity supplied by the continuation request.
+func restoreCheckpointRunContext(saved checkpointRunContext, input *RunInput) run.Context {
+	return run.Context{
+		RunID:            input.RunID,
+		ParentToolCallID: saved.ParentToolCallID,
+		ParentRunID:      saved.ParentRunID,
+		ParentAgentID:    saved.ParentAgentID,
+		SessionID:        input.SessionID,
+		TurnID:           input.TurnID,
+		Tool:             saved.Tool,
+		ToolArgs:         append(rawjson.Message(nil), saved.ToolArgs...),
+		Attempt:          saved.Attempt,
+		Labels:           cloneLabels(saved.Labels),
+		Metadata:         cloneMetadata(saved.Metadata),
+		MaxDuration:      saved.MaxDuration,
+	}
 }
 
 func (r *Runtime) restoreCheckpointState(ctx context.Context, checkpoint checkpointRunState) (*runLoopState, error) {
@@ -641,19 +692,19 @@ func (r *Runtime) restoreCheckpointBatch(ctx context.Context, checkpoint checkpo
 	}, nil
 }
 
-func retargetPlanResult(result *planner.PlanResult, input *RunInput, runContext *run.Context) {
+func retargetPlanResult(result *PlanResult, input *RunInput, runContext *run.Context) {
 	result.ToolCalls = retargetToolRequests(result.ToolCalls, input, runContext)
 }
 
-func retargetToolRequests(calls []planner.ToolRequest, input *RunInput, runContext *run.Context) []planner.ToolRequest {
-	retargeted := make([]planner.ToolRequest, len(calls))
+func retargetToolRequests(calls []ToolCall, input *RunInput, runContext *run.Context) []ToolCall {
+	retargeted := make([]ToolCall, len(calls))
 	for i, call := range calls {
 		retargeted[i] = retargetToolRequest(call, input, runContext)
 	}
 	return retargeted
 }
 
-func retargetToolRequest(call planner.ToolRequest, input *RunInput, runContext *run.Context) planner.ToolRequest {
+func retargetToolRequest(call ToolCall, input *RunInput, runContext *run.Context) ToolCall {
 	call.AgentID = input.AgentID
 	call.RunID = input.RunID
 	call.SessionID = input.SessionID

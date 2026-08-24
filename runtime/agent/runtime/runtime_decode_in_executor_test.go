@@ -22,7 +22,7 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 	ts := ToolsetRegistration{
 		Name:             "svc.ts",
 		DecodeInExecutor: true,
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			called = true
 			// Payload must be raw JSON to honor decode-in-executor contract.
 			require.JSONEq(t, `{"x":1}`, string(call.Payload))

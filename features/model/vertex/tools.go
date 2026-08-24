@@ -29,7 +29,7 @@ func encodeTools(defs []*model.ToolDefinition, canonToProv map[string]string) ([
 		if def.Description == "" {
 			return nil, fmt.Errorf("vertex: tool %q requires a description", def.Name)
 		}
-		schema, err := normalizeSchema(def.Input.JSONSchema())
+		schema, err := normalizeSchema(def.Input.Contract().Schema)
 		if err != nil {
 			return nil, fmt.Errorf("vertex: tool %q schema: %w", def.Name, err)
 		}

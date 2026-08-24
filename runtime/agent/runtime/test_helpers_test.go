@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -26,6 +28,17 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+// mustRuntimeToolInput compiles a static test schema.
+func mustRuntimeToolInput(schema []byte) model.ToolInput {
+	input, err := model.AdvertisedToolInputFromSchema(schema)
+	if err != nil {
+		panic(err)
+	}
+	return input
+}
+
+const testPublicationBatchID = "7b62faf2-1667-4f54-a807-46d151764717"
 
 func testToolFailure(kind planner.FailureKind, action planner.RecoveryAction, message string) *planner.ToolFailure {
 	var priorInput rawjson.Message
@@ -42,8 +55,8 @@ func testToolFailure(kind planner.FailureKind, action planner.RecoveryAction, me
 	}
 }
 
-func wrapExecute(fn func(context.Context, *planner.ToolRequest) (*planner.ToolResult, error)) func(context.Context, *planner.ToolRequest) (*ToolExecutionResult, error) {
-	return func(ctx context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+func wrapExecute(fn func(context.Context, *ToolCall) (*planner.ToolResult, error)) func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
+	return func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 		result, err := fn(ctx, call)
 		if err != nil {
 			return nil, err
@@ -61,7 +74,7 @@ func (r *Runtime) runLoop(
 	reg AgentRegistration,
 	input *RunInput,
 	base *planner.PlanInput,
-	initialResult *planner.PlanResult,
+	initialResult *PlanResult,
 	caps policy.CapsState,
 	budgetDeadline time.Time,
 	hardDeadline time.Time,
@@ -93,6 +106,17 @@ func seedTestToolSpecs(rt *Runtime, specs ...tools.ToolSpec) {
 		rt.toolSpecs[spec.Name] = spec
 		rt.policyToolMetadata[spec.Name] = canonicalToolMetadata(spec, nil)
 	}
+}
+
+func testModelRequest(toolNames ...string) *model.Request {
+	definitions := make([]*model.ToolDefinition, len(toolNames))
+	for index, name := range toolNames {
+		definitions[index] = &model.ToolDefinition{
+			Name:  name,
+			Input: mustRuntimeToolInput([]byte(`{"type":"object"}`)),
+		}
+	}
+	return &model.Request{Tools: definitions}
 }
 
 func testModelResponse(content []model.Message, calls ...model.ToolCall) *model.Response {
@@ -145,12 +169,13 @@ type testWorkflowContext struct {
 	nextSequence uint64
 	workflowID   string
 
-	planResult    *planner.PlanResult
-	hasPlanResult bool
-	barrier       chan struct{}
-	hookRuntime   *Runtime // optional runtime for record activity execution
-	runtime       *Runtime // optional runtime for activity execution (plan/resume/execute)
-	childRuntime  *Runtime // optional runtime for child workflow execution
+	planResult      *PlanResult
+	hasPlanResult   bool
+	recoveryCatalog *RecoveryCatalog
+	barrier         chan struct{}
+	hookRuntime     *Runtime // optional runtime for record activity execution
+	runtime         *Runtime // optional runtime for activity execution (plan/resume/execute)
+	childRuntime    *Runtime // optional runtime for child workflow execution
 
 	childRequests      []engine.ChildWorkflowRequest
 	firstChildGetCount int
@@ -208,12 +233,13 @@ func (t *testWorkflowContext) Detached() engine.WorkflowContext {
 		workflowID:  t.workflowID,
 		now:         t.now,
 
-		planResult:    t.planResult,
-		hasPlanResult: t.hasPlanResult,
-		barrier:       t.barrier,
-		hookRuntime:   t.hookRuntime,
-		runtime:       t.runtime,
-		childRuntime:  t.childRuntime,
+		planResult:      t.planResult,
+		hasPlanResult:   t.hasPlanResult,
+		recoveryCatalog: t.recoveryCatalog,
+		barrier:         t.barrier,
+		hookRuntime:     t.hookRuntime,
+		runtime:         t.runtime,
+		childRuntime:    t.childRuntime,
 
 		childRequests:      t.childRequests,
 		firstChildGetCount: t.firstChildGetCount,
@@ -244,12 +270,13 @@ func (t *testWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 		workflowID:  t.workflowID,
 		now:         t.now,
 
-		planResult:    t.planResult,
-		hasPlanResult: t.hasPlanResult,
-		barrier:       t.barrier,
-		hookRuntime:   t.hookRuntime,
-		runtime:       t.runtime,
-		childRuntime:  t.childRuntime,
+		planResult:      t.planResult,
+		hasPlanResult:   t.hasPlanResult,
+		recoveryCatalog: t.recoveryCatalog,
+		barrier:         t.barrier,
+		hookRuntime:     t.hookRuntime,
+		runtime:         t.runtime,
+		childRuntime:    t.childRuntime,
 
 		childRequests:      t.childRequests,
 		firstChildGetCount: t.firstChildGetCount,
@@ -331,6 +358,10 @@ func (t *testWorkflowContext) StartChildWorkflow(ctx context.Context, req engine
 			out: &api.RunOutput{
 				AgentID: req.Input.AgentID,
 				RunID:   req.Input.RunID,
+				Final: &model.Message{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "completed"}},
+				},
 			},
 		}
 		t.controlledChildHandles <- h
@@ -375,13 +406,15 @@ func (t *testWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivity
 		}
 	}
 
-	var result *planner.PlanResult
+	var result *PlanResult
 	if t.hasPlanResult {
 		result = t.planResult
 	}
 	return &PlanActivityOutput{
-		Result:     result,
-		Transcript: nil,
+		PublicationBatchID: uuid.NewString(),
+		Result:             result,
+		Transcript:         nil,
+		RecoveryCatalog:    t.recoveryCatalog,
 	}, nil
 }
 
@@ -718,6 +751,10 @@ func (h *testChildHandle) Get(ctx context.Context) (*api.RunOutput, error) {
 	return &api.RunOutput{
 		AgentID: h.request.Input.AgentID,
 		RunID:   h.request.Input.RunID,
+		Final: &model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "completed"}},
+		},
 	}, nil
 }
 

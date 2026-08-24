@@ -1,82 +1,68 @@
-// Package planner implements the chat agent's brain. This file was
-// scaffolded by goa example and is application-owned: it demonstrates the
-// full plan -> tool -> resume loop deterministically. PlanStart requests the
-// helpers.answer tool with the user's question; PlanResume decodes the tool
-// result with the generated typed descriptor and finalizes with the answer.
-// Replace the deterministic decisions with LLM calls (via
-// in.Agent.PlannerModelClient) to make the agent smart.
+// Package planner contains the example planner for ChatAgent.
+// Goa creates this file only when it does not already exist. The application
+// owns all later edits.
 package planner
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	genhelpers "example.com/quickstart/gen/orchestrator/toolsets/helpers"
+	gentool "example.com/quickstart/gen/orchestrator/toolsets/helpers"
 	model "goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 )
 
-// chatPlanner is a deterministic planner.Planner: one tool round-trip, then a
-// final answer. Production planners make the same two decisions with an LLM.
-type chatPlanner struct{}
+// New returns the example planner registered by the generated bootstrap.
+// Replace it with the planner that should answer real application requests.
+func New() planner.Planner { return &examplePlanner{} }
 
-// New returns the chat agent's planner.
-func New() planner.Planner { return &chatPlanner{} }
+// examplePlanner makes one sample tool call and turns its result into an
+// assistant reply. It lets a new application run without model credentials.
+type examplePlanner struct{}
 
-// PlanStart asks the runtime to execute helpers.answer with the user's
-// question. The generated typed descriptor (genhelpers.AnswerTool) encodes
-// the payload, so a design change that renames or retypes a field breaks
-// this planner at compile time instead of at runtime.
-func (p *chatPlanner) PlanStart(_ context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
-	question := lastUserText(in.Messages)
-	if question == "" {
-		return nil, errors.New("no user question in conversation")
-	}
-	payload, err := genhelpers.AnswerTool.Payload.ToJSON(&genhelpers.AnswerPayload{Question: question})
+// PlanStart requests the example tool call selected from the design.
+func (*examplePlanner) PlanStart(_ context.Context, _ *planner.PlanInput) (*planner.PlanResult, error) {
+	args, err := gentool.AnswerPayloadCodec().FromJSON(gentool.SpecAnswer().Payload.ExampleJSON)
 	if err != nil {
-		return nil, fmt.Errorf("encode %s payload: %w", genhelpers.Answer, err)
+		return nil, fmt.Errorf("decode generated helpers.answer example: %w", err)
+	}
+	call, err := planner.NewToolRequest(gentool.AnswerTool(), args)
+	if err != nil {
+		return nil, fmt.Errorf("build generated helpers.answer call: %w", err)
 	}
 	return &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{Name: genhelpers.Answer, Payload: payload}},
+		ToolCalls: []planner.ToolRequest{
+			call,
+		},
 	}, nil
 }
 
-// PlanResume decodes the helpers.answer result from the executed tool history
-// and finalizes the run with the answer text.
-func (p *chatPlanner) PlanResume(_ context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
-	for i := len(in.ToolOutputs) - 1; i >= 0; i-- {
-		out := in.ToolOutputs[i]
-		if out.Name != genhelpers.Answer || len(out.Result) == 0 {
-			continue
+// PlanResume turns the example tool result into the assistant's final reply.
+func (*examplePlanner) PlanResume(_ context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
+	if len(in.ToolOutputs) != 1 {
+		return nil, fmt.Errorf("expected one helpers.answer result, got %d", len(in.ToolOutputs))
+	}
+	output := in.ToolOutputs[0]
+	if output.Name != gentool.Answer {
+		return nil, fmt.Errorf("unexpected tool result %s (%s)", output.Name, output.ToolCallID)
+	}
+	if output.Failure != nil {
+		if output.Failure.Error.Cause != nil {
+			return nil, fmt.Errorf(
+				"helpers.answer failed: %s: %s",
+				output.Failure.Error.Message,
+				output.Failure.Error.Cause.Message,
+			)
 		}
-		answer, err := genhelpers.AnswerTool.Result.FromJSON(out.Result)
-		if err != nil {
-			return nil, fmt.Errorf("decode %s result: %w", genhelpers.Answer, err)
-		}
-		return &planner.PlanResult{
-			FinalResponse: &planner.FinalResponse{
-				Message: &model.Message{
-					Role:  model.ConversationRoleAssistant,
-					Parts: []model.Part{model.TextPart{Text: answer.Text}},
-				},
+		return nil, fmt.Errorf("helpers.answer failed: %s", output.Failure.Error.Message)
+	}
+	answer := fmt.Sprintf("Tool %s returned %s", output.Name, output.Result)
+	return &planner.PlanResult{
+		FinalResponse: &planner.FinalResponse{
+			Message: &model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: answer}},
 			},
-		}, nil
-	}
-	return nil, fmt.Errorf("no successful %s result in tool history", genhelpers.Answer)
-}
-
-// lastUserText returns the text of the most recent user message.
-func lastUserText(messages []*model.Message) string {
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role != model.ConversationRoleUser {
-			continue
-		}
-		for _, part := range messages[i].Parts {
-			if text, ok := part.(model.TextPart); ok {
-				return text.Text
-			}
-		}
-	}
-	return ""
+		},
+	}, nil
 }

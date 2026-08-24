@@ -9,10 +9,11 @@ package completions
 
 import (
 	"context"
+	"slices"
 
 	"goa.design/goa-ai/runtime/agent/completion"
 	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 // Completion IDs for this service.
@@ -20,39 +21,30 @@ const (
 	DraftTask completion.Ident = "draft_task"
 )
 
-var (
-	SpecDraftTask = completion.Spec[*DraftTaskResult]{
-		Name:        DraftTask,
-		Description: "Produce a task draft directly",
-		Result: tools.TypeSpec{
-			Name:                     "DraftTaskResult",
-			Schema:                   tools.RawJSON("{\"$defs\":{\"DraftTaskStep\":{\"example\":{\"title\":\"Review the current launch checklist\"},\"properties\":{\"title\":{\"description\":\"Short step title\",\"type\":\"string\"}},\"required\":[\"title\"],\"title\":\"DraftTaskStep\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"example\":{\"assistant_text\":\"Created a launch-readiness task draft.\",\"goal\":\"Confirm the service is ready to launch.\",\"name\":\"Prepare launch checklist\",\"steps\":[{\"title\":\"Review release notes and rollout scope\"},{\"title\":\"Confirm dashboards and alerts are healthy\"},{\"title\":\"Share the launch checklist with stakeholders\"}]},\"properties\":{\"assistant_text\":{\"description\":\"Short explanation of the generated draft\",\"type\":\"string\"},\"goal\":{\"description\":\"Outcome-style goal\",\"type\":\"string\"},\"name\":{\"description\":\"Task name\",\"type\":\"string\"},\"steps\":{\"description\":\"Ordered draft steps\",\"items\":{\"$ref\":\"#/$defs/DraftTaskStep\"},\"type\":\"array\"}},\"required\":[\"assistant_text\",\"name\",\"goal\",\"steps\"],\"type\":\"object\"}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$defs\":{\"DraftTaskStep\":{\"example\":{\"title\":\"Review the current launch checklist\"},\"properties\":{\"title\":{\"description\":\"Short step title\",\"type\":\"string\"}},\"required\":[\"title\"],\"title\":\"DraftTaskStep\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"assistant_text\":{\"description\":\"Short explanation of the generated draft\",\"type\":\"string\"},\"goal\":{\"description\":\"Outcome-style goal\",\"type\":\"string\"},\"name\":{\"description\":\"Task name\",\"type\":\"string\"},\"steps\":{\"description\":\"Ordered draft steps\",\"items\":{\"$ref\":\"#/$defs/DraftTaskStep\"},\"type\":\"array\"}},\"required\":[\"assistant_text\",\"name\",\"goal\",\"steps\"],\"type\":\"object\"}"),
-			ExampleJSON:              tools.RawJSON("{\"assistant_text\":\"Created a launch-readiness task draft.\",\"goal\":\"Confirm the service is ready to launch.\",\"name\":\"Prepare launch checklist\",\"steps\":[{\"title\":\"Review release notes and rollout scope\"},{\"title\":\"Confirm dashboards and alerts are healthy\"},{\"title\":\"Share the launch checklist with stakeholders\"}]}"),
-			FieldDescriptions:        DraftTaskResultFieldDescs,
-			FieldJSONTypes:           DraftTaskResultFieldJSONTypes,
-			Codec:                    draftTaskResultCodec,
-		},
-		Codec: DraftTaskResultCodec,
+// specDraftTask returns a fresh typed completion contract for draft_task.
+func specDraftTask() completion.Spec[*DraftTaskResult] {
+	return completion.Spec[*DraftTaskResult]{
+		Name:                     DraftTask,
+		Description:              "Produce a task draft directly",
+		Schema:                   rawjson.Message("{\"$defs\":{\"DraftTaskStep\":{\"example\":{\"title\":\"Review the current launch checklist\"},\"properties\":{\"title\":{\"description\":\"Short step title\",\"type\":\"string\"}},\"required\":[\"title\"],\"title\":\"DraftTaskStep\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"example\":{\"assistant_text\":\"Created a launch-readiness task draft.\",\"goal\":\"Confirm the service is ready to launch.\",\"name\":\"Prepare launch checklist\",\"steps\":[{\"title\":\"Review release notes and rollout scope\"},{\"title\":\"Confirm dashboards and alerts are healthy\"},{\"title\":\"Share the launch checklist with stakeholders\"}]},\"properties\":{\"assistant_text\":{\"description\":\"Short explanation of the generated draft\",\"type\":\"string\"},\"goal\":{\"description\":\"Outcome-style goal\",\"type\":\"string\"},\"name\":{\"description\":\"Task name\",\"type\":\"string\"},\"steps\":{\"description\":\"Ordered draft steps\",\"items\":{\"$ref\":\"#/$defs/DraftTaskStep\"},\"type\":\"array\"}},\"required\":[\"assistant_text\",\"name\",\"goal\",\"steps\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: rawjson.Message("{\"$defs\":{\"DraftTaskStep\":{\"example\":{\"title\":\"Review the current launch checklist\"},\"properties\":{\"title\":{\"description\":\"Short step title\",\"type\":\"string\"}},\"required\":[\"title\"],\"title\":\"DraftTaskStep\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"assistant_text\":{\"description\":\"Short explanation of the generated draft\",\"type\":\"string\"},\"goal\":{\"description\":\"Outcome-style goal\",\"type\":\"string\"},\"name\":{\"description\":\"Task name\",\"type\":\"string\"},\"steps\":{\"description\":\"Ordered draft steps\",\"items\":{\"$ref\":\"#/$defs/DraftTaskStep\"},\"type\":\"array\"}},\"required\":[\"assistant_text\",\"name\",\"goal\",\"steps\"],\"type\":\"object\"}"),
+		ExampleJSON:              rawjson.Message("{\"assistant_text\":\"Created a launch-readiness task draft.\",\"goal\":\"Confirm the service is ready to launch.\",\"name\":\"Prepare launch checklist\",\"steps\":[{\"title\":\"Review release notes and rollout scope\"},{\"title\":\"Confirm dashboards and alerts are healthy\"},{\"title\":\"Share the launch checklist with stakeholders\"}]}"),
+		Codec:                    newDraftTaskResultCodec(),
 	}
-)
-
-// DecodeDraftTask decodes the structured assistant response for draft_task.
-func DecodeDraftTask(resp *model.Response) (*DraftTaskResult, error) {
-	return completion.DecodeResponse(resp, SpecDraftTask)
 }
 
-// DecodeDraftTaskChunk decodes the final structured completion chunk for draft_task.
-func DecodeDraftTaskChunk(chunk model.Chunk) (*DraftTaskResult, bool, error) {
-	return completion.DecodeChunk(chunk, SpecDraftTask)
+// DraftTaskExample returns an immutable copy of the generated example
+// used to demonstrate draft_task output.
+func DraftTaskExample() rawjson.Message {
+	return slices.Clone(specDraftTask().ExampleJSON)
 }
 
 // CompleteDraftTask runs the unary typed completion for draft_task.
 func CompleteDraftTask(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[*DraftTaskResult], error) {
-	return completion.Complete(ctx, client, req, SpecDraftTask)
+	return completion.Complete(ctx, client, req, specDraftTask())
 }
 
 // StreamCompleteDraftTask starts the typed completion stream for draft_task.
-func StreamCompleteDraftTask(ctx context.Context, client model.Client, req *model.Request) (model.Streamer, error) {
-	return completion.Stream(ctx, client, req, SpecDraftTask)
+func StreamCompleteDraftTask(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[*DraftTaskResult], error) {
+	return completion.Stream(ctx, client, req, specDraftTask())
 }

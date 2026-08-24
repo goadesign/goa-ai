@@ -17,20 +17,15 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
-// toolCodec carries the reversible per-request tool projection state: the
-// sanitized names exchanged with OpenAI in both directions and the canonical
-// input schemas needed to canonicalize strict-mode tool arguments on the way
-// back. Methods tolerate a nil receiver so translation paths need no tool
-// bookkeeping when a request declares no tools.
+// toolCodec carries the reversible per-request tool-name projection used to
+// reject any provider tool name that was not advertised by this request.
 type toolCodec struct {
 	canonicalToProvider map[string]string
 	providerToCanonical map[string]string
-	canonicalSchemas    map[string]rawjson.Message
+	projections         map[string]*strictSchemaProjection
 }
 
-const structuredOutputDefaultName = "structured_output"
-
-func encodeTools(defs []*model.ToolDefinition) ([]responses.ToolUnionParam, *toolCodec, error) {
+func encodeTools(defs []*model.ToolDefinition, modelID string) ([]responses.ToolUnionParam, *toolCodec, error) {
 	if len(defs) == 0 {
 		return nil, nil, nil
 	}
@@ -42,26 +37,27 @@ func encodeTools(defs []*model.ToolDefinition) ([]responses.ToolUnionParam, *too
 	codec := &toolCodec{
 		canonicalToProvider: canonToProv,
 		providerToCanonical: provToCanon,
-		canonicalSchemas:    make(map[string]rawjson.Message, len(defs)),
+		projections:         make(map[string]*strictSchemaProjection, len(defs)),
 	}
 	for _, def := range defs {
 		if def.Description == "" {
 			return nil, nil, fmt.Errorf("openai: tool %q is missing description", def.Name)
 		}
-		schema := def.Input.JSONSchema()
-		parameters, err := projectStrictSchema(schema)
+		schema := def.Input.Contract().Schema
+		projection, err := compileStrictSchemaForModel(schema, modelID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("openai: tool %q schema: %w", def.Name, err)
 		}
+		providerName := canonToProv[def.Name]
+		codec.projections[providerName] = projection
 		tools = append(tools, responses.ToolUnionParam{
 			OfFunction: &responses.FunctionToolParam{
-				Name:        canonToProv[def.Name],
+				Name:        providerName,
 				Description: param.NewOpt(def.Description),
-				Parameters:  parameters,
+				Parameters:  projection.schema,
 				Strict:      param.NewOpt(true),
 			},
 		})
-		codec.canonicalSchemas[def.Name] = schema
 	}
 	return tools, codec, nil
 }
@@ -115,24 +111,23 @@ func encodeToolChoice(
 	}
 }
 
-func encodeStructuredOutput(output *model.StructuredOutput) (responses.ResponseTextConfigParam, bool, error) {
+func encodeStructuredOutput(
+	output *model.StructuredOutput,
+	modelID string,
+) (responses.ResponseTextConfigParam, *strictSchemaProjection, bool, error) {
 	if output == nil {
-		return responses.ResponseTextConfigParam{}, false, nil
+		return responses.ResponseTextConfigParam{}, nil, false, nil
 	}
 	schema := bytes.TrimSpace(output.Schema)
 	if len(schema) == 0 {
-		return responses.ResponseTextConfigParam{}, false, errors.New(
+		return responses.ResponseTextConfigParam{}, nil, false, errors.New(
 			"openai: structured output schema is required",
 		)
 	}
-	name := structuredOutputDefaultName
-	if output.Name != "" {
-		name = output.Name
-	}
-	name = toolname.Sanitize(name)
-	parameters, err := projectStrictSchema(rawjson.Message(schema))
+	name := toolname.Sanitize(output.Name)
+	projection, err := compileStrictSchemaForModel(rawjson.Message(schema), modelID)
 	if err != nil {
-		return responses.ResponseTextConfigParam{}, false, fmt.Errorf(
+		return responses.ResponseTextConfigParam{}, nil, false, fmt.Errorf(
 			"openai: structured output %q schema: %w",
 			name,
 			err,
@@ -142,32 +137,44 @@ func encodeStructuredOutput(output *model.StructuredOutput) (responses.ResponseT
 		Format: responses.ResponseFormatTextConfigUnionParam{
 			OfJSONSchema: &responses.ResponseFormatTextJSONSchemaConfigParam{
 				Name:   name,
-				Schema: parameters,
+				Schema: projection.schema,
 				Strict: param.NewOpt(true),
 			},
 		},
-	}, true, nil
+	}, projection, true, nil
 }
 
-// canonicalName maps a provider-visible tool name back to its canonical
-// goa-ai identifier. Unknown names pass through unchanged.
-func (c *toolCodec) canonicalName(providerName string) string {
+// canonicalName maps an advertised provider-visible tool name back to its
+// canonical goa-ai identifier.
+func (c *toolCodec) canonicalName(providerName string) (string, bool) {
 	if c == nil {
-		return providerName
+		return "", false
 	}
-	if canonical, ok := c.providerToCanonical[providerName]; ok {
-		return canonical
-	}
-	return providerName
+	canonical, ok := c.providerToCanonical[providerName]
+	return canonical, ok
 }
 
-// canonicalSchema returns the canonical input schema recorded for a canonical
-// tool name, or nil when the request declared no such tool.
-func (c *toolCodec) canonicalSchema(canonicalName string) rawjson.Message {
+// canonicalPayload removes transport-only nulls using the exact schema
+// projection paired with providerName.
+func (c *toolCodec) canonicalPayload(providerName string, payload []byte) (rawjson.Message, error) {
 	if c == nil {
-		return nil
+		return nil, errors.New("openai: tool codec is required")
 	}
-	return c.canonicalSchemas[canonicalName]
+	projection := c.projections[providerName]
+	if projection == nil {
+		return nil, fmt.Errorf("openai: tool %q has no strict schema projection", providerName)
+	}
+	return projection.canonicalize(payload)
+}
+
+// streamsCanonicalDeltas reports whether provider argument fragments already
+// concatenate to the canonical payload accepted by the generated tool codec.
+func (c *toolCodec) streamsCanonicalDeltas(providerName string) bool {
+	if c == nil {
+		return false
+	}
+	projection := c.projections[providerName]
+	return projection != nil && !projection.canonicalizes
 }
 
 // providerNames returns the canonical-to-provider name mapping used when

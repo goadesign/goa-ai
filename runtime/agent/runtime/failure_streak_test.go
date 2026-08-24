@@ -84,7 +84,7 @@ func TestBudgetedBatchOutcome(t *testing.T) {
 			result.Failure = testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom")
 		}
 		return stepToolRecord{
-			call:   planner.ToolRequest{Name: name, ToolCallID: "call-" + string(name)},
+			call:   ToolCall{Name: name, ToolCallID: "call-" + string(name)},
 			result: result,
 		}
 	}

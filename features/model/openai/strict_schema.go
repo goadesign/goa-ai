@@ -8,36 +8,41 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
-// strict_schema.go owns the OpenAI strict-mode schema projection and its
-// inverse. The adapter always requests function tools and structured outputs
+// strict_schema.go owns the OpenAI strict-mode schema projection. The adapter
+// always requests function tools and structured outputs
 // with strict:true, and OpenAI only accepts a constrained JSON Schema subset
 // in that mode: every object must set additionalProperties:false and list all
 // of its properties as required, with optionality expressed as a null type
 // union, and unions expressed only as anyOf. The canonical generated schema
 // stays provider-neutral and remains the source of truth for local decoding;
 // this file either produces a generation-equivalent strict schema — one that
-// accepts every instance the canonical schema accepts, folding oneOf into
-// anyOf and dropping constraints strict mode rejects — or rejects the
-// contract explicitly when OpenAI cannot represent it (open objects and
-// map-style additionalProperties).
+// accepts every instance the canonical schema accepts, folding provably
+// exclusive oneOf branches into anyOf and dropping constraints strict mode
+// rejects — or rejects the contract explicitly when OpenAI cannot represent it
+// (overlapping oneOf branches, open objects, and map-style
+// additionalProperties).
 //
-// The projection introduces exactly one model-visible artifact: canonically
-// optional members become nullable, so strict decoding emits explicit null
-// for members the model wants to omit. canonicalizeStrictPayload is the exact
-// inverse: it removes null members wherever the canonical schema does not
-// accept null. Those locations are precisely the ones the projection
-// rewrote, so payloads handed to the runtime keep the canonical encoding of
-// absence while members whose canonical contracts accept null pass through
-// untouched.
+// The projection can make canonically optional members nullable because strict
+// mode requires every object member. The same compiled projection removes only
+// those transport-only null members before generated canonical validation.
 
 const (
 	strictSchemaTypeObject = "object"
 	strictSchemaTypeString = "string"
 	strictSchemaTypeNull   = "null"
+	strictSchemaResource   = "schema://goa-ai/openai/canonical.json"
+	strictSchemaMaxDepth   = 10
+	strictSchemaMaxEnums   = 1_000
+	strictSchemaMaxProps   = 5_000
+	strictSchemaMaxStrings = 120_000
+	strictSchemaMaxEnumStr = 15_000
 )
 
 var (
@@ -70,8 +75,88 @@ var (
 	// user-chosen names (property or definition names), never schema keywords.
 	// Keyword handling must not apply at that level: a property legitimately
 	// named "default" is data, not a keyword.
-	strictChildSchemaMapKeywords = []string{"properties", "$defs", "definitions"}
+	strictChildSchemaMapKeywords = []string{"properties", "patternProperties", "$defs", "definitions"}
+
+	// strictAllowedKeywords is the JSON Schema subset accepted by OpenAI
+	// strict mode after this adapter removes annotations and rewrites oneOf.
+	strictAllowedKeywords = map[string]struct{}{
+		"$defs":                {},
+		"$ref":                 {},
+		"additionalProperties": {},
+		"anyOf":                {},
+		"const":                {},
+		"description":          {},
+		"enum":                 {},
+		"exclusiveMaximum":     {},
+		"exclusiveMinimum":     {},
+		"format":               {},
+		"items":                {},
+		"maximum":              {},
+		"maxItems":             {},
+		"maxLength":            {},
+		"minimum":              {},
+		"minLength":            {},
+		"minItems":             {},
+		"multipleOf":           {},
+		"pattern":              {},
+		"patternProperties":    {},
+		"properties":           {},
+		"required":             {},
+		"title":                {},
+		"type":                 {},
+	}
+
+	// fineTunedUnsupportedKeywords are valid for base OpenAI models but are
+	// rejected by Structured Outputs on model IDs beginning with "ft:".
+	fineTunedUnsupportedKeywords = map[string]struct{}{
+		"format":            {},
+		"maxItems":          {},
+		"maxLength":         {},
+		"maximum":           {},
+		"minItems":          {},
+		"minLength":         {},
+		"minimum":           {},
+		"multipleOf":        {},
+		"pattern":           {},
+		"patternProperties": {},
+	}
 )
+
+type (
+	// strictSchemaProjection contains the provider schema plus the generated
+	// paths where OpenAI may emit null only because strict mode made an
+	// optional canonical member required.
+	strictSchemaProjection struct {
+		schema        map[string]any
+		root          *strictNullProjection
+		canonicalizes bool
+	}
+
+	// strictNullProjection describes canonical object and array structure.
+	// dropNull is true only for a canonically optional, non-nullable member.
+	strictNullProjection struct {
+		dropNull   bool
+		properties map[string]*strictNullProjection
+		item       *strictNullProjection
+	}
+
+	// strictSchemaLoader rejects references outside the canonical schema
+	// document while nullability is compiled.
+	strictSchemaLoader struct{}
+
+	// strictSchemaUsage accumulates OpenAI's document-wide schema limits while
+	// the final provider document is checked.
+	strictSchemaUsage struct {
+		properties  int
+		enumValues  int
+		stringChars int
+	}
+)
+
+// Load rejects every external schema reference.
+func (strictSchemaLoader) Load(url string) (any, error) {
+	return nil, fmt.Errorf("external schema reference %q is not allowed", url)
+}
 
 // projectStrictSchema rewrites one canonical JSON Schema document into the
 // subset OpenAI strict mode accepts and returns it in the decoded form the SDK
@@ -79,9 +164,27 @@ var (
 // object. Callers wrap returned errors with the owning tool or
 // structured-output name.
 func projectStrictSchema(schema rawjson.Message) (map[string]any, error) {
+	projection, err := compileStrictSchema(schema)
+	if err != nil {
+		return nil, err
+	}
+	return projection.schema, nil
+}
+
+// compileStrictSchema builds the provider projection and the exact inverse for
+// transport-only null members in one pass over the canonical schema.
+func compileStrictSchema(schema rawjson.Message) (*strictSchemaProjection, error) {
+	return compileStrictSchemaForModel(schema, "")
+}
+
+// compileStrictSchemaForModel applies the stricter JSON Schema subset used by
+// OpenAI fine-tuned model IDs before returning the provider projection.
+func compileStrictSchemaForModel(schema rawjson.Message, modelID string) (*strictSchemaProjection, error) {
 	data := bytes.TrimSpace(schema)
 	if len(data) == 0 {
-		return map[string]any{"type": strictSchemaTypeObject, "additionalProperties": false}, nil
+		return &strictSchemaProjection{
+			schema: map[string]any{"type": strictSchemaTypeObject, "additionalProperties": false},
+		}, nil
 	}
 	if !json.Valid(data) {
 		return nil, errors.New("invalid JSON schema")
@@ -95,69 +198,253 @@ func projectStrictSchema(schema rawjson.Message) (map[string]any, error) {
 	if !includesSchemaType(doc, strictSchemaTypeObject) {
 		return nil, fmt.Errorf("schema root must declare type %q; OpenAI strict mode only accepts object payloads", strictSchemaTypeObject)
 	}
-	if err := projectStrictNode(doc, "$"); err != nil {
+	compiler := jsonschema.NewCompiler()
+	compiler.UseLoader(strictSchemaLoader{})
+	if err := compiler.AddResource(strictSchemaResource, doc); err != nil {
+		return nil, fmt.Errorf("add canonical schema: %w", err)
+	}
+	if _, err := compiler.Compile(strictSchemaResource); err != nil {
+		return nil, fmt.Errorf("compile canonical schema: %w", err)
+	}
+	nulls, err := buildStrictNullProjection(
+		doc,
+		doc,
+		compiler,
+		strictSchemaResource+"#",
+		make(map[string]*strictNullProjection),
+	)
+	if err != nil {
 		return nil, err
 	}
-	return doc, nil
+	if err := projectStrictNode(doc, "$", compiler, strictSchemaResource+"#"); err != nil {
+		return nil, err
+	}
+	if strings.HasPrefix(modelID, "ft:") {
+		if err := validateFineTunedStrictSchemaNode(doc, "$"); err != nil {
+			return nil, err
+		}
+	}
+	if err := validateStrictSchemaSubset(doc); err != nil {
+		return nil, err
+	}
+	return &strictSchemaProjection{
+		schema:        doc,
+		root:          nulls,
+		canonicalizes: strictProjectionDropsNulls(nulls),
+	}, nil
 }
 
-// canonicalizeStrictPayload restores the canonical encoding of absence in a
-// strict-mode payload: the projection makes optional members nullable, so the
-// model emits explicit null to omit them. Null members are removed exactly
-// where the canonical schema does not accept null; by construction those are
-// the members the projection rewrote. schema is the canonical (unprojected)
-// schema. Payloads without projection artifacts are returned unchanged.
-func canonicalizeStrictPayload(schema, payload rawjson.Message) (rawjson.Message, error) {
-	schemaData := bytes.TrimSpace(schema)
-	payloadData := bytes.TrimSpace(payload)
-	if len(schemaData) == 0 || len(payloadData) == 0 {
-		return payload, nil
+// strictProjectionDropsNulls reports whether the provider schema can emit a
+// null member that the canonical tool payload must omit.
+func strictProjectionDropsNulls(projection *strictNullProjection) bool {
+	if projection == nil {
+		return false
 	}
-	if !json.Valid(schemaData) {
-		return nil, errors.New("invalid canonical schema")
+	if projection.dropNull || strictProjectionDropsNulls(projection.item) {
+		return true
 	}
-	if !json.Valid(payloadData) {
-		return nil, errors.New("invalid payload JSON")
+	for _, child := range projection.properties {
+		if strictProjectionDropsNulls(child) {
+			return true
+		}
 	}
-	var root map[string]any
-	schemaDecoder := json.NewDecoder(bytes.NewReader(schemaData))
-	schemaDecoder.UseNumber()
-	if err := schemaDecoder.Decode(&root); err != nil {
-		return nil, fmt.Errorf("invalid canonical schema: %w", err)
+	return false
+}
+
+// validateStrictSchemaSubset rejects provider documents that exceed OpenAI's
+// strict-schema keywords or document-wide size limits.
+func validateStrictSchemaSubset(root map[string]any) error {
+	if _, ok := root["anyOf"]; ok {
+		return errors.New("schema root cannot use anyOf in OpenAI strict mode")
 	}
-	var doc any
-	decoder := json.NewDecoder(bytes.NewReader(payloadData))
-	decoder.UseNumber()
-	if err := decoder.Decode(&doc); err != nil {
-		return nil, fmt.Errorf("invalid payload JSON: %w", err)
+	usage := &strictSchemaUsage{}
+	return validateStrictSchemaNode(root, "$", 1, usage)
+}
+
+// validateStrictSchemaNode checks one schema node and recursively charges the
+// property names, definition names, and enum strings OpenAI limits.
+func validateStrictSchemaNode(node map[string]any, path string, depth int, usage *strictSchemaUsage) error {
+	if depth > strictSchemaMaxDepth {
+		return fmt.Errorf("schema at %s exceeds OpenAI's maximum nesting depth %d", path, strictSchemaMaxDepth)
 	}
-	if !canonicalizeStrictValue(resolveStrictSchemas(root, root, nil), doc, root) {
-		return payload, nil
+	for keyword := range node {
+		if _, ok := strictAllowedKeywords[keyword]; !ok {
+			return fmt.Errorf("schema at %s uses unsupported OpenAI strict-mode keyword %q", path, keyword)
+		}
 	}
-	normalized, err := json.Marshal(doc)
-	if err != nil {
-		return nil, fmt.Errorf("marshal canonicalized payload: %w", err)
+	if values, ok := node["enum"].([]any); ok {
+		usage.enumValues += len(values)
+		if usage.enumValues > strictSchemaMaxEnums {
+			return fmt.Errorf("schema exceeds OpenAI's maximum of %d enum values", strictSchemaMaxEnums)
+		}
+		enumChars := 0
+		for _, value := range values {
+			if text, ok := value.(string); ok {
+				chars := utf8.RuneCountInString(text)
+				enumChars += chars
+				usage.stringChars += chars
+			}
+		}
+		if len(values) > 250 && enumChars > strictSchemaMaxEnumStr {
+			return fmt.Errorf(
+				"schema enum at %s exceeds OpenAI's %d-character limit for more than 250 values",
+				path,
+				strictSchemaMaxEnumStr,
+			)
+		}
 	}
-	return rawjson.Message(normalized), nil
+	if value, ok := node["const"].(string); ok {
+		usage.stringChars += utf8.RuneCountInString(value)
+	}
+	if properties, ok := node["properties"].(map[string]any); ok {
+		usage.properties += len(properties)
+		if usage.properties > strictSchemaMaxProps {
+			return fmt.Errorf("schema exceeds OpenAI's maximum of %d object properties", strictSchemaMaxProps)
+		}
+		for name, rawChild := range properties {
+			usage.stringChars += utf8.RuneCountInString(name)
+			child, ok := rawChild.(map[string]any)
+			if !ok {
+				return fmt.Errorf("schema property %s.%s is not an object", path, name)
+			}
+			if err := validateStrictSchemaNode(child, path+".properties."+name, depth+1, usage); err != nil {
+				return err
+			}
+		}
+	}
+	if patterns, ok := node["patternProperties"].(map[string]any); ok {
+		for pattern, rawChild := range patterns {
+			usage.stringChars += utf8.RuneCountInString(pattern)
+			child, ok := rawChild.(map[string]any)
+			if !ok {
+				return fmt.Errorf("schema pattern property %s.%s is not an object", path, pattern)
+			}
+			if err := validateStrictSchemaNode(
+				child,
+				path+".patternProperties."+pattern,
+				depth+1,
+				usage,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	if item, ok := node["items"].(map[string]any); ok {
+		if err := validateStrictSchemaNode(item, path+".items", depth+1, usage); err != nil {
+			return err
+		}
+	}
+	if branches, ok := node["anyOf"].([]any); ok {
+		for index, rawBranch := range branches {
+			branch, ok := rawBranch.(map[string]any)
+			if !ok {
+				return fmt.Errorf("schema branch %s.anyOf[%d] is not an object", path, index)
+			}
+			if err := validateStrictSchemaNode(branch, fmt.Sprintf("%s.anyOf[%d]", path, index), depth, usage); err != nil {
+				return err
+			}
+		}
+	}
+	if definitions, ok := node["$defs"].(map[string]any); ok {
+		for name, rawDefinition := range definitions {
+			usage.stringChars += utf8.RuneCountInString(name)
+			definition, ok := rawDefinition.(map[string]any)
+			if !ok {
+				return fmt.Errorf("schema definition %s.$defs.%s is not an object", path, name)
+			}
+			if err := validateStrictSchemaNode(definition, path+".$defs."+name, depth, usage); err != nil {
+				return err
+			}
+		}
+	}
+	if usage.stringChars > strictSchemaMaxStrings {
+		return fmt.Errorf(
+			"schema exceeds OpenAI's %d-character limit for names, enum values, and constants",
+			strictSchemaMaxStrings,
+		)
+	}
+	return nil
+}
+
+// validateFineTunedStrictSchemaNode rejects constraints that OpenAI documents
+// as unavailable on fine-tuned models while leaving base-model schemas intact.
+func validateFineTunedStrictSchemaNode(node map[string]any, path string) error {
+	for keyword := range node {
+		if _, unsupported := fineTunedUnsupportedKeywords[keyword]; unsupported {
+			return fmt.Errorf(
+				"schema at %s uses keyword %q, which OpenAI fine-tuned models do not support",
+				path,
+				keyword,
+			)
+		}
+	}
+	if items, ok := node["items"].(map[string]any); ok {
+		if err := validateFineTunedStrictSchemaNode(items, path+".items"); err != nil {
+			return err
+		}
+	}
+	for _, keyword := range strictChildSchemaListKeywords {
+		branches, ok := node[keyword].([]any)
+		if !ok {
+			continue
+		}
+		for index, branch := range branches {
+			child, ok := branch.(map[string]any)
+			if !ok {
+				continue
+			}
+			if err := validateFineTunedStrictSchemaNode(
+				child,
+				fmt.Sprintf("%s.%s[%d]", path, keyword, index),
+			); err != nil {
+				return err
+			}
+		}
+	}
+	for _, keyword := range strictChildSchemaMapKeywords {
+		children, ok := node[keyword].(map[string]any)
+		if !ok {
+			continue
+		}
+		for name, rawChild := range children {
+			child, ok := rawChild.(map[string]any)
+			if !ok {
+				continue
+			}
+			if err := validateFineTunedStrictSchemaNode(
+				child,
+				path+"."+keyword+"."+name,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // projectStrictNode rewrites one schema node in place and recurses through the
 // keyword positions that hold child schemas. Recursion is keyword-driven so
 // instance data such as enum values is never mistaken for schema. path names
 // the node in rejection errors.
-func projectStrictNode(node map[string]any, path string) error {
+func projectStrictNode(node map[string]any, path string, compiler *jsonschema.Compiler, location string) error {
 	for _, keyword := range strictUnsupportedKeywords {
 		delete(node, keyword)
 	}
 	projectStrictFormat(node)
-	projectStrictUnion(node)
-	if includesSchemaType(node, strictSchemaTypeObject) {
-		if err := projectStrictObject(node, path); err != nil {
+	if err := projectStrictUnion(node, path); err != nil {
+		return err
+	}
+	if isBranchOnlyObjectUnion(node) {
+		delete(node, "type")
+		delete(node, "additionalProperties")
+		delete(node, "required")
+	} else if includesSchemaType(node, strictSchemaTypeObject) {
+		if err := projectStrictObject(node, path, compiler, location); err != nil {
 			return err
 		}
 	}
 	if items, ok := node["items"].(map[string]any); ok {
-		if err := projectStrictNode(items, path+".items"); err != nil {
+		if err := projectStrictNode(items, path+".items", compiler, location+"/items"); err != nil {
 			return err
 		}
 	}
@@ -171,7 +458,12 @@ func projectStrictNode(node map[string]any, path string) error {
 			if !ok {
 				continue
 			}
-			if err := projectStrictNode(branchMap, fmt.Sprintf("%s.%s[%d]", path, keyword, i)); err != nil {
+			if err := projectStrictNode(
+				branchMap,
+				fmt.Sprintf("%s.%s[%d]", path, keyword, i),
+				compiler,
+				fmt.Sprintf("%s/%s/%d", location, keyword, i),
+			); err != nil {
 				return err
 			}
 		}
@@ -186,7 +478,12 @@ func projectStrictNode(node map[string]any, path string) error {
 			if !ok {
 				continue
 			}
-			if err := projectStrictNode(childMap, path+"."+keyword+"."+name); err != nil {
+			if err := projectStrictNode(
+				childMap,
+				path+"."+keyword+"."+name,
+				compiler,
+				location+"/"+keyword+"/"+escapeJSONPointerToken(name),
+			); err != nil {
 				return err
 			}
 		}
@@ -194,11 +491,25 @@ func projectStrictNode(node map[string]any, path string) error {
 	return nil
 }
 
+// isBranchOnlyObjectUnion reports a wrapper whose object shape is defined only
+// by union branches. Closing the wrapper itself would reject every property
+// declared by those branches.
+func isBranchOnlyObjectUnion(node map[string]any) bool {
+	if !includesSchemaType(node, strictSchemaTypeObject) {
+		return false
+	}
+	if _, hasProperties := node["properties"]; hasProperties {
+		return false
+	}
+	_, hasUnion := node["anyOf"]
+	return hasUnion
+}
+
 // projectStrictObject enforces the strict closed-object contract: objects
 // declare additionalProperties:false and every property is required, with
 // canonically optional properties made nullable so the model can still omit
 // them by emitting null.
-func projectStrictObject(node map[string]any, path string) error {
+func projectStrictObject(node map[string]any, path string, compiler *jsonschema.Compiler, location string) error {
 	switch additional := node["additionalProperties"].(type) {
 	case nil:
 		node["additionalProperties"] = false
@@ -232,7 +543,16 @@ func projectStrictObject(node map[string]any, path string) error {
 			continue
 		}
 		if property, ok := properties[name].(map[string]any); ok {
-			makeStrictNullable(property)
+			acceptsNull, err := schemaAcceptsNull(
+				compiler,
+				location+"/properties/"+escapeJSONPointerToken(name),
+			)
+			if err != nil {
+				return err
+			}
+			if !acceptsNull {
+				makeStrictNullable(property)
+			}
 		}
 	}
 	allRequired := make([]any, len(names))
@@ -243,21 +563,167 @@ func projectStrictObject(node map[string]any, path string) error {
 	return nil
 }
 
-// projectStrictUnion folds oneOf branches into anyOf: strict mode only
-// accepts anyOf, and for generation guidance anyOf accepts a superset of the
-// instances oneOf accepts. The canonical schema keeps exclusive oneOf
-// semantics for local validation.
-func projectStrictUnion(node map[string]any) {
+// projectStrictUnion folds oneOf into anyOf only when every pair of branches
+// is provably disjoint. In that case the two keywords accept the same values.
+// Ambiguous branches are rejected before a provider call because widening them
+// would let OpenAI generate a value that the canonical codec rejects.
+func projectStrictUnion(node map[string]any, path string) error {
 	branches, ok := node["oneOf"].([]any)
 	if !ok {
-		return
+		return nil
+	}
+	if !strictUnionBranchesAreDisjoint(branches) {
+		return fmt.Errorf(
+			"schema at %s uses oneOf branches that may overlap; OpenAI strict mode cannot preserve exclusive union semantics",
+			path,
+		)
+	}
+	if _, exists := node["anyOf"]; exists {
+		return fmt.Errorf(
+			"schema at %s combines oneOf with anyOf; OpenAI strict mode cannot preserve both constraints",
+			path,
+		)
 	}
 	delete(node, "oneOf")
-	if existing, ok := node["anyOf"].([]any); ok {
-		node["anyOf"] = append(existing, branches...)
-		return
-	}
 	node["anyOf"] = branches
+	return nil
+}
+
+// strictUnionBranchesAreDisjoint proves that no JSON value can satisfy two
+// branches. It recognizes disjoint JSON types and Goa's generated object
+// unions, whose required discriminator property has distinct string values.
+func strictUnionBranchesAreDisjoint(branches []any) bool {
+	if len(branches) < 2 {
+		return false
+	}
+	for left := range branches {
+		leftBranch, ok := branches[left].(map[string]any)
+		if !ok {
+			return false
+		}
+		for right := left + 1; right < len(branches); right++ {
+			rightBranch, ok := branches[right].(map[string]any)
+			if !ok || !strictBranchesAreDisjoint(leftBranch, rightBranch) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// strictBranchesAreDisjoint recognizes the two exact forms whose separation
+// the adapter can prove without interpreting the complete JSON Schema language.
+func strictBranchesAreDisjoint(left, right map[string]any) bool {
+	leftTypes, leftTyped := strictSchemaTypes(left)
+	rightTypes, rightTyped := strictSchemaTypes(right)
+	if leftTyped && rightTyped && !strictSchemaTypesOverlap(leftTypes, rightTypes) {
+		return true
+	}
+	if !includesSchemaType(left, strictSchemaTypeObject) ||
+		!includesSchemaType(right, strictSchemaTypeObject) {
+		return false
+	}
+	leftRequired := strictRequiredProperties(left)
+	rightRequired := strictRequiredProperties(right)
+	leftProperties, leftOK := left["properties"].(map[string]any)
+	rightProperties, rightOK := right["properties"].(map[string]any)
+	if !leftOK || !rightOK {
+		return false
+	}
+	for name := range leftRequired {
+		if _, required := rightRequired[name]; !required {
+			continue
+		}
+		leftValues, leftOK := strictStringValues(leftProperties[name])
+		rightValues, rightOK := strictStringValues(rightProperties[name])
+		if leftOK && rightOK && !strictStringValuesOverlap(leftValues, rightValues) {
+			return true
+		}
+	}
+	return false
+}
+
+// strictSchemaTypes returns the explicit JSON types declared by one branch.
+func strictSchemaTypes(node map[string]any) (map[string]struct{}, bool) {
+	types := make(map[string]struct{})
+	switch value := node["type"].(type) {
+	case string:
+		types[value] = struct{}{}
+	case []any:
+		for _, item := range value {
+			name, ok := item.(string)
+			if !ok {
+				return nil, false
+			}
+			types[name] = struct{}{}
+		}
+	default:
+		return nil, false
+	}
+	return types, len(types) > 0
+}
+
+// strictSchemaTypesOverlap accounts for integer values also satisfying number.
+func strictSchemaTypesOverlap(left, right map[string]struct{}) bool {
+	for leftType := range left {
+		for rightType := range right {
+			if leftType == rightType ||
+				(leftType == "integer" && rightType == "number") ||
+				(leftType == "number" && rightType == "integer") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// strictRequiredProperties returns the property names every matching object
+// must contain.
+func strictRequiredProperties(node map[string]any) map[string]struct{} {
+	required := make(map[string]struct{})
+	names, _ := node["required"].([]any)
+	for _, value := range names {
+		if name, ok := value.(string); ok {
+			required[name] = struct{}{}
+		}
+	}
+	return required
+}
+
+// strictStringValues returns the finite string values accepted by a
+// discriminator property.
+func strictStringValues(raw any) (map[string]struct{}, bool) {
+	node, ok := raw.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	if value, ok := node["const"].(string); ok {
+		return map[string]struct{}{value: {}}, true
+	}
+	values, ok := node["enum"].([]any)
+	if !ok || len(values) == 0 {
+		return nil, false
+	}
+	result := make(map[string]struct{}, len(values))
+	for _, rawValue := range values {
+		value, ok := rawValue.(string)
+		if !ok {
+			return nil, false
+		}
+		result[value] = struct{}{}
+	}
+	return result, true
+}
+
+// strictStringValuesOverlap reports whether two finite discriminator sets
+// share a value.
+func strictStringValuesOverlap(left, right map[string]struct{}) bool {
+	for value := range left {
+		if _, exists := right[value]; exists {
+			return true
+		}
+	}
+	return false
 }
 
 // projectStrictFormat keeps only the string formats OpenAI strict mode
@@ -277,209 +743,19 @@ func projectStrictFormat(node map[string]any) {
 	}
 }
 
-// makeStrictNullable rewrites one property schema so null becomes an accepted
-// value: strict mode requires every member to be present, so null is how the
-// model omits a canonically optional member. Unions fold into anyOf first so
-// the null branch lands in the strict-representable form; the later visit of
-// this property during recursion finds nothing left to fold.
+// makeStrictNullable wraps one complete canonical property schema with a null
+// branch. Keeping every original keyword in the non-null branch preserves
+// interactions such as type plus const and typed allOf constraints.
 func makeStrictNullable(property map[string]any) {
-	projectStrictUnion(property)
-	if enum, ok := property["enum"].([]any); ok && !containsJSONNull(enum) {
-		property["enum"] = append(enum, nil)
+	original := make(map[string]any, len(property))
+	for key, value := range property {
+		original[key] = value
+		delete(property, key)
 	}
-	switch declared := property["type"].(type) {
-	case string:
-		if declared != strictSchemaTypeNull {
-			property["type"] = []any{declared, strictSchemaTypeNull}
-		}
-		return
-	case []any:
-		if !containsSchemaTypeName(declared, strictSchemaTypeNull) {
-			property["type"] = append(declared, strictSchemaTypeNull)
-		}
-		return
+	property["anyOf"] = []any{
+		original,
+		map[string]any{"type": strictSchemaTypeNull},
 	}
-	if branches, ok := property["anyOf"].([]any); ok {
-		if !strictBranchesAcceptNull(branches) {
-			property["anyOf"] = append(branches, map[string]any{"type": strictSchemaTypeNull})
-		}
-		return
-	}
-	if ref, ok := property["$ref"]; ok {
-		delete(property, "$ref")
-		property["anyOf"] = []any{
-			map[string]any{"$ref": ref},
-			map[string]any{"type": strictSchemaTypeNull},
-		}
-	}
-	// No type, union, or reference constrains the property, so the schema
-	// already accepts null.
-}
-
-// canonicalizeStrictValue walks one payload value alongside the canonical
-// schemas that can govern it, removing null members the canonical contract
-// does not accept. It mutates the payload in place and reports whether it
-// changed anything.
-func canonicalizeStrictValue(candidates []map[string]any, value any, root map[string]any) bool {
-	changed := false
-	switch actual := value.(type) {
-	case map[string]any:
-		for name, member := range actual {
-			memberCandidates := memberStrictSchemas(candidates, name, root)
-			if member == nil {
-				if len(memberCandidates) > 0 && !strictSchemasAcceptNull(memberCandidates) {
-					delete(actual, name)
-					changed = true
-				}
-				continue
-			}
-			if canonicalizeStrictValue(memberCandidates, member, root) {
-				changed = true
-			}
-		}
-	case []any:
-		itemCandidates := itemStrictSchemas(candidates, root)
-		for _, element := range actual {
-			if canonicalizeStrictValue(itemCandidates, element, root) {
-				changed = true
-			}
-		}
-	}
-	return changed
-}
-
-// resolveStrictSchemas expands one schema node into the concrete schemas that
-// can govern an instance location: local $refs are followed and branch
-// keywords contribute their branches independently. Unresolvable references
-// contribute nothing, which keeps unknown contracts untouched.
-func resolveStrictSchemas(node map[string]any, root map[string]any, seen map[string]struct{}) []map[string]any {
-	if node == nil {
-		return nil
-	}
-	if ref, ok := node["$ref"].(string); ok {
-		if _, cycling := seen[ref]; cycling {
-			return nil
-		}
-		target := resolveLocalSchemaRef(root, ref)
-		if target == nil {
-			return nil
-		}
-		next := make(map[string]struct{}, len(seen)+1)
-		for key := range seen {
-			next[key] = struct{}{}
-		}
-		next[ref] = struct{}{}
-		return resolveStrictSchemas(target, root, next)
-	}
-	var out []map[string]any
-	branched := false
-	for _, keyword := range strictChildSchemaListKeywords {
-		branches, ok := node[keyword].([]any)
-		if !ok {
-			continue
-		}
-		branched = true
-		for _, branch := range branches {
-			if branchMap, ok := branch.(map[string]any); ok {
-				out = append(out, resolveStrictSchemas(branchMap, root, seen)...)
-			}
-		}
-	}
-	if hasDirectStrictConstraints(node) || !branched {
-		out = append(out, node)
-	}
-	return out
-}
-
-// memberStrictSchemas returns the resolved schemas governing one object member
-// across all candidate object schemas.
-func memberStrictSchemas(candidates []map[string]any, name string, root map[string]any) []map[string]any {
-	var out []map[string]any
-	for _, candidate := range candidates {
-		properties, ok := candidate["properties"].(map[string]any)
-		if !ok {
-			continue
-		}
-		member, ok := properties[name].(map[string]any)
-		if !ok {
-			continue
-		}
-		out = append(out, resolveStrictSchemas(member, root, nil)...)
-	}
-	return out
-}
-
-// itemStrictSchemas returns the resolved schemas governing array elements
-// across all candidate array schemas.
-func itemStrictSchemas(candidates []map[string]any, root map[string]any) []map[string]any {
-	var out []map[string]any
-	for _, candidate := range candidates {
-		if items, ok := candidate["items"].(map[string]any); ok {
-			out = append(out, resolveStrictSchemas(items, root, nil)...)
-		}
-	}
-	return out
-}
-
-// strictSchemasAcceptNull reports whether any candidate schema accepts null.
-func strictSchemasAcceptNull(candidates []map[string]any) bool {
-	return slices.ContainsFunc(candidates, strictSchemaAcceptsNull)
-}
-
-// strictSchemaAcceptsNull reports whether one resolved schema accepts null.
-// Enums decide when present; otherwise a declared type must include "null".
-// Schemas that declare neither accept every value, including null.
-func strictSchemaAcceptsNull(schema map[string]any) bool {
-	if enum, ok := schema["enum"].([]any); ok {
-		return containsJSONNull(enum)
-	}
-	switch declared := schema["type"].(type) {
-	case string:
-		return declared == strictSchemaTypeNull
-	case []any:
-		return containsSchemaTypeName(declared, strictSchemaTypeNull)
-	}
-	return true
-}
-
-// hasDirectStrictConstraints reports whether the schema node constrains
-// instances directly rather than delegating entirely to branch schemas.
-func hasDirectStrictConstraints(schema map[string]any) bool {
-	for _, keyword := range []string{"type", "enum", "properties", "items"} {
-		if _, ok := schema[keyword]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-// strictBranchesAcceptNull reports whether an anyOf branch list already
-// contains a null-accepting branch.
-func strictBranchesAcceptNull(branches []any) bool {
-	return slices.ContainsFunc(branches, func(branch any) bool {
-		branchMap, ok := branch.(map[string]any)
-		return ok && includesSchemaType(branchMap, strictSchemaTypeNull)
-	})
-}
-
-// resolveLocalSchemaRef walks a document-local JSON pointer reference such as
-// "#/$defs/Name" through the schema document. Unknown or external references
-// return nil.
-func resolveLocalSchemaRef(root map[string]any, ref string) map[string]any {
-	if !strings.HasPrefix(ref, "#/") {
-		return nil
-	}
-	node := any(root)
-	for segment := range strings.SplitSeq(strings.TrimPrefix(ref, "#/"), "/") {
-		segment = strings.ReplaceAll(strings.ReplaceAll(segment, "~1", "/"), "~0", "~")
-		current, ok := node.(map[string]any)
-		if !ok {
-			return nil
-		}
-		node = current[segment]
-	}
-	target, _ := node.(map[string]any)
-	return target
 }
 
 // includesSchemaType reports whether a schema node declares the requested
@@ -494,15 +770,266 @@ func includesSchemaType(node map[string]any, want string) bool {
 	return false
 }
 
+// buildStrictNullProjection compiles canonical schema structure before the
+// provider projection adds transport-only null branches.
+func buildStrictNullProjection(
+	node, root map[string]any,
+	compiler *jsonschema.Compiler,
+	location string,
+	refs map[string]*strictNullProjection,
+) (*strictNullProjection, error) {
+	if ref, ok := node["$ref"].(string); ok {
+		if cached := refs[ref]; cached != nil {
+			return cached, nil
+		}
+		target, err := resolveLocalSchemaRef(root, ref)
+		if err != nil {
+			return nil, err
+		}
+		placeholder := &strictNullProjection{}
+		refs[ref] = placeholder
+		resolved, err := buildStrictNullProjection(target, root, compiler, strictSchemaResource+ref, refs)
+		if err != nil {
+			return nil, err
+		}
+		*placeholder = *resolved
+		return placeholder, nil
+	}
+
+	projection := &strictNullProjection{}
+	if properties, ok := node["properties"].(map[string]any); ok {
+		required := schemaRequiredNames(node)
+		projection.properties = make(map[string]*strictNullProjection, len(properties))
+		for name, rawProperty := range properties {
+			property, ok := rawProperty.(map[string]any)
+			if !ok {
+				continue
+			}
+			childLocation := location + "/properties/" + escapeJSONPointerToken(name)
+			child, err := buildStrictNullProjection(property, root, compiler, childLocation, refs)
+			if err != nil {
+				return nil, err
+			}
+			_, isRequired := required[name]
+			acceptsNull, err := schemaAcceptsNull(compiler, childLocation)
+			if err != nil {
+				return nil, err
+			}
+			projection.properties[name] = &strictNullProjection{
+				dropNull:   !isRequired && !acceptsNull,
+				properties: child.properties,
+				item:       child.item,
+			}
+		}
+	}
+	if item, ok := node["items"].(map[string]any); ok {
+		child, err := buildStrictNullProjection(item, root, compiler, location+"/items", refs)
+		if err != nil {
+			return nil, err
+		}
+		projection.item = child
+	}
+	for _, keyword := range []string{"anyOf", "oneOf", "allOf"} {
+		branches, ok := node[keyword].([]any)
+		if !ok {
+			continue
+		}
+		for index, rawBranch := range branches {
+			branch, ok := rawBranch.(map[string]any)
+			if !ok {
+				continue
+			}
+			child, err := buildStrictNullProjection(
+				branch,
+				root,
+				compiler,
+				fmt.Sprintf("%s/%s/%d", location, keyword, index),
+				refs,
+			)
+			if err != nil {
+				return nil, err
+			}
+			if err := mergeStrictNullProjection(
+				projection,
+				child,
+				fmt.Sprintf("%s/%s/%d", location, keyword, index),
+			); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return projection, nil
+}
+
+// schemaRequiredNames returns the object members required by the canonical
+// schema node.
+func schemaRequiredNames(node map[string]any) map[string]struct{} {
+	required := make(map[string]struct{})
+	names, _ := node["required"].([]any)
+	for _, raw := range names {
+		if name, ok := raw.(string); ok {
+			required[name] = struct{}{}
+		}
+	}
+	return required
+}
+
+// schemaAcceptsNull asks the compiled canonical schema whether null is valid at
+// one exact property location. This covers references and every composition
+// keyword without reimplementing JSON Schema semantics.
+func schemaAcceptsNull(compiler *jsonschema.Compiler, location string) (bool, error) {
+	schema, err := compiler.Compile(location)
+	if err != nil {
+		return false, fmt.Errorf("compile canonical property schema %q: %w", location, err)
+	}
+	return schema.Validate(nil) == nil, nil
+}
+
+// escapeJSONPointerToken encodes one property name for a schema fragment URI.
+func escapeJSONPointerToken(token string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(token, "~", "~0"), "/", "~1")
+}
+
+// resolveLocalSchemaRef resolves one JSON Pointer within the same generated
+// schema document.
+func resolveLocalSchemaRef(root map[string]any, ref string) (map[string]any, error) {
+	if !strings.HasPrefix(ref, "#/") {
+		return nil, fmt.Errorf("strict schema reference %q is not local", ref)
+	}
+	var current any = root
+	for _, encoded := range strings.Split(strings.TrimPrefix(ref, "#/"), "/") {
+		name := strings.ReplaceAll(strings.ReplaceAll(encoded, "~1", "/"), "~0", "~")
+		object, ok := current.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("strict schema reference %q does not resolve to an object", ref)
+		}
+		current, ok = object[name]
+		if !ok {
+			return nil, fmt.Errorf("strict schema reference %q is missing %q", ref, name)
+		}
+	}
+	resolved, ok := current.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("strict schema reference %q does not resolve to a schema", ref)
+	}
+	return resolved, nil
+}
+
+// mergeStrictNullProjection combines union branches without introducing
+// model-dependent choices.
+func mergeStrictNullProjection(dst, src *strictNullProjection, path string) error {
+	if src == nil {
+		return nil
+	}
+	if src.item != nil {
+		if dst.item == nil {
+			dst.item = src.item
+		} else {
+			if err := mergeStrictNullProjection(dst.item, src.item, path+"/items"); err != nil {
+				return err
+			}
+		}
+	}
+	if len(src.properties) == 0 {
+		return nil
+	}
+	if dst.properties == nil {
+		dst.properties = make(map[string]*strictNullProjection, len(src.properties))
+	}
+	for name, source := range src.properties {
+		if target := dst.properties[name]; target != nil {
+			if target.dropNull != source.dropNull {
+				return fmt.Errorf(
+					"openai: strict schema branches require conflicting null handling at %s/properties/%s",
+					path,
+					escapeJSONPointerToken(name),
+				)
+			}
+			if err := mergeStrictNullProjection(
+				target,
+				source,
+				path+"/properties/"+escapeJSONPointerToken(name),
+			); err != nil {
+				return err
+			}
+			continue
+		}
+		dst.properties[name] = source
+	}
+	return nil
+}
+
+// canonicalize removes only null object members introduced by OpenAI's strict
+// all-members-required projection. Provider JSON is returned unchanged when no
+// such member is present.
+func (p *strictSchemaProjection) canonicalize(data []byte) (rawjson.Message, error) {
+	if p == nil || p.root == nil {
+		return slices.Clone(data), nil
+	}
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	changed, err := removeStrictProjectionNulls(value, p.root, 0)
+	if err != nil {
+		return nil, err
+	}
+	if !changed {
+		return slices.Clone(data), nil
+	}
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return canonical, nil
+}
+
+// removeStrictProjectionNulls applies the compiled inverse to one provider
+// value. The depth bound matches generated model-output traversal limits.
+func removeStrictProjectionNulls(value any, projection *strictNullProjection, depth int) (bool, error) {
+	if projection == nil {
+		return false, nil
+	}
+	if depth > 128 {
+		return false, errors.New("openai: strict output exceeds maximum nesting depth 128")
+	}
+	changed := false
+	switch actual := value.(type) {
+	case []any:
+		for _, item := range actual {
+			itemChanged, err := removeStrictProjectionNulls(item, projection.item, depth+1)
+			if err != nil {
+				return false, err
+			}
+			changed = changed || itemChanged
+		}
+	case map[string]any:
+		for name, child := range projection.properties {
+			member, present := actual[name]
+			if !present {
+				continue
+			}
+			if member == nil && child.dropNull {
+				delete(actual, name)
+				changed = true
+				continue
+			}
+			memberChanged, err := removeStrictProjectionNulls(member, child, depth+1)
+			if err != nil {
+				return false, err
+			}
+			changed = changed || memberChanged
+		}
+	}
+	return changed, nil
+}
+
 // containsSchemaTypeName reports whether a type union names the given type.
 func containsSchemaTypeName(types []any, want string) bool {
 	return slices.ContainsFunc(types, func(entry any) bool {
 		name, ok := entry.(string)
 		return ok && name == want
 	})
-}
-
-// containsJSONNull reports whether an enum value list contains JSON null.
-func containsJSONNull(values []any) bool {
-	return slices.Contains(values, nil)
 }

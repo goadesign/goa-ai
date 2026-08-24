@@ -181,15 +181,29 @@ func TestMessageUnmarshalPreservesInterfaceValuedNumbers(t *testing.T) {
 }
 
 func TestToolInputContractRoundTrip(t *testing.T) {
-	orig := ToolInputFromSpec(toolInputSpecFixture())
+	orig := advertisedToolInputFromSpec(toolInputSpecFixture())
 
 	contract := orig.Contract()
 	got, err := ToolInputFromContract("reports.complete", contract)
 	require.NoError(t, err)
 
-	require.Equal(t, orig.JSONSchema(), got.JSONSchema())
-	require.Equal(t, orig.SchemaWithoutRootExample(), got.SchemaWithoutRootExample())
-	require.Equal(t, orig.ExampleJSON(), got.ExampleJSON())
+	require.Equal(t, orig.Contract(), got.Contract())
+}
+
+func TestToolInputContractReturnsIsolatedJSON(t *testing.T) {
+	input := advertisedToolInputFromSpec(toolInputSpecFixture())
+	wantSchema := append(rawjson.Message(nil), input.jsonSchema...)
+	wantSchemaAlt := append(rawjson.Message(nil), input.schemaWithoutRootExample...)
+	wantExample := append(rawjson.Message(nil), input.exampleJSON...)
+
+	contract := input.Contract()
+	contract.Schema[0] = '['
+	contract.SchemaWithoutRootExample[0] = '['
+	contract.ExampleJSON[0] = '['
+	got := input.Contract()
+	require.Equal(t, wantSchema, got.Schema)
+	require.Equal(t, wantSchemaAlt, got.SchemaWithoutRootExample)
+	require.Equal(t, wantExample, got.ExampleJSON)
 }
 
 func TestToolInputContractRequiresSchemaWithoutRootExample(t *testing.T) {
@@ -198,6 +212,15 @@ func TestToolInputContractRequiresSchemaWithoutRootExample(t *testing.T) {
 		ExampleJSON: rawjson.Message(`{"summary":"Done"}`),
 	})
 	require.ErrorContains(t, err, "example JSON requires schema without root example")
+}
+
+func TestToolInputContractRejectsDivergentAlternateSchema(t *testing.T) {
+	_, err := ToolInputFromContract("reports.complete", ToolInputContract{
+		Schema:                   rawjson.Message(`{"type":"object","properties":{"summary":{"type":"string"}},"example":{"summary":"Done"}}`),
+		SchemaWithoutRootExample: rawjson.Message(`{"type":"object","properties":{"summary":{"type":"integer"}}}`),
+		ExampleJSON:              rawjson.Message(`{"summary":"Done"}`),
+	})
+	require.ErrorContains(t, err, "alternate schema changes fields other than root examples")
 }
 
 func TestThinkingPartRoundTripPreservesSignature(t *testing.T) {

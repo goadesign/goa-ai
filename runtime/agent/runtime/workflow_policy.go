@@ -6,7 +6,9 @@ package runtime
 // Contract:
 // - Per-run overrides are applied first using the same compiled predicate used to
 //   advertise tools to planners.
-// - Runtime policy decisions rewrite denied calls to tool_unavailable so one
+// - A call excluded from the advertised per-run catalog is invalid planner
+//   output.
+// - A runtime policy decision made after planning uses tool_unavailable so one
 //   provider response remains an atomic transcript unit.
 
 import (
@@ -21,10 +23,9 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// applyPerRunOverrides rewrites policy-denied tool calls to the runtime-owned
-// tool_unavailable tool using the same compiled predicate that already shaped
-// the planner-visible advertised tool set.
-func (r *Runtime) applyPerRunOverrides(ctx context.Context, input *RunInput, candidates []planner.ToolRequest) ([]planner.ToolRequest, error) {
+// applyPerRunOverrides rejects calls excluded by the same rule that shaped the
+// planner-visible tool list.
+func (r *Runtime) applyPerRunOverrides(ctx context.Context, input *RunInput, candidates []ToolCall) ([]ToolCall, error) {
 	if input == nil || len(candidates) == 0 {
 		return candidates, nil
 	}
@@ -41,21 +42,15 @@ func (r *Runtime) applyPerRunOverrides(ctx context.Context, input *RunInput, can
 		len(input.Policy.TagClauses),
 	)
 	metas := r.toolMetadata(candidates)
-	rewritten := make([]planner.ToolRequest, 0, len(candidates))
 	for i, call := range candidates {
 		if runPolicy.allowsTool(call.Name, toolPolicyFactsFromMetadata(metas[i])) {
-			rewritten = append(rewritten, call)
 			continue
 		}
-		r.logger.Info(ctx, "Tool rewritten by run policy", "tool", call.Name, "tags", metas[i].Tags)
-		unavailable, err := r.rewriteToolCallUnavailable(call)
-		if err != nil {
-			return nil, err
-		}
-		rewritten = append(rewritten, unavailable)
+		return nil, planner.NewOutputContractError(
+			fmt.Errorf("planner called tool %q excluded from this run", call.Name),
+		)
 	}
-	r.logger.Info(ctx, "After per-run policy rewriting", "candidates", len(rewritten))
-	return rewritten, nil
+	return candidates, nil
 }
 
 // applyRuntimePolicy applies the runtime policy (if configured) to the provided
@@ -65,10 +60,10 @@ func (r *Runtime) applyRuntimePolicy(
 	ctx context.Context,
 	base *planner.PlanInput,
 	input *RunInput,
-	candidates []planner.ToolRequest,
+	candidates []ToolCall,
 	caps policy.CapsState,
 	turnID string,
-) ([]planner.ToolRequest, policy.CapsState, error) {
+) ([]ToolCall, policy.CapsState, error) {
 	if r.Policy == nil {
 		return candidates, caps, nil
 	}
@@ -118,12 +113,12 @@ func (r *Runtime) applyRuntimePolicy(
 
 // rewritePolicyDeniedToolCalls preserves one provider response atomically by
 // converting denied calls into runtime-owned tool_unavailable executions.
-func (r *Runtime) rewritePolicyDeniedToolCalls(calls []planner.ToolRequest, allowed []tools.Ident) ([]planner.ToolRequest, error) {
+func (r *Runtime) rewritePolicyDeniedToolCalls(calls []ToolCall, allowed []tools.Ident) ([]ToolCall, error) {
 	allow := make(map[tools.Ident]struct{}, len(allowed))
 	for _, name := range allowed {
 		allow[name] = struct{}{}
 	}
-	out := make([]planner.ToolRequest, len(calls))
+	out := make([]ToolCall, len(calls))
 	for i, call := range calls {
 		if call.Name == tools.ToolUnavailable {
 			out[i] = call
@@ -148,7 +143,7 @@ func (r *Runtime) rewritePolicyDeniedToolCalls(calls []planner.ToolRequest, allo
 // The run-level MaxToolCalls budget applies to budgeted (non-bookkeeping) tools
 // only. The response is admitted whole when every budgeted call fits and
 // rejected whole otherwise; provider responses are never partially edited.
-func (r *Runtime) admitToolBatch(calls []planner.ToolRequest, caps policy.CapsState) (int, bool) {
+func (r *Runtime) admitToolBatch(calls []ToolCall, caps policy.CapsState) (int, bool) {
 	remaining := caps.RemainingToolCalls
 	if remaining < 0 {
 		panic(fmt.Sprintf("runtime: negative remaining tool calls: %d", remaining))
@@ -162,9 +157,9 @@ func (r *Runtime) admitToolBatch(calls []planner.ToolRequest, caps policy.CapsSt
 	return budgetCost, caps.MaxToolCalls <= 0 || budgetCost <= remaining
 }
 
-// prepareAllowedCallsMetadata stamps run/session/turn IDs and deterministic tool
-// call IDs on allowed calls. It also fills parentToolCallID when tracking children.
-func (r *Runtime) prepareAllowedCallsMetadata(agentID agent.Ident, base *planner.PlanInput, allowed []planner.ToolRequest, parentTracker *childTracker) []planner.ToolRequest {
+// prepareAllowedCallsMetadata adds run metadata after the call's owner has
+// supplied its stable ID.
+func (r *Runtime) prepareAllowedCallsMetadata(agentID agent.Ident, base *planner.PlanInput, allowed []ToolCall, parentTracker *childTracker) []ToolCall {
 	for i := range allowed {
 		if allowed[i].RunID == "" {
 			allowed[i].RunID = base.RunContext.RunID
@@ -177,11 +172,6 @@ func (r *Runtime) prepareAllowedCallsMetadata(agentID agent.Ident, base *planner
 		}
 		if allowed[i].TurnID == "" {
 			allowed[i].TurnID = base.RunContext.TurnID
-		}
-		if allowed[i].ToolCallID == "" {
-			allowed[i].ToolCallID = generateDeterministicToolCallID(
-				base.RunContext.RunID, base.RunContext.TurnID, base.RunContext.Attempt, allowed[i].Name, i,
-			)
 		}
 		if parentTracker != nil && allowed[i].ParentToolCallID == "" {
 			allowed[i].ParentToolCallID = parentTracker.parentToolCallID

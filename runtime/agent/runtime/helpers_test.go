@@ -8,16 +8,25 @@ import (
 	"goa.design/goa-ai/runtime/toolregistry"
 )
 
-func TestGenerateDeterministicToolCallIDPreservesReadableID(t *testing.T) {
+func TestGenerateDeterministicToolCallIDUsesBoundedOpaqueEncoding(t *testing.T) {
 	got := generateDeterministicToolCallID("run-1", "turn-1", 3, "svc.read.get_time_series", 7)
 
-	assert.Equal(t, "run-1/turn-1/attempt-3/svc-read-get_time_series/7", got)
+	assert.Regexp(t, `^call-[0-9a-f]{64}$`, got)
+	assert.LessOrEqual(t, len(got), toolregistry.MaxToolCallMetaIDLength)
 }
 
-func TestGenerateDeterministicToolCallIDUniqueAcrossAttempts(t *testing.T) {
-	id1 := generateDeterministicToolCallID("run-1", "turn-1", 1, "svc.read.get_time_series", 0)
-	id2 := generateDeterministicToolCallID("run-1", "turn-1", 2, "svc.read.get_time_series", 0)
-	assert.NotEqual(t, id1, id2)
+func TestGenerateDeterministicToolCallIDChangesWithEveryComponent(t *testing.T) {
+	base := generateDeterministicToolCallID("run-1", "turn-1", 1, "svc.read.get_time_series", 0)
+	changed := []string{
+		generateDeterministicToolCallID("run-2", "turn-1", 1, "svc.read.get_time_series", 0),
+		generateDeterministicToolCallID("run-1", "turn-2", 1, "svc.read.get_time_series", 0),
+		generateDeterministicToolCallID("run-1", "turn-1", 2, "svc.read.get_time_series", 0),
+		generateDeterministicToolCallID("run-1", "turn-1", 1, "svc.read.get_time_series", 1),
+		generateDeterministicToolCallID("run-1", "turn-1", 1, "svc.read.get_time_range", 0),
+	}
+	for _, id := range changed {
+		assert.NotEqual(t, base, id)
+	}
 }
 
 func TestGenerateDeterministicToolCallIDDeterministicForSameInputs(t *testing.T) {
@@ -26,16 +35,17 @@ func TestGenerateDeterministicToolCallIDDeterministicForSameInputs(t *testing.T)
 	assert.Equal(t, id1, id2)
 }
 
-func TestGenerateDeterministicToolCallIDBoundsAtRegistryLimit(t *testing.T) {
-	const suffix = "/turn/attempt-1/tool/0"
-	runID := strings.Repeat("r", toolregistry.MaxToolCallMetaIDLength-len(suffix))
-
-	atLimit := generateDeterministicToolCallID(runID, "turn", 1, "tool", 0)
-	overLimit := generateDeterministicToolCallID(runID+"r", "turn", 1, "tool", 0)
-
-	assert.Len(t, atLimit, toolregistry.MaxToolCallMetaIDLength)
-	assert.Equal(t, runID+suffix, atLimit)
-	assert.Regexp(t, `^call-[0-9a-f]{64}$`, overLimit)
+func TestGenerateDeterministicToolCallIDSeparatorsAndDotsAreInjective(t *testing.T) {
+	assert.NotEqual(
+		t,
+		generateDeterministicToolCallID("run/a", "turn", 1, "svc.tool", 0),
+		generateDeterministicToolCallID("run", "a/turn", 1, "svc.tool", 0),
+	)
+	assert.NotEqual(
+		t,
+		generateDeterministicToolCallID("run", "turn", 1, "svc.a-b", 0),
+		generateDeterministicToolCallID("run", "turn", 1, "svc.a.b", 0),
+	)
 }
 
 func TestGenerateDeterministicToolCallIDBoundsNestedIDs(t *testing.T) {
@@ -50,4 +60,13 @@ func TestGenerateDeterministicToolCallIDBoundsNestedIDs(t *testing.T) {
 	assert.Equal(t, id, replayed)
 	assert.NotEqual(t, id, nextAttempt)
 	assert.NotEqual(t, id, nextIndex)
+}
+
+func TestNestedRunIDForToolCallKeepsExactRuntimeID(t *testing.T) {
+	callID := generateDeterministicToolCallID("parent", "turn", 1, "svc.agent", 0)
+	otherCallID := generateDeterministicToolCallID("parent", "turn", 1, "svc.agent", 1)
+
+	nested := NestedRunIDForToolCall("parent", "svc.agent", callID)
+	assert.Equal(t, "parent/agent/svc.agent/"+callID, nested)
+	assert.NotEqual(t, nested, NestedRunIDForToolCall("parent", "svc.agent", otherCallID))
 }

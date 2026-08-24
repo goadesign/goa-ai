@@ -16,12 +16,17 @@ const (
 	Echo tools.Ident = "union.echo"
 )
 
-var Specs = []tools.ToolSpec{
-	SpecEcho,
+// Specs returns fresh copies of every generated tool specification.
+func Specs() []tools.ToolSpec {
+	return []tools.ToolSpec{
+		newSpecEcho(),
+	}
 }
 
-var (
-	SpecEcho = tools.ToolSpec{
+// newSpecEcho builds the immutable generated contract for
+// union.echo. Each call owns all mutable slices and maps in the result.
+func newSpecEcho() tools.ToolSpec {
+	return tools.ToolSpec{
 		Name:        Echo,
 		Service:     "alpha",
 		Toolset:     "alpha.union",
@@ -32,32 +37,46 @@ var (
 			Schema:                   tools.RawJSON("{\"$defs\":{\"StructuredValue\":{\"properties\":{\"label\":{\"description\":\"Structured value label\",\"type\":\"string\"}},\"required\":[\"label\"],\"title\":\"StructuredValue\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"id\":{\"description\":\"Request identifier\",\"type\":\"string\"},\"optional_value\":{\"oneOf\":[{\"description\":\"Optional numeric value\",\"properties\":{\"type\":{\"enum\":[\"number\"],\"type\":\"string\"},\"value\":{\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Optional text value\",\"properties\":{\"type\":{\"enum\":[\"text\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"},\"value\":{\"oneOf\":[{\"description\":\"Numeric value\",\"properties\":{\"type\":{\"enum\":[\"number\"],\"type\":\"string\"},\"value\":{\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Text value\",\"properties\":{\"type\":{\"enum\":[\"text\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Structured value\",\"properties\":{\"type\":{\"enum\":[\"structured\"],\"type\":\"string\"},\"value\":{\"$ref\":\"#/$defs/StructuredValue\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"}},\"required\":[\"id\",\"value\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$defs\":{\"StructuredValue\":{\"properties\":{\"label\":{\"description\":\"Structured value label\",\"type\":\"string\"}},\"required\":[\"label\"],\"title\":\"StructuredValue\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"id\":{\"description\":\"Request identifier\",\"type\":\"string\"},\"optional_value\":{\"oneOf\":[{\"description\":\"Optional numeric value\",\"properties\":{\"type\":{\"enum\":[\"number\"],\"type\":\"string\"},\"value\":{\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Optional text value\",\"properties\":{\"type\":{\"enum\":[\"text\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"},\"value\":{\"oneOf\":[{\"description\":\"Numeric value\",\"properties\":{\"type\":{\"enum\":[\"number\"],\"type\":\"string\"},\"value\":{\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Text value\",\"properties\":{\"type\":{\"enum\":[\"text\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Structured value\",\"properties\":{\"type\":{\"enum\":[\"structured\"],\"type\":\"string\"},\"value\":{\"$ref\":\"#/$defs/StructuredValue\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"}},\"required\":[\"id\",\"value\"],\"type\":\"object\"}"),
 			ExampleJSON:              nil,
-			FieldDescriptions:        EchoPayloadFieldDescs,
-			FieldJSONTypes:           EchoPayloadFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(echoPayloadFieldDescs),
+			FieldJSONTypes:           cloneStringMap(echoPayloadFieldJSONTypes),
 			Codec:                    echoPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:                     "EchoResult",
 			Schema:                   tools.RawJSON("{\"$defs\":{\"StructuredValue\":{\"properties\":{\"label\":{\"description\":\"Structured value label\",\"type\":\"string\"}},\"required\":[\"label\"],\"title\":\"StructuredValue\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"id\":{\"description\":\"Request identifier\",\"type\":\"string\"},\"optional_value\":{\"oneOf\":[{\"description\":\"Optional numeric value\",\"properties\":{\"type\":{\"enum\":[\"number\"],\"type\":\"string\"},\"value\":{\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Optional text value\",\"properties\":{\"type\":{\"enum\":[\"text\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"},\"value\":{\"oneOf\":[{\"description\":\"Numeric value\",\"properties\":{\"type\":{\"enum\":[\"number\"],\"type\":\"string\"},\"value\":{\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Text value\",\"properties\":{\"type\":{\"enum\":[\"text\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Structured value\",\"properties\":{\"type\":{\"enum\":[\"structured\"],\"type\":\"string\"},\"value\":{\"$ref\":\"#/$defs/StructuredValue\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"}},\"required\":[\"id\",\"value\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$defs\":{\"StructuredValue\":{\"properties\":{\"label\":{\"description\":\"Structured value label\",\"type\":\"string\"}},\"required\":[\"label\"],\"title\":\"StructuredValue\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"id\":{\"description\":\"Request identifier\",\"type\":\"string\"},\"optional_value\":{\"oneOf\":[{\"description\":\"Optional numeric value\",\"properties\":{\"type\":{\"enum\":[\"number\"],\"type\":\"string\"},\"value\":{\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Optional text value\",\"properties\":{\"type\":{\"enum\":[\"text\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"},\"value\":{\"oneOf\":[{\"description\":\"Numeric value\",\"properties\":{\"type\":{\"enum\":[\"number\"],\"type\":\"string\"},\"value\":{\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Text value\",\"properties\":{\"type\":{\"enum\":[\"text\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Structured value\",\"properties\":{\"type\":{\"enum\":[\"structured\"],\"type\":\"string\"},\"value\":{\"$ref\":\"#/$defs/StructuredValue\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"}},\"required\":[\"id\",\"value\"],\"type\":\"object\"}"),
-			FieldDescriptions:        EchoResultFieldDescs,
-			FieldJSONTypes:           EchoResultFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(echoResultFieldDescs),
+			FieldJSONTypes:           cloneStringMap(echoResultFieldJSONTypes),
 			Codec:                    echoResultCodec,
 		},
 	}
-)
+}
+
+// SpecEcho returns a fresh union.echo specification.
+func SpecEcho() tools.ToolSpec {
+	return newSpecEcho()
+}
 
 // EchoTool pairs the union.echo identifier with its generated
 // typed payload and result codecs so consumers decode tool JSON without
 // restating the name-to-codec pairing fixed by the design.
-var EchoTool = tools.TypedTool[*EchoPayload, *EchoResult]{
-	Name:    Echo,
-	Payload: EchoPayloadCodec,
-	Result:  EchoResultCodec,
+func EchoTool() tools.TypedTool[*EchoPayload, *EchoResult] {
+	return tools.TypedTool[*EchoPayload, *EchoResult]{
+		Name: Echo,
+		Payload: tools.JSONCodec[*EchoPayload]{
+			ToJSON:   MarshalEchoPayload,
+			FromJSON: UnmarshalEchoPayload,
+		},
+		Result: tools.JSONCodec[*EchoResult]{
+			ToJSON:   MarshalEchoResult,
+			FromJSON: UnmarshalEchoResult,
+		},
+	}
 }
 
-var (
-	metadata = []policy.ToolMetadata{
+// Metadata returns fresh policy metadata for every generated tool.
+func Metadata() []policy.ToolMetadata {
+	return []policy.ToolMetadata{
 		{
 			ID:          Echo,
 			Title:       "Echo",
@@ -66,64 +85,59 @@ var (
 			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
 	}
-	names = []tools.Ident{
+}
+
+// Names returns the identifiers of all generated tools.
+func Names() []tools.Ident {
+	return []tools.Ident{
 		Echo,
 	}
-)
+}
 
 // RequiredLabels lists the run label keys this toolset's Inject-populated
 // tools require to be present via WithLabels(...) at run start. The runtime
 // validates coverage across every toolset an agent uses before starting a
 // run, so a missing label fails fast instead of surfacing mid-run as a tool
 // call error.
-var RequiredLabels = []string{}
-
-// Names returns the identifiers of all generated tools.
-func Names() []tools.Ident {
-	return names
+func RequiredLabels() []string {
+	return []string{}
 }
 
 // Spec returns the specification for the named tool if present.
-func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
+func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 	switch name {
 	case Echo:
-		return &SpecEcho, true
+		return newSpecEcho(), true
 	default:
-		return nil, false
+		return tools.ToolSpec{}, false
 	}
-}
-
-// PayloadSchema returns the JSON schema for the named tool payload.
-func PayloadSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case Echo:
-		return SpecEcho.Payload.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// ResultSchema returns the JSON schema for the named tool result.
-func ResultSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case Echo:
-		return SpecEcho.Result.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// Metadata exposes policy metadata for the generated tools.
-func Metadata() []policy.ToolMetadata {
-	return metadata
 }
 
 // MetadataByName returns policy metadata for the named tool if present.
 func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
 	switch name {
 	case Echo:
-		return metadata[0], true
+		return policy.ToolMetadata{
+			ID:          Echo,
+			Title:       "Echo",
+			Description: "Echo union",
+			Tags:        []string{},
+			BudgetClass: policy.ToolBudgetClassBudgeted,
+		}, true
 	default:
 		return policy.ToolMetadata{}, false
 	}
+}
+
+// cloneStringMap gives each returned specification ownership of its generated
+// field metadata.
+func cloneStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }

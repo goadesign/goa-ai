@@ -43,7 +43,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 		TurnID:    "turn-1",
 	}
 	seedRunMeta(t, rt, input)
-	initial := &planner.PlanResult{Await: planner.NewAwait(
+	initial := &PlanResult{Await: planner.NewAwait(
 		planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
 			ID:         "clarification-await-1",
 			ToolName:   tool.Name,
@@ -77,7 +77,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	continuedCtx := &testWorkflowContext{
 		ctx:           t.Context(),
 		hookRuntime:   rt,
-		planResult:    &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}},
+		planResult:    &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}},
 		hasPlanResult: true,
 	}
 	continuedInput := &RunInput{
@@ -140,7 +140,7 @@ func TestRunLoopSessionlessRunRejectsExternalInput(t *testing.T) {
 	base := &planner.PlanInput{RunContext: run.Context{
 		RunID: "run-1", TurnID: "turn-1", Attempt: 1,
 	}}
-	result := &planner.PlanResult{Await: planner.NewAwait(
+	result := &PlanResult{Await: planner.NewAwait(
 		planner.AwaitClarificationItem(&planner.AwaitClarification{
 			ID: "clarification-1", Question: "Which unit?",
 		}),

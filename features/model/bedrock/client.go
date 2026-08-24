@@ -1,5 +1,5 @@
-// Package bedrock provides a model.Client implementation backed by the AWS
-// Bedrock Converse API. It mirrors the inference-engine request pipeline used
+// Package bedrock provides raw and validated adapters backed by the AWS Bedrock
+// Converse API. It mirrors the inference-engine request pipeline used
 // in production systems: split system vs. conversational messages, encode tool
 // schemas into Bedrock's ToolConfiguration, and translate Converse responses
 // (text + tool_use blocks) back into planner-friendly structures.
@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"math/big"
 	"slices"
 	"strings"
@@ -26,6 +27,7 @@ import (
 
 	"goa.design/goa-ai/features/model/internal/claudebeta"
 	"goa.design/goa-ai/features/model/internal/claudecaps"
+	"goa.design/goa-ai/features/model/internal/modelid"
 	"goa.design/goa-ai/features/model/internal/tooluseid"
 	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -36,7 +38,6 @@ import (
 )
 
 const (
-	defaultThinkingBudget        = 16384
 	bedrockProviderName          = "bedrock"
 	minBedrockCitationCoordinate = -1 << 31
 	maxBedrockCitationCoordinate = 1<<31 - 1
@@ -80,31 +81,26 @@ type Options struct {
 	// Temperature is used when a request does not specify Temperature.
 	Temperature float32
 
-	// ThinkingBudget defines the thinking token budget when thinking is enabled
-	// for streaming calls. When zero or negative, the client omits
-	// budget_tokens so Bedrock uses its own default budget.
-	ThinkingBudget int
-
 	// Logger is used for non-fatal diagnostics inside the Bedrock adapter.
 	// When nil, defaults to a no-op logger.
 	Logger telemetry.Logger
 }
 
-// Client implements model.Client on top of AWS Bedrock Converse.
-type Client struct {
+// provider translates canonical requests to AWS Bedrock Converse.
+type provider struct {
 	runtime      RuntimeClient
 	defaultModel string
 	highModel    string
 	smallModel   string
 	maxTok       int
 	temp         float32
-	think        int
 	logger       telemetry.Logger
 }
 
 type requestParts struct {
 	modelID                 string
 	modelClass              model.ModelClass
+	thinking                thinkingConfig
 	messages                []brtypes.Message
 	system                  []brtypes.SystemContentBlock
 	outputConfig            *brtypes.OutputConfig
@@ -122,19 +118,29 @@ type requestParts struct {
 
 type thinkingConfig struct {
 	enable      bool
-	adaptive    bool // Opus 4.6+: use type:"adaptive" (no budget, interleaved is automatic)
+	adaptive    bool // The resolved model chooses its own thinking budget.
 	interleaved bool
 	budget      int
 }
 
 var (
-	_ model.Client       = (*Client)(nil)
-	_ model.TokenCounter = (*Client)(nil)
+	_ model.Provider     = (*provider)(nil)
+	_ model.TokenCounter = (*provider)(nil)
 )
 
-// New initializes a Bedrock-powered model client configured for chat
-// completion and streaming requests.
-func New(aws *bedrockruntime.Client, opts Options) (*Client, error) {
+// New initializes a validated Bedrock-powered model client.
+func New(aws *bedrockruntime.Client, opts Options) (model.Client, error) {
+	raw, err := NewProvider(aws, opts)
+	if err != nil {
+		return nil, err
+	}
+	return model.NewClient(raw)
+}
+
+// NewProvider initializes the raw Bedrock provider used beneath
+// model.NewClient. Callers use it to install provider-side middleware before
+// final validation.
+func NewProvider(aws *bedrockruntime.Client, opts Options) (model.Provider, error) {
 	opts.Runtime = aws
 	if opts.Runtime == nil {
 		return nil, errors.New("bedrock runtime client is required")
@@ -143,23 +149,24 @@ func New(aws *bedrockruntime.Client, opts Options) (*Client, error) {
 	if opts.DefaultModel == "" {
 		return nil, errors.New("default model identifier is required")
 	}
-	maxTokens := opts.MaxTokens
-	thinkBudget := opts.ThinkingBudget
-	if thinkBudget <= 0 {
-		thinkBudget = defaultThinkingBudget
+	if _, err := bedrockInt32("default max tokens", opts.MaxTokens); err != nil {
+		return nil, err
 	}
+	if err := validateBedrockTemperature(opts.Temperature); err != nil {
+		return nil, err
+	}
+	maxTokens := opts.MaxTokens
 	logger := opts.Logger
 	if logger == nil {
 		logger = telemetry.NewNoopLogger()
 	}
-	c := &Client{
+	c := &provider{
 		runtime:      opts.Runtime,
 		defaultModel: opts.DefaultModel,
 		highModel:    opts.HighModel,
 		smallModel:   opts.SmallModel,
 		maxTok:       maxTokens,
 		temp:         opts.Temperature,
-		think:        thinkBudget,
 		logger:       logger,
 	}
 	return c, nil
@@ -168,41 +175,55 @@ func New(aws *bedrockruntime.Client, opts Options) (*Client, error) {
 // Complete issues a chat completion request to the configured Bedrock model
 // using the Converse API and translates the response into planner-friendly
 // structures (assistant messages + tool calls).
-func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	contract, err := model.NewRequestContract(req)
+	if err != nil {
+		return nil, err
+	}
 	parts, err := c.prepareRequest(req)
 	if err != nil {
 		return nil, err
 	}
-	output, err := c.runtime.Converse(ctx, c.buildConverseInput(parts, req))
+	input, err := c.buildConverseInput(parts, req)
 	if err != nil {
-		if isRateLimited(err) {
-			return nil, fmt.Errorf("%w: %w", model.ErrRateLimited, err)
-		}
+		return nil, err
+	}
+	output, err := c.runtime.Converse(ctx, input, c.requestOptions(parts.thinking)...)
+	if err != nil {
 		return nil, wrapBedrockError("converse", err)
 	}
 	resp, err := translateResponse(output, parts.toolNameProvToCanonical, parts.modelID, parts.modelClass)
 	if err != nil {
-		return nil, err
+		usage := translateBedrockUsage(output, parts.modelID, parts.modelClass)
+		return nil, contract.RejectProviderOutput(&usage, err)
 	}
 	if parts.structuredOutputToolName != "" {
 		if err := reifyStructuredOutputToolFallback(resp, parts.structuredOutputToolName); err != nil {
-			return nil, err
+			return nil, contract.RejectResponse(resp, err)
 		}
 	}
 	return resp, nil
 }
 
-// CountTokens asks Bedrock to count the exact input tokens for req using the
-// same Converse request preparation path as Complete, except that replayed
-// thinking blocks are omitted per the model.TokenCounter contract. Bedrock
-// rejects thinking signatures issued by any other model ("Invalid signature
-// in thinking block"), and the Claude 5 generation does not support
-// CountTokens at all, so the count input must never carry thinking content.
-func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
-	countReq := model.CountingRequest(req)
-	parts, err := c.prepareRequest(countReq)
+// CountTokens asks Bedrock to count the exact input that Converse would
+// receive, including prior reasoning blocks and their provider signatures.
+func (c *provider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	if req.StructuredOutput != nil {
+		return model.TokenCount{}, fmt.Errorf(
+			"bedrock: CountTokens cannot represent structured output: %w",
+			model.ErrTokenCountingUnsupported,
+		)
+	}
+	parts, err := c.prepareRequest(req)
 	if err != nil {
 		return model.TokenCount{}, err
+	}
+	if !claudecaps.BedrockRuntimeTokenCountSupported(parts.modelID) {
+		return model.TokenCount{}, fmt.Errorf(
+			"bedrock: model %q requires the bedrock-mantle token-count endpoint: %w",
+			parts.modelID,
+			model.ErrTokenCountingUnsupported,
+		)
 	}
 	// Runtime CountTokens is a foundation-model operation: translate the resolved
 	// model ID (which may be a cross-region inference profile) to its foundation
@@ -212,24 +233,17 @@ func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.Tok
 	if err != nil {
 		return model.TokenCount{}, err
 	}
-	output, err := c.runtime.CountTokens(ctx, c.buildCountTokensInput(parts, countReq, foundationModelID))
-	var inputTokens int
+	output, err := c.runtime.CountTokens(ctx, c.buildCountTokensInput(parts, req, foundationModelID))
 	if err != nil {
-		var ok bool
-		inputTokens, ok = promptTooLongTokenCount(err)
-		if !ok {
-			return model.TokenCount{}, wrapBedrockError("count_tokens", err)
-		}
-	} else {
-		if output.InputTokens == nil {
-			return model.TokenCount{}, errors.New("bedrock: count_tokens response missing input tokens")
-		}
-		inputTokens = int(*output.InputTokens)
+		return model.TokenCount{}, wrapBedrockError("count_tokens", err)
+	}
+	if output.InputTokens == nil {
+		return model.TokenCount{}, errors.New("bedrock: count_tokens response missing input tokens")
 	}
 	return model.TokenCount{
 		Model:       parts.modelID,
 		ModelClass:  parts.modelClass,
-		InputTokens: inputTokens,
+		InputTokens: int(*output.InputTokens),
 		Exact:       true,
 	}, nil
 }
@@ -238,25 +252,34 @@ func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.Tok
 // into model.Chunks so planners can surface partial responses. Structured
 // output streams emit completion_delta previews plus one canonical completion
 // payload before stop.
-func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+	contract, err := model.NewRequestContract(req)
+	if err != nil {
+		return nil, err
+	}
 	parts, err := c.prepareRequest(req)
 	if err != nil {
 		return nil, err
 	}
-	thinking := c.resolveThinking(req, parts)
-	input := c.buildConverseStreamInput(parts, req, thinking)
-	out, err := c.runtime.ConverseStream(ctx, input, c.streamOptions(thinking)...)
+	input, err := c.buildConverseStreamInput(parts, req)
 	if err != nil {
-		if isRateLimited(err) {
-			return nil, fmt.Errorf("%w: %w", model.ErrRateLimited, err)
+		return nil, err
+	}
+	out, err := c.runtime.ConverseStream(ctx, input, c.requestOptions(parts.thinking)...)
+	if err != nil {
+		var closeErr error
+		if out != nil {
+			if stream := out.GetStream(); stream != nil {
+				closeErr = stream.Close()
+			}
 		}
-		return nil, wrapBedrockError("converse_stream", err)
+		return nil, errors.Join(wrapBedrockError("converse_stream", err), closeErr)
 	}
 	stream := out.GetStream()
 	if stream == nil {
 		return nil, errors.New("bedrock: stream output missing event stream")
 	}
-	return newBedrockStreamer(
+	streamer := newBedrockStreamer(
 		ctx,
 		stream,
 		parts.toolNameProvToCanonical,
@@ -264,22 +287,43 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 		parts.modelClass,
 		req.StructuredOutput,
 		parts.structuredOutputToolName,
-	), nil
+		contract,
+	)
+	return streamer, nil
 }
 
-func (c *Client) prepareRequest(req *model.Request) (*requestParts, error) {
+func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 	if len(req.Messages) == 0 {
 		return nil, errors.New("bedrock: messages are required")
 	}
-	modelID := c.resolveModelID(req)
-	if modelID == "" {
-		return nil, errors.New("bedrock: model identifier is required")
+	modelID, err := modelid.Resolve("bedrock", req, c.defaultModel, c.highModel, c.smallModel)
+	if err != nil {
+		return nil, err
+	}
+	// Claude models without Bedrock's native output format use one private tool
+	// call. Derive that tool choice before thinking so unsupported manual
+	// thinking and forced-tool combinations fail before the provider call.
+	toolDefs, toolChoice := req.Tools, req.ToolChoice
+	useToolFallback := structuredOutputUsesToolFallback(modelID, req.StructuredOutput)
+	if useToolFallback {
+		if len(req.Tools) > 0 || req.ToolChoice != nil {
+			return nil, errors.New("bedrock: structured output cannot be combined with request tool definitions")
+		}
+		def, err := structuredOutputToolDefinition(req.StructuredOutput)
+		if err != nil {
+			return nil, err
+		}
+		toolDefs = []*model.ToolDefinition{def}
+		toolChoice = &model.ToolChoice{Mode: model.ToolChoiceModeTool, Name: def.Name}
+	}
+	thinking, err := resolveThinking(req.Thinking, toolChoice, modelID)
+	if err != nil {
+		return nil, err
 	}
 	// Enforce provider constraints early when thinking is enabled.
 	// Adaptive thinking (Opus 4.6+) lets the model skip thinking blocks
 	// entirely, so the thinking-first ordering rule does not apply.
-	thinkingEnabled := req.Thinking != nil && req.Thinking.Enable
-	if thinkingEnabled && !claudecaps.AdaptiveThinkingRequired(modelID) {
+	if thinking.enable && !thinking.adaptive {
 		if err := transcript.ValidateBedrock(req.Messages, true); err != nil {
 			return nil, fmt.Errorf("bedrock: invalid message ordering with thinking enabled (model=%s): %w", modelID, err)
 		}
@@ -303,29 +347,16 @@ func (c *Client) prepareRequest(req *model.Request) (*requestParts, error) {
 	// names can reuse the exact sanitized identifiers. encodeTools is the single
 	// source of truth for name sanitization.
 	//
-	// Anthropic models reject Bedrock's native structured-output response
-	// format (see encodeOutputConfig), so structured output for those models is
-	// expressed as a forced single tool call instead, reusing encodeTools for
-	// naming, thinking-compatibility, and schema encoding exactly as a real
-	// tool call would. This is the one place that decides which wire mechanism
-	// to use; Complete and Stream read the decision back from
-	// requestParts.structuredOutputToolName instead of re-deriving it.
-	toolDefs, toolChoice := req.Tools, req.ToolChoice
-	useToolFallback := structuredOutputUsesToolFallback(modelID, req.StructuredOutput)
-	if useToolFallback {
-		if len(req.Tools) > 0 || req.ToolChoice != nil {
-			return nil, errors.New("bedrock: structured output cannot be combined with request tool definitions")
-		}
-		def, err := structuredOutputToolDefinition(req.StructuredOutput)
-		if err != nil {
-			return nil, err
-		}
-		toolDefs = []*model.ToolDefinition{def}
-		toolChoice = &model.ToolChoice{Mode: model.ToolChoiceModeTool, Name: def.Name}
-	}
+	// Build either Bedrock's native output format or the private tool used by
+	// Claude models that do not support that format. Complete and Stream read
+	// this decision from requestParts instead of deciding again.
 	toolConfig, additionalModelFields, canonToSan, sanToCanon, err := encodeTools(modelID, toolDefs, toolChoice, cacheAfterTools)
 	if err != nil {
 		return nil, err
+	}
+	if useToolFallback && claudecaps.StructuredOutputSupported(modelID) {
+		spec := toolConfig.Tools[0].(*brtypes.ToolMemberToolSpec)
+		spec.Value.Strict = aws.Bool(true)
 	}
 	var outputConfig *brtypes.OutputConfig
 	if req.StructuredOutput != nil && !useToolFallback {
@@ -357,6 +388,7 @@ func (c *Client) prepareRequest(req *model.Request) (*requestParts, error) {
 	return &requestParts{
 		modelID:                  modelID,
 		modelClass:               req.ModelClass,
+		thinking:                 thinking,
 		messages:                 messages,
 		system:                   system,
 		outputConfig:             outputConfig,
@@ -368,32 +400,15 @@ func (c *Client) prepareRequest(req *model.Request) (*requestParts, error) {
 	}, nil
 }
 
-// resolveModelID decides which concrete model ID to use based on Request.Model
-// and Request.ModelClass. Request.Model takes precedence; when empty, the class
-// is mapped to the configured identifiers. Falls back to the default model.
-func (c *Client) resolveModelID(req *model.Request) string {
-	if s := req.Model; s != "" {
-		return s
-	}
-	switch string(req.ModelClass) {
-	case string(model.ModelClassHighReasoning):
-		if c.highModel != "" {
-			return c.highModel
-		}
-	case string(model.ModelClassSmall):
-		if c.smallModel != "" {
-			return c.smallModel
-		}
-	}
-	return c.defaultModel
-}
-
-func (c *Client) buildConverseInput(parts *requestParts, req *model.Request) *bedrockruntime.ConverseInput {
+func (c *provider) buildConverseInput(
+	parts *requestParts,
+	req *model.Request,
+) (*bedrockruntime.ConverseInput, error) {
 	input := &bedrockruntime.ConverseInput{
 		ModelId:  aws.String(parts.modelID),
 		Messages: parts.messages,
 	}
-	fields := additionalModelFieldsForRequest(parts.additionalModelFields, req)
+	fields := requestModelFields(parts, req)
 	if len(parts.system) > 0 {
 		input.System = parts.system
 	}
@@ -403,19 +418,23 @@ func (c *Client) buildConverseInput(parts *requestParts, req *model.Request) *be
 	if parts.outputConfig != nil {
 		input.OutputConfig = parts.outputConfig
 	}
-	if cfg := c.inferenceConfig(parts.modelID, req.MaxTokens, req.Temperature); cfg != nil {
+	cfg, err := c.inferenceConfig(parts.modelID, req.MaxTokens, req.Temperature)
+	if err != nil {
+		return nil, err
+	}
+	if cfg != nil {
 		input.InferenceConfig = cfg
 	}
 	if len(fields) > 0 {
 		input.AdditionalModelRequestFields = document.NewLazyDocument(&fields)
 	}
-	return input
+	return input, nil
 }
 
 // buildCountTokensInput builds the Runtime CountTokens request. foundationModelID
 // is the foundation model ID resolved from parts.modelID (see FoundationModelID);
 // CountTokens rejects the cross-region inference-profile ID that Converse uses.
-func (c *Client) buildCountTokensInput(parts *requestParts, req *model.Request, foundationModelID string) *bedrockruntime.CountTokensInput {
+func (c *provider) buildCountTokensInput(parts *requestParts, req *model.Request, foundationModelID string) *bedrockruntime.CountTokensInput {
 	fields := additionalModelFieldsForRequest(parts.additionalModelFields, req)
 	converse := brtypes.ConverseTokensRequest{
 		Messages: parts.messages,
@@ -433,12 +452,15 @@ func (c *Client) buildCountTokensInput(parts *requestParts, req *model.Request, 
 	}
 }
 
-func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Request, thinking thinkingConfig) *bedrockruntime.ConverseStreamInput {
+func (c *provider) buildConverseStreamInput(
+	parts *requestParts,
+	req *model.Request,
+) (*bedrockruntime.ConverseStreamInput, error) {
 	input := &bedrockruntime.ConverseStreamInput{
 		ModelId:  aws.String(parts.modelID),
 		Messages: parts.messages,
 	}
-	fields := additionalModelFieldsForRequest(parts.additionalModelFields, req)
+	fields := requestModelFields(parts, req)
 	if len(parts.system) > 0 {
 		input.System = parts.system
 	}
@@ -448,38 +470,17 @@ func (c *Client) buildConverseStreamInput(parts *requestParts, req *model.Reques
 	if parts.outputConfig != nil {
 		input.OutputConfig = parts.outputConfig
 	}
-	if thinking.enable {
-		if fields == nil {
-			fields = map[string]any{}
-		}
-		if thinking.adaptive {
-			// Opus 4.6+: adaptive thinking lets the model decide when and how
-			// deeply to reason. Request summarized display explicitly so Bedrock
-			// keeps returning visible reasoning text even on models like Opus 4.7
-			// where omitted display is now the default. Interleaved thinking is
-			// automatic — no beta header required.
-			fields["thinking"] = map[string]any{
-				"type":    "adaptive",
-				"display": "summarized",
-			}
-		} else {
-			thinkingCfg := map[string]any{"type": "enabled"}
-			if thinking.budget > 0 {
-				thinkingCfg["budget_tokens"] = thinking.budget
-			}
-			fields["thinking"] = thinkingCfg
-			if thinking.interleaved {
-				addAnthropicBeta(fields, "interleaved-thinking-2025-05-14")
-			}
-		}
-	}
 	if len(fields) > 0 {
 		input.AdditionalModelRequestFields = document.NewLazyDocument(&fields)
 	}
-	if cfg := c.inferenceConfig(parts.modelID, req.MaxTokens, req.Temperature); cfg != nil {
+	cfg, err := c.inferenceConfig(parts.modelID, req.MaxTokens, req.Temperature)
+	if err != nil {
+		return nil, err
+	}
+	if cfg != nil {
 		input.InferenceConfig = cfg
 	}
-	return input
+	return input, nil
 }
 
 // encodeOutputConfig translates a provider-neutral structured-output request
@@ -511,18 +512,14 @@ func encodeOutputConfig(output *model.StructuredOutput) (*brtypes.OutputConfig, 
 	}, nil
 }
 
-// structuredOutputUsesToolFallback reports whether a structured-output request
-// must be expressed as a forced tool call instead of Bedrock's native
-// OutputConfig response format. Bedrock's Converse API translates
-// OutputConfig.TextFormat into Anthropic's own (unsupported-on-Converse)
-// output_config.format field before forwarding it to Anthropic models, and the
-// model then rejects it with "Extra inputs are not permitted" — a documented
-// AWS/Anthropic incompatibility, not a request bug. Forcing a single tool call
-// is the well-supported alternative that Bedrock validates against the same
-// JSON Schema with the same guarantee, so callers see no difference in the
-// canonical model.Response.
+// structuredOutputUsesToolFallback reports whether a Claude model needs a
+// private forced tool because Bedrock does not support OutputConfig for that
+// model. The adapter validates the returned tool JSON against the caller's
+// completion contract before exposing it.
 func structuredOutputUsesToolFallback(modelID string, output *model.StructuredOutput) bool {
-	return output != nil && isAnthropicBedrockModel(modelID)
+	return output != nil &&
+		isAnthropicBedrockModel(modelID) &&
+		!claudecaps.BedrockNativeStructuredOutputSupported(modelID)
 }
 
 // structuredOutputToolDefinition adapts a provider-neutral structured-output
@@ -588,41 +585,37 @@ func reifyStructuredOutputToolFallback(resp *model.Response, toolName string) er
 	return nil
 }
 
-func (c *Client) resolveThinking(req *model.Request, parts *requestParts) thinkingConfig {
-	if req.Thinking == nil || !req.Thinking.Enable {
-		return thinkingConfig{}
+// resolveThinking derives the one Bedrock thinking contract used by unary and
+// streaming requests. Legacy thinking always carries an explicit positive
+// budget; models on the adaptive contract never carry a legacy budget.
+func resolveThinking(thinking *model.ThinkingOptions, toolChoice *model.ToolChoice, modelID string) (thinkingConfig, error) {
+	if thinking == nil || !thinking.Enable {
+		return thinkingConfig{}, nil
 	}
-	if forcesToolUse(req.ToolChoice) {
-		return thinkingConfig{}
-	}
-	// Opus 4.6+ requires adaptive thinking: the model dynamically decides when
-	// and how deeply to reason. Interleaved thinking is automatic in adaptive
-	// mode — no beta header is needed. The legacy type:"enabled" + budget_tokens
-	// config is deprecated for Opus 4.6 and produces unreliable signatures.
-	if claudecaps.AdaptiveThinkingRequired(parts.modelID) {
+	// Use adaptive thinking whenever the selected model accepts it. Adaptive
+	// mode supports forced tools and automatically reasons between tool calls.
+	if claudecaps.AdaptiveThinkingSupported(modelID) {
 		return thinkingConfig{
 			enable:   true,
 			adaptive: true,
-		}
+		}, nil
 	}
-	budget := req.Thinking.BudgetTokens
+	if forcesToolUse(toolChoice) {
+		return thinkingConfig{}, errors.New("bedrock: manual thinking cannot be combined with forced tool choice")
+	}
+	budget := thinking.BudgetTokens
 	if budget <= 0 {
-		budget = c.think
+		return thinkingConfig{}, errors.New("bedrock: thinking budget_tokens must be positive for legacy extended thinking")
 	}
 	return thinkingConfig{
 		enable:      true,
-		interleaved: req.Thinking.Interleaved,
+		interleaved: thinking.Interleaved,
 		budget:      budget,
-	}
+	}, nil
 }
 
 // forcesToolUse reports whether a provider-neutral tool choice requires the
-// next assistant turn to contain a tool call. Anthropic-on-Bedrock rejects
-// thinking for those requests, regardless of whether the caller names one tool
-// or allows any tool. On models with optional thinking the adapter drops the
-// thinking config for forced-tool turns; on the always-thinking Claude 5
-// generation (Fable/Mythos) forced tool use is unrepresentable and encodeTools
-// rejects it.
+// next assistant turn to contain a tool call.
 func forcesToolUse(choice *model.ToolChoice) bool {
 	return choice != nil && (choice.Mode == model.ToolChoiceModeAny || choice.Mode == model.ToolChoiceModeTool)
 }
@@ -631,7 +624,7 @@ func forcesToolUse(choice *model.ToolChoice) bool {
 //
 // prepareRequest always enforces the shared planner tool-loop invariants.
 //
-// For legacy models (pre-Opus 4.6) with type:"enabled", Bedrock interleaved
+// For models without adaptive thinking, Bedrock interleaved
 // thinking additionally requires reasoning to precede tool_use within the same
 // assistant message. prepareRequest enforces that representability constraint
 // via transcript.ValidateBedrock; transcript construction never invents missing
@@ -641,8 +634,8 @@ func forcesToolUse(choice *model.ToolChoice) bool {
 // may skip reasoning entirely on simple turns. The thinking-first ordering
 // rule does not apply, and the beta header is not needed.
 
-func (c *Client) streamOptions(thinking thinkingConfig) []func(*bedrockruntime.Options) {
-	if !thinking.enable || thinking.adaptive {
+func (c *provider) requestOptions(thinking thinkingConfig) []func(*bedrockruntime.Options) {
+	if !thinking.enable || thinking.adaptive || !thinking.interleaved {
 		// Adaptive thinking (Opus 4.6+) does not require the interleaved
 		// thinking beta header — the capability is built into the model.
 		return nil
@@ -654,21 +647,79 @@ func (c *Client) streamOptions(thinking thinkingConfig) []func(*bedrockruntime.O
 	}
 }
 
-func (c *Client) inferenceConfig(modelID string, maxTokens int, temp float32) *brtypes.InferenceConfiguration {
+// requestModelFields applies provider-neutral request fields and the resolved
+// thinking contract once so Converse and ConverseStream send identical JSON.
+func requestModelFields(parts *requestParts, req *model.Request) map[string]any {
+	fields := additionalModelFieldsForRequest(parts.additionalModelFields, req)
+	thinking := parts.thinking
+	if !thinking.enable {
+		return fields
+	}
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	if thinking.adaptive {
+		fields["thinking"] = map[string]any{
+			"type":    "adaptive",
+			"display": "summarized",
+		}
+		return fields
+	}
+	fields["thinking"] = map[string]any{
+		"type":          "enabled",
+		"budget_tokens": thinking.budget,
+	}
+	if thinking.interleaved {
+		addAnthropicBeta(fields, "interleaved-thinking-2025-05-14")
+	}
+	return fields
+}
+
+func (c *provider) inferenceConfig(
+	modelID string,
+	maxTokens int,
+	temp float32,
+) (*brtypes.InferenceConfiguration, error) {
 	var cfg brtypes.InferenceConfiguration
+	effectiveTemperature := c.effectiveTemperature(temp)
+	if err := validateBedrockTemperature(effectiveTemperature); err != nil {
+		return nil, err
+	}
 	tokens := c.effectiveMaxTokens(maxTokens)
 	if tokens > 0 {
-		cfg.MaxTokens = aws.Int32(int32(tokens)) //nolint:gosec // AWS SDK requires int32
+		converted, err := bedrockInt32("max tokens", tokens)
+		if err != nil {
+			return nil, err
+		}
+		cfg.MaxTokens = aws.Int32(converted)
 	}
 	if claudecaps.TemperatureSupported(modelID) {
-		if t := c.effectiveTemperature(temp); t > 0 {
-			cfg.Temperature = aws.Float32(t)
+		if effectiveTemperature > 0 {
+			cfg.Temperature = aws.Float32(effectiveTemperature)
 		}
 	}
 	if cfg.MaxTokens == nil && cfg.Temperature == nil {
-		return nil
+		return nil, nil
 	}
-	return &cfg
+	return &cfg, nil
+}
+
+// bedrockInt32 rejects token limits the AWS SDK cannot represent before
+// narrowing.
+func bedrockInt32(field string, value int) (int32, error) {
+	if value < 0 || int64(value) > math.MaxInt32 {
+		return 0, fmt.Errorf("bedrock: %s must be between 0 and %d", field, int64(math.MaxInt32))
+	}
+	return int32(value), nil
+}
+
+// validateBedrockTemperature enforces the Converse API sampling range.
+func validateBedrockTemperature(temperature float32) error {
+	value := float64(temperature)
+	if math.IsNaN(value) || math.IsInf(value, 0) || temperature < 0 || temperature > 1 {
+		return errors.New("bedrock: temperature must be between 0 and 1")
+	}
+	return nil
 }
 
 func cloneAdditionalModelFields(fields map[string]any) map[string]any {
@@ -724,14 +775,14 @@ func removeAnthropicBeta(fields map[string]any, beta string) {
 	fields["anthropic_beta"] = out
 }
 
-func (c *Client) effectiveMaxTokens(requested int) int {
+func (c *provider) effectiveMaxTokens(requested int) int {
 	if requested > 0 {
 		return requested
 	}
 	return c.maxTok
 }
 
-func (c *Client) effectiveTemperature(requested float32) float32 {
+func (c *provider) effectiveTemperature(requested float32) float32 {
 	if requested > 0 {
 		return requested
 	}
@@ -1123,14 +1174,14 @@ func encodeTools(
 		if def.Description == "" {
 			return nil, nil, nil, nil, fmt.Errorf("bedrock: tool %q is missing description", canonical)
 		}
-		input := def.Input
-		inputSchema := input.JSONSchema()
-		hasExample := input.ExampleJSON() != nil
+		input := def.Input.Contract()
+		inputSchema := input.Schema
+		hasExample := input.ExampleJSON != nil
 		if anthropicModel && hasExample {
-			if input.SchemaWithoutRootExample() == nil {
+			if input.SchemaWithoutRootExample == nil {
 				return nil, nil, nil, nil, fmt.Errorf("bedrock: tool %q example JSON requires schema without root example", canonical)
 			}
-			inputSchema = input.SchemaWithoutRootExample()
+			inputSchema = input.SchemaWithoutRootExample
 			anthropicHasExamples = true
 		}
 		if anthropicModel {
@@ -1163,17 +1214,9 @@ func encodeTools(
 		return &brtypes.ToolConfiguration{Tools: toolList}, anthropicToolExampleFields(anthropicTools, anthropicHasExamples, nil), canonToSan, sanToCanon, nil
 	}
 
-	// Claude 5 generation models (Fable/Mythos) run with always-on adaptive
-	// thinking, and Anthropic rejects forced tool use (tool_choice any/tool)
-	// whenever thinking is active. Earlier models let the adapter drop the
-	// thinking config for forced-tool turns; Fable has no non-thinking mode, so
-	// the request is unrepresentable. Fail fast with a precise error instead of
-	// letting Bedrock return an opaque ValidationException: callers must use
-	// auto and steer tool selection through prompting, enforcing the
-	// must-call-tool contract on the response.
-	if forcesToolUse(choice) && claudecaps.IsFableGeneration(modelID) {
+	if forcesToolUse(choice) && claudecaps.ForcedToolChoiceUnsupported(modelID) {
 		return nil, nil, nil, nil, fmt.Errorf(
-			"bedrock: model %q does not support forced tool choice (tool_choice mode %q): thinking is always on and incompatible with forced tool use; use mode \"auto\" and steer tool selection through prompting",
+			"bedrock: model %q does not support forced tool choice mode %q",
 			modelID, choice.Mode,
 		)
 	}
@@ -1260,10 +1303,10 @@ func registerToolName(
 }
 
 func anthropicToolDefinition(name string, def *model.ToolDefinition, includeExample bool) (map[string]any, error) {
-	input := def.Input
-	inputSchema := input.JSONSchema()
+	input := def.Input.Contract()
+	inputSchema := input.Schema
 	if includeExample {
-		inputSchema = input.SchemaWithoutRootExample()
+		inputSchema = input.SchemaWithoutRootExample
 	}
 	schema, err := schemaMap(inputSchema)
 	if err != nil {
@@ -1275,7 +1318,7 @@ func anthropicToolDefinition(name string, def *model.ToolDefinition, includeExam
 		"input_schema": schema,
 	}
 	if includeExample {
-		example, err := schemaMap(input.ExampleJSON())
+		example, err := schemaMap(input.ExampleJSON)
 		if err != nil {
 			return nil, fmt.Errorf("bedrock: tool %q Anthropic example: %w", def.Name, err)
 		}
@@ -1522,6 +1565,7 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 		return nil, fmt.Errorf("bedrock: unsupported response output %T", output.Output)
 	}
 	assistant := model.Message{Role: model.ConversationRole(msg.Value.Role)}
+	reasoningIndex := 0
 	for _, block := range msg.Value.Content {
 		switch v := block.(type) {
 		case *brtypes.ContentBlockMemberReasoningContent:
@@ -1537,16 +1581,20 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 				assistant.Parts = append(assistant.Parts, model.ThinkingPart{
 					Text:      text,
 					Signature: signature,
+					Index:     reasoningIndex,
 					Final:     true,
 				})
+				reasoningIndex++
 			case *brtypes.ReasoningContentBlockMemberRedactedContent:
 				if len(reasoning.Value) == 0 {
 					return nil, errors.New("bedrock: response redacted reasoning block requires data")
 				}
 				assistant.Parts = append(assistant.Parts, model.ThinkingPart{
 					Redacted: append([]byte(nil), reasoning.Value...),
+					Index:    reasoningIndex,
 					Final:    true,
 				})
+				reasoningIndex++
 			default:
 				return nil, fmt.Errorf("bedrock: unsupported response reasoning block %T", v.Value)
 			}
@@ -1568,14 +1616,12 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 			}
 			raw := *v.Value.Name
 			key := normalizeToolName(raw)
-			name := key
-			// Bedrock tool_use blocks echo provider-visible names. When the model
-			// hallucinates a tool name that was not advertised in this request, the
-			// reverse map will not contain it. Surface the tool call as-is and let
-			// the runtime convert it into an "unknown tool" result so the model can
-			// recover on the next resume turn.
-			if canonical, ok := nameMap[key]; ok {
-				name = canonical
+			name, ok := nameMap[key]
+			if !ok {
+				return nil, fmt.Errorf(
+					"bedrock: response tool use block returned unadvertised name %q",
+					raw,
+				)
 			}
 			if v.Value.ToolUseId == nil || *v.Value.ToolUseId == "" {
 				return nil, errors.New("bedrock: response tool use block missing ID")
@@ -1592,25 +1638,31 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 	if len(assistant.Parts) > 0 {
 		resp.Content = append(resp.Content, assistant)
 	}
-	if usage := output.Usage; usage != nil {
-		resp.Usage = model.TokenUsage{
-			Model:            modelID,
-			ModelClass:       modelClass,
-			InputTokens:      int(ptrValue(usage.InputTokens)),
-			OutputTokens:     int(ptrValue(usage.OutputTokens)),
-			TotalTokens:      int(ptrValue(usage.TotalTokens)),
-			CacheReadTokens:  int(ptrValue(usage.CacheReadInputTokens)),
-			CacheWriteTokens: int(ptrValue(usage.CacheWriteInputTokens)),
-		}
-	}
+	resp.Usage = translateBedrockUsage(output, modelID, modelClass)
 	resp.StopReason = string(output.StopReason)
 	if resp.StopReason == "" {
 		return nil, errors.New("bedrock: response is missing its stop reason")
 	}
-	if err := model.ValidateResponse(resp); err != nil {
-		return nil, fmt.Errorf("bedrock: invalid response: %w", err)
-	}
 	return resp, nil
+}
+
+// translateBedrockUsage extracts provider usage and resolved model identity
+// before content translation so malformed content cannot erase valid billing
+// evidence.
+func translateBedrockUsage(output *bedrockruntime.ConverseOutput, modelID string, modelClass model.ModelClass) model.TokenUsage {
+	usage := model.TokenUsage{
+		Model:      modelID,
+		ModelClass: modelClass,
+	}
+	if output == nil || output.Usage == nil {
+		return usage
+	}
+	usage.InputTokens = int(ptrValue(output.Usage.InputTokens))
+	usage.OutputTokens = int(ptrValue(output.Usage.OutputTokens))
+	usage.TotalTokens = int(ptrValue(output.Usage.TotalTokens))
+	usage.CacheReadTokens = int(ptrValue(output.Usage.CacheReadInputTokens))
+	usage.CacheWriteTokens = int(ptrValue(output.Usage.CacheWriteInputTokens))
+	return usage
 }
 
 func decodeDocument(doc document.Interface) (rawjson.Message, error) {

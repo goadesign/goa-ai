@@ -35,7 +35,8 @@ func TestQuickstart_Renders_Minimal(t *testing.T) {
 	require.Contains(t, content, "calc.scribe")
 	require.Contains(t, content, "calc.helpers")
 	require.Contains(t, content, "client := scribe.NewClient(rt)")
-	require.Contains(t, content, "[]*model.Message{")
+	require.Contains(t, content, "`PlanStart` decodes a generated payload example")
+	require.Contains(t, content, "The runtime matches the result to the pending call")
 	require.Contains(t, content, "## 4. 🧠 The Planner:")
 	require.NotContains(t, content, "Service-Side Tool Providers (Registry-Routed Execution)")
 

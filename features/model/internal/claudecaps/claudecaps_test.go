@@ -69,13 +69,9 @@ func TestTemperatureSupported(t *testing.T) {
 	}
 }
 
-// AdaptiveThinkingRequired must match every Bedrock inference profile scope
-// (in-region, geo cross-region, global cross-region) for the Opus versions
-// and Sonnet versions that require adaptive thinking. Misclassifying these
-// models causes an adapter to send the legacy type:"enabled" + budget_tokens
-// config, which produces unreliable signatures on Opus 4.6 and a 400 error on
-// Opus 4.7+ and Sonnet 5.
-func TestAdaptiveThinkingRequired(t *testing.T) {
+// AdaptiveThinkingSupported must match every provider model ID shape so each
+// adapter chooses adaptive mode whenever the model accepts it.
+func TestAdaptiveThinkingSupported(t *testing.T) {
 	cases := []struct {
 		name    string
 		modelID string
@@ -102,14 +98,93 @@ func TestAdaptiveThinkingRequired(t *testing.T) {
 		{"opus-4-5 legacy config", "anthropic.claude-opus-4-5-20251101-v1", false},
 		{"opus-4-0 dated (date is not a minor)", "claude-opus-4-20250514", false},
 		{"sonnet-4-5", "us.anthropic.claude-sonnet-4-5-20250929-v1:0", false},
-		{"sonnet-4-6", "global.anthropic.claude-sonnet-4-6", false},
+		{"sonnet-4-6", "global.anthropic.claude-sonnet-4-6", true},
 		{"haiku-4-5", "global.anthropic.claude-haiku-4-5-20251001-v1:0", false},
-		{"mythos-preview", "claude-mythos-preview", false},
+		{"mythos-preview", "claude-mythos-preview", true},
 		{"empty", "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, AdaptiveThinkingRequired(tc.modelID))
+			assert.Equal(t, tc.want, AdaptiveThinkingSupported(tc.modelID))
+		})
+	}
+}
+
+func TestForcedToolChoiceUnsupported(t *testing.T) {
+	tests := []struct {
+		modelID string
+		want    bool
+	}{
+		{modelID: "claude-mythos-preview", want: true},
+		{modelID: "us.anthropic.claude-mythos-preview-v1:0", want: true},
+		{modelID: "claude-mythos-5"},
+		{modelID: "claude-fable-5"},
+		{modelID: "claude-opus-5"},
+	}
+	for _, test := range tests {
+		t.Run(test.modelID, func(t *testing.T) {
+			assert.Equal(t, test.want, ForcedToolChoiceUnsupported(test.modelID))
+		})
+	}
+}
+
+func TestStructuredOutputSupported(t *testing.T) {
+	tests := []struct {
+		modelID string
+		want    bool
+	}{
+		{modelID: "claude-sonnet-4-5", want: true},
+		{modelID: "claude-opus-4-7", want: true},
+		{modelID: "claude-haiku-5", want: true},
+		{modelID: "claude-fable-5", want: true},
+		{modelID: "claude-mythos-preview", want: true},
+		{modelID: "claude-sonnet-4-0"},
+		{modelID: "claude-3-5-sonnet-20241022"},
+	}
+	for _, test := range tests {
+		t.Run(test.modelID, func(t *testing.T) {
+			assert.Equal(t, test.want, StructuredOutputSupported(test.modelID))
+		})
+	}
+}
+
+func TestBedrockNativeStructuredOutputSupported(t *testing.T) {
+	tests := []struct {
+		modelID string
+		want    bool
+	}{
+		{modelID: "us.anthropic.claude-sonnet-4-5-20250929-v1:0", want: true},
+		{modelID: "global.anthropic.claude-opus-4-6-v1:0", want: true},
+		{modelID: "global.anthropic.claude-haiku-4-5-v1:0", want: true},
+		{modelID: "us.anthropic.claude-opus-5"},
+		{modelID: "us.anthropic.claude-opus-4-7"},
+		{modelID: "us.anthropic.claude-sonnet-4-0"},
+	}
+	for _, test := range tests {
+		t.Run(test.modelID, func(t *testing.T) {
+			assert.Equal(t, test.want, BedrockNativeStructuredOutputSupported(test.modelID))
+		})
+	}
+}
+
+func TestBedrockRuntimeTokenCountSupported(t *testing.T) {
+	tests := []struct {
+		modelID string
+		want    bool
+	}{
+		{modelID: "us.anthropic.claude-opus-4-7"},
+		{modelID: "global.anthropic.claude-sonnet-5"},
+		{modelID: "anthropic.claude-mythos-5"},
+		{modelID: "us.anthropic.claude-opus-4-8", want: true},
+		{modelID: "global.anthropic.claude-sonnet-6", want: true},
+		{modelID: "anthropic.claude-mythos-6", want: true},
+		{modelID: "global.anthropic.claude-fable-5", want: true},
+		{modelID: "global.anthropic.claude-haiku-4-5", want: true},
+		{modelID: "amazon.nova-pro-v1:0", want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.modelID, func(t *testing.T) {
+			assert.Equal(t, test.want, BedrockRuntimeTokenCountSupported(test.modelID))
 		})
 	}
 }

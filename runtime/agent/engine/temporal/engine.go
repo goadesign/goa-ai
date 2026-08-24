@@ -7,7 +7,6 @@ package temporal
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -21,26 +20,21 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
-// Options configures the Temporal engine adapter. Either a pre-configured Client
-// or ClientOptions must be provided. The adapter automatically wires OTEL
-// instrumentation.
+// Options configures the Temporal engine adapter. ClientOptions are required;
+// the adapter installs Goa-AI's workflow data contract and OTEL instrumentation
+// before constructing the client.
 //
 // Use NewWorker when the process will register workflows/activities and poll task
 // queues locally. Use NewClient when the process only needs Temporal client
 // capabilities such as starting workflows, querying status, or canceling runs.
 type Options struct {
-	// Client is an optional pre-configured Temporal client. If nil, the adapter
-	// creates a lazy client using ClientOptions, allowing automatic OTEL interceptor
-	// installation. Provide a pre-configured client when you need custom interceptors
-	// or connection pooling.
-	Client client.Client
-
-	// ClientOptions describe how to construct the Temporal client when Client is nil.
-	// Required when Client is nil. Only connection-related fields (HostPort, Namespace,
-	// etc.) need to be set; OTEL interceptors are configured automatically.
+	// ClientOptions describe how to construct the Temporal client. The engine
+	// rejects a custom DataConverter, installs its mandatory bounded converter,
+	// and appends automatic OTEL instrumentation.
 	ClientOptions *client.Options
 
 	// WorkerOptions configures worker defaults for task queue, concurrency, and
@@ -156,11 +150,10 @@ type InstrumentationOptions struct {
 //   - Register workflows/activities only on worker engines.
 //   - Call engine.SealRegistration via runtime.Seal() once all local registrations
 //     are complete. The call blocks until every local worker activates or ctx ends.
-//   - Call Close() to gracefully stop workers and release the Temporal client when
-//     owned here.
+//   - Call Close() to gracefully stop workers and release the Temporal client
+//     created by the constructor.
 type Engine struct {
-	client      client.Client
-	closeClient bool
+	client client.Client
 
 	workerMode bool
 
@@ -223,23 +216,18 @@ func newEngine(opts Options, workerMode bool) (*Engine, error) {
 
 	inst := configureInstrumentation(opts.Instrumentation)
 
-	cli := opts.Client
-	closeClient := false
-	if cli == nil {
-		if opts.ClientOptions == nil {
-			return nil, fmt.Errorf("temporal engine: client options are required when Client is nil")
-		}
-		clientOpts := *opts.ClientOptions
-		if clientOpts.DataConverter == nil {
-			clientOpts.DataConverter = NewAgentDataConverter()
-		}
-		applyClientInstrumentation(&clientOpts, inst)
-		lazyClient, err := client.NewLazyClient(clientOpts)
-		if err != nil {
-			return nil, fmt.Errorf("temporal engine: create client: %w", err)
-		}
-		cli = lazyClient
-		closeClient = true
+	if opts.ClientOptions == nil {
+		return nil, fmt.Errorf("temporal engine: client options are required")
+	}
+	clientOpts := *opts.ClientOptions
+	if clientOpts.DataConverter != nil {
+		return nil, fmt.Errorf("temporal engine: custom data converter is not supported")
+	}
+	clientOpts.DataConverter = NewAgentDataConverter()
+	applyClientInstrumentation(&clientOpts, inst)
+	cli, err := client.NewLazyClient(clientOpts)
+	if err != nil {
+		return nil, fmt.Errorf("temporal engine: create client: %w", err)
 	}
 
 	workerOpts := opts.WorkerOptions.Options
@@ -249,7 +237,6 @@ func newEngine(opts Options, workerMode bool) (*Engine, error) {
 
 	e := &Engine{
 		client:                  cli,
-		closeClient:             closeClient,
 		workerMode:              workerMode,
 		defaultQueue:            defaultQueue,
 		workerOpts:              workerOpts,
@@ -317,38 +304,11 @@ func (e *Engine) temporalWorkflowHandler(
 		wfCtx := newTemporalWorkflowContext(e, tctx)
 		defer e.releaseWorkflowContext(wfCtx.runID)
 		out, err := handler(wfCtx, input)
-		if cancellationOnly(err) {
-			return out, temporal.NewCanceledError(err.Error())
+		if temporalerrors.CancellationOnly(err) {
+			return out, temporal.NewCanceledError("workflow canceled")
 		}
-		return out, err
+		return out, temporalerrors.Wrap(err)
 	}
-}
-
-// cancellationOnly reports whether every error leaf represents cancellation.
-// A join containing any substantive failure must remain a failed workflow.
-func cancellationOnly(err error) bool {
-	if err == nil {
-		return false
-	}
-	type multiUnwrapper interface {
-		Unwrap() []error
-	}
-	if joined, ok := err.(multiUnwrapper); ok {
-		causes := joined.Unwrap()
-		if len(causes) == 0 {
-			return false
-		}
-		for _, cause := range causes {
-			if !cancellationOnly(cause) {
-				return false
-			}
-		}
-		return true
-	}
-	if cause := errors.Unwrap(err); cause != nil {
-		return cancellationOnly(cause)
-	}
-	return errors.Is(err, context.Canceled) || temporal.IsCanceledError(err)
 }
 
 // RegisterRecordActivity registers a typed runtime-record activity with the
@@ -361,7 +321,7 @@ func (e *Engine) RegisterRecordActivity(_ context.Context, name string, opts eng
 	}
 	opts = e.applyActivityClassDefaults(activityKindRecord, opts)
 	wrapped := func(ctx context.Context, in *api.RecordActivityInput) error {
-		return fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		return temporalerrors.Wrap(fn(e.injectWorkflowContextIntoActivity(ctx), in))
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -386,7 +346,8 @@ func (e *Engine) RegisterPlannerActivity(_ context.Context, name string, opts en
 	// Wrap to inject originating WorkflowContext into activity context so runtime code
 	// can start child workflows (agent-as-tool) with engine-owned context.
 	wrapped := func(ctx context.Context, in *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
-		return fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		return output, temporalerrors.Wrap(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -409,7 +370,8 @@ func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opt
 	// Wrap to inject originating WorkflowContext into activity context so runtime code
 	// can start child workflows (agent-as-tool) with engine-owned context.
 	wrapped := func(ctx context.Context, in *api.ToolInput) (*api.ToolOutput, error) {
-		return fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		return output, temporalerrors.Wrap(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -479,9 +441,8 @@ func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequ
 	}, nil
 }
 
-// Close gracefully shuts down the Temporal client if the engine created it
-// (via ClientOptions). If a pre-configured Client was provided to New(), Close
-// does nothing, leaving client lifecycle management to the caller.
+// Close stops local workers and closes the Temporal client created by
+// NewWorker or NewClient.
 //
 // Returns nil (error signature maintained for interface compatibility).
 //
@@ -490,9 +451,7 @@ func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequ
 //nolint:unparam // Error return maintained for interface compatibility.
 func (e *Engine) Close() error {
 	e.stopWorkers()
-	if e.closeClient && e.client != nil {
-		e.client.Close()
-	}
+	e.client.Close()
 	return nil
 }
 

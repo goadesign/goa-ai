@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -52,14 +53,41 @@ func (c *countTokensRuntimeClient) CountTokens(
 	return &bedrockruntime.CountTokensOutput{InputTokens: &tokens}, nil
 }
 
+func TestCountTokensRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
+	tests := []struct {
+		name    string
+		request *model.Request
+	}{
+		{name: "nil request"},
+		{name: "unsupported model class", request: &model.Request{ModelClass: "unsupported"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime := &countTokensRuntimeClient{}
+			raw := &provider{
+				runtime:      runtime,
+				defaultModel: "anthropic.claude-opus-4-8",
+				maxTok:       10,
+				temp:         0.5,
+			}
+			client, newErr := model.NewClient(raw)
+			require.NoError(t, newErr)
+
+			_, err := client.CountTokens(context.Background(), tt.request)
+
+			require.Error(t, err)
+			require.Nil(t, runtime.input)
+		})
+	}
+}
+
 func TestCountTokens_UsesConverseRequestPreparation(t *testing.T) {
 	rt := &countTokensRuntimeClient{}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "anthropic.claude-opus-4-8",
 		maxTok:       10,
 		temp:         0.5,
-		think:        defaultThinkingBudget,
 	}
 	req := &model.Request{
 		ModelClass: model.ModelClassDefault,
@@ -77,7 +105,7 @@ func TestCountTokens_UsesConverseRequestPreparation(t *testing.T) {
 			{
 				Name:        "lookup",
 				Description: "Look up a value.",
-				Input: model.ToolInputFromSchema(rawjson.Message(
+				Input: mustBedrockToolInput(t, rawjson.Message(
 					`{"type":"object","properties":{"id":{"type":"string"}}}`,
 				)),
 			},
@@ -106,10 +134,10 @@ func TestCountTokens_UsesConverseRequestPreparation(t *testing.T) {
 // TokenCount still reports the configured profile ID for observability.
 func TestCountTokens_SendsFoundationModelID(t *testing.T) {
 	rt := &countTokensRuntimeClient{}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "us.anthropic.claude-opus-4-8",
-		think:        defaultThinkingBudget,
+		highModel:    "us.anthropic.claude-opus-4-8",
 	}
 
 	count, err := client.CountTokens(context.Background(), &model.Request{
@@ -128,12 +156,37 @@ func TestCountTokens_SendsFoundationModelID(t *testing.T) {
 	require.Equal(t, model.ModelClassHighReasoning, count.ModelClass)
 }
 
-// TestCountTokens_ReturnsExactCountFromPromptTooLong verifies Bedrock's
-// over-window ValidationException remains an exact token-count result. The
-// provider completed the measurement and reports both measured and maximum
-// counts in its canonical message; history compression must receive the
-// measured count rather than a provider error or local estimate.
-func TestCountTokens_ReturnsExactCountFromPromptTooLong(t *testing.T) {
+func TestCountTokensRejectsModelsThatRequireBedrockMantle(t *testing.T) {
+	for _, modelID := range []string{
+		"us.anthropic.claude-opus-4-7",
+		"global.anthropic.claude-sonnet-5",
+		"anthropic.claude-mythos-5",
+	} {
+		t.Run(modelID, func(t *testing.T) {
+			rt := &countTokensRuntimeClient{}
+			client := &provider{
+				runtime:      rt,
+				defaultModel: modelID,
+			}
+
+			count, err := client.CountTokens(t.Context(), &model.Request{
+				Messages: []*model.Message{{
+					Role:  model.ConversationRoleUser,
+					Parts: []model.Part{model.TextPart{Text: "hello"}},
+				}},
+			})
+
+			require.Equal(t, model.TokenCount{}, count)
+			require.ErrorIs(t, err, model.ErrTokenCountingUnsupported)
+			require.ErrorContains(t, err, "requires the bedrock-mantle token-count endpoint")
+			require.Nil(t, rt.input)
+		})
+	}
+}
+
+// TestCountTokensRejectsPromptTooLongMessageAsCount verifies that English
+// provider text never becomes an exact token-count result.
+func TestCountTokensRejectsPromptTooLongMessageAsCount(t *testing.T) {
 	validationErr := &brtypes.ValidationException{
 		Message: aws.String("prompt is too long: 215065 tokens > 200000 maximum"),
 	}
@@ -144,13 +197,13 @@ func TestCountTokens_ReturnsExactCountFromPromptTooLong(t *testing.T) {
 			Err:           validationErr,
 		},
 	}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "anthropic.claude-opus-4-8",
-		think:        defaultThinkingBudget,
+		smallModel:   "anthropic.claude-opus-4-8",
 	}
 
-	count, err := client.CountTokens(context.Background(), &model.Request{
+	_, err := client.CountTokens(context.Background(), &model.Request{
 		ModelClass: model.ModelClassSmall,
 		Messages: []*model.Message{
 			{
@@ -160,11 +213,10 @@ func TestCountTokens_ReturnsExactCountFromPromptTooLong(t *testing.T) {
 		},
 	})
 
-	require.NoError(t, err)
-	require.Equal(t, 215065, count.InputTokens)
-	require.Equal(t, "anthropic.claude-opus-4-8", count.Model)
-	require.Equal(t, model.ModelClassSmall, count.ModelClass)
-	require.True(t, count.Exact)
+	require.Error(t, err)
+	providerErr, ok := model.AsProviderError(err)
+	require.True(t, ok)
+	require.Equal(t, "ValidationException", providerErr.Code())
 }
 
 // TestCountTokens_PreservesOtherValidationErrors verifies unrecognized AWS
@@ -189,10 +241,9 @@ func TestCountTokens_PreservesOtherValidationErrors(t *testing.T) {
 			Err:           responseErr,
 		},
 	}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "anthropic.claude-opus-4-8",
-		think:        defaultThinkingBudget,
 	}
 
 	_, err := client.CountTokens(context.Background(), &model.Request{
@@ -218,19 +269,15 @@ func TestCountTokens_PreservesOtherValidationErrors(t *testing.T) {
 	require.False(t, providerErr.Retryable())
 }
 
-// TestCountTokens_OmitsThinkingBlocks verifies that replayed thinking blocks
-// never reach the CountTokens API: Bedrock validates thinking signatures
-// against the counting model, and signatures only verify on the model that
-// issued them. Thinking-only assistant messages must be dropped entirely so
-// the count input never carries empty content.
-func TestCountTokens_OmitsThinkingBlocks(t *testing.T) {
+// TestCountTokensPreservesThinkingBlocks verifies that CountTokens receives the
+// same saved reasoning blocks as Converse.
+func TestCountTokensPreservesThinkingBlocks(t *testing.T) {
 	rt := &countTokensRuntimeClient{}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "anthropic.claude-opus-4-8",
 		maxTok:       10,
 		temp:         0.5,
-		think:        defaultThinkingBudget,
 	}
 	req := &model.Request{
 		ModelClass: model.ModelClassDefault,
@@ -263,7 +310,7 @@ func TestCountTokens_OmitsThinkingBlocks(t *testing.T) {
 			{
 				Name:        "lookup",
 				Description: "Look up a value.",
-				Input: model.ToolInputFromSchema(rawjson.Message(
+				Input: mustBedrockToolInput(t, rawjson.Message(
 					`{"type":"object","properties":{"id":{"type":"string"}}}`,
 				)),
 			},
@@ -277,15 +324,17 @@ func TestCountTokens_OmitsThinkingBlocks(t *testing.T) {
 	require.NotNil(t, rt.input)
 	converse, ok := rt.input.Input.(*brtypes.CountTokensInputMemberConverse)
 	require.True(t, ok)
-	// The thinking-only assistant message is dropped; the remaining three
-	// messages survive with their thinking parts removed.
-	require.Len(t, converse.Value.Messages, 3)
+	require.Len(t, converse.Value.Messages, 4)
+	reasoningBlocks := 0
 	for _, msg := range converse.Value.Messages {
 		for _, block := range msg.Content {
 			_, isReasoning := block.(*brtypes.ContentBlockMemberReasoningContent)
-			require.False(t, isReasoning, "count input must not contain reasoning content")
+			if isReasoning {
+				reasoningBlocks++
+			}
 		}
 	}
+	assert.Equal(t, 2, reasoningBlocks)
 	// The caller's request is untouched: the assistant message still carries
 	// its thinking part for the real converse call.
 	require.Len(t, req.Messages, 4)

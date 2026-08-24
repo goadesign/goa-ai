@@ -1,47 +1,28 @@
-// New returns a minimal planner implementation for {{ .GoName }} used by example bootstrap.
-// Replace with your production planner integrating your LLM of choice.
+// New returns the example planner registered by the generated bootstrap.
+// Replace it with the planner that should answer real application requests.
 func New() planner.Planner { return &examplePlanner{} }
 
-// examplePlanner is a minimal, stateless implementation of planner.Planner used by
-// the example bootstrap. The planner acts as the agent's "brain": it reasons over
-// conversation messages, decides whether to request tool executions, and produces
-// final assistant responses. Production planners typically invoke LLMs via
-// registered planner-scoped model clients (in.Agent.PlannerModelClient(...)) or
-// pair the raw ModelClient stream with planner.ConsumeStream / explicit
-// PlannerEvents emission, then integrate tool results in PlanResume.
+// examplePlanner makes one sample tool call and turns its result into an
+// assistant reply. It lets a new application run without model credentials.
 type examplePlanner struct{}
 
-func (p *examplePlanner) Decide(ctx context.Context, tool string) string {
-	{{- if .Methods }}
-	switch tool {
-	{{- range .Methods }}
-	case "{{ .Name }}":
-		{{- if .Passthrough }}
-		return "passthrough"
-		{{- else }}
-		return "reason"
-		{{- end }}
-	{{- end }}
-	default:
-		return "reason"
+// PlanStart requests the example tool call selected from the design.
+func (*examplePlanner) PlanStart(_ context.Context, _ *planner.PlanInput) (*planner.PlanResult, error) {
+	{{- if .Tool }}
+    args, err := gentool.{{ .Tool.Payload.ExportedCodec }}().FromJSON(gentool.Spec{{ .Tool.ConstName }}().Payload.ExampleJSON)
+	if err != nil {
+		return nil, fmt.Errorf("decode generated {{ .Tool.Name }} example: %w", err)
 	}
+    call, err := planner.NewToolRequest(gentool.{{ .Tool.TypedToolVar }}(), args)
+	if err != nil {
+		return nil, fmt.Errorf("build generated {{ .Tool.Name }} call: %w", err)
+	}
+	return &planner.PlanResult{
+		ToolCalls: []planner.ToolRequest{
+			call,
+		},
+	}, nil
 	{{- else }}
-	return "reason"
-	{{- end }}
-}
-
-func (p *examplePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
-	// Check for deterministic routing (Passthrough)
-	if in.RunContext.Tool != "" {
-		route := p.Decide(ctx, string(in.RunContext.Tool))
-		if route == "passthrough" {
-			// Deterministic passthrough: forward args directly to the target tool.
-			// For this example stub, we don't have the target mapping (it's in the DSL but not fully exposed here yet).
-			// Real implementation would use the Passthrough metadata to construct the ToolRequest.
-			// This stub just falls through to the default response.
-		}
-	}
-
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
@@ -50,14 +31,42 @@ func (p *examplePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 			},
 		},
 	}, nil
+	{{- end }}
 }
 
-func (p *examplePlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
+// PlanResume turns the example tool result into the assistant's final reply.
+func (*examplePlanner) PlanResume(_ context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
+	{{- if .Tool }}
+	if len(in.ToolOutputs) != 1 {
+		return nil, fmt.Errorf("expected one {{ .Tool.Name }} result, got %d", len(in.ToolOutputs))
+	}
+	output := in.ToolOutputs[0]
+	if output.Name != gentool.{{ .Tool.ConstName }} {
+		return nil, fmt.Errorf("unexpected tool result %s (%s)", output.Name, output.ToolCallID)
+	}
+	if output.Failure != nil {
+		if output.Failure.Error.Cause != nil {
+			return nil, fmt.Errorf(
+				"{{ .Tool.Name }} failed: %s: %s",
+				output.Failure.Error.Message,
+				output.Failure.Error.Cause.Message,
+			)
+		}
+		return nil, fmt.Errorf("{{ .Tool.Name }} failed: %s", output.Failure.Error.Message)
+	}
+	{{- if .Tool.HasResult }}
+	answer := fmt.Sprintf("Tool %s returned %s", output.Name, output.Result)
+	{{- else }}
+	answer := fmt.Sprintf("Tool %s completed successfully", output.Name)
+	{{- end }}
+	{{- else }}
+	answer := "Done."
+	{{- end }}
     return &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{
 			Message: &model.Message{
 				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "Done."}},
+				Parts: []model.Part{model.TextPart{Text: answer}},
 			},
 		},
 	}, nil

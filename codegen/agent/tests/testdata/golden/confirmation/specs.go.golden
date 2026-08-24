@@ -16,12 +16,17 @@ const (
 	DangerousWrite tools.Ident = "atlas.commands.dangerous_write"
 )
 
-var Specs = []tools.ToolSpec{
-	SpecDangerousWrite,
+// Specs returns fresh copies of every generated tool specification.
+func Specs() []tools.ToolSpec {
+	return []tools.ToolSpec{
+		newSpecDangerousWrite(),
+	}
 }
 
-var (
-	SpecDangerousWrite = tools.ToolSpec{
+// newSpecDangerousWrite builds the immutable generated contract for
+// atlas.commands.dangerous_write. Each call owns all mutable slices and maps in the result.
+func newSpecDangerousWrite() tools.ToolSpec {
+	return tools.ToolSpec{
 		Name:        DangerousWrite,
 		Service:     "alpha",
 		Toolset:     "alpha.atlas.commands",
@@ -37,32 +42,46 @@ var (
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"key\":{\"description\":\"Key to update.\",\"type\":\"string\"},\"value\":{\"description\":\"New value.\",\"type\":\"string\"}},\"required\":[\"key\",\"value\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"key\":{\"description\":\"Key to update.\",\"type\":\"string\"},\"value\":{\"description\":\"New value.\",\"type\":\"string\"}},\"required\":[\"key\",\"value\"],\"type\":\"object\"}"),
 			ExampleJSON:              nil,
-			FieldDescriptions:        DangerousWritePayloadFieldDescs,
-			FieldJSONTypes:           DangerousWritePayloadFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(dangerousWritePayloadFieldDescs),
+			FieldJSONTypes:           cloneStringMap(dangerousWritePayloadFieldJSONTypes),
 			Codec:                    dangerousWritePayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:                     "DangerousWriteResult",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"key\":{\"description\":\"Key that was updated.\",\"type\":\"string\"},\"summary\":{\"description\":\"Summary of the update.\",\"type\":\"string\"}},\"required\":[\"summary\",\"key\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"key\":{\"description\":\"Key that was updated.\",\"type\":\"string\"},\"summary\":{\"description\":\"Summary of the update.\",\"type\":\"string\"}},\"required\":[\"summary\",\"key\"],\"type\":\"object\"}"),
-			FieldDescriptions:        DangerousWriteResultFieldDescs,
-			FieldJSONTypes:           DangerousWriteResultFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(dangerousWriteResultFieldDescs),
+			FieldJSONTypes:           cloneStringMap(dangerousWriteResultFieldJSONTypes),
 			Codec:                    dangerousWriteResultCodec,
 		},
 	}
-)
+}
+
+// SpecDangerousWrite returns a fresh atlas.commands.dangerous_write specification.
+func SpecDangerousWrite() tools.ToolSpec {
+	return newSpecDangerousWrite()
+}
 
 // DangerousWriteTool pairs the atlas.commands.dangerous_write identifier with its generated
 // typed payload and result codecs so consumers decode tool JSON without
 // restating the name-to-codec pairing fixed by the design.
-var DangerousWriteTool = tools.TypedTool[*DangerousWritePayload, *DangerousWriteResult]{
-	Name:    DangerousWrite,
-	Payload: DangerousWritePayloadCodec,
-	Result:  DangerousWriteResultCodec,
+func DangerousWriteTool() tools.TypedTool[*DangerousWritePayload, *DangerousWriteResult] {
+	return tools.TypedTool[*DangerousWritePayload, *DangerousWriteResult]{
+		Name: DangerousWrite,
+		Payload: tools.JSONCodec[*DangerousWritePayload]{
+			ToJSON:   MarshalDangerousWritePayload,
+			FromJSON: UnmarshalDangerousWritePayload,
+		},
+		Result: tools.JSONCodec[*DangerousWriteResult]{
+			ToJSON:   MarshalDangerousWriteResult,
+			FromJSON: UnmarshalDangerousWriteResult,
+		},
+	}
 }
 
-var (
-	metadata = []policy.ToolMetadata{
+// Metadata returns fresh policy metadata for every generated tool.
+func Metadata() []policy.ToolMetadata {
+	return []policy.ToolMetadata{
 		{
 			ID:          DangerousWrite,
 			Title:       "Dangerous Write",
@@ -71,64 +90,59 @@ var (
 			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
 	}
-	names = []tools.Ident{
+}
+
+// Names returns the identifiers of all generated tools.
+func Names() []tools.Ident {
+	return []tools.Ident{
 		DangerousWrite,
 	}
-)
+}
 
 // RequiredLabels lists the run label keys this toolset's Inject-populated
 // tools require to be present via WithLabels(...) at run start. The runtime
 // validates coverage across every toolset an agent uses before starting a
 // run, so a missing label fails fast instead of surfacing mid-run as a tool
 // call error.
-var RequiredLabels = []string{}
-
-// Names returns the identifiers of all generated tools.
-func Names() []tools.Ident {
-	return names
+func RequiredLabels() []string {
+	return []string{}
 }
 
 // Spec returns the specification for the named tool if present.
-func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
+func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 	switch name {
 	case DangerousWrite:
-		return &SpecDangerousWrite, true
+		return newSpecDangerousWrite(), true
 	default:
-		return nil, false
+		return tools.ToolSpec{}, false
 	}
-}
-
-// PayloadSchema returns the JSON schema for the named tool payload.
-func PayloadSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case DangerousWrite:
-		return SpecDangerousWrite.Payload.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// ResultSchema returns the JSON schema for the named tool result.
-func ResultSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case DangerousWrite:
-		return SpecDangerousWrite.Result.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// Metadata exposes policy metadata for the generated tools.
-func Metadata() []policy.ToolMetadata {
-	return metadata
 }
 
 // MetadataByName returns policy metadata for the named tool if present.
 func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
 	switch name {
 	case DangerousWrite:
-		return metadata[0], true
+		return policy.ToolMetadata{
+			ID:          DangerousWrite,
+			Title:       "Dangerous Write",
+			Description: "Write a stateful change",
+			Tags:        []string{},
+			BudgetClass: policy.ToolBudgetClassBudgeted,
+		}, true
 	default:
 		return policy.ToolMetadata{}, false
 	}
+}
+
+// cloneStringMap gives each returned specification ownership of its generated
+// field metadata.
+func cloneStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }

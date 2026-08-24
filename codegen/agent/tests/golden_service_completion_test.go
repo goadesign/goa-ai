@@ -3,6 +3,7 @@ package tests
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 )
 
@@ -20,4 +21,16 @@ func TestGolden_ServiceCompletion(t *testing.T) {
 	assertGoldenGo(t, "service_completion", "unions.go.golden", unions)
 	assertGoldenGo(t, "service_completion", "codecs.go.golden", codecs)
 	assertGoldenGo(t, "service_completion", "specs.go.golden", specs)
+
+	require.Contains(t, specs, "func specDraftFromTranscript() completion.Spec")
+	require.Contains(t, specs, "func DraftFromTranscriptExample() rawjson.Message")
+	require.Contains(t, specs, "func CompleteDraftFromTranscript(")
+	require.Contains(t, specs, "func StreamCompleteDraftFromTranscript(")
+	require.NotContains(t, specs, "SpecDraftFromTranscript")
+	require.Contains(t, codecs, "func newDraftFromTranscriptResultCodec(")
+	require.Contains(t, codecs, "func marshalDraftFromTranscriptResult(")
+	require.Contains(t, codecs, "func unmarshalDraftFromTranscriptResult(")
+	require.NotContains(t, codecs, "func DraftFromTranscriptResultCodec(")
+	require.NotContains(t, codecs, "func MarshalDraftFromTranscriptResult(")
+	require.NotContains(t, codecs, "func UnmarshalDraftFromTranscriptResult(")
 }

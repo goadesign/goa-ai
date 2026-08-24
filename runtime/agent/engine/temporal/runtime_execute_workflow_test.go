@@ -5,11 +5,16 @@ package temporal
 // a second workflow.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/activity"
@@ -21,6 +26,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -30,6 +36,131 @@ import (
 )
 
 const runSuspensionType = "runtime.run_suspension"
+
+func TestPlannerOutputActivityFailureIsNotRetried(t *testing.T) {
+	var calls atomic.Int32
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterActivityWithOptions(func(context.Context) error {
+		calls.Add(1)
+		return temporalerrors.Wrap(planner.NewOutputContractError(
+			errors.New("invalid model reply"),
+		))
+	}, activity.RegisterOptions{Name: "invalid-planner-output"})
+
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			StartToCloseTimeout: time.Second,
+			RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 3},
+		})
+		err := workflow.ExecuteActivity(ctx, "invalid-planner-output").Get(ctx, nil)
+		return temporalerrors.Wrap(err)
+	})
+
+	err := env.GetWorkflowError()
+	require.Error(t, err)
+	require.True(t, temporalerrors.IsOutputContract(err))
+	require.EqualValues(t, 1, calls.Load())
+	var appErr *temporal.ApplicationError
+	require.ErrorAs(t, err, &appErr)
+	require.True(t, appErr.NonRetryable())
+}
+
+func TestPlannerOutputChildFailureIsNotRetried(t *testing.T) {
+	var calls atomic.Int32
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterWorkflowWithOptions(func(workflow.Context) error {
+		calls.Add(1)
+		return temporalerrors.Wrap(planner.NewOutputContractError(
+			errors.New("invalid child reply"),
+		))
+	}, workflow.RegisterOptions{Name: "invalid-child-output"})
+
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		ctx = workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
+			WorkflowExecutionTimeout: time.Minute,
+			RetryPolicy:              &temporal.RetryPolicy{MaximumAttempts: 3},
+		})
+		err := workflow.ExecuteChildWorkflow(ctx, "invalid-child-output").Get(ctx, nil)
+		return temporalerrors.Wrap(err)
+	})
+
+	err := env.GetWorkflowError()
+	require.Error(t, err)
+	require.True(t, temporalerrors.IsOutputContract(err))
+	require.EqualValues(t, 1, calls.Load())
+	var appErr *temporal.ApplicationError
+	require.ErrorAs(t, err, &appErr)
+	require.True(t, appErr.NonRetryable())
+}
+
+func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) {
+	const (
+		workflowName        = "publication.workflow"
+		taskQueue           = "publication.queue"
+		planActivityName    = "publication.plan"
+		resumeActivityName  = "publication.resume"
+		executeActivityName = "publication.execute"
+		runID               = "run-publication"
+		sessionID           = "session-publication"
+	)
+
+	agentID := agent.Ident("publication.agent")
+	plannerStub := &publicationRetryPlanner{}
+	runtime := agentruntime.New()
+	_, err := runtime.CreateSession(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.NoError(t, runtime.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
+		ID:      agentID,
+		Planner: plannerStub,
+		Workflow: engine.WorkflowDefinition{
+			Name:      workflowName,
+			TaskQueue: taskQueue,
+			Handler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
+				return runtime.ExecuteWorkflow(wfCtx, input)
+			},
+		},
+		PlanActivityName:    planActivityName,
+		ResumeActivityName:  resumeActivityName,
+		ExecuteToolActivity: executeActivityName,
+	}))
+
+	recorder := &publicationRetryRecorder{
+		stored: make(map[string]*api.RecordActivityInput),
+	}
+	eng := &Engine{
+		defaultQueue: taskQueue,
+		activityOptions: map[string]engine.ActivityOptions{
+			"runtime.record_event": {
+				StartToCloseTimeout: time.Second,
+				RetryPolicy:         engine.RetryPolicy{MaxAttempts: 1},
+			},
+		},
+	}
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterActivityWithOptions(recorder.Record, activity.RegisterOptions{Name: "runtime.record_event"})
+	env.RegisterActivityWithOptions(runtime.PlanStartActivity, activity.RegisterOptions{Name: planActivityName})
+	env.RegisterActivityWithOptions(runtime.PlanResumeActivity, activity.RegisterOptions{Name: resumeActivityName})
+	env.ExecuteWorkflow(func(ctx workflow.Context) (*api.RunOutput, error) {
+		return runtime.ExecuteWorkflow(NewWorkflowContext(eng, ctx), &agentruntime.RunInput{
+			AgentID:   agentID,
+			RunID:     runID,
+			SessionID: sessionID,
+			TurnID:    "turn-publication",
+		})
+	})
+
+	require.NoError(t, env.GetWorkflowError())
+	require.EqualValues(t, 1, plannerStub.calls.Load())
+	attempts, stored := recorder.snapshot()
+	require.Len(t, attempts, 4)
+	require.Equal(t, attempts[0].EventKey, attempts[2].EventKey)
+	require.Equal(t, attempts[1].EventKey, attempts[3].EventKey)
+	require.NotEqual(t, attempts[0].EventKey, attempts[1].EventKey)
+	require.Len(t, stored, 2)
+}
 
 func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 	t.Parallel()
@@ -150,7 +281,7 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 	require.NoError(t, runtime.RegisterToolset(agentruntime.ToolsetRegistration{
 		Name:  "service.cancel",
 		Specs: []tools.ToolSpec{spec},
-		Execute: func(context.Context, *planner.ToolRequest) (*agentruntime.ToolExecutionResult, error) {
+		Execute: func(context.Context, *agentruntime.ToolCall) (*agentruntime.ToolExecutionResult, error) {
 			return nil, temporal.NewCanceledError("superseded")
 		},
 	}))
@@ -174,8 +305,9 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 		TurnID:    "turn-1",
 	})
 
-	require.Error(t, env.GetWorkflowError())
-	require.True(t, temporal.IsCanceledError(env.GetWorkflowError()))
+	workflowErr := env.GetWorkflowError()
+	require.Error(t, workflowErr)
+	require.Truef(t, temporal.IsCanceledError(workflowErr), "unexpected workflow error: %T: %v", workflowErr, workflowErr)
 	var completed *hooks.RunCompletedEvent
 	for _, event := range recorder.Snapshot() {
 		if event, ok := event.(*hooks.RunCompletedEvent); ok {
@@ -194,9 +326,8 @@ type cancelingServicePlanner struct {
 
 func (p *cancelingServicePlanner) PlanStart(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
 	return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		ToolCallID: "cancel-call-1",
-		Name:       p.toolName,
-		Payload:    rawjson.Message(`{}`),
+		Name:    p.toolName,
+		Payload: rawjson.Message(`{}`),
 	}}}, nil
 }
 
@@ -204,12 +335,118 @@ func (p *cancelingServicePlanner) PlanResume(context.Context, *planner.PlanResum
 	return nil, errors.New("PlanResume must not run after service cancellation")
 }
 
-type awaitQuestionsPlanner struct {
-	mu          sync.Mutex
-	resumeCalls int
-	awaitID     string
-	toolName    tools.Ident
-	toolCallID  string
+type (
+	// awaitQuestionsPlanner suspends its first turn and records unexpected
+	// resume calls.
+	awaitQuestionsPlanner struct {
+		mu          sync.Mutex
+		resumeCalls int
+		awaitID     string
+		toolName    tools.Ident
+		toolCallID  string
+	}
+
+	// publicationRetryPlanner emits two records in one successful planner
+	// completion so the test can fail after storing a non-empty batch prefix.
+	publicationRetryPlanner struct {
+		calls atomic.Int32
+	}
+
+	// publicationRetryRecorder stores planner-publication records by idempotency
+	// key, fails the second first-time record, and rejects changed duplicate input.
+	publicationRetryRecorder struct {
+		mu       sync.Mutex
+		failed   bool
+		attempts []*api.RecordActivityInput
+		stored   map[string]*api.RecordActivityInput
+	}
+
+	// hookRecorder decodes runtime records and tracks suspension persistence.
+	hookRecorder struct {
+		mu                  sync.Mutex
+		events              []hooks.Event
+		suspensionPersisted bool
+	}
+)
+
+// PlanStart emits two deterministic planner records and one terminal response.
+func (p *publicationRetryPlanner) PlanStart(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+	p.calls.Add(1)
+	input.Events.PlannerThought(ctx, "first publication record", nil)
+	input.Events.PlannerThought(ctx, "second publication record", nil)
+	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{
+		Role:  model.ConversationRoleAssistant,
+		Parts: []model.Part{model.TextPart{Text: "done"}},
+	}}}, nil
+}
+
+// PlanResume is not part of this terminal planner flow.
+func (*publicationRetryPlanner) PlanResume(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+	return nil, errors.New("publication retry planner cannot resume")
+}
+
+// Record persists non-publication records normally and exercises immutable
+// idempotency for the planner completion batch.
+func (r *publicationRetryRecorder) Record(_ context.Context, input *api.RecordActivityInput) error {
+	if !strings.Contains(input.EventKey, "/planner-publication/") {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cloned := cloneRecordActivityInput(input)
+	r.attempts = append(r.attempts, cloned)
+	if existing, ok := r.stored[input.EventKey]; ok {
+		if err := equalRecordActivityInput(existing, input); err != nil {
+			return err
+		}
+		return nil
+	}
+	if !r.failed && len(r.stored) == 1 {
+		r.failed = true
+		return errors.New("record backend unavailable")
+	}
+	r.stored[input.EventKey] = cloned
+	return nil
+}
+
+// snapshot returns isolated publication attempts and stored records after the
+// Temporal workflow has completed.
+func (r *publicationRetryRecorder) snapshot() ([]*api.RecordActivityInput, map[string]*api.RecordActivityInput) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	attempts := make([]*api.RecordActivityInput, 0, len(r.attempts))
+	for _, input := range r.attempts {
+		attempts = append(attempts, cloneRecordActivityInput(input))
+	}
+	stored := make(map[string]*api.RecordActivityInput, len(r.stored))
+	for key, input := range r.stored {
+		stored[key] = cloneRecordActivityInput(input)
+	}
+	return attempts, stored
+}
+
+// cloneRecordActivityInput copies the complete record passed across the
+// Temporal activity boundary, including its payload bytes.
+func cloneRecordActivityInput(input *api.RecordActivityInput) *api.RecordActivityInput {
+	cloned := *input
+	cloned.Payload = append([]byte(nil), input.Payload...)
+	return &cloned
+}
+
+// equalRecordActivityInput verifies that retrying one event key cannot change
+// any frozen record field.
+func equalRecordActivityInput(want, got *api.RecordActivityInput) error {
+	if want.Type != got.Type ||
+		want.EventKey != got.EventKey ||
+		want.RunID != got.RunID ||
+		want.AgentID != got.AgentID ||
+		want.SessionID != got.SessionID ||
+		want.TurnID != got.TurnID ||
+		want.TimestampMS != got.TimestampMS ||
+		!bytes.Equal(want.Payload, got.Payload) {
+		return fmt.Errorf("duplicate planner publication record %q changed", got.EventKey)
+	}
+	return nil
 }
 
 func (p *awaitQuestionsPlanner) PlanStart(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
@@ -237,12 +474,6 @@ func (p *awaitQuestionsPlanner) ResumeCalls() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.resumeCalls
-}
-
-type hookRecorder struct {
-	mu                  sync.Mutex
-	events              []hooks.Event
-	suspensionPersisted bool
 }
 
 func (r *hookRecorder) Record(_ context.Context, input *api.RecordActivityInput) error {

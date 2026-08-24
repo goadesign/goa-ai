@@ -11,8 +11,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
+	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -26,12 +30,15 @@ import (
 // plannerActivityInvocation is the shared prepared state for one planner
 // activity execution.
 type plannerActivityInvocation struct {
-	reg         *AgentRegistration
-	agentCtx    planner.PlannerContext
-	events      *runtimePlannerEvents
-	invocations *modelInvocationJournal
-	messages    []*model.Message
-	reminders   []reminder.Reminder
+	runtime            *Runtime
+	reg                *AgentRegistration
+	agentCtx           planner.PlannerContext
+	events             *runtimePlannerEvents
+	invocations        *modelInvocationJournal
+	messages           []*model.Message
+	reminders          []reminder.Reminder
+	runContext         run.Context
+	publicationBatchID string
 }
 
 // PlanStartActivity executes the planner's PlanStart method.
@@ -45,10 +52,7 @@ type plannerActivityInvocation struct {
 // beginning of a run to produce the initial plan. The activity creates an
 // agent context with memory access and delegates to the planner's PlanStart
 // implementation.
-func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInput) (_ *PlanActivityOutput, retErr error) {
-	defer func() {
-		retErr = hooks.WrapTemporalProviderError(retErr)
-	}()
+func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
@@ -80,15 +84,25 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 		Reminders:  act.reminders,
 	}
 	result, err := r.planStart(ctx, act.reg, planInput)
+	err = act.planningError(err)
 	if err != nil {
-		act.notePlannerRateLimit(ctx, err)
-		return nil, err
+		return act.outputContractFailure(ctx, err)
 	}
-	if err := r.bindContinuationCursors(result, continuationActions); err != nil {
-		return nil, err
+	if err := validatePlannerActivityResult(r, result, false); err != nil {
+		return act.outputContractFailure(ctx, err)
+	}
+	if err := validatePlannerAdvertisedTools(result, act.agentCtx.AdvertisedToolDefinitions()); err != nil {
+		return act.outputContractFailure(ctx, planner.NewOutputContractError(err))
+	}
+	if err := validatePlannerResultPayloadCodecs(ctx, r, result, continuationActions); err != nil {
+		return act.outputContractFailure(ctx, planner.NewOutputContractError(err))
+	}
+	output, err := act.output(ctx, r, result, false, continuationActions)
+	if err != nil {
+		return act.outputContractFailure(ctx, err)
 	}
 	r.logger.Info(ctx, "PlanStartActivity returning PlanResult", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
-	return act.output(ctx, result)
+	return output, nil
 }
 
 // PlanResumeActivity executes the planner's PlanResume method.
@@ -102,10 +116,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 // execution to produce the next plan. The activity creates an agent context,
 // loads canonical tool outputs from the run log, and delegates to the planner's
 // PlanResume implementation.
-func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInput) (_ *PlanActivityOutput, retErr error) {
-	defer func() {
-		retErr = hooks.WrapTemporalProviderError(retErr)
-	}()
+func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
@@ -141,12 +152,9 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	}
 	act.reminders = append(recoveryReminders, act.reminders...)
 	if len(recoveryOutputs) == 0 {
-		result, automatic, err := r.automaticContinuationPlan(continuationActions)
-		if err != nil {
-			return nil, err
-		}
+		result, automatic := r.automaticContinuationPlan(input.RunContext, continuationActions)
 		if automatic {
-			return act.output(ctx, result)
+			return act.runtimeOutput(ctx, result)
 		}
 	}
 	planInput := &planner.PlanResumeInput{
@@ -160,24 +168,22 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		Reminders:     act.reminders,
 	}
 	result, err := r.planResume(ctx, act.reg, planInput)
+	err = act.planningError(err)
 	if err != nil {
-		act.notePlannerRateLimit(ctx, err)
-		return nil, err
+		return act.outputContractFailure(ctx, err)
 	}
-	if err := r.bindContinuationCursors(result, continuationActions); err != nil {
-		return nil, err
+	if err := validatePlannerActivityResult(r, result, input.SynthesisOnly); err != nil {
+		return act.outputContractFailure(ctx, err)
 	}
-	if input.SynthesisOnly {
-		if result != nil && len(result.ToolCalls) > 0 {
-			return nil, errors.New("synthesis-only planner result contains tool calls")
-		}
-		if err := validateTerminalPlanResult(result); err != nil {
-			return nil, fmt.Errorf("synthesis-only planner result: %w", err)
-		}
+	if err := validatePlannerAdvertisedTools(result, act.agentCtx.AdvertisedToolDefinitions()); err != nil {
+		return act.outputContractFailure(ctx, planner.NewOutputContractError(err))
 	}
-	output, err := act.output(ctx, result)
+	if err := validatePlannerResultPayloadCodecs(ctx, r, result, continuationActions); err != nil {
+		return act.outputContractFailure(ctx, planner.NewOutputContractError(err))
+	}
+	output, err := act.output(ctx, r, result, input.SynthesisOnly, continuationActions)
 	if err != nil {
-		return nil, err
+		return act.outputContractFailure(ctx, err)
 	}
 	if len(input.RecoveryToolCallIDs) > 0 {
 		definitions := act.agentCtx.AdvertisedToolDefinitions()
@@ -187,7 +193,35 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		}
 		output.RecoveryCatalog = &RecoveryCatalog{Tools: advertised}
 	}
+	if budgetErr := checkPlanActivityOutputBudget(output); budgetErr != nil {
+		return act.outputContractFailure(ctx, planner.NewOutputContractError(budgetErr))
+	}
 	return output, nil
+}
+
+// validatePlannerAdvertisedTools requires every model-selected tool name to
+// come from the exact catalog shown for this planner activity.
+func validatePlannerAdvertisedTools(result *planner.PlanResult, definitions []*model.ToolDefinition) error {
+	if result == nil {
+		return errors.New("planner returned a nil result")
+	}
+	allowed := make(map[tools.Ident]struct{}, len(definitions))
+	for _, definition := range definitions {
+		allowed[tools.Ident(definition.Name)] = struct{}{}
+	}
+	for _, call := range result.ToolCalls {
+		if _, ok := allowed[call.Name]; !ok {
+			return fmt.Errorf("planner called tool %q outside the advertised catalog", call.Name)
+		}
+	}
+	if result.Await != nil {
+		for _, call := range awaitToolRequests(result.Await.Items) {
+			if _, ok := allowed[call.Name]; !ok {
+				return fmt.Errorf("planner called tool %q outside the advertised catalog", call.Name)
+			}
+		}
+	}
+	return nil
 }
 
 // preparePlannerActivity constructs all shared planner activity state before
@@ -198,7 +232,7 @@ func (r *Runtime) preparePlannerActivity(
 	continuationActions []continuationAction,
 	unavailableTools []tools.Ident,
 ) (*plannerActivityInvocation, error) {
-	events := newPlannerEvents(r, input.AgentID, input.RunID, input.RunContext.SessionID, input.RunContext.TurnID)
+	events := newPlannerEvents(input.AgentID, input.RunID, input.RunContext.SessionID)
 	invocations := &modelInvocationJournal{}
 	reg, agentCtx, err := r.plannerContext(
 		ctx,
@@ -220,39 +254,304 @@ func (r *Runtime) preparePlannerActivity(
 		return nil, err
 	}
 	return &plannerActivityInvocation{
-		reg:         reg,
-		agentCtx:    agentCtx,
-		events:      events,
-		invocations: invocations,
-		messages:    messages,
-		reminders:   rems,
+		runtime:            r,
+		reg:                reg,
+		agentCtx:           agentCtx,
+		events:             events,
+		invocations:        invocations,
+		messages:           messages,
+		reminders:          rems,
+		runContext:         input.RunContext,
+		publicationBatchID: uuid.NewString(),
 	}, nil
 }
 
-// output validates hook publication and exports the workflow-safe planner
-// activity result.
-func (a *plannerActivityInvocation) output(ctx context.Context, result *planner.PlanResult) (*PlanActivityOutput, error) {
-	if err := validatePlannerResultPayloads(result); err != nil {
+// output rejects planner values that the workflow cannot execute, then exports
+// the accepted value and the exact model response that produced it. Hook
+// failures remain ordinary runtime errors because they are not planner output.
+func (a *plannerActivityInvocation) output(
+	ctx context.Context,
+	r *Runtime,
+	result *planner.PlanResult,
+	synthesisOnly bool,
+	continuationActions []continuationAction,
+) (*PlanActivityOutput, error) {
+	if err := validatePlannerActivityResult(r, result, synthesisOnly); err != nil {
 		return nil, err
 	}
 	transcript, err := a.invocations.exportModelInvocation(result)
 	if err != nil {
-		return nil, err
-	}
-	a.invocations.publishSelectedPresentation(ctx, a.events)
-	if err := a.events.hookError(); err != nil {
-		return nil, err
+		var outputErr *planner.OutputContractError
+		if errors.As(err, &outputErr) {
+			return nil, err
+		}
+		return nil, planner.NewOutputContractError(err)
 	}
 	if len(transcript) == 0 {
 		if err := validatePlannerAuthoredFinalResponse(result); err != nil {
-			return nil, err
+			return nil, planner.NewOutputContractError(err)
 		}
 	}
+	modelCalls, err := a.invocations.selectedCompiledModelCalls(result)
+	if err != nil {
+		return nil, planner.NewOutputContractError(err)
+	}
+	toolCalls, err := r.compilePlannerToolCallsForRun(a.runContext, result.ToolCalls, continuationActions, modelCalls)
+	if err != nil {
+		return nil, err
+	}
+	runtimeResult := &PlanResult{
+		ToolCalls:            toolCalls,
+		SynthesizeAfterTools: result.SynthesizeAfterTools,
+		FinalResponse:        result.FinalResponse,
+		FinalToolResult:      result.FinalToolResult,
+		Streamed:             result.Streamed,
+		Await:                result.Await,
+		ExpectedChildren:     result.ExpectedChildren,
+		Notes:                result.Notes,
+	}
+	return a.acceptedOutput(ctx, runtimeResult, transcript)
+}
+
+// runtimeOutput exports a runtime-authored execution result that did not call a
+// planner, such as an automatic continuation of an empty bounded page.
+func (a *plannerActivityInvocation) runtimeOutput(ctx context.Context, result *PlanResult) (*PlanActivityOutput, error) {
+	return a.acceptedOutput(ctx, result, nil)
+}
+
+// acceptedOutput attaches planner events and usage to one validated result
+// before it crosses the activity/workflow boundary.
+func (a *plannerActivityInvocation) acceptedOutput(
+	ctx context.Context,
+	result *PlanResult,
+	transcript []*model.Message,
+) (*PlanActivityOutput, error) {
+	a.invocations.publishSelectedPresentation(ctx, a.events)
+	output := &PlanActivityOutput{
+		PublicationBatchID: a.publicationBatchID,
+		Result:             result,
+		Transcript:         transcript,
+		Usage:              a.invocations.exportUsage(),
+	}
+	budget := &planActivityOutputBudget{}
+	if budgetErr := budget.add(output); budgetErr != nil {
+		return nil, planner.NewOutputContractError(budgetErr)
+	}
+	events, err := a.events.acceptedRecords(budget)
+	if err != nil {
+		var budgetErr *planActivityOutputBudgetError
+		if errors.As(err, &budgetErr) {
+			return nil, planner.NewOutputContractError(budgetErr)
+		}
+		return nil, err
+	}
+	output.PlannerEvents = events
+	if budgetErr := checkPlanActivityOutputBudget(output); budgetErr != nil {
+		return nil, planner.NewOutputContractError(budgetErr)
+	}
+	return output, nil
+}
+
+// outputContractFailure returns rejected model evidence and usage as a
+// successful activity value. The workflow publishes the usage records before
+// raising the same terminal planner error.
+func (a *plannerActivityInvocation) outputContractFailure(
+	ctx context.Context,
+	err error,
+) (*PlanActivityOutput, error) {
+	var outputErr *planner.OutputContractError
+	if !errors.As(err, &outputErr) {
+		return nil, err
+	}
+	usage := a.invocations.exportUsage()
+	failure := a.outputContractFailureMetadata(outputErr)
+	var originalBudgetErr *planActivityOutputBudgetError
+	if errors.As(err, &originalBudgetErr) {
+		return boundedPlanActivityOutputFailure(a.publicationBatchID, usage, failure, originalBudgetErr), nil
+	}
+	failureEvents := newPlannerEvents(
+		a.events.agentID,
+		a.events.runID,
+		a.events.sessionID,
+	)
+	a.invocations.publishUsage(ctx, failureEvents)
+	output := &PlanActivityOutput{
+		PublicationBatchID:    a.publicationBatchID,
+		Usage:                 usage,
+		OutputContractFailure: failure,
+	}
+	budget := &planActivityOutputBudget{}
+	if budgetErr := budget.add(output); budgetErr != nil {
+		return boundedPlanActivityOutputFailure(a.publicationBatchID, usage, failure, budgetErr), nil
+	}
+	events, recordErr := failureEvents.acceptedRecords(budget)
+	if recordErr != nil {
+		var budgetErr *planActivityOutputBudgetError
+		if errors.As(recordErr, &budgetErr) {
+			return boundedPlanActivityOutputFailure(a.publicationBatchID, usage, failure, budgetErr), nil
+		}
+		return nil, recordErr
+	}
+	output.PlannerEvents = events
+	if budgetErr := checkPlanActivityOutputBudget(output); budgetErr != nil {
+		return boundedPlanActivityOutputFailure(a.publicationBatchID, usage, failure, budgetErr), nil
+	}
+	return output, nil
+}
+
+// outputContractFailureMetadata keeps only fixed-size reason identity and
+// rejected-response evidence from one terminal output error.
+func (a *plannerActivityInvocation) outputContractFailureMetadata(
+	outputErr *planner.OutputContractError,
+) *OutputContractFailure {
+	reasonSHA256, reasonSize := errorevidence.Fingerprint(outputErr.Unwrap())
+	responseEvidence := a.invocations.rejectedModelResponseEvidence()
+	origin := outputErr.Origin()
+	if origin == "" && responseEvidence.Present {
+		origin = planner.OutputContractOriginModel
+	}
+	if origin == "" {
+		origin = planner.OutputContractOriginPlanner
+	}
+	return &OutputContractFailure{
+		Origin:                          origin,
+		ReasonSHA256:                    reasonSHA256,
+		ReasonSize:                      int64(reasonSize),
+		ModelResponsePresent:            responseEvidence.Present,
+		ModelResponseFingerprintVersion: responseEvidence.Version,
+		ModelResponseSHA256:             responseEvidence.SHA256,
+		ModelResponseSize:               responseEvidence.Size,
+	}
+}
+
+// boundedPlanActivityOutputFailure replaces oversized auxiliary output with
+// one small budget-rejection reason. It retains numeric usage and, for an
+// earlier model rejection, that rejection's origin and response fingerprint.
+func boundedPlanActivityOutputFailure(
+	publicationBatchID string,
+	usage model.TokenUsage,
+	failure *OutputContractFailure,
+	budgetErr error,
+) *PlanActivityOutput {
+	boundedFailure := *failure
+	boundedFailure.ReasonSHA256, boundedFailure.ReasonSize = fingerprintBytes(
+		[]byte("planner activity output rejected before Temporal encoding: " + budgetErr.Error()),
+	)
 	return &PlanActivityOutput{
-		Result:     result,
-		Transcript: transcript,
-		Usage:      a.invocations.exportUsage(),
-	}, nil
+		PublicationBatchID:    publicationBatchID,
+		Usage:                 usage,
+		OutputContractFailure: &boundedFailure,
+	}
+}
+
+// planningError makes the first malformed model response fail the activity,
+// even when planner code catches that error and returns another result.
+func (a *plannerActivityInvocation) planningError(err error) error {
+	if sealErr := a.invocations.seal(); sealErr != nil {
+		return sealErr
+	}
+	if outputErr := a.invocations.outputContractError(); outputErr != nil {
+		return outputErr
+	}
+	return err
+}
+
+// validatePlannerActivityResult rejects planner values that cannot be
+// executed before any selected model presentation is published.
+func validatePlannerActivityResult(r *Runtime, result *planner.PlanResult, synthesisOnly bool) error {
+	if err := validatePlannerResultPayloads(result); err != nil {
+		return planner.NewOutputContractError(err)
+	}
+	if err := validatePlannerToolCallIDs(result.ToolCalls); err != nil {
+		return planner.NewOutputContractError(err)
+	}
+	terminalPayloads := 0
+	if result.FinalResponse != nil {
+		terminalPayloads++
+	}
+	if result.FinalToolResult != nil {
+		terminalPayloads++
+	}
+	if terminalPayloads > 1 {
+		return planner.NewOutputContractError(errors.New("planner returned both FinalResponse and FinalToolResult"))
+	}
+	hasCalls := len(result.ToolCalls) > 0
+	hasTerminal := terminalPayloads == 1
+	hasAwait := result.Await != nil
+	if hasAwait {
+		if len(result.Await.Items) == 0 {
+			return planner.NewOutputContractError(errors.New("planner returned empty await"))
+		}
+		if err := validateAwaitItems(result.Await.Items); err != nil {
+			return planner.NewOutputContractError(err)
+		}
+		if err := r.validateAwaitTools(result.Await.Items); err != nil {
+			return planner.NewOutputContractError(err)
+		}
+	}
+	if !hasCalls && !hasTerminal && !hasAwait {
+		return planner.NewOutputContractError(errors.New("planner returned empty PlanResult"))
+	}
+	if result.SynthesizeAfterTools && (!hasCalls || hasTerminal || hasAwait) {
+		return planner.NewOutputContractError(errors.New("planner synthesis-after-tools requires only tool calls"))
+	}
+	if result.SynthesizeAfterTools {
+		for _, call := range result.ToolCalls {
+			spec, ok := r.toolSpec(call.Name)
+			if !ok {
+				return planner.NewOutputContractError(fmt.Errorf("planner synthesis-after-tools references unknown tool %q", call.Name))
+			}
+			if spec.Bookkeeping {
+				return planner.NewOutputContractError(fmt.Errorf("planner synthesis-after-tools cannot include bookkeeping tool %q", call.Name))
+			}
+		}
+	}
+	if hasTerminal && hasAwait {
+		return planner.NewOutputContractError(errors.New("planner cannot combine terminal payload and await"))
+	}
+	if hasTerminal && hasCalls {
+		for _, call := range result.ToolCalls {
+			spec, ok := r.toolSpec(call.Name)
+			if !ok {
+				return planner.NewOutputContractError(fmt.Errorf("planner terminal result references unknown tool %q", call.Name))
+			}
+			if !spec.Bookkeeping {
+				return planner.NewOutputContractError(fmt.Errorf("planner terminal result cannot include budgeted tool %q", call.Name))
+			}
+		}
+	}
+	if synthesisOnly {
+		if len(result.ToolCalls) > 0 {
+			return planner.NewOutputContractError(errors.New("synthesis-only planner result contains tool calls"))
+		}
+		if result.FinalResponse == nil && result.FinalToolResult == nil {
+			return planner.NewOutputContractError(errors.New("synthesis-only planner result has no terminal payload"))
+		}
+		if result.FinalResponse != nil && result.FinalToolResult != nil {
+			return planner.NewOutputContractError(errors.New("synthesis-only planner result has both terminal payloads"))
+		}
+		if result.Await != nil {
+			return planner.NewOutputContractError(errors.New("synthesis-only planner result contains await"))
+		}
+	}
+	return nil
+}
+
+// validatePlannerToolCallIDs requires provider correlation IDs to be unique
+// when requests forward model calls. Planner-authored requests leave them empty
+// because the runtime assigns every execution ID.
+func validatePlannerToolCallIDs(calls []planner.ToolRequest) error {
+	seen := make(map[string]struct{}, len(calls))
+	for index, call := range calls {
+		if call.ModelToolCallID == "" {
+			continue
+		}
+		if _, ok := seen[call.ModelToolCallID]; ok {
+			return fmt.Errorf("planner tool call %d repeats model tool call ID %q", index, call.ModelToolCallID)
+		}
+		seen[call.ModelToolCallID] = struct{}{}
+	}
+	return nil
 }
 
 // validatePlannerResultPayloads enforces canonical tool JSON before Temporal
@@ -278,11 +577,6 @@ func validatePlannerResultPayloads(result *planner.PlanResult) error {
 	for index, call := range result.ToolCalls {
 		if err := validatePlannerToolPayload(call.Payload); err != nil {
 			return fmt.Errorf("planner tool call %d payload: %w", index, err)
-		}
-		if call.ModelPayload != nil {
-			if err := validatePlannerToolPayload(call.ModelPayload); err != nil {
-				return fmt.Errorf("planner tool call %d model payload: %w", index, err)
-			}
 		}
 	}
 	if result.Await == nil {
@@ -374,7 +668,7 @@ func validatePlannerFinalToolResult(final *planner.FinalToolResult) error {
 
 // validatePlannerAuthoredFinalResponse ensures planners express tool
 // declarations through PlanResult.ToolCalls. Provider-owned final messages are
-// validated against their captured canonical response by the invocation journal.
+// matched to the exact complete response saved for that model call.
 func validatePlannerAuthoredFinalResponse(result *planner.PlanResult) error {
 	if result.FinalResponse == nil {
 		return nil
@@ -406,17 +700,83 @@ func validatePlannerToolPayload(payload rawjson.Message) error {
 	return nil
 }
 
-// notePlannerRateLimit emits a structured planner note for provider
-// rate-limiting errors before the activity returns the failure.
-func (a *plannerActivityInvocation) notePlannerRateLimit(ctx context.Context, err error) {
-	if !errors.Is(err, model.ErrRateLimited) {
-		return
+// validatePlannerResultPayloadCodecs applies each visible tool's exact payload
+// codec before the planner result can cross the activity boundary.
+func validatePlannerResultPayloadCodecs(
+	ctx context.Context,
+	r *Runtime,
+	result *planner.PlanResult,
+	continuations []continuationAction,
+) error {
+	for index, call := range result.ToolCalls {
+		if err := validatePlannerToolPayloadWithCodec(ctx, r, continuations, call.Name, call.Payload); err != nil {
+			return fmt.Errorf("planner tool call %d payload: %w", index, err)
+		}
 	}
-	a.events.PlannerThought(
-		ctx,
-		"Model provider is rate-limiting this request. It is safe to retry after a short delay.",
-		map[string]string{"code": "rate_limited"},
-	)
+	if result.Await == nil {
+		return nil
+	}
+	for itemIndex, item := range result.Await.Items {
+		switch item.Kind {
+		case planner.AwaitItemKindClarification:
+			continue
+		case planner.AwaitItemKindToolClarification:
+			if err := validatePlannerToolPayloadWithCodec(
+				ctx,
+				r,
+				nil,
+				item.ToolClarification.ToolName,
+				item.ToolClarification.Payload,
+			); err != nil {
+				return fmt.Errorf("planner await item %d tool clarification payload: %w", itemIndex, err)
+			}
+		case planner.AwaitItemKindQuestions:
+			if err := validatePlannerToolPayloadWithCodec(
+				ctx,
+				r,
+				nil,
+				item.Questions.ToolName,
+				item.Questions.Payload,
+			); err != nil {
+				return fmt.Errorf("planner await item %d questions payload: %w", itemIndex, err)
+			}
+		case planner.AwaitItemKindExternalTools:
+			for toolIndex, tool := range item.ExternalTools.Items {
+				if err := validatePlannerToolPayloadWithCodec(ctx, r, nil, tool.Name, tool.Payload); err != nil {
+					return fmt.Errorf("planner await item %d external tool %d payload: %w", itemIndex, toolIndex, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// validatePlannerToolPayloadWithCodec decodes one tool payload with the global
+// generated codec or the exact per-run continuation codec advertised to the
+// planner.
+func validatePlannerToolPayloadWithCodec(
+	ctx context.Context,
+	r *Runtime,
+	continuations []continuationAction,
+	name tools.Ident,
+	payload rawjson.Message,
+) error {
+	if _, ok := r.toolSpec(name); ok {
+		if _, err := r.unmarshalToolValue(ctx, name, payload.RawMessage(), true); err != nil {
+			return fmt.Errorf("tool %q payload does not satisfy its generated contract: %w", name, err)
+		}
+		return nil
+	}
+	for _, continuation := range continuations {
+		if continuation.modelName != name {
+			continue
+		}
+		if _, err := continuation.spec.Payload.Codec.FromJSON(payload); err != nil {
+			return fmt.Errorf("tool %q payload does not satisfy its continuation contract: %w", name, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("tool %q has no payload codec", name)
 }
 
 // ExecuteToolActivity runs a tool invocation as a workflow activity.
@@ -496,7 +856,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	// Populate run context fields so tool implementations can access metadata.
 	// Agent-tools use these to construct nested contexts; regular tools use
 	// them for logging/telemetry. Payload is always canonical JSON.
-	call := planner.ToolRequest{
+	call := ToolCall{
 		Name:             req.ToolName,
 		Payload:          raw,
 		RunID:            req.RunID,
@@ -507,9 +867,10 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		ParentToolCallID: req.ParentToolCallID,
 		ToolCallID:       req.ToolCallID,
 	}
-	meta := ToolCallMetaFromRequest(call)
+	meta := ToolCallMetaFromCall(call)
 	start := time.Now()
-	execResult, err := reg.Execute(ctx, &call)
+	executorCall := cloneToolCall(call)
+	execResult, err := reg.Execute(ctx, &executorCall)
 	if err != nil {
 		return nil, err
 	}
@@ -538,7 +899,28 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if clarification != nil {
 		out.Clarification = clarification
 	}
+	if err := validateToolActivityOutputBudget(out); err != nil {
+		return nil, outputcontract.NewWithOrigin(err, outputcontract.OriginTool)
+	}
 	return out, nil
+}
+
+// validateToolActivityOutputBudget rejects a tool result before Temporal tries
+// to encode it. Tools that can produce larger domain data must store that data
+// durably and return a typed reference in their canonical result.
+func validateToolActivityOutputBudget(output *ToolOutput) error {
+	encoded, err := json.Marshal(output)
+	if err != nil {
+		return fmt.Errorf("encode tool activity output for size validation: %w", err)
+	}
+	if len(encoded) > engine.MaxPayloadBytes {
+		return fmt.Errorf(
+			"tool activity output uses %d bytes, maximum is %d; store the result and return its typed reference",
+			len(encoded),
+			engine.MaxPayloadBytes,
+		)
+	}
+	return nil
 }
 
 // buildToolFailureFromPayloadError converts a model-authored payload failure

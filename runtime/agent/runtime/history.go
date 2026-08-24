@@ -1,6 +1,6 @@
 // Package runtime provides history management policies for bounding conversation
-// context. HistoryPolicy implementations transform message history before each
-// planner invocation to prevent unbounded context growth.
+// context. HistoryPolicy implementations transform messages and advertised
+// tools before each planner invocation to prevent unbounded context growth.
 package runtime
 
 import (
@@ -47,9 +47,10 @@ type (
 		// turns are present. Zero disables the turn-count trigger.
 		CompressAtTurns int
 
-		// CompressAtMaxInputTokens triggers summarization once the full
-		// provider-visible transcript exceeds this input-token count. Zero
-		// disables the token trigger.
+		// CompressAtMaxInputTokens triggers summarization once the history
+		// model counts the transcript and advertised tools above this input-token
+		// count. The threshold applies to one history-policy invocation and is
+		// exclusive: a count equal to the threshold fits. Zero disables it.
 		CompressAtMaxInputTokens int
 
 		// KeepMaxTurns caps exact retention to this many newest logical turns.
@@ -60,7 +61,7 @@ type (
 		// turn is always retained; this budget bounds the measured cost of the
 		// older whole turns that join it, anchored on the newest tail so the
 		// fixed system-prompt and tool-catalog overhead cancels out (unlike
-		// CompressAtMaxInputTokens, which counts the full provider-visible
+		// CompressAtMaxInputTokens, which counts the complete history-policy
 		// request). Zero disables the token retention cap.
 		KeepMaxInputTokens int
 	}
@@ -263,6 +264,9 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 		if client == nil {
 			return msgs, errors.New("runtime: history compression model is required")
 		}
+		if err := model.ValidateClient(client); err != nil {
+			return msgs, fmt.Errorf("runtime: history compression model: %w", err)
+		}
 		if len(msgs) == 0 {
 			return msgs, nil
 		}
@@ -363,6 +367,20 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 		result = append(result, summaryMsg)
 		result = append(result, keepMsgs...)
 
+		if policyCfg.CompressAtMaxInputTokens > 0 {
+			count, err := countMessages(ctx, runtimeCfg, client, result, tools)
+			if err != nil {
+				return msgs, err
+			}
+			if count.InputTokens > policyCfg.CompressAtMaxInputTokens {
+				return msgs, fmt.Errorf(
+					"runtime: compressed history exceeds CompressAtMaxInputTokens (%d > %d): the generated summary and newest exact turns do not fit",
+					count.InputTokens,
+					policyCfg.CompressAtMaxInputTokens,
+				)
+			}
+		}
+
 		return result, nil
 	}
 }
@@ -423,7 +441,7 @@ func shouldCompress(
 // exactTailStart selects the oldest turn index retained exactly. The newest
 // turn is always retained: compression cannot drop it without breaking the
 // conversation contract, so KeepMaxInputTokens budgets the older turns that
-// join it. Every candidate is counted as a full planner-request shape
+// join it. Every candidate is counted as a complete history-policy shape
 // (system + turns + tools) — providers such as Bedrock reject token counting
 // for tool-bearing transcripts without the tool config — and older turns are
 // charged by their measured cost relative to the newest tail, so the fixed
@@ -441,7 +459,7 @@ func exactTailStart(
 		return 0, nil
 	}
 	newestTokens := 0
-	if cfg.KeepMaxInputTokens > 0 {
+	if cfg.KeepMaxInputTokens > 0 || cfg.CompressAtMaxInputTokens > 0 {
 		count, err := countMessages(ctx, runtimeCfg, client, requestShape(system, turns[len(turns)-1:]), tools)
 		if err != nil {
 			return 0, err
@@ -452,25 +470,10 @@ func exactTailStart(
 		// request that compression would not immediately re-trigger on. Fail
 		// loudly with the true invariant instead of silently proceeding.
 		if cfg.CompressAtMaxInputTokens > 0 && newestTokens > cfg.CompressAtMaxInputTokens {
-			// Distinguish the two ways the ceiling can be infeasible: fixed
-			// request overhead (system prompt + advertised tool catalog) that
-			// compression can never reclaim, versus a genuinely oversized
-			// newest turn. Blaming the turn for catalog weight sends operators
-			// tuning the wrong thing.
-			overhead, err := countMessages(ctx, runtimeCfg, client, requestShape(system, nil), tools)
-			if err != nil {
-				return 0, err
-			}
-			if overhead.InputTokens > cfg.CompressAtMaxInputTokens {
-				return 0, fmt.Errorf(
-					"runtime: fixed request overhead exceeds CompressAtMaxInputTokens (system+tools=%d > %d; system messages=%d, tools=%d): compression cannot reclaim the system prompt or tool catalog; raise the ceiling or shrink the catalog",
-					overhead.InputTokens, cfg.CompressAtMaxInputTokens, len(system), len(tools),
-				)
-			}
 			return 0, fmt.Errorf(
-				"runtime: newest history turn cannot fit within CompressAtMaxInputTokens (%d > %d; overhead=%d, turns=%d, newest turn messages=%d): compression keeps the newest turn whole and cannot produce a smaller planner request",
+				"runtime: newest history turn cannot fit within CompressAtMaxInputTokens (%d > %d; system messages=%d, tools=%d, turns=%d, newest turn messages=%d): compression keeps the newest turn whole and cannot produce a smaller planner request",
 				newestTokens, cfg.CompressAtMaxInputTokens,
-				overhead.InputTokens, len(turns), len(turns[len(turns)-1].messages),
+				len(system), len(tools), len(turns), len(turns[len(turns)-1].messages),
 			)
 		}
 	}
@@ -479,12 +482,17 @@ func exactTailStart(
 		if cfg.KeepMaxTurns > 0 && len(turns)-i > cfg.KeepMaxTurns {
 			break
 		}
-		if cfg.KeepMaxInputTokens > 0 {
+		if cfg.KeepMaxInputTokens > 0 || cfg.CompressAtMaxInputTokens > 0 {
 			count, err := countMessages(ctx, runtimeCfg, client, requestShape(system, turns[i:]), tools)
 			if err != nil {
 				return 0, err
 			}
-			if count.InputTokens-newestTokens > cfg.KeepMaxInputTokens {
+			if cfg.KeepMaxInputTokens > 0 &&
+				count.InputTokens-newestTokens > cfg.KeepMaxInputTokens {
+				break
+			}
+			if cfg.CompressAtMaxInputTokens > 0 &&
+				count.InputTokens > cfg.CompressAtMaxInputTokens {
 				break
 			}
 		}
@@ -493,7 +501,7 @@ func exactTailStart(
 	return keepStart, nil
 }
 
-// requestShape assembles the planner-request message shape used for token
+// requestShape assembles the history-policy message shape used for token
 // counting: the preserved system prefix followed by the candidate tail turns.
 func requestShape(system []*model.Message, turns []turn) []*model.Message {
 	msgs := make([]*model.Message, 0, len(system)+len(turns))
@@ -510,11 +518,7 @@ func countMessages(
 ) (model.TokenCount, error) {
 	counter := cfg.tokenCounter
 	if counter == nil {
-		var ok bool
-		counter, ok = client.(model.TokenCounter)
-		if !ok {
-			return model.TokenCount{}, errors.New("runtime: history compression token counter is required for token budgets")
-		}
+		counter = client
 	}
 	req := &model.Request{
 		ModelClass: cfg.modelClass,
@@ -523,6 +527,12 @@ func countMessages(
 	}
 	count, err := counter.CountTokens(ctx, req)
 	if err != nil {
+		if errors.Is(err, model.ErrTokenCountingUnsupported) {
+			return model.TokenCount{}, fmt.Errorf(
+				"runtime: history compression requires a model provider with token counting: %w",
+				model.ErrTokenCountingUnsupported,
+			)
+		}
 		return model.TokenCount{}, err
 	}
 	if !count.Exact {

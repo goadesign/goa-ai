@@ -126,7 +126,7 @@ func TestAdvanceStepUsesAgentToolResultContractWhenNoChildrenRan(t *testing.T) {
 			name: "correctable agent failure with successful sibling",
 			records: []stepToolRecord{
 				{
-					call: planner.ToolRequest{Name: agentTool.Name, ToolCallID: "agent-call"},
+					call: ToolCall{Name: agentTool.Name, ToolCallID: "agent-call"},
 					result: &planner.ToolResult{
 						Name:       agentTool.Name,
 						ToolCallID: "agent-call",
@@ -138,7 +138,7 @@ func TestAdvanceStepUsesAgentToolResultContractWhenNoChildrenRan(t *testing.T) {
 					},
 				},
 				{
-					call: planner.ToolRequest{Name: nativeTool.Name, ToolCallID: "native-call"},
+					call: ToolCall{Name: nativeTool.Name, ToolCallID: "native-call"},
 					result: &planner.ToolResult{
 						Name:       nativeTool.Name,
 						ToolCallID: "native-call",
@@ -152,7 +152,7 @@ func TestAdvanceStepUsesAgentToolResultContractWhenNoChildrenRan(t *testing.T) {
 			name:            "successful agent result",
 			wantRecoveryIDs: []string{},
 			records: []stepToolRecord{{
-				call: planner.ToolRequest{Name: agentTool.Name, ToolCallID: "agent-call"},
+				call: ToolCall{Name: agentTool.Name, ToolCallID: "agent-call"},
 				result: &planner.ToolResult{
 					Name:       agentTool.Name,
 					ToolCallID: "agent-call",
@@ -334,8 +334,8 @@ func TestWorkflowLoopDoesNotCommitToolPlanRejectedAtBudget(t *testing.T) {
 			return finalOutput, finalErr
 		},
 	)
-	loop.st.Result = &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
+	loop.st.Result = &PlanResult{
+		ToolCalls: []ToolCall{{
 			Name:       "service.tool",
 			ToolCallID: "call-1",
 			Payload:    rawjson.Message(`{}`),
@@ -576,7 +576,7 @@ func newResumeDeadlineTestLoop(
 		TurnID:    "turn-1",
 	}
 	state := newRunLoopState(
-		&planner.PlanResult{},
+		&PlanResult{},
 		nil,
 		model.TokenUsage{},
 		policy.CapsState{},
@@ -607,7 +607,7 @@ func newResumeDeadlineTestLoop(
 func deadlineTestResumeBatch() stepBatch {
 	return stepBatch{
 		program: stepProgram{
-			result: &planner.PlanResult{},
+			result: &PlanResult{},
 			kind:   stepKindTools,
 		},
 	}
@@ -615,7 +615,8 @@ func deadlineTestResumeBatch() stepBatch {
 
 func deadlineTestFinalOutput() *PlanActivityOutput {
 	return &PlanActivityOutput{
-		Result: &planner.PlanResult{
+		PublicationBatchID: testPublicationBatchID,
+		Result: &PlanResult{
 			FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{
 					Role:  model.ConversationRoleAssistant,

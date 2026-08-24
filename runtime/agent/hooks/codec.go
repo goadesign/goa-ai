@@ -90,6 +90,29 @@ func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, 
 	if turnID == "" {
 		turnID = evt.TurnID()
 	}
+	payload, err := EncodeRecordPayload(evt)
+	if err != nil {
+		return nil, err
+	}
+
+	return &runlog.ActivityInput{
+		Type:        evt.Type(),
+		EventKey:    eventKey,
+		RunID:       evt.RunID(),
+		AgentID:     agent.Ident(evt.AgentID()),
+		SessionID:   evt.SessionID(),
+		TurnID:      turnID,
+		TimestampMS: timestampMS,
+		Payload:     payload,
+	}, nil
+}
+
+// EncodeRecordPayload serializes the event fields stored in a run-log record.
+// The caller supplies the record identity and timestamp separately.
+func EncodeRecordPayload(evt Event) (rawjson.Message, error) {
+	if evt == nil {
+		return nil, errors.New("encode hook payload: event is nil")
+	}
 	var payload rawjson.Message
 	switch e := evt.(type) {
 	case *RunCompletedEvent:
@@ -134,17 +157,7 @@ func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, 
 		}
 		payload = rawjson.Message(b)
 	}
-
-	return &runlog.ActivityInput{
-		Type:        evt.Type(),
-		EventKey:    eventKey,
-		RunID:       evt.RunID(),
-		AgentID:     agent.Ident(evt.AgentID()),
-		SessionID:   evt.SessionID(),
-		TurnID:      turnID,
-		TimestampMS: timestampMS,
-		Payload:     payload,
-	}, nil
+	return payload, nil
 }
 
 // DecodeFromRecordInput reconstructs a hooks.Event from the serialized runtime
@@ -353,6 +366,44 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			return nil, fmt.Errorf("decode %s payload: %w", Usage, err)
 		}
 		evt = NewUsageEvent(input.RunID, input.AgentID, input.SessionID, p.TokenUsage)
+
+	case ModelOutputRejected:
+		var p ModelOutputRejectedEvent
+		if err := json.Unmarshal(input.Payload, &p); err != nil {
+			return nil, fmt.Errorf("decode %s payload: %w", ModelOutputRejected, err)
+		}
+		rejected, err := NewModelOutputRejectedEvent(
+			input.RunID,
+			input.AgentID,
+			input.SessionID,
+			p.ReasonSHA256,
+			p.ReasonSize,
+			p.ModelResponsePresent,
+			p.ModelResponseFingerprintVersion,
+			p.ModelResponseSHA256,
+			p.ModelResponseSize,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("decode %s payload: %w", ModelOutputRejected, err)
+		}
+		evt = rejected
+
+	case PlannerOutputRejected:
+		var p PlannerOutputRejectedEvent
+		if err := json.Unmarshal(input.Payload, &p); err != nil {
+			return nil, fmt.Errorf("decode %s payload: %w", PlannerOutputRejected, err)
+		}
+		rejected, err := NewPlannerOutputRejectedEvent(
+			input.RunID,
+			input.AgentID,
+			input.SessionID,
+			p.ReasonSHA256,
+			p.ReasonSize,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("decode %s payload: %w", PlannerOutputRejected, err)
+		}
+		evt = rejected
 
 	case HardProtectionTriggered:
 		var p HardProtectionEvent

@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"strconv"
+	"unicode/utf8"
 
 	"google.golang.org/genai"
 
@@ -14,10 +17,69 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+type (
+	vertexToolCallIDAllocator struct {
+		used  map[string]struct{}
+		index int
+	}
+
+	// fixedJSONWriter copies encoded arguments into the exact-size allocation
+	// established before encoding begins.
+	fixedJSONWriter struct {
+		data   []byte
+		offset int
+	}
+)
+
+const maxVertexToolArgsBytes = 16 << 20
+
+var errVertexToolArgsTooLarge = errors.New("vertex: tool args exceed 16777216 bytes")
+
+// newVertexToolCallIDAllocator reserves every tool-call ID already present in
+// request history so locally assigned Gemini IDs remain unique in the run.
+func newVertexToolCallIDAllocator(messages []*model.Message) *vertexToolCallIDAllocator {
+	allocator := &vertexToolCallIDAllocator{used: make(map[string]struct{})}
+	for _, message := range messages {
+		if message == nil {
+			continue
+		}
+		for _, part := range message.Parts {
+			if toolUse, ok := part.(model.ToolUsePart); ok && toolUse.ID != "" {
+				allocator.used[toolUse.ID] = struct{}{}
+			}
+		}
+	}
+	return allocator
+}
+
+// reserve records one provider-issued ID and rejects duplicates with request
+// history or earlier calls in the same response.
+func (a *vertexToolCallIDAllocator) reserve(id string) error {
+	if _, exists := a.used[id]; exists {
+		return fmt.Errorf("vertex: response function call ID %q is not unique", id)
+	}
+	a.used[id] = struct{}{}
+	return nil
+}
+
+// next returns the next deterministic local ID that does not collide with
+// request history or provider-issued IDs.
+func (a *vertexToolCallIDAllocator) next() string {
+	for {
+		id := fmt.Sprintf("vertex-call-%d", a.index)
+		a.index++
+		if _, exists := a.used[id]; exists {
+			continue
+		}
+		a.used[id] = struct{}{}
+		return id
+	}
+}
+
 // translateResponse converts a Gemini response into the provider-neutral
 // model.Response. Only the first candidate is used (CandidateCount is never
 // set above 1 by this adapter).
-func translateResponse(resp *genai.GenerateContentResponse, modelID string, class model.ModelClass, provToCanon map[string]string) (*model.Response, error) {
+func translateResponse(resp *genai.GenerateContentResponse, modelID string, class model.ModelClass, provToCanon map[string]string, callIDs *vertexToolCallIDAllocator) (*model.Response, error) {
 	if resp == nil || len(resp.Candidates) == 0 {
 		return nil, errors.New("vertex: response has no candidates")
 	}
@@ -31,6 +93,18 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 	}
 	if cand.Content != nil {
 		msg := model.Message{Role: model.ConversationRoleAssistant}
+		thinkingIndex := 0
+		if callIDs == nil {
+			callIDs = newVertexToolCallIDAllocator(nil)
+		}
+		for _, part := range cand.Content.Parts {
+			if part == nil || part.FunctionCall == nil || part.FunctionCall.ID == "" {
+				continue
+			}
+			if err := callIDs.reserve(part.FunctionCall.ID); err != nil {
+				return nil, err
+			}
+		}
 		for _, part := range cand.Content.Parts {
 			if part == nil {
 				return nil, errors.New("vertex: response contains a nil part")
@@ -40,17 +114,25 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 				if part.FunctionCall.Name == "" {
 					return nil, errors.New("vertex: response function call is missing its name")
 				}
-				if part.FunctionCall.ID == "" {
-					return nil, fmt.Errorf("vertex: response function call %q is missing its ID", part.FunctionCall.Name)
-				}
 				payload, err := marshalArgs(part.FunctionCall.Args)
 				if err != nil {
 					return nil, err
 				}
+				name, ok := toolIdent(part.FunctionCall.Name, provToCanon)
+				if !ok {
+					return nil, fmt.Errorf(
+						"vertex: response function call returned unadvertised name %q",
+						part.FunctionCall.Name,
+					)
+				}
+				callID := part.FunctionCall.ID
+				if callID == "" {
+					callID = callIDs.next()
+				}
 				msg.Parts = append(msg.Parts, model.ToolUsePart{
-					Name:             string(toolIdent(part.FunctionCall.Name, provToCanon)),
+					Name:             string(name),
 					Input:            payload,
-					ID:               part.FunctionCall.ID,
+					ID:               callID,
 					ThoughtSignature: encodeThoughtSignature(part.ThoughtSignature),
 				})
 			case part.Thought:
@@ -60,8 +142,10 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 				msg.Parts = append(msg.Parts, model.ThinkingPart{
 					Text:      part.Text,
 					Signature: base64.StdEncoding.EncodeToString(part.ThoughtSignature),
+					Index:     thinkingIndex,
 					Final:     true,
 				})
+				thinkingIndex++
 			case part.Text != "":
 				msg.Parts = append(msg.Parts, model.TextPart{Text: part.Text})
 			default:
@@ -78,9 +162,6 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 		}
 	}
 	out.Usage = translateUsage(resp.UsageMetadata, modelID, class)
-	if err := model.ValidateResponse(out); err != nil {
-		return nil, fmt.Errorf("vertex: invalid response: %w", err)
-	}
 	return out, nil
 }
 
@@ -186,18 +267,17 @@ func groundingCitation(chunks []*genai.GroundingChunk, index int) (model.Citatio
 	}
 }
 
-// canonicalToolName reverses sanitization; names never advertised this
-// request pass through unchanged so the runtime can flag the unknown tool.
-func canonicalToolName(prov string, provToCanon map[string]string) string {
-	if canon, ok := provToCanon[prov]; ok {
-		return canon
-	}
-	return prov
+// canonicalToolName reverses sanitization only for a tool advertised by this
+// request.
+func canonicalToolName(prov string, provToCanon map[string]string) (string, bool) {
+	canon, ok := provToCanon[prov]
+	return canon, ok
 }
 
 // toolIdent maps a provider tool name back to its canonical ident.
-func toolIdent(prov string, provToCanon map[string]string) tools.Ident {
-	return tools.Ident(canonicalToolName(prov, provToCanon))
+func toolIdent(prov string, provToCanon map[string]string) (tools.Ident, bool) {
+	canonical, ok := canonicalToolName(prov, provToCanon)
+	return tools.Ident(canonical), ok
 }
 
 // marshalArgs encodes Gemini function-call args as a JSON payload.
@@ -205,40 +285,184 @@ func marshalArgs(args map[string]any) (rawjson.Message, error) {
 	if len(args) == 0 {
 		return rawjson.Message(`{}`), nil
 	}
-	if err := validateSDKJSONNumbers(args); err != nil {
+	values := 0
+	encodedSize := 0
+	if err := measureSDKJSONValue(args, 0, &values, &encodedSize); err != nil {
 		return nil, err
 	}
-	b, err := json.Marshal(args)
-	if err != nil {
+	data := make([]byte, encodedSize+1)
+	writer := &fixedJSONWriter{data: data}
+	if err := json.NewEncoder(writer).Encode(args); err != nil {
 		return nil, fmt.Errorf("vertex: marshal tool args: %w", err)
 	}
-	return b, nil
+	if writer.offset != len(data) || data[encodedSize] != '\n' {
+		return nil, errors.New("vertex: tool args encoding size changed between passes")
+	}
+	return rawjson.Message(data[:encodedSize]), nil
 }
 
-// validateSDKJSONNumbers rejects integers that Gemini's float64-backed SDK
-// representation cannot prove were decoded without precision loss.
-func validateSDKJSONNumbers(value any) error {
+// measureSDKJSONValue computes the exact encoding/json byte count without
+// building the encoded payload. It also bounds nesting and value count before
+// marshalArgs allocates its result buffer.
+func measureSDKJSONValue(value any, depth int, values, encodedSize *int) error {
 	const maxExactInteger = 1<<53 - 1
+	if depth > 64 {
+		return errors.New("vertex: tool args exceed 64 nested levels")
+	}
+	if *values >= 100_000 {
+		return errors.New("vertex: tool args exceed 100000 values")
+	}
+	*values++
 
 	switch actual := value.(type) {
 	case float64:
+		if math.IsNaN(actual) || math.IsInf(actual, 0) {
+			return fmt.Errorf("vertex: tool args contain unsupported number %v", actual)
+		}
 		if math.Trunc(actual) == actual && math.Abs(actual) > maxExactInteger {
 			return fmt.Errorf("vertex: tool args contain an integer outside the exact SDK range: %v", actual)
 		}
+		return addVertexJSONBytes(encodedSize, encodedFloat64Size(actual))
+	case string:
+		return measureJSONString(actual, encodedSize)
+	case bool:
+		if actual {
+			return addVertexJSONBytes(encodedSize, len("true"))
+		}
+		return addVertexJSONBytes(encodedSize, len("false"))
+	case nil:
+		return addVertexJSONBytes(encodedSize, len("null"))
 	case map[string]any:
-		for _, item := range actual {
-			if err := validateSDKJSONNumbers(item); err != nil {
+		if len(actual) > 100_000-*values {
+			return errors.New("vertex: tool args exceed 100000 values")
+		}
+		if err := addVertexJSONBytes(encodedSize, 2); err != nil {
+			return err
+		}
+		index := 0
+		for key, item := range actual {
+			if index > 0 {
+				if err := addVertexJSONBytes(encodedSize, 1); err != nil {
+					return err
+				}
+			}
+			if err := measureJSONString(key, encodedSize); err != nil {
+				return err
+			}
+			if err := addVertexJSONBytes(encodedSize, 1); err != nil {
+				return err
+			}
+			if err := measureSDKJSONValue(item, depth+1, values, encodedSize); err != nil {
+				return err
+			}
+			index++
+		}
+	case []any:
+		if len(actual) > 100_000-*values {
+			return errors.New("vertex: tool args exceed 100000 values")
+		}
+		if err := addVertexJSONBytes(encodedSize, 2); err != nil {
+			return err
+		}
+		for index, item := range actual {
+			if index > 0 {
+				if err := addVertexJSONBytes(encodedSize, 1); err != nil {
+					return err
+				}
+			}
+			if err := measureSDKJSONValue(item, depth+1, values, encodedSize); err != nil {
 				return err
 			}
 		}
-	case []any:
-		for _, item := range actual {
-			if err := validateSDKJSONNumbers(item); err != nil {
+	default:
+		return fmt.Errorf("vertex: tool args contain unsupported value %T", value)
+	}
+	return nil
+}
+
+// measureJSONString counts the bytes encoding/json emits with HTML escaping
+// enabled, including the surrounding quotes.
+func measureJSONString(value string, encodedSize *int) error {
+	if err := addVertexJSONBytes(encodedSize, 2); err != nil {
+		return err
+	}
+	for index := 0; index < len(value); {
+		char := value[index]
+		if char < utf8.RuneSelf {
+			index++
+			switch char {
+			case '"', '\\', '\b', '\f', '\n', '\r', '\t':
+				if err := addVertexJSONBytes(encodedSize, 2); err != nil {
+					return err
+				}
+			case '<', '>', '&':
+				if err := addVertexJSONBytes(encodedSize, 6); err != nil {
+					return err
+				}
+			default:
+				size := 1
+				if char < 0x20 {
+					size = 6
+				}
+				if err := addVertexJSONBytes(encodedSize, size); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(value[index:])
+		index += size
+		if r == utf8.RuneError && size == 1 {
+			if err := addVertexJSONBytes(encodedSize, 6); err != nil {
 				return err
 			}
+			continue
+		}
+		if r == '\u2028' || r == '\u2029' {
+			if err := addVertexJSONBytes(encodedSize, 6); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := addVertexJSONBytes(encodedSize, size); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func encodedFloat64Size(value float64) int {
+	format := byte('f')
+	absolute := math.Abs(value)
+	if absolute != 0 && (absolute < 1e-6 || absolute >= 1e21) {
+		format = 'e'
+	}
+	var buffer [32]byte
+	encoded := strconv.AppendFloat(buffer[:0], value, format, -1, 64)
+	if format == 'e' && len(encoded) >= 4 {
+		end := len(encoded)
+		if encoded[end-4] == 'e' && encoded[end-3] == '-' && encoded[end-2] == '0' {
+			return end - 1
+		}
+	}
+	return len(encoded)
+}
+
+func addVertexJSONBytes(encodedSize *int, count int) error {
+	if count > maxVertexToolArgsBytes-*encodedSize {
+		return errVertexToolArgsTooLarge
+	}
+	*encodedSize += count
+	return nil
+}
+
+func (w *fixedJSONWriter) Write(data []byte) (int, error) {
+	if len(data) > len(w.data)-w.offset {
+		return 0, io.ErrShortBuffer
+	}
+	copy(w.data[w.offset:], data)
+	w.offset += len(data)
+	return len(data), nil
 }
 
 // encodeThoughtSignature converts a genai Part's raw ThoughtSignature bytes

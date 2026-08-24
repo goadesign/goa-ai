@@ -12,12 +12,20 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+// mustBedrockToolInput compiles a static test schema.
+func mustBedrockToolInput(t *testing.T, schema rawjson.Message) model.ToolInput {
+	t.Helper()
+	input, err := model.AdvertisedToolInputFromSchema(schema)
+	require.NoError(t, err)
+	return input
+}
+
 func TestEncodeTools_NoChoice(t *testing.T) {
 	cfg, fields, canonToSan, sanToCanon, err := encodeTools("amazon.nova-pro-v1:0", []*model.ToolDefinition{
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		},
 	}, nil, false)
 	require.NoError(t, err)
@@ -34,7 +42,7 @@ func TestEncodeTools_ModeAny(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		},
 	}, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false)
 	require.NoError(t, err)
@@ -52,7 +60,7 @@ func TestEncodeTools_ModeTool(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		},
 	}, &model.ToolChoice{
 		Mode: model.ToolChoiceModeTool,
@@ -75,7 +83,7 @@ func TestEncodeTools_ModeNoneRejectsDefinedTools(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		},
 	}, &model.ToolChoice{Mode: model.ToolChoiceModeNone}, false)
 	require.ErrorContains(t, err, `tool choice mode "none" is unsupported when tools are defined`)
@@ -105,7 +113,7 @@ func TestEncodeTools_AppendsCacheCheckpoint(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Search",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		},
 	}, nil, true)
 	require.NoError(t, err)
@@ -120,7 +128,7 @@ func TestEncodeTools_AnthropicModelAddsToolExamples(t *testing.T) {
 		{
 			Name:        "reports.complete",
 			Description: "Complete a report",
-			Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
+			Input:       toolInputFromSpec(t, toolInputExampleSpec()),
 		},
 	}, nil, false)
 	require.NoError(t, err)
@@ -139,12 +147,12 @@ func TestEncodeTools_AnthropicModelKeepsAllToolsWhenOneHasExample(t *testing.T) 
 		{
 			Name:        "reports.complete",
 			Description: "Complete a report",
-			Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
+			Input:       toolInputFromSpec(t, toolInputExampleSpec()),
 		},
 		{
 			Name:        "reports.lookup",
 			Description: "Look up a report",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		},
 	}, nil, false)
 	require.NoError(t, err)
@@ -160,10 +168,9 @@ func TestEncodeTools_AnthropicModelKeepsAllToolsWhenOneHasExample(t *testing.T) 
 }
 
 func TestBuildConverseStreamInputAnthropicToolExamplesUseNativeToolsOnly(t *testing.T) {
-	client := &Client{
+	client := &provider{
 		defaultModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 		maxTok:       32,
-		think:        defaultThinkingBudget,
 	}
 	req := &model.Request{
 		Messages: []*model.Message{{
@@ -173,7 +180,7 @@ func TestBuildConverseStreamInputAnthropicToolExamplesUseNativeToolsOnly(t *test
 		Tools: []*model.ToolDefinition{{
 			Name:        "reports.complete",
 			Description: "Complete a report",
-			Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
+			Input:       toolInputFromSpec(t, toolInputExampleSpec()),
 		}},
 	}
 
@@ -181,7 +188,8 @@ func TestBuildConverseStreamInputAnthropicToolExamplesUseNativeToolsOnly(t *test
 	require.NoError(t, err)
 	require.NotNil(t, parts.toolConfig)
 
-	input := client.buildConverseStreamInput(parts, req, thinkingConfig{})
+	input, err := client.buildConverseStreamInput(parts, req)
+	require.NoError(t, err)
 	require.Nil(t, input.ToolConfig)
 	require.NotNil(t, input.AdditionalModelRequestFields)
 
@@ -196,10 +204,9 @@ func TestBuildConverseStreamInputAnthropicToolExamplesUseNativeToolsOnly(t *test
 }
 
 func TestBuildConverseStreamInputWithToolResultsUsesBedrockToolConfig(t *testing.T) {
-	client := &Client{
+	client := &provider{
 		defaultModel: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 		maxTok:       32,
-		think:        defaultThinkingBudget,
 	}
 	req := &model.Request{
 		Messages: []*model.Message{
@@ -233,12 +240,12 @@ func TestBuildConverseStreamInputWithToolResultsUsesBedrockToolConfig(t *testing
 			{
 				Name:        "reports.complete",
 				Description: "Complete a report",
-				Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
+				Input:       toolInputFromSpec(t, toolInputExampleSpec()),
 			},
 			{
 				Name:        "reports.lookup",
 				Description: "Look up a report",
-				Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+				Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 			},
 		},
 	}
@@ -246,7 +253,8 @@ func TestBuildConverseStreamInputWithToolResultsUsesBedrockToolConfig(t *testing
 	parts, err := client.prepareRequest(req)
 	require.NoError(t, err)
 
-	input := client.buildConverseStreamInput(parts, req, thinkingConfig{})
+	input, err := client.buildConverseStreamInput(parts, req)
+	require.NoError(t, err)
 	require.NotNil(t, input.ToolConfig)
 	require.Nil(t, input.AdditionalModelRequestFields)
 }
@@ -256,11 +264,26 @@ func TestEncodeTools_AnthropicToolChoiceUsesNativeFieldWithExamples(t *testing.T
 		{
 			Name:        "reports.complete",
 			Description: "Complete a report",
-			Input:       model.ToolInputFromSpec(toolInputExampleSpec()),
+			Input:       toolInputFromSpec(t, toolInputExampleSpec()),
 		},
 	}, &model.ToolChoice{Mode: model.ToolChoiceModeTool, Name: "reports.complete"}, false)
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"type": "tool", "name": "reports_complete"}, fields["tool_choice"])
+}
+
+func TestEncodeTools_MythosPreviewRejectsForcedToolChoice(t *testing.T) {
+	_, _, _, _, err := encodeTools("us.anthropic.claude-mythos-preview-v1:0", []*model.ToolDefinition{
+		{
+			Name:        "reports.complete",
+			Description: "Complete a report",
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
+		},
+	}, &model.ToolChoice{Mode: model.ToolChoiceModeAny}, false)
+	require.EqualError(
+		t,
+		err,
+		`bedrock: model "us.anthropic.claude-mythos-preview-v1:0" does not support forced tool choice mode "any"`,
+	)
 }
 
 func TestToDocumentPreservesCanonicalRawJSONNumbers(t *testing.T) {
@@ -317,4 +340,15 @@ func toolInputExampleSpec() tools.TypeSpec {
 		SchemaWithoutRootExample: tools.RawJSON(`{"type":"object"}`),
 		ExampleJSON:              tools.RawJSON(`{"summary":"Done"}`),
 	}
+}
+
+func toolInputFromSpec(t *testing.T, spec tools.TypeSpec) model.ToolInput {
+	t.Helper()
+	input, err := model.ToolInputFromContract(spec.Name, model.ToolInputContract{
+		Schema:                   spec.Schema,
+		SchemaWithoutRootExample: spec.SchemaWithoutRootExample,
+		ExampleJSON:              spec.ExampleJSON,
+	})
+	require.NoError(t, err)
+	return input
 }

@@ -1,5 +1,5 @@
-// Package runtime publishes planner presentation events independently from
-// provider transcript ownership.
+// Package runtime waits to publish user-visible planner events until the
+// planner result has passed every runtime check.
 package runtime
 
 import (
@@ -7,47 +7,34 @@ import (
 	"sync"
 
 	agent "goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
-	// runtimePlannerEvents implements planner.PlannerEvents for runtime plan
-	// activities.
+	// runtimePlannerEvents collects events produced during one planner activity.
 	//
-	// It publishes hook events; the model invocation journal owns usage and
-	// provider transcript state.
+	// The model response store separately keeps token usage and the exact
+	// provider response.
 	runtimePlannerEvents struct {
-		rt        *Runtime
 		agentID   agent.Ident
 		runID     string
 		sessionID string
-		turnID    string
 
 		mu      sync.Mutex
-		hookErr error
+		pending []hooks.Event
 	}
 )
 
-// newPlannerEvents constructs a planner presentation sink that publishes to
-// rt.Bus.
-//
-// The runtime requires a hook bus. If rt.Bus is nil, this panics to surface an
-// invalid runtime configuration early.
-func newPlannerEvents(rt *Runtime, agentID agent.Ident, runID, sessionID, turnID string) *runtimePlannerEvents {
-	if rt == nil {
-		panic("runtime: planner events runtime is nil")
-	}
-	if rt.Bus == nil {
-		panic("runtime: planner events hook bus is nil")
-	}
+// newPlannerEvents creates an event collector for one planner activity. The
+// workflow publishes these events only after the activity result is accepted.
+func newPlannerEvents(agentID agent.Ident, runID, sessionID string) *runtimePlannerEvents {
 	return &runtimePlannerEvents{
-		rt:        rt,
 		agentID:   agentID,
 		runID:     runID,
 		sessionID: sessionID,
-		turnID:    turnID,
 	}
 }
 
@@ -83,21 +70,40 @@ func (e *runtimePlannerEvents) PlannerThinkingBlock(ctx context.Context, block m
 	))
 }
 
-func (e *runtimePlannerEvents) hookError() error {
+// acceptedRecords freezes all accepted planner events into activity output.
+// When budget is non-nil, each encoded record is charged before its payload is
+// copied so a large event collection is abandoned as soon as the complete
+// activity envelope cannot fit. The workflow assigns stable event keys and
+// timestamps after the activity succeeds.
+func (e *runtimePlannerEvents) acceptedRecords(
+	budget *planActivityOutputBudget,
+) ([]*api.PlannerEventRecord, error) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.hookErr
+	pending := append([]hooks.Event(nil), e.pending...)
+	e.mu.Unlock()
+	records := make([]*api.PlannerEventRecord, 0, len(pending))
+	for _, event := range pending {
+		payload, err := hooks.EncodeRecordPayload(event)
+		if err != nil {
+			return nil, err
+		}
+		record := &api.PlannerEventRecord{
+			Type:    event.Type(),
+			Payload: payload,
+		}
+		if budget != nil {
+			if err := budget.add(record); err != nil {
+				return nil, err
+			}
+		}
+		record.Payload = append([]byte(nil), payload...)
+		records = append(records, record)
+	}
+	return records, nil
 }
 
-func (e *runtimePlannerEvents) publish(ctx context.Context, evt hooks.Event) {
-	if e.hookError() != nil {
-		return
-	}
-	if err := e.rt.publishHookErr(ctx, evt, e.turnID); err != nil {
-		e.mu.Lock()
-		if e.hookErr == nil {
-			e.hookErr = err
-		}
-		e.mu.Unlock()
-	}
+func (e *runtimePlannerEvents) publish(_ context.Context, evt hooks.Event) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.pending = append(e.pending, evt)
 }

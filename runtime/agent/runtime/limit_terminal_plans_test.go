@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -127,10 +128,10 @@ func TestValidateLimitTerminalPlansRejectsConfirmation(t *testing.T) {
 		rt := New(WithToolConfirmation(&ToolConfirmationConfig{
 			Confirm: map[tools.Ident]*ToolConfirmation{
 				terminal.Name: {
-					Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+					Prompt: func(context.Context, *ToolCall) (string, error) {
 						return "confirm", nil
 					},
-					DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+					DeniedResult: func(context.Context, *ToolCall) (any, error) {
 						return map[string]any{"denied": true}, nil
 					},
 				},
@@ -206,12 +207,18 @@ func TestLimitTerminalToolRequestRecordsReasonOnly(t *testing.T) {
 		Name:    "service.tools.complete",
 		Payload: rawjson.Message(`{"result":"time"}`),
 	}
-	request := limitTerminalToolRequest(call, planner.TerminationReasonTimeBudget)
+	request := limitTerminalToolRequest(
+		"run-1",
+		"turn-1",
+		2,
+		call,
+		planner.TerminationReasonTimeBudget,
+	)
 
 	assert.Len(t, request.Labels, 1)
 	assert.Equal(t, string(planner.TerminationReasonTimeBudget), request.Labels[LimitReasonLabel])
 	assert.Empty(t, request.RunID)
-	assert.Empty(t, request.ToolCallID)
+	assert.NotEmpty(t, request.ToolCallID)
 }
 
 func TestWithLimitTerminalPlansCopiesPayloads(t *testing.T) {
@@ -232,11 +239,9 @@ func TestRestoreContinuationRunInputCopiesLimitTerminalPlans(t *testing.T) {
 
 	plans := testLimitTerminalPlans("service.tools.complete")
 	checkpoint := &workflowCheckpoint{
-		AgentID:   "service.agent",
-		SessionID: "session-1",
-		BaseContext: run.Context{
-			RunID: "run-1",
-		},
+		AgentID:       "service.agent",
+		SessionID:     "session-1",
+		PreviousRunID: "run-1",
 		Policy: &PolicyOverrides{
 			LimitTerminalPlans: plans,
 		},
@@ -305,7 +310,8 @@ func TestToolFailureUsesPlannerWhenLimitPlansExist(t *testing.T) {
 					return nil, errors.New("tool failure finalization reason is required")
 				}
 				return &PlanActivityOutput{
-					Result: &planner.PlanResult{
+					PublicationBatchID: testPublicationBatchID,
+					Result: &PlanResult{
 						FinalResponse: &planner.FinalResponse{
 							Message: &model.Message{
 								Role:  model.ConversationRoleAssistant,
@@ -371,7 +377,7 @@ func TestWorkflowLimitsExecuteTerminalPlansWithoutPlannerResume(t *testing.T) {
 
 // executeWorkflowLimitTerminalPlan drives the complete workflow transition for
 // one limit and returns the fixed terminal request received by the tool.
-func executeWorkflowLimitTerminalPlan(t *testing.T, reason planner.TerminationReason) *planner.ToolRequest {
+func executeWorkflowLimitTerminalPlan(t *testing.T, reason planner.TerminationReason) *ToolCall {
 	t.Helper()
 
 	rt := New(
@@ -380,10 +386,10 @@ func executeWorkflowLimitTerminalPlan(t *testing.T, reason planner.TerminationRe
 	)
 	terminal := strictLimitTerminalSpec()
 	work := newAnyJSONSpec("service.tools.work", terminal.Toolset)
-	var executed *planner.ToolRequest
+	var executed *ToolCall
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: terminal.Toolset,
-		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			if call.Name == work.Name {
 				result := &planner.ToolResult{
 					Name:       call.Name,
@@ -476,10 +482,12 @@ func executeWorkflowLimitTerminalPlan(t *testing.T, reason planner.TerminationRe
 					return nil, engine.ErrPlannerActivityDeadlineExceeded
 				}
 				return &PlanActivityOutput{
-					Result: &planner.PlanResult{
-						ToolCalls: []planner.ToolRequest{{
-							Name:    work.Name,
-							Payload: rawjson.Message(`{}`),
+					PublicationBatchID: testPublicationBatchID,
+					Result: &PlanResult{
+						ToolCalls: []ToolCall{{
+							ToolCallID: fmt.Sprintf("work-call-%d", plannerCalls),
+							Name:       work.Name,
+							Payload:    rawjson.Message(`{}`),
 						}},
 					},
 				}, nil
@@ -488,10 +496,12 @@ func executeWorkflowLimitTerminalPlan(t *testing.T, reason planner.TerminationRe
 				plannerCalls++
 				if reason == planner.TerminationReasonToolCap {
 					return &PlanActivityOutput{
-						Result: &planner.PlanResult{
-							ToolCalls: []planner.ToolRequest{{
-								Name:    work.Name,
-								Payload: rawjson.Message(`{}`),
+						PublicationBatchID: testPublicationBatchID,
+						Result: &PlanResult{
+							ToolCalls: []ToolCall{{
+								ToolCallID: fmt.Sprintf("work-call-%d", plannerCalls),
+								Name:       work.Name,
+								Payload:    rawjson.Message(`{}`),
 							}},
 						},
 					}, nil

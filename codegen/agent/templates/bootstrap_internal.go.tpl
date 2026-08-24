@@ -1,7 +1,3 @@
-// Package bootstrap wires the goa-ai runtime and registers generated agents.
-// This scaffold is application-owned: edit and maintain it; it is not re-generated
-// by `goa gen`. Use it from your cmd main or workers to initialize agents.
-
 // Define flags for MCP endpoints (if any). Pass values via your cmd main.
 {{- $hasMCP := false }}
 {{- range .Agents }}{{- if .Agent.MCPToolsets }}{{ $hasMCP = true }}{{ end }}{{- end }}
@@ -44,6 +40,18 @@ func New(ctx context.Context) (*agentsruntime.Runtime, func(), error) {
         if err := {{ .Alias }}.Register{{ .Agent.StructName }}(ctx, rt, cfg); err != nil {
             return nil, nil, err
         }
+        {{- if .ExampleToolsets }}
+        // Register the application-owned example executors.
+        if err := {{ .Alias }}.RegisterUsedToolsets(ctx, rt,
+            {{- range .ExampleToolsets }}
+            {{ $a.Alias }}.With{{ goify .Toolset.PathName true }}Executor(
+                agentsruntime.ToolCallExecutorFunc({{ .ExecutorAlias }}.Execute),
+            ),
+            {{- end }}
+        ); err != nil {
+            return nil, nil, err
+        }
+        {{- end }}
         {{- range .Toolsets }}
         // Register method-backed toolsets with default executors.
         if err := {{ .Alias }}.Register(ctx, rt); err != nil {

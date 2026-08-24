@@ -75,11 +75,12 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	}
 
 	exec := defaultAgentToolExecute(rt, cfg)
-	call := planner.ToolRequest{
-		Name:      tools.Ident("tool"),
-		RunID:     "run",
-		SessionID: "sess-1",
-		Payload:   rawjson.Message([]byte(`{"x":"world"}`)),
+	call := ToolCall{
+		ToolCallID: "call-1",
+		Name:       tools.Ident("tool"),
+		RunID:      "run",
+		SessionID:  "sess-1",
+		Payload:    rawjson.Message([]byte(`{"x":"world"}`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -90,10 +91,10 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	require.Equal(t, "ok", res.ToolResult.Result)
 	// Agent-as-tool must attach a RunLink for the nested agent run.
 	require.NotNil(t, res.ToolResult.RunLink)
-	require.Equal(t, "run/agent/tool", res.ToolResult.RunLink.RunID)
+	require.Equal(t, NestedRunIDForToolCall(call.RunID, call.Name, call.ToolCallID), res.ToolResult.RunLink.RunID)
 	require.Equal(t, agent.Ident("svc.agent"), res.ToolResult.RunLink.AgentID)
 	require.Equal(t, "run", res.ToolResult.RunLink.ParentRunID)
-	require.Empty(t, res.ToolResult.RunLink.ParentToolCallID)
+	require.Equal(t, "call-1", res.ToolResult.RunLink.ParentToolCallID)
 	require.Len(t, got, 2)
 	require.Equal(t, model.ConversationRoleSystem, got[0].Role)
 	if tp, ok := got[0].Parts[0].(model.TextPart); ok {
@@ -132,7 +133,12 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 		},
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
-	call := planner.ToolRequest{Name: tools.Ident("tool"), RunID: "run", SessionID: "sess-1"}
+	call := ToolCall{
+		ToolCallID: "call-1",
+		Name:       tools.Ident("tool"),
+		RunID:      "run",
+		SessionID:  "sess-1",
+	}
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
@@ -165,11 +171,12 @@ func TestDefaultAgentToolExecute_DefaultContentFromPayload(t *testing.T) {
 		},
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
-	call := planner.ToolRequest{
-		Name:      tools.Ident("tool"),
-		RunID:     "run",
-		SessionID: "sess-1",
-		Payload:   rawjson.Message([]byte(`{"x":"world"}`)),
+	call := ToolCall{
+		ToolCallID: "call-1",
+		Name:       tools.Ident("tool"),
+		RunID:      "run",
+		SessionID:  "sess-1",
+		Payload:    rawjson.Message([]byte(`{"x":"world"}`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -211,11 +218,12 @@ func TestDefaultAgentToolExecute_PreChildValidatorReturnsToolResult(t *testing.T
 		},
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
-	call := planner.ToolRequest{
-		Name:      tools.Ident("tool"),
-		RunID:     "run",
-		SessionID: "sess-1",
-		Payload:   rawjson.Message([]byte(`{"sources":["x"]}`)),
+	call := ToolCall{
+		ToolCallID: "call-1",
+		Name:       tools.Ident("tool"),
+		RunID:      "run",
+		SessionID:  "sess-1",
+		Payload:    rawjson.Message([]byte(`{"sources":["x"]}`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -285,11 +293,12 @@ func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilde
 		},
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
-	call := planner.ToolRequest{
-		Name:      tools.Ident("tool"),
-		RunID:     "run",
-		SessionID: "sess-1",
-		Payload:   rawjson.Message([]byte(`{"x":"world"}`)),
+	call := ToolCall{
+		ToolCallID: "call-1",
+		Name:       tools.Ident("tool"),
+		RunID:      "run",
+		SessionID:  "sess-1",
+		Payload:    rawjson.Message([]byte(`{"x":"world"}`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -333,10 +342,11 @@ func TestDefaultAgentToolExecute_PromptSpecMissingReturnsError(t *testing.T) {
 		},
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
-	call := planner.ToolRequest{
-		Name:      tools.Ident("tool"),
-		RunID:     "run",
-		SessionID: "sess-1",
+	call := ToolCall{
+		ToolCallID: "call-1",
+		Name:       tools.Ident("tool"),
+		RunID:      "run",
+		SessionID:  "sess-1",
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -390,11 +400,12 @@ func TestDefaultAgentToolExecute_PromptSpecRendersWithSchemaKeys(t *testing.T) {
 			return &decoded, nil
 		},
 	}
-	call := planner.ToolRequest{
-		Name:      tools.Ident("tool"),
-		RunID:     "run",
-		SessionID: "sess-1",
-		Payload:   rawjson.Message([]byte(`{"time_context":"last 48h"}`)),
+	call := ToolCall{
+		ToolCallID: "call-1",
+		Name:       tools.Ident("tool"),
+		RunID:      "run",
+		SessionID:  "sess-1",
+		Payload:    rawjson.Message([]byte(`{"time_context":"last 48h"}`)),
 	}
 	spec := newAnyJSONSpec(call.Name, "svc.tools")
 	spec.Payload.Codec = codec
@@ -459,11 +470,12 @@ func TestDefaultAgentToolExecute_PromptSpecRejectsNonObjectPayloadShape(t *testi
 			return decoded, nil
 		},
 	}
-	call := planner.ToolRequest{
-		Name:      tools.Ident("tool"),
-		RunID:     "run",
-		SessionID: "sess-1",
-		Payload:   rawjson.Message([]byte(`"last 48h"`)),
+	call := ToolCall{
+		ToolCallID: "call-1",
+		Name:       tools.Ident("tool"),
+		RunID:      "run",
+		SessionID:  "sess-1",
+		Payload:    rawjson.Message([]byte(`"last 48h"`)),
 	}
 	spec := newAnyJSONSpec(call.Name, "svc.tools")
 	spec.Payload.Codec = stringCodec
@@ -511,7 +523,7 @@ func TestBuildAgentChildRequest_PreservesCanonicalToolArgs(t *testing.T) {
 	rt.toolSpecs[toolName] = spec
 
 	payload := rawjson.Message([]byte(`{"time_context":"last 48h","scope_context":{"type":"site","id":"s1"}}`))
-	call := &planner.ToolRequest{
+	call := &ToolCall{
 		Name:       toolName,
 		RunID:      "run-1",
 		ToolCallID: "tooluse_123",
@@ -553,7 +565,7 @@ func TestBuildAgentChildRequestRejectsMissingPayloadThroughCodec(t *testing.T) {
 	}
 	rt.toolSpecs[toolName] = spec
 
-	call := &planner.ToolRequest{
+	call := &ToolCall{
 		Name:       toolName,
 		RunID:      "run-1",
 		ToolCallID: "tooluse_123",

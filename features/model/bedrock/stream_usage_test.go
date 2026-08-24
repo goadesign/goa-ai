@@ -1,13 +1,41 @@
 package bedrock
 
 import (
+	"context"
+	"errors"
+	"sync"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/stretchr/testify/require"
 
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"goa.design/goa-ai/runtime/agent/model"
 )
+
+type nonIdempotentBedrockReader struct {
+	mu         sync.Mutex
+	events     <-chan brtypes.ConverseStreamOutput
+	closeCalls int
+}
+
+func (r *nonIdempotentBedrockReader) Events() <-chan brtypes.ConverseStreamOutput {
+	return r.events
+}
+
+func (r *nonIdempotentBedrockReader) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closeCalls++
+	if r.closeCalls > 1 {
+		return errors.New("bedrock reader closed more than once")
+	}
+	return nil
+}
+
+func (r *nonIdempotentBedrockReader) Err() error {
+	return nil
+}
 
 func TestChunkProcessorUsageIncludesCacheTokens(t *testing.T) {
 	var (
@@ -65,6 +93,45 @@ func TestChunkProcessorUsageIncludesCacheTokens(t *testing.T) {
 	require.Equal(t, model.ModelClassDefault, usageChunk.Usage.ModelClass)
 	require.IsType(t, model.StopChunk{}, chunks[1])
 	require.Equal(t, usageChunk.Usage, cp.response().Usage)
+}
+
+func TestBedrockStreamRejectsMissingToolCallIDWithUsage(t *testing.T) {
+	contract, err := model.NewRequestContract(&model.Request{ModelClass: model.ModelClassDefault})
+	require.NoError(t, err)
+	processor := newChunkProcessor(
+		func(model.Chunk) error { return nil },
+		map[string]string{"lookup": "svc.lookup"},
+		"test-model-id",
+		model.ModelClassDefault,
+		nil,
+		"",
+	)
+	err = processor.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
+	require.NoError(t, err)
+	index := int32(0)
+	err = processor.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStart{
+		Value: brtypes.ContentBlockStartEvent{
+			ContentBlockIndex: &index,
+			Start: &brtypes.ContentBlockStartMemberToolUse{Value: brtypes.ToolUseBlockStart{
+				Name: strPtr("lookup"),
+			}},
+		},
+	})
+	require.Error(t, err)
+	usage := model.TokenUsage{
+		Model:        "test-model-id",
+		ModelClass:   model.ModelClassDefault,
+		InputTokens:  7,
+		OutputTokens: 2,
+		TotalTokens:  9,
+	}
+
+	classified := (&bedrockStreamer{contract: contract}).outputError(usage, err)
+
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, classified, &validationErr)
+	require.ErrorContains(t, classified, "tool use block missing tool_use_id")
+	require.Equal(t, &usage, validationErr.Usage())
 }
 
 func TestReasoningBufferFinalizeRequiresCanonicalVariant(t *testing.T) {
@@ -262,6 +329,89 @@ func TestChunkProcessorReasoningBlockStartsWithFirstDelta(t *testing.T) {
 	}, final.Message.Parts[0])
 }
 
+func TestChunkProcessorAssignsDenseReasoningIndexes(t *testing.T) {
+	var finalIndexes []int
+	var finalSignatures []string
+	processor := newChunkProcessor(
+		func(chunk model.Chunk) error {
+			thinking, ok := chunk.(model.ThinkingChunk)
+			if !ok {
+				return nil
+			}
+			part := thinking.Message.Parts[0].(model.ThinkingPart)
+			if part.Final {
+				finalIndexes = append(finalIndexes, part.Index)
+				finalSignatures = append(finalSignatures, part.Signature)
+			}
+			return nil
+		},
+		nil,
+		"",
+		"",
+		nil,
+		"",
+	)
+	require.NoError(t, processor.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{}))
+	for sequence, contentIndex := range []int32{3, 8} {
+		if sequence > 0 {
+			require.NoError(t, processor.Handle(&brtypes.ConverseStreamOutputMemberContentBlockDelta{
+				Value: brtypes.ContentBlockDeltaEvent{
+					ContentBlockIndex: &contentIndex,
+					Delta: &brtypes.ContentBlockDeltaMemberReasoningContent{
+						Value: &brtypes.ReasoningContentBlockDeltaMemberText{Value: "reasoning"},
+					},
+				},
+			}))
+		}
+		require.NoError(t, processor.Handle(&brtypes.ConverseStreamOutputMemberContentBlockDelta{
+			Value: brtypes.ContentBlockDeltaEvent{
+				ContentBlockIndex: &contentIndex,
+				Delta: &brtypes.ContentBlockDeltaMemberReasoningContent{
+					Value: &brtypes.ReasoningContentBlockDeltaMemberSignature{
+						Value: []string{"sig-1", "sig-2"}[sequence],
+					},
+				},
+			},
+		}))
+		require.NoError(t, processor.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStop{
+			Value: brtypes.ContentBlockStopEvent{ContentBlockIndex: &contentIndex},
+		}))
+	}
+
+	require.Equal(t, []int{0, 1}, finalIndexes)
+	require.Equal(t, []string{"sig-1", "sig-2"}, finalSignatures)
+}
+
+func TestBedrockStreamerClosesProviderStreamOnce(t *testing.T) {
+	events := make(chan brtypes.ConverseStreamOutput)
+	close(events)
+	reader := &nonIdempotentBedrockReader{events: events}
+	providerStream := bedrockruntime.NewConverseStreamEventStream(func(stream *bedrockruntime.ConverseStreamEventStream) {
+		stream.Reader = reader
+	})
+	contract, err := model.NewRequestContract(&model.Request{})
+	require.NoError(t, err)
+	streamer := newBedrockStreamer(
+		context.Background(),
+		providerStream,
+		nil,
+		"model",
+		model.ModelClassDefault,
+		nil,
+		"",
+		contract,
+	)
+
+	_, recvErr := streamer.Recv()
+	require.Error(t, recvErr)
+	require.NoError(t, streamer.Close())
+	require.NoError(t, streamer.Close())
+	reader.mu.Lock()
+	closeCalls := reader.closeCalls
+	reader.mu.Unlock()
+	require.Equal(t, 1, closeCalls)
+}
+
 func TestChunkProcessorIgnoresEmptyToolUseDelta(t *testing.T) {
 	idx := int32(0)
 	name := "reports_lookup"
@@ -379,4 +529,23 @@ func TestChunkProcessorRejectsDuplicateMessageStop(t *testing.T) {
 
 	require.EqualError(t, err, "bedrock stream: duplicate message stop")
 	require.NotErrorIs(t, err, model.ErrEmptyStream)
+}
+
+// TestChunkProcessorChargesSyntheticCompletionBeforeAppend verifies Bedrock's
+// private completion buffer cannot grow beyond the validated stream budget.
+func TestChunkProcessorChargesSyntheticCompletionBeforeAppend(t *testing.T) {
+	cp := newChunkProcessor(
+		func(model.Chunk) error { return nil },
+		nil,
+		"model",
+		model.ModelClassDefault,
+		&model.StructuredOutput{Name: "answer"},
+		"",
+	)
+	cp.retainedBytes = 16 << 20
+
+	err := cp.handleCompletionDelta(0, "x")
+
+	require.ErrorContains(t, err, "retained output exceeds 16777216 bytes")
+	require.Zero(t, cp.completion.fragments.Len())
 }

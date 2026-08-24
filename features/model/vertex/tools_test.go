@@ -13,20 +13,18 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
-// toolDef builds a ToolDefinition whose Input carries the given raw JSON
-// schema. model.ToolInputFromSchema is for caller-authored schemas (it takes
-// a rawjson.Message and returns ToolInput directly, panicking on invalid
-// JSON) which fits a test helper better than ToolInputFromSpec, which
-// expects a generated tools.TypeSpec.
+// toolDef builds a ToolDefinition whose Input carries the given caller-authored
+// raw JSON schema.
 func toolDef(t *testing.T, name, schema string) *model.ToolDefinition {
 	t.Helper()
-	input := model.ToolInputFromSchema(rawjson.Message(schema))
+	input, err := model.AdvertisedToolInputFromSchema(rawjson.Message(schema))
+	require.NoError(t, err)
 	return &model.ToolDefinition{Name: name, Description: "desc for " + name, Input: input}
 }
 
 func TestEncodeTools(t *testing.T) {
 	defs := []*model.ToolDefinition{
-		toolDef(t, "feed/find_duplicates", `{"$schema":"x","type":"object","properties":{"title":{"type":"string"}}}`),
+		toolDef(t, "feed/find_duplicates", `{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string"}}}`),
 	}
 	canonToProv, _, err := buildToolNameMaps(defs)
 	require.NoError(t, err)
@@ -48,7 +46,7 @@ func TestEncodeTools(t *testing.T) {
 
 func TestEncodeToolsMissingDescription(t *testing.T) {
 	defs := []*model.ToolDefinition{
-		{Name: "feed/find_duplicates", Input: model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`))},
+		{Name: "feed/find_duplicates", Input: toolDef(t, "feed/find_duplicates", `{"type":"object"}`).Input},
 	}
 	canonToProv, _, err := buildToolNameMaps(defs)
 	require.NoError(t, err)

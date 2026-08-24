@@ -22,6 +22,7 @@ func translateResponse(
 	resolvedModelID string,
 	resolvedModelClass model.ModelClass,
 	output *model.StructuredOutput,
+	outputProjection *strictSchemaProjection,
 ) (*model.Response, error) {
 	if resp == nil {
 		return nil, errors.New("openai: response is nil")
@@ -34,12 +35,16 @@ func translateResponse(
 			errors.New(resp.Error.Message),
 		)
 	}
+	if err := preflightResponseSnapshot(resp); err != nil {
+		return nil, err
+	}
 	translated := &model.Response{
 		Usage: translateUsage(resp.Usage, chooseModelID(resp.Model, resolvedModelID), resolvedModelClass),
 	}
 	var (
 		pendingThinking []model.Part
 		reasoningRaw    []string
+		thinkingIndex   int
 	)
 	flushThinking := func() {
 		if len(pendingThinking) == 0 {
@@ -65,6 +70,8 @@ func translateResponse(
 			if !ok {
 				return nil, errors.New("openai: reasoning item has no summary or encrypted content")
 			}
+			part.Index = thinkingIndex
+			thinkingIndex++
 			pendingThinking = append(pendingThinking, part)
 			reasoningRaw = append(reasoningRaw, actual.RawJSON())
 		case responses.ResponseOutputMessage:
@@ -104,14 +111,40 @@ func translateResponse(
 	flushThinking()
 	translated.StopReason = translateStopReason(resp, len(translated.ToolCalls()) > 0)
 	if output != nil {
-		if _, err := structuredOutputPayload(translated.Content, output); err != nil {
+		payload, err := structuredOutputPayload(translated.Content, output, outputProjection)
+		if err != nil {
 			return nil, err
 		}
-	}
-	if err := model.ValidateResponse(translated); err != nil {
-		return nil, fmt.Errorf("openai: invalid response: %w", err)
+		translated.Content = replaceStructuredOutputText(translated.Content, string(payload))
 	}
 	return translated, nil
+}
+
+// preflightResponseSnapshot bounds the SDK response snapshot before
+// translation copies provider-controlled output into model values.
+func preflightResponseSnapshot(resp *responses.Response) error {
+	raw := resp.RawJSON()
+	if len(raw) > 16<<20 {
+		return errors.New("openai: response snapshot exceeds 16777216 bytes")
+	}
+	values := len(resp.Output)
+	for _, item := range resp.Output {
+		switch actual := item.AsAny().(type) {
+		case responses.ResponseReasoningItem:
+			values += len(actual.Summary)
+		case responses.ResponseOutputMessage:
+			values += len(actual.Content)
+			for _, content := range actual.Content {
+				if text, ok := content.AsAny().(responses.ResponseOutputText); ok {
+					values += len(text.Annotations)
+				}
+			}
+		}
+		if values > 100_000 {
+			return errors.New("openai: response snapshot exceeds 100000 values")
+		}
+	}
+	return nil
 }
 
 func translateAssistantMessage(
@@ -165,7 +198,7 @@ func translateTextContent(content responses.ResponseOutputText) (model.Part, err
 	}, nil
 }
 
-func translateReasoningItem(item responses.ResponseReasoningItem) (model.Part, bool) {
+func translateReasoningItem(item responses.ResponseReasoningItem) (model.ThinkingPart, bool) {
 	texts := make([]string, 0, len(item.Summary))
 	for _, summary := range item.Summary {
 		if summary.Text == "" {
@@ -174,7 +207,7 @@ func translateReasoningItem(item responses.ResponseReasoningItem) (model.Part, b
 		texts = append(texts, summary.Text)
 	}
 	if len(texts) == 0 && item.EncryptedContent == "" {
-		return nil, false
+		return model.ThinkingPart{}, false
 	}
 	part := model.ThinkingPart{
 		Text:  strings.Join(texts, "\n"),
@@ -230,12 +263,17 @@ func translateToolCall(
 	if err != nil {
 		return model.ToolCall{}, fmt.Errorf("openai: tool call %q payload: %w", call.CallID, err)
 	}
-	name := codec.canonicalName(call.Name)
-	if schema := codec.canonicalSchema(name); len(schema) > 0 {
-		payload, err = canonicalizeStrictPayload(schema, payload)
-		if err != nil {
-			return model.ToolCall{}, fmt.Errorf("openai: tool call %q payload: %w", call.CallID, err)
-		}
+	name, ok := codec.canonicalName(call.Name)
+	if !ok {
+		return model.ToolCall{}, fmt.Errorf(
+			"openai: tool call %q returned unadvertised function %q",
+			call.CallID,
+			call.Name,
+		)
+	}
+	payload, err = codec.canonicalPayload(call.Name, payload)
+	if err != nil {
+		return model.ToolCall{}, fmt.Errorf("openai: tool call %q canonical payload: %w", call.CallID, err)
 	}
 	return model.ToolCall{
 		Name:    tools.Ident(name),
@@ -272,22 +310,46 @@ func translateStopReason(resp *responses.Response, hasToolCalls bool) string {
 	}
 }
 
-func structuredOutputPayload(content []model.Message, output *model.StructuredOutput) (rawjson.Message, error) {
+func structuredOutputPayload(
+	content []model.Message,
+	output *model.StructuredOutput,
+	projection *strictSchemaProjection,
+) (rawjson.Message, error) {
 	if output == nil {
 		return nil, nil
 	}
-	text := strings.TrimSpace(extractAssistantText(content))
-	if text == "" {
+	text := extractAssistantText(content)
+	if strings.TrimSpace(text) == "" {
 		return nil, fmt.Errorf("openai: structured output %q completed without content", output.Name)
 	}
 	if !json.Valid([]byte(text)) {
 		return nil, fmt.Errorf("openai: structured output %q payload is not valid JSON", structuredOutputName(output))
 	}
-	payload, err := canonicalizeStrictPayload(rawjson.Message(output.Schema), rawjson.Message(text))
-	if err != nil {
-		return nil, fmt.Errorf("openai: structured output %q payload: %w", structuredOutputName(output), err)
+	return projection.canonicalize([]byte(text))
+}
+
+// replaceStructuredOutputText keeps thinking and metadata but replaces all
+// provider text fragments with one canonical structured-output document.
+func replaceStructuredOutputText(content []model.Message, payload string) []model.Message {
+	replaced := false
+	for messageIndex := range content {
+		if content[messageIndex].Role != model.ConversationRoleAssistant {
+			continue
+		}
+		parts := content[messageIndex].Parts[:0]
+		for _, part := range content[messageIndex].Parts {
+			if _, ok := part.(model.TextPart); !ok {
+				parts = append(parts, part)
+				continue
+			}
+			if !replaced {
+				parts = append(parts, model.TextPart{Text: payload})
+				replaced = true
+			}
+		}
+		content[messageIndex].Parts = parts
 	}
-	return payload, nil
+	return content
 }
 
 func extractAssistantText(content []model.Message) string {
@@ -310,9 +372,6 @@ func extractAssistantText(content []model.Message) string {
 
 func translateUsage(usage responses.ResponseUsage, modelID string, modelClass model.ModelClass) model.TokenUsage {
 	cacheReadTokens := int(usage.InputTokensDetails.CachedTokens)
-	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 && cacheReadTokens == 0 {
-		return model.TokenUsage{}
-	}
 	return model.TokenUsage{
 		Model:           modelID,
 		ModelClass:      modelClass,
@@ -331,12 +390,11 @@ func chooseModelID(providerModel, resolvedModelID string) string {
 }
 
 func decodeToolPayload(raw string) (rawjson.Message, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return rawjson.Message([]byte("{}")), nil
+	if strings.TrimSpace(raw) == "" {
+		return nil, errors.New("tool payload is empty")
 	}
-	if !json.Valid([]byte(trimmed)) {
+	if !json.Valid([]byte(raw)) {
 		return nil, errors.New("tool payload is not valid JSON")
 	}
-	return rawjson.Message([]byte(trimmed)), nil
+	return rawjson.Message([]byte(raw)), nil
 }

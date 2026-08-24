@@ -359,7 +359,7 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 		return errors.New("mcp caller is required")
 	}
 
-	exec := func(ctx context.Context, call planner.ToolRequest) (planner.ToolResult, error) {
+	exec := func(ctx context.Context, call agentsruntime.ToolCall) (planner.ToolResult, error) {
 		fullName := call.Name
 		toolName := string(fullName)
 		const suitePrefix = "assistant.assistant-mcp" + "."
@@ -412,7 +412,7 @@ func RegisterAssistantAssistantMcpToolset(ctx context.Context, rt *agentsruntime
 	return rt.RegisterToolset(agentsruntime.ToolsetRegistration{
 		Name:        "assistant.assistant-mcp",
 		Description: "AI Assistant service with full MCP protocol support",
-		Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
+		Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
 			if call == nil {
 				return nil, errors.New("tool request is nil")
 			}

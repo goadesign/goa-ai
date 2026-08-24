@@ -153,6 +153,41 @@ func TestOnPromptRenderedPublishesHookEvent(t *testing.T) {
 	require.Equal(t, "west", rendered.Scope.Labels["region"])
 }
 
+func TestOnPromptRenderedCollectsPlannerActivityEvent(t *testing.T) {
+	t.Parallel()
+
+	rt := newFromOptions(Options{})
+	var published int
+	sub, err := rt.Bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
+		published++
+		return nil
+	}))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = sub.Close()
+	})
+	events := newPlannerEvents("example.agent", "run_1", "sess_1")
+	ctx := withPromptRenderHookContext(context.Background(), PromptRenderHookContext{
+		RunID:     "run_1",
+		AgentID:   "example.agent",
+		SessionID: "sess_1",
+		TurnID:    "turn_1",
+	})
+	ctx = withPlannerEventCollector(ctx, events)
+
+	rt.onPromptRendered(ctx, prompt.RenderEvent{
+		PromptID: "example.agent.system",
+		Version:  "v2",
+		Scope:    prompt.Scope{SessionID: "sess_1"},
+	})
+
+	records, err := events.acceptedRecords(nil)
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	require.Equal(t, hooks.PromptRendered, records[0].Type)
+	require.Zero(t, published)
+}
+
 func testPromptRenderContext() context.Context {
 	return withPromptRenderHookContext(context.Background(), PromptRenderHookContext{
 		RunID:     "run_1",

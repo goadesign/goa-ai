@@ -69,27 +69,77 @@ func TemperatureSupported(modelID string) bool {
 	return true
 }
 
-// AdaptiveThinkingRequired reports whether modelID requires adaptive
-// thinking configuration. Starting with Opus 4.6, Anthropic deprecates the
-// manual type:"enabled" + budget_tokens config in favor of type:"adaptive",
-// where the model dynamically decides when and how deeply to reason.
-// Interleaved thinking is automatic in adaptive mode — no beta header is
-// needed. On Opus 4.7+ the legacy config is removed entirely and returns a
-// 400 error. Claude Sonnet 5 and the Claude 5 generation (Fable/Mythos) keep
-// thinking always on; only type:"adaptive" is accepted and the legacy config
-// likewise returns a 400 error.
-func AdaptiveThinkingRequired(modelID string) bool {
+// AdaptiveThinkingSupported reports whether modelID accepts adaptive thinking.
+// Adapters choose adaptive mode whenever it is available because it supports
+// forced tool choice and interleaves reasoning automatically. Older 4.5
+// models require manual thinking with a token budget.
+func AdaptiveThinkingSupported(modelID string) bool {
 	if IsFableGeneration(modelID) {
 		return true
 	}
-	if gen, _, _, ok := familyVersion(modelID, "claude-sonnet-"); ok && gen >= 5 {
+	if strings.Contains(modelID, "claude-mythos-preview") {
 		return true
+	}
+	if gen, minor, hasMinor, ok := familyVersion(modelID, "claude-sonnet-"); ok {
+		return gen >= 5 || (gen == 4 && hasMinor && minor >= 6)
 	}
 	gen, minor, hasMinor, ok := familyVersion(modelID, "claude-opus-")
 	if !ok {
 		return false
 	}
 	return gen >= 5 || (gen == 4 && hasMinor && minor >= 6)
+}
+
+// StructuredOutputSupported reports whether the Claude Messages API accepts
+// output_config.format for modelID.
+func StructuredOutputSupported(modelID string) bool {
+	if IsFableGeneration(modelID) || strings.Contains(modelID, "claude-mythos-preview") {
+		return true
+	}
+	if gen, minor, hasMinor, ok := familyVersion(modelID, "claude-sonnet-"); ok {
+		return gen >= 5 || (gen == 4 && hasMinor && minor >= 5)
+	}
+	if gen, minor, hasMinor, ok := familyVersion(modelID, "claude-opus-"); ok {
+		return gen >= 5 || (gen == 4 && hasMinor && minor >= 5)
+	}
+	gen, minor, hasMinor, ok := familyVersion(modelID, "claude-haiku-")
+	return ok && (gen >= 5 || (gen == 4 && hasMinor && minor >= 5))
+}
+
+// BedrockNativeStructuredOutputSupported reports whether Bedrock Converse
+// accepts OutputConfig for the named Claude model.
+func BedrockNativeStructuredOutputSupported(modelID string) bool {
+	for _, family := range []string{"claude-sonnet-", "claude-opus-"} {
+		if gen, minor, hasMinor, ok := familyVersion(modelID, family); ok {
+			return gen == 4 && hasMinor && (minor == 5 || minor == 6)
+		}
+	}
+	gen, minor, hasMinor, ok := familyVersion(modelID, "claude-haiku-")
+	return ok && gen == 4 && hasMinor && minor == 5
+}
+
+// BedrockRuntimeTokenCountSupported reports whether the Bedrock Runtime
+// CountTokens operation accepts the named Claude model. Models that AWS lists
+// as Mantle-only for token counting must fail locally because this adapter uses
+// the Bedrock Runtime endpoint.
+func BedrockRuntimeTokenCountSupported(modelID string) bool {
+	if gen, minor, hasMinor, ok := familyVersion(modelID, "claude-opus-"); ok {
+		return gen != 4 || !hasMinor || minor != 7
+	}
+	if gen, _, _, ok := familyVersion(modelID, "claude-sonnet-"); ok {
+		return gen != 5
+	}
+	if gen, _, _, ok := familyVersion(modelID, "claude-mythos-"); ok {
+		return gen != 5
+	}
+	return true
+}
+
+// ForcedToolChoiceUnsupported reports the one adaptive Claude model that
+// rejects tool_choice "any" and "tool". Current Fable and Mythos 5 models
+// support forced tools; Mythos Preview does not.
+func ForcedToolChoiceUnsupported(modelID string) bool {
+	return strings.Contains(modelID, "claude-mythos-preview")
 }
 
 // IsFableGeneration reports whether modelID belongs to the Claude 5

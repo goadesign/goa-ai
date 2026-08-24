@@ -2,6 +2,8 @@ package openai
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -57,8 +59,8 @@ func TestProjectStrictSchema(t *testing.T) {
 				"additionalProperties": false,
 				"properties": {
 					"query": {"type": "string"},
-					"limit": {"type": ["integer", "null"]},
-					"level": {"type": ["string", "null"], "enum": ["low", "high", null]}
+					"limit": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+					"level": {"anyOf": [{"type": "string", "enum": ["low", "high"]}, {"type": "null"}]}
 				},
 				"required": ["level", "limit", "query"]
 			}`,
@@ -101,7 +103,7 @@ func TestProjectStrictSchema(t *testing.T) {
 			schema: `{
 				"type": "object",
 				"properties": {
-					"id": {"type": "string", "format": "uuid", "minLength": 1},
+					"id": {"type": "string", "format": "uuid", "pattern": ".+"},
 					"count": {"type": "integer", "format": "int64", "minimum": 0},
 					"code": {"type": "string", "format": "regexp", "pattern": "^[a-z]+$"}
 				},
@@ -111,7 +113,7 @@ func TestProjectStrictSchema(t *testing.T) {
 				"type": "object",
 				"additionalProperties": false,
 				"properties": {
-					"id": {"type": "string", "format": "uuid", "minLength": 1},
+					"id": {"type": "string", "format": "uuid", "pattern": ".+"},
 					"count": {"type": "integer", "minimum": 0},
 					"code": {"type": "string", "pattern": "^[a-z]+$"}
 				},
@@ -162,13 +164,16 @@ func TestProjectStrictSchema(t *testing.T) {
 				"type": "object",
 				"additionalProperties": false,
 				"properties": {
-					"value": {"anyOf": [{"type": "string"}, {"type": "integer"}, {"type": "null"}]}
+					"value": {"anyOf": [
+						{"anyOf": [{"type": "string"}, {"type": "integer"}]},
+						{"type": "null"}
+					]}
 				},
 				"required": ["value"]
 			}`,
 		},
 		{
-			name: "oneOf unions fold into anyOf and optionals gain a null branch",
+			name: "disjoint oneOf types fold into anyOf and optionals gain a null branch",
 			schema: `{
 				"type": "object",
 				"properties": {
@@ -182,9 +187,87 @@ func TestProjectStrictSchema(t *testing.T) {
 				"additionalProperties": false,
 				"properties": {
 					"choice": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
-					"pick": {"anyOf": [{"type": "string"}, {"type": "boolean"}, {"type": "null"}]}
+					"pick": {"anyOf": [
+						{"anyOf": [{"type": "string"}, {"type": "boolean"}]},
+						{"type": "null"}
+					]}
 				},
 				"required": ["choice", "pick"]
+			}`,
+		},
+		{
+			name: "generated discriminator union folds into anyOf",
+			schema: `{
+				"type": "object",
+				"properties": {
+					"choice": {
+						"oneOf": [
+							{
+								"type": "object",
+								"properties": {
+									"type": {"type": "string", "enum": ["left"]},
+									"value": {"type": "string"}
+								},
+								"required": ["type", "value"]
+							},
+							{
+								"type": "object",
+								"properties": {
+									"type": {"type": "string", "enum": ["right"]},
+									"value": {"type": "integer"}
+								},
+								"required": ["type", "value"]
+							}
+						]
+					}
+				},
+				"required": ["choice"]
+			}`,
+			want: `{
+				"type": "object",
+				"additionalProperties": false,
+				"properties": {
+					"choice": {
+						"anyOf": [
+							{
+								"type": "object",
+								"additionalProperties": false,
+								"properties": {
+									"type": {"type": "string", "enum": ["left"]},
+									"value": {"type": "string"}
+								},
+								"required": ["type", "value"]
+							},
+							{
+								"type": "object",
+								"additionalProperties": false,
+								"properties": {
+									"type": {"type": "string", "enum": ["right"]},
+									"value": {"type": "integer"}
+								},
+								"required": ["type", "value"]
+							}
+						]
+					}
+				},
+				"required": ["choice"]
+			}`,
+		},
+		{
+			name: "optional constrained properties preserve their complete constraint",
+			schema: `{
+				"type": "object",
+				"properties": {
+					"constant": {"type": "string", "const": "fixed"}
+				}
+			}`,
+			want: `{
+				"type": "object",
+				"additionalProperties": false,
+				"properties": {
+					"constant": {"anyOf": [{"type": "string", "const": "fixed"}, {"type": "null"}]}
+				},
+				"required": ["constant"]
 			}`,
 		},
 		{
@@ -260,9 +343,102 @@ func TestProjectStrictSchemaRejectsUnrepresentableContracts(t *testing.T) {
 			wantErr: "open object",
 		},
 		{
+			name: "root union",
+			schema: `{
+				"type": "object",
+				"oneOf": [
+					{"type": "object", "properties": {"left": {"type": "string"}}, "required": ["left"]},
+					{"type": "object", "properties": {"right": {"type": "integer"}}, "required": ["right"]}
+				]
+			}`,
+			wantErr: "oneOf branches that may overlap",
+		},
+		{
+			name: "unsupported composition",
+			schema: `{
+				"type": "object",
+				"properties": {"value": {"type": "string", "allOf": [{"pattern": ".+"}]}},
+				"required": ["value"]
+			}`,
+			wantErr: `unsupported OpenAI strict-mode keyword "allOf"`,
+		},
+		{
+			name: "overlapping oneOf",
+			schema: `{
+				"type": "object",
+				"properties": {
+					"value": {
+						"oneOf": [
+							{"type": "string", "minLength": 1},
+							{"type": "string", "pattern": "^[a-z]+$"}
+						]
+					}
+				},
+				"required": ["value"]
+			}`,
+			wantErr: "oneOf branches that may overlap",
+		},
+		{
+			name: "integer overlaps number",
+			schema: `{
+				"type": "object",
+				"properties": {
+					"value": {
+						"oneOf": [
+							{"type": "number"},
+							{"type": "integer"}
+						]
+					}
+				},
+				"required": ["value"]
+			}`,
+			wantErr: "oneOf branches that may overlap",
+		},
+		{
+			name: "combined oneOf and anyOf",
+			schema: `{
+				"type": "object",
+				"properties": {
+					"value": {
+						"oneOf": [{"type": "string"}, {"type": "integer"}],
+						"anyOf": [{"type": "string"}, {"type": "boolean"}]
+					}
+				},
+				"required": ["value"]
+			}`,
+			wantErr: "combines oneOf with anyOf",
+		},
+		{
+			name: "unsupported string keyword",
+			schema: `{
+				"type": "object",
+				"properties": {"value": {"type": "string", "contentEncoding": "base64"}},
+				"required": ["value"]
+			}`,
+			wantErr: `unsupported OpenAI strict-mode keyword "contentEncoding"`,
+		},
+		{
 			name:    "invalid JSON",
 			schema:  `{"type":`,
 			wantErr: "invalid JSON schema",
+		},
+		{
+			name: "conflicting branch null projection",
+			schema: `{
+				"type": "object",
+				"anyOf": [
+					{
+						"type": "object",
+						"properties": {"value": {"type": "string"}}
+					},
+					{
+						"type": "object",
+						"properties": {"value": {"type": ["string", "null"]}},
+						"required": ["value"]
+					}
+				]
+			}`,
+			wantErr: "conflicting null handling",
 		},
 	}
 	for _, tt := range tests {
@@ -274,159 +450,139 @@ func TestProjectStrictSchemaRejectsUnrepresentableContracts(t *testing.T) {
 	}
 }
 
-func TestCanonicalizeStrictPayload(t *testing.T) {
+func TestProjectStrictSchemaEnforcesOpenAIResourceLimits(t *testing.T) {
+	t.Run("properties", func(t *testing.T) {
+		properties := make(map[string]any, strictSchemaMaxProps+1)
+		for index := 0; index <= strictSchemaMaxProps; index++ {
+			properties[fmt.Sprintf("field_%d", index)] = map[string]any{"type": "string"}
+		}
+		schema, err := json.Marshal(map[string]any{
+			"type":       "object",
+			"properties": properties,
+		})
+		require.NoError(t, err)
+
+		_, err = projectStrictSchema(schema)
+
+		require.ErrorContains(t, err, fmt.Sprintf("maximum of %d object properties", strictSchemaMaxProps))
+	})
+
+	t.Run("enum values", func(t *testing.T) {
+		values := make([]any, strictSchemaMaxEnums+1)
+		for index := range values {
+			values[index] = fmt.Sprintf("value_%d", index)
+		}
+		schema, err := json.Marshal(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"value": map[string]any{"type": "string", "enum": values},
+			},
+		})
+		require.NoError(t, err)
+
+		_, err = projectStrictSchema(schema)
+
+		require.ErrorContains(t, err, fmt.Sprintf("maximum of %d enum values", strictSchemaMaxEnums))
+	})
+
+	t.Run("enum string limits count characters", func(t *testing.T) {
+		values := make([]any, 251)
+		for index := range values {
+			values[index] = strings.Repeat("界", 50) + fmt.Sprintf("_%d", index)
+		}
+		schema, err := json.Marshal(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"value": map[string]any{"type": "string", "enum": values},
+			},
+		})
+		require.NoError(t, err)
+
+		projection, err := projectStrictSchema(schema)
+
+		require.NoError(t, err)
+		require.NotNil(t, projection)
+	})
+
+	t.Run("nesting depth", func(t *testing.T) {
+		nested := map[string]any{"type": "string"}
+		for depth := 0; depth < strictSchemaMaxDepth; depth++ {
+			nested = map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"child": nested},
+			}
+		}
+		schema, err := json.Marshal(nested)
+		require.NoError(t, err)
+
+		_, err = projectStrictSchema(schema)
+
+		require.ErrorContains(t, err, fmt.Sprintf("maximum nesting depth %d", strictSchemaMaxDepth))
+	})
+}
+
+func TestCompileStrictSchemaSpecializesFineTunedModels(t *testing.T) {
 	tests := []struct {
-		name    string
-		schema  string
-		payload string
-		want    string
+		name     string
+		property string
+		schema   string
 	}{
 		{
-			name: "removes null markers for canonically optional members",
-			schema: `{
-				"type": "object",
-				"properties": {
-					"query": {"type": "string"},
-					"limit": {"type": "integer"}
-				},
-				"required": ["query"]
-			}`,
-			payload: `{"query": "sales", "limit": null}`,
-			want:    `{"query": "sales"}`,
+			name:     "string length",
+			property: "minLength",
+			schema:   `{"type":"string","minLength":1}`,
 		},
 		{
-			name: "keeps null for members whose canonical contract accepts null",
-			schema: `{
-				"type": "object",
-				"properties": {
-					"note": {"type": ["string", "null"]}
-				},
-				"required": ["note"]
-			}`,
-			payload: `{"note": null}`,
-			want:    `{"note": null}`,
+			name:     "string pattern",
+			property: "pattern",
+			schema:   `{"type":"string","pattern":".+"}`,
 		},
 		{
-			name: "keeps null for undeclared members",
-			schema: `{
-				"type": "object",
-				"properties": {"query": {"type": "string"}},
-				"required": ["query"]
-			}`,
-			payload: `{"query": "sales", "extra": null}`,
-			want:    `{"query": "sales", "extra": null}`,
+			name:     "string format",
+			property: "format",
+			schema:   `{"type":"string","format":"uuid"}`,
 		},
 		{
-			name: "walks nested objects and array items",
-			schema: `{
-				"type": "object",
-				"properties": {
-					"filters": {
-						"type": "array",
-						"items": {
-							"type": "object",
-							"properties": {
-								"field": {"type": "string"},
-								"op": {"type": "string"}
-							},
-							"required": ["field"]
-						}
-					}
-				},
-				"required": ["filters"]
-			}`,
-			payload: `{"filters": [{"field": "region", "op": null}, {"field": "year", "op": "eq"}]}`,
-			want:    `{"filters": [{"field": "region"}, {"field": "year", "op": "eq"}]}`,
+			name:     "number bound",
+			property: "minimum",
+			schema:   `{"type":"number","minimum":0}`,
 		},
 		{
-			name: "resolves local references",
-			schema: `{
-				"type": "object",
-				"properties": {"draft": {"$ref": "#/$defs/Draft"}},
-				"required": ["draft"],
-				"$defs": {
-					"Draft": {
-						"type": "object",
-						"properties": {
-							"title": {"type": "string"},
-							"summary": {"type": "string"}
-						},
-						"required": ["title"]
-					}
-				}
-			}`,
-			payload: `{"draft": {"title": "Q3 plan", "summary": null}}`,
-			want:    `{"draft": {"title": "Q3 plan"}}`,
+			name:     "number multiple",
+			property: "multipleOf",
+			schema:   `{"type":"number","multipleOf":2}`,
 		},
 		{
-			name: "removes null when no union branch accepts it",
-			schema: `{
-				"type": "object",
-				"properties": {
-					"value": {"anyOf": [{"type": "string"}, {"type": "integer"}]}
-				}
-			}`,
-			payload: `{"value": null}`,
-			want:    `{}`,
+			name:     "array minimum",
+			property: "minItems",
+			schema:   `{"type":"array","items":{"type":"string"},"minItems":1}`,
 		},
 		{
-			name: "removes null when no oneOf branch accepts it",
-			schema: `{
-				"type": "object",
-				"properties": {
-					"choice": {"oneOf": [{"type": "string"}, {"type": "integer"}]}
-				}
-			}`,
-			payload: `{"choice": null}`,
-			want:    `{}`,
+			name:     "array maximum",
+			property: "maxItems",
+			schema:   `{"type":"array","items":{"type":"string"},"maxItems":2}`,
 		},
 		{
-			name: "keeps null when a union branch accepts it",
-			schema: `{
-				"type": "object",
-				"properties": {
-					"value": {"anyOf": [{"type": "string"}, {"type": "null"}]}
-				},
-				"required": ["value"]
-			}`,
-			payload: `{"value": null}`,
-			want:    `{"value": null}`,
+			name:     "object pattern properties",
+			property: "patternProperties",
+			schema:   `{"type":"object","patternProperties":{"^item_":{"type":"string"}}}`,
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := canonicalizeStrictPayload(rawjson.Message(tt.schema), rawjson.Message(tt.payload))
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			schema := rawjson.Message(fmt.Sprintf(
+				`{"type":"object","properties":{"value":%s},"required":["value"]}`,
+				test.schema,
+			))
+
+			baseProjection, err := compileStrictSchemaForModel(schema, "gpt-5.6")
 			require.NoError(t, err)
-			assert.JSONEq(t, tt.want, string(got))
+			require.NotNil(t, baseProjection)
+
+			fineTunedProjection, err := compileStrictSchemaForModel(schema, "ft:gpt-5.6:org:model")
+			require.Nil(t, fineTunedProjection)
+			require.ErrorContains(t, err, fmt.Sprintf("keyword %q", test.property))
+			require.ErrorContains(t, err, "fine-tuned models do not support")
 		})
 	}
-}
-
-func TestCanonicalizeStrictPayloadReturnsUntouchedPayloadBytes(t *testing.T) {
-	schema := rawjson.Message(`{
-		"type": "object",
-		"properties": {"query": {"type": "string"}},
-		"required": ["query"]
-	}`)
-	payload := rawjson.Message(`{"query":  "sales"}`)
-
-	got, err := canonicalizeStrictPayload(schema, payload)
-	require.NoError(t, err)
-	assert.Equal(t, string(payload), string(got))
-}
-
-func TestCanonicalizeStrictPayloadPreservesLargeIntegers(t *testing.T) {
-	schema := rawjson.Message(`{
-		"type": "object",
-		"properties": {
-			"reading": {"type": "integer"},
-			"note": {"type": "string"}
-		},
-		"required": ["reading"]
-	}`)
-	payload := rawjson.Message(`{"reading":9007199254740993,"note":null}`)
-
-	got, err := canonicalizeStrictPayload(schema, payload)
-	require.NoError(t, err)
-	assert.Equal(t, `{"reading":9007199254740993}`, string(got))
 }

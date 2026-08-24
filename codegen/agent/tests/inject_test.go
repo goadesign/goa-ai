@@ -38,7 +38,7 @@ func TestInjectBoundToolUsesGeneratedContext(t *testing.T) {
 		"injected fields are pointers on the tool payload (hidden fields are optional in the model-facing contract)")
 	require.Contains(t, inject, "func DecodeGetData(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*GetDataPayload, error) {",
 		"the composed decode helper must exist beside Inject<Tool> for custom executors")
-	require.Contains(t, inject, "p, err := GetDataPayloadCodec.FromJSON(payload)")
+	require.Contains(t, inject, "p, err := GetDataPayloadCodec().FromJSON(payload)")
 	require.Contains(t, inject, "if err := InjectGetData(p, meta, labels); err != nil {")
 
 	provider := fileContent(t, files, "gen/atlas/toolsets/helpers/provider.go")
@@ -67,7 +67,7 @@ func TestInjectLocalServiceExecutorCallsGeneratedInject(t *testing.T) {
 	files := buildWithPrepare(t, testscenarios.InjectBoundMetaExample())
 
 	exec := fileContent(t, files, "gen/atlas/agents/scribe/helpers/service_executor.go")
-	require.Contains(t, exec, "val, err := helpers.GetDataPayloadCodec.FromJSON(call.Payload)")
+	require.Contains(t, exec, "val, err := helpers.GetDataPayloadCodec().FromJSON(call.Payload)")
 	require.Contains(t, exec, "if err := helpers.InjectGetData(val, *meta, call.Labels); err != nil {",
 		"injection must run on the decoded tool payload, with call.Labels threaded to the shared Inject fn")
 	require.NotContains(t, exec, "p.SessionID = meta.SessionID",
@@ -110,28 +110,29 @@ func TestInjectLabelBackedWithValidation(t *testing.T) {
 		"the injecting tool's payload codec GoDoc must steer custom executors to the composed Decode<Tool> helper")
 
 	specs := fileContent(t, files, "gen/calc/toolsets/helpers/specs.go")
-	require.Contains(t, specs, `var RequiredLabels = []string{
-    "household_id",
+	require.Contains(t, specs, `func RequiredLabels() []string {
+    return []string{
+        "household_id",
+    }
 }`)
 	require.NotContains(t, specs, `"household_id"`+":", "household_id must stay hidden from the model-facing schema")
 	require.NotContains(t, specs, `\"session_id\"`, "session_id must stay hidden from the model-facing schema")
 }
 
-// TestInjectNoLabelsToolsetHasEmptyRequiredLabels proves RequiredLabels is
-// always present (even empty) so the runtime can union it across every
-// toolset without existence checks.
+// TestInjectNoLabelsToolsetHasEmptyRequiredLabels proves RequiredLabels always
+// returns a slice so the runtime can union every toolset without special cases.
 func TestInjectNoLabelsToolsetHasEmptyRequiredLabels(t *testing.T) {
 	files := buildWithPrepare(t, testscenarios.AuthoredPayloadExample())
 
 	specs := fileContent(t, files, "gen/calc/toolsets/helpers/specs.go")
-	require.Contains(t, specs, "var RequiredLabels = []string{\n}")
+	require.Contains(t, specs, "func RequiredLabels() []string {\n    return []string{\n    }\n}")
 	require.False(t, fileExists(files, "gen/calc/toolsets/helpers/inject.go"), "no Inject() fields means no generated inject.go")
 }
 
 // TestInjectAgentRequiredLabelsAggregation locks the agent-level
 // RequiredLabels contract at the generation layer: the agent's aggregated
 // specs package exposes the sorted, deduplicated union of every used
-// toolset's RequiredLabels, and registry.go wires that var onto
+// toolset's RequiredLabels, and registry.go wires that value onto
 // AgentRegistration so Runtime.Start/StartOneShot can enforce it before any
 // workflow is scheduled.
 func TestInjectAgentRequiredLabelsAggregation(t *testing.T) {
@@ -140,20 +141,20 @@ func TestInjectAgentRequiredLabelsAggregation(t *testing.T) {
 	// Per-toolset generated data: helpers requires household_id only; audit
 	// requires both keys.
 	helpers := fileContent(t, files, "gen/calc/toolsets/helpers/specs.go")
-	require.Contains(t, helpers, "var RequiredLabels = []string{\n    \"household_id\",\n}")
+	require.Contains(t, helpers, "func RequiredLabels() []string {\n    return []string{\n        \"household_id\",\n    }\n}")
 	audit := fileContent(t, files, "gen/calc/toolsets/audit/specs.go")
-	require.Contains(t, audit, "var RequiredLabels = []string{\n    \"household_id\",\n    \"tenant_id\",\n}")
+	require.Contains(t, audit, "func RequiredLabels() []string {\n    return []string{\n        \"household_id\",\n        \"tenant_id\",\n    }\n}")
 
 	// Agent-level aggregate: union across both toolsets, sorted, and
 	// deduplicated (household_id appears in both toolsets but only once here).
 	agg := fileContent(t, files, "gen/calc/agents/scribe/specs/specs.go")
-	require.Contains(t, agg, "RequiredLabels = []string{\n        \"household_id\",\n        \"tenant_id\",\n    }")
+	require.Contains(t, agg, "func RequiredLabels() []string {\n    return []string{\n        \"household_id\",\n        \"tenant_id\",\n    }\n}")
 	require.Equal(t, 1, strings.Count(agg, `"household_id",`),
 		"duplicate label keys across toolsets must be deduplicated in the aggregate")
 
-	// Registry wiring: the aggregate var reaches AgentRegistration.
+	// Registry wiring: the aggregate value reaches AgentRegistration.
 	registry := fileContent(t, files, "gen/calc/agents/scribe/registry.go")
-	require.Contains(t, registry, "RequiredLabels: specs.RequiredLabels,")
+	require.Contains(t, registry, "RequiredLabels: specs.RequiredLabels(),")
 }
 
 // TestInjectMixedBoundUnboundProviderScopesMeta locks the provider-side

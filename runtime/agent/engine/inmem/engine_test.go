@@ -23,7 +23,7 @@ func TestPlannerActivityTypedExecution(t *testing.T) {
 
 	err := eng.RegisterPlannerActivity(ctx, "test_plan", engine.ActivityOptions{}, func(ctx context.Context, input *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
 		return &api.PlanActivityOutput{
-			Result: &planner.PlanResult{
+			Result: &api.PlanResult{
 				FinalResponse: &planner.FinalResponse{
 					Message: &model.Message{
 						Role: model.ConversationRoleAssistant,
@@ -69,6 +69,39 @@ func TestPlannerActivityTypedExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("workflow failed: %v", err)
 	}
+}
+
+func TestPlannerActivityReturnsNativeOutputContractError(t *testing.T) {
+	eng := New()
+	ctx := context.Background()
+	outputErr := planner.NewOutputContractError(errors.New("invalid planner result"))
+
+	err := eng.RegisterPlannerActivity(ctx, "test_plan_error", engine.ActivityOptions{}, func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
+		return nil, outputErr
+	})
+	require.NoError(t, err)
+
+	err = eng.RegisterWorkflow(ctx, engine.WorkflowDefinition{
+		Name: "test_workflow_error",
+		Handler: func(wfCtx engine.WorkflowContext, _ *api.RunInput) (*api.RunOutput, error) {
+			_, err := wfCtx.ExecutePlannerActivity(engine.PlannerActivityCall{
+				Name:  "test_plan_error",
+				Input: &api.PlanActivityInput{},
+			})
+			return nil, err
+		},
+	})
+	require.NoError(t, err)
+
+	handle, err := eng.StartWorkflow(ctx, engine.WorkflowStartRequest{
+		ID:       "test-run-error",
+		Workflow: "test_workflow_error",
+		Input:    &api.RunInput{},
+	})
+	require.NoError(t, err)
+
+	_, err = handle.Wait(ctx)
+	require.ErrorIs(t, err, outputErr)
 }
 
 func TestQueryRunCompletionReturnsExactWorkflowOutput(t *testing.T) {

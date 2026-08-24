@@ -10,7 +10,8 @@ import (
 	"context"
 	"goa.design/goa-ai/runtime/agent/completion"
 	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/rawjson"
+	"slices"
 )
 
 // Completion IDs for this service.
@@ -18,39 +19,30 @@ const (
 	DraftFromTranscript completion.Ident = "draft_from_transcript"
 )
 
-var (
-	SpecDraftFromTranscript = completion.Spec[*DraftFromTranscriptResult]{
-		Name:        DraftFromTranscript,
-		Description: "Synthesize a task draft from a transcript",
-		Result: tools.TypeSpec{
-			Name:                     "DraftFromTranscriptResult",
-			Schema:                   tools.RawJSON("{\"$defs\":{\"CompletionDraft\":{\"properties\":{\"steps\":{\"description\":\"Draft steps\",\"items\":{\"$ref\":\"#/$defs/CompletionStep\"},\"type\":\"array\"}},\"required\":[\"steps\"],\"title\":\"CompletionDraft\",\"type\":\"object\"},\"CompletionStep\":{\"properties\":{\"label\":{\"description\":\"User-visible step label\",\"type\":\"string\"}},\"required\":[\"label\"],\"title\":\"CompletionStep\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"assistant_text\":{\"description\":\"Assistant summary\",\"type\":\"string\"},\"draft\":{\"oneOf\":[{\"description\":\"Draft a new task\",\"properties\":{\"type\":{\"enum\":[\"new_task\"],\"type\":\"string\"},\"value\":{\"$ref\":\"#/$defs/CompletionDraft\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Reference an existing task\",\"properties\":{\"type\":{\"enum\":[\"existing_task_id\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"}},\"required\":[\"assistant_text\",\"draft\"],\"type\":\"object\"}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$defs\":{\"CompletionDraft\":{\"properties\":{\"steps\":{\"description\":\"Draft steps\",\"items\":{\"$ref\":\"#/$defs/CompletionStep\"},\"type\":\"array\"}},\"required\":[\"steps\"],\"title\":\"CompletionDraft\",\"type\":\"object\"},\"CompletionStep\":{\"properties\":{\"label\":{\"description\":\"User-visible step label\",\"type\":\"string\"}},\"required\":[\"label\"],\"title\":\"CompletionStep\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"assistant_text\":{\"description\":\"Assistant summary\",\"type\":\"string\"},\"draft\":{\"oneOf\":[{\"description\":\"Draft a new task\",\"properties\":{\"type\":{\"enum\":[\"new_task\"],\"type\":\"string\"},\"value\":{\"$ref\":\"#/$defs/CompletionDraft\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Reference an existing task\",\"properties\":{\"type\":{\"enum\":[\"existing_task_id\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"}},\"required\":[\"assistant_text\",\"draft\"],\"type\":\"object\"}"),
-			ExampleJSON:              nil,
-			FieldDescriptions:        DraftFromTranscriptResultFieldDescs,
-			FieldJSONTypes:           DraftFromTranscriptResultFieldJSONTypes,
-			Codec:                    draftFromTranscriptResultCodec,
-		},
-		Codec: DraftFromTranscriptResultCodec,
+// specDraftFromTranscript returns a fresh typed completion contract for draft_from_transcript.
+func specDraftFromTranscript() completion.Spec[*DraftFromTranscriptResult] {
+	return completion.Spec[*DraftFromTranscriptResult]{
+		Name:                     DraftFromTranscript,
+		Description:              "Synthesize a task draft from a transcript",
+		Schema:                   rawjson.Message("{\"$defs\":{\"CompletionDraft\":{\"properties\":{\"steps\":{\"description\":\"Draft steps\",\"items\":{\"$ref\":\"#/$defs/CompletionStep\"},\"type\":\"array\"}},\"required\":[\"steps\"],\"title\":\"CompletionDraft\",\"type\":\"object\"},\"CompletionStep\":{\"properties\":{\"label\":{\"description\":\"User-visible step label\",\"type\":\"string\"}},\"required\":[\"label\"],\"title\":\"CompletionStep\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"assistant_text\":{\"description\":\"Assistant summary\",\"type\":\"string\"},\"draft\":{\"oneOf\":[{\"description\":\"Draft a new task\",\"properties\":{\"type\":{\"enum\":[\"new_task\"],\"type\":\"string\"},\"value\":{\"$ref\":\"#/$defs/CompletionDraft\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Reference an existing task\",\"properties\":{\"type\":{\"enum\":[\"existing_task_id\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"}},\"required\":[\"assistant_text\",\"draft\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: rawjson.Message("{\"$defs\":{\"CompletionDraft\":{\"properties\":{\"steps\":{\"description\":\"Draft steps\",\"items\":{\"$ref\":\"#/$defs/CompletionStep\"},\"type\":\"array\"}},\"required\":[\"steps\"],\"title\":\"CompletionDraft\",\"type\":\"object\"},\"CompletionStep\":{\"properties\":{\"label\":{\"description\":\"User-visible step label\",\"type\":\"string\"}},\"required\":[\"label\"],\"title\":\"CompletionStep\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"assistant_text\":{\"description\":\"Assistant summary\",\"type\":\"string\"},\"draft\":{\"oneOf\":[{\"description\":\"Draft a new task\",\"properties\":{\"type\":{\"enum\":[\"new_task\"],\"type\":\"string\"},\"value\":{\"$ref\":\"#/$defs/CompletionDraft\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"description\":\"Reference an existing task\",\"properties\":{\"type\":{\"enum\":[\"existing_task_id\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"}},\"required\":[\"assistant_text\",\"draft\"],\"type\":\"object\"}"),
+		ExampleJSON:              nil,
+		Codec:                    newDraftFromTranscriptResultCodec(),
 	}
-)
-
-// DecodeDraftFromTranscript decodes the structured assistant response for draft_from_transcript.
-func DecodeDraftFromTranscript(resp *model.Response) (*DraftFromTranscriptResult, error) {
-	return completion.DecodeResponse(resp, SpecDraftFromTranscript)
 }
 
-// DecodeDraftFromTranscriptChunk decodes the final structured completion chunk for draft_from_transcript.
-func DecodeDraftFromTranscriptChunk(chunk model.Chunk) (*DraftFromTranscriptResult, bool, error) {
-	return completion.DecodeChunk(chunk, SpecDraftFromTranscript)
+// DraftFromTranscriptExample returns an immutable copy of the generated example
+// used to demonstrate draft_from_transcript output.
+func DraftFromTranscriptExample() rawjson.Message {
+	return slices.Clone(specDraftFromTranscript().ExampleJSON)
 }
 
 // CompleteDraftFromTranscript runs the unary typed completion for draft_from_transcript.
 func CompleteDraftFromTranscript(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[*DraftFromTranscriptResult], error) {
-	return completion.Complete(ctx, client, req, SpecDraftFromTranscript)
+	return completion.Complete(ctx, client, req, specDraftFromTranscript())
 }
 
 // StreamCompleteDraftFromTranscript starts the typed completion stream for draft_from_transcript.
-func StreamCompleteDraftFromTranscript(ctx context.Context, client model.Client, req *model.Request) (model.Streamer, error) {
-	return completion.Stream(ctx, client, req, SpecDraftFromTranscript)
+func StreamCompleteDraftFromTranscript(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[*DraftFromTranscriptResult], error) {
+	return completion.Stream(ctx, client, req, specDraftFromTranscript())
 }

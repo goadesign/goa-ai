@@ -13,15 +13,43 @@ import (
 	tools "goa.design/goa-ai/runtime/agent/tools"
 )
 
-var (
-	// Specs is the static list of tool specs exported by this agent.
-	Specs = []tools.ToolSpec{
-		math.SpecAdd,
-		ops.SpecEcho,
-	}
+// Specs returns fresh specifications for every tool exported by this agent.
+func Specs() []tools.ToolSpec {
+	specs := make([]tools.ToolSpec, 0)
+	specs = append(specs, math.Specs()...)
+	specs = append(specs, ops.Specs()...)
+	return specs
+}
 
-	// metadata is the static list of policy metadata exported by this agent.
-	metadata = []policy.ToolMetadata{
+// Names returns fresh tool identifiers exported by this agent.
+func Names() []tools.Ident {
+	return []tools.Ident{
+		math.Add,
+		ops.Echo,
+	}
+}
+
+// RequiredLabels returns the sorted, deduplicated run label keys required by
+// label-backed Inject fields across every toolset this agent uses.
+func RequiredLabels() []string {
+	return []string{}
+}
+
+// Spec returns the specification for the named tool if present.
+func Spec(name tools.Ident) (tools.ToolSpec, bool) {
+	switch name {
+	case tools.Ident("math.add"):
+		return math.Spec(math.Add)
+	case tools.Ident("ops.echo"):
+		return ops.Spec(ops.Echo)
+	default:
+		return tools.ToolSpec{}, false
+	}
+}
+
+// Metadata returns fresh policy metadata for the aggregated tools.
+func Metadata() []policy.ToolMetadata {
+	return []policy.ToolMetadata{
 		{
 			ID:          tools.Ident("math.add"),
 			Title:       "Add",
@@ -37,69 +65,6 @@ var (
 			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
 	}
-
-	// names is the static list of exported tool identifiers.
-	names = []tools.Ident{
-		math.Add,
-		ops.Echo,
-	}
-
-	// RequiredLabels lists, sorted and deduplicated, the run label keys that
-	// label-backed Inject() fields require across every toolset this agent
-	// uses. Runtime.Start/OneShotRun rejects a run missing any of these keys
-	// before scheduling any workflow or activity.
-	RequiredLabels = []string{}
-)
-
-// Names returns the tool identifiers exported by this agent.
-func Names() []tools.Ident {
-	return names
-}
-
-// Spec returns the specification for the named tool if present.
-func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
-	switch name {
-	case tools.Ident("math.add"):
-		return &math.SpecAdd, true
-	case tools.Ident("ops.echo"):
-		return &ops.SpecEcho, true
-	default:
-		return nil, false
-	}
-}
-
-// PayloadSchema returns the JSON schema for the named tool payload.
-func PayloadSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case tools.Ident("math.add"):
-		return math.SpecAdd.Payload.Schema, true
-	case tools.Ident("ops.echo"):
-		return ops.SpecEcho.Payload.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// ResultSchema returns the JSON schema for the named tool result.
-func ResultSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case tools.Ident("math.add"):
-		return math.SpecAdd.Result.Schema, true
-	case tools.Ident("ops.echo"):
-		return ops.SpecEcho.Result.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// AdvertisedSpecs returns the full list of tool specs to advertise to the model.
-func AdvertisedSpecs() []tools.ToolSpec {
-	return Specs
-}
-
-// Metadata exposes policy metadata for the aggregated tools.
-func Metadata() []policy.ToolMetadata {
-	return metadata
 }
 
 // MetadataByName returns policy metadata for the named tool if present.

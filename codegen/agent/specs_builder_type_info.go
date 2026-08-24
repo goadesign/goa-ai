@@ -160,6 +160,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	// authored Goa Example(...) values become top-level schema examples and model
 	// input examples; synthesized attribute examples stay out of provider tool
 	// definitions so prompts only include examples the DSL author chose.
+	authoredExample := authoredExampleForAttribute(att)
 	var example *exampleData
 	if usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion) {
 		// Examples must reflect the JSON wire contract, not the public tool type.
@@ -167,7 +168,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		// the transport graph; deriving examples from the public type produces a
 		// flattened shape that misleads callers and generated examples.
 		//
-		example = authoredExampleForAttribute(att)
+		example = authoredExample
 	}
 
 	// JSON schema from model schema attribute.
@@ -280,6 +281,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		SchemaJSON:                   schemaBytes,
 		SchemaWithoutRootExampleJSON: schemaWithoutRootExampleBytes,
 		ExampleJSON:                  exampleBytes,
+		ScaffoldExampleJSON:          exampleJSON(authoredExample),
 		ExportedCodec:                typeName + "Codec",
 		GenericCodec:                 lowerCamel(typeName) + "Codec",
 		MarshalFunc:                  "Marshal" + typeName,

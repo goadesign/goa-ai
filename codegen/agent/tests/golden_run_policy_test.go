@@ -12,7 +12,7 @@ func TestGolden_RunPolicy(t *testing.T) {
 	design := testscenarios.RunPolicyBasic()
 	files := buildAndGenerate(t, design)
 	reg := fileContent(t, files, "gen/alpha/agents/scribe/registry.go")
-	require.Contains(t, reg, "Specs: specs.Specs")
+	require.Contains(t, reg, "Specs: specs.Specs()")
 	require.Contains(t, reg, "ResultMaterializer: cfg.resultMaterializers[toolsetID]")
 	require.Contains(t, reg, "func WithHelpersResultMaterializer(materializer agentsruntime.ResultMaterializer)")
 	require.NotContains(t, reg, "InterruptsAllowed")

@@ -64,3 +64,13 @@ func TestLoadRunSuspensionRejectsCorruptStoredEnvelope(t *testing.T) {
 	_, err := runtime.LoadRunSuspension(context.Background(), "run-1")
 	require.ErrorContains(t, err, "id does not match payload")
 }
+
+func TestDecodeStoredRunSuspensionRejectsUnknownAndTrailingData(t *testing.T) {
+	for _, data := range [][]byte{
+		[]byte(`{"id":"s","unknown":true}`),
+		[]byte(`{"id":"s"} {}`),
+	} {
+		var suspension api.RunSuspension
+		require.Error(t, decodeStoredRunSuspension(data, &suspension))
+	}
+}

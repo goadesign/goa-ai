@@ -27,7 +27,7 @@ type (
 		AggUsage model.TokenUsage
 
 		// Result is the current planner result being processed by the loop.
-		Result *planner.PlanResult
+		Result *PlanResult
 
 		// Transcript is the provider transcript for the current planner result.
 		Transcript []*model.Message
@@ -49,13 +49,13 @@ type (
 		PendingRecovery []*planner.ToolOutput
 
 		// PendingRecoveryCatalog is the exact tool catalog advertised by the
-		// activity that produced Result. Presence activates workflow-side
-		// enforcement; absence preserves histories created before this contract.
+		// activity that produced Result. It is required exactly when
+		// PendingRecovery contains failures for the current planner decision.
 		PendingRecoveryCatalog *RecoveryCatalog
 	}
 )
 
-func newRunLoopState(result *planner.PlanResult, transcriptMsgs []*model.Message, usage model.TokenUsage, caps policy.CapsState, nextAttempt int) *runLoopState {
+func newRunLoopState(result *PlanResult, transcriptMsgs []*model.Message, usage model.TokenUsage, caps policy.CapsState, nextAttempt int) *runLoopState {
 	return &runLoopState{
 		Caps:        caps,
 		NextAttempt: nextAttempt,

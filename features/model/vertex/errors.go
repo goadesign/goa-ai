@@ -1,6 +1,7 @@
 package vertex
 
 import (
+	"context"
 	"errors"
 
 	"google.golang.org/genai"
@@ -21,6 +22,9 @@ import (
 func wrapGeminiError(operation string, err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
 	}
 	status := 0
 	message := err.Error()

@@ -23,10 +23,10 @@ import (
 // This example main demonstrates running the agent using the generated bootstrap.
 // Replace or extend this as needed for your production deployment.
 
-// exampleCompletionClient is a tiny structured-output model client used by the
+// exampleCompletionProvider is a tiny structured-output model provider used by the
 // generated example main to demonstrate typed completion helpers without
 // requiring a real provider integration.
-type exampleCompletionClient struct {
+type exampleCompletionProvider struct {
 	name    string
 	payload []byte
 }
@@ -46,15 +46,15 @@ func newExampleCompletionClient(name string, payload []byte) (model.Client, erro
 	if len(payload) == 0 {
 		return nil, fmt.Errorf("completion %q example JSON is required for generated example", name)
 	}
-	return &exampleCompletionClient{
+	return model.NewClient(&exampleCompletionProvider{
 		name:    name,
 		payload: append([]byte(nil), payload...),
-	}, nil
+	})
 }
 
 // validateRequest enforces the structured-output contract expected by the
 // generated completion helpers.
-func (c *exampleCompletionClient) validateRequest(req *model.Request, stream bool) error {
+func (c *exampleCompletionProvider) validateRequest(req *model.Request, stream bool) error {
 	if req == nil {
 		return fmt.Errorf("completion %q request is nil", c.name)
 	}
@@ -75,7 +75,7 @@ func (c *exampleCompletionClient) validateRequest(req *model.Request, stream boo
 
 // Complete returns the canonical assistant JSON payload for unary completion
 // examples.
-func (c *exampleCompletionClient) Complete(_ context.Context, req *model.Request) (*model.Response, error) {
+func (c *exampleCompletionProvider) Complete(_ context.Context, req *model.Request) (*model.Response, error) {
 	if err := c.validateRequest(req, false); err != nil {
 		return nil, err
 	}
@@ -93,7 +93,7 @@ func (c *exampleCompletionClient) Complete(_ context.Context, req *model.Request
 }
 
 // Stream emits a preview fragment followed by the canonical completion payload.
-func (c *exampleCompletionClient) Stream(_ context.Context, req *model.Request) (model.Streamer, error) {
+func (c *exampleCompletionProvider) Stream(_ context.Context, req *model.Request) (model.Streamer, error) {
 	if err := c.validateRequest(req, true); err != nil {
 		return nil, err
 	}
@@ -177,7 +177,7 @@ func main() {
 		out, err := client.Run(ctx, "demo-session", []*model.Message{
 			{
 				Role:  model.ConversationRoleUser,
-				Parts: []model.Part{model.TextPart{Text: "Hello"}},
+				Parts: []model.Part{model.TextPart{Text: "What is the capital of Japan?"}},
 			},
 		})
 		if err != nil {
@@ -192,7 +192,10 @@ func main() {
 	}
 
 	{
-		client, err := newExampleCompletionClient(string(completions.DraftTask), completions.SpecDraftTask.Result.ExampleJSON)
+		client, err := newExampleCompletionClient(
+			string(completions.DraftTask),
+			completions.DraftTaskExample(),
+		)
 		if err != nil {
 			log.Fatalf("completion client setup failed: %v", err)
 		}
@@ -207,15 +210,20 @@ func main() {
 		if err != nil {
 			log.Fatalf("completion run failed: %v", err)
 		}
-		rendered, err := completions.SpecDraftTask.Result.Codec.ToJSON(out.Value)
-		if err != nil {
-			log.Fatalf("completion render failed: %v", err)
-		}
-		fmt.Printf("Completion %s: %s\n", completions.DraftTask, rendered)
+		fmt.Printf(
+			"Completion %s: %s (%s), %d steps\n",
+			completions.DraftTask,
+			out.Value.Name,
+			out.Value.Goal,
+			len(out.Value.Steps),
+		)
 	}
 
 	{
-		client, err := newExampleCompletionClient(string(completions.DraftTask), completions.SpecDraftTask.Result.ExampleJSON)
+		client, err := newExampleCompletionClient(
+			string(completions.DraftTask),
+			completions.DraftTaskExample(),
+		)
 		if err != nil {
 			log.Fatalf("completion stream client setup failed: %v", err)
 		}
@@ -241,18 +249,18 @@ func main() {
 			if delta, ok := chunk.(model.CompletionDeltaChunk); ok {
 				fmt.Printf("Completion delta %s: %s\n", completions.DraftTask, delta.Delta.Delta)
 			}
-			value, ok, err := completions.DecodeDraftTaskChunk(chunk)
-			if err != nil {
-				log.Fatalf("completion chunk decode failed: %v", err)
-			}
-			if ok {
-				rendered, err := completions.SpecDraftTask.Result.Codec.ToJSON(value)
-				if err != nil {
-					log.Fatalf("completion stream render failed: %v", err)
-				}
-				fmt.Printf("Completion stream %s: %s\n", completions.DraftTask, rendered)
-			}
 		}
+		value, ok := stream.Value()
+		if !ok {
+			log.Fatal("completion stream ended without a typed value")
+		}
+		fmt.Printf(
+			"Completion stream %s: %s (%s), %d steps\n",
+			completions.DraftTask,
+			value.Name,
+			value.Goal,
+			len(value.Steps),
+		)
 		if err := stream.Close(); err != nil {
 			log.Fatalf("completion stream close failed: %v", err)
 		}

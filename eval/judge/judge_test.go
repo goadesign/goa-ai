@@ -9,27 +9,31 @@ import (
 	"github.com/stretchr/testify/require"
 	aieval "goa.design/goa-ai/eval"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/planner"
 )
 
 type recordingClient struct {
-	request   *model.Request
-	requests  []*model.Request
-	response  *model.Response
-	responses []*model.Response
-	err       error
+	request  *model.Request
+	requests []*model.Request
+	response *model.Response
+	err      error
 }
 
 func (c *recordingClient) Complete(_ context.Context, request *model.Request) (*model.Response, error) {
 	c.request = request
 	c.requests = append(c.requests, request)
-	if len(c.responses) >= len(c.requests) {
-		return c.responses[len(c.requests)-1], nil
-	}
 	return c.response, c.err
 }
 
 func (c *recordingClient) Stream(context.Context, *model.Request) (model.Streamer, error) {
 	return nil, errors.New("unexpected stream")
+}
+
+func newTestJudge(t *testing.T, provider model.Provider, opts ...Option) *Judge {
+	t.Helper()
+	client, err := model.NewClient(provider)
+	require.NoError(t, err)
+	return New(client, opts...)
 }
 
 func TestJudgeUsesStrictHighReasoningRequest(t *testing.T) {
@@ -42,7 +46,7 @@ func TestJudgeUsesStrictHighReasoningRequest(t *testing.T) {
 		ClaimID: "complete", Output: "Every alarm is listed.", Claim: "The answer is complete.",
 	}}
 
-	judgments, err := New(client).Judge(context.Background(), assertions)
+	judgments, err := newTestJudge(t, client).Judge(context.Background(), assertions)
 
 	require.NoError(t, err)
 	assert.Equal(t, []aieval.Judgment{{
@@ -64,57 +68,38 @@ func TestJudgeUsesStrictHighReasoningRequest(t *testing.T) {
 	assert.JSONEq(t, `{"assertions":[{"claim_id":"complete","output":"Every alarm is listed.","claim":"The answer is complete."}]}`, user)
 }
 
-func TestJudgeCorrectsSchemaInvalidResponse(t *testing.T) {
-	client := &recordingClient{responses: []*model.Response{
-		modelResponse(`{"judgments":"not an array"}`),
-		modelResponse(`{"judgments":[
-			{"claim_id":"complete","label":"entailed","rationale":"The output directly establishes the claim."}
-		]}`),
-	}}
+func TestJudgeRejectsSchemaInvalidResponseWithoutAnotherRequest(t *testing.T) {
+	client := &recordingClient{response: modelResponse(`{"judgments":"not an array"}`)}
 
-	judgments, err := New(client).Judge(context.Background(), []aieval.Assertion{{
+	judgments, err := newTestJudge(t, client).Judge(context.Background(), []aieval.Assertion{{
 		ClaimID: "complete",
 		Output:  "Every alarm is listed.",
 		Claim:   "The answer is complete.",
 	}})
 
-	require.NoError(t, err)
-	require.Len(t, judgments, 1)
-	assert.Equal(t, aieval.Entailed, judgments[0].Label)
-	require.Len(t, client.requests, 2)
-	require.Len(t, client.requests[1].Messages, 4)
-	rejected := client.requests[1].Messages[2].Parts[0].(model.TextPart).Text
-	assert.JSONEq(t, `{"judgments":"not an array"}`, rejected)
-	correction := client.requests[1].Messages[3].Parts[0].(model.TextPart).Text
-	assert.Contains(t, correction, "cannot unmarshal string")
-	assert.NotContains(t, correction, "JSON shape example")
+	require.ErrorContains(t, err, "cannot unmarshal string")
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	assert.Nil(t, judgments)
+	assert.Len(t, client.requests, 1)
 }
 
-func TestJudgeCorrectsClaimContractFailure(t *testing.T) {
-	client := &recordingClient{responses: []*model.Response{
-		modelResponse(`{"judgments":[
-			{"claim_id":"other","label":"entailed","rationale":"The output establishes another claim."}
-		]}`),
-		modelResponse(`{"judgments":[
-			{"claim_id":"complete","label":"entailed","rationale":"The output directly establishes the claim."}
-		]}`),
-	}}
+func TestJudgeRejectsClaimContractFailureWithoutAnotherRequest(t *testing.T) {
+	client := &recordingClient{response: modelResponse(`{"judgments":[
+		{"claim_id":"other","label":"entailed","rationale":"The output establishes another claim."}
+	]}`)}
 
-	judgments, err := New(client).Judge(context.Background(), []aieval.Assertion{{
+	judgments, err := newTestJudge(t, client).Judge(context.Background(), []aieval.Assertion{{
 		ClaimID: "complete",
 		Output:  "Every alarm is listed.",
 		Claim:   "The answer is complete.",
 	}})
 
-	require.NoError(t, err)
-	assert.Equal(t, []aieval.Judgment{{
-		ClaimID:   "complete",
-		Label:     aieval.Entailed,
-		Rationale: "The output directly establishes the claim.",
-	}}, judgments)
-	require.Len(t, client.requests, 2)
-	correction := client.requests[1].Messages[3].Parts[0].(model.TextPart).Text
-	assert.Contains(t, correction, `judgment references unknown claim "other"`)
+	require.ErrorContains(t, err, `judgment references unknown claim "other"`)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	assert.Nil(t, judgments)
+	assert.Len(t, client.requests, 1)
 }
 
 func TestJudgeRejectsInvalidResponses(t *testing.T) {
@@ -131,7 +116,7 @@ func TestJudgeRejectsInvalidResponses(t *testing.T) {
 		{
 			name:    "trailing value",
 			body:    `{"judgments":[]} {"judgments":[]}`,
-			wantErr: "trailing JSON value",
+			wantErr: "assistant payload is not valid JSON",
 		},
 		{
 			name:    "missing judgment",
@@ -158,11 +143,13 @@ func TestJudgeRejectsInvalidResponses(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			client := &recordingClient{response: modelResponse(test.body)}
-			_, err := New(client).Judge(context.Background(), []aieval.Assertion{{
+			_, err := newTestJudge(t, client).Judge(context.Background(), []aieval.Assertion{{
 				ClaimID: "complete", Output: "Done.", Claim: "Complete.",
 			}})
 			require.ErrorContains(t, err, test.wantErr)
-			assert.Len(t, client.requests, 2)
+			var outputErr *planner.OutputContractError
+			require.ErrorAs(t, err, &outputErr)
+			assert.Len(t, client.requests, 1)
 		})
 	}
 }
@@ -170,7 +157,7 @@ func TestJudgeRejectsInvalidResponses(t *testing.T) {
 func TestJudgeDoesNotRetryModelErrors(t *testing.T) {
 	want := errors.New("provider unavailable")
 	client := &recordingClient{err: want}
-	_, err := New(client).Judge(context.Background(), []aieval.Assertion{{
+	_, err := newTestJudge(t, client).Judge(context.Background(), []aieval.Assertion{{
 		ClaimID: "complete", Output: "Done.", Claim: "Complete.",
 	}})
 	assert.ErrorIs(t, err, want)
@@ -188,7 +175,7 @@ func modelResponse(body string) *model.Response {
 
 func TestWithModelClassOverridesRequestClass(t *testing.T) {
 	client := &recordingClient{err: errors.New("stop")}
-	j := New(client, WithModelClass(model.ModelClassSmall))
+	j := newTestJudge(t, client, WithModelClass(model.ModelClassSmall))
 	_, _ = j.Judge(context.Background(), []aieval.Assertion{{ClaimID: "c1", Output: "o", Claim: "c"}})
 	require.NotNil(t, client.request)
 	assert.Equal(t, model.ModelClassSmall, client.request.ModelClass)

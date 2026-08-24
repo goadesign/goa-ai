@@ -56,16 +56,12 @@ func smithyDocumentFromJSON(t *testing.T, raw string) document.Interface {
 	return document.NewLazyDocument(v)
 }
 
-// Anthropic models reject Bedrock's native OutputConfig response format for
-// structured output (Bedrock's Converse API translates it into Anthropic's own
-// output_config.format field, which the model then rejects). These tests prove
-// prepareRequest routes Anthropic structured-output requests through a forced
-// tool call instead, while leaving non-Anthropic models (e.g. Nova) on the
-// native OutputConfig path, and that the response is reified back into the
-// same canonical single-text shape either way.
+// These tests prove that Bedrock uses OutputConfig for Claude models that
+// support it and one private tool for Claude models that do not. Both paths
+// return the same provider-neutral structured completion.
 
 func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
-	client := &Client{defaultModel: "us.anthropic.claude-opus-5"}
+	client := &provider{defaultModel: "us.anthropic.claude-opus-5"}
 	req := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
@@ -93,6 +89,8 @@ func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
 	spec, ok := parts.toolConfig.Tools[0].(*brtypes.ToolMemberToolSpec)
 	require.True(t, ok)
 	require.Equal(t, "Return the completed task draft.", *spec.Value.Description)
+	require.NotNil(t, spec.Value.Strict)
+	require.True(t, *spec.Value.Strict)
 	require.Equal(t, []string{"tool-examples-2025-10-29"}, parts.additionalModelFields["anthropic_beta"])
 	tools, ok := parts.additionalModelFields["tools"].([]map[string]any)
 	require.True(t, ok)
@@ -115,7 +113,7 @@ func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
 }
 
 func TestPrepareRequestNovaStructuredOutputUsesNativeOutputConfig(t *testing.T) {
-	client := &Client{defaultModel: "amazon.nova-pro-v1:0"}
+	client := &provider{defaultModel: "amazon.nova-pro-v1:0"}
 	req := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
@@ -134,8 +132,29 @@ func TestPrepareRequestNovaStructuredOutputUsesNativeOutputConfig(t *testing.T) 
 	require.Nil(t, parts.toolConfig)
 }
 
+func TestPrepareRequestClaude45StructuredOutputUsesNativeOutputConfig(t *testing.T) {
+	client := &provider{defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"}
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "draft the task"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:        "complete_draft",
+			Description: "Return the completed task draft.",
+			Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
+		},
+	}
+
+	parts, err := client.prepareRequest(req)
+
+	require.NoError(t, err)
+	require.NotNil(t, parts.outputConfig)
+	require.Nil(t, parts.toolConfig)
+}
+
 func TestPrepareRequestStructuredOutputRejectsExplicitTools(t *testing.T) {
-	client := &Client{defaultModel: "us.anthropic.claude-opus-5"}
+	client := &provider{defaultModel: "us.anthropic.claude-opus-5"}
 	req := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
@@ -153,10 +172,47 @@ func TestPrepareRequestStructuredOutputRejectsExplicitTools(t *testing.T) {
 	require.ErrorContains(t, err, "structured output cannot be combined with request tool definitions")
 }
 
-// TestCompleteAnthropicStructuredOutputReifiesToolCall proves the forced
-// tool_use response Bedrock returns for the fallback is rewritten into
-// completion text while provider-issued thinking is preserved, so
-// runtime/agent/completion.DecodeResponse works unmodified either way.
+func TestAnthropicStructuredOutputRejectsLegacyThinkingBeforeProviderCall(t *testing.T) {
+	client := &provider{
+		defaultModel: "us.anthropic.claude-sonnet-4-0",
+		runtime:      &recordingConverseRuntime{},
+	}
+	newRequest := func() *model.Request {
+		req := &model.Request{
+			Messages: []*model.Message{{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "draft the task"}},
+			}},
+			Thinking: &model.ThinkingOptions{
+				Enable:       true,
+				BudgetTokens: 2048,
+			},
+			StructuredOutput: &model.StructuredOutput{
+				Name:        "complete_draft",
+				Description: "Return the completed task draft.",
+				Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
+			},
+		}
+		require.NoError(t, model.SetCompletionValidator(
+			req,
+			func(*model.Response, *model.Completion) error { return nil },
+		))
+		return req
+	}
+
+	t.Run("unary", func(t *testing.T) {
+		_, err := client.Complete(t.Context(), newRequest())
+		require.EqualError(t, err, "bedrock: manual thinking cannot be combined with forced tool choice")
+	})
+	t.Run("streaming", func(t *testing.T) {
+		_, err := client.Stream(t.Context(), newRequest())
+		require.EqualError(t, err, "bedrock: manual thinking cannot be combined with forced tool choice")
+	})
+}
+
+// TestCompleteAnthropicStructuredOutputReifiesToolCall proves the adapter turns
+// Bedrock's forced tool response into the completion text required by the
+// provider-neutral contract while preserving provider-issued thinking.
 func TestCompleteAnthropicStructuredOutputReifiesToolCall(t *testing.T) {
 	runtime := &recordingConverseRuntime{
 		output: &bedrockruntime.ConverseOutput{
@@ -181,7 +237,7 @@ func TestCompleteAnthropicStructuredOutputReifiesToolCall(t *testing.T) {
 			}},
 		},
 	}
-	client := &Client{defaultModel: "us.anthropic.claude-opus-5", runtime: runtime}
+	client := &provider{defaultModel: "us.anthropic.claude-opus-5", runtime: runtime}
 	req := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
@@ -193,6 +249,10 @@ func TestCompleteAnthropicStructuredOutputReifiesToolCall(t *testing.T) {
 			Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
 		},
 	}
+	require.NoError(t, model.SetCompletionValidator(
+		req,
+		func(*model.Response, *model.Completion) error { return nil },
+	))
 
 	resp, err := client.Complete(t.Context(), req)
 	require.NoError(t, err)

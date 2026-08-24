@@ -6,71 +6,59 @@ import (
 	"io"
 	"sync"
 
+	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/internal/provenance"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 )
 
-// This file implements planner-scoped model client wrappers owned by the
-// runtime. Model output is recorded per invocation until the planner selects a
-// response, while the remaining wrappers apply cache, tracing, and
-// model-invocation policy to raw model clients returned from
-// PlannerContext.ModelClient.
+// This file wraps model clients used during one planner activity. Each response
+// is checked and saved before tracing or planner code can read it. The runtime
+// publishes only the response selected by an accepted planner result. The other
+// wrappers add request caching and tracing.
 //
-// Critical invariants:
-//   - Final tool calls are NOT emitted here; those are already surfaced to
-//     planners via model.ChunkTypeToolCall and handled by the workflow loop.
-//   - Tool call argument deltas MAY be emitted here as a best-effort UX signal
-//     (model.ChunkTypeToolCallDelta). Consumers may ignore them; the canonical
-//     tool payload remains the finalized tool call and the runtime tool_start.
-//   - Emission occurs in the planner activity context to keep hook writes
-//     deterministic and scoped to the current turn.
-//   - modelInvocationClient captures every response in an isolated runtime
-//     candidate before planner-facing types exist. The runtime later identifies
-//     the candidate from exact model-facing tool calls or opaque terminal
-//     provenance; call order never determines the durable transcript.
+// Rules:
+//   - Complete tool calls go to the planner and are handled by the workflow.
+//   - Partial tool arguments may be shown while streaming, but the completed
+//     tool call remains the value that executes.
+//   - User-visible events are created inside the current planner activity.
+//   - Concurrent model calls are saved separately and matched to the exact
+//     result returned by the planner. Call order never chooses a response.
 
 type (
-	// modelInvocationID identifies one runtime-owned response candidate within
-	// a planner activity. It never crosses the planner or workflow boundary.
+	// modelInvocationID identifies one saved model response during a planner
+	// activity. It is never returned to planner or workflow code.
 	modelInvocationID = provenance.Token
 
 	// plannerModelClient wraps a raw model.Client and identifies the selected
 	// invocation for one planner turn.
 	plannerModelClient struct {
-		inner  model.Client
-		events planner.PlannerEvents
-		mu     sync.Mutex
-		used   bool
+		inner model.Client
+		mu    sync.Mutex
+		used  bool
 	}
 )
 
 // newPlannerModelClient returns a planner-scoped client whose provider output is
 // published after the planner selects its response.
-func newPlannerModelClient(inner model.Client, events planner.PlannerEvents) planner.PlannerModelClient {
+func newPlannerModelClient(inner model.Client) planner.PlannerModelClient {
 	if inner == nil {
 		return nil
 	}
-	if events == nil {
-		panic("runtime: planner model client requires PlannerEvents")
-	}
-	return &plannerModelClient{
-		inner:  inner,
-		events: events,
-	}
+	return &plannerModelClient{inner: inner}
 }
 
-// Complete delegates to the inner client. The invocation journal publishes
-// presentation only after the planner result selects this response.
+// Complete calls the model. The saved output is published only if the planner
+// result selects this response and passes every runtime check.
 func (c *plannerModelClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
 	if err := c.begin(); err != nil {
 		return nil, err
 	}
 	resp, err := c.inner.Complete(ctx, req)
-	if err == nil {
-		stampModelIdentity(&resp.Usage, req)
+	if err != nil {
+		return nil, err
 	}
-	return resp, err
+	return resp, nil
 }
 
 // Stream delegates to the inner client, drains the resulting stream through the
@@ -81,13 +69,15 @@ func (c *plannerModelClient) Stream(ctx context.Context, req *model.Request) (pl
 	}
 	st, err := c.inner.Stream(ctx, req)
 	if err != nil {
+		if st != nil {
+			err = errors.Join(err, st.Close())
+		}
 		return planner.StreamSummary{}, err
 	}
-	return planner.ConsumeStream(ctx, st, req, c.events)
+	return planner.ConsumeStream(ctx, st)
 }
 
-// begin reserves this planner client for its one selected invocation. Planners
-// use PlannerContext.ModelClient for probes or retries before this call.
+// begin reserves this client for the planner's one selected model call.
 func (c *plannerModelClient) begin() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -98,188 +88,329 @@ func (c *plannerModelClient) begin() error {
 	return nil
 }
 
-// cacheConfiguredClient wraps a model.Client and applies the agent CachePolicy
+// cacheConfiguredProvider wraps a model.Provider and applies the agent CachePolicy
 // to each request. It sets Request.Cache only when it is currently nil so
 // explicit per-request CacheOptions take precedence over the agent defaults.
-type cacheConfiguredClient struct {
-	inner model.Client
+type cacheConfiguredProvider struct {
+	inner model.Provider
 	cache CachePolicy
 }
 
 func newCacheConfiguredClient(inner model.Client, cache CachePolicy) model.Client {
-	if inner == nil {
-		return nil
-	}
 	if !cache.AfterSystem && !cache.AfterTools {
 		return inner
 	}
-	return &cacheConfiguredClient{
-		inner: inner,
-		cache: cache,
-	}
+	return mustWrapModelClient(inner, func(provider model.Provider) model.Provider {
+		return &cacheConfiguredProvider{
+			inner: provider,
+			cache: cache,
+		}
+	})
 }
 
-func (c *cacheConfiguredClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+func (c *cacheConfiguredProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
 	applyCachePolicy(req, c.cache)
-	return c.inner.Complete(ctx, req)
+	response, err := c.inner.Complete(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return response, nil
 }
 
-func (c *cacheConfiguredClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+func (c *cacheConfiguredProvider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
 	applyCachePolicy(req, c.cache)
 	return c.inner.Stream(ctx, req)
 }
 
-// modelInvocationSink owns isolated provider response candidates for one
-// planner activity. Token usage remains activity-wide so rejected corrective
-// attempts are still accounted for.
+// modelInvocationSink saves separate model responses for one planner activity.
+// Token usage includes every model call made during that activity.
 //
-// The interface is intentionally unexported and separate from
-// planner.PlannerEvents: custom planners never implement provider transcript
-// persistence, and capture must not depend on which PlannerEvents value they
-// pass to planner.ConsumeStream.
+// It is separate from planner.PlannerEvents so custom planners do not save
+// responses themselves, and response storage does not depend on event wiring.
 type modelInvocationSink interface {
-	beginModelInvocation() modelInvocationID
+	beginModelInvocation(model.ModelClass, context.CancelFunc) (modelInvocationID, error)
 	designateModelInvocation(invocationID modelInvocationID) error
-	recordModelResponse(invocationID modelInvocationID, response *model.Response) error
+	recordRejectedModelResponse(
+		invocationID modelInvocationID,
+		evidence model.ResponseEvidence,
+		err error,
+	) error
+	recordRejectedModelUsageTotal(invocationID modelInvocationID, usage model.TokenUsage) error
+	recordRejectedModelUsageDelta(invocationID modelInvocationID, usage model.TokenUsage) error
+	recordValidatedModelResponse(invocationID modelInvocationID, response *model.Response) error
 	recordModelChunk(invocationID modelInvocationID, chunk model.Chunk) error
 	finishModelInvocation(invocationID modelInvocationID, err error) error
 }
 
-// modelInvocationClient bounds tentative transcript state to individual model
-// calls and captures provider-defined tool-call thought signatures before any
-// planner-facing type is constructed.
-type modelInvocationClient struct {
-	inner      model.Client
+// modelInvocationProvider saves each model call after the opaque client has
+// applied canonical validation and before planner code can read the response.
+type modelInvocationProvider struct {
+	inner      model.Provider
 	sink       modelInvocationSink
 	designated bool
+	mu         sync.Mutex
+	terminal   error
 }
 
-// newModelInvocationClient wraps inner with invocation tracking. It returns
-// inner unchanged when sink is nil.
+// modelInvocationCall records one validated result for the invocation started
+// before provider execution.
+type modelInvocationCall struct {
+	provider     *modelInvocationProvider
+	invocationID modelInvocationID
+}
+
+// newModelInvocationClient adds response checking and storage. It returns inner
+// unchanged when no response store was provided.
 func newModelInvocationClient(inner model.Client, sink modelInvocationSink) model.Client {
-	if inner == nil {
-		return nil
-	}
 	if sink == nil {
 		return inner
 	}
-	return &modelInvocationClient{inner: inner, sink: sink}
+	return mustWrapModelClient(inner, func(provider model.Provider) model.Provider {
+		return &modelInvocationProvider{inner: provider, sink: sink}
+	})
 }
 
-// newDesignatedModelInvocationClient captures a model call that is contractually
-// the planner's selected invocation and may publish live presentation events.
+// newDesignatedModelInvocationClient marks this client as the planner's one
+// selected model call.
 func newDesignatedModelInvocationClient(inner model.Client, sink modelInvocationSink) model.Client {
-	if inner == nil {
-		return nil
-	}
 	if sink == nil {
 		return inner
 	}
-	return &modelInvocationClient{inner: inner, sink: sink, designated: true}
+	return mustWrapModelClient(inner, func(provider model.Provider) model.Provider {
+		return &modelInvocationProvider{inner: provider, sink: sink, designated: true}
+	})
 }
 
-// Complete starts a new tentative response, validates the provider result, and
-// records its canonical transcript before returning to planner code.
-func (c *modelInvocationClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	invocationID := c.sink.beginModelInvocation()
-	if c.designated {
-		if err := c.sink.designateModelInvocation(invocationID); err != nil {
-			return nil, err
-		}
-	}
-	resp, err := c.inner.Complete(ctx, req)
-	if err != nil {
-		return resp, c.sink.finishModelInvocation(invocationID, err)
-	}
-	stampModelIdentity(&resp.Usage, req)
-	if err := c.sink.recordModelResponse(invocationID, resp); err != nil {
-		return nil, c.sink.finishModelInvocation(invocationID, err)
-	}
-	if err := c.sink.finishModelInvocation(invocationID, nil); err != nil {
-		return nil, err
-	}
-	return resp, nil
+// Complete forwards one raw provider result. The opaque client calls the
+// matching modelInvocationCall only after canonical validation.
+func (c *modelInvocationProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	return c.inner.Complete(ctx, req)
 }
 
-// Stream starts a new tentative response and wraps the returned Streamer so
-// every chunk is validated and the canonical response is captured.
-func (c *modelInvocationClient) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
-	invocationID := c.sink.beginModelInvocation()
+// Stream forwards one raw provider stream. The opaque client attaches the
+// matching modelInvocationCall only after canonical stream setup.
+func (c *modelInvocationProvider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+	return c.inner.Stream(ctx, req)
+}
+
+// PrepareClientCall creates the durable invocation before provider execution.
+func (c *modelInvocationProvider) PrepareClientCall(
+	ctx context.Context,
+	req *model.Request,
+) (context.Context, model.ClientCallObserver, error) {
+	if terminal := c.terminalError(); terminal != nil {
+		return ctx, nil, terminal
+	}
+	invocationCtx, cancel := context.WithCancel(ctx)
+	invocationID, err := c.sink.beginModelInvocation(req.ModelClass, cancel)
+	if err != nil {
+		cancel()
+		return ctx, nil, err
+	}
 	if c.designated {
 		if err := c.sink.designateModelInvocation(invocationID); err != nil {
-			return nil, err
+			cleanupErr := c.sink.finishModelInvocation(invocationID, err)
+			return ctx, nil, errors.Join(err, cleanupErr)
 		}
 	}
-	st, err := c.inner.Stream(ctx, req)
-	if err != nil {
-		return nil, c.sink.finishModelInvocation(invocationID, err)
-	}
-	return &modelInvocationStreamer{
-		inner:        st,
-		sink:         c.sink,
+	return invocationCtx, &modelInvocationCall{
+		provider:     c,
 		invocationID: invocationID,
-		request:      req,
 	}, nil
 }
 
-// modelInvocationStreamer validates every presentation chunk before exposing
-// it to planner code and captures the canonical response at clean EOF.
+// ObserveClientComplete saves one validated unary response or its precise
+// output rejection.
+func (c *modelInvocationCall) ObserveClientComplete(response *model.Response, err error) error {
+	if err != nil {
+		var validationErr *model.OutputValidationError
+		if errors.As(err, &validationErr) {
+			return c.provider.observeRejectedModelOutput(c.invocationID, validationErr)
+		}
+		return nil
+	}
+	if err := c.provider.sink.recordValidatedModelResponse(c.invocationID, response); err != nil {
+		return outputcontract.NewWithOrigin(err, planner.OutputContractOriginPlanner)
+	}
+	return nil
+}
+
+// observeRejectedModelOutput journals one lower-boundary rejection and returns
+// the additive model-origin classification understood by workflow engines.
+func (c *modelInvocationProvider) observeRejectedModelOutput(
+	invocationID modelInvocationID,
+	validationErr *model.OutputValidationError,
+) error {
+	cause := error(validationErr)
+	if usage := validationErr.Usage(); usage != nil {
+		cause = errors.Join(
+			cause,
+			c.sink.recordRejectedModelUsageTotal(invocationID, *usage),
+		)
+	}
+	var outputErr error = outputcontract.NewWithOrigin(
+		cause,
+		planner.OutputContractOriginModel,
+	)
+	outputErr = c.sink.recordRejectedModelResponse(
+		invocationID,
+		validationErr.Evidence(),
+		outputErr,
+	)
+	return outputErr
+}
+
+// ObserveClientStream returns journaling behavior for one validated stream or
+// records its setup rejection. The model client attaches returned behavior to
+// the exact stream and owns closing it when the prepared context is canceled.
+func (c *modelInvocationCall) ObserveClientStream(err error) (model.StreamObserver, error) {
+	if err != nil {
+		var validationErr *model.OutputValidationError
+		if errors.As(err, &validationErr) {
+			return nil, c.provider.observeRejectedModelOutput(c.invocationID, validationErr)
+		}
+		return nil, nil
+	}
+	journaled := &modelInvocationStreamer{
+		sink:         c.provider.sink,
+		invocationID: c.invocationID,
+		reject:       c.provider.latchTerminalError,
+	}
+	return journaled, nil
+}
+
+// Finish records the invocation's terminal result exactly once after unary
+// observation, failed stream setup, or stream close.
+func (c *modelInvocationCall) Finish(err error) error {
+	var outputErr *planner.OutputContractError
+	if errors.As(err, &outputErr) {
+		c.provider.latchTerminalError(err)
+	}
+	return c.provider.sink.finishModelInvocation(c.invocationID, err)
+}
+
+// Abort releases invocation state when a later observer cannot prepare.
+func (c *modelInvocationCall) Abort(err error) error {
+	return c.provider.sink.finishModelInvocation(c.invocationID, err)
+}
+
+// terminalError returns the first terminal output failure observed by this
+// planner-scoped client.
+func (c *modelInvocationProvider) terminalError() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.terminal
+}
+
+// latchTerminalError prevents another inference after malformed model output.
+func (c *modelInvocationProvider) latchTerminalError(err error) {
+	if err == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.terminal == nil {
+		c.terminal = err
+	}
+}
+
+// modelInvocationStreamer records output from the exact model-validated stream
+// and saves its complete response when the stream ends.
 type modelInvocationStreamer struct {
-	inner        model.Streamer
 	sink         modelInvocationSink
 	invocationID modelInvocationID
-	request      *model.Request
+	response     *model.Response
 	finished     bool
+	terminalErr  error
+	reject       func(error)
 }
 
-func (s *modelInvocationStreamer) Recv() (model.Chunk, error) {
-	ch, err := s.inner.Recv()
+// ObserveStreamRecv records one result from the exact validated stream. It may
+// stop the stream but cannot replace a chunk or response.
+func (s *modelInvocationStreamer) ObserveStreamRecv(observation model.StreamObservation) error {
+	if s.finished {
+		return s.terminalErr
+	}
+	err := observation.Err
 	if err != nil {
-		s.finished = true
+		if model.IsStreamValidationError(err) {
+			err = outputcontract.NewWithOrigin(
+				err,
+				planner.OutputContractOriginModel,
+			)
+			s.reject(err)
+			if observation.RejectedUsageDelta != nil {
+				err = errors.Join(
+					err,
+					s.sink.recordRejectedModelUsageDelta(s.invocationID, *observation.RejectedUsageDelta),
+				)
+			}
+			if observation.RejectedUsageTotal != nil {
+				err = errors.Join(
+					err,
+					s.sink.recordRejectedModelUsageTotal(s.invocationID, *observation.RejectedUsageTotal),
+				)
+			}
+			if observation.ResponseEvidence.Present {
+				err = s.sink.recordRejectedModelResponse(
+					s.invocationID,
+					observation.ResponseEvidence,
+					err,
+				)
+			}
+		}
 		if errors.Is(err, io.EOF) {
-			response := s.inner.Response()
-			if response == nil {
-				err := errors.New("model stream ended without a canonical response")
-				return nil, s.sink.finishModelInvocation(s.invocationID, err)
+			if observation.Response == nil {
+				outputErr := outputcontract.NewWithOrigin(
+					errors.New("model stream ended without a complete response"),
+					planner.OutputContractOriginModel,
+				)
+				return s.finish(outputErr)
 			}
-			stampModelIdentity(&response.Usage, s.request)
-			if err := s.sink.recordModelResponse(s.invocationID, response); err != nil {
-				return nil, s.sink.finishModelInvocation(s.invocationID, err)
+			if err := s.sink.recordValidatedModelResponse(s.invocationID, observation.Response); err != nil {
+				return s.finish(outputcontract.NewWithOrigin(
+					err,
+					planner.OutputContractOriginPlanner,
+				))
 			}
-			if err := s.sink.finishModelInvocation(s.invocationID, nil); err != nil {
-				return nil, err
+			s.response = observation.Response
+			if err := s.finish(nil); err != nil {
+				return err
 			}
 		} else {
-			return nil, s.sink.finishModelInvocation(s.invocationID, err)
+			if !model.IsStreamValidationError(observation.Err) {
+				return s.finish(nil)
+			}
+			return s.finish(err)
 		}
-		return ch, err
+		return nil
 	}
-	if usage, ok := ch.(model.UsageChunk); ok {
-		stampModelIdentity(&usage.Usage, s.request)
-		ch = usage
+	if err := s.sink.recordModelChunk(s.invocationID, observation.Chunk); err != nil {
+		return s.finish(err)
 	}
-	if err := s.sink.recordModelChunk(s.invocationID, ch); err != nil {
-		s.finished = true
-		return nil, s.sink.finishModelInvocation(s.invocationID, err)
-	}
-	return ch, nil
+	return nil
 }
 
-func (s *modelInvocationStreamer) Close() error {
-	var finishErr error
+// ObserveStreamClose records closure before EOF as a failed model invocation.
+func (s *modelInvocationStreamer) ObserveStreamClose(error) error {
 	if !s.finished {
-		s.finished = true
-		finishErr = s.sink.finishModelInvocation(s.invocationID, errors.New("model stream closed before EOF"))
+		return s.finish(outputcontract.NewWithOrigin(
+			errors.New("planner closed model stream before EOF"),
+			planner.OutputContractOriginPlanner,
+		))
 	}
-	return errors.Join(finishErr, s.inner.Close())
+	return nil
 }
 
-func (s *modelInvocationStreamer) Response() *model.Response { return s.inner.Response() }
-
-// StreamEvents prevents planner helpers from publishing tentative provider
-// output. The invocation journal publishes the selected response after planning.
-func (s *modelInvocationStreamer) StreamEvents(planner.PlannerEvents) planner.PlannerEvents {
-	return planner.NoopEvents()
+// finish records the additive stream-observer result exactly once. The prepared
+// call lifecycle records the full terminal error when the stream closes.
+func (s *modelInvocationStreamer) finish(err error) error {
+	if s.finished {
+		return s.terminalErr
+	}
+	s.finished = true
+	s.terminalErr = err
+	return err
 }
 
 // applyCachePolicy populates Request.Cache from the agent CachePolicy when no
@@ -297,13 +428,13 @@ func applyCachePolicy(req *model.Request, cache CachePolicy) {
 	}
 }
 
-// stampModelIdentity fills usage attribution from the request before the
-// invocation journal accounts for the provider response.
-func stampModelIdentity(usage *model.TokenUsage, req *model.Request) {
-	if usage.Model == "" && req.Model != "" {
-		usage.Model = req.Model
+// mustWrapModelClient installs trusted runtime middleware beneath the only
+// canonical validation boundary. Runtime registration has already established
+// the opaque Client invariant, so a wrapping failure is a programming error.
+func mustWrapModelClient(inner model.Client, wrap func(model.Provider) model.Provider) model.Client {
+	client, err := model.WrapClient(inner, wrap)
+	if err != nil {
+		panic(err)
 	}
-	if usage.ModelClass == "" && req.ModelClass != "" {
-		usage.ModelClass = req.ModelClass
-	}
+	return client
 }

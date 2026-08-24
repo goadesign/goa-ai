@@ -133,7 +133,7 @@ func New(client Client, pulse pulsec.Client, specs SpecLookup, opts ...Option) *
 	return e
 }
 
-func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
+func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
 	if call == nil {
 		return runtime.Executed(internalFailureResult("", "", "tool request is nil")), nil
 	}
@@ -436,7 +436,7 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 // ambiguous because the registry may have admitted the call before the response
 // was lost.
 func preAdmissionFailureResult(
-	call *planner.ToolRequest,
+	call *runtime.ToolCall,
 	toolCallID string,
 	err error,
 ) (*planner.ToolResult, bool) {
@@ -481,7 +481,7 @@ func preAdmissionFailureResult(
 // outcomeUnknownResult terminates planning after an invocation may have been
 // admitted. A replacement call could repeat an external side effect.
 func (e *Executor) outcomeUnknownResult(
-	call *planner.ToolRequest,
+	call *runtime.ToolCall,
 	meta *runtime.ToolCallMeta,
 	err error,
 ) *planner.ToolResult {
@@ -503,7 +503,7 @@ func (e *Executor) outcomeUnknownResult(
 	}
 }
 
-func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *planner.ToolRequest, toolCallID string, msg toolregistry.ToolResultMessage) *planner.ToolResult {
+func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *runtime.ToolCall, toolCallID string, msg toolregistry.ToolResultMessage) *planner.ToolResult {
 	tool := tools.Ident("")
 	if call != nil {
 		tool = call.Name
@@ -570,7 +570,7 @@ func malformedResultFailure(err error) *planner.ToolFailure {
 
 // toolFailureFromRegistryError restores the provider's canonical
 // classification and adds call-owned correction data.
-func toolFailureFromRegistryError(msg *toolregistry.ToolError, spec *tools.ToolSpec, call *planner.ToolRequest) *planner.ToolFailure {
+func toolFailureFromRegistryError(msg *toolregistry.ToolError, spec *tools.ToolSpec, call *runtime.ToolCall) *planner.ToolFailure {
 	failure := planner.CloneToolFailure(msg.Failure)
 	if failure.Recovery.Action == planner.RecoveryCorrectCall {
 		if spec == nil || call == nil {

@@ -11,11 +11,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -23,6 +28,11 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
+)
+
+const (
+	plannerPublicationInitialBackoff = 100 * time.Millisecond
+	plannerPublicationMaxBackoff     = 5 * time.Second
 )
 
 // finalizeRun selects the configured fixed terminal call for a runtime
@@ -189,7 +199,10 @@ func (r *Runtime) finalizeFromHistory(
 	if err := validateFinalizationPlanResult(output.Result); err != nil {
 		return nil, fmt.Errorf("%s: %w", reasonText, err)
 	}
-	aggUsage = addTokenUsage(aggUsage, output.Usage)
+	aggUsage, err = addTokenUsage(aggUsage, output.Usage)
+	if err != nil {
+		return nil, fmt.Errorf("aggregate finalization usage: %w", err)
+	}
 	if isFinalizationTerminalToolPlan(output.Result) {
 		out, err := r.finishFinalizationTerminalToolCalls(
 			wfCtx,
@@ -250,7 +263,7 @@ func finalizationPrompt(reason planner.TerminationReason) (string, error) {
 
 // validateFinalizationPlanResult enforces the finalizer's closed result union:
 // one terminal payload, or terminal bookkeeping calls to execute.
-func validateFinalizationPlanResult(result *planner.PlanResult) error {
+func validateFinalizationPlanResult(result *PlanResult) error {
 	if result == nil {
 		return errors.New("finalization planner returned nil result")
 	}
@@ -271,7 +284,7 @@ func validateFinalizationPlanResult(result *planner.PlanResult) error {
 
 // isFinalizationTerminalToolPlan reports whether a finalization planner turn
 // requested a terminal tool as the terminal action instead of returning text.
-func isFinalizationTerminalToolPlan(result *planner.PlanResult) bool {
+func isFinalizationTerminalToolPlan(result *PlanResult) bool {
 	return result != nil &&
 		len(result.ToolCalls) > 0 &&
 		result.FinalResponse == nil &&
@@ -287,7 +300,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	reg AgentRegistration,
 	input *RunInput,
 	base *planner.PlanInput,
-	result *planner.PlanResult,
+	result *PlanResult,
 	transcript []*model.Message,
 	allToolResults []*planner.ToolResult,
 	allToolOutputs []*planner.ToolOutput,
@@ -380,7 +393,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 
 // validateFinalizationTerminalToolCalls permits only terminal bookkeeping tools
 // during finalization because caps/deadlines have already forbidden new work.
-func (r *Runtime) validateFinalizationTerminalToolCalls(calls []planner.ToolRequest) error {
+func (r *Runtime) validateFinalizationTerminalToolCalls(calls []ToolCall) error {
 	if len(calls) == 0 {
 		return errors.New("finalization terminal tool plan has no tool calls")
 	}
@@ -533,7 +546,7 @@ func (r *Runtime) missingFieldsQuestion(tool tools.Ident, fields []string) (stri
 	var question strings.Builder
 	question.WriteString("I need a little more information before I can continue:")
 	for _, field := range fields {
-		description, ok := spec.Payload.FieldDescriptions[field]
+		description, ok := tools.LookupFieldMetadata(spec.Payload.FieldDescriptions, field)
 		if !ok || description == "" {
 			return "", fmt.Errorf("missing generated description for clarification field %q on tool %q", field, tool)
 		}
@@ -594,14 +607,36 @@ func (r *Runtime) runPlanActivity(
 	if out.SessionEnded {
 		return nil, errRunSessionEnded
 	}
-	if out.Result == nil {
+	switch {
+	case out.OutputContractFailure != nil:
+		if out.Result != nil {
+			return nil, errors.New("runPlanActivity received both PlanResult and OutputContractFailure")
+		}
+		if err := validateOutputContractFailure(out.OutputContractFailure); err != nil {
+			return out, planner.NewOutputContractError(err)
+		}
+	case out.Result == nil:
 		return nil, fmt.Errorf("runPlanActivity received nil PlanResult")
-	}
-	if len(out.Result.ToolCalls) == 0 &&
+	case len(out.Result.ToolCalls) == 0 &&
 		out.Result.FinalResponse == nil &&
 		out.Result.FinalToolResult == nil &&
-		out.Result.Await == nil {
+		out.Result.Await == nil:
 		return nil, fmt.Errorf("runPlanActivity received PlanResult with no ToolCalls, FinalResponse, FinalToolResult, or Await")
+	}
+	if out.Result != nil {
+		if _, err := r.normalizePlanResultForExecution(wfCtx.Context(), out.Result); err != nil {
+			return nil, err
+		}
+	}
+	batch, err := preparePlannerPublicationBatch(wfCtx, input, out)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.publishPlannerPublicationBatch(wfCtx, batch); err != nil {
+		return nil, err
+	}
+	if out.OutputContractFailure != nil {
+		return out, boundedOutputContractError(out.OutputContractFailure)
 	}
 	r.logger.Info(wfCtx.Context(),
 		"runPlanActivity received PlanResult",
@@ -615,4 +650,210 @@ func (r *Runtime) runPlanActivity(
 		out.Result.Await != nil,
 	)
 	return out, nil
+}
+
+// preparePlannerPublicationBatch freezes every record produced by one planner
+// activity completion before the first durable write. The activity completion
+// UUID keeps a later inference distinct even when workflow replay reaches the
+// same logical step.
+func preparePlannerPublicationBatch(
+	wfCtx engine.WorkflowContext,
+	input PlanActivityInput,
+	out *PlanActivityOutput,
+) ([]*RecordActivityInput, error) {
+	if err := validatePublicationBatchID(out.PublicationBatchID); err != nil {
+		return nil, err
+	}
+	workflowID := wfCtx.WorkflowID()
+	if workflowID == "" {
+		return nil, errors.New("planner publication workflow id is required")
+	}
+	recordCount := len(out.PlannerEvents)
+	if out.OutputContractFailure != nil {
+		recordCount++
+	}
+	records := make([]*RecordActivityInput, 0, recordCount)
+	timestampMS := wfCtx.Now().UnixMilli()
+	for index, record := range out.PlannerEvents {
+		if record == nil {
+			return nil, fmt.Errorf("planner event %d is nil", index)
+		}
+		if record.Type == "" || len(record.Payload) == 0 {
+			return nil, fmt.Errorf("planner event %d is missing its type or payload", index)
+		}
+		if len(record.Payload) > maxHookPayloadBytes {
+			return nil, fmt.Errorf(
+				"runtime: planner event payload exceeds budget (%d > %d bytes, type=%s, run_id=%s)",
+				len(record.Payload),
+				maxHookPayloadBytes,
+				record.Type,
+				input.RunID,
+			)
+		}
+		records = append(records, &RecordActivityInput{
+			Type:        record.Type,
+			EventKey:    formatPlannerPublicationEventKey(workflowID, out.PublicationBatchID, index, record.Type),
+			RunID:       input.RunID,
+			AgentID:     input.AgentID,
+			SessionID:   input.RunContext.SessionID,
+			TurnID:      input.RunContext.TurnID,
+			TimestampMS: timestampMS,
+			Payload:     append([]byte(nil), record.Payload...),
+		})
+	}
+	if out.OutputContractFailure == nil {
+		return records, nil
+	}
+	rejection, err := plannerOutputRejectionEvent(input, out.OutputContractFailure)
+	if err != nil {
+		return nil, err
+	}
+	index := len(records)
+	record, err := hooks.EncodeToRecordInput(rejection, hooks.EncodeOptions{
+		TurnID: input.RunContext.TurnID,
+		EventKey: formatPlannerPublicationEventKey(
+			workflowID,
+			out.PublicationBatchID,
+			index,
+			rejection.Type(),
+		),
+		TimestampMS: timestampMS,
+	})
+	if err != nil {
+		return nil, err
+	}
+	records = append(records, record)
+	return records, nil
+}
+
+// boundedOutputContractError reconstructs one fixed-size terminal error from
+// the fingerprints returned by the planner activity.
+func boundedOutputContractError(failure *OutputContractFailure) error {
+	if err := validateOutputContractFailure(failure); err != nil {
+		return err
+	}
+	cause := fmt.Errorf(
+		"completed output was rejected (reason_sha256=%s reason_size=%d)",
+		failure.ReasonSHA256,
+		failure.ReasonSize,
+	)
+	origin := planner.OutputContractOriginModel
+	if failure.Origin == planner.OutputContractOriginPlanner {
+		origin = planner.OutputContractOriginPlanner
+	}
+	return outputcontract.NewWithOrigin(cause, origin)
+}
+
+// validateOutputContractFailure checks the complete activity-to-workflow
+// rejection state before the workflow publishes any durable event.
+func validateOutputContractFailure(failure *OutputContractFailure) error {
+	if failure == nil {
+		return errors.New("completed output was rejected without failure metadata")
+	}
+	validOrigin := failure.Origin == planner.OutputContractOriginModel ||
+		failure.Origin == planner.OutputContractOriginPlanner
+	validVersion := (failure.ModelResponseSHA256 == "" &&
+		failure.ModelResponseFingerprintVersion == "") ||
+		(failure.ModelResponseSHA256 != "" &&
+			failure.ModelResponseFingerprintVersion == api.ModelResponseFingerprintVersionV1)
+	plannerHasNoModelEvidence := failure.Origin != planner.OutputContractOriginPlanner ||
+		(!failure.ModelResponsePresent &&
+			failure.ModelResponseSHA256 == "" &&
+			failure.ModelResponseSize == 0)
+	if !validReasonFingerprint(failure.ReasonSHA256, failure.ReasonSize) ||
+		!validFingerprint(failure.ModelResponseSHA256, failure.ModelResponseSize, true) ||
+		(!failure.ModelResponsePresent && failure.ModelResponseSHA256 != "") ||
+		!validOrigin ||
+		!validVersion ||
+		!plannerHasNoModelEvidence {
+		return errors.New("completed output was rejected with invalid failure metadata")
+	}
+	return nil
+}
+
+// validatePublicationBatchID requires the canonical UUID generated by the
+// planner activity before any completion records are published.
+func validatePublicationBatchID(batchID string) error {
+	parsed, err := uuid.Parse(batchID)
+	if err != nil || parsed.String() != batchID {
+		return errors.New("planner activity output has an invalid publication batch id")
+	}
+	return nil
+}
+
+// plannerOutputRejectionEvent builds the final record in a rejected planner
+// publication batch.
+func plannerOutputRejectionEvent(
+	input PlanActivityInput,
+	failure *OutputContractFailure,
+) (hooks.Event, error) {
+	if failure.Origin == planner.OutputContractOriginModel {
+		return hooks.NewModelOutputRejectedEvent(
+			input.RunID,
+			input.AgentID,
+			input.RunContext.SessionID,
+			failure.ReasonSHA256,
+			failure.ReasonSize,
+			failure.ModelResponsePresent,
+			failure.ModelResponseFingerprintVersion,
+			failure.ModelResponseSHA256,
+			failure.ModelResponseSize,
+		)
+	}
+	return hooks.NewPlannerOutputRejectedEvent(
+		input.RunID,
+		input.AgentID,
+		input.RunContext.SessionID,
+		failure.ReasonSHA256,
+		failure.ReasonSize,
+	)
+}
+
+// publishPlannerPublicationBatch retries the exact immutable batch from its
+// first record after any exhausted record-activity failure. Record activity
+// retries remain in force, and stable event keys make an already stored prefix
+// idempotent.
+func (r *Runtime) publishPlannerPublicationBatch(
+	wfCtx engine.WorkflowContext,
+	records []*RecordActivityInput,
+) error {
+	backoff := plannerPublicationInitialBackoff
+	for {
+		var publicationErr error
+		for index, record := range records {
+			if err := r.publishPreparedHook(wfCtx.Context(), record, engine.ActivityOptions{}); err != nil {
+				publicationErr = fmt.Errorf("publish planner record %d: %w", index, err)
+				break
+			}
+		}
+		if publicationErr == nil {
+			return nil
+		}
+		r.logger.Error(wfCtx.Context(), "planner publication batch failed", "error", publicationErr)
+		timer, err := wfCtx.NewTimer(wfCtx.Context(), backoff)
+		if err != nil {
+			return err
+		}
+		if _, err := timer.Get(wfCtx.Context()); err != nil {
+			return err
+		}
+		backoff = min(backoff*2, plannerPublicationMaxBackoff)
+	}
+}
+
+// formatPlannerPublicationEventKey identifies one immutable record within one
+// successful planner activity completion.
+func formatPlannerPublicationEventKey(
+	workflowID string,
+	publicationBatchID string,
+	index int,
+	recordType hooks.EventType,
+) string {
+	return fmt.Sprintf(
+		"%s/planner-publication/%s/%d/%s",
+		url.PathEscape(workflowID),
+		publicationBatchID,
+		index,
+		url.PathEscape(string(recordType)),
+	)
 }

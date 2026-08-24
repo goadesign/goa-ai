@@ -140,7 +140,7 @@ func TestPlanActivityInputOmitsEmptyRecoveryIdentity(t *testing.T) {
 	require.Contains(t, string(payload), `"RecoveryToolCallIDs":["call-1"]`)
 }
 
-func TestRecoveryActivityFieldsRequireHardWorkerCutover(t *testing.T) {
+func TestPlanActivityFieldsRequireHardWorkerCutover(t *testing.T) {
 	t.Parallel()
 
 	ordinaryInput, err := json.Marshal(PlanActivityInput{RunID: "run-1"})
@@ -156,7 +156,13 @@ func TestRecoveryActivityFieldsRequireHardWorkerCutover(t *testing.T) {
 
 	ordinaryOutput, err := json.Marshal(PlanActivityOutput{})
 	require.NoError(t, err)
-	require.NoError(t, strictJSONDecode(ordinaryOutput, &legacyPlanActivityOutput{}))
+	require.ErrorContains(t, strictJSONDecode(ordinaryOutput, &legacyPlanActivityOutput{}), "unknown field")
+
+	plannerEventOutput, err := json.Marshal(PlanActivityOutput{
+		PlannerEvents: []*PlannerEventRecord{{}},
+	})
+	require.NoError(t, err)
+	require.ErrorContains(t, strictJSONDecode(plannerEventOutput, &legacyPlanActivityOutput{}), "unknown field")
 
 	recoveryOutput, err := json.Marshal(PlanActivityOutput{
 		RecoveryCatalog: &RecoveryCatalog{},

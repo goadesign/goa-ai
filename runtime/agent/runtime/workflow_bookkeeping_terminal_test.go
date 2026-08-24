@@ -28,7 +28,7 @@ func TestRunLoopBookkeepingTerminalExecutesWithExhaustedBudget(t *testing.T) {
 	terminal.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
-		Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				Result:     map[string]any{"ok": true},
@@ -56,10 +56,11 @@ func TestRunLoopBookkeepingTerminalExecutesWithExhaustedBudget(t *testing.T) {
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
 	}
-	initial := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
-			Name:    terminal.Name,
-			Payload: rawjson.Message(`{}`),
+	initial := &PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "terminal-call",
+			Name:       terminal.Name,
+			Payload:    rawjson.Message(`{}`),
 		}},
 	}
 	caps := policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0}

@@ -9,7 +9,6 @@ import (
 
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -39,7 +38,7 @@ func TestExecuteToolCalls_CancelsInFlightToolsWhenTimeBudgetReached(t *testing.T
 	}
 
 	runCtx := &run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
-	calls := []planner.ToolRequest{
+	calls := []ToolCall{
 		{Name: tools.Ident("svc.tools.slow"), RunID: runCtx.RunID, SessionID: runCtx.SessionID, TurnID: runCtx.TurnID, ToolCallID: "call-slow"},
 	}
 

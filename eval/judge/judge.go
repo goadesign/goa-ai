@@ -1,8 +1,6 @@
-// Package judge implements strict semantic claim classification over Goa-AI's
-// provider-neutral model client. The judge contract is a framework-owned typed
-// completion: a canonical raw JSON schema plus a strict codec executed by the
-// shared completion runtime. The runtime may ask once for a corrected value when
-// the codec rejects model-authored JSON; it never repairs or substitutes output.
+// Package judge asks a model to classify evaluation claims. It sends a typed
+// JSON request and accepts one matching JSON response. Invalid output ends the
+// request without asking the model again.
 package judge
 
 import (
@@ -16,6 +14,7 @@ import (
 	aieval "goa.design/goa-ai/eval"
 	"goa.design/goa-ai/runtime/agent/completion"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -29,22 +28,20 @@ type (
 	// Option customizes a Judge.
 	Option func(*Judge)
 
-	// requestBody is the canonical user-message representation of an assertion batch.
+	// requestBody is the JSON sent to the model for one group of assertions.
 	requestBody struct {
 		Assertions []aieval.Assertion `json:"assertions"`
 	}
 
-	// responseBody is the only structured response shape accepted from the model.
+	// responseBody is the only JSON shape accepted from the model.
 	responseBody struct {
 		Judgments []aieval.Judgment `json:"judgments"`
 	}
 )
 
 const (
-	// maxTokensPerJudgment budgets output tokens for one judgment: a label,
-	// a concise rationale, and its share of JSON envelope overhead. Provider
-	// boundaries such as Anthropic and AURA's inference engine require an
-	// explicit positive cap; truncation surfaces as a strict decode error.
+	// maxTokensPerJudgment allows enough output for one label, one short reason,
+	// and its JSON fields. A cut-off response fails JSON decoding.
 	maxTokensPerJudgment = 256
 
 	judgePrompt = `Classify each assertion independently using only its output and claim.
@@ -75,16 +72,12 @@ Return exactly one judgment for every claim_id. Do not add, remove, merge, or re
 }`
 )
 
-// baseSpec is the framework-owned typed completion contract for judge output.
-// Each request binds its claim IDs into the codec before invoking the shared
-// completion runtime.
+// baseSpec defines the JSON response accepted from the model. Each request adds
+// its exact claim IDs before calling the model.
 var baseSpec = completion.Spec[responseBody]{
 	Name:        "eval_judgments",
 	Description: "One semantic label and rationale for every supplied claim ID.",
-	Result: tools.TypeSpec{
-		Name:   "responseBody",
-		Schema: tools.RawJSON(responseSchema),
-	},
+	Schema:      rawjson.Message(responseSchema),
 	Codec: tools.JSONCodec[responseBody]{
 		ToJSON:   func(value responseBody) ([]byte, error) { return json.Marshal(value) },
 		FromJSON: decodeResponse,
@@ -161,14 +154,14 @@ func decodeResponse(data []byte) (responseBody, error) {
 	return response, nil
 }
 
-// specForClaims binds request-specific claim identity and cardinality to the
-// completion codec so semantic contract failures participate in correction.
+// specForClaims requires one judgment for each claim ID in this request.
 func specForClaims(claims []aieval.Claim) completion.Spec[responseBody] {
 	spec := baseSpec
 	spec.Codec.FromJSON = decodeResponseForClaims(claims)
 	return spec
 }
 
+// decodeResponseForClaims checks both the JSON shape and the exact claim IDs.
 func decodeResponseForClaims(claims []aieval.Claim) func([]byte) (responseBody, error) {
 	return func(data []byte) (responseBody, error) {
 		response, err := decodeResponse(data)

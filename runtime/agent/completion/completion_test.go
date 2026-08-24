@@ -3,15 +3,25 @@ package completion
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+// mustCompletionToolInput compiles a static test schema.
+func mustCompletionToolInput(t *testing.T, schema rawjson.Message) model.ToolInput {
+	t.Helper()
+	input, err := model.AdvertisedToolInputFromSchema(schema)
+	require.NoError(t, err)
+	return input
+}
 
 type testCompletionResult struct {
 	AssistantText string `json:"assistant_text"`
@@ -19,21 +29,11 @@ type testCompletionResult struct {
 
 func testCompletionSpec() Spec[testCompletionResult] {
 	return Spec[testCompletionResult]{
-		Name:        "draft_from_transcript",
-		Description: "Synthesize task draft",
-		Result: tools.TypeSpec{
-			Name:                     "DraftFromTranscriptResult",
-			Schema:                   tools.RawJSON(`{"type":"object","required":["assistant_text"]}`),
-			SchemaWithoutRootExample: tools.RawJSON(`{"type":"object","required":["assistant_text"]}`),
-			ExampleJSON:              tools.RawJSON(`{"assistant_text":"Created a draft."}`),
-			FieldDescriptions: map[string]string{
-				"assistant_text": "Short explanation of the generated draft",
-			},
-			FieldJSONTypes: map[string]string{
-				"$payload":       "object",
-				"assistant_text": "string",
-			},
-		},
+		Name:                     "draft_from_transcript",
+		Description:              "Synthesize task draft",
+		Schema:                   rawjson.Message(`{"type":"object","required":["assistant_text"]}`),
+		SchemaWithoutRootExample: rawjson.Message(`{"type":"object","required":["assistant_text"]}`),
+		ExampleJSON:              rawjson.Message(`{"assistant_text":"Created a draft."}`),
 		Codec: tools.JSONCodec[testCompletionResult]{
 			ToJSON:   marshalTestCompletionResult,
 			FromJSON: unmarshalTestCompletionResult,
@@ -61,6 +61,30 @@ type recordingCompletionClient struct {
 	streamErr error
 }
 
+type validatingCompletionClient struct {
+	validated *model.Response
+	returned  *model.Response
+	mutate    func(*model.Response)
+}
+
+type streamResultCompletionClient struct {
+	stream model.Streamer
+	err    error
+}
+
+type forgedCompletionClient struct {
+	model.Client
+}
+
+type mutatingCompletionObserverProvider struct {
+	model.Provider
+	replacement string
+}
+
+type mutatingCompletionObserverCall struct {
+	replacement string
+}
+
 func (c *recordingCompletionClient) Complete(_ context.Context, req *model.Request) (*model.Response, error) {
 	c.request = req
 	c.requests = append(c.requests, req)
@@ -73,6 +97,61 @@ func (c *recordingCompletionClient) Complete(_ context.Context, req *model.Reque
 func (c *recordingCompletionClient) Stream(_ context.Context, req *model.Request) (model.Streamer, error) {
 	c.request = req
 	return c.streamer, c.streamErr
+}
+
+func (c *validatingCompletionClient) Complete(
+	_ context.Context,
+	request *model.Request,
+) (*model.Response, error) {
+	if c.mutate != nil {
+		c.mutate(c.returned)
+	}
+	return c.returned, nil
+}
+
+func (*validatingCompletionClient) Stream(context.Context, *model.Request) (model.Streamer, error) {
+	panic("unexpected streaming completion")
+}
+
+func (streamResultCompletionClient) Complete(context.Context, *model.Request) (*model.Response, error) {
+	panic("unexpected unary completion")
+}
+
+func (c streamResultCompletionClient) Stream(context.Context, *model.Request) (model.Streamer, error) {
+	return c.stream, c.err
+}
+
+func (p *mutatingCompletionObserverProvider) PrepareClientCall(
+	ctx context.Context,
+	_ *model.Request,
+) (context.Context, model.ClientCallObserver, error) { //nolint:unparam // The observer interface reserves setup failure.
+	return ctx, &mutatingCompletionObserverCall{replacement: p.replacement}, nil
+}
+
+func (c *mutatingCompletionObserverCall) ObserveClientComplete(response *model.Response, _ error) error {
+	if response != nil {
+		response.Content[0].Parts[0] = model.TextPart{Text: c.replacement}
+	}
+	return nil
+}
+
+func (*mutatingCompletionObserverCall) ObserveClientStream(error) (model.StreamObserver, error) {
+	return nil, nil
+}
+
+func (*mutatingCompletionObserverCall) Finish(error) error {
+	return nil
+}
+
+func (*mutatingCompletionObserverCall) Abort(error) error {
+	return nil
+}
+
+func mustCompletionClient(t *testing.T, provider model.Provider) model.Client {
+	t.Helper()
+	client, err := model.NewClient(provider)
+	require.NoError(t, err)
+	return client
 }
 
 type stubStreamer struct{}
@@ -98,6 +177,8 @@ type scriptedStreamer struct {
 	results  []recvResult
 	response *model.Response
 	index    int
+	closed   bool
+	closeErr error
 }
 
 func (s *scriptedStreamer) Recv() (model.Chunk, error) {
@@ -110,10 +191,42 @@ func (s *scriptedStreamer) Recv() (model.Chunk, error) {
 }
 
 func (s *scriptedStreamer) Close() error {
-	return nil
+	s.closed = true
+	return s.closeErr
 }
 
 func (s *scriptedStreamer) Response() *model.Response {
+	return s.response
+}
+
+type reusingCompletionStreamer struct {
+	payload  []byte
+	response *model.Response
+	step     int
+}
+
+func (s *reusingCompletionStreamer) Recv() (model.Chunk, error) {
+	switch s.step {
+	case 0:
+		s.step++
+		return model.CompletionChunk{Completion: model.Completion{
+			Name:    "draft_from_transcript",
+			Payload: s.payload,
+		}}, nil
+	case 1:
+		s.step++
+		s.payload[19] = 'X'
+		return model.StopChunk{Reason: "stop"}, nil
+	default:
+		return nil, io.EOF
+	}
+}
+
+func (s *reusingCompletionStreamer) Close() error {
+	return nil
+}
+
+func (s *reusingCompletionStreamer) Response() *model.Response {
 	return s.response
 }
 
@@ -148,11 +261,14 @@ func TestCompleteSetsStructuredOutputAndDecodesTypedValue(t *testing.T) {
 		}},
 	}
 
-	resp, err := Complete(context.Background(), client, req, spec)
+	resp, err := Complete(context.Background(), mustCompletionClient(t, client), req, spec)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	assert.Equal(t, testCompletionResult{AssistantText: "created a draft"}, resp.Value)
-	assert.Equal(t, []*model.Response{client.response}, resp.Attempts)
+	assert.NotSame(t, client.response, resp.ModelResponse)
+	assert.Equal(t, client.response.StopReason, resp.ModelResponse.StopReason)
+	assert.Equal(t, client.response.Usage, resp.ModelResponse.Usage)
+	assert.Equal(t, client.response.Content[0].Parts, resp.ModelResponse.Content[0].Parts)
 	require.NotNil(t, client.request)
 	require.NotNil(t, client.request.StructuredOutput)
 	assert.Equal(t, "draft_from_transcript", client.request.StructuredOutput.Name)
@@ -166,90 +282,123 @@ func TestCompleteSetsStructuredOutputAndDecodesTypedValue(t *testing.T) {
 	assert.Nil(t, req.StructuredOutput)
 }
 
-func TestCompleteCorrectsCodecFailureOnce(t *testing.T) {
+func TestCompleteObserverMutationCannotBreakModelResponseValueAgreement(t *testing.T) {
+	const original = `{"assistant_text":"canonical"}`
+	raw := &mutatingCompletionObserverProvider{
+		Provider:    &recordingCompletionClient{response: completionResponse(original)},
+		replacement: `{"assistant_text":"mutated by inner observer"}`,
+	}
+	client, err := model.NewClient(raw)
+	require.NoError(t, err)
+	client, err = model.WrapClient(client, func(provider model.Provider) model.Provider {
+		return &mutatingCompletionObserverProvider{
+			Provider:    provider,
+			replacement: `{"assistant_text":"mutated by outer observer"}`,
+		}
+	})
+	require.NoError(t, err)
+
+	response, err := Complete(t.Context(), client, &model.Request{}, testCompletionSpec())
+
+	require.NoError(t, err)
+	require.Equal(t, testCompletionResult{AssistantText: "canonical"}, response.Value)
+	require.Equal(t, model.TextPart{Text: original}, response.ModelResponse.Content[0].Parts[0])
+}
+
+func TestCompleteRejectsTypedNilClient(t *testing.T) {
+	var client *forgedCompletionClient
+
+	response, err := Complete(t.Context(), client, &model.Request{}, testCompletionSpec())
+
+	require.Nil(t, response)
+	require.ErrorContains(t, err, "model client is required")
+}
+
+func TestCompleteRejectsCodecFailureWithoutAnotherRequest(t *testing.T) {
 	spec := testCompletionSpec()
 	spec.Codec.FromJSON = func(data []byte) (testCompletionResult, error) {
-		if string(data) == `{"assistant_text":42}` {
-			return testCompletionResult{}, tools.NewValidationError(
-				"assistant_text must be a string",
-				[]*tools.FieldIssue{{
-					Field:            "assistant_text",
-					Constraint:       "invalid_field_type",
-					ExpectedJSONType: "string",
-					ActualJSONType:   "number",
-				}},
-				nil,
-			)
-		}
-		return unmarshalTestCompletionResult(data)
+		return testCompletionResult{}, tools.NewValidationError(
+			"assistant_text must be a string",
+			[]*tools.FieldIssue{{
+				Field:            "assistant_text",
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: "string",
+				ActualJSONType:   "number",
+			}},
+			nil,
+		)
 	}
 	rejectedResponse := completionResponse(`{"assistant_text":42}`)
 	rejectedResponse.Usage = model.TokenUsage{TotalTokens: 10}
-	acceptedResponse := completionResponse(`{"assistant_text":"Created a draft."}`)
-	acceptedResponse.Usage = model.TokenUsage{TotalTokens: 12}
 	client := &recordingCompletionClient{
-		responses: []*model.Response{rejectedResponse, acceptedResponse},
+		responses: []*model.Response{rejectedResponse},
 	}
 	req := &model.Request{Messages: []*model.Message{{
 		Role:  model.ConversationRoleUser,
 		Parts: []model.Part{model.TextPart{Text: "create a task"}},
 	}}}
 
-	response, err := Complete(context.Background(), client, req, spec)
+	response, err := Complete(context.Background(), mustCompletionClient(t, client), req, spec)
 
-	require.NoError(t, err)
-	assert.Equal(t, testCompletionResult{AssistantText: "Created a draft."}, response.Value)
-	assert.Equal(t, []*model.Response{rejectedResponse, acceptedResponse}, response.Attempts)
-	require.Len(t, client.requests, 2)
-	require.Len(t, client.requests[1].Messages, 3)
-	rejected := client.requests[1].Messages[1]
-	assert.Equal(t, model.ConversationRoleAssistant, rejected.Role)
-	assert.Equal(t, `{"assistant_text":42}`, rejected.Parts[0].(model.TextPart).Text)
-	correction := client.requests[1].Messages[2]
-	assert.Equal(t, model.ConversationRoleUser, correction.Role)
-	correctionText := correction.Parts[0].(model.TextPart).Text
-	assert.Contains(t, correctionText, "assistant_text must be a string")
-	assert.Contains(t, correctionText, `"expected_json_type":"string"`)
-	assert.Contains(t, correctionText, `"assistant_text":"Short explanation of the generated draft"`)
-	assert.Contains(
-		t,
-		correctionText,
-		`JSON shape example (replace example values with values that satisfy this request): {"assistant_text":"Created a draft."}`,
-	)
-	assert.Contains(t, correctionText, "Return the complete corrected JSON value.")
+	require.Error(t, err)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.ErrorContains(t, err, "assistant_text must be a string")
+	assert.Nil(t, response)
+	assert.Len(t, client.requests, 1)
 	require.Len(t, req.Messages, 1)
 	assert.Nil(t, req.StructuredOutput)
 }
 
-func TestCompleteStopsAfterOneCorrection(t *testing.T) {
-	client := &recordingCompletionClient{responses: []*model.Response{
-		completionResponse(`{"assistant_text":42}`),
-		completionResponse(`{"assistant_text":42}`),
-	}}
+func TestCompleteValidatesDifferentResponseReturnedByInnerClient(t *testing.T) {
+	client := &validatingCompletionClient{
+		validated: completionResponse(`{"assistant_text":"valid"}`),
+		returned:  completionResponse(`{"assistant_text":42}`),
+	}
 
-	response, err := Complete(context.Background(), client, &model.Request{
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "create a task"}},
-		}},
-	}, testCompletionSpec())
+	response, err := Complete(
+		context.Background(),
+		mustCompletionClient(t, client),
+		&model.Request{},
+		testCompletionSpec(),
+	)
 
-	require.Error(t, err)
-	require.ErrorContains(t, err, `remained invalid after 1 correction`)
-	require.Len(t, response.Attempts, 2)
-	assert.Len(t, client.requests, 2)
+	require.Nil(t, response)
+	require.ErrorContains(t, err, "cannot unmarshal number")
 }
 
-func TestCompleteDoesNotCorrectProviderOrEnvelopeFailures(t *testing.T) {
+func TestCompleteRevalidatesSameResponseAfterInnerClientMutation(t *testing.T) {
+	response := completionResponse(`{"assistant_text":"valid"}`)
+	client := &validatingCompletionClient{
+		validated: response,
+		returned:  response,
+		mutate: func(response *model.Response) {
+			response.Content[0].Parts[0] = model.TextPart{Text: `{"assistant_text":42}`}
+		},
+	}
+
+	result, err := Complete(
+		t.Context(),
+		mustCompletionClient(t, client),
+		&model.Request{},
+		testCompletionSpec(),
+	)
+
+	require.Nil(t, result)
+	require.ErrorContains(t, err, "cannot unmarshal number")
+}
+
+func TestCompleteReturnsProviderAndResponseShapeFailuresAfterOneCall(t *testing.T) {
 	t.Run("provider error", func(t *testing.T) {
 		client := &recordingCompletionClient{err: assert.AnError}
-		_, err := Complete(context.Background(), client, &model.Request{
+		response, err := Complete(context.Background(), mustCompletionClient(t, client), &model.Request{
 			Messages: []*model.Message{{
 				Role:  model.ConversationRoleUser,
 				Parts: []model.Part{model.TextPart{Text: "create a task"}},
 			}},
 		}, testCompletionSpec())
 		require.ErrorIs(t, err, assert.AnError)
+		assert.Nil(t, response)
 		assert.Len(t, client.requests, 1)
 	})
 
@@ -261,15 +410,15 @@ func TestCompleteDoesNotCorrectProviderOrEnvelopeFailures(t *testing.T) {
 			},
 			StopReason: "stop",
 		}}
-		response, err := Complete(context.Background(), client, &model.Request{
+		response, err := Complete(context.Background(), mustCompletionClient(t, client), &model.Request{
 			Messages: []*model.Message{{
 				Role:  model.ConversationRoleUser,
 				Parts: []model.Part{model.TextPart{Text: "create a task"}},
 			}},
 		}, testCompletionSpec())
 		require.Error(t, err)
-		require.ErrorContains(t, err, "expected exactly 1 assistant message")
-		assert.Equal(t, []*model.Response{client.response}, response.Attempts)
+		require.ErrorContains(t, err, "requires exactly one assistant message")
+		assert.Nil(t, response)
 		assert.Len(t, client.requests, 1)
 	})
 }
@@ -277,7 +426,7 @@ func TestCompleteDoesNotCorrectProviderOrEnvelopeFailures(t *testing.T) {
 func TestCompleteRejectsStreamingRequests(t *testing.T) {
 	_, err := Complete(
 		context.Background(),
-		&recordingCompletionClient{},
+		mustCompletionClient(t, &recordingCompletionClient{}),
 		&model.Request{Stream: true},
 		testCompletionSpec(),
 	)
@@ -287,11 +436,11 @@ func TestCompleteRejectsStreamingRequests(t *testing.T) {
 
 func TestCompleteRejectsExampleWithoutSplitSchema(t *testing.T) {
 	spec := testCompletionSpec()
-	spec.Result.SchemaWithoutRootExample = nil
+	spec.SchemaWithoutRootExample = nil
 
 	_, err := Complete(
 		context.Background(),
-		&recordingCompletionClient{},
+		mustCompletionClient(t, &recordingCompletionClient{}),
 		&model.Request{},
 		spec,
 	)
@@ -303,12 +452,12 @@ func TestCompleteRejectsExampleWithoutSplitSchema(t *testing.T) {
 func TestCompleteRejectsToolDefinitions(t *testing.T) {
 	_, err := Complete(
 		context.Background(),
-		&recordingCompletionClient{},
+		mustCompletionClient(t, &recordingCompletionClient{}),
 		&model.Request{
 			Tools: []*model.ToolDefinition{{
 				Name:        "lookup",
 				Description: "Search",
-				Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+				Input:       mustCompletionToolInput(t, rawjson.Message(`{"type":"object"}`)),
 			}},
 		},
 		testCompletionSpec(),
@@ -320,7 +469,7 @@ func TestCompleteRejectsToolDefinitions(t *testing.T) {
 func TestCompleteRejectsToolChoice(t *testing.T) {
 	_, err := Complete(
 		context.Background(),
-		&recordingCompletionClient{},
+		mustCompletionClient(t, &recordingCompletionClient{}),
 		&model.Request{
 			ToolChoice: &model.ToolChoice{Mode: model.ToolChoiceModeNone},
 		},
@@ -340,7 +489,7 @@ func TestStreamSetsStructuredOutputAndEnablesStreaming(t *testing.T) {
 		}},
 	}
 
-	stream, err := Stream(context.Background(), client, req, spec)
+	stream, err := Stream(context.Background(), mustCompletionClient(t, client), req, spec)
 	require.NoError(t, err)
 	require.NotNil(t, stream)
 	require.NotNil(t, client.request)
@@ -350,6 +499,39 @@ func TestStreamSetsStructuredOutputAndEnablesStreaming(t *testing.T) {
 	assert.JSONEq(t, `{"type":"object","required":["assistant_text"]}`, string(client.request.StructuredOutput.Schema))
 	assert.False(t, req.Stream)
 	assert.Nil(t, req.StructuredOutput)
+}
+
+func TestStreamRejectsTypedNilModelStreamer(t *testing.T) {
+	var upstream *scriptedStreamer
+	client := &recordingCompletionClient{streamer: upstream}
+
+	stream, err := Stream(
+		t.Context(),
+		mustCompletionClient(t, client),
+		&model.Request{},
+		testCompletionSpec(),
+	)
+
+	require.Nil(t, stream)
+	require.ErrorContains(t, err, "typed nil")
+}
+
+func TestStreamClosesValidatedModelStreamReturnedWithError(t *testing.T) {
+	callErr := errors.New("model stream failed")
+	closeErr := errors.New("model stream close failed")
+	raw := &scriptedStreamer{closeErr: closeErr}
+	request := &model.Request{}
+	stream, err := Stream(
+		t.Context(),
+		mustCompletionClient(t, streamResultCompletionClient{stream: raw, err: callErr}),
+		request,
+		testCompletionSpec(),
+	)
+
+	require.Nil(t, stream)
+	require.ErrorIs(t, err, callErr)
+	require.ErrorIs(t, err, closeErr)
+	require.True(t, raw.closed)
 }
 
 func TestStreamRejectsInvariantViolations(t *testing.T) {
@@ -374,7 +556,7 @@ func TestStreamRejectsInvariantViolations(t *testing.T) {
 				Tools: []*model.ToolDefinition{{
 					Name:        "lookup",
 					Description: "Search",
-					Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+					Input:       mustCompletionToolInput(t, rawjson.Message(`{"type":"object"}`)),
 				}},
 			},
 			want: "does not allow tool definitions",
@@ -390,7 +572,12 @@ func TestStreamRejectsInvariantViolations(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := Stream(context.Background(), &recordingCompletionClient{}, tc.req, testCompletionSpec())
+			_, err := Stream(
+				context.Background(),
+				mustCompletionClient(t, &recordingCompletionClient{}),
+				tc.req,
+				testCompletionSpec(),
+			)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
 		})
@@ -434,29 +621,32 @@ func TestStreamEnforcesCanonicalCompletionContract(t *testing.T) {
 	}
 	stream, err := Stream(
 		context.Background(),
-		&recordingCompletionClient{streamer: upstream},
+		mustCompletionClient(t, &recordingCompletionClient{streamer: upstream}),
 		&model.Request{},
 		spec,
 	)
 	require.NoError(t, err)
 
+	_, ok := stream.Value()
+	require.False(t, ok)
 	chunk, err := stream.Recv()
 	require.NoError(t, err)
 	require.IsType(t, model.CompletionDeltaChunk{}, chunk)
+	_, ok = stream.Value()
+	require.False(t, ok)
 
 	chunk, err = stream.Recv()
 	require.NoError(t, err)
 	require.IsType(t, model.CompletionChunk{}, chunk)
-
-	chunk, err = stream.Recv()
-	require.NoError(t, err)
-	require.IsType(t, model.StopChunk{}, chunk)
+	value, ok := stream.Value()
+	require.True(t, ok)
+	require.Equal(t, "created a draft", value.AssistantText)
 
 	_, err = stream.Recv()
 	require.ErrorIs(t, err, io.EOF)
 }
 
-func TestStreamComparesCanonicalTypedCompletionValues(t *testing.T) {
+func TestStreamRequiresExactCompletionBytes(t *testing.T) {
 	upstream := &scriptedStreamer{
 		response: &model.Response{
 			Content: []model.Message{{
@@ -476,7 +666,72 @@ func TestStreamComparesCanonicalTypedCompletionValues(t *testing.T) {
 	}
 	stream, err := Stream(
 		context.Background(),
-		&recordingCompletionClient{streamer: upstream},
+		mustCompletionClient(t, &recordingCompletionClient{streamer: upstream}),
+		&model.Request{},
+		testCompletionSpec(),
+	)
+	require.NoError(t, err)
+
+	_, err = stream.Recv()
+	require.ErrorContains(t, err, "stream does not match its complete response")
+}
+
+func TestStreamRejectsMultipleResponseMessages(t *testing.T) {
+	upstream := &scriptedStreamer{
+		response: &model.Response{
+			Content: []model.Message{
+				{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: `{"assistant_text":`}},
+				},
+				{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: `"created a draft"}`}},
+				},
+			},
+			StopReason: "stop",
+		},
+		results: []recvResult{
+			{chunk: model.CompletionChunk{Completion: model.Completion{
+				Name:    "draft_from_transcript",
+				Payload: []byte(`{"assistant_text":"created a draft"}`),
+			}}},
+			{chunk: model.StopChunk{Reason: "stop"}},
+			{err: io.EOF},
+		},
+	}
+	stream, err := Stream(
+		t.Context(),
+		mustCompletionClient(t, &recordingCompletionClient{streamer: upstream}),
+		&model.Request{},
+		testCompletionSpec(),
+	)
+	require.NoError(t, err)
+
+	_, err = stream.Recv()
+
+	require.ErrorContains(t, err, "expected exactly 1 assistant message, got 2")
+	_, ok := stream.Value()
+	require.False(t, ok)
+}
+
+func TestStreamOwnsFinalPayloadBeforeDraining(t *testing.T) {
+	payload := []byte(`{"assistant_text":"created a draft"}`)
+	upstream := &reusingCompletionStreamer{
+		payload: payload,
+		response: &model.Response{
+			Content: []model.Message{{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{
+					model.TextPart{Text: `{"assistant_text":"created a draft"}`},
+				},
+			}},
+			StopReason: "stop",
+		},
+	}
+	stream, err := Stream(
+		t.Context(),
+		mustCompletionClient(t, &recordingCompletionClient{streamer: upstream}),
 		&model.Request{},
 		testCompletionSpec(),
 	)
@@ -484,41 +739,159 @@ func TestStreamComparesCanonicalTypedCompletionValues(t *testing.T) {
 
 	_, err = stream.Recv()
 	require.NoError(t, err)
-	_, err = stream.Recv()
+	value, ok := stream.Value()
+
+	require.True(t, ok)
+	require.Equal(t, "created a draft", value.AssistantText)
+	require.Equal(t, byte('X'), payload[19])
+}
+
+func TestStreamLatchesFirstTerminalError(t *testing.T) {
+	upstream := &scriptedStreamer{
+		results: []recvResult{
+			{chunk: model.TextChunk{Message: model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "not a completion"}},
+			}}},
+			{chunk: model.CompletionChunk{Completion: model.Completion{
+				Name:    "draft_from_transcript",
+				Payload: []byte(`{"assistant_text":"created a draft"}`),
+			}}},
+		},
+	}
+	stream, err := Stream(
+		t.Context(),
+		mustCompletionClient(t, &recordingCompletionClient{streamer: upstream}),
+		&model.Request{},
+		testCompletionSpec(),
+	)
 	require.NoError(t, err)
-	_, err = stream.Recv()
-	require.ErrorIs(t, err, io.EOF)
+
+	_, firstErr := stream.Recv()
+	_, secondErr := stream.Recv()
+
+	require.Error(t, firstErr)
+	require.Equal(t, firstErr, secondErr)
+	require.Equal(t, 1, upstream.index)
+	_, ok := stream.Value()
+	require.False(t, ok)
+}
+
+func TestStreamReconcilesCompleteProviderOutput(t *testing.T) {
+	tests := []struct {
+		name           string
+		streamThinking model.ThinkingPart
+		responseThink  model.ThinkingPart
+		streamUsage    model.TokenUsage
+		responseUsage  model.TokenUsage
+		streamStop     string
+		responseStop   string
+		want           string
+	}{
+		{
+			name:           "thinking",
+			streamThinking: model.ThinkingPart{Text: "streamed", Final: true},
+			responseThink:  model.ThinkingPart{Text: "complete", Final: true},
+			streamStop:     "stop",
+			responseStop:   "stop",
+			want:           "streamed thinking does not match canonical response",
+		},
+		{
+			name:           "usage",
+			streamThinking: model.ThinkingPart{Text: "same", Final: true},
+			responseThink:  model.ThinkingPart{Text: "same", Final: true},
+			streamUsage:    model.TokenUsage{TotalTokens: 1},
+			responseUsage:  model.TokenUsage{TotalTokens: 2},
+			streamStop:     "stop",
+			responseStop:   "stop",
+			want:           "stream usage deltas do not match canonical response usage",
+		},
+		{
+			name:           "stop reason",
+			streamThinking: model.ThinkingPart{Text: "same", Final: true},
+			responseThink:  model.ThinkingPart{Text: "same", Final: true},
+			streamStop:     "length",
+			responseStop:   "stop",
+			want:           `stream stop reason "length" does not match canonical response "stop"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			results := []recvResult{
+				{chunk: model.ThinkingChunk{Message: model.Message{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{test.streamThinking},
+				}}},
+				{chunk: model.CompletionChunk{Completion: model.Completion{
+					Name:    "draft_from_transcript",
+					Payload: []byte(`{"assistant_text":"created a draft"}`),
+				}}},
+			}
+			if test.streamUsage != (model.TokenUsage{}) {
+				results = append(results, recvResult{chunk: model.UsageChunk{Usage: test.streamUsage}})
+			}
+			results = append(
+				results,
+				recvResult{chunk: model.StopChunk{Reason: test.streamStop}},
+				recvResult{err: io.EOF},
+			)
+			stream, err := Stream(
+				context.Background(),
+				mustCompletionClient(t, &recordingCompletionClient{streamer: &scriptedStreamer{
+					response: &model.Response{
+						Content: []model.Message{{
+							Role: model.ConversationRoleAssistant,
+							Parts: []model.Part{
+								test.responseThink,
+								model.TextPart{Text: `{"assistant_text":"created a draft"}`},
+							},
+						}},
+						StopReason: test.responseStop,
+						Usage:      test.responseUsage,
+					},
+					results: results,
+				}}),
+				&model.Request{},
+				testCompletionSpec(),
+			)
+			require.NoError(t, err)
+
+			_, err = stream.Recv()
+			require.NoError(t, err)
+			_, err = stream.Recv()
+			require.ErrorContains(t, err, test.want)
+			_, ok := stream.Value()
+			require.False(t, ok)
+		})
+	}
 }
 
 func TestStreamRejectsChunkAfterStop(t *testing.T) {
 	stream, err := Stream(
 		context.Background(),
-		&recordingCompletionClient{streamer: &scriptedStreamer{results: []recvResult{
+		mustCompletionClient(t, &recordingCompletionClient{streamer: &scriptedStreamer{results: []recvResult{
 			{chunk: model.CompletionChunk{Completion: model.Completion{
 				Name:    "draft_from_transcript",
 				Payload: []byte(`{"assistant_text":"created a draft"}`),
 			}}},
 			{chunk: model.StopChunk{Reason: "stop"}},
 			{chunk: model.UsageChunk{Usage: model.TokenUsage{TotalTokens: 1}}},
-		}}},
+		}}}),
 		&model.Request{},
 		testCompletionSpec(),
 	)
 	require.NoError(t, err)
-	_, err = stream.Recv()
-	require.NoError(t, err)
-	_, err = stream.Recv()
-	require.NoError(t, err)
-	_, err = stream.Recv()
+	chunk, err := stream.Recv()
+	require.Nil(t, chunk)
 	require.ErrorContains(t, err, `emitted "usage" after stop`)
 }
 
 func TestStreamRejectsEOFBeforeFinalCompletion(t *testing.T) {
 	stream, err := Stream(
 		context.Background(),
-		&recordingCompletionClient{
+		mustCompletionClient(t, &recordingCompletionClient{
 			streamer: &scriptedStreamer{results: []recvResult{{err: io.EOF}}},
-		},
+		}),
 		&model.Request{},
 		testCompletionSpec(),
 	)
@@ -526,13 +899,13 @@ func TestStreamRejectsEOFBeforeFinalCompletion(t *testing.T) {
 
 	_, err = stream.Recv()
 	require.Error(t, err)
-	require.ErrorContains(t, err, "ended without canonical completion chunk")
+	require.ErrorContains(t, err, "ended without a completion")
 }
 
 func TestStreamRejectsFinalCompletionWithoutMatchingCanonicalResponse(t *testing.T) {
 	stream, err := Stream(
 		context.Background(),
-		&recordingCompletionClient{
+		mustCompletionClient(t, &recordingCompletionClient{
 			streamer: &scriptedStreamer{results: []recvResult{
 				{chunk: model.CompletionChunk{Completion: model.Completion{
 					Name:    "draft_from_transcript",
@@ -541,27 +914,24 @@ func TestStreamRejectsFinalCompletionWithoutMatchingCanonicalResponse(t *testing
 				{chunk: model.StopChunk{Reason: "stop"}},
 				{err: io.EOF},
 			}},
-		},
+		}),
 		&model.Request{},
 		testCompletionSpec(),
 	)
 	require.NoError(t, err)
-	_, err = stream.Recv()
-	require.NoError(t, err)
-	_, err = stream.Recv()
-	require.NoError(t, err)
-	_, err = stream.Recv()
+	chunk, err := stream.Recv()
+	require.Nil(t, chunk)
 	require.ErrorContains(t, err, "invalid canonical response")
 }
 
 func TestStreamRejectsStopBeforeFinalCompletion(t *testing.T) {
 	stream, err := Stream(
 		context.Background(),
-		&recordingCompletionClient{
+		mustCompletionClient(t, &recordingCompletionClient{
 			streamer: &scriptedStreamer{
 				results: []recvResult{{chunk: model.StopChunk{Reason: "stop"}}},
 			},
-		},
+		}),
 		&model.Request{},
 		testCompletionSpec(),
 	)
@@ -569,13 +939,13 @@ func TestStreamRejectsStopBeforeFinalCompletion(t *testing.T) {
 
 	_, err = stream.Recv()
 	require.Error(t, err)
-	require.ErrorContains(t, err, "stopped before canonical completion chunk")
+	require.ErrorContains(t, err, "stopped before a completion")
 }
 
 func TestStreamRejectsUnexpectedTextChunk(t *testing.T) {
 	stream, err := Stream(
 		context.Background(),
-		&recordingCompletionClient{
+		mustCompletionClient(t, &recordingCompletionClient{
 			streamer: &scriptedStreamer{
 				results: []recvResult{{
 					chunk: model.TextChunk{
@@ -586,7 +956,7 @@ func TestStreamRejectsUnexpectedTextChunk(t *testing.T) {
 					},
 				}},
 			},
-		},
+		}),
 		&model.Request{},
 		testCompletionSpec(),
 	)
@@ -594,14 +964,13 @@ func TestStreamRejectsUnexpectedTextChunk(t *testing.T) {
 
 	_, err = stream.Recv()
 	require.Error(t, err)
-	require.ErrorContains(t, err, `unexpected "text" chunk`)
+	require.ErrorContains(t, err, "structured output stream emitted text")
 }
 
 func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
 	cases := []struct {
 		name    string
 		results []recvResult
-		advance int
 		want    string
 	}{
 		{
@@ -621,7 +990,7 @@ func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
 					},
 				},
 			}},
-			want: `completion delta for "other"`,
+			want: `completion delta "other" does not match requested completion`,
 		},
 		{
 			name: "missing completion fields",
@@ -640,7 +1009,7 @@ func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
 					},
 				},
 			}},
-			want: `completion for "other"`,
+			want: `stream completion "other" does not match requested completion`,
 		},
 		{
 			name: "duplicate canonical completion",
@@ -662,8 +1031,7 @@ func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
 					},
 				},
 			},
-			advance: 1,
-			want:    "multiple canonical completion chunks",
+			want: "multiple final completions",
 		},
 		{
 			name: "completion delta after final completion",
@@ -685,8 +1053,7 @@ func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
 					},
 				},
 			},
-			advance: 1,
-			want:    "completion delta after final completion",
+			want: "completion delta after final completion",
 		},
 	}
 
@@ -694,18 +1061,13 @@ func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stream, err := Stream(
 				context.Background(),
-				&recordingCompletionClient{
+				mustCompletionClient(t, &recordingCompletionClient{
 					streamer: &scriptedStreamer{results: tc.results},
-				},
+				}),
 				&model.Request{},
 				testCompletionSpec(),
 			)
 			require.NoError(t, err)
-			for i := 0; i < tc.advance; i++ {
-				_, err = stream.Recv()
-				require.NoError(t, err)
-			}
-
 			_, err = stream.Recv()
 			require.Error(t, err)
 			require.ErrorContains(t, err, tc.want)
@@ -713,8 +1075,8 @@ func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
 	}
 }
 
-func TestDecodeResponseRejectsToolCalls(t *testing.T) {
-	_, err := DecodeResponse(&model.Response{
+func TestCompleteRejectsToolCalls(t *testing.T) {
+	_, err := Complete(t.Context(), mustCompletionClient(t, &recordingCompletionClient{response: &model.Response{
 		Content: []model.Message{{
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{model.ToolUsePart{
@@ -724,13 +1086,13 @@ func TestDecodeResponseRejectsToolCalls(t *testing.T) {
 			}},
 		}},
 		StopReason: "tool_use",
-	}, testCompletionSpec())
+	}}), &model.Request{}, testCompletionSpec())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "returned tool calls")
 }
 
-func TestDecodeResponseRejectsMultipleAssistantMessages(t *testing.T) {
-	_, err := DecodeResponse(&model.Response{
+func TestCompleteRejectsMultipleAssistantMessages(t *testing.T) {
+	_, err := Complete(t.Context(), mustCompletionClient(t, &recordingCompletionClient{response: &model.Response{
 		Content: []model.Message{
 			{
 				Role:  model.ConversationRoleAssistant,
@@ -742,13 +1104,13 @@ func TestDecodeResponseRejectsMultipleAssistantMessages(t *testing.T) {
 			},
 		},
 		StopReason: "stop",
-	}, testCompletionSpec())
+	}}), &model.Request{}, testCompletionSpec())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expected exactly 1 assistant message")
+	assert.Contains(t, err.Error(), "requires exactly one assistant message")
 }
 
-func TestDecodeResponseConcatenatesChunkedTextParts(t *testing.T) {
-	value, err := DecodeResponse(&model.Response{
+func TestCompleteConcatenatesChunkedTextParts(t *testing.T) {
+	response, err := Complete(t.Context(), mustCompletionClient(t, &recordingCompletionClient{response: &model.Response{
 		Content: []model.Message{{
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{
@@ -757,13 +1119,13 @@ func TestDecodeResponseConcatenatesChunkedTextParts(t *testing.T) {
 			},
 		}},
 		StopReason: "stop",
-	}, testCompletionSpec())
+	}}), &model.Request{}, testCompletionSpec())
 	require.NoError(t, err)
-	assert.Equal(t, testCompletionResult{AssistantText: "joined"}, value)
+	assert.Equal(t, testCompletionResult{AssistantText: "joined"}, response.Value)
 }
 
-func TestDecodeResponseRejectsTwoCompleteJSONValues(t *testing.T) {
-	_, err := DecodeResponse(&model.Response{
+func TestCompleteRejectsTwoJSONValues(t *testing.T) {
+	_, err := Complete(t.Context(), mustCompletionClient(t, &recordingCompletionClient{response: &model.Response{
 		Content: []model.Message{{
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{
@@ -772,49 +1134,6 @@ func TestDecodeResponseRejectsTwoCompleteJSONValues(t *testing.T) {
 			},
 		}},
 		StopReason: "stop",
-	}, testCompletionSpec())
+	}}), &model.Request{}, testCompletionSpec())
 	require.Error(t, err)
-}
-
-func TestDecodeChunkIgnoresPreviewChunks(t *testing.T) {
-	value, ok, err := DecodeChunk(model.CompletionDeltaChunk{
-		Delta: model.CompletionDelta{
-			Name:  "draft_from_transcript",
-			Delta: `{"assistant_text":"draft`,
-		},
-	}, testCompletionSpec())
-	require.NoError(t, err)
-	assert.False(t, ok)
-	assert.Equal(t, testCompletionResult{}, value)
-}
-
-func TestDecodeChunkDecodesFinalCompletion(t *testing.T) {
-	value, ok, err := DecodeChunk(model.CompletionChunk{
-		Completion: model.Completion{
-			Name:    "draft_from_transcript",
-			Payload: []byte(`{"assistant_text":"created a draft"}`),
-		},
-	}, testCompletionSpec())
-	require.NoError(t, err)
-	assert.True(t, ok)
-	assert.Equal(t, testCompletionResult{AssistantText: "created a draft"}, value)
-}
-
-func TestDecodeChunkRejectsMalformedCompletionChunk(t *testing.T) {
-	_, ok, err := DecodeChunk(model.CompletionChunk{}, testCompletionSpec())
-	require.Error(t, err)
-	assert.False(t, ok)
-	assert.Contains(t, err.Error(), "does not match spec")
-}
-
-func TestDecodeChunkRejectsWrongCompletionName(t *testing.T) {
-	_, ok, err := DecodeChunk(model.CompletionChunk{
-		Completion: model.Completion{
-			Name:    "other",
-			Payload: []byte(`{"assistant_text":"created a draft"}`),
-		},
-	}, testCompletionSpec())
-	require.Error(t, err)
-	assert.False(t, ok)
-	assert.Contains(t, err.Error(), "does not match spec")
 }

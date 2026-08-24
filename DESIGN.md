@@ -93,17 +93,19 @@ start with a letter or digit.
 
 This generates a service-owned completions package with:
 
-- the completion result schema
-- the canonical authored root example, when the return type declares one
-- generated result codecs and validation helpers
-- typed `completion.Spec` values
-- unary helpers that request provider-enforced structured output and decode the
-  assistant response through the generated codec
-- streaming helpers that may surface preview `completion_delta` fragments and
-  always expose one canonical final `completion` payload
+- private completion specs containing the result schema and generated codec
+- narrow `<Name>Example()` accessors that return an immutable copy of the
+  canonical authored root example, when the return type declares one
+- public `Complete<Name>` wrappers that own provider-enforced structured output
+  and decode the assistant response through the private generated codec
+- public `StreamComplete<Name>` wrappers that may surface preview
+  `completion_delta` fragments and
+  expose the final `completion` value only after the provider ends a valid
+  stream and its complete response contains the same value
 
-Streaming completions stay on the raw `model.Streamer` surface, and generated
-`Decode<Name>Chunk(...)` helpers decode only the final canonical payload.
+Streaming completions use a typed `completion.Streamer[T]`. It may expose
+preview chunks, but its typed `Value` stays unavailable until the complete
+provider stream and final response pass validation.
 Providers that do not implement structured output fail explicitly with
 `model.ErrStructuredOutputUnsupported`.
 Generated schemas stay provider-neutral. Provider adapters may normalize that
@@ -111,20 +113,40 @@ canonical schema to a provider-specific subset for constrained decoding, but
 they must fail explicitly instead of redefining the service contract.
 Adapters with provider-native structured-output examples receive the generated
 root example separately from the schema. Unary helpers ask the model once for a
-corrected value when the generated codec rejects its JSON, supplying the exact
-codec error, structured field issues, field descriptions, and authored example
-that code generation already owns. `completion.Response.Attempts` retains both
-model responses and their per-invocation token usage. A second invalid response
-is terminal.
-Streaming helpers do not correct invalid output because callers may already have
-observed preview chunks. Provider adapters may suppress previews when their wire
-representation contains private framing that is absent from the completion
-contract.
+structured value. If the generated codec rejects the response, the helper
+returns a non-retryable `planner.OutputContractError` and does not ask the model
+again. `completion.Response.ModelResponse` contains that exact model response
+and its token usage. Streaming helpers follow the same one-request rule. Provider
+adapters may suppress previews when their wire representation contains private
+framing that is absent from the completion contract.
 
 The design intentionally keeps completions separate from toolsets: toolsets model
 callable capabilities, while completions model final assistant answers. Both reuse
 the same Goa types, validations, and codegen pipeline so there is one contract
 surface for structured model I/O.
+
+Every model request crosses one allocation preflight before the client copies
+messages, media, tool contracts, or structured-output schemas or calls an
+observer or provider. The complete request shares one 16 MiB byte budget and
+one 100,000-value visit budget.
+
+All provider output crosses one allocation preflight before copying,
+fingerprinting, or decoding. A unary response has one 16 MiB byte budget and
+one 100,000-value visit budget; nested dynamic metadata and tool-result values
+have a maximum depth of 64. A stream shares those bounds across all chunks and
+its terminal response, which is also bounded independently. Before copying the
+terminal response, the boundary exempts only fields that exactly repeat
+accepted chunks; response wrappers, metadata, and new or mismatched data
+consume the remaining shared budget. Every collection length is checked before
+allocating its copy or its sorted map-key list.
+
+Canonical dynamic values are JSON-shaped: nil, booleans, finite numbers, valid
+UTF-8 strings, byte slices, arrays, slices, and valid UTF-8 string-keyed maps.
+Structs are not canonical; bounded structs may survive only in rejected-output
+evidence. Pointers are unsupported in canonical data and rejected evidence.
+The boundary rejects invalid UTF-8, cycles, unknown typed parts, typed-nil
+streamers, and over-budget output without fallback, truncation, coercion,
+repair, or omission.
 
 ## Generated Evaluations
 
@@ -192,6 +214,21 @@ survives activity retries and execution on another worker. Planners remain
 responsible for enforcing synthesis-only output because provider APIs may need
 the tool catalog to interpret the preceding tool results.
 
+Planner requests contain domain intent: a tool name and typed payload. A request
+forwarded from a model response also carries that provider's correlation ID;
+planner-authored requests do not invent one. The runtime assigns every accepted
+request a deterministic execution ID from the run, turn, attempt, tool, and
+batch position. It rejects a provider ID that does not belong to the selected
+model response. When planner code compiles model output into different
+executable intent, the runtime retains the original model name and payload
+separately for the transcript.
+
+When a completed model reply or planner result breaks its required shape, the
+planner returns `OutputContractError`. The runtime validates the full result
+before publishing any selected model text or tool call, and Temporal records
+the failure as non-retryable even when it crosses an activity or child-workflow
+boundary. The parent does not ask the model to repair that reply.
+
 The runtime keeps execution policy and planner intent separate:
 
 | Completed step | Next state |
@@ -228,10 +265,9 @@ advertised capability, await input, or answer. Provider adapters continue to
 project historical canonical tool names independently of the current catalog.
 `replan` removes the failed tool from the recovery turn while permitting another
 advertised action, input request, or answer. A direct model call to an excluded
-tool becomes the runtime-owned `runtime.tool_unavailable` typed failure; the
-runtime preserves the original call identity and payload and continues valid
-sibling calls. Planner-owned tool-backed awaits remain strict because they
-encode suspension rather than a raw model request. `finish` forbids more domain
+tool is rejected as invalid planner output before any sibling call executes.
+Planner-owned tool-backed awaits remain strict because they encode suspension
+rather than a raw model request. `finish` forbids more domain
 work and enters finalization. The finalizer may return a final response or
 registered terminal bookkeeping calls, such as committing a Task report. When
 the same tool has both correction and replan failures in one batch, the
@@ -286,12 +322,10 @@ checkpoint restores the transcript, planner state, labels, policy,
 nested-agent identity, and exact tool-call/result provenance. Required tool
 names are recorded, and
 `Runtime.ValidateContinuation` rejects a checkpoint when the new worker does
-not register one of them. It also rejects every checkpoint version other than
-the worker's current version; deployments must complete or discard older
-suspensions before upgrading. Restoration passes every concrete saved payload
-and result through the current generated codec. Compatible tool evolution can
-therefore continue across releases, while a value the new contract cannot
-decode fails at that typed boundary. A tool call created in an earlier workflow
+not register one of them. Restoration passes every concrete saved payload and
+result through the current generated codec. A value the current contract cannot
+decode fails at that typed boundary; the runtime does not preserve continuation
+compatibility across releases. A tool call created in an earlier workflow
 retains that workflow's run ID while its result records the new workflow's run
 ID. The tool-result hook and `tool_end` stream payload carry the original call
 run ID explicitly; the result event's own run ID identifies the workflow that
@@ -303,29 +337,27 @@ requests because they have no continuation API.
 #### Deployment ownership
 
 Goa-AI owns workflow replay, suspension persistence, continuation validation,
-and exact call/result provenance. The consuming application owns Temporal
-worker versions and release routing. Production consumers must give every
-worker release an immutable build ID, use pinned Worker Deployment Versioning,
-make a release current only after its workers are ready, and retain each old
-version until Temporal reports it drained. Temporal then routes an existing
-workflow to the code that started it; it does not transfer that workflow to the
-new release.
+and exact call/result provenance. The consuming application owns release
+routing for the runtime workers, generated packages, and callers that use those
+contracts. They form one release unit: consumers regenerate every package from
+the same Goa-AI revision and deploy the complete generated system together.
+Goa-AI does not provide backward compatibility, mixed-version operation, or a
+persisted-suspension migration mode. Workflows and suspensions created by the
+previous release may fail after deployment. Historical completed-session
+records remain owned by the session store and are not rewritten for a runtime
+contract release.
 
-A continuation deliberately starts a new workflow and may use the current
-worker version. `ValidateContinuation` protects the Goa-AI boundary by checking
-the checkpoint and registered tool contracts, but it cannot make an
-incompatible persisted value compatible. Consumers must preserve compatible
-checkpoint codecs and required tools across the release or migrate saved
-checkpoints before promotion.
+`ValidateContinuation` checks the checkpoint and registered tool contracts; it
+does not make an incompatible persisted value compatible. Suspension schema
+`goa-ai.run-suspension.v3` is the only supported shape. Older checkpoints fail
+validation rather than being inferred or migrated by the runtime.
 
-Worker versioning does not own ordinary service availability. If one process
-serves an API and polls Temporal, external traffic must select only the current
-ready version while retained pods continue polling their pinned work. Services
-called by activities must keep a ready, API-compatible endpoint throughout
-their own rollout. These responsibilities stay outside Goa-AI because the
+Coordinated generated-code deployment does not own ordinary service
+availability. Services called by activities must keep a ready endpoint
+throughout their own rollout. These responsibilities stay outside Goa-AI because the
 consumer owns its process layout, traffic router, persistence, and downstream
 services. The operational checklist is in
-[docs/runtime.md](docs/runtime.md#transparent-temporal-rollouts).
+[docs/runtime.md](docs/runtime.md#coordinated-generated-system-releases).
 
 `DeleteSession` ends execution but intentionally retains run metadata.
 Applications that permanently delete customer data call `PurgeSession` after
@@ -629,33 +661,82 @@ redeploys.
   reconstruct the exact message order generically. Canonical tool-call IDs
   remain opaque and unchanged; adapters whose wire protocol restricts ID syntax
   assign request-local aliases and use the same alias for each matching tool
-  result. For planner calls without provider IDs, the runtime derives the
-  canonical ID from the run, turn, attempt, tool, and batch index. It preserves
-  the readable form when it fits registry metadata and uses a domain-separated
-  SHA-256 form only when that same identity exceeds the 256-byte contract.
-  Both forms are deterministic across workflow replay.
+  result. Provider calls must contain an ID. Planner requests preserve that ID
+  when they forward a provider call and leave it empty when the planner authored
+  the request. The runtime assigns every accepted request its deterministic
+  execution ID from the run, turn, attempt, tool, and batch index.
+- **Rejected model evidence**: The model boundary hashes a versioned,
+  deterministic encoding of complete responses before copying or validating
+  them. The encoding includes malformed raw tool bytes without requiring valid
+  JSON. The activity result and durable rejection event carry the
+  complete-response presence, SHA-256 digest, byte count, and encoding version
+  when a digest exists.
+  Each version explicitly orders response fields, message-part variants, and
+  metadata struct fields rather than depending on Go declaration order. Struct
+  field tags and anonymous-field status are part of the encoding.
+  Canonical metadata and tool-result values may contain nil, booleans, finite
+  numbers, strings, string-keyed maps, slices, and arrays. Fingerprinting and
+  rejected-response evidence copying also encode structs with exported fields
+  so an invalid provider response still has a stable identity. Canonical copying
+  rejects structs, pointers, functions, channels, unsafe pointers, complex
+  numbers, uintptr values, reference cycles, more than 64 nesting levels, or
+  more than 100,000 visited values in one metadata object or tool-result value.
+  Strings, byte slices, and map keys in one such value may total at most 16 MiB.
+  Fingerprints are captured before ownership cloning so invalid metadata or
+  parts cannot be mistaken for no response. If
+  concurrent calls reject output, the envelope uses the earliest-started
+  rejected invocation's reason and complete-response evidence. The
+  event also fingerprints the local validation error instead of retaining
+  provider-controlled text. Model content remains observability data rather
+  than workflow state, so diagnostic storage cannot retry inference and
+  Temporal and hook payloads remain bounded. A planner result rejected after
+  model output was accepted emits `PlannerOutputRejected` instead, with only
+  the bounded local reason identity.
+- **Generated tool validation**: A model definition created from a generated
+  tool specification retains its generated payload decoder inside the process.
+  Unary tool calls and final streamed tool-call chunks must match a definition
+  in the exact model request. Generated payloads are decoded before planner code
+  can observe them, so an invalid first response cannot lead to another model
+  call. The activity validates the selected planner request again before
+  scheduling effects.
 - **Planner-transparent provenance**: Each model call produces an isolated
   canonical response and ordered presentation before planner code observes
-  completion. Streams expose only closed typed chunks and carry the canonical
-  response separately through gateways. The runtime identifies tool turns from
-  unchanged model-facing calls and terminal turns from the canonical provider
-  message returned by its response helpers. It publishes only the selected
-  response's text, thinking, and tool-argument deltas, while usage accounts for
-  every invocation. It commits the complete selected response once after atomic
-  admission and before effects. Planners never manage transcript handles or
-  provider replay metadata, and uncertain ownership fails instead of selecting
-  by call order or visible text.
+  completion. One opaque validated-stream value owns validated chunks, the
+  validated response, and event scoping. It is
+  bound to the immutable output-validation contract copied when validation
+  begins and cannot be reused under different model identity, structured
+  output, tool, or generated-validator checks. Message and sampling changes do
+  not alter that contract. One receive operation includes provider access,
+  validation, and every observer callback; close waits for that complete
+  sequence and returns one stable result to every caller. Observer callbacks
+  may inspect the current response but must not call receive or close on the
+  same stream. The validated stream never exposes the provider stream. Each framework-owned
+  message carries a private
+  in-memory origin copied with it, so two messages with identical content remain
+  distinct without comparing visible text or metadata. The runtime identifies
+  tool turns from unchanged model-facing calls and terminal turns from the
+  canonical provider message returned by its response helpers. It publishes
+  only the selected response's text, thinking, and tool-argument deltas, while
+  usage accounts for every invocation, including valid numeric counts from a
+  rejected usage chunk. It commits the complete selected response once after
+  atomic admission and before effects. Planners never manage transcript handles
+  or provider replay metadata, and uncertain ownership fails instead of
+  selecting by call order or visible text.
 - **History compression**: Agent designs may declare compression defaults with
   `CompressAtTurns`, `CompressAtMaxInputTokens`, `KeepMaxTurns`, and
   `KeepMaxInputTokens`. The runtime evaluates token budgets with the configured
   model client's exact `model.TokenCounter`, so tokenization stays
   deployment/model-specific while the design records the agent's default policy.
-  The Anthropic adapter implements this capability through the Messages token
-  count API using the same message, tool, and cache encoding as completion, so
-  direct Anthropic and compatible gateways such as Bedrock Mantle can provide
-  exact counts without a second transcript conversion. Counting consumes the
-  canonical encoding only — completion policy such as the max_tokens
-  requirement never applies, because the count API carries no max_tokens.
+  Each history-policy count includes its preserved system messages, candidate
+  complete turns, and advertised tools. Thinking and structured output remain
+  planner decisions made after the history policy runs, so they are not part of
+  this threshold. The selected adapter counts this exact history shape using
+  its provider tokenizer. A gateway
+  preserves exact counting only when its transport supplies the separate
+  count operation through `NewCountingRemoteClient`; otherwise counting
+  returns `model.ErrTokenCountingUnsupported`.
+  Bedrock returns that error for Runtime models such as Claude Opus 4.7,
+  Sonnet 5, and Mythos 5 that require AWS's separate Mantle count endpoint.
   When encoded tools carry authored `input_examples`, completion, streaming,
   and counting all attach the same Anthropic tool-examples beta header.
   Exact retention always keeps whole recent turns; it never truncates
@@ -677,11 +758,10 @@ redeploys.
   hard-deadline window, and closes the run only if every terminal side effect
   succeeds. Recovery call IDs extend the planner activity payload and select the
   canonical failed outputs that shape both reminders and the advertised catalog.
-  Empty recovery IDs are omitted for compatibility. Temporal deployments use
-  Worker Deployment Versioning so an active workflow stays on its compatible
-  worker until it completes or suspends. A continuation is a new workflow and
-  may start on the current deployment after `ValidateContinuation` accepts the
-  saved checkpoint and tool schemas.
+  Empty recovery IDs are omitted from ordinary activity payloads. Runtime
+  workers, generated packages, and callers deploy as one coordinated hard
+  cutover. Mixed versions are unsupported; ongoing workflows and saved
+  suspensions may fail after the cutover.
   Current run policy still applies while the fixed terminal call is prepared.
   For example, `WithRestrictToTool` can reject that call because the
   restriction applies to every tool in the run.
@@ -880,6 +960,11 @@ side effect:
   deadline.
 - Once sealing returns `nil`, the runtime may safely start serving traffic
   because its workers are actively polling.
+- Temporal engines always construct their client from `ClientOptions` and
+  install the Goa-AI data converter. No supported constructor can bypass exact
+  number decoding, unknown-field rejection, unsafe-value checks, or the total
+  1 MiB limit for one workflow or activity call. Tool executors persist larger
+  domain results first and return their durable reference.
 - Post-start fatal worker failures surface through the configured
   `worker.Options.OnFatalError` callback instead of being silently ignored.
   Integrating services should treat that callback as process-fatal and exit.

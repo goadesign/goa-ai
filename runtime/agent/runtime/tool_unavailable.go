@@ -2,10 +2,9 @@ package runtime
 
 // tool_unavailable.go defines the runtime-owned "tool unavailable" tool.
 //
-// This tool is the canonical representation of "the model requested a tool that
-// is not available for this run". We keep the transcript/tool handshake
-// structurally valid by rewriting unknown or policy-denied tool calls to this
-// tool and embedding the originally requested name + payload inside its input.
+// This tool records a request for a registered tool that a runtime policy
+// rejected after the planner returned it. Unknown names and tools excluded from
+// the planner's visible list are rejected as planner output errors.
 
 import (
 	"bytes"
@@ -14,7 +13,6 @@ import (
 	"fmt"
 	"text/template"
 
-	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -26,6 +24,7 @@ const (
 )
 
 var (
+	toolUnavailableSchema   = tools.RawJSON(`{"type":"object","properties":{"requested_tool":{"type":"string","minLength":1,"description":"The tool name originally requested by the model."},"requested_payload":{"description":"The original JSON payload for the policy-rejected tool."}},"required":["requested_tool"],"additionalProperties":false}`)
 	toolUnavailableCallHint = template.Must(
 		template.New(tools.ToolUnavailable.String()).
 			Option("missingkey=error").
@@ -38,7 +37,7 @@ var (
 		Description: "Runtime-owned tool that represents unavailable tool calls.",
 		Payload: tools.TypeSpec{
 			Name:        "ToolUnavailablePayload",
-			Schema:      mustMarshalToolUnavailableSchema(),
+			Schema:      toolUnavailableSchema,
 			ExampleJSON: tools.RawJSON(`{"requested_tool":"svc_read_count_events","requested_payload":{"from":"2026-02-06T00:00:00Z"}}`),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: marshalToolUnavailablePayload,
@@ -60,14 +59,6 @@ type toolUnavailablePayload struct {
 	RequestedPayload rawjson.Message `json:"requested_payload,omitempty"`
 }
 
-func toolUnavailableToolDefinition() *model.ToolDefinition {
-	return &model.ToolDefinition{
-		Name:        tools.ToolUnavailable.String(),
-		Description: "Internal. Used when the model requests a tool that is not available for this run. Always tells the model to choose from the advertised tool list.",
-		Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object","properties":{"requested_tool":{"type":"string","minLength":1,"description":"The provider-visible tool name originally requested by the model."},"requested_payload":{"description":"The original JSON payload that the model provided for the unknown tool."}},"required":["requested_tool"],"additionalProperties":false}`)),
-	}
-}
-
 func toolUnavailableToolsetRegistration() ToolsetRegistration {
 	return ToolsetRegistration{
 		Name:             toolUnavailableToolsetName,
@@ -82,11 +73,7 @@ func toolUnavailableToolsetRegistration() ToolsetRegistration {
 	}
 }
 
-func mustMarshalToolUnavailableSchema() tools.RawJSON {
-	return toolUnavailableToolDefinition().Input.JSONSchema()
-}
-
-func executeToolUnavailable(ctx context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error) {
+func executeToolUnavailable(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 	decoded, err := unmarshalToolUnavailablePayload(call.Payload)
 	if err != nil {
 		return Executed(&planner.ToolResult{
@@ -121,8 +108,8 @@ func marshalToolUnavailablePayload(value any) ([]byte, error) {
 	return json.Marshal(payload)
 }
 
-// unmarshalToolUnavailablePayload enforces the closed runtime-owned schema for
-// direct model calls to the internal unavailable-tool marker.
+// unmarshalToolUnavailablePayload checks the runtime-created unavailable-tool
+// payload before execution.
 func unmarshalToolUnavailablePayload(data []byte) (*toolUnavailablePayload, error) {
 	var wire struct {
 		RequestedTool    *string         `json:"requested_tool"`
@@ -154,10 +141,9 @@ func unmarshalToolUnavailablePayload(data []byte) (*toolUnavailablePayload, erro
 	}, nil
 }
 
-// rewriteToolCallUnavailable rewrites one tool call to the runtime-owned
-// tool_unavailable tool while preserving the originally requested tool name and
-// payload in the rewritten input.
-func (r *Runtime) rewriteToolCallUnavailable(call planner.ToolRequest) (planner.ToolRequest, error) {
+// rewriteToolCallUnavailable records one call rejected by runtime policy while
+// preserving its original tool name and payload.
+func (r *Runtime) rewriteToolCallUnavailable(call ToolCall) (ToolCall, error) {
 	requestedName := call.TranscriptName()
 	requestedPayload := call.TranscriptPayload()
 	if call.ModelName == "" {
@@ -169,43 +155,18 @@ func (r *Runtime) rewriteToolCallUnavailable(call planner.ToolRequest) (planner.
 		RequestedPayload: requestedPayload,
 	})
 	if err != nil {
-		return planner.ToolRequest{}, fmt.Errorf("runtime: encode tool_unavailable payload for %s: %w", call.Name, err)
+		return ToolCall{}, fmt.Errorf("runtime: encode tool_unavailable payload for %s: %w", call.Name, err)
 	}
 	call.Name = tools.ToolUnavailable
 	call.Payload = rawjson.Message(payload)
 	return call, nil
 }
 
-func (r *Runtime) rewriteUnknownToolCalls(calls []planner.ToolRequest) ([]planner.ToolRequest, error) {
-	if len(calls) == 0 {
-		return nil, nil
-	}
-
-	out := make([]planner.ToolRequest, len(calls))
-	for i, call := range calls {
-		if call.Name == "" {
-			out[i] = call
-			continue
-		}
-		if _, ok := r.toolSpec(call.Name); ok {
-			out[i] = call
-			continue
-		}
-
-		rewritten, err := r.rewriteToolCallUnavailable(call)
-		if err != nil {
-			return nil, err
-		}
-		out[i] = rewritten
-	}
-	return out, nil
-}
-
 // rewriteRecoveryCatalogToolCalls converts direct model calls excluded from the
 // active recovery catalog into typed unavailable-tool calls. Planner-owned
 // await barriers remain subject to strict catalog validation because they
 // encode runtime suspension, not a raw model tool request.
-func (r *Runtime) rewriteRecoveryCatalogToolCalls(catalog *RecoveryCatalog, result *planner.PlanResult) error {
+func (r *Runtime) rewriteRecoveryCatalogToolCalls(catalog *RecoveryCatalog, result *PlanResult) error {
 	if catalog == nil || result == nil || len(result.ToolCalls) == 0 {
 		return nil
 	}
@@ -213,7 +174,7 @@ func (r *Runtime) rewriteRecoveryCatalogToolCalls(catalog *RecoveryCatalog, resu
 	for _, tool := range catalog.Tools {
 		allowed[tool] = struct{}{}
 	}
-	for i, call := range result.ToolCalls {
+	for index, call := range result.ToolCalls {
 		if call.Name == tools.ToolUnavailable {
 			continue
 		}
@@ -224,7 +185,7 @@ func (r *Runtime) rewriteRecoveryCatalogToolCalls(catalog *RecoveryCatalog, resu
 		if err != nil {
 			return err
 		}
-		result.ToolCalls[i] = rewritten
+		result.ToolCalls[index] = rewritten
 	}
 	return nil
 }

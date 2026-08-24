@@ -11,21 +11,50 @@ import (
 func NoResultMethod() func() {
 	return func() {
 		API("alpha", func() {})
+		var PurgePayload = Type("PurgePayload", func() {
+			Attribute("session_id", String, "Session ID")
+			Required("session_id")
+			Example(map[string]any{"session_id": "session-123"})
+		})
 		// Target service with a no-result method.
 		Service("tasks", func() {
 			Method("purge", func() {
-				Payload(func() {
-					Attribute("session_id", String, "Session ID")
-					Required("session_id")
-				})
+				Payload(PurgePayload)
 			})
+			Method("heartbeat", func() {})
 		})
 		// Agent on a different service binds a tool to the tasks.purge method.
 		Service("alpha", func() {
 			Agent("scribe", "Ops", func() {
 				Use("ops", func() {
 					Tool("purge", "Purge", func() {
+						Args(PurgePayload)
 						BindTo("tasks", "purge")
+					})
+					Tool("heartbeat", "Record a heartbeat", func() {
+						BindTo("tasks", "heartbeat")
+					})
+				})
+			})
+		})
+	}
+}
+
+// EmptyPayloadResultMethod returns a bound tool whose service method accepts no
+// payload and returns one value.
+func EmptyPayloadResultMethod() func() {
+	return func() {
+		API("alpha", func() {})
+		Service("tasks", func() {
+			Method("status", func() {
+				Result(String)
+			})
+		})
+		Service("alpha", func() {
+			Agent("scribe", "Ops", func() {
+				Use("ops", func() {
+					Tool("status", "Read status", func() {
+						BindTo("tasks", "status")
 					})
 				})
 			})

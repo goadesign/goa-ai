@@ -10,7 +10,8 @@ import (
 	"context"
 	"goa.design/goa-ai/runtime/agent/completion"
 	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/rawjson"
+	"slices"
 )
 
 // Completion IDs for this service.
@@ -18,39 +19,30 @@ const (
 	Headline completion.Ident = "headline"
 )
 
-var (
-	SpecHeadline = completion.Spec[HeadlineResult]{
-		Name:        Headline,
-		Description: "Write a short task headline",
-		Result: tools.TypeSpec{
-			Name:                     "HeadlineResult",
-			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
-			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
-			ExampleJSON:              nil,
-			FieldDescriptions:        nil,
-			FieldJSONTypes:           HeadlineResultFieldJSONTypes,
-			Codec:                    headlineResultCodec,
-		},
-		Codec: HeadlineResultCodec,
+// specHeadline returns a fresh typed completion contract for headline.
+func specHeadline() completion.Spec[HeadlineResult] {
+	return completion.Spec[HeadlineResult]{
+		Name:                     Headline,
+		Description:              "Write a short task headline",
+		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
+		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
+		ExampleJSON:              nil,
+		Codec:                    newHeadlineResultCodec(),
 	}
-)
-
-// DecodeHeadline decodes the structured assistant response for headline.
-func DecodeHeadline(resp *model.Response) (HeadlineResult, error) {
-	return completion.DecodeResponse(resp, SpecHeadline)
 }
 
-// DecodeHeadlineChunk decodes the final structured completion chunk for headline.
-func DecodeHeadlineChunk(chunk model.Chunk) (HeadlineResult, bool, error) {
-	return completion.DecodeChunk(chunk, SpecHeadline)
+// HeadlineExample returns an immutable copy of the generated example
+// used to demonstrate headline output.
+func HeadlineExample() rawjson.Message {
+	return slices.Clone(specHeadline().ExampleJSON)
 }
 
 // CompleteHeadline runs the unary typed completion for headline.
 func CompleteHeadline(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[HeadlineResult], error) {
-	return completion.Complete(ctx, client, req, SpecHeadline)
+	return completion.Complete(ctx, client, req, specHeadline())
 }
 
 // StreamCompleteHeadline starts the typed completion stream for headline.
-func StreamCompleteHeadline(ctx context.Context, client model.Client, req *model.Request) (model.Streamer, error) {
-	return completion.Stream(ctx, client, req, SpecHeadline)
+func StreamCompleteHeadline(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[HeadlineResult], error) {
+	return completion.Stream(ctx, client, req, specHeadline())
 }

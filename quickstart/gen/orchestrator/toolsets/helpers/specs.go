@@ -17,12 +17,17 @@ const (
 	Answer tools.Ident = "helpers.answer"
 )
 
-var Specs = []tools.ToolSpec{
-	SpecAnswer,
+// Specs returns fresh copies of every generated tool specification.
+func Specs() []tools.ToolSpec {
+	return []tools.ToolSpec{
+		newSpecAnswer(),
+	}
 }
 
-var (
-	SpecAnswer = tools.ToolSpec{
+// newSpecAnswer builds the immutable generated contract for
+// helpers.answer. Each call owns all mutable slices and maps in the result.
+func newSpecAnswer() tools.ToolSpec {
+	return tools.ToolSpec{
 		Name:        Answer,
 		Service:     "orchestrator",
 		Toolset:     "orchestrator.helpers",
@@ -33,32 +38,46 @@ var (
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"example\":{\"question\":\"What is the capital of Japan?\"},\"properties\":{\"question\":{\"description\":\"User question to answer\",\"type\":\"string\"}},\"required\":[\"question\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"question\":{\"description\":\"User question to answer\",\"type\":\"string\"}},\"required\":[\"question\"],\"type\":\"object\"}"),
 			ExampleJSON:              tools.RawJSON("{\"question\":\"What is the capital of Japan?\"}"),
-			FieldDescriptions:        AnswerPayloadFieldDescs,
-			FieldJSONTypes:           AnswerPayloadFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(answerPayloadFieldDescs),
+			FieldJSONTypes:           cloneStringMap(answerPayloadFieldJSONTypes),
 			Codec:                    answerPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:                     "AnswerResult",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"text\":{\"description\":\"Answer text\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"text\":{\"description\":\"Answer text\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
-			FieldDescriptions:        AnswerResultFieldDescs,
-			FieldJSONTypes:           AnswerResultFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(answerResultFieldDescs),
+			FieldJSONTypes:           cloneStringMap(answerResultFieldJSONTypes),
 			Codec:                    answerResultCodec,
 		},
 	}
-)
+}
+
+// SpecAnswer returns a fresh helpers.answer specification.
+func SpecAnswer() tools.ToolSpec {
+	return newSpecAnswer()
+}
 
 // AnswerTool pairs the helpers.answer identifier with its generated
 // typed payload and result codecs so consumers decode tool JSON without
 // restating the name-to-codec pairing fixed by the design.
-var AnswerTool = tools.TypedTool[*AnswerPayload, *AnswerResult]{
-	Name:    Answer,
-	Payload: AnswerPayloadCodec,
-	Result:  AnswerResultCodec,
+func AnswerTool() tools.TypedTool[*AnswerPayload, *AnswerResult] {
+	return tools.TypedTool[*AnswerPayload, *AnswerResult]{
+		Name: Answer,
+		Payload: tools.JSONCodec[*AnswerPayload]{
+			ToJSON:   MarshalAnswerPayload,
+			FromJSON: UnmarshalAnswerPayload,
+		},
+		Result: tools.JSONCodec[*AnswerResult]{
+			ToJSON:   MarshalAnswerResult,
+			FromJSON: UnmarshalAnswerResult,
+		},
+	}
 }
 
-var (
-	metadata = []policy.ToolMetadata{
+// Metadata returns fresh policy metadata for every generated tool.
+func Metadata() []policy.ToolMetadata {
+	return []policy.ToolMetadata{
 		{
 			ID:          Answer,
 			Title:       "Answer",
@@ -67,64 +86,59 @@ var (
 			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
 	}
-	names = []tools.Ident{
+}
+
+// Names returns the identifiers of all generated tools.
+func Names() []tools.Ident {
+	return []tools.Ident{
 		Answer,
 	}
-)
+}
 
 // RequiredLabels lists the run label keys this toolset's Inject-populated
 // tools require to be present via WithLabels(...) at run start. The runtime
 // validates coverage across every toolset an agent uses before starting a
 // run, so a missing label fails fast instead of surfacing mid-run as a tool
 // call error.
-var RequiredLabels = []string{}
-
-// Names returns the identifiers of all generated tools.
-func Names() []tools.Ident {
-	return names
+func RequiredLabels() []string {
+	return []string{}
 }
 
 // Spec returns the specification for the named tool if present.
-func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
+func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 	switch name {
 	case Answer:
-		return &SpecAnswer, true
+		return newSpecAnswer(), true
 	default:
-		return nil, false
+		return tools.ToolSpec{}, false
 	}
-}
-
-// PayloadSchema returns the JSON schema for the named tool payload.
-func PayloadSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case Answer:
-		return SpecAnswer.Payload.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// ResultSchema returns the JSON schema for the named tool result.
-func ResultSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case Answer:
-		return SpecAnswer.Result.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// Metadata exposes policy metadata for the generated tools.
-func Metadata() []policy.ToolMetadata {
-	return metadata
 }
 
 // MetadataByName returns policy metadata for the named tool if present.
 func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
 	switch name {
 	case Answer:
-		return metadata[0], true
+		return policy.ToolMetadata{
+			ID:          Answer,
+			Title:       "Answer",
+			Description: "Answer a simple question",
+			Tags:        []string{},
+			BudgetClass: policy.ToolBudgetClassBudgeted,
+		}, true
 	default:
 		return policy.ToolMetadata{}, false
 	}
+}
+
+// cloneStringMap gives each returned specification ownership of its generated
+// field metadata.
+func cloneStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }

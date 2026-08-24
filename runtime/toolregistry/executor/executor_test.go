@@ -102,7 +102,7 @@ func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 		RunID:     "run",
 		SessionID: "sess",
 		Labels:    map[string]string{"scope": "detached"},
-	}, &planner.ToolRequest{
+	}, &agentsruntime.ToolCall{
 		Name:    "todos.update_todos",
 		Payload: []byte(`{}`),
 	})
@@ -147,7 +147,7 @@ func TestExecutorSequentialAndConcurrentWaitersReplayTerminalHistory(t *testing.
 			RunID:      "run",
 			SessionID:  "session",
 			ToolCallID: "call-1",
-		}, &planner.ToolRequest{
+		}, &agentsruntime.ToolCall{
 			Name:    "todos.update_todos",
 			Payload: []byte(`{}`),
 		})
@@ -200,7 +200,7 @@ func TestExecutorRejectsMalformedTerminalHistoryImmediately(t *testing.T) {
 		RunID:      "run",
 		SessionID:  "session",
 		ToolCallID: "call-1",
-	}, &planner.ToolRequest{Name: "todos.update_todos", Payload: []byte(`{}`)})
+	}, &agentsruntime.ToolCall{Name: "todos.update_todos", Payload: []byte(`{}`)})
 	require.ErrorContains(t, err, "decode terminal tool result event 1-0")
 }
 
@@ -255,7 +255,7 @@ func TestExecutorAsksRegistryToRetryTransientProviderOverload(t *testing.T) {
 		RunID:      "run",
 		SessionID:  "session",
 		ToolCallID: "call-1",
-	}, &planner.ToolRequest{Name: "todos.update_todos", Payload: []byte(`{}`)})
+	}, &agentsruntime.ToolCall{Name: "todos.update_todos", Payload: []byte(`{}`)})
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, int64(2), calls.Load())
@@ -429,7 +429,7 @@ func TestExecutorIgnoresLateResultFromReusedToolUseID(t *testing.T) {
 	result, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
 		RunID:     "run",
 		SessionID: "session",
-	}, &planner.ToolRequest{
+	}, &agentsruntime.ToolCall{
 		Name:    "todos.update_todos",
 		Payload: []byte(`{}`),
 	})
@@ -579,7 +579,7 @@ func TestExecutorTransportFailureClassifiesToolUnavailable(t *testing.T) {
 		RunID:      "run",
 		SessionID:  "sess",
 		ToolCallID: "toolcall-transport",
-	}, &planner.ToolRequest{
+	}, &agentsruntime.ToolCall{
 		Name:    "atlas.read.get_time_series",
 		Payload: []byte(`{}`),
 	})
@@ -617,7 +617,7 @@ func TestExecutorAllowsRegistryAdmissionDecisionToReachCaller(t *testing.T) {
 		RunID:      "run",
 		SessionID:  "session",
 		ToolCallID: "call",
-	}, &planner.ToolRequest{
+	}, &agentsruntime.ToolCall{
 		Name:    "atlas.read.get_time_series",
 		Payload: []byte(`{}`),
 	})
@@ -704,7 +704,7 @@ func TestExecutorClassifiesTypedPreAdmissionFailures(t *testing.T) {
 			result, err := exec.Execute(
 				context.Background(),
 				&agentsruntime.ToolCallMeta{ToolCallID: "call-1"},
-				&planner.ToolRequest{Name: spec.Name, Payload: []byte(`{}`)},
+				&agentsruntime.ToolCall{Name: spec.Name, Payload: []byte(`{}`)},
 			)
 
 			require.NoError(t, err)
@@ -736,7 +736,7 @@ func TestExecutorRejectsNoncanonicalRegistrationToken(t *testing.T) {
 	result, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
 		RunID:     "run",
 		SessionID: "session",
-	}, &planner.ToolRequest{
+	}, &agentsruntime.ToolCall{
 		Name:    "todos.update_todos",
 		Payload: []byte(`{}`),
 	})
@@ -793,7 +793,7 @@ func TestExecutorDerivesResultStreamIDFromToolUseID(t *testing.T) {
 	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
 		RunID:     "run",
 		SessionID: "sess",
-	}, &planner.ToolRequest{
+	}, &agentsruntime.ToolCall{
 		Name:    "todos.update_todos",
 		Payload: []byte(`{}`),
 	})
@@ -831,7 +831,7 @@ func TestExecutorWaitsOnlyThroughExecutionDeadline(t *testing.T) {
 		RunID:      "run",
 		SessionID:  "session",
 		ToolCallID: "call",
-	}, &planner.ToolRequest{
+	}, &agentsruntime.ToolCall{
 		Name:    "todos.update_todos",
 		Payload: []byte(`{}`),
 	})
@@ -883,7 +883,7 @@ func TestExecutorEmitsRegistrySpan(t *testing.T) {
 		SessionID:  "sess",
 		TurnID:     "turn",
 		ToolCallID: "toolcall-1",
-	}, &planner.ToolRequest{
+	}, &agentsruntime.ToolCall{
 		Name:    "todos.update_todos",
 		Payload: []byte(`{}`),
 	})
@@ -1007,7 +1007,7 @@ func TestExecutorForwardsOnlyExactAdmissionOutputDeltaForReusedToolUseID(t *test
 		RunID:      "run",
 		SessionID:  "sess",
 		ToolCallID: "toolcall-1",
-	}, &planner.ToolRequest{
+	}, &agentsruntime.ToolCall{
 		Name:    "todos.update_todos",
 		Payload: []byte(`{}`),
 	})
@@ -1088,7 +1088,7 @@ func TestExecutorRestoresBoundsFromRegistryMessage(t *testing.T) {
 	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
 		RunID:     "run",
 		SessionID: "sess",
-	}, &planner.ToolRequest{
+	}, &agentsruntime.ToolCall{
 		Name:    "atlas.read.list_devices",
 		Payload: []byte(`{}`),
 	})
@@ -1725,7 +1725,7 @@ func executeRegistryResultMessage(
 		RunID:      "run",
 		SessionID:  "sess",
 		ToolCallID: toolCallID,
-	}, &planner.ToolRequest{
+	}, &agentsruntime.ToolCall{
 		Name:    spec.Name,
 		Payload: []byte(`{}`),
 	})

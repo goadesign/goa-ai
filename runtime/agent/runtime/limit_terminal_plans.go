@@ -128,9 +128,9 @@ func (r *Runtime) finishLimitTerminalCall(
 	reason planner.TerminationReason,
 	hardDeadline time.Time,
 ) (*RunOutput, error) {
-	result := &planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{
-			limitTerminalToolRequest(call, reason),
+	result := &PlanResult{
+		ToolCalls: []ToolCall{
+			limitTerminalToolRequest(input.RunID, turnID, nextAttempt, call, reason),
 		},
 	}
 	out, err := r.finishFinalizationTerminalToolCalls(
@@ -153,12 +153,19 @@ func (r *Runtime) finishLimitTerminalCall(
 	return out, nil
 }
 
-// limitTerminalToolRequest records why the runtime selected the payload-only
-// call. Current run labels are added after policy evaluation.
-func limitTerminalToolRequest(call LimitTerminalCall, reason planner.TerminationReason) planner.ToolRequest {
-	return planner.ToolRequest{
-		Name:    call.Name,
-		Payload: rawjson.Message(append([]byte(nil), call.Payload...)),
+// limitTerminalToolRequest builds the fixed completion call selected when a run
+// reaches a limit. This function creates the call, so it also assigns its ID.
+// Current run labels are added after policy evaluation.
+func limitTerminalToolRequest(
+	runID, turnID string,
+	attempt int,
+	call LimitTerminalCall,
+	reason planner.TerminationReason,
+) ToolCall {
+	return ToolCall{
+		Name:       call.Name,
+		ToolCallID: generateDeterministicToolCallID(runID, turnID, attempt, call.Name, 0),
+		Payload:    rawjson.Message(append([]byte(nil), call.Payload...)),
 		Labels: map[string]string{
 			LimitReasonLabel: string(reason),
 		},

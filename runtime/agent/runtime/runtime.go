@@ -344,7 +344,7 @@ type (
 		// populate AgentTool so the workflow runtime can start nested agents as child
 		// workflows and adapt their RunOutput into a ToolResult.
 		// For custom/server-side tools, users provide their own implementation.
-		Execute func(ctx context.Context, call *planner.ToolRequest) (*ToolExecutionResult, error)
+		Execute func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error)
 
 		// Specs enumerates the codecs associated with each tool in the set.
 		// Used by the runtime for JSON marshaling/unmarshaling and schema validation.
@@ -1298,8 +1298,8 @@ func (r *Runtime) RegisterModel(id string, client model.Client) error {
 	if id == "" {
 		return errors.New("model id is required")
 	}
-	if client == nil {
-		return errors.New("model client is required")
+	if err := model.ValidateClient(client); err != nil {
+		return fmt.Errorf("register model %q: %w", id, err)
 	}
 	r.mu.Lock()
 	r.models[id] = client
@@ -1329,8 +1329,6 @@ type BedrockConfig struct {
 	SmallModel string
 	// MaxTokens is the default completion token cap.
 	MaxTokens int
-	// ThinkingBudget is the default Bedrock thinking-token budget.
-	ThinkingBudget int
 	// Temperature is the default sampling temperature.
 	Temperature float32
 }
@@ -1382,14 +1380,13 @@ type VertexConfig struct {
 // Callers must supply the complete canonical transcript in Request.Messages.
 func (r *Runtime) NewBedrockModelClient(awsrt *bedrockruntime.Client, cfg BedrockConfig) (model.Client, error) {
 	opts := bedrock.Options{
-		Runtime:        awsrt,
-		DefaultModel:   cfg.DefaultModel,
-		HighModel:      cfg.HighModel,
-		SmallModel:     cfg.SmallModel,
-		MaxTokens:      cfg.MaxTokens,
-		ThinkingBudget: cfg.ThinkingBudget,
-		Temperature:    cfg.Temperature,
-		Logger:         r.logger,
+		Runtime:      awsrt,
+		DefaultModel: cfg.DefaultModel,
+		HighModel:    cfg.HighModel,
+		SmallModel:   cfg.SmallModel,
+		MaxTokens:    cfg.MaxTokens,
+		Temperature:  cfg.Temperature,
+		Logger:       r.logger,
 	}
 	return bedrock.New(awsrt, opts)
 }
@@ -1620,8 +1617,8 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		if err := validateContinuationIdentity(input, checkpoint); err != nil {
 			return nil, err
 		}
-		runLabels = checkpoint.Labels
-		runMetadata = checkpoint.Metadata
+		runLabels = checkpoint.Context.Labels
+		runMetadata = checkpoint.Context.Metadata
 		effectivePolicy = checkpoint.Policy
 	}
 	if err := validateRequiredLabels(reg, runLabels); err != nil {

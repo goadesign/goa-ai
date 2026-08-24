@@ -5,51 +5,34 @@ const (
 {{- end }}
 )
 
-var (
 {{- range .Completions }}
-    Spec{{ .ConstName }} = completion.Spec[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}]{
+// spec{{ .ConstName }} returns a fresh typed completion contract for {{ .Name }}.
+func spec{{ .ConstName }}() completion.Spec[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}] {
+    return completion.Spec[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}]{
         Name:        {{ .ConstName }},
         Description: {{ printf "%q" .Description }},
-        Result: tools.TypeSpec{
-            Name: {{ if .Result }}{{ printf "%q" .Result.TypeName }}{{ else }}""{{ end }},
-            Schema: {{- if and .Result (gt (len .Result.SchemaJSON) 0) }}tools.RawJSON({{ printf "%q" .Result.SchemaJSON }}){{ else }}nil{{ end }},
-            {{- if .Result }}
-            SchemaWithoutRootExample: {{- if gt (len .Result.SchemaWithoutRootExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Result.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
-            ExampleJSON: {{- if gt (len .Result.ExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Result.ExampleJSON }}){{ else }}nil{{ end }},
-            FieldDescriptions: {{- if .Result.FieldDescs }}{{ .Result.TypeName }}FieldDescs{{ else }}nil{{ end }},
-            FieldJSONTypes: {{- if .Result.FieldJSONTypes }}{{ .Result.TypeName }}FieldJSONTypes{{ else }}nil{{ end }},
-            Codec: {{ .Result.GenericCodec }},
-            {{- else }}
-            SchemaWithoutRootExample: nil,
-            ExampleJSON: nil,
-            FieldDescriptions: nil,
-            FieldJSONTypes: nil,
-            Codec: tools.JSONCodec[any]{},
-            {{- end }}
-        },
-        Codec: {{ .Result.ExportedCodec }},
+        Schema: {{- if and .Result (gt (len .Result.SchemaJSON) 0) }}rawjson.Message({{ printf "%q" .Result.SchemaJSON }}){{ else }}nil{{ end }},
+        SchemaWithoutRootExample: {{- if and .Result (gt (len .Result.SchemaWithoutRootExampleJSON) 0) }}rawjson.Message({{ printf "%q" .Result.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
+        ExampleJSON: {{- if and .Result (gt (len .Result.ExampleJSON) 0) }}rawjson.Message({{ printf "%q" .Result.ExampleJSON }}){{ else }}nil{{ end }},
+        Codec: {{ .Result.ExportedCodec }}(),
     }
+}
+
+// {{ .ConstName }}Example returns an immutable copy of the generated example
+// used to demonstrate {{ .Name }} output.
+func {{ .ConstName }}Example() rawjson.Message {
+    return slices.Clone(spec{{ .ConstName }}().ExampleJSON)
+}
 {{- end }}
-)
 
 {{- range .Completions }}
-// Decode{{ .ConstName }} decodes the structured assistant response for {{ .Name }}.
-func Decode{{ .ConstName }}(resp *model.Response) ({{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}, error) {
-    return completion.DecodeResponse(resp, Spec{{ .ConstName }})
-}
-
-// Decode{{ .ConstName }}Chunk decodes the final structured completion chunk for {{ .Name }}.
-func Decode{{ .ConstName }}Chunk(chunk model.Chunk) ({{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}, bool, error) {
-    return completion.DecodeChunk(chunk, Spec{{ .ConstName }})
-}
-
 // Complete{{ .ConstName }} runs the unary typed completion for {{ .Name }}.
 func Complete{{ .ConstName }}(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}], error) {
-    return completion.Complete(ctx, client, req, Spec{{ .ConstName }})
+    return completion.Complete(ctx, client, req, spec{{ .ConstName }}())
 }
 
 // StreamComplete{{ .ConstName }} starts the typed completion stream for {{ .Name }}.
-func StreamComplete{{ .ConstName }}(ctx context.Context, client model.Client, req *model.Request) (model.Streamer, error) {
-    return completion.Stream(ctx, client, req, Spec{{ .ConstName }})
+func StreamComplete{{ .ConstName }}(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}], error) {
+    return completion.Stream(ctx, client, req, spec{{ .ConstName }}())
 }
 {{- end }}

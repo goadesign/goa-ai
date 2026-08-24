@@ -47,6 +47,11 @@ type stubProvider struct {
 	streamer model.Streamer
 }
 
+type countingProvider struct {
+	calls    int
+	countErr error
+}
+
 func (p stubProvider) Complete(_ context.Context, req *model.Request) (*model.Response, error) {
 	if p.response != nil {
 		return p.response, nil
@@ -61,6 +66,137 @@ func (p stubProvider) Stream(_ context.Context, _ *model.Request) (model.Streame
 		return p.streamer, nil
 	}
 	return &stubStreamer{}, nil
+}
+
+func (p *countingProvider) Complete(context.Context, *model.Request) (*model.Response, error) {
+	p.calls++
+	return &model.Response{}, nil
+}
+
+func (p *countingProvider) Stream(context.Context, *model.Request) (model.Streamer, error) {
+	p.calls++
+	return &stubStreamer{}, nil
+}
+
+func (p *countingProvider) CountTokens(_ context.Context, req *model.Request) (model.TokenCount, error) {
+	p.calls++
+	return model.TokenCount{
+		Model:       req.Model,
+		ModelClass:  req.ModelClass,
+		InputTokens: 42,
+		Exact:       true,
+	}, p.countErr
+}
+
+func TestServerRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
+	provider := &countingProvider{}
+	server, err := NewServer(WithProvider(provider))
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+
+	response, err := server.Complete(t.Context(), nil)
+	if response != nil || err == nil || !strings.Contains(err.Error(), "model request is required") {
+		t.Fatalf("Complete response, error = %v, %v; want nil, request error", response, err)
+	}
+	response, err = server.Stream(t.Context(), nil, func(model.Chunk) error { return nil })
+	if response != nil || err == nil || !strings.Contains(err.Error(), "model request is required") {
+		t.Fatalf("Stream response, error = %v, %v; want nil, request error", response, err)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("provider calls = %d, want 0", provider.calls)
+	}
+}
+
+func TestNewServerRejectsTypedNilProvider(t *testing.T) {
+	var provider *countingProvider
+
+	server, err := NewServer(WithProvider(provider))
+
+	if server != nil {
+		t.Fatalf("server = %#v, want nil", server)
+	}
+	if !errors.Is(err, ErrProviderRequired) {
+		t.Fatalf("NewServer error = %v, want ErrProviderRequired", err)
+	}
+}
+
+func TestServerCountTokensPreservesOptionalProviderCapability(t *testing.T) {
+	provider := &countingProvider{}
+	server, err := NewServer(WithProvider(provider))
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+
+	count, err := server.CountTokens(t.Context(), &model.Request{
+		Model:      "remote-model",
+		ModelClass: model.ModelClassDefault,
+	})
+
+	if err != nil {
+		t.Fatalf("CountTokens error: %v", err)
+	}
+	if count.InputTokens != 42 || !count.Exact || provider.calls != 1 {
+		t.Fatalf("CountTokens result, calls = %#v, %d; want exact 42, 1", count, provider.calls)
+	}
+}
+
+func TestServerCountTokensReportsUnsupportedProvider(t *testing.T) {
+	server, err := NewServer(WithProvider(stubProvider{}))
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+
+	_, err = server.CountTokens(t.Context(), &model.Request{})
+
+	if !errors.Is(err, model.ErrTokenCountingUnsupported) {
+		t.Fatalf("CountTokens error = %v; want ErrTokenCountingUnsupported", err)
+	}
+}
+
+func TestServerStreamRequiresSendBeforeMiddlewareOrProvider(t *testing.T) {
+	provider := &countingProvider{}
+	middlewareCalled := false
+	server, err := NewServer(
+		WithProvider(provider),
+		WithStream(func(next StreamHandler) StreamHandler {
+			return func(ctx context.Context, req *model.Request, send func(model.Chunk) error) (*model.Response, error) {
+				middlewareCalled = true
+				return next(ctx, req, send)
+			}
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+
+	response, err := server.Stream(t.Context(), nil, nil)
+
+	if response != nil || err == nil || !strings.Contains(err.Error(), "send function is required") {
+		t.Fatalf("Stream response, error = %v, %v; want nil, callback error", response, err)
+	}
+	if middlewareCalled {
+		t.Fatal("stream middleware was invoked")
+	}
+	if provider.calls != 0 {
+		t.Fatalf("provider calls = %d, want 0", provider.calls)
+	}
+}
+
+func TestServerStreamRejectsTypedNilProviderStream(t *testing.T) {
+	var upstream *stubStreamer
+	server, err := NewServer(WithProvider(stubProvider{streamer: upstream}))
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+
+	response, err := server.Stream(t.Context(), &model.Request{}, func(model.Chunk) error {
+		return nil
+	})
+
+	if response != nil || err == nil || !strings.Contains(err.Error(), "typed nil") {
+		t.Fatalf("Stream response, error = %v, %v; want nil, typed-nil error", response, err)
+	}
 }
 
 func TestNewServer_BuildsChains(t *testing.T) {
@@ -141,34 +277,38 @@ func TestServerStreamTreatsEOFAsSuccessAndPropagatesCloseFailure(t *testing.T) {
 	}
 }
 
-func TestServerCompleteRejectsProviderResponseBeforeMiddleware(t *testing.T) {
-	repairsResponse := func(next UnaryHandler) UnaryHandler {
+func TestServerCompleteReturnsResponseChangedByMiddleware(t *testing.T) {
+	changesResponse := func(next UnaryHandler) UnaryHandler {
 		return func(ctx context.Context, req *model.Request) (*model.Response, error) {
-			_, err := next(ctx, req)
+			response, err := next(ctx, req)
 			if err != nil {
 				return nil, err
 			}
-			return &model.Response{
-				Content:    []model.Message{{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "repaired"}}}},
-				StopReason: "done",
-			}, nil
+			response.Content[0].Parts[0] = model.TextPart{Text: `{"answer":42}`}
+			return response, nil
 		}
 	}
 	srv, err := NewServer(
-		WithProvider(stubProvider{response: &model.Response{}}),
-		WithUnary(repairsResponse),
+		WithProvider(stubProvider{response: structuredGatewayResponse(`{"answer":"valid"}`)}),
+		WithUnary(changesResponse),
 	)
 	if err != nil {
 		t.Fatalf("NewServer error: %v", err)
 	}
+	request := structuredGatewayRequest(t)
 
-	_, err = srv.Complete(context.Background(), &model.Request{Model: "m"})
-	if err == nil || !strings.Contains(err.Error(), "provider returned invalid canonical response") {
-		t.Fatalf("complete error = %v, want provider validation error", err)
+	response, err := srv.Complete(t.Context(), request)
+
+	if err != nil {
+		t.Fatalf("Complete error: %v", err)
+	}
+	if got := response.Content[0].Parts[0].(model.TextPart).Text; got != `{"answer":42}` {
+		t.Fatalf("response text = %q, want middleware output", got)
 	}
 }
 
-func TestServerStreamRejectsProviderChunkBeforeMiddleware(t *testing.T) {
+func TestServerStreamLetsMiddlewareDropProviderChunk(t *testing.T) {
+	closeErr := errors.New("provider close failed")
 	dropsChunks := func(next StreamHandler) StreamHandler {
 		return func(ctx context.Context, req *model.Request, _ func(model.Chunk) error) (*model.Response, error) {
 			return next(ctx, req, func(model.Chunk) error { return nil })
@@ -176,8 +316,9 @@ func TestServerStreamRejectsProviderChunkBeforeMiddleware(t *testing.T) {
 	}
 	srv, err := NewServer(
 		WithProvider(stubProvider{streamer: &stubStreamer{
-			chunks:  []model.Chunk{model.ToolCallChunk{ToolCall: model.ToolCall{Name: "svc.lookup"}}},
-			recvErr: io.EOF,
+			chunks:   []model.Chunk{model.ToolCallChunk{ToolCall: model.ToolCall{Name: "svc.lookup"}}},
+			recvErr:  io.EOF,
+			closeErr: closeErr,
 			response: &model.Response{
 				Content:    []model.Message{{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}},
 				StopReason: "done",
@@ -190,16 +331,105 @@ func TestServerStreamRejectsProviderChunkBeforeMiddleware(t *testing.T) {
 	}
 
 	_, err = srv.Stream(context.Background(), &model.Request{Model: "m"}, func(model.Chunk) error { return nil })
-	if err == nil || !strings.Contains(err.Error(), "provider returned invalid stream chunk") {
-		t.Fatalf("stream error = %v, want provider chunk validation error", err)
+	if !errors.Is(err, closeErr) {
+		t.Fatalf("stream error = %v, want provider close failure", err)
 	}
 }
 
-func TestServerStreamRejectsChunkErrorIgnoredByMiddleware(t *testing.T) {
+func TestServerStreamJoinsCallerSendAndProviderCloseFailures(t *testing.T) {
+	callerErr := errors.New("caller send failed")
+	closeErr := errors.New("provider close failed")
+	upstream := &stubStreamer{
+		chunks: []model.Chunk{
+			model.TextChunk{Message: model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "hello"}},
+			}},
+			model.StopChunk{Reason: "done"},
+		},
+		recvErr:  io.EOF,
+		closeErr: closeErr,
+		response: &model.Response{
+			Content:    []model.Message{{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "hello"}}}},
+			StopReason: "done",
+		},
+	}
+	server, err := NewServer(WithProvider(stubProvider{streamer: upstream}))
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+
+	response, err := server.Stream(t.Context(), &model.Request{Model: "m"}, func(model.Chunk) error {
+		return callerErr
+	})
+
+	if response != nil {
+		t.Fatalf("response = %#v, want nil", response)
+	}
+	if !errors.Is(err, callerErr) {
+		t.Fatalf("stream error = %v, want caller send failure", err)
+	}
+	if !errors.Is(err, closeErr) {
+		t.Fatalf("stream error = %v, want provider close failure", err)
+	}
+	if !upstream.closed {
+		t.Fatal("provider stream was not closed")
+	}
+}
+
+func TestServerStreamSendsCompletionChangedByMiddleware(t *testing.T) {
+	changesCompletion := func(next StreamHandler) StreamHandler {
+		return func(ctx context.Context, req *model.Request, send func(model.Chunk) error) (*model.Response, error) {
+			return next(ctx, req, func(chunk model.Chunk) error {
+				if completion, ok := chunk.(model.CompletionChunk); ok {
+					completion.Completion.Payload = []byte(`{"answer":42}`)
+					chunk = completion
+				}
+				return send(chunk)
+			})
+		}
+	}
+	srv, err := NewServer(
+		WithProvider(stubProvider{streamer: &stubStreamer{
+			chunks: []model.Chunk{
+				model.CompletionChunk{Completion: model.Completion{
+					Name:    "answer",
+					Payload: []byte(`{"answer":"valid"}`),
+				}},
+				model.StopChunk{Reason: "done"},
+			},
+			recvErr:  io.EOF,
+			response: structuredGatewayResponse(`{"answer":"valid"}`),
+		}}),
+		WithStream(changesCompletion),
+	)
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+	request := structuredGatewayRequest(t)
+	sent := 0
+
+	response, err := srv.Stream(t.Context(), request, func(model.Chunk) error {
+		sent++
+		return nil
+	})
+
+	if err != nil {
+		t.Fatalf("Stream error: %v", err)
+	}
+	if response == nil {
+		t.Fatal("response is nil")
+	}
+	if sent != 2 {
+		t.Fatalf("sent chunks = %d, want 2", sent)
+	}
+}
+
+func TestServerStreamSendsMiddlewareChunkWithoutFinalValidation(t *testing.T) {
 	ignoresSendError := func(StreamHandler) StreamHandler {
 		return func(_ context.Context, _ *model.Request, send func(model.Chunk) error) (*model.Response, error) {
-			if err := send(model.ToolCallChunk{ToolCall: model.ToolCall{Name: "svc.lookup"}}); err == nil {
-				return nil, errors.New("expected invalid chunk error")
+			if err := send(model.ToolCallChunk{ToolCall: model.ToolCall{Name: "svc.lookup"}}); err != nil {
+				return nil, err
 			}
 			return &model.Response{
 				Content:    []model.Message{{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}},
@@ -212,10 +442,108 @@ func TestServerStreamRejectsChunkErrorIgnoredByMiddleware(t *testing.T) {
 		t.Fatalf("NewServer error: %v", err)
 	}
 
+	sent := 0
 	_, err = srv.Stream(context.Background(), &model.Request{Model: "m"}, func(model.Chunk) error {
+		sent++
 		return nil
 	})
-	if err == nil || !strings.Contains(err.Error(), "gateway: invalid stream chunk") {
-		t.Fatalf("stream error = %v, want invalid chunk", err)
+	if err != nil {
+		t.Fatalf("Stream error: %v", err)
+	}
+	if sent != 1 {
+		t.Fatalf("sent chunks = %d, want 1", sent)
+	}
+}
+
+func TestRemoteClientDropsResponseReturnedWithError(t *testing.T) {
+	providerErr := errors.New("provider failed")
+	client, err := NewRemoteClient(
+		func(context.Context, *model.Request) (*model.Response, error) {
+			return &model.Response{StopReason: "should-not-escape"}, providerErr
+		},
+		func(context.Context, *model.Request) (model.Streamer, error) {
+			return nil, errors.New("unexpected stream call")
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewRemoteClient error: %v", err)
+	}
+
+	response, err := client.Complete(t.Context(), &model.Request{})
+
+	if response != nil {
+		t.Fatalf("expected nil response, got %#v", response)
+	}
+	if !errors.Is(err, providerErr) {
+		t.Fatalf("expected provider error, got %v", err)
+	}
+}
+
+func TestRemoteClientRejectsStructuredOutputWithoutNameBeforeGatewayCall(t *testing.T) {
+	called := false
+	client, err := NewRemoteClient(
+		func(context.Context, *model.Request) (*model.Response, error) {
+			called = true
+			return nil, errors.New("unexpected gateway call")
+		},
+		func(context.Context, *model.Request) (model.Streamer, error) {
+			return nil, errors.New("unexpected stream call")
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewRemoteClient error: %v", err)
+	}
+
+	response, err := client.Complete(t.Context(), &model.Request{
+		StructuredOutput: &model.StructuredOutput{
+			Schema: []byte(`{"type":"object"}`),
+		},
+	})
+
+	if response != nil {
+		t.Fatalf("expected nil response, got %#v", response)
+	}
+	if err == nil || err.Error() != "model request structured output name is required" {
+		t.Fatalf("expected structured output name error, got %v", err)
+	}
+	if called {
+		t.Fatal("gateway handler was called for invalid request")
+	}
+}
+
+func structuredGatewayRequest(t *testing.T) *model.Request {
+	t.Helper()
+	request := &model.Request{StructuredOutput: &model.StructuredOutput{
+		Name:   "answer",
+		Schema: []byte(`{"type":"object"}`),
+	}}
+	err := model.SetCompletionValidator(request, func(response *model.Response, completion *model.Completion) error {
+		payload := ""
+		if completion != nil {
+			payload = string(completion.Payload)
+		} else if response != nil && len(response.Content) > 0 && len(response.Content[0].Parts) > 0 {
+			text, ok := response.Content[0].Parts[0].(model.TextPart)
+			if ok {
+				payload = text.Text
+			}
+		}
+		if payload != `{"answer":"valid"}` {
+			return errors.New("gateway completion payload is invalid")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("SetCompletionValidator error: %v", err)
+	}
+	return request
+}
+
+func structuredGatewayResponse(payload string) *model.Response {
+	return &model.Response{
+		Content: []model.Message{{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: payload}},
+		}},
+		StopReason: "done",
 	}
 }

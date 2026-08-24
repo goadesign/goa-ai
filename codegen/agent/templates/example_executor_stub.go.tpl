@@ -1,15 +1,5 @@
-// {{ $.Toolset.Name }} executor stub for {{ $.Agent.StructName }}
-//
-// This file declares a minimal executor implementation for the method-backed
-// toolset {{ $.Toolset.Name }}. Replace the TODOs with real client calls and
-// optional transforms. Keep business logic out of main; import this package
-// from your service bootstrap when wiring agents.
-//
-// Header above defines package and imports; code below focuses on logic.
-
-// Register registers the toolset with the runtime using the Execute stub below.
-// Replace Execute with a real implementation that calls the bound service client
-// and uses generated transforms when available.
+{{- if .Register }}
+// Register registers the method-backed toolset with the runtime using Execute.
 func Register(ctx context.Context, rt *runtime.Runtime) error {
     if rt == nil {
         return errors.New("runtime is required")
@@ -17,10 +7,12 @@ func Register(ctx context.Context, rt *runtime.Runtime) error {
     reg := {{ $.AgentImport.Name }}.New{{ $.Agent.GoName }}{{ goify $.Toolset.PathName true }}ToolsetRegistration(runtime.ToolCallExecutorFunc(Execute))
     return rt.RegisterToolset(reg)
 }
+{{- end }}
 
-// Execute demonstrates per-tool branching with typed decode. Replace placeholders
-// with client calls and optional transforms from the specs package (transforms.go).
-func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
+// Execute checks one tool call against its generated argument contract. The
+// initial implementation returns the result example from the design;
+// applications replace that result with their service call.
+func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
     if call == nil {
         return nil, errors.New("tool request is nil")
     }
@@ -30,8 +22,12 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
     switch call.Name {
     {{- range .Tools }}
     case "{{ .ID }}":
-        // Decode typed payload
-        args, err := {{ $.SpecsAlias }}.{{ .PayloadUnmarshal }}(call.Payload)
+        // Decode the JSON arguments with the generated {{ .ID }} contract.
+        {{- if .InjectDecodeFunc }}
+        _, err := {{ $.SpecsAlias }}.{{ .InjectDecodeFunc }}(call.Payload, *meta, meta.Labels)
+        {{- else }}
+        _, err := {{ $.SpecsAlias }}.{{ .TypedTool }}().Payload.FromJSON(call.Payload)
+        {{- end }}
         if err != nil {
             var issuer interface {
                 Issues() []*tools.FieldIssue
@@ -51,21 +47,30 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
                         PriorInput: append(rawjson.Message(nil), call.Payload...),
                         ExampleJSON: append(
                             rawjson.Message(nil),
-                            {{ $.SpecsAlias }}.Spec{{ .ConstName }}.Payload.ExampleJSON...,
+                            {{ $.SpecsAlias }}.Spec{{ .ConstName }}().Payload.ExampleJSON...,
                         ),
                     },
                 },
 			}), nil
         }
-        // Optional: transform to method payload if compatible
-        // mp, _ := {{ $.SpecsAlias }}.ToMethodPayload_{{ .GoName }}(args)
-        // TODO: Call your service client with mp (or args), map result back:
-        // tr, _ := {{ $.SpecsAlias }}.ToToolReturn_{{ .GoName }}(methodRes)
+        {{- if .HasResult }}
+        {{- if .HasResultExample }}
+        result, err := {{ $.SpecsAlias }}.{{ .TypedTool }}().Result.FromJSON(
+            rawjson.Message({{ printf "%q" .ResultExample }}),
+        )
+        if err != nil {
+            return nil, fmt.Errorf("decode {{ .ID }} example result: %w", err)
+        }
         return runtime.Executed(&planner.ToolResult{
-			Result: map[string]any{
-				"status": "ok",
-			},
+            Name:   call.Name,
+            Result: result,
 		}), nil
+        {{- else }}
+        return nil, fmt.Errorf("execute %s: generated executor requires an application implementation", call.Name)
+        {{- end }}
+        {{- else }}
+        return runtime.Executed(&planner.ToolResult{Name: call.Name}), nil
+        {{- end }}
     {{- end }}
     default:
         return runtime.Executed(&planner.ToolResult{

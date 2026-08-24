@@ -43,10 +43,11 @@ func TestStreamTextToolCallUsageStop(t *testing.T) {
 	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
 	require.NoError(t, err)
 	def := toolDef(t, "feed/find_duplicates", `{"type":"object"}`)
-	s, err := cl.Stream(context.Background(), &model.Request{
+	request := &model.Request{
 		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
 		Tools:    []*model.ToolDefinition{def},
-	})
+	}
+	s, err := cl.Stream(context.Background(), request)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, s.Close()) }()
 
@@ -91,7 +92,9 @@ func TestStreamRejectsProviderEndBeforeFinishReason(t *testing.T) {
 	require.IsType(t, model.TextChunk{}, chunk)
 	_, err = stream.Recv()
 
-	require.EqualError(t, err, "vertex: stream ended before candidate finish reason")
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.ErrorContains(t, err, "vertex: stream ended before candidate finish reason")
 }
 
 func TestStreamToolCallThoughtSignature(t *testing.T) {
@@ -108,10 +111,11 @@ func TestStreamToolCallThoughtSignature(t *testing.T) {
 	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
 	require.NoError(t, err)
 	def := toolDef(t, "feed/find_duplicates", `{"type":"object"}`)
-	s, err := cl.Stream(context.Background(), &model.Request{
+	request := &model.Request{
 		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
 		Tools:    []*model.ToolDefinition{def},
-	})
+	}
+	s, err := cl.Stream(context.Background(), request)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, s.Close()) }()
 
@@ -119,6 +123,60 @@ func TestStreamToolCallThoughtSignature(t *testing.T) {
 	require.Len(t, chunks, 2)
 	call := chunks[0].(model.ToolCallChunk).ToolCall
 	assert.Equal(t, base64.StdEncoding.EncodeToString(sig), call.ThoughtSignature)
+}
+
+func TestStreamReservesLaterExplicitToolCallIDsBeforeGeneratingMissingIDs(t *testing.T) {
+	missing := &genai.Part{FunctionCall: &genai.FunctionCall{Name: "lookup", Args: map[string]any{}}}
+	explicit := &genai.Part{FunctionCall: &genai.FunctionCall{
+		ID:   "vertex-call-0",
+		Name: "lookup",
+		Args: map[string]any{},
+	}}
+	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
+		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{missing}}}}},
+		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{explicit}}}}},
+		{Candidates: []*genai.Candidate{{FinishReason: genai.FinishReasonStop}}},
+	}}
+	client, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
+	require.NoError(t, err)
+	def := toolDef(t, "lookup", `{"type":"object"}`)
+	request := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "go"}},
+		}},
+		Tools: []*model.ToolDefinition{def},
+	}
+	stream, err := client.Stream(t.Context(), request)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, stream.Close()) }()
+
+	chunks := drain(t, stream)
+	var streamIDs []string
+	for _, chunk := range chunks {
+		if call, ok := chunk.(model.ToolCallChunk); ok {
+			streamIDs = append(streamIDs, call.ToolCall.ID)
+		}
+	}
+	unary, err := translateResponse(
+		&genai.GenerateContentResponse{Candidates: []*genai.Candidate{{
+			FinishReason: genai.FinishReasonStop,
+			Content:      &genai.Content{Parts: []*genai.Part{missing, explicit}},
+		}}},
+		"gemini-2.5-flash",
+		model.ModelClassDefault,
+		map[string]string{"lookup": "lookup"},
+		newVertexToolCallIDAllocator(request.Messages),
+	)
+	require.NoError(t, err)
+	calls := unary.ToolCalls()
+	unaryIDs := make([]string, 0, len(calls))
+	for _, call := range calls {
+		unaryIDs = append(unaryIDs, call.ID)
+	}
+
+	assert.Equal(t, []string{"vertex-call-1", "vertex-call-0"}, unaryIDs)
+	assert.Equal(t, unaryIDs, streamIDs)
 }
 
 func TestStreamThinkingWithSignature(t *testing.T) {
@@ -136,9 +194,10 @@ func TestStreamThinkingWithSignature(t *testing.T) {
 	}}
 	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
 	require.NoError(t, err)
-	s, err := cl.Stream(context.Background(), &model.Request{
+	request := &model.Request{
 		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
-	})
+	}
+	s, err := cl.Stream(context.Background(), request)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, s.Close()) }()
 
@@ -173,6 +232,40 @@ func TestStreamThinkingWithSignature(t *testing.T) {
 
 	require.IsType(t, model.StopChunk{}, chunks[3])
 	require.NotNil(t, s.Response())
+}
+
+func TestStreamMultipleThinkingBlocksSatisfyModelValidator(t *testing.T) {
+	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
+		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{
+			{Thought: true, Text: "first", ThoughtSignature: []byte("first-signature")},
+			{Thought: true, Text: "second", ThoughtSignature: []byte("second-signature")},
+		}}}}},
+		{Candidates: []*genai.Candidate{{FinishReason: genai.FinishReasonStop}}},
+	}}
+	client, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
+	require.NoError(t, err)
+	request := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "go"}},
+		}},
+	}
+	validated, err := client.Stream(context.Background(), request)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, validated.Close())
+	}()
+
+	drain(t, validated)
+
+	response := validated.Response()
+	require.NotNil(t, response)
+	require.Len(t, response.Content, 1)
+	require.Len(t, response.Content[0].Parts, 2)
+	first := response.Content[0].Parts[0].(model.ThinkingPart)
+	second := response.Content[0].Parts[1].(model.ThinkingPart)
+	assert.Equal(t, 0, first.Index)
+	assert.Equal(t, 1, second.Index)
 }
 
 // TestStreamThinkingSignatureCanonicalReplay verifies that the stream's
@@ -383,13 +476,18 @@ func TestStreamStructuredOutputEmitsCompletionDeltaAndFinalCompletion(t *testing
 	}}
 	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
 	require.NoError(t, err)
-	s, err := cl.Stream(context.Background(), &model.Request{
+	request := &model.Request{
 		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
 		StructuredOutput: &model.StructuredOutput{
 			Name:   "draft_from_transcript",
 			Schema: []byte(`{"type":"object"}`),
 		},
-	})
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		request,
+		func(*model.Response, *model.Completion) error { return nil },
+	))
+	s, err := cl.Stream(context.Background(), request)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, s.Close()) }()
 
@@ -433,13 +531,18 @@ func TestStreamStructuredOutputRejectsInvalidFinalJSON(t *testing.T) {
 	}}
 	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
 	require.NoError(t, err)
-	s, err := cl.Stream(context.Background(), &model.Request{
+	request := &model.Request{
 		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
 		StructuredOutput: &model.StructuredOutput{
 			Name:   "draft_from_transcript",
 			Schema: []byte(`{"type":"object"}`),
 		},
-	})
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		request,
+		func(*model.Response, *model.Completion) error { return nil },
+	))
+	s, err := cl.Stream(context.Background(), request)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, s.Close()) }()
 
@@ -454,19 +557,24 @@ func TestStreamStructuredOutputRejectsEmptyAccumulation(t *testing.T) {
 	}}
 	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
 	require.NoError(t, err)
-	s, err := cl.Stream(context.Background(), &model.Request{
+	request := &model.Request{
 		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
 		StructuredOutput: &model.StructuredOutput{
 			Name:   "draft_from_transcript",
 			Schema: []byte(`{"type":"object"}`),
 		},
-	})
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		request,
+		func(*model.Response, *model.Completion) error { return nil },
+	))
+	s, err := cl.Stream(context.Background(), request)
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, s.Close()) }()
 
 	err = drainToError(t, s)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "structured completion payload is empty")
+	assert.Contains(t, err.Error(), "not valid JSON")
 }
 
 // drainToError drains a streamer until it returns a non-EOF error, failing

@@ -31,7 +31,7 @@ func (r *Runtime) resolveConfirmationDecision(
 	input *RunInput,
 	base *planner.PlanInput,
 	toolOpts engine.ActivityOptions,
-	call planner.ToolRequest,
+	call ToolCall,
 	awaitID string,
 	plan *confirmationPlan,
 	dec *api.ConfirmationDecision,
@@ -53,6 +53,11 @@ func (r *Runtime) resolveConfirmationDecision(
 	}
 	if dec.RequestedBy == "" {
 		return nil, nil, false, fmt.Errorf("confirmation decision missing requested_by for %q (%s)", it.call.Name, it.call.ToolCallID)
+	}
+	if call.ToolCallID == "" {
+		return nil, nil, false, planner.NewOutputContractError(
+			fmt.Errorf("confirmed tool %q is missing tool_call_id", call.Name),
+		)
 	}
 
 	approved := dec.Approved
@@ -148,11 +153,7 @@ func (r *Runtime) resolveConfirmationDecision(
 	}
 
 	// Approved: execute the tool call.
-	if call.ToolCallID == "" {
-		call.ToolCallID = generateDeterministicToolCallID(base.RunContext.RunID, call.TurnID, base.RunContext.Attempt, call.Name, 0)
-	}
-
-	grouped, timeouts := r.groupToolCallsByTimeout([]planner.ToolRequest{call}, input, toolOpts.StartToCloseTimeout)
+	grouped, timeouts := r.groupToolCallsByTimeout([]ToolCall{call}, input, toolOpts.StartToCloseTimeout)
 	finishBy := deadlines.Budget
 	if r.isBookkeeping(call.Name) {
 		finishBy = deadlines.Hard
@@ -170,7 +171,7 @@ func (r *Runtime) resolveConfirmationDecision(
 		toolOpts,
 	)
 	records, resultErr := stepToolRecordsAfterExecution(
-		[]planner.ToolRequest{call},
+		[]ToolCall{call},
 		outcomes,
 		executionErr,
 	)
@@ -253,7 +254,7 @@ func (r *Runtime) publishAwaitToolUses(ctx context.Context, input *RunInput, bas
 			base.RunContext.RunID,
 			input.AgentID,
 			base.RunContext.SessionID,
-			planner.ToolRequest{
+			ToolCall{
 				Name:       c.ToolName,
 				ToolCallID: c.ToolCallID,
 				Payload:    c.Payload,
@@ -274,7 +275,7 @@ func (r *Runtime) publishAwaitToolUses(ctx context.Context, input *RunInput, bas
 			base.RunContext.RunID,
 			input.AgentID,
 			base.RunContext.SessionID,
-			planner.ToolRequest{
+			ToolCall{
 				Name:       q.ToolName,
 				ToolCallID: q.ToolCallID,
 				Payload:    q.Payload,
@@ -291,12 +292,12 @@ func (r *Runtime) publishAwaitToolUses(ctx context.Context, input *RunInput, bas
 		if len(e.Items) == 0 {
 			return errors.New("await_external_tools: no items in await")
 		}
-		awaitCalls := make([]planner.ToolRequest, 0, len(e.Items))
+		awaitCalls := make([]ToolCall, 0, len(e.Items))
 		for _, item := range e.Items {
 			if item.ToolCallID == "" {
 				return fmt.Errorf("await_external_tools: missing tool_call_id for external tool %q", item.Name)
 			}
-			awaitCalls = append(awaitCalls, planner.ToolRequest{
+			awaitCalls = append(awaitCalls, ToolCall{
 				Name:       item.Name,
 				ToolCallID: item.ToolCallID,
 				Payload:    item.Payload,
@@ -457,12 +458,12 @@ func (r *Runtime) consumeClarificationResponse(
 		if err != nil {
 			return nil, fmt.Errorf("encode tool clarification answer: %w", err)
 		}
-		call := planner.ToolRequest{
+		call := ToolCall{
 			Name:       c.ToolName,
 			ToolCallID: c.ToolCallID,
 			Payload:    c.Payload,
 		}
-		call = r.prepareAllowedCallsMetadata(input.AgentID, base, []planner.ToolRequest{call}, parentTracker)[0]
+		call = r.prepareAllowedCallsMetadata(input.AgentID, base, []ToolCall{call}, parentTracker)[0]
 		call.RunID = callRunID
 		return r.consumeProvidedToolResultRecords(
 			ctx,
@@ -476,7 +477,7 @@ func (r *Runtime) consumeClarificationResponse(
 					Result: rawjson.Message(resultJSON),
 				},
 			}}},
-			[]planner.ToolRequest{call},
+			[]ToolCall{call},
 			map[string]struct{}{c.ToolCallID: {}},
 		)
 	case planner.AwaitItemKindQuestions, planner.AwaitItemKindExternalTools:
@@ -509,7 +510,7 @@ func (r *Runtime) consumeToolResultsResponse(
 			return nil, fmt.Errorf("tool-results response id %q does not match pending id %q", rs.ID, q.ID)
 		}
 		expected := map[string]struct{}{q.ToolCallID: {}}
-		allowed := []planner.ToolRequest{
+		allowed := []ToolCall{
 			{
 				Name:       q.ToolName,
 				ToolCallID: q.ToolCallID,
@@ -528,13 +529,13 @@ func (r *Runtime) consumeToolResultsResponse(
 			return nil, fmt.Errorf("tool-results response id %q does not match pending id %q", rs.ID, e.ID)
 		}
 		expected := make(map[string]struct{}, len(e.Items))
-		allowed := make([]planner.ToolRequest, 0, len(e.Items))
+		allowed := make([]ToolCall, 0, len(e.Items))
 		for _, it := range e.Items {
 			if it.ToolCallID == "" {
 				return nil, fmt.Errorf("await_external_tools: missing tool_call_id for external tool %q", it.Name)
 			}
 			expected[it.ToolCallID] = struct{}{}
-			allowed = append(allowed, planner.ToolRequest{
+			allowed = append(allowed, ToolCall{
 				Name:       it.Name,
 				ToolCallID: it.ToolCallID,
 				Payload:    it.Payload,
@@ -552,7 +553,7 @@ func (r *Runtime) consumeToolResultsResponse(
 	}
 }
 
-func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *RunInput, base *planner.PlanInput, turnID string, rs *api.ToolResultsSet, allowed []planner.ToolRequest, expected map[string]struct{}) ([]stepToolRecord, error) {
+func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *RunInput, base *planner.PlanInput, turnID string, rs *api.ToolResultsSet, allowed []ToolCall, expected map[string]struct{}) ([]stepToolRecord, error) {
 	if rs == nil {
 		return nil, errors.New("await: nil tool results set")
 	}

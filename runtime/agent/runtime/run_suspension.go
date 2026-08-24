@@ -6,10 +6,12 @@ package runtime
 // interpreting runtime state.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -26,15 +28,26 @@ func (r *Runtime) persistRunSuspension(wfCtx engine.WorkflowContext, input *RunI
 	if err != nil {
 		return fmt.Errorf("encode run suspension for storage: %w", err)
 	}
+	record := &RecordActivityInput{
+		Type:      runSuspensionRecordType,
+		RunID:     input.RunID,
+		AgentID:   input.AgentID,
+		SessionID: input.SessionID,
+		Payload:   data,
+	}
+	encodedRecord, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("encode run suspension record: %w", err)
+	}
+	if len(encodedRecord) > engine.MaxPayloadBytes {
+		return fmt.Errorf(
+			"run suspension record exceeds workflow payload limit %d bytes",
+			engine.MaxPayloadBytes,
+		)
+	}
 	return wfCtx.PublishRecord(engine.RecordActivityCall{
-		Name: recordActivityName,
-		Input: &RecordActivityInput{
-			Type:      runSuspensionRecordType,
-			RunID:     input.RunID,
-			AgentID:   input.AgentID,
-			SessionID: input.SessionID,
-			Payload:   data,
-		},
+		Name:  recordActivityName,
+		Input: record,
 	})
 }
 
@@ -48,14 +61,16 @@ func (r *Runtime) saveRunSuspension(ctx context.Context, input *RecordActivityIn
 		return errors.New("runtime: suspension record cannot contain run-log event fields")
 	}
 	var suspension api.RunSuspension
-	if err := json.Unmarshal(input.Payload, &suspension); err != nil {
+	if err := decodeStoredRunSuspension(input.Payload, &suspension); err != nil {
 		return fmt.Errorf("decode run suspension storage payload: %w", err)
 	}
 	checkpoint, err := decodeWorkflowCheckpointState(&suspension)
 	if err != nil {
 		return err
 	}
-	if checkpoint.AgentID != string(input.AgentID) || checkpoint.SessionID != input.SessionID || checkpoint.BaseContext.RunID != input.RunID {
+	if checkpoint.AgentID != string(input.AgentID) ||
+		checkpoint.SessionID != input.SessionID ||
+		checkpoint.PreviousRunID != input.RunID {
 		return errors.New("runtime: suspension record identity does not match checkpoint")
 	}
 	return r.SessionStore.SaveRunSuspension(ctx, input.RunID, session.RunSuspension{
@@ -72,7 +87,7 @@ func (r *Runtime) LoadRunSuspension(ctx context.Context, runID string) (*api.Run
 		return nil, err
 	}
 	var suspension api.RunSuspension
-	if err := json.Unmarshal(stored.Data, &suspension); err != nil {
+	if err := decodeStoredRunSuspension(stored.Data, &suspension); err != nil {
 		return nil, fmt.Errorf("decode stored run suspension: %w", err)
 	}
 	if suspension.ID != stored.ID {
@@ -82,8 +97,22 @@ func (r *Runtime) LoadRunSuspension(ctx context.Context, runID string) (*api.Run
 	if err != nil {
 		return nil, err
 	}
-	if checkpoint.BaseContext.RunID != runID {
+	if checkpoint.PreviousRunID != runID {
 		return nil, errors.New("stored run suspension belongs to another run")
 	}
 	return &suspension, nil
+}
+
+// decodeStoredRunSuspension accepts exactly the runtime-owned suspension
+// fields. Unknown or trailing data indicates incompatible stored state.
+func decodeStoredRunSuspension(data []byte, suspension *api.RunSuspension) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(suspension); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return errors.New("run suspension has trailing data")
+	}
+	return nil
 }

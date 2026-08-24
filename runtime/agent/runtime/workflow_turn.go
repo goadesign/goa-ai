@@ -136,11 +136,15 @@ func (l *workflowLoop) recordToolResultsBeforeError(batch *stepBatch, contractEr
 func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 	ctx := l.wfCtx.Context()
 	l.r.logger.Info(ctx, "Workflow received tool calls from planner", "count", len(program.calls))
-	candidates, err := l.r.rewriteUnknownToolCalls(program.calls)
-	if err != nil {
-		return err
+	candidates := append([]ToolCall(nil), program.calls...)
+	for _, call := range candidates {
+		if _, ok := l.r.toolSpec(call.Name); !ok {
+			return planner.NewOutputContractError(
+				fmt.Errorf("planner called unregistered tool %q", call.Name),
+			)
+		}
 	}
-	candidates, err = l.r.applyPerRunOverrides(ctx, l.input, candidates)
+	candidates, err := l.r.applyPerRunOverrides(ctx, l.input, candidates)
 	if err != nil {
 		return err
 	}
@@ -247,7 +251,7 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 
 // validateTerminalRunBatch prevents one planner step from assigning both
 // completion and continuation semantics to successful side effects.
-func (r *Runtime) validateTerminalRunBatch(calls []planner.ToolRequest) error {
+func (r *Runtime) validateTerminalRunBatch(calls []ToolCall) error {
 	hasTerminal := false
 	hasNonTerminal := false
 	for _, call := range calls {
@@ -287,9 +291,9 @@ func (r *Runtime) validateTerminalToolClarifications(records []stepToolRecord) e
 
 // executeImmediateToolCalls applies each call's deadline class independently:
 // ordinary tools consume Budget, while bookkeeping obligations may use Hard.
-func (l *workflowLoop) executeImmediateToolCalls(calls []planner.ToolRequest, expectedChildren int) ([]*ToolExecutionResult, bool, error) {
-	budgeted := make([]planner.ToolRequest, 0, len(calls))
-	bookkeeping := make([]planner.ToolRequest, 0, len(calls))
+func (l *workflowLoop) executeImmediateToolCalls(calls []ToolCall, expectedChildren int) ([]*ToolExecutionResult, bool, error) {
+	budgeted := make([]ToolCall, 0, len(calls))
+	bookkeeping := make([]ToolCall, 0, len(calls))
 	for _, call := range calls {
 		if l.r.isBookkeeping(call.Name) {
 			bookkeeping = append(bookkeeping, call)
@@ -315,7 +319,7 @@ func (l *workflowLoop) executeImmediateToolCalls(calls []planner.ToolRequest, ex
 }
 
 func (l *workflowLoop) executeImmediateToolClass(
-	calls []planner.ToolRequest,
+	calls []ToolCall,
 	expectedChildren int,
 	finishBy time.Time,
 ) ([]*ToolExecutionResult, bool, error) {
@@ -347,8 +351,8 @@ func (l *workflowLoop) resolveExpiredConfirmations(
 ) ([]confirmationAwait, []stepToolRecord, bool, error) {
 	now := l.wfCtx.Now()
 	remaining := make([]confirmationAwait, 0, len(confirmations))
-	expiredBudgeted := make([]planner.ToolRequest, 0, len(confirmations))
-	expiredBookkeeping := make([]planner.ToolRequest, 0, len(confirmations))
+	expiredBudgeted := make([]ToolCall, 0, len(confirmations))
+	expiredBookkeeping := make([]ToolCall, 0, len(confirmations))
 	for _, confirmation := range confirmations {
 		bookkeeping := l.r.isBookkeeping(confirmation.call.Name)
 		deadline := l.deadlines.Budget
@@ -365,7 +369,7 @@ func (l *workflowLoop) resolveExpiredConfirmations(
 			expiredBudgeted = append(expiredBudgeted, confirmation.call)
 		}
 	}
-	expiredCalls := make([]planner.ToolRequest, 0, len(expiredBudgeted)+len(expiredBookkeeping))
+	expiredCalls := make([]ToolCall, 0, len(expiredBudgeted)+len(expiredBookkeeping))
 	expiredCalls = append(expiredCalls, expiredBudgeted...)
 	expiredCalls = append(expiredCalls, expiredBookkeeping...)
 	if len(expiredCalls) == 0 {
@@ -524,7 +528,7 @@ func (r *Runtime) classifyStep(batch stepBatch) (stepTransition, error) {
 
 // classifyToolRecords decides whether an executed batch must resume reasoning
 // or can complete immediately.
-func (r *Runtime) classifyToolRecords(records []stepToolRecord, result *planner.PlanResult, awaited bool) (stepTransition, error) {
+func (r *Runtime) classifyToolRecords(records []stepToolRecord, result *PlanResult, awaited bool) (stepTransition, error) {
 	if len(records) == 0 {
 		return stepTransitionResume, nil
 	}
@@ -588,7 +592,7 @@ func (r *Runtime) executedSuccessfulTerminalRunTool(records []stepToolRecord) (b
 // denied confirmations and canceled executions.
 func (l *workflowLoop) recordCapDeniedToolCall(
 	ctx context.Context,
-	call planner.ToolRequest,
+	call ToolCall,
 	tr *planner.ToolResult,
 ) (bool, *RecordActivityInput, error) {
 	parentID := parentToolCallID(call, &l.base.RunContext)

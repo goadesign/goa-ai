@@ -97,13 +97,36 @@ func unwrapStructuredOutputValue(payload rawjson.Message) (rawjson.Message, erro
 }
 
 func wrapStructuredOutputSchema(schema []byte) (rawjson.Message, error) {
+	decoder := json.NewDecoder(bytes.NewReader(schema))
+	decoder.UseNumber()
+	var inner any
+	if err := decoder.Decode(&inner); err != nil {
+		return nil, fmt.Errorf("decode structured output tool schema: %w", err)
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return nil, errors.New("decode structured output tool schema: trailing JSON value")
+	}
 	envelope := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
 		"required":             []string{structuredOutputValueField},
-		"properties": map[string]json.RawMessage{
-			structuredOutputValueField: append(json.RawMessage(nil), schema...),
+		"properties": map[string]any{
+			structuredOutputValueField: inner,
 		},
+	}
+	if object, ok := inner.(map[string]any); ok {
+		if example, present := object["example"]; present {
+			envelope["example"] = map[string]any{structuredOutputValueField: example}
+			delete(object, "example")
+		}
+		if examples, present := object["examples"].([]any); present {
+			wrapped := make([]any, len(examples))
+			for index, example := range examples {
+				wrapped[index] = map[string]any{structuredOutputValueField: example}
+			}
+			envelope["examples"] = wrapped
+			delete(object, "examples")
+		}
 	}
 	data, err := json.Marshal(envelope)
 	if err != nil {

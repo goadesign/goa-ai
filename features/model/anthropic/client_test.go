@@ -21,12 +21,21 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+// mustAnthropicToolInput compiles a static test schema.
+func mustAnthropicToolInput(t *testing.T, schema rawjson.Message) model.ToolInput {
+	t.Helper()
+	input, err := model.AdvertisedToolInputFromSchema(schema)
+	require.NoError(t, err)
+	return input
+}
+
 type (
 	// stubMessagesClient records the last request per Messages endpoint and
 	// replays canned responses.
 	stubMessagesClient struct {
 		lastParams      sdk.MessageNewParams
 		lastCountParams sdk.MessageCountTokensParams
+		countCalls      int
 		resp            *sdk.Message
 		countResp       *sdk.MessageTokensCount
 		err             error
@@ -37,6 +46,11 @@ type (
 
 	// noopDecoder terminates a stream immediately for streaming stubs.
 	noopDecoder struct{}
+
+	closeTrackingDecoder struct {
+		closed   bool
+		closeErr error
+	}
 
 	// roundTripFunc adapts a function to http.RoundTripper so tests can
 	// observe the wire request a real SDK client produces.
@@ -62,6 +76,22 @@ func TestTranslateResponsePreservesThinkingInOneAssistantMessage(t *testing.T) {
 	}, resp.Content[0].Parts)
 }
 
+func TestTranslateResponseAssignsDenseThinkingIndexes(t *testing.T) {
+	resp, err := translateResponse(&sdk.Message{
+		StopReason: sdk.StopReasonEndTurn,
+		Content: []sdk.ContentBlockUnion{
+			{Type: "text", Text: "before"},
+			{Type: "thinking", Thinking: "first", Signature: "sig-1"},
+			{Type: "text", Text: "between"},
+			{Type: "redacted_thinking", Data: "opaque"},
+		},
+	}, nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, 0, resp.Content[0].Parts[1].(model.ThinkingPart).Index)
+	assert.Equal(t, 1, resp.Content[0].Parts[3].(model.ThinkingPart).Index)
+}
+
 func TestTranslateResponsePreservesOmittedThinkingDisplay(t *testing.T) {
 	resp, err := translateResponse(&sdk.Message{
 		StopReason: sdk.StopReasonToolUse,
@@ -76,6 +106,46 @@ func TestTranslateResponsePreservesOmittedThinkingDisplay(t *testing.T) {
 		model.ThinkingPart{Signature: "sig", Final: true},
 		model.ToolUsePart{ID: "call-1", Name: "svc.lookup", Input: rawjson.Message(`{"id":"a"}`)},
 	}, resp.Content[0].Parts)
+}
+
+func TestCompleteRejectsMissingToolCallIDWithUsage(t *testing.T) {
+	stub := &stubMessagesClient{resp: &sdk.Message{
+		Content: []sdk.ContentBlockUnion{{
+			Type:  "tool_use",
+			Name:  "lookup",
+			Input: json.RawMessage(`{"id":"a"}`),
+		}},
+		StopReason: sdk.StopReasonToolUse,
+		Usage: sdk.Usage{
+			InputTokens:  7,
+			OutputTokens: 2,
+		},
+	}}
+	client, err := New(stub, Options{DefaultModel: "claude-test", MaxTokens: 64})
+	require.NoError(t, err)
+
+	response, err := client.Complete(t.Context(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "look up a"}},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "lookup",
+			Description: "Look up a value.",
+			Input:       mustAnthropicToolInput(t, rawjson.Message(`{"type":"object"}`)),
+		}},
+	})
+
+	require.Nil(t, response)
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.ErrorContains(t, err, "response tool use block missing ID")
+	require.Equal(t, &model.TokenUsage{
+		Model:        "claude-test",
+		InputTokens:  7,
+		OutputTokens: 2,
+		TotalTokens:  9,
+	}, validationErr.Usage())
 }
 
 func TestTranslateResponsePreservesTextCitations(t *testing.T) {
@@ -144,6 +214,7 @@ func (s *stubMessagesClient) NewStreaming(_ context.Context, body sdk.MessageNew
 }
 
 func (s *stubMessagesClient) CountTokens(_ context.Context, body sdk.MessageCountTokensParams, _ ...option.RequestOption) (*sdk.MessageTokensCount, error) {
+	s.countCalls++
 	s.lastCountParams = body
 	return s.countResp, s.countErr
 }
@@ -152,6 +223,14 @@ func (n *noopDecoder) Event() ssestream.Event { return ssestream.Event{} }
 func (n *noopDecoder) Next() bool             { return false }
 func (n *noopDecoder) Close() error           { return nil }
 func (n *noopDecoder) Err() error             { return nil }
+
+func (*closeTrackingDecoder) Event() ssestream.Event { return ssestream.Event{} }
+func (*closeTrackingDecoder) Next() bool             { return false }
+func (d *closeTrackingDecoder) Close() error {
+	d.closed = true
+	return d.closeErr
+}
+func (*closeTrackingDecoder) Err() error { return nil }
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
@@ -210,6 +289,31 @@ func TestComplete_TextOnly(t *testing.T) {
 	}
 }
 
+func TestCountTokensRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
+	tests := []struct {
+		name    string
+		request *model.Request
+	}{
+		{name: "nil request"},
+		{name: "unsupported model class", request: &model.Request{ModelClass: "unsupported"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stub := &stubMessagesClient{}
+			client, err := New(stub, Options{
+				DefaultModel: "claude-3.5-sonnet",
+				MaxTokens:    128,
+			})
+			require.NoError(t, err)
+
+			_, err = client.CountTokens(context.Background(), tt.request)
+
+			require.Error(t, err)
+			assert.Zero(t, stub.countCalls)
+		})
+	}
+}
+
 func TestCountTokensUsesCanonicalAnthropicRequest(t *testing.T) {
 	stub := &stubMessagesClient{
 		countResp: &sdk.MessageTokensCount{InputTokens: 42},
@@ -242,7 +346,7 @@ func TestCountTokensUsesCanonicalAnthropicRequest(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "lookup",
 			Description: "Look up a value.",
-			Input: model.ToolInputFromSchema(rawjson.Message(
+			Input: mustAnthropicToolInput(t, rawjson.Message(
 				`{"type":"object","properties":{"id":{"type":"string"}}}`,
 			)),
 		}},
@@ -261,8 +365,9 @@ func TestCountTokensUsesCanonicalAnthropicRequest(t *testing.T) {
 	}, count)
 	assert.Equal(t, sdk.Model("anthropic.claude-sonnet-5"), stub.lastCountParams.Model)
 	require.Len(t, stub.lastCountParams.Messages, 2)
-	require.Len(t, stub.lastCountParams.Messages[1].Content, 1)
-	assert.NotNil(t, stub.lastCountParams.Messages[1].Content[0].OfText)
+	require.Len(t, stub.lastCountParams.Messages[1].Content, 2)
+	assert.NotNil(t, stub.lastCountParams.Messages[1].Content[0].OfThinking)
+	assert.NotNil(t, stub.lastCountParams.Messages[1].Content[1].OfText)
 	require.Len(t, stub.lastCountParams.System.OfTextBlockArray, 1)
 	assert.Equal(t, "ephemeral", string(stub.lastCountParams.System.OfTextBlockArray[0].CacheControl.Type))
 	require.Len(t, stub.lastCountParams.Tools, 1)
@@ -375,22 +480,31 @@ func TestCountTokensEnablesToolExamplesBeta(t *testing.T) {
 		MaxTokens:    128,
 	})
 	require.NoError(t, err)
+	spec := tools.TypeSpec{
+		Name:                     "ReportsConcurrentPayload",
+		Schema:                   tools.RawJSON(`{"type":"object","properties":{"minimum":{"type":"integer","const":9007199254740993},"ratios":{"type":"array","items":{"type":"number"}}},"required":["minimum","ratios"],"example":{"minimum":9007199254740993,"ratios":[0.25,2]}}`),
+		SchemaWithoutRootExample: tools.RawJSON(`{"type":"object","properties":{"minimum":{"type":"integer","const":9007199254740993},"ratios":{"type":"array","items":{"type":"number"}}},"required":["minimum","ratios"]}`),
+		ExampleJSON:              tools.RawJSON(`{"minimum":9007199254740993,"ratios":[0.25,2]}`),
+		Codec: tools.JSONCodec[any]{
+			FromJSON: func(data []byte) (any, error) {
+				var value any
+				err := json.Unmarshal(data, &value)
+				return value, err
+			},
+		},
+	}
+	definition := model.ToolDefinitionFromSpec(tools.ToolSpec{
+		Name:        "reports.concurrent",
+		Description: "Check concurrent reports",
+		Payload:     spec,
+	})
 
 	_, err = client.CountTokens(context.Background(), &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "hello"}},
 		}},
-		Tools: []*model.ToolDefinition{{
-			Name:        "reports.concurrent",
-			Description: "Check concurrent reports",
-			Input: model.ToolInputFromSpec(tools.TypeSpec{
-				Name:                     "ReportsConcurrentPayload",
-				Schema:                   tools.RawJSON(`{"type":"object","properties":{"minimum":{"type":"integer","const":9007199254740993},"ratios":{"type":"array","items":{"type":"number"}}},"required":["minimum","ratios"],"example":{"minimum":9007199254740993,"ratios":[0.25,2]}}`),
-				SchemaWithoutRootExample: tools.RawJSON(`{"type":"object","properties":{"minimum":{"type":"integer","const":9007199254740993},"ratios":{"type":"array","items":{"type":"number"}}},"required":["minimum","ratios"]}`),
-				ExampleJSON:              tools.RawJSON(`{"minimum":9007199254740993,"ratios":[0.25,2]}`),
-			}),
-		}},
+		Tools: []*model.ToolDefinition{definition},
 	})
 
 	require.NoError(t, err)
@@ -431,7 +545,7 @@ func TestToolExamplesBetaOmittedWithoutAuthoredExamples(t *testing.T) {
 			tools: []*model.ToolDefinition{{
 				Name:        "reports.complete",
 				Description: "Complete a report",
-				Input: model.ToolInputFromSchema(rawjson.Message(
+				Input: mustAnthropicToolInput(t, rawjson.Message(
 					`{"type":"object","properties":{"id":{"type":"string"}}}`,
 				)),
 			}},
@@ -497,7 +611,7 @@ func TestComplete_ToolUse(t *testing.T) {
 			{
 				Name:        "test.tool",
 				Description: "test tool",
-				Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+				Input:       mustAnthropicToolInput(t, rawjson.Message(`{"type":"object"}`)),
 			},
 		},
 	}
@@ -549,8 +663,8 @@ func TestComplete_ToolUse(t *testing.T) {
 	}
 }
 
-func TestPrepareRequestForcedToolDisablesThinking(t *testing.T) {
-	cl := &Client{
+func TestPrepareRequestForcedToolKeepsAdaptiveThinking(t *testing.T) {
+	cl := &provider{
 		defaultModel: "claude-opus-4-7",
 		maxTok:       4096,
 		think:        2048,
@@ -566,7 +680,7 @@ func TestPrepareRequestForcedToolDisablesThinking(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "tasks.progress.complete",
 			Description: "complete the task",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustAnthropicToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeTool,
@@ -578,16 +692,13 @@ func TestPrepareRequestForcedToolDisablesThinking(t *testing.T) {
 		},
 	}
 	params := completionParamsFor(t, cl, req)
-	if params.Thinking.OfEnabled != nil {
-		t.Fatalf("forced tool choice must not send thinking config")
-	}
-	if params.ToolChoice.OfTool == nil {
-		t.Fatalf("expected forced tool choice to survive")
-	}
+	require.NotNil(t, params.Thinking.OfAdaptive)
+	require.Equal(t, sdk.ThinkingConfigAdaptiveDisplaySummarized, params.Thinking.OfAdaptive.Display)
+	require.NotNil(t, params.ToolChoice.OfTool)
 }
 
-func TestPrepareRequestAnyToolDisablesThinking(t *testing.T) {
-	cl := &Client{
+func TestPrepareRequestAnyToolKeepsAdaptiveThinking(t *testing.T) {
+	cl := &provider{
 		defaultModel: "claude-opus-4-7",
 		maxTok:       4096,
 		think:        2048,
@@ -603,7 +714,7 @@ func TestPrepareRequestAnyToolDisablesThinking(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "tasks.progress.update",
 			Description: "update task progress",
-			Input:       model.ToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustAnthropicToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeAny,
@@ -614,17 +725,70 @@ func TestPrepareRequestAnyToolDisablesThinking(t *testing.T) {
 		},
 	}
 	params := completionParamsFor(t, cl, req)
-	if params.Thinking.OfEnabled != nil {
-		t.Fatalf("any tool choice must not send thinking config")
+	require.NotNil(t, params.Thinking.OfAdaptive)
+	require.NotNil(t, params.ToolChoice.OfAny)
+}
+
+func TestPrepareRequestLegacyThinkingRejectsForcedTool(t *testing.T) {
+	cl := &provider{
+		defaultModel: "claude-sonnet-4-5-20250929",
+		maxTok:       4096,
+		think:        2048,
 	}
-	if params.ToolChoice.OfAny == nil {
-		t.Fatalf("expected any tool choice to survive")
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "finish the task"}},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "tasks.progress.complete",
+			Description: "complete the task",
+			Input:       mustAnthropicToolInput(t, rawjson.Message(`{"type":"object"}`)),
+		}},
+		ToolChoice: &model.ToolChoice{
+			Mode: model.ToolChoiceModeTool,
+			Name: "tasks.progress.complete",
+		},
+		Thinking: &model.ThinkingOptions{
+			Enable:       true,
+			BudgetTokens: 2048,
+		},
 	}
+
+	enc, err := cl.encodeRequest(context.Background(), req)
+	require.NoError(t, err)
+	_, err = cl.completionParams(context.Background(), req, enc)
+	require.EqualError(t, err, "anthropic: manual thinking cannot be combined with forced tool choice")
+}
+
+func TestPrepareRequestMythosPreviewRejectsForcedTool(t *testing.T) {
+	cl := &provider{
+		defaultModel: "claude-mythos-preview",
+		maxTok:       4096,
+	}
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "finish the task"}},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "tasks.progress.complete",
+			Description: "complete the task",
+			Input:       mustAnthropicToolInput(t, rawjson.Message(`{"type":"object"}`)),
+		}},
+		ToolChoice: &model.ToolChoice{
+			Mode: model.ToolChoiceModeTool,
+			Name: "tasks.progress.complete",
+		},
+	}
+
+	_, err := cl.encodeRequest(context.Background(), req)
+	require.EqualError(t, err, `anthropic: model "claude-mythos-preview" does not support forced tool choice mode "tool"`)
 }
 
 // completionParamsFor runs the full encode + completion-policy pipeline the
 // way Complete and Stream do, failing the test on any error.
-func completionParamsFor(t *testing.T, cl *Client, req *model.Request) *sdk.MessageNewParams {
+func completionParamsFor(t *testing.T, cl *provider, req *model.Request) *sdk.MessageNewParams {
 	t.Helper()
 	enc, err := cl.encodeRequest(context.Background(), req)
 	require.NoError(t, err)
@@ -718,6 +882,30 @@ func TestStream_EstablishmentErrorClassified(t *testing.T) {
 	assert.True(t, pe.Retryable())
 }
 
+func TestStream_EstablishmentErrorJoinsCloseFailure(t *testing.T) {
+	closeErr := errors.New("stream close failed")
+	decoder := &closeTrackingDecoder{closeErr: closeErr}
+	stub := &stubMessagesClient{
+		stream: ssestream.NewStream[sdk.MessageStreamEventUnion](
+			decoder,
+			&sdk.Error{StatusCode: http.StatusInternalServerError},
+		),
+	}
+	client, err := New(stub, Options{DefaultModel: "claude-3.5-sonnet", MaxTokens: 64})
+	require.NoError(t, err)
+	request := &model.Request{Messages: []*model.Message{{
+		Role:  model.ConversationRoleUser,
+		Parts: []model.Part{model.TextPart{Text: "hi"}},
+	}}}
+
+	stream, err := client.Stream(t.Context(), request)
+
+	require.Nil(t, stream)
+	require.Error(t, err)
+	require.ErrorIs(t, err, closeErr)
+	require.True(t, decoder.closed)
+}
+
 // TestComplete_ContextCancelPassthrough verifies that a context-cancellation
 // error surfaced by the SDK call passes through unclassified: cancellation
 // is consumer-side flow control, not a provider failure.
@@ -750,7 +938,7 @@ func TestComplete_RejectsStructuredOutput(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	_, err = cl.Complete(context.Background(), &model.Request{
+	request := &model.Request{
 		Messages: []*model.Message{
 			{
 				Role:  model.ConversationRoleUser,
@@ -761,7 +949,12 @@ func TestComplete_RejectsStructuredOutput(t *testing.T) {
 			Name:   "draft_from_transcript",
 			Schema: tools.RawJSON(`{"type":"object"}`),
 		},
-	})
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		request,
+		func(*model.Response, *model.Completion) error { return nil },
+	))
+	_, err = cl.Complete(context.Background(), request)
 	if !errors.Is(err, model.ErrStructuredOutputUnsupported) {
 		t.Fatalf("expected ErrStructuredOutputUnsupported, got %v", err)
 	}
@@ -777,7 +970,7 @@ func TestStream_RejectsStructuredOutput(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	_, err = cl.Stream(context.Background(), &model.Request{
+	request := &model.Request{
 		Messages: []*model.Message{
 			{
 				Role:  model.ConversationRoleUser,
@@ -788,8 +981,52 @@ func TestStream_RejectsStructuredOutput(t *testing.T) {
 			Name:   "draft_from_transcript",
 			Schema: tools.RawJSON(`{"type":"object"}`),
 		},
-	})
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		request,
+		func(*model.Response, *model.Completion) error { return nil },
+	))
+	_, err = cl.Stream(context.Background(), request)
 	if !errors.Is(err, model.ErrStructuredOutputUnsupported) {
 		t.Fatalf("expected ErrStructuredOutputUnsupported, got %v", err)
 	}
+}
+
+func TestCompleteUsesNativeStructuredOutputOnSupportedModel(t *testing.T) {
+	stub := &stubMessagesClient{
+		resp: &sdk.Message{
+			Model:      "claude-sonnet-5",
+			StopReason: sdk.StopReasonEndTurn,
+			Content: []sdk.ContentBlockUnion{{
+				Type: "text",
+				Text: `{"answer":"yes"}`,
+			}},
+		},
+	}
+	client, err := New(stub, Options{
+		DefaultModel: "claude-sonnet-5",
+		MaxTokens:    64,
+	})
+	require.NoError(t, err)
+	request := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "answer"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "answer",
+			Schema: rawjson.Message(`{"type":"object","properties":{"answer":{"type":"string"}}}`),
+		},
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		request,
+		func(*model.Response, *model.Completion) error { return nil },
+	))
+
+	_, err = client.Complete(t.Context(), request)
+
+	require.NoError(t, err)
+	schemaType, ok := stub.lastParams.OutputConfig.Format.Schema["type"].(json.RawMessage)
+	require.True(t, ok)
+	assert.JSONEq(t, `"object"`, string(schemaType))
 }

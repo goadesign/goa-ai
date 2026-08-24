@@ -3,11 +3,13 @@ package bedrock
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
+	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/stretchr/testify/require"
 
-	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
@@ -52,12 +54,11 @@ func TestComplete_WrapsRateLimitedErrors(t *testing.T) {
 	rt := &errorRuntimeClient{
 		converseErr: model.ErrRateLimited,
 	}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "test-model",
 		maxTok:       10,
 		temp:         0.5,
-		think:        defaultThinkingBudget,
 	}
 	req := model.Request{
 		ModelClass: model.ModelClassDefault,
@@ -73,18 +74,20 @@ func TestComplete_WrapsRateLimitedErrors(t *testing.T) {
 	_, err := client.Complete(context.Background(), &req)
 	require.Error(t, err)
 	require.ErrorIs(t, err, model.ErrRateLimited)
+	providerErr, ok := model.AsProviderError(err)
+	require.True(t, ok)
+	require.Equal(t, bedrockProviderName, providerErr.Provider())
 }
 
 func TestStream_WrapsRateLimitedErrors(t *testing.T) {
 	rt := &errorRuntimeClient{
 		converseStreamErr: model.ErrRateLimited,
 	}
-	client := &Client{
+	client := &provider{
 		runtime:      rt,
 		defaultModel: "test-model",
 		maxTok:       10,
 		temp:         0.5,
-		think:        defaultThinkingBudget,
 	}
 	req := model.Request{
 		ModelClass: model.ModelClassDefault,
@@ -100,4 +103,72 @@ func TestStream_WrapsRateLimitedErrors(t *testing.T) {
 	_, err := client.Stream(context.Background(), &req)
 	require.Error(t, err)
 	require.ErrorIs(t, err, model.ErrRateLimited)
+	providerErr, ok := model.AsProviderError(err)
+	require.True(t, ok)
+	require.Equal(t, bedrockProviderName, providerErr.Provider())
+}
+
+func TestWrapBedrockErrorPreservesCancellation(t *testing.T) {
+	err := wrapBedrockError("converse", context.Canceled)
+
+	require.ErrorIs(t, err, context.Canceled)
+	_, ok := model.AsProviderError(err)
+	require.False(t, ok)
+}
+
+func TestWrapBedrockErrorClassifiesStreamExceptionsWithoutHTTPStatus(t *testing.T) {
+	tests := []struct {
+		name      string
+		err       error
+		status    int
+		kind      model.ProviderErrorKind
+		retryable bool
+	}{
+		{
+			name:      "validation",
+			err:       &brtypes.ValidationException{},
+			status:    http.StatusBadRequest,
+			kind:      model.ProviderErrorKindInvalidRequest,
+			retryable: false,
+		},
+		{
+			name:      "internal server",
+			err:       &brtypes.InternalServerException{},
+			status:    http.StatusInternalServerError,
+			kind:      model.ProviderErrorKindUnavailable,
+			retryable: true,
+		},
+		{
+			name:      "service unavailable",
+			err:       &brtypes.ServiceUnavailableException{},
+			status:    http.StatusServiceUnavailable,
+			kind:      model.ProviderErrorKindUnavailable,
+			retryable: true,
+		},
+		{
+			name:      "model timeout",
+			err:       &brtypes.ModelTimeoutException{},
+			status:    http.StatusRequestTimeout,
+			kind:      model.ProviderErrorKindUnavailable,
+			retryable: true,
+		},
+		{
+			name:      "model stream error",
+			err:       &brtypes.ModelStreamErrorException{},
+			status:    424,
+			kind:      model.ProviderErrorKindUnavailable,
+			retryable: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := wrapBedrockError("converse_stream.recv", tt.err)
+
+			providerErr, ok := model.AsProviderError(err)
+			require.True(t, ok)
+			require.Equal(t, tt.status, providerErr.HTTPStatus())
+			require.Equal(t, tt.kind, providerErr.Kind())
+			require.Equal(t, tt.retryable, providerErr.Retryable())
+		})
+	}
 }

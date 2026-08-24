@@ -8,7 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/features/model/gateway"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/internal/provenance"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -20,9 +22,10 @@ import (
 
 type (
 	recordingPlannerEvents struct {
-		chunks   []string
-		thinking []model.ThinkingPart
-		usage    []model.TokenUsage
+		chunks     []string
+		thinking   []model.ThinkingPart
+		toolDeltas []string
+		usage      []model.TokenUsage
 	}
 
 	chunkStreamer struct {
@@ -31,14 +34,53 @@ type (
 		terminalErr error
 		index       int
 		closed      bool
+		closeErr    error
+	}
+
+	nilStreamClient struct{}
+
+	streamResultClient struct {
+		stream model.Streamer
+		err    error
 	}
 )
+
+func (nilStreamClient) Complete(context.Context, *model.Request) (*model.Response, error) {
+	return nil, errors.New("unexpected Complete call")
+}
+
+func (nilStreamClient) Stream(context.Context, *model.Request) (model.Streamer, error) {
+	return nil, nil
+}
+
+func (streamResultClient) Complete(context.Context, *model.Request) (*model.Response, error) {
+	return nil, errors.New("unexpected Complete call")
+}
+
+func (c streamResultClient) Stream(context.Context, *model.Request) (model.Streamer, error) {
+	return c.stream, c.err
+}
+
+func newTestModelInvocationClient(provider model.Provider, sink modelInvocationSink) model.Client {
+	return newModelInvocationClient(mustTestModelClient(provider), sink)
+}
+
+func newTestDesignatedModelInvocationClient(provider model.Provider, sink modelInvocationSink) model.Client {
+	return newDesignatedModelInvocationClient(mustTestModelClient(provider), sink)
+}
 
 func (e *recordingPlannerEvents) AssistantChunk(_ context.Context, text string) {
 	e.chunks = append(e.chunks, text)
 }
 
-func (e *recordingPlannerEvents) ToolCallArgsDelta(context.Context, string, tools.Ident, string) {}
+func (e *recordingPlannerEvents) ToolCallArgsDelta(
+	_ context.Context,
+	_ string,
+	_ tools.Ident,
+	delta string,
+) {
+	e.toolDeltas = append(e.toolDeltas, delta)
+}
 
 func (e *recordingPlannerEvents) PlannerThinkingBlock(_ context.Context, thinking model.ThinkingPart) {
 	e.thinking = append(e.thinking, thinking)
@@ -64,21 +106,331 @@ func (s *chunkStreamer) Recv() (model.Chunk, error) {
 
 func (s *chunkStreamer) Close() error {
 	s.closed = true
-	return nil
+	return s.closeErr
 }
 
 func (s *chunkStreamer) Response() *model.Response {
 	return s.response
 }
 
-func TestModelPresentationPublishesOnlySelectedAttempt(t *testing.T) {
+func TestModelInvocationClientRejectsNilStream(t *testing.T) {
+	invocations := &modelInvocationJournal{}
+	client := newTestModelInvocationClient(nilStreamClient{}, invocations)
+
+	stream, err := client.Stream(t.Context(), &model.Request{})
+
+	require.Nil(t, stream)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.ErrorContains(t, err, "model stream is nil")
+}
+
+func TestRuntimeModelWrappersCloseStreamsReturnedWithErrors(t *testing.T) {
+	callErr := errors.New("stream call failed")
+	closeErr := errors.New("stream close failed")
+
+	tests := []struct {
+		name string
+		wrap func(model.Client) model.Client
+	}{
+		{
+			name: "cache policy",
+			wrap: func(inner model.Client) model.Client {
+				return newCacheConfiguredClient(inner, CachePolicy{AfterSystem: true})
+			},
+		},
+		{
+			name: "invocation journal",
+			wrap: func(inner model.Client) model.Client {
+				return newModelInvocationClient(inner, &modelInvocationJournal{})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := &chunkStreamer{closeErr: closeErr}
+			client := test.wrap(mustTestModelClient(streamResultClient{stream: raw, err: callErr}))
+
+			got, err := client.Stream(t.Context(), &model.Request{})
+
+			require.Nil(t, got)
+			require.ErrorIs(t, err, callErr)
+			require.ErrorIs(t, err, closeErr)
+			require.True(t, raw.closed)
+		})
+	}
+}
+
+func TestPlannerModelClientClosesStreamReturnedWithError(t *testing.T) {
+	callErr := errors.New("stream call failed")
+	closeErr := errors.New("stream close failed")
+	raw := &chunkStreamer{closeErr: closeErr}
+	client := newPlannerModelClient(
+		mustTestModelClient(streamResultClient{stream: raw, err: callErr}),
+	)
+
+	summary, err := client.Stream(t.Context(), &model.Request{})
+
+	require.Equal(t, planner.StreamSummary{}, summary)
+	require.ErrorIs(t, err, callErr)
+	require.ErrorIs(t, err, closeErr)
+	require.True(t, raw.closed)
+}
+
+func TestModelInvocationStreamFingerprintsRejectedCompleteResponse(t *testing.T) {
+	invocations := &modelInvocationJournal{}
+	client := newTestModelInvocationClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			return &chunkStreamer{
+				chunks: []model.Chunk{model.StopChunk{Reason: "end_turn"}},
+				response: &model.Response{
+					Content: []model.Message{{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{nil},
+					}},
+					StopReason: "end_turn",
+				},
+			}, nil
+		},
+	}, invocations)
+	stream, err := client.Stream(t.Context(), &model.Request{})
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid canonical response")
+
+	evidence, present := rejectedResponseEvidence(invocations)
+	require.True(t, present)
+	require.Len(t, evidence.SHA256, 64)
+	require.Positive(t, evidence.Size)
+}
+
+func TestModelInvocationClientRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
+	providerCalls := 0
+	client := newTestModelInvocationClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			providerCalls++
+			return &model.Response{}, nil
+		},
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			providerCalls++
+			return &chunkStreamer{}, nil
+		},
+	}, &modelInvocationJournal{})
+	tool := &model.ToolDefinition{
+		Name:  "duplicate",
+		Input: mustRuntimeToolInput(rawjson.Message(`{"type":"object"}`)),
+	}
+	request := &model.Request{Tools: []*model.ToolDefinition{tool, tool}}
+
+	response, err := client.Complete(t.Context(), request)
+	require.Nil(t, response)
+	require.ErrorContains(t, err, `duplicate tool definition "duplicate"`)
+	stream, err := client.Stream(t.Context(), request)
+	require.Nil(t, stream)
+	require.ErrorContains(t, err, `duplicate tool definition "duplicate"`)
+	require.Zero(t, providerCalls)
+}
+
+func TestModelInvocationClientRejectsNilRequestBeforeProviderCall(t *testing.T) {
+	providerCalls := 0
+	client := newTestModelInvocationClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			providerCalls++
+			return &model.Response{}, nil
+		},
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			providerCalls++
+			return &chunkStreamer{}, nil
+		},
+	}, &modelInvocationJournal{})
+
+	response, err := client.Complete(t.Context(), nil)
+	require.Nil(t, response)
+	require.ErrorContains(t, err, "model request is required")
+	stream, err := client.Stream(t.Context(), nil)
+	require.Nil(t, stream)
+	require.ErrorContains(t, err, "model request is required")
+	require.Zero(t, providerCalls)
+}
+
+func TestModelInvocationClientKeepsPreProviderRequestContract(t *testing.T) {
+	request := testModelRequest()
+	client := newTestModelInvocationClient(stubModelClient{
+		complete: func(_ context.Context, request *model.Request) (*model.Response, error) {
+			request.Tools = testModelRequest("late_tool").Tools
+			return testModelResponse(nil, model.ToolCall{
+				ID:      "call-1",
+				Name:    "late_tool",
+				Payload: rawjson.Message(`{}`),
+			}), nil
+		},
+	}, &modelInvocationJournal{})
+
+	response, err := client.Complete(t.Context(), request)
+	require.Nil(t, response)
+	require.ErrorContains(t, err, `model returned tool "late_tool" that was not present in its request`)
+}
+
+func TestModelInvocationJournalSelectsEarliestStartedRejection(t *testing.T) {
+	invocations := &modelInvocationJournal{}
+	firstID, err := invocations.beginModelInvocation("", func() {})
+	require.NoError(t, err)
+	secondID, err := invocations.beginModelInvocation("", func() {})
+	require.NoError(t, err)
+
+	firstFingerprint := model.ResponseEvidence{Present: true, SHA256: "first", Size: 5}
+	secondFingerprint := model.ResponseEvidence{Present: true, SHA256: "second", Size: 6}
+
+	require.NoError(t, invocations.recordRejectedResponseEvidence(secondID, secondFingerprint))
+	secondErr := outputcontract.NewWithOrigin(
+		errors.New("second rejection completed first"),
+		planner.OutputContractOriginModel,
+	)
+	require.Equal(t, secondErr, invocations.rejectModelInvocation(secondID, secondErr))
+
+	require.NoError(t, invocations.recordRejectedResponseEvidence(firstID, firstFingerprint))
+	firstErr := outputcontract.NewWithOrigin(
+		errors.New("first rejection completed second"),
+		planner.OutputContractOriginModel,
+	)
+	require.Equal(t, firstErr, invocations.rejectModelInvocation(firstID, firstErr))
+
+	require.Equal(t, firstErr, invocations.outputContractError())
+	evidence, present := rejectedResponseEvidence(invocations)
+	require.True(t, present)
+	require.Equal(t, firstFingerprint, evidence)
+}
+
+func TestModelInvocationClientKeepsValidatedResponseBookkeepingFailurePlannerOwned(t *testing.T) {
+	bookkeepingErr := planner.NewOutputContractError(errors.New("save validated response"))
+	sink := &fakeModelInvocationSink{recordValidatedErr: bookkeepingErr}
+	client := newTestModelInvocationClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			return testModelResponse([]model.Message{{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "accepted"}},
+			}}), nil
+		},
+	}, sink)
+
+	response, err := client.Complete(t.Context(), &model.Request{})
+
+	require.Nil(t, response)
+	require.ErrorIs(t, err, bookkeepingErr)
+	require.Zero(t, sink.rejectedResponses)
+}
+
+func TestModelInvocationJournalBlocksCallsAfterSeal(t *testing.T) {
+	invocations := &modelInvocationJournal{}
+	require.NoError(t, invocations.seal())
+
+	_, err := invocations.beginModelInvocation("", func() {})
+
+	require.EqualError(t, err, "planner model invocation journal is sealed")
+}
+
+func TestModelInvocationStreamLatchesTerminalError(t *testing.T) {
+	upstream := &chunkStreamer{chunks: []model.Chunk{
+		model.StopChunk{Reason: "stop"},
+		model.TextChunk{Message: model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "late"}},
+		}},
+	}}
+	client := newTestModelInvocationClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			return upstream, nil
+		},
+	}, &modelInvocationJournal{})
+	stream, err := client.Stream(t.Context(), &model.Request{})
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.NoError(t, err)
+
+	_, firstErr := stream.Recv()
+	_, secondErr := stream.Recv()
+
+	require.ErrorContains(t, firstErr, "after stop")
+	require.Equal(t, firstErr, secondErr)
+	require.Equal(t, 2, upstream.index)
+}
+
+func TestModelInvocationStreamCloseLatchesPlannerContractFailure(t *testing.T) {
+	providerCalls := 0
+	invocations := &modelInvocationJournal{}
+	client := newTestModelInvocationClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			providerCalls++
+			return &chunkStreamer{}, nil
+		},
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			providerCalls++
+			return testModelResponse([]model.Message{{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "late"}},
+			}}), nil
+		},
+	}, invocations)
+	stream, err := client.Stream(t.Context(), &model.Request{})
+	require.NoError(t, err)
+
+	closeErr := stream.Close()
+	require.ErrorContains(t, closeErr, "planner closed model stream before EOF")
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, closeErr, &outputErr)
+	require.Equal(t, planner.OutputContractOriginPlanner, outputErr.Origin())
+
+	response, err := client.Complete(t.Context(), &model.Request{})
+	require.Nil(t, response)
+	require.ErrorIs(t, err, outputErr)
+	require.Equal(t, 1, providerCalls)
+}
+
+func TestRejectedTerminalStreamUsageReplacesPriorDeltas(t *testing.T) {
+	usage := model.TokenUsage{InputTokens: 40, OutputTokens: 60, TotalTokens: 100}
+	response := &model.Response{
+		Content: []model.Message{{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "different terminal text"}},
+		}},
+		Usage:      usage,
+		StopReason: "end_turn",
+	}
+	invocations := &modelInvocationJournal{}
+	client := newTestModelInvocationClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			return &chunkStreamer{
+				chunks: []model.Chunk{
+					model.TextChunk{Message: model.Message{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{model.TextPart{Text: "streamed text"}},
+					}},
+					model.UsageChunk{Usage: usage},
+					model.StopChunk{Reason: "end_turn"},
+				},
+				response: response,
+			}, nil
+		},
+	}, invocations)
+
+	stream, err := client.Stream(t.Context(), &model.Request{})
+	require.NoError(t, err)
+	_, err = planner.ConsumeStream(t.Context(), stream)
+	require.Error(t, err)
+	require.Equal(t, usage, invocations.exportUsage())
+}
+
+func TestModelPresentationPublishesOnlySelectedInvocation(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	events := &recordingPlannerEvents{}
 	invocations := &modelInvocationJournal{}
-	request := &model.Request{Model: "gpt-5", ModelClass: model.ModelClassDefault}
-	failed := newModelInvocationClient(stubModelClient{
+	probeRequest := &model.Request{Model: "gpt-5-mini", ModelClass: model.ModelClassSmall}
+	failed := newTestModelInvocationClient(stubModelClient{
 		stream: func(context.Context, *model.Request) (model.Streamer, error) {
 			return &chunkStreamer{
 				chunks: []model.Chunk{
@@ -87,6 +439,7 @@ func TestModelPresentationPublishesOnlySelectedAttempt(t *testing.T) {
 						Parts: []model.Part{model.TextPart{Text: "discarded partial"}},
 					}},
 					model.UsageChunk{Usage: model.TokenUsage{
+						Model:       "provider-mini",
 						InputTokens: 1, OutputTokens: 2, TotalTokens: 3,
 					}},
 				},
@@ -94,9 +447,9 @@ func TestModelPresentationPublishesOnlySelectedAttempt(t *testing.T) {
 			}, nil
 		},
 	}, invocations)
-	failedStream, err := failed.Stream(ctx, request)
+	failedStream, err := failed.Stream(ctx, probeRequest)
 	require.NoError(t, err)
-	_, err = planner.ConsumeStream(ctx, failedStream, request, events)
+	_, err = planner.ConsumeStream(ctx, failedStream)
 	require.EqualError(t, err, "retryable provider failure")
 	require.Empty(t, events.chunks)
 	require.Empty(t, events.usage)
@@ -108,10 +461,11 @@ func TestModelPresentationPublishesOnlySelectedAttempt(t *testing.T) {
 		}},
 		StopReason: "end_turn",
 		Usage: model.TokenUsage{
+			Model:       "provider-main",
 			InputTokens: 4, OutputTokens: 5, TotalTokens: 9,
 		},
 	}
-	selected := newModelInvocationClient(stubModelClient{
+	selected := newTestDesignatedModelInvocationClient(stubModelClient{
 		stream: func(context.Context, *model.Request) (model.Streamer, error) {
 			return &chunkStreamer{
 				chunks: []model.Chunk{
@@ -123,9 +477,10 @@ func TestModelPresentationPublishesOnlySelectedAttempt(t *testing.T) {
 			}, nil
 		},
 	}, invocations)
-	selectedStream, err := selected.Stream(ctx, request)
+	selectedRequest := &model.Request{Model: "gpt-5", ModelClass: model.ModelClassDefault}
+	selectedStream, err := selected.Stream(ctx, selectedRequest)
 	require.NoError(t, err)
-	summary, err := planner.ConsumeStream(ctx, selectedStream, request, events)
+	summary, err := planner.ConsumeStream(ctx, selectedStream)
 	require.NoError(t, err)
 	require.Empty(t, events.chunks)
 	require.Empty(t, events.usage)
@@ -138,14 +493,14 @@ func TestModelPresentationPublishesOnlySelectedAttempt(t *testing.T) {
 	require.Equal(t, []string{"selected answer"}, events.chunks)
 	require.Equal(t, []model.TokenUsage{
 		{
-			Model:        "gpt-5",
-			ModelClass:   model.ModelClassDefault,
+			Model:        "provider-mini",
+			ModelClass:   model.ModelClassSmall,
 			InputTokens:  1,
 			OutputTokens: 2,
 			TotalTokens:  3,
 		},
 		{
-			Model:        "gpt-5",
+			Model:        "provider-main",
 			ModelClass:   model.ModelClassDefault,
 			InputTokens:  4,
 			OutputTokens: 5,
@@ -158,7 +513,7 @@ func TestSimplePlannerContextModelClientDoesNotEmitPlannerEvents(t *testing.T) {
 	events := &recordingPlannerEvents{}
 	rt := &Runtime{
 		models: map[string]model.Client{
-			"primary": stubModelClient{
+			"primary": mustTestModelClient(stubModelClient{
 				complete: func(context.Context, *model.Request) (*model.Response, error) {
 					return &model.Response{
 						Usage: model.TokenUsage{InputTokens: 3, OutputTokens: 5, TotalTokens: 8},
@@ -168,9 +523,10 @@ func TestSimplePlannerContextModelClientDoesNotEmitPlannerEvents(t *testing.T) {
 								Parts: []model.Part{model.TextPart{Text: "hello"}},
 							},
 						},
+						StopReason: "stop",
 					}, nil
 				},
-			},
+			}),
 		},
 		logger: telemetry.NewNoopLogger(),
 		tracer: telemetry.NoopTracer{},
@@ -207,7 +563,12 @@ func TestSimplePlannerContextPlannerModelClientOwnsEventEmission(t *testing.T) {
 				ToolCall: model.ToolCall{ID: "call-1", Name: "svc.lookup", Payload: []byte(`{"q":"x"}`)},
 			},
 			model.UsageChunk{
-				Usage: model.TokenUsage{InputTokens: 2, OutputTokens: 4, TotalTokens: 6},
+				Usage: model.TokenUsage{
+					Model:        "provider-gpt-5",
+					InputTokens:  2,
+					OutputTokens: 4,
+					TotalTokens:  6,
+				},
 			},
 			model.StopChunk{
 				Reason: "tool_use",
@@ -215,17 +576,22 @@ func TestSimplePlannerContextPlannerModelClientOwnsEventEmission(t *testing.T) {
 		},
 		response: testModelResponseWithUsage(
 			[]model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "hello"}}}},
-			model.TokenUsage{InputTokens: 2, OutputTokens: 4, TotalTokens: 6},
+			model.TokenUsage{
+				Model:        "provider-gpt-5",
+				InputTokens:  2,
+				OutputTokens: 4,
+				TotalTokens:  6,
+			},
 			model.ToolCall{ID: "call-1", Name: "svc.lookup", Payload: []byte(`{"q":"x"}`)},
 		),
 	}
 	rt := &Runtime{
 		models: map[string]model.Client{
-			"primary": stubModelClient{
+			"primary": mustTestModelClient(stubModelClient{
 				stream: func(context.Context, *model.Request) (model.Streamer, error) {
 					return streamer, nil
 				},
-			},
+			}),
 		},
 		logger: telemetry.NewNoopLogger(),
 		tracer: telemetry.NoopTracer{},
@@ -243,48 +609,36 @@ func TestSimplePlannerContextPlannerModelClientOwnsEventEmission(t *testing.T) {
 	_, isRawModelClient := any(client).(model.Client)
 	require.False(t, isRawModelClient)
 
-	summary, err := client.Stream(
-		context.Background(),
-		&model.Request{Model: "gpt-5", ModelClass: model.ModelClassDefault},
-	)
+	request := testModelRequest("svc.lookup")
+	request.Model = "gpt-5"
+	request.ModelClass = model.ModelClassDefault
+	summary, err := client.Stream(context.Background(), request)
 
 	require.NoError(t, err)
 	require.Equal(t, "hello", summary.Text)
-	require.Equal(t, []string{"hello"}, events.chunks)
+	require.Empty(t, events.chunks)
 	require.Len(t, summary.ToolCalls, 1)
 	require.Equal(t, tools.Ident("svc.lookup"), summary.ToolCalls[0].Name)
 	require.Equal(t, "tool_use", summary.StopReason)
-	require.Equal(t, "gpt-5", summary.Usage.Model)
+	require.Equal(t, "provider-gpt-5", summary.Usage.Model)
 	require.Equal(t, model.ModelClassDefault, summary.Usage.ModelClass)
 	require.Equal(t, 2, summary.Usage.InputTokens)
 	require.Equal(t, 4, summary.Usage.OutputTokens)
 	require.Equal(t, 6, summary.Usage.TotalTokens)
 	require.True(t, streamer.closed)
-	require.Len(t, events.usage, 1)
-	require.Equal(t, "gpt-5", events.usage[0].Model)
-	require.Equal(t, model.ModelClassDefault, events.usage[0].ModelClass)
-}
-
-func TestNewPlannerModelClientRequiresEvents(t *testing.T) {
-	require.PanicsWithValue(t,
-		"runtime: planner model client requires PlannerEvents",
-		func() {
-			_ = newPlannerModelClient(stubModelClient{}, nil)
-		},
-	)
+	require.Empty(t, events.usage)
 }
 
 func TestPlannerModelClientIsSingleUseAndSelectsCanonicalResponse(t *testing.T) {
-	events := &recordingPlannerEvents{}
 	invocations := &modelInvocationJournal{}
-	client := newPlannerModelClient(newDesignatedModelInvocationClient(stubModelClient{
+	client := newPlannerModelClient(newTestDesignatedModelInvocationClient(stubModelClient{
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
 			return testModelResponse([]model.Message{{
 				Role:  model.ConversationRoleAssistant,
 				Parts: []model.Part{model.TextPart{Text: "selected"}},
 			}}), nil
 		},
-	}, invocations), events)
+	}, invocations))
 
 	response, err := client.Complete(context.Background(), &model.Request{})
 	require.NoError(t, err)
@@ -309,7 +663,7 @@ func TestModelInvocationExportPreservesAdditivePlannerMetadata(t *testing.T) {
 		},
 		model.TextPart{Text: "provider answer"},
 	}
-	client := newModelInvocationClient(stubModelClient{
+	client := newTestModelInvocationClient(stubModelClient{
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
 			return testModelResponse([]model.Message{{
 				Role:  model.ConversationRoleAssistant,
@@ -323,21 +677,44 @@ func TestModelInvocationExportPreservesAdditivePlannerMetadata(t *testing.T) {
 
 	response, err := client.Complete(t.Context(), &model.Request{})
 	require.NoError(t, err)
-	response.Content[0].Parts = []model.Part{model.TextPart{Text: "planner rewrite"}}
 	response.Content[0].Meta["aura.assistant_citations.v1"] =
 		`[{"index":1,"file_id":"document-1"}]`
-
-	transcript, err := invocations.exportModelInvocation(&planner.PlanResult{
+	result := &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{Message: &response.Content[0]},
-	})
+	}
+	transcript, err := invocations.exportModelInvocation(result)
 
 	require.NoError(t, err)
 	require.Len(t, transcript, 1)
 	assert.Equal(t, originalParts, transcript[0].Parts)
+	assert.Equal(t, originalParts, result.FinalResponse.Message.Parts)
 	assert.Equal(t, map[string]any{
 		"provider":                    map[string]any{"request_id": "req-1"},
 		"aura.assistant_citations.v1": `[{"index":1,"file_id":"document-1"}]`,
 	}, transcript[0].Meta)
+}
+
+func TestModelInvocationExportRejectsProviderContentChanges(t *testing.T) {
+	t.Parallel()
+
+	invocations := &modelInvocationJournal{}
+	client := newTestModelInvocationClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			return testModelResponse([]model.Message{{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "provider answer"}},
+			}}), nil
+		},
+	}, invocations)
+	response, err := client.Complete(t.Context(), &model.Request{})
+	require.NoError(t, err)
+	response.Content[0].Parts = []model.Part{model.TextPart{Text: "planner rewrite"}}
+
+	_, err = invocations.exportModelInvocation(&planner.PlanResult{
+		FinalResponse: &planner.FinalResponse{Message: &response.Content[0]},
+	})
+
+	require.EqualError(t, err, "planner result modified provider-owned message content")
 }
 
 func TestModelInvocationExportRejectsProviderMetadataChanges(t *testing.T) {
@@ -361,7 +738,7 @@ func TestModelInvocationExportRejectsProviderMetadataChanges(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			invocations := &modelInvocationJournal{}
-			client := newModelInvocationClient(stubModelClient{
+			client := newTestModelInvocationClient(stubModelClient{
 				complete: func(context.Context, *model.Request) (*model.Response, error) {
 					return testModelResponse([]model.Message{{
 						Role:  model.ConversationRoleAssistant,
@@ -388,7 +765,7 @@ func TestModelInvocationExportRejectsProviderMetadataChanges(t *testing.T) {
 func TestDesignatedModelInvocationWinsIdenticalProbeToolCalls(t *testing.T) {
 	invocations := &modelInvocationJournal{}
 	call := model.ToolCall{ID: "call-1", Name: "svc.lookup", Payload: rawjson.Message(`{"q":"status"}`)}
-	probe := newModelInvocationClient(stubModelClient{
+	probe := newTestModelInvocationClient(stubModelClient{
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
 			return testModelResponse([]model.Message{{
 				Role:  model.ConversationRoleAssistant,
@@ -396,7 +773,7 @@ func TestDesignatedModelInvocationWinsIdenticalProbeToolCalls(t *testing.T) {
 			}}, call), nil
 		},
 	}, invocations)
-	designated := newDesignatedModelInvocationClient(stubModelClient{
+	designated := newTestDesignatedModelInvocationClient(stubModelClient{
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
 			return testModelResponse([]model.Message{{
 				Role:  model.ConversationRoleAssistant,
@@ -405,16 +782,17 @@ func TestDesignatedModelInvocationWinsIdenticalProbeToolCalls(t *testing.T) {
 		},
 	}, invocations)
 
-	_, err := probe.Complete(context.Background(), &model.Request{})
+	request := testModelRequest("svc.lookup")
+	_, err := probe.Complete(context.Background(), request)
 	require.NoError(t, err)
-	_, err = designated.Complete(context.Background(), &model.Request{})
+	_, err = designated.Complete(context.Background(), request)
 	require.NoError(t, err)
 
 	transcript, err := invocations.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{{
-			Name:       call.Name,
-			Payload:    call.Payload,
-			ToolCallID: call.ID,
+			Name:            call.Name,
+			Payload:         call.Payload,
+			ModelToolCallID: call.ID,
 		}},
 	})
 	require.NoError(t, err)
@@ -424,17 +802,27 @@ func TestDesignatedModelInvocationWinsIdenticalProbeToolCalls(t *testing.T) {
 // fakeModelInvocationSink records complete responses and stream chunks by
 // runtime-owned invocation.
 type fakeModelInvocationSink struct {
-	begins    uint64
-	last      modelInvocationID
-	responses map[modelInvocationID]*model.Response
-	chunks    map[modelInvocationID][]model.Chunk
-	finished  map[modelInvocationID]error
+	begins             uint64
+	last               modelInvocationID
+	responses          map[modelInvocationID]*model.Response
+	chunks             map[modelInvocationID][]model.Chunk
+	finished           map[modelInvocationID]error
+	cancels            map[modelInvocationID]context.CancelFunc
+	recordValidatedErr error
+	rejectedResponses  int
 }
 
-func (s *fakeModelInvocationSink) beginModelInvocation() modelInvocationID {
+func (s *fakeModelInvocationSink) beginModelInvocation(
+	_ model.ModelClass,
+	cancel context.CancelFunc,
+) (modelInvocationID, error) {
 	s.begins++
 	s.last = provenance.New()
-	return s.last
+	if s.cancels == nil {
+		s.cancels = make(map[modelInvocationID]context.CancelFunc)
+	}
+	s.cancels[s.last] = cancel
+	return s.last, nil
 }
 
 func (s *fakeModelInvocationSink) designateModelInvocation(modelInvocationID) error {
@@ -447,6 +835,33 @@ func (s *fakeModelInvocationSink) recordModelResponse(invocationID modelInvocati
 	}
 	s.responses[invocationID] = response
 	return nil
+}
+
+func (s *fakeModelInvocationSink) recordRejectedModelResponse(
+	_ modelInvocationID,
+	_ model.ResponseEvidence,
+	err error,
+) error {
+	s.rejectedResponses++
+	return err
+}
+
+func (*fakeModelInvocationSink) recordRejectedModelUsageTotal(_ modelInvocationID, _ model.TokenUsage) error {
+	return nil
+}
+
+func (*fakeModelInvocationSink) recordRejectedModelUsageDelta(_ modelInvocationID, _ model.TokenUsage) error {
+	return nil
+}
+
+func (s *fakeModelInvocationSink) recordValidatedModelResponse(
+	invocationID modelInvocationID,
+	response *model.Response,
+) error {
+	if s.recordValidatedErr != nil {
+		return s.recordValidatedErr
+	}
+	return s.recordModelResponse(invocationID, response)
 }
 
 func (s *fakeModelInvocationSink) recordModelChunk(invocationID modelInvocationID, chunk model.Chunk) error {
@@ -462,21 +877,50 @@ func (s *fakeModelInvocationSink) finishModelInvocation(invocationID modelInvoca
 		s.finished = make(map[modelInvocationID]error)
 	}
 	s.finished[invocationID] = err
-	return err
+	s.cancels[invocationID]()
+	return nil
 }
 
 func TestNewModelInvocationClientReturnsInnerWhenSinkNil(t *testing.T) {
-	inner := stubModelClient{}
+	inner := mustTestModelClient(stubModelClient{})
 	client := newModelInvocationClient(inner, nil)
 	require.Equal(t, inner, client)
 }
 
-// TestModelInvocationClientCapturesFromCompleteResponse covers the
-// non-streaming boundary: the call starts a fresh tentative transcript and
-// captures finalized tool-call signatures before planner-facing types exist.
+func TestModelInvocationClientMakesRemoteMalformedOutputTerminal(t *testing.T) {
+	providerCalls := 0
+	remote, err := gateway.NewRemoteClient(
+		func(context.Context, *model.Request) (*model.Response, error) {
+			providerCalls++
+			return &model.Response{
+				Content: []model.Message{{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "missing stop reason"}},
+				}},
+			}, nil
+		},
+		func(context.Context, *model.Request) (model.Streamer, error) {
+			return nil, errors.New("unexpected stream call")
+		},
+	)
+	require.NoError(t, err)
+	client := newModelInvocationClient(remote, &fakeModelInvocationSink{})
+
+	_, firstErr := client.Complete(t.Context(), &model.Request{})
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, firstErr, &outputErr)
+	require.Equal(t, planner.OutputContractOriginModel, outputErr.Origin())
+
+	_, secondErr := client.Complete(t.Context(), &model.Request{})
+	require.ErrorIs(t, secondErr, outputErr)
+	require.Equal(t, 1, providerCalls)
+}
+
+// TestModelInvocationClientCapturesFromCompleteResponse verifies that a
+// complete response is saved before planner code receives it.
 func TestModelInvocationClientCapturesFromCompleteResponse(t *testing.T) {
 	sink := &fakeModelInvocationSink{}
-	client := newModelInvocationClient(stubModelClient{
+	client := newTestModelInvocationClient(stubModelClient{
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
 			return testModelResponse(nil,
 				model.ToolCall{ID: "call-1", Name: "svc.lookup", Payload: []byte(`{}`), ThoughtSignature: "sig-1"},
@@ -485,17 +929,18 @@ func TestModelInvocationClientCapturesFromCompleteResponse(t *testing.T) {
 		},
 	}, sink)
 
-	resp, err := client.Complete(context.Background(), &model.Request{})
+	resp, err := client.Complete(context.Background(), testModelRequest("svc.lookup", "svc.other"))
 
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), sink.begins)
-	require.Same(t, resp, sink.responses[sink.last])
+	require.NotSame(t, resp, sink.responses[sink.last])
+	require.Equal(t, resp, sink.responses[sink.last])
 }
 
 func TestPlannerModelClientScopesCompleteResponseTranscript(t *testing.T) {
 	events := &recordingPlannerEvents{}
 	invocations := &modelInvocationJournal{}
-	client := newPlannerModelClient(newModelInvocationClient(stubModelClient{
+	client := newPlannerModelClient(newTestDesignatedModelInvocationClient(stubModelClient{
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
 			return testModelResponse([]model.Message{{
 				Role: model.ConversationRoleAssistant,
@@ -516,18 +961,18 @@ func TestPlannerModelClientScopesCompleteResponseTranscript(t *testing.T) {
 				},
 			), nil
 		},
-	}, invocations), events)
+	}, invocations))
 
-	_, err := client.Complete(context.Background(), &model.Request{})
+	_, err := client.Complete(context.Background(), testModelRequest("svc.lookup"))
 	require.NoError(t, err)
 	require.Empty(t, events.chunks)
 	require.Empty(t, events.thinking)
 
 	transcript, err := invocations.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{{
-			ToolCallID: "call-1",
-			Name:       "svc.lookup",
-			Payload:    []byte(`{"query":"status"}`),
+			ModelToolCallID: "call-1",
+			Name:            "svc.lookup",
+			Payload:         []byte(`{"query":"status"}`),
 		}},
 	})
 	require.NoError(t, err)
@@ -576,6 +1021,7 @@ func TestModelInvocationClientCapturesFromStreamedToolCallChunk(t *testing.T) {
 			model.ToolCallChunk{
 				ToolCall: model.ToolCall{ID: "call-2", Name: "svc.other", Payload: []byte(`{}`)}, // no signature
 			},
+			model.StopChunk{Reason: "tool_use"},
 		},
 		response: testModelResponse([]model.Message{{
 			Role:  model.ConversationRoleAssistant,
@@ -585,13 +1031,14 @@ func TestModelInvocationClientCapturesFromStreamedToolCallChunk(t *testing.T) {
 			model.ToolCall{ID: "call-2", Name: "svc.other", Payload: []byte(`{}`)},
 		),
 	}
-	client := newModelInvocationClient(stubModelClient{
+	client := newTestModelInvocationClient(stubModelClient{
 		stream: func(context.Context, *model.Request) (model.Streamer, error) {
 			return streamer, nil
 		},
 	}, sink)
 
-	st, err := client.Stream(context.Background(), &model.Request{})
+	request := testModelRequest("svc.lookup", "svc.other")
+	st, err := client.Stream(context.Background(), request)
 	require.NoError(t, err)
 	for {
 		_, err := st.Recv()
@@ -600,6 +1047,7 @@ func TestModelInvocationClientCapturesFromStreamedToolCallChunk(t *testing.T) {
 			break
 		}
 	}
+	require.NoError(t, st.Close())
 
 	require.Equal(t, uint64(1), sink.begins)
 	require.Equal(t, streamer.chunks, sink.chunks[sink.last])
@@ -608,7 +1056,6 @@ func TestModelInvocationClientCapturesFromStreamedToolCallChunk(t *testing.T) {
 }
 
 func TestModelInvocationClientCapturesCanonicalResponseAtEOF(t *testing.T) {
-	events := newPlannerEvents(New(), "svc.agent", "run-1", "sess-1", "turn-1")
 	invocations := &modelInvocationJournal{}
 	response := testModelResponse([]model.Message{{
 		Role:  model.ConversationRoleAssistant,
@@ -626,14 +1073,15 @@ func TestModelInvocationClientCapturesCanonicalResponseAtEOF(t *testing.T) {
 		},
 		response: response,
 	}
-	client := newModelInvocationClient(stubModelClient{
+	client := newTestModelInvocationClient(stubModelClient{
 		stream: func(context.Context, *model.Request) (model.Streamer, error) {
 			return streamer, nil
 		},
 	}, invocations)
-	stream, err := client.Stream(context.Background(), &model.Request{})
+	request := testModelRequest("svc.lookup")
+	stream, err := client.Stream(context.Background(), request)
 	require.NoError(t, err)
-	summary, err := planner.ConsumeStream(context.Background(), stream, &model.Request{}, events)
+	summary, err := planner.ConsumeStream(context.Background(), stream)
 	require.NoError(t, err)
 
 	transcript, err := invocations.exportModelInvocation(&planner.PlanResult{ToolCalls: summary.ToolCalls})
@@ -644,29 +1092,65 @@ func TestModelInvocationClientCapturesCanonicalResponseAtEOF(t *testing.T) {
 }
 
 func TestModelInvocationClientRejectsStreamWithoutCanonicalResponse(t *testing.T) {
-	events := newPlannerEvents(New(), "svc.agent", "run-1", "sess-1", "turn-1")
 	invocations := &modelInvocationJournal{}
-	client := newModelInvocationClient(stubModelClient{
+	client := newTestModelInvocationClient(stubModelClient{
 		stream: func(context.Context, *model.Request) (model.Streamer, error) {
-			return &chunkStreamer{chunks: []model.Chunk{model.TextChunk{
-				Message: model.Message{
-					Role:  model.ConversationRoleAssistant,
-					Parts: []model.Part{model.TextPart{Text: "partial"}},
+			return &chunkStreamer{chunks: []model.Chunk{
+				model.TextChunk{
+					Message: model.Message{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{model.TextPart{Text: "partial"}},
+					},
 				},
-			}}}, nil
+				model.StopChunk{Reason: "stop"},
+			}}, nil
 		},
 	}, invocations)
 
 	stream, err := client.Stream(context.Background(), &model.Request{})
 	require.NoError(t, err)
-	_, err = planner.ConsumeStream(context.Background(), stream, &model.Request{}, events)
+	_, err = planner.ConsumeStream(context.Background(), stream)
 
-	require.EqualError(t, err, "model stream ended without a canonical response")
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.ErrorContains(t, err, "invalid canonical response: model: response is nil")
+}
+
+func TestModelInvocationClientRejectsMalformedUnaryResponse(t *testing.T) {
+	t.Parallel()
+
+	client := newTestModelInvocationClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			return nil, nil
+		},
+	}, &modelInvocationJournal{})
+
+	response, err := client.Complete(context.Background(), &model.Request{})
+
+	require.Nil(t, response)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+}
+
+func TestModelInvocationClientDropsResponseReturnedWithError(t *testing.T) {
+	client := newTestModelInvocationClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			return testModelResponse([]model.Message{{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "failed"}},
+			}}), assert.AnError
+		},
+	}, &modelInvocationJournal{})
+
+	response, err := client.Complete(context.Background(), &model.Request{})
+
+	require.Nil(t, response)
+	require.ErrorIs(t, err, assert.AnError)
 }
 
 func TestModelInvocationClientRejectsMalformedStreamChunk(t *testing.T) {
 	invocations := &modelInvocationJournal{}
-	client := newModelInvocationClient(stubModelClient{
+	client := newTestModelInvocationClient(stubModelClient{
 		stream: func(context.Context, *model.Request) (model.Streamer, error) {
 			return &chunkStreamer{chunks: []model.Chunk{model.ToolCallChunk{}}}, nil
 		},
@@ -677,13 +1161,14 @@ func TestModelInvocationClientRejectsMalformedStreamChunk(t *testing.T) {
 	_, err = stream.Recv()
 
 	require.ErrorContains(t, err, "tool call is missing its ID")
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
 }
 
 // TestRawModelInvocationSelectionKeepsResponsesIsolated reproduces two probe
 // calls and proves that call order does not choose the durable transcript.
 func TestRawModelInvocationSelectionKeepsResponsesIsolated(t *testing.T) {
-	rt := New()
-	events := newPlannerEvents(rt, "svc.agent", "run-1", "sess-1", "turn-1")
+	events := &recordingPlannerEvents{}
 	invocations := &modelInvocationJournal{}
 	streamers := []model.Streamer{
 		&chunkStreamer{
@@ -714,6 +1199,11 @@ func TestRawModelInvocationSelectionKeepsResponsesIsolated(t *testing.T) {
 						Parts: []model.Part{model.TextPart{Text: "tentative response"}},
 					},
 				},
+				model.ToolCallDeltaChunk{Delta: model.ToolCallDelta{
+					ID:    "tentative-call",
+					Name:  "svc.lookup",
+					Delta: `{}`,
+				}},
 				model.ToolCallChunk{
 					ToolCall: model.ToolCall{
 						ID:               "tentative-call",
@@ -766,6 +1256,11 @@ func TestRawModelInvocationSelectionKeepsResponsesIsolated(t *testing.T) {
 						Parts: []model.Part{model.TextPart{Text: "accepted response"}},
 					},
 				},
+				model.ToolCallDeltaChunk{Delta: model.ToolCallDelta{
+					ID:    "accepted-call",
+					Name:  "svc.lookup",
+					Delta: `{}`,
+				}},
 				model.ToolCallChunk{
 					ToolCall: model.ToolCall{
 						ID:               "accepted-call",
@@ -801,7 +1296,7 @@ func TestRawModelInvocationSelectionKeepsResponsesIsolated(t *testing.T) {
 		},
 	}
 	next := 0
-	client := newModelInvocationClient(stubModelClient{
+	client := newTestModelInvocationClient(stubModelClient{
 		stream: func(context.Context, *model.Request) (model.Streamer, error) {
 			streamer := streamers[next]
 			next++
@@ -809,19 +1304,33 @@ func TestRawModelInvocationSelectionKeepsResponsesIsolated(t *testing.T) {
 		},
 	}, invocations)
 
-	stream, err := client.Stream(context.Background(), &model.Request{})
+	request := testModelRequest("svc.lookup")
+	stream, err := client.Stream(context.Background(), request)
 	require.NoError(t, err)
-	tentative, err := planner.ConsumeStream(context.Background(), stream, &model.Request{}, events)
+	tentative, err := planner.ConsumeStream(context.Background(), stream)
 	require.NoError(t, err)
-	stream, err = client.Stream(context.Background(), &model.Request{})
+	stream, err = client.Stream(context.Background(), request)
 	require.NoError(t, err)
-	accepted, err := planner.ConsumeStream(context.Background(), stream, &model.Request{}, events)
+	accepted, err := planner.ConsumeStream(context.Background(), stream)
 	require.NoError(t, err)
+	require.Empty(t, events.chunks)
+	require.Empty(t, events.thinking)
+	require.Empty(t, events.toolDeltas)
+	require.Empty(t, events.usage)
 
 	transcript, err := invocations.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: accepted.ToolCalls,
 	})
 	require.NoError(t, err)
+	invocations.publishSelectedPresentation(context.Background(), events)
+	require.Equal(t, []string{"accepted response"}, events.chunks)
+	require.Equal(t, []model.ThinkingPart{{
+		Text:      "accepted reasoning",
+		Signature: "accepted-thinking-signature",
+		Index:     0,
+		Final:     true,
+	}}, events.thinking)
+	require.Equal(t, []string{`{}`}, events.toolDeltas)
 	require.Len(t, transcript, 1)
 	require.Equal(t, []model.Part{
 		model.ThinkingPart{
@@ -868,31 +1377,38 @@ func TestRawModelInvocationSelectionKeepsResponsesIsolated(t *testing.T) {
 
 // TestConfiguredModelClientCapturesToolCallSignatureViaRawModelClient exercises
 // the full runtime wiring for the "Option 2" streaming style (AGENTS.md):
-// PlannerContext.ModelClient returns the raw client, and a planner drains it
+// PlannerContext.ModelClient returns the opaque client, and a planner drains it
 // directly with planner.ConsumeStream. Capture must still happen even though
 // ConsumeStream itself never sees or forwards a signature.
 func TestConfiguredModelClientCapturesToolCallSignatureViaRawModelClient(t *testing.T) {
 	rt := New()
-	events := newPlannerEvents(rt, "svc.agent", "run-1", "sess-1", "turn-1")
+	events := newPlannerEvents("svc.agent", "run-1", "sess-1")
 	invocations := &modelInvocationJournal{}
 	streamer := &chunkStreamer{
 		chunks: []model.Chunk{
+			model.TextChunk{Message: model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "working"}},
+			}},
 			model.ToolCallChunk{
 				ToolCall: model.ToolCall{ID: "call-1", Name: "svc.lookup", Payload: []byte(`{}`), ThoughtSignature: "sig-1"},
 			},
 			model.StopChunk{Reason: "tool_use"},
 		},
-		response: testModelResponse(nil, model.ToolCall{
+		response: testModelResponse([]model.Message{{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "working"}},
+		}}, model.ToolCall{
 			ID: "call-1", Name: "svc.lookup", Payload: []byte(`{}`), ThoughtSignature: "sig-1",
 		}),
 	}
 	rt.mu.Lock()
 	rt.models = map[string]model.Client{
-		"primary": stubModelClient{
+		"primary": mustTestModelClient(stubModelClient{
 			stream: func(context.Context, *model.Request) (model.Streamer, error) {
 				return streamer, nil
 			},
-		},
+		}),
 	}
 	rt.mu.Unlock()
 	agentCtx := newAgentContext(agentContextOptions{
@@ -905,16 +1421,19 @@ func TestConfiguredModelClientCapturesToolCallSignatureViaRawModelClient(t *test
 
 	cli, ok := agentCtx.ModelClient("primary")
 	require.True(t, ok)
-	st, err := cli.Stream(context.Background(), &model.Request{Model: "gemini"})
+	request := testModelRequest("svc.lookup")
+	request.Model = "gemini"
+	st, err := cli.Stream(context.Background(), request)
 	require.NoError(t, err)
-	summary, err := planner.ConsumeStream(context.Background(), st, &model.Request{Model: "gemini"}, events)
+	summary, err := planner.ConsumeStream(context.Background(), st)
 	require.NoError(t, err)
+	require.Empty(t, events.pending)
 
 	transcript, err := invocations.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: summary.ToolCalls,
 	})
 	require.NoError(t, err)
-	require.Equal(t, "sig-1", transcript[0].Parts[0].(model.ToolUsePart).ThoughtSignature)
+	require.Equal(t, "sig-1", transcript[0].Parts[1].(model.ToolUsePart).ThoughtSignature)
 }
 
 // TestPreparePlannerActivityWiresSignatureCaptureIntoModelClients pins the
@@ -924,12 +1443,19 @@ func TestConfiguredModelClientCapturesToolCallSignatureViaRawModelClient(t *test
 func TestPreparePlannerActivityWiresSignatureCaptureIntoModelClients(t *testing.T) {
 	streamer := &chunkStreamer{
 		chunks: []model.Chunk{
+			model.TextChunk{Message: model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "working"}},
+			}},
 			model.ToolCallChunk{
 				ToolCall: model.ToolCall{ID: "call-1", Name: "svc.lookup", Payload: []byte(`{}`), ThoughtSignature: "sig-1"},
 			},
 			model.StopChunk{Reason: "tool_use"},
 		},
-		response: testModelResponse(nil, model.ToolCall{
+		response: testModelResponse([]model.Message{{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "working"}},
+		}}, model.ToolCall{
 			ID: "call-1", Name: "svc.lookup", Payload: []byte(`{}`), ThoughtSignature: "sig-1",
 		}),
 	}
@@ -938,11 +1464,11 @@ func TestPreparePlannerActivityWiresSignatureCaptureIntoModelClients(t *testing.
 			"svc.agent": {ID: "svc.agent"},
 		},
 		models: map[string]model.Client{
-			"primary": stubModelClient{
+			"primary": mustTestModelClient(stubModelClient{
 				stream: func(context.Context, *model.Request) (model.Streamer, error) {
 					return streamer, nil
 				},
-			},
+			}),
 		},
 		logger:  telemetry.NewNoopLogger(),
 		metrics: telemetry.NoopMetrics{},
@@ -959,14 +1485,50 @@ func TestPreparePlannerActivityWiresSignatureCaptureIntoModelClients(t *testing.
 
 	cli, ok := act.agentCtx.ModelClient("primary")
 	require.True(t, ok)
-	st, err := cli.Stream(context.Background(), &model.Request{Model: "gemini"})
+	request := testModelRequest("svc.lookup")
+	request.Model = "gemini"
+	st, err := cli.Stream(context.Background(), request)
 	require.NoError(t, err)
-	summary, err := planner.ConsumeStream(context.Background(), st, &model.Request{Model: "gemini"}, act.events)
+	summary, err := planner.ConsumeStream(context.Background(), st)
 	require.NoError(t, err)
+	require.Empty(t, act.events.pending)
 
 	transcript, err := act.invocations.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: summary.ToolCalls,
 	})
 	require.NoError(t, err)
-	require.Equal(t, "sig-1", transcript[0].Parts[0].(model.ToolUsePart).ThoughtSignature)
+	require.Equal(t, "sig-1", transcript[0].Parts[1].(model.ToolUsePart).ThoughtSignature)
+}
+
+func TestPlannerAndCacheClientsDropResponsesReturnedWithErrors(t *testing.T) {
+	providerErr := errors.New("provider failed")
+	inner := mustTestModelClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			return &model.Response{StopReason: "should-not-escape"}, providerErr
+		},
+	})
+
+	plannerClient := newPlannerModelClient(inner)
+	response, err := plannerClient.Complete(t.Context(), &model.Request{})
+	require.Nil(t, response)
+	require.ErrorIs(t, err, providerErr)
+
+	cacheClient := newCacheConfiguredClient(inner, CachePolicy{AfterSystem: true})
+	response, err = cacheClient.Complete(t.Context(), &model.Request{})
+	require.Nil(t, response)
+	require.ErrorIs(t, err, providerErr)
+}
+
+// rejectedResponseEvidence returns the earliest rejected provider evidence
+// retained by the test journal.
+func rejectedResponseEvidence(journal *modelInvocationJournal) (model.ResponseEvidence, bool) {
+	journal.mu.Lock()
+	defer journal.mu.Unlock()
+	for _, invocationID := range journal.order {
+		candidate := journal.invocations[invocationID]
+		if candidate != nil && candidate.rejectedResponseEvidence != nil {
+			return *candidate.rejectedResponseEvidence, true
+		}
+	}
+	return model.ResponseEvidence{}, false
 }

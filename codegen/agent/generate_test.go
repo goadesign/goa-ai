@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	agentsExpr "goa.design/goa-ai/expr/agent"
+	goaexpr "goa.design/goa/v3/expr"
 )
 
 func TestMCPExecutorFiles_DeduplicatesSameOriginToolsets(t *testing.T) {
@@ -63,7 +64,7 @@ func TestExecutorTemplatesUseSpecializedDispatch(t *testing.T) {
 	assert.NotContains(t, mcp, "strings.HasPrefix")
 
 	service := agentsTemplates.Read(serviceExecutorFileT)
-	assert.Contains(t, service, "{{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}PayloadCodec.FromJSON(call.Payload)")
+	assert.Contains(t, service, "{{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}PayloadCodec().FromJSON(call.Payload)")
 	assert.NotContains(t, service, "PayloadCodec(string(call.Name))")
 	assert.NotContains(t, service, "bounds = init")
 }
@@ -74,4 +75,36 @@ func TestRegistryTemplateValidatesExecutorsBeforeRegistration(t *testing.T) {
 	assert.Contains(t, registry, "ResultMaterializer: cfg.resultMaterializers[toolsetID]")
 	assert.Contains(t, registry, "ResultMaterializer associates a result materializer")
 	assert.NotContains(t, registry, "no executor registered for toolset")
+}
+
+func TestTypedCallHelperTemplatesLeaveExecutionIDsToRuntime(t *testing.T) {
+	for _, source := range []string{
+		agentsTemplates.Read(agentToolsFileT),
+		agentsTemplates.Read(usedToolsFileT),
+	} {
+		assert.NotContains(t, source, "toolCallID string")
+		assert.Contains(t, source, "Call(args ")
+		assert.Contains(t, source, "(planner.ToolRequest, error)")
+		assert.Contains(t, source, "planner.NewToolRequest(")
+		assert.NotContains(t, source, "CallOption")
+		assert.NotContains(t, source, "WithToolCallID")
+	}
+}
+
+func TestGeneratedJSONTypeLeavesAnyUnconstrained(t *testing.T) {
+	require.Empty(t, generatedJSONType(goaexpr.Any))
+}
+
+func TestNewToolDataClassifiesUnboundResults(t *testing.T) {
+	toolset := &ToolsetData{Name: "helpers"}
+	withResult, err := newToolData(toolset, &agentsExpr.ToolExpr{
+		Name:   "answer",
+		Return: &goaexpr.AttributeExpr{Type: goaexpr.String},
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, withResult.HasResult)
+
+	withoutResult, err := newToolData(toolset, &agentsExpr.ToolExpr{Name: "notify"}, nil)
+	require.NoError(t, err)
+	require.False(t, withoutResult.HasResult)
 }

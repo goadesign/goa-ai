@@ -76,103 +76,33 @@ This generates:
 
 ### Understanding the Generated Code
 
-The generated `cmd/<service>/main.go` uses the bootstrap to run your agents. Here's what it does under the hood:
+When an unbounded tool declares a payload example and either has no result or
+declares a result example, the scaffold demonstrates one complete deterministic
+agent turn:
 
-```go
-package main
+1. `PlanStart` decodes a generated payload example and calls
+   `planner.NewToolRequest(gentool.<Tool>Tool(), args)`.
+2. `bootstrap.New` registers a deterministic example executor for that toolset.
+   The executor validates the payload with the generated codec and returns the
+   generated result example, or a successful no-result outcome.
+3. The runtime executes the call and invokes `PlanResume` with the correlated
+   result.
+4. The runtime matches the result to the pending call. `PlanResume` checks the
+   tool name, then returns the exact JSON result in the final assistant message.
 
-import (
-    "context"
-    "fmt"
+This path exercises the generated schemas, codecs, executor registration,
+runtime tool dispatch, and `PlanStart` → `PlanResume` transition without
+requiring model credentials. Replace the planner and example executor together
+when connecting real model and service implementations.
 
-    // The core Goa-AI runtime and planner interfaces
-    "goa.design/goa-ai/runtime/agent/runtime"
-    "goa.design/goa-ai/runtime/agent/model"
-    "goa.design/goa-ai/runtime/agent/planner"
+If no tool has the examples needed for that demonstration, the generated
+planner returns a final greeting without calling a tool. Bounded tools are not
+selected because their returned counts and truncation state belong to a real
+executor rather than generated sample data.
 
-    // === Your Generated Agent Packages ===
-    // (Goa generated these based on your design)
-    {{- range .Services }}{{- range .Agents }}
-    {{ .PackageName }} "{{ .ImportPath }}"
-    {{- end }}{{- end }}
-)
-
-// A simple "brain" for our agent. It just says hello for now.
-// We'll make this smarter in the next section!
-type StubPlanner struct{}
-func (p *StubPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
-    return &planner.PlanResult{
-		FinalResponse: &planner.FinalResponse{
-			Message: &model.Message{
-				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "Hello!"}},
-			},
-		},
-	}, nil
-}
-func (p *StubPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
-    return &planner.PlanResult{
-		FinalResponse: &planner.FinalResponse{
-			Message: &model.Message{
-				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "Done."}},
-			},
-		},
-	}, nil
-}
-
-func main() {
-    // 1. Create the Runtime
-    // This is the central engine for all your agents.
-    rt := runtime.New()
-
-    // 2. Register Your Agent(s)
-    // Let the runtime know about the agents it can manage.
-    {{- $first := true -}}
-    {{- range .Services }}{{- range .Agents }}
-    {
-        cfg := {{ .PackageName }}.{{ .StructName }}Config{
-            Planner: &StubPlanner{},
-            // We'll add tool configurations here later on.
-        }
-        if err := {{ .PackageName }}.Register{{ .StructName }}(context.Background(), rt, cfg); err != nil {
-            panic(err)
-        }
-    }
-    {{- if $first }}{{ $first = false }}{{ end }}
-    {{- end }}{{- end }}
-
-    // 3. Run it!
-    // Let's invoke our first agent and see what it says using AgentClient.
-    fmt.Println("🚀 Invoking agent...")
-    if _, err := rt.CreateSession(context.Background(), "my-first-session"); err != nil {
-        panic(err)
-    }
-    client := {{ (index (index .Services 0).Agents 0).PackageName }}.NewClient(rt)
-    out, err := client.Run(
-        context.Background(),
-        "my-first-session",
-        []*model.Message{
-			{ Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Hi there!"}} },
-		},
-    )
-    if err != nil {
-		panic(err)
-	}
-
-    fmt.Println("✅ Success!")
-    fmt.Println("RunID:", out.RunID)
-    // Print first text part (if any)
-    if out.Final != nil && len(out.Final.Parts) > 0 {
-        if tp, ok := out.Final.Parts[0].(model.TextPart); ok {
-            fmt.Println("Assistant says:", tp.Text)
-        }
-    }
-}
-```
-
-When a service also declares `Completion(...)` contracts, Goa generates
-`gen/<service>/completions/` and the example main demonstrates both
+When a service also declares `Completion(...)` contracts, Goa always generates
+`gen/<service>/completions/`. For completions with an authored result example,
+the example main also demonstrates both
 `Complete<Name>(...)` and `StreamComplete<Name>(...)` using the generated typed
 codecs and schema examples.
 
@@ -253,7 +183,7 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 
 // PlanResume is called after tools have run, giving the agent new information.
 func (p *MySmartPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
-    // 1. Inspect the tool results from in.ToolResults.
+    // 1. Inspect the tool results from in.ToolOutputs.
     // 2. Build a new prompt including the tool results.
     // 3. Call the LLM to decide what to do next.
     return &planner.PlanResult{
@@ -276,8 +206,9 @@ Your agents can do useful work by calling other parts of your system. Here's how
 #### Local Service-Backed Tools (`BindTo`) — Executor-First
 
 When your tool maps to a service method (via `BindTo`), Goa-AI generates:
-- Typed tool specs/codecs under `gen/<svc>/agents/<agent>/specs/<toolset>/`
-- One typed descriptor per tool (for example `SummarizeDocTool`) pairing the tool identifier with its payload and result codecs, so planners, executors, and eval hooks decode tool JSON without restating the name-to-codec pairing fixed by the design
+- Service-owned tool specs/codecs under `gen/<service>/toolsets/<toolset>/`
+- Agent-exported tool specs/codecs under `gen/<service>/agents/<agent>/exports/<toolset>/`
+- One typed descriptor factory per tool (for example `SummarizeDocTool()`) pairing the tool identifier with its payload and result codecs, so planners, executors, and eval hooks decode tool JSON without restating the name-to-codec pairing fixed by the design
 - Transform helpers (when shapes are compatible): `transforms.go`
 - An application-owned executor stub under `internal/agents/<agent>/toolsets/<toolset>/execute.go`
 
@@ -293,8 +224,8 @@ if err != nil { panic(err) }
 
 Implement the executor's `Execute` function to:
 - Switch on `call.Name` for each tool
-- Decode `call.Payload` to typed args with the generated typed descriptor (`specs.<Tool>Tool.Payload.FromJSON`) — the name-to-codec pairing is fixed at generation time and compile-checked, no type assertion needed
-- Optionally use `ToMethodPayload_<Tool>`/`ToToolReturn_<Tool>` transforms
+- Decode `call.Payload` to typed args with the generated typed descriptor (`specs.<Tool>Tool().Payload.FromJSON`); when the tool declares `Inject(...)`, call `specs.Decode<Tool>(call.Payload, *meta, meta.Labels)` so generated code also supplies those server-owned fields
+- Optionally use `Init<Tool>MethodPayload`/`Init<Tool>ToolResult` transforms
 - Call your service client and return a `planner.ToolResult`
 
 Minimal executor scaffold:
@@ -310,15 +241,15 @@ import (
     "goa.design/goa-ai/runtime/agent/rawjson"
     "goa.design/goa-ai/runtime/agent/runtime"
     "goa.design/goa-ai/runtime/agent/tools"
-    specs "<module>/gen/<svc>/agents/<agent>/specs/<toolset>"
+    specs "<module>/gen/<service>/toolsets/<toolset>"
 )
 
-func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
+func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
     switch call.Name {
     case specs.<Tool>:
         // Decode with the generated typed descriptor: args is the typed
         // payload (e.g. *specs.<ToolPayload>), no type assertion needed.
-        args, err := specs.<Tool>Tool.Payload.FromJSON(call.Payload)
+        args, err := specs.<Tool>Tool().Payload.FromJSON(call.Payload)
         if err != nil {
             var issuer interface {
                 Issues() []*tools.FieldIssue
@@ -336,14 +267,14 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
                         Action: planner.RecoveryCorrectCall,
                         Issues: issues,
                         PriorInput: append(rawjson.Message(nil), call.Payload...),
-                        ExampleJSON: append(rawjson.Message(nil), specs.Spec<Tool>.Payload.ExampleJSON...),
+                        ExampleJSON: append(rawjson.Message(nil), specs.Spec<Tool>().Payload.ExampleJSON...),
                     },
                 },
             }), nil
         }
-        // Optionally use transforms: mp, _ := specs.ToMethodPayload_<Tool>(args)
-        // Call your service client, map result via specs.ToToolReturn_<Tool>
-        // Or build a typed tool return directly:
+        // Call your service client with args and return the generated result
+        // type. Method-backed providers generated in the owning service already
+        // contain the required payload and result transforms.
         return runtime.Executed(&planner.ToolResult{
 			Name:   call.Name,
 			Result: &specs.<ToolReturn>{
@@ -634,7 +565,7 @@ sub, err := streambridge.Register(rt.Bus, sink) // sink filters the scenario's s
 ev, err := collector.Finish()
 expect := evidence.Expect{
     Tools: []evidence.Tool{
-        evidence.ExpectCall(specs.<Tool>Tool,
+        evidence.ExpectCall(specs.<Tool>Tool(),
             func(p *specs.<ToolPayload>) error { /* assert arguments */ return nil },
             func(r *specs.<ToolReturn>) error { /* assert result */ return nil },
         ),
@@ -688,7 +619,7 @@ Rerun `goa gen` to get a typed harness under `gen/evals/<suite>/` (one hook per 
 * **Human Input:** Clarifications, confirmations, and external results end the current workflow with a typed suspension. Keep the complete suspension in trusted server-side storage, atomically claim it once, and submit one answer with `client.StartContinuation()` to start the next workflow.
 * **Policies & Caps:** The `RunPolicy` in your design (max tool calls, time budgets) is automatically enforced by the runtime.
 * **Persistence & Observability:** The `runtime.New` function accepts `runtime.Options` to configure production-grade components like a Temporal engine, MongoDB for memory, and telemetry hooks.
-* **Temporal DataConverter:** The Temporal engine automatically installs its strict data converter when `ClientOptions.DataConverter` is unset. Explicit custom converters remain the caller's responsibility.
+* **Temporal DataConverter:** The Temporal engine always installs its strict, bounded data converter. Applications provide connection and namespace settings through `ClientOptions`; they cannot replace the workflow data contract.
 * **Registries & Discovery:** When you declare registries and `FromRegistry(...)` toolsets in your DSL, Goa-AI generates typed registry HTTP clients under `gen/<svc>/registry/<name>/` plus per-toolset specs helpers (with `DiscoverAndPopulate`, `Specs`, and `RegistryToolsetID`) so you can discover tools at runtime and register executors using `runtime.ToolsetRegistration`.
 
 ```go

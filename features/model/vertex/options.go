@@ -1,6 +1,9 @@
 package vertex
 
-import "goa.design/goa-ai/runtime/agent/model"
+import (
+	"goa.design/goa-ai/features/model/internal/modelid"
+	"goa.design/goa-ai/runtime/agent/model"
+)
 
 // Options configures the Gemini-on-Vertex model client.
 //
@@ -20,29 +23,16 @@ type Options struct {
 	// Temperature is the default sampling temperature when the request does
 	// not set one.
 	Temperature float32
-	// ThinkingBudget is the default thinking token budget applied when the
-	// request enables thinking without a budget.
+	// ThinkingBudget is the default thinking token budget for models that accept
+	// numeric budgets. Gemini 3 uses thinking levels and does not read this
+	// option.
 	ThinkingBudget int
 }
 
 // geminiProviderName identifies the Gemini-on-Vertex adapter in provider errors.
 const geminiProviderName = "vertex-gemini"
 
-// resolveModelID picks the concrete Vertex model for a request: an explicit
-// Request.Model wins, then the configured class override, then DefaultModel.
-func (o Options) resolveModelID(req *model.Request) string {
-	if req.Model != "" {
-		return req.Model
-	}
-	switch req.ModelClass { //nolint:exhaustive
-	case model.ModelClassHighReasoning:
-		if o.HighModel != "" {
-			return o.HighModel
-		}
-	case model.ModelClassSmall:
-		if o.SmallModel != "" {
-			return o.SmallModel
-		}
-	}
-	return o.DefaultModel
+// resolveModelID returns the exact configured model for req.
+func (o Options) resolveModelID(req *model.Request) (string, error) {
+	return modelid.Resolve("vertex", req, o.DefaultModel, o.HighModel, o.SmallModel)
 }

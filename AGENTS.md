@@ -72,7 +72,9 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 - Generator edits must be section-driven and guard-first: match the target section early and `continue`; avoid redundant `s.Source == ""`-style guards.
 - Generator code must stay generic. Derive aliases from imports instead of example-specific names.
 - DSL packages may use dot imports; `.golangci.yml` allows `ST1001`.
-- Do not introspect Goa `docs.json` at runtime. Use generated `tool_specs.Specs`, including payload/result schemas and codecs.
+- Do not introspect Goa `docs.json` at runtime. Use generated
+  `tool_specs.Specs()` or `Spec<Name>()` factories, which return fresh
+  payload/result schemas, metadata, and codecs on each call.
 - Tool schemas, schema projections, examples, and retry examples are canonical
  raw JSON contracts. Keep them as `rawjson.Message`/`tools.RawJSON`
  through runtime and generated specs. Do not rehydrate them into
@@ -155,9 +157,10 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 ### Streaming and runtime contracts
 
 - Streaming planners must choose exactly one event path:
-  - Use the decorated client from `PlannerContext.ModelClient(id)` / `input.Agent.ModelClient(id)` and drain the `Streamer` yourself with `Recv()`, or
-  - Use `planner.ConsumeStream` only with a raw `model.Client`.
-- Never call `planner.ConsumeStream` on a decorated runtime client; it double-emits assistant, thinking, and usage events.
+  - Use `PlannerContext.PlannerModelClient(id)` and let it drain the stream, or
+  - Use `PlannerContext.ModelClient(id)` / `input.Agent.ModelClient(id)` and
+    either pass its `ValidatedStream` to `planner.ConsumeStream` or drain it
+    yourself.
 - Register agent-as-tool toolsets with `agenttools.NewRegistration(...)` and runtime-owned options. You may set per-tool or shared text/template content, but never both text and template for the same tool.
 - If no prompt override is provided, the runtime builds the default prompt from the optional system prompt plus the tool payload. Validate custom templates with `runtime.ValidateAgentToolTemplates`; templates compile with `missingkey=error`.
 - Agent-as-tool runs as child workflows by default via `ExecuteAgentChildWithRoute`. Do not schedule `ExecuteTool` activities for agent-as-tool.

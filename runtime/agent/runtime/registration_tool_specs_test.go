@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
 
 	"github.com/stretchr/testify/require"
@@ -43,14 +42,14 @@ func TestRegisterToolsetRejectsDuplicateExecutableOwner(t *testing.T) {
 	first := ToolsetRegistration{
 		Name:  "svc",
 		Specs: []tools.ToolSpec{spec},
-		Execute: func(context.Context, *planner.ToolRequest) (*ToolExecutionResult, error) {
+		Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
 			return nil, nil
 		},
 	}
 	require.NoError(t, runtime.RegisterToolset(first))
 
 	second := first
-	second.Execute = func(context.Context, *planner.ToolRequest) (*ToolExecutionResult, error) {
+	second.Execute = func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
 		return &ToolExecutionResult{}, nil
 	}
 	require.ErrorContains(t, runtime.RegisterToolset(second), `toolset "svc" is already registered`)
@@ -69,7 +68,7 @@ func TestRegisterToolsetOwnsMutableContractData(t *testing.T) {
 	registration := ToolsetRegistration{
 		Name:  "svc",
 		Specs: []tools.ToolSpec{spec},
-		Execute: func(context.Context, *planner.ToolRequest) (*ToolExecutionResult, error) {
+		Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
 			return nil, nil
 		},
 	}

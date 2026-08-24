@@ -6,8 +6,6 @@ Minimal, copy‑paste runnable example to go from zero → talking agent. Keep y
 
 - Go 1.24+
 - Goa v3 CLI (`go install goa.design/goa/v3/cmd/goa@latest`)
-- Temporal dev server (for workflow execution)
-  - Easiest: Docker one‑liner below, or use Temporalite
 
 ## 1) Scaffold a fresh project
 
@@ -114,7 +112,7 @@ goa example example.com/quickstart/design
 
 This creates:
 - **`gen/`** - Generated code (never edit by hand), including one typed
-  descriptor per tool (`helpers.AnswerTool`) pairing the tool identifier with
+  descriptor factory per tool (`helpers.AnswerTool()`) pairing the tool identifier with
   its payload and result codecs
 - **`cmd/orchestrator/main.go`** - Runnable example using the bootstrap
 - **`internal/agents/bootstrap/bootstrap.go`** - Wires runtime, registers agents and toolset executors
@@ -127,13 +125,12 @@ This quickstart's application-owned files are already filled in to demonstrate
 the full agent loop deterministically, with no model or external service:
 
 - The planner (`internal/agents/chat/planner/planner.go`) requests the
-  `helpers.answer` tool with the user's question on `PlanStart`, then decodes
-  the tool result with the typed descriptor (`helpers.AnswerTool.Result`) and
-  finalizes with the answer on `PlanResume`.
+  `helpers.answer` tool with the user's question on `PlanStart`.
 - The executor (`internal/agents/chat/toolsets/helpers/execute.go`) decodes
-  the payload with `helpers.AnswerTool.Payload` and returns a typed
-  `AnswerResult`. Invalid payloads come back as classified invalid-call
-  failures with structured correction guidance.
+  the payload and example result with `helpers.AnswerTool()`, then returns the
+  typed `AnswerResult`. Invalid payloads come back as classified invalid-call
+  failures with structured correction guidance. The runtime passes the typed
+  result to `PlanResume`, where the planner finalizes with the answer.
 - The bootstrap registers the executor with the generated
   `RegisterUsedToolsets` helper, which fails fast when an executor is missing.
 
@@ -160,15 +157,16 @@ Completion names are part of the structured-output contract. They must be
 1-64 ASCII characters, may contain letters, digits, `_`, and `-`, and must
 start with a letter or digit.
 
-Regeneration emits `gen/orchestrator/completions/` with the result schema,
-typed codecs, and generated helpers such as `CompleteDraftTask(...)`,
-`StreamCompleteDraftTask(...)`, and `DecodeDraftTaskChunk(...)`.
+Regeneration emits `gen/orchestrator/completions/` with the result schema and
+generated helpers such as `CompleteDraftTask(...)` and
+`StreamCompleteDraftTask(...)`. Codec details stay inside that generated
+package.
 
 The unary helper issues a unary model request with provider-enforced structured
 output and decodes the assistant response through the generated codec. The
-streaming helper stays on the raw `model.Streamer` surface: `completion_delta`
-chunks are preview-only, exactly one final `completion` chunk is canonical, and
-`DecodeDraftTaskChunk(...)` decodes only that final payload. Generated
+streaming helper returns a typed stream: `completion_delta` chunks are
+preview-only, and `Value()` remains unavailable until the provider stream ends
+and its final `completion` chunk matches the complete response. Generated
 completion helpers reject tool-enabled requests and caller-supplied
 `StructuredOutput`. Providers that do not implement structured output return
 `model.ErrStructuredOutputUnsupported`.
@@ -183,7 +181,7 @@ Expected output:
 
 ```
 RunID: orchestrator-chat-...
-Assistant: Deterministic demo answer to: Hello
+Assistant: Tool helpers.answer returned {"text":"Tokyo is the capital of Japan."}
 Completion draft_task: ...
 Completion delta draft_task: ...
 Completion stream draft_task: ...
@@ -211,7 +209,7 @@ with declarative expectations built from the generated typed tool descriptor:
 ```go
 expect := evidence.Expect{
     Tools: []evidence.Tool{
-        evidence.ExpectCall(genhelpers.AnswerTool,
+        evidence.ExpectCall(genhelpers.AnswerTool(),
             func(p *genhelpers.AnswerPayload) error { /* assert arguments */ return nil },
             func(r *genhelpers.AnswerResult) error { /* assert result */ return nil },
         ),
@@ -271,7 +269,7 @@ import (
     "go.temporal.io/sdk/client"
 )
 
-eng, _ := temporal.NewWorker(temporal.Options{
+eng, err := temporal.NewWorker(temporal.Options{
     ClientOptions: &client.Options{
         HostPort:      "127.0.0.1:7233",
         Namespace:     "default",
@@ -280,15 +278,23 @@ eng, _ := temporal.NewWorker(temporal.Options{
         TaskQueue: "<service>_<agent>_workflow",
     },
 })
+if err != nil {
+    log.Fatal(err)
+}
 rt := agentsruntime.New(agentsruntime.WithEngine(eng))
 ```
+
+The engine always installs Goa-AI's strict data converter and limits one
+workflow or activity call to 1 MiB. Supply only connection and namespace
+settings through `ClientOptions`; persist larger tool results first and return
+their durable reference.
 
 ## 7) Customize the planner
 
 The planner in `internal/agents/chat/planner/planner.go` already demonstrates
 both planner decisions deterministically: `PlanStart` returns tool calls
-(encoding the payload with `helpers.AnswerTool.Payload`), and `PlanResume`
-decodes the executed tool result and finalizes. To make the agent smart,
+(encoding the payload with `helpers.AnswerTool().Payload`), and `PlanResume`
+reads the typed result decoded by the bootstrap and finalizes. To make the agent smart,
 replace the deterministic decisions with LLM calls:
 
 ```go
@@ -337,7 +343,8 @@ Note: tool execution requires wiring executors. For a first run, the in‑proces
 ## Notes
 
 - Always change design in `design/*.go` then run `goa gen` (and `goa example` as needed). Never edit `gen/` by hand.
-- Generated tool specs live under `gen/<svc>/agents/<agent>/specs/…` with typed codecs.
+- Service-owned tool specs and typed codecs live under `gen/<service>/toolsets/<toolset>/`.
+  Agent exports use `gen/<service>/agents/<agent>/exports/<toolset>/`.
 - Tool payload examples come from authored top-level Goa `Example(...)` blocks.
   Generated specs keep both schema variants plus parsed example input so
   provider adapters can choose schema annotations or native `input_examples`.

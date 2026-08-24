@@ -1,4 +1,6 @@
-// Package mongo implements the low-level MongoDB client used by the run log store.
+// Package mongo implements the low-level MongoDB client used by the run log
+// store. Append-only event documents stay in one collection and retain stable
+// identities for workflow retries.
 package mongo
 
 //go:generate cmg gen .
@@ -83,7 +85,8 @@ func New(opts Options) (Client, error) {
 		timeout = defaultTimeout
 	}
 
-	mcoll := opts.Client.Database(opts.Database).Collection(collection)
+	database := opts.Client.Database(opts.Database)
+	mcoll := database.Collection(collection)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 

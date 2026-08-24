@@ -24,7 +24,7 @@ import (
 // terminalPlannerState carries the runtime-owned state needed to materialize a
 // terminal planner result.
 type terminalPlannerState struct {
-	result     *planner.PlanResult
+	result     *PlanResult
 	toolEvents []*planner.ToolResult
 	usage      model.TokenUsage
 }
@@ -130,7 +130,7 @@ func (r *Runtime) materializeTerminalPlannerResult(
 	}, nil
 }
 
-func validateTerminalPlanResult(result *planner.PlanResult) error {
+func validateTerminalPlanResult(result *PlanResult) error {
 	if result == nil {
 		return errors.New("planner returned nil terminal result")
 	}

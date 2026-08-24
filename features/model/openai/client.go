@@ -1,13 +1,13 @@
-// Package openai provides a model.Client implementation backed by the OpenAI
-// Responses API. The adapter keeps all provider quirks inside this package so
-// planners and runtimes can continue speaking the provider-neutral model.Client
-// contract.
+// Package openai provides raw and validated OpenAI Responses API adapters. Raw
+// providers are available for provider-side middleware; ordinary constructors
+// return the opaque model.Client validation boundary.
 package openai
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 
@@ -63,8 +63,8 @@ type (
 		transport transport
 	}
 
-	// Client implements model.Client on top of the OpenAI Responses API.
-	Client struct {
+	// provider translates canonical model requests to the OpenAI Responses API.
+	provider struct {
 		transport transport
 
 		defaultModel string
@@ -85,6 +85,7 @@ type (
 		resolvedModelID    string
 		resolvedModelClass model.ModelClass
 		structuredOutput   *model.StructuredOutput
+		outputProjection   *strictSchemaProjection
 	}
 
 	// responseStream is the minimal streaming surface needed by the adapter.
@@ -116,10 +117,27 @@ const (
 	thinkingEffortHigh   = "high"
 )
 
-// New builds an OpenAI-backed model client from the provided options.
-func New(opts Options) (*Client, error) {
+// New builds a validated OpenAI-backed model client.
+func New(opts Options) (model.Client, error) {
+	raw, err := NewProvider(opts)
+	if err != nil {
+		return nil, err
+	}
+	return model.NewClient(raw)
+}
+
+// NewProvider builds the raw OpenAI provider used beneath model.NewClient.
+// Callers should use this constructor only to install provider-side middleware
+// before final canonical output validation.
+func NewProvider(opts Options) (model.Provider, error) {
 	if opts.DefaultModel == "" {
 		return nil, errors.New("openai: default model identifier is required")
+	}
+	if opts.MaxCompletionTokens < 0 {
+		return nil, errors.New("openai: default max completion tokens cannot be negative")
+	}
+	if err := validateOpenAITemperature(opts.Temperature); err != nil {
+		return nil, fmt.Errorf("openai: default %w", err)
 	}
 	if err := validateThinkingEffort(opts.ThinkingEffort); err != nil {
 		return nil, err
@@ -131,7 +149,7 @@ func New(opts Options) (*Client, error) {
 		}
 		tr = sdkTransport{client: opts.Client}
 	}
-	return &Client{
+	return &provider{
 		transport:           tr,
 		defaultModel:        opts.DefaultModel,
 		highModel:           opts.HighModel,
@@ -142,21 +160,36 @@ func New(opts Options) (*Client, error) {
 	}, nil
 }
 
-// NewFromAPIKey constructs a client using the default OpenAI HTTP client.
-func NewFromAPIKey(apiKey, defaultModel string) (*Client, error) {
+// NewFromAPIKey constructs a validated client using the default OpenAI HTTP
+// client.
+func NewFromAPIKey(apiKey, defaultModel string) (model.Client, error) {
+	raw, err := NewProviderFromAPIKey(apiKey, defaultModel)
+	if err != nil {
+		return nil, err
+	}
+	return model.NewClient(raw)
+}
+
+// NewProviderFromAPIKey constructs a raw provider using the default OpenAI HTTP
+// client.
+func NewProviderFromAPIKey(apiKey, defaultModel string) (model.Provider, error) {
 	if apiKey == "" {
 		return nil, errors.New("openai: api key is required")
 	}
 	client := openaisdk.NewClient(option.WithAPIKey(apiKey))
 	service := client.Responses
-	return New(Options{
+	return NewProvider(Options{
 		Client:       &service,
 		DefaultModel: defaultModel,
 	})
 }
 
 // Complete renders a unary response using the configured OpenAI client.
-func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	contract, err := model.NewRequestContract(req)
+	if err != nil {
+		return nil, err
+	}
 	prepared, err := c.prepareRequest(req)
 	if err != nil {
 		return nil, err
@@ -165,17 +198,30 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 	if err != nil {
 		return nil, wrapOpenAIError("responses.create", err)
 	}
-	return translateResponse(
+	response, err := translateResponse(
 		resp,
 		prepared.codec,
 		prepared.resolvedModelID,
 		prepared.resolvedModelClass,
 		prepared.structuredOutput,
+		prepared.outputProjection,
 	)
+	if err != nil {
+		if _, providerFailure := model.AsProviderError(err); providerFailure {
+			return nil, err
+		}
+		usage := translateUsage(resp.Usage, chooseModelID(resp.Model, prepared.resolvedModelID), prepared.resolvedModelClass)
+		return nil, contract.RejectProviderOutput(&usage, err)
+	}
+	return response, nil
 }
 
-// Stream renders a streaming response using the configured OpenAI client.
-func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+// Stream renders a raw streaming response using the configured OpenAI client.
+func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+	contract, err := model.NewRequestContract(req)
+	if err != nil {
+		return nil, err
+	}
 	prepared, err := c.prepareRequest(req)
 	if err != nil {
 		return nil, err
@@ -184,17 +230,20 @@ func (c *Client) Stream(ctx context.Context, req *model.Request) (model.Streamer
 	if stream == nil {
 		return nil, errors.New("openai: stream is nil")
 	}
-	return newOpenAIStreamer(
+	streamer := newOpenAIStreamer(
 		ctx,
 		stream,
 		prepared.codec,
 		prepared.resolvedModelID,
 		prepared.resolvedModelClass,
 		prepared.structuredOutput,
-	), nil
+		prepared.outputProjection,
+		contract,
+	)
+	return streamer, nil
 }
 
-func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
+func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) {
 	if req == nil {
 		return nil, errors.New("openai: request is required")
 	}
@@ -211,7 +260,7 @@ func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 	if modelID == "" {
 		return nil, errors.New("openai: model identifier is required")
 	}
-	toolDefs, codec, err := encodeTools(req.Tools)
+	toolDefs, codec, err := encodeTools(req.Tools, modelID)
 	if err != nil {
 		return nil, err
 	}
@@ -232,24 +281,28 @@ func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 	if maxTokens := c.effectiveMaxCompletionTokens(req.MaxTokens); maxTokens > 0 {
 		request.MaxOutputTokens = param.NewOpt(int64(maxTokens))
 	}
-	if temperature := c.effectiveTemperature(req.Temperature); temperature > 0 {
-		request.Temperature = param.NewOpt(float64(temperature))
-	}
 	if req.Thinking != nil && req.Thinking.Enable {
+		if req.Temperature > 0 {
+			return nil, errors.New("openai: temperature is not supported when thinking is enabled")
+		}
 		reasoning, include, err := c.effectiveThinkingRequest(req.Thinking)
 		if err != nil {
 			return nil, err
 		}
 		request.Reasoning = reasoning
 		request.Include = append(request.Include, include...)
+	} else if temperature := c.effectiveTemperature(req.Temperature); temperature > 0 {
+		request.Temperature = param.NewOpt(float64(temperature))
 	}
+	var outputProjection *strictSchemaProjection
 	if req.StructuredOutput != nil {
-		textConfig, ok, err := encodeStructuredOutput(req.StructuredOutput)
+		textConfig, projection, ok, err := encodeStructuredOutput(req.StructuredOutput, modelID)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
 			request.Text = textConfig
+			outputProjection = projection
 		}
 	}
 	if req.ToolChoice != nil {
@@ -267,6 +320,7 @@ func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 		resolvedModelID:    modelID,
 		resolvedModelClass: modelClass,
 		structuredOutput:   req.StructuredOutput,
+		outputProjection:   outputProjection,
 	}, nil
 }
 
@@ -279,15 +333,25 @@ func validateRequestBoundary(req *model.Request) error {
 	if req.Cache != nil && (req.Cache.AfterSystem || req.Cache.AfterTools) {
 		return errors.New("openai: request caching is not supported")
 	}
-	if req.StructuredOutput != nil && (len(req.Tools) > 0 || req.ToolChoice != nil) {
-		return errors.New("openai: structured output cannot be combined with tools")
+	if err := validateOpenAITemperature(req.Temperature); err != nil {
+		return fmt.Errorf("openai: %w", err)
+	}
+	return nil
+}
+
+// validateOpenAITemperature enforces the Responses API sampling range before
+// request construction.
+func validateOpenAITemperature(temperature float32) error {
+	value := float64(temperature)
+	if math.IsNaN(value) || math.IsInf(value, 0) || temperature < 0 || temperature > 2 {
+		return errors.New("temperature must be between 0 and 2")
 	}
 	return nil
 }
 
 // resolveModel chooses the concrete provider model ID plus the logical model
 // class associated with the request.
-func (c *Client) resolveModel(req *model.Request) (string, model.ModelClass, error) {
+func (c *provider) resolveModel(req *model.Request) (string, model.ModelClass, error) {
 	if req.Model != "" {
 		return req.Model, req.ModelClass, nil
 	}
@@ -309,14 +373,14 @@ func (c *Client) resolveModel(req *model.Request) (string, model.ModelClass, err
 	}
 }
 
-func (c *Client) effectiveMaxCompletionTokens(requested int) int {
+func (c *provider) effectiveMaxCompletionTokens(requested int) int {
 	if requested > 0 {
 		return requested
 	}
 	return c.maxCompletionTokens
 }
 
-func (c *Client) effectiveTemperature(requested float32) float32 {
+func (c *provider) effectiveTemperature(requested float32) float32 {
 	if requested > 0 {
 		return requested
 	}
@@ -325,7 +389,7 @@ func (c *Client) effectiveTemperature(requested float32) float32 {
 
 // effectiveThinkingRequest maps the provider-neutral thinking request onto the
 // OpenAI reasoning controls when the requested shape is representable.
-func (c *Client) effectiveThinkingRequest(opts *model.ThinkingOptions) (shared.ReasoningParam, []responses.ResponseIncludable, error) {
+func (c *provider) effectiveThinkingRequest(opts *model.ThinkingOptions) (shared.ReasoningParam, []responses.ResponseIncludable, error) {
 	if opts == nil || !opts.Enable {
 		return shared.ReasoningParam{}, nil, nil
 	}
@@ -384,11 +448,17 @@ func wrapOpenAIError(operation string, err error) error {
 	if err == nil {
 		return nil
 	}
-	if isRateLimited(err) {
-		pe := providerErrorFromSDK(operation, err)
-		return errors.Join(model.ErrRateLimited, pe)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
 	}
-	return providerErrorFromSDK(operation, err)
+	providerErr := providerErrorFromSDK(operation, err)
+	if errors.Is(providerErr, model.ErrRateLimited) {
+		return providerErr
+	}
+	if isRateLimited(err) {
+		return errors.Join(model.ErrRateLimited, providerErr)
+	}
+	return providerErr
 }
 
 func providerErrorFromSDK(operation string, err error) error {
@@ -422,7 +492,7 @@ func providerErrorFromResponseFailure(operation string, code string, msg string,
 
 func newProviderError(operation string, status int, code string, msg string, cause error) error {
 	kind, retryable := classifyOpenAIError(status, code)
-	return model.NewProviderError(
+	providerErr := model.NewProviderError(
 		openAIProviderName,
 		operation,
 		status,
@@ -433,6 +503,10 @@ func newProviderError(operation string, status int, code string, msg string, cau
 		retryable,
 		cause,
 	)
+	if kind == model.ProviderErrorKindRateLimited {
+		return errors.Join(model.ErrRateLimited, providerErr)
+	}
+	return providerErr
 }
 
 func classifyOpenAIError(status int, code string) (model.ProviderErrorKind, bool) {

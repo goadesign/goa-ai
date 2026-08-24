@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/internal/responseevidence"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -414,8 +415,7 @@ type (
 
 	// RecoveryCatalog records the exact tools advertised by a recovery planner
 	// activity. Its presence lets the workflow enforce the same catalog after
-	// the activity returns; absence preserves replay of histories recorded
-	// before recovery catalogs were introduced.
+	// the activity returns. Recovery turns require this catalog.
 	RecoveryCatalog struct {
 		// Tools lists canonical tool identifiers in advertised order. An empty
 		// list means the recovery turn required a tool-free result.
@@ -467,16 +467,131 @@ type (
 		Finalize *planner.Termination
 	}
 
-	// PlanActivityOutput wraps the planner result produced by a plan/resume activity.
+	// PlannerEventRecord is one accepted planner event awaiting workflow-owned
+	// identity and durable publication.
+	PlannerEventRecord struct {
+		// Type identifies the record variant.
+		Type runlog.Type
+		// Payload contains the encoded event fields.
+		Payload rawjson.Message
+	}
+
+	// ToolCall is one validated tool invocation prepared by the runtime for
+	// workflow execution. Planner implementations cannot construct this type
+	// through their PlanResult contract.
+	ToolCall struct {
+		// Name is the fully-qualified tool identifier the runtime will execute.
+		Name tools.Ident
+
+		// Payload is the canonical JSON payload sent to the tool.
+		Payload rawjson.Message
+
+		// ModelName is the model-facing tool identifier preserved when runtime
+		// compilation changes Name. Empty means the transcript identity is Name.
+		ModelName tools.Ident
+
+		// ModelPayload is the exact model payload preserved before the runtime
+		// adds or replaces execution fields. Empty means the transcript payload is
+		// Payload.
+		ModelPayload rawjson.Message
+
+		// AgentID identifies the agent that owns this call.
+		AgentID agent.Ident
+
+		// RunID identifies the run that owns this call.
+		RunID string
+
+		// SessionID identifies the logical session that owns this call.
+		SessionID string
+
+		// Labels carries runtime-assigned metadata used by policies and prompts.
+		Labels map[string]string
+
+		// TurnID identifies the conversational turn that owns this call.
+		TurnID string
+
+		// ToolCallID uniquely identifies this invocation across runtime records.
+		ToolCallID string
+
+		// ModelToolCallID is the provider correlation ID preserved only for
+		// rebuilding a model transcript. It is empty for planner-authored calls.
+		ModelToolCallID string
+
+		// ParentToolCallID identifies the parent call for nested execution.
+		ParentToolCallID string
+
+		// ContinuationRootToolCallID identifies the original bounded query
+		// advanced by this continuation call.
+		ContinuationRootToolCallID string
+	}
+
+	// PlanResult is the runtime-owned, workflow-safe result of one accepted
+	// planner activity. ToolCalls have already passed planner-result validation
+	// and contain execution metadata unavailable to planner implementations.
+	PlanResult struct {
+		// ToolCalls are the validated tool invocations to execute next.
+		ToolCalls []ToolCall
+
+		// SynthesizeAfterTools requires the next successful planner turn to return
+		// a final response without new tool calls.
+		SynthesizeAfterTools bool
+
+		// FinalResponse ends the run with a final assistant message.
+		FinalResponse *planner.FinalResponse
+
+		// FinalToolResult ends a nested run with a canonical parent tool result.
+		FinalToolResult *planner.FinalToolResult
+
+		// Streamed reports whether FinalResponse text was already streamed.
+		Streamed bool
+
+		// Await requests external input before planning resumes.
+		Await *planner.Await
+
+		// ExpectedChildren records the planner's expected nested result count.
+		ExpectedChildren int
+
+		// Notes are planner annotations surfaced to subscribers.
+		Notes []planner.PlannerAnnotation
+	}
+
+	// PlanActivityOutput carries one runtime-owned result from a planner
+	// activity across the Temporal activity/workflow boundary.
+	//
+	// Internal runtime contract:
+	//   - Before encoding, the complete value must fit a conservative 1 MiB
+	//     upper bound for its JSON/Temporal payload and require at most 100,000
+	//     reflection visits. The bound includes escaped strings and field names,
+	//     scalar text, base64 byte slices, collection punctuation, type
+	//     envelopes, Result, Transcript, PlannerEvents, failure metadata, and
+	//     every nested message, tool payload, result, label, and dynamic
+	//     metadata value.
+	//   - The runtime checks this contract before returning an activity result.
+	//     An oversized success becomes a planner-origin OutputContractFailure
+	//     with no partial Result or PlannerEvents.
+	//   - When model output was already rejected, an oversized auxiliary event
+	//     batch is removed while numeric Usage, model origin, and bounded model
+	//     response evidence remain intact.
 	PlanActivityOutput struct {
-		// Result is the planner output describing next tool calls, await requests, or final response.
-		Result *planner.PlanResult
+		// PublicationBatchID uniquely identifies this successful planner activity
+		// completion. The activity generates one UUID after planning and carries
+		// it with accepted or rejected output so the workflow can retry the exact
+		// publication batch without colliding with a later activity completion.
+		PublicationBatchID string
+
+		// Result contains the accepted planner decision after tool intents have
+		// been converted to runtime-owned execution calls.
+		Result *PlanResult
 
 		// Transcript contains the provider-visible transcript produced by the planner.
 		Transcript []*model.Message
 
 		// Usage is the token usage reported by the model provider when available.
 		Usage model.TokenUsage
+
+		// PlannerEvents contains accepted events for the workflow to publish with
+		// deterministic identities after this activity succeeds.
+		PlannerEvents []*PlannerEventRecord
 
 		// SessionEnded reports that the run's durable session was ended before
 		// this turn could be planned: the activity refused to plan and Result
@@ -489,6 +604,44 @@ type (
 		// RecoveryCatalog is present only for a recovery-aware resume activity
 		// and records the exact executable catalog shown to that planner turn.
 		RecoveryCatalog *RecoveryCatalog `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+
+		// OutputContractFailure is present when model or planner output was
+		// rejected. The workflow publishes Usage and PlannerEvents from this
+		// successful activity result before terminating the run.
+		OutputContractFailure *OutputContractFailure `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+	}
+
+	// OutputContractFailure preserves terminal model or planner evidence across
+	// the activity boundary without returning a result beside an activity error.
+	OutputContractFailure struct {
+		// Origin identifies whether model output or the planner result failed its
+		// contract.
+		Origin planner.OutputContractOrigin
+
+		// ReasonSHA256 identifies the exact local validation error without
+		// carrying provider-controlled text through Temporal.
+		ReasonSHA256 string
+
+		// ReasonSize is the number of bytes covered by ReasonSHA256.
+		ReasonSize int64
+
+		// ModelResponsePresent reports whether the provider returned a complete
+		// response before the rejection.
+		ModelResponsePresent bool
+
+		// ModelResponseSHA256 identifies the exact versioned encoding of complete
+		// provider responses rejected by the activity. It is empty when no
+		// complete response existed or when invalid metadata could not be
+		// encoded; ModelResponsePresent distinguishes those cases.
+		ModelResponseSHA256 string
+
+		// ModelResponseFingerprintVersion identifies the encoding covered by
+		// ModelResponseSHA256.
+		ModelResponseFingerprintVersion string
+
+		// ModelResponseSize is the number of bytes covered by
+		// ModelResponseSHA256.
+		ModelResponseSize int64
 	}
 
 	// RecordActivityInput is the canonical workflow-to-activity envelope for
@@ -633,8 +786,9 @@ type (
 	// ProvidedToolSuccess carries a successful external result and its optional
 	// bounded-result metadata.
 	ProvidedToolSuccess struct {
-		// Result contains canonical JSON for the tool's result contract. JSON
-		// null remains a successful result when the registered codec permits it.
+		// Result contains canonical JSON for the tool's result contract. It must
+		// be empty when the registered tool has no result contract. JSON null
+		// remains a successful result when a registered codec permits it.
 		Result rawjson.Message
 
 		// Bounds carries bounded-result metadata when the tool contract requires it.
@@ -688,5 +842,25 @@ const (
 	PendingInputKindToolResults PendingInputKind = "tool_results"
 
 	// RunSuspensionVersion is the checkpoint schema emitted by this runtime.
-	RunSuspensionVersion = "goa-ai.run-suspension.v2"
+	RunSuspensionVersion = "goa-ai.run-suspension.v3"
+
+	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
+	// model-response fingerprint encoding stored in workflow payloads.
+	ModelResponseFingerprintVersionV1 = responseevidence.VersionV1
 )
+
+// TranscriptName returns the tool name recorded in the provider transcript.
+func (c ToolCall) TranscriptName() tools.Ident {
+	if c.ModelName != "" {
+		return c.ModelName
+	}
+	return c.Name
+}
+
+// TranscriptPayload returns the tool payload recorded in the provider transcript.
+func (c ToolCall) TranscriptPayload() rawjson.Message {
+	if len(c.ModelPayload) > 0 {
+		return c.ModelPayload
+	}
+	return c.Payload
+}

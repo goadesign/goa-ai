@@ -58,7 +58,7 @@ func TestChildSuspensionPropagatesThroughParentContinuation(t *testing.T) {
 			&planner.PlanInput{RunContext: run.Context{
 				RunID: firstInput.RunID, SessionID: firstInput.SessionID, TurnID: firstInput.TurnID, Attempt: 1,
 			}},
-			&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+			&PlanResult{ToolCalls: []ToolCall{{
 				Name: tool.Name, ToolCallID: "call-child", Payload: rawjson.Message(`{}`),
 			}}},
 			policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1},
@@ -112,7 +112,7 @@ func TestChildSuspensionPropagatesThroughParentContinuation(t *testing.T) {
 	secondContext := &testWorkflowContext{
 		ctx: t.Context(), hookRuntime: runtime, controlledChildHandles: secondChildren,
 		hasPlanResult: true,
-		planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{
+		planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{
 			Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}},
 		}}},
 	}

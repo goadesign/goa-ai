@@ -119,15 +119,15 @@ provider-native structured-output example fields when available.
 
 Unary helpers request provider-enforced structured output and decode the final
 assistant response through the generated codec instead of hand-parsing JSON.
-When the codec rejects model-authored JSON, the helper makes one correction
-attempt with the exact error, generated field guidance, and authored example.
-`completion.Response.Attempts` preserves every response and its token usage; a
-second invalid value is terminal.
+When the codec rejects model-authored JSON, the helper returns a non-retryable
+`planner.OutputContractError` and does not ask the model again.
+`completion.Response.ModelResponse` preserves that exact response and its token
+usage.
 
-Streaming helpers stay on the raw `model.Streamer` surface. Providers may emit
-preview `completion_delta` chunks, exactly one final `completion` chunk is
-canonical, and generated `Decode<Name>Chunk(...)` helpers decode only that final
-payload. Streaming never restarts after exposing output.
+Streaming helpers return a typed `completion.Streamer[T]`. Providers may emit
+preview `completion_delta` chunks, but `Value` remains unavailable until exactly
+one final `completion` chunk, the stream ending, and the complete response all
+agree. Streaming never restarts after exposing output.
 Providers that do not implement structured output fail explicitly with
 `model.ErrStructuredOutputUnsupported`.
 The generated schema remains the canonical service contract; model adapters may
@@ -333,8 +333,7 @@ func main() {
 	rt := runtime.New() // in‑memory engine by default
 
 	if err := chat.RegisterChatAgent(context.Background(), rt, chat.ChatAgentConfig{
-		Planner:      &StubPlanner{},
-		HistoryModel: myHistoryModelClient, // counts tokens and writes summaries
+		Planner: &StubPlanner{},
 	}); err != nil {
 		panic(err)
 	}
@@ -362,6 +361,10 @@ func main() {
 	}
 }
 ```
+
+History compression is design-owned. Declare `History(...)` inside the agent's
+`RunPolicy`; regeneration then adds `HistoryModel` and
+`HistoryCompression` to that agent's generated configuration.
 
 **Want durability?** Just swap in a Temporal engine:
 
@@ -786,7 +789,7 @@ type PlannerContext interface {
     Tracer() telemetry.Tracer
     State() AgentState                    // Ephemeral per-run state
     AdvertisedToolDefinitions() []*model.ToolDefinition
-    ModelClient(id string) (model.Client, bool) // Raw client; no PlannerEvents emission
+    ModelClient(id string) (model.Client, bool) // Direct validated model client
     PlannerModelClient(id string) (planner.PlannerModelClient, bool) // Planner-scoped streaming client
     RenderPrompt(ctx context.Context, id prompt.Ident, data any) (*prompt.PromptContent, error)
     AddReminder(r reminder.Reminder)      // Register guidance for future turns
@@ -796,7 +799,8 @@ type PlannerContext interface {
 
 ### PlannerEvents
 
-Stream updates during planning:
+Planner-authored semantic progress during planning. Model response presentation
+and usage are published later from the runtime's validated invocation journal:
 
 ```go
 type PlannerEvents interface {
@@ -842,7 +846,7 @@ Provider-agnostic model interactions:
 ```go
 type Client interface {
     Complete(ctx context.Context, req *Request) (*Response, error)
-    Stream(ctx context.Context, req *Request) (Streamer, error)
+    Stream(ctx context.Context, req *Request) (*ValidatedStream, error)
 }
 
 type Streamer interface {
@@ -852,10 +856,14 @@ type Streamer interface {
 }
 ```
 
-Drain a stream until `Recv` returns `io.EOF`, then read `Response` for the
-canonical provider-authored content, usage, and stop reason before calling
-`Close`. `UsageChunk` carries progressive usage while the stream is active;
-terminal errors do not produce a canonical response.
+Every public client captures the request's immutable output contract before
+provider work and returns a `ValidatedStream`. Raw provider and transport
+adapters implement `Streamer` only so `RequestContract.ValidateStream` can own
+and validate them. Drain the validated stream until `Recv` returns `io.EOF`,
+then read `Response` for the canonical provider-authored content, usage, and
+stop reason before calling `Close`. `UsageChunk` carries progressive usage
+while the stream is active; terminal errors do not produce a canonical
+response.
 
 ### Message Types
 
@@ -873,18 +881,18 @@ Messages are structured as typed parts:
 
 ```go
 type Request struct {
-    RunID       string
-    Model       string           // Provider-specific model ID
-    ModelClass  ModelClass       // Or family: "high-reasoning", "default", "small"
-    PromptRefs  []prompt.PromptRef // Rendered prompt provenance metadata
-    Messages    []*Message
-    Temperature float32
-    Tools       []*ToolDefinition
-    ToolChoice  *ToolChoice      // auto/none/any/tool
-    MaxTokens   int
-    Stream      bool
-    Thinking    *ThinkingOptions // Enable provider reasoning
-    Cache       *CacheOptions    // Prompt caching
+    Model            string
+    ModelClass       ModelClass
+    PromptRefs       []prompt.PromptRef
+    Messages         []*Message
+    Temperature      float32
+    Tools            []*ToolDefinition
+    ToolChoice       *ToolChoice
+    MaxTokens        int
+    Stream           bool
+    Thinking         *ThinkingOptions
+    StructuredOutput *StructuredOutput
+    Cache            *CacheOptions
 }
 ```
 
@@ -923,8 +931,9 @@ history, unified debugging.
 
 ### Advertising Tools to Planners
 
-Register generated tool specs with the runtime using `specs.AdvertisedSpecs()` from
-`gen/<svc>/agents/<agent>/specs`. Inside planners, use
+Register generated tool specs with the runtime using `specs.Specs()` from
+`gen/<svc>/agents/<agent>/specs`; use `specs.Spec(name)` when one generated
+contract is needed by name. Inside planners, use
 `input.Agent.AdvertisedToolDefinitions()` to get the runtime-filtered model-facing tool
 definitions. Tags stay in runtime policy metadata and are not exposed to model providers.
 
@@ -1060,7 +1069,8 @@ as child workflows, enabling linked streams and run links.
 - **`New<Agent>ToolsetRegistration(rt *runtime.Runtime)`** — creates registration with routing info
 - **`NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)`** — configure per‑tool
   text/templates
-- **Typed call builders** like `New<Tool>Call(args, ...CallOption)`
+- **Typed call builders** like `New<Tool>Call(args)`. The runtime assigns the
+  execution ID after the planner returns its `PlanResult`.
 
 ### Runtime Behavior
 

@@ -41,7 +41,7 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.ts": {
-				Execute: wrapExecute(func(ctx context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+				Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 					// Executors receive the exact model-authored JSON payload.
 					require.JSONEq(t, `{"server_data":"on"}`, string(call.Payload))
 					// Return arbitrary value; encode path should use result codec.
@@ -88,7 +88,7 @@ func TestExecuteToolActivity_RejectsEmptyPayloadAtActivityBoundary(t *testing.T)
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.ts": {
-				Execute: wrapExecute(func(context.Context, *planner.ToolRequest) (*planner.ToolResult, error) {
+				Execute: wrapExecute(func(context.Context, *ToolCall) (*planner.ToolResult, error) {
 					executed = true
 					return &planner.ToolResult{}, nil
 				}),

@@ -24,13 +24,14 @@
 //	}
 //
 //	func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error) {
-//	    // Process input.ToolResults and decide next step
+//	    // Process input.ToolOutputs and decide next step
 //	    // The Finalize field is non-nil when runtime forces termination
 //	}
 package planner
 
 import (
 	"context"
+	"errors"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/memory"
@@ -60,10 +61,13 @@ import (
 // than once under its retry policy. Implementations must not perform
 // non-idempotent side effects outside runtime-owned planner output.
 //
-// Error handling: Planner errors terminate the run with a failed status. An
-// engine-owned PlanStart budget expiry instead enters the explicit PlanResume
-// finalization turn. Failed tools return ToolFailure as part of their ToolResult;
-// the runtime enforces its recovery transition on the next turn.
+// Error handling: Planner errors end the run with a failed status. Return
+// NewOutputContractError when a planner value does not follow its required
+// rules; Temporal will not ask for the same value again. Network and
+// model-provider failures keep their existing retry behavior. If
+// PlanStart runs out of time, the runtime calls PlanResume once to finish the
+// run. A failed tool returns ToolFailure in its ToolResult, and the runtime
+// applies the next action stated by that failure.
 type Planner interface {
 	// PlanStart receives the initial messages and returns the first decision.
 	// This is one logical call at the start of each run; its activity may retry.
@@ -184,7 +188,9 @@ type PlannerEvents interface {
 	UsageDelta(ctx context.Context, usage model.TokenUsage)
 }
 
-// ToolRequest describes a tool invocation requested by the planner.
+// ToolRequest is one tool invocation selected by a planner. It contains only
+// planner-authored intent; the runtime adds execution metadata after validating
+// the complete PlanResult.
 type ToolRequest struct {
 	// Name is the fully-qualified tool identifier (for example, "svc.read.get_time_series").
 	Name tools.Ident
@@ -192,68 +198,11 @@ type ToolRequest struct {
 	// Payload is the canonical JSON payload for the tool call.
 	Payload rawjson.Message
 
-	// ModelName is the tool identifier the model actually emitted when a planner
-	// compiles a model-facing synthetic tool into a different executable tool.
-	// Empty means the model-facing transcript identity is Name.
-	ModelName tools.Ident
-
-	// ModelPayload is the exact payload the model emitted when execution rewrites
-	// Payload with runtime-owned fields. Empty means the model-facing transcript
-	// payload is Payload.
-	ModelPayload rawjson.Message
-
-	// AgentID is the identifier of the agent that issued this tool request.
-	AgentID agent.Ident
-
-	// RunID is the identifier of the run that owns this tool call.
-	RunID string
-
-	// SessionID is the logical session identifier (for example, a chat conversation).
-	SessionID string
-
-	// Labels carries caller-defined run metadata dimensions used by runtime
-	// policies and prompt scoping.
-	Labels map[string]string
-
-	// TurnID identifies the conversational turn that produced this tool call.
-	TurnID string
-
-	// ToolCallID uniquely identifies this tool invocation for correlation across events.
-	//
-	// The runtime also reattaches opaque provider state (for example, Gemini 3
-	// tool-call thought signatures) by this ID, so planner implementations that
-	// hand-build ToolRequests from a Complete response MUST carry
-	// Response.ToolCalls()[i].ID through unchanged — ID preservation is the
-	// load-bearing obligation.
-	ToolCallID string
-
-	// ParentToolCallID is the identifier of the parent tool call when this invocation
-	// is nested (for example, a tool launched by an agent-as-tool).
-	ParentToolCallID string
-
-	// ContinuationRootToolCallID identifies the original bounded query advanced
-	// by a synthetic continuation action. It is empty for ordinary tool calls.
-	ContinuationRootToolCallID string
-}
-
-// TranscriptName returns the model-facing tool name recorded in provider
-// transcript history. Execution, policy, and result contracts continue to use
-// Name.
-func (r ToolRequest) TranscriptName() tools.Ident {
-	if r.ModelName != "" {
-		return r.ModelName
-	}
-	return r.Name
-}
-
-// TranscriptPayload returns the model-facing tool payload recorded in provider
-// transcript history. Execution, policy, and result contracts continue to use
-// Payload.
-func (r ToolRequest) TranscriptPayload() rawjson.Message {
-	if len(r.ModelPayload) > 0 {
-		return r.ModelPayload
-	}
-	return r.Payload
+	// ModelToolCallID is the provider's correlation ID when this request forwards
+	// a validated model call. ConsumeStream and ToolRequestFromModelCall set it;
+	// planner-authored requests leave it empty. The runtime always assigns a
+	// separate execution ID.
+	ModelToolCallID string
 }
 
 // ToolResult captures the outcome of a tool invocation.
@@ -321,6 +270,16 @@ type ToolResult struct {
 	// is nil. Callers can use RunLink to subscribe to or display the child
 	// agent run separately from the parent tool call.
 	RunLink *run.Handle
+}
+
+// MarshalJSON rejects ToolResult at every nesting depth. Its decoded Result is
+// an in-process typed value, not a JSON or workflow-boundary contract. Temporal
+// callers must use the typed data converter with a workflow-safe top-level API
+// envelope whose tool values are canonical generated-codec bytes.
+func (ToolResult) MarshalJSON() ([]byte, error) {
+	return nil, errors.New(
+		"planner.ToolResult cannot be JSON marshaled; use the Temporal typed converter with a workflow-safe top-level API envelope",
+	)
 }
 
 // ToolOutput captures one executed tool call in canonical JSON form for planner

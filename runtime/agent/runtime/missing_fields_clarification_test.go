@@ -58,7 +58,7 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 		ctx:           context.Background(),
 		hookRuntime:   rt,
 		hasPlanResult: true,
-		planResult: &planner.PlanResult{
+		planResult: &PlanResult{
 			FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}},
 			},
@@ -132,7 +132,7 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 		t,
 		"missing-fields-continuation",
 		[]tools.ToolSpec{completion},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			executions++
 			if string(call.Payload) == `{"title":"corrected"}` {
 				return successfulToolResult(call), nil
@@ -147,7 +147,8 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 		func(_ context.Context, _ *planner.PlanResumeInput) (*planner.PlanResult, error) {
 			resumes++
 			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-				Name: completion.Name, Payload: rawjson.Message(`{"title":"corrected"}`),
+				Name:    completion.Name,
+				Payload: rawjson.Message(`{"title":"corrected"}`),
 			}}}, nil
 		},
 	)
@@ -156,8 +157,8 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 	h.runtime.agents[h.input.AgentID] = h.registration
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
-	first, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name: completion.Name, Payload: rawjson.Message(`{}`),
+	first, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
+		Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-initial",
 	}}}, policy.CapsState{
 		MaxToolCalls:                        3,
 		RemainingToolCalls:                  3,

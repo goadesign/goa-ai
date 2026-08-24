@@ -223,8 +223,9 @@ type (
 		// CompressAtTurns triggers summarization after this many logical turns
 		// when Mode == "compress".
 		CompressAtTurns int
-		// CompressAtMaxInputTokens triggers summarization after this runtime
-		// preflight input-token count when Mode == "compress".
+		// CompressAtMaxInputTokens triggers summarization when the history
+		// model counts system messages, turns, and advertised tools above this
+		// input-token threshold and Mode == "compress".
 		CompressAtMaxInputTokens int
 		// KeepMaxTurns caps exact retention to this many newest logical turns
 		// after summarization when Mode == "compress".
@@ -483,11 +484,17 @@ type (
 		// MethodPayloadAttr is the Goa attribute for the bound service payload
 		// (resolved user type). Used to generate the typed payload mapper.
 		MethodPayloadAttr *goaexpr.AttributeExpr
+		// HasMethodPayload reports whether the bound Goa method accepts a payload
+		// argument. Provider templates use it to emit the exact service call arity.
+		HasMethodPayload bool
 
 		// MethodResultAttr is the Goa attribute for the bound service result
 		// (resolved user type). Used to generate default result adapters and to
 		// materialize specs when the tool Return is not specified.
 		MethodResultAttr *goaexpr.AttributeExpr
+		// HasMethodResult reports whether the bound Goa method returns a value in
+		// addition to an error.
+		HasMethodResult bool
 
 		// Toolset links back to the parent toolset metadata.
 		Toolset *ToolsetData

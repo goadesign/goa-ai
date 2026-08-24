@@ -61,9 +61,9 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
         ExecuteToolActivityOptions: {{ template "activityOptionsLiteral" .Runtime.ExecuteTool }},
 {{- end }}
         {{- if .Tools }}
-        Specs: {{ .ToolSpecsPackage }}.Specs,
+        Specs: {{ .ToolSpecsPackage }}.Specs(),
         ToolMetadataLookup: {{ .ToolSpecsPackage }}.MetadataByName,
-        RequiredLabels: {{ .ToolSpecsPackage }}.RequiredLabels,
+        RequiredLabels: {{ .ToolSpecsPackage }}.RequiredLabels(),
         {{- else }}
         Specs: nil,
         {{- end }}
@@ -144,13 +144,13 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
         reg := agentsruntime.ToolsetRegistration{
             Name: {{ printf "%q" .QualifiedName }},
             // Use the used-toolset specs package for strong-contract payload/result codecs.
-            Specs: {{ .SpecsPackageName }}.Specs,
+            Specs: {{ .SpecsPackageName }}.Specs(),
             ToolMetadataLookup: {{ .SpecsPackageName }}.MetadataByName,
-            Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
+            Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
                 if call == nil {
                     return nil, fmt.Errorf("tool request is nil")
                 }
-                meta := agentsruntime.ToolCallMetaFromRequest(*call)
+                meta := agentsruntime.ToolCallMetaFromCall(*call)
                 result, err := exec.Execute(ctx, &meta, call)
                 if err != nil {
                     return nil, err
@@ -231,14 +231,14 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
         exec := cfg.executors[toolsetID]
         reg := agentsruntime.ToolsetRegistration{
             Name:               toolsetID,
-            Specs:              {{ .SpecsPackageName }}.Specs,
+            Specs:              {{ .SpecsPackageName }}.Specs(),
             ToolMetadataLookup: {{ .SpecsPackageName }}.MetadataByName,
             ResultMaterializer: cfg.resultMaterializers[toolsetID],
-            Execute: func(ctx context.Context, call *planner.ToolRequest) (*agentsruntime.ToolExecutionResult, error) {
+            Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
                 if call == nil {
                     return nil, fmt.Errorf("tool request is nil")
                 }
-                meta := agentsruntime.ToolCallMetaFromRequest(*call)
+                meta := agentsruntime.ToolCallMetaFromCall(*call)
                 result, err := exec.Execute(ctx, &meta, call)
                 if err != nil {
                     return nil, err

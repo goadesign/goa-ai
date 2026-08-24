@@ -6,6 +6,8 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,8 +16,10 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -25,6 +29,192 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+func TestAgentToolPlannerOutputFailureEndsParentWorkflow(t *testing.T) {
+	t.Parallel()
+
+	cause := temporalerrors.Wrap(planner.NewOutputContractError(
+		errors.New("summary reply used prose"),
+	))
+	ready := make(chan struct{})
+	close(ready)
+	exec := &toolBatchExec{r: &Runtime{}}
+	_, _, _, err := exec.collectAgentChildResults(
+		&testWorkflowContext{ctx: context.Background()},
+		[]agentChildFutureInfo{{
+			handle: &controlledChildHandle{ready: ready, err: cause},
+			call:   ToolCall{Name: "child", ToolCallID: "child-1"},
+		}},
+		nil,
+	)
+
+	require.Error(t, err)
+	require.True(t, temporalerrors.IsOutputContract(err))
+}
+
+func TestAgentToolProviderFailureEndsParentWorkflow(t *testing.T) {
+	t.Parallel()
+
+	cause := temporalerrors.Wrap(model.NewProviderError(
+		"anthropic",
+		"complete",
+		503,
+		model.ProviderErrorKindUnavailable,
+		"service_unavailable",
+		"provider unavailable",
+		"request-1",
+		true,
+		nil,
+	))
+	ready := make(chan struct{})
+	close(ready)
+	exec := &toolBatchExec{r: &Runtime{}}
+	results, _, _, err := exec.collectAgentChildResults(
+		&testWorkflowContext{ctx: context.Background()},
+		[]agentChildFutureInfo{{
+			handle: &controlledChildHandle{ready: ready, err: cause},
+			call:   ToolCall{Name: "child", ToolCallID: "child-1"},
+		}},
+		nil,
+	)
+
+	require.Error(t, err)
+	require.Empty(t, results)
+	providerErr, ok := temporalerrors.Provider(err)
+	require.True(t, ok)
+	require.Equal(t, "anthropic", providerErr.Provider())
+	require.True(t, providerErr.Retryable())
+}
+
+func TestAgentToolPlannerOutputFailureSkipsParentResume(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		wrap func(error) error
+	}{
+		{name: "native", wrap: func(err error) error { return err }},
+		{name: "Temporal", wrap: temporalerrors.Wrap},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			const (
+				childPlanActivity  = "child.plan"
+				childResume        = "child.resume"
+				childExecute       = "child.execute"
+				parentPlan         = "parent.plan"
+				parentResume       = "parent.resume"
+				parentExecute      = "parent.execute"
+				childWorkflowName  = "child.workflow"
+				parentWorkflowName = "parent.workflow"
+			)
+			childID := agent.Ident("service.child")
+			parentID := agent.Ident("service.parent")
+			childTool := tools.Ident("child.tools.run")
+			childSpec := newAnyJSONSpec(childTool, "child.tools")
+			rt := New(WithLogger(telemetry.NoopLogger{}))
+
+			require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{
+				ID: childID,
+				Planner: &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+					return nil, test.wrap(planner.NewOutputContractError(
+						errors.New("invalid child reply"),
+					))
+				}},
+				Workflow: engine.WorkflowDefinition{
+					Name: childWorkflowName,
+					Handler: func(wfCtx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
+						return rt.ExecuteWorkflow(wfCtx, input)
+					},
+				},
+				PlanActivityName:    childPlanActivity,
+				ResumeActivityName:  childResume,
+				ExecuteToolActivity: childExecute,
+			}))
+			childToolset := NewAgentToolsetRegistration(rt, AgentToolConfig{
+				AgentID: childID,
+				Route: AgentRoute{
+					ID:               childID,
+					WorkflowName:     childWorkflowName,
+					DefaultTaskQueue: "child.queue",
+				},
+				Name: "child.tools",
+				AgentToolContent: AgentToolContent{
+					Texts: map[tools.Ident]string{childTool: "run child"},
+				},
+			})
+			childToolset.Specs = []tools.ToolSpec{childSpec}
+			require.NoError(t, rt.RegisterToolset(childToolset))
+
+			var parentResumeCalls atomic.Int32
+			parentRegistration := AgentRegistration{
+				ID: parentID,
+				Planner: &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+					parentResumeCalls.Add(1)
+					return finalPlannerResult("unexpected resume"), nil
+				}},
+				Workflow: engine.WorkflowDefinition{
+					Name: parentWorkflowName,
+					Handler: func(wfCtx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
+						return rt.ExecuteWorkflow(wfCtx, input)
+					},
+				},
+				PlanActivityName:    parentPlan,
+				ResumeActivityName:  parentResume,
+				ExecuteToolActivity: parentExecute,
+				Specs:               []tools.ToolSpec{childSpec},
+			}
+			require.NoError(t, rt.RegisterAgent(context.Background(), parentRegistration))
+
+			sessionID := "session-" + test.name
+			_, err := rt.CreateSession(context.Background(), sessionID)
+			require.NoError(t, err)
+			input := &RunInput{
+				AgentID:   parentID,
+				RunID:     "parent-run-" + test.name,
+				SessionID: sessionID,
+				TurnID:    "parent-turn-" + test.name,
+			}
+			seedRunMeta(t, rt, input)
+			wfCtx := &routeWorkflowContext{
+				ctx:          context.Background(),
+				runID:        input.RunID,
+				hookRuntime:  rt,
+				childRuntime: rt,
+				plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+					childPlanActivity: rt.PlanStartActivity,
+					parentResume:      rt.PlanResumeActivity,
+				},
+				toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){},
+			}
+
+			_, err = rt.runLoop(
+				wfCtx,
+				parentRegistration,
+				input,
+				&planner.PlanInput{RunContext: run.Context{
+					RunID: input.RunID, SessionID: sessionID, TurnID: input.TurnID, Attempt: 1,
+				}},
+				&PlanResult{ToolCalls: []ToolCall{{
+					ToolCallID: "child-call",
+					Name:       childTool,
+					Payload:    rawjson.Message(`{}`),
+				}}},
+				policy.CapsState{MaxToolCalls: 2, RemainingToolCalls: 2},
+				time.Time{},
+				time.Time{},
+				input.TurnID,
+				nil,
+			)
+
+			require.Error(t, err)
+			require.True(t, temporalerrors.IsOutputContract(err), "unexpected error: %v", err)
+			require.Zero(t, parentResumeCalls.Load())
+		})
+	}
+}
 
 // planner that captures messages passed to PlanStart and returns a final response
 type capturePlanner struct {
@@ -107,11 +297,12 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
 	// String payload path (canonical JSON)
-	call := planner.ToolRequest{
-		RunID:     "r1",
-		SessionID: "s1",
-		Name:      tools.Ident("svc.tools.do"),
-		Payload:   rawjson.Message([]byte(`"hello"`)),
+	call := ToolCall{
+		ToolCallID: "call-1",
+		RunID:      "r1",
+		SessionID:  "s1",
+		Name:       tools.Ident("svc.tools.do"),
+		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -193,11 +384,12 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 		},
 	})
 
-	call := planner.ToolRequest{
-		RunID:     "r1",
-		SessionID: "s1",
-		Name:      callName,
-		Payload:   rawjson.Message([]byte(`{"sources_ref":"src_1","server_data":"on"}`)),
+	call := ToolCall{
+		ToolCallID: "call-1",
+		RunID:      "r1",
+		SessionID:  "s1",
+		Name:       callName,
+		Payload:    rawjson.Message([]byte(`{"sources_ref":"src_1","server_data":"on"}`)),
 	}
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
@@ -251,11 +443,12 @@ func TestAgentTool_TextContent(t *testing.T) {
 	})
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
-	call := planner.ToolRequest{
-		RunID:     "r1",
-		SessionID: "s1",
-		Name:      tools.Ident("svc.tools.do"),
-		Payload:   rawjson.Message([]byte(`"hello"`)),
+	call := ToolCall{
+		ToolCallID: "call-1",
+		RunID:      "r1",
+		SessionID:  "s1",
+		Name:       tools.Ident("svc.tools.do"),
+		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -308,11 +501,12 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 	})
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
-	call := planner.ToolRequest{
-		RunID:     "r1",
-		SessionID: "s1",
-		Name:      tools.Ident("svc.tools.do"),
-		Payload:   rawjson.Message([]byte(`"hello"`)),
+	call := ToolCall{
+		ToolCallID: "call-1",
+		RunID:      "r1",
+		SessionID:  "s1",
+		Name:       tools.Ident("svc.tools.do"),
+		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -370,11 +564,12 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 	})
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
-	call := planner.ToolRequest{
-		RunID:     "r1",
-		SessionID: "s1",
-		Name:      tools.Ident("svc.tools.do"),
-		Payload:   rawjson.Message([]byte(`"hello"`)),
+	call := ToolCall{
+		ToolCallID: "call-1",
+		RunID:      "r1",
+		SessionID:  "s1",
+		Name:       tools.Ident("svc.tools.do"),
+		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
@@ -420,7 +615,7 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 	rt.toolSpecs[parent.Name] = parent
 
 	cfg := &AgentToolConfig{AgentID: "test.agent"}
-	call := &planner.ToolRequest{
+	call := &ToolCall{
 		Name:       parent.Name,
 		ToolCallID: "toolcall",
 		RunID:      "run",
@@ -450,8 +645,12 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 	require.Equal(t, "child-run", tr.RunLink.RunID)
 }
 
-func TestConvertRunOutputToToolResultPreservesTerminalChildFailure(t *testing.T) {
+func TestConvertRunOutputToToolResultKeepsTerminalChildFailureHistorical(t *testing.T) {
 	output := &RunOutput{
+		Final: &model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "completed after recovery"}},
+		},
 		ToolEvents: []*api.ToolEvent{
 			{
 				Name:    "child.correctable",
@@ -464,17 +663,19 @@ func TestConvertRunOutputToToolResultPreservesTerminalChildFailure(t *testing.T)
 		},
 	}
 
-	result := ConvertRunOutputToToolResult("parent.agent_tool", output)
+	result, err := ConvertRunOutputToToolResult("parent.agent_tool", output)
 
-	require.NotNil(t, result.Failure)
-	require.Equal(t, planner.FailureInternal, result.Failure.Kind)
-	require.Equal(t, planner.RecoveryFinish, result.Failure.Recovery.Action)
-	require.Empty(t, result.Failure.Recovery.Issues)
-	require.Empty(t, result.Failure.Recovery.PriorInput)
+	require.NoError(t, err)
+	require.Nil(t, result.Failure)
+	require.Equal(t, "completed after recovery", result.Result)
 }
 
-func TestConvertRunOutputToToolResultReplansNonTerminalChildFailures(t *testing.T) {
+func TestConvertRunOutputToToolResultKeepsNonTerminalChildFailuresHistorical(t *testing.T) {
 	output := &RunOutput{
+		Final: &model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "completed without the unavailable tool"}},
+		},
 		ToolEvents: []*api.ToolEvent{
 			{
 				Name:    "child.search",
@@ -483,9 +684,9 @@ func TestConvertRunOutputToToolResultReplansNonTerminalChildFailures(t *testing.
 		},
 	}
 
-	result := ConvertRunOutputToToolResult("parent.agent_tool", output)
+	result, err := ConvertRunOutputToToolResult("parent.agent_tool", output)
 
-	require.NotNil(t, result.Failure)
-	require.Equal(t, planner.FailureUnavailable, result.Failure.Kind)
-	require.Equal(t, planner.RecoveryReplan, result.Failure.Recovery.Action)
+	require.NoError(t, err)
+	require.Nil(t, result.Failure)
+	require.Equal(t, "completed without the unavailable tool", result.Result)
 }

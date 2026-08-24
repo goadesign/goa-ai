@@ -87,7 +87,6 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 		sessionID    = "session-1"
 		turnID       = "turn-1"
 		invokeToolID = tools.Ident("invoke")
-		invokeCallID = "invoke-1"
 		toolsetName  = "svc.agenttools"
 	)
 
@@ -114,15 +113,15 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 		newAnyJSONSpec(invokeToolID, toolsetName),
 	}
 	require.NoError(t, rt.RegisterToolset(agentTools))
+	rt.agentToolSpecs["parent.agent"] = agentTools.Specs
 
 	parentPlanner := &stubPlanner{
 		start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
 			return &planner.PlanResult{
 				ToolCalls: []planner.ToolRequest{
 					{
-						Name:       invokeToolID,
-						ToolCallID: invokeCallID,
-						Payload:    rawjson.Message(`{}`),
+						Name:    invokeToolID,
+						Payload: rawjson.Message(`{}`),
 					},
 				},
 			}, nil
@@ -170,6 +169,7 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 	require.NoError(t, err)
 
 	events := sink.snapshot()
+	invokeCallID := generateDeterministicToolCallID(parentRunID, turnID, 1, invokeToolID, 0)
 	childRunID := NestedRunIDForToolCall(parentRunID, invokeToolID, invokeCallID)
 
 	childIdx := indexRunStreamEnd(events, childRunID)

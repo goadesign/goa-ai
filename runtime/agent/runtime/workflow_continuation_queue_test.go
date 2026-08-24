@@ -34,7 +34,7 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 		&planner.PlanInput{RunContext: run.Context{
 			RunID: "run-1", SessionID: "session-1", TurnID: "turn-1", Attempt: 1,
 		}},
-		&planner.PlanResult{Await: planner.NewAwait(
+		&PlanResult{Await: planner.NewAwait(
 			planner.AwaitClarificationItem(&planner.AwaitClarification{
 				ID: "facility", Question: "Which facility?",
 			}),
@@ -92,7 +92,7 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 	seedRunMeta(t, runtime, thirdInput)
 	thirdContext := &testWorkflowContext{
 		ctx: t.Context(), hasPlanResult: true,
-		planResult: &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{
+		planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{
 			Role:  model.ConversationRoleAssistant,
 			Parts: []model.Part{model.TextPart{Text: "done"}},
 		}}},

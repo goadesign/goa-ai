@@ -32,13 +32,9 @@ const (
 	Find tools.Ident = "search.find"
 )
 
-// Type aliases and codec re-exports for convenience. These aliases preserve exact
-// type identity while allowing callers to avoid importing the specs package.
+// Type aliases preserve exact tool payload and result identities.
 type FindPayload = searchspecs.FindPayload
 type FindResult = searchspecs.FindResult
-
-var FindPayloadCodec = searchspecs.FindPayloadCodec
-var FindResultCodec = searchspecs.FindResultCodec
 
 // NewScribeToolsetRegistration creates a toolset registration for the scribe agent.
 // The returned registration can be used with runtime.RegisterToolset to make the agent
@@ -69,14 +65,9 @@ func NewScribeToolsetRegistration(rt *runtime.Runtime) runtime.ToolsetRegistrati
 		ExecuteToolActivity: "alpha.scribe.executetool",
 	}
 	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
-	reg.Specs = searchspecs.Specs
+	reg.Specs = searchspecs.Specs()
 	reg.ToolMetadataLookup = searchspecs.MetadataByName
 	return reg
-}
-
-// ToolIDs lists all tools in this toolset for validation.
-var ToolIDs = []tools.Ident{
-	Find,
 }
 
 // NewRegistration creates a toolset registration with an optional agent-wide
@@ -116,48 +107,16 @@ func NewRegistration(
 		}
 	}
 	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
-	reg.Specs = searchspecs.Specs
+	reg.Specs = searchspecs.Specs()
 	reg.ToolMetadataLookup = searchspecs.MetadataByName
 	return reg, nil
-}
-
-// CallOption customizes planner.ToolRequest values built by the typed helpers
-// below (e.g., setting parent/tool-call IDs for correlation with model calls).
-type CallOption func(*planner.ToolRequest)
-
-// WithParentToolCallID sets the ParentToolCallID on the constructed request.
-func WithParentToolCallID(id string) CallOption {
-	return func(r *planner.ToolRequest) { r.ParentToolCallID = id }
-}
-
-// WithToolCallID sets a model/tool-call identifier on the request. The runtime
-// preserves this ID and echoes it in ToolResult.ToolCallID for correlation.
-func WithToolCallID(id string) CallOption {
-	return func(r *planner.ToolRequest) { r.ToolCallID = id }
 }
 
 // Typed tool-call helpers for each tool in this exported toolset. These helpers
 // enforce use of the generated tool identifier and accept a typed payload that
 // matches the tool schema.
-// NewFindCall builds a planner.ToolRequest for the search.find tool.
-func NewFindCall(args *FindPayload, opts ...CallOption) planner.ToolRequest {
-	var payload []byte
-	if args != nil {
-		// Encode typed payloads into canonical JSON using the generated codec.
-		b, err := FindPayloadCodec.ToJSON(args)
-		if err != nil {
-			panic(err)
-		}
-		payload = b
-	}
-	req := planner.ToolRequest{
-		Name:    Find,
-		Payload: payload,
-	}
-	for _, o := range opts {
-		if o != nil {
-			o(&req)
-		}
-	}
-	return req
+// NewSearchFindCall builds a planner-authored request for the
+// search.find tool. The runtime assigns its execution ID.
+func NewSearchFindCall(args *FindPayload) (planner.ToolRequest, error) {
+	return planner.NewToolRequest(searchspecs.FindTool(), args)
 }

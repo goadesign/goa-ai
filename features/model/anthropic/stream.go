@@ -25,25 +25,46 @@ type anthropicStreamer struct {
 	stream *ssestream.Stream[sdk.MessageStreamEventUnion]
 
 	chunks chan model.Chunk
+	done   chan struct{}
 
 	errMu    sync.Mutex
 	errSet   bool
 	finalErr error
 
+	closeOnce sync.Once
+	closeErr  error
+
 	responseMu sync.RWMutex
 	response   *model.Response
 
 	toolNameMap map[string]string
+	modelID     string
+	modelClass  model.ModelClass
+	output      *model.StructuredOutput
+	contract    *model.RequestContract
 }
 
-func newAnthropicStreamer(ctx context.Context, stream *ssestream.Stream[sdk.MessageStreamEventUnion], nameMap map[string]string) model.Streamer {
+func newAnthropicStreamer(
+	ctx context.Context,
+	stream *ssestream.Stream[sdk.MessageStreamEventUnion],
+	nameMap map[string]string,
+	modelID string,
+	modelClass model.ModelClass,
+	output *model.StructuredOutput,
+	contract *model.RequestContract,
+) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
 	as := &anthropicStreamer{
 		ctx:         cctx,
 		cancel:      cancel,
 		stream:      stream,
 		chunks:      make(chan model.Chunk, 32),
+		done:        make(chan struct{}),
 		toolNameMap: nameMap,
+		modelID:     modelID,
+		modelClass:  modelClass,
+		output:      output,
+		contract:    contract,
 	}
 	go as.run()
 	return as
@@ -75,10 +96,9 @@ func (s *anthropicStreamer) Recv() (model.Chunk, error) {
 
 func (s *anthropicStreamer) Close() error {
 	s.cancel()
-	if s.stream == nil {
-		return nil
-	}
-	return s.stream.Close()
+	closeErr := s.closeProviderStream()
+	<-s.done
+	return closeErr
 }
 
 func (s *anthropicStreamer) Response() *model.Response {
@@ -89,15 +109,14 @@ func (s *anthropicStreamer) Response() *model.Response {
 
 func (s *anthropicStreamer) run() {
 	defer close(s.chunks)
+	defer close(s.done)
 	defer func() {
-		if s.stream != nil {
-			if err := s.stream.Close(); err != nil {
-				s.setErr(err)
-			}
+		if err := s.closeProviderStream(); err != nil {
+			s.setErr(err)
 		}
 	}()
 
-	processor := newAnthropicChunkProcessor(s.emitChunk, s.toolNameMap)
+	processor := newAnthropicChunkProcessor(s.emitChunk, s.toolNameMap, s.output)
 	var response sdk.Message
 
 	for {
@@ -121,9 +140,10 @@ func (s *anthropicStreamer) run() {
 			} else {
 				translated, err := translateResponse(&response, s.toolNameMap)
 				if err != nil {
-					s.setErr(err)
+					s.setErr(s.outputError(processor, err))
 					return
 				}
+				translated.Usage = processor.attributedUsage(s.modelID, s.modelClass)
 				s.responseMu.Lock()
 				s.response = translated
 				s.responseMu.Unlock()
@@ -131,15 +151,47 @@ func (s *anthropicStreamer) run() {
 			return
 		}
 		event := s.stream.Current()
+		if err := processor.retainSDKSnapshot(event); err != nil {
+			s.setErr(s.outputError(processor, err))
+			return
+		}
 		if err := response.Accumulate(event); err != nil {
-			s.setErr(fmt.Errorf("anthropic: accumulate streamed response: %w", err))
+			s.setErr(s.outputError(processor, fmt.Errorf("anthropic: accumulate streamed response: %w", err)))
 			return
 		}
 		if err := processor.Handle(event); err != nil {
-			s.setErr(err)
+			s.setErr(s.outputError(processor, err))
 			return
 		}
 	}
+}
+
+// closeProviderStream closes the Anthropic SSE stream once and returns the
+// cached cleanup result to the pump and every caller of Close.
+func (s *anthropicStreamer) closeProviderStream() error {
+	s.closeOnce.Do(func() {
+		s.closeErr = s.stream.Close()
+	})
+	return s.closeErr
+}
+
+// outputError preserves provider and caller flow-control errors while marking
+// malformed Anthropic stream data as output validation.
+func (s *anthropicStreamer) outputError(processor *anthropicChunkProcessor, err error) error {
+	if err == nil ||
+		errors.Is(err, context.Canceled) ||
+		errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	if _, ok := model.AsProviderError(err); ok {
+		return err
+	}
+	var validationErr *model.OutputValidationError
+	if errors.As(err, &validationErr) {
+		return err
+	}
+	usage := processor.attributedUsage(s.modelID, s.modelClass)
+	return s.contract.RejectProviderOutput(&usage, err)
 }
 
 func (s *anthropicStreamer) emitChunk(chunk model.Chunk) error {
@@ -171,24 +223,38 @@ func (s *anthropicStreamer) err() error {
 type anthropicChunkProcessor struct {
 	emit func(model.Chunk) error
 
-	toolBlocks     map[int]*toolBuffer
-	thinkingBlocks map[int]*thinkingBuffer
-	openBlocks     map[int]struct{}
+	toolBlocks      map[int]*toolBuffer
+	thinkingBlocks  map[int]*thinkingBuffer
+	thinkingIndexes map[int]int
+	nextThinking    int
+	completion      *completionBuffer
+	completionSeen  bool
+	openBlocks      map[int]struct{}
 
 	toolNameMap map[string]string
+	output      *model.StructuredOutput
 
-	stopReason string
-	started    bool
-	complete   bool
+	stopReason     string
+	usage          model.TokenUsage
+	started        bool
+	complete       bool
+	retainedBytes  int
+	retainedValues int
 }
 
-func newAnthropicChunkProcessor(emit func(model.Chunk) error, nameMap map[string]string) *anthropicChunkProcessor {
+func newAnthropicChunkProcessor(
+	emit func(model.Chunk) error,
+	nameMap map[string]string,
+	output *model.StructuredOutput,
+) *anthropicChunkProcessor {
 	return &anthropicChunkProcessor{
-		emit:           emit,
-		toolBlocks:     make(map[int]*toolBuffer),
-		thinkingBlocks: make(map[int]*thinkingBuffer),
-		openBlocks:     make(map[int]struct{}),
-		toolNameMap:    nameMap,
+		emit:            emit,
+		toolBlocks:      make(map[int]*toolBuffer),
+		thinkingBlocks:  make(map[int]*thinkingBuffer),
+		thinkingIndexes: make(map[int]int),
+		openBlocks:      make(map[int]struct{}),
+		toolNameMap:     nameMap,
+		output:          output,
 	}
 }
 
@@ -200,11 +266,19 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		}
 		p.toolBlocks = make(map[int]*toolBuffer)
 		p.thinkingBlocks = make(map[int]*thinkingBuffer)
+		p.thinkingIndexes = make(map[int]int)
+		p.nextThinking = 0
+		p.completion = nil
+		p.completionSeen = false
 		p.openBlocks = make(map[int]struct{})
 		p.stopReason = ""
+		p.usage = anthropicUsage(ev.Message.Usage)
 		p.started = true
 		p.complete = false
-		return nil
+		if p.usage == (model.TokenUsage{}) {
+			return nil
+		}
+		return p.emit(model.UsageChunk{Usage: p.usage})
 	case sdk.ContentBlockStartEvent:
 		if !p.started || p.complete {
 			return errors.New("anthropic stream: content block started outside an active message")
@@ -213,9 +287,22 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		if _, ok := p.openBlocks[idx]; ok {
 			return fmt.Errorf("anthropic stream: duplicate content block start %d", idx)
 		}
+		if err := p.retain(""); err != nil {
+			return err
+		}
 		p.openBlocks[idx] = struct{}{}
 		start := ev.ContentBlock.AsAny()
 		if text, ok := start.(sdk.TextBlock); ok {
+			if p.output != nil {
+				if p.completion != nil || p.completionSeen {
+					return errors.New("anthropic stream: structured output contains multiple text blocks")
+				}
+				p.completion = &completionBuffer{
+					name:  p.output.Name,
+					index: idx,
+				}
+				return p.emitCompletionDelta(text.Text)
+			}
 			if text.Text == "" {
 				return nil
 			}
@@ -235,24 +322,43 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			if toolUse.Name == "" {
 				return fmt.Errorf("anthropic stream: tool use block %q missing name", toolUse.ID)
 			}
-			raw := toolUse.Name
-			// Anthropic echoes the provider-visible tool name in tool_use blocks.
-			// When the model hallucinates a tool name that was not advertised in this
-			// request, the reverse map will not contain it. Surface the tool call
-			// as-is and let the runtime convert it into an "unknown tool" result so
-			// the model can recover on the next resume turn.
-			if canonical, ok := p.toolNameMap[raw]; ok {
-				tb.name = canonical
-			} else {
-				tb.name = raw
+			if err := p.retain(toolUse.ID); err != nil {
+				return err
 			}
+			if err := p.retain(toolUse.Name); err != nil {
+				return err
+			}
+			raw := toolUse.Name
+			canonical, ok := p.toolNameMap[raw]
+			if !ok {
+				return fmt.Errorf(
+					"anthropic stream: tool use block %q returned unadvertised name %q",
+					toolUse.ID,
+					raw,
+				)
+			}
+			tb.name = canonical
 			tb.id = toolUse.ID
+			if err := p.retain(""); err != nil {
+				return err
+			}
 			p.toolBlocks[idx] = tb
 			return nil
 		}
 		if thinking, ok := start.(sdk.ThinkingBlock); ok {
 			tb := &thinkingBuffer{signature: thinking.Signature}
+			if err := p.retain(thinking.Thinking); err != nil {
+				return err
+			}
+			if err := p.retain(thinking.Signature); err != nil {
+				return err
+			}
 			tb.text.WriteString(thinking.Thinking)
+			if err := p.retain(""); err != nil {
+				return err
+			}
+			p.thinkingIndexes[idx] = p.nextThinking
+			p.nextThinking++
 			p.thinkingBlocks[idx] = tb
 			return nil
 		}
@@ -260,6 +366,14 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			if redacted.Data == "" {
 				return errors.New("anthropic stream: redacted thinking block missing data")
 			}
+			if err := p.retain(redacted.Data); err != nil {
+				return err
+			}
+			if err := p.retain(""); err != nil {
+				return err
+			}
+			p.thinkingIndexes[idx] = p.nextThinking
+			p.nextThinking++
 			p.thinkingBlocks[idx] = &thinkingBuffer{redacted: []byte(redacted.Data)}
 			return nil
 		}
@@ -274,6 +388,15 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		}
 		switch delta := ev.Delta.AsAny().(type) {
 		case sdk.TextDelta:
+			if p.output != nil {
+				if p.completion == nil || p.completion.index != idx {
+					return fmt.Errorf(
+						"anthropic stream: structured output text delta %d has no matching text block",
+						idx,
+					)
+				}
+				return p.emitCompletionDelta(delta.Text)
+			}
 			if delta.Text == "" {
 				return nil
 			}
@@ -291,7 +414,10 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 				return nil
 			}
 			if tb := p.toolBlocks[idx]; tb != nil {
-				tb.fragments = append(tb.fragments, delta.PartialJSON)
+				if err := p.retain(delta.PartialJSON); err != nil {
+					return err
+				}
+				tb.fragments.WriteString(delta.PartialJSON)
 				if tb.id == "" {
 					return fmt.Errorf("anthropic stream: tool JSON delta missing tool call id")
 				}
@@ -313,8 +439,16 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			}
 			tb := p.thinkingBlocks[idx]
 			if tb == nil {
+				if err := p.retain(""); err != nil {
+					return err
+				}
 				tb = &thinkingBuffer{}
 				p.thinkingBlocks[idx] = tb
+				p.thinkingIndexes[idx] = p.nextThinking
+				p.nextThinking++
+			}
+			if err := p.retain(delta.Thinking); err != nil {
+				return err
 			}
 			tb.text.WriteString(delta.Thinking)
 			return p.emit(model.ThinkingChunk{
@@ -323,7 +457,7 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 					Parts: []model.Part{
 						model.ThinkingPart{
 							Text:  delta.Thinking,
-							Index: idx,
+							Index: p.thinkingIndexes[idx],
 							Final: false,
 						},
 					},
@@ -335,8 +469,16 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			}
 			tb := p.thinkingBlocks[idx]
 			if tb == nil {
+				if err := p.retain(""); err != nil {
+					return err
+				}
 				tb = &thinkingBuffer{}
 				p.thinkingBlocks[idx] = tb
+				p.thinkingIndexes[idx] = p.nextThinking
+				p.nextThinking++
+			}
+			if err := p.retain(delta.Signature); err != nil {
+				return err
 			}
 			tb.signature = delta.Signature
 			return nil
@@ -357,31 +499,39 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			return fmt.Errorf("anthropic stream: content block stop %d has no matching start", idx)
 		}
 		delete(p.openBlocks, idx)
+		if p.completion != nil && p.completion.index == idx {
+			payload, err := p.completion.finalPayload()
+			if err != nil {
+				return fmt.Errorf(
+					"anthropic stream: finalize structured output %q: %w",
+					p.completion.name,
+					err,
+				)
+			}
+			completion := p.completion
+			p.completion = nil
+			p.completionSeen = true
+			return p.emit(model.CompletionChunk{
+				Completion: model.Completion{
+					Name:    completion.name,
+					Payload: payload,
+				},
+			})
+		}
 		if tb := p.thinkingBlocks[idx]; tb != nil {
 			delete(p.thinkingBlocks, idx)
-			part, err := tb.finalize(idx)
+			part, err := tb.finalize(p.thinkingIndexes[idx])
 			if err != nil {
 				return fmt.Errorf("anthropic stream: finalize thinking block %d: %w", idx, err)
 			}
 			if part != nil {
-				if part.Text != "" {
-					if err := p.emit(model.ThinkingChunk{
-						Message: model.Message{
-							Role:  model.ConversationRoleAssistant,
-							Parts: []model.Part{*part},
-						},
-					}); err != nil {
-						return err
-					}
-				} else if len(part.Redacted) > 0 {
-					if err := p.emit(model.ThinkingChunk{
-						Message: model.Message{
-							Role:  model.ConversationRoleAssistant,
-							Parts: []model.Part{*part},
-						},
-					}); err != nil {
-						return err
-					}
+				if err := p.emit(model.ThinkingChunk{
+					Message: model.Message{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{*part},
+					},
+				}); err != nil {
+					return err
 				}
 			}
 		}
@@ -405,14 +555,32 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			return errors.New("anthropic stream: message delta received outside an active message")
 		}
 		p.stopReason = string(ev.Delta.StopReason)
-		usage := model.TokenUsage{
-			InputTokens:      int(ev.Usage.InputTokens),
-			OutputTokens:     int(ev.Usage.OutputTokens),
-			TotalTokens:      int(ev.Usage.InputTokens + ev.Usage.OutputTokens),
-			CacheReadTokens:  int(ev.Usage.CacheReadInputTokens),
-			CacheWriteTokens: int(ev.Usage.CacheCreationInputTokens),
+		// Anthropic sends cumulative usage but may omit fields that have not
+		// changed. Keep the last value for each omitted field before computing
+		// the newly consumed tokens emitted to callers.
+		cumulative := p.usage
+		if ev.Usage.JSON.InputTokens.Valid() {
+			cumulative.InputTokens = int(ev.Usage.InputTokens)
 		}
-		return p.emit(model.UsageChunk{Usage: usage})
+		if ev.Usage.JSON.OutputTokens.Valid() {
+			cumulative.OutputTokens = int(ev.Usage.OutputTokens)
+		}
+		if ev.Usage.JSON.CacheReadInputTokens.Valid() {
+			cumulative.CacheReadTokens = int(ev.Usage.CacheReadInputTokens)
+		}
+		if ev.Usage.JSON.CacheCreationInputTokens.Valid() {
+			cumulative.CacheWriteTokens = int(ev.Usage.CacheCreationInputTokens)
+		}
+		cumulative.TotalTokens = cumulative.InputTokens + cumulative.OutputTokens
+		delta, err := subtractAnthropicUsage(cumulative, p.usage)
+		if err != nil {
+			return err
+		}
+		p.usage = cumulative
+		if delta == (model.TokenUsage{}) {
+			return nil
+		}
+		return p.emit(model.UsageChunk{Usage: delta})
 	case sdk.MessageStopEvent:
 		if !p.started {
 			// Anthropic models intermittently emit an empty completion whose
@@ -433,6 +601,12 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		if p.stopReason == "" {
 			return errors.New("anthropic stream: message stopped without a stop reason")
 		}
+		if p.output != nil && !p.completionSeen {
+			return fmt.Errorf(
+				"anthropic stream: structured output %q did not produce a text block",
+				p.output.Name,
+			)
+		}
 		chunk := model.StopChunk{Reason: p.stopReason}
 		p.complete = true
 		return p.emit(chunk)
@@ -441,27 +615,100 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 	}
 }
 
+// anthropicUsage converts one cumulative Anthropic usage snapshot into the
+// provider-neutral token fields validated by the model stream.
+func anthropicUsage(usage sdk.Usage) model.TokenUsage {
+	return model.TokenUsage{
+		InputTokens:      int(usage.InputTokens),
+		OutputTokens:     int(usage.OutputTokens),
+		TotalTokens:      int(usage.InputTokens + usage.OutputTokens),
+		CacheReadTokens:  int(usage.CacheReadInputTokens),
+		CacheWriteTokens: int(usage.CacheCreationInputTokens),
+	}
+}
+
+// subtractAnthropicUsage turns successive cumulative provider snapshots into
+// non-negative deltas whose sum equals the terminal response usage.
+func subtractAnthropicUsage(current, previous model.TokenUsage) (model.TokenUsage, error) {
+	delta := model.TokenUsage{
+		InputTokens:      current.InputTokens - previous.InputTokens,
+		OutputTokens:     current.OutputTokens - previous.OutputTokens,
+		TotalTokens:      current.TotalTokens - previous.TotalTokens,
+		CacheReadTokens:  current.CacheReadTokens - previous.CacheReadTokens,
+		CacheWriteTokens: current.CacheWriteTokens - previous.CacheWriteTokens,
+	}
+	if delta.InputTokens < 0 ||
+		delta.OutputTokens < 0 ||
+		delta.TotalTokens < 0 ||
+		delta.CacheReadTokens < 0 ||
+		delta.CacheWriteTokens < 0 {
+		return model.TokenUsage{}, errors.New("anthropic stream: cumulative usage decreased")
+	}
+	return delta, nil
+}
+
+// attributedUsage returns the cumulative counters accepted by the stream
+// processor with the model identity owned by this invocation.
+func (p *anthropicChunkProcessor) attributedUsage(modelID string, modelClass model.ModelClass) model.TokenUsage {
+	usage := p.usage
+	usage.Model = modelID
+	usage.ModelClass = modelClass
+	return usage
+}
+
 type toolBuffer struct {
 	name      string
 	id        string
-	fragments []string
+	fragments strings.Builder
 }
 
 func (tb *toolBuffer) finalInput() string {
-	if len(tb.fragments) == 0 {
-		return "{}"
+	return tb.fragments.String()
+}
+
+// completionBuffer retains the one text block Anthropic uses for native
+// structured output until the complete JSON document can be validated.
+type completionBuffer struct {
+	name      string
+	index     int
+	fragments strings.Builder
+}
+
+// finalPayload returns the complete JSON document emitted for structured
+// output. Invalid or incomplete JSON fails the stream.
+func (cb *completionBuffer) finalPayload() (rawjson.Message, error) {
+	data := []byte(cb.fragments.String())
+	if !json.Valid(data) {
+		return nil, errors.New("structured completion payload is not valid JSON")
 	}
-	joined := strings.Join(tb.fragments, "")
-	if strings.TrimSpace(joined) == "" {
-		return "{}"
-	}
-	return joined
+	return rawjson.Message(data), nil
 }
 
 type thinkingBuffer struct {
 	text      strings.Builder
 	signature string
 	redacted  []byte
+}
+
+// emitCompletionDelta retains one native structured-output fragment and emits
+// the same fragment as a preview for streaming callers.
+func (p *anthropicChunkProcessor) emitCompletionDelta(delta string) error {
+	if delta == "" {
+		return nil
+	}
+	if p.completion == nil {
+		return errors.New("anthropic stream: structured output fragment has no text block")
+	}
+	if err := p.retain(delta); err != nil {
+		return err
+	}
+	p.completion.fragments.WriteString(delta)
+	return p.emit(model.CompletionDeltaChunk{
+		Delta: model.CompletionDelta{
+			Name:  p.completion.name,
+			Delta: delta,
+		},
+	})
 }
 
 func (tb *thinkingBuffer) finalize(index int) (*model.ThinkingPart, error) {
@@ -493,13 +740,40 @@ func (tb *thinkingBuffer) finalize(index int) (*model.ThinkingPart, error) {
 }
 
 func decodeToolPayload(raw string) (rawjson.Message, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		trimmed = "{}"
-	}
-	data := []byte(trimmed)
+	data := []byte(raw)
 	if !json.Valid(data) {
 		return nil, errors.New("tool payload is not valid JSON")
 	}
 	return rawjson.Message(data), nil
+}
+
+// retain charges provider fragments before any private accumulator grows.
+func (p *anthropicChunkProcessor) retain(value string) error {
+	if p.retainedValues >= 100_000 {
+		return errors.New("anthropic stream: retained output exceeds 100000 values")
+	}
+	if len(value) > 16<<20-p.retainedBytes {
+		return errors.New("anthropic stream: retained output exceeds 16777216 bytes")
+	}
+	p.retainedValues++
+	p.retainedBytes += len(value)
+	return nil
+}
+
+// retainSDKSnapshot charges the provider event before the Anthropic SDK
+// accumulator copies it into the final response snapshot.
+func (p *anthropicChunkProcessor) retainSDKSnapshot(event sdk.MessageStreamEventUnion) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("anthropic stream: encode provider event for retention budget: %w", err)
+	}
+	if p.retainedValues >= 100_000 {
+		return errors.New("anthropic stream: retained output exceeds 100000 values")
+	}
+	if len(data) > 16<<20-p.retainedBytes {
+		return errors.New("anthropic stream: retained output exceeds 16777216 bytes")
+	}
+	p.retainedValues++
+	p.retainedBytes += len(data)
+	return nil
 }

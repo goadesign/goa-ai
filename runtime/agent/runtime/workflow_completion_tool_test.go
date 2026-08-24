@@ -27,7 +27,7 @@ func TestCompletionToolSuccessEndsRunWithoutPlannerResume(t *testing.T) {
 		t,
 		"completion-success",
 		[]tools.ToolSpec{completion},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return successfulToolResult(call), nil
 		},
 		func(_ context.Context, _ *planner.PlanResumeInput) (*planner.PlanResult, error) {
@@ -37,8 +37,8 @@ func TestCompletionToolSuccessEndsRunWithoutPlannerResume(t *testing.T) {
 	)
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
-	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name: completion.Name, Payload: rawjson.Message(`{"title":"Recap"}`),
+	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
+		Name: completion.Name, Payload: rawjson.Message(`{"title":"Recap"}`), ToolCallID: "persist-success",
 	}}}, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3})
 
 	require.NoError(t, err)
@@ -56,7 +56,7 @@ func TestCompletionToolFailureCanBeCorrected(t *testing.T) {
 		t,
 		"completion-correction",
 		[]tools.ToolSpec{completion},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			if string(call.Payload) == `{"title":"corrected"}` {
 				return successfulToolResult(call), nil
 			}
@@ -71,8 +71,8 @@ func TestCompletionToolFailureCanBeCorrected(t *testing.T) {
 	)
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
-	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name: completion.Name, Payload: rawjson.Message(`{}`),
+	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
+		Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-invalid",
 	}}}, policy.CapsState{
 		MaxToolCalls:                        3,
 		RemainingToolCalls:                  3,
@@ -91,7 +91,7 @@ func TestCompletionToolRejectsClarificationBeforeSuspension(t *testing.T) {
 	completion := tools.Ident("briefs.persist")
 
 	err := validateCompletionToolRecords([]stepToolRecord{{
-		call:          planner.ToolRequest{Name: completion, ToolCallID: "persist-1"},
+		call:          ToolCall{Name: completion, ToolCallID: "persist-1"},
 		result:        &planner.ToolResult{Name: completion, ToolCallID: "persist-1"},
 		clarification: &ToolClarification{ID: "clarify-1", Question: "Which title?"},
 	}}, completion)
@@ -120,7 +120,7 @@ func TestCompletionToolRejectsPlannerTerminalResponse(t *testing.T) {
 		t,
 		"completion-terminal-response",
 		[]tools.ToolSpec{completion},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return successfulToolResult(call), nil
 		},
 		func(_ context.Context, _ *planner.PlanResumeInput) (*planner.PlanResult, error) {
@@ -129,7 +129,9 @@ func TestCompletionToolRejectsPlannerTerminalResponse(t *testing.T) {
 	)
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
-	out, err := h.run(finalPlannerResult("looks successful"), policy.CapsState{
+	out, err := h.run(&PlanResult{
+		FinalResponse: finalPlannerResult("looks successful").FinalResponse,
+	}, policy.CapsState{
 		MaxToolCalls: 3, RemainingToolCalls: 3,
 	})
 
@@ -145,7 +147,7 @@ func TestCompletionToolCapExhaustionFailsWithoutFinalization(t *testing.T) {
 		t,
 		"completion-tool-cap",
 		[]tools.ToolSpec{completion},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return successfulToolResult(call), nil
 		},
 		func(_ context.Context, _ *planner.PlanResumeInput) (*planner.PlanResult, error) {
@@ -155,8 +157,8 @@ func TestCompletionToolCapExhaustionFailsWithoutFinalization(t *testing.T) {
 	)
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
-	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name: completion.Name, Payload: rawjson.Message(`{}`),
+	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
+		Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-cap",
 	}}}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 0})
 
 	assert.Nil(t, out)
@@ -172,7 +174,7 @@ func TestCompletionToolFailureCapFailsWithoutFinalization(t *testing.T) {
 		t,
 		"completion-failure-cap",
 		[]tools.ToolSpec{completion},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return invalidCallResult(call), nil
 		},
 		func(_ context.Context, _ *planner.PlanResumeInput) (*planner.PlanResult, error) {
@@ -182,8 +184,8 @@ func TestCompletionToolFailureCapFailsWithoutFinalization(t *testing.T) {
 	)
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
-	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name: completion.Name, Payload: rawjson.Message(`{}`),
+	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
+		Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-failure-cap",
 	}}}, policy.CapsState{
 		MaxToolCalls:                        2,
 		RemainingToolCalls:                  2,
@@ -203,7 +205,7 @@ func TestCompletionToolMustBeOnlyActionInPlannerResponse(t *testing.T) {
 		t,
 		"completion-mixed-batch",
 		[]tools.ToolSpec{completion, other},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return successfulToolResult(call), nil
 		},
 		func(_ context.Context, _ *planner.PlanResumeInput) (*planner.PlanResult, error) {
@@ -212,9 +214,9 @@ func TestCompletionToolMustBeOnlyActionInPlannerResponse(t *testing.T) {
 	)
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
-	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: completion.Name, Payload: rawjson.Message(`{}`)},
-		{Name: other.Name, Payload: rawjson.Message(`{}`)},
+	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{
+		{Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-mixed"},
+		{Name: other.Name, Payload: rawjson.Message(`{}`), ToolCallID: "lookup-mixed"},
 	}}, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3})
 
 	assert.Nil(t, out)
@@ -229,7 +231,7 @@ func TestCompletionToolCannotAccompanyPlannerAwait(t *testing.T) {
 		t,
 		"completion-await",
 		[]tools.ToolSpec{completion},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			executions++
 			return successfulToolResult(call), nil
 		},
@@ -239,9 +241,9 @@ func TestCompletionToolCannotAccompanyPlannerAwait(t *testing.T) {
 	)
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
-	out, err := h.run(&planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
-			Name: completion.Name, Payload: rawjson.Message(`{}`),
+	out, err := h.run(&PlanResult{
+		ToolCalls: []ToolCall{{
+			Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-await",
 		}},
 		Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{
 			ID: "clarify-brief", Question: "Which details should the Brief include?",
@@ -261,7 +263,7 @@ func TestCompletionToolCannotRequestPostToolSynthesis(t *testing.T) {
 		t,
 		"completion-synthesis",
 		[]tools.ToolSpec{completion, lookup},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			executions++
 			return successfulToolResult(call), nil
 		},
@@ -271,9 +273,9 @@ func TestCompletionToolCannotRequestPostToolSynthesis(t *testing.T) {
 	)
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
-	out, err := h.run(&planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{
-			Name: lookup.Name, Payload: rawjson.Message(`{}`),
+	out, err := h.run(&PlanResult{
+		ToolCalls: []ToolCall{{
+			Name: lookup.Name, Payload: rawjson.Message(`{}`), ToolCallID: "lookup-synthesis",
 		}},
 		SynthesizeAfterTools: true,
 	}, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3})
@@ -290,7 +292,7 @@ func TestCompletionToolCannotBeDelegatedToAwaitWork(t *testing.T) {
 		t,
 		"completion-external-await",
 		[]tools.ToolSpec{completion},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return successfulToolResult(call), nil
 		},
 		func(_ context.Context, _ *planner.PlanResumeInput) (*planner.PlanResult, error) {
@@ -299,7 +301,7 @@ func TestCompletionToolCannotBeDelegatedToAwaitWork(t *testing.T) {
 	)
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
-	out, err := h.run(&planner.PlanResult{
+	out, err := h.run(&PlanResult{
 		Await: planner.NewAwait(planner.AwaitExternalToolsItem(&planner.AwaitExternalTools{
 			ID: "external-completion",
 			Items: []planner.AwaitToolItem{{
@@ -325,7 +327,7 @@ func TestCompletionToolRejectsAnotherTerminalTool(t *testing.T) {
 		t,
 		"completion-other-terminal",
 		[]tools.ToolSpec{completion, terminal},
-		func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			executions++
 			return successfulToolResult(call), nil
 		},
@@ -335,8 +337,8 @@ func TestCompletionToolRejectsAnotherTerminalTool(t *testing.T) {
 	)
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
-	out, err := h.run(&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name: terminal.Name, Payload: rawjson.Message(`{}`),
+	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
+		Name: terminal.Name, Payload: rawjson.Message(`{}`), ToolCallID: "terminal-other",
 	}}}, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3})
 
 	assert.Nil(t, out)
@@ -360,14 +362,14 @@ func TestCompletionToolPolicyRejectsUnexecutableTools(t *testing.T) {
 	rt := New()
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "briefs",
-		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return successfulToolResult(call), nil
 		}),
 		Specs: []tools.ToolSpec{persist, lookup, audit, terminal, confirmed},
 	}))
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "foreign",
-		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return successfulToolResult(call), nil
 		}),
 		Specs: []tools.ToolSpec{foreign},

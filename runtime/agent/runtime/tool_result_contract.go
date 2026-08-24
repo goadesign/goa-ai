@@ -24,7 +24,7 @@ import (
 //     refinement hint.
 //   - A present next cursor must be non-empty.
 //   - next cursor is only valid for bounded tools with paging configured.
-func validateToolResultContract(spec tools.ToolSpec, call planner.ToolRequest, tr *planner.ToolResult) error {
+func validateToolResultContract(spec tools.ToolSpec, call ToolCall, tr *planner.ToolResult) error {
 	if tr == nil {
 		return fmt.Errorf("nil tool result for %q (%s)", call.Name, call.ToolCallID)
 	}
@@ -54,7 +54,7 @@ func validateToolResultContract(spec tools.ToolSpec, call planner.ToolRequest, t
 
 // validateToolClarificationContract enforces the runtime-owned user-question
 // contract after the durable tool-result contract has been validated.
-func validateToolClarificationContract(call planner.ToolRequest, tr *planner.ToolResult, clarification *ToolClarification) error {
+func validateToolClarificationContract(call ToolCall, tr *planner.ToolResult, clarification *ToolClarification) error {
 	if clarification == nil {
 		return nil
 	}
@@ -75,7 +75,7 @@ func validateToolClarificationContract(call planner.ToolRequest, tr *planner.Too
 
 // validateToolBoundsContract enforces the bounds-specific subset of the runtime
 // tool-result contract after the result/error shape has been validated.
-func validateToolBoundsContract(spec tools.ToolSpec, call planner.ToolRequest, failed bool, bounds *agent.Bounds) error {
+func validateToolBoundsContract(spec tools.ToolSpec, call ToolCall, failed bool, bounds *agent.Bounds) error {
 	if spec.Bounds == nil {
 		if bounds != nil {
 			return fmt.Errorf("unbounded tool %q returned unexpected bounds metadata (tool_call_id=%s)", call.Name, call.ToolCallID)

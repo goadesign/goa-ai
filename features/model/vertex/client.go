@@ -1,4 +1,4 @@
-// Gemini-on-Vertex model.Client core. Invariants:
+// Gemini-on-Vertex raw provider core. Invariants:
 //   - prepareRequest is the single translation entry point shared by
 //     Complete, Stream, and CountTokens so gates apply uniformly.
 //   - The adapter is stateless and never retries (see doc.go).
@@ -8,7 +8,10 @@ package vertex
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
+	"math"
+	"strings"
 
 	"google.golang.org/genai"
 
@@ -24,8 +27,8 @@ type (
 		CountTokens(ctx context.Context, model string, contents []*genai.Content, config *genai.CountTokensConfig) (*genai.CountTokensResponse, error)
 	}
 
-	// Client is the Gemini-on-Vertex implementation of model.Client.
-	Client struct {
+	// provider translates canonical requests to Gemini on Vertex.
+	provider struct {
 		models GenerativeClient
 		opts   Options
 	}
@@ -38,22 +41,47 @@ type (
 		config           *genai.GenerateContentConfig
 		provToCanon      map[string]string
 		structuredOutput *model.StructuredOutput
+		toolCallIDs      *vertexToolCallIDAllocator
 	}
 )
 
-// New builds a Gemini-on-Vertex client from a generative service and options.
-func New(models GenerativeClient, opts Options) (*Client, error) {
+// New builds a validated Gemini-on-Vertex client.
+func New(models GenerativeClient, opts Options) (model.Client, error) {
+	raw, err := NewProvider(models, opts)
+	if err != nil {
+		return nil, err
+	}
+	return model.NewClient(raw)
+}
+
+// NewProvider builds the raw Gemini-on-Vertex provider used beneath
+// model.NewClient. Callers use it to install provider-side middleware before
+// final validation.
+func NewProvider(models GenerativeClient, opts Options) (model.Provider, error) {
 	if models == nil {
 		return nil, errors.New("vertex: generative client is required")
 	}
 	if opts.DefaultModel == "" {
 		return nil, errors.New("vertex: default model is required")
 	}
-	return &Client{models: models, opts: opts}, nil
+	if _, err := vertexInt32("default max tokens", opts.MaxTokens); err != nil {
+		return nil, err
+	}
+	if _, err := vertexInt32("default thinking budget", opts.ThinkingBudget); err != nil {
+		return nil, err
+	}
+	if err := validateVertexTemperature(opts.Temperature); err != nil {
+		return nil, err
+	}
+	return &provider{models: models, opts: opts}, nil
 }
 
-// Complete implements model.Client.
-func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+// Complete performs one raw Gemini provider operation.
+func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	contract, err := model.NewRequestContract(req)
+	if err != nil {
+		return nil, err
+	}
 	prep, err := c.prepareRequest(req)
 	if err != nil {
 		return nil, err
@@ -62,19 +90,34 @@ func (c *Client) Complete(ctx context.Context, req *model.Request) (*model.Respo
 	if err != nil {
 		return nil, wrapGeminiError("generate_content", err)
 	}
-	return translateResponse(resp, prep.modelID, prep.modelClass, prep.provToCanon)
+	response, err := translateResponse(resp, prep.modelID, prep.modelClass, prep.provToCanon, prep.toolCallIDs)
+	if err != nil {
+		usage := translateUsage(nil, prep.modelID, prep.modelClass)
+		if resp != nil {
+			usage = translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
+		}
+		return nil, contract.RejectProviderOutput(&usage, err)
+	}
+	return response, nil
 }
 
-// CountTokens implements model.TokenCounter using Vertex's native counter.
-// Replayed thinking parts are excluded per the TokenCounter contract.
-func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
-	prep, err := c.prepareRequest(model.CountingRequest(req))
+// CountTokens implements model.TokenCounter using the exact transcript and
+// generation settings that Vertex inference would receive.
+func (c *provider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	prep, err := c.prepareRequest(req)
 	if err != nil {
 		return model.TokenCount{}, err
 	}
 	resp, err := c.models.CountTokens(ctx, prep.modelID, prep.contents, &genai.CountTokensConfig{
 		SystemInstruction: prep.config.SystemInstruction,
 		Tools:             prep.config.Tools,
+		GenerationConfig: &genai.GenerationConfig{
+			MaxOutputTokens:    prep.config.MaxOutputTokens,
+			ResponseJsonSchema: prep.config.ResponseJsonSchema,
+			ResponseMIMEType:   prep.config.ResponseMIMEType,
+			Temperature:        prep.config.Temperature,
+			ThinkingConfig:     prep.config.ThinkingConfig,
+		},
 	})
 	if err != nil {
 		return model.TokenCount{}, wrapGeminiError("count_tokens", err)
@@ -89,9 +132,13 @@ func (c *Client) CountTokens(ctx context.Context, req *model.Request) (model.Tok
 
 // prepareRequest translates a model.Request into Gemini call inputs,
 // applying capability gates shared by Complete, Stream, and CountTokens.
-func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
+func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) {
 	if req == nil {
 		return nil, errors.New("vertex: request is required")
+	}
+	modelID, err := c.opts.resolveModelID(req)
+	if err != nil {
+		return nil, err
 	}
 	if req.StructuredOutput != nil && len(req.Tools) > 0 {
 		return nil, model.ErrStructuredOutputUnsupported
@@ -112,15 +159,24 @@ func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 	}
 	config := &genai.GenerateContentConfig{SystemInstruction: system}
 	if maxTokens := req.MaxTokens; maxTokens > 0 {
-		config.MaxOutputTokens = int32(maxTokens) //nolint:gosec // genai requires int32; goa-ai request token counts fit comfortably
+		config.MaxOutputTokens, err = vertexInt32("max tokens", maxTokens)
+		if err != nil {
+			return nil, err
+		}
 	} else if c.opts.MaxTokens > 0 {
-		config.MaxOutputTokens = int32(c.opts.MaxTokens) //nolint:gosec // genai requires int32; goa-ai request token counts fit comfortably
+		config.MaxOutputTokens, err = vertexInt32("default max tokens", c.opts.MaxTokens)
+		if err != nil {
+			return nil, err
+		}
 	}
 	temperature := req.Temperature
 	if temperature == 0 {
 		temperature = c.opts.Temperature
 	}
 	if temperature != 0 {
+		if err := validateVertexTemperature(temperature); err != nil {
+			return nil, err
+		}
 		config.Temperature = genai.Ptr(temperature)
 	}
 	if len(req.Tools) > 0 {
@@ -145,26 +201,65 @@ func (c *Client) prepareRequest(req *model.Request) (*preparedRequest, error) {
 	switch {
 	case req.Thinking != nil && req.Thinking.Enable:
 		budget := req.Thinking.BudgetTokens
+		if isGemini3Model(modelID) {
+			if budget > 0 {
+				return nil, errors.New("vertex: Gemini 3 uses thinking levels and does not accept a token budget")
+			}
+			config.ThinkingConfig = &genai.ThinkingConfig{IncludeThoughts: true}
+			break
+		}
 		if budget == 0 {
 			budget = c.opts.ThinkingBudget
 		}
 		tc := &genai.ThinkingConfig{IncludeThoughts: true}
 		if budget > 0 {
-			tc.ThinkingBudget = genai.Ptr(int32(budget)) //nolint:gosec // genai requires int32; goa-ai thinking budgets fit comfortably
+			converted, err := vertexInt32("thinking budget", budget)
+			if err != nil {
+				return nil, err
+			}
+			tc.ThinkingBudget = genai.Ptr(converted)
 		}
 		config.ThinkingConfig = tc
 	case req.Thinking != nil:
-		// Explicit off: models that think by default (Gemini Flash) accept a
-		// zero budget as "do not think". Models with a mandatory minimum
-		// ignore it server-side, which is the closest honest interpretation.
+		if isGemini3Model(modelID) {
+			return nil, errors.New("vertex: Gemini 3 does not support disabling thinking")
+		}
 		config.ThinkingConfig = &genai.ThinkingConfig{ThinkingBudget: genai.Ptr(int32(0))}
 	}
 	return &preparedRequest{
-		modelID:          c.opts.resolveModelID(req),
+		modelID:          modelID,
 		modelClass:       req.ModelClass,
 		contents:         contents,
 		config:           config,
 		provToCanon:      provToCanon,
 		structuredOutput: req.StructuredOutput,
+		toolCallIDs:      newVertexToolCallIDAllocator(req.Messages),
 	}, nil
+}
+
+// isGemini3Model reports whether modelID uses Gemini 3 thinking levels instead
+// of numeric token budgets.
+func isGemini3Model(modelID string) bool {
+	name := modelID
+	if separator := strings.LastIndexByte(name, '/'); separator >= 0 {
+		name = name[separator+1:]
+	}
+	return strings.HasPrefix(name, "gemini-3-") || strings.HasPrefix(name, "gemini-3.")
+}
+
+// vertexInt32 rejects values the Gemini SDK cannot represent before narrowing.
+func vertexInt32(field string, value int) (int32, error) {
+	if value < 0 || int64(value) > math.MaxInt32 {
+		return 0, fmt.Errorf("vertex: %s must be between 0 and %d", field, int64(math.MaxInt32))
+	}
+	return int32(value), nil
+}
+
+// validateVertexTemperature enforces Gemini's sampling range.
+func validateVertexTemperature(temperature float32) error {
+	value := float64(temperature)
+	if math.IsNaN(value) || math.IsInf(value, 0) || temperature < 0 || temperature > 2 {
+		return errors.New("vertex: temperature must be between 0 and 2")
+	}
+	return nil
 }

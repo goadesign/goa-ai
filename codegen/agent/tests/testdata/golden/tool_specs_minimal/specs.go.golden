@@ -16,12 +16,17 @@ const (
 	SummarizeDoc tools.Ident = "helpers.summarize_doc"
 )
 
-var Specs = []tools.ToolSpec{
-	SpecSummarizeDoc,
+// Specs returns fresh copies of every generated tool specification.
+func Specs() []tools.ToolSpec {
+	return []tools.ToolSpec{
+		newSpecSummarizeDoc(),
+	}
 }
 
-var (
-	SpecSummarizeDoc = tools.ToolSpec{
+// newSpecSummarizeDoc builds the immutable generated contract for
+// helpers.summarize_doc. Each call owns all mutable slices and maps in the result.
+func newSpecSummarizeDoc() tools.ToolSpec {
+	return tools.ToolSpec{
 		Name:        SummarizeDoc,
 		Service:     "calc",
 		Toolset:     "calc.helpers",
@@ -32,32 +37,46 @@ var (
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"doc_id\":{\"description\":\"Document identifier\",\"type\":\"string\"}},\"required\":[\"doc_id\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"doc_id\":{\"description\":\"Document identifier\",\"type\":\"string\"}},\"required\":[\"doc_id\"],\"type\":\"object\"}"),
 			ExampleJSON:              nil,
-			FieldDescriptions:        SummarizeDocPayloadFieldDescs,
-			FieldJSONTypes:           SummarizeDocPayloadFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(summarizeDocPayloadFieldDescs),
+			FieldJSONTypes:           cloneStringMap(summarizeDocPayloadFieldJSONTypes),
 			Codec:                    summarizeDocPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:                     "SummarizeDocResult",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"title\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"title\"],\"type\":\"object\"}"),
-			FieldDescriptions:        SummarizeDocResultFieldDescs,
-			FieldJSONTypes:           SummarizeDocResultFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(summarizeDocResultFieldDescs),
+			FieldJSONTypes:           cloneStringMap(summarizeDocResultFieldJSONTypes),
 			Codec:                    summarizeDocResultCodec,
 		},
 	}
-)
+}
+
+// SpecSummarizeDoc returns a fresh helpers.summarize_doc specification.
+func SpecSummarizeDoc() tools.ToolSpec {
+	return newSpecSummarizeDoc()
+}
 
 // SummarizeDocTool pairs the helpers.summarize_doc identifier with its generated
 // typed payload and result codecs so consumers decode tool JSON without
 // restating the name-to-codec pairing fixed by the design.
-var SummarizeDocTool = tools.TypedTool[*SummarizeDocPayload, *SummarizeDocResult]{
-	Name:    SummarizeDoc,
-	Payload: SummarizeDocPayloadCodec,
-	Result:  SummarizeDocResultCodec,
+func SummarizeDocTool() tools.TypedTool[*SummarizeDocPayload, *SummarizeDocResult] {
+	return tools.TypedTool[*SummarizeDocPayload, *SummarizeDocResult]{
+		Name: SummarizeDoc,
+		Payload: tools.JSONCodec[*SummarizeDocPayload]{
+			ToJSON:   MarshalSummarizeDocPayload,
+			FromJSON: UnmarshalSummarizeDocPayload,
+		},
+		Result: tools.JSONCodec[*SummarizeDocResult]{
+			ToJSON:   MarshalSummarizeDocResult,
+			FromJSON: UnmarshalSummarizeDocResult,
+		},
+	}
 }
 
-var (
-	metadata = []policy.ToolMetadata{
+// Metadata returns fresh policy metadata for every generated tool.
+func Metadata() []policy.ToolMetadata {
+	return []policy.ToolMetadata{
 		{
 			ID:          SummarizeDoc,
 			Title:       "Summarize Doc",
@@ -66,64 +85,59 @@ var (
 			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
 	}
-	names = []tools.Ident{
+}
+
+// Names returns the identifiers of all generated tools.
+func Names() []tools.Ident {
+	return []tools.Ident{
 		SummarizeDoc,
 	}
-)
+}
 
 // RequiredLabels lists the run label keys this toolset's Inject-populated
 // tools require to be present via WithLabels(...) at run start. The runtime
 // validates coverage across every toolset an agent uses before starting a
 // run, so a missing label fails fast instead of surfacing mid-run as a tool
 // call error.
-var RequiredLabels = []string{}
-
-// Names returns the identifiers of all generated tools.
-func Names() []tools.Ident {
-	return names
+func RequiredLabels() []string {
+	return []string{}
 }
 
 // Spec returns the specification for the named tool if present.
-func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
+func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 	switch name {
 	case SummarizeDoc:
-		return &SpecSummarizeDoc, true
+		return newSpecSummarizeDoc(), true
 	default:
-		return nil, false
+		return tools.ToolSpec{}, false
 	}
-}
-
-// PayloadSchema returns the JSON schema for the named tool payload.
-func PayloadSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case SummarizeDoc:
-		return SpecSummarizeDoc.Payload.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// ResultSchema returns the JSON schema for the named tool result.
-func ResultSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case SummarizeDoc:
-		return SpecSummarizeDoc.Result.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// Metadata exposes policy metadata for the generated tools.
-func Metadata() []policy.ToolMetadata {
-	return metadata
 }
 
 // MetadataByName returns policy metadata for the named tool if present.
 func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
 	switch name {
 	case SummarizeDoc:
-		return metadata[0], true
+		return policy.ToolMetadata{
+			ID:          SummarizeDoc,
+			Title:       "Summarize Doc",
+			Description: "Summarize a document",
+			Tags:        []string{},
+			BudgetClass: policy.ToolBudgetClassBudgeted,
+		}, true
 	default:
 		return policy.ToolMetadata{}, false
 	}
+}
+
+// cloneStringMap gives each returned specification ownership of its generated
+// field metadata.
+func cloneStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }

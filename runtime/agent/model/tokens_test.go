@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -37,8 +38,9 @@ func TestTokenEstimatorCountsLargestToolProjection(t *testing.T) {
 		Tools: []*ToolDefinition{tool},
 	}
 
-	annotated := len(input.JSONSchema())
-	split := len(input.SchemaWithoutRootExample()) + len(input.ExampleJSON())
+	inputContract := input.Contract()
+	annotated := len(inputContract.Schema)
+	split := len(inputContract.SchemaWithoutRootExample) + len(inputContract.ExampleJSON)
 	projection := annotated
 	if split > projection {
 		projection = split
@@ -82,4 +84,41 @@ func TestTokenEstimatorCountsLargestStructuredOutputProjection(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, count.Exact)
 	require.Equal(t, chars+1, count.InputTokens)
+}
+
+func TestTokenEstimatorIncludesReplayedThinking(t *testing.T) {
+	withoutThinking := &Request{
+		Model:      "model-1",
+		ModelClass: ModelClassDefault,
+		Messages: []*Message{{
+			Role:  ConversationRoleAssistant,
+			Parts: []Part{TextPart{Text: "visible answer"}},
+		}},
+	}
+	withThinking := &Request{
+		Model:      withoutThinking.Model,
+		ModelClass: withoutThinking.ModelClass,
+		Messages: []*Message{
+			{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{
+					ThinkingPart{Text: "private reasoning", Signature: "signature"},
+					TextPart{Text: "visible answer"},
+				},
+			},
+			{
+				Role:  ConversationRoleAssistant,
+				Parts: []Part{ThinkingPart{Text: "thinking-only message"}},
+			},
+		},
+		Thinking: &ThinkingOptions{Enable: true, BudgetTokens: 4096},
+	}
+	estimator := TokenEstimator{CharactersPerToken: 1, OverheadTokens: 1}
+
+	withoutCount, err := estimator.CountTokens(t.Context(), withoutThinking)
+	require.NoError(t, err)
+	withCount, err := estimator.CountTokens(t.Context(), withThinking)
+
+	require.NoError(t, err)
+	assert.Greater(t, withCount.InputTokens, withoutCount.InputTokens)
 }

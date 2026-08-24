@@ -245,6 +245,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		Bookkeeping:        expr.Bookkeeping,
 		ResultReminder:     expr.ResultReminder,
 	}
+	tool.HasResult = tool.Return != nil && tool.Return.Type != goaexpr.Empty
 	if isDedicatedContinuation(expr) {
 		tool.ModelHiddenPayloadFields = continuationModelHiddenFields(expr)
 	} else if expr.Bounds != nil && expr.Bounds.Paging != nil && expr.Bounds.Paging.ContinueTool != "" {
@@ -301,6 +302,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		if me != nil && me.Payload.Type != goaexpr.Empty {
 			// Expose attribute for template default adapter generation.
 			tool.MethodPayloadAttr = me.Payload
+			tool.HasMethodPayload = true
 			if md.PayloadLoc != nil && md.PayloadLoc.PackageName() != "" {
 				tool.MethodPayloadTypeRef = md.PayloadRef
 			} else {
@@ -311,6 +313,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		}
 		if me != nil && me.Result.Type != goaexpr.Empty {
 			tool.MethodResultAttr = me.Result
+			tool.HasMethodResult = true
 			if md.ResultLoc != nil && md.ResultLoc.PackageName() != "" {
 				tool.MethodResultTypeRef = md.ResultRef
 			} else {
@@ -332,8 +335,9 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 			ts.SourceService.Name,
 		)
 	}
-	// Derive HasResult from tool.Return or bound method result.
-	tool.HasResult = (tool.Return != nil && tool.Return.Type != goaexpr.Empty) || (tool.MethodResultAttr != nil && tool.MethodResultAttr.Type != goaexpr.Empty)
+	// A bound method result also makes the tool result-bearing when the tool
+	// declaration relies on the method contract.
+	tool.HasResult = tool.HasResult || (tool.MethodResultAttr != nil && tool.MethodResultAttr.Type != goaexpr.Empty)
 	// Compute aliasing flags for payload and result against method types when bound.
 	if tool.IsMethodBacked {
 		tool.PayloadAliasesMethod = ToolAttrAliasesMethod(tool.Args, tool.MethodPayloadAttr)

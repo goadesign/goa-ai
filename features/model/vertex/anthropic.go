@@ -51,11 +51,21 @@ type AnthropicOptions struct {
 	ThinkingBudget int64
 }
 
-// NewAnthropicClient builds a Claude-on-Vertex model client using
+// NewAnthropicClient builds a validated Claude-on-Vertex model client using
 // Application Default Credentials.
 //
-//nolint:unparam // model.Client is consumed by wiring code outside this package; these unit tests only exercise the validation-error paths.
+//nolint:unparam // External callers consume the client; local coverage exercises constructor failures.
 func NewAnthropicClient(ctx context.Context, opts AnthropicOptions) (model.Client, error) {
+	raw, err := NewAnthropicProvider(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return model.NewClient(raw)
+}
+
+// NewAnthropicProvider builds the raw Claude-on-Vertex provider used beneath
+// model.NewClient.
+func NewAnthropicProvider(ctx context.Context, opts AnthropicOptions) (model.Provider, error) {
 	if strings.TrimSpace(opts.ProjectID) == "" {
 		return nil, errors.New("vertex: project id is required")
 	}
@@ -76,7 +86,7 @@ func NewAnthropicClient(ctx context.Context, opts AnthropicOptions) (model.Clien
 	// activation, and the conditional anthropic-beta header the adapter
 	// attaches for the direct API is accepted and ignored (live-verified
 	// via rawPredict usage.input_tokens, 2026-07-18).
-	inner, err := anthropicprovider.New(&client.Messages, anthropicprovider.Options{
+	inner, err := anthropicprovider.NewProvider(&client.Messages, anthropicprovider.Options{
 		DefaultModel:   opts.DefaultModel,
 		HighModel:      opts.HighModel,
 		SmallModel:     opts.SmallModel,

@@ -117,7 +117,7 @@ func (c *simplePlannerContext) PlannerModelClient(id string) (planner.PlannerMod
 	if !ok {
 		return nil, false
 	}
-	return newPlannerModelClient(cli, c.ev), true
+	return newPlannerModelClient(cli), true
 }
 
 // configuredModelClient returns the runtime-managed raw model client for the
@@ -137,21 +137,20 @@ func (c *simplePlannerContext) configuredModelClient(id string, designated bool)
 	if c.cache.AfterSystem || c.cache.AfterTools {
 		cli = newCacheConfiguredClient(cli, c.cache)
 	}
-	// Wrap with tracing so model invocations are always visible in traces, including
-	// full stream lifetimes when streaming is used.
-	cli = newTracedClient(cli, c.rt.tracer, c.rt.logger, id, telemetry.GenAIContext{
-		ConversationID: conversationID(c.sessionID, c.runID),
-		AgentID:        string(c.agent),
-		AgentName:      string(c.agent),
-	}, c.rt.captureGenAIMessages)
-	// Capture each traced provider response as an isolated transcript and
-	// presentation candidate before any planner-facing type exists. This outer
-	// wrapper also scopes ConsumeStream events to the invocation journal.
+	// Check and save each provider response before tracing or planner code can
+	// read it. This also keeps concurrent model calls separate.
 	if designated {
 		cli = newDesignatedModelInvocationClient(cli, c.invocations)
 	} else {
 		cli = newModelInvocationClient(cli, c.invocations)
 	}
+	// Trace only responses that passed the model response contract. Streaming
+	// traces still cover the complete accepted stream lifetime.
+	cli = newTracedClient(cli, c.rt.tracer, c.rt.logger, id, telemetry.GenAIContext{
+		ConversationID: conversationID(c.sessionID, c.runID),
+		AgentID:        string(c.agent),
+		AgentName:      string(c.agent),
+	}, c.rt.captureGenAIMessages)
 	return cli, true
 }
 
@@ -167,6 +166,9 @@ func (c *simplePlannerContext) RenderPrompt(ctx context.Context, id prompt.Ident
 		SessionID: c.sessionID,
 		TurnID:    c.turnID,
 	})
+	if events, ok := c.ev.(*runtimePlannerEvents); ok {
+		renderContext = withPlannerEventCollector(renderContext, events)
+	}
 	return c.rt.PromptRegistry.Render(renderContext, id, scope, data)
 }
 

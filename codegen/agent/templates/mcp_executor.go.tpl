@@ -3,7 +3,7 @@
 func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
     suite := {{ printf "%q" .Toolset.QualifiedName }}
 
-    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
+    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
         if call == nil {
             return runtime.Executed(failedMCPToolResult("", planner.FailureInternal, planner.RecoveryFinish, errors.New("tool request is nil"))), nil
         }
@@ -20,7 +20,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller 
             })
             if err != nil {
                 return runtime.Executed(mcpCallFailure(call, err,
-                    {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                    {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}().Payload.ExampleJSON,
                 )), nil
             }
             var value any
@@ -63,7 +63,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller 
 
 // mcpCallFailure classifies MCP protocol and transport failures without
 // converting error text into control flow.
-func mcpCallFailure(call *planner.ToolRequest, err error, example rawjson.Message) *planner.ToolResult {
+func mcpCallFailure(call *runtime.ToolCall, err error, example rawjson.Message) *planner.ToolResult {
     kind := planner.FailureUnavailable
     action := planner.RecoveryReplan
     if errors.Is(err, context.DeadlineExceeded) {
