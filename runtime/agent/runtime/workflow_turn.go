@@ -164,6 +164,9 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 			cloneLabels(l.base.RunContext.Labels),
 			allowed[i].Labels,
 		)
+		// Only finalization writes this reserved label. Remove values supplied
+		// by planner, run, or policy labels before ordinary tool execution.
+		delete(allowed[i].Labels, FinalizationReasonLabel)
 	}
 	if len(allowed) == 0 {
 		l.r.logger.Error(

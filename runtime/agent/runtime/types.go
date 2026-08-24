@@ -90,9 +90,10 @@ type (
 		// UIs and subscribers use it to reconstruct the call tree.
 		ParentToolCallID string
 
-		// Labels is a copy of the immutable run labels attached before the
-		// workflow started. Executors may use it for mechanical context that
-		// must not be supplied by the model.
+		// Labels contains a copy of the run labels plus runtime-authored values
+		// for this call. When the runtime executes a terminal finalization tool,
+		// FinalizationReasonLabel contains the exact termination reason; ordinary
+		// tool calls do not receive that reserved label.
 		Labels map[string]string
 	}
 

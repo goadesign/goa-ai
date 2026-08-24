@@ -14,13 +14,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-const (
-	// LimitReasonLabel records why Goa-AI selected a predeclared terminal call.
-	// Goa-AI writes this label during execution; callers cannot set it on the
-	// payload-only call stored in the run policy.
-	LimitReasonLabel = "goa-ai.limit_reason"
-)
-
 // cloneLimitTerminalPlans copies terminal call payloads so caller mutation
 // cannot change a submitted run.
 func cloneLimitTerminalPlans(plans *LimitTerminalPlans) *LimitTerminalPlans {
@@ -130,7 +123,7 @@ func (r *Runtime) finishLimitTerminalCall(
 ) (*RunOutput, error) {
 	result := &PlanResult{
 		ToolCalls: []ToolCall{
-			limitTerminalToolRequest(input.RunID, turnID, nextAttempt, call, reason),
+			limitTerminalToolRequest(input.RunID, turnID, nextAttempt, call),
 		},
 	}
 	out, err := r.finishFinalizationTerminalToolCalls(
@@ -145,6 +138,7 @@ func (r *Runtime) finishLimitTerminalCall(
 		aggUsage,
 		nextAttempt,
 		turnID,
+		reason,
 		hardDeadline,
 	)
 	if err != nil {
@@ -160,15 +154,11 @@ func limitTerminalToolRequest(
 	runID, turnID string,
 	attempt int,
 	call LimitTerminalCall,
-	reason planner.TerminationReason,
 ) ToolCall {
 	return ToolCall{
 		Name:       call.Name,
 		ToolCallID: generateDeterministicToolCallID(runID, turnID, attempt, call.Name, 0),
 		Payload:    rawjson.Message(append([]byte(nil), call.Payload...)),
-		Labels: map[string]string{
-			LimitReasonLabel: string(reason),
-		},
 	}
 }
 
