@@ -763,8 +763,11 @@ redeploys.
   preserves exact counting only when its transport supplies the separate
   count operation through `NewCountingRemoteClient`; otherwise counting
   returns `model.ErrTokenCountingUnsupported`.
-  Bedrock returns that error for Runtime models such as Claude Opus 4.7,
-  Sonnet 5, and Mythos 5 that require AWS's separate Mantle count endpoint.
+  The Bedrock adapter routes models supported by Runtime `CountTokens` there.
+  For Claude Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, and Mythos 5, it delegates
+  the resolved Bedrock-effective request to an optional Mantle counter.
+  Without that configured counter it returns
+  `model.ErrTokenCountingUnsupported`.
   When encoded tools carry authored `input_examples`, completion, streaming,
   and counting all attach the same Anthropic tool-examples beta header.
   Exact retention always keeps whole recent turns; it never truncates

@@ -838,7 +838,9 @@ Use `AdvertisedToolDefinitions()` when constructing provider requests inside pla
 runtime filters registered tool specs before the planner/model sees them and strips tag metadata
 from the model-facing `ToolDefinition` values. Provider adapters still encode
 historical tool-use and tool-result blocks from the transcript independently of
-the tools currently advertised.
+the tools currently advertised. Set `ToolDefinition.Strict` only when the
+provider must enforce the advertised input schema; adapters reject unsupported
+strict-tool requests instead of silently sending a weaker contract.
 
 Generated tool definitions also carry precomputed provider projections. The
 DSL-authored top-level Goa `Example(...)` on a payload becomes the only
@@ -2613,14 +2615,16 @@ trigger budget from the exact-retention budget:
   the newest turn even when retention uses only `KeepMaxTurns`, and rejects a
   generated summary that still leaves the history-policy request over the
   threshold.
-- Bedrock uses its native Runtime `CountTokens` operation when the resolved
-  model supports it. Claude Opus 4.7, Sonnet 5, and Mythos 5 require AWS's
-  separate Mantle token-count endpoint, so this adapter returns
-  `model.ErrTokenCountingUnsupported` for those models. Structured output
-  lowered to a forced tool is included in Runtime token counts. Native
-  structured output remains unsupported because Runtime `CountTokens` cannot
-  carry the `OutputConfig` sent to Converse. Provider validation errors remain
-  errors; the adapter never parses an error message into a fabricated count.
+- Bedrock uses Runtime `CountTokens` when the resolved model supports it.
+  Claude Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, and Mythos 5 use the optional
+  `bedrock.Options.MantleTokenCounter` instead. Before delegating, the Bedrock
+  adapter resolves the foundation model ID and preserves the effective tools,
+  including the strict forced tool used for structured output. Without that
+  configured Mantle counter, these models return
+  `model.ErrTokenCountingUnsupported`. Native structured output remains
+  unsupported because neither AWS count request can carry the `OutputConfig`
+  sent to Converse. Provider validation errors remain errors; the adapter never
+  parses an error message into a fabricated count.
 
 ```go
 // DSL

@@ -1123,7 +1123,7 @@ Production checklist:
 | `runtime/mcp` | MCP callers for stdio, HTTP, and SSE |
 | `runtime/toolregistry` | Registry wire protocol, executor, provider support, schema validation |
 | `features/model/openai` | OpenAI Responses API adapter |
-| `features/model/bedrock` | AWS Bedrock adapter, including visible Claude thinking support |
+| `features/model/bedrock` | AWS Bedrock adapter with visible Claude thinking and model-aware Runtime/Mantle token counting |
 | `features/model/anthropic` | Anthropic Messages adapter with streaming and exact token counting; also composes with compatible gateways such as Bedrock Mantle |
 | `features/model/vertex` | Google Vertex AI adapters: Gemini (`vertex.New`) and Claude-on-Vertex (`vertex.NewAnthropicClient`), both with native token counting and provider-error classification. |
 | `features/model/gateway` | Remote model gateway client |

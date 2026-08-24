@@ -1,13 +1,11 @@
-// Package claudecaps is the single source of truth for Anthropic Claude
-// model-capability rules shared by every adapter that speaks to Claude
-// (features/model/anthropic — which also backs Claude-on-Vertex — and
-// features/model/bedrock). Anthropic removes capabilities per model
-// generation, not per endpoint, so the same rule must hold whether the model
-// ID is a bare first-party alias ("claude-sonnet-5"), a dated snapshot
-// ("claude-opus-4-7-20260315"), Vertex's "@" dated form
-// ("claude-opus-4-7@20260315"), or a Bedrock inference-profile scope
-// ("global.anthropic.claude-fable-5-v1:0"). All predicates therefore match
-// on the stable "claude-<family>-<generation>" segment anywhere in the ID.
+// Package claudecaps is the single source of truth for Claude model and
+// endpoint capability rules used by the Anthropic, Vertex, and Bedrock
+// adapters. Model-language features such as thinking follow the model across
+// providers. Endpoint features are named explicitly: for example, AWS exposes
+// CountTokens for some Claude models through Bedrock Runtime and for others
+// through Bedrock Mantle. Predicates match the stable
+// "claude-<family>-<generation>" segment in bare aliases, dated snapshots,
+// Vertex "@" IDs, and Bedrock inference-profile IDs.
 //
 // Default direction for TemperatureSupported: a KNOWN family with a
 // parseable NEWER generation is treated as rejecting temperature — this
@@ -118,13 +116,16 @@ func BedrockNativeStructuredOutputSupported(modelID string) bool {
 	return ok && gen == 4 && hasMinor && minor == 5
 }
 
-// BedrockRuntimeTokenCountSupported reports whether the Bedrock Runtime
-// CountTokens operation accepts the named Claude model. Models that AWS lists
-// as Mantle-only for token counting must fail locally because this adapter uses
-// the Bedrock Runtime endpoint.
+// BedrockRuntimeTokenCountSupported reports whether AWS lists CountTokens on
+// the Bedrock Runtime endpoint for the named Claude model. Opus 4.7, Opus 4.8,
+// Opus 5, Sonnet 5, and Mythos 5 count through Bedrock Mantle instead. Opus
+// 4.6, Haiku 4.5, and Fable 5 retain Runtime counting.
 func BedrockRuntimeTokenCountSupported(modelID string) bool {
 	if gen, minor, hasMinor, ok := familyVersion(modelID, "claude-opus-"); ok {
-		return gen != 4 || !hasMinor || minor != 7
+		if gen >= 5 {
+			return false
+		}
+		return gen != 4 || !hasMinor || minor < 7
 	}
 	if gen, _, _, ok := familyVersion(modelID, "claude-sonnet-"); ok {
 		return gen != 5
