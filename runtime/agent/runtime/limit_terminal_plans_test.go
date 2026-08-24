@@ -200,7 +200,7 @@ func TestLimitTerminalCallSelectsOnlyConfiguredLimits(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported termination reason")
 }
 
-func TestLimitTerminalToolRequestRecordsReasonOnly(t *testing.T) {
+func TestLimitTerminalToolRequestLeavesRuntimeLabelsUnset(t *testing.T) {
 	t.Parallel()
 
 	call := LimitTerminalCall{
@@ -212,11 +212,9 @@ func TestLimitTerminalToolRequestRecordsReasonOnly(t *testing.T) {
 		"turn-1",
 		2,
 		call,
-		planner.TerminationReasonTimeBudget,
 	)
 
-	assert.Len(t, request.Labels, 1)
-	assert.Equal(t, string(planner.TerminationReasonTimeBudget), request.Labels[LimitReasonLabel])
+	assert.Empty(t, request.Labels)
 	assert.Empty(t, request.RunID)
 	assert.NotEmpty(t, request.ToolCallID)
 }
@@ -359,31 +357,62 @@ func TestWorkflowLimitsExecuteTerminalPlansWithoutPlannerResume(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		reason planner.TerminationReason
-		result string
+		name       string
+		reason     planner.TerminationReason
+		result     string
+		withLabels bool
 	}{
-		{reason: planner.TerminationReasonTimeBudget, result: "time"},
-		{reason: planner.TerminationReasonToolCap, result: "tools"},
-		{reason: planner.TerminationReasonFailureCap, result: "failures"},
+		{
+			name:       "time budget with conflicting labels",
+			reason:     planner.TerminationReasonTimeBudget,
+			result:     "time",
+			withLabels: true,
+		},
+		{
+			name:       "tool cap with conflicting labels",
+			reason:     planner.TerminationReasonToolCap,
+			result:     "tools",
+			withLabels: true,
+		},
+		{
+			name:       "failure cap with conflicting labels",
+			reason:     planner.TerminationReasonFailureCap,
+			result:     "failures",
+			withLabels: true,
+		},
+		{
+			name:   "time budget with empty labels",
+			reason: planner.TerminationReasonTimeBudget,
+			result: "time",
+		},
 	}
 	for _, test := range tests {
-		t.Run(string(test.reason), func(t *testing.T) {
-			executed := executeWorkflowLimitTerminalPlan(t, test.reason)
+		t.Run(test.name, func(t *testing.T) {
+			executed := executeWorkflowLimitTerminalPlan(t, test.reason, test.withLabels)
 			assert.JSONEq(t, `{"result":"`+test.result+`"}`, string(executed.Payload))
-			assert.Equal(t, string(test.reason), executed.Labels[LimitReasonLabel])
+			assert.Equal(t, string(test.reason), executed.Labels[FinalizationReasonLabel])
+			if !test.withLabels {
+				assert.Equal(t, map[string]string{
+					FinalizationReasonLabel: string(test.reason),
+				}, executed.Labels)
+			}
 		})
 	}
 }
 
 // executeWorkflowLimitTerminalPlan drives the complete workflow transition for
 // one limit and returns the fixed terminal request received by the tool.
-func executeWorkflowLimitTerminalPlan(t *testing.T, reason planner.TerminationReason) *ToolCall {
+func executeWorkflowLimitTerminalPlan(
+	t *testing.T,
+	reason planner.TerminationReason,
+	withLabels bool,
+) *ToolCall {
 	t.Helper()
 
-	rt := New(
-		WithLogger(telemetry.NoopLogger{}),
-		WithPolicy(limitTerminalLabelPolicy{}),
-	)
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	if withLabels {
+		rt.Policy = limitTerminalLabelPolicy{}
+	}
 	terminal := strictLimitTerminalSpec()
 	work := newAnyJSONSpec("service.tools.work", terminal.Toolset)
 	var executed *ToolCall
@@ -391,6 +420,7 @@ func executeWorkflowLimitTerminalPlan(t *testing.T, reason planner.TerminationRe
 		Name: terminal.Toolset,
 		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			if call.Name == work.Name {
+				assert.NotContains(t, call.Labels, FinalizationReasonLabel)
 				result := &planner.ToolResult{
 					Name:       call.Name,
 					ToolCallID: call.ToolCallID,
@@ -462,10 +492,15 @@ func executeWorkflowLimitTerminalPlan(t *testing.T, reason planner.TerminationRe
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "Do the work."}},
 		}},
-		Labels: map[string]string{"account": "caller-account"},
 		Policy: &PolicyOverrides{
 			LimitTerminalPlans: testLimitTerminalPlans(terminal.Name),
 		},
+	}
+	if withLabels {
+		input.Labels = map[string]string{
+			"account":               "caller-account",
+			FinalizationReasonLabel: "incorrect-run-value",
+		}
 	}
 	current := time.Unix(100, 0)
 	plannerCalls := 0
@@ -524,9 +559,11 @@ func executeWorkflowLimitTerminalPlan(t *testing.T, reason planner.TerminationRe
 	}
 	assert.Equal(t, expectedPlannerCalls, plannerCalls)
 	assert.Equal(t, terminal.Name, executed.Name)
-	assert.Equal(t, "policy-account", executed.Labels["account"])
-	assert.Equal(t, "policy-value", executed.Labels["policy"])
-	assert.Equal(t, string(reason), executed.Labels[LimitReasonLabel])
+	if withLabels {
+		assert.Equal(t, "policy-account", executed.Labels["account"])
+		assert.Equal(t, "policy-value", executed.Labels["policy"])
+	}
+	assert.Equal(t, string(reason), executed.Labels[FinalizationReasonLabel])
 	assert.NotEmpty(t, executed.ToolCallID)
 	return executed
 }
@@ -540,9 +577,9 @@ func (limitTerminalLabelPolicy) Decide(_ context.Context, input policy.Input) (p
 	return policy.Decision{
 		Caps: input.RemainingCaps,
 		Labels: map[string]string{
-			"account":        "policy-account",
-			"policy":         "policy-value",
-			LimitReasonLabel: "incorrect-policy-value",
+			"account":               "policy-account",
+			"policy":                "policy-value",
+			FinalizationReasonLabel: "incorrect-policy-value",
 		},
 	}, nil
 }

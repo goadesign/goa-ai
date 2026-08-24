@@ -33,6 +33,11 @@ import (
 const (
 	plannerPublicationInitialBackoff = 100 * time.Millisecond
 	plannerPublicationMaxBackoff     = 5 * time.Second
+
+	// FinalizationReasonLabel records why Goa-AI is executing a terminal tool
+	// call during finalization. The runtime writes the exact planner termination
+	// reason after run and policy labels have been applied.
+	FinalizationReasonLabel = "goa-ai.finalization_reason"
 )
 
 // finalizeRun selects the configured fixed terminal call for a runtime
@@ -216,6 +221,7 @@ func (r *Runtime) finalizeFromHistory(
 			aggUsage,
 			nextAttempt,
 			turnID,
+			reason,
 			hardDeadline,
 		)
 		if err != nil {
@@ -307,6 +313,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	aggUsage model.TokenUsage,
 	nextAttempt int,
 	turnID string,
+	reason planner.TerminationReason,
 	hardDeadline time.Time,
 ) (*RunOutput, error) {
 	if result == nil {
@@ -365,6 +372,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	if err := r.validateFinalizationTerminalToolCalls(program.allowed); err != nil {
 		return nil, err
 	}
+	stampFinalizationReason(program.immediate, reason)
 	if err := loop.commitSelectedModelResponse(program.result); err != nil {
 		return nil, err
 	}
@@ -389,6 +397,19 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		return nil, err
 	}
 	return r.finishAfterSuccessfulToolCompletion(wfCtx.Context(), input, &execBase, st)
+}
+
+// stampFinalizationReason gives each call that will execute its runtime-owned
+// termination reason without sharing a mutable labels map with prepared calls.
+func stampFinalizationReason(calls []ToolCall, reason planner.TerminationReason) {
+	for i := range calls {
+		labels := cloneLabels(calls[i].Labels)
+		if labels == nil {
+			labels = make(map[string]string, 1)
+		}
+		labels[FinalizationReasonLabel] = string(reason)
+		calls[i].Labels = labels
+	}
 }
 
 // validateFinalizationTerminalToolCalls permits only terminal bookkeeping tools

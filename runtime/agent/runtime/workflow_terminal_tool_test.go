@@ -619,9 +619,11 @@ func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
 	terminalTool := newAnyJSONSpec(tools.Ident("tasks.progress.complete"), "tasks.progress")
 	terminalTool.TerminalRun = true
 	terminalTool.Bookkeeping = true
+	var executed *ToolCall
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "tasks.progress",
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			executed = call
 			return &planner.ToolResult{
 				Name:       call.Name,
 				Result:     map[string]any{"ok": true},
@@ -675,6 +677,8 @@ func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
 	require.Len(t, out.ToolEvents, 1)
 	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
 	require.Empty(t, wfCtx.lastPlannerCall.Name, "expected no planner resume/finalization after terminal tool")
+	require.NotNil(t, executed)
+	require.NotContains(t, executed.Labels, FinalizationReasonLabel)
 }
 
 func TestFinalizeWithPlannerExecutesTerminalToolCall(t *testing.T) {
@@ -690,6 +694,110 @@ func TestFinalizeWithPlannerExecutesTerminalToolCall(t *testing.T) {
 	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
 	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
 	require.Len(t, base.Messages, 2)
+}
+
+func TestFinalizeWithPlannerTerminalToolUsesRuntimeReason(t *testing.T) {
+	tests := []struct {
+		name          string
+		runLabels     map[string]string
+		policyLabels  map[string]string
+		plannerLabels map[string]string
+	}{
+		{name: "empty labels"},
+		{
+			name: "conflicting labels",
+			runLabels: map[string]string{
+				"run":                   "run-value",
+				FinalizationReasonLabel: "incorrect-run-value",
+			},
+			policyLabels: map[string]string{
+				"policy":                "policy-value",
+				FinalizationReasonLabel: "incorrect-policy-value",
+			},
+			plannerLabels: map[string]string{
+				FinalizationReasonLabel: "incorrect-planner-value",
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rt, terminalTool, wfCtx := newTerminalFinalizationRuntime(t)
+			var executedLabels map[string]string
+			wfCtx.toolRoutes["execute"] = func(ctx context.Context, input *ToolInput) (*ToolOutput, error) {
+				executedLabels = cloneLabels(input.Labels)
+				return rt.ExecuteToolActivity(ctx, input)
+			}
+			if len(test.policyLabels) > 0 {
+				rt.Policy = &stubPolicyEngine{decision: policy.Decision{
+					Labels: cloneLabels(test.policyLabels),
+				}}
+			}
+			resume := wfCtx.plannerRoutes["resume"]
+			wfCtx.plannerRoutes["resume"] = func(
+				ctx context.Context,
+				input *PlanActivityInput,
+			) (*PlanActivityOutput, error) {
+				out, err := resume(ctx, input)
+				if err == nil {
+					out.Result.ToolCalls[0].Labels = cloneLabels(test.plannerLabels)
+				}
+				return out, err
+			}
+			base := &planner.PlanInput{
+				RunContext: run.Context{
+					RunID:     "run-1",
+					SessionID: "sess-1",
+					TurnID:    "turn-1",
+					Attempt:   1,
+					Labels:    cloneLabels(test.runLabels),
+				},
+			}
+			input := &RunInput{
+				AgentID:   agent.Ident("agent-1"),
+				RunID:     "run-1",
+				SessionID: "sess-1",
+				TurnID:    "turn-1",
+				Labels:    cloneLabels(test.runLabels),
+			}
+
+			out, err := rt.finalizeRun(
+				wfCtx,
+				AgentRegistration{
+					ExecuteToolActivity: "execute",
+					ResumeActivityName:  "resume",
+				},
+				input,
+				base,
+				nil,
+				nil,
+				model.TokenUsage{},
+				2,
+				input.TurnID,
+				nil,
+				planner.TerminationReasonToolFailure,
+				time.Time{},
+			)
+
+			require.NoError(t, err)
+			require.NotNil(t, out)
+			require.Len(t, out.ToolEvents, 1)
+			require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
+			require.NotNil(t, executedLabels)
+			require.Equal(
+				t,
+				string(planner.TerminationReasonToolFailure),
+				executedLabels[FinalizationReasonLabel],
+			)
+			if len(test.runLabels) == 0 {
+				require.Equal(t, map[string]string{
+					FinalizationReasonLabel: string(planner.TerminationReasonToolFailure),
+				}, executedLabels)
+			} else {
+				require.Equal(t, "run-value", executedLabels["run"])
+				require.Equal(t, "policy-value", executedLabels["policy"])
+			}
+		})
+	}
 }
 
 func TestFinalizeWithPlannerTerminalToolStopsAtHard(t *testing.T) {

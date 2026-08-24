@@ -248,10 +248,25 @@ payload-only calls: time budget, tool-call cap, and consecutive failed-call cap.
 Before the first planner call, the runtime requires every payload to pass the
 registered generated codec and every target to be a `TerminalRun` bookkeeping
 tool owned by the agent that does not require confirmation. At a matching limit,
-the workflow adds its current identifiers and labels, records the reason in
-`runtime.LimitReasonLabel`, and executes the call through the normal
-terminal-tool path. The individual `tool_failure` termination case never
-selects these calls because its final result may depend on saved tool evidence.
+the workflow adds its current identifiers and labels and executes the call
+through the normal terminal-tool path. The individual `tool_failure`
+termination case never selects these fixed calls because its final result may
+depend on saved tool evidence. Instead, the finalization planner may use that
+evidence to author a registered terminal bookkeeping call.
+
+Immediately before either a fixed limit call or a planner-authored finalization
+call executes, the runtime writes the exact `planner.TerminationReason` to
+`runtime.FinalizationReasonLabel` (`goa-ai.finalization_reason`). This happens
+after run and policy labels are applied, so callers, policies, planners, and
+models cannot choose or replace the reason. Ordinary tool calls do not receive
+this label: the runtime removes the reserved key if any of those sources
+supplies it.
+
+`runtime.LimitReasonLabel` and `goa-ai.limit_reason` were removed. Consumers of
+fixed-limit and planner-authored finalization calls, including `tool_failure`,
+must use `runtime.FinalizationReasonLabel` and
+`goa-ai.finalization_reason`.
+
 The additional workflow-input field requires a pinned Temporal Worker
 Deployment cutover: old and new strict decoders cannot share one unversioned
 task queue during rollout.

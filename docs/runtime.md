@@ -660,8 +660,7 @@ Workflow step boundary:
   confirmation,
 - when one of those limits is reached, the workflow selects the matching call
   without loading saved messages, adds current run identifiers and labels,
-  writes the reason to `runtime.LimitReasonLabel`, and executes the call through
-  the existing terminal-tool path,
+  and executes the call through the existing terminal-tool path,
 - when the run omitted `LimitTerminalPlans`, or a tool failure requires
   finalization, `PlanResumeInput.Finalize` is non-nil and the planner may close
   through terminal bookkeeping tools instead of prose; the runtime admits only
@@ -670,12 +669,24 @@ Workflow step boundary:
   with an opaque SHA-256 digest of length-delimited run ID, turn ID, attempt,
   batch index, and exact tool name, and requires every terminal side effect in
   the batch to complete successfully,
+- before executing either a fixed limit call or a terminal call returned by the
+  finalization planner, the runtime writes the exact
+  `planner.TerminationReason` to
+  `runtime.FinalizationReasonLabel` (`goa-ai.finalization_reason`); run labels,
+  policy labels, planner output, and model output cannot replace this value,
+- ordinary tool calls do not receive the finalization-reason label; the runtime
+  removes that reserved key if a run, policy, planner, or model supplies it,
 - recoverable failures supply one normal planner activity with their structured
   evidence and do not constrain this validated terminal bookkeeping path;
   caller-supplied `WithRestrictToTool` remains run-scoped and still applies,
 - deadline checks happen before admitting new work; in-flight tool batches
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.
+
+Migration: `runtime.LimitReasonLabel` and `goa-ai.limit_reason` were removed.
+Consumers of fixed-limit and planner-authored finalization calls, including
+`tool_failure`, must read `runtime.FinalizationReasonLabel` at
+`goa-ai.finalization_reason`.
 
 `LimitTerminalPlans` and `CompletionTool` add fields to the Temporal workflow
 input. Deploy the runtime, generated workers, and callers as one coordinated
@@ -1548,13 +1559,15 @@ type ToolCallMeta struct {
     TurnID           string  // Conversational turn identifier
     ToolCallID       string  // Unique tool invocation ID
     ParentToolCallID string  // Parent tool call (for agent-as-tool)
-    Labels            map[string]string // Copied immutable run labels
+    Labels            map[string]string // Run labels plus runtime-authored values for this call
 }
 ```
 
-`Labels` exposes server-authored run context to custom executors without
-placing those values in the model payload. Mutating this map does not change
-the workflow's saved labels or another tool call.
+`Labels` exposes server-authored context to custom executors without placing
+those values in the model payload. Terminal finalization calls include the
+exact reason under `runtime.FinalizationReasonLabel`; ordinary calls do not.
+Mutating this map does not change the workflow's saved labels or another tool
+call.
 
 ### Injected Fields (`Inject()`)
 
@@ -1653,6 +1666,11 @@ injected** -- there is no generated conversion to numeric, boolean, or
 structured types. A design that needs a non-string injected value must model
 it as a `String` (with `Pattern`/`Format` validation as needed) and convert
 in service code.
+
+`goa-ai.finalization_reason` is the exception to unchanged tool-call labels.
+The runtime removes caller, policy, planner, and model values for this reserved
+key. It writes the exact termination reason only when executing a terminal
+finalization tool call.
 
 **Example (label-backed):**
 
