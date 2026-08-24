@@ -40,7 +40,7 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			// GoDoc must steer custom executors to the composed Decode<Tool>
 			// helper (tool_inject.go.tpl), whose name is derived from the same
 			// ConstName inject.go uses.
-			payload.InjectDecodeFunc = "Decode" + tool.ConstName
+			payload.InjectDecodeFunc = "Decode" + constName
 		}
 		var result *typeData
 		if tool.HasResult {

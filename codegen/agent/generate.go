@@ -11,7 +11,6 @@ import (
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
-	goaexpr "goa.design/goa/v3/expr"
 )
 
 // Generate is the code generation entry point for the agents plugin. It is called
@@ -560,15 +559,10 @@ func mcpExecutorFiles(agent *AgentData) []*codegen.File {
 				if entry == nil {
 					panic(fmt.Sprintf("agent codegen: missing MCP tool spec for %q", tool.QualifiedName))
 				}
-				resultCodec := ""
-				if entry.Result != nil {
-					resultCodec = entry.Result.GenericCodec
-				}
 				tools = append(tools, mcpExecutorToolData{
-					LocalName:          tool.Name,
-					ConstName:          entry.ConstName,
-					HasResult:          tool.Return != nil && tool.Return.Type != goaexpr.Empty,
-					ResultGenericCodec: resultCodec,
+					LocalName: tool.Name,
+					ConstName: entry.ConstName,
+					HasResult: entry.HasResult,
 				})
 			}
 		}
@@ -583,7 +577,6 @@ func mcpExecutorFiles(agent *AgentData) []*codegen.File {
 			{Path: "encoding/json"},
 			{Path: "errors"},
 			{Path: "goa.design/goa-ai/runtime/agent/planner"},
-			{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
 			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
 			{Path: "goa.design/goa-ai/runtime/agent/telemetry"},
 			{Path: "goa.design/goa-ai/runtime/agent/tools"},
@@ -774,7 +767,6 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 			{Path: "fmt"},
 			{Path: "strings"},
 			{Path: "goa.design/goa-ai/runtime/agent/planner"},
-			{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
 			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
 			{Path: "goa.design/goa-ai/runtime/agent/tools"},
 			{Path: ts.SpecsImportPath, Name: specsAlias},
@@ -785,6 +777,7 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 		if needsRawJSON {
 			imports = append(imports,
 				&codegen.ImportSpec{Path: "encoding/json"},
+				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
 				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/toolregistry"},
 			)
 		}

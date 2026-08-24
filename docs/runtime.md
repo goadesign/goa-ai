@@ -691,9 +691,11 @@ Consumers of fixed-limit and planner-authored finalization calls, including
 `LimitTerminalPlans` and `CompletionTool` add fields to the Temporal workflow
 input. Deploy the runtime, generated workers, and callers as one coordinated
 cutover. Mixed versions are unsupported. New suspensions use
-`goa-ai.run-suspension.v3`; workers accept only that exact checkpoint version,
-so work and suspensions created by the previous release may fail after the
-cutover.
+`goa-ai.run-suspension.v4`; workers accept only that exact checkpoint version.
+Each model-authored await item stores its runtime `ToolCallID` separately from
+the provider `ModelToolCallID`. Suspensions created by older releases, including
+v3, cannot be resumed after the cutover; there is no dual-read, fallback, or
+migration mode.
 
 Run-scoped completion tool:
 
@@ -769,10 +771,19 @@ The runtime applies them in this order:
 `SynthesizeAfterTools` therefore does not create a second recovery policy.
 `ToolFailure.Recovery` is the single transition contract: `correct_call` keeps
 the failed tool available and attaches generated correction evidence without
-requiring a retry. The planner may combine work, call any advertised tool, await
-input, or answer. Historical tool calls retain deterministic provider-name
-projection independently of the current catalog. `replan` removes the failed
-tool while permitting another advertised action, input request, or answer;
+requiring a retry. Its `PriorInput` is a clone of the exact model-authored
+payload; execution keeps the separately compiled or injected `Payload`.
+Executors and tool activities return the failure classification, error,
+recovery action, and generated field issues without constructing correction
+evidence. Before recording the failure, the workflow requires the retained
+provider tool-call ID and sets `PriorInput` and `ExampleJSON` from the original
+call and registered tool specification. Runtime-authored calls have no provider
+tool-call ID, so a `correct_call` result for an automatic continuation is a
+contract error and its private execution payload is never shown to the model.
+The planner may combine work, call any advertised tool, await input, or answer.
+Historical tool calls retain deterministic provider-name projection
+independently of the current catalog. `replan` removes the failed tool while
+permitting another advertised action, input request, or answer;
 `finish` forbids more tools. When the same tool has both correction and replan
 failures in one batch, the correctable failure keeps that tool available. A
 recovery turn may end with an input suspension; continuing retains the selected failure
@@ -1531,7 +1542,9 @@ the shared Pulse wire protocol lives under `goa-ai/runtime/toolregistry`.
 reg := runtime.ToolsetRegistration{
     Name: "myservice.helpers",
     Execute: func(ctx context.Context, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
-        // Decode payload, execute logic, return result
+        // Decode call.Payload and use it for execution. Return structured field
+        // issues for correctable validation failures; the workflow supplies the
+        // rejected model input and generated example.
     },
     Specs: []tools.ToolSpec{...},
 }
@@ -1944,9 +1957,14 @@ Ongoing workflows and saved suspensions may fail when they reach the new
 contract. Historical completed-session records remain stored unchanged; this
 release policy does not alter their persistence schema.
 
-`goa-ai.run-suspension.v3` is the only supported suspension schema. The runtime
-rejects older persisted shapes; it does not infer missing fields, migrate them,
-or provide a compatibility execution path.
+`goa-ai.run-suspension.v4` is the only supported suspension schema. Every
+model-authored await item preserves its runtime `ToolCallID` separately from
+the provider `ModelToolCallID`: runtime records and continuation responses use
+the former, while provider transcript reconstruction uses the latter.
+Suspensions written by older runtimes, including v3, are incompatible and
+cannot be resumed across this coordinated release. The runtime does not
+dual-read old checkpoints, substitute missing fields, fall back to an earlier
+shape, or migrate suspended executions.
 
 ### Upgrade checklist for strict model-output contracts
 
@@ -2004,8 +2022,11 @@ the model for a replacement. It also changes source and workflow contracts:
   failure as `goa_ai.output_contract_error`; the earlier planner-specific type
   is not decoded as a compatibility alias.
 - Planner activity results and accepted planner-event records have new Temporal
-  payload shapes. Suspension schema `goa-ai.run-suspension.v3` is required and
+  payload shapes. Suspension schema `goa-ai.run-suspension.v4` is required and
   is decoded with exact numbers, unknown-field rejection, and no trailing data.
+  Its await items keep runtime `ToolCallID` and provider `ModelToolCallID`
+  separate. Older suspended executions, including v3, are not resumed; no
+  dual-read, fallback, or migration path is provided.
 - Child workflow IDs now append the exact runtime tool-call ID to the nested
   agent run path. Existing in-progress child workflows are not compatible with
   the new ID derivation.
@@ -2060,11 +2081,11 @@ result:
 return &planner.PlanResult{
 	Await: planner.NewAwait(
 		planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
-			ID:         "clarify-device",
-			ToolName:   tools.Ident("chat.ask_clarification"),
-			ToolCallID: call.ToolCallID,
-			Payload:    call.Payload,
-			Question:   "Which device should I configure?",
+			ID:              "clarify-device",
+			ToolName:        tools.Ident("chat.ask_clarification"),
+			ModelToolCallID: call.ID,
+			Payload:         call.Payload,
+			Question:        "Which device should I configure?",
 		}),
 	),
 }
@@ -2073,7 +2094,11 @@ return &planner.PlanResult{
 The runtime emits the same `AwaitClarification` event for the UI. The next
 workflow decodes the answer with the registered generated result codec and
 restores a provider-valid `tool_use` / `tool_result` pair. Do not replace this
-correlation with a reminder or a copied user message.
+correlation with a reminder or a copied user message. The planner must supply
+the provider's `ModelToolCallID` and leave `ToolCallID` empty. Before returning
+the suspension, the workflow assigns a deterministic runtime `ToolCallID`.
+Provider transcript parts retain `ModelToolCallID`; suspension responses and
+runtime events use `ToolCallID`.
 
 ### External Tools
 
@@ -2085,16 +2110,20 @@ return &planner.PlanResult{
         planner.AwaitExternalToolsItem(&planner.AwaitExternalTools{
             ID: "external-1",
             Items: []planner.AwaitToolItem{{
-                Name:       tools.Ident("external.fetch"),
-                ToolCallID: "tc-ext-1",
-                Payload:    json.RawMessage(`{"url":"..."}`),
+                Name:            tools.Ident("external.fetch"),
+                ModelToolCallID: call.ID,
+                Payload:         json.RawMessage(`{"url":"..."}`),
             }},
         }),
     ),
 }
 ```
 
-Callers start the next workflow with the exact result set:
+Each item must carry its unique provider `ModelToolCallID` and leave
+`ToolCallID` empty. The workflow adds a stable, distinct runtime `ToolCallID`
+to each item before publishing and storing the suspension. Callers start the
+next workflow with the exact result set, copying that runtime ID from the
+suspension:
 
 ```go
 response := &api.PendingInputResponse{
@@ -2102,8 +2131,8 @@ response := &api.PendingInputResponse{
         ID: "external-1",
         Results: []*api.ProvidedToolResult{
             {
-                ToolCallID: "toolcall-1",
-                Name:       tools.Ident("chat.ask_question.ask_question"),
+                ToolCallID: pending.Await.ExternalTools.Items[0].ToolCallID,
+                Name:       tools.Ident("external.fetch"),
                 Success: &api.ProvidedToolSuccess{
                     // Canonical JSON matching the tool's Return schema.
                     Result: json.RawMessage(`{"answers":[{"question_id":"...","selected_ids":["approve"]}]}`),
@@ -3112,13 +3141,16 @@ failure := &planner.ToolFailure{
     Kind:  planner.FailureInvalidCall,
     Error: planner.NewToolError("invalid tool arguments"),
     Recovery: planner.RecoveryDirective{
-        Action:      planner.RecoveryCorrectCall,
-        Issues:      validationErr.Issues(),
-        PriorInput:  input,
-        ExampleJSON: spec.ExamplePayload,
+        Action: planner.RecoveryCorrectCall,
+        Issues: validationErr.Issues(),
     },
 }
 ```
+
+Executors do not set `PriorInput` or `ExampleJSON`. Activities may return a
+`correct_call` failure without those fields. The workflow then verifies that
+the call came from a model tool use and overwrites both fields from its retained
+`ToolCall` and registered `ToolSpec` before recording the result.
 
 ### Validation Issues and Tool Failures
 
@@ -3149,8 +3181,10 @@ Goa‑AI supports two complementary paths that produce
      `toolregistry.ValidationIssues(err)` and, when issues are present, emit an error
      result that includes them.
    - **Wire protocol**: tool result errors may include `issues` (`[]FieldIssue`).
-   - **Consumer behavior**: registry executors preserve `issues`, prior canonical
-     input, and the generated tool example in a `correct_call` directive.
+   - **Consumer behavior**: registry executors preserve the provider's failure
+     classification, recovery action, and `issues`. The workflow supplies the
+     exact model-authored input and generated tool example only after verifying
+     the retained provider tool-call ID.
 
 This keeps the contract strong and deterministic: validation stays at boundaries,
 and “what to retry with” is computed from structured data, not heuristics.

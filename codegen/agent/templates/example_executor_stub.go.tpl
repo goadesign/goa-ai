@@ -44,11 +44,6 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.Tool
                     Recovery: planner.RecoveryDirective{
                         Action: planner.RecoveryCorrectCall,
                         Issues: issues,
-                        PriorInput: append(rawjson.Message(nil), call.Payload...),
-                        ExampleJSON: append(
-                            rawjson.Message(nil),
-                            {{ $.SpecsAlias }}.Spec{{ .ConstName }}().Payload.ExampleJSON...,
-                        ),
                     },
                 },
 			}), nil

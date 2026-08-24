@@ -128,7 +128,52 @@ func TestExecuteToolActivityPropagatesLabels(t *testing.T) {
 	require.JSONEq(t, `{"ok":true}`, string(out.Payload))
 }
 
-func TestEnforceToolResultContractsRequiresExplicitBoundsForBoundedTool(t *testing.T) {
+// TestExecuteToolActivityEagerDecodeDefersCorrectionEvidence verifies that an
+// activity reports validation issues without copying execution data into
+// model-facing correction fields.
+func TestExecuteToolActivityEagerDecodeDefersCorrectionEvidence(t *testing.T) {
+	const toolName = tools.Ident("tool")
+	executionPayload := rawjson.Message(`{"query":42,"credential":"server-owned"}`)
+	spec := newAnyJSONSpec(toolName, "svc.ts")
+	spec.Payload.Codec.FromJSON = func([]byte) (any, error) {
+		return nil, tools.NewValidationError(
+			"query must be a string",
+			[]*tools.FieldIssue{{
+				Field:      "query",
+				Constraint: "invalid_field_type",
+			}},
+			map[string]string{"query": "query must be a string"},
+		)
+	}
+	rt := &Runtime{
+		logger: telemetry.NoopLogger{},
+		toolsets: map[string]ToolsetRegistration{
+			"svc.ts": {
+				Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
+					t.Fatal("executor must not run after eager payload decode fails")
+					return nil, nil
+				},
+			},
+		},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{toolName: spec},
+	}
+
+	out, err := rt.ExecuteToolActivity(context.Background(), &ToolInput{
+		ToolName:   toolName,
+		ToolCallID: "call-1",
+		Payload:    executionPayload,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.Failure)
+	require.Equal(t, planner.FailureInvalidCall, out.Failure.Kind)
+	require.Equal(t, planner.RecoveryCorrectCall, out.Failure.Recovery.Action)
+	require.Len(t, out.Failure.Recovery.Issues, 1)
+	require.Empty(t, out.Failure.Recovery.PriorInput)
+	require.Empty(t, out.Failure.Recovery.ExampleJSON)
+}
+
+func TestCanonicalizeWorkflowToolResultRequiresExplicitBoundsForBoundedTool(t *testing.T) {
 	spec := newAnyJSONSpec("tool", "svc.ts")
 	spec.Bounds = &tools.BoundsSpec{
 		Paging: &tools.PagingSpec{
@@ -136,10 +181,9 @@ func TestEnforceToolResultContractsRequiresExplicitBoundsForBoundedTool(t *testi
 			NextCursorField: "next_cursor",
 		},
 	}
-	rt := &Runtime{}
 	call := ToolCall{Name: "tool", ToolCallID: "tool-1"}
 
-	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
+	err := canonicalizeAndValidateWorkflowToolResult(spec, call, &planner.ToolResult{
 		Name:   call.Name,
 		Result: map[string]any{"ok": true},
 	})
@@ -148,7 +192,7 @@ func TestEnforceToolResultContractsRequiresExplicitBoundsForBoundedTool(t *testi
 	require.Contains(t, err.Error(), "without bounds")
 }
 
-func TestEnforceToolResultContractsAcceptsExplicitBoundsForBoundedTool(t *testing.T) {
+func TestCanonicalizeWorkflowToolResultAcceptsExplicitBoundsForBoundedTool(t *testing.T) {
 	spec := newAnyJSONSpec("tool", "svc.ts")
 	spec.Bounds = &tools.BoundsSpec{
 		Paging: &tools.PagingSpec{
@@ -156,10 +200,9 @@ func TestEnforceToolResultContractsAcceptsExplicitBoundsForBoundedTool(t *testin
 			NextCursorField: "next_cursor",
 		},
 	}
-	rt := &Runtime{}
 	call := ToolCall{Name: "tool", ToolCallID: "tool-1"}
 
-	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
+	err := canonicalizeAndValidateWorkflowToolResult(spec, call, &planner.ToolResult{
 		Name:   call.Name,
 		Result: map[string]any{"ok": true},
 		Bounds: &agent.Bounds{
@@ -170,7 +213,7 @@ func TestEnforceToolResultContractsAcceptsExplicitBoundsForBoundedTool(t *testin
 	require.NoError(t, err)
 }
 
-func TestEnforceToolResultContractsRejectsTruncatedBoundsWithoutContinuation(t *testing.T) {
+func TestCanonicalizeWorkflowToolResultRejectsTruncatedBoundsWithoutContinuation(t *testing.T) {
 	spec := newAnyJSONSpec("tool", "svc.ts")
 	spec.Bounds = &tools.BoundsSpec{
 		Paging: &tools.PagingSpec{
@@ -178,10 +221,9 @@ func TestEnforceToolResultContractsRejectsTruncatedBoundsWithoutContinuation(t *
 			NextCursorField: "next_cursor",
 		},
 	}
-	rt := &Runtime{}
 	call := ToolCall{Name: "tool", ToolCallID: "tool-1"}
 
-	err := rt.enforceToolResultContracts(spec, call, &planner.ToolResult{
+	err := canonicalizeAndValidateWorkflowToolResult(spec, call, &planner.ToolResult{
 		Name:   call.Name,
 		Result: map[string]any{"ok": true},
 		Bounds: &agent.Bounds{
@@ -193,13 +235,13 @@ func TestEnforceToolResultContractsRejectsTruncatedBoundsWithoutContinuation(t *
 	require.Contains(t, err.Error(), "truncated result without next_cursor or refinement_hint")
 }
 
-func TestEnforceToolResultContractsRejectsEmptyNextCursor(t *testing.T) {
+func TestCanonicalizeWorkflowToolResultRejectsEmptyNextCursor(t *testing.T) {
 	spec := newAnyJSONSpec("tool", "svc.ts")
 	spec.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{
 		CursorField: "cursor", NextCursorField: "next_cursor",
 	}}
 	cursor := ""
-	err := (&Runtime{}).enforceToolResultContracts(spec, ToolCall{
+	err := canonicalizeAndValidateWorkflowToolResult(spec, ToolCall{
 		Name: "tool", ToolCallID: "tool-1",
 	}, &planner.ToolResult{
 		Name: "tool", Result: map[string]any{"ok": true},
@@ -213,13 +255,13 @@ func TestEnforceToolResultContractsRejectsEmptyNextCursor(t *testing.T) {
 	require.ErrorContains(t, err, "empty next_cursor")
 }
 
-func TestEnforceToolResultContractsRejectsCursorWithoutTruncation(t *testing.T) {
+func TestCanonicalizeWorkflowToolResultRejectsCursorWithoutTruncation(t *testing.T) {
 	spec := newAnyJSONSpec("tool", "svc.ts")
 	spec.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{
 		CursorField: "cursor", NextCursorField: "next_cursor",
 	}}
 	cursor := "provider"
-	err := (&Runtime{}).enforceToolResultContracts(spec, ToolCall{
+	err := canonicalizeAndValidateWorkflowToolResult(spec, ToolCall{
 		Name: "tool", ToolCallID: "tool-1",
 	}, &planner.ToolResult{
 		Name: "tool", Result: map[string]any{"ok": true},
@@ -229,12 +271,11 @@ func TestEnforceToolResultContractsRejectsCursorWithoutTruncation(t *testing.T) 
 	require.ErrorContains(t, err, "next_cursor without truncation")
 }
 
-func TestEnforceToolResultContractsRejectsNilToolResultWithoutCriticalPrefix(t *testing.T) {
-	rt := &Runtime{}
+func TestCanonicalizeWorkflowToolResultRejectsNilToolResultWithoutCriticalPrefix(t *testing.T) {
 	spec := newAnyJSONSpec("tool", "svc.ts")
 	call := ToolCall{Name: "tool", ToolCallID: "tool-1"}
 
-	err := rt.enforceToolResultContracts(spec, call, nil)
+	err := canonicalizeAndValidateWorkflowToolResult(spec, call, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "nil tool result")
 	require.NotContains(t, err.Error(), "CRITICAL:")
@@ -850,9 +891,11 @@ func TestDecodeProvidedToolResultDerivesCorrectionMetadata(t *testing.T) {
 	spec := newAnyJSONSpec("svc.tools.example", "svc.tools")
 	spec.Payload.ExampleJSON = rawjson.Message(`{"query":"example"}`)
 	call := ToolCall{
-		Name:       spec.Name,
-		ToolCallID: "tool-call-1",
-		Payload:    rawjson.Message(`{"query":""}`),
+		Name:            spec.Name,
+		ToolCallID:      "tool-call-1",
+		ModelToolCallID: "model-call-1",
+		Payload:         rawjson.Message(`{"query":"","execution_only":"derived"}`),
+		ModelPayload:    rawjson.Message(`{"query":""}`),
 	}
 	rt := &Runtime{
 		toolSpecs: map[tools.Ident]tools.ToolSpec{spec.Name: spec},
@@ -875,12 +918,13 @@ func TestDecodeProvidedToolResultDerivesCorrectionMetadata(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, result.Failure)
-	require.JSONEq(t, string(call.Payload), string(result.Failure.Recovery.PriorInput))
+	require.JSONEq(t, `{"query":""}`, string(result.Failure.Recovery.PriorInput))
 	require.JSONEq(t, string(spec.Payload.ExampleJSON), string(result.Failure.Recovery.ExampleJSON))
+	call.ModelPayload[0] = '!'
+	require.JSONEq(t, `{"query":""}`, string(result.Failure.Recovery.PriorInput))
 }
 
-func TestEnforceToolResultContractsRejectsAmbiguousErrorAndResult(t *testing.T) {
-	rt := &Runtime{}
+func TestCanonicalizeWorkflowToolResultRejectsAmbiguousErrorAndResult(t *testing.T) {
 	call := ToolCall{
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "tool-call-1",
@@ -892,7 +936,7 @@ func TestEnforceToolResultContractsRejectsAmbiguousErrorAndResult(t *testing.T) 
 		Failure:    testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "failed"),
 	}
 
-	err := rt.enforceToolResultContracts(newAnyJSONSpec(call.Name, "svc.tools"), call, tr)
+	err := canonicalizeAndValidateWorkflowToolResult(newAnyJSONSpec(call.Name, "svc.tools"), call, tr)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failure and result are both set")
 }

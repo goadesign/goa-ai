@@ -16,6 +16,23 @@ func BuildToolSpecsDataForTest(agent *AgentData) (*toolSpecsData, error) {
 	return buildToolSpecsData(agent)
 }
 
+// CollectToolNamesForTest returns each generated tool constant and injected
+// decoder name keyed by the qualified runtime tool name.
+func CollectToolNamesForTest(specs *toolSpecsData) (map[string]string, map[string]string) {
+	constNames := make(map[string]string)
+	injectDecoders := make(map[string]string)
+	if specs == nil {
+		return constNames, injectDecoders
+	}
+	for _, tool := range specs.tools {
+		constNames[tool.Name] = tool.ConstName
+		if tool.Payload != nil && tool.Payload.InjectDecodeFunc != "" {
+			injectDecoders[tool.Name] = tool.Payload.InjectDecodeFunc
+		}
+	}
+	return constNames, injectDecoders
+}
+
 // CollectTypeInfoForTest returns a map of type name to definition for all
 // types captured in the tool specs data (in declaration order).
 func CollectTypeInfoForTest(specs *toolSpecsData) map[string]string {

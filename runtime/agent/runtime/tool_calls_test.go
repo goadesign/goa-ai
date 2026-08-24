@@ -4,10 +4,15 @@ package runtime
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
+	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -72,4 +77,82 @@ func TestDispatchToolCallsPropagatesLabelsToActivityInput(t *testing.T) {
 		"aura.session.id": "sess-1",
 		"kind":            "brief",
 	}, wfCtx.lastToolCall.Input.Labels)
+}
+
+// TestExecuteToolCallsRetainsModelPayloadInWorkflow verifies that the activity
+// receives only execution JSON while the workflow uses the retained model JSON
+// for correction feedback.
+func TestExecuteToolCallsRetainsModelPayloadInWorkflow(t *testing.T) {
+	const (
+		toolName    = tools.Ident("svc.tools.search")
+		toolsetName = "svc.tools"
+	)
+	modelPayload := rawjson.Message(`{"query":"status"}`)
+	executionPayload := rawjson.Message(`{"query":"status","credential":"server-owned"}`)
+	var executedPayload rawjson.Message
+	rt := &Runtime{
+		toolsets: map[string]ToolsetRegistration{
+			toolsetName: {
+				DecodeInExecutor: true,
+				Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+					executedPayload = append(rawjson.Message(nil), call.Payload...)
+					return &planner.ToolResult{
+						Name: call.Name,
+						Failure: &planner.ToolFailure{
+							Kind:  planner.FailureInvalidCall,
+							Error: planner.NewToolError("query is invalid"),
+							Recovery: planner.RecoveryDirective{
+								Action: planner.RecoveryCorrectCall,
+							},
+						},
+					}, nil
+				}),
+			},
+		},
+		Bus:           noopHooks{},
+		logger:        telemetry.NoopLogger{},
+		metrics:       telemetry.NoopMetrics{},
+		tracer:        telemetry.NoopTracer{},
+		RunEventStore: runloginmem.New(),
+	}
+	seedTestToolSpecs(rt, newAnyJSONSpec(toolName, toolsetName))
+	wfCtx := &testWorkflowContext{
+		ctx:     context.Background(),
+		runtime: rt,
+	}
+	call := ToolCall{
+		Name:            toolName,
+		ToolCallID:      "call-1",
+		ModelToolCallID: "provider-call-1",
+		Payload:         executionPayload,
+		ModelPayload:    modelPayload,
+	}
+
+	results, _, err := rt.executeToolCalls(
+		wfCtx,
+		"execute",
+		engine.ActivityOptions{},
+		"svc.agent",
+		&run.Context{RunID: "run-1", SessionID: "session-1"},
+		nil,
+		[]ToolCall{call},
+		0,
+		nil,
+		time.Time{},
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, executionPayload, executedPayload)
+	require.NotNil(t, wfCtx.lastToolCall.Input)
+	require.Equal(t, executionPayload, wfCtx.lastToolCall.Input.Payload)
+
+	failure := results[0].ToolResult.Failure
+	require.NotNil(t, failure)
+	require.Equal(t, planner.RecoveryCorrectCall, failure.Recovery.Action)
+	require.Equal(t, modelPayload, failure.Recovery.PriorInput)
+
+	modelPayload[0] = '!'
+	executionPayload[0] = '!'
+	require.JSONEq(t, `{"query":"status","credential":"server-owned"}`, string(executedPayload))
+	require.JSONEq(t, `{"query":"status"}`, string(failure.Recovery.PriorInput))
 }

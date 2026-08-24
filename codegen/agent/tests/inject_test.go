@@ -74,6 +74,10 @@ func TestInjectLocalServiceExecutorCallsGeneratedInject(t *testing.T) {
 		"the per-branch inline meta assignment must be retired now that decode-time injection covers every branch")
 	require.NotContains(t, exec, "meta.{{ goify",
 		"template placeholder must not leak into generated output")
+	require.NotContains(t, exec, "PriorInput:",
+		"generated executors must leave model-authored correction input to the workflow")
+	require.NotContains(t, exec, "ExampleJSON:",
+		"generated executors must leave correction examples to the workflow")
 
 	// The single decode-time injection call must run before the mapPayload
 	// customization hook, so a user-supplied WithPayloadMapper still observes

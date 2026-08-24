@@ -310,7 +310,6 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 		codegen.SimpleImport("errors"),
 		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/runtime"},
 		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/planner"},
-		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
 		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/tools"},
 	)
 	// Import specs package for typed payloads and transforms.
@@ -338,6 +337,7 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 	tools := make([]execTool, 0, len(specs.tools))
 	register := false
 	needsFmt := false
+	needsRawJSON := false
 	for _, tool := range ts.Tools {
 		register = register || tool.IsMethodBacked
 	}
@@ -353,11 +353,17 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 			needsFmt = true
 			tool.ResultExample = string(t.Result.ScaffoldExampleJSON)
 			tool.HasResultExample = len(t.Result.ScaffoldExampleJSON) > 0
+			needsRawJSON = needsRawJSON || tool.HasResultExample
 		}
 		tools = append(tools, tool)
 	}
 	if needsFmt {
 		imports = append(imports, codegen.SimpleImport("fmt"))
+	}
+	if needsRawJSON {
+		imports = append(imports,
+			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
+		)
 	}
 	if register {
 		imports = append(imports, agentImport)

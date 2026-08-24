@@ -483,8 +483,9 @@ type AwaitClarification struct {
 // and returns the human answer through the tool's generated result codec.
 //
 // Contract: the tool result is an object with one required string field named
-// "answer". ToolName, ToolCallID, and Payload must remain exact so provider
-// transcript correlation survives the external-input workflow boundary.
+// "answer". The planner supplies ToolName, ModelToolCallID, and Payload from the
+// model call and leaves ToolCallID empty. The workflow assigns ToolCallID before
+// exposing the suspension.
 type AwaitToolClarification struct {
 	// ID uniquely identifies this clarification request.
 	ID string
@@ -492,8 +493,13 @@ type AwaitToolClarification struct {
 	// ToolName identifies the model-authored free-text tool.
 	ToolName tools.Ident
 
-	// ToolCallID correlates the human-provided answer with the tool call.
+	// ToolCallID is the runtime-owned execution identifier. Planners must leave
+	// it empty; the workflow assigns it before suspension.
 	ToolCallID string
+
+	// ModelToolCallID is the provider correlation identifier for the
+	// model-authored call.
+	ModelToolCallID string
 
 	// Payload is the canonical JSON payload for the model-authored call.
 	Payload rawjson.Message
@@ -504,10 +510,10 @@ type AwaitToolClarification struct {
 
 // AwaitQuestions requests structured multiple-choice answers from the user.
 //
-// Contract: AwaitQuestions represents one tool invocation whose answers arrive
-// in the next workflow continuation. When the model authored the invocation,
-// ToolName, ToolCallID, and Payload must remain exact; place multiple questions
-// in that one payload rather than merging calls.
+// Contract: AwaitQuestions represents one model-authored tool invocation whose
+// answers arrive in the next workflow continuation. The planner supplies
+// ToolName, ModelToolCallID, and Payload and leaves ToolCallID empty. Place
+// multiple questions in that one payload rather than merging calls.
 type AwaitQuestions struct {
 	// ID uniquely identifies this questions request.
 	ID string
@@ -515,8 +521,13 @@ type AwaitQuestions struct {
 	// ToolName identifies the tool awaiting user answers (for example, "chat.ask_question.ask_question").
 	ToolName tools.Ident
 
-	// ToolCallID correlates the provided result with this requested call.
+	// ToolCallID is the runtime-owned execution identifier. Planners must leave
+	// it empty; the workflow assigns it before suspension.
 	ToolCallID string
+
+	// ModelToolCallID is the provider correlation identifier for the
+	// model-authored call.
+	ModelToolCallID string
 
 	// Payload is the canonical JSON payload for the awaited tool call.
 	Payload rawjson.Message
@@ -553,7 +564,8 @@ type AwaitQuestionOption struct {
 }
 
 // AwaitExternalTools requests external tool results (provided out-of-band).
-// Model-authored items preserve their original order, names, IDs, and payloads.
+// Model-authored items preserve their original order, names, provider IDs, and
+// payloads while the workflow assigns separate execution IDs.
 type AwaitExternalTools struct {
 	// ID uniquely identifies this external-tools request.
 	ID string
@@ -567,8 +579,13 @@ type AwaitToolItem struct {
 	// Name is the tool identifier to invoke externally.
 	Name tools.Ident
 
-	// ToolCallID correlates the provided result with this requested call.
+	// ToolCallID is the runtime-owned execution identifier. Planners must leave
+	// it empty; the workflow assigns it before suspension.
 	ToolCallID string
+
+	// ModelToolCallID is the provider correlation identifier for the
+	// model-authored call.
+	ModelToolCallID string
 
 	// Payload is the canonical JSON payload for the external tool call.
 	Payload rawjson.Message

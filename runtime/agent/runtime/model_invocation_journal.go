@@ -766,20 +766,20 @@ func planResultModelToolCalls(result *planner.PlanResult) []modelFacingToolCall 
 		case planner.AwaitItemKindClarification:
 		case planner.AwaitItemKindToolClarification:
 			calls = append(calls, modelFacingToolCall{
-				id:      item.ToolClarification.ToolCallID,
+				id:      item.ToolClarification.ModelToolCallID,
 				name:    item.ToolClarification.ToolName,
 				payload: item.ToolClarification.Payload,
 			})
 		case planner.AwaitItemKindQuestions:
 			calls = append(calls, modelFacingToolCall{
-				id:      item.Questions.ToolCallID,
+				id:      item.Questions.ModelToolCallID,
 				name:    item.Questions.ToolName,
 				payload: item.Questions.Payload,
 			})
 		case planner.AwaitItemKindExternalTools:
 			for _, call := range item.ExternalTools.Items {
 				calls = append(calls, modelFacingToolCall{
-					id:      call.ToolCallID,
+					id:      call.ModelToolCallID,
 					name:    call.Name,
 					payload: call.Payload,
 				})
@@ -798,12 +798,8 @@ func runtimePlanResultModelToolCalls(result *PlanResult) []modelFacingToolCall {
 	}
 	calls := make([]modelFacingToolCall, 0, len(result.ToolCalls))
 	for _, call := range result.ToolCalls {
-		modelCallID := call.ModelToolCallID
-		if modelCallID == "" {
-			modelCallID = call.ToolCallID
-		}
 		calls = append(calls, modelFacingToolCall{
-			id:      modelCallID,
+			id:      transcriptToolCallID(call),
 			name:    call.TranscriptName(),
 			payload: call.TranscriptPayload(),
 		})
@@ -816,20 +812,20 @@ func runtimePlanResultModelToolCalls(result *PlanResult) []modelFacingToolCall {
 		case planner.AwaitItemKindClarification:
 		case planner.AwaitItemKindToolClarification:
 			calls = append(calls, modelFacingToolCall{
-				id:      item.ToolClarification.ToolCallID,
+				id:      item.ToolClarification.ModelToolCallID,
 				name:    item.ToolClarification.ToolName,
 				payload: item.ToolClarification.Payload,
 			})
 		case planner.AwaitItemKindQuestions:
 			calls = append(calls, modelFacingToolCall{
-				id:      item.Questions.ToolCallID,
+				id:      item.Questions.ModelToolCallID,
 				name:    item.Questions.ToolName,
 				payload: item.Questions.Payload,
 			})
 		case planner.AwaitItemKindExternalTools:
 			for _, call := range item.ExternalTools.Items {
 				calls = append(calls, modelFacingToolCall{
-					id:      call.ToolCallID,
+					id:      call.ModelToolCallID,
 					name:    call.Name,
 					payload: call.Payload,
 				})
@@ -837,6 +833,16 @@ func runtimePlanResultModelToolCalls(result *PlanResult) []modelFacingToolCall {
 		}
 	}
 	return calls
+}
+
+// transcriptToolCallID returns the provider correlation ID used by tool_use
+// and tool_result parts. Runtime-authored calls have no provider identity, so
+// their execution ID also identifies the synthetic transcript pair.
+func transcriptToolCallID(call ToolCall) string {
+	if call.ModelToolCallID != "" {
+		return call.ModelToolCallID
+	}
+	return call.ToolCallID
 }
 
 // modelInvocationMatches reports whether every finalized call preserves one

@@ -2564,18 +2564,18 @@ func TestPlanResumeActivityRejectsEmptyRawJSONPayloads(t *testing.T) {
 				},
 				Await: planner.NewAwait(
 					planner.AwaitQuestionsItem(&planner.AwaitQuestions{
-						ID:         "await-q",
-						ToolName:   "chat.ask_question.ask_question",
-						ToolCallID: "call-q",
-						Payload:    rawjson.Message([]byte{}),
+						ID:              "await-q",
+						ToolName:        "chat.ask_question.ask_question",
+						ModelToolCallID: "call-q",
+						Payload:         rawjson.Message([]byte{}),
 					}),
 					planner.AwaitExternalToolsItem(&planner.AwaitExternalTools{
 						ID: "await-ext",
 						Items: []planner.AwaitToolItem{
 							{
-								Name:       "external.one",
-								ToolCallID: "call-ext",
-								Payload:    rawjson.Message([]byte{}),
+								Name:            "external.one",
+								ModelToolCallID: "call-ext",
+								Payload:         rawjson.Message([]byte{}),
 							},
 						},
 					}),

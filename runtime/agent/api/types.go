@@ -293,7 +293,9 @@ type (
 		// Confirmation is set for a tool authorization decision.
 		Confirmation *PendingConfirmation
 
-		// Await is set for planner-authored clarification, questions, or external tools.
+		// Await is set for planner-authored clarification, questions, or external
+		// tools. Tool-bound awaits carry the runtime ToolCallID used by callers
+		// and the provider ModelToolCallID retained for transcript reconstruction.
 		Await *planner.AwaitItem
 	}
 
@@ -312,7 +314,7 @@ type (
 		// ToolName is the exact tool awaiting authorization.
 		ToolName tools.Ident
 
-		// ToolCallID is the model-authored correlation identifier.
+		// ToolCallID is the runtime-owned execution identifier.
 		ToolCallID string
 
 		// Payload is the exact canonical tool input awaiting authorization.
@@ -648,7 +650,8 @@ type (
 	// durable runtime records.
 	RecordActivityInput = runlog.ActivityInput
 
-	// ToolInput is the payload passed to tool executors. Payload is JSON-encoded.
+	// ToolInput carries the execution payload for one tool call from workflow
+	// code to its activity. The workflow retains model-authored transcript data.
 	ToolInput struct {
 		// RunID identifies the run that owns this tool call.
 		RunID string
@@ -665,7 +668,7 @@ type (
 		// ToolCallID uniquely identifies the tool invocation for correlation across events.
 		ToolCallID string
 
-		// Payload is the canonical JSON payload for the tool call.
+		// Payload is the execution-enriched JSON sent to the tool.
 		Payload rawjson.Message
 
 		// SessionID is the logical session identifier (for example, a chat conversation).
@@ -842,7 +845,9 @@ const (
 	PendingInputKindToolResults PendingInputKind = "tool_results"
 
 	// RunSuspensionVersion is the checkpoint schema emitted by this runtime.
-	RunSuspensionVersion = "goa-ai.run-suspension.v3"
+	// Version 4 stores separate runtime and provider identities for every
+	// model-authored await call.
+	RunSuspensionVersion = "goa-ai.run-suspension.v4"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.

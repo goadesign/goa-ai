@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -144,6 +146,137 @@ func TestCommitSelectedModelResponseBuildsPlannerAuthoredModelIdentity(t *testin
 	}}, base.Messages[0].Parts)
 }
 
+func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *testing.T) {
+	const (
+		agentID            = agent.Ident("service.agent")
+		runID              = "run-identity"
+		sessionID          = "session-identity"
+		turnID             = "turn-identity"
+		providerToolCallID = "provider-call-1"
+	)
+	tool := newAnyJSONSpec("service.lookup", "service")
+	providerCall := model.ToolCall{
+		ID:      providerToolCallID,
+		Name:    tool.Name,
+		Payload: rawjson.Message(`{"query":"status"}`),
+	}
+	var resumeInput *PlanActivityInput
+	pl := &stubPlanner{
+		start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+			client, ok := input.Agent.ModelClient("test")
+			require.True(t, ok)
+			response, err := client.Complete(ctx, &model.Request{
+				Model: "test",
+				Tools: input.Agent.AdvertisedToolDefinitions(),
+			})
+			require.NoError(t, err)
+			require.Len(t, response.ToolCalls(), 1)
+			request, err := planner.ToolRequestFromModelCall(response.ToolCalls()[0])
+			require.NoError(t, err)
+			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{request}}, nil
+		},
+		resume: func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			require.NoError(t, transcript.ValidatePlannerTranscript(input.Messages))
+			return finalPlannerResult("done"), nil
+		},
+	}
+	rt := newTestRuntimeWithPlanner(agentID, pl)
+	recorder := &recordingHooks{}
+	rt.Bus = recorder
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "service",
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Result:     map[string]any{"ok": true},
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{tool},
+	}))
+	rt.agentToolSpecs = make(map[agent.Ident][]tools.ToolSpec)
+	rt.agentToolSpecs[agentID] = []tools.ToolSpec{tool}
+	rt.models["test"] = mustTestModelClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			return testModelResponse(nil, providerCall), nil
+		},
+	})
+	reg := AgentRegistration{
+		ID:                  agentID,
+		Planner:             pl,
+		PlanActivityName:    "plan",
+		ResumeActivityName:  "resume",
+		ExecuteToolActivity: "execute",
+		Policy:              RunPolicy{MaxToolCalls: 2},
+	}
+	rt.agents[agentID] = reg
+	_, err := rt.CreateSession(t.Context(), sessionID)
+	require.NoError(t, err)
+
+	var activityToolCallID string
+	wfCtx := &routeWorkflowContext{
+		ctx:         t.Context(),
+		runID:       runID,
+		hookRuntime: rt,
+		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+			"plan": rt.PlanStartActivity,
+			"resume": func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+				resumeInput = input
+				return rt.PlanResumeActivity(ctx, input)
+			},
+		},
+		toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
+			"execute": func(ctx context.Context, input *ToolInput) (*ToolOutput, error) {
+				activityToolCallID = input.ToolCallID
+				return rt.ExecuteToolActivity(ctx, input)
+			},
+		},
+	}
+	out, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
+		AgentID:   agentID,
+		RunID:     runID,
+		SessionID: sessionID,
+		TurnID:    turnID,
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "Look up status."}},
+		}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "done", agentMessageText(out.Final))
+
+	executionToolCallID := generateDeterministicToolCallID(runID, turnID, 1, tool.Name, 0)
+	require.NotEqual(t, providerToolCallID, executionToolCallID)
+	require.Equal(t, executionToolCallID, activityToolCallID)
+	require.NotNil(t, resumeInput)
+	require.Len(t, resumeInput.ToolOutputs, 1)
+	require.Equal(t, executionToolCallID, resumeInput.ToolOutputs[0].ToolCallID)
+	require.NoError(t, transcript.ValidatePlannerTranscript(resumeInput.Messages))
+
+	require.Len(t, resumeInput.Messages, 3)
+	toolUse, ok := resumeInput.Messages[1].Parts[0].(model.ToolUsePart)
+	require.True(t, ok)
+	toolResult, ok := resumeInput.Messages[2].Parts[0].(model.ToolResultPart)
+	require.True(t, ok)
+	require.Equal(t, providerToolCallID, toolUse.ID)
+	require.Equal(t, providerToolCallID, toolResult.ToolUseID)
+
+	var scheduled *hooks.ToolCallScheduledEvent
+	var received *hooks.ToolResultReceivedEvent
+	for _, event := range recorder.events {
+		switch event := event.(type) {
+		case *hooks.ToolCallScheduledEvent:
+			scheduled = event
+		case *hooks.ToolResultReceivedEvent:
+			received = event
+		}
+	}
+	require.NotNil(t, scheduled)
+	require.NotNil(t, received)
+	require.Equal(t, executionToolCallID, scheduled.ToolCallID)
+	require.Equal(t, executionToolCallID, received.ToolCallID)
+}
+
 func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 	rt := New()
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
@@ -168,6 +301,7 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 	part, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
 	require.True(t, ok)
 	require.True(t, part.IsError)
+	require.Equal(t, call.ToolCallID, part.ToolUseID)
 	require.Equal(t, "access denied: missing controlleddevices.write privilege", part.Content)
 }
 
@@ -219,8 +353,9 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 	})
 	agentID := agent.Ident("agent-1")
 	call := ToolCall{
-		Name:       tools.Ident("svc.commands.adjust_setpoint"),
-		ToolCallID: "tc-1",
+		Name:            tools.Ident("svc.commands.adjust_setpoint"),
+		ToolCallID:      "runtime-call-1",
+		ModelToolCallID: "provider-call-1",
 	}
 
 	cases := []struct {
@@ -246,6 +381,14 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 			},
 		},
 		{
+			name: "correction failure",
+			tr: &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Failure:    testToolFailure(planner.FailureInvalidCall, planner.RecoveryCorrectCall, "invalid query"),
+			},
+		},
+		{
 			name: "omitted",
 			tr: &planner.ToolResult{
 				Name:       call.Name,
@@ -266,6 +409,7 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 
 			livePart, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
 			require.True(t, ok)
+			require.Equal(t, call.ModelToolCallID, livePart.ToolUseID)
 
 			resultJSON := ""
 			if tc.tr.Result != nil {

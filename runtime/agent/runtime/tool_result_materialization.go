@@ -28,28 +28,58 @@ import (
 	"goa.design/goa-ai/runtime/toolserverdata"
 )
 
-// materializeToolResult runs the registered typed result materializer, enforces
-// the tool contract, and returns canonical JSON for the final runtime-owned
-// tool result payload.
+// materializeToolResult prepares one result inside the workflow, replaces any
+// executor-authored correction evidence with data from the retained model call
+// and registered specification, and returns canonical result JSON.
 func (r *Runtime) materializeToolResult(ctx context.Context, call ToolCall, result *planner.ToolResult) (rawjson.Message, error) {
 	spec, ok := r.toolSpec(call.Name)
 	if !ok {
 		return nil, fmt.Errorf("tool %q is not registered", call.Name)
 	}
+	resultJSON, err := r.materializeToolResultData(ctx, spec, call, result)
+	if err != nil {
+		return nil, err
+	}
+	if err := canonicalizeAndValidateWorkflowToolResult(spec, call, result); err != nil {
+		return nil, err
+	}
+	return resultJSON, nil
+}
+
+// materializeActivityToolResult prepares one activity result without creating
+// model-facing correction evidence. The workflow still owns the complete call
+// and adds that evidence after the activity returns.
+func (r *Runtime) materializeActivityToolResult(ctx context.Context, call ToolCall, result *planner.ToolResult) (rawjson.Message, error) {
+	spec, ok := r.toolSpec(call.Name)
+	if !ok {
+		return nil, fmt.Errorf("tool %q is not registered", call.Name)
+	}
+	resultJSON, err := r.materializeToolResultData(ctx, spec, call, result)
+	if err != nil {
+		return nil, err
+	}
+	return resultJSON, nil
+}
+
+// materializeToolResultData takes ownership of executor failures before
+// validating them, then applies toolset-owned result conversion and server-data
+// validation. Contract-invalid successes become malformed-result failures.
+func (r *Runtime) materializeToolResultData(
+	ctx context.Context,
+	spec tools.ToolSpec,
+	call ToolCall,
+	result *planner.ToolResult,
+) (rawjson.Message, error) {
 	if result == nil {
 		return nil, fmt.Errorf("nil tool result for %q (%s)", call.Name, call.ToolCallID)
 	}
 	if result.Name == "" {
 		result.Name = call.Name
 	}
+	if err := sanitizeAndValidateExecutorToolResult(spec, call, result); err != nil {
+		return nil, err
+	}
 	if result.Failure != nil {
-		if len(result.ServerData) > 0 {
-			setMalformedToolResult(result, call, errors.New("failed tool result contains server data"))
-			return nil, nil
-		}
-		if err := r.enforceToolResultContracts(spec, call, result); err != nil {
-			return nil, err
-		}
 		return nil, nil
 	}
 	if result.Result == nil && spec.Result.Codec.ToJSON != nil {
@@ -66,7 +96,7 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call ToolCall, resu
 		return nil, nil
 	}
 	result.ServerData = serverData
-	if err := r.enforceToolResultContracts(spec, call, result); err != nil {
+	if err := validateToolResultContract(spec, call, result); err != nil {
 		setMalformedToolResult(result, call, err)
 		return nil, nil
 	}
@@ -95,6 +125,32 @@ func (r *Runtime) materializeToolExecutionResult(
 	exec.ToolResult.Name = call.Name
 	exec.ToolResult.ToolCallID = call.ToolCallID
 	resultJSON, err := r.materializeToolResult(ctx, call, exec.ToolResult)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if err := validateToolClarificationContract(call, exec.ToolResult, exec.Clarification); err != nil {
+		return nil, nil, nil, err
+	}
+	return exec.ToolResult, resultJSON, exec.Clarification, nil
+}
+
+// materializeActivityToolExecutionResult prepares the result returned by an
+// activity executor while leaving correct-call transcript evidence for the
+// workflow that retained the original model call.
+func (r *Runtime) materializeActivityToolExecutionResult(
+	ctx context.Context,
+	call ToolCall,
+	exec *ToolExecutionResult,
+) (*planner.ToolResult, rawjson.Message, *ToolClarification, error) {
+	if exec == nil {
+		return nil, nil, nil, fmt.Errorf("tool %q returned nil execution result", call.Name)
+	}
+	if exec.ToolResult == nil {
+		return nil, nil, nil, fmt.Errorf("tool %q returned nil tool result", call.Name)
+	}
+	exec.ToolResult.Name = call.Name
+	exec.ToolResult.ToolCallID = call.ToolCallID
+	resultJSON, err := r.materializeActivityToolResult(ctx, call, exec.ToolResult)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -178,7 +234,7 @@ func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolS
 		Result:     decoded,
 		ServerData: nil,
 		Bounds:     bounds,
-		Failure:    canonicalProvidedToolFailure(spec, call, item.Failure),
+		Failure:    canonicalProvidedToolFailure(item.Failure),
 		ToolCallID: call.ToolCallID,
 	}
 	if err != nil {
@@ -213,9 +269,11 @@ func setMalformedToolResult(result *planner.ToolResult, call ToolCall, cause err
 	}
 }
 
-// canonicalProvidedToolFailure combines external failure facts with call-owned
-// correction metadata before the canonical result contract is validated.
-func canonicalProvidedToolFailure(spec tools.ToolSpec, call ToolCall, in *api.ProvidedToolFailure) *planner.ToolFailure {
+// canonicalProvidedToolFailure converts external failure facts into the
+// planner's failure type. Runtime-owned correction context is attached by
+// canonicalizeAndValidateWorkflowToolResult with the registered call and tool
+// specification.
+func canonicalProvidedToolFailure(in *api.ProvidedToolFailure) *planner.ToolFailure {
 	if in == nil {
 		return nil
 	}
@@ -228,10 +286,6 @@ func canonicalProvidedToolFailure(spec tools.ToolSpec, call ToolCall, in *api.Pr
 			Action: in.Action,
 			Issues: tools.CloneFieldIssues(in.Issues),
 		},
-	}
-	if in.Action == planner.RecoveryCorrectCall {
-		failure.Recovery.PriorInput = append(rawjson.Message(nil), call.Payload...)
-		failure.Recovery.ExampleJSON = append(rawjson.Message(nil), spec.Payload.ExampleJSON...)
 	}
 	return failure
 }

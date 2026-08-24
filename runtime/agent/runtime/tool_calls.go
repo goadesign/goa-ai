@@ -246,7 +246,27 @@ func (e *toolBatchExec) synthesizeCanceledExecution(ctx context.Context, call To
 	return result, nil
 }
 
-func (r *Runtime) enforceToolResultContracts(spec tools.ToolSpec, call ToolCall, tr *planner.ToolResult) error {
+// canonicalizeAndValidateWorkflowToolResult takes ownership of a failed result
+// before the workflow records or exposes it. For correct-call recovery, it
+// replaces activity or executor evidence with the retained model input and the
+// registered example, then validates the complete model-facing result. Only
+// calls with a model correlation ID may expose correction evidence because
+// runtime-authored calls can contain private execution fields in Payload.
+func canonicalizeAndValidateWorkflowToolResult(spec tools.ToolSpec, call ToolCall, tr *planner.ToolResult) error {
+	if tr != nil && tr.Failure != nil {
+		tr.Failure = planner.CloneToolFailure(tr.Failure)
+	}
+	if tr != nil && tr.Failure != nil && tr.Failure.Recovery.Action == planner.RecoveryCorrectCall {
+		if call.ModelToolCallID == "" {
+			return fmt.Errorf(
+				"tool %q result is invalid: correct-call recovery requires a model-authored call (tool_call_id=%s)",
+				call.Name,
+				call.ToolCallID,
+			)
+		}
+		tr.Failure.Recovery.PriorInput = append(rawjson.Message(nil), call.TranscriptPayload()...)
+		tr.Failure.Recovery.ExampleJSON = append(rawjson.Message(nil), spec.Payload.ExampleJSON...)
+	}
 	return validateToolResultContract(spec, call, tr)
 }
 
@@ -422,8 +442,12 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			if spec.IsAgentTool {
 				messages, nestedRunCtx, err := e.r.buildAgentChildRequest(ctx, ts.AgentTool, &call, e.messages, e.runCtx)
 				if err != nil {
-					tr, err := e.r.agentToolRequestFailureResult(call, err)
+					tr, err := agentToolRequestFailureResult(call, err)
 					if err != nil {
+						executionErr = errors.Join(executionErr, err)
+						continue
+					}
+					if err := canonicalizeAndValidateWorkflowToolResult(spec, call, tr); err != nil {
 						executionErr = errors.Join(executionErr, err)
 						continue
 					}
@@ -535,7 +559,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			ToolsetName:      spec.Toolset,
 			ToolName:         call.Name,
 			ToolCallID:       call.ToolCallID,
-			Payload:          call.Payload,
+			Payload:          append(rawjson.Message(nil), call.Payload...),
 			SessionID:        call.SessionID,
 			Labels:           cloneLabels(call.Labels),
 			TurnID:           call.TurnID,
@@ -680,7 +704,7 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 		Telemetry:  out.Telemetry,
 	}
 	toolRes.Failure = out.Failure
-	if err := e.r.enforceToolResultContracts(spec, info.call, toolRes); err != nil {
+	if err := canonicalizeAndValidateWorkflowToolResult(spec, info.call, toolRes); err != nil {
 		return nil, err
 	}
 	if err := validateToolClarificationContract(info.call, toolRes, out.Clarification); err != nil {

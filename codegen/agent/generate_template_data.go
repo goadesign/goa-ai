@@ -79,10 +79,9 @@ type (
 	}
 
 	mcpExecutorToolData struct {
-		LocalName          string
-		ConstName          string
-		HasResult          bool
-		ResultGenericCodec string
+		LocalName string
+		ConstName string
+		HasResult bool
 	}
 
 	// transforms metadata used by tool_transforms.go.tpl

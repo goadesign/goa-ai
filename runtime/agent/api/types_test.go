@@ -14,6 +14,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -49,6 +50,48 @@ type (
 		FinalizerGrace                time.Duration
 	}
 )
+
+// TestToolCallTranscriptPayload verifies transcript projection independently
+// from correction legality: enriched model calls use ModelPayload, while calls
+// without enrichment use Payload.
+func TestToolCallTranscriptPayload(t *testing.T) {
+	tests := []struct {
+		name string
+		call ToolCall
+		want rawjson.Message
+	}{
+		{
+			name: "enriched model call",
+			call: ToolCall{
+				ModelToolCallID: "model-call-1",
+				Payload:         rawjson.Message(`{"query":"status","execution_only":"derived"}`),
+				ModelPayload:    rawjson.Message(`{"query":"status"}`),
+			},
+			want: rawjson.Message(`{"query":"status"}`),
+		},
+		{
+			name: "model call without enrichment",
+			call: ToolCall{
+				ModelToolCallID: "model-call-1",
+				Payload:         rawjson.Message(`{"query":"status"}`),
+			},
+			want: rawjson.Message(`{"query":"status"}`),
+		},
+		{
+			name: "model-less transcript projection",
+			call: ToolCall{
+				Payload: rawjson.Message(`{"query":"status"}`),
+			},
+			want: rawjson.Message(`{"query":"status"}`),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, test.call.TranscriptPayload())
+		})
+	}
+}
 
 func TestPolicyOverridesRequireHardWorkerCutover(t *testing.T) {
 	for _, field := range []string{"CompletionTool", "LimitTerminalPlans"} {

@@ -296,9 +296,9 @@ func TestRuntimePlannerEventsMatchesAwaitCallTransparently(t *testing.T) {
 
 	_, err := e.exportModelInvocation(&planner.PlanResult{
 		Await: planner.NewAwait(planner.AwaitQuestionsItem(&planner.AwaitQuestions{
-			ToolCallID: "question-1",
-			ToolName:   "chat.ask_question",
-			Payload:    []byte(`{"title":"Choose"}`),
+			ModelToolCallID: "question-1",
+			ToolName:        "chat.ask_question",
+			Payload:         []byte(`{"title":"Choose"}`),
 		})),
 	})
 
@@ -316,10 +316,10 @@ func TestRuntimePlannerEventsMatchesToolClarificationCallTransparently(t *testin
 
 	transcript, err := e.exportModelInvocation(&planner.PlanResult{
 		Await: planner.NewAwait(planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
-			ToolCallID: "clarification-1",
-			ToolName:   "chat.ask_clarification",
-			Payload:    []byte(`{"question":"Which device?"}`),
-			Question:   "Which device?",
+			ModelToolCallID: "clarification-1",
+			ToolName:        "chat.ask_clarification",
+			Payload:         []byte(`{"question":"Which device?"}`),
+			Question:        "Which device?",
 		})),
 	})
 

@@ -305,9 +305,9 @@ func TestCompletionToolCannotBeDelegatedToAwaitWork(t *testing.T) {
 		Await: planner.NewAwait(planner.AwaitExternalToolsItem(&planner.AwaitExternalTools{
 			ID: "external-completion",
 			Items: []planner.AwaitToolItem{{
-				Name:       completion.Name,
-				ToolCallID: "completion-call",
-				Payload:    rawjson.Message(`{}`),
+				Name:            completion.Name,
+				ModelToolCallID: "completion-call",
+				Payload:         rawjson.Message(`{}`),
 			}},
 		})),
 	}, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3})

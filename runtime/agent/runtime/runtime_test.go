@@ -515,11 +515,11 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 		}},
 		&PlanResult{Await: planner.NewAwait(
 			planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
-				ID:         "clarification-1",
-				ToolName:   tool.Name,
-				ToolCallID: "call-1",
-				Payload:    rawjson.Message(`{"question":"Which facility?"}`),
-				Question:   "Which facility?",
+				ID:              "clarification-1",
+				ToolName:        tool.Name,
+				ModelToolCallID: "call-1",
+				Payload:         rawjson.Message(`{"question":"Which facility?"}`),
+				Question:        "Which facility?",
 			}),
 		)},
 		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},

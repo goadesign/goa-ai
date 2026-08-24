@@ -14,6 +14,66 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
+func TestBuildToolSpecsDataUsesScopedConstNameForInjectDecoder(t *testing.T) {
+	eval.Reset()
+	goaexpr.Root = new(goaexpr.RootExpr)
+	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	require.NoError(t, eval.Register(goaexpr.Root))
+	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	require.NoError(t, eval.Register(agentsExpr.Root))
+
+	design := func() {
+		goadsl.API("alpha", func() {})
+		goadsl.Service("alpha", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("lookup1", "First colliding tool", func() {
+						Args(func() {
+							goadsl.Attribute("query", goadsl.String, "Search query.")
+							goadsl.Required("query")
+						})
+					})
+					Tool("lookup_1", "Injected colliding tool", func() {
+						Args(func() {
+							goadsl.Attribute("session_id", goadsl.String, "Server-injected session identifier.")
+							goadsl.Attribute("query", goadsl.String, "Search query.")
+							goadsl.Required("session_id", "query")
+						})
+						Inject("session_id")
+					})
+				})
+			})
+		})
+	}
+	require.True(t, eval.Execute(design, nil), eval.Context.Error())
+	require.NoError(t, eval.RunDSL())
+
+	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
+	require.NoError(t, err)
+	require.Len(t, data.Services, 1)
+	require.Len(t, data.Services[0].Agents, 1)
+	agent := data.Services[0].Agents[0]
+	specs, err := codegen.BuildToolSpecsDataForTest(agent)
+	require.NoError(t, err)
+
+	var sourceName string
+	for _, tool := range agent.Tools {
+		if tool.Name == "lookup_1" {
+			sourceName = tool.ConstName
+			break
+		}
+	}
+	constNames, injectDecoders := codegen.CollectToolNamesForTest(specs)
+	require.NotEmpty(t, sourceName)
+	require.NotEqual(t, sourceName, constNames["helpers.lookup_1"])
+	require.Equal(
+		t,
+		"Decode"+constNames["helpers.lookup_1"],
+		injectDecoders["helpers.lookup_1"],
+	)
+}
+
 // This test lives in package codegen to access unexported helpers and
 // validates deterministic type references in tool_specs type definitions.
 func TestBuildToolSpecsData_DeterministicRefs(t *testing.T) {

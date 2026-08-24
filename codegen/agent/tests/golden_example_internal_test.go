@@ -27,7 +27,10 @@ func TestExampleInternal_MethodBacked(t *testing.T) {
 	// Executor stub for toolset profiles
 	exec := fileContent(t, files, "internal/agents/scribe/toolsets/profiles/execute.go")
 	require.NotContains(t, exec, `rawjson.Message("")`)
+	require.NotContains(t, exec, `"goa.design/goa-ai/runtime/agent/rawjson"`)
 	require.Contains(t, exec, "generated executor requires an application implementation")
+	require.NotContains(t, exec, "PriorInput:")
+	require.NotContains(t, exec, "ExampleJSON:")
 	assertGoldenGo(t, "example_internal_method", "executor.go.golden", exec)
 }
 
@@ -53,6 +56,7 @@ func TestExampleInternal_NoResultToolReturnsEmptySuccess(t *testing.T) {
 	require.Contains(t, exec, "return runtime.Executed(&planner.ToolResult{Name: call.Name}), nil")
 	require.NotContains(t, exec, "generated executor requires an application implementation")
 	require.NotContains(t, exec, `"fmt"`)
+	require.NotContains(t, exec, `"goa.design/goa-ai/runtime/agent/rawjson"`)
 }
 
 func TestExampleInternal_InjectedToolUsesComposedDecoder(t *testing.T) {
@@ -70,9 +74,12 @@ func TestExampleInternal_InjectedToolUsesComposedDecoder(t *testing.T) {
 func TestExampleInternal_BoundedToolIsNotSelectedWithoutExecutorBounds(t *testing.T) {
 	files := buildAndGenerateExample(t, testscenarios.ServiceToolsetBindSelfBoundedResult())
 	plan := fileContent(t, files, "internal/agents/scribe/planner/planner.go")
+	exec := fileContent(t, files, "internal/agents/scribe/toolsets/lookup/execute.go")
 
 	require.Contains(t, plan, "Hello from example planner.")
 	require.NotContains(t, plan, "build generated search call")
+	require.Contains(t, exec, `"goa.design/goa-ai/runtime/agent/rawjson"`)
+	require.Contains(t, exec, "rawjson.Message(")
 }
 
 func TestExampleInternal_CompletionWithoutExampleIsNotExecuted(t *testing.T) {

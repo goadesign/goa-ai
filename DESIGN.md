@@ -274,10 +274,18 @@ task queue during rollout.
 This order makes recovery explicit rather than presence-based. `ToolFailure`
 classifies why execution failed independently from its `RecoveryDirective`:
 `correct_call` keeps the failed tool available and attaches its generated
-validation issues, rejected input, and example to the next planner activity.
-The planner may retry fewer, equal, or more calls, combine work, use another
-advertised capability, await input, or answer. Provider adapters continue to
-project historical canonical tool names independently of the current catalog.
+validation issues, rejected model-authored input, and example to the next
+planner activity. Executors and tool activities report only the classification,
+error, recovery action, and generated field issues. Immediately before the
+failure becomes durable or model-visible, the workflow requires a provider
+tool-call ID and replaces any executor-supplied correction input and example
+with clones from the retained model call and registered tool specification.
+Runtime-authored calls, including automatic pagination continuations, have no
+provider tool-call ID and therefore cannot request `correct_call`; the workflow
+returns a contract error without rendering their execution payload. The planner
+may retry fewer, equal, or more calls, combine work, use another advertised
+capability, await input, or answer. Provider adapters continue to project
+historical canonical tool names independently of the current catalog.
 `replan` removes the failed tool from the recovery turn while permitting another
 advertised action, input request, or answer. A direct model call to an excluded
 tool is rejected as invalid planner output before any sibling call executes.
@@ -364,8 +372,13 @@ contract release.
 
 `ValidateContinuation` checks the checkpoint and registered tool contracts; it
 does not make an incompatible persisted value compatible. Suspension schema
-`goa-ai.run-suspension.v3` is the only supported shape. Older checkpoints fail
-validation rather than being inferred or migrated by the runtime.
+`goa-ai.run-suspension.v4` is the only supported shape. Every model-authored
+await item preserves the runtime `ToolCallID` separately from the provider
+`ModelToolCallID`, so execution records and provider transcript reconstruction
+never substitute one identity for the other. Suspensions written by older
+runtimes, including v3, cannot be resumed after this coordinated release. The
+runtime has no dual read, fallback, or migration mode; incompatible checkpoints
+fail validation.
 
 Coordinated generated-code deployment does not own ordinary service
 availability. Services called by activities must keep a ready endpoint

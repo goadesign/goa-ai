@@ -513,7 +513,7 @@ func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *runtime.ToolCall
 		ToolCallID: toolCallID,
 	}
 	if msg.Error != nil {
-		out.Failure = toolFailureFromRegistryError(msg.Error, spec, call)
+		out.Failure = toolFailureFromRegistryError(msg.Error)
 		return out
 	}
 	out.Bounds = agent.CloneBounds(msg.Bounds)
@@ -568,18 +568,10 @@ func malformedResultFailure(err error) *planner.ToolFailure {
 	}
 }
 
-// toolFailureFromRegistryError restores the provider's canonical
-// classification and adds call-owned correction data.
-func toolFailureFromRegistryError(msg *toolregistry.ToolError, spec *tools.ToolSpec, call *runtime.ToolCall) *planner.ToolFailure {
-	failure := planner.CloneToolFailure(msg.Failure)
-	if failure.Recovery.Action == planner.RecoveryCorrectCall {
-		if spec == nil || call == nil {
-			panic("toolregistry executor: correct_call recovery requires the registered spec and rejected call")
-		}
-		failure.Recovery.PriorInput = append(rawjson.Message(nil), call.Payload...)
-		failure.Recovery.ExampleJSON = append(rawjson.Message(nil), spec.Payload.ExampleJSON...)
-	}
-	return failure
+// toolFailureFromRegistryError restores the provider's classification and
+// field issues. The workflow owns model-facing correction evidence.
+func toolFailureFromRegistryError(msg *toolregistry.ToolError) *planner.ToolFailure {
+	return planner.CloneToolFailure(msg.Failure)
 }
 
 // internalFailureResult constructs the terminal result for executor invariant
