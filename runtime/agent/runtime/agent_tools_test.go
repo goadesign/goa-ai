@@ -385,11 +385,12 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 	})
 
 	call := ToolCall{
-		ToolCallID: "call-1",
-		RunID:      "r1",
-		SessionID:  "s1",
-		Name:       callName,
-		Payload:    rawjson.Message([]byte(`{"sources_ref":"src_1","server_data":"on"}`)),
+		ToolCallID:      "call-1",
+		ModelToolCallID: "call-1",
+		RunID:           "r1",
+		SessionID:       "s1",
+		Name:            callName,
+		Payload:         rawjson.Message([]byte(`{"sources_ref":"src_1","server_data":"on"}`)),
 	}
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
@@ -401,7 +402,8 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 	require.NotNil(t, tr.ToolResult.Failure)
 	require.Equal(t, planner.FailureInvalidCall, tr.ToolResult.Failure.Kind)
 	require.Equal(t, planner.RecoveryCorrectCall, tr.ToolResult.Failure.Recovery.Action)
-	require.JSONEq(t, string(call.Payload), string(tr.ToolResult.Failure.Recovery.PriorInput))
+	require.Empty(t, tr.ToolResult.Failure.Recovery.PriorInput)
+	require.Empty(t, tr.ToolResult.Failure.Recovery.ExampleJSON)
 	require.Empty(t, pl.msgs)
 	require.Empty(t, wf.childRequests)
 }

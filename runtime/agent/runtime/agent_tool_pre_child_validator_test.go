@@ -57,6 +57,14 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 		ctx:     context.Background(),
 		runtime: rt,
 	}
+	modelPayload := rawjson.Message([]byte(`{"sources":["x"]}`))
+	call := ToolCall{
+		ToolCallID:      "call-1",
+		ModelToolCallID: "model-call-1",
+		Name:            "svc.tools.do",
+		Payload:         rawjson.Message([]byte(`{"sources":["x"],"execution_only":"derived"}`)),
+		ModelPayload:    modelPayload,
+	}
 	results, _, err := rt.executeToolCalls(
 		wfCtx,
 		"execute",
@@ -68,13 +76,7 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 			TurnID:    "turn-1",
 		},
 		nil,
-		[]ToolCall{
-			{
-				ToolCallID: "call-1",
-				Name:       "svc.tools.do",
-				Payload:    rawjson.Message([]byte(`{"sources":["x"]}`)),
-			},
-		},
+		[]ToolCall{call},
 		0,
 		nil,
 		time.Time{},
@@ -86,4 +88,7 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 	require.Equal(t, planner.FailureInvalidCall, results[0].ToolResult.Failure.Kind)
 	require.Equal(t, planner.RecoveryCorrectCall, results[0].ToolResult.Failure.Recovery.Action)
 	require.Equal(t, "sources", results[0].ToolResult.Failure.Recovery.Issues[0].Field)
+	require.JSONEq(t, `{"sources":["x"]}`, string(results[0].ToolResult.Failure.Recovery.PriorInput))
+	modelPayload[0] = '!'
+	require.JSONEq(t, `{"sources":["x"]}`, string(results[0].ToolResult.Failure.Recovery.PriorInput))
 }

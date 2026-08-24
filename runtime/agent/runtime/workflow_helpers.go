@@ -151,7 +151,7 @@ func (r *Runtime) appendUserToolRecordResults(
 			return err
 		}
 		parts = append(parts, model.ToolResultPart{
-			ToolUseID: tr.ToolCallID,
+			ToolUseID: transcriptToolCallID(call),
 			Content:   content,
 			IsError:   tr.Failure != nil,
 		})

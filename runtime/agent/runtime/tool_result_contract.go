@@ -11,6 +11,22 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+// sanitizeAndValidateExecutorToolResult takes ownership of an executor-authored
+// failure before checking it. Executors own the failure classification, error,
+// recovery action, and field issues; correction input and examples are
+// workflow-owned, so this boundary discards those bytes from its private clone.
+// Successful results continue through materialization before their complete
+// result and bounds contract is checked.
+func sanitizeAndValidateExecutorToolResult(spec tools.ToolSpec, call ToolCall, tr *planner.ToolResult) error {
+	if tr.Failure == nil {
+		return nil
+	}
+	tr.Failure = planner.CloneToolFailure(tr.Failure)
+	tr.Failure.Recovery.PriorInput = nil
+	tr.Failure.Recovery.ExampleJSON = nil
+	return validateToolResultContract(spec, call, tr)
+}
+
 // validateToolResultContract enforces runtime-owned invariants for one tool
 // result across all ingress paths (activity, inline, child, and provided).
 //
@@ -37,16 +53,6 @@ func validateToolResultContract(spec tools.ToolSpec, call ToolCall, tr *planner.
 		}
 		if err := planner.ValidateToolFailure(tr.Failure); err != nil {
 			return fmt.Errorf("tool %q result is invalid: %w (tool_call_id=%s)", call.Name, err, call.ToolCallID)
-		}
-		if tr.Failure.Recovery.Action == planner.RecoveryCorrectCall {
-			if err := validatePlannerToolPayload(tr.Failure.Recovery.PriorInput); err != nil {
-				return fmt.Errorf(
-					"tool %q result is invalid: correct-call recovery prior input is invalid: %w (tool_call_id=%s)",
-					call.Name,
-					err,
-					call.ToolCallID,
-				)
-			}
 		}
 	}
 	return validateToolBoundsContract(spec, call, tr.Failure != nil, tr.Bounds)

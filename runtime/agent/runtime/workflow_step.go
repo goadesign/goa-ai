@@ -21,6 +21,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -197,6 +198,17 @@ func (r *Runtime) normalizePlanResultContract(result *PlanResult) (stepProgram, 
 	if err := validatePlanResultToolCallIDs(result); err != nil {
 		return stepProgram{}, planner.NewOutputContractError(err)
 	}
+	plannerResult := plannerResultValidationProjection(result)
+	if err := validatePlannerResultPayloads(plannerResult); err != nil {
+		return stepProgram{}, planner.NewOutputContractError(err)
+	}
+	return program, nil
+}
+
+// plannerResultValidationProjection rebuilds the planner-owned fields that
+// cross the validation boundary. Provider correlation stays separate from the
+// runtime execution ID assigned after the planner activity returns.
+func plannerResultValidationProjection(result *PlanResult) *planner.PlanResult {
 	plannerResult := &planner.PlanResult{
 		ToolCalls:            make([]planner.ToolRequest, len(result.ToolCalls)),
 		SynthesizeAfterTools: result.SynthesizeAfterTools,
@@ -209,15 +221,12 @@ func (r *Runtime) normalizePlanResultContract(result *PlanResult) (stepProgram, 
 	}
 	for index, call := range result.ToolCalls {
 		plannerResult.ToolCalls[index] = planner.ToolRequest{
-			Name:       call.TranscriptName(),
-			Payload:    call.TranscriptPayload(),
-			ModelToolCallID: call.ToolCallID,
+			Name:            call.TranscriptName(),
+			Payload:         call.TranscriptPayload(),
+			ModelToolCallID: call.ModelToolCallID,
 		}
 	}
-	if err := validatePlannerResultPayloads(plannerResult); err != nil {
-		return stepProgram{}, planner.NewOutputContractError(err)
-	}
-	return program, nil
+	return plannerResult
 }
 
 // normalizePlanResultForExecution validates generated tool payload contracts
@@ -290,13 +299,13 @@ func validateAwaitItems(items []planner.AwaitItem) error {
 			}
 		case planner.AwaitItemKindToolClarification:
 			q := item.ToolClarification
-			if q == nil || q.ID == "" || q.ToolName == "" || q.ToolCallID == "" || q.Question == "" {
-				return fmt.Errorf("await tool clarification item %d requires id, tool, tool_call_id, and question", i)
+			if q == nil || q.ID == "" || q.ToolName == "" || q.ModelToolCallID == "" || q.Question == "" {
+				return fmt.Errorf("await tool clarification item %d requires id, tool, model_tool_call_id, and question", i)
 			}
 		case planner.AwaitItemKindQuestions:
 			q := item.Questions
-			if q == nil || q.ID == "" || q.ToolName == "" || q.ToolCallID == "" || len(q.Questions) == 0 {
-				return fmt.Errorf("await questions item %d requires id, tool, tool_call_id, and questions", i)
+			if q == nil || q.ID == "" || q.ToolName == "" || q.ModelToolCallID == "" || len(q.Questions) == 0 {
+				return fmt.Errorf("await questions item %d requires id, tool, model_tool_call_id, and questions", i)
 			}
 		case planner.AwaitItemKindExternalTools:
 			e := item.ExternalTools
@@ -304,8 +313,8 @@ func validateAwaitItems(items []planner.AwaitItem) error {
 				return fmt.Errorf("await external tools item %d requires id and tool calls", i)
 			}
 			for j, call := range e.Items {
-				if call.Name == "" || call.ToolCallID == "" {
-					return fmt.Errorf("await external tools item %d call %d requires tool and tool_call_id", i, j)
+				if call.Name == "" || call.ModelToolCallID == "" {
+					return fmt.Errorf("await external tools item %d call %d requires tool and model_tool_call_id", i, j)
 				}
 			}
 		default:
@@ -315,8 +324,9 @@ func validateAwaitItems(items []planner.AwaitItem) error {
 	return nil
 }
 
-// awaitToolRequests returns the provider-correlated calls embedded in an await
-// barrier; plain clarification awaits do not create tool uses.
+// awaitToolRequests returns the compiled calls embedded in an await barrier.
+// Each call keeps runtime identity for records and provider identity for
+// transcript reconstruction; plain clarification awaits do not create calls.
 func awaitToolRequests(items []planner.AwaitItem) []ToolCall {
 	var calls []ToolCall
 	for _, item := range items {
@@ -325,22 +335,127 @@ func awaitToolRequests(items []planner.AwaitItem) []ToolCall {
 		case planner.AwaitItemKindToolClarification:
 			q := item.ToolClarification
 			calls = append(calls, ToolCall{
-				Name: q.ToolName, ToolCallID: q.ToolCallID, Payload: q.Payload,
+				Name:            q.ToolName,
+				ToolCallID:      q.ToolCallID,
+				ModelToolCallID: q.ModelToolCallID,
+				Payload:         append(rawjson.Message(nil), q.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), q.Payload...),
 			})
 		case planner.AwaitItemKindQuestions:
 			q := item.Questions
 			calls = append(calls, ToolCall{
-				Name: q.ToolName, ToolCallID: q.ToolCallID, Payload: q.Payload,
+				Name:            q.ToolName,
+				ToolCallID:      q.ToolCallID,
+				ModelToolCallID: q.ModelToolCallID,
+				Payload:         append(rawjson.Message(nil), q.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), q.Payload...),
 			})
 		case planner.AwaitItemKindExternalTools:
 			for _, call := range item.ExternalTools.Items {
 				calls = append(calls, ToolCall{
-					Name: call.Name, ToolCallID: call.ToolCallID, Payload: call.Payload,
+					Name:            call.Name,
+					ToolCallID:      call.ToolCallID,
+					ModelToolCallID: call.ModelToolCallID,
+					Payload:         append(rawjson.Message(nil), call.Payload...),
+					ModelPayload:    append(rawjson.Message(nil), call.Payload...),
 				})
 			}
 		}
 	}
 	return calls
+}
+
+// compilePlannerAwaitForRun clones one planner-authored await barrier and
+// assigns runtime execution IDs before the workflow commits, publishes, or
+// checkpoints it. The index follows ordinary planner calls so every call in one
+// result has a distinct replay-stable identity.
+func compilePlannerAwaitForRun(runCtx run.Context, firstIndex int, await *planner.Await) (*planner.Await, error) {
+	items := make([]planner.AwaitItem, len(await.Items))
+	callIndex := firstIndex
+	for itemIndex, item := range await.Items {
+		switch item.Kind {
+		case planner.AwaitItemKindClarification:
+			clarification := *item.Clarification
+			clarification.MissingFields = append([]string(nil), item.Clarification.MissingFields...)
+			clarification.ExampleJSON = append(rawjson.Message(nil), item.Clarification.ExampleJSON...)
+			items[itemIndex] = planner.AwaitClarificationItem(&clarification)
+		case planner.AwaitItemKindToolClarification:
+			source := item.ToolClarification
+			if source.ToolCallID != "" {
+				return nil, fmt.Errorf("planner await item %d tool clarification already has runtime tool call ID", itemIndex)
+			}
+			clarification := *source
+			clarification.ToolCallID = generateDeterministicToolCallID(
+				runCtx.RunID,
+				runCtx.TurnID,
+				runCtx.Attempt,
+				source.ToolName,
+				callIndex,
+			)
+			clarification.Payload = append(rawjson.Message(nil), source.Payload...)
+			items[itemIndex] = planner.AwaitToolClarificationItem(&clarification)
+			callIndex++
+		case planner.AwaitItemKindQuestions:
+			source := item.Questions
+			if source.ToolCallID != "" {
+				return nil, fmt.Errorf("planner await item %d questions already has runtime tool call ID", itemIndex)
+			}
+			questions := *source
+			questions.ToolCallID = generateDeterministicToolCallID(
+				runCtx.RunID,
+				runCtx.TurnID,
+				runCtx.Attempt,
+				source.ToolName,
+				callIndex,
+			)
+			questions.Payload = append(rawjson.Message(nil), source.Payload...)
+			if source.Title != nil {
+				title := *source.Title
+				questions.Title = &title
+			}
+			questions.Questions = cloneAwaitQuestions(source.Questions)
+			items[itemIndex] = planner.AwaitQuestionsItem(&questions)
+			callIndex++
+		case planner.AwaitItemKindExternalTools:
+			source := item.ExternalTools
+			external := *source
+			external.Items = make([]planner.AwaitToolItem, len(source.Items))
+			for toolIndex, tool := range source.Items {
+				if tool.ToolCallID != "" {
+					return nil, fmt.Errorf(
+						"planner await item %d external tool %d already has runtime tool call ID",
+						itemIndex,
+						toolIndex,
+					)
+				}
+				tool.ToolCallID = generateDeterministicToolCallID(
+					runCtx.RunID,
+					runCtx.TurnID,
+					runCtx.Attempt,
+					tool.Name,
+					callIndex,
+				)
+				tool.Payload = append(rawjson.Message(nil), tool.Payload...)
+				external.Items[toolIndex] = tool
+				callIndex++
+			}
+			items[itemIndex] = planner.AwaitExternalToolsItem(&external)
+		default:
+			return nil, fmt.Errorf("planner await item %d has unknown kind %q", itemIndex, item.Kind)
+		}
+	}
+	return planner.NewAwait(items...), nil
+}
+
+// cloneAwaitQuestions copies the question and option slices so a planner cannot
+// mutate the workflow-owned suspension after returning.
+func cloneAwaitQuestions(questions []planner.AwaitQuestion) []planner.AwaitQuestion {
+	cloned := make([]planner.AwaitQuestion, len(questions))
+	for index, question := range questions {
+		question.Options = append([]planner.AwaitQuestionOption(nil), question.Options...)
+		cloned[index] = question
+	}
+	return cloned
 }
 
 // validateSynthesisAfterTools requires a batch whose existing execution
@@ -381,6 +496,18 @@ func (r *Runtime) hasBookkeepingToolCalls(calls []ToolCall) bool {
 // runStep executes one normalized planner result and applies one post-step
 // transition.
 func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
+	if program.result.Await != nil {
+		compiled, err := compilePlannerAwaitForRun(
+			l.base.RunContext,
+			len(program.calls),
+			program.result.Await,
+		)
+		if err != nil {
+			return nil, planner.NewOutputContractError(err)
+		}
+		program.result.Await = compiled
+		program.awaitItems = compiled.Items
+	}
 	if err := validateRecoveryCatalog(l.st.PendingRecovery, l.st.PendingRecoveryCatalog, program.result); err != nil {
 		return nil, planner.NewOutputContractError(err)
 	}

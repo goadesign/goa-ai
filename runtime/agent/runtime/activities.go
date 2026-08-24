@@ -462,7 +462,7 @@ func validatePlannerActivityResult(r *Runtime, result *planner.PlanResult, synth
 	if err := validatePlannerResultPayloads(result); err != nil {
 		return planner.NewOutputContractError(err)
 	}
-	if err := validatePlannerToolCallIDs(result.ToolCalls); err != nil {
+	if err := validatePlannerToolCallIDs(result); err != nil {
 		return planner.NewOutputContractError(err)
 	}
 	terminalPayloads := 0
@@ -537,19 +537,71 @@ func validatePlannerActivityResult(r *Runtime, result *planner.PlanResult, synth
 	return nil
 }
 
-// validatePlannerToolCallIDs requires provider correlation IDs to be unique
-// when requests forward model calls. Planner-authored requests leave them empty
-// because the runtime assigns every execution ID.
-func validatePlannerToolCallIDs(calls []planner.ToolRequest) error {
-	seen := make(map[string]struct{}, len(calls))
-	for index, call := range calls {
+// validatePlannerToolCallIDs keeps provider correlation separate from
+// runtime-owned execution identity before planner output crosses the activity
+// boundary. Ordinary planner-authored tool requests may omit provider identity;
+// every tool-bound await is model-authored and must include it.
+func validatePlannerToolCallIDs(result *planner.PlanResult) error {
+	seen := make(map[string]struct{})
+	addModelID := func(context, id string) error {
+		if id == "" {
+			return fmt.Errorf("%s is missing model tool call ID", context)
+		}
+		if _, ok := seen[id]; ok {
+			return fmt.Errorf("%s repeats model tool call ID %q", context, id)
+		}
+		seen[id] = struct{}{}
+		return nil
+	}
+	for index, call := range result.ToolCalls {
 		if call.ModelToolCallID == "" {
 			continue
 		}
-		if _, ok := seen[call.ModelToolCallID]; ok {
-			return fmt.Errorf("planner tool call %d repeats model tool call ID %q", index, call.ModelToolCallID)
+		if err := addModelID(fmt.Sprintf("planner tool call %d", index), call.ModelToolCallID); err != nil {
+			return err
 		}
-		seen[call.ModelToolCallID] = struct{}{}
+	}
+	if result.Await == nil {
+		return nil
+	}
+	for itemIndex, item := range result.Await.Items {
+		context := fmt.Sprintf("planner await item %d", itemIndex)
+		switch item.Kind {
+		case planner.AwaitItemKindClarification:
+		case planner.AwaitItemKindToolClarification:
+			if item.ToolClarification == nil {
+				continue
+			}
+			if item.ToolClarification.ToolCallID != "" {
+				return fmt.Errorf("%s tool clarification must not set runtime tool call ID", context)
+			}
+			if err := addModelID(context+" tool clarification", item.ToolClarification.ModelToolCallID); err != nil {
+				return err
+			}
+		case planner.AwaitItemKindQuestions:
+			if item.Questions == nil {
+				continue
+			}
+			if item.Questions.ToolCallID != "" {
+				return fmt.Errorf("%s questions must not set runtime tool call ID", context)
+			}
+			if err := addModelID(context+" questions", item.Questions.ModelToolCallID); err != nil {
+				return err
+			}
+		case planner.AwaitItemKindExternalTools:
+			if item.ExternalTools == nil {
+				continue
+			}
+			for toolIndex, tool := range item.ExternalTools.Items {
+				toolContext := fmt.Sprintf("%s external tool %d", context, toolIndex)
+				if tool.ToolCallID != "" {
+					return fmt.Errorf("%s must not set runtime tool call ID", toolContext)
+				}
+				if err := addModelID(toolContext, tool.ModelToolCallID); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -600,8 +652,8 @@ func validatePlannerResultPayloads(result *planner.PlanResult) error {
 			if item.ToolClarification.ToolName == "" {
 				return fmt.Errorf("planner await item %d tool clarification name is missing", itemIndex)
 			}
-			if item.ToolClarification.ToolCallID == "" {
-				return fmt.Errorf("planner await item %d tool clarification call ID is missing", itemIndex)
+			if item.ToolClarification.ModelToolCallID == "" {
+				return fmt.Errorf("planner await item %d tool clarification model call ID is missing", itemIndex)
 			}
 			if err := validatePlannerToolPayload(item.ToolClarification.Payload); err != nil {
 				return fmt.Errorf("planner await item %d tool clarification payload: %w", itemIndex, err)
@@ -833,29 +885,9 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		return nil, fmt.Errorf("toolset %q is not registered", sName)
 	}
 
-	// The generated payload codec owns the model-authored JSON boundary. Tool
-	// execution receives the exact planner bytes; typed service adaptation happens
-	// only after successful decoding.
+	// Rebuild the activity-local call from execution data only. The workflow
+	// retains the model-authored call and owns any later correction evidence.
 	raw := append(rawjson.Message(nil), req.Payload...)
-
-	// For non DecodeInExecutor toolsets, validate payloads eagerly using the
-	// generated codecs so we can surface structured correction contracts. Executors
-	// still receive the canonical JSON payload and may decode again as needed.
-	if !reg.DecodeInExecutor {
-		spec, ok := r.toolSpec(req.ToolName)
-		if !ok {
-			return nil, fmt.Errorf("tool %q has no registered ToolSpec", req.ToolName)
-		}
-		if _, decErr := r.unmarshalToolValue(ctx, req.ToolName, raw.RawMessage(), true); decErr != nil {
-			return &ToolOutput{
-				Failure: buildToolFailureFromPayloadError(decErr, raw, spec),
-			}, nil
-		}
-	}
-
-	// Populate run context fields so tool implementations can access metadata.
-	// Agent-tools use these to construct nested contexts; regular tools use
-	// them for logging/telemetry. Payload is always canonical JSON.
 	call := ToolCall{
 		Name:             req.ToolName,
 		Payload:          raw,
@@ -867,6 +899,22 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		ParentToolCallID: req.ParentToolCallID,
 		ToolCallID:       req.ToolCallID,
 	}
+
+	// For non DecodeInExecutor toolsets, validate payloads eagerly using the
+	// generated codecs so we can surface structured correction contracts. Executors
+	// still receive the execution payload and may decode again as needed.
+	if !reg.DecodeInExecutor {
+		_, ok := r.toolSpec(req.ToolName)
+		if !ok {
+			return nil, fmt.Errorf("tool %q has no registered ToolSpec", req.ToolName)
+		}
+		if _, decErr := r.unmarshalToolValue(ctx, req.ToolName, raw.RawMessage(), true); decErr != nil {
+			return &ToolOutput{
+				Failure: buildToolFailureFromPayloadError(decErr),
+			}, nil
+		}
+	}
+
 	meta := ToolCallMetaFromCall(call)
 	start := time.Now()
 	executorCall := cloneToolCall(call)
@@ -883,7 +931,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 			execResult.ToolResult.Telemetry = tel
 		}
 	}
-	result, resultJSON, clarification, err := r.materializeToolExecutionResult(ctx, call, execResult)
+	result, resultJSON, clarification, err := r.materializeActivityToolExecutionResult(ctx, call, execResult)
 	if err != nil {
 		return nil, err
 	}
@@ -923,11 +971,10 @@ func validateToolActivityOutputBudget(output *ToolOutput) error {
 	return nil
 }
 
-// buildToolFailureFromPayloadError converts a model-authored payload failure
-// into the canonical same-tool correction contract. Generated validation
-// issues remain structured data; the runtime does not reinterpret them into a
-// second handwritten validation or prompting language.
-func buildToolFailureFromPayloadError(err error, input rawjson.Message, spec tools.ToolSpec) *planner.ToolFailure {
+// buildToolFailureFromPayloadError classifies invalid executor input and
+// preserves generated field issues. The workflow later attaches correction
+// evidence from the retained model call and registered specification.
+func buildToolFailureFromPayloadError(err error) *planner.ToolFailure {
 	var issuer interface {
 		Issues() []*tools.FieldIssue
 	}
@@ -939,10 +986,8 @@ func buildToolFailureFromPayloadError(err error, input rawjson.Message, spec too
 		Kind:  planner.FailureInvalidCall,
 		Error: planner.ToolErrorFromError(err),
 		Recovery: planner.RecoveryDirective{
-			Action:      planner.RecoveryCorrectCall,
-			Issues:      issues,
-			PriorInput:  append(rawjson.Message(nil), input...),
-			ExampleJSON: append(rawjson.Message(nil), spec.Payload.ExampleJSON...),
+			Action: planner.RecoveryCorrectCall,
+			Issues: issues,
 		},
 	}
 }
@@ -954,16 +999,16 @@ func buildToolFailureFromPayloadError(err error, input rawjson.Message, spec too
 // feeds the failure back to the model. Runtime configuration errors (missing
 // ToolSpec registrations, prompt rendering failures) return nil and stay
 // terminal workflow errors.
-func buildToolFailureFromAgentToolRequestError(err error, input rawjson.Message, spec tools.ToolSpec) *planner.ToolFailure {
+func buildToolFailureFromAgentToolRequestError(err error) *planner.ToolFailure {
 	var issuer interface {
 		Issues() []*tools.FieldIssue
 	}
 	if errors.As(err, &issuer) {
-		return buildToolFailureFromPayloadError(err, input, spec)
+		return buildToolFailureFromPayloadError(err)
 	}
 	var payloadErr *agentToolPayloadError
 	if errors.As(err, &payloadErr) {
-		return buildToolFailureFromPayloadError(payloadErr.cause, input, spec)
+		return buildToolFailureFromPayloadError(payloadErr.cause)
 	}
 	return nil
 }

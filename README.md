@@ -644,9 +644,11 @@ runs.
 Generated agents, completion packages, runtime workers, and their callers form
 one release unit. Regenerate every consumer, stop new work that depends on the
 old generated contract, and deploy the generated code and runtime together.
-`goa-ai.run-suspension.v3` is the only supported suspension schema; older
-persisted shapes are rejected rather than inferred, migrated, or served through
-a compatibility mode. See [Coordinated generated-system
+`goa-ai.run-suspension.v4` is the only supported suspension schema. Its
+model-authored await items preserve the runtime `ToolCallID` separately from the
+provider `ModelToolCallID`. Suspensions written by older runtimes, including
+v3, cannot be resumed across this coordinated release; the runtime does not
+dual-read, fall back to, or migrate older shapes. See [Coordinated generated-system
 releases](docs/runtime.md#coordinated-generated-system-releases) for the
 deployment contract.
 

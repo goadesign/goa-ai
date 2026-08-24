@@ -48,6 +48,7 @@ func populateMCPToolset(ts *ToolsetData) bool {
 			Args:        payload,
 			Return:      result,
 			Toolset:     ts,
+			HasResult:   result != nil && result.Type != goaexpr.Empty,
 		}
 		td.Title = naming.HumanizeTitle(tool.Name)
 		td.QualifiedName = fmt.Sprintf("%s.%s", ts.Name, tool.Name)

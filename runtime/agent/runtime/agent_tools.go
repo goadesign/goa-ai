@@ -342,7 +342,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		}
 		messages, nestedRunCtx, err := rt.buildAgentChildRequest(wfCtx.Context(), &cfg, call, nil, parentRun)
 		if err != nil {
-			result, err := rt.agentToolRequestFailureResult(*call, err)
+			result, err := agentToolRequestFailureResult(*call, err)
 			if err != nil {
 				return nil, err
 			}
@@ -381,12 +381,11 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 	}
 }
 
-func (r *Runtime) agentToolRequestFailureResult(call ToolCall, err error) (*planner.ToolResult, error) {
-	spec, ok := r.toolSpec(call.Name)
-	if !ok {
-		return nil, fmt.Errorf("agent tool %s requires a registered ToolSpec", call.Name)
-	}
-	failure := buildToolFailureFromAgentToolRequestError(err, call.Payload, spec)
+// agentToolRequestFailureResult converts a generated payload-validation error
+// into executor-owned failure facts. The normal tool collection path adds
+// workflow-owned correction evidence before recording the result.
+func agentToolRequestFailureResult(call ToolCall, err error) (*planner.ToolResult, error) {
+	failure := buildToolFailureFromAgentToolRequestError(err)
 	if failure == nil {
 		return nil, err
 	}
@@ -394,9 +393,6 @@ func (r *Runtime) agentToolRequestFailureResult(call ToolCall, err error) (*plan
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
 		Failure:    failure,
-	}
-	if _, err := r.materializeToolResult(context.Background(), call, result); err != nil {
-		return nil, err
 	}
 	return result, nil
 }

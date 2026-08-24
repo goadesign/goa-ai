@@ -250,14 +250,19 @@ func (r *Runtime) publishAwaitToolUses(ctx context.Context, input *RunInput, bas
 		if c.ToolCallID == "" {
 			return errors.New("await_tool_clarification: missing tool_call_id")
 		}
+		if c.ModelToolCallID == "" {
+			return errors.New("await_tool_clarification: missing model_tool_call_id")
+		}
 		return r.publishHook(ctx, newToolCallScheduledEvent(
 			base.RunContext.RunID,
 			input.AgentID,
 			base.RunContext.SessionID,
 			ToolCall{
-				Name:       c.ToolName,
-				ToolCallID: c.ToolCallID,
-				Payload:    c.Payload,
+				Name:            c.ToolName,
+				ToolCallID:      c.ToolCallID,
+				ModelToolCallID: c.ModelToolCallID,
+				Payload:         append(rawjson.Message(nil), c.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), c.Payload...),
 			},
 			"",
 			base.RunContext.ParentToolCallID,
@@ -271,14 +276,19 @@ func (r *Runtime) publishAwaitToolUses(ctx context.Context, input *RunInput, bas
 		if q.ToolCallID == "" {
 			return errors.New("await_questions: missing tool_call_id")
 		}
+		if q.ModelToolCallID == "" {
+			return errors.New("await_questions: missing model_tool_call_id")
+		}
 		return r.publishHook(ctx, newToolCallScheduledEvent(
 			base.RunContext.RunID,
 			input.AgentID,
 			base.RunContext.SessionID,
 			ToolCall{
-				Name:       q.ToolName,
-				ToolCallID: q.ToolCallID,
-				Payload:    q.Payload,
+				Name:            q.ToolName,
+				ToolCallID:      q.ToolCallID,
+				ModelToolCallID: q.ModelToolCallID,
+				Payload:         append(rawjson.Message(nil), q.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), q.Payload...),
 			},
 			"",
 			base.RunContext.ParentToolCallID,
@@ -297,10 +307,15 @@ func (r *Runtime) publishAwaitToolUses(ctx context.Context, input *RunInput, bas
 			if item.ToolCallID == "" {
 				return fmt.Errorf("await_external_tools: missing tool_call_id for external tool %q", item.Name)
 			}
+			if item.ModelToolCallID == "" {
+				return fmt.Errorf("await_external_tools: missing model_tool_call_id for external tool %q", item.Name)
+			}
 			awaitCalls = append(awaitCalls, ToolCall{
-				Name:       item.Name,
-				ToolCallID: item.ToolCallID,
-				Payload:    item.Payload,
+				Name:            item.Name,
+				ToolCallID:      item.ToolCallID,
+				ModelToolCallID: item.ModelToolCallID,
+				Payload:         append(rawjson.Message(nil), item.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), item.Payload...),
 			})
 		}
 		for _, call := range awaitCalls {
@@ -459,9 +474,11 @@ func (r *Runtime) consumeClarificationResponse(
 			return nil, fmt.Errorf("encode tool clarification answer: %w", err)
 		}
 		call := ToolCall{
-			Name:       c.ToolName,
-			ToolCallID: c.ToolCallID,
-			Payload:    c.Payload,
+			Name:            c.ToolName,
+			ToolCallID:      c.ToolCallID,
+			ModelToolCallID: c.ModelToolCallID,
+			Payload:         append(rawjson.Message(nil), c.Payload...),
+			ModelPayload:    append(rawjson.Message(nil), c.Payload...),
 		}
 		call = r.prepareAllowedCallsMetadata(input.AgentID, base, []ToolCall{call}, parentTracker)[0]
 		call.RunID = callRunID
@@ -512,9 +529,11 @@ func (r *Runtime) consumeToolResultsResponse(
 		expected := map[string]struct{}{q.ToolCallID: {}}
 		allowed := []ToolCall{
 			{
-				Name:       q.ToolName,
-				ToolCallID: q.ToolCallID,
-				Payload:    q.Payload,
+				Name:            q.ToolName,
+				ToolCallID:      q.ToolCallID,
+				ModelToolCallID: q.ModelToolCallID,
+				Payload:         append(rawjson.Message(nil), q.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), q.Payload...),
 			},
 		}
 		allowed = r.prepareAllowedCallsMetadata(input.AgentID, base, allowed, parentTracker)
@@ -534,11 +553,16 @@ func (r *Runtime) consumeToolResultsResponse(
 			if it.ToolCallID == "" {
 				return nil, fmt.Errorf("await_external_tools: missing tool_call_id for external tool %q", it.Name)
 			}
+			if it.ModelToolCallID == "" {
+				return nil, fmt.Errorf("await_external_tools: missing model_tool_call_id for external tool %q", it.Name)
+			}
 			expected[it.ToolCallID] = struct{}{}
 			allowed = append(allowed, ToolCall{
-				Name:       it.Name,
-				ToolCallID: it.ToolCallID,
-				Payload:    it.Payload,
+				Name:            it.Name,
+				ToolCallID:      it.ToolCallID,
+				ModelToolCallID: it.ModelToolCallID,
+				Payload:         append(rawjson.Message(nil), it.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), it.Payload...),
 			})
 		}
 		allowed = r.prepareAllowedCallsMetadata(input.AgentID, base, allowed, parentTracker)

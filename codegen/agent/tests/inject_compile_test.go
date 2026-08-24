@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,12 +23,13 @@ import (
 	gcodegen "goa.design/goa/v3/codegen"
 )
 
-// buildWithPrepareAndPkg mirrors buildWithPrepare but generates against an
-// explicit genpkg. Realistic genpkgs end in "/gen" (the goa CLI always passes
-// "<module>/gen"), which keeps the generator's two service import forms --
-// shared.JoinImportPath (inserts /gen/) and plain path.Join -- identical.
-func buildWithPrepareAndPkg(t *testing.T, genpkg string, design func()) []*gcodegen.File {
+// buildWithPrepareForGeneratedModule generates against the package path used by
+// the temporary module below. Real package paths end in "/gen" because the Goa
+// CLI passes "<module>/gen", which keeps both generated service import forms
+// identical.
+func buildWithPrepareForGeneratedModule(t *testing.T, design func()) []*gcodegen.File {
 	t.Helper()
+	const genpkg = "generated.local/gen"
 	_, roots := testhelpers.RunDesign(t, design)
 	require.NoError(t, codegen.Prepare(genpkg, roots))
 	files, err := codegen.Generate(genpkg, roots, nil)
@@ -43,18 +45,232 @@ func buildWithPrepareAndPkg(t *testing.T, genpkg string, design func()) []*gcode
 // rendered through gcodegen.File.Render -- the same pipeline `goa gen` uses,
 // including gofmt and unused-import pruning -- so the tree compiles exactly
 // as a real generation run would.
-func writeGeneratedModuleKeepingGen(t *testing.T, modulePath string, files []*gcodegen.File) string {
+func writeGeneratedModuleKeepingGen(t *testing.T, files []*gcodegen.File) string {
 	t.Helper()
 	root := t.TempDir()
 	repoRoot, err := filepath.Abs("../../..")
 	require.NoError(t, err)
-	goMod := "module " + modulePath + "\n\ngo 1.24\n\nrequire goa.design/goa-ai v0.0.0\n\nreplace goa.design/goa-ai => " + filepath.ToSlash(repoRoot) + "\n"
+	goMod := "module generated.local\n\ngo 1.24\n\nrequire goa.design/goa-ai v0.0.0\n\nreplace goa.design/goa-ai => " + filepath.ToSlash(repoRoot) + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o600))
 	for _, file := range files {
 		_, err := file.Render(root)
 		require.NoErrorf(t, err, "render %s", file.Path)
 	}
 	return root
+}
+
+// applicationExecutorBuildCommand returns a fixed compile command for each
+// application executor scenario so test data cannot alter subprocess arguments.
+func applicationExecutorBuildCommand(ctx context.Context, scenario string) *exec.Cmd {
+	switch scenario {
+	case "no result only":
+		return exec.CommandContext(ctx, "go", "build", "-mod=mod", "./internal/agents/scribe/toolsets/ops")
+	case "result without example":
+		return exec.CommandContext(ctx, "go", "build", "-mod=mod", "./internal/agents/scribe/toolsets/profiles")
+	default:
+		panic("unknown application executor compile scenario: " + scenario)
+	}
+}
+
+// mcpExecutorBuildCommand returns fixed package arguments for each generated
+// MCP executor variant so the subprocess never consumes a dynamic path.
+func mcpExecutorBuildCommand(ctx context.Context, scenario string) *exec.Cmd {
+	switch scenario {
+	case "Goa-backed result", "Goa-backed no result":
+		return exec.CommandContext(ctx, "go", "build", "-mod=mod", "./gen/alpha/agents/scribe/core")
+	case "aliased Goa-backed executor":
+		return exec.CommandContext(ctx, "go", "build", "-mod=mod", "./gen/alpha/agents/scribe/calc_remote")
+	case "external inline inject":
+		return exec.CommandContext(ctx, "go", "build", "-mod=mod", "./gen/alpha/agents/scribe/remote_search")
+	default:
+		panic("unknown MCP executor compile scenario: " + scenario)
+	}
+}
+
+// TestGeneratedApplicationExecutorsCompile proves application-owned executor
+// files import rawjson only when their generated implementation decodes an
+// authored result example. These two designs exercise the branches that do not:
+// tools with no result and a tool whose result has no authored example.
+func TestGeneratedApplicationExecutorsCompile(t *testing.T) {
+	tests := []struct {
+		name        string
+		design      func()
+		servicePath string
+		serviceStub string
+		agentStub   string
+	}{
+		{
+			name:        "no result only",
+			design:      testscenarios.NoResultMethod(),
+			servicePath: "gen/tasks/service_stub.go",
+			serviceStub: `package tasks
+
+import "context"
+
+type PurgePayload struct {
+	SessionID string
+}
+
+type Service interface {
+	Purge(context.Context, *PurgePayload) error
+	Heartbeat(context.Context) error
+}
+
+type Client struct{}
+
+func (c *Client) Purge(context.Context, *PurgePayload) error {
+	return nil
+}
+
+func (c *Client) Heartbeat(context.Context) error {
+	return nil
+}
+`,
+			agentStub: `package scribe
+
+import "goa.design/goa-ai/runtime/agent/runtime"
+
+func NewScribeOpsToolsetRegistration(runtime.ToolCallExecutor) runtime.ToolsetRegistration {
+	return runtime.ToolsetRegistration{}
+}
+`,
+		},
+		{
+			name:        "result without example",
+			design:      testscenarios.MethodComplexEmbedded(),
+			servicePath: "gen/alpha/service_stub.go",
+			serviceStub: `package alpha
+
+import "context"
+
+type Address struct {
+	Street string
+	City   string
+}
+
+type Profile struct {
+	ID      string
+	Name    *string
+	Address *Address
+}
+
+type Service interface {
+	UpsertProfile(context.Context, *Profile) (*Profile, error)
+}
+
+type Client struct{}
+
+func (c *Client) UpsertProfile(context.Context, *Profile) (*Profile, error) {
+	return &Profile{}, nil
+}
+`,
+			agentStub: `package scribe
+
+import "goa.design/goa-ai/runtime/agent/runtime"
+
+func NewScribeProfilesToolsetRegistration(runtime.ToolCallExecutor) runtime.ToolsetRegistration {
+	return runtime.ToolsetRegistration{}
+}
+`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			files := testhelpers.BuildAndGenerateWithExamplePkg(
+				t,
+				"generated.local/gen",
+				test.design,
+			)
+			root := writeGeneratedModuleKeepingGen(t, files)
+			writeGeneratedPackageTest(t, root, test.servicePath, test.serviceStub)
+			writeGeneratedPackageTest(
+				t,
+				root,
+				"gen/alpha/agents/scribe/registration_stub.go",
+				test.agentStub,
+			)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			runGeneratedGoTestCommand(
+				t,
+				root,
+				applicationExecutorBuildCommand(ctx, test.name),
+			)
+		})
+	}
+}
+
+// TestGeneratedMCPExecutorsCompile asks the Go compiler to type-check each
+// available MCP executor shape together with the exact generated specs package
+// it imports. The small service stub represents Goa service codegen, which the
+// agent generator does not emit.
+func TestGeneratedMCPExecutorsCompile(t *testing.T) {
+	const calcServiceStub = `package calc
+
+// AddPayload mirrors the method payload emitted by Goa service codegen.
+type AddPayload struct {
+	A int
+	B int
+}
+`
+	tests := []struct {
+		name            string
+		design          func()
+		executorPackage string
+		specsPrefix     string
+		serviceStub     string
+	}{
+		{
+			name:            "Goa-backed result",
+			design:          testscenarios.MCPUse(),
+			executorPackage: "gen/alpha/agents/scribe/core",
+			specsPrefix:     "gen/calc/toolsets/core/",
+			serviceStub:     calcServiceStub,
+		},
+		{
+			name:            "Goa-backed no result",
+			design:          testscenarios.MCPUseNoResult(),
+			executorPackage: "gen/alpha/agents/scribe/core",
+			specsPrefix:     "gen/calc/toolsets/core/",
+			serviceStub:     calcServiceStub,
+		},
+		{
+			name:            "aliased Goa-backed executor",
+			design:          testscenarios.MCPUseAlias(),
+			executorPackage: "gen/alpha/agents/scribe/calc_remote",
+			specsPrefix:     "gen/calc/toolsets/calc_remote/",
+			serviceStub:     calcServiceStub,
+		},
+		{
+			name:            "external inline inject",
+			design:          testscenarios.MCPUseExternalInlineInject(),
+			executorPackage: "gen/alpha/agents/scribe/remote_search",
+			specsPrefix:     "gen/remote/toolsets/remote_search/",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			files := buildWithPrepareForGeneratedModule(t, test.design)
+			compileFiles := make([]*gcodegen.File, 0, len(files))
+			executorFile := filepath.ToSlash(filepath.Join(test.executorPackage, "mcp_executor.go"))
+			for _, file := range files {
+				path := filepath.ToSlash(file.Path)
+				if path == executorFile || strings.HasPrefix(path, test.specsPrefix) {
+					compileFiles = append(compileFiles, file)
+				}
+			}
+			require.NotEmpty(t, compileFiles)
+			root := writeGeneratedModuleKeepingGen(t, compileFiles)
+			if test.serviceStub != "" {
+				writeGeneratedPackageTest(t, root, "gen/calc/service_stub.go", test.serviceStub)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			runGeneratedGoTestCommand(t, root, mcpExecutorBuildCommand(ctx, test.name))
+		})
+	}
 }
 
 // TestGeneratedMixedInjectPackagesCompile generates the mixed
@@ -66,8 +282,8 @@ func writeGeneratedModuleKeepingGen(t *testing.T, modulePath string, files []*gc
 // (which agent codegen does not emit) is stubbed; every agent-generated
 // file, including http/validate.go, is compiled verbatim.
 func TestGeneratedMixedInjectPackagesCompile(t *testing.T) {
-	files := buildWithPrepareAndPkg(t, "generated.local/gen", testscenarios.InjectMixedBoundUnboundExample())
-	root := writeGeneratedModuleKeepingGen(t, "generated.local", files)
+	files := buildWithPrepareForGeneratedModule(t, testscenarios.InjectMixedBoundUnboundExample())
+	root := writeGeneratedModuleKeepingGen(t, files)
 
 	// Stub the Goa-core service package (emitted by `goa gen`'s service
 	// codegen, not by the agent generator): the generated provider,
@@ -111,8 +327,8 @@ func (c *Client) GetData(ctx context.Context, p *GetDataPayload) (*GetDataResult
 // that encode server-only method result data: the registry provider and the
 // agent-side service executor.
 func TestGeneratedServerDataPackagesCompile(t *testing.T) {
-	files := buildWithPrepareAndPkg(t, "generated.local/gen", testscenarios.ServiceToolsetBindSelfServerData())
-	root := writeGeneratedModuleKeepingGen(t, "generated.local", files)
+	files := buildWithPrepareForGeneratedModule(t, testscenarios.ServiceToolsetBindSelfServerData())
+	root := writeGeneratedModuleKeepingGen(t, files)
 
 	// Stub the Goa service package that normal `goa gen` output supplies.
 	writeGeneratedPackageTest(t, root, "gen/alpha/service_stub.go", `package alpha
@@ -161,8 +377,8 @@ func (c *Client) Find(ctx context.Context, p *FindPayload) (*FindResult, error) 
 // pointer deref -> service call) with `go test`, asserting the bound method
 // payload actually receives session metadata and immutable labels end to end.
 func TestGeneratedBoundMetaInjectPackagesCompile(t *testing.T) {
-	files := buildWithPrepareAndPkg(t, "generated.local/gen", testscenarios.InjectBoundMetaExample())
-	root := writeGeneratedModuleKeepingGen(t, "generated.local", files)
+	files := buildWithPrepareForGeneratedModule(t, testscenarios.InjectBoundMetaExample())
+	root := writeGeneratedModuleKeepingGen(t, files)
 
 	writeGeneratedPackageTest(t, root, "gen/atlas/service_stub.go", `package atlas
 

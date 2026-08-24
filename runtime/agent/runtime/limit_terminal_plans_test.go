@@ -516,13 +516,15 @@ func executeWorkflowLimitTerminalPlan(
 					current = current.Add(time.Second)
 					return nil, engine.ErrPlannerActivityDeadlineExceeded
 				}
+				callID := fmt.Sprintf("work-call-%d", plannerCalls)
 				return &PlanActivityOutput{
 					PublicationBatchID: testPublicationBatchID,
 					Result: &PlanResult{
 						ToolCalls: []ToolCall{{
-							ToolCallID: fmt.Sprintf("work-call-%d", plannerCalls),
-							Name:       work.Name,
-							Payload:    rawjson.Message(`{}`),
+							ToolCallID:      callID,
+							ModelToolCallID: callID,
+							Name:            work.Name,
+							Payload:         rawjson.Message(`{}`),
 						}},
 					},
 				}, nil
@@ -530,13 +532,15 @@ func executeWorkflowLimitTerminalPlan(
 			"resume": func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error) {
 				plannerCalls++
 				if reason == planner.TerminationReasonToolCap {
+					callID := fmt.Sprintf("work-call-%d", plannerCalls)
 					return &PlanActivityOutput{
 						PublicationBatchID: testPublicationBatchID,
 						Result: &PlanResult{
 							ToolCalls: []ToolCall{{
-								ToolCallID: fmt.Sprintf("work-call-%d", plannerCalls),
-								Name:       work.Name,
-								Payload:    rawjson.Message(`{}`),
+								ToolCallID:      callID,
+								ModelToolCallID: callID,
+								Name:            work.Name,
+								Payload:         rawjson.Message(`{}`),
 							}},
 						},
 					}, nil

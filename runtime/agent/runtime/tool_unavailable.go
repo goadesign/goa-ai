@@ -79,7 +79,7 @@ func executeToolUnavailable(ctx context.Context, call *ToolCall) (*ToolExecution
 		return Executed(&planner.ToolResult{
 			Name:       call.Name,
 			ToolCallID: call.ToolCallID,
-			Failure:    buildToolFailureFromPayloadError(err, call.Payload, toolUnavailableSpec),
+			Failure:    buildToolFailureFromPayloadError(err),
 		}), nil
 	}
 	requested := decoded.RequestedTool

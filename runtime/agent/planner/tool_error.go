@@ -34,7 +34,9 @@ type (
 		// failed call.
 		Issues []*tools.FieldIssue `json:"issues,omitempty"`
 
-		// PriorInput is the exact canonical JSON payload rejected by the tool.
+		// PriorInput is the exact model-authored JSON being corrected. The
+		// workflow replaces any executor value from its retained ToolCall before
+		// the failure becomes durable or model-visible.
 		PriorInput rawjson.Message `json:"prior_input,omitempty"`
 
 		// ExampleJSON is a canonical schema-compliant payload example.
@@ -112,9 +114,9 @@ func ToolErrorf(format string, args ...any) *ToolError {
 
 // ValidateToolFailure enforces the canonical failure classification, error,
 // recovery, and correction-data contract at every ingress boundary. Correct-call
-// prior input is optional here because registry providers do not own it; the
-// executor attaches the rejected call before the runtime requires planner-ready
-// correction context.
+// evidence is optional here because executors and activities do not own it; the
+// workflow supplies the retained model input and registered example before the
+// failure becomes durable or model-visible.
 func ValidateToolFailure(failure *ToolFailure) error {
 	if failure == nil {
 		return fmt.Errorf("tool failure is required")

@@ -223,7 +223,7 @@ func TestRunLoopPreservesCorrectionEvidenceAcrossClarification(t *testing.T) {
 	require.NotNil(t, out.Suspension)
 }
 
-func TestRunLoopRepeatedInvalidCallsReachFailureFinalization(t *testing.T) {
+func TestRunLoopInvalidCallReachesFailureFinalization(t *testing.T) {
 	search := newAnyJSONSpec("catalog.search", "catalog")
 	var recoveryTurns int
 	h := newRecoveryHarness(
@@ -239,10 +239,8 @@ func TestRunLoopRepeatedInvalidCallsReachFailureFinalization(t *testing.T) {
 				return finalPlannerResult("stopped after repeated failures"), nil
 			}
 			recoveryTurns++
-			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-				Name:    search.Name,
-				Payload: rawjson.Message(`{"query":"still-bad"}`),
-			}}}, nil
+			require.FailNow(t, "failure cap must finalize before another planner tool call")
+			return nil, nil
 		},
 	)
 
@@ -253,15 +251,15 @@ func TestRunLoopRepeatedInvalidCallsReachFailureFinalization(t *testing.T) {
 	}}}, policy.CapsState{
 		MaxToolCalls:                        5,
 		RemainingToolCalls:                  5,
-		MaxConsecutiveFailedToolCalls:       2,
-		RemainingConsecutiveFailedToolCalls: 2,
+		MaxConsecutiveFailedToolCalls:       1,
+		RemainingConsecutiveFailedToolCalls: 1,
 	})
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	assert.Equal(t, "stopped after repeated failures", agentMessageText(out.Final))
-	assert.Equal(t, 1, recoveryTurns)
-	assert.Len(t, out.ToolEvents, 2)
+	assert.Zero(t, recoveryTurns)
+	assert.Len(t, out.ToolEvents, 1)
 }
 
 func TestRunLoopRecoveryCatalogRejectsExcludedCallBeforeExecution(t *testing.T) {
@@ -393,10 +391,10 @@ func TestRecoveryCatalogAndMixedFailureContracts(t *testing.T) {
 	))
 	toolBackedAwait := &PlanResult{Await: planner.NewAwait(
 		planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
-			ID:         "tool-clarify",
-			ToolName:   list.Name,
-			ToolCallID: "call-list",
-			Question:   "Which page?",
+			ID:              "tool-clarify",
+			ToolName:        list.Name,
+			ModelToolCallID: "call-list",
+			Question:        "Which page?",
 		}),
 	)}
 	require.NoError(t, validateRecoveryCatalog(
@@ -519,10 +517,17 @@ func newRecoveryHarness(
 }
 
 // run executes a complete workflow from the selected initial planner result.
+// These fixtures represent model calls, so their provider IDs match the
+// human-readable execution IDs chosen by each test.
 func (h *recoveryHarness) run(
 	initial *PlanResult,
 	caps policy.CapsState,
 ) (*RunOutput, error) {
+	for i := range initial.ToolCalls {
+		if initial.ToolCalls[i].ModelToolCallID == "" {
+			initial.ToolCalls[i].ModelToolCallID = initial.ToolCalls[i].ToolCallID
+		}
+	}
 	return h.runtime.runLoop(
 		h.workflow,
 		h.registration,

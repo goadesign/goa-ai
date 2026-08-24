@@ -198,7 +198,6 @@ import (
     "context"
     "errors"
     "goa.design/goa-ai/runtime/agent/planner"
-    "goa.design/goa-ai/runtime/agent/rawjson"
     "goa.design/goa-ai/runtime/agent/runtime"
     "goa.design/goa-ai/runtime/agent/tools"
     specs "<module>/gen/<service>/toolsets/<toolset>"
@@ -226,8 +225,6 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.Tool
                     Recovery: planner.RecoveryDirective{
                         Action: planner.RecoveryCorrectCall,
                         Issues: issues,
-                        PriorInput: append(rawjson.Message(nil), call.Payload...),
-                        ExampleJSON: append(rawjson.Message(nil), specs.Spec<Tool>().Payload.ExampleJSON...),
                     },
                 },
             }), nil

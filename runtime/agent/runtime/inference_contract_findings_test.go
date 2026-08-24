@@ -514,6 +514,21 @@ func TestSuccessfulOutputPublicationRetriesImmutableBatch(t *testing.T) {
 	require.Equal(t, attempts[0], attempts[1])
 }
 
+func TestNormalizePlanResultContractPreservesProviderIdentityInValidationProjection(t *testing.T) {
+	result := &PlanResult{ToolCalls: []ToolCall{{
+		Name:            "svc.tools.lookup",
+		ToolCallID:      "runtime-call-1",
+		ModelToolCallID: "provider-call-1",
+		Payload:         rawjson.Message(`{}`),
+	}}}
+
+	projected := plannerResultValidationProjection(result)
+	require.Equal(t, "provider-call-1", projected.ToolCalls[0].ModelToolCallID)
+	require.NotEqual(t, result.ToolCalls[0].ToolCallID, projected.ToolCalls[0].ModelToolCallID)
+	_, err := New().normalizePlanResultContract(result)
+	require.NoError(t, err)
+}
+
 func TestInvalidPlannerActivityResultPublishesNoRecords(t *testing.T) {
 	toolSpec := newAnyJSONSpec("svc.tools.lookup", "svc.tools")
 	final := finalPlannerResult("done").FinalResponse
@@ -547,9 +562,9 @@ func TestInvalidPlannerActivityResultPublishesNoRecords(t *testing.T) {
 				ExternalTools: &planner.AwaitExternalTools{
 					ID: "external-1",
 					Items: []planner.AwaitToolItem{{
-						Name:       toolSpec.Name,
-						ToolCallID: "call-1",
-						Payload:    rawjson.Message(`{}`),
+						Name:            toolSpec.Name,
+						ModelToolCallID: "call-1",
+						Payload:         rawjson.Message(`{}`),
 					}},
 				},
 			}}}},

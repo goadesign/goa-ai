@@ -37,6 +37,8 @@ func TestQuickstart_Renders_Minimal(t *testing.T) {
 	require.Contains(t, content, "client := scribe.NewClient(rt)")
 	require.Contains(t, content, "`PlanStart` decodes a generated payload example")
 	require.Contains(t, content, "The runtime matches the result to the pending call")
+	require.NotContains(t, content, "PriorInput:")
+	require.NotContains(t, content, "ExampleJSON:")
 	require.Contains(t, content, "## 4. 🧠 The Planner:")
 	require.NotContains(t, content, "Service-Side Tool Providers (Registry-Routed Execution)")
 

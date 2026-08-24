@@ -219,11 +219,12 @@ func TestDefaultAgentToolExecute_PreChildValidatorReturnsToolResult(t *testing.T
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
 	call := ToolCall{
-		ToolCallID: "call-1",
-		Name:       tools.Ident("tool"),
-		RunID:      "run",
-		SessionID:  "sess-1",
-		Payload:    rawjson.Message([]byte(`{"sources":["x"]}`)),
+		ToolCallID:      "call-1",
+		ModelToolCallID: "call-1",
+		Name:            tools.Ident("tool"),
+		RunID:           "run",
+		SessionID:       "sess-1",
+		Payload:         rawjson.Message([]byte(`{"sources":["x"]}`)),
 	}
 	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)

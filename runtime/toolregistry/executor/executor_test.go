@@ -449,15 +449,14 @@ func TestExecutorRegistryErrorsCarryCanonicalRecovery(t *testing.T) {
 	example := tools.RawJSON(`{"query":"latency"}`)
 
 	cases := []struct {
-		name        string
-		code        string
-		wantKind    planner.FailureKind
-		wantAction  planner.RecoveryAction
-		wantExample bool
+		name       string
+		code       string
+		wantKind   planner.FailureKind
+		wantAction planner.RecoveryAction
 	}{
-		{"timeout finishes", "timeout", planner.FailureTimeout, planner.RecoveryFinish, false},
-		{"domain rejection replans", "invalid_input", planner.FailureDomainRejection, planner.RecoveryReplan, false},
-		{"invalid call carries correction data", "invalid_arguments", planner.FailureInvalidCall, planner.RecoveryCorrectCall, true},
+		{"timeout finishes", "timeout", planner.FailureTimeout, planner.RecoveryFinish},
+		{"domain rejection replans", "invalid_input", planner.FailureDomainRejection, planner.RecoveryReplan},
+		{"invalid call defers correction evidence", "invalid_arguments", planner.FailureInvalidCall, planner.RecoveryCorrectCall},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -481,11 +480,8 @@ func TestExecutorRegistryErrorsCarryCanonicalRecovery(t *testing.T) {
 			require.NotNil(t, res.ToolResult.Failure)
 			assert.Equal(t, tc.wantKind, res.ToolResult.Failure.Kind)
 			assert.Equal(t, tc.wantAction, res.ToolResult.Failure.Recovery.Action)
-			if tc.wantExample {
-				assert.NotEmpty(t, res.ToolResult.Failure.Recovery.ExampleJSON)
-			} else {
-				assert.Empty(t, res.ToolResult.Failure.Recovery.ExampleJSON)
-			}
+			assert.Empty(t, res.ToolResult.Failure.Recovery.PriorInput)
+			assert.Empty(t, res.ToolResult.Failure.Recovery.ExampleJSON)
 		})
 	}
 }
@@ -519,7 +515,7 @@ func TestExecutorPreservesProviderOwnedRecovery(t *testing.T) {
 	assert.Equal(t, planner.RecoveryFinish, result.ToolResult.Failure.Recovery.Action)
 }
 
-func TestExecutorPreservesServiceFailureThroughJSONAndEnrichesCorrection(t *testing.T) {
+func TestExecutorPreservesServiceFailureWithoutOwningCorrectionEvidence(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -540,14 +536,15 @@ func TestExecutorPreservesServiceFailureThroughJSONAndEnrichesCorrection(t *test
 			issues: []*tools.FieldIssue{issue},
 		},
 	)
-	result, err := executeRegistryResultMessage(t, toolUseID, toolCallID, message, &tools.ToolSpec{
+	spec := &tools.ToolSpec{
 		Name:    "atlas.read.get_time_series",
 		Toolset: "atlas.read",
 		Result:  tools.TypeSpec{},
 		Payload: tools.TypeSpec{
 			ExampleJSON: tools.RawJSON(`{"query":"compressor temperature"}`),
 		},
-	})
+	}
+	result, err := executeRegistryResultMessage(t, toolUseID, toolCallID, message, spec)
 
 	require.NoError(t, err)
 	require.NotNil(t, result.ToolResult)
@@ -556,8 +553,8 @@ func TestExecutorPreservesServiceFailureThroughJSONAndEnrichesCorrection(t *test
 	assert.Equal(t, planner.FailureDomainRejection, failure.Kind)
 	assert.Equal(t, planner.RecoveryCorrectCall, failure.Recovery.Action)
 	assert.Equal(t, []*tools.FieldIssue{issue}, failure.Recovery.Issues)
-	assert.JSONEq(t, `{}`, string(failure.Recovery.PriorInput))
-	assert.JSONEq(t, `{"query":"compressor temperature"}`, string(failure.Recovery.ExampleJSON))
+	assert.Empty(t, failure.Recovery.PriorInput)
+	assert.Empty(t, failure.Recovery.ExampleJSON)
 }
 
 func TestExecutorTransportFailureClassifiesToolUnavailable(t *testing.T) {

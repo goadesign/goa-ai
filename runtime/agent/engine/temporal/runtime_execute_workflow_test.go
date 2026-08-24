@@ -175,12 +175,12 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 		runID               = "run-await-questions"
 		sessionID           = "session-1"
 		awaitID             = "await-1"
-		toolCallID          = "tool-call-1"
+		modelToolCallID     = "model-tool-call-1"
 	)
 
 	agentID := agent.Ident("service.agent")
 	questionTool := tools.Ident("chat.ask_question.ask_question")
-	plannerStub := &awaitQuestionsPlanner{awaitID: awaitID, toolName: questionTool, toolCallID: toolCallID}
+	plannerStub := &awaitQuestionsPlanner{awaitID: awaitID, toolName: questionTool, toolCallID: modelToolCallID}
 	runtime := agentruntime.New()
 	_, err := runtime.CreateSession(context.Background(), sessionID)
 	require.NoError(t, err)
@@ -220,6 +220,11 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 	require.NotNil(t, out.Suspension)
 	require.Len(t, out.Suspension.Pending, 1)
 	require.Equal(t, api.PendingInputKindToolResults, out.Suspension.Pending[0].Kind)
+	await := out.Suspension.Pending[0].Await.Questions
+	require.NotNil(t, await)
+	require.NotEmpty(t, await.ToolCallID)
+	require.Equal(t, modelToolCallID, await.ModelToolCallID)
+	require.NotEqual(t, await.ToolCallID, await.ModelToolCallID)
 	require.True(t, recorder.SuspensionPersisted())
 	require.Zero(t, plannerStub.ResumeCalls())
 
@@ -237,7 +242,7 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 	require.NotNil(t, awaitEvent)
 	require.Equal(t, awaitID, awaitEvent.ID)
 	require.Equal(t, questionTool, awaitEvent.ToolName)
-	require.Equal(t, toolCallID, awaitEvent.ToolCallID)
+	require.Equal(t, await.ToolCallID, awaitEvent.ToolCallID)
 	suspended, ok := events[len(events)-1].(*hooks.RunSuspendedEvent)
 	require.True(t, ok)
 	require.Equal(t, out.Suspension.ID, suspended.SuspensionID)
@@ -452,7 +457,7 @@ func equalRecordActivityInput(want, got *api.RecordActivityInput) error {
 func (p *awaitQuestionsPlanner) PlanStart(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
 	title := "Questions"
 	return &planner.PlanResult{Await: planner.NewAwait(planner.AwaitQuestionsItem(&planner.AwaitQuestions{
-		ID: p.awaitID, ToolName: p.toolName, ToolCallID: p.toolCallID,
+		ID: p.awaitID, ToolName: p.toolName, ModelToolCallID: p.toolCallID,
 		Payload: rawjson.Message(`{"title":"Questions"}`), Title: &title,
 		Questions: []planner.AwaitQuestion{{
 			ID: "q1", Prompt: "Choose one answer",
