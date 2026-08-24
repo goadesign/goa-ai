@@ -15,6 +15,7 @@ import (
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/param"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 
 	"goa.design/goa-ai/features/model/internal/claudebeta"
@@ -615,6 +616,9 @@ func encodeTools(ctx context.Context, defs []*model.ToolDefinition, cacheAfterTo
 		u := sdk.ToolUnionParamOfTool(input, canonToProv[def.Name])
 		u.OfTool.Description = sdk.String(def.Description)
 		u.OfTool.InputExamples = examples
+		if def.Strict {
+			u.OfTool.Strict = param.NewOpt(true)
+		}
 		toolList = append(toolList, u)
 	}
 	if cacheAfterTools {

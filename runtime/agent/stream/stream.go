@@ -281,9 +281,9 @@ type (
 	}
 
 	// PlannerThoughtPayload is the typed wire payload for planner thought events.
-	// Back-compat: Note carries legacy text-only thoughts. When the planner emits
-	// structured thinking blocks, Text/Signature or Redacted are populated with
-	// ContentIndex and Final flags mirroring provider content blocks.
+	// Note carries displayable planner notes and non-final thinking text.
+	// Structured thinking blocks also populate Text/Signature or Redacted with
+	// ContentIndex and Final flags matching the provider content blocks.
 	PlannerThoughtPayload struct {
 		Note         string `json:"note,omitempty"`
 		Text         string `json:"text,omitempty"`

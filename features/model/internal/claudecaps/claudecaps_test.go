@@ -172,10 +172,12 @@ func TestBedrockRuntimeTokenCountSupported(t *testing.T) {
 		modelID string
 		want    bool
 	}{
+		{modelID: "global.anthropic.claude-opus-4-6", want: true},
 		{modelID: "us.anthropic.claude-opus-4-7"},
+		{modelID: "us.anthropic.claude-opus-4-8"},
+		{modelID: "us.anthropic.claude-opus-5"},
 		{modelID: "global.anthropic.claude-sonnet-5"},
 		{modelID: "anthropic.claude-mythos-5"},
-		{modelID: "us.anthropic.claude-opus-4-8", want: true},
 		{modelID: "global.anthropic.claude-sonnet-6", want: true},
 		{modelID: "anthropic.claude-mythos-6", want: true},
 		{modelID: "global.anthropic.claude-fable-5", want: true},

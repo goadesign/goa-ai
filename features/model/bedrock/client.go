@@ -64,6 +64,14 @@ type Options struct {
 	// Runtime provides access to the Bedrock runtime. Required.
 	Runtime RuntimeClient
 
+	// MantleTokenCounter counts requests for Claude models whose model card
+	// excludes CountTokens from the Bedrock Runtime endpoint. The Bedrock
+	// adapter resolves the model and applies its effective tool contract before
+	// delegating, so this counter must call Anthropic's count_tokens operation
+	// on the Bedrock Mantle endpoint. When nil, those models return
+	// model.ErrTokenCountingUnsupported.
+	MantleTokenCounter model.TokenCounter
+
 	// DefaultModel is the default model identifier (e.g., Sonnet).
 	DefaultModel string
 
@@ -95,11 +103,14 @@ type provider struct {
 	maxTok       int
 	temp         float32
 	logger       telemetry.Logger
+	mantle       model.TokenCounter
 }
 
 type requestParts struct {
 	modelID                 string
 	modelClass              model.ModelClass
+	effectiveTools          []*model.ToolDefinition
+	effectiveToolChoice     *model.ToolChoice
 	thinking                thinkingConfig
 	messages                []brtypes.Message
 	system                  []brtypes.SystemContentBlock
@@ -168,6 +179,7 @@ func NewProvider(aws *bedrockruntime.Client, opts Options) (model.Provider, erro
 		maxTok:       maxTokens,
 		temp:         opts.Temperature,
 		logger:       logger,
+		mantle:       opts.MantleTokenCounter,
 	}
 	return c, nil
 }
@@ -208,22 +220,18 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 // CountTokens asks Bedrock to count the exact input that Converse would
 // receive, including prior reasoning blocks and their provider signatures.
 func (c *provider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
-	if req.StructuredOutput != nil {
-		return model.TokenCount{}, fmt.Errorf(
-			"bedrock: CountTokens cannot represent structured output: %w",
-			model.ErrTokenCountingUnsupported,
-		)
-	}
 	parts, err := c.prepareRequest(req)
 	if err != nil {
 		return model.TokenCount{}, err
 	}
-	if !claudecaps.BedrockRuntimeTokenCountSupported(parts.modelID) {
+	if parts.outputConfig != nil {
 		return model.TokenCount{}, fmt.Errorf(
-			"bedrock: model %q requires the bedrock-mantle token-count endpoint: %w",
-			parts.modelID,
+			"bedrock: CountTokens cannot represent native structured output: %w",
 			model.ErrTokenCountingUnsupported,
 		)
+	}
+	if !claudecaps.BedrockRuntimeTokenCountSupported(parts.modelID) {
+		return c.countTokensWithMantle(ctx, req, parts)
 	}
 	// Runtime CountTokens is a foundation-model operation: translate the resolved
 	// model ID (which may be a cross-region inference profile) to its foundation
@@ -246,6 +254,41 @@ func (c *provider) CountTokens(ctx context.Context, req *model.Request) (model.T
 		InputTokens: int(*output.InputTokens),
 		Exact:       true,
 	}, nil
+}
+
+// countTokensWithMantle delegates the Bedrock-effective request to Anthropic's
+// count_tokens operation on the Mantle endpoint. prepareRequest has already
+// replaced structured output with the same forced tool used by Converse.
+func (c *provider) countTokensWithMantle(
+	ctx context.Context,
+	req *model.Request,
+	parts *requestParts,
+) (model.TokenCount, error) {
+	if c.mantle == nil {
+		return model.TokenCount{}, fmt.Errorf(
+			"bedrock: model %q requires the bedrock-mantle token-count endpoint: %w",
+			parts.modelID,
+			model.ErrTokenCountingUnsupported,
+		)
+	}
+	foundationModelID, err := FoundationModelID(parts.modelID)
+	if err != nil {
+		return model.TokenCount{}, err
+	}
+	countReq := *req
+	countReq.Model = foundationModelID
+	countReq.Tools = parts.effectiveTools
+	countReq.ToolChoice = parts.effectiveToolChoice
+	if parts.structuredOutputToolName != "" {
+		countReq.StructuredOutput = nil
+	}
+	count, err := c.mantle.CountTokens(ctx, &countReq)
+	if err != nil {
+		return model.TokenCount{}, fmt.Errorf("bedrock: count tokens with Mantle: %w", err)
+	}
+	count.Model = parts.modelID
+	count.ModelClass = parts.modelClass
+	return count, nil
 }
 
 // Stream invokes the Bedrock ConverseStream API and adapts incremental events
@@ -354,10 +397,6 @@ func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 	if err != nil {
 		return nil, err
 	}
-	if useToolFallback && claudecaps.StructuredOutputSupported(modelID) {
-		spec := toolConfig.Tools[0].(*brtypes.ToolMemberToolSpec)
-		spec.Value.Strict = aws.Bool(true)
-	}
 	var outputConfig *brtypes.OutputConfig
 	if req.StructuredOutput != nil && !useToolFallback {
 		outputConfig, err = encodeOutputConfig(req.StructuredOutput)
@@ -388,6 +427,8 @@ func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 	return &requestParts{
 		modelID:                  modelID,
 		modelClass:               req.ModelClass,
+		effectiveTools:           toolDefs,
+		effectiveToolChoice:      toolChoice,
 		thinking:                 thinking,
 		messages:                 messages,
 		system:                   system,
@@ -435,7 +476,7 @@ func (c *provider) buildConverseInput(
 // is the foundation model ID resolved from parts.modelID (see FoundationModelID);
 // CountTokens rejects the cross-region inference-profile ID that Converse uses.
 func (c *provider) buildCountTokensInput(parts *requestParts, req *model.Request, foundationModelID string) *bedrockruntime.CountTokensInput {
-	fields := additionalModelFieldsForRequest(parts.additionalModelFields, req)
+	fields := requestModelFields(parts, req)
 	converse := brtypes.ConverseTokensRequest{
 		Messages: parts.messages,
 		System:   parts.system,
@@ -543,6 +584,7 @@ func structuredOutputToolDefinition(output *model.StructuredOutput) (*model.Tool
 		Name:        output.Name,
 		Description: output.Description,
 		Input:       input,
+		Strict:      true,
 	}, nil
 }
 
@@ -1199,6 +1241,16 @@ func encodeTools(
 			Name:        aws.String(sanitized),
 			Description: aws.String(def.Description),
 			InputSchema: &brtypes.ToolInputSchemaMemberJson{Value: schemaDoc},
+		}
+		if def.Strict {
+			if !claudecaps.StructuredOutputSupported(modelID) {
+				return nil, nil, nil, nil, fmt.Errorf(
+					"bedrock: model %q does not support strict tool %q",
+					modelID,
+					canonical,
+				)
+			}
+			spec.Strict = aws.Bool(true)
 		}
 		toolList = append(toolList, &brtypes.ToolMemberToolSpec{Value: spec})
 	}

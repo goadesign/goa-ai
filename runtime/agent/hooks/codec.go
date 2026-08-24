@@ -405,13 +405,6 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		}
 		evt = rejected
 
-	case HardProtectionTriggered:
-		var p HardProtectionEvent
-		if err := json.Unmarshal(input.Payload, &p); err != nil {
-			return nil, fmt.Errorf("decode %s payload: %w", HardProtectionTriggered, err)
-		}
-		evt = NewHardProtectionEvent(input.RunID, input.AgentID, input.SessionID, p.Reason, p.ExecutedAgentTools, p.ChildrenTotal, p.ToolNames)
-
 	default:
 		return nil, fmt.Errorf("unsupported hook event type %q", input.Type)
 	}

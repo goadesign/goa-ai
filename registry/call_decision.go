@@ -260,19 +260,15 @@ if decision == "rejected" then
     redis.call("HGET", KEYS[1], "message") or ""
   }
 end
-if decision and decision ~= "admitted" then
+if decision ~= "admitted" then
   return redis.error_reply("CALLDECISIONINVALID")
 end
 local state_error = admitted_state_error(KEYS[1], ARGV[2], ARGV[3])
 if state_error then
   return redis.error_reply(state_error)
 end
-local status = 0
-if not decision then
-  status = 3
-end
 return {
-  status,
+  0,
   digest,
   redis.call("HGET", KEYS[1], "execution_deadline_unix_milli"),
   redis.call("HGET", KEYS[1], "expires_at_unix_milli"),
@@ -287,21 +283,6 @@ return {
   redis.call("HGET", KEYS[1], "terminal_payload"),
   redis.call("HGET", KEYS[1], "terminal_cause")
 }
-`)
-	migrateCallDecisionScript = redis.NewScript(`
-local digest = redis.call("HGET", KEYS[1], "digest")
-if digest ~= ARGV[1] then
-  return redis.error_reply("CALLDECISIONCHANGED")
-end
-local decision = redis.call("HGET", KEYS[1], "decision")
-if decision == false then
-  redis.call("HSET", KEYS[1], "decision", "admitted")
-  return 1
-end
-if decision ~= "admitted" then
-  return redis.error_reply("CALLDECISIONCHANGED")
-end
-return 0
 `)
 	ensureCallAdmissionScript = redis.NewScript(`
 if redis.call("EXISTS", KEYS[1]) == 0 then
@@ -451,22 +432,12 @@ func (s *callAdmissionStore) Attach(
 		}
 		return callAdmission{}, &callRejectedError{rejection: rejection}
 	}
-	if status != 0 && status != 3 {
+	if status != 0 {
 		return callAdmission{}, fmt.Errorf("attach call admission returned invalid status %d", status)
 	}
 	admission, err := s.parseResult(toolset, key, digest, toolUseID, value)
 	if err != nil {
 		return callAdmission{}, err
-	}
-	if status == 3 {
-		if _, err := migrateCallDecisionScript.Run(
-			ctx,
-			s.redis,
-			[]string{key},
-			digest,
-		).Int(); err != nil {
-			return callAdmission{}, fmt.Errorf("migrate call decision: %w", err)
-		}
 	}
 	return admission, nil
 }

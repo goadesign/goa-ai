@@ -519,8 +519,8 @@ func (s *validatedStreamer) captureProviderRejection(err error) error {
 	return err
 }
 
-// firstTokenUsage returns the first present value for the legacy validation
-// error envelope, which carries usage without add-versus-replace semantics.
+// firstTokenUsage prefers a complete usage total and otherwise returns the
+// available delta for OutputValidationError's single usage field.
 func firstTokenUsage(values ...*TokenUsage) *TokenUsage {
 	for _, value := range values {
 		if value != nil {
