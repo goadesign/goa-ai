@@ -869,3 +869,4 @@ func (c ToolCall) TranscriptPayload() rawjson.Message {
 	}
 	return c.Payload
 }
+

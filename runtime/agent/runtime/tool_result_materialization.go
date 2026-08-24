@@ -304,3 +304,4 @@ func ToolCallMetaFromCall(call ToolCall) ToolCallMeta {
 		Labels:           cloneLabels(call.Labels),
 	}
 }
+

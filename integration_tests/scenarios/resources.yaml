@@ -1,16 +1,16 @@
-# MCP Resources Test Scenarios (new shape)
+# MCP resource scenarios verify exact query decoding and selector errors.
 
 scenarios:
   - name: resources_read_denied_by_name
     defaults:
       client: jsonrpc.mcp_assistant
       headers:
-        Accept: application/json
+        Accept: "application/json, text/event-stream"
         x-mcp-deny-names: "system_info"
     pre:
       auto_initialize: true
     steps:
-      - name: read_denied_by_name
+      - name: read
         op: ResourcesRead
         input: { uri: "system://info" }
         expect:
@@ -21,9 +21,9 @@ scenarios:
     defaults:
       client: jsonrpc.mcp_assistant
       headers:
-        Accept: application/json
+        Accept: "application/json, text/event-stream"
     steps:
-      - name: read_before_init
+      - name: read
         op: ResourcesRead
         input: { uri: "system://info" }
         expect:
@@ -34,7 +34,7 @@ scenarios:
     defaults:
       client: jsonrpc.mcp_assistant
       headers:
-        Accept: application/json
+        Accept: "application/json, text/event-stream"
         x-mcp-allow-names: "documents,system_info,conversation_history"
     pre:
       auto_initialize: true
@@ -50,7 +50,7 @@ scenarios:
     defaults:
       client: jsonrpc.mcp_assistant
       headers:
-        Accept: application/json
+        Accept: "application/json, text/event-stream"
         x-mcp-allow-names: "system_info"
     pre:
       auto_initialize: true
@@ -63,16 +63,16 @@ scenarios:
           result:
             contents: [ { uri: "system://info", mimeType: "application/json" } ]
 
-  - name: resources_read_conversation_with_params
+  - name: resources_read_conversation
     defaults:
       client: jsonrpc.mcp_assistant
       headers:
-        Accept: application/json
+        Accept: "application/json, text/event-stream"
         x-mcp-allow-names: "conversation_history"
     pre:
       auto_initialize: true
     steps:
-      - name: read_with_params
+      - name: read
         op: ResourcesRead
         input: { uri: "conversation://history?limit=10" }
         expect:
@@ -80,44 +80,89 @@ scenarios:
           result:
             contents: [ { uri: "conversation://history", mimeType: "application/json" } ]
 
-  - name: resources_read_coercions
+  - name: resources_read_exact_query_types
     defaults:
       client: jsonrpc.mcp_assistant
       headers:
-        Accept: application/json
+        Accept: "application/json, text/event-stream"
         x-mcp-allow-names: "conversation_history"
     pre:
       auto_initialize: true
     steps:
-      - name: read_with_types
+      - name: read
         op: ResourcesRead
         input: { uri: "conversation://history?limit=10&flag=true&nums=1&nums=2.5" }
         expect:
           status: success
-          result:
-            contents: [ { uri: "conversation://history" } ]
+
+  - name: resources_read_one_element_array
+    defaults:
+      client: jsonrpc.mcp_assistant
+      headers:
+        Accept: "application/json, text/event-stream"
+        x-mcp-allow-names: "conversation_history"
+    pre:
+      auto_initialize: true
+    steps:
+      - name: read
+        op: ResourcesRead
+        input: { uri: "conversation://history?nums=1.5" }
+        expect:
+          status: success
 
   - name: resources_read_invalid_query_type
     defaults:
       client: jsonrpc.mcp_assistant
       headers:
-        Accept: application/json
+        Accept: "application/json, text/event-stream"
         x-mcp-allow-names: "conversation_history"
     pre:
       auto_initialize: true
     steps:
-      - name: read_with_bad_types
+      - name: read
         op: ResourcesRead
         input: { uri: "conversation://history?limit=abc" }
         expect:
           status: error
           error: { code: -32602 }
 
-  - name: resources_read_invalid
+  - name: resources_read_duplicate_scalar_query
     defaults:
       client: jsonrpc.mcp_assistant
       headers:
-        Accept: application/json
+        Accept: "application/json, text/event-stream"
+        x-mcp-allow-names: "conversation_history"
+    pre:
+      auto_initialize: true
+    steps:
+      - name: read
+        op: ResourcesRead
+        input: { uri: "conversation://history?limit=1&limit=2" }
+        expect:
+          status: error
+          error: { code: -32602 }
+
+  - name: resources_read_unknown_query
+    defaults:
+      client: jsonrpc.mcp_assistant
+      headers:
+        Accept: "application/json, text/event-stream"
+        x-mcp-allow-names: "conversation_history"
+    pre:
+      auto_initialize: true
+    steps:
+      - name: read
+        op: ResourcesRead
+        input: { uri: "conversation://history?unexpected=value" }
+        expect:
+          status: error
+          error: { code: -32602 }
+
+  - name: resources_read_unknown_resource
+    defaults:
+      client: jsonrpc.mcp_assistant
+      headers:
+        Accept: "application/json, text/event-stream"
     pre:
       auto_initialize: true
     steps:
@@ -126,26 +171,28 @@ scenarios:
         input: { uri: "invalid://resource" }
         expect:
           status: error
-          error: { code: -32601 }
+          error: { code: -32602 }
 
   - name: resources_read_denied_uri
     defaults:
       client: jsonrpc.mcp_assistant
       headers:
-        Accept: application/json
+        Accept: "application/json, text/event-stream"
     pre:
       auto_initialize: true
     steps:
-      - name: read_denied
+      - name: read
         op: ResourcesRead
         input: { uri: "system://info" }
         expect:
           status: error
           error: { code: -32602 }
 
-  - name: resources_subscribe_unsubscribe
+  - name: resources_unknown_subscription
     defaults:
       client: jsonrpc.mcp_assistant
+      headers:
+        Accept: "application/json, text/event-stream"
     pre:
       auto_initialize: true
     steps:
@@ -154,10 +201,10 @@ scenarios:
         input: { uri: "doc://list" }
         expect:
           status: error
-          error: { code: -32601 }
+          error: { code: -32602 }
       - name: unsubscribe
         op: ResourcesUnsubscribe
         input: { uri: "doc://list" }
         expect:
           status: error
-          error: { code: -32601 }
+          error: { code: -32602 }

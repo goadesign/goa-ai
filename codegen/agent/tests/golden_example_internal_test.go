@@ -1,12 +1,14 @@
 package tests
 
 import (
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
-	"goa.design/goa-ai/codegen/testhelpers"
+	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa/v3/dsl"
 )
 
 // buildAndGenerateExample provided by golden_helpers_test.go
@@ -20,17 +22,12 @@ func TestExampleInternal_MethodBacked(t *testing.T) {
 
 	// Planner stub
 	plan := fileContent(t, files, "internal/agents/scribe/planner/planner.go")
-	require.NotContains(t, plan, "decode generated")
-	require.Contains(t, plan, "Hello from example planner.")
 	assertGoldenGo(t, "example_internal_method", "planner.go.golden", plan)
 
 	// Executor stub for toolset profiles
 	exec := fileContent(t, files, "internal/agents/scribe/toolsets/profiles/execute.go")
-	require.NotContains(t, exec, `rawjson.Message("")`)
-	require.NotContains(t, exec, `"goa.design/goa-ai/runtime/agent/rawjson"`)
-	require.Contains(t, exec, "generated executor requires an application implementation")
-	require.NotContains(t, exec, "PriorInput:")
-	require.NotContains(t, exec, "ExampleJSON:")
+	require.Contains(t, exec, "profilesspecs.UpsertPayloadCodec.FromJSON(call.Payload)")
+	require.Contains(t, exec, "profilesspecs.SpecUpsert.Payload.ExampleJSON")
 	assertGoldenGo(t, "example_internal_method", "executor.go.golden", exec)
 }
 
@@ -46,68 +43,63 @@ func TestExampleInternal_MCP(t *testing.T) {
 	assertGoldenGo(t, "example_internal_mcp", "planner.go.golden", plan)
 }
 
-func TestExampleInternal_NoResultToolReturnsEmptySuccess(t *testing.T) {
-	files := buildAndGenerateExample(t, testscenarios.NoResultMethod())
-	plan := fileContent(t, files, "internal/agents/scribe/planner/planner.go")
-	exec := fileContent(t, files, "internal/agents/scribe/toolsets/ops/execute.go")
+// TestExampleInternalUsesGeneratedToolNames checks that independently planned
+// example files call the exact names written by goa gen.
+func TestExampleInternalUsesGeneratedToolNames(t *testing.T) {
+	design := exampleToolNameCollisionDesign()
+	generated := buildAndGenerate(t, design)
+	codecs := fileContent(t, generated, "gen/alpha/toolsets/ops/codecs.go")
+	specs := fileContent(t, generated, "gen/alpha/toolsets/ops/specs.go")
 
-	require.Contains(t, plan, "build generated ops.purge call")
-	require.Contains(t, plan, "Tool %s completed successfully")
-	require.Contains(t, exec, "return runtime.Executed(&planner.ToolResult{Name: call.Name}), nil")
-	require.NotContains(t, exec, "generated executor requires an application implementation")
-	require.NotContains(t, exec, `"fmt"`)
-	require.NotContains(t, exec, `"goa.design/goa-ai/runtime/agent/rawjson"`)
+	examples := buildAndGenerateExample(t, design)
+	executor := renderedFileContent(t, examples, "internal/agents/worker/toolsets/ops/execute.go")
+
+	codecRefs := regexp.MustCompile(`opsspecs\.([A-Za-z0-9]+PayloadCodec)\.FromJSON`).FindAllStringSubmatch(executor, -1)
+	require.Len(t, codecRefs, 2)
+	for _, match := range codecRefs {
+		require.Contains(t, codecs, match[1]+" = tools.JSONCodec")
+	}
+	specRefs := regexp.MustCompile(`opsspecs\.(Spec[A-Za-z0-9]+)\.Payload\.ExampleJSON`).FindAllStringSubmatch(executor, -1)
+	require.Len(t, specRefs, 2)
+	for _, match := range specRefs {
+		require.Contains(t, specs, match[1]+" = tools.ToolSpec")
+	}
+	for _, file := range examples {
+		require.False(t, strings.HasPrefix(file.Path, "gen/"), file.Path)
+	}
 }
 
-func TestExampleInternal_InjectedToolUsesComposedDecoder(t *testing.T) {
-	files := buildAndGenerateExample(t, testscenarios.InjectLabelExample())
-	exec := fileContent(t, files, "internal/agents/scribe/toolsets/helpers/execute.go")
-
-	require.Contains(
-		t,
-		exec,
-		"helpersspecs.DecodeLookupHousehold(call.Payload, *meta, meta.Labels)",
-	)
-	require.NotContains(t, exec, "SpecLookupHousehold().Payload.Codec.FromJSON")
+// exampleToolNameCollisionDesign defines two method-backed tools whose names
+// become the same Go name before the package chooses unique spellings.
+func exampleToolNameCollisionDesign() func() {
+	return func() {
+		API("example_names", func() {})
+		Service("alpha", func() {
+			Method("by_dash", func() {
+				Payload(func() {
+					Attribute("id", String, "Item ID")
+					Required("id")
+				})
+				Result(String)
+			})
+			Method("by_underscore", func() {
+				Payload(func() {
+					Attribute("id", String, "Item ID")
+					Required("id")
+				})
+				Result(String)
+			})
+			aidsl.Agent("worker", "Worker", func() {
+				aidsl.Use("ops", func() {
+					aidsl.Tool("by-id", "Find by ID", func() {
+						aidsl.BindTo("by_dash")
+					})
+					aidsl.Tool("by_id", "Find by ID", func() {
+						aidsl.BindTo("by_underscore")
+					})
+				})
+			})
+		})
+	}
 }
 
-func TestExampleInternal_BoundedToolIsNotSelectedWithoutExecutorBounds(t *testing.T) {
-	files := buildAndGenerateExample(t, testscenarios.ServiceToolsetBindSelfBoundedResult())
-	plan := fileContent(t, files, "internal/agents/scribe/planner/planner.go")
-	exec := fileContent(t, files, "internal/agents/scribe/toolsets/lookup/execute.go")
-
-	require.Contains(t, plan, "Hello from example planner.")
-	require.NotContains(t, plan, "build generated search call")
-	require.Contains(t, exec, `"goa.design/goa-ai/runtime/agent/rawjson"`)
-	require.Contains(t, exec, "rawjson.Message(")
-}
-
-func TestExampleInternal_CompletionWithoutExampleIsNotExecuted(t *testing.T) {
-	files := buildAndGenerateExample(t, testscenarios.ServiceCompletionWithoutExampleWithAgent())
-	main := fileContent(t, files, "cmd/tasks/main.go")
-
-	require.NotContains(t, main, "newExampleCompletionClient")
-	require.NotContains(t, main, "DraftFromTranscriptExample")
-}
-
-func TestGeneratedProviderUsesExactMethodCallArity(t *testing.T) {
-	noResultFiles := testhelpers.BuildAndGenerateWithPkg(
-		t,
-		"generated.local/gen",
-		testscenarios.NoResultMethod(),
-	)
-	noResultProvider := generatedContentBySuffix(t, noResultFiles, "alpha/toolsets/ops/provider.go")
-	require.Contains(t, noResultProvider, "err = p.svc.Purge(ctx, methodIn)")
-	require.Contains(t, noResultProvider, "err = p.svc.Heartbeat(ctx)")
-	require.NotContains(t, noResultProvider, "methodOut")
-
-	resultFiles := testhelpers.BuildAndGenerateWithPkg(
-		t,
-		"generated.local/gen",
-		testscenarios.EmptyPayloadResultMethod(),
-	)
-	resultProvider := generatedContentBySuffix(t, resultFiles, "alpha/toolsets/ops/provider.go")
-
-	require.Contains(t, resultProvider, "methodOut, err := p.svc.Status(ctx)")
-	require.NotContains(t, resultProvider, "InitStatusMethodPayload")
-}

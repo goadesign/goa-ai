@@ -171,7 +171,7 @@ func marshalDraftTaskResult(v *DraftTaskResult) ([]byte, error) {
 			out.Steps[i] = nil
 			continue
 		}
-		out.Steps[i] = encodeDraftTaskStepToToolhttpDraftTaskStepTransport(val)
+		out.Steps[i] = encodeDraftTaskStepToDraftTaskStepTransport(val)
 	}
 	return json.Marshal(out)
 }
@@ -208,7 +208,7 @@ func unmarshalDraftTaskResult(data []byte) (*DraftTaskResult, error) {
 			out.Steps[i] = nil
 			continue
 		}
-		out.Steps[i] = decodeToolhttpDraftTaskStepTransportToDraftTaskStep(val)
+		out.Steps[i] = decodeDraftTaskStepTransportToDraftTaskStep(val)
 	}
 	return out, nil
 }
@@ -502,14 +502,14 @@ func unknownJSONFieldError(path, field string, allowed []string) error {
 }
 
 // Helper transform functions
-func decodeToolhttpDraftTaskStepTransportToDraftTaskStep(v *toolhttp.DraftTaskStepTransport) *DraftTaskStep {
+func decodeDraftTaskStepTransportToDraftTaskStep(v *toolhttp.DraftTaskStepTransport) *DraftTaskStep {
 	res := &DraftTaskStep{
 		Title: *v.Title,
 	}
 
 	return res
 }
-func encodeDraftTaskStepToToolhttpDraftTaskStepTransport(v *DraftTaskStep) *toolhttp.DraftTaskStepTransport {
+func encodeDraftTaskStepToDraftTaskStepTransport(v *DraftTaskStep) *toolhttp.DraftTaskStepTransport {
 	res := &toolhttp.DraftTaskStepTransport{
 		Title: &v.Title,
 	}

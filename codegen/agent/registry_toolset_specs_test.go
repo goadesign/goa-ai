@@ -49,7 +49,7 @@ func TestRegistryToolsetSpecsStructure(t *testing.T) {
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
 
-	files, err := codegen.Generate("example.com/registry", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
+	files, err := codegen.BuildFilesForTest("example.com/registry", []eval.Root{goaexpr.Root, agentsExpr.Root}, false)
 	require.NoError(t, err)
 
 	var specsContent string
@@ -114,7 +114,7 @@ func TestRegistryToolsetSpecsMetadata(t *testing.T) {
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
 
-	files, err := codegen.Generate("example.com/meta", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
+	files, err := codegen.BuildFilesForTest("example.com/meta", []eval.Root{goaexpr.Root, agentsExpr.Root}, false)
 	require.NoError(t, err)
 
 	var specsContent string

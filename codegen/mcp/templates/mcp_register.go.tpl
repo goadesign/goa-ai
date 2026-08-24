@@ -1,20 +1,3 @@
-package {{ .Register.Package }}
-
-import (
-	"context"
-	"encoding/json"
-	"errors"
-	"strings"
-
-	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
-	"goa.design/goa-ai/runtime/agent/rawjson"
-	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
-	"goa.design/goa-ai/runtime/agent/telemetry"
-	"goa.design/goa-ai/runtime/agent/tools"
-	mcpruntime "goa.design/goa-ai/runtime/mcp"
-)
-
 // {{ .Register.HelperName }}ToolSpecs contains the tool specifications for the {{ .Register.SuiteName }} toolset.
 var {{ .Register.HelperName }}ToolSpecs = []tools.ToolSpec{
 {{- range .Register.Tools }}

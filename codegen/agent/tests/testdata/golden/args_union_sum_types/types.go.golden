@@ -21,17 +21,17 @@ type (
 		Value         Value
 		OptionalValue OptionalValue
 	}
-	// OptionalValueNumber is a helper type materialized for nested references.
+	// OptionalValueNumber is a nested type used by generated tool data.
 	OptionalValueNumber = int32
-	// OptionalValueText is a helper type materialized for nested references.
+	// OptionalValueText is a nested type used by generated tool data.
 	OptionalValueText = string
-	// StructuredValue is a helper type materialized for nested references.
+	// StructuredValue is a nested type used by generated tool data.
 	StructuredValue = struct {
 		// Structured value label
 		Label string
 	}
-	// ValueNumber is a helper type materialized for nested references.
+	// ValueNumber is a nested type used by generated tool data.
 	ValueNumber = int32
-	// ValueText is a helper type materialized for nested references.
+	// ValueText is a nested type used by generated tool data.
 	ValueText = string
 )

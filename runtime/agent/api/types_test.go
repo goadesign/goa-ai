@@ -221,3 +221,4 @@ func strictJSONDecode(payload []byte, target any) error {
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(target)
 }
+

@@ -7,9 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 	ir "goa.design/goa-ai/codegen/ir"
 	"goa.design/goa-ai/codegen/testhelpers"
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	. "goa.design/goa/v3/dsl"
+	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
@@ -34,12 +35,12 @@ func TestBuild_Deterministic(t *testing.T) {
 					Attribute("ok", Boolean, "OK")
 				})
 			})
-			Agent("scribe", "Doc helper", func() {
-				Use("lookup", func() {
-					Tool("by_id", "Lookup by ID", func() {
-						Args(QPayload)
-						Return(OkResult)
-						BindTo("Do")
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use("lookup", func() {
+					aidsl.Tool("by_id", "Lookup by ID", func() {
+						aidsl.Args(QPayload)
+						aidsl.Return(OkResult)
+						aidsl.BindTo("Do")
 					})
 				})
 			})
@@ -63,13 +64,13 @@ func TestBuild_ToolsetOwnership_ServiceLexicographic(t *testing.T) {
 	design := func() {
 		API("multi", func() {})
 
-		var Shared = Toolset("shared", func() {
-			Tool("ping", "Ping", func() {
-				Args(func() {
+		var Shared = aidsl.Toolset("shared", func() {
+			aidsl.Tool("ping", "Ping", func() {
+				aidsl.Args(func() {
 					Attribute("msg", String, "Message")
 					Required("msg")
 				})
-				Return(func() {
+				aidsl.Return(func() {
 					Attribute("ok", Boolean, "OK")
 					Required("ok")
 				})
@@ -77,16 +78,16 @@ func TestBuild_ToolsetOwnership_ServiceLexicographic(t *testing.T) {
 		})
 
 		Service("bravo", func() {
-			Agent("b", "B", func() {
-				Use(Shared, func() {
-					Tool("ping")
+			aidsl.Agent("b", "B", func() {
+				aidsl.Use(Shared, func() {
+					aidsl.Tool("ping")
 				})
 			})
 		})
 		Service("alpha", func() {
-			Agent("a", "A", func() {
-				Use(Shared, func() {
-					Tool("ping")
+			aidsl.Agent("a", "A", func() {
+				aidsl.Use(Shared, func() {
+					aidsl.Tool("ping")
 				})
 			})
 		})
@@ -108,13 +109,13 @@ func TestBuild_ToolsetOwnership_ExportWins(t *testing.T) {
 	design := func() {
 		API("multi", func() {})
 
-		var Shared = Toolset("shared", func() {
-			Tool("ping", "Ping", func() {
-				Args(func() {
+		var Shared = aidsl.Toolset("shared", func() {
+			aidsl.Tool("ping", "Ping", func() {
+				aidsl.Args(func() {
 					Attribute("msg", String, "Message")
 					Required("msg")
 				})
-				Return(func() {
+				aidsl.Return(func() {
 					Attribute("ok", Boolean, "OK")
 					Required("ok")
 				})
@@ -122,16 +123,16 @@ func TestBuild_ToolsetOwnership_ExportWins(t *testing.T) {
 		})
 
 		Service("bravo", func() {
-			Agent("provider", "Provider", func() {
-				Export(Shared, func() {
-					Tool("ping")
+			aidsl.Agent("provider", "Provider", func() {
+				aidsl.Export(Shared, func() {
+					aidsl.Tool("ping")
 				})
 			})
 		})
 		Service("alpha", func() {
-			Agent("consumer", "Consumer", func() {
-				Use(Shared, func() {
-					Tool("ping")
+			aidsl.Agent("consumer", "Consumer", func() {
+				aidsl.Use(Shared, func() {
+					aidsl.Tool("ping")
 				})
 			})
 		})
@@ -154,13 +155,13 @@ func TestBuild_ToolsetOwnership_ServiceExportWins(t *testing.T) {
 	design := func() {
 		API("multi", func() {})
 
-		var Shared = Toolset("shared", func() {
-			Tool("ping", "Ping", func() {
-				Args(func() {
+		var Shared = aidsl.Toolset("shared", func() {
+			aidsl.Tool("ping", "Ping", func() {
+				aidsl.Args(func() {
 					Attribute("msg", String, "Message")
 					Required("msg")
 				})
-				Return(func() {
+				aidsl.Return(func() {
 					Attribute("ok", Boolean, "OK")
 					Required("ok")
 				})
@@ -168,14 +169,14 @@ func TestBuild_ToolsetOwnership_ServiceExportWins(t *testing.T) {
 		})
 
 		Service("bravo", func() {
-			Export(Shared, func() {
-				Tool("ping")
+			aidsl.Export(Shared, func() {
+				aidsl.Tool("ping")
 			})
 		})
 		Service("alpha", func() {
-			Agent("consumer", "Consumer", func() {
-				Use(Shared, func() {
-					Tool("ping")
+			aidsl.Agent("consumer", "Consumer", func() {
+				aidsl.Use(Shared, func() {
+					aidsl.Tool("ping")
 				})
 			})
 		})
@@ -198,8 +199,7 @@ func TestBuild_RejectsOwnerScopedSanitizedCollisions(t *testing.T) {
 		API("multi", func() {})
 		Service("consumer", func() {})
 	})
-	goaRoot := roots[0].(*goaexpr.RootExpr)
-	agentsRoot := roots[1].(*agentsExpr.RootExpr)
+	goaRoot, agentsRoot := buildRoots(t, roots)
 	consumer := goaRoot.Service("consumer")
 	require.NotNil(t, consumer)
 	planner := &agentsExpr.AgentExpr{Name: "planner", Service: consumer}
@@ -226,8 +226,7 @@ func TestBuild_RejectsUnsanitizableAgentNames(t *testing.T) {
 		API("multi", func() {})
 		Service("consumer", func() {})
 	})
-	goaRoot := roots[0].(*goaexpr.RootExpr)
-	agentsRoot := roots[1].(*agentsExpr.RootExpr)
+	goaRoot, agentsRoot := buildRoots(t, roots)
 	consumer := goaRoot.Service("consumer")
 	require.NotNil(t, consumer)
 	agentsRoot.Agents = []*agentsExpr.AgentExpr{
@@ -244,19 +243,19 @@ func TestBuild_ServiceAgentAndCompletionLayout(t *testing.T) {
 	design := func() {
 		API("svc", func() {})
 
-		var Shared = Toolset("shared_tools", func() {
-			Tool("ping", "Ping", func() {})
+		var Shared = aidsl.Toolset("shared_tools", func() {
+			aidsl.Tool("ping", "Ping", func() {})
 		})
 
 		Service("svc", func() {
-			Completion("draft", "Draft completion", func() {
-				Return(func() {
+			aidsl.Completion("draft", "Draft completion", func() {
+				aidsl.Return(func() {
 					Attribute("text", String, "Draft text")
 				})
 			})
-			Agent("scribe", "Doc helper", func() {
-				Use(Shared, func() {
-					Tool("ping")
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use(Shared, func() {
+					aidsl.Tool("ping")
 				})
 			})
 		})
@@ -291,4 +290,24 @@ func TestBuild_ServiceAgentAndCompletionLayout(t *testing.T) {
 	completion := svc.Completions[0]
 	require.Equal(t, "draft", completion.Name)
 	require.Equal(t, "Draft", completion.GoName)
+}
+
+// buildRoots returns the Goa service definitions and goa-ai agent definitions
+// created by a test design.
+func buildRoots(t *testing.T, roots []eval.Root) (*goaexpr.RootExpr, *agentsExpr.RootExpr) {
+	t.Helper()
+
+	var goaRoot *goaexpr.RootExpr
+	var agentsRoot *agentsExpr.RootExpr
+	for _, root := range roots {
+		switch root := root.(type) {
+		case *goaexpr.RootExpr:
+			goaRoot = root
+		case *agentsExpr.RootExpr:
+			agentsRoot = root
+		}
+	}
+	require.NotNil(t, goaRoot)
+	require.NotNil(t, agentsRoot)
+	return goaRoot, agentsRoot
 }

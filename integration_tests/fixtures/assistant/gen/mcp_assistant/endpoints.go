@@ -29,22 +29,9 @@ type Endpoints struct {
 	EventsStream         goa.Endpoint
 }
 
-// ToolsCallEndpointInput holds both the payload and the server stream of the
-// "tools/call" method.
-type ToolsCallEndpointInput struct {
-	// Payload is the method payload.
-	Payload *ToolsCallPayload
-	// RequestID is the JSON-RPC request ID (available for JSON-RPC transports).
-	RequestID any
-	// Stream is the server stream used by the "tools/call" method to send data.
-	Stream ToolsCallServerStream
-}
-
 // EventsStreamEndpointInput holds both the payload and the server stream of
 // the "events/stream" method.
 type EventsStreamEndpointInput struct {
-	// RequestID is the JSON-RPC request ID (available for JSON-RPC transports).
-	RequestID any
 	// Stream is the server stream used by the "events/stream" method to send data.
 	Stream EventsStreamServerStream
 }
@@ -114,12 +101,8 @@ func NewToolsListEndpoint(s Service) goa.Endpoint {
 // "tools/call" of service "mcp_assistant".
 func NewToolsCallEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
-		ep := req.(*ToolsCallEndpointInput)
-		res, err := s.ToolsCall(ctx, ep.Payload, ep.Stream)
-		if err != nil {
-			return nil, err
-		}
-		return res, nil
+		p := req.(*ToolsCallPayload)
+		return s.ToolsCall(ctx, p)
 	}
 }
 
@@ -191,10 +174,6 @@ func NewNotifyStatusUpdateEndpoint(s Service) goa.Endpoint {
 func NewEventsStreamEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		ep := req.(*EventsStreamEndpointInput)
-		res, err := s.EventsStream(ctx, ep.Stream)
-		if err != nil {
-			return nil, err
-		}
-		return res, nil
+		return nil, s.EventsStream(ctx, ep.Stream)
 	}
 }

@@ -37,7 +37,7 @@ func HeadlineExample() rawjson.Message {
 	return slices.Clone(specHeadline().ExampleJSON)
 }
 
-// CompleteHeadline runs the unary typed completion for headline.
+// CompleteHeadline runs the typed completion for headline.
 func CompleteHeadline(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[HeadlineResult], error) {
 	return completion.Complete(ctx, client, req, specHeadline())
 }

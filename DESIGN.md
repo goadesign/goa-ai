@@ -266,7 +266,6 @@ supplies it.
 fixed-limit and planner-authored finalization calls, including `tool_failure`,
 must use `runtime.FinalizationReasonLabel` and
 `goa-ai.finalization_reason`.
-
 The additional workflow-input field requires a pinned Temporal Worker
 Deployment cutover: old and new strict decoders cannot share one unversioned
 task queue during rollout.

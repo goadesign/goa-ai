@@ -330,3 +330,4 @@ func (s *testWorkflowService) startRequest() *workflowservice.StartWorkflowExecu
 	defer s.mu.Unlock()
 	return s.startReq
 }
+

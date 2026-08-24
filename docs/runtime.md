@@ -678,7 +678,7 @@ Workflow step boundary:
   removes that reserved key if a run, policy, planner, or model supplies it,
 - recoverable failures supply one normal planner activity with their structured
   evidence and do not constrain this validated terminal bookkeeping path;
-  caller-supplied `WithRestrictToTool` remains run-scoped and still applies,
+  caller-supplied `WithRestrictToTool` still applies for the entire run,
 - deadline checks happen before admitting new work; in-flight tool batches
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.

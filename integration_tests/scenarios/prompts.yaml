@@ -1,9 +1,11 @@
-# MCP Prompts Test Scenarios (new shape)
+# MCP prompt scenarios verify selectors and payload-free argument handling.
 
 scenarios:
   - name: prompts_list
     defaults:
       client: jsonrpc.mcp_assistant
+      headers:
+        Accept: "application/json, text/event-stream"
     pre:
       auto_initialize: true
     steps:
@@ -19,9 +21,42 @@ scenarios:
                   - { name: context, required: true }
                   - { name: task, required: true }
 
-  - name: prompts_get_static
+  - name: prompts_get_static_without_arguments
     defaults:
       client: jsonrpc.mcp_assistant
+      headers:
+        Accept: "application/json, text/event-stream"
+    pre:
+      auto_initialize: true
+    steps:
+      - name: get
+        op: PromptsGet
+        input:
+          name: code_review
+        expect:
+          status: success
+
+  - name: prompts_get_static_with_empty_arguments
+    defaults:
+      client: jsonrpc.mcp_assistant
+      headers:
+        Accept: "application/json, text/event-stream"
+    pre:
+      auto_initialize: true
+    steps:
+      - name: get
+        op: PromptsGet
+        input:
+          name: code_review
+          arguments: {}
+        expect:
+          status: success
+
+  - name: prompts_get_static_rejects_arguments
+    defaults:
+      client: jsonrpc.mcp_assistant
+      headers:
+        Accept: "application/json, text/event-stream"
     pre:
       auto_initialize: true
     steps:
@@ -31,11 +66,14 @@ scenarios:
           name: code_review
           arguments: { code: "func add(a, b int) int { return a + b }" }
         expect:
-          status: success
+          status: error
+          error: { code: -32602 }
 
   - name: prompts_get_dynamic
     defaults:
       client: jsonrpc.mcp_assistant
+      headers:
+        Accept: "application/json, text/event-stream"
     pre:
       auto_initialize: true
     steps:
@@ -47,9 +85,11 @@ scenarios:
         expect:
           status: success
 
-  - name: prompts_get_invalid
+  - name: prompts_get_unknown_prompt
     defaults:
       client: jsonrpc.mcp_assistant
+      headers:
+        Accept: "application/json, text/event-stream"
     pre:
       auto_initialize: true
     steps:
@@ -58,28 +98,32 @@ scenarios:
         input: { name: non_existent_prompt, arguments: {} }
         expect:
           status: error
-          error: { code: -32601 }
+          error: { code: -32602 }
 
   - name: prompts_get_missing_name
     defaults:
       client: jsonrpc.mcp_assistant
+      headers:
+        Accept: "application/json, text/event-stream"
     pre:
       auto_initialize: true
     steps:
       - name: get
         op: PromptsGet
-        input: { name: "" }
+        input: {}
         expect:
           status: error
           error: { code: -32602 }
 
-  - name: prompts_get_missing_arg_http
+  - name: prompts_get_missing_dynamic_argument
     defaults:
       client: jsonrpc.mcp_assistant
+      headers:
+        Accept: "application/json, text/event-stream"
     pre:
       auto_initialize: true
     steps:
-      - name: get_missing_task
+      - name: get
         op: PromptsGet
         input: { name: contextual_prompts, arguments: { context: testing } }
         expect:

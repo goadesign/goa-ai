@@ -434,3 +434,4 @@ func rewriteSuspensionCheckpoint(t *testing.T, suspension *api.RunSuspension, mu
 	suspension.Checkpoint = payload
 	suspension.ID = hex.EncodeToString(digest[:16])
 }
+

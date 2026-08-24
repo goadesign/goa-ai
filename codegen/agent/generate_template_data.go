@@ -44,12 +44,17 @@ type (
 	}
 
 	toolSpecsAggregateData struct {
-		Toolsets []*ToolsetData
+		Toolsets []*aggregateToolsetRenderData
 		// RequiredLabels lists, sorted and deduplicated, the union of every
 		// aggregated toolset's RequiredLabels. Runtime.Start/OneShotRun
 		// validates a run's supplied labels against this set before scheduling
 		// any workflow or activity for the agent.
 		RequiredLabels []string
+	}
+
+	aggregateToolsetRenderData struct {
+		SpecsPackageName string
+		Tools            []*toolRenderData
 	}
 
 	agentToolsetFileData struct {
@@ -68,7 +73,16 @@ type (
 		PackageName     string
 		Agent           *AgentData
 		Toolset         *ToolsetData
+		Tools           []*toolRenderData
 		ServicePkgAlias string
+	}
+
+	exampleExecutorFileData struct {
+		Agent       *AgentData
+		Toolset     *ToolsetData
+		AgentImport *codegen.ImportSpec
+		SpecsAlias  string
+		Tools       []*toolRenderData
 	}
 
 	mcpExecutorFileData struct {

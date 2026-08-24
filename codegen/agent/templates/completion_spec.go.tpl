@@ -5,34 +5,52 @@ const (
 {{- end }}
 )
 
+var (
 {{- range .Completions }}
-// spec{{ .ConstName }} returns a fresh typed completion contract for {{ .Name }}.
-func spec{{ .ConstName }}() completion.Spec[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}] {
-    return completion.Spec[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}]{
+    {{ .SpecVar }} = completion.Spec[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}]{
         Name:        {{ .ConstName }},
         Description: {{ printf "%q" .Description }},
-        Schema: {{- if and .Result (gt (len .Result.SchemaJSON) 0) }}rawjson.Message({{ printf "%q" .Result.SchemaJSON }}){{ else }}nil{{ end }},
-        SchemaWithoutRootExample: {{- if and .Result (gt (len .Result.SchemaWithoutRootExampleJSON) 0) }}rawjson.Message({{ printf "%q" .Result.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
-        ExampleJSON: {{- if and .Result (gt (len .Result.ExampleJSON) 0) }}rawjson.Message({{ printf "%q" .Result.ExampleJSON }}){{ else }}nil{{ end }},
-        Codec: {{ .Result.ExportedCodec }}(),
+        Result: tools.TypeSpec{
+            Name: {{ if .Result }}{{ printf "%q" .Result.TypeName }}{{ else }}""{{ end }},
+            Schema: {{- if and .Result (gt (len .Result.SchemaJSON) 0) }}tools.RawJSON({{ printf "%q" .Result.SchemaJSON }}){{ else }}nil{{ end }},
+            {{- if .Result }}
+            SchemaWithoutRootExample: {{- if gt (len .Result.SchemaWithoutRootExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Result.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
+            ExampleJSON: {{- if gt (len .Result.ExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Result.ExampleJSON }}){{ else }}nil{{ end }},
+            FieldDescriptions: {{- if .Result.FieldDescs }}{{ .Result.TypeName }}FieldDescs{{ else }}nil{{ end }},
+            FieldJSONTypes: {{- if .Result.FieldJSONTypes }}{{ .Result.TypeName }}FieldJSONTypes{{ else }}nil{{ end }},
+            Codec: {{ .Result.GenericCodec }},
+            {{- else }}
+            SchemaWithoutRootExample: nil,
+            ExampleJSON: nil,
+            FieldDescriptions: nil,
+            FieldJSONTypes: nil,
+            Codec: tools.JSONCodec[any]{},
+            {{- end }}
+        },
+        Codec: {{ .Result.ExportedCodec }},
     }
-}
-
-// {{ .ConstName }}Example returns an immutable copy of the generated example
-// used to demonstrate {{ .Name }} output.
-func {{ .ConstName }}Example() rawjson.Message {
-    return slices.Clone(spec{{ .ConstName }}().ExampleJSON)
-}
 {{- end }}
+)
 
 {{- range .Completions }}
-// Complete{{ .ConstName }} runs the unary typed completion for {{ .Name }}.
-func Complete{{ .ConstName }}(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}], error) {
-    return completion.Complete(ctx, client, req, spec{{ .ConstName }}())
+// {{ .DecodeFunc }} decodes the structured assistant response for {{ .Name }}.
+func {{ .DecodeFunc }}(resp *model.Response) ({{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}, error) {
+    return completion.DecodeResponse(resp, {{ .SpecVar }})
 }
 
-// StreamComplete{{ .ConstName }} starts the typed completion stream for {{ .Name }}.
-func StreamComplete{{ .ConstName }}(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}], error) {
-    return completion.Stream(ctx, client, req, spec{{ .ConstName }}())
+// {{ .DecodeChunk }} decodes the final structured completion chunk for {{ .Name }}.
+func {{ .DecodeChunk }}(chunk model.Chunk) ({{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}, bool, error) {
+    return completion.DecodeChunk(chunk, {{ .SpecVar }})
+}
+
+// {{ .Complete }} runs the typed completion for {{ .Name }}.
+func {{ .Complete }}(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}], error) {
+    return completion.Complete(ctx, client, req, {{ .SpecVar }})
+}
+
+// {{ .Stream }} starts the typed completion stream for {{ .Name }}.
+func {{ .Stream }}(ctx context.Context, client model.Client, req *model.Request) (model.Streamer, error) {
+    return completion.Stream(ctx, client, req, {{ .SpecVar }})
 }
 {{- end }}
+

@@ -7,9 +7,7 @@
 
 package assistant
 
-import (
-	"context"
-)
+import "context"
 
 // AI Assistant service with full MCP protocol support
 type Service interface {

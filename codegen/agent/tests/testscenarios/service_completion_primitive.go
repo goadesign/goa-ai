@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -12,8 +12,8 @@ func ServiceCompletionPrimitive() func() {
 		API("tasks", func() {})
 
 		Service("tasks", func() {
-			Completion("headline", "Write a short task headline", func() {
-				Return(String)
+			aidsl.Completion("headline", "Write a short task headline", func() {
+				aidsl.Return(String)
 			})
 		})
 	}

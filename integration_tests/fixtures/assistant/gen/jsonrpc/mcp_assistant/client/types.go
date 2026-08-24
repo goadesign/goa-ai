@@ -20,7 +20,7 @@ type InitializeRequestBody struct {
 	// MCP protocol version
 	ProtocolVersion string `form:"protocolVersion" json:"protocolVersion" xml:"protocolVersion"`
 	// Client information
-	ClientInfo *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody `form:"clientInfo" json:"clientInfo" xml:"clientInfo"`
+	ClientInfo *ClientInfoRequestBody `form:"clientInfo" json:"clientInfo" xml:"clientInfo"`
 }
 
 // ToolsListRequestBody is the type of the "mcp_assistant" service "tools/list"
@@ -96,111 +96,566 @@ type NotifyStatusUpdateRequestBody struct {
 
 // InitializeResponseBody is the type of the "mcp_assistant" service
 // "initialize" endpoint HTTP response body.
-type InitializeResponseBody InitializeResponseBodyResponseBody
-
-// PingResponseBody is the type of the "mcp_assistant" service "ping" endpoint
-// HTTP response body.
-type PingResponseBody PingResponseBodyResponseBody
-
-// ToolsListResponseBody is the type of the "mcp_assistant" service
-// "tools/list" endpoint HTTP response body.
-type ToolsListResponseBody ToolsListResponseBodyResponseBody
-
-// ToolsCallResponseBody is the type of the "mcp_assistant" service
-// "tools/call" endpoint HTTP response body.
-type ToolsCallResponseBody ToolsCallResponseBodyResponseBody
-
-// ResourcesListResponseBody is the type of the "mcp_assistant" service
-// "resources/list" endpoint HTTP response body.
-type ResourcesListResponseBody ResourcesListResponseBodyResponseBody
-
-// ResourcesReadResponseBody is the type of the "mcp_assistant" service
-// "resources/read" endpoint HTTP response body.
-type ResourcesReadResponseBody ResourcesReadResponseBodyResponseBody
-
-// PromptsListResponseBody is the type of the "mcp_assistant" service
-// "prompts/list" endpoint HTTP response body.
-type PromptsListResponseBody PromptsListResponseBodyResponseBody
-
-// PromptsGetResponseBody is the type of the "mcp_assistant" service
-// "prompts/get" endpoint HTTP response body.
-type PromptsGetResponseBody PromptsGetResponseBodyResponseBody
-
-// EventsStreamResponseBody is the type of the "mcp_assistant" service
-// "events/stream" endpoint HTTP response body.
-type EventsStreamResponseBody EventsStreamResponseBodyResponseBody
-
-// ClientInfoRequestBodyRequestBodyRequestBodyRequestBody is used to define
-// fields on request body types.
-type ClientInfoRequestBodyRequestBodyRequestBodyRequestBody struct {
-	// Client name
-	Name string `form:"name" json:"name" xml:"name"`
-	// Client version
-	Version string `form:"version" json:"version" xml:"version"`
-}
-
-// InitializeResponseBodyResponseBody is used to define fields on response body
-// types.
-type InitializeResponseBodyResponseBody struct {
+type InitializeResponseBody struct {
 	// MCP protocol version
 	ProtocolVersion *string `form:"protocolVersion,omitempty" json:"protocolVersion,omitempty" xml:"protocolVersion,omitempty"`
 	// Server capabilities
-	Capabilities *ServerCapabilitiesResponseBodyResponseBody `form:"capabilities,omitempty" json:"capabilities,omitempty" xml:"capabilities,omitempty"`
+	Capabilities *ServerCapabilitiesResponseBody `form:"capabilities,omitempty" json:"capabilities,omitempty" xml:"capabilities,omitempty"`
 	// Server information
-	ServerInfo *ServerInfoResponseBodyResponseBody `form:"serverInfo,omitempty" json:"serverInfo,omitempty" xml:"serverInfo,omitempty"`
+	ServerInfo *ServerInfoResponseBody `form:"serverInfo,omitempty" json:"serverInfo,omitempty" xml:"serverInfo,omitempty"`
 }
 
-// ServerCapabilitiesResponseBodyResponseBody is used to define fields on
-// response body types.
-type ServerCapabilitiesResponseBodyResponseBody struct {
-	// Tool capabilities
-	Tools *ToolsCapabilityResponseBodyResponseBody `form:"tools,omitempty" json:"tools,omitempty" xml:"tools,omitempty"`
-	// Resource capabilities
-	Resources *ResourcesCapabilityResponseBodyResponseBody `form:"resources,omitempty" json:"resources,omitempty" xml:"resources,omitempty"`
-	// Prompt capabilities
-	Prompts *PromptsCapabilityResponseBodyResponseBody `form:"prompts,omitempty" json:"prompts,omitempty" xml:"prompts,omitempty"`
+// PingResponseBody is the type of the "mcp_assistant" service "ping" endpoint
+// HTTP response body.
+type PingResponseBody struct {
+	// Response to ping
+	Pong *bool `form:"pong,omitempty" json:"pong,omitempty" xml:"pong,omitempty"`
 }
 
-// ToolsCapabilityResponseBodyResponseBody is used to define fields on response
-// body types.
-type ToolsCapabilityResponseBodyResponseBody struct {
+// ToolsListResponseBody is the type of the "mcp_assistant" service
+// "tools/list" endpoint HTTP response body.
+type ToolsListResponseBody struct {
+	// List of available tools
+	Tools []*ToolInfoResponseBody `form:"tools,omitempty" json:"tools,omitempty" xml:"tools,omitempty"`
 }
 
-// ResourcesCapabilityResponseBodyResponseBody is used to define fields on
-// response body types.
-type ResourcesCapabilityResponseBodyResponseBody struct {
+// ToolsCallResponseBody is the type of the "mcp_assistant" service
+// "tools/call" endpoint HTTP response body.
+type ToolsCallResponseBody struct {
+	// Tool execution results
+	Content []*ContentItemResponseBody `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
+	// Whether the tool encountered an error
+	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
 }
 
-// PromptsCapabilityResponseBodyResponseBody is used to define fields on
-// response body types.
-type PromptsCapabilityResponseBodyResponseBody struct {
+// ResourcesListResponseBody is the type of the "mcp_assistant" service
+// "resources/list" endpoint HTTP response body.
+type ResourcesListResponseBody struct {
+	// List of available resources
+	Resources []*ResourceInfoResponseBody `form:"resources,omitempty" json:"resources,omitempty" xml:"resources,omitempty"`
 }
 
-// ServerInfoResponseBodyResponseBody is used to define fields on response body
+// ResourcesReadResponseBody is the type of the "mcp_assistant" service
+// "resources/read" endpoint HTTP response body.
+type ResourcesReadResponseBody struct {
+	// Resource contents
+	Contents []*ResourceContentResponseBody `form:"contents,omitempty" json:"contents,omitempty" xml:"contents,omitempty"`
+}
+
+// PromptsListResponseBody is the type of the "mcp_assistant" service
+// "prompts/list" endpoint HTTP response body.
+type PromptsListResponseBody struct {
+	// List of available prompts
+	Prompts []*PromptInfoResponseBody `form:"prompts,omitempty" json:"prompts,omitempty" xml:"prompts,omitempty"`
+}
+
+// PromptsGetResponseBody is the type of the "mcp_assistant" service
+// "prompts/get" endpoint HTTP response body.
+type PromptsGetResponseBody struct {
+	// Prompt description
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Prompt messages
+	Messages []*PromptMessageResponseBody `form:"messages,omitempty" json:"messages,omitempty" xml:"messages,omitempty"`
+}
+
+// EventsStreamResponseBody is the type of the "mcp_assistant" service
+// "events/stream" endpoint HTTP response body.
+type EventsStreamResponseBody struct {
+	// Tool execution results
+	Content []*ContentItemResponseBody `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
+	// Whether the tool encountered an error
+	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
+}
+
+// InitializeInvalidParamsResponseBody is the type of the "mcp_assistant"
+// service "initialize" endpoint HTTP response body for the "invalid_params"
+// error.
+type InitializeInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// InitializeInternalErrorResponseBody is the type of the "mcp_assistant"
+// service "initialize" endpoint HTTP response body for the "internal_error"
+// error.
+type InitializeInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// PingInvalidParamsResponseBody is the type of the "mcp_assistant" service
+// "ping" endpoint HTTP response body for the "invalid_params" error.
+type PingInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// PingInternalErrorResponseBody is the type of the "mcp_assistant" service
+// "ping" endpoint HTTP response body for the "internal_error" error.
+type PingInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ToolsListInvalidParamsResponseBody is the type of the "mcp_assistant"
+// service "tools/list" endpoint HTTP response body for the "invalid_params"
+// error.
+type ToolsListInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ToolsListInternalErrorResponseBody is the type of the "mcp_assistant"
+// service "tools/list" endpoint HTTP response body for the "internal_error"
+// error.
+type ToolsListInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ToolsCallInvalidParamsResponseBody is the type of the "mcp_assistant"
+// service "tools/call" endpoint HTTP response body for the "invalid_params"
+// error.
+type ToolsCallInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ToolsCallInternalErrorResponseBody is the type of the "mcp_assistant"
+// service "tools/call" endpoint HTTP response body for the "internal_error"
+// error.
+type ToolsCallInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ResourcesListInvalidParamsResponseBody is the type of the "mcp_assistant"
+// service "resources/list" endpoint HTTP response body for the
+// "invalid_params" error.
+type ResourcesListInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ResourcesListInternalErrorResponseBody is the type of the "mcp_assistant"
+// service "resources/list" endpoint HTTP response body for the
+// "internal_error" error.
+type ResourcesListInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ResourcesReadInvalidParamsResponseBody is the type of the "mcp_assistant"
+// service "resources/read" endpoint HTTP response body for the
+// "invalid_params" error.
+type ResourcesReadInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ResourcesReadInternalErrorResponseBody is the type of the "mcp_assistant"
+// service "resources/read" endpoint HTTP response body for the
+// "internal_error" error.
+type ResourcesReadInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ResourcesSubscribeInvalidParamsResponseBody is the type of the
+// "mcp_assistant" service "resources/subscribe" endpoint HTTP response body
+// for the "invalid_params" error.
+type ResourcesSubscribeInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ResourcesSubscribeInternalErrorResponseBody is the type of the
+// "mcp_assistant" service "resources/subscribe" endpoint HTTP response body
+// for the "internal_error" error.
+type ResourcesSubscribeInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ResourcesUnsubscribeInvalidParamsResponseBody is the type of the
+// "mcp_assistant" service "resources/unsubscribe" endpoint HTTP response body
+// for the "invalid_params" error.
+type ResourcesUnsubscribeInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ResourcesUnsubscribeInternalErrorResponseBody is the type of the
+// "mcp_assistant" service "resources/unsubscribe" endpoint HTTP response body
+// for the "internal_error" error.
+type ResourcesUnsubscribeInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// PromptsListInvalidParamsResponseBody is the type of the "mcp_assistant"
+// service "prompts/list" endpoint HTTP response body for the "invalid_params"
+// error.
+type PromptsListInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// PromptsListInternalErrorResponseBody is the type of the "mcp_assistant"
+// service "prompts/list" endpoint HTTP response body for the "internal_error"
+// error.
+type PromptsListInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// PromptsGetInvalidParamsResponseBody is the type of the "mcp_assistant"
+// service "prompts/get" endpoint HTTP response body for the "invalid_params"
+// error.
+type PromptsGetInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// PromptsGetInternalErrorResponseBody is the type of the "mcp_assistant"
+// service "prompts/get" endpoint HTTP response body for the "internal_error"
+// error.
+type PromptsGetInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// NotifyStatusUpdateInvalidParamsResponseBody is the type of the
+// "mcp_assistant" service "notify_status_update" endpoint HTTP response body
+// for the "invalid_params" error.
+type NotifyStatusUpdateInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// NotifyStatusUpdateInternalErrorResponseBody is the type of the
+// "mcp_assistant" service "notify_status_update" endpoint HTTP response body
+// for the "internal_error" error.
+type NotifyStatusUpdateInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// EventsStreamInvalidParamsResponseBody is the type of the "mcp_assistant"
+// service "events/stream" endpoint HTTP response body for the "invalid_params"
+// error.
+type EventsStreamInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// EventsStreamInternalErrorResponseBody is the type of the "mcp_assistant"
+// service "events/stream" endpoint HTTP response body for the "internal_error"
+// error.
+type EventsStreamInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ServerCapabilitiesResponseBody is used to define fields on response body
 // types.
-type ServerInfoResponseBodyResponseBody struct {
+type ServerCapabilitiesResponseBody struct {
+	// Tool capabilities
+	Tools *ToolsCapabilityResponseBody `form:"tools,omitempty" json:"tools,omitempty" xml:"tools,omitempty"`
+	// Resource capabilities
+	Resources *ResourcesCapabilityResponseBody `form:"resources,omitempty" json:"resources,omitempty" xml:"resources,omitempty"`
+	// Prompt capabilities
+	Prompts *PromptsCapabilityResponseBody `form:"prompts,omitempty" json:"prompts,omitempty" xml:"prompts,omitempty"`
+}
+
+// ToolsCapabilityResponseBody is used to define fields on response body types.
+type ToolsCapabilityResponseBody struct {
+}
+
+// ResourcesCapabilityResponseBody is used to define fields on response body
+// types.
+type ResourcesCapabilityResponseBody struct {
+}
+
+// PromptsCapabilityResponseBody is used to define fields on response body
+// types.
+type PromptsCapabilityResponseBody struct {
+}
+
+// ServerInfoResponseBody is used to define fields on response body types.
+type ServerInfoResponseBody struct {
 	// Server name
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// Server version
 	Version *string `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
 }
 
-// PingResponseBodyResponseBody is used to define fields on response body types.
-type PingResponseBodyResponseBody struct {
-	// Response to ping
-	Pong *bool `form:"pong,omitempty" json:"pong,omitempty" xml:"pong,omitempty"`
-}
-
-// ToolsListResponseBodyResponseBody is used to define fields on response body
-// types.
-type ToolsListResponseBodyResponseBody struct {
-	// List of available tools
-	Tools []*ToolInfoResponseBodyResponseBody `form:"tools,omitempty" json:"tools,omitempty" xml:"tools,omitempty"`
-}
-
-// ToolInfoResponseBodyResponseBody is used to define fields on response body
-// types.
-type ToolInfoResponseBodyResponseBody struct {
+// ToolInfoResponseBody is used to define fields on response body types.
+type ToolInfoResponseBody struct {
 	// Tool name
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// Tool description
@@ -209,18 +664,8 @@ type ToolInfoResponseBodyResponseBody struct {
 	InputSchema any `form:"inputSchema,omitempty" json:"inputSchema,omitempty" xml:"inputSchema,omitempty"`
 }
 
-// ToolsCallResponseBodyResponseBody is used to define fields on response body
-// types.
-type ToolsCallResponseBodyResponseBody struct {
-	// Tool execution results
-	Content []*ContentItemResponseBodyResponseBody `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
-	// Whether the tool encountered an error
-	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
-}
-
-// ContentItemResponseBodyResponseBody is used to define fields on response
-// body types.
-type ContentItemResponseBodyResponseBody struct {
+// ContentItemResponseBody is used to define fields on response body types.
+type ContentItemResponseBody struct {
 	// Content type
 	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
 	// Text content
@@ -233,16 +678,8 @@ type ContentItemResponseBodyResponseBody struct {
 	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
 }
 
-// ResourcesListResponseBodyResponseBody is used to define fields on response
-// body types.
-type ResourcesListResponseBodyResponseBody struct {
-	// List of available resources
-	Resources []*ResourceInfoResponseBodyResponseBody `form:"resources,omitempty" json:"resources,omitempty" xml:"resources,omitempty"`
-}
-
-// ResourceInfoResponseBodyResponseBody is used to define fields on response
-// body types.
-type ResourceInfoResponseBodyResponseBody struct {
+// ResourceInfoResponseBody is used to define fields on response body types.
+type ResourceInfoResponseBody struct {
 	// Resource URI
 	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
 	// Resource name
@@ -253,16 +690,8 @@ type ResourceInfoResponseBodyResponseBody struct {
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
 }
 
-// ResourcesReadResponseBodyResponseBody is used to define fields on response
-// body types.
-type ResourcesReadResponseBodyResponseBody struct {
-	// Resource contents
-	Contents []*ResourceContentResponseBodyResponseBody `form:"contents,omitempty" json:"contents,omitempty" xml:"contents,omitempty"`
-}
-
-// ResourceContentResponseBodyResponseBody is used to define fields on response
-// body types.
-type ResourceContentResponseBodyResponseBody struct {
+// ResourceContentResponseBody is used to define fields on response body types.
+type ResourceContentResponseBody struct {
 	// Resource URI
 	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
 	// Content MIME type
@@ -273,27 +702,18 @@ type ResourceContentResponseBodyResponseBody struct {
 	Blob *string `form:"blob,omitempty" json:"blob,omitempty" xml:"blob,omitempty"`
 }
 
-// PromptsListResponseBodyResponseBody is used to define fields on response
-// body types.
-type PromptsListResponseBodyResponseBody struct {
-	// List of available prompts
-	Prompts []*PromptInfoResponseBodyResponseBody `form:"prompts,omitempty" json:"prompts,omitempty" xml:"prompts,omitempty"`
-}
-
-// PromptInfoResponseBodyResponseBody is used to define fields on response body
-// types.
-type PromptInfoResponseBodyResponseBody struct {
+// PromptInfoResponseBody is used to define fields on response body types.
+type PromptInfoResponseBody struct {
 	// Prompt name
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// Prompt description
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
 	// Prompt arguments
-	Arguments []*PromptArgumentResponseBodyResponseBody `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
+	Arguments []*PromptArgumentResponseBody `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
 }
 
-// PromptArgumentResponseBodyResponseBody is used to define fields on response
-// body types.
-type PromptArgumentResponseBodyResponseBody struct {
+// PromptArgumentResponseBody is used to define fields on response body types.
+type PromptArgumentResponseBody struct {
 	// Argument name
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// Argument description
@@ -302,27 +722,16 @@ type PromptArgumentResponseBodyResponseBody struct {
 	Required *bool `form:"required,omitempty" json:"required,omitempty" xml:"required,omitempty"`
 }
 
-// PromptsGetResponseBodyResponseBody is used to define fields on response body
-// types.
-type PromptsGetResponseBodyResponseBody struct {
-	// Prompt description
-	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
-	// Prompt messages
-	Messages []*PromptMessageResponseBodyResponseBody `form:"messages,omitempty" json:"messages,omitempty" xml:"messages,omitempty"`
-}
-
-// PromptMessageResponseBodyResponseBody is used to define fields on response
-// body types.
-type PromptMessageResponseBodyResponseBody struct {
+// PromptMessageResponseBody is used to define fields on response body types.
+type PromptMessageResponseBody struct {
 	// Message role
 	Role *string `form:"role,omitempty" json:"role,omitempty" xml:"role,omitempty"`
 	// Message content
-	Content *MessageContentResponseBodyResponseBody `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
+	Content *MessageContentResponseBody `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
 }
 
-// MessageContentResponseBodyResponseBody is used to define fields on response
-// body types.
-type MessageContentResponseBodyResponseBody struct {
+// MessageContentResponseBody is used to define fields on response body types.
+type MessageContentResponseBody struct {
 	// Content type
 	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
 	// Text content
@@ -335,13 +744,12 @@ type MessageContentResponseBodyResponseBody struct {
 	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
 }
 
-// EventsStreamResponseBodyResponseBody is used to define fields on response
-// body types.
-type EventsStreamResponseBodyResponseBody struct {
-	// Tool execution results
-	Content []*ContentItemResponseBodyResponseBody `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
-	// Whether the tool encountered an error
-	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
+// ClientInfoRequestBody is used to define fields on request body types.
+type ClientInfoRequestBody struct {
+	// Client name
+	Name string `form:"name" json:"name" xml:"name"`
+	// Client version
+	Version string `form:"version" json:"version" xml:"version"`
 }
 
 // NewInitializeRequestBody builds the HTTP request body from the payload of
@@ -351,7 +759,7 @@ func NewInitializeRequestBody(p *mcpassistant.InitializePayload) *InitializeRequ
 		ProtocolVersion: p.ProtocolVersion,
 	}
 	if p.ClientInfo != nil {
-		body.ClientInfo = marshalMcpassistantClientInfoToClientInfoRequestBodyRequestBodyRequestBodyRequestBody(p.ClientInfo)
+		body.ClientInfo = marshalMcpassistantClientInfoToClientInfoRequestBody(p.ClientInfo)
 	}
 	return body
 }
@@ -449,8 +857,38 @@ func NewInitializeResultOK(body *InitializeResponseBody) *mcpassistant.Initializ
 	v := &mcpassistant.InitializeResult{
 		ProtocolVersion: *body.ProtocolVersion,
 	}
-	v.Capabilities = unmarshalServerCapabilitiesResponseBodyResponseBodyToMcpassistantServerCapabilities(body.Capabilities)
-	v.ServerInfo = unmarshalServerInfoResponseBodyResponseBodyToMcpassistantServerInfo(body.ServerInfo)
+	v.Capabilities = unmarshalServerCapabilitiesResponseBodyToMcpassistantServerCapabilities(body.Capabilities)
+	v.ServerInfo = unmarshalServerInfoResponseBodyToMcpassistantServerInfo(body.ServerInfo)
+
+	return v
+}
+
+// NewInitializeInvalidParams builds a mcp_assistant service initialize
+// endpoint invalid_params error.
+func NewInitializeInvalidParams(body *InitializeInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewInitializeInternalError builds a mcp_assistant service initialize
+// endpoint internal_error error.
+func NewInitializeInternalError(body *InitializeInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
 
 	return v
 }
@@ -460,6 +898,36 @@ func NewInitializeResultOK(body *InitializeResponseBody) *mcpassistant.Initializ
 func NewPingResultOK(body *PingResponseBody) *mcpassistant.PingResult {
 	v := &mcpassistant.PingResult{
 		Pong: *body.Pong,
+	}
+
+	return v
+}
+
+// NewPingInvalidParams builds a mcp_assistant service ping endpoint
+// invalid_params error.
+func NewPingInvalidParams(body *PingInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewPingInternalError builds a mcp_assistant service ping endpoint
+// internal_error error.
+func NewPingInternalError(body *PingInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
 	}
 
 	return v
@@ -475,7 +943,37 @@ func NewToolsListResultOK(body *ToolsListResponseBody) *mcpassistant.ToolsListRe
 			v.Tools[i] = nil
 			continue
 		}
-		v.Tools[i] = unmarshalToolInfoResponseBodyResponseBodyToMcpassistantToolInfo(val)
+		v.Tools[i] = unmarshalToolInfoResponseBodyToMcpassistantToolInfo(val)
+	}
+
+	return v
+}
+
+// NewToolsListInvalidParams builds a mcp_assistant service tools/list endpoint
+// invalid_params error.
+func NewToolsListInvalidParams(body *ToolsListInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewToolsListInternalError builds a mcp_assistant service tools/list endpoint
+// internal_error error.
+func NewToolsListInternalError(body *ToolsListInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
 	}
 
 	return v
@@ -493,7 +991,37 @@ func NewToolsCallResultOK(body *ToolsCallResponseBody) *mcpassistant.ToolsCallRe
 			v.Content[i] = nil
 			continue
 		}
-		v.Content[i] = unmarshalContentItemResponseBodyResponseBodyToMcpassistantContentItem(val)
+		v.Content[i] = unmarshalContentItemResponseBodyToMcpassistantContentItem(val)
+	}
+
+	return v
+}
+
+// NewToolsCallInvalidParams builds a mcp_assistant service tools/call endpoint
+// invalid_params error.
+func NewToolsCallInvalidParams(body *ToolsCallInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewToolsCallInternalError builds a mcp_assistant service tools/call endpoint
+// internal_error error.
+func NewToolsCallInternalError(body *ToolsCallInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
 	}
 
 	return v
@@ -509,7 +1037,37 @@ func NewResourcesListResultOK(body *ResourcesListResponseBody) *mcpassistant.Res
 			v.Resources[i] = nil
 			continue
 		}
-		v.Resources[i] = unmarshalResourceInfoResponseBodyResponseBodyToMcpassistantResourceInfo(val)
+		v.Resources[i] = unmarshalResourceInfoResponseBodyToMcpassistantResourceInfo(val)
+	}
+
+	return v
+}
+
+// NewResourcesListInvalidParams builds a mcp_assistant service resources/list
+// endpoint invalid_params error.
+func NewResourcesListInvalidParams(body *ResourcesListInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewResourcesListInternalError builds a mcp_assistant service resources/list
+// endpoint internal_error error.
+func NewResourcesListInternalError(body *ResourcesListInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
 	}
 
 	return v
@@ -525,7 +1083,97 @@ func NewResourcesReadResultOK(body *ResourcesReadResponseBody) *mcpassistant.Res
 			v.Contents[i] = nil
 			continue
 		}
-		v.Contents[i] = unmarshalResourceContentResponseBodyResponseBodyToMcpassistantResourceContent(val)
+		v.Contents[i] = unmarshalResourceContentResponseBodyToMcpassistantResourceContent(val)
+	}
+
+	return v
+}
+
+// NewResourcesReadInvalidParams builds a mcp_assistant service resources/read
+// endpoint invalid_params error.
+func NewResourcesReadInvalidParams(body *ResourcesReadInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewResourcesReadInternalError builds a mcp_assistant service resources/read
+// endpoint internal_error error.
+func NewResourcesReadInternalError(body *ResourcesReadInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewResourcesSubscribeInvalidParams builds a mcp_assistant service
+// resources/subscribe endpoint invalid_params error.
+func NewResourcesSubscribeInvalidParams(body *ResourcesSubscribeInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewResourcesSubscribeInternalError builds a mcp_assistant service
+// resources/subscribe endpoint internal_error error.
+func NewResourcesSubscribeInternalError(body *ResourcesSubscribeInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewResourcesUnsubscribeInvalidParams builds a mcp_assistant service
+// resources/unsubscribe endpoint invalid_params error.
+func NewResourcesUnsubscribeInvalidParams(body *ResourcesUnsubscribeInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewResourcesUnsubscribeInternalError builds a mcp_assistant service
+// resources/unsubscribe endpoint internal_error error.
+func NewResourcesUnsubscribeInternalError(body *ResourcesUnsubscribeInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
 	}
 
 	return v
@@ -541,7 +1189,37 @@ func NewPromptsListResultOK(body *PromptsListResponseBody) *mcpassistant.Prompts
 			v.Prompts[i] = nil
 			continue
 		}
-		v.Prompts[i] = unmarshalPromptInfoResponseBodyResponseBodyToMcpassistantPromptInfo(val)
+		v.Prompts[i] = unmarshalPromptInfoResponseBodyToMcpassistantPromptInfo(val)
+	}
+
+	return v
+}
+
+// NewPromptsListInvalidParams builds a mcp_assistant service prompts/list
+// endpoint invalid_params error.
+func NewPromptsListInvalidParams(body *PromptsListInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewPromptsListInternalError builds a mcp_assistant service prompts/list
+// endpoint internal_error error.
+func NewPromptsListInternalError(body *PromptsListInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
 	}
 
 	return v
@@ -559,7 +1237,67 @@ func NewPromptsGetResultOK(body *PromptsGetResponseBody) *mcpassistant.PromptsGe
 			v.Messages[i] = nil
 			continue
 		}
-		v.Messages[i] = unmarshalPromptMessageResponseBodyResponseBodyToMcpassistantPromptMessage(val)
+		v.Messages[i] = unmarshalPromptMessageResponseBodyToMcpassistantPromptMessage(val)
+	}
+
+	return v
+}
+
+// NewPromptsGetInvalidParams builds a mcp_assistant service prompts/get
+// endpoint invalid_params error.
+func NewPromptsGetInvalidParams(body *PromptsGetInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewPromptsGetInternalError builds a mcp_assistant service prompts/get
+// endpoint internal_error error.
+func NewPromptsGetInternalError(body *PromptsGetInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewNotifyStatusUpdateInvalidParams builds a mcp_assistant service
+// notify_status_update endpoint invalid_params error.
+func NewNotifyStatusUpdateInvalidParams(body *NotifyStatusUpdateInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewNotifyStatusUpdateInternalError builds a mcp_assistant service
+// notify_status_update endpoint internal_error error.
+func NewNotifyStatusUpdateInternalError(body *NotifyStatusUpdateInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
 	}
 
 	return v
@@ -577,7 +1315,37 @@ func NewEventsStreamResultOK(body *EventsStreamResponseBody) *mcpassistant.Event
 			v.Content[i] = nil
 			continue
 		}
-		v.Content[i] = unmarshalContentItemResponseBodyResponseBodyToMcpassistantContentItem(val)
+		v.Content[i] = unmarshalContentItemResponseBodyToMcpassistantContentItem(val)
+	}
+
+	return v
+}
+
+// NewEventsStreamInvalidParams builds a mcp_assistant service events/stream
+// endpoint invalid_params error.
+func NewEventsStreamInvalidParams(body *EventsStreamInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewEventsStreamInternalError builds a mcp_assistant service events/stream
+// endpoint internal_error error.
+func NewEventsStreamInternalError(body *EventsStreamInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
 	}
 
 	return v
@@ -596,7 +1364,7 @@ func ValidateInitializeResponseBody(body *InitializeResponseBody) (err error) {
 		err = goa.MergeErrors(err, goa.MissingFieldError("serverInfo", "body"))
 	}
 	if body.ServerInfo != nil {
-		if err2 := ValidateServerInfoResponseBodyResponseBody(body.ServerInfo); err2 != nil {
+		if err2 := validateServerInfoResponseBody(body.ServerInfo, "body.serverInfo"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -612,14 +1380,14 @@ func ValidatePingResponseBody(body *PingResponseBody) (err error) {
 }
 
 // ValidateToolsListResponseBody runs the validations defined on
-// Tools/ListResponseBody
+// ToolsListResponseBody
 func ValidateToolsListResponseBody(body *ToolsListResponseBody) (err error) {
 	if body.Tools == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("tools", "body"))
 	}
 	for _, e := range body.Tools {
 		if e != nil {
-			if err2 := ValidateToolInfoResponseBodyResponseBody(e); err2 != nil {
+			if err2 := validateToolInfoResponseBody(e, "body.tools[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -628,14 +1396,14 @@ func ValidateToolsListResponseBody(body *ToolsListResponseBody) (err error) {
 }
 
 // ValidateToolsCallResponseBody runs the validations defined on
-// Tools/CallResponseBody
+// ToolsCallResponseBody
 func ValidateToolsCallResponseBody(body *ToolsCallResponseBody) (err error) {
 	if body.Content == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
 	}
 	for _, e := range body.Content {
 		if e != nil {
-			if err2 := ValidateContentItemResponseBodyResponseBody(e); err2 != nil {
+			if err2 := validateContentItemResponseBody(e, "body.content[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -644,14 +1412,14 @@ func ValidateToolsCallResponseBody(body *ToolsCallResponseBody) (err error) {
 }
 
 // ValidateResourcesListResponseBody runs the validations defined on
-// Resources/ListResponseBody
+// ResourcesListResponseBody
 func ValidateResourcesListResponseBody(body *ResourcesListResponseBody) (err error) {
 	if body.Resources == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("resources", "body"))
 	}
 	for _, e := range body.Resources {
 		if e != nil {
-			if err2 := ValidateResourceInfoResponseBodyResponseBody(e); err2 != nil {
+			if err2 := validateResourceInfoResponseBody(e, "body.resources[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -660,14 +1428,14 @@ func ValidateResourcesListResponseBody(body *ResourcesListResponseBody) (err err
 }
 
 // ValidateResourcesReadResponseBody runs the validations defined on
-// Resources/ReadResponseBody
+// ResourcesReadResponseBody
 func ValidateResourcesReadResponseBody(body *ResourcesReadResponseBody) (err error) {
 	if body.Contents == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("contents", "body"))
 	}
 	for _, e := range body.Contents {
 		if e != nil {
-			if err2 := ValidateResourceContentResponseBodyResponseBody(e); err2 != nil {
+			if err2 := validateResourceContentResponseBody(e, "body.contents[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -676,14 +1444,14 @@ func ValidateResourcesReadResponseBody(body *ResourcesReadResponseBody) (err err
 }
 
 // ValidatePromptsListResponseBody runs the validations defined on
-// Prompts/ListResponseBody
+// PromptsListResponseBody
 func ValidatePromptsListResponseBody(body *PromptsListResponseBody) (err error) {
 	if body.Prompts == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("prompts", "body"))
 	}
 	for _, e := range body.Prompts {
 		if e != nil {
-			if err2 := ValidatePromptInfoResponseBodyResponseBody(e); err2 != nil {
+			if err2 := validatePromptInfoResponseBody(e, "body.prompts[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -692,14 +1460,14 @@ func ValidatePromptsListResponseBody(body *PromptsListResponseBody) (err error) 
 }
 
 // ValidatePromptsGetResponseBody runs the validations defined on
-// Prompts/GetResponseBody
+// PromptsGetResponseBody
 func ValidatePromptsGetResponseBody(body *PromptsGetResponseBody) (err error) {
 	if body.Messages == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("messages", "body"))
 	}
 	for _, e := range body.Messages {
 		if e != nil {
-			if err2 := ValidatePromptMessageResponseBodyResponseBody(e); err2 != nil {
+			if err2 := validatePromptMessageResponseBody(e, "body.messages[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -708,14 +1476,14 @@ func ValidatePromptsGetResponseBody(body *PromptsGetResponseBody) (err error) {
 }
 
 // ValidateEventsStreamResponseBody runs the validations defined on
-// Events/StreamResponseBody
+// EventsStreamResponseBody
 func ValidateEventsStreamResponseBody(body *EventsStreamResponseBody) (err error) {
 	if body.Content == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
 	}
 	for _, e := range body.Content {
 		if e != nil {
-			if err2 := ValidateContentItemResponseBodyResponseBody(e); err2 != nil {
+			if err2 := validateContentItemResponseBody(e, "body.content[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -723,29 +1491,584 @@ func ValidateEventsStreamResponseBody(body *EventsStreamResponseBody) (err error
 	return
 }
 
-// ValidateInitializeResponseBodyResponseBody runs the validations defined on
-// InitializeResponseBodyResponseBody
-func ValidateInitializeResponseBodyResponseBody(body *InitializeResponseBodyResponseBody) (err error) {
-	if body.ProtocolVersion == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("protocolVersion", "body"))
+// ValidateInitializeInvalidParamsResponseBody runs the validations defined on
+// InitializeInvalidParamsResponseBody
+func ValidateInitializeInvalidParamsResponseBody(body *InitializeInvalidParamsResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
-	if body.Capabilities == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("capabilities", "body"))
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
 	}
-	if body.ServerInfo == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("serverInfo", "body"))
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
 	}
-	if body.ServerInfo != nil {
-		if err2 := ValidateServerInfoResponseBodyResponseBody(body.ServerInfo); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
 	}
 	return
 }
 
-// ValidateServerInfoResponseBodyResponseBody runs the validations defined on
-// ServerInfoResponseBodyResponseBody
-func ValidateServerInfoResponseBodyResponseBody(body *ServerInfoResponseBodyResponseBody) (err error) {
+// ValidateInitializeInternalErrorResponseBody runs the validations defined on
+// InitializeInternalErrorResponseBody
+func ValidateInitializeInternalErrorResponseBody(body *InitializeInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidatePingInvalidParamsResponseBody runs the validations defined on
+// PingInvalidParamsResponseBody
+func ValidatePingInvalidParamsResponseBody(body *PingInvalidParamsResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidatePingInternalErrorResponseBody runs the validations defined on
+// PingInternalErrorResponseBody
+func ValidatePingInternalErrorResponseBody(body *PingInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateToolsListInvalidParamsResponseBody runs the validations defined on
+// ToolsListInvalidParamsResponseBody
+func ValidateToolsListInvalidParamsResponseBody(body *ToolsListInvalidParamsResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateToolsListInternalErrorResponseBody runs the validations defined on
+// ToolsListInternalErrorResponseBody
+func ValidateToolsListInternalErrorResponseBody(body *ToolsListInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateToolsCallInvalidParamsResponseBody runs the validations defined on
+// ToolsCallInvalidParamsResponseBody
+func ValidateToolsCallInvalidParamsResponseBody(body *ToolsCallInvalidParamsResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateToolsCallInternalErrorResponseBody runs the validations defined on
+// ToolsCallInternalErrorResponseBody
+func ValidateToolsCallInternalErrorResponseBody(body *ToolsCallInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateResourcesListInvalidParamsResponseBody runs the validations defined
+// on ResourcesListInvalidParamsResponseBody
+func ValidateResourcesListInvalidParamsResponseBody(body *ResourcesListInvalidParamsResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateResourcesListInternalErrorResponseBody runs the validations defined
+// on ResourcesListInternalErrorResponseBody
+func ValidateResourcesListInternalErrorResponseBody(body *ResourcesListInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateResourcesReadInvalidParamsResponseBody runs the validations defined
+// on ResourcesReadInvalidParamsResponseBody
+func ValidateResourcesReadInvalidParamsResponseBody(body *ResourcesReadInvalidParamsResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateResourcesReadInternalErrorResponseBody runs the validations defined
+// on ResourcesReadInternalErrorResponseBody
+func ValidateResourcesReadInternalErrorResponseBody(body *ResourcesReadInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateResourcesSubscribeInvalidParamsResponseBody runs the validations
+// defined on ResourcesSubscribeInvalidParamsResponseBody
+func ValidateResourcesSubscribeInvalidParamsResponseBody(body *ResourcesSubscribeInvalidParamsResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateResourcesSubscribeInternalErrorResponseBody runs the validations
+// defined on ResourcesSubscribeInternalErrorResponseBody
+func ValidateResourcesSubscribeInternalErrorResponseBody(body *ResourcesSubscribeInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateResourcesUnsubscribeInvalidParamsResponseBody runs the validations
+// defined on ResourcesUnsubscribeInvalidParamsResponseBody
+func ValidateResourcesUnsubscribeInvalidParamsResponseBody(body *ResourcesUnsubscribeInvalidParamsResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateResourcesUnsubscribeInternalErrorResponseBody runs the validations
+// defined on ResourcesUnsubscribeInternalErrorResponseBody
+func ValidateResourcesUnsubscribeInternalErrorResponseBody(body *ResourcesUnsubscribeInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidatePromptsListInvalidParamsResponseBody runs the validations defined on
+// PromptsListInvalidParamsResponseBody
+func ValidatePromptsListInvalidParamsResponseBody(body *PromptsListInvalidParamsResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidatePromptsListInternalErrorResponseBody runs the validations defined on
+// PromptsListInternalErrorResponseBody
+func ValidatePromptsListInternalErrorResponseBody(body *PromptsListInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidatePromptsGetInvalidParamsResponseBody runs the validations defined on
+// PromptsGetInvalidParamsResponseBody
+func ValidatePromptsGetInvalidParamsResponseBody(body *PromptsGetInvalidParamsResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidatePromptsGetInternalErrorResponseBody runs the validations defined on
+// PromptsGetInternalErrorResponseBody
+func ValidatePromptsGetInternalErrorResponseBody(body *PromptsGetInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateNotifyStatusUpdateInvalidParamsResponseBody runs the validations
+// defined on NotifyStatusUpdateInvalidParamsResponseBody
+func ValidateNotifyStatusUpdateInvalidParamsResponseBody(body *NotifyStatusUpdateInvalidParamsResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateNotifyStatusUpdateInternalErrorResponseBody runs the validations
+// defined on NotifyStatusUpdateInternalErrorResponseBody
+func ValidateNotifyStatusUpdateInternalErrorResponseBody(body *NotifyStatusUpdateInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateEventsStreamInvalidParamsResponseBody runs the validations defined
+// on EventsStreamInvalidParamsResponseBody
+func ValidateEventsStreamInvalidParamsResponseBody(body *EventsStreamInvalidParamsResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateEventsStreamInternalErrorResponseBody runs the validations defined
+// on EventsStreamInternalErrorResponseBody
+func ValidateEventsStreamInternalErrorResponseBody(body *EventsStreamInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateServerInfoResponseBody runs the validations defined on ServerInfo
+func ValidateServerInfoResponseBody(body *ServerInfoResponseBody) (err error) {
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
@@ -755,59 +2078,37 @@ func ValidateServerInfoResponseBodyResponseBody(body *ServerInfoResponseBodyResp
 	return
 }
 
-// ValidatePingResponseBodyResponseBody runs the validations defined on
-// PingResponseBodyResponseBody
-func ValidatePingResponseBodyResponseBody(body *PingResponseBodyResponseBody) (err error) {
-	if body.Pong == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("pong", "body"))
+// validateServerInfoResponseBody checks ServerInfo and reports errors using
+// the path supplied by its caller
+func validateServerInfoResponseBody(body *ServerInfoResponseBody, path string) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.Version == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("version", path))
 	}
 	return
 }
 
-// ValidateToolsListResponseBodyResponseBody runs the validations defined on
-// Tools/ListResponseBodyResponseBody
-func ValidateToolsListResponseBodyResponseBody(body *ToolsListResponseBodyResponseBody) (err error) {
-	if body.Tools == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("tools", "body"))
-	}
-	for _, e := range body.Tools {
-		if e != nil {
-			if err2 := ValidateToolInfoResponseBodyResponseBody(e); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-	return
-}
-
-// ValidateToolInfoResponseBodyResponseBody runs the validations defined on
-// ToolInfoResponseBodyResponseBody
-func ValidateToolInfoResponseBodyResponseBody(body *ToolInfoResponseBodyResponseBody) (err error) {
+// ValidateToolInfoResponseBody runs the validations defined on ToolInfo
+func ValidateToolInfoResponseBody(body *ToolInfoResponseBody) (err error) {
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
 	return
 }
 
-// ValidateToolsCallResponseBodyResponseBody runs the validations defined on
-// Tools/CallResponseBodyResponseBody
-func ValidateToolsCallResponseBodyResponseBody(body *ToolsCallResponseBodyResponseBody) (err error) {
-	if body.Content == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
-	}
-	for _, e := range body.Content {
-		if e != nil {
-			if err2 := ValidateContentItemResponseBodyResponseBody(e); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
+// validateToolInfoResponseBody checks ToolInfo and reports errors using the
+// path supplied by its caller
+func validateToolInfoResponseBody(body *ToolInfoResponseBody, path string) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
 	}
 	return
 }
 
-// ValidateContentItemResponseBodyResponseBody runs the validations defined on
-// ContentItemResponseBodyResponseBody
-func ValidateContentItemResponseBodyResponseBody(body *ContentItemResponseBodyResponseBody) (err error) {
+// ValidateContentItemResponseBody runs the validations defined on ContentItem
+func ValidateContentItemResponseBody(body *ContentItemResponseBody) (err error) {
 	if body.Type == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
 	}
@@ -819,81 +2120,63 @@ func ValidateContentItemResponseBodyResponseBody(body *ContentItemResponseBodyRe
 	return
 }
 
-// ValidateResourcesListResponseBodyResponseBody runs the validations defined
-// on Resources/ListResponseBodyResponseBody
-func ValidateResourcesListResponseBodyResponseBody(body *ResourcesListResponseBodyResponseBody) (err error) {
-	if body.Resources == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("resources", "body"))
+// validateContentItemResponseBody checks ContentItem and reports errors using
+// the path supplied by its caller
+func validateContentItemResponseBody(body *ContentItemResponseBody, path string) (err error) {
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
 	}
-	for _, e := range body.Resources {
-		if e != nil {
-			if err2 := ValidateResourceInfoResponseBodyResponseBody(e); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
+	if body.Type != nil {
+		if !(*body.Type == "text" || *body.Type == "image" || *body.Type == "resource") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", *body.Type, []any{"text", "image", "resource"}))
 		}
 	}
 	return
 }
 
-// ValidateResourceInfoResponseBodyResponseBody runs the validations defined on
-// ResourceInfoResponseBodyResponseBody
-func ValidateResourceInfoResponseBodyResponseBody(body *ResourceInfoResponseBodyResponseBody) (err error) {
+// ValidateResourceInfoResponseBody runs the validations defined on ResourceInfo
+func ValidateResourceInfoResponseBody(body *ResourceInfoResponseBody) (err error) {
 	if body.URI == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
 	}
 	return
 }
 
-// ValidateResourcesReadResponseBodyResponseBody runs the validations defined
-// on Resources/ReadResponseBodyResponseBody
-func ValidateResourcesReadResponseBodyResponseBody(body *ResourcesReadResponseBodyResponseBody) (err error) {
-	if body.Contents == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("contents", "body"))
-	}
-	for _, e := range body.Contents {
-		if e != nil {
-			if err2 := ValidateResourceContentResponseBodyResponseBody(e); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
+// validateResourceInfoResponseBody checks ResourceInfo and reports errors
+// using the path supplied by its caller
+func validateResourceInfoResponseBody(body *ResourceInfoResponseBody, path string) (err error) {
+	if body.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", path))
 	}
 	return
 }
 
-// ValidateResourceContentResponseBodyResponseBody runs the validations defined
-// on ResourceContentResponseBodyResponseBody
-func ValidateResourceContentResponseBodyResponseBody(body *ResourceContentResponseBodyResponseBody) (err error) {
+// ValidateResourceContentResponseBody runs the validations defined on
+// ResourceContent
+func ValidateResourceContentResponseBody(body *ResourceContentResponseBody) (err error) {
 	if body.URI == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
 	}
 	return
 }
 
-// ValidatePromptsListResponseBodyResponseBody runs the validations defined on
-// Prompts/ListResponseBodyResponseBody
-func ValidatePromptsListResponseBodyResponseBody(body *PromptsListResponseBodyResponseBody) (err error) {
-	if body.Prompts == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("prompts", "body"))
-	}
-	for _, e := range body.Prompts {
-		if e != nil {
-			if err2 := ValidatePromptInfoResponseBodyResponseBody(e); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
+// validateResourceContentResponseBody checks ResourceContent and reports
+// errors using the path supplied by its caller
+func validateResourceContentResponseBody(body *ResourceContentResponseBody, path string) (err error) {
+	if body.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", path))
 	}
 	return
 }
 
-// ValidatePromptInfoResponseBodyResponseBody runs the validations defined on
-// PromptInfoResponseBodyResponseBody
-func ValidatePromptInfoResponseBodyResponseBody(body *PromptInfoResponseBodyResponseBody) (err error) {
+// ValidatePromptInfoResponseBody runs the validations defined on PromptInfo
+func ValidatePromptInfoResponseBody(body *PromptInfoResponseBody) (err error) {
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
 	for _, e := range body.Arguments {
 		if e != nil {
-			if err2 := ValidatePromptArgumentResponseBodyResponseBody(e); err2 != nil {
+			if err2 := validatePromptArgumentResponseBody(e, "body.arguments[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -901,9 +2184,25 @@ func ValidatePromptInfoResponseBodyResponseBody(body *PromptInfoResponseBodyResp
 	return
 }
 
-// ValidatePromptArgumentResponseBodyResponseBody runs the validations defined
-// on PromptArgumentResponseBodyResponseBody
-func ValidatePromptArgumentResponseBodyResponseBody(body *PromptArgumentResponseBodyResponseBody) (err error) {
+// validatePromptInfoResponseBody checks PromptInfo and reports errors using
+// the path supplied by its caller
+func validatePromptInfoResponseBody(body *PromptInfoResponseBody, path string) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	for _, e := range body.Arguments {
+		if e != nil {
+			if err2 := validatePromptArgumentResponseBody(e, path+".arguments[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidatePromptArgumentResponseBody runs the validations defined on
+// PromptArgument
+func ValidatePromptArgumentResponseBody(body *PromptArgumentResponseBody) (err error) {
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
@@ -913,25 +2212,21 @@ func ValidatePromptArgumentResponseBodyResponseBody(body *PromptArgumentResponse
 	return
 }
 
-// ValidatePromptsGetResponseBodyResponseBody runs the validations defined on
-// Prompts/GetResponseBodyResponseBody
-func ValidatePromptsGetResponseBodyResponseBody(body *PromptsGetResponseBodyResponseBody) (err error) {
-	if body.Messages == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("messages", "body"))
+// validatePromptArgumentResponseBody checks PromptArgument and reports errors
+// using the path supplied by its caller
+func validatePromptArgumentResponseBody(body *PromptArgumentResponseBody, path string) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
 	}
-	for _, e := range body.Messages {
-		if e != nil {
-			if err2 := ValidatePromptMessageResponseBodyResponseBody(e); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
+	if body.Required == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("required", path))
 	}
 	return
 }
 
-// ValidatePromptMessageResponseBodyResponseBody runs the validations defined
-// on PromptMessageResponseBodyResponseBody
-func ValidatePromptMessageResponseBodyResponseBody(body *PromptMessageResponseBodyResponseBody) (err error) {
+// ValidatePromptMessageResponseBody runs the validations defined on
+// PromptMessage
+func ValidatePromptMessageResponseBody(body *PromptMessageResponseBody) (err error) {
 	if body.Role == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("role", "body"))
 	}
@@ -944,16 +2239,38 @@ func ValidatePromptMessageResponseBodyResponseBody(body *PromptMessageResponseBo
 		}
 	}
 	if body.Content != nil {
-		if err2 := ValidateMessageContentResponseBodyResponseBody(body.Content); err2 != nil {
+		if err2 := validateMessageContentResponseBody(body.Content, "body.content"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return
 }
 
-// ValidateMessageContentResponseBodyResponseBody runs the validations defined
-// on MessageContentResponseBodyResponseBody
-func ValidateMessageContentResponseBodyResponseBody(body *MessageContentResponseBodyResponseBody) (err error) {
+// validatePromptMessageResponseBody checks PromptMessage and reports errors
+// using the path supplied by its caller
+func validatePromptMessageResponseBody(body *PromptMessageResponseBody, path string) (err error) {
+	if body.Role == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("role", path))
+	}
+	if body.Content == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", path))
+	}
+	if body.Role != nil {
+		if !(*body.Role == "user" || *body.Role == "assistant" || *body.Role == "system") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".role", *body.Role, []any{"user", "assistant", "system"}))
+		}
+	}
+	if body.Content != nil {
+		if err2 := validateMessageContentResponseBody(body.Content, path+".content"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateMessageContentResponseBody runs the validations defined on
+// MessageContent
+func ValidateMessageContentResponseBody(body *MessageContentResponseBody) (err error) {
 	if body.Type == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
 	}
@@ -965,17 +2282,15 @@ func ValidateMessageContentResponseBodyResponseBody(body *MessageContentResponse
 	return
 }
 
-// ValidateEventsStreamResponseBodyResponseBody runs the validations defined on
-// Events/StreamResponseBodyResponseBody
-func ValidateEventsStreamResponseBodyResponseBody(body *EventsStreamResponseBodyResponseBody) (err error) {
-	if body.Content == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
+// validateMessageContentResponseBody checks MessageContent and reports errors
+// using the path supplied by its caller
+func validateMessageContentResponseBody(body *MessageContentResponseBody, path string) (err error) {
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
 	}
-	for _, e := range body.Content {
-		if e != nil {
-			if err2 := ValidateContentItemResponseBodyResponseBody(e); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
+	if body.Type != nil {
+		if !(*body.Type == "text" || *body.Type == "image" || *body.Type == "resource") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", *body.Type, []any{"text", "image", "resource"}))
 		}
 	}
 	return

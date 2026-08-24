@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"os"
 
-	assistantc "example.com/assistant/gen/jsonrpc/assistant/client"
+	mcpassistantc "example.com/assistant/gen/jsonrpc/mcp_assistant/client"
 	goahttp "goa.design/goa/v3/http"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -23,13 +23,13 @@ import (
 //	command (subcommand1|subcommand2|...)
 func UsageCommands() []string {
 	return []string{
-		"assistant (list-documents|system-info|conversation-history|generate-prompts|send-notification|analyze-sentiment|extract-keywords|summarize-text|search|execute-code|process-batch)",
+		"mcp-assistant (initialize|ping|tools-list|tools-call|resources-list|resources-read|resources-subscribe|resources-unsubscribe|prompts-list|prompts-get|notify-status-update|events-stream)",
 	}
 }
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "assistant list-documents" + "\n" +
+	return os.Args[0] + " " + "mcp-assistant initialize --body '{\n      \"clientInfo\": {\n         \"name\": \"Doloribus velit voluptatibus.\",\n         \"version\": \"Est alias qui.\"\n      },\n      \"protocolVersion\": \"Facilis distinctio.\"\n   }'" + "\n" +
 		""
 }
 
@@ -43,51 +43,55 @@ func ParseEndpoint(
 	restore bool,
 ) (goa.Endpoint, any, error) {
 	var (
-		assistantFlags = flag.NewFlagSet("assistant", flag.ContinueOnError)
+		mcpAssistantFlags = flag.NewFlagSet("mcp-assistant", flag.ContinueOnError)
 
-		assistantListDocumentsFlags = flag.NewFlagSet("list-documents", flag.ExitOnError)
+		mcpAssistantInitializeFlags    = flag.NewFlagSet("initialize", flag.ExitOnError)
+		mcpAssistantInitializeBodyFlag = mcpAssistantInitializeFlags.String("body", "REQUIRED", "")
 
-		assistantSystemInfoFlags = flag.NewFlagSet("system-info", flag.ExitOnError)
+		mcpAssistantPingFlags = flag.NewFlagSet("ping", flag.ExitOnError)
 
-		assistantConversationHistoryFlags    = flag.NewFlagSet("conversation-history", flag.ExitOnError)
-		assistantConversationHistoryBodyFlag = assistantConversationHistoryFlags.String("body", "REQUIRED", "")
+		mcpAssistantToolsListFlags    = flag.NewFlagSet("tools-list", flag.ExitOnError)
+		mcpAssistantToolsListBodyFlag = mcpAssistantToolsListFlags.String("body", "REQUIRED", "")
 
-		assistantGeneratePromptsFlags    = flag.NewFlagSet("generate-prompts", flag.ExitOnError)
-		assistantGeneratePromptsBodyFlag = assistantGeneratePromptsFlags.String("body", "REQUIRED", "")
+		mcpAssistantToolsCallFlags    = flag.NewFlagSet("tools-call", flag.ExitOnError)
+		mcpAssistantToolsCallBodyFlag = mcpAssistantToolsCallFlags.String("body", "REQUIRED", "")
 
-		assistantSendNotificationFlags    = flag.NewFlagSet("send-notification", flag.ExitOnError)
-		assistantSendNotificationBodyFlag = assistantSendNotificationFlags.String("body", "REQUIRED", "")
+		mcpAssistantResourcesListFlags    = flag.NewFlagSet("resources-list", flag.ExitOnError)
+		mcpAssistantResourcesListBodyFlag = mcpAssistantResourcesListFlags.String("body", "REQUIRED", "")
 
-		assistantAnalyzeSentimentFlags    = flag.NewFlagSet("analyze-sentiment", flag.ExitOnError)
-		assistantAnalyzeSentimentBodyFlag = assistantAnalyzeSentimentFlags.String("body", "REQUIRED", "")
+		mcpAssistantResourcesReadFlags    = flag.NewFlagSet("resources-read", flag.ExitOnError)
+		mcpAssistantResourcesReadBodyFlag = mcpAssistantResourcesReadFlags.String("body", "REQUIRED", "")
 
-		assistantExtractKeywordsFlags    = flag.NewFlagSet("extract-keywords", flag.ExitOnError)
-		assistantExtractKeywordsBodyFlag = assistantExtractKeywordsFlags.String("body", "REQUIRED", "")
+		mcpAssistantResourcesSubscribeFlags    = flag.NewFlagSet("resources-subscribe", flag.ExitOnError)
+		mcpAssistantResourcesSubscribeBodyFlag = mcpAssistantResourcesSubscribeFlags.String("body", "REQUIRED", "")
 
-		assistantSummarizeTextFlags    = flag.NewFlagSet("summarize-text", flag.ExitOnError)
-		assistantSummarizeTextBodyFlag = assistantSummarizeTextFlags.String("body", "REQUIRED", "")
+		mcpAssistantResourcesUnsubscribeFlags    = flag.NewFlagSet("resources-unsubscribe", flag.ExitOnError)
+		mcpAssistantResourcesUnsubscribeBodyFlag = mcpAssistantResourcesUnsubscribeFlags.String("body", "REQUIRED", "")
 
-		assistantSearchFlags    = flag.NewFlagSet("search", flag.ExitOnError)
-		assistantSearchBodyFlag = assistantSearchFlags.String("body", "REQUIRED", "")
+		mcpAssistantPromptsListFlags    = flag.NewFlagSet("prompts-list", flag.ExitOnError)
+		mcpAssistantPromptsListBodyFlag = mcpAssistantPromptsListFlags.String("body", "REQUIRED", "")
 
-		assistantExecuteCodeFlags    = flag.NewFlagSet("execute-code", flag.ExitOnError)
-		assistantExecuteCodeBodyFlag = assistantExecuteCodeFlags.String("body", "REQUIRED", "")
+		mcpAssistantPromptsGetFlags    = flag.NewFlagSet("prompts-get", flag.ExitOnError)
+		mcpAssistantPromptsGetBodyFlag = mcpAssistantPromptsGetFlags.String("body", "REQUIRED", "")
 
-		assistantProcessBatchFlags    = flag.NewFlagSet("process-batch", flag.ExitOnError)
-		assistantProcessBatchBodyFlag = assistantProcessBatchFlags.String("body", "REQUIRED", "")
+		mcpAssistantNotifyStatusUpdateFlags    = flag.NewFlagSet("notify-status-update", flag.ExitOnError)
+		mcpAssistantNotifyStatusUpdateBodyFlag = mcpAssistantNotifyStatusUpdateFlags.String("body", "REQUIRED", "")
+
+		mcpAssistantEventsStreamFlags = flag.NewFlagSet("events-stream", flag.ExitOnError)
 	)
-	assistantFlags.Usage = assistantUsage
-	assistantListDocumentsFlags.Usage = assistantListDocumentsUsage
-	assistantSystemInfoFlags.Usage = assistantSystemInfoUsage
-	assistantConversationHistoryFlags.Usage = assistantConversationHistoryUsage
-	assistantGeneratePromptsFlags.Usage = assistantGeneratePromptsUsage
-	assistantSendNotificationFlags.Usage = assistantSendNotificationUsage
-	assistantAnalyzeSentimentFlags.Usage = assistantAnalyzeSentimentUsage
-	assistantExtractKeywordsFlags.Usage = assistantExtractKeywordsUsage
-	assistantSummarizeTextFlags.Usage = assistantSummarizeTextUsage
-	assistantSearchFlags.Usage = assistantSearchUsage
-	assistantExecuteCodeFlags.Usage = assistantExecuteCodeUsage
-	assistantProcessBatchFlags.Usage = assistantProcessBatchUsage
+	mcpAssistantFlags.Usage = mcpAssistantUsage
+	mcpAssistantInitializeFlags.Usage = mcpAssistantInitializeUsage
+	mcpAssistantPingFlags.Usage = mcpAssistantPingUsage
+	mcpAssistantToolsListFlags.Usage = mcpAssistantToolsListUsage
+	mcpAssistantToolsCallFlags.Usage = mcpAssistantToolsCallUsage
+	mcpAssistantResourcesListFlags.Usage = mcpAssistantResourcesListUsage
+	mcpAssistantResourcesReadFlags.Usage = mcpAssistantResourcesReadUsage
+	mcpAssistantResourcesSubscribeFlags.Usage = mcpAssistantResourcesSubscribeUsage
+	mcpAssistantResourcesUnsubscribeFlags.Usage = mcpAssistantResourcesUnsubscribeUsage
+	mcpAssistantPromptsListFlags.Usage = mcpAssistantPromptsListUsage
+	mcpAssistantPromptsGetFlags.Usage = mcpAssistantPromptsGetUsage
+	mcpAssistantNotifyStatusUpdateFlags.Usage = mcpAssistantNotifyStatusUpdateUsage
+	mcpAssistantEventsStreamFlags.Usage = mcpAssistantEventsStreamUsage
 
 	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
 		return nil, nil, err
@@ -104,8 +108,8 @@ func ParseEndpoint(
 	{
 		svcn = flag.Arg(0)
 		switch svcn {
-		case "assistant":
-			svcf = assistantFlags
+		case "mcp-assistant":
+			svcf = mcpAssistantFlags
 		default:
 			return nil, nil, fmt.Errorf("unknown service %q", svcn)
 		}
@@ -121,40 +125,43 @@ func ParseEndpoint(
 	{
 		epn = svcf.Arg(0)
 		switch svcn {
-		case "assistant":
+		case "mcp-assistant":
 			switch epn {
-			case "list-documents":
-				epf = assistantListDocumentsFlags
+			case "initialize":
+				epf = mcpAssistantInitializeFlags
 
-			case "system-info":
-				epf = assistantSystemInfoFlags
+			case "ping":
+				epf = mcpAssistantPingFlags
 
-			case "conversation-history":
-				epf = assistantConversationHistoryFlags
+			case "tools-list":
+				epf = mcpAssistantToolsListFlags
 
-			case "generate-prompts":
-				epf = assistantGeneratePromptsFlags
+			case "tools-call":
+				epf = mcpAssistantToolsCallFlags
 
-			case "send-notification":
-				epf = assistantSendNotificationFlags
+			case "resources-list":
+				epf = mcpAssistantResourcesListFlags
 
-			case "analyze-sentiment":
-				epf = assistantAnalyzeSentimentFlags
+			case "resources-read":
+				epf = mcpAssistantResourcesReadFlags
 
-			case "extract-keywords":
-				epf = assistantExtractKeywordsFlags
+			case "resources-subscribe":
+				epf = mcpAssistantResourcesSubscribeFlags
 
-			case "summarize-text":
-				epf = assistantSummarizeTextFlags
+			case "resources-unsubscribe":
+				epf = mcpAssistantResourcesUnsubscribeFlags
 
-			case "search":
-				epf = assistantSearchFlags
+			case "prompts-list":
+				epf = mcpAssistantPromptsListFlags
 
-			case "execute-code":
-				epf = assistantExecuteCodeFlags
+			case "prompts-get":
+				epf = mcpAssistantPromptsGetFlags
 
-			case "process-batch":
-				epf = assistantProcessBatchFlags
+			case "notify-status-update":
+				epf = mcpAssistantNotifyStatusUpdateFlags
+
+			case "events-stream":
+				epf = mcpAssistantEventsStreamFlags
 
 			}
 
@@ -178,40 +185,43 @@ func ParseEndpoint(
 	)
 	{
 		switch svcn {
-		case "assistant":
-			c := assistantc.NewClient(scheme, host, doer, enc, dec, restore)
+		case "mcp-assistant":
+			c := mcpassistantc.NewClient(scheme, host, doer, enc, dec, restore)
 			switch epn {
-			case "list-documents":
-				endpoint = c.ListDocuments()
-			case "system-info":
-				endpoint = c.SystemInfo()
-			case "conversation-history":
-				endpoint = c.ConversationHistory()
-				data, err = assistantc.BuildConversationHistoryPayload(*assistantConversationHistoryBodyFlag)
-			case "generate-prompts":
-				endpoint = c.GeneratePrompts()
-				data, err = assistantc.BuildGeneratePromptsPayload(*assistantGeneratePromptsBodyFlag)
-			case "send-notification":
-				endpoint = c.SendNotification()
-				data, err = assistantc.BuildSendNotificationPayload(*assistantSendNotificationBodyFlag)
-			case "analyze-sentiment":
-				endpoint = c.AnalyzeSentiment()
-				data, err = assistantc.BuildAnalyzeSentimentPayload(*assistantAnalyzeSentimentBodyFlag)
-			case "extract-keywords":
-				endpoint = c.ExtractKeywords()
-				data, err = assistantc.BuildExtractKeywordsPayload(*assistantExtractKeywordsBodyFlag)
-			case "summarize-text":
-				endpoint = c.SummarizeText()
-				data, err = assistantc.BuildSummarizeTextPayload(*assistantSummarizeTextBodyFlag)
-			case "search":
-				endpoint = c.Search()
-				data, err = assistantc.BuildSearchPayload(*assistantSearchBodyFlag)
-			case "execute-code":
-				endpoint = c.ExecuteCode()
-				data, err = assistantc.BuildExecuteCodePayload(*assistantExecuteCodeBodyFlag)
-			case "process-batch":
-				endpoint = c.ProcessBatch()
-				data, err = assistantc.BuildProcessBatchPayload(*assistantProcessBatchBodyFlag)
+			case "initialize":
+				endpoint = c.Initialize()
+				data, err = mcpassistantc.BuildInitializePayload(*mcpAssistantInitializeBodyFlag)
+			case "ping":
+				endpoint = c.Ping()
+			case "tools-list":
+				endpoint = c.ToolsList()
+				data, err = mcpassistantc.BuildToolsListPayload(*mcpAssistantToolsListBodyFlag)
+			case "tools-call":
+				endpoint = c.ToolsCall()
+				data, err = mcpassistantc.BuildToolsCallPayload(*mcpAssistantToolsCallBodyFlag)
+			case "resources-list":
+				endpoint = c.ResourcesList()
+				data, err = mcpassistantc.BuildResourcesListPayload(*mcpAssistantResourcesListBodyFlag)
+			case "resources-read":
+				endpoint = c.ResourcesRead()
+				data, err = mcpassistantc.BuildResourcesReadPayload(*mcpAssistantResourcesReadBodyFlag)
+			case "resources-subscribe":
+				endpoint = c.ResourcesSubscribe()
+				data, err = mcpassistantc.BuildResourcesSubscribePayload(*mcpAssistantResourcesSubscribeBodyFlag)
+			case "resources-unsubscribe":
+				endpoint = c.ResourcesUnsubscribe()
+				data, err = mcpassistantc.BuildResourcesUnsubscribePayload(*mcpAssistantResourcesUnsubscribeBodyFlag)
+			case "prompts-list":
+				endpoint = c.PromptsList()
+				data, err = mcpassistantc.BuildPromptsListPayload(*mcpAssistantPromptsListBodyFlag)
+			case "prompts-get":
+				endpoint = c.PromptsGet()
+				data, err = mcpassistantc.BuildPromptsGetPayload(*mcpAssistantPromptsGetBodyFlag)
+			case "notify-status-update":
+				endpoint = c.NotifyStatusUpdate()
+				data, err = mcpassistantc.BuildNotifyStatusUpdatePayload(*mcpAssistantNotifyStatusUpdateBodyFlag)
+			case "events-stream":
+				endpoint = c.EventsStream()
 			}
 		}
 	}
@@ -222,217 +232,236 @@ func ParseEndpoint(
 	return endpoint, data, nil
 }
 
-// assistantUsage displays the usage of the assistant command and its
+// mcpAssistantUsage displays the usage of the mcp-assistant command and its
 // subcommands.
-func assistantUsage() {
-	fmt.Fprintln(os.Stderr, `AI Assistant service with full MCP protocol support`)
-	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] assistant COMMAND [flags]\n\n", os.Args[0])
+func mcpAssistantUsage() {
+	fmt.Fprintln(os.Stderr, `MCP protocol service for assistant`)
+	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] mcp-assistant COMMAND [flags]\n\n", os.Args[0])
 	fmt.Fprintln(os.Stderr, "COMMAND:")
-	fmt.Fprintln(os.Stderr, `    list-documents: List available documents`)
-	fmt.Fprintln(os.Stderr, `    system-info: Return system info`)
-	fmt.Fprintln(os.Stderr, `    conversation-history: Return conversation history with optional query params`)
-	fmt.Fprintln(os.Stderr, `    generate-prompts: Generate context-aware prompts`)
-	fmt.Fprintln(os.Stderr, `    send-notification: Send status notification to client`)
-	fmt.Fprintln(os.Stderr, `    analyze-sentiment: Analyze sentiment of text`)
-	fmt.Fprintln(os.Stderr, `    extract-keywords: Extract keywords from text`)
-	fmt.Fprintln(os.Stderr, `    summarize-text: Summarize text`)
-	fmt.Fprintln(os.Stderr, `    search: Search knowledge base`)
-	fmt.Fprintln(os.Stderr, `    execute-code: Execute code`)
-	fmt.Fprintln(os.Stderr, `    process-batch: Process batch of items`)
+	fmt.Fprintln(os.Stderr, `    initialize: Initialize MCP session`)
+	fmt.Fprintln(os.Stderr, `    ping: Ping the server`)
+	fmt.Fprintln(os.Stderr, `    tools-list: List available tools`)
+	fmt.Fprintln(os.Stderr, `    tools-call: Call a tool`)
+	fmt.Fprintln(os.Stderr, `    resources-list: List available resources`)
+	fmt.Fprintln(os.Stderr, `    resources-read: Read a resource`)
+	fmt.Fprintln(os.Stderr, `    resources-subscribe: Subscribe to resource changes`)
+	fmt.Fprintln(os.Stderr, `    resources-unsubscribe: Unsubscribe from resource changes`)
+	fmt.Fprintln(os.Stderr, `    prompts-list: List available prompts`)
+	fmt.Fprintln(os.Stderr, `    prompts-get: Get a prompt by name`)
+	fmt.Fprintln(os.Stderr, `    notify-status-update: Send status updates to client`)
+	fmt.Fprintln(os.Stderr, `    events-stream: Stream server-sent events (notifications)`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
-	fmt.Fprintf(os.Stderr, "    %s assistant COMMAND --help\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "    %s mcp-assistant COMMAND --help\n", os.Args[0])
 }
-func assistantListDocumentsUsage() {
+func mcpAssistantInitializeUsage() {
 	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant list-documents", os.Args[0])
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `List available documents`)
-
-	// Flags list
-
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant list-documents")
-}
-
-func assistantSystemInfoUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant system-info", os.Args[0])
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Return system info`)
-
-	// Flags list
-
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant system-info")
-}
-
-func assistantConversationHistoryUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant conversation-history", os.Args[0])
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant initialize", os.Args[0])
 	fmt.Fprint(os.Stderr, " -body JSON")
 	fmt.Fprintln(os.Stderr)
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Return conversation history with optional query params`)
+	fmt.Fprintln(os.Stderr, `Initialize MCP session`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant conversation-history --body '{\n      \"flag\": true,\n      \"limit\": 2637775629554690885,\n      \"nums\": [\n         0.5643204135869995,\n         0.38404870089046034\n      ]\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant initialize --body '{\n      \"clientInfo\": {\n         \"name\": \"Doloribus velit voluptatibus.\",\n         \"version\": \"Est alias qui.\"\n      },\n      \"protocolVersion\": \"Facilis distinctio.\"\n   }'")
 }
 
-func assistantGeneratePromptsUsage() {
+func mcpAssistantPingUsage() {
 	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant generate-prompts", os.Args[0])
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant ping", os.Args[0])
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Ping the server`)
+
+	// Flags list
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant ping")
+}
+
+func mcpAssistantToolsListUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant tools-list", os.Args[0])
 	fmt.Fprint(os.Stderr, " -body JSON")
 	fmt.Fprintln(os.Stderr)
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Generate context-aware prompts`)
+	fmt.Fprintln(os.Stderr, `List available tools`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant generate-prompts --body '{\n      \"context\": \"Ut aspernatur quas culpa.\",\n      \"task\": \"Voluptatum maiores incidunt eum accusamus.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant tools-list --body '{\n      \"cursor\": \"In numquam hic rem autem.\"\n   }'")
 }
 
-func assistantSendNotificationUsage() {
+func mcpAssistantToolsCallUsage() {
 	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant send-notification", os.Args[0])
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant tools-call", os.Args[0])
 	fmt.Fprint(os.Stderr, " -body JSON")
 	fmt.Fprintln(os.Stderr)
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Send status notification to client`)
+	fmt.Fprintln(os.Stderr, `Call a tool`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant send-notification --body '{\n      \"data\": \"Corrupti repellendus.\",\n      \"message\": \"Aspernatur in ut eos perspiciatis delectus.\",\n      \"type\": \"Ratione amet perspiciatis.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant tools-call --body '{\n      \"arguments\": \"Molestiae dolores deserunt.\",\n      \"name\": \"Quibusdam et quis porro deserunt nihil qui.\"\n   }'")
 }
 
-func assistantAnalyzeSentimentUsage() {
+func mcpAssistantResourcesListUsage() {
 	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant analyze-sentiment", os.Args[0])
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant resources-list", os.Args[0])
 	fmt.Fprint(os.Stderr, " -body JSON")
 	fmt.Fprintln(os.Stderr)
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Analyze sentiment of text`)
+	fmt.Fprintln(os.Stderr, `List available resources`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant analyze-sentiment --body '{\n      \"text\": \"Ipsam eos excepturi necessitatibus.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant resources-list --body '{\n      \"cursor\": \"Quia natus vel quis ut.\"\n   }'")
 }
 
-func assistantExtractKeywordsUsage() {
+func mcpAssistantResourcesReadUsage() {
 	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant extract-keywords", os.Args[0])
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant resources-read", os.Args[0])
 	fmt.Fprint(os.Stderr, " -body JSON")
 	fmt.Fprintln(os.Stderr)
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Extract keywords from text`)
+	fmt.Fprintln(os.Stderr, `Read a resource`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant extract-keywords --body '{\n      \"text\": \"Eum reprehenderit.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant resources-read --body '{\n      \"uri\": \"w:my\"\n   }'")
 }
 
-func assistantSummarizeTextUsage() {
+func mcpAssistantResourcesSubscribeUsage() {
 	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant summarize-text", os.Args[0])
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant resources-subscribe", os.Args[0])
 	fmt.Fprint(os.Stderr, " -body JSON")
 	fmt.Fprintln(os.Stderr)
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Summarize text`)
+	fmt.Fprintln(os.Stderr, `Subscribe to resource changes`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant summarize-text --body '{\n      \"text\": \"Ut consequatur illo dicta.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant resources-subscribe --body '{\n      \"uri\": \"Laborum magnam modi et est doloribus facilis.\"\n   }'")
 }
 
-func assistantSearchUsage() {
+func mcpAssistantResourcesUnsubscribeUsage() {
 	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant search", os.Args[0])
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant resources-unsubscribe", os.Args[0])
 	fmt.Fprint(os.Stderr, " -body JSON")
 	fmt.Fprintln(os.Stderr)
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Search knowledge base`)
+	fmt.Fprintln(os.Stderr, `Unsubscribe from resource changes`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant search --body '{\n      \"limit\": 823993099793574612,\n      \"query\": \"Sit impedit eos.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant resources-unsubscribe --body '{\n      \"uri\": \"Similique in quaerat qui qui quaerat.\"\n   }'")
 }
 
-func assistantExecuteCodeUsage() {
+func mcpAssistantPromptsListUsage() {
 	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant execute-code", os.Args[0])
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant prompts-list", os.Args[0])
 	fmt.Fprint(os.Stderr, " -body JSON")
 	fmt.Fprintln(os.Stderr)
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Execute code`)
+	fmt.Fprintln(os.Stderr, `List available prompts`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant execute-code --body '{\n      \"code\": \"Maxime consequatur fugiat.\",\n      \"language\": \"javascript\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant prompts-list --body '{\n      \"cursor\": \"At incidunt magni blanditiis.\"\n   }'")
 }
 
-func assistantProcessBatchUsage() {
+func mcpAssistantPromptsGetUsage() {
 	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] assistant process-batch", os.Args[0])
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant prompts-get", os.Args[0])
 	fmt.Fprint(os.Stderr, " -body JSON")
 	fmt.Fprintln(os.Stderr)
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Process batch of items`)
+	fmt.Fprintln(os.Stderr, `Get a prompt by name`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "assistant process-batch --body '{\n      \"blob\": \"Est non quia a iure.\",\n      \"format\": \"json\",\n      \"items\": [\n         \"Temporibus laborum occaecati.\",\n         \"Occaecati omnis.\"\n      ],\n      \"mimeType\": \"Perferendis autem et asperiores expedita.\",\n      \"uri\": \"Commodi consequatur aut voluptatibus corporis et.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant prompts-get --body '{\n      \"arguments\": \"Voluptatum et.\",\n      \"name\": \"Voluptas accusamus rerum quo.\"\n   }'")
+}
+
+func mcpAssistantNotifyStatusUpdateUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant notify-status-update", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Send status updates to client`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant notify-status-update --body '{\n      \"data\": \"Nostrum perferendis velit numquam aut.\",\n      \"message\": \"Nisi qui placeat harum excepturi.\",\n      \"type\": \"Enim consequatur velit.\"\n   }'")
+}
+
+func mcpAssistantEventsStreamUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant events-stream", os.Args[0])
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Stream server-sent events (notifications)`)
+
+	// Flags list
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant events-stream")
 }

@@ -5,7 +5,7 @@ package bootstrap
 
 import (
 	"context"
-	scribe "goa.design/goa-ai/alpha/agents/scribe"
+	scribe "goa.design/goa-ai/gen/alpha/agents/scribe"
 	plannerscribe "goa.design/goa-ai/internal/agents/scribe/planner"
 	toolsetscribeprofiles "goa.design/goa-ai/internal/agents/scribe/toolsets/profiles"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"

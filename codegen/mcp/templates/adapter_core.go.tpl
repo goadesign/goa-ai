@@ -106,22 +106,23 @@ func (a *MCPAdapter) mcpProtocolVersion() string {
     return DefaultProtocolVersion
 }
 
-// parseQueryParamsToJSON converts URI query params into JSON.
-func parseQueryParamsToJSON(uri string) ([]byte, error) {
-    u, err := url.Parse(uri)
-    if err != nil {
-        return nil, fmt.Errorf("invalid resource URI: %w", err)
+{{- if .NeedsNoArgumentsValidation }}
+// validateNoArguments accepts omitted arguments and an empty JSON object.
+// It rejects all data because the selected Goa method accepts no input.
+func validateNoArguments(arguments json.RawMessage) error {
+    if len(arguments) == 0 {
+        return nil
     }
-    q := u.Query()
-    if len(q) == 0 {
-        return []byte("{}"), nil
+    var fields map[string]json.RawMessage
+    if err := json.Unmarshal(arguments, &fields); err != nil {
+        return fmt.Errorf("arguments must be an empty JSON object: %w", err)
     }
-    // Copy to plain map[string][]string to avoid depending on url.Values in helper
-    m := make(map[string][]string, len(q))
-    for k, v := range q { m[k] = v }
-    coerced := mcpruntime.CoerceQuery(m)
-    return json.Marshal(coerced)
+    if fields == nil || len(fields) > 0 {
+        return fmt.Errorf("arguments must be an empty JSON object")
+    }
+    return nil
 }
+{{- end }}
 
 func (a *MCPAdapter) isInitialized() bool {
     a.mu.RLock()

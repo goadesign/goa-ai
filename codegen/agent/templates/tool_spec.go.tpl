@@ -5,20 +5,15 @@ const (
 {{- end }}
 )
 
-// Specs returns fresh copies of every generated tool specification.
-func Specs() []tools.ToolSpec {
-    return []tools.ToolSpec{
+var Specs = []tools.ToolSpec{
 {{- range .Tools }}
-        newSpec{{ .ConstName }}(),
+    {{ .SpecVar }},
 {{- end }}
-    }
 }
 
+var (
 {{- range .Tools }}
-// newSpec{{ .ConstName }} builds the immutable generated contract for
-// {{ .Name }}. Each call owns all mutable slices and maps in the result.
-func newSpec{{ .ConstName }}() tools.ToolSpec {
-    return tools.ToolSpec{
+    {{ .SpecVar }} = tools.ToolSpec{
         Name:        {{ .ConstName }},
         Service:     {{ printf "%q" .Service }},
         Toolset:     {{ printf "%q" .Toolset }},
@@ -75,8 +70,8 @@ func newSpec{{ .ConstName }}() tools.ToolSpec {
                     Schema: {{- if gt (len .Type.SchemaJSON) 0 }}tools.RawJSON({{ printf "%q" .Type.SchemaJSON }}){{ else }}nil{{ end }},
                     SchemaWithoutRootExample: {{- if gt (len .Type.SchemaWithoutRootExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Type.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
                     ExampleJSON: {{- if gt (len .Type.ExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Type.ExampleJSON }}){{ else }}nil{{ end }},
-                    FieldDescriptions: {{- if .Type.FieldDescs }}cloneStringMap({{ goify .Type.TypeName false }}FieldDescs){{ else }}nil{{ end }},
-                    FieldJSONTypes: {{- if .Type.FieldJSONTypes }}cloneStringMap({{ goify .Type.TypeName false }}FieldJSONTypes){{ else }}nil{{ end }},
+                    FieldDescriptions: {{- if .Type.FieldDescs }}{{ .Type.TypeName }}FieldDescs{{ else }}nil{{ end }},
+                    FieldJSONTypes: {{- if .Type.FieldJSONTypes }}{{ .Type.TypeName }}FieldJSONTypes{{ else }}nil{{ end }},
                     Codec: {{ .Type.GenericCodec }},
                     {{- else }}
                     Schema: nil,
@@ -90,7 +85,7 @@ func newSpec{{ .ConstName }}() tools.ToolSpec {
             },
         {{- end }}
         },
-        CanonicalizeServerData: canonicalize{{ .GoName }}ServerData,
+        CanonicalizeServerData: {{ .CanonicalizeServerDataFunc }},
         {{- end }}
         {{- if .ResultReminder }}
         ResultReminder: {{ printf "%q" .ResultReminder }},
@@ -108,8 +103,8 @@ func newSpec{{ .ConstName }}() tools.ToolSpec {
             Schema: {{- if gt (len .Payload.SchemaJSON) 0 }}tools.RawJSON({{ printf "%q" .Payload.SchemaJSON }}){{ else }}nil{{ end }},
             SchemaWithoutRootExample: {{- if gt (len .Payload.SchemaWithoutRootExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Payload.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
             ExampleJSON: {{- if gt (len .Payload.ExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Payload.ExampleJSON }}){{ else }}nil{{ end }},
-            FieldDescriptions: {{- if .Payload.FieldDescs }}cloneStringMap({{ goify .Payload.TypeName false }}FieldDescs){{ else }}nil{{ end }},
-            FieldJSONTypes: {{- if .Payload.FieldJSONTypes }}cloneStringMap({{ goify .Payload.TypeName false }}FieldJSONTypes){{ else }}nil{{ end }},
+            FieldDescriptions: {{- if .Payload.FieldDescs }}{{ .Payload.TypeName }}FieldDescs{{ else }}nil{{ end }},
+            FieldJSONTypes: {{- if .Payload.FieldJSONTypes }}{{ .Payload.TypeName }}FieldJSONTypes{{ else }}nil{{ end }},
             Codec:  {{ .Payload.GenericCodec }},
             {{- else }}
             Schema: nil,
@@ -125,8 +120,8 @@ func newSpec{{ .ConstName }}() tools.ToolSpec {
             Schema: {{- if and .Result (gt (len .Result.SchemaJSON) 0) }}tools.RawJSON({{ printf "%q" .Result.SchemaJSON }}){{ else }}nil{{ end }},
             {{- if .Result }}
             SchemaWithoutRootExample: {{- if gt (len .Result.SchemaWithoutRootExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Result.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
-            FieldDescriptions: {{- if .Result.FieldDescs }}cloneStringMap({{ goify .Result.TypeName false }}FieldDescs){{ else }}nil{{ end }},
-            FieldJSONTypes: {{- if .Result.FieldJSONTypes }}cloneStringMap({{ goify .Result.TypeName false }}FieldJSONTypes){{ else }}nil{{ end }},
+            FieldDescriptions: {{- if .Result.FieldDescs }}{{ .Result.TypeName }}FieldDescs{{ else }}nil{{ end }},
+            FieldJSONTypes: {{- if .Result.FieldJSONTypes }}{{ .Result.TypeName }}FieldJSONTypes{{ else }}nil{{ end }},
             Codec:  {{ .Result.GenericCodec }},
             {{- else }}
             SchemaWithoutRootExample: nil,
@@ -136,13 +131,8 @@ func newSpec{{ .ConstName }}() tools.ToolSpec {
             {{- end }}
         },
     }
-}
-
-// Spec{{ .ConstName }} returns a fresh {{ .Name }} specification.
-func Spec{{ .ConstName }}() tools.ToolSpec {
-    return newSpec{{ .ConstName }}()
-}
 {{- end }}
+)
 
 {{- range .Tools }}
 {{- if .TypedToolVar }}
@@ -150,22 +140,10 @@ func Spec{{ .ConstName }}() tools.ToolSpec {
 // {{ .TypedToolVar }} pairs the {{ .Name }} identifier with its generated
 // typed payload and result codecs so consumers decode tool JSON without
 // restating the name-to-codec pairing fixed by the design.
-func {{ .TypedToolVar }}() tools.TypedTool[{{ if .Payload.Pointer }}*{{ end }}{{ .Payload.FullRef }}, {{ if .Result }}{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}{{ else }}any{{ end }}] {
-    return tools.TypedTool[{{ if .Payload.Pointer }}*{{ end }}{{ .Payload.FullRef }}, {{ if .Result }}{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}{{ else }}any{{ end }}]{
-        Name:    {{ .ConstName }},
-        Payload: tools.JSONCodec[{{ if .Payload.Pointer }}*{{ end }}{{ .Payload.FullRef }}]{
-            ToJSON:   {{ .Payload.MarshalFunc }},
-            FromJSON: {{ .Payload.UnmarshalFunc }},
-        },
-        {{- if .Result }}
-        Result: tools.JSONCodec[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}]{
-            ToJSON:   {{ .Result.MarshalFunc }},
-            FromJSON: {{ .Result.UnmarshalFunc }},
-        },
-        {{- else }}
-        Result:  tools.JSONCodec[any]{},
-        {{- end }}
-    }
+var {{ .TypedToolVar }} = tools.TypedTool[{{ if .Payload.Pointer }}*{{ end }}{{ .Payload.FullRef }}, {{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}]{
+    Name:    {{ .ConstName }},
+    Payload: {{ .Payload.ExportedCodec }},
+    Result:  {{ .Result.ExportedCodec }},
 }
 {{- end }}
 {{- end }}
@@ -175,13 +153,13 @@ func {{ .TypedToolVar }}() tools.TypedTool[{{ if .Payload.Pointer }}*{{ end }}{{
 
 // canonicalize{{ .GoName }}ServerData validates the server-only payloads
 // declared by {{ .Name }} and returns their canonical envelope.
-func canonicalize{{ .GoName }}ServerData(data tools.RawJSON) (tools.RawJSON, error) {
-    return toolserverdata.Canonicalize(data, canonicalize{{ .GoName }}ServerDataItem)
+func {{ .CanonicalizeServerDataFunc }}(data tools.RawJSON) (tools.RawJSON, error) {
+    return toolserverdata.Canonicalize(data, {{ .CanonicalizeServerDataItemFunc }})
 }
 
 // canonicalize{{ .GoName }}ServerDataItem validates one kind-specific payload
 // and returns the audience and JSON declared by {{ .Name }}.
-func canonicalize{{ .GoName }}ServerDataItem(kind, audience string, data tools.RawJSON) (string, tools.RawJSON, error) {
+func {{ .CanonicalizeServerDataItemFunc }}(kind, audience string, data tools.RawJSON) (string, tools.RawJSON, error) {
     switch kind {
     {{- range .ServerData }}
     case {{ printf "%q" .Kind }}:
@@ -205,10 +183,9 @@ func canonicalize{{ .GoName }}ServerDataItem(kind, audience string, data tools.R
 {{- end }}
 {{- end }}
 
-// Metadata returns fresh policy metadata for every generated tool.
-func Metadata() []policy.ToolMetadata {
-    return []policy.ToolMetadata{
-{{- range .Tools }}
+var (
+    metadata   = []policy.ToolMetadata{
+    {{- range .Tools }}
         {
             ID:          {{ .ConstName }},
             Title:       {{ printf "%q" .Title }},
@@ -220,75 +197,81 @@ func Metadata() []policy.ToolMetadata {
             },
             BudgetClass: policy.ToolBudgetClass{{ if .Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
         },
-{{- end }}
+    {{- end }}
     }
-}
-
-// Names returns the identifiers of all generated tools.
-func Names() []tools.Ident {
-    return []tools.Ident{
-{{- range .Tools }}
+    names = []tools.Ident{
+    {{- range .Tools }}
         {{ .ConstName }},
-{{- end }}
+    {{- end }}
     }
-}
+)
 
 // RequiredLabels lists the run label keys this toolset's Inject-populated
 // tools require to be present via WithLabels(...) at run start. The runtime
 // validates coverage across every toolset an agent uses before starting a
 // run, so a missing label fails fast instead of surfacing mid-run as a tool
 // call error.
-func RequiredLabels() []string {
-    return []string{
+var RequiredLabels = []string{
 {{- range .RequiredLabels }}
-        {{ printf "%q" . }},
+    {{ printf "%q" . }},
 {{- end }}
-    }
+}
+
+// Names returns the identifiers of all generated tools.
+func Names() []tools.Ident {
+    return names
 }
 
 // Spec returns the specification for the named tool if present.
-func Spec(name tools.Ident) (tools.ToolSpec, bool) {
+func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
     switch name {
     {{- range .Tools }}
     case {{ .ConstName }}:
-        return newSpec{{ .ConstName }}(), true
+        return &{{ .SpecVar }}, true
     {{- end }}
     default:
-        return tools.ToolSpec{}, false
+        return nil, false
     }
+}
+
+// PayloadSchema returns the JSON schema for the named tool payload.
+func PayloadSchema(name tools.Ident) ([]byte, bool) {
+    switch name {
+    {{- range .Tools }}
+    case {{ .ConstName }}:
+        return {{ .SpecVar }}.Payload.Schema, true
+    {{- end }}
+    default:
+        return nil, false
+    }
+}
+
+// ResultSchema returns the JSON schema for the named tool result.
+func ResultSchema(name tools.Ident) ([]byte, bool) {
+    switch name {
+    {{- range .Tools }}
+    case {{ .ConstName }}:
+        return {{ .SpecVar }}.Result.Schema, true
+    {{- end }}
+    default:
+        return nil, false
+    }
+}
+
+// Metadata exposes policy metadata for the generated tools.
+func Metadata() []policy.ToolMetadata {
+    return metadata
 }
 
 // MetadataByName returns policy metadata for the named tool if present.
 func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
     switch name {
-    {{- range $tool := .Tools }}
+    {{- range $i, $tool := .Tools }}
     case {{ $tool.ConstName }}:
-        return policy.ToolMetadata{
-            ID:          {{ $tool.ConstName }},
-            Title:       {{ printf "%q" $tool.Title }},
-            Description: {{ printf "%q" $tool.Description }},
-            Tags: []string{
-            {{- range $tool.Tags }}
-                {{ printf "%q" . }},
-            {{- end }}
-            },
-            BudgetClass: policy.ToolBudgetClass{{ if $tool.Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
-        }, true
+        return metadata[{{ $i }}], true
     {{- end }}
     default:
         return policy.ToolMetadata{}, false
     }
 }
 
-// cloneStringMap gives each returned specification ownership of its generated
-// field metadata.
-func cloneStringMap(source map[string]string) map[string]string {
-    if source == nil {
-        return nil
-    }
-    cloned := make(map[string]string, len(source))
-    for key, value := range source {
-        cloned[key] = value
-    }
-    return cloned
-}

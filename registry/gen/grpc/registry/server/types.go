@@ -15,8 +15,8 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-// NewRegisterPayload builds the payload of the "Register" endpoint of the
-// "registry" service from the gRPC request type.
+// NewRegisterPayload builds *registry.RegisterPayload from
+// *registrypb.RegisterRequest.
 func NewRegisterPayload(message *registrypb.RegisterRequest) *registry.RegisterPayload {
 	v := &registry.RegisterPayload{
 		Name:                  message.Name,
@@ -57,8 +57,8 @@ func NewRegisterPayload(message *registrypb.RegisterRequest) *registry.RegisterP
 	return v
 }
 
-// NewProtoRegisterResponse builds the gRPC response type from the result of
-// the "Register" endpoint of the "registry" service.
+// NewProtoRegisterResponse builds *registrypb.RegisterResponse from
+// *registry.RegisterResult.
 func NewProtoRegisterResponse(result *registry.RegisterResult) *registrypb.RegisterResponse {
 	message := &registrypb.RegisterResponse{
 		RegisteredAt:      result.RegisteredAt,
@@ -68,8 +68,8 @@ func NewProtoRegisterResponse(result *registry.RegisterResult) *registrypb.Regis
 	return message
 }
 
-// NewReleaseProviderPayload builds the payload of the "ReleaseProvider"
-// endpoint of the "registry" service from the gRPC request type.
+// NewReleaseProviderPayload builds *registry.ReleaseProviderPayload from
+// *registrypb.ReleaseProviderRequest.
 func NewReleaseProviderPayload(message *registrypb.ReleaseProviderRequest) *registry.ReleaseProviderPayload {
 	v := &registry.ReleaseProviderPayload{
 		Name:                      message.Name,
@@ -80,15 +80,15 @@ func NewReleaseProviderPayload(message *registrypb.ReleaseProviderRequest) *regi
 	return v
 }
 
-// NewProtoReleaseProviderResponse builds the gRPC response type from the
-// result of the "ReleaseProvider" endpoint of the "registry" service.
+// NewProtoReleaseProviderResponse builds *registrypb.ReleaseProviderResponse
+// from metadata values.
 func NewProtoReleaseProviderResponse() *registrypb.ReleaseProviderResponse {
 	message := &registrypb.ReleaseProviderResponse{}
 	return message
 }
 
-// NewDrainProviderPayload builds the payload of the "DrainProvider" endpoint
-// of the "registry" service from the gRPC request type.
+// NewDrainProviderPayload builds *registry.DrainProviderPayload from
+// *registrypb.DrainProviderRequest.
 func NewDrainProviderPayload(message *registrypb.DrainProviderRequest) *registry.DrainProviderPayload {
 	v := &registry.DrainProviderPayload{
 		SettlementDurationMs:      message.SettlementDurationMs,
@@ -100,15 +100,15 @@ func NewDrainProviderPayload(message *registrypb.DrainProviderRequest) *registry
 	return v
 }
 
-// NewProtoDrainProviderResponse builds the gRPC response type from the result
-// of the "DrainProvider" endpoint of the "registry" service.
+// NewProtoDrainProviderResponse builds *registrypb.DrainProviderResponse from
+// metadata values.
 func NewProtoDrainProviderResponse() *registrypb.DrainProviderResponse {
 	message := &registrypb.DrainProviderResponse{}
 	return message
 }
 
-// NewUnregisterPayload builds the payload of the "Unregister" endpoint of the
-// "registry" service from the gRPC request type.
+// NewUnregisterPayload builds *registry.UnregisterPayload from
+// *registrypb.UnregisterRequest.
 func NewUnregisterPayload(message *registrypb.UnregisterRequest) *registry.UnregisterPayload {
 	v := &registry.UnregisterPayload{
 		Name:                      message.Name,
@@ -117,15 +117,14 @@ func NewUnregisterPayload(message *registrypb.UnregisterRequest) *registry.Unreg
 	return v
 }
 
-// NewProtoUnregisterResponse builds the gRPC response type from the result of
-// the "Unregister" endpoint of the "registry" service.
+// NewProtoUnregisterResponse builds *registrypb.UnregisterResponse from
+// metadata values.
 func NewProtoUnregisterResponse() *registrypb.UnregisterResponse {
 	message := &registrypb.UnregisterResponse{}
 	return message
 }
 
-// NewPongPayload builds the payload of the "Pong" endpoint of the "registry"
-// service from the gRPC request type.
+// NewPongPayload builds *registry.PongPayload from *registrypb.PongRequest.
 func NewPongPayload(message *registrypb.PongRequest) *registry.PongPayload {
 	v := &registry.PongPayload{
 		PingID:                message.PingId,
@@ -136,15 +135,14 @@ func NewPongPayload(message *registrypb.PongRequest) *registry.PongPayload {
 	return v
 }
 
-// NewProtoPongResponse builds the gRPC response type from the result of the
-// "Pong" endpoint of the "registry" service.
+// NewProtoPongResponse builds *registrypb.PongResponse from metadata values.
 func NewProtoPongResponse() *registrypb.PongResponse {
 	message := &registrypb.PongResponse{}
 	return message
 }
 
-// NewListToolsetsPayload builds the payload of the "ListToolsets" endpoint of
-// the "registry" service from the gRPC request type.
+// NewListToolsetsPayload builds *registry.ListToolsetsPayload from
+// *registrypb.ListToolsetsRequest.
 func NewListToolsetsPayload(message *registrypb.ListToolsetsRequest) *registry.ListToolsetsPayload {
 	v := &registry.ListToolsetsPayload{}
 	if message.Tags != nil {
@@ -156,8 +154,8 @@ func NewListToolsetsPayload(message *registrypb.ListToolsetsRequest) *registry.L
 	return v
 }
 
-// NewProtoListToolsetsResponse builds the gRPC response type from the result
-// of the "ListToolsets" endpoint of the "registry" service.
+// NewProtoListToolsetsResponse builds *registrypb.ListToolsetsResponse from
+// *registry.ListToolsetsResult.
 func NewProtoListToolsetsResponse(result *registry.ListToolsetsResult) *registrypb.ListToolsetsResponse {
 	message := &registrypb.ListToolsetsResponse{}
 	if result.Toolsets != nil {
@@ -184,8 +182,8 @@ func NewProtoListToolsetsResponse(result *registry.ListToolsetsResult) *registry
 	return message
 }
 
-// NewGetToolsetPayload builds the payload of the "GetToolset" endpoint of the
-// "registry" service from the gRPC request type.
+// NewGetToolsetPayload builds *registry.GetToolsetPayload from
+// *registrypb.GetToolsetRequest.
 func NewGetToolsetPayload(message *registrypb.GetToolsetRequest) *registry.GetToolsetPayload {
 	v := &registry.GetToolsetPayload{
 		Name: message.Name,
@@ -193,8 +191,8 @@ func NewGetToolsetPayload(message *registrypb.GetToolsetRequest) *registry.GetTo
 	return v
 }
 
-// NewProtoGetToolsetResponse builds the gRPC response type from the result of
-// the "GetToolset" endpoint of the "registry" service.
+// NewProtoGetToolsetResponse builds *registrypb.GetToolsetResponse from
+// *registry.Toolset.
 func NewProtoGetToolsetResponse(result *registry.Toolset) *registrypb.GetToolsetResponse {
 	message := &registrypb.GetToolsetResponse{
 		Name:         result.Name,
@@ -232,8 +230,8 @@ func NewProtoGetToolsetResponse(result *registry.Toolset) *registrypb.GetToolset
 	return message
 }
 
-// NewSearchPayload builds the payload of the "Search" endpoint of the
-// "registry" service from the gRPC request type.
+// NewSearchPayload builds *registry.SearchPayload from
+// *registrypb.SearchRequest.
 func NewSearchPayload(message *registrypb.SearchRequest) *registry.SearchPayload {
 	v := &registry.SearchPayload{
 		Query: message.Query,
@@ -241,8 +239,8 @@ func NewSearchPayload(message *registrypb.SearchRequest) *registry.SearchPayload
 	return v
 }
 
-// NewProtoSearchResponse builds the gRPC response type from the result of the
-// "Search" endpoint of the "registry" service.
+// NewProtoSearchResponse builds *registrypb.SearchResponse from
+// *registry.SearchResult.
 func NewProtoSearchResponse(result *registry.SearchResult) *registrypb.SearchResponse {
 	message := &registrypb.SearchResponse{}
 	if result.Toolsets != nil {
@@ -269,8 +267,8 @@ func NewProtoSearchResponse(result *registry.SearchResult) *registrypb.SearchRes
 	return message
 }
 
-// NewCallToolPayload builds the payload of the "CallTool" endpoint of the
-// "registry" service from the gRPC request type.
+// NewCallToolPayload builds *registry.CallToolPayload from
+// *registrypb.CallToolRequest.
 func NewCallToolPayload(message *registrypb.CallToolRequest) *registry.CallToolPayload {
 	v := &registry.CallToolPayload{
 		Toolset:             message.Toolset,
@@ -279,13 +277,13 @@ func NewCallToolPayload(message *registrypb.CallToolRequest) *registry.CallToolP
 		WireProtocolVersion: int(message.WireProtocolVersion),
 	}
 	if message.Meta != nil {
-		v.Meta = protobufRegistrypbToolCallMetaToRegistryToolCallMeta(message.Meta)
+		v.Meta = transformProtoCallToolRequestToolCallMetaToCallToolPayloadToolCallMeta(message.Meta)
 	}
 	return v
 }
 
-// NewProtoCallToolResponse builds the gRPC response type from the result of
-// the "CallTool" endpoint of the "registry" service.
+// NewProtoCallToolResponse builds *registrypb.CallToolResponse from
+// *registry.CallToolResult.
 func NewProtoCallToolResponse(result *registry.CallToolResult) *registrypb.CallToolResponse {
 	message := &registrypb.CallToolResponse{
 		ToolUseId:             result.ToolUseID,
@@ -296,8 +294,8 @@ func NewProtoCallToolResponse(result *registry.CallToolResult) *registrypb.CallT
 	return message
 }
 
-// NewRetryToolPayload builds the payload of the "RetryTool" endpoint of the
-// "registry" service from the gRPC request type.
+// NewRetryToolPayload builds *registry.RetryToolPayload from
+// *registrypb.RetryToolRequest.
 func NewRetryToolPayload(message *registrypb.RetryToolRequest) *registry.RetryToolPayload {
 	v := &registry.RetryToolPayload{
 		ExpectedRegistrationToken: message.ExpectedRegistrationToken,
@@ -307,13 +305,13 @@ func NewRetryToolPayload(message *registrypb.RetryToolRequest) *registry.RetryTo
 		WireProtocolVersion:       int(message.WireProtocolVersion),
 	}
 	if message.Meta != nil {
-		v.Meta = protobufRegistrypbToolCallMetaToRegistryToolCallMeta(message.Meta)
+		v.Meta = transformProtoRetryToolRequestToolCallMetaToRetryToolPayloadToolCallMeta(message.Meta)
 	}
 	return v
 }
 
-// NewProtoRetryToolResponse builds the gRPC response type from the result of
-// the "RetryTool" endpoint of the "registry" service.
+// NewProtoRetryToolResponse builds *registrypb.RetryToolResponse from
+// *registry.CallToolResult.
 func NewProtoRetryToolResponse(result *registry.CallToolResult) *registrypb.RetryToolResponse {
 	message := &registrypb.RetryToolResponse{
 		ToolUseId:             result.ToolUseID,
@@ -324,8 +322,8 @@ func NewProtoRetryToolResponse(result *registry.CallToolResult) *registrypb.Retr
 	return message
 }
 
-// NewCompleteToolCallPayload builds the payload of the "CompleteToolCall"
-// endpoint of the "registry" service from the gRPC request type.
+// NewCompleteToolCallPayload builds *registry.CompleteToolCallPayload from
+// *registrypb.CompleteToolCallRequest.
 func NewCompleteToolCallPayload(message *registrypb.CompleteToolCallRequest) *registry.CompleteToolCallPayload {
 	v := &registry.CompleteToolCallPayload{
 		Toolset:                   message.Toolset,
@@ -340,16 +338,16 @@ func NewCompleteToolCallPayload(message *registrypb.CompleteToolCallRequest) *re
 	return v
 }
 
-// NewProtoCompleteToolCallResponse builds the gRPC response type from the
-// result of the "CompleteToolCall" endpoint of the "registry" service.
+// NewProtoCompleteToolCallResponse builds *registrypb.CompleteToolCallResponse
+// from metadata values.
 func NewProtoCompleteToolCallResponse() *registrypb.CompleteToolCallResponse {
 	message := &registrypb.CompleteToolCallResponse{}
 	return message
 }
 
-// NewPublishToolOutputDeltaPayload builds the payload of the
-// "PublishToolOutputDelta" endpoint of the "registry" service from the gRPC
-// request type.
+// NewPublishToolOutputDeltaPayload builds
+// *registry.PublishToolOutputDeltaPayload from
+// *registrypb.PublishToolOutputDeltaRequest.
 func NewPublishToolOutputDeltaPayload(message *registrypb.PublishToolOutputDeltaRequest) *registry.PublishToolOutputDeltaPayload {
 	v := &registry.PublishToolOutputDeltaPayload{
 		Stream:                    message.Stream,
@@ -365,17 +363,16 @@ func NewPublishToolOutputDeltaPayload(message *registrypb.PublishToolOutputDelta
 	return v
 }
 
-// NewProtoPublishToolOutputDeltaResponse builds the gRPC response type from
-// the result of the "PublishToolOutputDelta" endpoint of the "registry"
-// service.
+// NewProtoPublishToolOutputDeltaResponse builds
+// *registrypb.PublishToolOutputDeltaResponse from metadata values.
 func NewProtoPublishToolOutputDeltaResponse() *registrypb.PublishToolOutputDeltaResponse {
 	message := &registrypb.PublishToolOutputDeltaResponse{}
 	return message
 }
 
-// NewReportToolCallOverloadPayload builds the payload of the
-// "ReportToolCallOverload" endpoint of the "registry" service from the gRPC
-// request type.
+// NewReportToolCallOverloadPayload builds
+// *registry.ProviderToolCallClaimPayload from
+// *registrypb.ReportToolCallOverloadRequest.
 func NewReportToolCallOverloadPayload(message *registrypb.ReportToolCallOverloadRequest) *registry.ProviderToolCallClaimPayload {
 	v := &registry.ProviderToolCallClaimPayload{
 		Toolset:                   message.Toolset,
@@ -389,16 +386,15 @@ func NewReportToolCallOverloadPayload(message *registrypb.ReportToolCallOverload
 	return v
 }
 
-// NewProtoReportToolCallOverloadResponse builds the gRPC response type from
-// the result of the "ReportToolCallOverload" endpoint of the "registry"
-// service.
+// NewProtoReportToolCallOverloadResponse builds
+// *registrypb.ReportToolCallOverloadResponse from metadata values.
 func NewProtoReportToolCallOverloadResponse() *registrypb.ReportToolCallOverloadResponse {
 	message := &registrypb.ReportToolCallOverloadResponse{}
 	return message
 }
 
-// NewClaimToolCallPayload builds the payload of the "ClaimToolCall" endpoint
-// of the "registry" service from the gRPC request type.
+// NewClaimToolCallPayload builds *registry.ProviderToolCallClaimPayload from
+// *registrypb.ClaimToolCallRequest.
 func NewClaimToolCallPayload(message *registrypb.ClaimToolCallRequest) *registry.ProviderToolCallClaimPayload {
 	v := &registry.ProviderToolCallClaimPayload{
 		Toolset:                   message.Toolset,
@@ -412,8 +408,8 @@ func NewClaimToolCallPayload(message *registrypb.ClaimToolCallRequest) *registry
 	return v
 }
 
-// NewProtoClaimToolCallResponse builds the gRPC response type from the result
-// of the "ClaimToolCall" endpoint of the "registry" service.
+// NewProtoClaimToolCallResponse builds *registrypb.ClaimToolCallResponse from
+// *registry.ClaimToolCallResult.
 func NewProtoClaimToolCallResponse(result *registry.ClaimToolCallResult) *registrypb.ClaimToolCallResponse {
 	message := &registrypb.ClaimToolCallResponse{
 		Disposition: result.Disposition,
@@ -629,13 +625,9 @@ func ValidateToolCallMeta(meta *registrypb.ToolCallMeta) (err error) {
 	}
 	if meta.TurnId != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("meta.turn_id", *meta.TurnId, "^[^\\x00]+$"))
-	}
-	if meta.TurnId != nil {
 		if utf8.RuneCountInString(*meta.TurnId) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.turn_id", *meta.TurnId, utf8.RuneCountInString(*meta.TurnId), 1, true))
 		}
-	}
-	if meta.TurnId != nil {
 		if utf8.RuneCountInString(*meta.TurnId) > 256 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.turn_id", *meta.TurnId, utf8.RuneCountInString(*meta.TurnId), 256, false))
 		}
@@ -649,13 +641,9 @@ func ValidateToolCallMeta(meta *registrypb.ToolCallMeta) (err error) {
 	}
 	if meta.ParentToolCallId != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("meta.parent_tool_call_id", *meta.ParentToolCallId, "^[^\\x00]+$"))
-	}
-	if meta.ParentToolCallId != nil {
 		if utf8.RuneCountInString(*meta.ParentToolCallId) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.parent_tool_call_id", *meta.ParentToolCallId, utf8.RuneCountInString(*meta.ParentToolCallId), 1, true))
 		}
-	}
-	if meta.ParentToolCallId != nil {
 		if utf8.RuneCountInString(*meta.ParentToolCallId) > 256 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.parent_tool_call_id", *meta.ParentToolCallId, utf8.RuneCountInString(*meta.ParentToolCallId), 256, false))
 		}
@@ -807,9 +795,10 @@ func ValidateClaimToolCallRequest(message *registrypb.ClaimToolCallRequest) (err
 	return
 }
 
-// protobufRegistrypbToolCallMetaToRegistryToolCallMeta builds a value of type
-// *registry.ToolCallMeta from a value of type *registrypb.ToolCallMeta.
-func protobufRegistrypbToolCallMetaToRegistryToolCallMeta(v *registrypb.ToolCallMeta) *registry.ToolCallMeta {
+// transformProtoCallToolRequestToolCallMetaToCallToolPayloadToolCallMeta
+// builds a value of type *registry.ToolCallMeta from a value of type
+// *registrypb.ToolCallMeta.
+func transformProtoCallToolRequestToolCallMetaToCallToolPayloadToolCallMeta(v *registrypb.ToolCallMeta) *registry.ToolCallMeta {
 	res := &registry.ToolCallMeta{
 		RunID:            v.RunId,
 		SessionID:        v.SessionId,
@@ -821,15 +810,16 @@ func protobufRegistrypbToolCallMetaToRegistryToolCallMeta(v *registrypb.ToolCall
 	return res
 }
 
-// svcRegistryToolCallMetaToRegistrypbToolCallMeta builds a value of type
-// *registrypb.ToolCallMeta from a value of type *registry.ToolCallMeta.
-func svcRegistryToolCallMetaToRegistrypbToolCallMeta(v *registry.ToolCallMeta) *registrypb.ToolCallMeta {
-	res := &registrypb.ToolCallMeta{
-		RunId:            v.RunID,
-		SessionId:        v.SessionID,
-		TurnId:           v.TurnID,
-		ToolCallId:       v.ToolCallID,
-		ParentToolCallId: v.ParentToolCallID,
+// transformProtoRetryToolRequestToolCallMetaToRetryToolPayloadToolCallMeta
+// builds a value of type *registry.ToolCallMeta from a value of type
+// *registrypb.ToolCallMeta.
+func transformProtoRetryToolRequestToolCallMetaToRetryToolPayloadToolCallMeta(v *registrypb.ToolCallMeta) *registry.ToolCallMeta {
+	res := &registry.ToolCallMeta{
+		RunID:            v.RunId,
+		SessionID:        v.SessionId,
+		TurnID:           v.TurnId,
+		ToolCallID:       v.ToolCallId,
+		ParentToolCallID: v.ParentToolCallId,
 	}
 
 	return res

@@ -55,7 +55,7 @@ func TestRegistryTemplateOmitsHintMapsWhenAbsent(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.ServiceToolsetBindSelf())
 	registry := fileContent(t, files, "gen/alpha/agents/scribe/registry.go")
 
-	require.Contains(t, registry, "agentsruntime.ToolCallMetaFromCall(*call)")
+	require.Contains(t, registry, "agentsruntime.ToolCallMetaFromRequest(*call)")
 	require.NotContains(t, registry, "var callRaw map[tools.Ident]string")
 	require.NotContains(t, registry, "var resultRaw map[tools.Ident]string")
 	require.NotContains(t, registry, "hints.CompileHintTemplates(")
@@ -75,3 +75,4 @@ func TestRegistryTemplateSpecializesHintMaps(t *testing.T) {
 	require.Contains(t, registry, `tools.Ident("lookup.by_id"): "Lookup {{ .ID }}"`)
 	require.Contains(t, registry, `tools.Ident("lookup.by_id"): "Done {{ .Result.Ok }}"`)
 }
+

@@ -261,3 +261,4 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 		require.False(t, received)
 	}
 }
+

@@ -182,3 +182,4 @@ func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
 	require.ErrorContains(t, err, "execution was denied by confirmation")
 	require.Zero(t, executions)
 }
+

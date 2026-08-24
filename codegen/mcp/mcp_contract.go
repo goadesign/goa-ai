@@ -23,7 +23,12 @@ type (
 // services are MCP-only, preserve the source JSON-RPC transport shape, and use
 // notification payloads the generated MCP notification adapter can represent
 // without lossy coercion.
-func validatePureMCPService(svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, source *sourceSnapshot) error {
+func validatePureMCPService(
+	svc *expr.ServiceExpr,
+	mcp *mcpexpr.MCPExpr,
+	dynamicPrompts []*mcpexpr.DynamicPromptExpr,
+	source *sourceSnapshot,
+) error {
 	if err := rejectUnsupportedPureMCPMethods(svc, mcp); err != nil {
 		return err
 	}
@@ -47,10 +52,8 @@ func validatePureMCPService(svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, source 
 	for _, notification := range mcp.Notifications {
 		mapped[notification.Method.Name] = struct{}{}
 	}
-	if mcpexpr.Root != nil {
-		for _, prompt := range mcpexpr.Root.DynamicPrompts[svc.Name] {
-			mapped[prompt.Method.Name] = struct{}{}
-		}
+	for _, prompt := range dynamicPrompts {
+		mapped[prompt.Method.Name] = struct{}{}
 	}
 
 	unmapped := make([]string, 0, len(svc.Methods))

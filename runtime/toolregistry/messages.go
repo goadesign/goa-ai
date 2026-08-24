@@ -562,3 +562,4 @@ func isGoaValidationConstraint(name string) bool {
 		return false
 	}
 }
+

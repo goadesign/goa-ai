@@ -274,6 +274,9 @@ func (t *ToolExpr) Validate() error {
 	if t.Description == "" {
 		verr.Add(t, "tool description is required")
 	}
+	if t.Method != nil && t.Method.IsStreaming() {
+		verr.Add(t, "tool %q uses streaming method %q; MCP tools must return one result from one request", t.Name, t.Method.Name)
+	}
 	if len(verr.Errors) > 0 {
 		return verr
 	}
@@ -288,6 +291,9 @@ func (r *ResourceExpr) Validate() error {
 	}
 	if r.URI == "" {
 		verr.Add(r, "resource URI is required")
+	}
+	if r.Method != nil && r.Method.IsStreaming() {
+		verr.Add(r, "resource %q uses streaming method %q; MCP resources must return one result from one request", r.Name, r.Method.Name)
 	}
 	if len(verr.Errors) > 0 {
 		return verr

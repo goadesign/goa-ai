@@ -455,3 +455,4 @@ func TestCompletionToolIsRequiredBySuspendedRun(t *testing.T) {
 
 	assert.Equal(t, []tools.Ident{"briefs.persist"}, requiredCheckpointToolNames(checkpoint))
 }
+

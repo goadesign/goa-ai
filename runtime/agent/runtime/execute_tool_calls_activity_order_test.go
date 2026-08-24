@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/sdk/temporal"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -146,4 +147,66 @@ func TestExecuteToolCalls_ServiceToolErrorDoesNotAbortRun(t *testing.T) {
 	require.Equal(t, callFail.ToolCallID, ends[0].ToolCallID)
 	require.NotNil(t, ends[0].Failure)
 	require.Equal(t, "tool activity failed", ends[0].Failure.Error.Message)
+}
+
+func TestExecuteToolCalls_ServiceToolCancellationCancelsRun(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "engine cancellation", err: context.Canceled},
+		{name: "tool cancellation", err: temporal.NewCanceledError("superseded")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := &recordingHooks{}
+			spec := newAnyJSONSpec("svc.tools.cancel", "svc.tools")
+			rt := &Runtime{
+				Bus:           recorder,
+				RunEventStore: runloginmem.New(),
+				logger:        telemetry.NoopLogger{},
+				metrics:       telemetry.NoopMetrics{},
+				tracer:        telemetry.NoopTracer{},
+				toolsets:      map[string]ToolsetRegistration{"svc.tools": {}},
+			}
+			seedTestToolSpecs(rt, spec)
+			call := planner.ToolRequest{
+				Name:       tools.Ident("svc.tools.cancel"),
+				RunID:      "run-1",
+				SessionID:  "sess-1",
+				TurnID:     "turn-1",
+				ToolCallID: "call-cancel",
+			}
+			future := &controlledToolFuture{
+				ready: make(chan struct{}),
+				err:   test.err,
+			}
+			close(future.ready)
+			wfCtx := &testWorkflowContext{
+				ctx:         context.Background(),
+				hookRuntime: rt,
+				toolFutures: map[string]*controlledToolFuture{call.ToolCallID: future},
+			}
+
+			results, _, err := rt.executeToolCalls(
+				wfCtx,
+				"execute",
+				engine.ActivityOptions{},
+				agent.Ident("agent-1"),
+				&run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"},
+				nil,
+				[]planner.ToolRequest{call},
+				0,
+				nil,
+				time.Time{},
+			)
+
+			require.Error(t, err)
+			require.True(t, isRunCancellationError(err))
+			require.Empty(t, results)
+			for _, event := range recorder.events {
+				_, received := event.(*hooks.ToolResultReceivedEvent)
+				require.False(t, received)
+			}
+		})
+	}
 }

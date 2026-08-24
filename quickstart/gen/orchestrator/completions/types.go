@@ -19,7 +19,7 @@ type (
 		// Ordered draft steps
 		Steps []*DraftTaskStep
 	}
-	// DraftTaskStep is a helper type materialized for nested references.
+	// DraftTaskStep is a nested type used by generated tool data.
 	DraftTaskStep = struct {
 		// Short step title
 		Title string
