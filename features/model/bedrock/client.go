@@ -584,7 +584,6 @@ func structuredOutputToolDefinition(output *model.StructuredOutput) (*model.Tool
 		Name:        output.Name,
 		Description: output.Description,
 		Input:       input,
-		Strict:      true,
 	}, nil
 }
 
@@ -1241,16 +1240,6 @@ func encodeTools(
 			Name:        aws.String(sanitized),
 			Description: aws.String(def.Description),
 			InputSchema: &brtypes.ToolInputSchemaMemberJson{Value: schemaDoc},
-		}
-		if def.Strict {
-			if !claudecaps.StructuredOutputSupported(modelID) {
-				return nil, nil, nil, nil, fmt.Errorf(
-					"bedrock: model %q does not support strict tool %q",
-					modelID,
-					canonical,
-				)
-			}
-			spec.Strict = aws.Bool(true)
 		}
 		toolList = append(toolList, &brtypes.ToolMemberToolSpec{Value: spec})
 	}

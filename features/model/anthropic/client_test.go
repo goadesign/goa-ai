@@ -612,7 +612,6 @@ func TestComplete_ToolUse(t *testing.T) {
 				Name:        "test.tool",
 				Description: "test tool",
 				Input:       mustAnthropicToolInput(t, rawjson.Message(`{"type":"object"}`)),
-				Strict:      true,
 			},
 		},
 	}
@@ -624,7 +623,6 @@ func TestComplete_ToolUse(t *testing.T) {
 	if len(tools) != 1 {
 		t.Fatalf("expected 1 encoded tool, got %d", len(tools))
 	}
-	assert.True(t, tools[0].OfTool.Strict.Value)
 	if len(canon) != 1 || len(prov) != 1 {
 		t.Fatalf("expected name maps, got canon=%v prov=%v", canon, prov)
 	}

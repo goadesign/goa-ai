@@ -149,7 +149,7 @@ func TestCountTokens_UsesConverseRequestPreparation(t *testing.T) {
 }
 
 // TestCountTokensUsesMantleForStructuredOutputToolFallback verifies that Opus
-// 5 counting receives the same strict forced tool that Converse uses.
+// 5 counting receives the same forced tool that Converse uses.
 func TestCountTokensUsesMantleForStructuredOutputToolFallback(t *testing.T) {
 	rt := &countTokensRuntimeClient{}
 	mantle := &recordingMantleCounter{
@@ -186,7 +186,6 @@ func TestCountTokensUsesMantleForStructuredOutputToolFallback(t *testing.T) {
 	require.Nil(t, mantle.request.StructuredOutput)
 	require.Len(t, mantle.request.Tools, 1)
 	require.Equal(t, "eval_judgments", mantle.request.Tools[0].Name)
-	require.True(t, mantle.request.Tools[0].Strict)
 	require.Equal(t, &model.ToolChoice{
 		Mode: model.ToolChoiceModeTool,
 		Name: "eval_judgments",

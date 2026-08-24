@@ -835,9 +835,7 @@ Use `AdvertisedToolDefinitions()` when constructing provider requests inside pla
 runtime filters registered tool specs before the planner/model sees them and strips tag metadata
 from the model-facing `ToolDefinition` values. Provider adapters still encode
 historical tool-use and tool-result blocks from the transcript independently of
-the tools currently advertised. Set `ToolDefinition.Strict` only when the
-provider must enforce the advertised input schema; adapters reject unsupported
-strict-tool requests instead of silently sending a weaker contract.
+the tools currently advertised.
 
 Generated tool definitions also carry precomputed provider projections. The
 DSL-authored top-level Goa `Example(...)` on a payload becomes the only
@@ -2528,8 +2526,9 @@ trigger budget from the exact-retention budget:
   Claude Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, and Mythos 5 use the optional
   `bedrock.Options.MantleTokenCounter` instead. Before delegating, the Bedrock
   adapter resolves the foundation model ID and preserves the effective tools,
-  including the strict forced tool used for structured output. Without that
-  configured Mantle counter, these models return
+  including the forced tool used to represent structured output on models that
+  do not support native structured outputs. Without that configured Mantle
+  counter, these models return
   `model.ErrTokenCountingUnsupported`. Native structured output remains
   unsupported because neither AWS count request can carry the `OutputConfig`
   sent to Converse. Provider validation errors remain errors; the adapter never
