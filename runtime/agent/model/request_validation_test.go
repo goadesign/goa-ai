@@ -8,10 +8,12 @@ import (
 	"errors"
 	"io"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // mustAdvertisedToolInput compiles a static test schema.
@@ -152,6 +154,90 @@ func TestRequestContractReturnsImmutableOutputValidationError(t *testing.T) {
 	second, err := validationErr.RejectedResponse()
 	require.NoError(t, err)
 	require.Equal(t, "ok", second.Content[0].Parts[0].(TextPart).Text)
+}
+
+func TestRestoreOutputValidationErrorPreservesBoundedEvidence(t *testing.T) {
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	source := contract.RejectResponse(canonicalTextResponse(), errors.New("remote adapter rejected output"))
+
+	restored, err := RestoreOutputValidationError(errors.Unwrap(source), source.Evidence(), source.Usage())
+
+	require.NoError(t, err)
+	require.Equal(t, source.Evidence(), restored.Evidence())
+	require.Equal(t, source.Usage(), restored.Usage())
+	require.ErrorContains(t, restored, "remote adapter rejected output")
+
+	_, err = RestoreOutputValidationError(errors.New("invalid evidence"), ResponseEvidence{
+		Present: true,
+		Version: "unsupported",
+		SHA256:  source.Evidence().SHA256,
+		Size:    source.Evidence().Size,
+	}, nil)
+	require.ErrorContains(t, err, `unsupported version "unsupported"`)
+
+	_, err = RestoreOutputValidationError(errors.New("invalid evidence"), ResponseEvidence{
+		Present: true,
+		Version: source.Evidence().Version,
+		SHA256:  strings.Repeat("A", 64),
+		Size:    1,
+	}, nil)
+	require.ErrorContains(t, err, "must use lowercase hexadecimal characters")
+}
+
+func TestRequestContractRejectsContradictoryNoArgumentTool(t *testing.T) {
+	_, err := NewRequestContract(&Request{Tools: []*ToolDefinition{{
+		Name:        "continue",
+		Description: "Continue the operation.",
+		Input: mustAdvertisedToolInput(rawjson.Message(
+			`{"type":"object","properties":{"cursor":{"type":"string"}},"required":["cursor"]}`,
+		)),
+		NoArguments: true,
+	}}})
+
+	require.ErrorContains(t, err, `tool "continue" declares no arguments but its schema declares fields`)
+
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{{
+		Name:        "continue",
+		Description: "Continue the operation.",
+		Input:       mustAdvertisedToolInput(rawjson.Message(`{"type":"object","additionalProperties":false}`)),
+		NoArguments: true,
+	}}})
+	require.NoError(t, err)
+	_, err = contract.ValidateResponse(toolResponse("continue"))
+	require.NoError(t, err)
+
+	response := toolResponse("continue")
+	response.Content[0].Parts[0] = ToolUsePart{
+		Name:  "continue",
+		Input: rawjson.Message(`{ }`),
+		ID:    "call-1",
+	}
+	_, err = contract.ValidateResponse(response)
+	require.ErrorContains(t, err, `payload is not the canonical empty object`)
+}
+
+func TestRequestContractNoArgumentToolUsesModelFacingContract(t *testing.T) {
+	definition := ToolDefinitionFromSpec(tools.ToolSpec{
+		Name:        "continue",
+		Description: "Continue the operation.",
+		Payload: tools.TypeSpec{
+			Name:           "ContinuePayload",
+			Schema:         rawjson.Message(`{"type":"object"}`),
+			FieldJSONTypes: map[string]string{"$payload": "object"},
+			Codec: tools.JSONCodec[any]{
+				FromJSON: func([]byte) (any, error) {
+					return nil, errors.New("injected cursor is required")
+				},
+			},
+		},
+	})
+	definition.NoArguments = true
+
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+	require.NoError(t, err)
+	_, err = contract.ValidateResponse(toolResponse("continue"))
+	require.NoError(t, err)
 }
 
 func TestRequestContractEnforcesToolChoice(t *testing.T) {

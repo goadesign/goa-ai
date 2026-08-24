@@ -838,6 +838,14 @@ runtime filters registered tool specs before the planner/model sees them and str
 from the model-facing `ToolDefinition` values. Provider adapters still encode
 historical tool-use and tool-result blocks from the transcript independently of
 the tools currently advertised.
+`ToolDefinition.NoArguments` means choosing the tool is the complete model
+decision. The Bedrock streaming adapter still counts provider-emitted argument
+text against response bounds, but exposes the canonical payload `{}` rather
+than retaining text the runtime does not use. The runtime sets this only for
+generated continuation actions whose execution payload is already derived from
+saved query state. Request validation checks `{}` against this model-facing
+contract; the generated execution decoder validates the separate payload after
+the runtime adds the saved cursor.
 
 Generated tool definitions also carry precomputed provider projections. The
 DSL-authored top-level Goa `Example(...)` on a payload becomes the only
@@ -848,6 +856,13 @@ Runtime code does not parse or rewrite schemas to discover examples. Boundaries
 that transport model tools between processes should use `model.ToolInputContract`
 so the complete provider-neutral input contract stays intact until the provider
 adapter chooses a projection.
+
+Remote model transports must preserve model-output rejection as
+`model.OutputValidationError`, separately from provider and internal failures.
+Transmit only the rejection cause, `ResponseEvidence`, and validated
+`TokenUsage`; never transmit the rejected response body.
+`model.RestoreOutputValidationError` validates and reconstructs that bounded
+error after decoding the trusted transport.
 
 ### PlannerEvents
 

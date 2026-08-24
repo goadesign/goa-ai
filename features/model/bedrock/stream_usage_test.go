@@ -11,6 +11,7 @@ import (
 
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type nonIdempotentBedrockReader struct {
@@ -399,6 +400,7 @@ func TestBedrockStreamerClosesProviderStreamOnce(t *testing.T) {
 		model.ModelClassDefault,
 		nil,
 		"",
+		nil,
 		contract,
 	)
 
@@ -455,6 +457,59 @@ func TestChunkProcessorIgnoresEmptyToolUseDelta(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Empty(t, chunks)
+}
+
+// TestChunkProcessorDerivesEmptyInputToolPayload verifies that Bedrock argument
+// text cannot invalidate a tool whose selection is the complete model decision.
+func TestChunkProcessorDerivesEmptyInputToolPayload(t *testing.T) {
+	idx := int32(0)
+	providerName := "ada_continue_alarms"
+	canonicalName := "ada.continue_alarms"
+	id := "tooluse_1"
+	malformed := `{"cursor":`
+	var chunks []model.Chunk
+	cp := newChunkProcessor(
+		func(chunk model.Chunk) error {
+			chunks = append(chunks, chunk)
+			return nil
+		},
+		map[string]string{providerName: canonicalName},
+		"test-model-id",
+		model.ModelClassDefault,
+		nil,
+		"",
+	)
+	cp.noArgumentTools = map[string]struct{}{canonicalName: {}}
+
+	require.NoError(t, cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{}))
+	require.NoError(t, cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStart{
+		Value: brtypes.ContentBlockStartEvent{
+			ContentBlockIndex: &idx,
+			Start: &brtypes.ContentBlockStartMemberToolUse{
+				Value: brtypes.ToolUseBlockStart{
+					Name:      &providerName,
+					ToolUseId: &id,
+				},
+			},
+		},
+	}))
+	require.NoError(t, cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockDelta{
+		Value: brtypes.ContentBlockDeltaEvent{
+			ContentBlockIndex: &idx,
+			Delta: &brtypes.ContentBlockDeltaMemberToolUse{
+				Value: brtypes.ToolUseBlockDelta{Input: &malformed},
+			},
+		},
+	}))
+	require.NoError(t, cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStop{
+		Value: brtypes.ContentBlockStopEvent{ContentBlockIndex: &idx},
+	}))
+
+	require.Len(t, chunks, 1)
+	call, ok := chunks[0].(model.ToolCallChunk)
+	require.True(t, ok)
+	require.Equal(t, tools.Ident(canonicalName), call.ToolCall.Name)
+	require.JSONEq(t, `{}`, string(call.ToolCall.Payload))
 }
 
 func TestChunkProcessorRejectsMessageStopWithOpenContentBlock(t *testing.T) {

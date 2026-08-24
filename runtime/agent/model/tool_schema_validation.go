@@ -41,7 +41,7 @@ func compileToolSchemaValidator(schemaBytes rawjson.Message) (func(rawjson.Messa
 	if !ok {
 		return nil, fmt.Errorf("tool schema root must be an object schema")
 	}
-	if declared, ok := schemaObject["type"].(string); !ok || declared != "object" {
+	if declared, ok := schemaObject["type"].(string); !ok || declared != jsonObjectType {
 		return nil, fmt.Errorf(`tool schema root must declare type "object"`)
 	}
 	if err := validateCanonicalDynamicValue(reflect.ValueOf(schemaDocument)); err != nil {
