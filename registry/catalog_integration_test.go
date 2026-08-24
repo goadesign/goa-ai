@@ -678,101 +678,55 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 	require.Equal(t, rejection, rejected.rejection)
 	assertStoredCallDecision(t, ctx, firstStore, "reject-first", false)
 
-	admitted, _, err := firstStore.Ensure(
-		ctx,
-		toolset,
-		"admit-first",
-		token,
-		digest,
-		time.Second,
-		5*time.Second,
-		outcomeUnknownPayload(token, "admit-first"),
-	)
-	require.NoError(t, err)
-	// v0.70 admission records predate the explicit decision discriminator.
-	legacyKey := firstStore.callKey("admit-first")
-	require.NoError(t, testRedisClient.HDel(
-		ctx,
-		legacyKey,
-		"decision",
-	).Err())
-	ttlBefore, err := testRedisClient.PTTL(ctx, legacyKey).Result()
-	require.NoError(t, err)
-	migrated, err := secondStore.Attach(ctx, toolset, "admit-first", digest)
-	require.NoError(t, err)
-	require.Equal(t, admitted, migrated)
-	ttlAfter, err := testRedisClient.PTTL(ctx, legacyKey).Result()
-	require.NoError(t, err)
-	assert.Positive(t, ttlAfter)
-	assert.LessOrEqual(t, ttlAfter, ttlBefore)
-
-	_, err = secondStore.Reject(
-		ctx,
-		toolset,
-		"admit-first",
-		digest,
-		rejection,
-		5*time.Second,
-	)
-	require.ErrorAs(t, err, &rejected)
-	require.Equal(t, rejection, rejected.rejection)
-	assertStoredCallDecision(t, ctx, firstStore, "admit-first", false)
-
-	fractionalLegacyID := "fractional-legacy"
+	fractionalCountID := "fractional-count"
 	_, _, err = firstStore.Ensure(
 		ctx,
 		toolset,
-		fractionalLegacyID,
+		fractionalCountID,
 		token,
 		digest,
 		time.Second,
 		5*time.Second,
-		outcomeUnknownPayload(token, fractionalLegacyID),
+		outcomeUnknownPayload(token, fractionalCountID),
 	)
 	require.NoError(t, err)
-	fractionalLegacyKey := firstStore.callKey(fractionalLegacyID)
-	require.NoError(t, testRedisClient.HDel(ctx, fractionalLegacyKey, "decision").Err())
-	require.NoError(t, testRedisClient.HSet(ctx, fractionalLegacyKey, "output_delta_count", "0.5").Err())
-	_, err = secondStore.Attach(ctx, toolset, fractionalLegacyID, digest)
+	fractionalCountKey := firstStore.callKey(fractionalCountID)
+	require.NoError(t, testRedisClient.HSet(ctx, fractionalCountKey, "output_delta_count", "0.5").Err())
+	_, err = secondStore.Attach(ctx, toolset, fractionalCountID, digest)
 	require.ErrorContains(t, err, "CALLDECISIONINVALID counter state")
-	_, err = testRedisClient.HGet(ctx, fractionalLegacyKey, "decision").Result()
-	require.ErrorIs(t, err, redis.Nil)
 	for _, invalidCount := range []string{"00", "9007199254740992"} {
 		require.NoError(t, testRedisClient.HSet(
 			ctx,
-			fractionalLegacyKey,
+			fractionalCountKey,
 			"output_delta_count",
 			invalidCount,
 		).Err())
-		_, err = secondStore.Attach(ctx, toolset, fractionalLegacyID, digest)
+		_, err = secondStore.Attach(ctx, toolset, fractionalCountID, digest)
 		require.ErrorContains(t, err, "CALLDECISIONINVALID counter state")
-		_, err = testRedisClient.HGet(ctx, fractionalLegacyKey, "decision").Result()
-		require.ErrorIs(t, err, redis.Nil)
 	}
 	require.NoError(t, testRedisClient.HSet(
 		ctx,
-		fractionalLegacyKey,
+		fractionalCountKey,
 		"output_delta_count",
 		"0",
 		"outcome_unknown_payload",
 		`{}`,
 	).Err())
-	_, err = secondStore.Attach(ctx, toolset, fractionalLegacyID, digest)
+	_, err = secondStore.Attach(ctx, toolset, fractionalCountID, digest)
 	require.ErrorContains(t, err, "outcome unknown payload")
-	_, err = testRedisClient.HGet(ctx, fractionalLegacyKey, "decision").Result()
-	require.ErrorIs(t, err, redis.Nil)
 
-	malformedKey := firstStore.callKey("malformed-legacy")
+	malformedID := "malformed-call"
+	malformedKey := firstStore.callKey(malformedID)
 	require.NoError(t, testRedisClient.HSet(
 		ctx,
 		malformedKey,
 		"digest",
 		digest,
 		"tool_use_id",
-		"malformed-legacy",
+		malformedID,
 	).Err())
 	require.NoError(t, testRedisClient.PExpire(ctx, malformedKey, 5*time.Second).Err())
-	_, err = secondStore.Attach(ctx, toolset, "malformed-legacy", digest)
+	_, err = secondStore.Attach(ctx, toolset, malformedID, digest)
 	require.ErrorContains(t, err, "CALLDECISIONINVALID")
 	_, err = testRedisClient.HGet(ctx, malformedKey, "decision").Result()
 	require.ErrorIs(t, err, redis.Nil)
@@ -980,6 +934,101 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 		}
 		assertStoredCallDecision(t, ctx, firstStore, toolUseID, false)
 	}
+}
+
+func TestCallDecisionRejectsInvalidDiscriminatorWithoutMutation(t *testing.T) {
+	ctx := context.Background()
+	name := fmt.Sprintf("invalid-call-decision-%d", time.Now().UnixNano())
+	firstStore := newCallAdmissionStore(testRedisClient, name)
+	secondStore := newCallAdmissionStore(testRedisClient, name)
+	const (
+		toolset = "decision-toolset"
+		digest  = "request-digest"
+	)
+	token := strings.Repeat("a", 64)
+	rejection := callRejection{
+		kind:    callRejectionUnavailable,
+		message: "no healthy providers",
+	}
+
+	for _, test := range []struct {
+		name     string
+		decision string
+	}{
+		{name: "missing decision"},
+		{name: "unknown decision", decision: "unknown"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			toolUseID := strings.ReplaceAll(test.name, " ", "-")
+			_, _, err := firstStore.Ensure(
+				ctx,
+				toolset,
+				toolUseID,
+				token,
+				digest,
+				time.Second,
+				5*time.Second,
+				outcomeUnknownPayload(token, toolUseID),
+			)
+			require.NoError(t, err)
+			key := firstStore.callKey(toolUseID)
+			if test.decision == "" {
+				require.NoError(t, testRedisClient.HDel(ctx, key, "decision").Err())
+			} else {
+				require.NoError(t, testRedisClient.HSet(ctx, key, "decision", test.decision).Err())
+			}
+			wantFields, err := testRedisClient.HGetAll(ctx, key).Result()
+			require.NoError(t, err)
+			wantExpiration, err := testRedisClient.Do(ctx, "PEXPIRETIME", key).Int64()
+			require.NoError(t, err)
+
+			_, err = secondStore.Attach(ctx, toolset, toolUseID, digest)
+			require.ErrorContains(t, err, "CALLDECISIONINVALID")
+			assertCallHashUnchanged(t, ctx, key, wantFields, wantExpiration)
+
+			_, _, err = secondStore.Ensure(
+				ctx,
+				toolset,
+				toolUseID,
+				token,
+				digest,
+				time.Second,
+				5*time.Second,
+				outcomeUnknownPayload(token, toolUseID),
+			)
+			require.ErrorContains(t, err, "CALLDECISIONINVALID")
+			assertCallHashUnchanged(t, ctx, key, wantFields, wantExpiration)
+
+			_, err = secondStore.Reject(
+				ctx,
+				toolset,
+				toolUseID,
+				digest,
+				rejection,
+				5*time.Second,
+			)
+			require.ErrorContains(t, err, "CALLDECISIONINVALID")
+			assertCallHashUnchanged(t, ctx, key, wantFields, wantExpiration)
+		})
+	}
+}
+
+// assertCallHashUnchanged verifies that a rejected operation did not alter any
+// field or the absolute expiration of the retained call decision.
+func assertCallHashUnchanged(
+	t *testing.T,
+	ctx context.Context,
+	key string,
+	wantFields map[string]string,
+	wantExpiration int64,
+) {
+	t.Helper()
+	gotFields, err := testRedisClient.HGetAll(ctx, key).Result()
+	require.NoError(t, err)
+	assert.Equal(t, wantFields, gotFields)
+	gotExpiration, err := testRedisClient.Do(ctx, "PEXPIRETIME", key).Int64()
+	require.NoError(t, err)
+	assert.Equal(t, wantExpiration, gotExpiration)
 }
 
 func TestRedisConcurrentRenewalReplacementAndCandidates(t *testing.T) {
