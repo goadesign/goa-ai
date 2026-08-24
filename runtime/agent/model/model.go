@@ -288,11 +288,6 @@ type (
 		// decision. Adapters may derive the canonical empty object instead of
 		// retaining provider-authored argument text.
 		NoArguments bool
-
-		// Strict asks providers that support strict tools to enforce Input before
-		// returning a tool call. Adapters fail when a strict tool cannot be
-		// represented instead of silently weakening its contract.
-		Strict bool
 	}
 
 	// ToolInput contains the model-facing input contract for one tool.

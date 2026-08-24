@@ -461,6 +461,10 @@ stream ends normally and the complete provider response contains exactly the
 same JSON bytes, including surrounding whitespace. Providers that cannot
 preserve the structured-output contract fail explicitly with
 `model.ErrStructuredOutputUnsupported`.
+On Bedrock, Claude 4.6 uses one private strict tool so Runtime `CountTokens`
+and Converse receive the same enforced schema. Claude 4.5 retains native
+`OutputConfig`; Bedrock Claude models that AWS does not list as supporting
+structured output fail before a provider request.
 
 When updating generated completion callers, replace direct `Spec<Name>` access
 with `Complete<Name>(...)` or `StreamComplete<Name>(...)`. Use

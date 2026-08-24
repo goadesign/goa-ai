@@ -402,10 +402,12 @@ effective tool choice, including a private structured-output tool when needed,
 before sending the request. Unsupported combinations fail locally.
 
 The direct Anthropic Messages adapter uses native structured output on Claude
-Sonnet, Opus, and Haiku 4.5 or later. Bedrock Converse uses native
-`OutputConfig` only for the Claude 4.5 and 4.6 models Bedrock documents as
-supporting it. Other Claude models on Bedrock use one private forced tool and
-the framework validates its result against the same completion contract.
+Sonnet, Opus, and Haiku 4.5 or later. On Bedrock, Claude 4.6 uses one private
+forced tool with `strict: true`, so Converse and Runtime `CountTokens` receive
+the same provider-enforced schema. Claude 4.5 retains native `OutputConfig`
+because its manual thinking mode cannot use forced tools. Other Claude models
+fail with `model.ErrStructuredOutputUnsupported` unless AWS documents
+structured-output support for them.
 
 ### Thinking on Gemini 3
 
@@ -835,9 +837,7 @@ Use `AdvertisedToolDefinitions()` when constructing provider requests inside pla
 runtime filters registered tool specs before the planner/model sees them and strips tag metadata
 from the model-facing `ToolDefinition` values. Provider adapters still encode
 historical tool-use and tool-result blocks from the transcript independently of
-the tools currently advertised. Set `ToolDefinition.Strict` only when the
-provider must enforce the advertised input schema; adapters reject unsupported
-strict-tool requests instead of silently sending a weaker contract.
+the tools currently advertised.
 `ToolDefinition.NoArguments` means choosing the tool is the complete model
 decision. The Bedrock streaming adapter still counts provider-emitted argument
 text against response bounds, but exposes the canonical payload `{}` rather
@@ -2542,13 +2542,14 @@ trigger budget from the exact-retention budget:
 - Bedrock uses Runtime `CountTokens` when the resolved model supports it.
   Claude Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, and Mythos 5 use the optional
   `bedrock.Options.MantleTokenCounter` instead. Before delegating, the Bedrock
-  adapter resolves the foundation model ID and preserves the effective tools,
-  including the strict forced tool used for structured output. Without that
-  configured Mantle counter, these models return
+  adapter resolves the foundation model ID and preserves the effective tools.
+  Without that configured Mantle counter, these models return
   `model.ErrTokenCountingUnsupported`. Native structured output remains
-  unsupported because neither AWS count request can carry the `OutputConfig`
-  sent to Converse. Provider validation errors remain errors; the adapter never
-  parses an error message into a fabricated count.
+  unsupported in Mantle because its count request cannot carry Bedrock
+  `OutputConfig` or a strict tool. Claude 4.6 structured output uses the same
+  strict tool in Runtime counting and Converse instead. Provider validation
+  errors remain errors; the adapter never parses an error message into a
+  fabricated count.
 
 ```go
 // DSL

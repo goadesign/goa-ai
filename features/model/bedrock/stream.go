@@ -36,22 +36,22 @@ type bedrockStreamer struct {
 	closeOnce sync.Once
 	closeErr  error
 
-	responseMu       sync.RWMutex
-	response         *model.Response
-	toolNameMap      map[string]string
-	modelID          string
-	modelClass       model.ModelClass
-	output           *model.StructuredOutput
-	toolFallbackName string
-	noArgumentTools  map[string]struct{}
-	contract         *model.RequestContract
+	responseMu               sync.RWMutex
+	response                 *model.Response
+	toolNameMap              map[string]string
+	modelID                  string
+	modelClass               model.ModelClass
+	output                   *model.StructuredOutput
+	structuredOutputToolName string
+	noArgumentTools          map[string]struct{}
+	contract                 *model.RequestContract
 }
 
 // newBedrockStreamer adapts a Bedrock ConverseStream to model.Streamer.
-// toolFallbackName is non-empty only when structuredOutputUsesToolFallback
-// chose to express output (structured output) as a forced tool call; the
-// streamer then treats that one tool_use block as the completion channel
-// instead of a canonical ToolCallChunk.
+// structuredOutputToolName is non-empty only when
+// structuredOutputUsesStrictTool chose a forced private tool. The streamer
+// treats that tool_use block as the completion channel instead of emitting a
+// canonical ToolCallChunk.
 func newBedrockStreamer(
 	ctx context.Context,
 	stream *bedrockruntime.ConverseStreamEventStream,
@@ -59,24 +59,24 @@ func newBedrockStreamer(
 	modelID string,
 	modelClass model.ModelClass,
 	output *model.StructuredOutput,
-	toolFallbackName string,
+	structuredOutputToolName string,
 	noArgumentTools map[string]struct{},
 	contract *model.RequestContract,
 ) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
 	bs := &bedrockStreamer{
-		ctx:              cctx,
-		cancel:           cancel,
-		stream:           stream,
-		chunks:           make(chan model.Chunk, 32),
-		done:             make(chan struct{}),
-		toolNameMap:      nameMap,
-		modelID:          modelID,
-		modelClass:       modelClass,
-		output:           output,
-		toolFallbackName: toolFallbackName,
-		noArgumentTools:  noArgumentTools,
-		contract:         contract,
+		ctx:                      cctx,
+		cancel:                   cancel,
+		stream:                   stream,
+		chunks:                   make(chan model.Chunk, 32),
+		done:                     make(chan struct{}),
+		toolNameMap:              nameMap,
+		modelID:                  modelID,
+		modelClass:               modelClass,
+		output:                   output,
+		structuredOutputToolName: structuredOutputToolName,
+		noArgumentTools:          noArgumentTools,
+		contract:                 contract,
 	}
 	go bs.run()
 	return bs
@@ -134,7 +134,7 @@ func (s *bedrockStreamer) run() {
 		s.modelID,
 		s.modelClass,
 		s.output,
-		s.toolFallbackName,
+		s.structuredOutputToolName,
 	)
 	processor.noArgumentTools = s.noArgumentTools
 	events := s.stream.Events()
@@ -243,12 +243,12 @@ type chunkProcessor struct {
 	canonicalParts   map[int]model.Part
 	openBlocks       map[int]struct{}
 
-	toolNameMap      map[string]string
-	modelID          string
-	modelClass       model.ModelClass
-	output           *model.StructuredOutput
-	toolFallbackName string
-	noArgumentTools  map[string]struct{}
+	toolNameMap              map[string]string
+	modelID                  string
+	modelClass               model.ModelClass
+	output                   *model.StructuredOutput
+	structuredOutputToolName string
+	noArgumentTools          map[string]struct{}
 
 	canonical       model.Response
 	started         bool
@@ -258,33 +258,33 @@ type chunkProcessor struct {
 	retainedValues  int
 }
 
-// newChunkProcessor builds the stream event decoder. toolFallbackName is
-// non-empty only when the request encoded structured output as a forced tool
-// call (see structuredOutputUsesToolFallback); the processor then routes that
-// one tool_use content block through the completion buffer instead of
-// emitting a ToolCallChunk.
+// newChunkProcessor builds the stream event decoder.
+// structuredOutputToolName is non-empty only when the request encoded
+// structured output as a forced private tool. The processor routes that one
+// tool_use content block through the completion buffer instead of emitting a
+// ToolCallChunk.
 func newChunkProcessor(
 	emit func(model.Chunk) error,
 	nameMap map[string]string,
 	modelID string,
 	modelClass model.ModelClass,
 	output *model.StructuredOutput,
-	toolFallbackName string,
+	structuredOutputToolName string,
 ) *chunkProcessor {
 	return &chunkProcessor{
-		emit:             emit,
-		toolBlocks:       make(map[int]*toolBuffer),
-		reasoningBlocks:  make(map[int]*reasoningBuffer),
-		reasoningIndexes: make(map[int]int),
-		textBlocks:       make(map[int]*strings.Builder),
-		citationBlocks:   make(map[int][]model.Citation),
-		canonicalParts:   make(map[int]model.Part),
-		openBlocks:       make(map[int]struct{}),
-		toolNameMap:      nameMap,
-		modelID:          modelID,
-		modelClass:       modelClass,
-		output:           output,
-		toolFallbackName: toolFallbackName,
+		emit:                     emit,
+		toolBlocks:               make(map[int]*toolBuffer),
+		reasoningBlocks:          make(map[int]*reasoningBuffer),
+		reasoningIndexes:         make(map[int]int),
+		textBlocks:               make(map[int]*strings.Builder),
+		citationBlocks:           make(map[int][]model.Citation),
+		canonicalParts:           make(map[int]model.Part),
+		openBlocks:               make(map[int]struct{}),
+		toolNameMap:              nameMap,
+		modelID:                  modelID,
+		modelClass:               modelClass,
+		output:                   output,
+		structuredOutputToolName: structuredOutputToolName,
 	}
 }
 
@@ -343,7 +343,7 @@ func (p *chunkProcessor) Handle(event any) error {
 				)
 			}
 			if p.output != nil {
-				if p.toolFallbackName == "" || name != p.toolFallbackName {
+				if p.structuredOutputToolName == "" || name != p.structuredOutputToolName {
 					return fmt.Errorf(
 						"bedrock stream: structured output %q emitted tool_use start",
 						p.output.Name,
@@ -760,7 +760,7 @@ func (p *chunkProcessor) handleCompletionDelta(idx int, delta string) error {
 		return err
 	}
 	p.completion.fragments.WriteString(delta)
-	if p.toolFallbackName != "" {
+	if p.structuredOutputToolName != "" {
 		// Synthetic-tool fragments contain Bedrock's private object wrapper.
 		// Completion previews are optional, so do not expose that provider
 		// representation through the provider-neutral stream.
@@ -784,12 +784,12 @@ func (p *chunkProcessor) finalizeCompletion(idx int) error {
 	if err != nil {
 		return fmt.Errorf("bedrock stream: structured output %q: %w", p.output.Name, err)
 	}
-	if p.toolFallbackName != "" {
+	if p.structuredOutputToolName != "" {
 		payload, err = unwrapStructuredOutputValue(payload)
 		if err != nil {
 			return fmt.Errorf(
-				"bedrock stream: structured output tool fallback %q: %w",
-				p.toolFallbackName,
+				"bedrock stream: structured output tool %q: %w",
+				p.structuredOutputToolName,
 				err,
 			)
 		}

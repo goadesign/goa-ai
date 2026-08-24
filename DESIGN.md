@@ -111,6 +111,11 @@ Providers that do not implement structured output fail explicitly with
 Generated schemas stay provider-neutral. Provider adapters may normalize that
 canonical schema to a provider-specific subset for constrained decoding, but
 they must fail explicitly instead of redefining the service contract.
+The Bedrock adapter uses a private strict tool for Claude 4.6 so Runtime
+`CountTokens` and Converse receive the same schema. Claude 4.5 retains native
+`OutputConfig` because its manual thinking mode cannot use forced tools.
+Bedrock Claude models that AWS does not list as supporting structured output
+fail before the provider call.
 Adapters with provider-native structured-output examples receive the generated
 root example separately from the schema. Unary helpers ask the model once for a
 structured value. If the generated codec rejects the response, the helper
@@ -749,6 +754,8 @@ redeploys.
   the resolved Bedrock-effective request to an optional Mantle counter.
   Without that configured counter it returns
   `model.ErrTokenCountingUnsupported`.
+  Mantle cannot represent Bedrock structured output. Claude 4.6 instead uses
+  the same strict private tool for Runtime counting and Converse.
   When encoded tools carry authored `input_examples`, completion, streaming,
   and counting all attach the same Anthropic tool-examples beta header.
   Exact retention always keeps whole recent turns; it never truncates
