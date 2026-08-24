@@ -107,7 +107,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- if .MethodResultField }}
 		{
 			data := Init{{ $tool.ConstName }}{{ goify .Kind true }}ServerData(methodOut.{{ goify .MethodResultField true }})
-			dataJSON, err := {{ $tool.ConstName }}{{ goify .Kind true }}ServerDataCodec.ToJSON(data)
+			dataJSON, err := {{ $tool.ConstName }}{{ goify .Kind true }}ServerDataCodec().ToJSON(data)
 			if err != nil {
 				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
 			}
