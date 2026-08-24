@@ -7,7 +7,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	goa.design/clue v1.2.6
 	goa.design/goa-ai v0.0.0
-	goa.design/goa/v3 v3.30.1-0.20260824162302-d6f33592445e
+	goa.design/goa/v3 v3.30.1-0.20260824171601-e5b1394b6984
 )
 
 require (
