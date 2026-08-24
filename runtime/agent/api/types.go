@@ -225,14 +225,17 @@ type (
 		// run ended by terminal-tool contract rather than planner-authored text.
 		Final *model.Message
 
-		// FinalToolResult is the canonical parent tool_result for nested agent runs
-		// when the child planner/runtime owns the outer tool contract directly.
+		// FinalToolResult is the canonical tool result that completed the run
+		// without an assistant reply. Terminal and required completion tools place
+		// their successful result here. Nested agents use the same field when the
+		// child planner or runtime owns the outer tool contract directly.
 		//
 		// Contract:
 		// - This uses the same workflow-safe envelope as ToolEvents because it also
 		//   crosses a workflow boundary.
 		// - Result bytes are canonical JSON for the parent tool's result schema.
-		// - Top-level runs normally leave this nil.
+		// - Tool-completed runs also retain this event in ToolEvents so callers can
+		//   inspect the complete execution history in order.
 		FinalToolResult *ToolEvent
 
 		// ToolEvents captures all tool results emitted before completion in execution order.

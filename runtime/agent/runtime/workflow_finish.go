@@ -147,10 +147,10 @@ func validateTerminalPlanResult(result *PlanResult) error {
 }
 
 // finishAfterSuccessfulToolCompletion completes the run after either a terminal
-// tool batch or the run's required completion tool succeeds. It returns the tool
-// events without publishing an assistant message or requesting another planner
-// turn. Final remains nil because a tool side effect, not planner-authored text,
-// completed the run.
+// tool batch or the run's required completion tool succeeds. It returns the
+// successful completion result both as FinalToolResult and in the ordered tool
+// history without publishing an assistant message or requesting another planner
+// turn.
 func (r *Runtime) finishAfterSuccessfulToolCompletion(
 	ctx context.Context,
 	input *RunInput,
@@ -161,12 +161,46 @@ func (r *Runtime) finishAfterSuccessfulToolCompletion(
 	if err != nil {
 		return nil, err
 	}
+	finalToolResult, err := r.successfulCompletionToolEvent(input, toolEvents)
+	if err != nil {
+		return nil, err
+	}
 	return &RunOutput{
-		AgentID:    input.AgentID,
-		RunID:      base.RunContext.RunID,
-		ToolEvents: toolEvents,
-		Usage:      &st.AggUsage,
+		AgentID:         input.AgentID,
+		RunID:           base.RunContext.RunID,
+		FinalToolResult: finalToolResult,
+		ToolEvents:      toolEvents,
+		Usage:           &st.AggUsage,
 	}, nil
+}
+
+// successfulCompletionToolEvent returns the one successful tool result that
+// ended the run. Earlier ordinary tools and failed completion attempts remain
+// only in ToolEvents; multiple successful completion results are ambiguous and
+// violate the singular RunOutput contract.
+func (r *Runtime) successfulCompletionToolEvent(input *RunInput, events []*api.ToolEvent) (*api.ToolEvent, error) {
+	var completionTool tools.Ident
+	if input.Policy != nil {
+		completionTool = input.Policy.CompletionTool
+	}
+	var final *api.ToolEvent
+	for _, event := range events {
+		spec, ok := r.toolSpec(event.Name)
+		if !ok {
+			return nil, fmt.Errorf("unknown tool %q in completed run output", event.Name)
+		}
+		if event.Failure != nil || (!spec.TerminalRun && event.Name != completionTool) {
+			continue
+		}
+		if final != nil {
+			return nil, errors.New("completed run contains multiple successful terminal tool results")
+		}
+		final = event
+	}
+	if final == nil {
+		return nil, errors.New("completed run is missing its successful terminal tool result")
+	}
+	return final, nil
 }
 
 // finalToolResultEvent converts the planner-owned final tool-result envelope

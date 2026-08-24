@@ -46,6 +46,7 @@ func TestCompletionToolSuccessEndsRunWithoutPlannerResume(t *testing.T) {
 	assert.Nil(t, out.Final)
 	assert.Len(t, out.ToolEvents, 1)
 	assert.Equal(t, completion.Name, out.ToolEvents[0].Name)
+	assert.Same(t, out.ToolEvents[0], out.FinalToolResult)
 	assert.Zero(t, resumes)
 }
 
@@ -84,6 +85,7 @@ func TestCompletionToolFailureCanBeCorrected(t *testing.T) {
 	require.NotNil(t, out)
 	assert.Nil(t, out.Final)
 	assert.Len(t, out.ToolEvents, 2)
+	assert.Same(t, out.ToolEvents[1], out.FinalToolResult)
 	assert.Equal(t, 1, resumes)
 }
 
