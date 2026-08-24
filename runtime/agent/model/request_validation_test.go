@@ -217,6 +217,44 @@ func TestRequestContractRejectsContradictoryNoArgumentTool(t *testing.T) {
 	require.ErrorContains(t, err, `payload is not the canonical empty object`)
 }
 
+func TestToolDefinitionAcceptsEmptyObject(t *testing.T) {
+	tests := []struct {
+		name   string
+		schema rawjson.Message
+		want   bool
+	}{
+		{
+			name:   "no fields",
+			schema: rawjson.Message(`{"type":"object","additionalProperties":false}`),
+			want:   true,
+		},
+		{
+			name: "optional field",
+			schema: rawjson.Message(
+				`{"type":"object","properties":{"cursor":{"type":"string"}},"additionalProperties":false}`,
+			),
+			want: true,
+		},
+		{
+			name: "required field",
+			schema: rawjson.Message(
+				`{"type":"object","properties":{"source":{"type":"string"}},"required":["source"],"additionalProperties":false}`,
+			),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			definition := &ToolDefinition{
+				Name:  "lookup",
+				Input: mustAdvertisedToolInput(test.schema),
+			}
+
+			require.Equal(t, test.want, definition.AcceptsEmptyObject())
+		})
+	}
+}
+
 func TestRequestContractNoArgumentToolUsesModelFacingContract(t *testing.T) {
 	definition := ToolDefinitionFromSpec(tools.ToolSpec{
 		Name:        "continue",

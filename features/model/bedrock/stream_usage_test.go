@@ -401,6 +401,7 @@ func TestBedrockStreamerClosesProviderStreamOnce(t *testing.T) {
 		nil,
 		"",
 		nil,
+		nil,
 		contract,
 	)
 
@@ -498,6 +499,51 @@ func TestChunkProcessorDerivesEmptyInputToolPayload(t *testing.T) {
 			ContentBlockIndex: &idx,
 			Delta: &brtypes.ContentBlockDeltaMemberToolUse{
 				Value: brtypes.ToolUseBlockDelta{Input: &malformed},
+			},
+		},
+	}))
+	require.NoError(t, cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStop{
+		Value: brtypes.ContentBlockStopEvent{ContentBlockIndex: &idx},
+	}))
+
+	require.Len(t, chunks, 1)
+	call, ok := chunks[0].(model.ToolCallChunk)
+	require.True(t, ok)
+	require.Equal(t, tools.Ident(canonicalName), call.ToolCall.Name)
+	require.JSONEq(t, `{}`, string(call.ToolCall.Payload))
+}
+
+// TestChunkProcessorDerivesOmittedOptionalPayload verifies that Bedrock's
+// missing argument delta becomes an empty object only when the advertised tool
+// contract accepts that object.
+func TestChunkProcessorDerivesOmittedOptionalPayload(t *testing.T) {
+	idx := int32(0)
+	providerName := "atlas_discover_list_apps"
+	canonicalName := "atlas.discover.list_apps"
+	id := "tooluse_2"
+	var chunks []model.Chunk
+	cp := newChunkProcessor(
+		func(chunk model.Chunk) error {
+			chunks = append(chunks, chunk)
+			return nil
+		},
+		map[string]string{providerName: canonicalName},
+		"test-model-id",
+		model.ModelClassDefault,
+		nil,
+		"",
+	)
+	cp.emptyObjectTools = map[string]struct{}{canonicalName: {}}
+
+	require.NoError(t, cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{}))
+	require.NoError(t, cp.Handle(&brtypes.ConverseStreamOutputMemberContentBlockStart{
+		Value: brtypes.ContentBlockStartEvent{
+			ContentBlockIndex: &idx,
+			Start: &brtypes.ContentBlockStartMemberToolUse{
+				Value: brtypes.ToolUseBlockStart{
+					Name:      &providerName,
+					ToolUseId: &id,
+				},
 			},
 		},
 	}))

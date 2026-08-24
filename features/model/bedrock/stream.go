@@ -44,6 +44,7 @@ type bedrockStreamer struct {
 	output                   *model.StructuredOutput
 	structuredOutputToolName string
 	noArgumentTools          map[string]struct{}
+	emptyObjectTools         map[string]struct{}
 	contract                 *model.RequestContract
 }
 
@@ -61,6 +62,7 @@ func newBedrockStreamer(
 	output *model.StructuredOutput,
 	structuredOutputToolName string,
 	noArgumentTools map[string]struct{},
+	emptyObjectTools map[string]struct{},
 	contract *model.RequestContract,
 ) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
@@ -76,6 +78,7 @@ func newBedrockStreamer(
 		output:                   output,
 		structuredOutputToolName: structuredOutputToolName,
 		noArgumentTools:          noArgumentTools,
+		emptyObjectTools:         emptyObjectTools,
 		contract:                 contract,
 	}
 	go bs.run()
@@ -137,6 +140,7 @@ func (s *bedrockStreamer) run() {
 		s.structuredOutputToolName,
 	)
 	processor.noArgumentTools = s.noArgumentTools
+	processor.emptyObjectTools = s.emptyObjectTools
 	events := s.stream.Events()
 
 	for {
@@ -249,6 +253,7 @@ type chunkProcessor struct {
 	output                   *model.StructuredOutput
 	structuredOutputToolName string
 	noArgumentTools          map[string]struct{}
+	emptyObjectTools         map[string]struct{}
 
 	canonical       model.Response
 	started         bool
@@ -361,10 +366,12 @@ func (p *chunkProcessor) Handle(event any) error {
 				return nil
 			}
 			_, noArguments := p.noArgumentTools[name]
+			_, acceptsEmptyObject := p.emptyObjectTools[name]
 			p.toolBlocks[idx] = &toolBuffer{
-				name:        name,
-				id:          id,
-				noArguments: noArguments,
+				name:               name,
+				id:                 id,
+				noArguments:        noArguments,
+				acceptsEmptyObject: acceptsEmptyObject,
 			}
 			return nil
 		}
@@ -559,7 +566,7 @@ func (p *chunkProcessor) Handle(event any) error {
 		}
 		if tb := p.toolBlocks[idx]; tb != nil {
 			payload := rawjson.Message(`{}`)
-			if !tb.noArguments {
+			if !tb.noArguments && (tb.fragments.Len() > 0 || !tb.acceptsEmptyObject) {
 				var err error
 				payload, err = decodeToolPayload(tb.finalInput())
 				if err != nil {
@@ -707,10 +714,11 @@ func (p *chunkProcessor) finishStream() error {
 }
 
 type toolBuffer struct {
-	name        string
-	id          string
-	noArguments bool
-	fragments   strings.Builder
+	name               string
+	id                 string
+	noArguments        bool
+	acceptsEmptyObject bool
+	fragments          strings.Builder
 }
 
 // completionBuffer accumulates one structured-output content block until the

@@ -413,6 +413,14 @@ the private tool value, the validated `model.Client` rejects malformed JSON,
 and generated typed-completion decoders reject schema-invalid output as
 `model.OutputValidationError` before the caller can observe a response.
 
+Bedrock may omit tool-input delta events when a model selects a tool without
+supplying any arguments. The streaming adapter emits the canonical `{}` payload
+only when the tool's exact generated or transported validator accepts `{}`.
+Tools with required fields still fail output validation, and supplied optional
+arguments remain model-authored input. `ToolDefinition.NoArguments` is
+stronger: it means tool selection is the complete model decision, so the
+adapter discards any provider-authored argument text and always emits `{}`.
+
 ### Thinking on Gemini 3
 
 Gemini 3 uses thinking levels rather than numeric thinking-token budgets, and

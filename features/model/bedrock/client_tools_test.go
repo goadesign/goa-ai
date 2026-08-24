@@ -37,25 +37,47 @@ func TestEncodeTools_NoChoice(t *testing.T) {
 	require.Len(t, sanToCanon, 1)
 }
 
-// TestPrepareRequestRetainsNoArgumentToolNames verifies that stream decoding
-// receives the runtime fact under the canonical name restored from Bedrock.
-func TestPrepareRequestRetainsNoArgumentToolNames(t *testing.T) {
+// TestPrepareRequestClassifiesEmptyToolInputs verifies that stream decoding
+// receives both the stronger code-owned argument fact and the generated
+// contract's acceptance of an empty object under canonical tool names.
+func TestPrepareRequestClassifiesEmptyToolInputs(t *testing.T) {
 	client := &provider{defaultModel: "us.anthropic.claude-sonnet-5"}
 	parts, err := client.prepareRequest(&model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "continue"}},
 		}},
-		Tools: []*model.ToolDefinition{{
-			Name:        "ada.continue_alarms",
-			Description: "Continue the alarm listing.",
-			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
-			NoArguments: true,
-		}},
+		Tools: []*model.ToolDefinition{
+			{
+				Name:        "ada.continue_alarms",
+				Description: "Continue the alarm listing.",
+				Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
+				NoArguments: true,
+			},
+			{
+				Name:        "atlas.discover.list_apps",
+				Description: "List configured applications.",
+				Input: mustBedrockToolInput(
+					t,
+					rawjson.Message(`{"type":"object","properties":{"cursor":{"type":"string"}}}`),
+				),
+			},
+			{
+				Name:        "atlas.read.get_time_series",
+				Description: "Read one required source.",
+				Input: mustBedrockToolInput(
+					t,
+					rawjson.Message(`{"type":"object","properties":{"source":{"type":"string"}},"required":["source"]}`),
+				),
+			},
+		},
 	})
 
 	require.NoError(t, err)
 	require.Contains(t, parts.noArgumentTools, "ada.continue_alarms")
+	require.Contains(t, parts.emptyObjectTools, "ada.continue_alarms")
+	require.Contains(t, parts.emptyObjectTools, "atlas.discover.list_apps")
+	require.NotContains(t, parts.emptyObjectTools, "atlas.read.get_time_series")
 }
 
 func TestEncodeTools_ModeAny(t *testing.T) {

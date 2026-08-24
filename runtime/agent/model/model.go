@@ -1210,6 +1210,15 @@ func validateSchemaWithoutRootExample(schema, alternate rawjson.Message) error {
 	return nil
 }
 
+// AcceptsEmptyObject reports whether the tool's exact payload validator accepts
+// the canonical empty JSON object. Provider adapters use this when a model
+// selects a tool but sends no argument bytes; required-field tools remain
+// invalid, while no-field and all-optional payloads retain their generated
+// defaults.
+func (definition *ToolDefinition) AcceptsEmptyObject() bool {
+	return definition.Input.validate(rawjson.Message(`{}`)) == nil
+}
+
 // Contract returns the provider-neutral transport projection of the tool input.
 // The returned values are raw generated JSON documents owned by the caller.
 func (in ToolInput) Contract() ToolInputContract {
