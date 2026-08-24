@@ -405,9 +405,13 @@ The direct Anthropic Messages adapter uses native structured output on Claude
 Sonnet, Opus, and Haiku 4.5 or later. On Bedrock, Claude 4.6 uses one private
 forced tool with `strict: true`, so Converse and Runtime `CountTokens` receive
 the same provider-enforced schema. Claude 4.5 retains native `OutputConfig`
-because its manual thinking mode cannot use forced tools. Other Claude models
-fail with `model.ErrStructuredOutputUnsupported` unless AWS documents
-structured-output support for them.
+because its manual thinking mode cannot use forced tools. Newer Claude models
+for which Bedrock exposes forced tools but not `OutputConfig` or `strict` tools
+use one private non-strict tool. This fallback keeps those models available for
+typed completions, but Bedrock does not enforce the schema: the adapter unwraps
+the private tool value, the validated `model.Client` rejects malformed JSON,
+and generated typed-completion decoders reject schema-invalid output as
+`model.OutputValidationError` before the caller can observe a response.
 
 ### Thinking on Gemini 3
 
@@ -2544,12 +2548,12 @@ trigger budget from the exact-retention budget:
   `bedrock.Options.MantleTokenCounter` instead. Before delegating, the Bedrock
   adapter resolves the foundation model ID and preserves the effective tools.
   Without that configured Mantle counter, these models return
-  `model.ErrTokenCountingUnsupported`. Native structured output remains
-  unsupported in Mantle because its count request cannot carry Bedrock
-  `OutputConfig` or a strict tool. Claude 4.6 structured output uses the same
-  strict tool in Runtime counting and Converse instead. Provider validation
-  errors remain errors; the adapter never parses an error message into a
-  fabricated count.
+  `model.ErrTokenCountingUnsupported`. Mantle counts the same private
+  non-strict tool that Converse receives for these models. Native
+  `OutputConfig` remains unsupported in Mantle. Claude 4.6 structured output
+  uses the same strict tool in Runtime counting and Converse instead. Provider
+  validation errors remain errors; the adapter never parses an error message
+  into a fabricated count.
 
 ```go
 // DSL

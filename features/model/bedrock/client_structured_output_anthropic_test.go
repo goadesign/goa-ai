@@ -3,6 +3,7 @@ package bedrock
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -56,9 +57,9 @@ func smithyDocumentFromJSON(t *testing.T, raw string) document.Interface {
 	return document.NewLazyDocument(v)
 }
 
-// These tests prove that Bedrock uses one strict private tool for adaptive
-// Claude models whose schema can be represented in Runtime CountTokens. Older
-// Claude models retain OutputConfig, and unsupported models fail locally.
+// These tests prove that Bedrock uses one strict private tool when AWS can
+// enforce its schema, one validated non-strict tool when AWS exposes only
+// ordinary forced tools, and OutputConfig for older native models.
 
 func TestPrepareRequestAnthropicStructuredOutputUsesStrictTool(t *testing.T) {
 	client := &provider{defaultModel: "global.anthropic.claude-opus-4-6-v1"}
@@ -132,7 +133,7 @@ func TestPrepareRequestNovaStructuredOutputUsesNativeOutputConfig(t *testing.T) 
 	require.Nil(t, parts.toolConfig)
 }
 
-func TestPrepareRequestAnthropicStructuredOutputRejectsUnsupportedModel(t *testing.T) {
+func TestPrepareRequestAnthropicStructuredOutputUsesValidatedToolFallback(t *testing.T) {
 	client := &provider{defaultModel: "global.anthropic.claude-sonnet-5"}
 	req := &model.Request{
 		Messages: []*model.Message{{
@@ -146,10 +147,19 @@ func TestPrepareRequestAnthropicStructuredOutputRejectsUnsupportedModel(t *testi
 		},
 	}
 
-	_, err := client.prepareRequest(req)
+	parts, err := client.prepareRequest(req)
 
-	require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
-	require.ErrorContains(t, err, `model "global.anthropic.claude-sonnet-5"`)
+	require.NoError(t, err)
+	require.Nil(t, parts.outputConfig)
+	require.NotNil(t, parts.toolConfig)
+	require.Len(t, parts.toolConfig.Tools, 1)
+	require.Equal(t, "complete_draft", parts.structuredOutputToolName)
+	choice, ok := parts.toolConfig.ToolChoice.(*brtypes.ToolChoiceMemberTool)
+	require.True(t, ok)
+	require.Equal(t, "complete_draft", parts.toolNameProvToCanonical[*choice.Value.Name])
+	spec, ok := parts.toolConfig.Tools[0].(*brtypes.ToolMemberToolSpec)
+	require.True(t, ok)
+	require.Nil(t, spec.Value.Strict, "AWS does not support strict structured-output tools for Sonnet 5")
 }
 
 func TestPrepareRequestClaude45StructuredOutputUsesNativeOutputConfig(t *testing.T) {
@@ -270,6 +280,62 @@ func TestCompleteAnthropicStructuredOutputReifiesToolCall(t *testing.T) {
 	require.True(t, ok, "forced tool call must be reified into a TextPart")
 	require.JSONEq(t, `{"title":"Inspect evaporator"}`, text.Text)
 	require.Empty(t, resp.ToolCalls(), "the canonical response must not surface tool calls")
+}
+
+// TestCompleteAnthropicStructuredOutputFallbackRejectsInvalidCompletion proves
+// the non-strict provider tool does not weaken the caller-visible contract.
+// The adapter unwraps the private tool value, then model.Client rejects it
+// before the caller can observe a response.
+func TestCompleteAnthropicStructuredOutputFallbackRejectsInvalidCompletion(t *testing.T) {
+	runtime := &recordingConverseRuntime{
+		output: &bedrockruntime.ConverseOutput{
+			StopReason: brtypes.StopReasonToolUse,
+			Output: &brtypes.ConverseOutputMemberMessage{Value: brtypes.Message{
+				Role: brtypes.ConversationRoleAssistant,
+				Content: []brtypes.ContentBlock{
+					&brtypes.ContentBlockMemberToolUse{Value: brtypes.ToolUseBlock{
+						ToolUseId: strPtr("tooluse_1"),
+						Name:      strPtr("complete_draft"),
+						Input:     smithyDocumentFromJSON(t, `{"value":{"title":42}}`),
+					}},
+				},
+			}},
+		},
+	}
+	client, err := model.NewClient(&provider{
+		defaultModel: "global.anthropic.claude-sonnet-5",
+		runtime:      runtime,
+	})
+	require.NoError(t, err)
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "draft the task"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:        "complete_draft",
+			Description: "Return the completed task draft.",
+			Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
+		},
+	}
+	require.NoError(t, model.SetCompletionValidator(
+		req,
+		func(response *model.Response, _ *model.Completion) error {
+			require.Len(t, response.Content, 1)
+			require.Len(t, response.Content[0].Parts, 1)
+			text, ok := response.Content[0].Parts[0].(model.TextPart)
+			require.True(t, ok)
+			require.JSONEq(t, `{"title":42}`, text.Text)
+			return errors.New("title must be a string")
+		},
+	))
+
+	response, err := client.Complete(t.Context(), req)
+
+	require.Nil(t, response)
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.ErrorContains(t, err, "title must be a string")
 }
 
 // TestChunkProcessorStructuredOutputToolEmitsCompletion proves the
