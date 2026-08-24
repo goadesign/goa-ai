@@ -455,8 +455,8 @@ type (
 		// RecoveryToolCallIDs selects the failed outputs whose recovery directives
 		// shape this planner turn. The activity uses these stable identities to
 		// derive its executable catalog and ephemeral recovery guidance from
-		// canonical run-log outputs. Omitting the empty field keeps PlanStart and
-		// ordinary PlanResume payloads compatible with earlier activity workers.
+		// canonical run-log outputs. PlanStart and ordinary PlanResume omit the
+		// empty field because they have no failed output to recover.
 		RecoveryToolCallIDs []string `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// SynthesisOnly requires the planner to produce a final response without

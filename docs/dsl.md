@@ -227,7 +227,6 @@ on agent/tool contracts.
 | `Use(value, dsl?)`                     | Inside `Agent`              | Declares toolset consumption (referencing or inline definition) |
 | `Export(value, dsl?)`                  | Inside `Agent` or `Service` | Declares toolsets exposed to other agents                       |
 | `AgentToolset(svc, agent, ts)`         | Top-level or inside `Use`   | References a toolset exported by another agent                  |
-| `UseAgentToolset(svc, agent, ts)`      | Inside `Agent`              | Combines `AgentToolset` with `Use`                              |
 | `DisableAgentDocs()`                   | Inside `API`                | Disables `AGENTS_QUICKSTART.md` generation                      |
 | `Passthrough(tool, target...)`         | Inside exported `Tool`      | Forwards tool execution to a Goa service method                 |
 
@@ -653,16 +652,8 @@ Agent("helper", "Helper agent", func() {
 those schemas are the contract surface for the external server.
 
 At runtime, supply an `mcpruntime.Caller` for the toolset ID.
-
-### Migration Notes
-
-- If you previously used `FromMCP(...)` for an external MCP server with inline
-tool schemas, switch that declaration to `FromExternalMCP(...)`.
-- `FromMCP(...)` now means "Goa-defined MCP server in this design" only. It
-rejects inline tool schemas and fails evaluation if the referenced service
-does not declare `MCP(...)`.
-- Agent and toolset names that sanitize to an empty identifier now fail during
-evaluation instead of being silently repaired during code generation.
+Agent and toolset names must produce a non-empty Go identifier during
+evaluation.
 
 ### Registry-Backed Toolsets
 

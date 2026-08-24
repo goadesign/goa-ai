@@ -343,8 +343,8 @@ planner and runtime streaming:
 | Cache options / cache checkpoints | Rejected explicitly |
 | Thinking | Only the representable subset is supported: `Thinking.Enable` maps to configured OpenAI `reasoning_effort`; budgeted or interleaved thinking requests fail fast. A request that explicitly combines thinking with temperature also fails; a configured default temperature is omitted from thinking requests |
 
-This is the intended migration seam for Aura-style inference backends: swap the
-provider adapter, keep planners and runtime flow unchanged.
+This adapter boundary lets an inference backend change providers without
+changing its planners or runtime flow.
 
 Model adapters are stateless at the transcript boundary. They never rehydrate
 history from a `RunID`; runtime-owned callers must supply the full transcript,
@@ -683,19 +683,16 @@ Workflow step boundary:
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.
 
-Migration: `runtime.LimitReasonLabel` and `goa-ai.limit_reason` were removed.
 Consumers of fixed-limit and planner-authored finalization calls, including
-`tool_failure`, must read `runtime.FinalizationReasonLabel` at
-`goa-ai.finalization_reason`.
+`tool_failure`, read the termination reason from
+`runtime.FinalizationReasonLabel` (`goa-ai.finalization_reason`).
 
-`LimitTerminalPlans` and `CompletionTool` add fields to the Temporal workflow
-input. Deploy the runtime, generated workers, and callers as one coordinated
-cutover. Mixed versions are unsupported. New suspensions use
-`goa-ai.run-suspension.v4`; workers accept only that exact checkpoint version.
+Suspensions use `goa-ai.run-suspension.v4`; workers accept only that exact
+checkpoint version. Deploy any future checkpoint-shape change across the
+runtime, generated workers, and callers as one coordinated release.
 Each model-authored await item stores its runtime `ToolCallID` separately from
-the provider `ModelToolCallID`. Suspensions created by older releases, including
-v3, cannot be resumed after the cutover; there is no dual-read, fallback, or
-migration mode.
+the provider `ModelToolCallID`. Other checkpoint versions cannot resume; there
+is no dual-read, fallback, or shape inference.
 
 Run-scoped completion tool:
 
@@ -792,9 +789,9 @@ synthesis intent; a new retry batch may request `SynthesizeAfterTools` again.
 
 The workflow selects current recovery outputs by stable call ID in
 `PlanActivityInput`. Empty recovery IDs are omitted from canonical JSON.
-Deploy workflow workers and generated callers as one coordinated hard cutover.
-Only the current generated and persisted shapes are supported. Ongoing
-workflows and saved suspensions may therefore fail after the cutover.
+Workflow workers and generated callers must use the same input shape. A future
+shape change requires a coordinated release that retires incompatible ongoing
+work and saved suspensions before the new workers start.
 
 Bookkeeping turn invariant:
 
@@ -1326,8 +1323,8 @@ A registry cannot distinguish a release handoff from another interval with no
 healthy provider, so the same bounded wait applies to both rather than guessing
 from version or process state.
 A crash may extend the wait until the old lease expires. A wire protocol change
-remains a coordinated hard cutover because registry servers and consumers do
-not negotiate envelope versions. No deployment component persists registration
+requires a coordinated release because registry servers and consumers do not
+negotiate envelope versions. No deployment component persists registration
 tokens or calls `Unregister` during rollout.
 `Unregister` is reserved for
 intentional retirement: exact active becomes retired while preserving leases,
@@ -1347,21 +1344,15 @@ while payload, result, and sidecar schema bytes are hashed exactly. Generated
 raw schemas must therefore be canonical: reformatting semantically equivalent
 schema JSON changes schema and admission identity.
 
-This version is a breaking-wire fence, not capability negotiation. There is no
-legacy ToolError envelope, optional fallback, or dual decoder. Quiesce
-consumers, drain admitted calls and provider leases, then stop every old
-registry replica. Back up the catalog and atomically remove entries owned by
-the old wire version while preserving retained call records. Start the new
-registry against that cleaned catalog, then start matching providers and
-finally consumers.
-
-The new registry rejects an old consumer's missing version (protobuf zero) at
-the generated transport boundary and repeats the check at the first line of
-CallTool or RetryTool, before catalog lookup, health checks, result-stream
-creation, call admission, or Pulse publication. It likewise rejects an old
-provider on Register or renewal before provider admission. The same
-runtime-owned version therefore fences both producers of protocol bytes while
-the version-bound registration token continues to fence provider generations.
+This version is an exact wire fence, not capability negotiation. There is no
+optional fallback or dual decoder. The registry rejects a missing version
+(protobuf zero) or a mismatched version at the generated transport boundary and
+repeats the check at the first line of CallTool or RetryTool, before catalog
+lookup, health checks, result-stream creation, call admission, or Pulse
+publication. Register and renewal apply the same check before provider
+admission. The runtime-owned version therefore fences both producers of
+protocol bytes while the version-bound registration token fences provider
+generations.
 Incoming `run_id`, `session_id`, `turn_id`, `tool_call_id`, and
 `parent_tool_call_id` values are bounded to 256
 bytes and reject NUL at the generated transport boundary; provider and
@@ -1463,13 +1454,9 @@ the terminal call record cannot expire before its retained result and a reused
 tool-use ID cannot republish while either exists. Completed, abandoned,
 duplicate, and recreated state expires without a separate cleanup protocol.
 
-Wire protocol version 8 introduces the explicit decision state. Registry
-replicas running versions 7 and 8 must never overlap. Follow the hard-cutover
-order above; version 8 cannot start while version 7 catalog entries remain. On
-first read, version 8 validates the complete retained version 7 call-admission
-shape, adds the `admitted` discriminator without extending its TTL, and rejects
-malformed records. Unobserved version 7 call records expire at their original
-deadline.
+Every retained call hash has an explicit `admitted` or `rejected` decision.
+Missing and unknown decisions are protocol errors; reads reject them without
+mutating the record.
 
 Toolsets with no routable leases have no health identity, so the scheduler emits
 no pings and an idle request stream cannot grow. Active request streams trim
@@ -1496,11 +1483,9 @@ cannot be guaranteed from empty Redis. Stop incompatible admissions and restore
 a catalog backup or deliberately rebootstrap the registry before resuming
 providers. Never overlap incompatible admissions.
 
-Pre-contract Redis records and unfenced queued messages require a one-time
-operational hard cutover. Follow
-[`POST_ROLLOUT_CLEANUP.md`](POST_ROLLOUT_CLEANUP.md); do not remove the permanent
-catalog lease, token-fencing, flat-stream, or non-overlap mechanisms after the
-cleanup.
+Catalog leases, token fencing, flat shared streams, and incompatible-admission
+non-overlap are permanent runtime contracts. Catalog and queued records must
+match the current wire protocol; unknown records are rejected.
 
 ### Registry-Routed Execution (Agent/Consumer Side)
 
@@ -1934,17 +1919,15 @@ active-time budget, and exact call/result provenance; callers cannot override
 those values. The runtime loads the suspension by predecessor run ID and checks
 the checkpoint version, public pending requests, and required tool names before routing. The receiving
 worker restores saved payloads and results through its current generated codecs;
-there is no cross-release compatibility promise, and any saved value outside
-the current contract fails at that typed boundary. If the response closes a tool call created by the previous
+any saved value outside the current contract fails at that typed boundary. If
+the response closes a tool call created by the previous
 workflow, the `tool_end` event belongs to the new result run and its required
 `call_run_id` identifies the run that emitted the matching `tool_start`.
 
 ### Coordinated Generated-System Releases
 
 Generated agents, generated completion packages, runtime workers, and their
-callers use one contract and deploy as one release unit. Goa-AI does not provide
-backward compatibility, mixed-version operation, or suspension migration for
-generated runtime contracts.
+callers use one exact contract and deploy as one release unit.
 
 For a release that changes generated or persisted runtime shapes:
 
@@ -1952,90 +1935,16 @@ For a release that changes generated or persisted runtime shapes:
 2. Deploy the runtime workers, generated packages, and callers as one release.
 3. Verify every deployed component reports the same revision ready.
 
-The deployment does not drain or migrate work created by the previous release.
-Ongoing workflows and saved suspensions may fail when they reach the new
-contract. Historical completed-session records remain stored unchanged; this
-release policy does not alter their persistence schema.
+Ongoing workflows and saved suspensions must satisfy the exact current
+contract. Historical completed-session records remain stored unchanged because
+this release policy does not alter their persistence schema.
 
 `goa-ai.run-suspension.v4` is the only supported suspension schema. Every
 model-authored await item preserves its runtime `ToolCallID` separately from
 the provider `ModelToolCallID`: runtime records and continuation responses use
 the former, while provider transcript reconstruction uses the latter.
-Suspensions written by older runtimes, including v3, are incompatible and
-cannot be resumed across this coordinated release. The runtime does not
-dual-read old checkpoints, substitute missing fields, fall back to an earlier
-shape, or migrate suspended executions.
-
-### Upgrade checklist for strict model-output contracts
-
-This release makes the model boundary reject malformed output instead of asking
-the model for a replacement. It also changes source and workflow contracts:
-
-- `model.Client` is now package-owned and `Client.Stream` returns
-  `*model.ValidatedStream`. Replace custom `Client` implementations with
-  `model.Provider`, pass the provider to `model.NewClient`, and install
-  provider-side wrappers with `model.WrapClient`. Direct provider callers use
-  `model.NewRequestContract`; ordinary callers use the opaque client.
-- `planner.ConsumeStream` accepts that validated stream directly. Remove stream
-  wrappers and caller-side validation helpers. Stream observers may inspect
-  `Response()` during callbacks but must not call `Recv()` or `Close()` on the
-  same stream; lifecycle operations wait for the active callback.
-- Temporal engines now require `ClientOptions` and always install the Goa-AI
-  data converter. Remove `Options.Client` and custom `DataConverter` wiring;
-  construction rejects a non-nil custom converter.
-  Every workflow and activity call has one aggregate 1 MiB encoded limit.
-  Tool executors must persist larger domain results before returning and place
-  their durable reference in the typed result; the runtime never truncates or
-  infers a replacement.
-- `planner.ToolRequest` now contains `Name`, `Payload`, and optional
-  `ModelToolCallID`. Use `planner.ToolRequestFromModelCall` when forwarding a
-  validated provider call; leave the provider ID empty for planner-authored
-  requests.
-  Tool executors receive `*runtime.ToolCall`, which contains runtime-assigned
-  labels and execution identifiers. Replace the removed `CallOption` API with
-  `planner.NewToolRequest(gentool.<Tool>Tool(), args)`. The runtime assigns each
-  call ID.
-- Rate-limit middleware construction now returns `(model.Client, error)`.
-  Check and propagate the setup error instead of treating `Middleware(...)` as
-  an infallible client value.
-- Gateway `NewRemoteClient` now returns `(model.Client, error)`. Check the
-  constructor error before registering or invoking the client.
-- Provider adapters no longer expose concrete clients as the model boundary.
-  Implement `model.Provider`, construct the validated client with
-  `model.NewClient`, and install middleware with `model.WrapClient`.
-- Generated tools must use `model.ToolDefinitionFromSpec` so the generated
-  payload decoder runs before planner code sees a tool call. Caller-authored
-  tools use `model.AdvertisedToolInputFromSchema`, which compiles their schema.
-  `model.ToolInputFromContract` reconstructs provider-facing schema documents
-  after transport; it does not make a transport projection eligible for use as
-  a validated client request.
-- Generated completion packages keep codec-bearing specs private. Replace
-  direct `completion.Complete` / `completion.Stream` calls that passed
-  `Spec<Name>` with generated `Complete<Name>` / `StreamComplete<Name>`
-  wrappers. Keep unary value reads on `Response.Value`, replace
-  `Response.Attempts[0]` with `Response.ModelResponse`, and use
-  `<Name>Example()` only for authored example JSON. Regenerate generated agents
-  and completion packages before compiling callers.
-- Invalid model output, invalid planner output, and a planner closing a model
-  stream before EOF end the run with `OutputContractError`. The runtime does not
-  make a correction inference or execute later tool calls. Temporal stores this
-  failure as `goa_ai.output_contract_error`; the earlier planner-specific type
-  is not decoded as a compatibility alias.
-- Planner activity results and accepted planner-event records have new Temporal
-  payload shapes. Suspension schema `goa-ai.run-suspension.v4` is required and
-  is decoded with exact numbers, unknown-field rejection, and no trailing data.
-  Its await items keep runtime `ToolCallID` and provider `ModelToolCallID`
-  separate. Older suspended executions, including v3, are not resumed; no
-  dual-read, fallback, or migration path is provided.
-- Child workflow IDs now append the exact runtime tool-call ID to the nested
-  agent run path. Existing in-progress child workflows are not compatible with
-  the new ID derivation.
-
-Regenerate all generated agents and completion packages, then deploy them with
-the runtime as described in [Coordinated generated-system
-releases](#coordinated-generated-system-releases). Do not overlap old and new
-generated contracts or add decoding for the replaced payload shape. No database
-migration is required.
+Other suspension schemas are incompatible. The runtime does not dual-read
+checkpoints, substitute missing fields, or infer another shape.
 
 Ending a session stops future work but retains its run metadata for inspection.
 When the owning application permanently deletes the session's customer data, it
