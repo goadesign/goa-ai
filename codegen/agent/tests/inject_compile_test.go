@@ -107,6 +107,48 @@ func (c *Client) GetData(ctx context.Context, p *GetDataPayload) (*GetDataResult
 		"./gen/atlas/toolsets/helpers", "./gen/atlas/agents/scribe/helpers"))
 }
 
+// TestGeneratedServerDataPackagesCompile compiles both generated call sites
+// that encode server-only method result data: the registry provider and the
+// agent-side service executor.
+func TestGeneratedServerDataPackagesCompile(t *testing.T) {
+	files := buildWithPrepareAndPkg(t, "generated.local/gen", testscenarios.ServiceToolsetBindSelfServerData())
+	root := writeGeneratedModuleKeepingGen(t, "generated.local", files)
+
+	// Stub the Goa service package that normal `goa gen` output supplies.
+	writeGeneratedPackageTest(t, root, "gen/alpha/service_stub.go", `package alpha
+
+import "context"
+
+type Evidence struct {
+	Kind string
+}
+
+type FindPayload struct {
+	Ident string
+}
+
+type FindResult struct {
+	Okay     bool
+	Evidence []*Evidence
+}
+
+type Service interface {
+	Find(context.Context, *FindPayload) (*FindResult, error)
+}
+
+type Client struct{}
+
+func (c *Client) Find(ctx context.Context, p *FindPayload) (*FindResult, error) {
+	return &FindResult{Okay: true, Evidence: []*Evidence{{Kind: "alarm"}}}, nil
+}
+`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "build", "-mod=mod",
+		"./gen/alpha/toolsets/lookup", "./gen/alpha/agents/scribe/lookup"))
+}
+
 // TestGeneratedBoundMetaInjectPackagesCompile is the bound half of the
 // compile matrix: a BindTo tool injecting a meta-backed field (session_id),
 // whose provider.go DOES declare the runtime.ToolCallMeta and call
