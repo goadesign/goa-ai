@@ -645,8 +645,12 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 	require.Equal(t, "child-run", tr.RunLink.RunID)
 }
 
-func TestConvertRunOutputToToolResultPreservesTerminalChildFailure(t *testing.T) {
+func TestConvertRunOutputToToolResultKeepsTerminalChildFailureHistorical(t *testing.T) {
 	output := &RunOutput{
+		Final: &model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "completed after recovery"}},
+		},
 		ToolEvents: []*api.ToolEvent{
 			{
 				Name:    "child.correctable",
@@ -659,17 +663,19 @@ func TestConvertRunOutputToToolResultPreservesTerminalChildFailure(t *testing.T)
 		},
 	}
 
-	result := ConvertRunOutputToToolResult("parent.agent_tool", output)
+	result, err := ConvertRunOutputToToolResult("parent.agent_tool", output)
 
-	require.NotNil(t, result.Failure)
-	require.Equal(t, planner.FailureInternal, result.Failure.Kind)
-	require.Equal(t, planner.RecoveryFinish, result.Failure.Recovery.Action)
-	require.Empty(t, result.Failure.Recovery.Issues)
-	require.Empty(t, result.Failure.Recovery.PriorInput)
+	require.NoError(t, err)
+	require.Nil(t, result.Failure)
+	require.Equal(t, "completed after recovery", result.Result)
 }
 
-func TestConvertRunOutputToToolResultReplansNonTerminalChildFailures(t *testing.T) {
+func TestConvertRunOutputToToolResultKeepsNonTerminalChildFailuresHistorical(t *testing.T) {
 	output := &RunOutput{
+		Final: &model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "completed without the unavailable tool"}},
+		},
 		ToolEvents: []*api.ToolEvent{
 			{
 				Name:    "child.search",
@@ -678,9 +684,9 @@ func TestConvertRunOutputToToolResultReplansNonTerminalChildFailures(t *testing.
 		},
 	}
 
-	result := ConvertRunOutputToToolResult("parent.agent_tool", output)
+	result, err := ConvertRunOutputToToolResult("parent.agent_tool", output)
 
-	require.NotNil(t, result.Failure)
-	require.Equal(t, planner.FailureUnavailable, result.Failure.Kind)
-	require.Equal(t, planner.RecoveryReplan, result.Failure.Recovery.Action)
+	require.NoError(t, err)
+	require.Nil(t, result.Failure)
+	require.Equal(t, "completed without the unavailable tool", result.Result)
 }

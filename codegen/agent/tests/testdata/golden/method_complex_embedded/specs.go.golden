@@ -7,7 +7,6 @@
 package profiles
 
 import (
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -17,12 +16,17 @@ const (
 	Upsert tools.Ident = "profiles.upsert"
 )
 
-var Specs = []tools.ToolSpec{
-	SpecUpsert,
+// Specs returns fresh copies of every generated tool specification.
+func Specs() []tools.ToolSpec {
+	return []tools.ToolSpec{
+		newSpecUpsert(),
+	}
 }
 
-var (
-	SpecUpsert = tools.ToolSpec{
+// newSpecUpsert builds the immutable generated contract for
+// profiles.upsert. Each call owns all mutable slices and maps in the result.
+func newSpecUpsert() tools.ToolSpec {
+	return tools.ToolSpec{
 		Name:        Upsert,
 		Service:     "alpha",
 		Toolset:     "alpha.profiles",
@@ -33,49 +37,46 @@ var (
 			Schema:                   tools.RawJSON("{\"$defs\":{\"Address\":{\"description\":\"Postal address\",\"properties\":{\"city\":{\"description\":\"City\",\"type\":\"string\"},\"street\":{\"description\":\"Street\",\"type\":\"string\"}},\"required\":[\"street\",\"city\"],\"title\":\"Address\",\"type\":\"object\"},\"Profile\":{\"description\":\"User profile\",\"properties\":{\"address\":{\"$ref\":\"#/$defs/Address\"},\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"name\":{\"description\":\"Name\",\"type\":\"string\"}},\"required\":[\"id\",\"address\"],\"title\":\"Profile\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"profile\":{\"$ref\":\"#/$defs/Profile\"}},\"required\":[\"profile\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$defs\":{\"Address\":{\"description\":\"Postal address\",\"properties\":{\"city\":{\"description\":\"City\",\"type\":\"string\"},\"street\":{\"description\":\"Street\",\"type\":\"string\"}},\"required\":[\"street\",\"city\"],\"title\":\"Address\",\"type\":\"object\"},\"Profile\":{\"description\":\"User profile\",\"properties\":{\"address\":{\"$ref\":\"#/$defs/Address\"},\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"name\":{\"description\":\"Name\",\"type\":\"string\"}},\"required\":[\"id\",\"address\"],\"title\":\"Profile\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"profile\":{\"$ref\":\"#/$defs/Profile\"}},\"required\":[\"profile\"],\"type\":\"object\"}"),
 			ExampleJSON:              nil,
-			FieldDescriptions:        UpsertPayloadFieldDescs,
-			FieldJSONTypes:           UpsertPayloadFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(upsertPayloadFieldDescs),
+			FieldJSONTypes:           cloneStringMap(upsertPayloadFieldJSONTypes),
 			Codec:                    upsertPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:                     "UpsertResult",
 			Schema:                   tools.RawJSON("{\"$defs\":{\"Address\":{\"description\":\"Postal address\",\"properties\":{\"city\":{\"description\":\"City\",\"type\":\"string\"},\"street\":{\"description\":\"Street\",\"type\":\"string\"}},\"required\":[\"street\",\"city\"],\"title\":\"Address\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"address\":{\"$ref\":\"#/$defs/Address\"},\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"name\":{\"description\":\"Name\",\"type\":\"string\"}},\"required\":[\"id\",\"address\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$defs\":{\"Address\":{\"description\":\"Postal address\",\"properties\":{\"city\":{\"description\":\"City\",\"type\":\"string\"},\"street\":{\"description\":\"Street\",\"type\":\"string\"}},\"required\":[\"street\",\"city\"],\"title\":\"Address\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"address\":{\"$ref\":\"#/$defs/Address\"},\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"name\":{\"description\":\"Name\",\"type\":\"string\"}},\"required\":[\"id\",\"address\"],\"type\":\"object\"}"),
-			FieldDescriptions:        UpsertResultFieldDescs,
-			FieldJSONTypes:           UpsertResultFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(upsertResultFieldDescs),
+			FieldJSONTypes:           cloneStringMap(upsertResultFieldJSONTypes),
 			Codec:                    upsertResultCodec,
 		},
 	}
-)
+}
+
+// SpecUpsert returns a fresh profiles.upsert specification.
+func SpecUpsert() tools.ToolSpec {
+	return newSpecUpsert()
+}
 
 // UpsertTool pairs the profiles.upsert identifier with its generated
 // typed payload and result codecs so consumers decode tool JSON without
 // restating the name-to-codec pairing fixed by the design.
-var UpsertTool = tools.TypedTool[*UpsertPayload, *UpsertResult]{
-	Name:    Upsert,
-	Payload: UpsertPayloadCodec,
-	Result:  UpsertResultCodec,
-}
-
-// NewUpsertCall builds a planner request for profiles.upsert from its typed
-// generated payload. toolCallID must be nonempty and unique within the plan.
-func NewUpsertCall(toolCallID string, args *UpsertPayload) planner.ToolRequest {
-	if toolCallID == "" {
-		panic("profiles.upsert tool call ID is required")
-	}
-	payload, err := UpsertPayloadCodec.ToJSON(args)
-	if err != nil {
-		panic(err)
-	}
-	return planner.ToolRequest{
-		Name:       Upsert,
-		Payload:    payload,
-		ToolCallID: toolCallID,
+func UpsertTool() tools.TypedTool[*UpsertPayload, *UpsertResult] {
+	return tools.TypedTool[*UpsertPayload, *UpsertResult]{
+		Name: Upsert,
+		Payload: tools.JSONCodec[*UpsertPayload]{
+			ToJSON:   MarshalUpsertPayload,
+			FromJSON: UnmarshalUpsertPayload,
+		},
+		Result: tools.JSONCodec[*UpsertResult]{
+			ToJSON:   MarshalUpsertResult,
+			FromJSON: UnmarshalUpsertResult,
+		},
 	}
 }
 
-var (
-	metadata = []policy.ToolMetadata{
+// Metadata returns fresh policy metadata for every generated tool.
+func Metadata() []policy.ToolMetadata {
+	return []policy.ToolMetadata{
 		{
 			ID:          Upsert,
 			Title:       "Upsert",
@@ -84,64 +85,59 @@ var (
 			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
 	}
-	names = []tools.Ident{
+}
+
+// Names returns the identifiers of all generated tools.
+func Names() []tools.Ident {
+	return []tools.Ident{
 		Upsert,
 	}
-)
+}
 
 // RequiredLabels lists the run label keys this toolset's Inject-populated
 // tools require to be present via WithLabels(...) at run start. The runtime
 // validates coverage across every toolset an agent uses before starting a
 // run, so a missing label fails fast instead of surfacing mid-run as a tool
 // call error.
-var RequiredLabels = []string{}
-
-// Names returns the identifiers of all generated tools.
-func Names() []tools.Ident {
-	return names
+func RequiredLabels() []string {
+	return []string{}
 }
 
 // Spec returns the specification for the named tool if present.
-func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
+func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 	switch name {
 	case Upsert:
-		return &SpecUpsert, true
+		return newSpecUpsert(), true
 	default:
-		return nil, false
+		return tools.ToolSpec{}, false
 	}
-}
-
-// PayloadSchema returns the JSON schema for the named tool payload.
-func PayloadSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case Upsert:
-		return SpecUpsert.Payload.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// ResultSchema returns the JSON schema for the named tool result.
-func ResultSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case Upsert:
-		return SpecUpsert.Result.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// Metadata exposes policy metadata for the generated tools.
-func Metadata() []policy.ToolMetadata {
-	return metadata
 }
 
 // MetadataByName returns policy metadata for the named tool if present.
 func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
 	switch name {
 	case Upsert:
-		return metadata[0], true
+		return policy.ToolMetadata{
+			ID:          Upsert,
+			Title:       "Upsert",
+			Description: "Upsert a profile",
+			Tags:        []string{},
+			BudgetClass: policy.ToolBudgetClassBudgeted,
+		}, true
 	default:
 		return policy.ToolMetadata{}, false
 	}
+}
+
+// cloneStringMap gives each returned specification ownership of its generated
+// field metadata.
+func cloneStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }

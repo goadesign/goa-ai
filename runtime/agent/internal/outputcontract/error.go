@@ -1,4 +1,4 @@
-// Package outputcontract reports completed model or planner output that the
+// Package outputcontract reports completed model, planner, or tool output that the
 // agent runtime cannot accept. These failures end the run without asking a
 // model for replacement output.
 package outputcontract
@@ -7,7 +7,7 @@ type (
 	// Origin identifies the component whose completed output failed validation.
 	Origin string
 
-	// Error reports completed model or planner output that broke its contract.
+	// Error reports completed output that broke its contract.
 	Error struct {
 		cause  error
 		origin Origin
@@ -20,6 +20,9 @@ const (
 
 	// OriginPlanner identifies a rejected planner result.
 	OriginPlanner Origin = "planner"
+
+	// OriginTool identifies a rejected tool execution result.
+	OriginTool Origin = "tool"
 )
 
 // NewWithOrigin records why one known output boundary rejected a completed
@@ -28,7 +31,7 @@ func NewWithOrigin(cause error, origin Origin) *Error {
 	if cause == nil {
 		panic("outputcontract: error requires a cause")
 	}
-	if origin != OriginModel && origin != OriginPlanner {
+	if origin != OriginModel && origin != OriginPlanner && origin != OriginTool {
 		panic("outputcontract: error requires a valid origin")
 	}
 	return &Error{cause: cause, origin: origin}

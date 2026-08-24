@@ -239,11 +239,9 @@ func TestRestoreContinuationRunInputCopiesLimitTerminalPlans(t *testing.T) {
 
 	plans := testLimitTerminalPlans("service.tools.complete")
 	checkpoint := &workflowCheckpoint{
-		AgentID:   "service.agent",
-		SessionID: "session-1",
-		BaseContext: run.Context{
-			RunID: "run-1",
-		},
+		AgentID:       "service.agent",
+		SessionID:     "session-1",
+		PreviousRunID: "run-1",
 		Policy: &PolicyOverrides{
 			LimitTerminalPlans: plans,
 		},

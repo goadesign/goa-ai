@@ -162,12 +162,12 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             var toolArgs any
             {{- if .MethodPayloadTypeRef }}
             {
-                val, err := {{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}PayloadCodec.FromJSON(call.Payload)
+                val, err := {{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}PayloadCodec().FromJSON(call.Payload)
                 if err != nil {
                     return runtime.Executed(invalidServiceToolCall(
                         call,
                         err,
-                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}().Payload.ExampleJSON,
                     )), nil
                 }
                 {{- if .Injected }}
@@ -175,7 +175,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     return runtime.Executed(failedServiceCallResult(
                         call,
                         err,
-                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}().Payload.ExampleJSON,
                     )), nil
                 }
                 {{- end }}
@@ -190,7 +190,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     return runtime.Executed(failedServiceCallResult(
                         call,
                         err,
-                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}().Payload.ExampleJSON,
                     )), nil
                 }
             } else {
@@ -207,7 +207,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     return runtime.Executed(failedServiceCallResult(
                         call,
                         err,
-                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}().Payload.ExampleJSON,
                     )), nil
                 }
             }
@@ -216,7 +216,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                 return runtime.Executed(failedServiceCallResult(
                     call,
                     err,
-                    {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                    {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}().Payload.ExampleJSON,
                 )), nil
             }
             var result any
@@ -227,7 +227,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     return runtime.Executed(failedServiceCallResult(
                         call,
                         e,
-                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}().Payload.ExampleJSON,
                     )), nil
                 }
             } else {
@@ -245,7 +245,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                 return runtime.Executed(failedServiceCallResult(
                     call,
                     fmt.Errorf("unexpected method result type for %q: %T", call.Name, methodOut),
-                    {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                    {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}().Payload.ExampleJSON,
                 )), nil
             }
             {{- end }}
@@ -264,7 +264,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     return runtime.Executed(failedServiceCallResult(
                         call,
                         err,
-                        {{ $.Toolset.SpecsPackageName }}.Spec{{ $tool.ConstName }}.Payload.ExampleJSON,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ $tool.ConstName }}().Payload.ExampleJSON,
                     )), nil
                 }
                 if string(dataJSON) != "null" {
@@ -284,7 +284,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     return runtime.Executed(failedServiceCallResult(
                         call,
                         err,
-                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                        {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}().Payload.ExampleJSON,
                     )), nil
                 }
                 serverData = rawjson.Message(b)

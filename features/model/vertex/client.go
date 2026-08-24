@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"strings"
 
 	"google.golang.org/genai"
 
@@ -40,6 +41,7 @@ type (
 		config           *genai.GenerateContentConfig
 		provToCanon      map[string]string
 		structuredOutput *model.StructuredOutput
+		toolCallIDs      *vertexToolCallIDAllocator
 	}
 )
 
@@ -88,7 +90,7 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	if err != nil {
 		return nil, wrapGeminiError("generate_content", err)
 	}
-	response, err := translateResponse(resp, prep.modelID, prep.modelClass, prep.provToCanon)
+	response, err := translateResponse(resp, prep.modelID, prep.modelClass, prep.provToCanon, prep.toolCallIDs)
 	if err != nil {
 		usage := translateUsage(nil, prep.modelID, prep.modelClass)
 		if resp != nil {
@@ -99,16 +101,23 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	return response, nil
 }
 
-// CountTokens implements model.TokenCounter using Vertex's native counter.
-// Replayed thinking parts are excluded per the TokenCounter contract.
+// CountTokens implements model.TokenCounter using the exact transcript and
+// generation settings that Vertex inference would receive.
 func (c *provider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
-	prep, err := c.prepareRequest(model.CountingRequest(req))
+	prep, err := c.prepareRequest(req)
 	if err != nil {
 		return model.TokenCount{}, err
 	}
 	resp, err := c.models.CountTokens(ctx, prep.modelID, prep.contents, &genai.CountTokensConfig{
 		SystemInstruction: prep.config.SystemInstruction,
 		Tools:             prep.config.Tools,
+		GenerationConfig: &genai.GenerationConfig{
+			MaxOutputTokens:    prep.config.MaxOutputTokens,
+			ResponseJsonSchema: prep.config.ResponseJsonSchema,
+			ResponseMIMEType:   prep.config.ResponseMIMEType,
+			Temperature:        prep.config.Temperature,
+			ThinkingConfig:     prep.config.ThinkingConfig,
+		},
 	})
 	if err != nil {
 		return model.TokenCount{}, wrapGeminiError("count_tokens", err)
@@ -126,6 +135,10 @@ func (c *provider) CountTokens(ctx context.Context, req *model.Request) (model.T
 func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) {
 	if req == nil {
 		return nil, errors.New("vertex: request is required")
+	}
+	modelID, err := c.opts.resolveModelID(req)
+	if err != nil {
+		return nil, err
 	}
 	if req.StructuredOutput != nil && len(req.Tools) > 0 {
 		return nil, model.ErrStructuredOutputUnsupported
@@ -188,6 +201,13 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 	switch {
 	case req.Thinking != nil && req.Thinking.Enable:
 		budget := req.Thinking.BudgetTokens
+		if isGemini3Model(modelID) {
+			if budget > 0 {
+				return nil, errors.New("vertex: Gemini 3 uses thinking levels and does not accept a token budget")
+			}
+			config.ThinkingConfig = &genai.ThinkingConfig{IncludeThoughts: true}
+			break
+		}
 		if budget == 0 {
 			budget = c.opts.ThinkingBudget
 		}
@@ -201,19 +221,30 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 		}
 		config.ThinkingConfig = tc
 	case req.Thinking != nil:
-		// Explicit off: models that think by default (Gemini Flash) accept a
-		// zero budget as "do not think". Models with a mandatory minimum
-		// ignore it server-side, which is the closest honest interpretation.
+		if isGemini3Model(modelID) {
+			return nil, errors.New("vertex: Gemini 3 does not support disabling thinking")
+		}
 		config.ThinkingConfig = &genai.ThinkingConfig{ThinkingBudget: genai.Ptr(int32(0))}
 	}
 	return &preparedRequest{
-		modelID:          c.opts.resolveModelID(req),
+		modelID:          modelID,
 		modelClass:       req.ModelClass,
 		contents:         contents,
 		config:           config,
 		provToCanon:      provToCanon,
 		structuredOutput: req.StructuredOutput,
+		toolCallIDs:      newVertexToolCallIDAllocator(req.Messages),
 	}, nil
+}
+
+// isGemini3Model reports whether modelID uses Gemini 3 thinking levels instead
+// of numeric token budgets.
+func isGemini3Model(modelID string) bool {
+	name := modelID
+	if separator := strings.LastIndexByte(name, '/'); separator >= 0 {
+		name = name[separator+1:]
+	}
+	return strings.HasPrefix(name, "gemini-3-") || strings.HasPrefix(name, "gemini-3.")
 }
 
 // vertexInt32 rejects values the Gemini SDK cannot represent before narrowing.

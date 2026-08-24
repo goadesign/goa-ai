@@ -7,6 +7,7 @@ package model
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"slices"
@@ -124,10 +125,7 @@ func WrapClient(client Client, wrap func(Provider) Provider) (Client, error) {
 	if observer, ok := provider.(ProviderCallObserver); ok && !isNilInterface(observer) {
 		observers = append(observers, observer)
 	}
-	counter, ok := provider.(TokenCounter)
-	if !ok {
-		counter, _ = core.rawProvider().(TokenCounter)
-	}
+	counter, _ := provider.(TokenCounter)
 	return newValidatedClient(provider, counter, observers)
 }
 
@@ -146,18 +144,22 @@ func ValidateProvider(provider Provider) error {
 	return nil
 }
 
-// Complete snapshots the request contract before the raw provider can observe
-// the request, then owns and validates the translated response.
+// Complete owns one request before observers or the raw provider can inspect
+// it, then validates the translated response against that exact snapshot.
 func (c *validatedClient) Complete(ctx context.Context, req *Request) (*Response, error) {
-	contract, err := NewRequestContract(req)
+	request, err := cloneRequest(req)
 	if err != nil {
 		return nil, err
 	}
-	ctx, observers, err := c.prepareClientCall(ctx, req)
+	contract, err := newRequestContract(request)
 	if err != nil {
 		return nil, err
 	}
-	response, err := c.provider.Complete(ctx, req)
+	ctx, observers, err := c.prepareClientCall(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	response, err := c.provider.Complete(ctx, request)
 	if err == nil {
 		response, err = contract.ValidateResponse(response)
 	} else {
@@ -175,18 +177,22 @@ func (c *validatedClient) Complete(ctx context.Context, req *Request) (*Response
 	return response, nil
 }
 
-// Stream snapshots the request contract before provider work, closes any
-// partial stream returned with an error, and exposes only the validated stream.
+// Stream owns one request before observer or provider work, closes any partial
+// stream returned with an error, and exposes only the validated stream.
 func (c *validatedClient) Stream(ctx context.Context, req *Request) (*ValidatedStream, error) {
-	contract, err := NewRequestContract(req)
+	request, err := cloneRequest(req)
 	if err != nil {
 		return nil, err
 	}
-	ctx, observers, err := c.prepareClientCall(ctx, req)
+	contract, err := newRequestContract(request)
 	if err != nil {
 		return nil, err
 	}
-	stream, err := c.provider.Stream(ctx, req)
+	ctx, observers, err := c.prepareClientCall(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	stream, err := c.provider.Stream(ctx, request)
 	if err != nil {
 		if !isNilStreamer(stream) {
 			err = errors.Join(err, stream.Close())
@@ -206,13 +212,34 @@ func (c *validatedClient) Stream(ctx context.Context, req *Request) (*ValidatedS
 // CountTokens validates the provider input contract before forwarding the
 // optional raw counting capability.
 func (c *validatedClient) CountTokens(ctx context.Context, req *Request) (TokenCount, error) {
-	if _, err := NewRequestContract(req); err != nil {
+	request, err := cloneRequest(req)
+	if err != nil {
+		return TokenCount{}, err
+	}
+	contract, err := newRequestContract(request)
+	if err != nil {
 		return TokenCount{}, err
 	}
 	if isNilInterface(c.counter) {
 		return TokenCount{}, ErrTokenCountingUnsupported
 	}
-	return c.counter.CountTokens(ctx, req)
+	count, err := c.counter.CountTokens(ctx, request)
+	if err != nil {
+		return TokenCount{}, err
+	}
+	if count.InputTokens < 0 {
+		return TokenCount{}, errors.New("model provider returned a negative input token count")
+	}
+	if err := validateTokenUsageModel(count.Model); err != nil {
+		return TokenCount{}, fmt.Errorf("model provider returned an invalid token-count model: %w", err)
+	}
+	if count.ModelClass != contract.stream.modelClass {
+		return TokenCount{}, errors.New("model provider returned a token count for the wrong model class")
+	}
+	if count.Exact && count.Model == "" {
+		return TokenCount{}, errors.New("model provider returned an exact token count without a model identifier")
+	}
+	return count, nil
 }
 
 func (*validatedClient) validatedModelClient() {}
@@ -236,7 +263,14 @@ func (c *validatedClient) prepareClientCall(
 ) (context.Context, []ClientCallObserver, error) {
 	observers := make([]ClientCallObserver, 0, len(c.observers))
 	for i := len(c.observers) - 1; i >= 0; i-- {
-		nextCtx, observer, err := c.observers[i].PrepareClientCall(ctx, req)
+		observedRequest, err := cloneRequest(req)
+		if err != nil {
+			for j := len(observers) - 1; j >= 0; j-- {
+				err = errors.Join(err, observers[j].Abort(err))
+			}
+			return ctx, nil, err
+		}
+		nextCtx, observer, err := c.observers[i].PrepareClientCall(ctx, observedRequest)
 		if err != nil {
 			for j := len(observers) - 1; j >= 0; j-- {
 				err = errors.Join(err, observers[j].Abort(err))

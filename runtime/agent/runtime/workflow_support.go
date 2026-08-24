@@ -546,7 +546,7 @@ func (r *Runtime) missingFieldsQuestion(tool tools.Ident, fields []string) (stri
 	var question strings.Builder
 	question.WriteString("I need a little more information before I can continue:")
 	for _, field := range fields {
-		description, ok := spec.Payload.FieldDescriptions[field]
+		description, ok := tools.LookupFieldMetadata(spec.Payload.FieldDescriptions, field)
 		if !ok || description == "" {
 			return "", fmt.Errorf("missing generated description for clarification field %q on tool %q", field, tool)
 		}

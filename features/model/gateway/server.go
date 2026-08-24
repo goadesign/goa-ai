@@ -11,7 +11,8 @@ import (
 
 type (
 	// Server adapts a raw model.Provider into a composable transport handler with
-	// middleware support for both unary and streaming completions.
+	// middleware support for both unary and streaming completions. CountTokens
+	// is available when the configured provider implements model.TokenCounter.
 	//
 	// Applications typically instantiate a Server with NewServer, configure it
 	// with a provider client (WithProvider), and optionally add middleware chains
@@ -109,8 +110,11 @@ func WithStream(mw ...StreamMiddleware) Option {
 // Middleware chains are built during construction and applied in registration
 // order: the first registered middleware becomes the outermost layer, wrapping
 // all subsequent middleware and eventually the base provider handler. This
-// allows early middleware to observe and transform both requests and responses
-// while later middleware operate closer to the provider.
+// allows early middleware to observe requests and responses while later
+// middleware operate closer to the provider. A middleware may change transport
+// details, but it must preserve the caller's original output contract: returned
+// tool calls, structured output, and model class are validated against the
+// request the gateway client sent.
 func NewServer(opts ...Option) (*Server, error) {
 	var cfg serverConfig
 	for _, o := range opts {
@@ -192,6 +196,19 @@ func (s *Server) Stream(ctx context.Context, req *model.Request, send func(model
 		return nil, err
 	}
 	return s.stream(ctx, req, send)
+}
+
+// CountTokens validates and forwards one exact count request when the
+// configured provider supports native token counting.
+func (s *Server) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	if _, err := model.NewRequestContract(req); err != nil {
+		return model.TokenCount{}, err
+	}
+	counter, ok := s.provider.(model.TokenCounter)
+	if !ok {
+		return model.TokenCount{}, model.ErrTokenCountingUnsupported
+	}
+	return counter.CountTokens(ctx, req)
 }
 
 // isNilStreamer rejects typed nil stream implementations before the gateway

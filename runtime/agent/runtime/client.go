@@ -349,7 +349,7 @@ func (r *Runtime) buildStoredContinuationRunInput(
 	if err := validateContinuationIdentity(input, checkpoint); err != nil {
 		return nil, err
 	}
-	if checkpoint.BaseContext.RunID != predecessorRunID {
+	if checkpoint.PreviousRunID != predecessorRunID {
 		return nil, errors.New("predecessor run id does not match stored suspension")
 	}
 	input.WorkflowOptions = workflowOptions

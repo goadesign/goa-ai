@@ -106,6 +106,9 @@ type (
 	//   may normalize the typed semantic result before canonical encoding.
 	// - Materializers must be deterministic and must not perform I/O when they run
 	//   inside workflow code.
+	// - Tool executors must persist results larger than engine.MaxPayloadBytes
+	//   before returning and place the durable reference in the typed result.
+	//   Materializers do not provide a late fallback for oversized values.
 	ResultMaterializer func(ctx context.Context, meta ToolCallMeta, call *ToolCall, result *planner.ToolResult) error
 
 	// ToolExecutionResult captures the runtime-owned outcome of one tool

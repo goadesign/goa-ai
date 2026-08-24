@@ -242,6 +242,12 @@ func buildCompletionSpecsData(genpkg string, svc *service.Data, completions []*C
 		if err != nil {
 			return nil, err
 		}
+		// Completion callers use the generated Complete<Name> and
+		// StreamComplete<Name> operations. Keep their codec plumbing private so
+		// applications cannot bypass those typed boundaries.
+		result.ExportedCodec = "new" + result.TypeName + "Codec"
+		result.MarshalFunc = "marshal" + result.TypeName
+		result.UnmarshalFunc = "unmarshal" + result.TypeName
 		data.completions = append(data.completions, &completionEntry{
 			Name:        completion.Name,
 			GoName:      completion.GoName,

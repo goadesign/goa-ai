@@ -56,17 +56,16 @@ var _ engine.Future[*api.ToolOutput] = (*testToolFuture)(nil)
 func (p *nestedPlannerStub) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
 	p.iter = 0
 	return &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: tools.Ident("child1"), ToolCallID: "child-1", Payload: rawjson.Message(`{}`)},
-		{Name: tools.Ident("child2"), ToolCallID: "child-2", Payload: rawjson.Message(`{}`)},
+		{Name: tools.Ident("child1"), Payload: rawjson.Message(`{}`)},
+		{Name: tools.Ident("child2"), Payload: rawjson.Message(`{}`)},
 	}}, nil
 }
 func (p *nestedPlannerStub) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
 	p.iter++
 	if p.iter == 1 {
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-			Name:       tools.Ident("child3"),
-			ToolCallID: "child-3",
-			Payload:    rawjson.Message(`{}`),
+			Name:    tools.Ident("child3"),
+			Payload: rawjson.Message(`{}`),
 		}}}, nil
 	}
 	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "nested done"}}}}}, nil
@@ -1266,7 +1265,8 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 5, DurationMs: 50, Model: "m1"}},
 			},
 		}
-		tr := ConvertRunOutputToToolResult("parent.tool", &out)
+		tr, err := ConvertRunOutputToToolResult("parent.tool", &out)
+		require.NoError(t, err)
 		require.Nil(t, tr.Failure)
 		require.NotNil(t, tr.Telemetry)
 		require.Equal(t, 15, tr.Telemetry.TokensUsed)
@@ -1274,7 +1274,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 		require.Equal(t, "m1", tr.Telemetry.Model)
 		require.Equal(t, "final", tr.Result)
 	})
-	t.Run("propagates_error_when_all_nested_fail", func(t *testing.T) {
+	t.Run("keeps_historical_failures_in_child_run", func(t *testing.T) {
 		out := RunOutput{
 			Final: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
 			ToolEvents: []*api.ToolEvent{
@@ -1282,8 +1282,10 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 				{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "e2")},
 			},
 		}
-		tr := ConvertRunOutputToToolResult("parent.tool", &out)
-		require.NotNil(t, tr.Failure)
+		tr, err := ConvertRunOutputToToolResult("parent.tool", &out)
+		require.NoError(t, err)
+		require.Nil(t, tr.Failure)
+		require.Equal(t, "final", tr.Result)
 	})
 }
 
@@ -1413,7 +1415,10 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 			if outPtr == nil {
 				return nil, fmt.Errorf("nil nested output")
 			}
-			result := ConvertRunOutputToToolResult(call.Name, outPtr)
+			result, err := ConvertRunOutputToToolResult(call.Name, outPtr)
+			if err != nil {
+				return nil, err
+			}
 			return &result, nil
 		}),
 	}

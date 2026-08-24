@@ -42,9 +42,12 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			// ConstName inject.go uses.
 			payload.InjectDecodeFunc = "Decode" + tool.ConstName
 		}
-		result, err := builder.typeFor(owner, tool.Return, usageResult)
-		if err != nil {
-			return nil, err
+		var result *typeData
+		if tool.HasResult {
+			result, err = builder.typeFor(owner, tool.Return, usageResult)
+			if err != nil {
+				return nil, err
+			}
 		}
 		serverDataEntries, err := serverDataEntriesForTool(tool, builder)
 		if err != nil {
@@ -68,6 +71,7 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 			ExportingAgentID:  tool.ExportingAgentID,
 			Payload:           payload,
 			Result:            result,
+			HasResult:         tool.HasResult,
 			Bounds:            tool.Bounds,
 			TerminalRun:       tool.TerminalRun,
 			Bookkeeping:       tool.Bookkeeping,
@@ -94,17 +98,17 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 	sort.Slice(data.tools, func(i, j int) bool {
 		return data.tools[i].Name < data.tools[j].Name
 	})
-	assignTypedToolVars(data)
+	assignTypedToolFactories(data)
 	return data, nil
 }
 
-// assignTypedToolVars names the exported typed tool descriptor for every tool
-// that has both a payload and a result codec. Descriptor names derive from the
+// assignTypedToolFactories names the exported typed tool descriptor for every
+// tool with a payload codec. Descriptor names derive from the
 // tool constant plus a "Tool" suffix and are made unique against every other
 // package-level identifier the specs package emits (tool constants and
 // materialized type names), so a design type that happens to Goify to the same
 // identifier cannot collide.
-func assignTypedToolVars(data *toolSpecsData) {
+func assignTypedToolFactories(data *toolSpecsData) {
 	scope := codegen.NewNameScope()
 	for _, entry := range data.tools {
 		scope.Unique(entry.ConstName)
@@ -113,7 +117,7 @@ func assignTypedToolVars(data *toolSpecsData) {
 		scope.Unique(info.TypeName)
 	}
 	for _, entry := range data.tools {
-		if entry.Payload == nil || entry.Result == nil {
+		if entry.Payload == nil {
 			continue
 		}
 		entry.TypedToolVar = scope.Unique(entry.ConstName + "Tool")

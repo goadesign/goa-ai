@@ -221,7 +221,7 @@ func TestModelInvocationClientRejectsInvalidRequestBeforeProviderCall(t *testing
 	}, &modelInvocationJournal{})
 	tool := &model.ToolDefinition{
 		Name:  "duplicate",
-		Input: model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+		Input: mustRuntimeToolInput(rawjson.Message(`{"type":"object"}`)),
 	}
 	request := &model.Request{Tools: []*model.ToolDefinition{tool, tool}}
 
@@ -276,9 +276,9 @@ func TestModelInvocationClientKeepsPreProviderRequestContract(t *testing.T) {
 
 func TestModelInvocationJournalSelectsEarliestStartedRejection(t *testing.T) {
 	invocations := &modelInvocationJournal{}
-	firstID, err := invocations.beginModelInvocation("", "", func() {})
+	firstID, err := invocations.beginModelInvocation("", func() {})
 	require.NoError(t, err)
-	secondID, err := invocations.beginModelInvocation("", "", func() {})
+	secondID, err := invocations.beginModelInvocation("", func() {})
 	require.NoError(t, err)
 
 	firstFingerprint := model.ResponseEvidence{Present: true, SHA256: "first", Size: 5}
@@ -327,7 +327,7 @@ func TestModelInvocationJournalBlocksCallsAfterSeal(t *testing.T) {
 	invocations := &modelInvocationJournal{}
 	require.NoError(t, invocations.seal())
 
-	_, err := invocations.beginModelInvocation("", "", func() {})
+	_, err := invocations.beginModelInvocation("", func() {})
 
 	require.EqualError(t, err, "planner model invocation journal is sealed")
 }
@@ -389,6 +389,40 @@ func TestModelInvocationStreamCloseLatchesPlannerContractFailure(t *testing.T) {
 	require.Equal(t, 1, providerCalls)
 }
 
+func TestRejectedTerminalStreamUsageReplacesPriorDeltas(t *testing.T) {
+	usage := model.TokenUsage{InputTokens: 40, OutputTokens: 60, TotalTokens: 100}
+	response := &model.Response{
+		Content: []model.Message{{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "different terminal text"}},
+		}},
+		Usage:      usage,
+		StopReason: "end_turn",
+	}
+	invocations := &modelInvocationJournal{}
+	client := newTestModelInvocationClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			return &chunkStreamer{
+				chunks: []model.Chunk{
+					model.TextChunk{Message: model.Message{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{model.TextPart{Text: "streamed text"}},
+					}},
+					model.UsageChunk{Usage: usage},
+					model.StopChunk{Reason: "end_turn"},
+				},
+				response: response,
+			}, nil
+		},
+	}, invocations)
+
+	stream, err := client.Stream(t.Context(), &model.Request{})
+	require.NoError(t, err)
+	_, err = planner.ConsumeStream(t.Context(), stream)
+	require.Error(t, err)
+	require.Equal(t, usage, invocations.exportUsage())
+}
+
 func TestModelPresentationPublishesOnlySelectedInvocation(t *testing.T) {
 	t.Parallel()
 
@@ -405,6 +439,7 @@ func TestModelPresentationPublishesOnlySelectedInvocation(t *testing.T) {
 						Parts: []model.Part{model.TextPart{Text: "discarded partial"}},
 					}},
 					model.UsageChunk{Usage: model.TokenUsage{
+						Model:       "provider-mini",
 						InputTokens: 1, OutputTokens: 2, TotalTokens: 3,
 					}},
 				},
@@ -426,6 +461,7 @@ func TestModelPresentationPublishesOnlySelectedInvocation(t *testing.T) {
 		}},
 		StopReason: "end_turn",
 		Usage: model.TokenUsage{
+			Model:       "provider-main",
 			InputTokens: 4, OutputTokens: 5, TotalTokens: 9,
 		},
 	}
@@ -453,19 +489,18 @@ func TestModelPresentationPublishesOnlySelectedInvocation(t *testing.T) {
 	_, err = invocations.exportModelInvocation(result)
 	require.NoError(t, err)
 	invocations.publishSelectedPresentation(ctx, events)
-	invocations.publishUsage(ctx, events)
 
 	require.Equal(t, []string{"selected answer"}, events.chunks)
 	require.Equal(t, []model.TokenUsage{
 		{
-			Model:        "gpt-5-mini",
+			Model:        "provider-mini",
 			ModelClass:   model.ModelClassSmall,
 			InputTokens:  1,
 			OutputTokens: 2,
 			TotalTokens:  3,
 		},
 		{
-			Model:        "gpt-5",
+			Model:        "provider-main",
 			ModelClass:   model.ModelClassDefault,
 			InputTokens:  4,
 			OutputTokens: 5,
@@ -528,7 +563,12 @@ func TestSimplePlannerContextPlannerModelClientOwnsEventEmission(t *testing.T) {
 				ToolCall: model.ToolCall{ID: "call-1", Name: "svc.lookup", Payload: []byte(`{"q":"x"}`)},
 			},
 			model.UsageChunk{
-				Usage: model.TokenUsage{InputTokens: 2, OutputTokens: 4, TotalTokens: 6},
+				Usage: model.TokenUsage{
+					Model:        "provider-gpt-5",
+					InputTokens:  2,
+					OutputTokens: 4,
+					TotalTokens:  6,
+				},
 			},
 			model.StopChunk{
 				Reason: "tool_use",
@@ -536,7 +576,12 @@ func TestSimplePlannerContextPlannerModelClientOwnsEventEmission(t *testing.T) {
 		},
 		response: testModelResponseWithUsage(
 			[]model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "hello"}}}},
-			model.TokenUsage{InputTokens: 2, OutputTokens: 4, TotalTokens: 6},
+			model.TokenUsage{
+				Model:        "provider-gpt-5",
+				InputTokens:  2,
+				OutputTokens: 4,
+				TotalTokens:  6,
+			},
 			model.ToolCall{ID: "call-1", Name: "svc.lookup", Payload: []byte(`{"q":"x"}`)},
 		),
 	}
@@ -575,7 +620,7 @@ func TestSimplePlannerContextPlannerModelClientOwnsEventEmission(t *testing.T) {
 	require.Len(t, summary.ToolCalls, 1)
 	require.Equal(t, tools.Ident("svc.lookup"), summary.ToolCalls[0].Name)
 	require.Equal(t, "tool_use", summary.StopReason)
-	require.Equal(t, "gpt-5", summary.Usage.Model)
+	require.Equal(t, "provider-gpt-5", summary.Usage.Model)
 	require.Equal(t, model.ModelClassDefault, summary.Usage.ModelClass)
 	require.Equal(t, 2, summary.Usage.InputTokens)
 	require.Equal(t, 4, summary.Usage.OutputTokens)
@@ -745,9 +790,9 @@ func TestDesignatedModelInvocationWinsIdenticalProbeToolCalls(t *testing.T) {
 
 	transcript, err := invocations.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{{
-			Name:       call.Name,
-			Payload:    call.Payload,
-			ToolCallID: call.ID,
+			Name:            call.Name,
+			Payload:         call.Payload,
+			ModelToolCallID: call.ID,
 		}},
 	})
 	require.NoError(t, err)
@@ -768,7 +813,6 @@ type fakeModelInvocationSink struct {
 }
 
 func (s *fakeModelInvocationSink) beginModelInvocation(
-	_ string,
 	_ model.ModelClass,
 	cancel context.CancelFunc,
 ) (modelInvocationID, error) {
@@ -802,7 +846,11 @@ func (s *fakeModelInvocationSink) recordRejectedModelResponse(
 	return err
 }
 
-func (*fakeModelInvocationSink) recordRejectedModelUsage(_ modelInvocationID, _ model.TokenUsage) error {
+func (*fakeModelInvocationSink) recordRejectedModelUsageTotal(_ modelInvocationID, _ model.TokenUsage) error {
+	return nil
+}
+
+func (*fakeModelInvocationSink) recordRejectedModelUsageDelta(_ modelInvocationID, _ model.TokenUsage) error {
 	return nil
 }
 
@@ -922,9 +970,9 @@ func TestPlannerModelClientScopesCompleteResponseTranscript(t *testing.T) {
 
 	transcript, err := invocations.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{{
-			ToolCallID: "call-1",
-			Name:       "svc.lookup",
-			Payload:    []byte(`{"query":"status"}`),
+			ModelToolCallID: "call-1",
+			Name:            "svc.lookup",
+			Payload:         []byte(`{"query":"status"}`),
 		}},
 	})
 	require.NoError(t, err)

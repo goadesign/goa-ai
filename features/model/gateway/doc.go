@@ -1,5 +1,6 @@
-// Package gateway provides a transport-agnostic server and client wrapper
-// for model completion. It exposes composable middleware for unary and
-// streaming requests and can be paired with any RPC layer by supplying
-// provider and caller functions that operate on the runtime model types.
+// Package gateway provides transport-agnostic server and client wrappers for
+// model completion. Unary and streaming requests support middleware. Exact
+// token counting is a separate optional operation: transports that implement
+// it use NewCountingRemoteClient, while NewRemoteClient reports that counting
+// is unsupported.
 package gateway

@@ -27,6 +27,16 @@ import (
 // These tests lock the Temporal adapter contract around duplicate registration
 // handling and workflow start option propagation.
 
+func TestNewRejectsCustomDataConverter(t *testing.T) {
+	_, err := NewClient(Options{
+		ClientOptions: &client.Options{
+			DataConverter: converter.GetDefaultDataConverter(),
+		},
+	})
+
+	require.EqualError(t, err, "temporal engine: custom data converter is not supported")
+}
+
 func TestRegisterWorkflowRejectsDuplicateBeforeCreatingWorkerForNewQueue(t *testing.T) {
 	t.Parallel()
 
@@ -135,12 +145,17 @@ func TestStartWorkflowPropagatesMemoAndSearchAttributes(t *testing.T) {
 
 	service := &testWorkflowService{}
 	eng, err := NewWorker(Options{
-		Client: newWorkflowServiceClient(t, service),
+		ClientOptions: &client.Options{},
 		WorkerOptions: WorkerOptions{
 			TaskQueue: "default.queue",
 		},
 	})
 	require.NoError(t, err)
+	eng.client.Close()
+	eng.client = newWorkflowServiceClient(t, service)
+	t.Cleanup(func() {
+		require.NoError(t, eng.Close())
+	})
 
 	handler := func(ctx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
 		return &api.RunOutput{}, nil
@@ -213,7 +228,7 @@ func TestNewClientRejectsRegistration(t *testing.T) {
 	t.Parallel()
 
 	eng, err := NewClient(Options{
-		Client: newLazyTestClient(t),
+		ClientOptions: &client.Options{},
 	})
 	require.NoError(t, err)
 
@@ -232,24 +247,13 @@ func newTestEngine(t *testing.T) *Engine {
 	t.Helper()
 
 	eng, err := NewWorker(Options{
-		Client: newLazyTestClient(t),
+		ClientOptions: &client.Options{},
 		WorkerOptions: WorkerOptions{
 			TaskQueue: "default.queue",
 		},
 	})
 	require.NoError(t, err)
 	return eng
-}
-
-// newLazyTestClient returns a Temporal client that satisfies worker.New without
-// eagerly dialing a server.
-func newLazyTestClient(t *testing.T) client.Client {
-	t.Helper()
-
-	cli, err := client.NewLazyClient(client.Options{})
-	require.NoError(t, err)
-	t.Cleanup(cli.Close)
-	return cli
 }
 
 // newWorkflowServiceClient returns a client wired to a local gRPC server so the

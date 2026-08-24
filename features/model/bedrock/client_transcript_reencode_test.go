@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent"
@@ -100,6 +101,36 @@ func TestTranslateResponsePreservesReasoning(t *testing.T) {
 		model.ThinkingPart{Text: "reasoning", Signature: "sig", Final: true},
 		model.TextPart{Text: "answer"},
 	}, resp.Content[0].Parts)
+}
+
+func TestTranslateResponseAssignsDenseReasoningIndexes(t *testing.T) {
+	reasoning := func(text, signature string) brtypes.ContentBlock {
+		return &brtypes.ContentBlockMemberReasoningContent{
+			Value: &brtypes.ReasoningContentBlockMemberReasoningText{
+				Value: brtypes.ReasoningTextBlock{
+					Text:      aws.String(text),
+					Signature: aws.String(signature),
+				},
+			},
+		}
+	}
+	output := &bedrockruntime.ConverseOutput{
+		StopReason: brtypes.StopReasonEndTurn,
+		Output: &brtypes.ConverseOutputMemberMessage{Value: brtypes.Message{
+			Role: brtypes.ConversationRoleAssistant,
+			Content: []brtypes.ContentBlock{
+				&brtypes.ContentBlockMemberText{Value: "before"},
+				reasoning("first", "sig-1"),
+				&brtypes.ContentBlockMemberText{Value: "between"},
+				reasoning("second", "sig-2"),
+			},
+		}},
+	}
+
+	resp, err := translateResponse(output, nil, "", "")
+	require.NoError(t, err)
+	assert.Equal(t, 0, resp.Content[0].Parts[1].(model.ThinkingPart).Index)
+	assert.Equal(t, 1, resp.Content[0].Parts[3].(model.ThinkingPart).Index)
 }
 
 func TestTranslateResponseHandlesIncompleteReasoning(t *testing.T) {
@@ -230,7 +261,7 @@ func TestClientPrepareRequestLowersRunlogReplayedTranscriptWithNarrowedTools(t *
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.correct",
 			Description: "Correct the failed analysis request.",
-			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -312,10 +343,11 @@ func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "analytics.analyze",
 			Description: "Run an analysis.",
-			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		Thinking: &model.ThinkingOptions{
-			Enable: true,
+			Enable:       true,
+			BudgetTokens: 4096,
 		},
 	})
 	require.ErrorContains(t, err, "must start with thinking")
@@ -345,7 +377,7 @@ func TestClientPrepareRequestSanitizesHistoryOnlyToolName(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "atlas.read.some_other_tool",
 			Description: "Read another resource.",
-			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -378,7 +410,7 @@ func TestClientPrepareRequestRejectsHistoricalToolNameCollision(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "ada_unknown_tool",
 			Description: "Current tool with a colliding provider name.",
-			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.ErrorContains(t, err, `tool name "ada.unknown_tool" sanitizes to "ada_unknown_tool"`)

@@ -125,6 +125,11 @@ callable capabilities, while completions model final assistant answers. Both reu
 the same Goa types, validations, and codegen pipeline so there is one contract
 surface for structured model I/O.
 
+Every model request crosses one allocation preflight before the client copies
+messages, media, tool contracts, or structured-output schemas or calls an
+observer or provider. The complete request shares one 16 MiB byte budget and
+one 100,000-value visit budget.
+
 All provider output crosses one allocation preflight before copying,
 fingerprinting, or decoding. A unary response has one 16 MiB byte budget and
 one 100,000-value visit budget; nested dynamic metadata and tool-result values
@@ -209,9 +214,14 @@ survives activity retries and execution on another worker. Planners remain
 responsible for enforcing synthesis-only output because provider APIs may need
 the tool catalog to interpret the preceding tool results.
 
-Every planner-produced tool call must include its tool-call ID. Model clients
-preserve the provider's ID, and code that creates a call assigns its own ID.
-The runtime rejects a missing ID instead of inventing one later.
+Planner requests contain domain intent: a tool name and typed payload. A request
+forwarded from a model response also carries that provider's correlation ID;
+planner-authored requests do not invent one. The runtime assigns every accepted
+request a deterministic execution ID from the run, turn, attempt, tool, and
+batch position. It rejects a provider ID that does not belong to the selected
+model response. When planner code compiles model output into different
+executable intent, the runtime retains the original model name and payload
+separately for the transcript.
 
 When a completed model reply or planner result breaks its required shape, the
 planner returns `OutputContractError`. The runtime validates the full result
@@ -339,7 +349,7 @@ contract release.
 
 `ValidateContinuation` checks the checkpoint and registered tool contracts; it
 does not make an incompatible persisted value compatible. Suspension schema
-`goa-ai.run-suspension.v2` is the only supported shape. Older checkpoints fail
+`goa-ai.run-suspension.v3` is the only supported shape. Older checkpoints fail
 validation rather than being inferred or migrated by the runtime.
 
 Coordinated generated-code deployment does not own ordinary service
@@ -651,10 +661,10 @@ redeploys.
   reconstruct the exact message order generically. Canonical tool-call IDs
   remain opaque and unchanged; adapters whose wire protocol restricts ID syntax
   assign request-local aliases and use the same alias for each matching tool
-  result. Provider and planner calls must already contain an ID; missing IDs are
-  rejected. Runtime code that creates a call, such as automatic pagination or
-  limit finalization, assigns its deterministic ID at construction from the
-  run, turn, attempt, tool, and batch index.
+  result. Provider calls must contain an ID. Planner requests preserve that ID
+  when they forward a provider call and leave it empty when the planner authored
+  the request. The runtime assigns every accepted request its deterministic
+  execution ID from the run, turn, attempt, tool, and batch index.
 - **Rejected model evidence**: The model boundary hashes a versioned,
   deterministic encoding of complete responses before copying or validating
   them. The encoding includes malformed raw tool bytes without requiring valid
@@ -696,8 +706,12 @@ redeploys.
   bound to the immutable output-validation contract copied when validation
   begins and cannot be reused under different model identity, structured
   output, tool, or generated-validator checks. Message and sampling changes do
-  not alter that contract. It never exposes the provider stream or runtime
-  observer. Each framework-owned message carries a private
+  not alter that contract. One receive operation includes provider access,
+  validation, and every observer callback; close waits for that complete
+  sequence and returns one stable result to every caller. Observer callbacks
+  may inspect the current response but must not call receive or close on the
+  same stream. The validated stream never exposes the provider stream. Each framework-owned
+  message carries a private
   in-memory origin copied with it, so two messages with identical content remain
   distinct without comparing visible text or metadata. The runtime identifies
   tool turns from unchanged model-facing calls and terminal turns from the
@@ -713,12 +727,16 @@ redeploys.
   `KeepMaxInputTokens`. The runtime evaluates token budgets with the configured
   model client's exact `model.TokenCounter`, so tokenization stays
   deployment/model-specific while the design records the agent's default policy.
-  The Anthropic adapter implements this capability through the Messages token
-  count API using the same message, tool, and cache encoding as completion, so
-  direct Anthropic and compatible gateways such as Bedrock Mantle can provide
-  exact counts without a second transcript conversion. Counting consumes the
-  canonical encoding only — completion policy such as the max_tokens
-  requirement never applies, because the count API carries no max_tokens.
+  Each history-policy count includes its preserved system messages, candidate
+  complete turns, and advertised tools. Thinking and structured output remain
+  planner decisions made after the history policy runs, so they are not part of
+  this threshold. The selected adapter counts this exact history shape using
+  its provider tokenizer. A gateway
+  preserves exact counting only when its transport supplies the separate
+  count operation through `NewCountingRemoteClient`; otherwise counting
+  returns `model.ErrTokenCountingUnsupported`.
+  Bedrock returns that error for Runtime models such as Claude Opus 4.7,
+  Sonnet 5, and Mythos 5 that require AWS's separate Mantle count endpoint.
   When encoded tools carry authored `input_examples`, completion, streaming,
   and counting all attach the same Anthropic tool-examples beta header.
   Exact retention always keeps whole recent turns; it never truncates
@@ -942,6 +960,11 @@ side effect:
   deadline.
 - Once sealing returns `nil`, the runtime may safely start serving traffic
   because its workers are actively polling.
+- Temporal engines always construct their client from `ClientOptions` and
+  install the Goa-AI data converter. No supported constructor can bypass exact
+  number decoding, unknown-field rejection, unsafe-value checks, or the total
+  1 MiB limit for one workflow or activity call. Tool executors persist larger
+  domain results first and return their durable reference.
 - Post-start fatal worker failures surface through the configured
   `worker.Options.OnFatalError` callback instead of being silently ignored.
   Integrating services should treat that callback as process-fatal and exit.

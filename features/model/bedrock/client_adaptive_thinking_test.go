@@ -37,7 +37,7 @@ func TestBuildConverseStreamInputOpus47AndLaterUsesAdaptiveThinking(t *testing.T
 				Tools: []*model.ToolDefinition{{
 					Name:        "search",
 					Description: "search the workspace",
-					Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+					Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 				}},
 				Thinking: &model.ThinkingOptions{
 					Enable:       true,
@@ -49,13 +49,13 @@ func TestBuildConverseStreamInputOpus47AndLaterUsesAdaptiveThinking(t *testing.T
 			parts, err := client.prepareRequest(req)
 			require.NoError(t, err)
 
-			thinking := client.resolveThinking(req, parts)
+			thinking := parts.thinking
 			require.True(t, thinking.enable, "thinking must be enabled")
 			require.True(t, thinking.adaptive, "Opus 4.7+ must use adaptive thinking")
 			require.Zero(t, thinking.budget, "adaptive mode must not carry a token budget")
 			require.False(t, thinking.interleaved, "adaptive mode must not set the interleaved beta header")
 
-			input, err := client.buildConverseStreamInput(parts, req, thinking)
+			input, err := client.buildConverseStreamInput(parts, req)
 			require.NoError(t, err)
 			require.NotNil(t, input.AdditionalModelRequestFields)
 
@@ -101,13 +101,13 @@ func TestBuildConverseStreamInputSonnet5UsesVisibleAdaptiveThinking(t *testing.T
 	parts, err := client.prepareRequest(req)
 	require.NoError(t, err)
 
-	thinking := client.resolveThinking(req, parts)
+	thinking := parts.thinking
 	require.True(t, thinking.enable)
 	require.True(t, thinking.adaptive)
 	require.Zero(t, thinking.budget)
 	require.False(t, thinking.interleaved)
 
-	input, err := client.buildConverseStreamInput(parts, req, thinking)
+	input, err := client.buildConverseStreamInput(parts, req)
 	require.NoError(t, err)
 	require.NotNil(t, input.AdditionalModelRequestFields)
 	raw, err := input.AdditionalModelRequestFields.MarshalSmithyDocument()
@@ -121,49 +121,77 @@ func TestBuildConverseStreamInputSonnet5UsesVisibleAdaptiveThinking(t *testing.T
 	}, fields["thinking"])
 }
 
+func TestPrepareRequestLegacyThinkingRequiresPositiveBudget(t *testing.T) {
+	client := &provider{defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"}
+	for _, budget := range []int{0, -1} {
+		req := &model.Request{
+			Messages: []*model.Message{{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "reason"}},
+			}},
+			Thinking: &model.ThinkingOptions{Enable: true, BudgetTokens: budget},
+		}
+		_, err := client.prepareRequest(req)
+		require.ErrorContains(t, err, "budget_tokens must be positive")
+	}
+}
+
 func TestBuildConverseStreamInputThinkingBudget(t *testing.T) {
-	tests := []struct {
-		name       string
-		budget     int
-		wantBudget any
-	}{
-		{name: "zero uses provider default"},
-		{name: "positive remains exact", budget: 4096, wantBudget: float64(4096)},
+	client := &provider{
+		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		maxTok:       32,
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			client := &provider{
-				defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-				maxTok:       32,
-			}
-			req := &model.Request{
-				Messages: []*model.Message{{
-					Role:  model.ConversationRoleUser,
-					Parts: []model.Part{model.TextPart{Text: "reason"}},
-				}},
-				Thinking: &model.ThinkingOptions{
-					Enable:       true,
-					BudgetTokens: test.budget,
-				},
-			}
-			parts, err := client.prepareRequest(req)
-			require.NoError(t, err)
-			input, err := client.buildConverseStreamInput(parts, req, client.resolveThinking(req, parts))
-			require.NoError(t, err)
-			require.NotNil(t, input.AdditionalModelRequestFields)
-			raw, err := input.AdditionalModelRequestFields.MarshalSmithyDocument()
-			require.NoError(t, err)
-			var fields map[string]any
-			require.NoError(t, json.Unmarshal(raw, &fields))
-			thinking := fields["thinking"].(map[string]any)
-			require.Equal(t, "enabled", thinking["type"])
-			if test.wantBudget == nil {
-				require.NotContains(t, thinking, "budget_tokens")
-				return
-			}
-			require.Equal(t, test.wantBudget, thinking["budget_tokens"])
-		})
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "reason"}},
+		}},
+		Thinking: &model.ThinkingOptions{Enable: true, BudgetTokens: 4096},
 	}
+	parts, err := client.prepareRequest(req)
+	require.NoError(t, err)
+	input, err := client.buildConverseStreamInput(parts, req)
+	require.NoError(t, err)
+	require.NotNil(t, input.AdditionalModelRequestFields)
+	raw, err := input.AdditionalModelRequestFields.MarshalSmithyDocument()
+	require.NoError(t, err)
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(raw, &fields))
+	assert.Equal(t, map[string]any{
+		"type":          "enabled",
+		"budget_tokens": float64(4096),
+	}, fields["thinking"])
+}
+
+func TestConverseAndConverseStreamShareThinkingContract(t *testing.T) {
+	client := &provider{defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"}
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "reason"}},
+		}},
+		Thinking: &model.ThinkingOptions{
+			Enable:       true,
+			Interleaved:  true,
+			BudgetTokens: 4096,
+		},
+	}
+	parts, err := client.prepareRequest(req)
+	require.NoError(t, err)
+
+	unary, err := client.buildConverseInput(parts, req)
+	require.NoError(t, err)
+	streaming, err := client.buildConverseStreamInput(parts, req)
+	require.NoError(t, err)
+	require.NotNil(t, unary.AdditionalModelRequestFields)
+	require.NotNil(t, streaming.AdditionalModelRequestFields)
+	unaryFields, err := unary.AdditionalModelRequestFields.MarshalSmithyDocument()
+	require.NoError(t, err)
+	streamFields, err := streaming.AdditionalModelRequestFields.MarshalSmithyDocument()
+	require.NoError(t, err)
+
+	assert.JSONEq(t, string(unaryFields), string(streamFields))
+	assert.Len(t, client.requestOptions(parts.thinking), 1)
 }
 
 // Bedrock adaptive thinking is valid even without tools. The adapter must not
@@ -193,17 +221,14 @@ func TestResolveThinkingOpus47WithoutTools(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, parts.toolConfig, "test requires a no-tools request")
 
-	thinking := client.resolveThinking(req, parts)
+	thinking := parts.thinking
 	require.True(t, thinking.enable, "explicit adaptive thinking must survive no-tools requests")
 	require.True(t, thinking.adaptive, "Opus 4.7 must stay on adaptive thinking without tools")
 	require.Zero(t, thinking.budget, "adaptive mode must not carry a token budget")
 	require.False(t, thinking.interleaved, "adaptive mode must not request the legacy interleaved beta header")
 }
 
-// Bedrock Anthropic rejects thinking when tool_choice forces one exact tool.
-// The adapter owns that provider representability rule so planners can express
-// the stronger semantic constraint without knowing the transport quirk.
-func TestResolveThinkingOpus47ForcedToolDisablesThinking(t *testing.T) {
+func TestResolveThinkingOpus47KeepsAdaptiveThinkingWithForcedTool(t *testing.T) {
 	client := &provider{
 		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 		highModel:    "us.anthropic.claude-opus-4-7",
@@ -219,7 +244,7 @@ func TestResolveThinkingOpus47ForcedToolDisablesThinking(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "tasks.progress.complete",
 			Description: "complete the task",
-			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeTool,
@@ -234,22 +259,11 @@ func TestResolveThinkingOpus47ForcedToolDisablesThinking(t *testing.T) {
 
 	parts, err := client.prepareRequest(req)
 	require.NoError(t, err)
-
-	thinking := client.resolveThinking(req, parts)
-	require.False(t, thinking.enable)
-
-	input, err := client.buildConverseStreamInput(parts, req, thinking)
-	require.NoError(t, err)
-	if input.AdditionalModelRequestFields != nil {
-		raw, err := input.AdditionalModelRequestFields.MarshalSmithyDocument()
-		require.NoError(t, err)
-		var fields map[string]any
-		require.NoError(t, json.Unmarshal(raw, &fields))
-		assert.NotContains(t, fields, "thinking")
-	}
+	assert.True(t, parts.thinking.enable)
+	assert.True(t, parts.thinking.adaptive)
 }
 
-func TestResolveThinkingOpus47AnyToolDisablesThinking(t *testing.T) {
+func TestResolveThinkingOpus47KeepsAdaptiveThinkingWithAnyTool(t *testing.T) {
 	client := &provider{
 		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 		highModel:    "us.anthropic.claude-opus-4-7",
@@ -265,7 +279,7 @@ func TestResolveThinkingOpus47AnyToolDisablesThinking(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "tasks.progress.update",
 			Description: "update task progress",
-			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeAny,
@@ -279,40 +293,32 @@ func TestResolveThinkingOpus47AnyToolDisablesThinking(t *testing.T) {
 
 	parts, err := client.prepareRequest(req)
 	require.NoError(t, err)
-
-	thinking := client.resolveThinking(req, parts)
-	require.False(t, thinking.enable)
+	assert.True(t, parts.thinking.enable)
+	assert.True(t, parts.thinking.adaptive)
 }
 
-// Claude 5 generation models run with always-on thinking, and Anthropic
-// rejects forced tool use whenever thinking is active. Unlike Opus, Fable has
-// no non-thinking mode to fall back to, so the adapter must fail fast with a
-// precise error instead of sending a request Bedrock will 400.
-func TestFableRejectsForcedToolChoice(t *testing.T) {
+func TestFableAcceptsForcedToolChoice(t *testing.T) {
 	cases := []struct {
 		name       string
 		toolChoice *model.ToolChoice
-		wantErr    bool
 	}{
 		{
-			name:       "any is rejected",
+			name:       "any",
 			toolChoice: &model.ToolChoice{Mode: model.ToolChoiceModeAny},
-			wantErr:    true,
 		},
 		{
-			name: "specific tool is rejected",
+			name: "specific tool",
 			toolChoice: &model.ToolChoice{
 				Mode: model.ToolChoiceModeTool,
 				Name: "tasks.progress.complete",
 			},
-			wantErr: true,
 		},
 		{
-			name:       "auto is accepted",
+			name:       "auto",
 			toolChoice: &model.ToolChoice{Mode: model.ToolChoiceModeAuto},
 		},
 		{
-			name: "nil is accepted",
+			name: "nil",
 		},
 	}
 
@@ -333,25 +339,49 @@ func TestFableRejectsForcedToolChoice(t *testing.T) {
 				Tools: []*model.ToolDefinition{{
 					Name:        "tasks.progress.complete",
 					Description: "complete the task",
-					Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+					Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 				}},
 				ToolChoice: tc.toolChoice,
 			}
 
 			_, err := client.prepareRequest(req)
-			if tc.wantErr {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), "does not support forced tool choice")
-				return
-			}
 			require.NoError(t, err)
 		})
 	}
 }
 
-// Opus models keep the legacy escape hatch: forced tool choice is allowed and
-// the adapter drops thinking for that turn instead of erroring.
-func TestOpusStillAllowsForcedToolChoice(t *testing.T) {
+func TestResolveThinkingLegacyModelRejectsForcedToolChoice(t *testing.T) {
+	client := &provider{
+		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		maxTok:       4096,
+	}
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "finish the task"}},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "tasks.progress.complete",
+			Description: "complete the task",
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
+		}},
+		ToolChoice: &model.ToolChoice{
+			Mode: model.ToolChoiceModeTool,
+			Name: "tasks.progress.complete",
+		},
+		Thinking: &model.ThinkingOptions{
+			Enable:       true,
+			BudgetTokens: 2048,
+		},
+	}
+
+	_, err := client.prepareRequest(req)
+	require.EqualError(t, err, "bedrock: manual thinking cannot be combined with forced tool choice")
+}
+
+// Opus models allow forced tool choice when the caller did not request
+// thinking.
+func TestOpusAllowsForcedToolChoiceWithoutThinking(t *testing.T) {
 	client := &provider{
 		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 		highModel:    "us.anthropic.claude-opus-4-8",
@@ -367,7 +397,7 @@ func TestOpusStillAllowsForcedToolChoice(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "tasks.progress.complete",
 			Description: "complete the task",
-			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeTool,
@@ -377,8 +407,8 @@ func TestOpusStillAllowsForcedToolChoice(t *testing.T) {
 
 	parts, err := client.prepareRequest(req)
 	require.NoError(t, err)
-	thinking := client.resolveThinking(req, parts)
-	require.False(t, thinking.enable, "forced tool choice must disable thinking on Opus")
+	thinking := parts.thinking
+	require.False(t, thinking.enable)
 }
 
 // Claude Opus 4.7 and later, as well as the Claude 5 generation (Fable), reject

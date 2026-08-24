@@ -20,6 +20,9 @@ const (
 
 	// OutputContractOriginPlanner identifies a rejected planner result.
 	OutputContractOriginPlanner = outputcontract.OriginPlanner
+
+	// OutputContractOriginTool identifies a rejected tool execution result.
+	OutputContractOriginTool = outputcontract.OriginTool
 )
 
 // NewOutputContractError records why a completed planner result was rejected.

@@ -8,15 +8,18 @@ import (
 	"encoding"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
+	"unicode/utf8"
 
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 const (
-	maxPlanActivityOutputBytes  = 1 << 20
+	maxPlanActivityOutputBytes  = engine.MaxPayloadBytes
 	maxPlanActivityOutputVisits = 100_000
 	maxPlanActivityOutputDepth  = 64
 
@@ -94,7 +97,12 @@ func (b *planActivityOutputBudget) walk(value reflect.Value, depth int) error {
 		if value.IsNil() {
 			return b.addBytes(len("null"))
 		}
-		return b.addScaledBytes(value.Len(), 6)
+		if !json.Valid(value.Bytes()) {
+			return newPlanActivityOutputBudgetError(
+				"planner activity output contains invalid raw JSON",
+			)
+		}
+		return b.addBytes(value.Len())
 	}
 	if isByteCollection(value) {
 		if value.Kind() == reflect.Slice && value.IsNil() {
@@ -141,7 +149,16 @@ func (b *planActivityOutputBudget) walk(value reflect.Value, depth int) error {
 		}
 		for index := 0; index < value.NumField(); index++ {
 			field := value.Type().Field(index)
-			if field.PkgPath != "" || field.Tag.Get("json") == "-" {
+			if field.Tag.Get("json") == "-" {
+				continue
+			}
+			if field.PkgPath != "" && !isEmbeddedActivityOutputStruct(field) {
+				continue
+			}
+			if field.PkgPath != "" {
+				if err := b.walk(value.Field(index), depth+1); err != nil {
+					return err
+				}
 				continue
 			}
 			if err := b.addJSONStringBytes(jsonFieldName(field)); err != nil {
@@ -211,8 +228,13 @@ func (b *planActivityOutputBudget) walk(value reflect.Value, depth int) error {
 		reflect.Uint64,
 		reflect.Uintptr:
 		return b.addBytes(maxJSONIntegerBytes)
-	case reflect.Float32,
-		reflect.Float64:
+	case reflect.Float32, reflect.Float64:
+		number := value.Float()
+		if math.IsNaN(number) || math.IsInf(number, 0) {
+			return newPlanActivityOutputBudgetError(
+				"planner activity output contains non-finite number",
+			)
+		}
 		return b.addBytes(maxJSONFloatBytes)
 	case reflect.Invalid:
 		return b.addBytes(len("null"))
@@ -227,6 +249,19 @@ func (b *planActivityOutputBudget) walk(value reflect.Value, depth int) error {
 		)
 	}
 	return nil
+}
+
+// isEmbeddedActivityOutputStruct matches encoding/json's treatment of a
+// private anonymous struct: its exported descendants remain encoded fields.
+func isEmbeddedActivityOutputStruct(field reflect.StructField) bool {
+	if !field.Anonymous {
+		return false
+	}
+	typ := field.Type
+	if typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	return typ.Kind() == reflect.Struct
 }
 
 // visit charges one reflected value before descending into it.
@@ -253,25 +288,55 @@ func (b *planActivityOutputBudget) addBytes(count int) error {
 	return nil
 }
 
-// addScaledBytes charges multiplier*count without evaluating an overflowing
-// multiplication.
-func (b *planActivityOutputBudget) addScaledBytes(count, multiplier int) error {
-	if count < 0 || multiplier < 0 || count > (maxPlanActivityOutputBytes-b.bytes)/multiplier {
-		return newPlanActivityOutputBudgetError(
-			"planner activity output exceeds conservative encoded-size bound %d bytes",
-			maxPlanActivityOutputBytes,
-		)
-	}
-	return b.addBytes(count * multiplier)
-}
-
-// addJSONStringBytes charges the maximum six-byte escape for every source byte,
-// plus the surrounding quotes.
+// addJSONStringBytes charges exactly the bytes encoding/json emits for a
+// string, including HTML escaping and replacement of invalid UTF-8.
 func (b *planActivityOutputBudget) addJSONStringBytes(value string) error {
 	if err := b.addBytes(2); err != nil {
 		return err
 	}
-	return b.addScaledBytes(len(value), 6)
+	for index := 0; index < len(value); {
+		char := value[index]
+		if char < utf8.RuneSelf {
+			index++
+			switch char {
+			case '"', '\\', '\b', '\f', '\n', '\r', '\t':
+				if err := b.addBytes(2); err != nil {
+					return err
+				}
+			case '<', '>', '&':
+				if err := b.addBytes(6); err != nil {
+					return err
+				}
+			default:
+				size := 1
+				if char < 0x20 {
+					size = 6
+				}
+				if err := b.addBytes(size); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(value[index:])
+		index += size
+		if r == utf8.RuneError && size == 1 {
+			if err := b.addBytes(6); err != nil {
+				return err
+			}
+			continue
+		}
+		if r == '\u2028' || r == '\u2029' {
+			if err := b.addBytes(6); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := b.addBytes(size); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // addCollectionBytes charges braces or brackets and every possible comma.

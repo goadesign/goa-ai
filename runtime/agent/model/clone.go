@@ -166,6 +166,56 @@ func CloneMessages(messages []*Message) ([]*Message, error) {
 	return out, nil
 }
 
+// cloneRequest owns every mutable value that providers or observers can read
+// during one call. Function-backed generated validators are immutable and are
+// copied by reference.
+func cloneRequest(request *Request) (*Request, error) {
+	if err := preflightRequest(request); err != nil {
+		return nil, err
+	}
+	messages, err := CloneMessages(request.Messages)
+	if err != nil {
+		return nil, fmt.Errorf("clone model request messages: %w", err)
+	}
+	owned := *request
+	owned.PromptRefs = slices.Clone(request.PromptRefs)
+	owned.Messages = messages
+	owned.Tools = make([]*ToolDefinition, len(request.Tools))
+	for i, definition := range request.Tools {
+		if definition == nil {
+			continue
+		}
+		cloned := *definition
+		cloned.Input = ToolInput{
+			jsonSchema:               slices.Clone(definition.Input.jsonSchema),
+			schemaWithoutRootExample: slices.Clone(definition.Input.schemaWithoutRootExample),
+			exampleJSON:              slices.Clone(definition.Input.exampleJSON),
+			validate:                 definition.Input.validate,
+		}
+		owned.Tools[i] = &cloned
+	}
+	if request.ToolChoice != nil {
+		value := *request.ToolChoice
+		owned.ToolChoice = &value
+	}
+	if request.Thinking != nil {
+		value := *request.Thinking
+		owned.Thinking = &value
+	}
+	if request.StructuredOutput != nil {
+		value := *request.StructuredOutput
+		value.Schema = slices.Clone(request.StructuredOutput.Schema)
+		value.SchemaWithoutRootExample = slices.Clone(request.StructuredOutput.SchemaWithoutRootExample)
+		value.ExampleJSON = slices.Clone(request.StructuredOutput.ExampleJSON)
+		owned.StructuredOutput = &value
+	}
+	if request.Cache != nil {
+		value := *request.Cache
+		owned.Cache = &value
+	}
+	return &owned, nil
+}
+
 // cloneChunk returns a deep copy of one provider stream chunk. Stream
 // boundaries call it before retaining or returning chunks so provider buffer
 // reuse cannot change accepted payloads.

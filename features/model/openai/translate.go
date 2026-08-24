@@ -22,6 +22,7 @@ func translateResponse(
 	resolvedModelID string,
 	resolvedModelClass model.ModelClass,
 	output *model.StructuredOutput,
+	outputProjection *strictSchemaProjection,
 ) (*model.Response, error) {
 	if resp == nil {
 		return nil, errors.New("openai: response is nil")
@@ -110,9 +111,11 @@ func translateResponse(
 	flushThinking()
 	translated.StopReason = translateStopReason(resp, len(translated.ToolCalls()) > 0)
 	if output != nil {
-		if _, err := structuredOutputPayload(translated.Content, output); err != nil {
+		payload, err := structuredOutputPayload(translated.Content, output, outputProjection)
+		if err != nil {
 			return nil, err
 		}
+		translated.Content = replaceStructuredOutputText(translated.Content, string(payload))
 	}
 	return translated, nil
 }
@@ -268,6 +271,10 @@ func translateToolCall(
 			call.Name,
 		)
 	}
+	payload, err = codec.canonicalPayload(call.Name, payload)
+	if err != nil {
+		return model.ToolCall{}, fmt.Errorf("openai: tool call %q canonical payload: %w", call.CallID, err)
+	}
 	return model.ToolCall{
 		Name:    tools.Ident(name),
 		Payload: payload,
@@ -303,7 +310,11 @@ func translateStopReason(resp *responses.Response, hasToolCalls bool) string {
 	}
 }
 
-func structuredOutputPayload(content []model.Message, output *model.StructuredOutput) (rawjson.Message, error) {
+func structuredOutputPayload(
+	content []model.Message,
+	output *model.StructuredOutput,
+	projection *strictSchemaProjection,
+) (rawjson.Message, error) {
 	if output == nil {
 		return nil, nil
 	}
@@ -314,7 +325,31 @@ func structuredOutputPayload(content []model.Message, output *model.StructuredOu
 	if !json.Valid([]byte(text)) {
 		return nil, fmt.Errorf("openai: structured output %q payload is not valid JSON", structuredOutputName(output))
 	}
-	return rawjson.Message([]byte(text)), nil
+	return projection.canonicalize([]byte(text))
+}
+
+// replaceStructuredOutputText keeps thinking and metadata but replaces all
+// provider text fragments with one canonical structured-output document.
+func replaceStructuredOutputText(content []model.Message, payload string) []model.Message {
+	replaced := false
+	for messageIndex := range content {
+		if content[messageIndex].Role != model.ConversationRoleAssistant {
+			continue
+		}
+		parts := content[messageIndex].Parts[:0]
+		for _, part := range content[messageIndex].Parts {
+			if _, ok := part.(model.TextPart); !ok {
+				parts = append(parts, part)
+				continue
+			}
+			if !replaced {
+				parts = append(parts, model.TextPart{Text: payload})
+				replaced = true
+			}
+		}
+		content[messageIndex].Parts = parts
+	}
+	return content
 }
 
 func extractAssistantText(content []model.Message) string {

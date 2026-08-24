@@ -7,11 +7,44 @@ package model
 import (
 	"errors"
 	"io"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
+
+// mustAdvertisedToolInput compiles a static test schema.
+func mustAdvertisedToolInput(schema rawjson.Message) ToolInput {
+	input, err := AdvertisedToolInputFromSchema(schema)
+	if err != nil {
+		panic(err)
+	}
+	return input
+}
+
+func TestCallerAuthoredToolSchemaRequiresOneObjectDocument(t *testing.T) {
+	tests := []struct {
+		name   string
+		schema rawjson.Message
+	}{
+		{name: "scalar root", schema: rawjson.Message(`{"type":"string"}`)},
+		{name: "implicit root", schema: rawjson.Message(`{"properties":{}}`)},
+		{name: "trailing document", schema: rawjson.Message(`{"type":"object"} {}`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := AdvertisedToolInputFromSchema(tt.schema)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestCallerAuthoredToolPayloadRejectsTrailingDocument(t *testing.T) {
+	input := mustAdvertisedToolInput(rawjson.Message(`{"type":"object"}`))
+	err := input.validate(rawjson.Message(`{} {}`))
+	require.ErrorContains(t, err, "multiple JSON values")
+}
 
 func TestRequestContractOwnsUsageModelClass(t *testing.T) {
 	request := &Request{Model: "requested-model", ModelClass: ModelClassSmall}
@@ -30,7 +63,7 @@ func TestRequestContractOwnsUsageModelClass(t *testing.T) {
 	require.Equal(t, ModelClassHighReasoning, response.Usage.ModelClass)
 }
 
-func TestRequestContractFillsMissingUsageModelFromRequest(t *testing.T) {
+func TestRequestContractPreservesMissingProviderUsageModel(t *testing.T) {
 	request := &Request{Model: "requested-model", ModelClass: ModelClassSmall}
 	contract, err := NewRequestContract(request)
 	require.NoError(t, err)
@@ -40,9 +73,24 @@ func TestRequestContractFillsMissingUsageModelFromRequest(t *testing.T) {
 	validated, err := contract.ValidateResponse(response)
 
 	require.NoError(t, err)
-	require.Equal(t, "requested-model", validated.Usage.Model)
+	require.Empty(t, validated.Usage.Model)
 	require.Equal(t, ModelClassSmall, validated.Usage.ModelClass)
 	require.Empty(t, response.Usage.Model)
+}
+
+func TestRequestContractRejectsMalformedProviderUsageModel(t *testing.T) {
+	contract, err := NewRequestContract(&Request{ModelClass: ModelClassSmall})
+	require.NoError(t, err)
+	response := canonicalTextResponse()
+	response.Usage = TokenUsage{Model: string([]byte{0xff}), TotalTokens: 3}
+
+	_, err = contract.ValidateResponse(response)
+
+	require.ErrorContains(t, err, "not valid UTF-8")
+	rejected := contract.RejectProviderOutput(&response.Usage, errors.New("translation failed"))
+	require.Empty(t, rejected.Usage().Model)
+	require.Equal(t, 3, rejected.Usage().TotalTokens)
+	require.Equal(t, ModelClassSmall, rejected.Usage().ModelClass)
 }
 
 func TestRequestContractOwnsStreamUsageModelClass(t *testing.T) {
@@ -241,6 +289,94 @@ func TestNewRequestContractRejectsStructuredOutputWithoutName(t *testing.T) {
 	require.EqualError(t, err, "model request structured output name is required")
 }
 
+func TestNewRequestContractRejectsMalformedRequestValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		request *Request
+		wantErr string
+	}{
+		{
+			name:    "non-finite temperature",
+			request: &Request{Temperature: float32(math.NaN())},
+			wantErr: "temperature must be finite",
+		},
+		{
+			name: "unknown message role",
+			request: &Request{Messages: []*Message{{
+				Role:  ConversationRole("operator"),
+				Parts: []Part{TextPart{Text: "hello"}},
+			}}},
+			wantErr: "unsupported role",
+		},
+		{
+			name: "empty message",
+			request: &Request{Messages: []*Message{{
+				Role: ConversationRoleUser,
+			}}},
+			wantErr: "message has no parts",
+		},
+		{
+			name: "malformed tool input",
+			request: &Request{Messages: []*Message{{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{ToolUsePart{
+					ID:    "call-1",
+					Name:  "lookup",
+					Input: rawjson.Message(`{"broken"`),
+				}},
+			}}},
+			wantErr: "input to be a JSON object",
+		},
+		{
+			name: "malformed structured output schema",
+			request: &Request{StructuredOutput: &StructuredOutput{
+				Name:   "answer",
+				Schema: rawjson.Message(`{"broken"`),
+			}},
+			wantErr: "schema is not valid JSON",
+		},
+		{
+			name: "malformed structured output example",
+			request: &Request{StructuredOutput: &StructuredOutput{
+				Name:        "answer",
+				ExampleJSON: rawjson.Message(`{"broken"`),
+			}},
+			wantErr: "example is not valid JSON",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewRequestContract(test.request)
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
+func TestNewRequestContractRejectsToolChoiceForStructuredOutput(t *testing.T) {
+	for _, mode := range []ToolChoiceMode{
+		ToolChoiceModeAuto,
+		ToolChoiceModeNone,
+		ToolChoiceModeAny,
+		ToolChoiceModeTool,
+	} {
+		t.Run(string(mode), func(t *testing.T) {
+			choice := &ToolChoice{Mode: mode}
+			if mode == ToolChoiceModeTool {
+				choice.Name = "lookup"
+			}
+			request := &Request{
+				StructuredOutput: &StructuredOutput{Name: "answer"},
+				ToolChoice:       choice,
+			}
+			if mode == ToolChoiceModeAny || mode == ToolChoiceModeTool {
+				request.Tools = []*ToolDefinition{advertisedTool("lookup")}
+			}
+			_, err := NewRequestContract(request)
+			require.ErrorContains(t, err, "structured output cannot")
+		})
+	}
+}
+
 func TestRequestContractValidatesUnaryStructuredOutputEnvelope(t *testing.T) {
 	request := &Request{StructuredOutput: &StructuredOutput{
 		Name:   "answer",
@@ -286,6 +422,61 @@ func TestRequestContractRunsGeneratedStructuredOutputDecoder(t *testing.T) {
 	require.ErrorContains(t, err, "generated decoder rejected payload")
 }
 
+func TestCallerAuthoredToolSchemaRejectsInvalidPayload(t *testing.T) {
+	request := &Request{Tools: []*ToolDefinition{{
+		Name: "lookup",
+		Input: mustAdvertisedToolInput(rawjson.Message(
+			`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`,
+		)),
+	}}}
+	contract, err := NewRequestContract(request)
+	require.NoError(t, err)
+	response := toolResponse("lookup")
+	response.Content[0].Parts[0] = ToolUsePart{
+		ID:    "call-1",
+		Name:  "lookup",
+		Input: rawjson.Message(`{"unexpected":true}`),
+	}
+
+	validated, err := contract.ValidateResponse(response)
+
+	require.Nil(t, validated)
+	require.ErrorContains(t, err, `model tool "lookup" payload failed its request contract`)
+	require.ErrorContains(t, err, "validate JSON Schema")
+}
+
+func TestRequestContractValidatesTransportedToolPayload(t *testing.T) {
+	input, err := ToolInputFromContract("lookup", ToolInputContract{
+		Schema: rawjson.Message(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}`),
+	})
+	require.NoError(t, err)
+
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{{
+		Name:  "lookup",
+		Input: input,
+	}}})
+
+	require.NoError(t, err)
+	response := toolResponse("lookup")
+	response.Content[0].Parts[0] = ToolUsePart{
+		ID:    "call-1",
+		Name:  "lookup",
+		Input: rawjson.Message(`{"unexpected":true}`),
+	}
+	validated, err := contract.ValidateResponse(response)
+	require.Nil(t, validated)
+	require.ErrorContains(t, err, `model tool "lookup" payload failed its request contract`)
+}
+
+func TestNewRequestContractPreflightsToolCount(t *testing.T) {
+	_, err := NewRequestContract(&Request{
+		Tools: make([]*ToolDefinition, maxDynamicValueVisits+1),
+	})
+
+	require.ErrorContains(t, err, "model request tools")
+	require.ErrorContains(t, err, "exceeds maximum visited values")
+}
+
 func canonicalTextResponse() *Response {
 	return &Response{
 		Content: []Message{{
@@ -299,7 +490,7 @@ func canonicalTextResponse() *Response {
 func advertisedTool(name string) *ToolDefinition {
 	return &ToolDefinition{
 		Name:  name,
-		Input: AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+		Input: mustAdvertisedToolInput(rawjson.Message(`{"type":"object"}`)),
 	}
 }
 

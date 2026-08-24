@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"strings"
-	"sync"
 	"testing"
 
 	"goa.design/goa-ai/runtime/agent/model"
@@ -49,7 +48,8 @@ type stubProvider struct {
 }
 
 type countingProvider struct {
-	calls int
+	calls    int
+	countErr error
 }
 
 func (p stubProvider) Complete(_ context.Context, req *model.Request) (*model.Response, error) {
@@ -76,6 +76,16 @@ func (p *countingProvider) Complete(context.Context, *model.Request) (*model.Res
 func (p *countingProvider) Stream(context.Context, *model.Request) (model.Streamer, error) {
 	p.calls++
 	return &stubStreamer{}, nil
+}
+
+func (p *countingProvider) CountTokens(_ context.Context, req *model.Request) (model.TokenCount, error) {
+	p.calls++
+	return model.TokenCount{
+		Model:       req.Model,
+		ModelClass:  req.ModelClass,
+		InputTokens: 42,
+		Exact:       true,
+	}, p.countErr
 }
 
 func TestServerRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
@@ -111,6 +121,39 @@ func TestNewServerRejectsTypedNilProvider(t *testing.T) {
 	}
 }
 
+func TestServerCountTokensPreservesOptionalProviderCapability(t *testing.T) {
+	provider := &countingProvider{}
+	server, err := NewServer(WithProvider(provider))
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+
+	count, err := server.CountTokens(t.Context(), &model.Request{
+		Model:      "remote-model",
+		ModelClass: model.ModelClassDefault,
+	})
+
+	if err != nil {
+		t.Fatalf("CountTokens error: %v", err)
+	}
+	if count.InputTokens != 42 || !count.Exact || provider.calls != 1 {
+		t.Fatalf("CountTokens result, calls = %#v, %d; want exact 42, 1", count, provider.calls)
+	}
+}
+
+func TestServerCountTokensReportsUnsupportedProvider(t *testing.T) {
+	server, err := NewServer(WithProvider(stubProvider{}))
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+
+	_, err = server.CountTokens(t.Context(), &model.Request{})
+
+	if !errors.Is(err, model.ErrTokenCountingUnsupported) {
+		t.Fatalf("CountTokens error = %v; want ErrTokenCountingUnsupported", err)
+	}
+}
+
 func TestServerStreamRequiresSendBeforeMiddlewareOrProvider(t *testing.T) {
 	provider := &countingProvider{}
 	middlewareCalled := false
@@ -137,33 +180,6 @@ func TestServerStreamRequiresSendBeforeMiddlewareOrProvider(t *testing.T) {
 	}
 	if provider.calls != 0 {
 		t.Fatalf("provider calls = %d, want 0", provider.calls)
-	}
-}
-
-func TestHandlerStreamCloseReturnsSavedCleanupErrorConcurrently(t *testing.T) {
-	cleanupErr := errors.New("cleanup failed")
-	stream := newHandlerStream(t.Context(), func(ctx context.Context, _ func(model.Chunk) error) (*model.Response, error) {
-		<-ctx.Done()
-		return nil, cleanupErr
-	})
-
-	const callers = 8
-	results := make(chan error, callers)
-	var wg sync.WaitGroup
-	for range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			results <- stream.Close()
-		}()
-	}
-	wg.Wait()
-	close(results)
-
-	for err := range results {
-		if !errors.Is(err, cleanupErr) {
-			t.Fatalf("Close error = %v, want cleanup error", err)
-		}
 	}
 }
 

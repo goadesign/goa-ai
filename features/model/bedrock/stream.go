@@ -27,10 +27,14 @@ type bedrockStreamer struct {
 	stream *bedrockruntime.ConverseStreamEventStream
 
 	chunks chan model.Chunk
+	done   chan struct{}
 
 	errMu    sync.Mutex
 	errSet   bool
 	finalErr error
+
+	closeOnce sync.Once
+	closeErr  error
 
 	responseMu       sync.RWMutex
 	response         *model.Response
@@ -55,18 +59,15 @@ func newBedrockStreamer(
 	modelClass model.ModelClass,
 	output *model.StructuredOutput,
 	toolFallbackName string,
-	contracts ...*model.RequestContract,
+	contract *model.RequestContract,
 ) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
-	var contract *model.RequestContract
-	if len(contracts) > 0 {
-		contract = contracts[0]
-	}
 	bs := &bedrockStreamer{
 		ctx:              cctx,
 		cancel:           cancel,
 		stream:           stream,
 		chunks:           make(chan model.Chunk, 32),
+		done:             make(chan struct{}),
 		toolNameMap:      nameMap,
 		modelID:          modelID,
 		modelClass:       modelClass,
@@ -104,7 +105,9 @@ func (s *bedrockStreamer) Recv() (model.Chunk, error) {
 
 func (s *bedrockStreamer) Close() error {
 	s.cancel()
-	return s.stream.Close()
+	closeErr := s.closeProviderStream()
+	<-s.done
+	return closeErr
 }
 
 func (s *bedrockStreamer) Response() *model.Response {
@@ -115,8 +118,9 @@ func (s *bedrockStreamer) Response() *model.Response {
 
 func (s *bedrockStreamer) run() {
 	defer close(s.chunks)
+	defer close(s.done)
 	defer func() {
-		if err := s.stream.Close(); err != nil {
+		if err := s.closeProviderStream(); err != nil {
 			s.setErr(err)
 		}
 	}()
@@ -166,11 +170,19 @@ func (s *bedrockStreamer) run() {
 	}
 }
 
+// closeProviderStream closes the AWS event stream once and returns the same
+// cleanup result to the pump and every caller of Close.
+func (s *bedrockStreamer) closeProviderStream() error {
+	s.closeOnce.Do(func() {
+		s.closeErr = s.stream.Close()
+	})
+	return s.closeErr
+}
+
 // outputError preserves provider and caller flow-control errors while marking
 // malformed Bedrock stream data as output validation.
 func (s *bedrockStreamer) outputError(usage model.TokenUsage, err error) error {
-	if s.contract == nil ||
-		err == nil ||
+	if err == nil ||
 		errors.Is(err, context.Canceled) ||
 		errors.Is(err, context.DeadlineExceeded) {
 		return err
@@ -219,11 +231,13 @@ type chunkProcessor struct {
 	toolBlocks map[int]*toolBuffer
 	completion *completionBuffer
 	// reasoningBlocks accumulates reasoning content per content index until stop.
-	reasoningBlocks map[int]*reasoningBuffer
-	textBlocks      map[int]*strings.Builder
-	citationBlocks  map[int][]model.Citation
-	canonicalParts  map[int]model.Part
-	openBlocks      map[int]struct{}
+	reasoningBlocks  map[int]*reasoningBuffer
+	reasoningIndexes map[int]int
+	nextReasoning    int
+	textBlocks       map[int]*strings.Builder
+	citationBlocks   map[int][]model.Citation
+	canonicalParts   map[int]model.Part
+	openBlocks       map[int]struct{}
 
 	toolNameMap      map[string]string
 	modelID          string
@@ -256,6 +270,7 @@ func newChunkProcessor(
 		emit:             emit,
 		toolBlocks:       make(map[int]*toolBuffer),
 		reasoningBlocks:  make(map[int]*reasoningBuffer),
+		reasoningIndexes: make(map[int]int),
 		textBlocks:       make(map[int]*strings.Builder),
 		citationBlocks:   make(map[int][]model.Citation),
 		canonicalParts:   make(map[int]model.Part),
@@ -276,6 +291,8 @@ func (p *chunkProcessor) Handle(event any) error {
 		}
 		p.toolBlocks = make(map[int]*toolBuffer)
 		p.reasoningBlocks = make(map[int]*reasoningBuffer)
+		p.reasoningIndexes = make(map[int]int)
+		p.nextReasoning = 0
 		p.textBlocks = make(map[int]*strings.Builder)
 		p.citationBlocks = make(map[int][]model.Citation)
 		p.canonicalParts = make(map[int]model.Part)
@@ -404,7 +421,10 @@ func (p *chunkProcessor) Handle(event any) error {
 			if rb == nil {
 				rb = &reasoningBuffer{}
 				p.reasoningBlocks[idx] = rb
+				p.reasoningIndexes[idx] = p.nextReasoning
+				p.nextReasoning++
 			}
+			reasoningIndex := p.reasoningIndexes[idx]
 			// Capture reasoning deltas (text, redacted bytes, signature).
 			switch v := delta.Value.(type) {
 			case *brtypes.ReasoningContentBlockDeltaMemberText:
@@ -421,7 +441,7 @@ func (p *chunkProcessor) Handle(event any) error {
 						Role: "assistant",
 						Parts: []model.Part{model.ThinkingPart{
 							Text:  v.Value,
-							Index: idx,
+							Index: reasoningIndex,
 							Final: false,
 						}},
 					},
@@ -508,29 +528,16 @@ func (p *chunkProcessor) Handle(event any) error {
 				return fmt.Errorf("bedrock stream: finalize reasoning block %d: %w", idx, err)
 			}
 			if part != nil {
-				part.Index = idx
+				part.Index = p.reasoningIndexes[idx]
 				part.Final = true
 				p.canonicalParts[idx] = *part
-				if part.Text != "" {
-					// Emit final plaintext thinking with signature preserved.
-					if err := p.emit(model.ThinkingChunk{
-						Message: model.Message{
-							Role:  "assistant",
-							Parts: []model.Part{*part},
-						},
-					}); err != nil {
-						return err
-					}
-				} else if len(part.Redacted) > 0 {
-					// Emit final redacted thinking.
-					if err := p.emit(model.ThinkingChunk{
-						Message: model.Message{
-							Role:  "assistant",
-							Parts: []model.Part{*part},
-						},
-					}); err != nil {
-						return err
-					}
+				if err := p.emit(model.ThinkingChunk{
+					Message: model.Message{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{*part},
+					},
+				}); err != nil {
+					return err
 				}
 			}
 		}

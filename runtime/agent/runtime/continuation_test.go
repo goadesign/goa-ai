@@ -38,9 +38,8 @@ func TestContinuationActionBindsExactChainWithoutExposingCursor(t *testing.T) {
 	assert.NotContains(t, actions[0].description, "opaque-next-page")
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		ToolCallID: "continue-call",
-		Name:       actions[0].modelName,
-		Payload:    rawjson.Message(`{}`),
+		Name:    actions[0].modelName,
+		Payload: rawjson.Message(`{}`),
 	}}}
 	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
 	require.NoError(t, err)
@@ -162,9 +161,8 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 	assert.NotContains(t, actions[0].description, secondCursor)
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		ToolCallID: "continue-call",
-		Name:       actions[0].modelName,
-		Payload:    rawjson.Message(`{}`),
+		Name:    actions[0].modelName,
+		Payload: rawjson.Message(`{}`),
 	}}}
 	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
 	require.NoError(t, err)
@@ -190,9 +188,8 @@ func TestContinuationActionRetainsCanonicalQueryPayload(t *testing.T) {
 	actions, err := rt.availableContinuationActions("svc.agent", outputs)
 	require.NoError(t, err)
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		ToolCallID: "continue-call",
-		Name:       actions[0].modelName,
-		Payload:    rawjson.Message(`{}`),
+		Name:    actions[0].modelName,
+		Payload: rawjson.Message(`{}`),
 	}}}
 
 	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
@@ -290,9 +287,8 @@ func TestContinuationActionNameStaysStableAsChainAdvances(t *testing.T) {
 	assert.Equal(t, first[0].modelName, second[0].modelName)
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		ToolCallID: "continue-call",
-		Name:       second[0].modelName,
-		Payload:    rawjson.Message(`{}`),
+		Name:    second[0].modelName,
+		Payload: rawjson.Message(`{}`),
 	}}}
 	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, second, nil)
 	require.NoError(t, err)
@@ -333,8 +329,8 @@ func TestContinuationActionsKeepParallelChainsIndependent(t *testing.T) {
 	assert.NotEqual(t, actions[0].modelName, actions[1].modelName)
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{ToolCallID: "continue-call-1", Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
-		{ToolCallID: "continue-call-2", Name: actions[1].modelName, Payload: rawjson.Message(`{}`)},
+		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
+		{Name: actions[1].modelName, Payload: rawjson.Message(`{}`)},
 	}}
 	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
 	require.NoError(t, err)
@@ -456,8 +452,8 @@ func TestBindContinuationRejectsDuplicateActionCalls(t *testing.T) {
 	})
 	require.NoError(t, err)
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{ToolCallID: "continue-call-1", Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
-		{ToolCallID: "continue-call-2", Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
+		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
+		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
 	}}
 
 	_, err = rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
@@ -492,9 +488,8 @@ func TestBindContinuationRejectsCanonicalToolAndModelArguments(t *testing.T) {
 	require.NoError(t, err)
 
 	canonical := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		ToolCallID: "canonical-call",
-		Name:       continuation.Name,
-		Payload:    rawjson.Message(`{}`),
+		Name:    continuation.Name,
+		Payload: rawjson.Message(`{}`),
 	}}}
 	_, err = rt.compilePlannerToolCalls(canonical.ToolCalls, actions, nil)
 	var outputErr *planner.OutputContractError
@@ -502,9 +497,8 @@ func TestBindContinuationRejectsCanonicalToolAndModelArguments(t *testing.T) {
 	require.ErrorContains(t, err, "is not model-callable")
 
 	withArguments := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		ToolCallID: "continue-call",
-		Name:       actions[0].modelName,
-		Payload:    rawjson.Message(`{"cursor":"model-authored"}`),
+		Name:    actions[0].modelName,
+		Payload: rawjson.Message(`{"cursor":"model-authored"}`),
 	}}}
 	_, err = rt.compilePlannerToolCalls(withArguments.ToolCalls, actions, nil)
 	require.ErrorAs(t, err, &outputErr)

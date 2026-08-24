@@ -59,7 +59,7 @@ func TestRequestContractAppliesGeneratedToolPayloadCodec(t *testing.T) {
 	require.NoError(t, err)
 	_, err = contract.ValidateResponse(response)
 
-	require.ErrorContains(t, err, `model tool "svc.lookup" payload failed its generated contract`)
+	require.ErrorContains(t, err, `model tool "svc.lookup" payload failed its request contract`)
 }
 
 func TestStreamValidatorAppliesGeneratedToolPayloadCodecBeforeExposure(t *testing.T) {
@@ -71,7 +71,7 @@ func TestStreamValidatorAppliesGeneratedToolPayloadCodecBeforeExposure(t *testin
 		Payload: []byte(`{"query":42}`),
 	}})
 
-	require.ErrorContains(t, err, `model tool "svc.lookup" payload failed its generated contract`)
+	require.ErrorContains(t, err, `model tool "svc.lookup" payload failed its request contract`)
 }
 
 func TestStreamValidatorReconcilesToolPayloadDeltas(t *testing.T) {
@@ -227,6 +227,24 @@ func TestStreamValidatorOwnsRetainedMessageParts(t *testing.T) {
 	}))
 }
 
+func TestStreamValidatorRejectsTerminalThinkingWithoutFinalChunk(t *testing.T) {
+	validator := mustNewStreamValidator(t, &Request{})
+	require.NoError(t, validator.accept(StopChunk{Reason: "stop"}))
+
+	err := validator.finish(&Response{
+		Content: []Message{{
+			Role: ConversationRoleAssistant,
+			Parts: []Part{ThinkingPart{
+				Signature: "signature",
+				Final:     true,
+			}},
+		}},
+		StopReason: "stop",
+	})
+
+	require.ErrorContains(t, err, "streamed thinking does not match canonical response")
+}
+
 func TestStreamValidatorOwnsRetainedToolPayload(t *testing.T) {
 	payload := []byte(`{"query":"original"}`)
 	validator := mustNewStreamValidator(t, requestWithTool("search"))
@@ -345,7 +363,7 @@ func mustNewStreamValidator(t *testing.T, request *Request) *streamValidator {
 func requestWithTool(name string) *Request {
 	return &Request{Tools: []*ToolDefinition{{
 		Name:  name,
-		Input: AdvertisedToolInputFromSchema([]byte(`{"type":"object"}`)),
+		Input: mustAdvertisedToolInput([]byte(`{"type":"object"}`)),
 	}}}
 }
 

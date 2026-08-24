@@ -21,6 +21,9 @@ type historyCountingClient struct {
 	countErr     error
 	tokenCounted bool
 	inexactCount bool
+	// rejectEmptyConversation matches built-in providers, which require at
+	// least one user or assistant message in every token-count request.
+	rejectEmptyConversation bool
 	// toolTokens charges this many tokens per tool definition present on the
 	// counted request, so tests can prove which counts include the catalog.
 	toolTokens int
@@ -66,7 +69,21 @@ func (c *historyCountingClient) CountTokens(_ context.Context, req *model.Reques
 	if c.countErr != nil {
 		return model.TokenCount{}, c.countErr
 	}
+	if c.rejectEmptyConversation {
+		hasConversation := false
+		for _, message := range req.Messages {
+			if message.Role == model.ConversationRoleUser ||
+				message.Role == model.ConversationRoleAssistant {
+				hasConversation = true
+				break
+			}
+		}
+		if !hasConversation {
+			return model.TokenCount{}, errors.New("messages required")
+		}
+	}
 	return model.TokenCount{
+		Model:       "history-test",
 		ModelClass:  req.ModelClass,
 		InputTokens: len(req.Messages)*10 + len(req.Tools)*c.toolTokens,
 		Exact:       !c.inexactCount,
@@ -169,7 +186,7 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 		KeepMaxInputTokens: 10,
 	})
 	msgs := []*model.Message{
-		systemMsg("system"),
+		systemMsg(),
 		userMsg("question 1"),
 		assistantTextMsg("answer 1"),
 		userMsg("question 2"),
@@ -184,7 +201,7 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Looks up cursor-backed data.",
-			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object","properties":{"id":{"type":"string"}}}`)),
+			Input:       mustRuntimeToolInput(rawjson.Message(`{"type":"object","properties":{"id":{"type":"string"}}}`)),
 		},
 	}
 
@@ -194,10 +211,10 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 	require.True(t, client.tokenCounted)
 	require.NotEmpty(t, client.countedAll)
 	assert.Equal(t, model.ModelClassSmall, client.countedAll[0].ModelClass)
-	// The compression trigger counts the full provider-visible request
+	// The compression trigger counts the complete history-policy request
 	// including the tool catalog; exact-tail retention counts turn content
 	// only (see TestCompress_KeepBudgetExcludesToolCatalog).
-	assert.Equal(t, toolDefs, client.countedAll[0].Tools)
+	assertToolDefinitionsEqual(t, toolDefs, client.countedAll[0].Tools)
 	require.NotNil(t, client.summarized)
 	require.Len(t, client.summarized.Messages, 1)
 	assert.Contains(t, textPart(t, client.summarized.Messages[0]), "question 1")
@@ -225,11 +242,11 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
 	client := &historyCountingClient{toolTokens: 1000}
 	policy := Compress(historyTestClient(t, client), HistoryCompressionConfig{
-		CompressAtMaxInputTokens: 1050,
+		CompressAtMaxInputTokens: 1065,
 		KeepMaxInputTokens:       25,
 	})
 	msgs := []*model.Message{
-		systemMsg("system"),
+		systemMsg(),
 		userMsg("question 1"),
 		assistantTextMsg("answer 1"),
 		userMsg("question 2"),
@@ -241,7 +258,7 @@ func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Looks up data.",
-			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustRuntimeToolInput(rawjson.Message(`{"type":"object"}`)),
 		},
 	}
 
@@ -252,7 +269,7 @@ func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
 	// attached and system prompt included.
 	require.NotEmpty(t, client.countedAll)
 	for _, req := range client.countedAll {
-		assert.Equal(t, toolDefs, req.Tools)
+		assertToolDefinitionsEqual(t, toolDefs, req.Tools)
 		require.NotEmpty(t, req.Messages)
 		assert.Equal(t, model.ConversationRoleSystem, req.Messages[0].Role)
 	}
@@ -260,7 +277,9 @@ func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
 	// The 1000-token catalog cancels out of the anchored comparison: the
 	// newest tail counts 1030 (system + 2 messages + catalog), adding turn 2
 	// costs 20 more (fits the 25 budget), adding turn 1 costs 40 more
-	// (exceeds it). Turns 2 and 3 stay exact; turn 1 is summarized.
+	// (exceeds both the keep budget and the 1065 trigger). The final summary
+	// plus turns 2 and 3 counts 1060, so it fits. Turns 2 and 3 stay exact;
+	// turn 1 is summarized.
 	require.Len(t, out, 6)
 	assert.Equal(t, model.ConversationRoleSystem, out[0].Role)
 	assert.Equal(t, model.ConversationRoleSystem, out[1].Role)
@@ -277,13 +296,16 @@ func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
 // truly doomed request; anything larger than the compress trigger would just
 // re-trigger compression forever.
 func TestCompress_ErrsWhenNewestTurnCannotFitCompressTrigger(t *testing.T) {
-	client := &historyCountingClient{toolTokens: 1000}
+	client := &historyCountingClient{
+		toolTokens:              1000,
+		rejectEmptyConversation: true,
+	}
 	policy := Compress(historyTestClient(t, client), HistoryCompressionConfig{
 		CompressAtMaxInputTokens: 1025,
 		KeepMaxInputTokens:       25,
 	})
 	msgs := []*model.Message{
-		systemMsg("system"),
+		systemMsg(),
 		userMsg("question 1"),
 		assistantTextMsg("answer 1"),
 		userMsg("question 2"),
@@ -293,7 +315,7 @@ func TestCompress_ErrsWhenNewestTurnCannotFitCompressTrigger(t *testing.T) {
 		{
 			Name:        "lookup",
 			Description: "Looks up data.",
-			Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustRuntimeToolInput(rawjson.Message(`{"type":"object"}`)),
 		},
 	}
 
@@ -302,12 +324,61 @@ func TestCompress_ErrsWhenNewestTurnCannotFitCompressTrigger(t *testing.T) {
 	out, err := policy(context.Background(), msgs, toolDefs)
 	require.ErrorContains(t, err, "newest history turn cannot fit within CompressAtMaxInputTokens (1030 > 1025;")
 	require.Len(t, out, 5)
+	require.Len(t, client.countedAll, 2)
 }
 
-func systemMsg(text string) *model.Message {
+func TestCompressTurnRetentionRejectsNewestTurnAboveTokenTrigger(t *testing.T) {
+	client := &historyCountingClient{}
+	policy := Compress(historyTestClient(t, client), HistoryCompressionConfig{
+		CompressAtMaxInputTokens: 25,
+		KeepMaxTurns:             1,
+	})
+	msgs := []*model.Message{
+		systemMsg(),
+		userMsg("question 1"),
+		assistantTextMsg("answer 1"),
+		userMsg("question 2"),
+		assistantTextMsg("answer 2"),
+	}
+
+	out, err := policy(t.Context(), msgs, nil)
+
+	require.ErrorContains(t, err, "newest history turn cannot fit within CompressAtMaxInputTokens (30 > 25;")
+	assert.Equal(t, msgs, out)
+}
+
+func TestCompressTurnRetentionAlsoFitsTokenTrigger(t *testing.T) {
+	client := &historyCountingClient{}
+	policy := Compress(historyTestClient(t, client), HistoryCompressionConfig{
+		CompressAtMaxInputTokens: 60,
+		KeepMaxTurns:             3,
+	})
+	msgs := []*model.Message{
+		systemMsg(),
+		userMsg("question 1"),
+		assistantTextMsg("answer 1"),
+		userMsg("question 2"),
+		assistantTextMsg("answer 2"),
+		userMsg("question 3"),
+		assistantTextMsg("answer 3"),
+	}
+
+	out, err := policy(t.Context(), msgs, nil)
+
+	require.NoError(t, err)
+	require.Len(t, out, 6)
+	require.NotNil(t, client.summarized)
+	assert.Contains(t, textPart(t, client.summarized.Messages[0]), "question 1")
+	assert.Equal(t, "question 2", textPart(t, out[2]))
+	assert.Equal(t, "answer 3", textPart(t, out[5]))
+	require.NotEmpty(t, client.countedAll)
+	assert.Len(t, client.countedAll[len(client.countedAll)-1].Messages, 6)
+}
+
+func systemMsg() *model.Message {
 	return &model.Message{
 		Role:  model.ConversationRoleSystem,
-		Parts: []model.Part{model.TextPart{Text: text}},
+		Parts: []model.Part{model.TextPart{Text: "system"}},
 	}
 }
 
@@ -358,12 +429,24 @@ func textPart(t *testing.T, msg *model.Message) string {
 	return part.Text
 }
 
+// assertToolDefinitionsEqual compares the exported tool contract while ignoring
+// the compiled validation function copied with each request.
+func assertToolDefinitionsEqual(t *testing.T, expected, actual []*model.ToolDefinition) {
+	t.Helper()
+	require.Len(t, actual, len(expected))
+	for i := range expected {
+		assert.Equal(t, expected[i].Name, actual[i].Name)
+		assert.Equal(t, expected[i].Description, actual[i].Description)
+		assert.Equal(t, expected[i].Input.Contract(), actual[i].Input.Contract())
+	}
+}
+
 // TestCompressDoesNotAdvertiseHistoricalUnavailableTool proves transcript
 // history cannot expand the executable catalog used for token counting.
 func TestCompressDoesNotAdvertiseHistoricalUnavailableTool(t *testing.T) {
 	client := &historyCountingClient{}
 	policy := Compress(historyTestClient(t, client), HistoryCompressionConfig{
-		CompressAtMaxInputTokens: 30,
+		CompressAtMaxInputTokens: 45,
 		KeepMaxInputTokens:       40,
 	})
 
@@ -374,7 +457,10 @@ func TestCompressDoesNotAdvertiseHistoricalUnavailableTool(t *testing.T) {
 		assistantTextMsg("answer"),
 		userMsg("follow-up"),
 		assistantTextMsg("done"),
-	}, []*model.ToolDefinition{{Name: "known.tool"}})
+	}, []*model.ToolDefinition{{
+		Name:  "known.tool",
+		Input: mustRuntimeToolInput(rawjson.Message(`{"type":"object"}`)),
+	}})
 	require.NoError(t, err)
 	require.NotEmpty(t, client.countedAll)
 	for _, req := range client.countedAll {

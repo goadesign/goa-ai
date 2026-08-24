@@ -61,3 +61,12 @@ func TestGenerateDeterministicToolCallIDBoundsNestedIDs(t *testing.T) {
 	assert.NotEqual(t, id, nextAttempt)
 	assert.NotEqual(t, id, nextIndex)
 }
+
+func TestNestedRunIDForToolCallKeepsExactRuntimeID(t *testing.T) {
+	callID := generateDeterministicToolCallID("parent", "turn", 1, "svc.agent", 0)
+	otherCallID := generateDeterministicToolCallID("parent", "turn", 1, "svc.agent", 1)
+
+	nested := NestedRunIDForToolCall("parent", "svc.agent", callID)
+	assert.Equal(t, "parent/agent/svc.agent/"+callID, nested)
+	assert.NotEqual(t, nested, NestedRunIDForToolCall("parent", "svc.agent", otherCallID))
+}

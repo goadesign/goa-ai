@@ -16,7 +16,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
-	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -163,12 +162,12 @@ func TestValidateContinuationRejectsNoncurrentSuspensionVersion(t *testing.T) {
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
-		checkpoint.Version = "goa-ai.run-suspension.v1"
+		checkpoint.Version = "goa-ai.run-suspension.v2"
 	})
-	suspension.Version = "goa-ai.run-suspension.v1"
+	suspension.Version = "goa-ai.run-suspension.v2"
 
 	require.EqualError(t, runtime.ValidateContinuation(suspension),
-		`unsupported run suspension version "goa-ai.run-suspension.v1"`)
+		`unsupported run suspension version "goa-ai.run-suspension.v2"`)
 }
 
 func TestValidateContinuationChecksSavedCompletionPlan(t *testing.T) {
@@ -271,6 +270,56 @@ func TestValidateContinuationRejectsUnknownSavedStepKind(t *testing.T) {
 	require.ErrorContains(t, runtime.ValidateContinuation(suspension), "unknown step kind")
 }
 
+func TestDecodeWorkflowCheckpointRejectsUnknownAndTrailingJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		rewrite func(rawjson.Message) rawjson.Message
+		want    string
+	}{
+		{
+			name: "unknown field",
+			rewrite: func(checkpoint rawjson.Message) rawjson.Message {
+				return append(append(rawjson.Message(nil), checkpoint[:len(checkpoint)-1]...), []byte(`,"unknown":true}`)...)
+			},
+			want: "unknown field",
+		},
+		{
+			name: "trailing data",
+			rewrite: func(checkpoint rawjson.Message) rawjson.Message {
+				return append(append(rawjson.Message(nil), checkpoint...), []byte(` true`)...)
+			},
+			want: "trailing data",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			suspension := suspensionContractFixture(t, "svc.lookup")
+			suspension.Checkpoint = test.rewrite(suspension.Checkpoint)
+			digest := sha256.Sum256(suspension.Checkpoint)
+			suspension.ID = hex.EncodeToString(digest[:16])
+
+			_, err := decodeWorkflowCheckpointState(suspension)
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestDecodeWorkflowCheckpointPreservesMetadataIntegers(t *testing.T) {
+	suspension := suspensionContractFixtureWithContext(
+		t,
+		"svc.lookup",
+		"svc.agent",
+		"run-1",
+		nil,
+		map[string]any{"sequence": json.Number("9007199254740993")},
+	)
+
+	checkpoint, err := decodeWorkflowCheckpointState(suspension)
+
+	require.NoError(t, err)
+	require.Equal(t, json.Number("9007199254740993"), checkpoint.Context.Metadata["sequence"])
+}
+
 func TestValidateContinuationRejectsNilSavedToolValue(t *testing.T) {
 	runtime := New()
 	spec := newAnyJSONSpec("svc.lookup", "svc")
@@ -343,13 +392,14 @@ func suspensionContractFixtureWithContext(t *testing.T, tool tools.Ident, agentI
 	}}
 	result := &PlanResult{ToolCalls: calls}
 	checkpoint := &workflowCheckpoint{
-		Version:   api.RunSuspensionVersion,
-		AgentID:   agentID,
-		SessionID: sessionID,
-		Labels:    cloneLabels(labels),
-		Metadata:  cloneMetadata(metadata),
-		BaseContext: run.Context{
-			RunID: runID, SessionID: sessionID, TurnID: "turn-1",
+		Version:        api.RunSuspensionVersion,
+		AgentID:        agentID,
+		SessionID:      sessionID,
+		PreviousRunID:  runID,
+		PreviousTurnID: "turn-1",
+		Context: checkpointRunContext{
+			Labels:   cloneLabels(labels),
+			Metadata: cloneMetadata(metadata),
 		},
 		State:   checkpointRunState{NextAttempt: 2},
 		Batch:   checkpointStepBatch{Result: result, Calls: calls, Kind: stepKindTools},

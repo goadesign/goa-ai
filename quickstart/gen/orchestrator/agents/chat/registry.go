@@ -67,9 +67,9 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 				BackoffCoefficient: 2,
 			},
 		},
-		Specs:              specs.Specs,
+		Specs:              specs.Specs(),
 		ToolMetadataLookup: specs.MetadataByName,
-		RequiredLabels:     specs.RequiredLabels,
+		RequiredLabels:     specs.RequiredLabels(),
 		Policy: agentsruntime.RunPolicy{
 			MaxToolCalls:                  2,
 			MaxConsecutiveFailedToolCalls: 1,
@@ -125,7 +125,7 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
 		exec := cfg.executors[toolsetID]
 		reg := agentsruntime.ToolsetRegistration{
 			Name:               toolsetID,
-			Specs:              helpers.Specs,
+			Specs:              helpers.Specs(),
 			ToolMetadataLookup: helpers.MetadataByName,
 			ResultMaterializer: cfg.resultMaterializers[toolsetID],
 			Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {

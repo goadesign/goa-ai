@@ -65,7 +65,11 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- range .Tools }}
 {{- if .IsMethodBacked }}
 	case {{ .ConstName }}:
-		args, err := {{ .ConstName }}PayloadCodec.FromJSON(msg.Payload)
+{{- if or .HasMethodPayload .Injected }}
+		args, err := {{ .ConstName }}PayloadCodec().FromJSON(msg.Payload)
+{{- else }}
+		_, err := {{ .ConstName }}PayloadCodec().FromJSON(msg.Payload)
+{{- end }}
 		if err != nil {
 			if issues := toolregistry.ValidationIssues(err); len(issues) > 0 {
 				return toolregistry.NewToolResultInvalidArgumentsMessage(msg.RegistrationToken, msg.ToolUseID, err.Error(), issues), nil
@@ -77,14 +81,20 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
 {{- end }}
+{{- if .HasMethodPayload }}
 		methodIn := Init{{ .ConstName }}MethodPayload(args)
-		methodOut, err := p.svc.{{ .MethodGoName }}(ctx, methodIn)
+{{- end }}
+{{- if .HasMethodResult }}
+		methodOut, err := p.svc.{{ .MethodGoName }}(ctx{{ if .HasMethodPayload }}, methodIn{{ end }})
+{{- else }}
+		err = p.svc.{{ .MethodGoName }}(ctx{{ if .HasMethodPayload }}, methodIn{{ end }})
+{{- end }}
 		if err != nil {
 			return toolregistry.NewToolResultServiceErrorMessage(msg.RegistrationToken, msg.ToolUseID, msg.Tool, toolErrorCode(err), err), nil
 		}
 {{- if .HasResult }}
 		result := Init{{ .ConstName }}ToolResult(methodOut)
-		resultJSON, err := {{ .ConstName }}ResultCodec.ToJSON(result)
+		resultJSON, err := {{ .ConstName }}ResultCodec().ToJSON(result)
 		if err != nil {
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
 		}

@@ -436,7 +436,7 @@ func TestTracedClientCompleteRecordsGenAIMessagesWhenEnabled(t *testing.T) {
 		}},
 		Tools: []*model.ToolDefinition{{
 			Name:  "atlas.read",
-			Input: model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+			Input: mustRuntimeToolInput(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
 	require.NoError(t, err)

@@ -65,7 +65,7 @@ func TestCompletionToolFailureCanBeCorrected(t *testing.T) {
 		func(_ context.Context, _ *planner.PlanResumeInput) (*planner.PlanResult, error) {
 			resumes++
 			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-				Name: completion.Name, Payload: rawjson.Message(`{"title":"corrected"}`), ToolCallID: "persist-corrected",
+				Name: completion.Name, Payload: rawjson.Message(`{"title":"corrected"}`),
 			}}}, nil
 		},
 	)

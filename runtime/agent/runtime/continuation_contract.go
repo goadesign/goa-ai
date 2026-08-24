@@ -6,12 +6,14 @@ package runtime
 // planner-step, policy, timing, and registered-tool invariants.
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"slices"
 
@@ -178,8 +180,14 @@ func decodeWorkflowCheckpointState(suspension *api.RunSuspension) (*workflowChec
 		return nil, fmt.Errorf("unsupported run suspension version %q", suspension.Version)
 	}
 	var checkpoint workflowCheckpoint
-	if err := json.Unmarshal(suspension.Checkpoint, &checkpoint); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(suspension.Checkpoint))
+	decoder.UseNumber()
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&checkpoint); err != nil {
 		return nil, fmt.Errorf("decode run suspension checkpoint: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, errors.New("run suspension checkpoint has trailing data")
 	}
 	if err := validateWorkflowCheckpoint(&checkpoint); err != nil {
 		return nil, err
@@ -211,11 +219,8 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 	if checkpoint.AgentID == "" || checkpoint.SessionID == "" {
 		return errors.New("run suspension checkpoint requires agent and session ids")
 	}
-	if checkpoint.BaseContext.RunID == "" {
+	if checkpoint.PreviousRunID == "" {
 		return errors.New("run suspension checkpoint requires predecessor run id")
-	}
-	if checkpoint.BaseContext.SessionID != checkpoint.SessionID {
-		return errors.New("run suspension checkpoint session does not match saved run context")
 	}
 	if checkpoint.Batch.Result == nil {
 		return errors.New("run suspension checkpoint requires a planner result")
@@ -341,14 +346,21 @@ func validateWorkflowOutput(out *RunOutput, expectedAgentID agent.Ident, expecte
 	if out.RunID != expectedRunID {
 		return fmt.Errorf("workflow output run mismatch: got=%q want=%q", out.RunID, expectedRunID)
 	}
+	terminalVariants := 0
 	if out.Suspension != nil {
-		if out.Final != nil || out.FinalToolResult != nil {
-			return errors.New("suspended workflow output cannot include a completed result")
-		}
-		return validatePublicRunSuspension(out.Suspension)
+		terminalVariants++
 	}
-	if out.Final != nil && out.FinalToolResult != nil {
-		return errors.New("completed workflow output cannot include both final response and final tool result")
+	if out.Final != nil {
+		terminalVariants++
+	}
+	if out.FinalToolResult != nil {
+		terminalVariants++
+	}
+	if terminalVariants != 1 {
+		return fmt.Errorf("workflow output must contain exactly one terminal result, got %d", terminalVariants)
+	}
+	if out.Suspension != nil {
+		return validatePublicRunSuspension(out.Suspension)
 	}
 	return nil
 }

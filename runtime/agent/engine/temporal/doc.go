@@ -22,8 +22,7 @@
 //	        Namespace: "default",
 //	    },
 //	    WorkerOptions: temporal.WorkerOptions{
-//	        TaskQueue:              "orchestrator.chat",
-//	        MaxConcurrentActivities: 10,
+//	        TaskQueue: "orchestrator.chat",
 //	    },
 //	})
 //	if err != nil {
@@ -38,8 +37,9 @@
 //	}
 //	defer eng.Close()
 //
-// NewWorker and NewClient install NewAgentDataConverter when ClientOptions does
-// not specify one. A preconfigured Client owns its data converter.
+// NewWorker and NewClient always install NewAgentDataConverter. This keeps
+// exact-number decoding, unknown-field rejection, unsafe-value rejection, and
+// payload limits identical in every worker and client process.
 //
 // Client-only processes use NewClient and do not register local workflows or
 // activities:

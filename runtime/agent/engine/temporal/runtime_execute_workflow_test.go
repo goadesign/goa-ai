@@ -305,8 +305,9 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 		TurnID:    "turn-1",
 	})
 
-	require.Error(t, env.GetWorkflowError())
-	require.True(t, temporal.IsCanceledError(env.GetWorkflowError()))
+	workflowErr := env.GetWorkflowError()
+	require.Error(t, workflowErr)
+	require.Truef(t, temporal.IsCanceledError(workflowErr), "unexpected workflow error: %T: %v", workflowErr, workflowErr)
 	var completed *hooks.RunCompletedEvent
 	for _, event := range recorder.Snapshot() {
 		if event, ok := event.(*hooks.RunCompletedEvent); ok {
@@ -325,9 +326,8 @@ type cancelingServicePlanner struct {
 
 func (p *cancelingServicePlanner) PlanStart(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
 	return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		ToolCallID: "cancel-call-1",
-		Name:       p.toolName,
-		Payload:    rawjson.Message(`{}`),
+		Name:    p.toolName,
+		Payload: rawjson.Message(`{}`),
 	}}}, nil
 }
 

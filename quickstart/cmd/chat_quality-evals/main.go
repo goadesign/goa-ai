@@ -126,7 +126,7 @@ func scenarioInputs() genevalchatquality.Inputs {
 // GreetingReply executes the greeting_reply scenario: it runs the chat agent
 // while collecting the run's stream events as evidence, then grades the
 // trajectory with typed expectations. evidence.ExpectCall binds the
-// generated descriptor genhelpers.AnswerTool, so the predicates below are
+// generated descriptor genhelpers.AnswerTool(), so the predicates below are
 // compile-checked against the tool's actual payload and result types. Hooks
 // returning eval.Claims (judged by an eval.Judge) belong here too once a
 // real model client is wired.
@@ -158,7 +158,7 @@ func (h *hooks) GreetingReply(ctx context.Context, input *genevalchatquality.Ask
 	}
 	expect := evidence.Expect{
 		Tools: []evidence.Tool{
-			evidence.ExpectCall(genhelpers.AnswerTool,
+			evidence.ExpectCall(genhelpers.AnswerTool(),
 				func(p *genhelpers.AnswerPayload) error {
 					if p.Question != input.Question {
 						return fmt.Errorf("question: got %q, want %q", p.Question, input.Question)

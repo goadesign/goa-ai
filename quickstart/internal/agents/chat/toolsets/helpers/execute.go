@@ -1,8 +1,6 @@
-// Package helpers executes the orchestrator.helpers toolset. This file is
-// application-owned: it decodes tool payloads with the generated typed
-// descriptor, performs the work, and returns typed results. Replace the
-// deterministic answer with your real implementation (service call,
-// retrieval, computation).
+// Package helpers contains the helpers executor for ChatAgent.
+// Goa creates this file only when it does not already exist. The application
+// owns all later edits.
 package helpers
 
 import (
@@ -10,65 +8,70 @@ import (
 	"errors"
 	"fmt"
 
-	genhelpers "example.com/quickstart/gen/orchestrator/toolsets/helpers"
+	helpersspecs "example.com/quickstart/gen/orchestrator/toolsets/helpers"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// Execute runs one helpers tool call. Payload decoding is a boundary: in a
-// production system the arguments are model-authored, so decode failures
-// return a classified invalid-call failure with structured correction
-// guidance instead of an error.
-func Execute(_ context.Context, _ *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
+// Execute checks one tool call against its generated argument contract. The
+// initial implementation returns the result example from the design;
+// applications replace that result with their service call.
+func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
+	if call == nil {
+		return nil, errors.New("tool request is nil")
+	}
+	if meta == nil {
+		return nil, errors.New("tool call meta is nil")
+	}
 	switch call.Name {
-	case genhelpers.Answer:
-		args, err := genhelpers.AnswerTool.Payload.FromJSON(call.Payload)
+	case "helpers.answer":
+		// Decode the JSON arguments with the generated helpers.answer contract.
+		_, err := helpersspecs.AnswerTool().Payload.FromJSON(call.Payload)
 		if err != nil {
-			return runtime.Executed(invalidCall(call, err)), nil
+			var issuer interface {
+				Issues() []*tools.FieldIssue
+			}
+			var issues []*tools.FieldIssue
+			if errors.As(err, &issuer) {
+				issues = issuer.Issues()
+			}
+			return runtime.Executed(&planner.ToolResult{
+				Name: call.Name,
+				Failure: &planner.ToolFailure{
+					Kind:  planner.FailureInvalidCall,
+					Error: planner.ToolErrorFromError(err),
+					Recovery: planner.RecoveryDirective{
+						Action:     planner.RecoveryCorrectCall,
+						Issues:     issues,
+						PriorInput: append(rawjson.Message(nil), call.Payload...),
+						ExampleJSON: append(
+							rawjson.Message(nil),
+							helpersspecs.SpecAnswer().Payload.ExampleJSON...,
+						),
+					},
+				},
+			}), nil
+		}
+		result, err := helpersspecs.AnswerTool().Result.FromJSON(
+			rawjson.Message("{\"text\":\"Tokyo is the capital of Japan.\"}"),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("decode helpers.answer example result: %w", err)
 		}
 		return runtime.Executed(&planner.ToolResult{
 			Name:   call.Name,
-			Result: &genhelpers.AnswerResult{Text: answerFor(args.Question)},
+			Result: result,
 		}), nil
-	}
-	return runtime.Executed(&planner.ToolResult{
-		Name: call.Name,
-		Failure: &planner.ToolFailure{
-			Kind:     planner.FailureInvalidCall,
-			Error:    planner.NewToolError(fmt.Sprintf("unknown tool %s", call.Name)),
-			Recovery: planner.RecoveryDirective{Action: planner.RecoveryReplan},
-		},
-	}), nil
-}
-
-// answerFor returns a deterministic demo answer so the quickstart runs
-// without a model or external service.
-func answerFor(question string) string {
-	return fmt.Sprintf("Deterministic demo answer to: %s", question)
-}
-
-// invalidCall classifies a payload decode failure as a correctable
-// invalid-call tool failure, carrying the generated codec's structured field
-// issues plus the canonical example so the planner can repair the call.
-func invalidCall(call *runtime.ToolCall, err error) *planner.ToolResult {
-	var issuer interface{ Issues() []*tools.FieldIssue }
-	var issues []*tools.FieldIssue
-	if errors.As(err, &issuer) {
-		issues = issuer.Issues()
-	}
-	return &planner.ToolResult{
-		Name: call.Name,
-		Failure: &planner.ToolFailure{
-			Kind:  planner.FailureInvalidCall,
-			Error: planner.ToolErrorFromError(err),
-			Recovery: planner.RecoveryDirective{
-				Action:      planner.RecoveryCorrectCall,
-				Issues:      issues,
-				PriorInput:  append(rawjson.Message(nil), call.Payload...),
-				ExampleJSON: append(rawjson.Message(nil), genhelpers.SpecAnswer.Payload.ExampleJSON...),
+	default:
+		return runtime.Executed(&planner.ToolResult{
+			Name: call.Name,
+			Failure: &planner.ToolFailure{
+				Kind:     planner.FailureInvalidCall,
+				Error:    planner.NewToolError("unknown tool"),
+				Recovery: planner.RecoveryDirective{Action: planner.RecoveryReplan},
 			},
-		},
+		}), nil
 	}
 }

@@ -214,6 +214,15 @@ func TestToolInputContractRequiresSchemaWithoutRootExample(t *testing.T) {
 	require.ErrorContains(t, err, "example JSON requires schema without root example")
 }
 
+func TestToolInputContractRejectsDivergentAlternateSchema(t *testing.T) {
+	_, err := ToolInputFromContract("reports.complete", ToolInputContract{
+		Schema:                   rawjson.Message(`{"type":"object","properties":{"summary":{"type":"string"}},"example":{"summary":"Done"}}`),
+		SchemaWithoutRootExample: rawjson.Message(`{"type":"object","properties":{"summary":{"type":"integer"}}}`),
+		ExampleJSON:              rawjson.Message(`{"summary":"Done"}`),
+	})
+	require.ErrorContains(t, err, "alternate schema changes fields other than root examples")
+}
+
 func TestThinkingPartRoundTripPreservesSignature(t *testing.T) {
 	orig := ThinkingPart{
 		Text:      "let me think",

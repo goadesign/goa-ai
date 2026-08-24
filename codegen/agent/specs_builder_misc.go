@@ -67,7 +67,14 @@ func buildFieldDescriptions(att *goaexpr.AttributeExpr) map[string]string {
 		case *goaexpr.Array:
 			walk(prefix, dt.ElemType)
 		case *goaexpr.Map:
-			walk(prefix, dt.ElemType)
+			elementPath := generatedMapElementPath(prefix)
+			switch {
+			case dt.ElemType.Description != "":
+				out[elementPath] = dt.ElemType.Description
+			case out[prefix] != "":
+				out[elementPath] = out[prefix]
+			}
+			walk(elementPath, dt.ElemType)
 		case *goaexpr.Union:
 			// Union branch descriptions depend on the discriminator, so this generic
 			// field map records only the union field itself.
@@ -128,7 +135,7 @@ func buildFieldJSONTypes(att *goaexpr.AttributeExpr) map[string]string {
 		case *goaexpr.Array:
 			walk(prefix, dt.ElemType)
 		case *goaexpr.Map:
-			walk(prefix, dt.ElemType)
+			walk(generatedMapElementPath(prefix), dt.ElemType)
 		case *goaexpr.Union:
 			// Union branch payload types are discriminator-specific. The unqualified
 			// {type,value} envelope path is intentionally not used as contract
@@ -143,9 +150,8 @@ func buildFieldJSONTypes(att *goaexpr.AttributeExpr) map[string]string {
 }
 
 // buildFieldAllowedObjectKeys collects accepted JSON object keys at each closed
-// object path. It follows arrays into their element type so object arrays use the
-// same path as the array field, and stops at maps because map keys are open by
-// contract.
+// object path. It follows arrays into their element type and uses "*" for each
+// open map key so closed objects stored beneath maps still reject unknown fields.
 func buildFieldAllowedObjectKeys(att *goaexpr.AttributeExpr) map[string][]string {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return nil
@@ -183,7 +189,7 @@ func buildFieldAllowedObjectKeys(att *goaexpr.AttributeExpr) map[string][]string
 		case *goaexpr.Array:
 			walk(prefix, dt.ElemType)
 		case *goaexpr.Map:
-			return
+			walk(generatedMapElementPath(prefix), dt.ElemType)
 		case *goaexpr.Union:
 			return
 		}
@@ -195,7 +201,16 @@ func buildFieldAllowedObjectKeys(att *goaexpr.AttributeExpr) map[string][]string
 	return out
 }
 
-// generatedJSONType maps Goa types to the JSON type emitted by the generated schema.
+// generatedMapElementPath names the schema beneath any caller-chosen map key.
+func generatedMapElementPath(prefix string) string {
+	if prefix == "" {
+		return "*"
+	}
+	return prefix + ".*"
+}
+
+// generatedJSONType maps Goa types to exact JSON categories. It returns an
+// empty string when the design accepts more than one category.
 func generatedJSONType(dt goaexpr.DataType) string {
 	switch actual := dt.(type) {
 	case goaexpr.UserType:
@@ -221,7 +236,7 @@ func generatedJSONType(dt goaexpr.DataType) string {
 			goaexpr.Float64Kind:
 			return "number"
 		case goaexpr.AnyKind:
-			return "JSON value"
+			return ""
 		case goaexpr.ArrayKind,
 			goaexpr.ObjectKind,
 			goaexpr.MapKind,

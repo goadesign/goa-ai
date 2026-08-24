@@ -15,6 +15,14 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+// mustCompletionToolInput compiles a static test schema.
+func mustCompletionToolInput(t *testing.T, schema rawjson.Message) model.ToolInput {
+	t.Helper()
+	input, err := model.AdvertisedToolInputFromSchema(schema)
+	require.NoError(t, err)
+	return input
+}
+
 type testCompletionResult struct {
 	AssistantText string `json:"assistant_text"`
 }
@@ -449,7 +457,7 @@ func TestCompleteRejectsToolDefinitions(t *testing.T) {
 			Tools: []*model.ToolDefinition{{
 				Name:        "lookup",
 				Description: "Search",
-				Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+				Input:       mustCompletionToolInput(t, rawjson.Message(`{"type":"object"}`)),
 			}},
 		},
 		testCompletionSpec(),
@@ -548,7 +556,7 @@ func TestStreamRejectsInvariantViolations(t *testing.T) {
 				Tools: []*model.ToolDefinition{{
 					Name:        "lookup",
 					Description: "Search",
-					Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+					Input:       mustCompletionToolInput(t, rawjson.Message(`{"type":"object"}`)),
 				}},
 			},
 			want: "does not allow tool definitions",

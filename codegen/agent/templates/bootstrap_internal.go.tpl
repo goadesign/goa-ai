@@ -1,7 +1,3 @@
-// Package bootstrap wires the goa-ai runtime and registers generated agents.
-// This scaffold is application-owned: edit and maintain it; it is not re-generated
-// by `goa gen`. Use it from your cmd main or workers to initialize agents.
-
 // Define flags for MCP endpoints (if any). Pass values via your cmd main.
 {{- $hasMCP := false }}
 {{- range .Agents }}{{- if .Agent.MCPToolsets }}{{ $hasMCP = true }}{{ end }}{{- end }}
@@ -45,39 +41,12 @@ func New(ctx context.Context) (*agentsruntime.Runtime, func(), error) {
             return nil, nil, err
         }
         {{- if .ExampleToolsets }}
-        // Register deterministic executors so the generated example runs one
-        // complete typed tool round trip before application code is added.
+        // Register the application-owned example executors.
         if err := {{ .Alias }}.RegisterUsedToolsets(ctx, rt,
             {{- range .ExampleToolsets }}
-            {{- $example := . }}
-            {{ $a.Alias }}.With{{ goify .Toolset.PathName true }}Executor(agentsruntime.ToolCallExecutorFunc(
-                func(ctx context.Context, _ *agentsruntime.ToolCallMeta, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
-                    if call == nil {
-                        return nil, fmt.Errorf("tool request is nil")
-                    }
-                    switch call.Name {
-                    {{- range .Tools }}
-                    case {{ $example.Alias }}.{{ .ConstName }}:
-                        if _, err := {{ $example.Alias }}.Spec{{ .ConstName }}.Payload.Codec.FromJSON(call.Payload); err != nil {
-                            return nil, fmt.Errorf("decode {{ .Name }} example payload: %w", err)
-                        }
-                        {{- if .Result }}
-                        result, err := {{ $example.Alias }}.{{ .Result.ExportedCodec }}.FromJSON(
-                            []byte({{ printf "%q" .Result.ScaffoldExampleJSON }}),
-                        )
-                        if err != nil {
-                            return nil, fmt.Errorf("decode {{ .Name }} example result: %w", err)
-                        }
-                        return agentsruntime.Executed(&planner.ToolResult{Name: call.Name, Result: result}), nil
-                        {{- else }}
-                        return agentsruntime.Executed(&planner.ToolResult{Name: call.Name}), nil
-                        {{- end }}
-                    {{- end }}
-                    default:
-                        return nil, fmt.Errorf("unknown example tool %q", call.Name)
-                    }
-                },
-            )),
+            {{ $a.Alias }}.With{{ goify .Toolset.PathName true }}Executor(
+                agentsruntime.ToolCallExecutorFunc({{ .ExecutorAlias }}.Execute),
+            ),
             {{- end }}
         ); err != nil {
             return nil, nil, err

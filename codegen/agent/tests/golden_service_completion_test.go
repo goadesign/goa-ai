@@ -27,4 +27,10 @@ func TestGolden_ServiceCompletion(t *testing.T) {
 	require.Contains(t, specs, "func CompleteDraftFromTranscript(")
 	require.Contains(t, specs, "func StreamCompleteDraftFromTranscript(")
 	require.NotContains(t, specs, "SpecDraftFromTranscript")
+	require.Contains(t, codecs, "func newDraftFromTranscriptResultCodec(")
+	require.Contains(t, codecs, "func marshalDraftFromTranscriptResult(")
+	require.Contains(t, codecs, "func unmarshalDraftFromTranscriptResult(")
+	require.NotContains(t, codecs, "func DraftFromTranscriptResultCodec(")
+	require.NotContains(t, codecs, "func MarshalDraftFromTranscriptResult(")
+	require.NotContains(t, codecs, "func UnmarshalDraftFromTranscriptResult(")
 }

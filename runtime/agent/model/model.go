@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -516,11 +517,9 @@ type (
 	// Local estimators should implement the same contract with Exact=false so
 	// callers can distinguish approximation from provider-authoritative counts.
 	//
-	// Counts measure the durable transcript: implementations exclude replayed
-	// thinking blocks from the counted surface. Thinking signatures only verify
-	// on the model that issued them, while callers such as history-retention
-	// policies legitimately count with a different model class; Anthropic
-	// billing likewise strips prior-turn thinking from input.
+	// Counts measure the exact request that inference would receive. This includes
+	// prior reasoning blocks, tools, structured output, and thinking settings when
+	// the provider's counting endpoint accepts those fields.
 	TokenCounter interface {
 		CountTokens(ctx context.Context, req *Request) (TokenCount, error)
 	}
@@ -697,13 +696,18 @@ type (
 	// deliberately callable for provider adapters, middleware, and gateways.
 	// Its responses and streams have not crossed the canonical output validation
 	// boundary. APIs that require canonical model output accept an opaque Client
-	// returned by NewClient instead.
+	// returned by NewClient instead. Every operation must stop promptly after
+	// ctx is canceled. A returned Streamer must also unblock Recv and permit
+	// Close after that cancellation so activity shutdown cannot retain provider
+	// work.
 	Provider interface {
-		// Complete performs a raw non-streaming provider invocation.
+		// Complete performs a raw non-streaming provider invocation and returns
+		// promptly when ctx is canceled.
 		Complete(ctx context.Context, req *Request) (*Response, error)
 
 		// Stream performs a raw streaming provider invocation when supported.
-		// Implementations return a non-nil stream exactly when err is nil.
+		// Implementations return a non-nil stream exactly when err is nil and
+		// make its Recv return promptly when ctx is canceled.
 		Stream(ctx context.Context, req *Request) (Streamer, error)
 	}
 
@@ -741,14 +745,15 @@ type (
 	}
 
 	// StreamObservation contains safe copies and bounded evidence from one
-	// validated stream receive operation. RejectedUsage contains only valid
-	// numeric counts from a usage chunk whose identity fields were rejected.
+	// validated stream receive operation.
 	StreamObservation struct {
 		// Chunk is a validated copy returned to the stream caller.
 		Chunk Chunk
-		// RejectedUsage contains bounded counts that remain valid even though
-		// the usage chunk itself was rejected.
-		RejectedUsage *TokenUsage
+		// RejectedUsageDelta contains valid counts from one rejected usage chunk.
+		RejectedUsageDelta *TokenUsage
+		// RejectedUsageTotal contains the invocation total copied from a rejected
+		// complete response.
+		RejectedUsageTotal *TokenUsage
 		// Response is a safe copy of the complete response at EOF or rejection.
 		Response *Response
 		// ResponseEvidence identifies the raw complete response before copying.
@@ -778,22 +783,6 @@ type (
 	}
 )
 
-// CountingRequest projects req to the input a TokenCounter counts: replayed
-// thinking parts are removed (messages containing only thinking are omitted)
-// and the thinking configuration is cleared, because thinking never counts
-// toward durable-transcript input tokens. Every TokenCounter implementation
-// counts this projection so exact counts agree across providers. The returned
-// request is a shallow clone; req is never mutated.
-func CountingRequest(req *Request) *Request {
-	if req == nil {
-		return nil
-	}
-	counted := *req
-	counted.Messages = messagesWithoutThinking(req.Messages)
-	counted.Thinking = nil
-	return &counted
-}
-
 // CountTokens estimates req's input-token usage with Exact=false. It is intended
 // for explicit fallback paths such as rate limiting or non-native providers, not
 // for provider-specific billing or hard context-window guarantees.
@@ -801,11 +790,10 @@ func (e TokenEstimator) CountTokens(ctx context.Context, req *Request) (TokenCou
 	if err := ctx.Err(); err != nil {
 		return TokenCount{}, err
 	}
-	counted := CountingRequest(req)
 	return TokenCount{
-		Model:       reqModel(counted),
-		ModelClass:  reqModelClass(counted),
-		InputTokens: e.estimate(counted),
+		Model:       reqModel(req),
+		ModelClass:  reqModelClass(req),
+		InputTokens: e.estimate(req),
 		Exact:       false,
 	}, nil
 }
@@ -1090,13 +1078,23 @@ func ToolDefinitionFromSpec(spec tools.ToolSpec) *ToolDefinition {
 	}
 }
 
-// AdvertisedToolInputFromSchema builds the input shape shown to the provider
-// for a caller-authored tool. It does not validate returned payloads. The
-// planner that owns the tool must validate its selected payload before effects.
-// Generated tools should use ToolDefinitionFromSpec so their generated decoder
-// runs at the model boundary.
-func AdvertisedToolInputFromSchema(schema rawjson.Message) ToolInput {
-	return ToolInput{jsonSchema: validatedJSON("caller-authored tool schema", schema)}
+// AdvertisedToolInputFromSchema builds the model-facing contract for a
+// caller-authored tool. It compiles the schema immediately and validates every
+// returned payload before model output is exposed. Generated tools should use
+// ToolDefinitionFromSpec so their generated decoder remains the exact contract.
+func AdvertisedToolInputFromSchema(schema rawjson.Message) (ToolInput, error) {
+	validated, err := validateContractJSON("caller-authored", "input schema", schema)
+	if err != nil {
+		return ToolInput{}, err
+	}
+	validate, err := compileToolSchemaValidator(validated)
+	if err != nil {
+		return ToolInput{}, fmt.Errorf("model: caller-authored input schema: %w", err)
+	}
+	return ToolInput{
+		jsonSchema: validated,
+		validate:   validate,
+	}, nil
 }
 
 // advertisedToolInputFromSpec projects generated documents for
@@ -1128,15 +1126,52 @@ func ToolInputFromContract(toolName string, contract ToolInputContract) (ToolInp
 	if err != nil {
 		return ToolInput{}, err
 	}
+	if len(schemaWithoutRootExample) > 0 {
+		if _, err := compileToolSchemaValidator(schemaWithoutRootExample); err != nil {
+			return ToolInput{}, fmt.Errorf("model: tool %q schema without root example: %w", toolName, err)
+		}
+		if err := validateSchemaWithoutRootExample(schema, schemaWithoutRootExample); err != nil {
+			return ToolInput{}, fmt.Errorf("model: tool %q schema without root example: %w", toolName, err)
+		}
+	}
 	exampleJSON, err := validateContractJSON(toolName, "example JSON", contract.ExampleJSON)
 	if err != nil {
 		return ToolInput{}, err
+	}
+	validate, err := compileToolSchemaValidator(schema)
+	if err != nil {
+		return ToolInput{}, fmt.Errorf("model: tool %q input schema: %w", toolName, err)
 	}
 	return ToolInput{
 		jsonSchema:               schema,
 		schemaWithoutRootExample: schemaWithoutRootExample,
 		exampleJSON:              exampleJSON,
+		validate:                 validate,
 	}, nil
+}
+
+// validateSchemaWithoutRootExample proves that the alternate provider schema
+// differs only by removing root example annotations.
+func validateSchemaWithoutRootExample(schema, alternate rawjson.Message) error {
+	canonicalDocument, err := decodeSingleJSONDocument(schema)
+	if err != nil {
+		return err
+	}
+	alternateDocument, err := decodeSingleJSONDocument(alternate)
+	if err != nil {
+		return err
+	}
+	canonicalObject, canonicalOK := canonicalDocument.(map[string]any)
+	alternateObject, alternateOK := alternateDocument.(map[string]any)
+	if !canonicalOK || !alternateOK {
+		return errors.New("both schema projections must be objects")
+	}
+	delete(canonicalObject, "example")
+	delete(canonicalObject, "examples")
+	if !reflect.DeepEqual(canonicalObject, alternateObject) {
+		return errors.New("alternate schema changes fields other than root examples")
+	}
+	return nil
 }
 
 // Contract returns the provider-neutral transport projection of the tool input.
@@ -1147,33 +1182,6 @@ func (in ToolInput) Contract() ToolInputContract {
 		SchemaWithoutRootExample: cloneRawJSON(in.schemaWithoutRootExample),
 		ExampleJSON:              cloneRawJSON(in.exampleJSON),
 	}
-}
-
-// messagesWithoutThinking implements the CountingRequest transcript
-// projection: it returns a shallow copy of messages with ThinkingParts
-// removed and thinking-only messages dropped, never mutating the input.
-func messagesWithoutThinking(messages []*Message) []*Message {
-	out := make([]*Message, 0, len(messages))
-	for _, message := range messages {
-		parts := make([]Part, 0, len(message.Parts))
-		for _, part := range message.Parts {
-			if _, ok := part.(ThinkingPart); ok {
-				continue
-			}
-			parts = append(parts, part)
-		}
-		if len(parts) == 0 {
-			continue
-		}
-		if len(parts) == len(message.Parts) {
-			out = append(out, message)
-			continue
-		}
-		clone := *message
-		clone.Parts = parts
-		out = append(out, &clone)
-	}
-	return out
 }
 
 func reqModel(req *Request) string {
@@ -1328,16 +1336,6 @@ func validateContractJSON(toolName, label string, data rawjson.Message) (rawjson
 		return nil, fmt.Errorf("model: invalid %s for tool %q", label, toolName)
 	}
 	return cloneRawJSON(data), nil
-}
-
-func validatedJSON(label string, data rawjson.Message) rawjson.Message {
-	if len(bytes.TrimSpace(data)) == 0 {
-		return nil
-	}
-	if !json.Valid(data) {
-		panic(fmt.Errorf("model: invalid %s", label))
-	}
-	return cloneRawJSON(data)
 }
 
 func cloneRawJSON(data rawjson.Message) rawjson.Message {

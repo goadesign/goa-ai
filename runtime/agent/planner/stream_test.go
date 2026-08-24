@@ -11,6 +11,15 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+// mustPlannerToolInput compiles a static test schema.
+func mustPlannerToolInput(schema []byte) model.ToolInput {
+	input, err := model.AdvertisedToolInputFromSchema(schema)
+	if err != nil {
+		panic(err)
+	}
+	return input
+}
+
 type (
 	testStreamer struct {
 		chunks   []model.Chunk
@@ -38,7 +47,7 @@ func (s *testStreamer) Response() *model.Response {
 	return s.response
 }
 
-func TestConsumeStreamStampsUsageIdentityFromRequest(t *testing.T) {
+func TestConsumeStreamPreservesMissingProviderUsageModel(t *testing.T) {
 	streamer := &testStreamer{
 		chunks: []model.Chunk{
 			model.UsageChunk{
@@ -62,7 +71,7 @@ func TestConsumeStreamStampsUsageIdentityFromRequest(t *testing.T) {
 
 	require.NoError(t, err)
 	require.True(t, streamer.closed)
-	require.Equal(t, "gpt-5", summary.Usage.Model)
+	require.Empty(t, summary.Usage.Model)
 	require.Equal(t, model.ModelClassHighReasoning, summary.Usage.ModelClass)
 	require.Equal(t, 2, summary.Usage.InputTokens)
 	require.Equal(t, 3, summary.Usage.OutputTokens)
@@ -106,7 +115,7 @@ func TestConsumeStreamToolCallOmitsThoughtSignature(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, summary.ToolCalls, 1)
 	require.Equal(t, tools.Ident("svc.read.get_time_series"), summary.ToolCalls[0].Name)
-	require.Equal(t, "call-1", summary.ToolCalls[0].ToolCallID)
+	require.Equal(t, "call-1", summary.ToolCalls[0].ModelToolCallID)
 }
 
 func TestConsumeStreamRejectsRepeatedFinalizedToolCall(t *testing.T) {
@@ -197,7 +206,7 @@ func TestConsumeStreamUsesCanonicalResponseUsage(t *testing.T) {
 
 	require.NoError(t, err)
 	require.True(t, streamer.closed)
-	require.Equal(t, "gpt-5", summary.Usage.Model)
+	require.Empty(t, summary.Usage.Model)
 	require.Equal(t, model.ModelClassDefault, summary.Usage.ModelClass)
 	require.Equal(t, 1, summary.Usage.InputTokens)
 	require.Equal(t, 2, summary.Usage.OutputTokens)
@@ -249,7 +258,7 @@ func TestStreamSummaryWithToolCallsHasNoFinalResponse(t *testing.T) {
 func modelRequestWithTool(name string) *model.Request {
 	return &model.Request{Tools: []*model.ToolDefinition{{
 		Name:  name,
-		Input: model.AdvertisedToolInputFromSchema([]byte(`{"type":"object"}`)),
+		Input: mustPlannerToolInput([]byte(`{"type":"object"}`)),
 	}}}
 }
 

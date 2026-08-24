@@ -333,8 +333,7 @@ func main() {
 	rt := runtime.New() // in‑memory engine by default
 
 	if err := chat.RegisterChatAgent(context.Background(), rt, chat.ChatAgentConfig{
-		Planner:      &StubPlanner{},
-		HistoryModel: myHistoryModelClient, // counts tokens and writes summaries
+		Planner: &StubPlanner{},
 	}); err != nil {
 		panic(err)
 	}
@@ -362,6 +361,10 @@ func main() {
 	}
 }
 ```
+
+History compression is design-owned. Declare `History(...)` inside the agent's
+`RunPolicy`; regeneration then adds `HistoryModel` and
+`HistoryCompression` to that agent's generated configuration.
 
 **Want durability?** Just swap in a Temporal engine:
 
@@ -878,18 +881,18 @@ Messages are structured as typed parts:
 
 ```go
 type Request struct {
-    RunID       string
-    Model       string           // Provider-specific model ID
-    ModelClass  ModelClass       // Or family: "high-reasoning", "default", "small"
-    PromptRefs  []prompt.PromptRef // Rendered prompt provenance metadata
-    Messages    []*Message
-    Temperature float32
-    Tools       []*ToolDefinition
-    ToolChoice  *ToolChoice      // auto/none/any/tool
-    MaxTokens   int
-    Stream      bool
-    Thinking    *ThinkingOptions // Enable provider reasoning
-    Cache       *CacheOptions    // Prompt caching
+    Model            string
+    ModelClass       ModelClass
+    PromptRefs       []prompt.PromptRef
+    Messages         []*Message
+    Temperature      float32
+    Tools            []*ToolDefinition
+    ToolChoice       *ToolChoice
+    MaxTokens        int
+    Stream           bool
+    Thinking         *ThinkingOptions
+    StructuredOutput *StructuredOutput
+    Cache            *CacheOptions
 }
 ```
 
@@ -928,8 +931,9 @@ history, unified debugging.
 
 ### Advertising Tools to Planners
 
-Register generated tool specs with the runtime using `specs.AdvertisedSpecs()` from
-`gen/<svc>/agents/<agent>/specs`. Inside planners, use
+Register generated tool specs with the runtime using `specs.Specs()` from
+`gen/<svc>/agents/<agent>/specs`; use `specs.Spec(name)` when one generated
+contract is needed by name. Inside planners, use
 `input.Agent.AdvertisedToolDefinitions()` to get the runtime-filtered model-facing tool
 definitions. Tags stay in runtime policy metadata and are not exposed to model providers.
 
@@ -1065,8 +1069,8 @@ as child workflows, enabling linked streams and run links.
 - **`New<Agent>ToolsetRegistration(rt *runtime.Runtime)`** — creates registration with routing info
 - **`NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)`** — configure per‑tool
   text/templates
-- **Typed call builders** like `New<Tool>Call(toolCallID, args)`. The ID is
-  required and must be unique within the returned `planner.PlanResult`.
+- **Typed call builders** like `New<Tool>Call(args)`. The runtime assigns the
+  execution ID after the planner returns its `PlanResult`.
 
 ### Runtime Behavior
 

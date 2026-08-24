@@ -89,7 +89,10 @@ func TestValidateWorkflowOutputEnforcesIdentityAndTerminalShape(t *testing.T) {
 
 	mixed := valid()
 	mixed.Final = &model.Message{Role: model.ConversationRoleAssistant}
-	require.ErrorContains(t, validateWorkflowOutput(mixed, agent.Ident("child.agent"), "child-run-1"), "cannot include a completed result")
+	require.ErrorContains(t, validateWorkflowOutput(mixed, agent.Ident("child.agent"), "child-run-1"), "exactly one terminal result")
+
+	empty := &RunOutput{AgentID: "child.agent", RunID: "child-run-1"}
+	require.ErrorContains(t, validateWorkflowOutput(empty, agent.Ident("child.agent"), "child-run-1"), "exactly one terminal result")
 
 	invalidPending := valid()
 	invalidPending.Suspension.Pending[0].Await = nil

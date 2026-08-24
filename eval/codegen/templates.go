@@ -133,7 +133,7 @@ const contractTemplate = `// MustToolContract returns the generated production
 func MustToolContract(name tools.Ident) *tools.ToolSpec {
 {{- range .Specs }}
 	if spec, ok := {{ .Alias }}.Spec(name); ok {
-		return spec
+		return &spec
 	}
 {{- end }}
 	panic(fmt.Sprintf("tool %q is not statically reachable from {{ .AgentID }}", name))

@@ -4,8 +4,8 @@
 package bedrock
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -45,6 +45,9 @@ func isRateLimited(err error) bool {
 // wrapBedrockError preserves provider identity, operation, status, code, and
 // retry semantics while retaining the complete AWS error chain.
 func wrapBedrockError(operation string, err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
 	var (
 		status    int
 		code      string
@@ -77,51 +80,46 @@ func wrapBedrockError(operation string, err error) error {
 		return errors.Join(model.ErrRateLimited, pe)
 	}
 
-	kind := model.ProviderErrorKindUnknown
-	retryable := false
-	switch {
-	case status == http.StatusBadRequest:
-		kind = model.ProviderErrorKindInvalidRequest
-	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		kind = model.ProviderErrorKindAuth
-	case status == http.StatusTooManyRequests:
-		kind = model.ProviderErrorKindRateLimited
-		retryable = true
-	case status >= http.StatusInternalServerError && status <= http.StatusNetworkAuthenticationRequired:
-		kind = model.ProviderErrorKindUnavailable
-		retryable = true
+	kind, retryable, codeStatus := classifyBedrockErrorCode(code)
+	if status == 0 {
+		status = codeStatus
+	}
+	if kind == model.ProviderErrorKindUnknown {
+		switch {
+		case status == http.StatusBadRequest:
+			kind = model.ProviderErrorKindInvalidRequest
+		case status == http.StatusUnauthorized || status == http.StatusForbidden:
+			kind = model.ProviderErrorKindAuth
+		case status == http.StatusTooManyRequests:
+			kind = model.ProviderErrorKindRateLimited
+			retryable = true
+		case status >= http.StatusInternalServerError && status < 600:
+			kind = model.ProviderErrorKindUnavailable
+			retryable = true
+		}
 	}
 
 	return model.NewProviderError(bedrockProviderName, operation, status, kind, code, msg, requestID, retryable, err)
 }
 
-// promptTooLongTokenCount decodes the exact input count Bedrock reports when
-// CountTokens measures a valid request beyond the model context window. AWS
-// exposes this outcome only as a ValidationException message rather than a
-// typed count result. Match the complete provider message and its invariant
-// (input > maximum) so every other validation failure remains an error.
-func promptTooLongTokenCount(err error) (int, bool) {
-	var apiErr smithy.APIError
-	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ValidationException" {
-		return 0, false
+// classifyBedrockErrorCode handles event-stream exceptions that arrive after
+// the HTTP request succeeded and therefore carry no response status. The
+// returned status is the value documented for that Bedrock exception.
+func classifyBedrockErrorCode(code string) (model.ProviderErrorKind, bool, int) {
+	switch code {
+	case "ValidationException":
+		return model.ProviderErrorKindInvalidRequest, false, http.StatusBadRequest
+	case "AccessDeniedException":
+		return model.ProviderErrorKindAuth, false, http.StatusForbidden
+	case "InternalServerException":
+		return model.ProviderErrorKindUnavailable, true, http.StatusInternalServerError
+	case "ServiceUnavailableException":
+		return model.ProviderErrorKindUnavailable, true, http.StatusServiceUnavailable
+	case "ModelTimeoutException":
+		return model.ProviderErrorKindUnavailable, true, http.StatusRequestTimeout
+	case "ModelStreamErrorException":
+		return model.ProviderErrorKindUnavailable, true, 424
+	default:
+		return model.ProviderErrorKindUnknown, false, 0
 	}
-	message := apiErr.ErrorMessage()
-	var inputTokens, maximumTokens int
-	n, scanErr := fmt.Sscanf(
-		message,
-		"prompt is too long: %d tokens > %d maximum",
-		&inputTokens,
-		&maximumTokens,
-	)
-	if scanErr != nil || n != 2 || inputTokens <= maximumTokens || maximumTokens <= 0 {
-		return 0, false
-	}
-	if message != fmt.Sprintf(
-		"prompt is too long: %d tokens > %d maximum",
-		inputTokens,
-		maximumTokens,
-	) {
-		return 0, false
-	}
-	return inputTokens, true
 }

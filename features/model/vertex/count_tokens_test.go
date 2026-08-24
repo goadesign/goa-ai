@@ -37,14 +37,17 @@ func TestCountTokensRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
 
 func TestCountTokens(t *testing.T) {
 	stub := &stubGenerativeClient{countResp: &genai.CountTokensResponse{TotalTokens: 42}}
-	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-pro"})
+	cl, err := New(stub, Options{
+		DefaultModel: "gemini-2.5-pro",
+		SmallModel:   "gemini-2.5-flash",
+	})
 	require.NoError(t, err)
 	count, err := cl.CountTokens(context.Background(), &model.Request{
 		ModelClass: model.ModelClassSmall,
 		Messages: []*model.Message{
 			{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}},
 			{Role: model.ConversationRoleAssistant, Parts: []model.Part{
-				model.ThinkingPart{Text: "secret reasoning", Final: true},
+				model.ThinkingPart{Text: "secret reasoning", Signature: "c2ln", Final: true},
 				model.TextPart{Text: "answer"},
 			}},
 		},
@@ -53,12 +56,15 @@ func TestCountTokens(t *testing.T) {
 	assert.Equal(t, 42, count.InputTokens)
 	assert.True(t, count.Exact)
 	assert.Equal(t, model.ModelClassSmall, count.ModelClass)
-	// Thinking parts must not be encoded into the counted contents.
+	thoughtParts := 0
 	for _, content := range stub.lastContents {
 		for _, part := range content.Parts {
-			assert.False(t, part.Thought, "thinking part leaked into token counting")
+			if part.Thought {
+				thoughtParts++
+			}
 		}
 	}
+	assert.Equal(t, 1, thoughtParts)
 }
 
 // TestCountTokensIncludesSystemInstructionAndTools verifies that CountTokens

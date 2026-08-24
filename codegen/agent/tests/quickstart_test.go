@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -111,6 +112,20 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 		}
 	})
 
+	t.Run("checked_in_generated_code_is_fresh", func(t *testing.T) {
+		checkedIn, err := readQuickstartTree(quickstartSrcDir, "gen")
+		if err != nil {
+			t.Fatalf("read checked-in quickstart generated code: %v", err)
+		}
+		generated, err := readQuickstartTree(quickstartDir, "gen")
+		if err != nil {
+			t.Fatalf("read freshly generated quickstart code: %v", err)
+		}
+		if difference := firstQuickstartTreeDifference(checkedIn, generated); difference != "" {
+			t.Fatalf("quickstart/gen is stale at %s; regenerate the checked-in quickstart", difference)
+		}
+	})
+
 	// Step 2: Run goa example
 	t.Run("goa_example", func(t *testing.T) {
 		cmd := exec.CommandContext(ctx, "goa", "example", "example.com/quickstart/design")
@@ -120,6 +135,44 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 			t.Fatalf("goa example failed: %v\nOutput:\n%s", err, out)
 		}
 		t.Logf("goa example output:\n%s", out)
+	})
+
+	t.Run("goa_example_preserves_bootstrap", func(t *testing.T) {
+		root, err := os.OpenRoot(quickstartDir)
+		if err != nil {
+			t.Fatalf("open quickstart root: %v", err)
+		}
+		defer func() {
+			if err := root.Close(); err != nil {
+				t.Errorf("close quickstart root: %v", err)
+			}
+		}()
+		bootstrapPath := filepath.Join("internal", "agents", "bootstrap", "bootstrap.go")
+		const marker = "\n// application wiring survives regeneration\n"
+		file, err := root.OpenFile(bootstrapPath, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatalf("open generated bootstrap: %v", err)
+		}
+		if _, err := file.WriteString(marker); err != nil {
+			closeErr := file.Close()
+			t.Fatalf("mark generated bootstrap: %v; close after failure: %v", err, closeErr)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatalf("close generated bootstrap: %v", err)
+		}
+
+		cmd := exec.CommandContext(ctx, "goa", "example", "example.com/quickstart/design")
+		cmd.Dir = quickstartDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("second goa example failed: %v\nOutput:\n%s", err, out)
+		}
+		bootstrap, err := root.ReadFile(bootstrapPath)
+		if err != nil {
+			t.Fatalf("read preserved bootstrap: %v", err)
+		}
+		if !bytes.Contains(bootstrap, []byte(marker)) {
+			t.Fatal("goa example overwrote application-owned bootstrap wiring")
+		}
 	})
 
 	// Step 2b: Ensure module sums include dependencies pulled in by generated code.
@@ -229,6 +282,66 @@ func readQuickstartGuide(rootPath string) (data []byte, err error) {
 		return nil, fmt.Errorf("read AGENTS_QUICKSTART.md: %w", err)
 	}
 	return data, nil
+}
+
+// readQuickstartTree returns every regular file beneath relPath so freshness
+// checks compare the complete checked-in generated contract.
+func readQuickstartTree(rootPath, relPath string) (files map[string][]byte, err error) {
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return nil, fmt.Errorf("open quickstart root: %w", err)
+	}
+	defer func() {
+		if closeErr := root.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close quickstart root: %w", closeErr))
+		}
+	}()
+
+	files = make(map[string][]byte)
+	err = fs.WalkDir(root.FS(), relPath, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		data, readErr := root.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		files[path] = data
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk %s: %w", relPath, err)
+	}
+	return files, nil
+}
+
+// firstQuickstartTreeDifference returns the first sorted path that is missing
+// or differs between checked-in and freshly generated files.
+func firstQuickstartTreeDifference(checkedIn, generated map[string][]byte) string {
+	paths := make([]string, 0, len(checkedIn)+len(generated))
+	seen := make(map[string]struct{}, len(checkedIn)+len(generated))
+	for path := range checkedIn {
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	for path := range generated {
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		checked, checkedOK := checkedIn[path]
+		fresh, freshOK := generated[path]
+		if !checkedOK || !freshOK || !bytes.Equal(checked, fresh) {
+			return path
+		}
+	}
+	return ""
 }
 
 // copyDir copies the quickstart fixture into the temp workspace using

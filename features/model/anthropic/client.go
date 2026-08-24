@@ -19,6 +19,7 @@ import (
 
 	"goa.design/goa-ai/features/model/internal/claudebeta"
 	"goa.design/goa-ai/features/model/internal/claudecaps"
+	"goa.design/goa-ai/features/model/internal/modelid"
 	"goa.design/goa-ai/features/model/internal/tooluseid"
 	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -48,13 +49,14 @@ type (
 	// bundling them here makes it impossible for a call path to send one
 	// without the other.
 	encodedRequest struct {
-		model       string
-		messages    []sdk.MessageParam
-		system      []sdk.TextBlockParam
-		tools       []sdk.ToolUnionParam
-		toolChoice  sdk.ToolChoiceUnionParam
-		provToCanon map[string]string
-		opts        []option.RequestOption
+		model        string
+		messages     []sdk.MessageParam
+		system       []sdk.TextBlockParam
+		tools        []sdk.ToolUnionParam
+		toolChoice   sdk.ToolChoiceUnionParam
+		outputConfig sdk.OutputConfigParam
+		provToCanon  map[string]string
+		opts         []option.RequestOption
 	}
 
 	// Options configures optional Anthropic adapter behavior.
@@ -211,20 +213,23 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	return response, nil
 }
 
-// CountTokens asks Anthropic to count the exact provider input built from req.
-// It consumes the canonical encoding directly — counting carries no completion
-// policy, so a client without a default MaxTokens counts exactly what an
-// explicit-cap completion would send. Replayed thinking is excluded per the
-// model.TokenCounter contract.
+// CountTokens asks Anthropic to count the exact request fields that inference
+// would receive, including saved reasoning, output format, and thinking mode.
 func (c *provider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
-	enc, err := c.encodeRequest(ctx, model.CountingRequest(req))
+	enc, err := c.encodeRequest(ctx, req)
+	if err != nil {
+		return model.TokenCount{}, err
+	}
+	thinking, err := c.thinkingConfig(req, enc.model, c.effectiveMaxTokens(req.MaxTokens))
 	if err != nil {
 		return model.TokenCount{}, err
 	}
 	countParams := sdk.MessageCountTokensParams{
-		Messages:   enc.messages,
-		Model:      enc.model,
-		ToolChoice: enc.toolChoice,
+		Messages:     enc.messages,
+		Model:        enc.model,
+		OutputConfig: enc.outputConfig,
+		Thinking:     thinking,
+		ToolChoice:   enc.toolChoice,
 	}
 	if len(enc.system) > 0 {
 		countParams.System = sdk.MessageCountTokensParamsSystemUnion{
@@ -272,7 +277,15 @@ func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Stream
 	if err := stream.Err(); err != nil {
 		return nil, errors.Join(wrapAnthropicError("stream", err), stream.Close())
 	}
-	return newAnthropicStreamer(ctx, stream, enc.provToCanon, enc.model, req.ModelClass, contract), nil
+	return newAnthropicStreamer(
+		ctx,
+		stream,
+		enc.provToCanon,
+		enc.model,
+		req.ModelClass,
+		req.StructuredOutput,
+		contract,
+	), nil
 }
 
 // encodeRequest builds the canonical Anthropic encoding of req: resolved
@@ -284,15 +297,31 @@ func (c *provider) encodeRequest(ctx context.Context, req *model.Request) (*enco
 	if len(req.Messages) == 0 {
 		return nil, errors.New("anthropic: messages are required")
 	}
-	if req.StructuredOutput != nil {
-		return nil, fmt.Errorf(
-			"anthropic messages do not support structured output: %w",
-			model.ErrStructuredOutputUnsupported,
-		)
+	modelID, err := modelid.Resolve("anthropic", req, c.defaultModel, c.highModel, c.smallModel)
+	if err != nil {
+		return nil, err
 	}
-	modelID := c.resolveModelID(req)
-	if modelID == "" {
-		return nil, errors.New("anthropic: model identifier is required")
+	var outputConfig sdk.OutputConfigParam
+	if req.StructuredOutput != nil {
+		if !claudecaps.StructuredOutputSupported(modelID) {
+			return nil, fmt.Errorf(
+				"anthropic: model %q does not support structured output: %w",
+				modelID,
+				model.ErrStructuredOutputUnsupported,
+			)
+		}
+		schema, err := decodeToolJSONObject(bytes.TrimSpace(req.StructuredOutput.Schema))
+		if err != nil {
+			return nil, fmt.Errorf("anthropic: structured output schema: %w", err)
+		}
+		outputConfig.Format = sdk.JSONOutputFormatParam{Schema: schema}
+	}
+	if forcesToolUse(req.ToolChoice) && claudecaps.ForcedToolChoiceUnsupported(modelID) {
+		return nil, fmt.Errorf(
+			"anthropic: model %q does not support forced tool choice mode %q",
+			modelID,
+			req.ToolChoice.Mode,
+		)
 	}
 	var cacheAfterSystem, cacheAfterTools bool
 	if req.Cache != nil {
@@ -308,12 +337,13 @@ func (c *provider) encodeRequest(ctx context.Context, req *model.Request) (*enco
 		return nil, err
 	}
 	enc := &encodedRequest{
-		model:       modelID,
-		messages:    msgs,
-		system:      system,
-		tools:       tools,
-		provToCanon: provToCanon,
-		opts:        toolExampleOptions(tools),
+		model:        modelID,
+		messages:     msgs,
+		system:       system,
+		tools:        tools,
+		outputConfig: outputConfig,
+		provToCanon:  provToCanon,
+		opts:         toolExampleOptions(tools),
 	}
 	if req.ToolChoice != nil {
 		tc, err := encodeToolChoice(req.ToolChoice, canonToProv, req.Tools)
@@ -338,10 +368,11 @@ func (c *provider) completionParams(ctx context.Context, req *model.Request, enc
 		return nil, errors.New("anthropic: max_tokens must be positive")
 	}
 	params := sdk.MessageNewParams{
-		MaxTokens:  int64(maxTokens),
-		Messages:   enc.messages,
-		Model:      enc.model,
-		ToolChoice: enc.toolChoice,
+		MaxTokens:    int64(maxTokens),
+		Messages:     enc.messages,
+		Model:        enc.model,
+		OutputConfig: enc.outputConfig,
+		ToolChoice:   enc.toolChoice,
 	}
 	if len(enc.system) > 0 {
 		params.System = enc.system
@@ -356,43 +387,54 @@ func (c *provider) completionParams(ctx context.Context, req *model.Request, enc
 			traceTemperatureOmitted(ctx, enc.model, t)
 		}
 	}
-	if req.Thinking != nil && req.Thinking.Enable && !forcesToolUse(req.ToolChoice) {
-		budget := req.Thinking.BudgetTokens
-		if budget <= 0 {
-			budget = int(c.think)
-		}
-		if budget <= 0 {
-			return nil, errors.New("anthropic: thinking budget is required when thinking is enabled")
-		}
-		if budget < 1024 {
-			return nil, fmt.Errorf("anthropic: thinking budget %d must be >= 1024", budget)
-		}
-		if int64(budget) >= int64(maxTokens) {
-			return nil, fmt.Errorf("anthropic: thinking budget %d must be less than max_tokens %d", budget, maxTokens)
-		}
-		params.Thinking = sdk.ThinkingConfigParamOfEnabled(int64(budget))
+	thinking, err := c.thinkingConfig(req, enc.model, maxTokens)
+	if err != nil {
+		return nil, err
 	}
+	params.Thinking = thinking
 	return &params, nil
 }
 
-// resolveModelID decides which concrete model ID to use based on Request.Model
-// and Request.ModelClass. Request.Model takes precedence; when empty, the class
-// is mapped to the configured identifiers. Falls back to the default model.
-func (c *provider) resolveModelID(req *model.Request) string {
-	if s := req.Model; s != "" {
-		return s
+// thinkingConfig translates the request's thinking choice once for both
+// completion and token counting.
+func (c *provider) thinkingConfig(req *model.Request, modelID string, maxTokens int) (sdk.ThinkingConfigParamUnion, error) {
+	if req.Thinking == nil || !req.Thinking.Enable {
+		return sdk.ThinkingConfigParamUnion{}, nil
 	}
-	switch string(req.ModelClass) {
-	case string(model.ModelClassHighReasoning):
-		if c.highModel != "" {
-			return c.highModel
+	if claudecaps.AdaptiveThinkingSupported(modelID) {
+		adaptive := sdk.ThinkingConfigAdaptiveParam{
+			Display: sdk.ThinkingConfigAdaptiveDisplaySummarized,
 		}
-	case string(model.ModelClassSmall):
-		if c.smallModel != "" {
-			return c.smallModel
-		}
+		return sdk.ThinkingConfigParamUnion{OfAdaptive: &adaptive}, nil
 	}
-	return c.defaultModel
+	if forcesToolUse(req.ToolChoice) {
+		return sdk.ThinkingConfigParamUnion{}, errors.New(
+			"anthropic: manual thinking cannot be combined with forced tool choice",
+		)
+	}
+	budget := req.Thinking.BudgetTokens
+	if budget <= 0 {
+		budget = int(c.think)
+	}
+	if budget <= 0 {
+		return sdk.ThinkingConfigParamUnion{}, errors.New(
+			"anthropic: thinking budget is required when thinking is enabled",
+		)
+	}
+	if budget < 1024 {
+		return sdk.ThinkingConfigParamUnion{}, fmt.Errorf(
+			"anthropic: thinking budget %d must be >= 1024",
+			budget,
+		)
+	}
+	if maxTokens > 0 && budget >= maxTokens {
+		return sdk.ThinkingConfigParamUnion{}, fmt.Errorf(
+			"anthropic: thinking budget %d must be less than max_tokens %d",
+			budget,
+			maxTokens,
+		)
+	}
+	return sdk.ThinkingConfigParamOfEnabled(int64(budget)), nil
 }
 
 // validateAnthropicTemperature enforces the Messages API sampling range before
@@ -647,9 +689,7 @@ func decodeToolJSONObject(data []byte) (map[string]any, error) {
 	return object, nil
 }
 
-// forcesToolUse reports whether Anthropic will treat tool_choice as requiring a
-// tool-use response. The Messages API rejects thinking for these requests, so
-// forced tool-use takes precedence during request encoding.
+// forcesToolUse reports whether Anthropic will require a tool-use response.
 func forcesToolUse(choice *model.ToolChoice) bool {
 	return choice != nil && (choice.Mode == model.ToolChoiceModeAny || choice.Mode == model.ToolChoiceModeTool)
 }
@@ -758,6 +798,7 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 	}
 	resp := &model.Response{}
 	assistant := model.Message{Role: model.ConversationRoleAssistant}
+	thinkingIndex := 0
 	for _, block := range msg.Content {
 		switch block.Type {
 		case "text":
@@ -780,16 +821,20 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 			assistant.Parts = append(assistant.Parts, model.ThinkingPart{
 				Text:      block.Thinking,
 				Signature: block.Signature,
+				Index:     thinkingIndex,
 				Final:     true,
 			})
+			thinkingIndex++
 		case "redacted_thinking":
 			if block.Data == "" {
 				return nil, errors.New("anthropic: response redacted thinking block requires data")
 			}
 			assistant.Parts = append(assistant.Parts, model.ThinkingPart{
 				Redacted: []byte(block.Data),
+				Index:    thinkingIndex,
 				Final:    true,
 			})
+			thinkingIndex++
 		case "tool_use":
 			if block.ID == "" {
 				return nil, errors.New("anthropic: response tool use block missing ID")

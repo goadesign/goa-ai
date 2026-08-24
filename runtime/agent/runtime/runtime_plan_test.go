@@ -286,9 +286,9 @@ func TestPlanStartActivityRejectsModelToolPayloadBeforeRecovery(t *testing.T) {
 		require.ErrorIs(t, secondErr, outputErr)
 		return &planner.PlanResult{
 			ToolCalls: []planner.ToolRequest{{
-				Name:       call.Name,
-				Payload:    call.Payload,
-				ToolCallID: call.ID,
+				Name:            call.Name,
+				Payload:         call.Payload,
+				ModelToolCallID: call.ID,
 			}},
 		}, nil
 	}}
@@ -756,7 +756,7 @@ func TestPlanStartActivityAggregatesUsageAcrossManyRejectedInvocations(t *testin
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, probeCount, out.Usage.TotalTokens)
-	require.Len(t, out.PlannerEvents, probeCount+1)
+	require.Len(t, out.PlannerEvents, probeCount)
 	encoded, err := json.Marshal(out)
 	require.NoError(t, err)
 	require.Less(t, len(encoded), maxHookPayloadBytes)
@@ -792,12 +792,18 @@ func TestPlanStartActivityPublishesAttributedUsagePerInvocationOnFailure(t *test
 						Role:  model.ConversationRoleAssistant,
 						Parts: []model.Part{model.TextPart{Text: "probe"}},
 					}},
-					Usage:      model.TokenUsage{TotalTokens: 3},
+					Usage: model.TokenUsage{
+						Model:       "provider-small",
+						TotalTokens: 3,
+					},
 					StopReason: "end_turn",
 				}, nil
 			}
 			return &model.Response{
-				Usage:      model.TokenUsage{TotalTokens: 7},
+				Usage: model.TokenUsage{
+					Model:       "provider-large",
+					TotalTokens: 7,
+				},
 				StopReason: "end_turn",
 			}, nil
 		},
@@ -821,12 +827,12 @@ func TestPlanStartActivityPublishesAttributedUsagePerInvocationOnFailure(t *test
 	}
 	require.Equal(t, []model.TokenUsage{
 		{
-			Model:       "small-model",
+			Model:       "provider-small",
 			ModelClass:  model.ModelClassSmall,
 			TotalTokens: 3,
 		},
 		{
-			Model:       "large-model",
+			Model:       "provider-large",
 			ModelClass:  model.ModelClassDefault,
 			TotalTokens: 7,
 		},
@@ -1315,8 +1321,8 @@ func TestRunPlanActivityPublishesTypedModelRejectionReason(t *testing.T) {
 	require.Equal(t, planner.OutputContractOriginModel, out.OutputContractFailure.Origin)
 	require.Positive(t, out.OutputContractFailure.ReasonSize)
 	require.Len(t, out.OutputContractFailure.ReasonSHA256, 64)
-	require.Len(t, recorder.events, 2)
-	rejected, ok := recorder.events[1].(*hooks.ModelOutputRejectedEvent)
+	require.Len(t, recorder.events, 1)
+	rejected, ok := recorder.events[0].(*hooks.ModelOutputRejectedEvent)
 	require.True(t, ok)
 	require.Equal(t, out.OutputContractFailure.ReasonSHA256, rejected.ReasonSHA256)
 	require.Equal(t, out.OutputContractFailure.ReasonSize, rejected.ReasonSize)
@@ -1367,7 +1373,7 @@ func TestRunPlanActivityRetriesPublicationBeforeOutputFailure(t *testing.T) {
 	require.ErrorAs(t, err, &outputErr)
 	require.Equal(t, planner.OutputContractOriginModel, out.OutputContractFailure.Origin)
 	require.Equal(t, 1, providerCalls)
-	require.Equal(t, 2, store.storedCount())
+	require.Equal(t, 1, store.storedCount())
 }
 
 func TestRunPlanActivityBoundsOversizedRejectedResponseFingerprint(t *testing.T) {
@@ -1413,8 +1419,8 @@ func TestRunPlanActivityBoundsOversizedRejectedResponseFingerprint(t *testing.T)
 	require.Less(t, len(encodedOutput), maxHookPayloadBytes)
 	require.Len(t, out.OutputContractFailure.ModelResponseSHA256, 64)
 	require.Greater(t, out.OutputContractFailure.ModelResponseSize, int64(maxHookPayloadBytes))
-	require.Len(t, recorder.events, 2)
-	rejected, ok := recorder.events[1].(*hooks.ModelOutputRejectedEvent)
+	require.Len(t, recorder.events, 1)
+	rejected, ok := recorder.events[0].(*hooks.ModelOutputRejectedEvent)
 	require.True(t, ok)
 	require.Equal(t, out.OutputContractFailure.ModelResponseSHA256, rejected.ModelResponseSHA256)
 	require.Equal(t, out.OutputContractFailure.ModelResponseSize, rejected.ModelResponseSize)
@@ -1677,9 +1683,8 @@ func TestPlanStartActivityAdvertisesHistoricalContinuation(t *testing.T) {
 			definitions[1].Description,
 		)
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-			Name:       actionName,
-			ToolCallID: "continue-1",
-			Payload:    rawjson.Message(`{}`),
+			Name:    actionName,
+			Payload: rawjson.Message(`{}`),
 		}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
@@ -2162,7 +2167,7 @@ func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) 
 		require.Equal(t, first.Name.String(), definitions[0].Name)
 		require.Len(t, input.ToolOutputs, 2)
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-			Name: first.Name, ToolCallID: "first-valid", Payload: rawjson.Message(`{"valid":"first"}`),
+			Name: first.Name, Payload: rawjson.Message(`{"valid":"first"}`),
 		}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
@@ -2234,9 +2239,9 @@ func TestPlanResumeActivityEnforcesSynthesisOnly(t *testing.T) {
 	pl := &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
 		return &planner.PlanResult{
 			ToolCalls: []planner.ToolRequest{{
-				Name:       "svc.other.tool",
-				ToolCallID: "other-1",
-				Payload:    rawjson.Message(`{}`),
+				Name:            "svc.other.tool",
+				ModelToolCallID: "other-1",
+				Payload:         rawjson.Message(`{}`),
 			}},
 		}, nil
 	}}
@@ -2297,9 +2302,9 @@ func TestPlanResumeActivityHydratesOmittedResultMetadataFromCanonicalRunlog(t *t
 		require.Nil(t, input.ToolOutputs[0].Result)
 		require.JSONEq(t, `[{"kind":"evidence"}]`, string(input.ToolOutputs[0].ServerData))
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-			Name:       "svc.other.tool",
-			ToolCallID: "other-1",
-			Payload:    rawjson.Message(`{}`),
+			Name:            "svc.other.tool",
+			ModelToolCallID: "other-1",
+			Payload:         rawjson.Message(`{}`),
 		}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
@@ -2552,9 +2557,9 @@ func TestPlanResumeActivityRejectsEmptyRawJSONPayloads(t *testing.T) {
 			return &planner.PlanResult{
 				ToolCalls: []planner.ToolRequest{
 					{
-						ToolCallID: "tool-call",
-						Name:       "svc.other.tool",
-						Payload:    rawjson.Message([]byte{}),
+						ModelToolCallID: "tool-call",
+						Name:            "svc.other.tool",
+						Payload:         rawjson.Message([]byte{}),
 					},
 				},
 				Await: planner.NewAwait(

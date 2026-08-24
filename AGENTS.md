@@ -72,7 +72,9 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 - Generator edits must be section-driven and guard-first: match the target section early and `continue`; avoid redundant `s.Source == ""`-style guards.
 - Generator code must stay generic. Derive aliases from imports instead of example-specific names.
 - DSL packages may use dot imports; `.golangci.yml` allows `ST1001`.
-- Do not introspect Goa `docs.json` at runtime. Use generated `tool_specs.Specs`, including payload/result schemas and codecs.
+- Do not introspect Goa `docs.json` at runtime. Use generated
+  `tool_specs.Specs()` or `Spec<Name>()` factories, which return fresh
+  payload/result schemas, metadata, and codecs on each call.
 - Tool schemas, schema projections, examples, and retry examples are canonical
  raw JSON contracts. Keep them as `rawjson.Message`/`tools.RawJSON`
  through runtime and generated specs. Do not rehydrate them into

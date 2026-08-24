@@ -7,7 +7,6 @@
 package docs
 
 import (
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -17,12 +16,17 @@ const (
 	Store tools.Ident = "docs.store"
 )
 
-var Specs = []tools.ToolSpec{
-	SpecStore,
+// Specs returns fresh copies of every generated tool specification.
+func Specs() []tools.ToolSpec {
+	return []tools.ToolSpec{
+		newSpecStore(),
+	}
 }
 
-var (
-	SpecStore = tools.ToolSpec{
+// newSpecStore builds the immutable generated contract for
+// docs.store. Each call owns all mutable slices and maps in the result.
+func newSpecStore() tools.ToolSpec {
+	return tools.ToolSpec{
 		Name:        Store,
 		Service:     "alpha",
 		Toolset:     "alpha.docs",
@@ -33,49 +37,46 @@ var (
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"id\",\"title\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"id\",\"title\"],\"type\":\"object\"}"),
 			ExampleJSON:              nil,
-			FieldDescriptions:        StorePayloadFieldDescs,
-			FieldJSONTypes:           StorePayloadFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(storePayloadFieldDescs),
+			FieldJSONTypes:           cloneStringMap(storePayloadFieldJSONTypes),
 			Codec:                    storePayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:                     "StoreResult",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
-			FieldDescriptions:        StoreResultFieldDescs,
-			FieldJSONTypes:           StoreResultFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(storeResultFieldDescs),
+			FieldJSONTypes:           cloneStringMap(storeResultFieldJSONTypes),
 			Codec:                    storeResultCodec,
 		},
 	}
-)
+}
+
+// SpecStore returns a fresh docs.store specification.
+func SpecStore() tools.ToolSpec {
+	return newSpecStore()
+}
 
 // StoreTool pairs the docs.store identifier with its generated
 // typed payload and result codecs so consumers decode tool JSON without
 // restating the name-to-codec pairing fixed by the design.
-var StoreTool = tools.TypedTool[*StorePayload, *StoreResult]{
-	Name:    Store,
-	Payload: StorePayloadCodec,
-	Result:  StoreResultCodec,
-}
-
-// NewStoreCall builds a planner request for docs.store from its typed
-// generated payload. toolCallID must be nonempty and unique within the plan.
-func NewStoreCall(toolCallID string, args *StorePayload) planner.ToolRequest {
-	if toolCallID == "" {
-		panic("docs.store tool call ID is required")
-	}
-	payload, err := StorePayloadCodec.ToJSON(args)
-	if err != nil {
-		panic(err)
-	}
-	return planner.ToolRequest{
-		Name:       Store,
-		Payload:    payload,
-		ToolCallID: toolCallID,
+func StoreTool() tools.TypedTool[*StorePayload, *StoreResult] {
+	return tools.TypedTool[*StorePayload, *StoreResult]{
+		Name: Store,
+		Payload: tools.JSONCodec[*StorePayload]{
+			ToJSON:   MarshalStorePayload,
+			FromJSON: UnmarshalStorePayload,
+		},
+		Result: tools.JSONCodec[*StoreResult]{
+			ToJSON:   MarshalStoreResult,
+			FromJSON: UnmarshalStoreResult,
+		},
 	}
 }
 
-var (
-	metadata = []policy.ToolMetadata{
+// Metadata returns fresh policy metadata for every generated tool.
+func Metadata() []policy.ToolMetadata {
+	return []policy.ToolMetadata{
 		{
 			ID:          Store,
 			Title:       "Store",
@@ -84,64 +85,59 @@ var (
 			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
 	}
-	names = []tools.Ident{
+}
+
+// Names returns the identifiers of all generated tools.
+func Names() []tools.Ident {
+	return []tools.Ident{
 		Store,
 	}
-)
+}
 
 // RequiredLabels lists the run label keys this toolset's Inject-populated
 // tools require to be present via WithLabels(...) at run start. The runtime
 // validates coverage across every toolset an agent uses before starting a
 // run, so a missing label fails fast instead of surfacing mid-run as a tool
 // call error.
-var RequiredLabels = []string{}
-
-// Names returns the identifiers of all generated tools.
-func Names() []tools.Ident {
-	return names
+func RequiredLabels() []string {
+	return []string{}
 }
 
 // Spec returns the specification for the named tool if present.
-func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
+func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 	switch name {
 	case Store:
-		return &SpecStore, true
+		return newSpecStore(), true
 	default:
-		return nil, false
+		return tools.ToolSpec{}, false
 	}
-}
-
-// PayloadSchema returns the JSON schema for the named tool payload.
-func PayloadSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case Store:
-		return SpecStore.Payload.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// ResultSchema returns the JSON schema for the named tool result.
-func ResultSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case Store:
-		return SpecStore.Result.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// Metadata exposes policy metadata for the generated tools.
-func Metadata() []policy.ToolMetadata {
-	return metadata
 }
 
 // MetadataByName returns policy metadata for the named tool if present.
 func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
 	switch name {
 	case Store:
-		return metadata[0], true
+		return policy.ToolMetadata{
+			ID:          Store,
+			Title:       "Store",
+			Description: "Store",
+			Tags:        []string{},
+			BudgetClass: policy.ToolBudgetClassBudgeted,
+		}, true
 	default:
 		return policy.ToolMetadata{}, false
 	}
+}
+
+// cloneStringMap gives each returned specification ownership of its generated
+// field metadata.
+func cloneStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }

@@ -30,10 +30,9 @@ type (
 	//   - Observer callbacks run after the provider operation mutex is released.
 	//     One observer callback is serialized across all derived views that
 	//     inherit it.
-	//     A receive callback may call Response to see the state produced by that
-	//     receive, or Close to close the provider once. A close callback may call
-	//     Response and may call Close again; that reentrant Close sees the
-	//     provider close result while the observer's own result is still pending.
+	//     A callback may call Response to see the state produced by that
+	//     operation. Callbacks must not call Recv or Close on the same stream;
+	//     those lifecycle operations wait for the callback to finish.
 	ValidatedStream struct {
 		core      *validatedStreamCore
 		observers *validatedStreamObservers
@@ -46,12 +45,12 @@ type (
 		mu    sync.Mutex
 		recv  sync.Mutex
 
+		started          bool
 		closed           bool
 		providerCloseErr error
 
-		closeMu      sync.Mutex
-		closeStarted bool
-		closeErr     error
+		closeObserved bool
+		closeErr      error
 	}
 
 	// validatedStreamObservers owns the observer wrappers shared by every view
@@ -78,7 +77,8 @@ type (
 		validator        *streamValidator
 		response         *Response
 		rejected         *Response
-		rejectedUsage    *TokenUsage
+		rejectedDelta    *TokenUsage
+		rejectedTotal    *TokenUsage
 		responseEvidence ResponseEvidence
 		finished         bool
 		terminalErr      error
@@ -86,18 +86,13 @@ type (
 
 	observedValidatedStreamer struct {
 		observer   StreamObserver
-		core       *validatedStreamCore
 		callbackMu sync.Mutex
 
-		mu                sync.Mutex
-		finished          bool
-		terminalErr       error
-		recvCallback      bool
-		closeCallback     bool
-		closeCallbackDone chan struct{}
-		closePending      bool
-		closeDone         bool
-		closeErr          error
+		mu          sync.Mutex
+		finished    bool
+		terminalErr error
+		closeDone   bool
+		closeErr    error
 	}
 )
 
@@ -116,11 +111,10 @@ func (c *RequestContract) ValidateStream(streamer Streamer) (*ValidatedStream, e
 	}, nil
 }
 
-// Observe attaches recording behavior to this validated stream. Every returned
-// view shares the owned provider core and observer registry, so a view retained
-// before observation still closes the complete observed stream. The distinct
-// views serialize their provider operations through the core and serialize each
-// inherited observer through that observer's callback mutex.
+// Observe attaches recording behavior before the first receive or close. Every
+// returned view shares the owned provider stream and observer registry, so a
+// view retained before observation still closes the complete observed stream.
+// The distinct views serialize provider operations and each observer callback.
 func (s *ValidatedStream) Observe(observer StreamObserver) (*ValidatedStream, error) {
 	if s == nil || s.core == nil || s.core.inner == nil {
 		return nil, errors.New("model stream is not an intact validated stream")
@@ -128,10 +122,14 @@ func (s *ValidatedStream) Observe(observer StreamObserver) (*ValidatedStream, er
 	if observer == nil {
 		return nil, errors.New("model stream observer is nil")
 	}
+	s.core.recv.Lock()
+	defer s.core.recv.Unlock()
+	if s.core.started {
+		return nil, errors.New("model stream observers must be attached before receive or close")
+	}
 	s.observers.mu.Lock()
 	s.observers.list = append(s.observers.list, &observedValidatedStreamer{
 		observer: observer,
-		core:     s.core,
 	})
 	s.observers.mu.Unlock()
 	return &ValidatedStream{
@@ -154,6 +152,7 @@ func (s *ValidatedStream) Recv() (Chunk, error) {
 	}
 	s.core.recv.Lock()
 	defer s.core.recv.Unlock()
+	s.core.started = true
 	observers := s.streamObservers()
 	if len(observers) > 0 {
 		if finished, terminalErr := observers[len(observers)-1].terminal(); finished {
@@ -201,6 +200,9 @@ func (s *ValidatedStream) Close() error {
 	if s == nil || s.core == nil || s.core.inner == nil {
 		return errors.New("model stream is not an intact validated stream")
 	}
+	s.core.recv.Lock()
+	defer s.core.recv.Unlock()
+	s.core.started = true
 	s.core.mu.Lock()
 	if !s.core.closed {
 		s.core.providerCloseErr = s.core.inner.Close()
@@ -208,62 +210,17 @@ func (s *ValidatedStream) Close() error {
 	}
 	providerErr := s.core.providerCloseErr
 	s.core.mu.Unlock()
+	if s.core.closeObserved {
+		return s.core.closeErr
+	}
 	observers := s.streamObservers()
-	started, err := s.core.beginObserverClose(providerErr)
-	if !started {
-		return err
-	}
+	err := providerErr
 	for _, observer := range observers {
-		err = s.core.currentCloseErr()
 		err = observer.observeClose(err)
-		s.core.recordCloseErr(err)
 	}
-	return s.core.finishObserverClose()
-}
-
-// beginObserverClose gives one caller ownership of the lineage-wide observer
-// close chain. Reentrant calls return the complete error prefix accumulated so
-// far instead of waiting on the callback that invoked them.
-func (s *validatedStreamCore) beginObserverClose(providerErr error) (bool, error) {
-	s.closeMu.Lock()
-	defer s.closeMu.Unlock()
-	if s.closeStarted {
-		return false, s.closeErr
-	}
-	s.closeStarted = true
-	s.closeErr = providerErr
-	return true, providerErr
-}
-
-// currentCloseErr returns every provider and observer failure recorded so far.
-func (s *validatedStreamCore) currentCloseErr() error {
-	s.closeMu.Lock()
-	defer s.closeMu.Unlock()
-	return s.closeErr
-}
-
-// recordCloseErr retains the full incoming error chain returned by one
-// observer before the next observer runs.
-func (s *validatedStreamCore) recordCloseErr(err error) {
-	s.closeMu.Lock()
-	s.closeErr = err
-	s.closeMu.Unlock()
-}
-
-// completeDeferredObserverClose merges a reentrant observer result after its
-// receive callback returns.
-func (s *validatedStreamCore) completeDeferredObserverClose(err error) {
-	s.closeMu.Lock()
-	s.closeErr = err
-	s.closeMu.Unlock()
-}
-
-// finishObserverClose marks dispatch complete. A deferred callback will publish
-// the final result when its active receive callback returns.
-func (s *validatedStreamCore) finishObserverClose() error {
-	s.closeMu.Lock()
-	defer s.closeMu.Unlock()
-	return s.closeErr
+	s.core.closeObserved = true
+	s.core.closeErr = err
+	return err
 }
 
 // streamObservers snapshots the observers attached before one Recv or Close
@@ -298,23 +255,30 @@ func rejectedStreamResponse(streamer Streamer) (*Response, error) {
 
 // rejectedStreamUsage returns valid numeric counts from a rejected usage chunk
 // without returning its invalid identity fields.
-func rejectedStreamUsage(streamer Streamer) *TokenUsage {
+func rejectedStreamUsage(streamer Streamer) (delta, total *TokenUsage) {
 	switch actual := streamer.(type) {
 	case *ValidatedStream:
 		if actual == nil || actual.core == nil {
-			return nil
+			return nil, nil
 		}
 		actual.core.mu.Lock()
 		defer actual.core.mu.Unlock()
 		return rejectedStreamUsage(actual.core.inner)
 	case *validatedStreamer:
-		if actual.rejectedUsage != nil {
-			usage := *actual.rejectedUsage
-			return &usage
+		if actual.rejectedDelta != nil {
+			usage := *actual.rejectedDelta
+			delta = &usage
+		}
+		if actual.rejectedTotal != nil {
+			usage := *actual.rejectedTotal
+			total = &usage
+		}
+		if delta != nil || total != nil {
+			return delta, total
 		}
 		return rejectedStreamUsage(actual.inner)
 	}
-	return nil
+	return nil, nil
 }
 
 // streamResponseEvidence returns evidence captured from the raw complete
@@ -349,13 +313,14 @@ func (s *validatedStreamer) Recv() (Chunk, error) {
 	chunk, err := s.inner.Recv()
 	if err != nil {
 		if !errors.Is(err, io.EOF) {
+			err = s.captureProviderRejection(err)
 			s.finished = true
 			s.terminalErr = err
 			return nil, err
 		}
 		rawResponse := s.inner.Response()
 		s.responseEvidence.Present = rawResponse != nil
-		s.rejectedUsage = s.contract.validatedUsageEvidence(rawResponse)
+		s.rejectedTotal = s.contract.validatedUsageEvidence(rawResponse)
 		var responseBudget dynamicValueWalk
 		if preflightErr := preflightResponse(
 			rawResponse,
@@ -395,11 +360,11 @@ func (s *validatedStreamer) Recv() (Chunk, error) {
 		owned = usage
 	}
 	if err := validateCanonicalChunk(owned); err != nil {
-		s.rejectedUsage = rejectedUsageEvidence(owned)
+		s.rejectedDelta = rejectedUsageEvidence(owned)
 		return nil, s.failValidation(err)
 	}
 	if err := s.validator.acceptOwned(owned); err != nil {
-		s.rejectedUsage = rejectedUsageEvidence(owned)
+		s.rejectedDelta = rejectedUsageEvidence(owned)
 		return nil, s.failValidation(err)
 	}
 	return owned, nil
@@ -424,12 +389,13 @@ func observeStreamResult(inner Streamer, chunk Chunk, err error) StreamObservati
 		copyErr = nil
 	}
 	var observedResponse *Response
-	var rejectedUsage *TokenUsage
+	var rejectedUsageDelta *TokenUsage
+	var rejectedUsageTotal *TokenUsage
 	evidence := streamResponseEvidence(inner)
 	if errors.Is(err, io.EOF) {
 		observedResponse, copyErr = CloneResponse(inner.Response())
 	} else if IsStreamValidationError(err) {
-		rejectedUsage = rejectedStreamUsage(inner)
+		rejectedUsageDelta, rejectedUsageTotal = rejectedStreamUsage(inner)
 		observedResponse, copyErr = rejectedStreamResponse(inner)
 	}
 	if copyErr != nil {
@@ -437,15 +403,16 @@ func observeStreamResult(inner Streamer, chunk Chunk, err error) StreamObservati
 			errors.Join(err, copyErr),
 			evidence,
 			observedResponse,
-			rejectedUsage,
+			firstTokenUsage(rejectedUsageTotal, rejectedUsageDelta),
 		)
 	}
 	return StreamObservation{
-		Chunk:            observedChunk,
-		RejectedUsage:    rejectedUsage,
-		Response:         observedResponse,
-		ResponseEvidence: evidence,
-		Err:              err,
+		Chunk:              observedChunk,
+		RejectedUsageDelta: rejectedUsageDelta,
+		RejectedUsageTotal: rejectedUsageTotal,
+		Response:           observedResponse,
+		ResponseEvidence:   evidence,
+		Err:                err,
 	}
 }
 
@@ -456,69 +423,28 @@ func (s *observedValidatedStreamer) terminal() (bool, error) {
 	return s.finished, s.terminalErr
 }
 
-// observeRecv invokes one receive callback without holding the provider mutex.
-// Close requests made by that callback close the provider immediately and defer
-// the close callback until this receive callback returns.
+// observeRecv invokes one receive callback while the shared stream lock keeps
+// Close or another Recv from running before that callback finishes.
 func (s *observedValidatedStreamer) observeRecv(
 	chunk Chunk,
 	err error,
 	observation StreamObservation,
 ) (Chunk, error) {
-	s.beginRecvCallback()
+	s.callbackMu.Lock()
+	defer s.callbackMu.Unlock()
 	observerErr := s.observer.ObserveStreamRecv(observation)
-	runClose := s.finishRecvCallback(err, observerErr)
-	s.callbackMu.Unlock()
-	var closeErr error
-	if runClose {
-		closeErr = s.completeCloseCallback(s.core.currentCloseErr(), true)
+	s.mu.Lock()
+	if observerErr != nil || (err != nil && !errors.Is(err, io.EOF)) {
+		s.finished = true
+		s.terminalErr = errors.Join(err, observerErr)
+	} else if err != nil {
+		s.finished = true
 	}
-	if resultErr := errors.Join(err, observerErr, closeErr); resultErr != nil {
+	s.mu.Unlock()
+	if resultErr := errors.Join(err, observerErr); resultErr != nil {
 		return nil, resultErr
 	}
 	return chunk, nil
-}
-
-// beginRecvCallback serializes this observer across every derived view. It
-// waits for an externally started close callback, then marks the observer busy
-// so a reentrant Close can defer its own callback safely.
-func (s *observedValidatedStreamer) beginRecvCallback() {
-	for {
-		s.callbackMu.Lock()
-		s.mu.Lock()
-		if !s.closeCallback {
-			s.recvCallback = true
-			s.mu.Unlock()
-			return
-		}
-		done := s.closeCallbackDone
-		s.mu.Unlock()
-		s.callbackMu.Unlock()
-		<-done
-	}
-}
-
-// finishRecvCallback latches stream termination and transfers a reentrant Close
-// request to the caller for callback delivery.
-func (s *observedValidatedStreamer) finishRecvCallback(
-	streamErr error,
-	observerErr error,
-) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if observerErr != nil || (streamErr != nil && !errors.Is(streamErr, io.EOF)) {
-		s.finished = true
-		s.terminalErr = errors.Join(streamErr, observerErr)
-	} else if streamErr != nil {
-		s.finished = true
-	}
-	s.recvCallback = false
-	if !s.closePending || s.closeDone || s.closeCallback {
-		return false
-	}
-	s.closePending = false
-	s.closeCallback = true
-	s.closeCallbackDone = make(chan struct{})
-	return true
 }
 
 // rejectedUsageEvidence projects only nonnegative token counts from a usage
@@ -542,48 +468,24 @@ func rejectedUsageEvidence(chunk Chunk) *TokenUsage {
 	}
 }
 
-// observeClose invokes the close callback once without holding the provider
-// mutex. A reentrant close callback sees providerErr; subsequent calls see the
-// final joined provider and observer result.
+// observeClose invokes the close callback once after all receive observations
+// finish. Every later call returns the same joined provider and observer error.
 func (s *observedValidatedStreamer) observeClose(providerErr error) error {
+	s.callbackMu.Lock()
+	defer s.callbackMu.Unlock()
 	s.mu.Lock()
-	switch {
-	case s.closeDone:
+	if s.closeDone {
 		err := s.closeErr
 		s.mu.Unlock()
 		return err
-	case s.closeCallback:
-		s.mu.Unlock()
-		return providerErr
-	case s.recvCallback:
-		s.closePending = true
-		s.mu.Unlock()
-		return providerErr
-	default:
-		s.closeCallback = true
-		s.closeCallbackDone = make(chan struct{})
-		s.mu.Unlock()
-		return s.completeCloseCallback(providerErr, false)
 	}
-}
-
-// completeCloseCallback records the observer result and releases Recv callers
-// waiting to deliver their next callback.
-func (s *observedValidatedStreamer) completeCloseCallback(providerErr error, deferred bool) error {
-	s.callbackMu.Lock()
-	defer s.callbackMu.Unlock()
+	s.mu.Unlock()
 	observerErr := s.observer.ObserveStreamClose(providerErr)
 	finalErr := errors.Join(providerErr, observerErr)
 	s.mu.Lock()
 	s.closeErr = finalErr
 	s.closeDone = true
-	s.closeCallback = false
-	close(s.closeCallbackDone)
-	s.closeCallbackDone = nil
 	s.mu.Unlock()
-	if deferred {
-		s.core.completeDeferredObserverClose(finalErr)
-	}
 	return finalErr
 }
 
@@ -594,9 +496,38 @@ func (s *validatedStreamer) failValidation(err error) error {
 		err,
 		s.responseEvidence,
 		s.rejected,
-		s.rejectedUsage,
+		firstTokenUsage(s.rejectedTotal, s.rejectedDelta),
 	)
 	return s.terminalErr
+}
+
+// captureProviderRejection retains the bounded usage and response evidence
+// carried by a provider's OutputValidationError before the stream latches that
+// terminal error.
+func (s *validatedStreamer) captureProviderRejection(err error) error {
+	var outputErr *OutputValidationError
+	if !errors.As(err, &outputErr) {
+		return err
+	}
+	s.responseEvidence = outputErr.Evidence()
+	s.rejectedTotal = outputErr.Usage()
+	rejected, cloneErr := outputErr.RejectedResponse()
+	if cloneErr != nil {
+		return errors.Join(err, cloneErr)
+	}
+	s.rejected = rejected
+	return err
+}
+
+// firstTokenUsage returns the first present value for the legacy validation
+// error envelope, which carries usage without add-versus-replace semantics.
+func firstTokenUsage(values ...*TokenUsage) *TokenUsage {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
 }
 
 // isNilStreamer detects nil and typed-nil interface values at the model

@@ -3,6 +3,7 @@
 package temporalerrors
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 
 	"go.temporal.io/sdk/temporal"
 
+	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 )
@@ -36,6 +38,7 @@ const (
 	maxGenericErrorTypeBytes     = 128
 	maxClassificationDepth       = 64
 	maxClassificationVisits      = 256
+	maxClassificationChildren    = 256
 )
 
 type (
@@ -100,12 +103,19 @@ const (
 	errorKindGeneric
 )
 
-// Wrap tells Temporal whether it may run the failed operation again. Direct
-// output contract errors must not be retried. Model-service failures keep the
-// retry setting reported by that service.
+// Wrap tells Temporal whether it may run the failed operation again.
+// Cancellation remains cancellation, direct output contract errors must not be
+// retried, and model-service failures keep the retry setting reported by that
+// service.
 func Wrap(err error) error {
 	if err == nil {
 		return nil
+	}
+	if isNilErrorValue(err) {
+		return wrapInvalidReserved(fmt.Errorf("error graph contains a typed nil node"))
+	}
+	if CancellationOnly(err) {
+		return temporal.NewCanceledError("activity canceled")
 	}
 	// A direct custom Temporal ApplicationError owns retryability but not an
 	// unbounded type, message, details payload, or cause.
@@ -126,7 +136,7 @@ func Wrap(err error) error {
 			return err
 		}
 		return temporal.NewNonRetryableApplicationError(
-			boundedErrorMessage("output contract error", err.Error()),
+			boundedErrorMessage("output contract error", errorevidence.Text(err)),
 			outputContractErrorApplicationType,
 			nil,
 			outputContractErrorDetails{Origin: string(classified.origin)},
@@ -194,6 +204,75 @@ func Provider(err error) (*model.ProviderError, bool) {
 	return classified.provider, true
 }
 
+// CancellationOnly reports whether every leaf in a bounded error graph is an
+// exact context or Temporal cancellation. Malformed, cyclic, or oversized
+// graphs are ordinary failures rather than cancellations.
+func CancellationOnly(err error) bool {
+	if err == nil {
+		return false
+	}
+	type visit struct {
+		err      error
+		depth    int
+		leaving  bool
+		identity errorIdentity
+	}
+	stack := []visit{{err: err}}
+	active := make(map[errorIdentity]struct{})
+	leaves := 0
+	visits := 0
+	for len(stack) > 0 {
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if current.leaving {
+			delete(active, current.identity)
+			continue
+		}
+		if current.err == nil {
+			continue
+		}
+		if isNilErrorValue(current.err) {
+			return false
+		}
+		visits++
+		if visits > maxClassificationVisits || current.depth > maxClassificationDepth {
+			return false
+		}
+		if identity, ok := classificationIdentity(current.err); ok {
+			if _, exists := active[identity]; exists {
+				return false
+			}
+			active[identity] = struct{}{}
+			stack = append(stack, visit{leaving: true, identity: identity})
+		}
+		children, childErr := unwrapChildren(current.err)
+		if childErr != nil {
+			return false
+		}
+		nonNilChildren := 0
+		for index := len(children) - 1; index >= 0; index-- {
+			if children[index] == nil {
+				continue
+			}
+			nonNilChildren++
+			stack = append(stack, visit{err: children[index], depth: current.depth + 1})
+		}
+		if nonNilChildren > 0 {
+			continue
+		}
+		leaves++
+		//nolint:errorlint // The bounded walker has already followed every wrapper to this exact leaf.
+		if current.err == context.Canceled {
+			continue
+		}
+		//nolint:errorlint // Temporal cancellation is recognized only at an exact leaf.
+		if _, ok := current.err.(*temporal.CanceledError); !ok {
+			return false
+		}
+	}
+	return leaves > 0
+}
+
 // classify walks outer errors before their children so the component that
 // deliberately wrapped another failure keeps ownership of classification. The
 // iterative walk bounds malformed graphs and detects pointer cycles.
@@ -219,6 +298,9 @@ func classify(err error) classification {
 		}
 		if current.err == nil {
 			continue
+		}
+		if isNilErrorValue(current.err) {
+			return invalidReserved("error graph contains a typed nil node")
 		}
 		visits++
 		if visits > maxClassificationVisits || current.depth > maxClassificationDepth {
@@ -300,6 +382,25 @@ func classificationIdentity(err error) (errorIdentity, bool) {
 	panic(fmt.Sprintf("unhandled reflect kind %s", value.Kind()))
 }
 
+// isNilErrorValue reports whether err contains a nil reference value behind a
+// non-nil error interface.
+func isNilErrorValue(err error) bool {
+	value := reflect.ValueOf(err)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return value.IsNil()
+	case reflect.Invalid,
+		reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64,
+		reflect.Complex64, reflect.Complex128,
+		reflect.Array, reflect.Interface, reflect.String, reflect.Struct:
+		return false
+	}
+	panic(fmt.Sprintf("unhandled reflect kind %s", value.Kind()))
+}
+
 // unwrapChildren reads either standard unwrap shape and converts panics from a
 // malformed implementation into a bounded invalid-envelope result.
 func unwrapChildren(err error) (children []error, resultErr error) {
@@ -310,7 +411,15 @@ func unwrapChildren(err error) (children []error, resultErr error) {
 		}
 	}()
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		return joined.Unwrap(), nil
+		children = joined.Unwrap()
+		if len(children) > maxClassificationChildren {
+			return nil, fmt.Errorf(
+				"unwrap returned %d children, maximum is %d",
+				len(children),
+				maxClassificationChildren,
+			)
+		}
+		return children, nil
 	}
 	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
 		return []error{wrapped.Unwrap()}, nil
@@ -453,7 +562,7 @@ func decodeApplicationDetails(appErr *temporal.ApplicationError, target any) (er
 
 // wrapGeneric converts an ordinary failure into a bounded framework envelope.
 func wrapGeneric(err error, originalType string, retryable bool) error {
-	message := safeErrorText(err)
+	message := errorevidence.Text(err)
 	//nolint:errorlint // Exact application errors expose their owned message separately from Error formatting.
 	if appErr, ok := err.(*temporal.ApplicationError); ok {
 		message = appErr.Message()
@@ -480,16 +589,6 @@ func wrapGeneric(err error, originalType string, retryable bool) error {
 		nil,
 		details,
 	)
-}
-
-// safeErrorText converts a panicking Error method into fixed bounded evidence.
-func safeErrorText(err error) (text string) {
-	defer func() {
-		if recover() != nil {
-			text = "error message unavailable"
-		}
-	}()
-	return err.Error()
 }
 
 // validateGenericDetails rejects forged generic envelopes and enforces their
@@ -584,9 +683,7 @@ func saveBoundedText(field, value string, limit int) boundedText {
 	if len(value) <= limit {
 		return boundedText{Value: value}
 	}
-	sum := sha256.Sum256([]byte(value))
-	hash := hex.EncodeToString(sum[:])
-	size := len(value)
+	hash, size := errorevidence.FingerprintText(value)
 	return boundedText{
 		Value:         boundedTextReplacement(field, hash, size),
 		SHA256:        hash,
@@ -686,7 +783,7 @@ func validateTemporalMessage(message string) error {
 // malformed reserved error.
 func wrapInvalidReserved(err error) error {
 	return temporal.NewNonRetryableApplicationError(
-		boundedErrorMessage("invalid Temporal error envelope", err.Error()),
+		boundedErrorMessage("invalid Temporal error envelope", errorevidence.Text(err)),
 		invalidReservedApplicationType,
 		nil,
 	)
@@ -704,7 +801,8 @@ func invalidReserved(format string, args ...any) classification {
 // validOutputOrigin reports whether an output failure names its actual owner.
 func validOutputOrigin(origin planner.OutputContractOrigin) bool {
 	return origin == planner.OutputContractOriginModel ||
-		origin == planner.OutputContractOriginPlanner
+		origin == planner.OutputContractOriginPlanner ||
+		origin == planner.OutputContractOriginTool
 }
 
 // validProviderKind reports whether persisted details use the public provider

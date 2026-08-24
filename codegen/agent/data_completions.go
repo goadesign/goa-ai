@@ -17,6 +17,9 @@ type (
 		GoName string
 		// Result is the typed assistant-output contract.
 		Result *goaexpr.AttributeExpr
+		// HasExample reports whether the completion declares an authored result
+		// example that generated runnable examples can return.
+		HasExample bool
 	}
 )
 
@@ -31,5 +34,6 @@ func newCompletionDataFromIR(completion *ir.Completion) *CompletionData {
 		Description: completion.Description,
 		GoName:      completion.GoName,
 		Result:      completion.Expr.Return,
+		HasExample:  authoredExampleForAttribute(completion.Expr.Return) != nil,
 	}
 }

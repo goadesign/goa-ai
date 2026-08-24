@@ -37,3 +37,21 @@ func ServiceCompletion() func() {
 		})
 	}
 }
+
+// ServiceCompletionWithoutExampleWithAgent returns a runnable example design
+// whose completion has no authored result example.
+func ServiceCompletionWithoutExampleWithAgent() func() {
+	return func() {
+		API("tasks", func() {})
+		var CompletionResult = Type("CompletionResult", func() {
+			Attribute("assistant_text", String, "Assistant summary")
+			Required("assistant_text")
+		})
+		Service("tasks", func() {
+			Completion("draft_from_transcript", "Synthesize a task draft", func() {
+				Return(CompletionResult)
+			})
+			Agent("scribe", "Draft tasks", func() {})
+		})
+	}
+}

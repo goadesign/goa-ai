@@ -52,10 +52,10 @@ type (
 		// ConstName is the Go constant identifier for this tool's ID, computed
 		// using the name scope to ensure uniqueness within the package.
 		ConstName string
-		// TypedToolVar is the exported typed descriptor variable name (e.g.,
-		// "SummarizeDocTool") pairing the tool identifier with its typed
-		// payload and result codecs. Empty when the tool lacks a payload or
-		// result type, in which case no descriptor is generated.
+		// TypedToolVar is the exported typed descriptor factory name (e.g.,
+		// "SummarizeDocTool") pairing the tool identifier with its typed payload
+		// and result codecs. Empty when the tool lacks a payload type, in which
+		// case no descriptor is generated.
 		TypedToolVar string
 		// Title is the human-friendly display title.
 		Title string
@@ -84,6 +84,9 @@ type (
 		Payload *typeData
 		// Type metadata for the tool's output result.
 		Result *typeData
+		// HasResult reports whether the design declares a result. Generated
+		// empty transport types do not change this semantic fact.
+		HasResult bool
 		// Bounds declares the out-of-band bounded-result contract for this tool.
 		// It is propagated into ToolSpec for runtime consumers.
 		Bounds *ToolBoundsData
@@ -174,7 +177,9 @@ type (
 		// application scaffolds. It remains private generator data so tool result
 		// examples do not become model-facing TypeSpec metadata.
 		ScaffoldExampleJSON []byte
-		// Typed codec variable name (e.g., "MyToolPayloadCodec").
+		// ExportedCodec names the typed codec factory. Tool contracts export it
+		// (for example, "MyToolPayloadCodec"); completion contracts keep it
+		// private behind their generated Complete and StreamComplete operations.
 		ExportedCodec string
 		// InjectDecodeFunc is the generated composed decode helper name
 		// (e.g., "DecodeGetData") when this type is the payload of a tool

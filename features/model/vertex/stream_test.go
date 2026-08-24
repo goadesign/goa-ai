@@ -125,6 +125,60 @@ func TestStreamToolCallThoughtSignature(t *testing.T) {
 	assert.Equal(t, base64.StdEncoding.EncodeToString(sig), call.ThoughtSignature)
 }
 
+func TestStreamReservesLaterExplicitToolCallIDsBeforeGeneratingMissingIDs(t *testing.T) {
+	missing := &genai.Part{FunctionCall: &genai.FunctionCall{Name: "lookup", Args: map[string]any{}}}
+	explicit := &genai.Part{FunctionCall: &genai.FunctionCall{
+		ID:   "vertex-call-0",
+		Name: "lookup",
+		Args: map[string]any{},
+	}}
+	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{
+		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{missing}}}}},
+		{Candidates: []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{explicit}}}}},
+		{Candidates: []*genai.Candidate{{FinishReason: genai.FinishReasonStop}}},
+	}}
+	client, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
+	require.NoError(t, err)
+	def := toolDef(t, "lookup", `{"type":"object"}`)
+	request := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "go"}},
+		}},
+		Tools: []*model.ToolDefinition{def},
+	}
+	stream, err := client.Stream(t.Context(), request)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, stream.Close()) }()
+
+	chunks := drain(t, stream)
+	var streamIDs []string
+	for _, chunk := range chunks {
+		if call, ok := chunk.(model.ToolCallChunk); ok {
+			streamIDs = append(streamIDs, call.ToolCall.ID)
+		}
+	}
+	unary, err := translateResponse(
+		&genai.GenerateContentResponse{Candidates: []*genai.Candidate{{
+			FinishReason: genai.FinishReasonStop,
+			Content:      &genai.Content{Parts: []*genai.Part{missing, explicit}},
+		}}},
+		"gemini-2.5-flash",
+		model.ModelClassDefault,
+		map[string]string{"lookup": "lookup"},
+		newVertexToolCallIDAllocator(request.Messages),
+	)
+	require.NoError(t, err)
+	calls := unary.ToolCalls()
+	unaryIDs := make([]string, 0, len(calls))
+	for _, call := range calls {
+		unaryIDs = append(unaryIDs, call.ID)
+	}
+
+	assert.Equal(t, []string{"vertex-call-1", "vertex-call-0"}, unaryIDs)
+	assert.Equal(t, unaryIDs, streamIDs)
+}
+
 func TestStreamThinkingWithSignature(t *testing.T) {
 	sig := []byte("sig-bytes")
 	stub := &stubGenerativeClient{streamChunks: []*genai.GenerateContentResponse{

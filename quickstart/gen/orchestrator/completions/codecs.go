@@ -22,34 +22,37 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-var (
-	// DraftTaskResultCodec serializes values of type *DraftTaskResult to canonical JSON.
-	DraftTaskResultCodec = tools.JSONCodec[*DraftTaskResult]{
-		ToJSON:   MarshalDraftTaskResult,
-		FromJSON: UnmarshalDraftTaskResult,
+// newDraftTaskResultCodec returns a fresh codec for *DraftTaskResult.
+func newDraftTaskResultCodec() tools.JSONCodec[*DraftTaskResult] {
+	return tools.JSONCodec[*DraftTaskResult]{
+		ToJSON:   marshalDraftTaskResult,
+		FromJSON: unmarshalDraftTaskResult,
 	}
+}
+
+var (
 	// draftTaskResultCodec provides an untyped codec for *DraftTaskResult.
 	draftTaskResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
 			// Prefer typed marshal when the value matches the expected type.
 			if typed, ok := v.(*DraftTaskResult); ok {
-				return MarshalDraftTaskResult(typed)
+				return marshalDraftTaskResult(typed)
 			}
 			return nil, fmt.Errorf("invalid value type for *DraftTaskResult: %T", v)
 		},
 		FromJSON: func(data []byte) (any, error) {
-			return UnmarshalDraftTaskResult(data)
+			return unmarshalDraftTaskResult(data)
 		},
 	}
 )
-var DraftTaskResultFieldDescs = map[string]string{
+var draftTaskResultFieldDescs = map[string]string{
 	"assistant_text": "Short explanation of the generated draft",
 	"goal":           "Outcome-style goal",
 	"name":           "Task name",
 	"steps":          "Ordered draft steps",
 	"steps.title":    "Short step title",
 }
-var DraftTaskResultFieldJSONTypes = map[string]string{
+var draftTaskResultFieldJSONTypes = map[string]string{
 	"$payload":       "object",
 	"assistant_text": "string",
 	"goal":           "string",
@@ -57,7 +60,7 @@ var DraftTaskResultFieldJSONTypes = map[string]string{
 	"steps":          "array",
 	"steps.title":    "string",
 }
-var DraftTaskResultFieldAllowedObjectKeys = map[string][]string{
+var draftTaskResultFieldAllowedObjectKeys = map[string][]string{
 	"": {
 		"assistant_text",
 		"goal",
@@ -111,7 +114,7 @@ func enrichDraftTaskResultValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := DraftTaskResultFieldDescs[is.Field]; ok && d != "" {
+		if d, ok := tools.LookupFieldMetadata(draftTaskResultFieldDescs, is.Field); ok && d != "" {
 			m[is.Field] = d
 		}
 	}
@@ -127,11 +130,11 @@ func invalidDraftTaskResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := DraftTaskResultFieldJSONTypes[field]
+	expected, ok := tools.LookupFieldMetadata(draftTaskResultFieldJSONTypes, field)
 	if !ok {
 		return err
 	}
-	actual := typeErr.Value
+	actual := generatedUnmarshalJSONType(typeErr.Value)
 	if actual == "" {
 		return err
 	}
@@ -149,8 +152,8 @@ func invalidDraftTaskResultFieldTypeError(err error) error {
 	)
 }
 
-// MarshalDraftTaskResult serializes *DraftTaskResult into JSON.
-func MarshalDraftTaskResult(v *DraftTaskResult) ([]byte, error) {
+// marshalDraftTaskResult serializes *DraftTaskResult into JSON.
+func marshalDraftTaskResult(v *DraftTaskResult) ([]byte, error) {
 	if v == nil {
 		return nil, fmt.Errorf("draftTaskResult is nil")
 	}
@@ -173,13 +176,17 @@ func MarshalDraftTaskResult(v *DraftTaskResult) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// UnmarshalDraftTaskResult deserializes JSON into *DraftTaskResult.
-func UnmarshalDraftTaskResult(data []byte) (*DraftTaskResult, error) {
+// unmarshalDraftTaskResult deserializes JSON into *DraftTaskResult.
+func unmarshalDraftTaskResult(data []byte) (*DraftTaskResult, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("draftTaskResult JSON is empty")
 	}
 	var tv toolhttp.DraftTaskResultTransport
-	if err := decodeKnownJSON(data, &tv, DraftTaskResultFieldAllowedObjectKeys); err != nil {
+	if err := decodeKnownJSON(
+		data,
+		&tv,
+		draftTaskResultFieldAllowedObjectKeys, draftTaskResultFieldJSONTypes, draftTaskResultFieldDescs,
+	); err != nil {
 		return nil, invalidDraftTaskResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateDraftTaskResultTransport(&tv); err != nil {
@@ -206,9 +213,17 @@ func UnmarshalDraftTaskResult(data []byte) (*DraftTaskResult, error) {
 	return out, nil
 }
 
-// decodeStrictJSON decodes one JSON document and rejects object fields that are
-// not present in the generated transport contract.
-func decodeStrictJSON(data []byte, v any) error {
+// decodeStrictJSON decodes one JSON document and rejects null members and
+// object fields outside the generated transport contract.
+func decodeStrictJSON(
+	data []byte,
+	v any,
+	fieldTypes map[string]string,
+	fieldDescriptions map[string]string,
+) error {
+	if err := validateGeneratedJSON(data, nil, fieldTypes, fieldDescriptions); err != nil {
+		return err
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
@@ -220,56 +235,126 @@ func decodeStrictJSON(data []byte, v any) error {
 	return nil
 }
 
-// decodeKnownJSON decodes one JSON document after rejecting fields outside the
-// generated closed-object payload/result contracts. It preserves open map/object
-// fields by only validating paths present in allowed.
-func decodeKnownJSON(data []byte, v any, allowed map[string][]string) error {
-	if err := validateKnownJSONFields(data, allowed); err != nil {
+// decodeKnownJSON decodes one JSON document after enforcing generated field
+// names and JSON categories. Open map fields remain open because their paths
+// are absent from the generated closed-object metadata.
+func decodeKnownJSON(
+	data []byte,
+	v any,
+	allowed map[string][]string,
+	fieldTypes map[string]string,
+	fieldDescriptions map[string]string,
+) error {
+	if err := validateGeneratedJSON(data, allowed, fieldTypes, fieldDescriptions); err != nil {
 		return err
 	}
 	return json.Unmarshal(data, v)
 }
 
-func validateKnownJSONFields(data []byte, allowed map[string][]string) error {
+// validateGeneratedJSON checks raw JSON facts that Go's typed decoder cannot
+// preserve, including the difference between an absent optional member and an
+// explicit null.
+func validateGeneratedJSON(
+	data []byte,
+	allowed map[string][]string,
+	fieldTypes map[string]string,
+	fieldDescriptions map[string]string,
+) error {
 	var root any
 	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
 	if err := dec.Decode(&root); err != nil {
 		return err
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return fmt.Errorf("multiple JSON documents")
 	}
-	return validateKnownJSONValue("", root, allowed)
+	return validateGeneratedJSONValue("", "", root, allowed, fieldTypes, fieldDescriptions, true)
 }
 
-func validateKnownJSONValue(path string, value any, allowed map[string][]string) error {
+// validateGeneratedJSONValue walks one decoded value using paths emitted by
+// code generation. path names the actual caller field for errors; schemaPath
+// uses "*" where a map accepts caller-chosen keys.
+func validateGeneratedJSONValue(
+	path string,
+	schemaPath string,
+	value any,
+	allowed map[string][]string,
+	fieldTypes map[string]string,
+	fieldDescriptions map[string]string,
+	validateType bool,
+) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	schemaField := schemaPath
+	if schemaField == "" {
+		schemaField = "$payload"
+	}
+	expected, hasExpectedType := fieldTypes[schemaField]
+	description := fieldDescriptions[schemaField]
+	if value == nil {
+		if hasExpectedType {
+			return invalidGeneratedFieldTypeError(field, expected, "null", description)
+		}
+		return nil
+	}
+	if validateType {
+		actual := decodedJSONType(value)
+		if hasExpectedType && !generatedJSONTypesCompatible(expected, actual) {
+			return invalidGeneratedFieldTypeError(field, expected, actual, description)
+		}
+	}
 	switch v := value.(type) {
 	case []any:
 		for _, item := range v {
-			if err := validateKnownJSONValue(path, item, allowed); err != nil {
+			if err := validateGeneratedJSONValue(
+				path,
+				schemaPath,
+				item,
+				allowed,
+				fieldTypes,
+				fieldDescriptions,
+				false,
+			); err != nil {
 				return err
 			}
 		}
 		return nil
 	case map[string]any:
-		allowedKeys, ok := allowed[path]
-		if !ok {
-			return nil
+		allowedKeys, closed := allowed[schemaPath]
+		wildcardPath := "*"
+		if schemaPath != "" {
+			wildcardPath = schemaPath + ".*"
 		}
+		mapElements := !closed && hasGeneratedJSONPath(wildcardPath, allowed, fieldTypes)
 		keys := make([]string, 0, len(v))
 		for key := range v {
 			keys = append(keys, key)
 		}
 		sort.Strings(keys)
 		for _, key := range keys {
-			if !slices.Contains(allowedKeys, key) {
+			if closed && !slices.Contains(allowedKeys, key) {
 				return unknownJSONFieldError(path, key, allowedKeys)
 			}
-			childPath := key
-			if path != "" {
-				childPath = path + "." + key
+			childPath := generatedJSONChildPath(path, key, mapElements)
+			childSchemaPath := key
+			if schemaPath != "" {
+				childSchemaPath = schemaPath + "." + key
 			}
-			if err := validateKnownJSONValue(childPath, v[key], allowed); err != nil {
+			if mapElements {
+				childSchemaPath = wildcardPath
+			}
+			if err := validateGeneratedJSONValue(
+				childPath,
+				childSchemaPath,
+				v[key],
+				allowed,
+				fieldTypes,
+				fieldDescriptions,
+				true,
+			); err != nil {
 				return err
 			}
 		}
@@ -277,11 +362,132 @@ func validateKnownJSONValue(path string, value any, allowed map[string][]string)
 	return nil
 }
 
-func unknownJSONFieldError(path, field string, allowed []string) error {
-	issueField := field
-	if path != "" {
-		issueField = path + "." + field
+// generatedJSONChildPath keeps generated object fields in dotted form until an
+// open map introduces caller-chosen keys. From that point it uses JSON Pointer
+// so dots, slashes, and tildes in map keys remain unambiguous.
+func generatedJSONChildPath(path, key string, mapElement bool) string {
+	if mapElement || strings.HasPrefix(path, "/") {
+		if path != "" && !strings.HasPrefix(path, "/") {
+			path = dottedJSONPathPointer(path)
+		}
+		return path + "/" + escapeJSONPointerToken(key)
 	}
+	if path == "" {
+		return key
+	}
+	return path + "." + key
+}
+
+// dottedJSONPathPointer converts the generated dotted path leading to an open
+// map into JSON Pointer tokens.
+func dottedJSONPathPointer(path string) string {
+	parts := strings.Split(path, ".")
+	var pointer strings.Builder
+	for _, part := range parts {
+		pointer.WriteByte('/')
+		pointer.WriteString(escapeJSONPointerToken(part))
+	}
+	return pointer.String()
+}
+
+// escapeJSONPointerToken applies RFC 6901 escaping to one object key.
+func escapeJSONPointerToken(token string) string {
+	token = strings.ReplaceAll(token, "~", "~0")
+	return strings.ReplaceAll(token, "/", "~1")
+}
+
+// decodedJSONType returns the JSON category retained by Decoder.UseNumber.
+func decodedJSONType(value any) string {
+	switch value.(type) {
+	case bool:
+		return "boolean"
+	case json.Number:
+		return "number"
+	case string:
+		return "string"
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	default:
+		panic(fmt.Sprintf("unsupported decoded JSON value %T", value))
+	}
+}
+
+// generatedUnmarshalJSONType reduces encoding/json's detailed value label to
+// the stable JSON category carried by FieldIssue.
+func generatedUnmarshalJSONType(value string) string {
+	category, _, _ := strings.Cut(value, " ")
+	switch category {
+	case "array", "bool", "number", "object", "string":
+		if category == "bool" {
+			return "boolean"
+		}
+		return category
+	default:
+		return ""
+	}
+}
+
+// generatedJSONTypesCompatible performs only the raw JSON category check.
+// Typed decoding remains responsible for integer syntax, ranges, and formats.
+func generatedJSONTypesCompatible(expected, actual string) bool {
+	if actual == "number" && (expected == "integer" || expected == "number") {
+		return true
+	}
+	return expected == actual
+}
+
+// hasGeneratedJSONPath reports whether code generation emitted metadata for a
+// field itself or for a closed object beneath it.
+func hasGeneratedJSONPath(
+	path string,
+	allowed map[string][]string,
+	fieldTypes map[string]string,
+) bool {
+	if _, ok := allowed[path]; ok {
+		return true
+	}
+	if _, ok := fieldTypes[path]; ok {
+		return true
+	}
+	prefix := path + "."
+	for candidate := range allowed {
+		if strings.HasPrefix(candidate, prefix) {
+			return true
+		}
+	}
+	for candidate := range fieldTypes {
+		if strings.HasPrefix(candidate, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// invalidGeneratedFieldTypeError reports a raw JSON category that conflicts
+// with the generated schema and attaches that schema path's description.
+func invalidGeneratedFieldTypeError(field, expected, actual, description string) error {
+	var descriptions map[string]string
+	if description != "" {
+		descriptions = map[string]string{field: description}
+	}
+	return tools.NewValidationError(
+		fmt.Sprintf("field %q must be %s, got %s", field, expected, actual),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		descriptions,
+	)
+}
+
+func unknownJSONFieldError(path, field string, allowed []string) error {
+	issueField := generatedJSONChildPath(path, field, false)
 	return tools.NewValidationError(
 		fmt.Sprintf("unknown field %q", issueField),
 		[]*tools.FieldIssue{

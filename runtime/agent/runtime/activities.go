@@ -14,6 +14,9 @@ import (
 	"github.com/google/uuid"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
+	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -34,6 +37,7 @@ type plannerActivityInvocation struct {
 	invocations        *modelInvocationJournal
 	messages           []*model.Message
 	reminders          []reminder.Reminder
+	runContext         run.Context
 	publicationBatchID string
 }
 
@@ -257,6 +261,7 @@ func (r *Runtime) preparePlannerActivity(
 		invocations:        invocations,
 		messages:           messages,
 		reminders:          rems,
+		runContext:         input.RunContext,
 		publicationBatchID: uuid.NewString(),
 	}, nil
 }
@@ -291,7 +296,7 @@ func (a *plannerActivityInvocation) output(
 	if err != nil {
 		return nil, planner.NewOutputContractError(err)
 	}
-	toolCalls, err := r.compilePlannerToolCalls(result.ToolCalls, continuationActions, modelCalls)
+	toolCalls, err := r.compilePlannerToolCallsForRun(a.runContext, result.ToolCalls, continuationActions, modelCalls)
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +404,7 @@ func (a *plannerActivityInvocation) outputContractFailure(
 func (a *plannerActivityInvocation) outputContractFailureMetadata(
 	outputErr *planner.OutputContractError,
 ) *OutputContractFailure {
-	reasonSHA256, reasonSize := fingerprintBytes([]byte(outputErr.Unwrap().Error()))
+	reasonSHA256, reasonSize := errorevidence.Fingerprint(outputErr.Unwrap())
 	responseEvidence := a.invocations.rejectedModelResponseEvidence()
 	origin := outputErr.Origin()
 	if origin == "" && responseEvidence.Present {
@@ -411,7 +416,7 @@ func (a *plannerActivityInvocation) outputContractFailureMetadata(
 	return &OutputContractFailure{
 		Origin:                          origin,
 		ReasonSHA256:                    reasonSHA256,
-		ReasonSize:                      reasonSize,
+		ReasonSize:                      int64(reasonSize),
 		ModelResponsePresent:            responseEvidence.Present,
 		ModelResponseFingerprintVersion: responseEvidence.Version,
 		ModelResponseSHA256:             responseEvidence.SHA256,
@@ -532,18 +537,19 @@ func validatePlannerActivityResult(r *Runtime, result *planner.PlanResult, synth
 	return nil
 }
 
-// validatePlannerToolCallIDs requires stable, unique correlation IDs before the
-// runtime creates execution calls.
+// validatePlannerToolCallIDs requires provider correlation IDs to be unique
+// when requests forward model calls. Planner-authored requests leave them empty
+// because the runtime assigns every execution ID.
 func validatePlannerToolCallIDs(calls []planner.ToolRequest) error {
 	seen := make(map[string]struct{}, len(calls))
 	for index, call := range calls {
-		if call.ToolCallID == "" {
-			return fmt.Errorf("planner tool call %d has an empty tool call id", index)
+		if call.ModelToolCallID == "" {
+			continue
 		}
-		if _, ok := seen[call.ToolCallID]; ok {
-			return fmt.Errorf("planner tool call %d repeats tool call id %q", index, call.ToolCallID)
+		if _, ok := seen[call.ModelToolCallID]; ok {
+			return fmt.Errorf("planner tool call %d repeats model tool call ID %q", index, call.ModelToolCallID)
 		}
-		seen[call.ToolCallID] = struct{}{}
+		seen[call.ModelToolCallID] = struct{}{}
 	}
 	return nil
 }
@@ -893,7 +899,28 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if clarification != nil {
 		out.Clarification = clarification
 	}
+	if err := validateToolActivityOutputBudget(out); err != nil {
+		return nil, outputcontract.NewWithOrigin(err, outputcontract.OriginTool)
+	}
 	return out, nil
+}
+
+// validateToolActivityOutputBudget rejects a tool result before Temporal tries
+// to encode it. Tools that can produce larger domain data must store that data
+// durably and return a typed reference in their canonical result.
+func validateToolActivityOutputBudget(output *ToolOutput) error {
+	encoded, err := json.Marshal(output)
+	if err != nil {
+		return fmt.Errorf("encode tool activity output for size validation: %w", err)
+	}
+	if len(encoded) > engine.MaxPayloadBytes {
+		return fmt.Errorf(
+			"tool activity output uses %d bytes, maximum is %d; store the result and return its typed reference",
+			len(encoded),
+			engine.MaxPayloadBytes,
+		)
+	}
+	return nil
 }
 
 // buildToolFailureFromPayloadError converts a model-authored payload failure

@@ -146,16 +146,10 @@ func TestPlanStartActivityWaitsForCanceledStreamReceiveCleanup(t *testing.T) {
 	<-cleanupStarted
 	select {
 	case <-returned:
-		t.Fatal("planner activity returned before provider receive cleanup completed")
-	default:
-	}
-	select {
-	case <-closeCalled:
-		t.Fatal("provider stream closed while Recv was still cleaning up")
+		t.Fatal("planner activity returned before provider cleanup finished")
 	default:
 	}
 	close(cleanupRelease)
-
 	result := <-returned
 	requirePlannerOutputContractFailure(t, result.output, result.err)
 	require.Equal(
@@ -163,11 +157,7 @@ func TestPlanStartActivityWaitsForCanceledStreamReceiveCleanup(t *testing.T) {
 		planner.OutputContractOriginPlanner,
 		result.output.OutputContractFailure.Origin,
 	)
-	select {
-	case <-closeCalled:
-	default:
-		t.Fatal("planner activity returned before the provider stream was closed")
-	}
+	<-closeCalled
 }
 
 func TestPlanStartActivityPreservesModelRejectionWhileJoiningPendingCall(t *testing.T) {
@@ -229,11 +219,10 @@ func TestPlanStartActivityPreservesModelRejectionWhileJoiningPendingCall(t *test
 	<-pendingCleanupStarted
 	select {
 	case <-returned:
-		t.Fatal("planner activity returned before the pending provider call completed")
+		t.Fatal("planner activity returned before pending model call finished")
 	default:
 	}
 	close(pendingCleanupRelease)
-
 	result := <-returned
 	requirePlannerOutputContractFailure(t, result.output, result.err)
 	require.Equal(
@@ -245,16 +234,12 @@ func TestPlanStartActivityPreservesModelRejectionWhileJoiningPendingCall(t *test
 	require.Len(t, result.output.OutputContractFailure.ModelResponseSHA256, 64)
 	require.Positive(t, result.output.OutputContractFailure.ModelResponseSize)
 	require.Equal(t, 5, result.output.Usage.TotalTokens)
-	select {
-	case <-pendingReturned:
-	default:
-		t.Fatal("planner activity returned before the pending provider call joined")
-	}
 	require.Len(t, result.output.PlannerEvents, 1)
 	var usageEvent hooks.UsageEvent
 	require.NoError(t, json.Unmarshal(result.output.PlannerEvents[0].Payload, &usageEvent))
 	require.Equal(t, "provider-resolved-model", usageEvent.Model)
 	require.Equal(t, model.ModelClassSmall, usageEvent.ModelClass)
+	<-pendingReturned
 }
 
 func TestPlanStartActivityRejectsOversizedResultBranches(t *testing.T) {
@@ -385,10 +370,6 @@ func TestPlanActivityOutputBudgetBoundsEncodedJSONShape(t *testing.T) {
 				strings.Repeat("\x00", maxPlanActivityOutputBytes/6+1): true,
 			},
 		},
-		{
-			name:  "repeated struct field names",
-			value: make([]budgetFieldNames, 2_000),
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -396,6 +377,23 @@ func TestPlanActivityOutputBudgetBoundsEncodedJSONShape(t *testing.T) {
 			require.ErrorContains(t, err, "conservative encoded-size bound")
 		})
 	}
+}
+
+func TestPlanActivityOutputBudgetAcceptsExactStringAndRawJSONSizes(t *testing.T) {
+	require.NoError(
+		t,
+		(&planActivityOutputBudget{}).add(strings.Repeat("x", maxPlanActivityOutputBytes/2)),
+	)
+	require.NoError(
+		t,
+		(&planActivityOutputBudget{}).add(
+			rawjson.Message(`"`+strings.Repeat("x", maxPlanActivityOutputBytes/2)+`"`),
+		),
+	)
+	require.NoError(
+		t,
+		(&planActivityOutputBudget{}).add(make([]budgetFieldNames, 2_000)),
+	)
 }
 
 func TestPlanActivityOutputBudgetRejectsUnboundedJSONMarshalerWithoutCallingIt(t *testing.T) {

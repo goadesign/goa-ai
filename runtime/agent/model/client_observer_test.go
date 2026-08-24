@@ -17,6 +17,7 @@ type (
 		completeErr      error
 		stream           Streamer
 		streamErr        error
+		request          *Request
 		calls            int
 	}
 
@@ -25,6 +26,7 @@ type (
 		events     *[]string
 		prepareErr error
 		call       *observerTestCall
+		mutate     func(*Request)
 	}
 
 	observerTestCall struct {
@@ -49,21 +51,26 @@ type (
 	}
 )
 
-func (p *observerTestProvider) Complete(context.Context, *Request) (*Response, error) {
+func (p *observerTestProvider) Complete(_ context.Context, request *Request) (*Response, error) {
 	p.calls++
+	p.request = request
 	return p.completeResponse, p.completeErr
 }
 
-func (p *observerTestProvider) Stream(context.Context, *Request) (Streamer, error) {
+func (p *observerTestProvider) Stream(_ context.Context, request *Request) (Streamer, error) {
 	p.calls++
+	p.request = request
 	return p.stream, p.streamErr
 }
 
 func (p *observerTestPreparer) PrepareClientCall(
 	ctx context.Context,
-	_ *Request,
+	request *Request,
 ) (context.Context, ClientCallObserver, error) {
 	*p.events = append(*p.events, "prepare "+p.name)
+	if p.mutate != nil {
+		p.mutate(request)
+	}
 	if p.prepareErr != nil {
 		return ctx, nil, p.prepareErr
 	}
@@ -108,6 +115,44 @@ func (o *observerTestStreamObserver) ObserveStreamRecv(StreamObservation) error 
 func (o *observerTestStreamObserver) ObserveStreamClose(error) error {
 	o.closeCalls++
 	return nil
+}
+
+func TestClientObserverCannotChangeProviderOrValidationRequest(t *testing.T) {
+	provider := &observerTestProvider{completeResponse: &Response{
+		Content: []Message{{
+			Role: ConversationRoleAssistant,
+			Parts: []Part{ToolUsePart{
+				ID:    "call-1",
+				Name:  "lookup",
+				Input: []byte(`{"id":"one"}`),
+			}},
+		}},
+		StopReason: "tool_use",
+	}}
+	request := &Request{
+		Tools:      []*ToolDefinition{advertisedTool("lookup")},
+		ToolChoice: &ToolChoice{Mode: ToolChoiceModeTool, Name: "lookup"},
+	}
+	client, err := newValidatedClient(provider, nil, []ProviderCallObserver{
+		&observerTestPreparer{
+			events: &[]string{},
+			call:   &observerTestCall{},
+			mutate: func(observed *Request) {
+				observed.Tools[0].Name = "changed"
+				observed.ToolChoice.Name = "changed"
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	response, err := client.Complete(t.Context(), request)
+
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	require.Equal(t, "lookup", provider.request.Tools[0].Name)
+	require.Equal(t, "lookup", provider.request.ToolChoice.Name)
+	require.Equal(t, "lookup", request.Tools[0].Name)
+	require.Equal(t, "lookup", request.ToolChoice.Name)
 }
 
 func TestClientCompleteJoinsProviderObserverAndFinishErrors(t *testing.T) {

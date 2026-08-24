@@ -6,6 +6,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
 
 	"goa.design/goa-ai/runtime/agent/model"
@@ -16,6 +17,7 @@ type fakeClient struct {
 	completeErr error
 	streamErr   error
 	stream      model.Streamer
+	countErr    error
 
 	completeCalls int
 	streamCalls   int
@@ -24,9 +26,13 @@ type fakeClient struct {
 type closeTrackingStreamer struct {
 	closed   bool
 	closeErr error
+	recvErr  error
 }
 
-func (*closeTrackingStreamer) Recv() (model.Chunk, error) {
+func (s *closeTrackingStreamer) Recv() (model.Chunk, error) {
+	if s.recvErr != nil {
+		return nil, s.recvErr
+	}
 	return nil, io.EOF
 }
 
@@ -46,6 +52,8 @@ type fakeCountingClient struct {
 	err   error
 }
 
+type fakeNoCounterClient struct{}
+
 func (f *fakeClient) Complete(_ context.Context, _ *model.Request) (*model.Response, error) {
 	f.completeCalls++
 	return f.response, f.completeErr
@@ -56,11 +64,39 @@ func (f *fakeClient) Stream(_ context.Context, _ *model.Request) (model.Streamer
 	return f.stream, f.streamErr
 }
 
+func (*fakeNoCounterClient) Complete(context.Context, *model.Request) (*model.Response, error) {
+	return nil, nil
+}
+
+func (*fakeNoCounterClient) Stream(context.Context, *model.Request) (model.Streamer, error) {
+	return nil, nil
+}
+
+func (f *fakeClient) CountTokens(_ context.Context, req *model.Request) (model.TokenCount, error) {
+	if f.countErr != nil {
+		return model.TokenCount{}, f.countErr
+	}
+	return model.TokenCount{
+		InputTokens: 1,
+		Model:       "test",
+		ModelClass:  req.ModelClass,
+		Exact:       true,
+	}, nil
+}
+
 func (f *fakeCountingClient) CountTokens(context.Context, *model.Request) (model.TokenCount, error) {
 	if f.err != nil {
 		return model.TokenCount{}, f.err
 	}
 	return f.count, nil
+}
+
+func TestAdaptiveRateLimiterRequiresExactTokenCount(t *testing.T) {
+	limiter := newAdaptiveRateLimiter(60_000, 60_000)
+	err := limiter.wait(t.Context(), &fakeCountingClient{
+		count: model.TokenCount{InputTokens: 10, Exact: false},
+	}, &model.Request{})
+	require.ErrorContains(t, err, "requires an exact provider token count")
 }
 
 func TestAdaptiveRateLimiter_BackoffOnRateLimited(t *testing.T) {
@@ -122,6 +158,63 @@ func TestLimitedClientClosesStreamReturnedWithError(t *testing.T) {
 	if !raw.closed {
 		t.Fatal("stream was not closed")
 	}
+}
+
+func TestAdaptiveRateLimiterObservesTerminalStreamRateLimit(t *testing.T) {
+	limiter := newAdaptiveRateLimiter(60_000, 60_000)
+	initialTPM := limiter.currentTPM
+	client := &fakeClient{
+		stream: &closeTrackingStreamer{recvErr: model.ErrRateLimited},
+	}
+	provider := &limitedProvider{next: client, counter: client, limiter: limiter}
+
+	stream, err := provider.Stream(t.Context(), &model.Request{})
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.ErrorIs(t, err, model.ErrRateLimited)
+
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	require.Less(t, limiter.currentTPM, initialTPM)
+}
+
+func TestAdaptiveRateLimiterObservesCleanStreamOnce(t *testing.T) {
+	limiter := newAdaptiveRateLimiter(60_000, 120_000)
+	limiter.recoveryRate = 1_000
+	initialTPM := limiter.currentTPM
+	client := &fakeClient{
+		stream: &closeTrackingStreamer{},
+	}
+	provider := &limitedProvider{next: client, counter: client, limiter: limiter}
+
+	stream, err := provider.Stream(t.Context(), &model.Request{})
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.ErrorIs(t, err, io.EOF)
+	_, err = stream.Recv()
+	require.ErrorIs(t, err, io.EOF)
+
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	require.InDelta(t, initialTPM+limiter.recoveryRate, limiter.currentTPM, 0.001)
+}
+
+func TestAdaptiveRateLimiterCloseDoesNotInventStreamOutcome(t *testing.T) {
+	closeErr := errors.New("stream close failed")
+	limiter := newAdaptiveRateLimiter(60_000, 120_000)
+	initialTPM := limiter.currentTPM
+	client := &fakeClient{
+		stream: &closeTrackingStreamer{closeErr: closeErr},
+	}
+	provider := &limitedProvider{next: client, counter: client, limiter: limiter}
+
+	stream, err := provider.Stream(t.Context(), &model.Request{})
+	require.NoError(t, err)
+	require.ErrorIs(t, stream.Close(), closeErr)
+
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	require.InDelta(t, initialTPM, limiter.currentTPM, 0.001)
 }
 
 func TestAdaptiveRateLimiter_ProbeOnSuccess(t *testing.T) {
@@ -270,7 +363,9 @@ func TestAdaptiveRateLimiterDelegatesTokenCounting(t *testing.T) {
 	}
 	wrapped := limitedTestClient(t, limiter, client)
 
-	count, err := wrapped.(model.TokenCounter).CountTokens(context.Background(), &model.Request{})
+	count, err := wrapped.(model.TokenCounter).CountTokens(context.Background(), &model.Request{
+		ModelClass: model.ModelClassSmall,
+	})
 	if err != nil {
 		t.Fatalf("count tokens: %v", err)
 	}
@@ -281,7 +376,7 @@ func TestAdaptiveRateLimiterDelegatesTokenCounting(t *testing.T) {
 
 func TestAdaptiveRateLimiterCountTokensRequiresWrappedCounter(t *testing.T) {
 	limiter := newAdaptiveRateLimiter(60000, 60000)
-	wrapped := limitedTestClient(t, limiter, &fakeClient{})
+	wrapped := limitedTestClient(t, limiter, &fakeNoCounterClient{})
 
 	_, err := wrapped.(model.TokenCounter).CountTokens(context.Background(), &model.Request{})
 	if err == nil {

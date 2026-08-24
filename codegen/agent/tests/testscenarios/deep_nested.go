@@ -28,6 +28,9 @@ func DeepNestedValidations() func() {
 			Attribute("root", String, "Root value")
 			Attribute("child", Level2, "Child L2")
 			Attribute("labels", MapOf(String, String), "Open labels keyed by source")
+			Attribute("objects", MapOf(String, Level3), "Open objects keyed by source")
+			Attribute("groups", MapOf(String, MapOf(String, String)), "Nested labels keyed by group and source")
+			Attribute("counts", MapOf(String, Int), "Integer counts keyed by source")
 			Required("root", "child")
 		})
 

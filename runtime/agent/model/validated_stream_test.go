@@ -15,11 +15,13 @@ import (
 )
 
 type validatedStreamFixture struct {
-	chunks   []Chunk
-	response *Response
-	next     int
-	closed   bool
-	closeErr error
+	chunks      []Chunk
+	response    *Response
+	next        int
+	closed      bool
+	recvErr     error
+	closeErr    error
+	closeCalled chan struct{}
 }
 
 type recordingStreamObserver struct {
@@ -29,16 +31,6 @@ type recordingStreamObserver struct {
 }
 
 type mutatingStreamObserver struct{}
-
-type reentrantStreamObserver struct {
-	stream          *ValidatedStream
-	closeOnRecv     bool
-	recvResponse    *Response
-	recvCloseErr    error
-	closeResponse   *Response
-	closeReentryErr error
-	closeCalls      int
-}
 
 type typedNilStreamFixture struct{}
 
@@ -62,15 +54,6 @@ type blockingRejectingStreamObserver struct {
 	releaseFirst chan struct{}
 	rejectErr    error
 	calls        atomic.Int32
-}
-
-type reentrantCloseErrorObserver struct {
-	stream          *ValidatedStream
-	closeOnRecv     bool
-	closeErr        error
-	recvCloseErr    error
-	closeReentryErr error
-	closeCalls      int
 }
 
 func (*typedNilStreamFixture) Recv() (Chunk, error) {
@@ -132,6 +115,22 @@ func TestZeroValidatedStreamReturnsContractErrors(t *testing.T) {
 	observed, err := stream.Observe(&recordingStreamObserver{})
 	require.Nil(t, observed)
 	require.ErrorContains(t, err, "not an intact validated stream")
+}
+
+func TestValidatedStreamRejectsObserverAfterUseStarts(t *testing.T) {
+	stream := mustValidateStream(t, &validatedStreamFixture{
+		chunks: []Chunk{TextChunk{Message: Message{
+			Role:  ConversationRoleAssistant,
+			Parts: []Part{TextPart{Text: "visible"}},
+		}}},
+	}, &Request{})
+	_, err := stream.Recv()
+	require.NoError(t, err)
+
+	observed, err := stream.Observe(&recordingStreamObserver{})
+
+	require.Nil(t, observed)
+	require.ErrorContains(t, err, "before receive or close")
 }
 
 func TestRequestContractRejectsInvalidRequestIdentity(t *testing.T) {
@@ -455,7 +454,33 @@ func TestValidatedStreamObserveBoundsRejectedUsageEvidence(t *testing.T) {
 		TotalTokens:      3,
 		CacheReadTokens:  4,
 		CacheWriteTokens: 5,
-	}, observer.observations[0].RejectedUsage)
+	}, observer.observations[0].RejectedUsageDelta)
+	require.Nil(t, observer.observations[0].RejectedUsageTotal)
+}
+
+func TestValidatedStreamObservePreservesProviderRejectionEvidence(t *testing.T) {
+	contract, err := NewRequestContract(&Request{ModelClass: ModelClassDefault})
+	require.NoError(t, err)
+	rejection := contract.RejectProviderOutput(&TokenUsage{
+		Model:        "provider-model",
+		InputTokens:  7,
+		OutputTokens: 3,
+		TotalTokens:  10,
+	}, errors.New("translate provider stream"))
+	raw := &validatedStreamFixture{recvErr: rejection}
+	validated, err := contract.ValidateStream(raw)
+	require.NoError(t, err)
+	observer := &recordingStreamObserver{}
+	observed, err := validated.Observe(observer)
+	require.NoError(t, err)
+
+	chunk, err := observed.Recv()
+
+	require.Nil(t, chunk)
+	require.ErrorIs(t, err, rejection)
+	require.Len(t, observer.observations, 1)
+	require.Equal(t, rejection.Usage(), observer.observations[0].RejectedUsageTotal)
+	require.Equal(t, rejection.Evidence(), observer.observations[0].ResponseEvidence)
 }
 
 func TestObservedStreamCloseJoinsProviderAndObserverFailures(t *testing.T) {
@@ -474,49 +499,6 @@ func TestObservedStreamCloseJoinsProviderAndObserverFailures(t *testing.T) {
 	require.ErrorIs(t, err, observerErr)
 	require.Equal(t, err, observed.Close())
 	require.True(t, raw.closed)
-}
-
-func TestValidatedStreamRecvObserverMayReenterResponseAndClose(t *testing.T) {
-	raw := &validatedStreamFixture{
-		chunks: []Chunk{TextChunk{Message: Message{
-			Role:  ConversationRoleAssistant,
-			Parts: []Part{TextPart{Text: "visible"}},
-		}}},
-	}
-	validated := mustValidateStream(t, raw, &Request{})
-	observer := &reentrantStreamObserver{closeOnRecv: true}
-	observed, err := validated.Observe(observer)
-	require.NoError(t, err)
-	observer.stream = observed
-
-	chunk, err := observed.Recv()
-
-	require.NoError(t, err)
-	require.Equal(t, "visible", chunk.(TextChunk).Message.Parts[0].(TextPart).Text)
-	require.Nil(t, observer.recvResponse)
-	require.NoError(t, observer.recvCloseErr)
-	require.Nil(t, observer.closeResponse)
-	require.NoError(t, observer.closeReentryErr)
-	require.Equal(t, 1, observer.closeCalls)
-	require.True(t, raw.closed)
-}
-
-func TestValidatedStreamCloseObserverMayReenterResponseAndClose(t *testing.T) {
-	providerErr := errors.New("provider close failed")
-	raw := &validatedStreamFixture{closeErr: providerErr}
-	validated := mustValidateStream(t, raw, &Request{})
-	observer := &reentrantStreamObserver{}
-	observed, err := validated.Observe(observer)
-	require.NoError(t, err)
-	observer.stream = observed
-
-	err = observed.Close()
-
-	require.ErrorIs(t, err, providerErr)
-	require.Nil(t, observer.closeResponse)
-	require.ErrorIs(t, observer.closeReentryErr, providerErr)
-	require.Equal(t, 1, observer.closeCalls)
-	require.Equal(t, err, observed.Close())
 }
 
 func TestValidatedStreamObserverConcurrentOperations(t *testing.T) {
@@ -613,45 +595,43 @@ func TestValidatedStreamDoesNotReceiveSiblingChunkBeforeObserverDecision(t *test
 	require.EqualValues(t, 1, shared.calls.Load())
 }
 
-func TestValidatedStreamReentrantClosePreservesEveryObserverError(t *testing.T) {
-	providerErr := errors.New("provider close failed")
-	firstErr := errors.New("first observer close failed")
-	secondErr := errors.New("second observer close failed")
+func TestValidatedStreamCloseWaitsForReceiveObservation(t *testing.T) {
 	raw := &validatedStreamFixture{
 		chunks: []Chunk{TextChunk{Message: Message{
 			Role:  ConversationRoleAssistant,
 			Parts: []Part{TextPart{Text: "visible"}},
 		}}},
-		closeErr: providerErr,
+		closeCalled: make(chan struct{}),
 	}
 	base := mustValidateStream(t, raw, &Request{})
-	firstObserver := &reentrantCloseErrorObserver{closeOnRecv: true, closeErr: firstErr}
-	first, err := base.Observe(firstObserver)
+	observer := &blockingRejectingStreamObserver{
+		firstEntered: make(chan struct{}),
+		releaseFirst: make(chan struct{}),
+	}
+	observed, err := base.Observe(observer)
 	require.NoError(t, err)
-	secondObserver := &reentrantCloseErrorObserver{closeErr: secondErr}
-	observed, err := first.Observe(secondObserver)
-	require.NoError(t, err)
-	firstObserver.stream = observed
-	secondObserver.stream = observed
 
-	chunk, err := observed.Recv()
+	recvResult := make(chan error, 1)
+	go func() {
+		_, recvErr := observed.Recv()
+		recvResult <- recvErr
+	}()
+	<-observer.firstEntered
+	closeResult := make(chan error, 1)
+	go func() {
+		closeResult <- observed.Close()
+	}()
 
-	require.Nil(t, chunk)
-	require.ErrorIs(t, err, providerErr)
-	require.ErrorIs(t, err, firstErr)
-	require.ErrorIs(t, err, secondErr)
-	require.ErrorIs(t, firstObserver.recvCloseErr, providerErr)
-	require.ErrorIs(t, firstObserver.recvCloseErr, secondErr)
-	require.ErrorIs(t, firstObserver.closeReentryErr, providerErr)
-	require.ErrorIs(t, firstObserver.closeReentryErr, secondErr)
-	require.ErrorIs(t, secondObserver.closeReentryErr, providerErr)
-	require.Equal(t, 1, firstObserver.closeCalls)
-	require.Equal(t, 1, secondObserver.closeCalls)
-
-	finalErr := observed.Close()
-	require.ErrorIs(t, finalErr, providerErr)
-	require.ErrorIs(t, finalErr, firstErr)
-	require.ErrorIs(t, finalErr, secondErr)
+	select {
+	case <-raw.closeCalled:
+		t.Fatal("Close overtook the in-flight receive observer")
+	default:
+	}
+	close(observer.releaseFirst)
+	require.NoError(t, <-recvResult)
+	<-raw.closeCalled
+	require.NoError(t, <-closeResult)
+	require.NoError(t, observed.Close())
 }
 
 func TestValidatedStreamSerializesCancellationAndIdempotentClose(t *testing.T) {
@@ -705,6 +685,9 @@ func TestValidatedStreamSerializesCancellationAndIdempotentClose(t *testing.T) {
 
 func (s *validatedStreamFixture) Recv() (Chunk, error) {
 	if s.next == len(s.chunks) {
+		if s.recvErr != nil {
+			return nil, s.recvErr
+		}
 		return nil, io.EOF
 	}
 	chunk := s.chunks[s.next]
@@ -718,6 +701,9 @@ func (s *validatedStreamFixture) Response() *Response {
 
 func (s *validatedStreamFixture) Close() error {
 	s.closed = true
+	if s.closeCalled != nil {
+		close(s.closeCalled)
+	}
 	return s.closeErr
 }
 
@@ -782,21 +768,6 @@ func (*mutatingStreamObserver) ObserveStreamClose(error) error {
 	return nil
 }
 
-func (o *reentrantStreamObserver) ObserveStreamRecv(StreamObservation) error {
-	o.recvResponse = o.stream.Response()
-	if o.closeOnRecv {
-		o.recvCloseErr = o.stream.Close()
-	}
-	return nil
-}
-
-func (o *reentrantStreamObserver) ObserveStreamClose(error) error {
-	o.closeCalls++
-	o.closeResponse = o.stream.Response()
-	o.closeReentryErr = o.stream.Close()
-	return nil
-}
-
 func (o *blockingRejectingStreamObserver) ObserveStreamRecv(StreamObservation) error {
 	if o.calls.Add(1) == 1 {
 		close(o.firstEntered)
@@ -808,17 +779,4 @@ func (o *blockingRejectingStreamObserver) ObserveStreamRecv(StreamObservation) e
 
 func (*blockingRejectingStreamObserver) ObserveStreamClose(error) error {
 	return nil
-}
-
-func (o *reentrantCloseErrorObserver) ObserveStreamRecv(StreamObservation) error {
-	if o.closeOnRecv {
-		o.recvCloseErr = o.stream.Close()
-	}
-	return nil
-}
-
-func (o *reentrantCloseErrorObserver) ObserveStreamClose(error) error {
-	o.closeCalls++
-	o.closeReentryErr = o.stream.Close()
-	return o.closeErr
 }

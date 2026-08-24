@@ -25,10 +25,14 @@ type (
 		contract *model.RequestContract
 
 		chunks chan model.Chunk
+		done   chan struct{}
 
 		errMu    sync.Mutex
 		errSet   bool
 		finalErr error
+
+		closeOnce sync.Once
+		closeErr  error
 
 		responseMu    sync.RWMutex
 		response      *model.Response
@@ -43,6 +47,7 @@ type (
 		recordUsage    func(model.TokenUsage)
 
 		toolCalls       map[string]*streamToolBuffer
+		streamedCallIDs map[string]struct{}
 		thinkingIndexes map[int]int
 		nextThinking    int
 
@@ -50,6 +55,7 @@ type (
 		modelID    string
 		modelClass model.ModelClass
 		output     *model.StructuredOutput
+		projection *strictSchemaProjection
 
 		completed      bool
 		sawText        bool
@@ -58,10 +64,10 @@ type (
 	}
 
 	streamToolBuffer struct {
-		itemID  string
-		callID  string
-		name    string
-		pending []string
+		itemID       string
+		callID       string
+		name         tools.Ident
+		providerName string
 	}
 )
 
@@ -72,6 +78,7 @@ func newOpenAIStreamer(
 	modelID string,
 	modelClass model.ModelClass,
 	output *model.StructuredOutput,
+	projection *strictSchemaProjection,
 	contract *model.RequestContract,
 ) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
@@ -81,6 +88,7 @@ func newOpenAIStreamer(
 		stream:   stream,
 		contract: contract,
 		chunks:   make(chan model.Chunk, 32),
+		done:     make(chan struct{}),
 		rejectedUsage: model.TokenUsage{
 			Model:      modelID,
 			ModelClass: modelClass,
@@ -91,11 +99,13 @@ func newOpenAIStreamer(
 		recordResponse:  streamer.recordResponse,
 		recordUsage:     streamer.recordUsage,
 		toolCalls:       make(map[string]*streamToolBuffer),
+		streamedCallIDs: make(map[string]struct{}),
 		thinkingIndexes: make(map[int]int),
 		codec:           codec,
 		modelID:         modelID,
 		modelClass:      modelClass,
 		output:          output,
+		projection:      projection,
 	}
 	go streamer.run(processor)
 	return streamer
@@ -127,10 +137,9 @@ func (s *openAIStreamer) Recv() (model.Chunk, error) {
 
 func (s *openAIStreamer) Close() error {
 	s.cancel()
-	if s.stream == nil {
-		return nil
-	}
-	return s.stream.Close()
+	closeErr := s.closeProviderStream()
+	<-s.done
+	return closeErr
 }
 
 func (s *openAIStreamer) Response() *model.Response {
@@ -141,11 +150,10 @@ func (s *openAIStreamer) Response() *model.Response {
 
 func (s *openAIStreamer) run(processor *openAIChunkProcessor) {
 	defer close(s.chunks)
+	defer close(s.done)
 	defer func() {
-		if s.stream != nil {
-			if err := s.stream.Close(); err != nil {
-				s.setErr(err)
-			}
+		if err := s.closeProviderStream(); err != nil {
+			s.setErr(err)
 		}
 	}()
 
@@ -174,6 +182,15 @@ func (s *openAIStreamer) run(processor *openAIChunkProcessor) {
 			return
 		}
 	}
+}
+
+// closeProviderStream closes the Responses API stream once and returns the
+// cached cleanup result to the pump and every caller of Close.
+func (s *openAIStreamer) closeProviderStream() error {
+	s.closeOnce.Do(func() {
+		s.closeErr = s.stream.Close()
+	})
+	return s.closeErr
 }
 
 // outputError preserves transport, cancellation, and provider failures while
@@ -315,9 +332,10 @@ func (p *openAIChunkProcessor) registerOutputItem(item responses.ResponseOutputI
 			if err := p.retain(name); err != nil {
 				return err
 			}
-			buffer.name = name
+			buffer.name = tools.Ident(name)
+			buffer.providerName = actual.Name
 		}
-		return p.flushPendingToolDeltas(buffer)
+		return nil
 	default:
 		return nil
 	}
@@ -335,40 +353,29 @@ func (p *openAIChunkProcessor) handleToolCallArgumentsDelta(event responses.Resp
 		buffer = &streamToolBuffer{itemID: event.ItemID}
 		p.toolCalls[event.ItemID] = buffer
 	}
-	if buffer.callID == "" || buffer.name == "" {
-		if err := p.retain(event.Delta); err != nil {
-			return err
-		}
-		buffer.pending = append(buffer.pending, event.Delta)
+	if event.Delta == "" {
 		return nil
 	}
-	return p.emitToolCallDelta(buffer, event.Delta)
-}
-
-func (p *openAIChunkProcessor) flushPendingToolDeltas(buffer *streamToolBuffer) error {
-	if buffer == nil || buffer.callID == "" || buffer.name == "" || len(buffer.pending) == 0 {
+	if err := p.retain(event.Delta); err != nil {
+		return err
+	}
+	if buffer.callID == "" || buffer.name == "" || buffer.providerName == "" {
+		return errors.New("openai: tool argument delta arrived before tool call identity")
+	}
+	if !p.codec.streamsCanonicalDeltas(buffer.providerName) {
 		return nil
 	}
-	for _, delta := range buffer.pending {
-		if err := p.emitToolCallDelta(buffer, delta); err != nil {
-			return err
-		}
-	}
-	buffer.pending = nil
-	return nil
-}
-
-func (p *openAIChunkProcessor) emitToolCallDelta(buffer *streamToolBuffer, delta string) error {
-	if delta == "" {
-		return nil
-	}
-	return p.emit(model.ToolCallDeltaChunk{
+	if err := p.emit(model.ToolCallDeltaChunk{
 		Delta: model.ToolCallDelta{
-			Name:  tools.Ident(buffer.name),
+			Name:  buffer.name,
 			ID:    buffer.callID,
-			Delta: delta,
+			Delta: event.Delta,
 		},
-	})
+	}); err != nil {
+		return err
+	}
+	p.streamedCallIDs[buffer.callID] = struct{}{}
+	return nil
 }
 
 func (p *openAIChunkProcessor) handleTextDelta(delta string, itemID string, outputIndex int64) error {
@@ -377,12 +384,10 @@ func (p *openAIChunkProcessor) handleTextDelta(delta string, itemID string, outp
 	}
 	p.sawText = true
 	if p.output != nil {
-		return p.emit(model.CompletionDeltaChunk{
-			Delta: model.CompletionDelta{
-				Name:  structuredOutputName(p.output),
-				Delta: delta,
-			},
-		})
+		// OpenAI can emit transport-only null members for canonical optional
+		// fields. The complete document is normalized before it crosses the
+		// model boundary, so partial JSON cannot be exposed as canonical deltas.
+		return nil
 	}
 	return p.emit(model.TextChunk{
 		Message: model.Message{
@@ -452,7 +457,14 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 	p.completed = true
 	p.modelID = chooseModelID(resp.Model, p.modelID)
 	p.recordUsage(translateUsage(resp.Usage, p.modelID, p.modelClass))
-	translated, err := translateResponse(&resp, p.codec, p.modelID, p.modelClass, p.output)
+	translated, err := translateResponse(
+		&resp,
+		p.codec,
+		p.modelID,
+		p.modelClass,
+		p.output,
+		p.projection,
+	)
 	if err != nil {
 		return err
 	}
@@ -460,7 +472,7 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 		return err
 	}
 	if p.output != nil {
-		payload, err := structuredOutputPayload(translated.Content, p.output)
+		payload, err := structuredOutputPayload(translated.Content, p.output, p.projection)
 		if err != nil {
 			return err
 		}
@@ -474,6 +486,17 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 		}
 	} else {
 		for _, call := range translated.ToolCalls() {
+			if _, streamed := p.streamedCallIDs[call.ID]; !streamed {
+				if err := p.emit(model.ToolCallDeltaChunk{
+					Delta: model.ToolCallDelta{
+						Name:  call.Name,
+						ID:    call.ID,
+						Delta: string(call.Payload),
+					},
+				}); err != nil {
+					return err
+				}
+			}
 			if err := p.emit(model.ToolCallChunk{
 				ToolCall: call,
 			}); err != nil {

@@ -85,6 +85,7 @@ type (
 		resolvedModelID    string
 		resolvedModelClass model.ModelClass
 		structuredOutput   *model.StructuredOutput
+		outputProjection   *strictSchemaProjection
 	}
 
 	// responseStream is the minimal streaming surface needed by the adapter.
@@ -203,6 +204,7 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 		prepared.resolvedModelID,
 		prepared.resolvedModelClass,
 		prepared.structuredOutput,
+		prepared.outputProjection,
 	)
 	if err != nil {
 		if _, providerFailure := model.AsProviderError(err); providerFailure {
@@ -235,6 +237,7 @@ func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Stream
 		prepared.resolvedModelID,
 		prepared.resolvedModelClass,
 		prepared.structuredOutput,
+		prepared.outputProjection,
 		contract,
 	)
 	return streamer, nil
@@ -257,7 +260,7 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 	if modelID == "" {
 		return nil, errors.New("openai: model identifier is required")
 	}
-	toolDefs, codec, err := encodeTools(req.Tools)
+	toolDefs, codec, err := encodeTools(req.Tools, modelID)
 	if err != nil {
 		return nil, err
 	}
@@ -278,24 +281,28 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 	if maxTokens := c.effectiveMaxCompletionTokens(req.MaxTokens); maxTokens > 0 {
 		request.MaxOutputTokens = param.NewOpt(int64(maxTokens))
 	}
-	if temperature := c.effectiveTemperature(req.Temperature); temperature > 0 {
-		request.Temperature = param.NewOpt(float64(temperature))
-	}
 	if req.Thinking != nil && req.Thinking.Enable {
+		if req.Temperature > 0 {
+			return nil, errors.New("openai: temperature is not supported when thinking is enabled")
+		}
 		reasoning, include, err := c.effectiveThinkingRequest(req.Thinking)
 		if err != nil {
 			return nil, err
 		}
 		request.Reasoning = reasoning
 		request.Include = append(request.Include, include...)
+	} else if temperature := c.effectiveTemperature(req.Temperature); temperature > 0 {
+		request.Temperature = param.NewOpt(float64(temperature))
 	}
+	var outputProjection *strictSchemaProjection
 	if req.StructuredOutput != nil {
-		textConfig, ok, err := encodeStructuredOutput(req.StructuredOutput)
+		textConfig, projection, ok, err := encodeStructuredOutput(req.StructuredOutput, modelID)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
 			request.Text = textConfig
+			outputProjection = projection
 		}
 	}
 	if req.ToolChoice != nil {
@@ -313,6 +320,7 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 		resolvedModelID:    modelID,
 		resolvedModelClass: modelClass,
 		structuredOutput:   req.StructuredOutput,
+		outputProjection:   outputProjection,
 	}, nil
 }
 
@@ -327,9 +335,6 @@ func validateRequestBoundary(req *model.Request) error {
 	}
 	if err := validateOpenAITemperature(req.Temperature); err != nil {
 		return fmt.Errorf("openai: %w", err)
-	}
-	if req.StructuredOutput != nil && (len(req.Tools) > 0 || req.ToolChoice != nil) {
-		return errors.New("openai: structured output cannot be combined with tools")
 	}
 	return nil
 }
@@ -443,11 +448,17 @@ func wrapOpenAIError(operation string, err error) error {
 	if err == nil {
 		return nil
 	}
-	if isRateLimited(err) {
-		pe := providerErrorFromSDK(operation, err)
-		return errors.Join(model.ErrRateLimited, pe)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
 	}
-	return providerErrorFromSDK(operation, err)
+	providerErr := providerErrorFromSDK(operation, err)
+	if errors.Is(providerErr, model.ErrRateLimited) {
+		return providerErr
+	}
+	if isRateLimited(err) {
+		return errors.Join(model.ErrRateLimited, providerErr)
+	}
+	return providerErr
 }
 
 func providerErrorFromSDK(operation string, err error) error {
@@ -481,7 +492,7 @@ func providerErrorFromResponseFailure(operation string, code string, msg string,
 
 func newProviderError(operation string, status int, code string, msg string, cause error) error {
 	kind, retryable := classifyOpenAIError(status, code)
-	return model.NewProviderError(
+	providerErr := model.NewProviderError(
 		openAIProviderName,
 		operation,
 		status,
@@ -492,6 +503,10 @@ func newProviderError(operation string, status int, code string, msg string, cau
 		retryable,
 		cause,
 	)
+	if kind == model.ProviderErrorKindRateLimited {
+		return errors.Join(model.ErrRateLimited, providerErr)
+	}
+	return providerErr
 }
 
 func classifyOpenAIError(status int, code string) (model.ProviderErrorKind, bool) {

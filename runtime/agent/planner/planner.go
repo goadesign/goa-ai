@@ -198,14 +198,11 @@ type ToolRequest struct {
 	// Payload is the canonical JSON payload for the tool call.
 	Payload rawjson.Message
 
-	// ToolCallID uniquely identifies this tool invocation for correlation across events.
-	//
-	// The runtime also reattaches provider state (for example, Gemini 3 tool-call
-	// thought signatures) by this ID. Planner code that builds a ToolRequest
-	// from a model response must therefore preserve Response.ToolCalls()[i].ID.
-	// When one model call becomes one different executable call, the unchanged
-	// ID also lets the runtime record the original model name and payload.
-	ToolCallID string
+	// ModelToolCallID is the provider's correlation ID when this request forwards
+	// a validated model call. ConsumeStream and ToolRequestFromModelCall set it;
+	// planner-authored requests leave it empty. The runtime always assigns a
+	// separate execution ID.
+	ModelToolCallID string
 }
 
 // ToolResult captures the outcome of a tool invocation.

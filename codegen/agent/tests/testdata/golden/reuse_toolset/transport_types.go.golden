@@ -14,9 +14,4 @@ type (
 	// the public tool type.
 	PingPayloadTransport struct {
 	}
-	// PingResultTransport is the internal JSON transport type for PingResult.
-	// It lives in the toolset-local http package and is used only for JSON
-	// decode + validation (missing-field detection) before transforming into
-	// the public tool type.
-	PingResultTransport struct{}
 )

@@ -583,10 +583,9 @@ func (r *Runtime) buildPromptTemplateData(ctx context.Context, toolName tools.Id
 
 // adaptAgentChildOutput converts a nested agent RunOutput into a planner.ToolResult.
 //
-// Preference order:
-//   - Use the child-produced FinalToolResult when present.
-//   - Otherwise convert the child run output into the legacy prose-oriented
-//     planner.ToolResult shape.
+// The child must return exactly one completed result. A typed final tool result
+// is decoded with the parent tool's generated codec; a final assistant message
+// becomes the parent-visible text result.
 //
 // In all cases the returned ToolResult is linked back to the child run.
 func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfig, call *ToolCall, nestedRunCtx run.Context, outPtr *RunOutput) (*planner.ToolResult, error) {
@@ -608,7 +607,10 @@ func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfi
 		return tr, nil
 	}
 
-	result := ConvertRunOutputToToolResult(call.Name, outPtr)
+	result, err := ConvertRunOutputToToolResult(call.Name, outPtr)
+	if err != nil {
+		return nil, err
+	}
 	result.ToolCallID = call.ToolCallID
 	attachRunLink(&result, handle)
 	tr := &result

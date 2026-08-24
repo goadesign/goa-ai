@@ -1617,8 +1617,8 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		if err := validateContinuationIdentity(input, checkpoint); err != nil {
 			return nil, err
 		}
-		runLabels = checkpoint.Labels
-		runMetadata = checkpoint.Metadata
+		runLabels = checkpoint.Context.Labels
+		runMetadata = checkpoint.Context.Metadata
 		effectivePolicy = checkpoint.Policy
 	}
 	if err := validateRequiredLabels(reg, runLabels); err != nil {

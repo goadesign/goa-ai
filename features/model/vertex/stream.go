@@ -18,58 +18,74 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// geminiStreamer adapts a Gemini GenerateContentStream sequence to the
-// model.Streamer interface. A single pump goroutine (run) translates
-// provider responses into chunks; Recv drains them.
-type geminiStreamer struct {
-	// ctx is the pump context. Close cancels it so run stops emitting even
-	// when the caller abandons the stream without draining it.
-	ctx context.Context
+type (
+	// geminiStreamer adapts a Gemini GenerateContentStream sequence to the
+	// model.Streamer interface. A single pump goroutine (run) translates
+	// provider responses into chunks; Recv drains them.
+	geminiStreamer struct {
+		// ctx is the pump context. Close cancels it so run stops emitting even
+		// when the caller abandons the stream without draining it.
+		ctx context.Context
 
-	// cancel cancels ctx; Close calls it (context cancellation is
-	// idempotent, so is Close).
-	cancel context.CancelFunc
+		// cancel cancels ctx; Close calls it (context cancellation is
+		// idempotent, so is Close).
+		cancel context.CancelFunc
 
-	// chunks carries translated chunks from the pump goroutine to Recv. It
-	// is buffered (32) and closed by run when the provider stream ends,
-	// which is Recv's signal to surface the terminal error or io.EOF.
-	chunks chan model.Chunk
+		// chunks carries translated chunks from the pump goroutine to Recv. It
+		// is buffered (32) and closed by run when the provider stream ends,
+		// which is Recv's signal to surface the terminal error or io.EOF.
+		chunks chan model.Chunk
+		done   chan struct{}
 
-	// mu guards err and canonical, the fields that cross the pump/consumer
-	// boundary outside the chunks channel.
-	mu sync.Mutex
+		// mu guards err and canonical, the fields that cross the pump/consumer
+		// boundary outside the chunks channel.
+		mu sync.Mutex
 
-	// err is the terminal pump error surfaced by Recv after chunks closes.
-	err error
+		// err is the terminal pump error surfaced by Recv after chunks closes.
+		err error
 
-	// thoughtText accumulates thought text across Thought parts until a
-	// signature finalizes the block. Pump-owned, no locking.
-	thoughtText strings.Builder
-	// thoughtIndex identifies the current reasoning block. It advances only
-	// after a signature closes that block.
-	thoughtIndex int
+		// thoughtText accumulates thought text across Thought parts until a
+		// signature finalizes the block. Pump-owned, no locking.
+		thoughtText strings.Builder
+		// thoughtIndex identifies the current reasoning block. It advances only
+		// after a signature closes that block.
+		thoughtIndex int
 
-	// completionText accumulates structured-output text for the canonical
-	// Completion chunk emitted at stream end. Pump-owned, no locking.
-	completionText strings.Builder
+		// completionText accumulates structured-output text for the canonical
+		// Completion chunk emitted at stream end. Pump-owned, no locking.
+		completionText strings.Builder
 
-	// response is the canonical model response assembled by the pump.
-	response model.Response
-	// canonical is published atomically when the provider stream completes.
-	canonical      *model.Response
-	retainedBytes  int
-	retainedValues int
-	rejectedUsage  model.TokenUsage
+		// response is the canonical model response assembled by the pump.
+		response model.Response
+		// canonical is published atomically when the provider stream completes.
+		canonical      *model.Response
+		retainedBytes  int
+		retainedValues int
+		rejectedUsage  model.TokenUsage
 
-	// assistant accumulates provider-authored response parts in provider order.
-	assistant model.Message
+		// assistant accumulates provider-authored response parts in provider order.
+		assistant model.Message
 
-	// contract classifies provider-authored stream data that cannot be
-	// represented by the captured request.
-	contract *model.RequestContract
-}
+		// contract classifies provider-authored stream data that cannot be
+		// represented by the captured request.
+		contract     *model.RequestContract
+		callIDs      *vertexToolCallIDAllocator
+		pendingCalls []pendingVertexCall
+	}
+
+	// pendingVertexCall retains one validated provider call until every
+	// explicit call ID in the stream has been reserved.
+	pendingVertexCall struct {
+		name             string
+		payload          rawjson.Message
+		id               string
+		thoughtSignature string
+		partIndex        int
+	}
+)
 
 // Stream starts one raw Gemini provider stream.
 func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
@@ -87,7 +103,9 @@ func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Stream
 		ctx:           ctx,
 		cancel:        cancel,
 		chunks:        make(chan model.Chunk, 32),
+		done:          make(chan struct{}),
 		contract:      contract,
+		callIDs:       prep.toolCallIDs,
 		rejectedUsage: translateUsage(nil, prep.modelID, prep.modelClass),
 	}
 	go s.run(seq, prep)
@@ -118,6 +136,7 @@ func (s *geminiStreamer) Recv() (model.Chunk, error) {
 // draining it. Context cancellation is idempotent, so is Close.
 func (s *geminiStreamer) Close() error {
 	s.cancel()
+	<-s.done
 	return nil
 }
 
@@ -132,6 +151,7 @@ func (s *geminiStreamer) Response() *model.Response {
 // candidate parts to the named part handlers, and finishes with the
 // canonical completion, usage, and stop chunks before closing chunks.
 func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error) bool), prep *preparedRequest) {
+	defer close(s.done)
 	defer close(s.chunks)
 	s.assistant = model.Message{Role: model.ConversationRoleAssistant}
 	var stopReason string
@@ -207,6 +227,10 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 		s.setErr(errors.New("vertex: stream ended with unsigned thinking"))
 		return
 	}
+	if err := s.flushFunctionCalls(); err != nil {
+		s.setErr(err)
+		return
+	}
 	if prep.structuredOutput != nil {
 		accumulated := s.completionText.String()
 		if err := s.retain(accumulated); err != nil {
@@ -250,15 +274,21 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 	s.mu.Unlock()
 }
 
-// handleFunctionCallPart emits the finalized tool call for a functionCall
-// part, carrying the provider-issued tool-call thought signature when
-// present. A payload marshal failure is terminal for the stream.
+// handleFunctionCallPart validates and retains one functionCall part. Emission
+// waits until stream end so later provider IDs are reserved before any missing
+// ID receives a deterministic local value.
 func (s *geminiStreamer) handleFunctionCallPart(part *genai.Part, prep *preparedRequest) error {
 	if part.FunctionCall.Name == "" {
 		return errors.New("vertex: streamed function call is missing its name")
 	}
-	if part.FunctionCall.ID == "" {
-		return fmt.Errorf("vertex: streamed function call %q is missing its ID", part.FunctionCall.Name)
+	callID := part.FunctionCall.ID
+	if err := s.retain(callID); err != nil {
+		return err
+	}
+	if callID != "" {
+		if err := s.callIDs.reserve(callID); err != nil {
+			return err
+		}
 	}
 	payload, err := marshalArgs(part.FunctionCall.Args)
 	if err != nil {
@@ -274,26 +304,47 @@ func (s *geminiStreamer) handleFunctionCallPart(part *genai.Part, prep *prepared
 			part.FunctionCall.Name,
 		)
 	}
-	if err := s.retain(part.FunctionCall.ID); err != nil {
-		return err
-	}
 	signature, err := s.retainThoughtSignature(part.ThoughtSignature)
 	if err != nil {
 		return err
 	}
-	call := model.ToolCall{
-		Name:             name,
-		Payload:          payload,
-		ID:               part.FunctionCall.ID,
-		ThoughtSignature: signature,
-	}
-	s.assistant.Parts = append(s.assistant.Parts, model.ToolUsePart{
-		Name:             string(call.Name),
-		Input:            call.Payload,
-		ID:               call.ID,
-		ThoughtSignature: call.ThoughtSignature,
+	partIndex := len(s.assistant.Parts)
+	s.pendingCalls = append(s.pendingCalls, pendingVertexCall{
+		name:             string(name),
+		payload:          payload,
+		id:               callID,
+		thoughtSignature: signature,
+		partIndex:        partIndex,
 	})
-	s.emit(model.ToolCallChunk{ToolCall: call})
+	s.assistant.Parts = append(s.assistant.Parts, nil)
+	return nil
+}
+
+// flushFunctionCalls assigns missing IDs after the complete provider stream is
+// known, then emits calls and fills their original response positions.
+func (s *geminiStreamer) flushFunctionCalls() error {
+	for _, pending := range s.pendingCalls {
+		callID := pending.id
+		if callID == "" {
+			callID = s.callIDs.next()
+			if err := s.retain(callID); err != nil {
+				return err
+			}
+		}
+		call := model.ToolCall{
+			Name:             tools.Ident(pending.name),
+			Payload:          pending.payload,
+			ID:               callID,
+			ThoughtSignature: pending.thoughtSignature,
+		}
+		s.assistant.Parts[pending.partIndex] = model.ToolUsePart{
+			Name:             pending.name,
+			Input:            pending.payload,
+			ID:               callID,
+			ThoughtSignature: pending.thoughtSignature,
+		}
+		s.emit(model.ToolCallChunk{ToolCall: call})
+	}
 	return nil
 }
 

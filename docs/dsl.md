@@ -907,8 +907,8 @@ Tool("notify", "Send notification", func() {
 
 Codegen produces transform helpers when shapes are compatible:
 
-- `ToMethodPayload_<Tool>(in <ToolArgs>) (<MethodPayload>, error)`
-- `ToToolReturn_<Tool>(in <MethodResult>) (<ToolReturn>, error)`
+- `Init<Tool>MethodPayload(in <ToolArgs>) <MethodPayload>`
+- `Init<Tool>ToolResult(in <MethodResult>) <ToolReturn>`
 
 ### Inject (Server-Side Fields)
 
@@ -1639,10 +1639,13 @@ Generated transforms in `specs/ts/transforms.go`:
 
 ```go
 // In your executor stub:
-args := tspecs.UnmarshalSearchPayload(call.Payload)
-mp, _ := tspecs.ToMethodPayload_Search(args)
+args, err := tspecs.UnmarshalSearchPayload(call.Payload)
+if err != nil {
+    return nil, err
+}
+mp := tspecs.InitSearchMethodPayload(args)
 result := yourClient.Search(ctx, mp)
-tr, _ := tspecs.ToToolReturn_Search(result)
+tr := tspecs.InitSearchToolResult(result)
 return planner.ToolResult{Result: tr}, nil
 ```
 

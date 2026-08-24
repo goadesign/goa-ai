@@ -123,9 +123,9 @@ func ConsumeStream(ctx context.Context, streamer *model.ValidatedStream) (summar
 			// chunk; ToolRequest intentionally carries no signature field so
 			// opaque provider state never transits this user-facing type.
 			summary.ToolCalls = append(summary.ToolCalls, ToolRequest{
-				Name:       actual.ToolCall.Name,
-				Payload:    actual.ToolCall.Payload,
-				ToolCallID: actual.ToolCall.ID,
+				Name:            actual.ToolCall.Name,
+				Payload:         actual.ToolCall.Payload,
+				ModelToolCallID: actual.ToolCall.ID,
 			})
 		case model.ToolCallDeltaChunk:
 		case model.UsageChunk:

@@ -1,6 +1,7 @@
 package vertex
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"testing"
@@ -37,4 +38,12 @@ func TestWrapGeminiErrorNonAPI(t *testing.T) {
 
 func TestWrapGeminiErrorNil(t *testing.T) {
 	assert.NoError(t, wrapGeminiError("generate_content", nil))
+}
+
+func TestWrapGeminiErrorPreservesCancellation(t *testing.T) {
+	err := wrapGeminiError("generate_content", context.Canceled)
+
+	require.ErrorIs(t, err, context.Canceled)
+	_, ok := model.AsProviderError(err)
+	assert.False(t, ok)
 }

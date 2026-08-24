@@ -794,6 +794,56 @@ func TestConsumeProvidedToolResultsRejectsMissingOutcome(t *testing.T) {
 	require.Contains(t, err.Error(), "exactly one success or failure")
 }
 
+func TestDecodeProvidedNoResultSuccess(t *testing.T) {
+	name := tools.Ident("svc.tools.notify")
+	spec := tools.ToolSpec{
+		Name:    name,
+		Service: "svc",
+		Toolset: "svc.tools",
+	}
+	rt := &Runtime{
+		toolsets:  map[string]ToolsetRegistration{"svc.tools": {}},
+		toolSpecs: map[tools.Ident]tools.ToolSpec{name: spec},
+	}
+	call := ToolCall{Name: name, ToolCallID: "tool-call-1"}
+
+	result, resultJSON, err := rt.decodeProvidedToolResult(
+		context.Background(),
+		spec,
+		call,
+		&api.ProvidedToolResult{
+			Name:       name,
+			ToolCallID: call.ToolCallID,
+			Success:    &api.ProvidedToolSuccess{},
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Nil(t, result.Failure)
+	require.Nil(t, result.Result)
+	require.Empty(t, resultJSON)
+
+	result, resultJSON, err = rt.decodeProvidedToolResult(
+		context.Background(),
+		spec,
+		call,
+		&api.ProvidedToolResult{
+			Name:       name,
+			ToolCallID: call.ToolCallID,
+			Success: &api.ProvidedToolSuccess{
+				Result: rawjson.Message(`{"unexpected":true}`),
+			},
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Failure)
+	require.NotNil(t, result.Failure.Error.Cause)
+	require.Contains(t, result.Failure.Error.Cause.Message, "no result contract")
+	require.Empty(t, resultJSON)
+}
+
 func TestDecodeProvidedToolResultDerivesCorrectionMetadata(t *testing.T) {
 	t.Parallel()
 

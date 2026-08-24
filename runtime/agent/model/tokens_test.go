@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -85,7 +86,7 @@ func TestTokenEstimatorCountsLargestStructuredOutputProjection(t *testing.T) {
 	require.Equal(t, chars+1, count.InputTokens)
 }
 
-func TestTokenEstimatorOmitsReplayedThinking(t *testing.T) {
+func TestTokenEstimatorIncludesReplayedThinking(t *testing.T) {
 	withoutThinking := &Request{
 		Model:      "model-1",
 		ModelClass: ModelClassDefault,
@@ -114,10 +115,10 @@ func TestTokenEstimatorOmitsReplayedThinking(t *testing.T) {
 	}
 	estimator := TokenEstimator{CharactersPerToken: 1, OverheadTokens: 1}
 
-	want, err := estimator.CountTokens(t.Context(), withoutThinking)
+	withoutCount, err := estimator.CountTokens(t.Context(), withoutThinking)
 	require.NoError(t, err)
-	got, err := estimator.CountTokens(t.Context(), withThinking)
+	withCount, err := estimator.CountTokens(t.Context(), withThinking)
 
 	require.NoError(t, err)
-	require.Equal(t, want, got)
+	assert.Greater(t, withCount.InputTokens, withoutCount.InputTokens)
 }

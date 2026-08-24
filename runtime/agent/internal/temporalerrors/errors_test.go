@@ -1,6 +1,7 @@
 package temporalerrors
 
 import (
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -24,7 +25,27 @@ type (
 	joinedCycleError struct {
 		children []error
 	}
+
+	typedNilError struct{}
+
+	manyChildrenError struct {
+		children []error
+	}
+
+	panickingError struct{}
 )
+
+func TestWrapPreservesCancellation(t *testing.T) {
+	tests := []error{
+		context.Canceled,
+		fmt.Errorf("activity stopped: %w", context.Canceled),
+		temporal.NewCanceledError("activity stopped"),
+		errors.Join(context.Canceled, fmt.Errorf("nested: %w", context.Canceled)),
+	}
+	for _, err := range tests {
+		require.True(t, temporal.IsCanceledError(Wrap(err)))
+	}
+}
 
 func (*singleCycleError) Error() string {
 	return "single cycle"
@@ -40,6 +61,59 @@ func (*joinedCycleError) Error() string {
 
 func (e *joinedCycleError) Unwrap() []error {
 	return e.children
+}
+
+func (*typedNilError) Error() string {
+	return "typed nil"
+}
+
+func (*manyChildrenError) Error() string {
+	return "many children"
+}
+
+func (e *manyChildrenError) Unwrap() []error {
+	return e.children
+}
+
+func (*panickingError) Error() string {
+	panic("broken error")
+}
+
+func TestErrorGraphsRejectTypedNilExcessiveFanoutAndPanickingText(t *testing.T) {
+	var typedNil *typedNilError
+	require.False(t, CancellationOnly(typedNil))
+	require.NotPanics(t, func() {
+		wrapped := Wrap(typedNil)
+		var appErr *temporal.ApplicationError
+		require.ErrorAs(t, wrapped, &appErr)
+		require.Equal(t, invalidReservedApplicationType, appErr.Type())
+	})
+
+	children := make([]error, maxClassificationChildren+1)
+	for i := range children {
+		children[i] = context.Canceled
+	}
+	fanout := &manyChildrenError{children: children}
+	require.False(t, CancellationOnly(fanout))
+	wrapped := Wrap(fanout)
+	var appErr *temporal.ApplicationError
+	require.ErrorAs(t, wrapped, &appErr)
+	require.Equal(t, invalidReservedApplicationType, appErr.Type())
+
+	require.NotPanics(t, func() {
+		wrapped := Wrap(outputcontract.NewWithOrigin(&panickingError{}, outputcontract.OriginPlanner))
+		require.True(t, IsOutputContract(wrapped))
+	})
+}
+
+func TestCancellationOnlyBoundsAndClassifiesCompleteErrorGraph(t *testing.T) {
+	single := &singleCycleError{}
+	single.next = single
+
+	require.True(t, CancellationOnly(fmt.Errorf("wrapped: %w", context.Canceled)))
+	require.True(t, CancellationOnly(errors.Join(context.Canceled, temporal.NewCanceledError("ignored"))))
+	require.False(t, CancellationOnly(errors.Join(context.Canceled, errors.New("failed"))))
+	require.False(t, CancellationOnly(single))
 }
 
 func TestWrapReclassifiesNestedOutputContractError(t *testing.T) {
@@ -77,6 +151,13 @@ func TestWrapReclassifiesNestedOutputContractError(t *testing.T) {
 			require.True(t, appErr.NonRetryable())
 		})
 	}
+}
+
+func TestWrapPreservesToolOutputContractOrigin(t *testing.T) {
+	wrapped := Wrap(outputcontract.NewWithOrigin(errors.New("tool result is too large"), outputcontract.OriginTool))
+
+	require.True(t, IsOutputContract(wrapped))
+	require.Equal(t, planner.OutputContractOriginTool, OutputContractOrigin(wrapped))
 }
 
 func TestOutputContractApplicationTypeIsNeutralWithoutLegacyDecoding(t *testing.T) {

@@ -128,14 +128,15 @@ func (c *cacheConfiguredProvider) Stream(ctx context.Context, req *model.Request
 // It is separate from planner.PlannerEvents so custom planners do not save
 // responses themselves, and response storage does not depend on event wiring.
 type modelInvocationSink interface {
-	beginModelInvocation(string, model.ModelClass, context.CancelFunc) (modelInvocationID, error)
+	beginModelInvocation(model.ModelClass, context.CancelFunc) (modelInvocationID, error)
 	designateModelInvocation(invocationID modelInvocationID) error
 	recordRejectedModelResponse(
 		invocationID modelInvocationID,
 		evidence model.ResponseEvidence,
 		err error,
 	) error
-	recordRejectedModelUsage(invocationID modelInvocationID, usage model.TokenUsage) error
+	recordRejectedModelUsageTotal(invocationID modelInvocationID, usage model.TokenUsage) error
+	recordRejectedModelUsageDelta(invocationID modelInvocationID, usage model.TokenUsage) error
 	recordValidatedModelResponse(invocationID modelInvocationID, response *model.Response) error
 	recordModelChunk(invocationID modelInvocationID, chunk model.Chunk) error
 	finishModelInvocation(invocationID modelInvocationID, err error) error
@@ -201,7 +202,7 @@ func (c *modelInvocationProvider) PrepareClientCall(
 		return ctx, nil, terminal
 	}
 	invocationCtx, cancel := context.WithCancel(ctx)
-	invocationID, err := c.sink.beginModelInvocation(req.Model, req.ModelClass, cancel)
+	invocationID, err := c.sink.beginModelInvocation(req.ModelClass, cancel)
 	if err != nil {
 		cancel()
 		return ctx, nil, err
@@ -244,7 +245,7 @@ func (c *modelInvocationProvider) observeRejectedModelOutput(
 	if usage := validationErr.Usage(); usage != nil {
 		cause = errors.Join(
 			cause,
-			c.sink.recordRejectedModelUsage(invocationID, *usage),
+			c.sink.recordRejectedModelUsageTotal(invocationID, *usage),
 		)
 	}
 	var outputErr error = outputcontract.NewWithOrigin(
@@ -338,10 +339,16 @@ func (s *modelInvocationStreamer) ObserveStreamRecv(observation model.StreamObse
 				planner.OutputContractOriginModel,
 			)
 			s.reject(err)
-			if observation.RejectedUsage != nil {
+			if observation.RejectedUsageDelta != nil {
 				err = errors.Join(
 					err,
-					s.sink.recordRejectedModelUsage(s.invocationID, *observation.RejectedUsage),
+					s.sink.recordRejectedModelUsageDelta(s.invocationID, *observation.RejectedUsageDelta),
+				)
+			}
+			if observation.RejectedUsageTotal != nil {
+				err = errors.Join(
+					err,
+					s.sink.recordRejectedModelUsageTotal(s.invocationID, *observation.RejectedUsageTotal),
 				)
 			}
 			if observation.ResponseEvidence.Present {

@@ -9,40 +9,21 @@ const (
 {{- end }}
 )
 
-// Type aliases and codec re-exports for convenience.
+// Type aliases preserve exact tool payload and result identities.
 {{- range .Tools }}
 type {{ .GoName }}Payload = {{ $.Toolset.SpecsPackageName }}specs.{{ .Payload.TypeName }}
-var {{ .GoName }}PayloadCodec = {{ $.Toolset.SpecsPackageName }}specs.{{ .Payload.ExportedCodec }}
 {{- if .Result }}
 type {{ .GoName }}Result  = {{ $.Toolset.SpecsPackageName }}specs.{{ .Result.TypeName }}
-var {{ .GoName }}ResultCodec  = {{ $.Toolset.SpecsPackageName }}specs.{{ .Result.ExportedCodec }}
 {{- end }}
 {{- end }}
 
 // Typed tool-call helpers (one per tool). These ensure use of the generated tool ID
 // and accept typed payloads matching tool schemas.
 {{- range .Tools }}
-// New{{ .GoName }}Call builds a planner.ToolRequest for {{ .Name }}.
-// toolCallID must be nonempty and unique within the containing planner.PlanResult.
-func New{{ .GoName }}Call(toolCallID string, args *{{ .GoName }}Payload) planner.ToolRequest {
-    if toolCallID == "" {
-        panic("{{ .Name }} tool call ID is required")
-    }
-    var payload []byte
-    if args != nil {
-        // Encode typed payloads into canonical JSON using the generated codec.
-        b, err := {{ .GoName }}PayloadCodec.ToJSON(args)
-        if err != nil {
-            panic(err)
-        }
-        payload = b
-    }
-    req := planner.ToolRequest{
-        Name:       {{ .ConstName }},
-        Payload:    payload,
-        ToolCallID: toolCallID,
-    }
-    return req
+// New{{ .GoName }}Call builds a planner-authored request for {{ .Name }}.
+// The runtime assigns its execution ID.
+func New{{ .GoName }}Call(args *{{ .GoName }}Payload) (planner.ToolRequest, error) {
+    return planner.NewToolRequest({{ $.Toolset.SpecsPackageName }}specs.{{ .TypedToolVar }}(), args)
 }
 {{- end }}
 

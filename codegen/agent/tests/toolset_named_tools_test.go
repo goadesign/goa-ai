@@ -25,10 +25,13 @@ func TestToolsetNamedTools(t *testing.T) {
 	// The toolset import should be aliased to avoid conflict
 	require.True(t,
 		strings.Contains(specsContent, `toolsspecs "`) ||
-			strings.Contains(specsContent, "Specs = append(Specs, toolsspecs.Specs...)"),
+			strings.Contains(specsContent, "specs = append(specs, toolsspecs.Specs()...)"),
 		"toolset named 'tools' should be aliased to 'toolsspecs' in import or usage")
 
 	// Verify the generated code is syntactically valid by checking structure
 	require.Contains(t, specsContent, "package specs")
 	require.Contains(t, specsContent, "func Spec(")
+	require.NotContains(t, specsContent, "func AdvertisedSpecs(")
+	require.NotContains(t, specsContent, "func PayloadSchema(")
+	require.NotContains(t, specsContent, "func ResultSchema(")
 }

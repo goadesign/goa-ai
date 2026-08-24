@@ -52,8 +52,8 @@ func TestRunLoopCombinesFailedCallsIntoFewerCorrections(t *testing.T) {
 				require.Len(t, input.Reminders, 4)
 				return &planner.PlanResult{
 					ToolCalls: []planner.ToolRequest{
-						{ToolCallID: "combined-call-a", Name: search.Name, Payload: rawjson.Message(`{"query":"combined-a"}`)},
-						{ToolCallID: "combined-call-b", Name: search.Name, Payload: rawjson.Message(`{"query":"combined-b"}`)},
+						{Name: search.Name, Payload: rawjson.Message(`{"query":"combined-a"}`)},
+						{Name: search.Name, Payload: rawjson.Message(`{"query":"combined-b"}`)},
 					},
 					SynthesizeAfterTools: true,
 				}, nil
@@ -93,9 +93,8 @@ func TestRunLoopCorrectionMayChooseAnotherToolOrAnswer(t *testing.T) {
 			choose: func(_, list tools.ToolSpec) *planner.PlanResult {
 				return &planner.PlanResult{
 					ToolCalls: []planner.ToolRequest{{
-						ToolCallID: "list-call",
-						Name:       list.Name,
-						Payload:    rawjson.Message(`{"page":1}`),
+						Name:    list.Name,
+						Payload: rawjson.Message(`{"page":1}`),
 					}},
 					SynthesizeAfterTools: true,
 				}
@@ -108,8 +107,8 @@ func TestRunLoopCorrectionMayChooseAnotherToolOrAnswer(t *testing.T) {
 			choose: func(_, list tools.ToolSpec) *planner.PlanResult {
 				return &planner.PlanResult{
 					ToolCalls: []planner.ToolRequest{
-						{ToolCallID: "list-call-1", Name: list.Name, Payload: rawjson.Message(`{"page":1}`)},
-						{ToolCallID: "list-call-2", Name: list.Name, Payload: rawjson.Message(`{"page":2}`)},
+						{Name: list.Name, Payload: rawjson.Message(`{"page":1}`)},
+						{Name: list.Name, Payload: rawjson.Message(`{"page":2}`)},
 					},
 					SynthesizeAfterTools: true,
 				}
@@ -199,9 +198,8 @@ func TestRunLoopPreservesCorrectionEvidenceAcrossClarification(t *testing.T) {
 				require.Len(t, input.Reminders, 1)
 				return &planner.PlanResult{
 					ToolCalls: []planner.ToolRequest{{
-						ToolCallID: "good-call",
-						Name:       search.Name,
-						Payload:    rawjson.Message(`{"query":"good"}`),
+						Name:    search.Name,
+						Payload: rawjson.Message(`{"query":"good"}`),
 					}},
 					SynthesizeAfterTools: true,
 				}, nil
@@ -242,9 +240,8 @@ func TestRunLoopRepeatedInvalidCallsReachFailureFinalization(t *testing.T) {
 			}
 			recoveryTurns++
 			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-				ToolCallID: "still-bad-call",
-				Name:       search.Name,
-				Payload:    rawjson.Message(`{"query":"still-bad"}`),
+				Name:    search.Name,
+				Payload: rawjson.Message(`{"query":"still-bad"}`),
 			}}}, nil
 		},
 	)
@@ -305,8 +302,8 @@ func TestRunLoopRecoveryCatalogRejectsExcludedCallBeforeExecution(t *testing.T) 
 			case 1:
 				assertAdvertisedTools(t, input, search.Name)
 				return &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-					{Name: list.Name, ToolCallID: "list-excluded", Payload: rawjson.Message(`{"page":2}`)},
-					{Name: search.Name, ToolCallID: "search-valid", Payload: rawjson.Message(`{"query":"fallback"}`)},
+					{Name: list.Name, Payload: rawjson.Message(`{"page":2}`)},
+					{Name: search.Name, Payload: rawjson.Message(`{"query":"fallback"}`)},
 				}}, nil
 			case 2:
 				return finalPlannerResult("recovered with search"), nil

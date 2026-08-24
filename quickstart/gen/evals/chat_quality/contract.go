@@ -19,7 +19,7 @@ import (
 // an evaluation programming error.
 func MustToolContract(name tools.Ident) *tools.ToolSpec {
 	if spec, ok := genhelpers.Spec(name); ok {
-		return spec
+		return &spec
 	}
 	panic(fmt.Sprintf("tool %q is not statically reachable from orchestrator.chat", name))
 }

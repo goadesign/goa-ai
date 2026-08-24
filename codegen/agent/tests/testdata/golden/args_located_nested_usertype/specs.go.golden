@@ -7,7 +7,6 @@
 package progress
 
 import (
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -17,12 +16,17 @@ const (
 	SetStepStatus tools.Ident = "progress.set_step_status"
 )
 
-var Specs = []tools.ToolSpec{
-	SpecSetStepStatus,
+// Specs returns fresh copies of every generated tool specification.
+func Specs() []tools.ToolSpec {
+	return []tools.ToolSpec{
+		newSpecSetStepStatus(),
+	}
 }
 
-var (
-	SpecSetStepStatus = tools.ToolSpec{
+// newSpecSetStepStatus builds the immutable generated contract for
+// progress.set_step_status. Each call owns all mutable slices and maps in the result.
+func newSpecSetStepStatus() tools.ToolSpec {
+	return tools.ToolSpec{
 		Name:        SetStepStatus,
 		Service:     "alpha",
 		Toolset:     "alpha.progress",
@@ -33,49 +37,43 @@ var (
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"note\":{\"description\":\"Optional note about progress.\",\"type\":\"string\"},\"status\":{\"description\":\"New step status.\",\"enum\":[\"pending\",\"in_progress\",\"completed\",\"blocked\"],\"example\":\"in_progress\",\"type\":\"string\"},\"step_id\":{\"description\":\"Step identifier.\",\"type\":\"string\"}},\"required\":[\"step_id\",\"status\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"note\":{\"description\":\"Optional note about progress.\",\"type\":\"string\"},\"status\":{\"description\":\"New step status.\",\"enum\":[\"pending\",\"in_progress\",\"completed\",\"blocked\"],\"example\":\"in_progress\",\"type\":\"string\"},\"step_id\":{\"description\":\"Step identifier.\",\"type\":\"string\"}},\"required\":[\"step_id\",\"status\"],\"type\":\"object\"}"),
 			ExampleJSON:              nil,
-			FieldDescriptions:        SetStepStatusPayloadFieldDescs,
-			FieldJSONTypes:           SetStepStatusPayloadFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(setStepStatusPayloadFieldDescs),
+			FieldJSONTypes:           cloneStringMap(setStepStatusPayloadFieldJSONTypes),
 			Codec:                    setStepStatusPayloadCodec,
 		},
 		Result: tools.TypeSpec{
-			Name:                     "SetStepStatusResult",
+			Name:                     "",
 			Schema:                   nil,
 			SchemaWithoutRootExample: nil,
 			FieldDescriptions:        nil,
 			FieldJSONTypes:           nil,
-			Codec:                    setStepStatusResultCodec,
+			Codec:                    tools.JSONCodec[any]{},
 		},
 	}
-)
+}
+
+// SpecSetStepStatus returns a fresh progress.set_step_status specification.
+func SpecSetStepStatus() tools.ToolSpec {
+	return newSpecSetStepStatus()
+}
 
 // SetStepStatusTool pairs the progress.set_step_status identifier with its generated
 // typed payload and result codecs so consumers decode tool JSON without
 // restating the name-to-codec pairing fixed by the design.
-var SetStepStatusTool = tools.TypedTool[*SetStepStatusPayload, *SetStepStatusResult]{
-	Name:    SetStepStatus,
-	Payload: SetStepStatusPayloadCodec,
-	Result:  SetStepStatusResultCodec,
-}
-
-// NewSetStepStatusCall builds a planner request for progress.set_step_status from its typed
-// generated payload. toolCallID must be nonempty and unique within the plan.
-func NewSetStepStatusCall(toolCallID string, args *SetStepStatusPayload) planner.ToolRequest {
-	if toolCallID == "" {
-		panic("progress.set_step_status tool call ID is required")
-	}
-	payload, err := SetStepStatusPayloadCodec.ToJSON(args)
-	if err != nil {
-		panic(err)
-	}
-	return planner.ToolRequest{
-		Name:       SetStepStatus,
-		Payload:    payload,
-		ToolCallID: toolCallID,
+func SetStepStatusTool() tools.TypedTool[*SetStepStatusPayload, any] {
+	return tools.TypedTool[*SetStepStatusPayload, any]{
+		Name: SetStepStatus,
+		Payload: tools.JSONCodec[*SetStepStatusPayload]{
+			ToJSON:   MarshalSetStepStatusPayload,
+			FromJSON: UnmarshalSetStepStatusPayload,
+		},
+		Result: tools.JSONCodec[any]{},
 	}
 }
 
-var (
-	metadata = []policy.ToolMetadata{
+// Metadata returns fresh policy metadata for every generated tool.
+func Metadata() []policy.ToolMetadata {
+	return []policy.ToolMetadata{
 		{
 			ID:          SetStepStatus,
 			Title:       "Set Step Status",
@@ -84,64 +82,59 @@ var (
 			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
 	}
-	names = []tools.Ident{
+}
+
+// Names returns the identifiers of all generated tools.
+func Names() []tools.Ident {
+	return []tools.Ident{
 		SetStepStatus,
 	}
-)
+}
 
 // RequiredLabels lists the run label keys this toolset's Inject-populated
 // tools require to be present via WithLabels(...) at run start. The runtime
 // validates coverage across every toolset an agent uses before starting a
 // run, so a missing label fails fast instead of surfacing mid-run as a tool
 // call error.
-var RequiredLabels = []string{}
-
-// Names returns the identifiers of all generated tools.
-func Names() []tools.Ident {
-	return names
+func RequiredLabels() []string {
+	return []string{}
 }
 
 // Spec returns the specification for the named tool if present.
-func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
+func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 	switch name {
 	case SetStepStatus:
-		return &SpecSetStepStatus, true
+		return newSpecSetStepStatus(), true
 	default:
-		return nil, false
+		return tools.ToolSpec{}, false
 	}
-}
-
-// PayloadSchema returns the JSON schema for the named tool payload.
-func PayloadSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case SetStepStatus:
-		return SpecSetStepStatus.Payload.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// ResultSchema returns the JSON schema for the named tool result.
-func ResultSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case SetStepStatus:
-		return SpecSetStepStatus.Result.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// Metadata exposes policy metadata for the generated tools.
-func Metadata() []policy.ToolMetadata {
-	return metadata
 }
 
 // MetadataByName returns policy metadata for the named tool if present.
 func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
 	switch name {
 	case SetStepStatus:
-		return metadata[0], true
+		return policy.ToolMetadata{
+			ID:          SetStepStatus,
+			Title:       "Set Step Status",
+			Description: "Set step status",
+			Tags:        []string{},
+			BudgetClass: policy.ToolBudgetClassBudgeted,
+		}, true
 	default:
 		return policy.ToolMetadata{}, false
 	}
+}
+
+// cloneStringMap gives each returned specification ownership of its generated
+// field metadata.
+func cloneStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }

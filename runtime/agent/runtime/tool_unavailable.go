@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"text/template"
 
-	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -25,6 +24,7 @@ const (
 )
 
 var (
+	toolUnavailableSchema   = tools.RawJSON(`{"type":"object","properties":{"requested_tool":{"type":"string","minLength":1,"description":"The tool name originally requested by the model."},"requested_payload":{"description":"The original JSON payload for the policy-rejected tool."}},"required":["requested_tool"],"additionalProperties":false}`)
 	toolUnavailableCallHint = template.Must(
 		template.New(tools.ToolUnavailable.String()).
 			Option("missingkey=error").
@@ -37,7 +37,7 @@ var (
 		Description: "Runtime-owned tool that represents unavailable tool calls.",
 		Payload: tools.TypeSpec{
 			Name:        "ToolUnavailablePayload",
-			Schema:      mustMarshalToolUnavailableSchema(),
+			Schema:      toolUnavailableSchema,
 			ExampleJSON: tools.RawJSON(`{"requested_tool":"svc_read_count_events","requested_payload":{"from":"2026-02-06T00:00:00Z"}}`),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: marshalToolUnavailablePayload,
@@ -59,14 +59,6 @@ type toolUnavailablePayload struct {
 	RequestedPayload rawjson.Message `json:"requested_payload,omitempty"`
 }
 
-func toolUnavailableToolDefinition() *model.ToolDefinition {
-	return &model.ToolDefinition{
-		Name:        tools.ToolUnavailable.String(),
-		Description: "Internal. Records a tool call rejected by runtime policy after planning.",
-		Input:       model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object","properties":{"requested_tool":{"type":"string","minLength":1,"description":"The tool name originally requested by the model."},"requested_payload":{"description":"The original JSON payload for the policy-rejected tool."}},"required":["requested_tool"],"additionalProperties":false}`)),
-	}
-}
-
 func toolUnavailableToolsetRegistration() ToolsetRegistration {
 	return ToolsetRegistration{
 		Name:             toolUnavailableToolsetName,
@@ -79,10 +71,6 @@ func toolUnavailableToolsetRegistration() ToolsetRegistration {
 			tools.ToolUnavailable: toolUnavailableCallHint,
 		},
 	}
-}
-
-func mustMarshalToolUnavailableSchema() tools.RawJSON {
-	return toolUnavailableToolDefinition().Input.Contract().Schema
 }
 
 func executeToolUnavailable(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {

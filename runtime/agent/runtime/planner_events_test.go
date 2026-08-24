@@ -48,9 +48,9 @@ func TestRuntimePlannerEventsMatchesEarlierInvocationByExactToolCall(t *testing.
 
 	transcript, err := e.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{{
-			ToolCallID: "call-1",
-			Name:       "svc.lookup",
-			Payload:    []byte(`{"query":"first"}`),
+			ModelToolCallID: "call-1",
+			Name:            "svc.lookup",
+			Payload:         []byte(`{"query":"first"}`),
 		}},
 	})
 	require.NoError(t, err)
@@ -277,8 +277,8 @@ func TestRuntimePlannerEventsRejectsCallsMixedAcrossInvocations(t *testing.T) {
 
 	_, err := e.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{
-			{ToolCallID: "call-1", Name: "svc.lookup", Payload: []byte(`{}`)},
-			{ToolCallID: "call-2", Name: "svc.lookup", Payload: []byte(`{}`)},
+			{ModelToolCallID: "call-1", Name: "svc.lookup", Payload: []byte(`{}`)},
+			{ModelToolCallID: "call-2", Name: "svc.lookup", Payload: []byte(`{}`)},
 		},
 	})
 
@@ -341,9 +341,9 @@ func TestRuntimePlannerEventsRecordsOriginalPayloadForCompiledToolCall(t *testin
 
 	result := &planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{{
-			ToolCallID: "call-1",
-			Name:       "svc.lookup",
-			Payload:    []byte(`{"query":"modified"}`),
+			ModelToolCallID: "call-1",
+			Name:            "svc.lookup",
+			Payload:         []byte(`{"query":"modified"}`),
 		}},
 	}
 	_, err := e.exportModelInvocation(result)
@@ -367,8 +367,8 @@ func TestRuntimePlannerEventsPreservesProviderOrderWhenPlannerGroupsCalls(t *tes
 
 	transcript, err := e.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{
-			{ToolCallID: "call-2", Name: "svc.second", Payload: []byte(`{}`)},
-			{ToolCallID: "call-1", Name: "svc.first", Payload: []byte(`{}`)},
+			{ModelToolCallID: "call-2", Name: "svc.second", Payload: []byte(`{}`)},
+			{ModelToolCallID: "call-1", Name: "svc.first", Payload: []byte(`{}`)},
 		},
 	})
 
@@ -386,8 +386,8 @@ func TestRuntimePlannerEventsRejectsDuplicatePlannerToolCallIdentity(t *testing.
 
 	_, err := e.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{
-			{ToolCallID: "call-1", Name: "svc.first", Payload: []byte(`{}`)},
-			{ToolCallID: "call-1", Name: "svc.first", Payload: []byte(`{}`)},
+			{ModelToolCallID: "call-1", Name: "svc.first", Payload: []byte(`{}`)},
+			{ModelToolCallID: "call-1", Name: "svc.first", Payload: []byte(`{}`)},
 		},
 	})
 
@@ -405,9 +405,9 @@ func TestRuntimePlannerEventsMatchesCompiledToolByModelIdentity(t *testing.T) {
 
 	result := &planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{{
-			ToolCallID: "call-1",
-			Name:       "service.execute",
-			Payload:    []byte(`{"compiled":true}`),
+			ModelToolCallID: "call-1",
+			Name:            "service.execute",
+			Payload:         []byte(`{"compiled":true}`),
 		}},
 	}
 	transcript, err := e.exportModelInvocation(result)
@@ -439,7 +439,7 @@ func TestRuntimePlannerEventsRejectsAmbiguousInvocation(t *testing.T) {
 	mustRecordModelResponse(t, e, second, response)
 
 	_, err := e.exportModelInvocation(&planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{ToolCallID: "call-1", Name: "svc.lookup", Payload: []byte(`{}`)}},
+		ToolCalls: []planner.ToolRequest{{ModelToolCallID: "call-1", Name: "svc.lookup", Payload: []byte(`{}`)}},
 	})
 
 	require.EqualError(t, err, "planner result matches multiple model invocations")
@@ -467,7 +467,7 @@ func TestRuntimePlannerEventsCanonicalResponseReplacesStreamDeltas(t *testing.T)
 	))
 
 	transcript, err := e.exportModelInvocation(&planner.PlanResult{
-		ToolCalls: []planner.ToolRequest{{ToolCallID: "call-1", Name: "svc.lookup", Payload: []byte(`{}`)}},
+		ToolCalls: []planner.ToolRequest{{ModelToolCallID: "call-1", Name: "svc.lookup", Payload: []byte(`{}`)}},
 	})
 
 	require.NoError(t, err)
@@ -499,13 +499,13 @@ func TestRuntimePlannerEventsRejectsCallsAfterMalformedResponse(t *testing.T) {
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
 	require.ErrorContains(t, err, `duplicate tool call ID "duplicate"`)
-	_, err = e.beginModelInvocation("", "", func() {})
+	_, err = e.beginModelInvocation("", func() {})
 	require.ErrorIs(t, err, outputErr)
 }
 
 func mustBeginModelInvocation(t *testing.T, events *modelInvocationJournal) modelInvocationID {
 	t.Helper()
-	invocationID, err := events.beginModelInvocation("", "", func() {})
+	invocationID, err := events.beginModelInvocation("", func() {})
 	require.NoError(t, err)
 	return invocationID
 }

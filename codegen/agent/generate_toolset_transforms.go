@@ -5,6 +5,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"goa.design/goa-ai/codegen/naming"
 	"goa.design/goa-ai/codegen/shared"
@@ -51,7 +52,7 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 	helperKeys := make(map[string]struct{})
 
 	for _, t := range ts.Tools {
-		if t == nil || !t.IsMethodBacked || t.MethodPayloadAttr == nil || t.MethodResultAttr == nil {
+		if t == nil || !t.IsMethodBacked {
 			continue
 		}
 
@@ -116,14 +117,20 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 		}
 
 		// Init<GoName>ToolResult: service method result -> tool result (specs, public type)
-		if toolResult != nil && toolResult.PublicType != nil && t.Return != nil && t.Return.Type != expr.Empty && t.MethodResultAttr != nil && t.MethodResultAttr.Type != expr.Empty {
+		if toolResult != nil && toolResult.PublicType != nil &&
+			t.MethodResultAttr != nil && t.MethodResultAttr.Type != expr.Empty {
 			// Use the TOOL Return shape as the base target shape so server-only fields
 			// present only on the service result are not exposed in the tool result.
+			// When Return is omitted, the bound method result is the tool contract.
+			toolReturn := t.Return
+			if toolReturn == nil || toolReturn.Type == expr.Empty {
+				toolReturn = t.MethodResultAttr
+			}
 			var baseAttr *expr.AttributeExpr
-			if ut, ok := t.Return.Type.(expr.UserType); ok && ut != nil {
+			if ut, ok := toolReturn.Type.(expr.UserType); ok && ut != nil {
 				baseAttr = ut.Attribute()
 			} else {
-				baseAttr = t.Return
+				baseAttr = toolReturn
 			}
 			if err := codegen.IsCompatible(t.MethodResultAttr.Type, baseAttr.Type, "in", "out"); err == nil {
 				for _, im := range shared.GatherAttributeImports(genpkg, t.MethodResultAttr) {
@@ -131,7 +138,7 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 						extraImports[im.Path] = im
 					}
 				}
-				for _, im := range shared.GatherAttributeImports(genpkg, t.Return) {
+				for _, im := range shared.GatherAttributeImports(genpkg, toolReturn) {
 					if im != nil && im.Path != "" {
 						extraImports[im.Path] = im
 					}
@@ -251,12 +258,22 @@ func toolsetAdapterTransformsFile(genpkg string, ts *ToolsetData) *codegen.File 
 		return nil
 	}
 
-	// Assemble imports: service and any additional referenced packages.
-	imports := []*codegen.ImportSpec{
-		{Name: svcAlias, Path: svcImport},
+	// Assemble only the packages referenced by emitted transform types.
+	imports := make([]*codegen.ImportSpec, 0, len(extraImports))
+	usedAliases := make(map[string]struct{})
+	needsServiceImport := false
+	serviceQualifier := svcAlias + "."
+	for _, fn := range fns {
+		if strings.Contains(fn.ParamTypeRef, serviceQualifier) ||
+			strings.Contains(fn.ResultTypeRef, serviceQualifier) ||
+			strings.Contains(fn.Body, serviceQualifier) {
+			needsServiceImport = true
+			break
+		}
 	}
-	usedAliases := map[string]struct{}{
-		svcAlias: {},
+	if needsServiceImport {
+		imports = append(imports, &codegen.ImportSpec{Name: svcAlias, Path: svcImport})
+		usedAliases[svcAlias] = struct{}{}
 	}
 	paths := make([]string, 0, len(extraImports))
 	for p := range extraImports {

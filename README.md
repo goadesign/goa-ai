@@ -191,8 +191,9 @@ Expected shape:
 
 ```text
 RunID: orchestrator-chat-...
-Assistant: Hello from example planner.
+Assistant: Tool helpers.answer returned {"text":"Tokyo is the capital of Japan."}
 Completion draft_task: ...
+Completion delta draft_task: ...
 Completion stream draft_task: ...
 ```
 
@@ -288,6 +289,12 @@ responses or streams. Pass it to `model.NewClient` before using an API that
 requires canonical model output. External packages cannot implement a valid
 `model.Client`; APIs that accept one verify the package-owned opaque client
 before inference.
+
+Remote transports that expose exact token counting use
+`gateway.NewCountingRemoteClient`; it forwards a separate count operation in
+addition to completion and streaming. `gateway.NewRemoteClient` deliberately
+has no counting capability and returns `model.ErrTokenCountingUnsupported`
+instead of estimating.
 
 ---
 
@@ -437,7 +444,10 @@ Unary helpers install their generated decoder before provider work, request
 provider-enforced structured output, and decode with generated codecs. A
 low-level `model.Request` may use `StructuredOutput` without a local decoder;
 it must set a nonempty `StructuredOutput.Name`, and shared request validation
-rejects a missing name before provider work. The validated client then enforces
+rejects a missing name before provider work. Before copying or exposing a
+request, the validated client applies one 16 MiB and 100,000-value budget across
+messages, media, tool contracts, and structured-output schemas. The validated
+client then enforces
 one canonical completion envelope while the provider owns JSON-Schema
 enforcement. Typed completion helpers additionally
 guarantee exact generated decoding. When the return type has an authored root
@@ -634,7 +644,7 @@ runs.
 Generated agents, completion packages, runtime workers, and their callers form
 one release unit. Regenerate every consumer, stop new work that depends on the
 old generated contract, and deploy the generated code and runtime together.
-`goa-ai.run-suspension.v2` is the only supported suspension schema; older
+`goa-ai.run-suspension.v3` is the only supported suspension schema; older
 persisted shapes are rejected rather than inferred, migrated, or served through
 a compatibility mode. See [Coordinated generated-system
 releases](docs/runtime.md#coordinated-generated-system-releases) for the
@@ -883,13 +893,15 @@ response independently from planner-facing chunks, and terminal helpers return
 the selected provider message without exposing transcript identity. Future
 session turns retain provider-authored thinking without inferring ownership from
 visible text.
-Planners return only the canonical tool-call ID, name, and payload they received
-from the model. When the runtime turns a temporary model-facing action into its
-executable tool call, it stores that action's name and payload in the runtime's
-private execution record; planners do not populate the record's `ModelName` or
-`ModelPayload` fields. The workflow commits the selected response once
-after atomic admission and before effects. Usage includes all attempts.
-Canonical tool-call IDs remain opaque and unchanged in durable transcripts.
+Planners return a tool name and canonical payload. A request forwarded from a
+model call also carries the provider correlation ID; planner-authored requests
+do not. The runtime assigns every accepted request its deterministic execution
+ID. When planner code compiles a model-facing action into different executable
+intent, the runtime stores the original model name and payload separately;
+planners do not populate `ModelName` or `ModelPayload`. The workflow commits the
+selected response once after atomic admission and before effects. Usage includes
+all attempts. Provider tool-call IDs remain opaque and unchanged in durable
+transcripts.
 Provider adapters translate IDs only while encoding a request when the target
 wire protocol imposes narrower syntax, and apply the same request-local alias
 to each matching tool result.
@@ -1070,6 +1082,10 @@ Production checklist:
   chooses the final projection.
 - Register models, toolsets, agents, stores, streams, policy, and telemetry before the first run.
 - Call `rt.Seal(ctx)` for worker processes before serving traffic; Temporal workers start at the seal boundary.
+- Supply Temporal connection settings through `ClientOptions`; the engine always
+  installs the strict Goa-AI data converter and limits one workflow or activity
+  call to 1 MiB. Persist larger tool results first and return their durable
+  reference.
 - Use `CreateSession` before sessionful `Run`/`Start`, or use `OneShotRun`/`StartOneShot` for sessionless work.
 - Use persistent stores for transcripts, sessions, prompt overrides, and run logs when runs must survive process restarts. A `runlog.Store` also owns exact rejected-model evidence outside bounded Temporal and event payloads.
 - Use stream events rather than polling for UI updates.

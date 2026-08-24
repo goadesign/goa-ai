@@ -493,8 +493,8 @@ type (
 	UsageEvent struct {
 		baseEvent
 		// TokenUsage contains the attributed token counts reported by the model
-		// adapter. Model and ModelClass identify the specific model that produced
-		// this delta.
+		// adapter. Model is the provider-resolved identity when reported;
+		// ModelClass is the logical family requested by the caller.
 		model.TokenUsage
 	}
 

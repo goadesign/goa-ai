@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -36,7 +37,6 @@ type (
 	}
 
 	streamValidationContract struct {
-		model                   string
 		modelClass              ModelClass
 		structuredOutputPresent bool
 		structuredOutputName    string
@@ -50,6 +50,15 @@ type (
 // NewRequestContract validates request and copies every value used to accept
 // provider output. Later request mutation cannot replace these checks.
 func NewRequestContract(request *Request) (*RequestContract, error) {
+	if err := preflightRequest(request); err != nil {
+		return nil, err
+	}
+	return newRequestContract(request)
+}
+
+// newRequestContract builds a contract after the framework has already checked
+// the request's combined input size and collection count.
+func newRequestContract(request *Request) (*RequestContract, error) {
 	if err := validateRequest(request); err != nil {
 		return nil, err
 	}
@@ -61,7 +70,7 @@ func NewRequestContract(request *Request) (*RequestContract, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validateInferenceMode(request, choiceMode); err != nil {
+	if err := validateInferenceMode(request); err != nil {
 		return nil, err
 	}
 	return &RequestContract{
@@ -185,20 +194,17 @@ func (c *RequestContract) validateOwnedResponse(response *Response) error {
 	return validateToolChoiceResponse(c.toolChoiceMode, c.toolChoiceName, response)
 }
 
-// stampUsageIdentity fills a missing provider-resolved model and always applies
-// the logical model class copied from the request.
+// stampUsageIdentity applies the logical model class copied from the request.
+// Provider model identity remains empty when the provider did not report it.
 func (c *RequestContract) stampUsageIdentity(usage *TokenUsage) {
-	if usage.Model == "" {
-		usage.Model = c.stream.model
-	}
 	if c.stream.modelClass != "" {
 		usage.ModelClass = c.stream.modelClass
 	}
 }
 
 // validatedUsageEvidence snapshots nonnegative counts before response
-// traversal. Invalid provider model identity falls back to the immutable
-// request identity, while a valid concrete provider model is preserved.
+// traversal. Invalid provider model identity is omitted from rejected evidence,
+// while a valid concrete provider model is preserved.
 func (c *RequestContract) validatedUsageEvidence(response *Response) *TokenUsage {
 	if response == nil {
 		return nil
@@ -206,8 +212,8 @@ func (c *RequestContract) validatedUsageEvidence(response *Response) *TokenUsage
 	return c.validatedUsageValue(&response.Usage)
 }
 
-// validatedUsageValue keeps only valid bounded usage and applies immutable
-// request identity when the provider omitted or malformed its identity fields.
+// validatedUsageValue keeps valid bounded counts from rejected output. Missing
+// provider identity remains empty; malformed identity is omitted.
 func (c *RequestContract) validatedUsageValue(providerUsage *TokenUsage) *TokenUsage {
 	if providerUsage == nil {
 		return nil
@@ -220,10 +226,9 @@ func (c *RequestContract) validatedUsageValue(providerUsage *TokenUsage) *TokenU
 		usage.CacheWriteTokens < 0 {
 		return nil
 	}
-	if usage.Model == "" ||
-		len(usage.Model) > maxTokenUsageModelBytes ||
+	if len(usage.Model) > maxTokenUsageModelBytes ||
 		!utf8.ValidString(usage.Model) {
-		usage.Model = c.stream.model
+		usage.Model = ""
 	}
 	usage.ModelClass = c.stream.modelClass
 	if err := validateTokenUsage(usage); err != nil {
@@ -247,29 +252,66 @@ func validateRequest(request *Request) error {
 	if request.MaxTokens < 0 {
 		return errors.New("model request max tokens cannot be negative")
 	}
-	if request.Temperature < 0 {
-		return errors.New("model request temperature cannot be negative")
+	if math.IsNaN(float64(request.Temperature)) || math.IsInf(float64(request.Temperature), 0) ||
+		request.Temperature < 0 {
+		return errors.New("model request temperature must be finite and non-negative")
 	}
 	if request.Thinking != nil && request.Thinking.BudgetTokens < 0 {
 		return errors.New("model request thinking budget cannot be negative")
 	}
-	if request.StructuredOutput != nil && request.StructuredOutput.Name == "" {
-		return errors.New("model request structured output name is required")
+	for index, message := range request.Messages {
+		if err := validateRequestMessage(message); err != nil {
+			return fmt.Errorf("model request message %d: %w", index, err)
+		}
+	}
+	if output := request.StructuredOutput; output != nil {
+		if output.Name == "" {
+			return errors.New("model request structured output name is required")
+		}
+		if len(output.Schema) > 0 && !json.Valid(output.Schema) {
+			return errors.New("model request structured output schema is not valid JSON")
+		}
+		if len(output.SchemaWithoutRootExample) > 0 && !json.Valid(output.SchemaWithoutRootExample) {
+			return errors.New("model request structured output schema without root example is not valid JSON")
+		}
+		if len(output.ExampleJSON) > 0 && !json.Valid(output.ExampleJSON) {
+			return errors.New("model request structured output example is not valid JSON")
+		}
 	}
 	return nil
 }
 
 // validateInferenceMode keeps provider-enforced structured completion and tool
 // calling as separate request modes.
-func validateInferenceMode(request *Request, choiceMode ToolChoiceMode) error {
+func validateInferenceMode(request *Request) error {
 	if request.StructuredOutput == nil {
 		return nil
 	}
 	if len(request.Tools) > 0 {
 		return errors.New("model request structured output cannot include tools")
 	}
-	if choiceMode == ToolChoiceModeAny || choiceMode == ToolChoiceModeTool {
-		return errors.New("model request structured output cannot require tool calls")
+	if request.ToolChoice != nil {
+		return errors.New("model request structured output cannot set tool choice")
+	}
+	return nil
+}
+
+// validateRequestMessage checks the provider-neutral transcript shape before an
+// adapter applies provider-specific role and media restrictions.
+func validateRequestMessage(message *Message) error {
+	if message == nil {
+		return errors.New("message is nil")
+	}
+	switch message.Role {
+	case ConversationRoleSystem, ConversationRoleUser, ConversationRoleAssistant:
+	default:
+		return fmt.Errorf("message has unsupported role %q", message.Role)
+	}
+	if len(message.Parts) == 0 {
+		return errors.New("message has no parts")
+	}
+	if _, err := message.MarshalJSON(); err != nil {
+		return fmt.Errorf("message is not canonical: %w", err)
 	}
 	return nil
 }
@@ -334,12 +376,11 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 		}
 		validate := definition.Input.validate
 		if validate == nil {
-			validators[name] = nil
-			continue
+			return nil, fmt.Errorf("model request tool %q has no payload validator", name)
 		}
 		validators[name] = func(call ToolCall) error {
 			if err := validate(call.Payload); err != nil {
-				return fmt.Errorf("model tool %q payload failed its generated contract: %w", call.Name, err)
+				return fmt.Errorf("model tool %q payload failed its request contract: %w", call.Name, err)
 			}
 			return nil
 		}
@@ -445,7 +486,6 @@ func validateStructuredOutputResponse(response *Response) error {
 // validated stream.
 func newStreamValidationContract(request *Request) streamValidationContract {
 	contract := streamValidationContract{
-		model:      request.Model,
 		modelClass: request.ModelClass,
 	}
 	if request.ToolChoice != nil {

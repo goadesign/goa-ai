@@ -175,10 +175,10 @@ func CompressAtTurns(n int) {
 	h.CompressAtTurns = n
 }
 
-// CompressAtMaxInputTokens configures compression to run when the
-// provider-visible input transcript exceeds n tokens. Token counting happens at
-// runtime through the configured history model because tokenization is
-// model-specific.
+// CompressAtMaxInputTokens configures compression to run when the history
+// model counts the preserved system messages, conversation turns, and
+// advertised tools above n input tokens. A count equal to n fits. Thinking and
+// structured output chosen later by a planner are outside this history policy.
 //
 // CompressAtMaxInputTokens must appear inside a History expression.
 func CompressAtMaxInputTokens(n int) {

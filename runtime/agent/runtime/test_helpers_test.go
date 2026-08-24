@@ -29,6 +29,15 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+// mustRuntimeToolInput compiles a static test schema.
+func mustRuntimeToolInput(schema []byte) model.ToolInput {
+	input, err := model.AdvertisedToolInputFromSchema(schema)
+	if err != nil {
+		panic(err)
+	}
+	return input
+}
+
 const testPublicationBatchID = "7b62faf2-1667-4f54-a807-46d151764717"
 
 func testToolFailure(kind planner.FailureKind, action planner.RecoveryAction, message string) *planner.ToolFailure {
@@ -104,7 +113,7 @@ func testModelRequest(toolNames ...string) *model.Request {
 	for index, name := range toolNames {
 		definitions[index] = &model.ToolDefinition{
 			Name:  name,
-			Input: model.AdvertisedToolInputFromSchema([]byte(`{"type":"object"}`)),
+			Input: mustRuntimeToolInput([]byte(`{"type":"object"}`)),
 		}
 	}
 	return &model.Request{Tools: definitions}
@@ -349,6 +358,10 @@ func (t *testWorkflowContext) StartChildWorkflow(ctx context.Context, req engine
 			out: &api.RunOutput{
 				AgentID: req.Input.AgentID,
 				RunID:   req.Input.RunID,
+				Final: &model.Message{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "completed"}},
+				},
 			},
 		}
 		t.controlledChildHandles <- h
@@ -738,6 +751,10 @@ func (h *testChildHandle) Get(ctx context.Context) (*api.RunOutput, error) {
 	return &api.RunOutput{
 		AgentID: h.request.Input.AgentID,
 		RunID:   h.request.Input.RunID,
+		Final: &model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "completed"}},
+		},
 	}, nil
 }
 

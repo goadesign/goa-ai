@@ -7,7 +7,6 @@
 package math
 
 import (
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -17,12 +16,17 @@ const (
 	Add tools.Ident = "math.add"
 )
 
-var Specs = []tools.ToolSpec{
-	SpecAdd,
+// Specs returns fresh copies of every generated tool specification.
+func Specs() []tools.ToolSpec {
+	return []tools.ToolSpec{
+		newSpecAdd(),
+	}
 }
 
-var (
-	SpecAdd = tools.ToolSpec{
+// newSpecAdd builds the immutable generated contract for
+// math.add. Each call owns all mutable slices and maps in the result.
+func newSpecAdd() tools.ToolSpec {
+	return tools.ToolSpec{
 		Name:        Add,
 		Service:     "alpha",
 		Toolset:     "alpha.math",
@@ -33,49 +37,46 @@ var (
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"left\":{\"description\":\"Left operand\",\"format\":\"int32\",\"type\":\"integer\"},\"right\":{\"description\":\"Right operand\",\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"left\",\"right\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"left\":{\"description\":\"Left operand\",\"format\":\"int32\",\"type\":\"integer\"},\"right\":{\"description\":\"Right operand\",\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"left\",\"right\"],\"type\":\"object\"}"),
 			ExampleJSON:              nil,
-			FieldDescriptions:        AddPayloadFieldDescs,
-			FieldJSONTypes:           AddPayloadFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(addPayloadFieldDescs),
+			FieldJSONTypes:           cloneStringMap(addPayloadFieldJSONTypes),
 			Codec:                    addPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:                     "AddResult",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"sum\":{\"description\":\"Sum\",\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"sum\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"sum\":{\"description\":\"Sum\",\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"sum\"],\"type\":\"object\"}"),
-			FieldDescriptions:        AddResultFieldDescs,
-			FieldJSONTypes:           AddResultFieldJSONTypes,
+			FieldDescriptions:        cloneStringMap(addResultFieldDescs),
+			FieldJSONTypes:           cloneStringMap(addResultFieldJSONTypes),
 			Codec:                    addResultCodec,
 		},
 	}
-)
+}
+
+// SpecAdd returns a fresh math.add specification.
+func SpecAdd() tools.ToolSpec {
+	return newSpecAdd()
+}
 
 // AddTool pairs the math.add identifier with its generated
 // typed payload and result codecs so consumers decode tool JSON without
 // restating the name-to-codec pairing fixed by the design.
-var AddTool = tools.TypedTool[*AddPayload, *AddResult]{
-	Name:    Add,
-	Payload: AddPayloadCodec,
-	Result:  AddResultCodec,
-}
-
-// NewAddCall builds a planner request for math.add from its typed
-// generated payload. toolCallID must be nonempty and unique within the plan.
-func NewAddCall(toolCallID string, args *AddPayload) planner.ToolRequest {
-	if toolCallID == "" {
-		panic("math.add tool call ID is required")
-	}
-	payload, err := AddPayloadCodec.ToJSON(args)
-	if err != nil {
-		panic(err)
-	}
-	return planner.ToolRequest{
-		Name:       Add,
-		Payload:    payload,
-		ToolCallID: toolCallID,
+func AddTool() tools.TypedTool[*AddPayload, *AddResult] {
+	return tools.TypedTool[*AddPayload, *AddResult]{
+		Name: Add,
+		Payload: tools.JSONCodec[*AddPayload]{
+			ToJSON:   MarshalAddPayload,
+			FromJSON: UnmarshalAddPayload,
+		},
+		Result: tools.JSONCodec[*AddResult]{
+			ToJSON:   MarshalAddResult,
+			FromJSON: UnmarshalAddResult,
+		},
 	}
 }
 
-var (
-	metadata = []policy.ToolMetadata{
+// Metadata returns fresh policy metadata for every generated tool.
+func Metadata() []policy.ToolMetadata {
+	return []policy.ToolMetadata{
 		{
 			ID:          Add,
 			Title:       "Add",
@@ -84,64 +85,59 @@ var (
 			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
 	}
-	names = []tools.Ident{
+}
+
+// Names returns the identifiers of all generated tools.
+func Names() []tools.Ident {
+	return []tools.Ident{
 		Add,
 	}
-)
+}
 
 // RequiredLabels lists the run label keys this toolset's Inject-populated
 // tools require to be present via WithLabels(...) at run start. The runtime
 // validates coverage across every toolset an agent uses before starting a
 // run, so a missing label fails fast instead of surfacing mid-run as a tool
 // call error.
-var RequiredLabels = []string{}
-
-// Names returns the identifiers of all generated tools.
-func Names() []tools.Ident {
-	return names
+func RequiredLabels() []string {
+	return []string{}
 }
 
 // Spec returns the specification for the named tool if present.
-func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
+func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 	switch name {
 	case Add:
-		return &SpecAdd, true
+		return newSpecAdd(), true
 	default:
-		return nil, false
+		return tools.ToolSpec{}, false
 	}
-}
-
-// PayloadSchema returns the JSON schema for the named tool payload.
-func PayloadSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case Add:
-		return SpecAdd.Payload.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// ResultSchema returns the JSON schema for the named tool result.
-func ResultSchema(name tools.Ident) ([]byte, bool) {
-	switch name {
-	case Add:
-		return SpecAdd.Result.Schema, true
-	default:
-		return nil, false
-	}
-}
-
-// Metadata exposes policy metadata for the generated tools.
-func Metadata() []policy.ToolMetadata {
-	return metadata
 }
 
 // MetadataByName returns policy metadata for the named tool if present.
 func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
 	switch name {
 	case Add:
-		return metadata[0], true
+		return policy.ToolMetadata{
+			ID:          Add,
+			Title:       "Add",
+			Description: "Add",
+			Tags:        []string{},
+			BudgetClass: policy.ToolBudgetClassBudgeted,
+		}, true
 	default:
 		return policy.ToolMetadata{}, false
 	}
+}
+
+// cloneStringMap gives each returned specification ownership of its generated
+// field metadata.
+func cloneStringMap(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }

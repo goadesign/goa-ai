@@ -6,6 +6,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"io"
 	"strconv"
 	"sync"
 	"time"
@@ -17,10 +18,10 @@ import (
 )
 
 type (
-	// AdaptiveRateLimiter applies an AIMD-style adaptive token bucket on top of a
-	// model.Client. It estimates the token cost of each request, blocks callers
-	// until capacity is available, and adjusts its effective tokens-per-minute
-	// budget in response to rate limiting signals from the provider.
+	// AdaptiveRateLimiter applies an AIMD-style adaptive input-token bucket on
+	// top of a model.Client. It asks the provider for the exact input-token cost,
+	// blocks callers until capacity is available, and adjusts its effective
+	// input-tokens-per-minute budget in response to provider rate limits.
 	//
 	// The limiter is process-local and designed to sit at the provider client
 	// boundary. Callers construct a single instance per process and wrap the
@@ -43,12 +44,17 @@ type (
 
 	limitedProvider struct {
 		next    model.Provider
+		counter model.TokenCounter
 		limiter *AdaptiveRateLimiter
 	}
 
-	limitedCountingProvider struct {
-		*limitedProvider
-		counter model.TokenCounter
+	// limitedStreamer reports the exact terminal stream outcome to the limiter.
+	// Opening a stream is not success because the provider can return a rate
+	// limit after earlier chunks have already arrived.
+	limitedStreamer struct {
+		next    model.Streamer
+		limiter *AdaptiveRateLimiter
+		once    sync.Once
 	}
 
 	// clusterMap is the subset of rmap.Map used by the cluster-aware limiter.
@@ -64,9 +70,9 @@ type (
 	}
 )
 
-// NewAdaptiveRateLimiter constructs an AdaptiveRateLimiter with a
-// tokens-per-minute budget. When m and key are set, it coordinates capacity
-// across processes using a Pulse replicated map; otherwise it operates as a
+// NewAdaptiveRateLimiter constructs an AdaptiveRateLimiter with an input-token
+// budget per minute. When m and key are set, it coordinates capacity across
+// processes using a Pulse replicated map; otherwise it operates as a
 // process-local limiter.
 func NewAdaptiveRateLimiter(ctx context.Context, m *rmap.Map, key string, initialTPM, maxTPM float64) *AdaptiveRateLimiter {
 	var cm clusterMap
@@ -77,12 +83,12 @@ func NewAdaptiveRateLimiter(ctx context.Context, m *rmap.Map, key string, initia
 }
 
 // newAdaptiveRateLimiter constructs an AdaptiveRateLimiter configured with an
-// initial tokens-per-minute budget and an upper bound. The limiter uses a
+// initial input-tokens-per-minute budget and an upper bound. The limiter uses a
 // simple AIMD strategy and is used internally by the cluster-aware
 // constructor.
 //
-// initialTPM and maxTPM are expressed in tokens per minute. When maxTPM is
-// zero or less than initialTPM, it is clamped to initialTPM.
+// initialTPM and maxTPM are expressed in input tokens per minute. When maxTPM
+// is zero or less than initialTPM, it is clamped to initialTPM.
 func newAdaptiveRateLimiter(initialTPM, maxTPM float64) *AdaptiveRateLimiter {
 	if initialTPM <= 0 {
 		// Default to a conservative budget when callers do not provide one.
@@ -111,22 +117,16 @@ func newAdaptiveRateLimiter(initialTPM, maxTPM float64) *AdaptiveRateLimiter {
 }
 
 // Middleware returns a model.Client middleware that enforces the adaptive
-// tokens-per-minute limit for both Complete and Stream calls. The returned
-// client retains the input client's optional token-counting capability.
+// input-tokens-per-minute limit for both Complete and Stream calls. The
+// returned client retains the input client's optional token-counting
+// capability.
 func (l *AdaptiveRateLimiter) Middleware() func(model.Client) (model.Client, error) {
 	return func(next model.Client) (model.Client, error) {
 		return model.WrapClient(next, func(raw model.Provider) model.Provider {
-			limited := &limitedProvider{
+			return &limitedProvider{
 				next:    raw,
+				counter: next,
 				limiter: l,
-			}
-			counter, ok := raw.(model.TokenCounter)
-			if !ok {
-				return limited
-			}
-			return &limitedCountingProvider{
-				limitedProvider: limited,
-				counter:         counter,
 			}
 		})
 	}
@@ -134,7 +134,7 @@ func (l *AdaptiveRateLimiter) Middleware() func(model.Client) (model.Client, err
 
 // Complete enforces the limiter before delegating to the underlying client.
 func (c *limitedProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	if err := c.limiter.wait(ctx, req); err != nil {
+	if err := c.limiter.wait(ctx, c.counter, req); err != nil {
 		return nil, err
 	}
 	resp, err := c.next.Complete(ctx, req)
@@ -147,31 +147,61 @@ func (c *limitedProvider) Complete(ctx context.Context, req *model.Request) (*mo
 
 // Stream enforces the limiter before delegating to the underlying client.
 func (c *limitedProvider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
-	if err := c.limiter.wait(ctx, req); err != nil {
+	if err := c.limiter.wait(ctx, c.counter, req); err != nil {
 		return nil, err
 	}
 	stream, err := c.next.Stream(ctx, req)
-	c.limiter.observe(err)
 	if err != nil {
+		c.limiter.observe(err)
 		if stream != nil {
 			err = errors.Join(err, stream.Close())
 		}
 		return nil, err
 	}
-	return stream, nil
+	return &limitedStreamer{next: stream, limiter: c.limiter}, nil
 }
 
 // CountTokens preserves the optional token-counting capability through the
 // middleware chain. Native counters are delegated so policy code sees the same
 // contract as the wrapped provider client.
-func (c *limitedCountingProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+func (c *limitedProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
 	return c.counter.CountTokens(ctx, req)
 }
 
-func (l *AdaptiveRateLimiter) wait(ctx context.Context, req *model.Request) error {
-	count, err := model.TokenEstimator{}.CountTokens(ctx, req)
+// Recv forwards one chunk and teaches the limiter from the first terminal
+// result. Clean EOF increases capacity; a streamed rate limit reduces it.
+func (s *limitedStreamer) Recv() (model.Chunk, error) {
+	chunk, err := s.next.Recv()
+	if err != nil {
+		s.once.Do(func() {
+			if errors.Is(err, io.EOF) {
+				s.limiter.observe(nil)
+				return
+			}
+			s.limiter.observe(err)
+		})
+	}
+	return chunk, err
+}
+
+// Close releases the provider stream without guessing whether an unread
+// stream would have succeeded or failed.
+func (s *limitedStreamer) Close() error {
+	return s.next.Close()
+}
+
+// Response returns the provider's response after clean stream completion.
+func (s *limitedStreamer) Response() *model.Response {
+	return s.next.Response()
+}
+
+func (l *AdaptiveRateLimiter) wait(ctx context.Context, counter model.TokenCounter, req *model.Request) error {
+	count, err := counter.CountTokens(ctx, req)
 	if err != nil {
 		return err
+	}
+	if !count.Exact {
+		return errors.New("adaptive rate limiting requires an exact provider token count")
 	}
 	return l.limiter.WaitN(ctx, count.InputTokens)
 }

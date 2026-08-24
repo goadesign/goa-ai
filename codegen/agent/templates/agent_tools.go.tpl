@@ -18,14 +18,10 @@ const (
 {{- end }}
 )
 
-// Type aliases and codec re-exports for convenience. These aliases preserve exact
-// type identity while allowing callers to avoid importing the specs package.
+// Type aliases preserve exact tool payload and result identities.
 {{- range .Tools }}
 type {{ .GoName }}Payload = {{ $.Toolset.SpecsPackageName }}specs.{{ .Payload.TypeName }}
 type {{ .GoName }}Result  = {{ $.Toolset.SpecsPackageName }}specs.{{ .Result.TypeName }}
-
-var {{ .GoName }}PayloadCodec = {{ $.Toolset.SpecsPackageName }}specs.{{ .Payload.ExportedCodec }}
-var {{ .GoName }}ResultCodec  = {{ $.Toolset.SpecsPackageName }}specs.{{ .Result.ExportedCodec }}
 {{- end }}
 
 {{- $hasCallHints := false -}}
@@ -95,7 +91,7 @@ func New{{ .Toolset.Agent.GoName }}ToolsetRegistration(rt *runtime.Runtime) runt
         ExecuteToolActivity: {{ printf "%q" .Toolset.Agent.Runtime.ExecuteTool.Name }},
     }
     reg := runtime.NewAgentToolsetRegistration(rt, cfg)
-    reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs
+    reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs()
     reg.ToolMetadataLookup = {{ $.Toolset.SpecsPackageName }}specs.MetadataByName
     {{- if or $hasCallHints $hasResultHints }}
     if err := installGeneratedHints(&reg); err != nil {
@@ -103,13 +99,6 @@ func New{{ .Toolset.Agent.GoName }}ToolsetRegistration(rt *runtime.Runtime) runt
     }
     {{- end }}
     return reg
-}
-
-// ToolIDs lists all tools in this toolset for validation.
-var ToolIDs = []tools.Ident{
-{{- range .Toolset.Tools }}
-    {{ .ConstName }},
-{{- end }}
 }
 
 // NewRegistration creates a toolset registration with an optional agent-wide
@@ -149,7 +138,7 @@ func NewRegistration(
         }
     }
     reg := runtime.NewAgentToolsetRegistration(rt, cfg)
-    reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs
+    reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs()
     reg.ToolMetadataLookup = {{ $.Toolset.SpecsPackageName }}specs.MetadataByName
     {{- if or $hasCallHints $hasResultHints }}
     if err := installGeneratedHints(&reg); err != nil {
@@ -162,27 +151,10 @@ func NewRegistration(
 // Typed tool-call helpers for each tool in this exported toolset. These helpers
 // enforce use of the generated tool identifier and accept a typed payload that
 // matches the tool schema.
-{{- range .Toolset.Tools }}
-// New{{ goify .Name true }}Call builds a planner.ToolRequest for the {{ .QualifiedName }} tool.
-// toolCallID must be nonempty and unique within the containing planner.PlanResult.
-func New{{ goify .Name true }}Call(toolCallID string, args *{{ goify .Name true }}Payload) planner.ToolRequest {
-    if toolCallID == "" {
-        panic("{{ .QualifiedName }} tool call ID is required")
-    }
-    var payload []byte
-    if args != nil {
-        // Encode typed payloads into canonical JSON using the generated codec.
-        b, err := {{ goify .Name true }}PayloadCodec.ToJSON(args)
-        if err != nil {
-            panic(err)
-        }
-        payload = b
-    }
-    req := planner.ToolRequest{
-        Name:       {{ .ConstName }},
-        Payload:    payload,
-        ToolCallID: toolCallID,
-    }
-    return req
+{{- range .Tools }}
+// New{{ goify .Name true }}Call builds a planner-authored request for the
+// {{ .Name }} tool. The runtime assigns its execution ID.
+func New{{ goify .Name true }}Call(args {{ if .Payload.Pointer }}*{{ end }}{{ .GoName }}Payload) (planner.ToolRequest, error) {
+    return planner.NewToolRequest({{ $.Toolset.SpecsPackageName }}specs.{{ .TypedToolVar }}(), args)
 }
 {{- end }}

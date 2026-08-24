@@ -119,7 +119,9 @@ type (
 		Confirmation *ConfirmationSpec
 		// Payload describes the request schema for the tool.
 		Payload TypeSpec
-		// Result describes the response schema for the tool.
+		// Result describes the response schema for the tool. It is the zero
+		// TypeSpec, including nil codec functions, when the tool succeeds without
+		// returning a value.
 		Result TypeSpec
 	}
 
@@ -224,7 +226,7 @@ type (
 	}
 
 	// TypedTool binds a tool identifier to the generated typed codecs for its
-	// payload and result. Code generation exports one descriptor per tool in
+	// payload and result. Code generation exports one descriptor factory per tool in
 	// the toolset specs package (for example helpers.SummarizeDocTool) so
 	// consumers decode tool JSON without restating the name-to-codec pairing
 	// that the design already fixed.

@@ -27,7 +27,7 @@ func specHeadline() completion.Spec[HeadlineResult] {
 		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
 		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
 		ExampleJSON:              nil,
-		Codec:                    HeadlineResultCodec,
+		Codec:                    newHeadlineResultCodec(),
 	}
 }
 

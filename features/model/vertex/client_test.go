@@ -103,6 +103,91 @@ func TestCompleteSystemOnlyTranscriptRejected(t *testing.T) {
 	require.ErrorContains(t, err, "no user or assistant messages")
 }
 
+func TestGemini3RejectsUnsupportedThinking(t *testing.T) {
+	tests := []struct {
+		name    string
+		request *model.Request
+		wantErr string
+	}{
+		{
+			name: "numeric thinking budget",
+			request: &model.Request{
+				Thinking: &model.ThinkingOptions{Enable: true, BudgetTokens: 1024},
+			},
+			wantErr: "does not accept a token budget",
+		},
+		{
+			name: "thinking disabled",
+			request: &model.Request{
+				Thinking: &model.ThinkingOptions{},
+			},
+			wantErr: "does not support disabling thinking",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stub := &stubGenerativeClient{}
+			client, err := New(stub, Options{
+				DefaultModel: "projects/p/locations/us/publishers/google/models/gemini-3-pro-preview",
+			})
+			require.NoError(t, err)
+			tt.request.Messages = []*model.Message{{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "hello"}},
+			}}
+
+			_, err = client.Complete(t.Context(), tt.request)
+
+			require.ErrorContains(t, err, tt.wantErr)
+			assert.Empty(t, stub.lastModel)
+		})
+	}
+}
+
+func TestGemini3ForwardsValidTemperature(t *testing.T) {
+	stub := &stubGenerativeClient{resp: textResp("ok")}
+	client, err := New(stub, Options{
+		DefaultModel: "projects/p/locations/us/publishers/google/models/gemini-3-pro-preview",
+	})
+	require.NoError(t, err)
+
+	_, err = client.Complete(t.Context(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "hello"}},
+		}},
+		Temperature: 0.2,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, stub.lastConfig.Temperature)
+	assert.InDelta(t, 0.2, *stub.lastConfig.Temperature, 1e-6)
+}
+
+func TestGemini3DoesNotInheritNumericThinkingBudgetDefault(t *testing.T) {
+	stub := &stubGenerativeClient{resp: textResp("ok")}
+	client, err := New(stub, Options{
+		DefaultModel:   "projects/p/locations/us/publishers/google/models/gemini-2.5-pro",
+		HighModel:      "projects/p/locations/us/publishers/google/models/gemini-3-pro-preview",
+		ThinkingBudget: 2048,
+	})
+	require.NoError(t, err)
+
+	_, err = client.Complete(t.Context(), &model.Request{
+		ModelClass: model.ModelClassHighReasoning,
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "hello"}},
+		}},
+		Thinking: &model.ThinkingOptions{Enable: true},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, stub.lastConfig.ThinkingConfig)
+	assert.True(t, stub.lastConfig.ThinkingConfig.IncludeThoughts)
+	assert.Zero(t, stub.lastConfig.ThinkingConfig.ThinkingBudget)
+}
+
 func TestCompleteStructuredOutputWithoutTools(t *testing.T) {
 	stub := &stubGenerativeClient{resp: textResp(`{}`)}
 	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-pro"})

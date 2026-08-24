@@ -2,11 +2,15 @@ package temporal
 
 import (
 	"errors"
+	"math"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	commonpb "go.temporal.io/api/common/v1"
 
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -25,12 +29,120 @@ type (
 	hidingTextMarshaler struct {
 		hidden any
 	}
+
+	// workflowByteSlice proves named byte slices use the same byte accounting
+	// as plain []byte values.
+	workflowByteSlice []byte
+
+	// hidingWorkflowByteSlice proves a byte slice cannot hide its contents
+	// behind custom JSON.
+	hidingWorkflowByteSlice []byte
+
+	// hidingWorkflowByte proves a slice with custom-encoded byte elements is
+	// inspected element by element.
+	hidingWorkflowByte byte
+
+	// privateWorkflowFields verifies that preflight inspects exported fields
+	// promoted by an embedded private struct exactly as encoding/json does.
+	privateWorkflowFields struct {
+		Raw    rawjson.Message
+		Number float64
+		Text   string
+	}
+
+	workflowEnvelope struct {
+		privateWorkflowFields
+	}
+
+	privateWorkflowResult struct {
+		Result *planner.ToolResult
+	}
+
+	workflowResultEnvelope struct {
+		privateWorkflowResult
+	}
 )
 
 func TestNewAgentDataConverterRejectsToolResult(t *testing.T) {
 	dc := NewAgentDataConverter()
 	_, err := dc.ToPayload(&planner.ToolResult{Name: "test.tool"})
 	require.Error(t, err)
+}
+
+func TestNewAgentDataConverterBoundsEveryPayloadEncoding(t *testing.T) {
+	dc := NewAgentDataConverter()
+
+	_, err := dc.ToPayload([]byte(strings.Repeat("x", engine.MaxPayloadBytes+1)))
+	require.ErrorContains(t, err, "maximum aggregate size")
+
+	_, err = dc.ToPayloads(
+		[]byte(strings.Repeat("a", engine.MaxPayloadBytes/2)),
+		[]byte(strings.Repeat("b", engine.MaxPayloadBytes/2+1)),
+	)
+	require.ErrorContains(t, err, "maximum aggregate size")
+}
+
+func TestPreflightTemporalValuesBoundsAggregateSource(t *testing.T) {
+	tests := []struct {
+		name   string
+		values []any
+	}{
+		{
+			name: "nested string",
+			values: []any{map[string]any{
+				"value": strings.Repeat("x", engine.MaxPayloadBytes+1),
+			}},
+		},
+		{
+			name: "multiple payloads",
+			values: []any{
+				strings.Repeat("a", engine.MaxPayloadBytes/2),
+				strings.Repeat("b", engine.MaxPayloadBytes/2+1),
+			},
+		},
+		{
+			name:   "raw JSON",
+			values: []any{rawjson.Message(`"` + strings.Repeat("x", engine.MaxPayloadBytes+1) + `"`)},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := preflightTemporalValues(test.values...)
+			require.ErrorContains(t, err, "maximum aggregate size")
+		})
+	}
+}
+
+func TestPreflightTemporalValuesCountsNestedBytesAsOneBlock(t *testing.T) {
+	for _, value := range []any{
+		make([]byte, maxWorkflowJSONVisits+1),
+		workflowByteSlice(make([]byte, maxWorkflowJSONVisits+1)),
+	} {
+		err := preflightTemporalValues(map[string]any{"value": value})
+		require.NoError(t, err)
+	}
+
+	err := preflightTemporalValues(map[string]any{
+		"value": make([]byte, engine.MaxPayloadBytes+1),
+	})
+	require.ErrorContains(t, err, "maximum aggregate size")
+}
+
+func TestPreflightTemporalValuesRejectsCustomByteEncoding(t *testing.T) {
+	err := preflightTemporalValues(hidingWorkflowByteSlice{1})
+	require.ErrorContains(t, err, "unsupported custom JSON marshaler")
+
+	err = preflightTemporalValues([]hidingWorkflowByte{1})
+	require.ErrorContains(t, err, "unsupported custom JSON marshaler")
+}
+
+func TestNewAgentDataConverterRejectsOversizedPersistedPayload(t *testing.T) {
+	err := NewAgentDataConverter().FromPayload(
+		&commonpb.Payload{Data: []byte(strings.Repeat("x", engine.MaxPayloadBytes+1))},
+		new([]byte),
+	)
+
+	require.ErrorContains(t, err, "maximum aggregate size")
 }
 
 func TestNewAgentDataConverterRejectsNestedToolResultInRunInput(t *testing.T) {
@@ -86,6 +198,49 @@ func TestNewAgentDataConverterRejectsHidingMarshalers(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := NewAgentDataConverter().ToPayload(test.value)
 			require.ErrorContains(t, err, test.kind)
+		})
+	}
+}
+
+func TestNewAgentDataConverterChecksEmbeddedPrivateStructFields(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   any
+		wantErr string
+	}{
+		{
+			name: "workflow-only value",
+			value: workflowResultEnvelope{privateWorkflowResult: privateWorkflowResult{
+				Result: &planner.ToolResult{Name: "test.tool"},
+			}},
+			wantErr: "planner.ToolResult must not cross workflow boundaries",
+		},
+		{
+			name: "invalid raw JSON",
+			value: workflowEnvelope{privateWorkflowFields: privateWorkflowFields{
+				Raw: rawjson.Message(`{"broken"`),
+			}},
+			wantErr: "invalid raw JSON",
+		},
+		{
+			name: "non-finite number",
+			value: workflowEnvelope{privateWorkflowFields: privateWorkflowFields{
+				Number: math.Inf(1),
+			}},
+			wantErr: "non-finite number",
+		},
+		{
+			name: "oversized string",
+			value: workflowEnvelope{privateWorkflowFields: privateWorkflowFields{
+				Text: strings.Repeat("x", engine.MaxPayloadBytes+1),
+			}},
+			wantErr: "maximum aggregate size",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewAgentDataConverter().ToPayload(test.value)
+			require.ErrorContains(t, err, test.wantErr)
 		})
 	}
 }
@@ -221,4 +376,22 @@ func (m hidingTextMarshaler) MarshalText() ([]byte, error) {
 		return nil, errors.New("hidden text value is required")
 	}
 	return []byte("hidden"), nil
+}
+
+// MarshalJSON would hide a named byte slice if preflight let encoding/json call
+// it.
+func (value hidingWorkflowByteSlice) MarshalJSON() ([]byte, error) {
+	if len(value) == 0 {
+		return nil, errors.New("byte slice is required")
+	}
+	return []byte("null"), nil
+}
+
+// MarshalJSON would replace a byte element if preflight treated its containing
+// slice as an ordinary byte block.
+func (value *hidingWorkflowByte) MarshalJSON() ([]byte, error) {
+	if value == nil {
+		return nil, errors.New("byte is required")
+	}
+	return []byte("0"), nil
 }

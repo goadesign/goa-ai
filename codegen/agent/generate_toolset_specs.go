@@ -255,7 +255,6 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 				specImports = append(specImports, codegen.SimpleImport("fmt"))
 			}
 			specImports = append(specImports,
-				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/planner"},
 				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/policy"},
 				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/tools"},
 			)

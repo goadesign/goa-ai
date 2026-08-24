@@ -5,7 +5,6 @@ package runtime
 // separate, and saves only the response that exactly matches that result.
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -45,20 +44,12 @@ type (
 		streamed                 bool
 		usageSeen                bool
 		finished                 bool
-		requestModel             string
 		requestModelClass        model.ModelClass
 		cancel                   context.CancelFunc
 		done                     chan struct{}
 		usage                    model.TokenUsage
 		err                      error
 		rejectedResponseEvidence *model.ResponseEvidence
-	}
-
-	// pendingModelInvocation contains the immutable controls seal uses after it
-	// releases the journal lock.
-	pendingModelInvocation struct {
-		cancel context.CancelFunc
-		done   <-chan struct{}
 	}
 
 	// modelFacingToolCall is the provider transcript identity of a planner
@@ -79,16 +70,16 @@ type (
 	// modelInvocationJournal keeps every model call made during one planner
 	// activity separate from user-visible event publication.
 	modelInvocationJournal struct {
-		mu             sync.Mutex
-		invocations    map[modelInvocationID]*modelInvocationCandidate
-		order          []modelInvocationID
-		designated     modelInvocationID
-		selected       modelInvocationID
-		usage          model.TokenUsage
-		usagePublished bool
-		outputErr      error
-		sealed         bool
-		sealedErr      error
+		mu          sync.Mutex
+		invocations map[modelInvocationID]*modelInvocationCandidate
+		order       []modelInvocationID
+		designated  modelInvocationID
+		selected    modelInvocationID
+		usage       model.TokenUsage
+		outputErr   error
+		sealed      bool
+		sealedErr   error
+		sealDone    chan struct{}
 	}
 )
 
@@ -101,7 +92,6 @@ const (
 // beginModelInvocation creates a place to save one model response and the
 // runtime-owned controls that stop and join it when planning ends.
 func (j *modelInvocationJournal) beginModelInvocation(
-	requestModel string,
 	requestModelClass model.ModelClass,
 	cancel context.CancelFunc,
 ) (modelInvocationID, error) {
@@ -118,7 +108,6 @@ func (j *modelInvocationJournal) beginModelInvocation(
 		j.invocations = make(map[modelInvocationID]*modelInvocationCandidate)
 	}
 	j.invocations[id] = &modelInvocationCandidate{
-		requestModel:      requestModel,
 		requestModelClass: requestModelClass,
 		cancel:            cancel,
 		done:              make(chan struct{}),
@@ -127,27 +116,32 @@ func (j *modelInvocationJournal) beginModelInvocation(
 	return id, nil
 }
 
-// seal prevents new model calls, cancels every unfinished call, and then joins
-// final invocation bookkeeping. The model client owns closing the exact stream
-// when this cancellation reaches its prepared context. An output rejection
-// already recorded by the journal remains the exact terminal error; an
-// unfinished call is planner-origin only when no earlier rejection exists.
+// seal prevents new model calls, cancels every unfinished call, and waits for
+// each provider operation to return. Planner activity completion therefore
+// means no model inference or usage accounting remains in flight.
 func (j *modelInvocationJournal) seal() error {
 	j.mu.Lock()
 	if j.sealed {
 		err := j.sealedErr
+		done := j.sealDone
 		j.mu.Unlock()
+		<-done
 		return err
 	}
 	j.sealed = true
+	j.sealDone = make(chan struct{})
 	outputErr := j.outputContractErrorLocked()
-	var pending []pendingModelInvocation
+	type pendingInvocation struct {
+		cancel context.CancelFunc
+		done   <-chan struct{}
+	}
+	var pending []pendingInvocation
 	for _, id := range j.order {
 		candidate := j.invocations[id]
 		if candidate == nil || candidate.finished {
 			continue
 		}
-		pending = append(pending, pendingModelInvocation{
+		pending = append(pending, pendingInvocation{
 			cancel: candidate.cancel,
 			done:   candidate.done,
 		})
@@ -169,6 +163,7 @@ func (j *modelInvocationJournal) seal() error {
 	for _, invocation := range pending {
 		<-invocation.done
 	}
+	close(j.sealDone)
 	return err
 }
 
@@ -226,9 +221,10 @@ func (j *modelInvocationJournal) recordRejectedResponseEvidence(
 	return nil
 }
 
-// recordRejectedModelUsage retains valid counts from a rejected usage chunk
-// and attributes them to the immutable request identity.
-func (j *modelInvocationJournal) recordRejectedModelUsage(
+// recordRejectedModelUsageTotal replaces this invocation's streamed deltas
+// with the provider's terminal total. Providers report the same tokens in both
+// forms, so adding the terminal value would count one invocation twice.
+func (j *modelInvocationJournal) recordRejectedModelUsageTotal(
 	invocationID modelInvocationID,
 	rejected model.TokenUsage,
 ) error {
@@ -242,26 +238,38 @@ func (j *modelInvocationJournal) recordRejectedModelUsage(
 		return errors.New("rejected model usage references an unknown invocation")
 	}
 	rejected = candidate.attributeUsage(rejected)
-	activityUsage, err := addTokenUsage(j.usage, rejected)
-	if err != nil {
-		return outputcontract.NewWithOrigin(
-			fmt.Errorf("aggregate rejected model usage: %w", err),
-			planner.OutputContractOriginPlanner,
-		)
-	}
-	invocationUsage, err := addTokenUsage(candidate.usage, rejected)
-	if err != nil {
-		return outputcontract.NewWithOrigin(
-			fmt.Errorf("aggregate rejected invocation usage: %w", err),
-			planner.OutputContractOriginPlanner,
-		)
-	}
-	invocationUsage.Model = rejected.Model
-	invocationUsage.ModelClass = rejected.ModelClass
+	previous := candidate.usage
+	previousSeen := candidate.usageSeen
+	candidate.usage = rejected
 	candidate.usageSeen = true
+	var activityUsage model.TokenUsage
+	for _, id := range j.order {
+		invocation := j.invocations[id]
+		if invocation == nil || !invocation.usageSeen {
+			continue
+		}
+		var err error
+		activityUsage, err = addTokenUsage(activityUsage, invocation.usage)
+		if err != nil {
+			candidate.usage = previous
+			candidate.usageSeen = previousSeen
+			return outputcontract.NewWithOrigin(
+				fmt.Errorf("aggregate rejected model usage total: %w", err),
+				planner.OutputContractOriginPlanner,
+			)
+		}
+	}
 	j.usage = activityUsage
-	candidate.usage = invocationUsage
 	return nil
+}
+
+// recordRejectedModelUsageDelta retains valid counts from one rejected usage
+// chunk without treating them as an invocation total.
+func (j *modelInvocationJournal) recordRejectedModelUsageDelta(
+	invocationID modelInvocationID,
+	delta model.TokenUsage,
+) error {
+	return j.recordModelChunk(invocationID, model.UsageChunk{Usage: delta})
 }
 
 // recordValidatedModelResponse saves a stream response already accepted by the
@@ -313,6 +321,7 @@ func (j *modelInvocationJournal) saveModelResponse(
 		j.usage = usage
 		if responseUsage != (model.TokenUsage{}) {
 			candidate.usage = responseUsage
+			candidate.usageSeen = true
 		}
 	}
 	return nil
@@ -529,7 +538,7 @@ func (j *modelInvocationJournal) exportModelInvocation(
 func (j *modelInvocationJournal) selectedCompiledModelCalls(result *planner.PlanResult) (map[string]model.ToolCall, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return compiledModelCalls(j.invocations[j.selected], result, planResultModelToolCalls(result))
+	return compiledModelCalls(j.invocations[j.selected], result)
 }
 
 // outputContractError returns the earliest-started invocation that rejected
@@ -616,15 +625,12 @@ func (j *modelInvocationJournal) publishSelectedPresentation(ctx context.Context
 	j.publishUsage(ctx, events)
 }
 
-// publishUsage emits every provider usage report recorded by this planner
-// activity, including attempts whose output was rejected.
+// publishUsage copies every provider usage report into the supplied activity
+// event collector. Callers may build and discard an accepted output before
+// rebuilding a bounded rejection, so this method does not retain publication
+// state.
 func (j *modelInvocationJournal) publishUsage(ctx context.Context, events planner.PlannerEvents) {
 	j.mu.Lock()
-	if j.usagePublished {
-		j.mu.Unlock()
-		return
-	}
-	j.usagePublished = true
 	usageEvents := make([]model.TokenUsage, 0, len(j.order))
 	for _, id := range j.order {
 		candidate := j.invocations[id]
@@ -638,12 +644,9 @@ func (j *modelInvocationJournal) publishUsage(ctx context.Context, events planne
 	}
 }
 
-// attributeUsage fills a missing concrete model and always applies the logical
-// model class owned by the immutable request.
+// attributeUsage applies the logical model class owned by the immutable
+// request. Missing provider model identity remains empty.
 func (c *modelInvocationCandidate) attributeUsage(usage model.TokenUsage) model.TokenUsage {
-	if usage.Model == "" {
-		usage.Model = c.requestModel
-	}
 	usage.ModelClass = c.requestModelClass
 	return usage
 }
@@ -746,8 +749,11 @@ func planResultModelToolCalls(result *planner.PlanResult) []modelFacingToolCall 
 	}
 	calls := make([]modelFacingToolCall, 0, len(result.ToolCalls))
 	for _, call := range result.ToolCalls {
+		if call.ModelToolCallID == "" {
+			continue
+		}
 		calls = append(calls, modelFacingToolCall{
-			id:      call.ToolCallID,
+			id:      call.ModelToolCallID,
 			name:    call.Name,
 			payload: call.Payload,
 		})
@@ -792,8 +798,12 @@ func runtimePlanResultModelToolCalls(result *PlanResult) []modelFacingToolCall {
 	}
 	calls := make([]modelFacingToolCall, 0, len(result.ToolCalls))
 	for _, call := range result.ToolCalls {
+		modelCallID := call.ModelToolCallID
+		if modelCallID == "" {
+			modelCallID = call.ToolCallID
+		}
 		calls = append(calls, modelFacingToolCall{
-			id:      call.ToolCallID,
+			id:      modelCallID,
 			name:    call.TranscriptName(),
 			payload: call.TranscriptPayload(),
 		})
@@ -863,7 +873,6 @@ func modelInvocationMatches(candidate *modelInvocationCandidate, calls []modelFa
 func compiledModelCalls(
 	candidate *modelInvocationCandidate,
 	result *planner.PlanResult,
-	finalized []modelFacingToolCall,
 ) (map[string]model.ToolCall, error) {
 	if candidate == nil || candidate.response == nil || result == nil {
 		return nil, nil
@@ -872,20 +881,19 @@ func compiledModelCalls(
 	for _, call := range candidate.response.ToolCalls() {
 		captured[call.ID] = call
 	}
-	executable := make(map[string]struct{}, len(result.ToolCalls))
-	for _, call := range result.ToolCalls {
-		executable[call.ToolCallID] = struct{}{}
-	}
 	bindings := make(map[string]model.ToolCall)
-	for _, call := range finalized {
-		source := captured[call.id]
-		if source.Name == call.name && bytes.Equal(source.Payload, call.payload) {
+	for _, call := range result.ToolCalls {
+		if call.ModelToolCallID == "" {
 			continue
 		}
-		if _, ok := executable[call.id]; !ok {
-			return nil, errors.New("planner compiled a model call outside executable tool output")
+		source, ok := captured[call.ModelToolCallID]
+		if !ok {
+			return nil, fmt.Errorf(
+				"planner tool %q supplied a model call ID that does not belong to its selected model response",
+				call.Name,
+			)
 		}
-		bindings[call.id] = source
+		bindings[call.ModelToolCallID] = source
 	}
 	return bindings, nil
 }

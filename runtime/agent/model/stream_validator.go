@@ -18,7 +18,6 @@ type (
 	// streamValidator checks one provider stream against its complete response.
 	// The validated stream calls accept for each owned chunk and finish at EOF.
 	streamValidator struct {
-		model              string
 		modelClass         ModelClass
 		completionName     string
 		expectsCompletion  bool
@@ -29,7 +28,6 @@ type (
 		citations          []citationsPartSnapshot
 		thinking           map[int]thinkingSnapshot
 		thinkingOrder      []int
-		thinkingSeen       bool
 		toolCalls          []toolCallSnapshot
 		finalToolCallIDs   map[string]struct{}
 		toolDeltaNames     map[string]string
@@ -100,7 +98,6 @@ func newStreamValidator(contract *RequestContract) *streamValidator {
 		thinking:           make(map[int]thinkingSnapshot),
 		toolValidators:     contract.toolValidators,
 		contract:           contract.stream,
-		model:              contract.stream.model,
 		modelClass:         contract.stream.modelClass,
 		completionValidate: contract.completionValidate,
 		toolChoiceMode:     contract.toolChoiceMode,
@@ -138,6 +135,9 @@ func SetCompletionValidator(request *Request, validate func(*Response, *Completi
 
 // accept validates and records one provider chunk.
 func (v *streamValidator) accept(chunk Chunk) error {
+	if err := v.preflightStreamChunk(chunk); err != nil {
+		return err
+	}
 	owned, err := validateAndCloneChunk(chunk)
 	if err != nil {
 		return err
@@ -177,7 +177,6 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 					v.thinkingOrder = append(v.thinkingOrder, thinking.Index)
 				}
 				v.thinking[thinking.Index] = snapshotThinking(thinking)
-				v.thinkingSeen = true
 			}
 		}
 	case ToolCallDeltaChunk:
@@ -234,6 +233,8 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 			)
 		}
 		v.finalToolCallIDs[actual.ToolCall.ID] = struct{}{}
+		delete(v.toolDeltaNames, actual.ToolCall.ID)
+		delete(v.toolDeltaPayloads, actual.ToolCall.ID)
 		v.toolCalls = append(v.toolCalls, snapshotToolCall(actual.ToolCall))
 	case UsageChunk:
 		usage := actual.Usage
@@ -301,9 +302,6 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 // validateAndCloneChunk transfers a provider chunk into framework ownership,
 // then checks only the owned copy.
 func validateAndCloneChunk(chunk Chunk) (Chunk, error) {
-	if err := preflightChunk(chunk, &dynamicValueWalk{}); err != nil {
-		return nil, err
-	}
 	owned, err := cloneChunk(chunk)
 	if err != nil {
 		return nil, err
@@ -361,18 +359,16 @@ func (v *streamValidator) finish(response *Response) error {
 	if len(v.citations) > 0 && !reflect.DeepEqual(v.citations, snapshotResponseCitations(response)) {
 		return errors.New("streamed citations do not match canonical response")
 	}
-	if v.thinkingSeen {
-		thinking := make([]thinkingSnapshot, 0, len(v.thinkingOrder))
-		for _, index := range v.thinkingOrder {
-			block := v.thinking[index]
-			if !block.final {
-				return fmt.Errorf("model stream ended before thinking block %d was final", index)
-			}
-			thinking = append(thinking, block)
+	thinking := make([]thinkingSnapshot, 0, len(v.thinkingOrder))
+	for _, index := range v.thinkingOrder {
+		block := v.thinking[index]
+		if !block.final {
+			return fmt.Errorf("model stream ended before thinking block %d was final", index)
 		}
-		if !slices.Equal(thinking, snapshotResponseThinking(response)) {
-			return errors.New("streamed thinking does not match canonical response")
-		}
+		thinking = append(thinking, block)
+	}
+	if !slices.Equal(thinking, snapshotResponseThinking(response)) {
+		return errors.New("streamed thinking does not match canonical response")
 	}
 	if v.completion != nil {
 		if !json.Valid([]byte(v.completion.payload)) {
@@ -554,12 +550,9 @@ func addStreamTokenCount(name string, current, delta int) (int, error) {
 	return sum, nil
 }
 
-// stampUsageIdentity fills a missing provider-resolved model and applies the
-// logical model class from the immutable request contract.
+// stampUsageIdentity applies the logical model class from the immutable
+// request contract. Missing provider model identity remains empty.
 func (v *streamValidator) stampUsageIdentity(usage *TokenUsage) {
-	if usage.Model == "" {
-		usage.Model = v.model
-	}
 	if v.modelClass != "" {
 		usage.ModelClass = v.modelClass
 	}

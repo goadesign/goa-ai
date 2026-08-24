@@ -112,6 +112,18 @@ func (r *Runtime) compilePlannerToolCalls(
 	actions []continuationAction,
 	modelCalls map[string]model.ToolCall,
 ) ([]ToolCall, error) {
+	return r.compilePlannerToolCallsForRun(run.Context{}, requests, actions, modelCalls)
+}
+
+// compilePlannerToolCallsForRun turns planner intent into runtime-owned calls.
+// It preserves provider transcript IDs separately and derives every execution
+// ID from the current run and planner attempt.
+func (r *Runtime) compilePlannerToolCallsForRun(
+	runCtx run.Context,
+	requests []planner.ToolRequest,
+	actions []continuationAction,
+	modelCalls map[string]model.ToolCall,
+) ([]ToolCall, error) {
 	byName := make(map[tools.Ident]continuationAction, len(actions))
 	for _, action := range actions {
 		byName[action.modelName] = action
@@ -120,13 +132,18 @@ func (r *Runtime) compilePlannerToolCalls(
 	calls := make([]ToolCall, len(requests))
 	for i, request := range requests {
 		call := ToolCall{
-			Name:       request.Name,
-			Payload:    append(rawjson.Message(nil), request.Payload...),
-			ToolCallID: request.ToolCallID,
+			Name:            request.Name,
+			Payload:         append(rawjson.Message(nil), request.Payload...),
+			ToolCallID:      generateDeterministicToolCallID(runCtx.RunID, runCtx.TurnID, runCtx.Attempt, request.Name, i),
+			ModelToolCallID: request.ModelToolCallID,
 		}
-		if source, ok := modelCalls[request.ToolCallID]; ok {
+		if source, ok := modelCalls[request.ModelToolCallID]; ok {
 			call.ModelName = source.Name
 			call.ModelPayload = append(rawjson.Message(nil), source.Payload...)
+		} else if request.ModelToolCallID != "" {
+			return nil, planner.NewOutputContractError(
+				fmt.Errorf("planner tool %q supplied a model call ID that does not belong to its selected model response", request.Name),
+			)
 		}
 		action, ok := byName[call.Name]
 		if !ok {

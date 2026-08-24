@@ -56,13 +56,9 @@ func smithyDocumentFromJSON(t *testing.T, raw string) document.Interface {
 	return document.NewLazyDocument(v)
 }
 
-// Anthropic models reject Bedrock's native OutputConfig response format for
-// structured output (Bedrock's Converse API translates it into Anthropic's own
-// output_config.format field, which the model then rejects). These tests prove
-// prepareRequest routes Anthropic structured-output requests through a forced
-// tool call instead, while leaving non-Anthropic models (e.g. Nova) on the
-// native OutputConfig path, and that the response is reified back into the
-// same canonical single-text shape either way.
+// These tests prove that Bedrock uses OutputConfig for Claude models that
+// support it and one private tool for Claude models that do not. Both paths
+// return the same provider-neutral structured completion.
 
 func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
 	client := &provider{defaultModel: "us.anthropic.claude-opus-5"}
@@ -93,6 +89,8 @@ func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
 	spec, ok := parts.toolConfig.Tools[0].(*brtypes.ToolMemberToolSpec)
 	require.True(t, ok)
 	require.Equal(t, "Return the completed task draft.", *spec.Value.Description)
+	require.NotNil(t, spec.Value.Strict)
+	require.True(t, *spec.Value.Strict)
 	require.Equal(t, []string{"tool-examples-2025-10-29"}, parts.additionalModelFields["anthropic_beta"])
 	tools, ok := parts.additionalModelFields["tools"].([]map[string]any)
 	require.True(t, ok)
@@ -134,6 +132,27 @@ func TestPrepareRequestNovaStructuredOutputUsesNativeOutputConfig(t *testing.T) 
 	require.Nil(t, parts.toolConfig)
 }
 
+func TestPrepareRequestClaude45StructuredOutputUsesNativeOutputConfig(t *testing.T) {
+	client := &provider{defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"}
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "draft the task"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:        "complete_draft",
+			Description: "Return the completed task draft.",
+			Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
+		},
+	}
+
+	parts, err := client.prepareRequest(req)
+
+	require.NoError(t, err)
+	require.NotNil(t, parts.outputConfig)
+	require.Nil(t, parts.toolConfig)
+}
+
 func TestPrepareRequestStructuredOutputRejectsExplicitTools(t *testing.T) {
 	client := &provider{defaultModel: "us.anthropic.claude-opus-5"}
 	req := &model.Request{
@@ -151,6 +170,44 @@ func TestPrepareRequestStructuredOutputRejectsExplicitTools(t *testing.T) {
 
 	_, err := client.prepareRequest(req)
 	require.ErrorContains(t, err, "structured output cannot be combined with request tool definitions")
+}
+
+func TestAnthropicStructuredOutputRejectsLegacyThinkingBeforeProviderCall(t *testing.T) {
+	client := &provider{
+		defaultModel: "us.anthropic.claude-sonnet-4-0",
+		runtime:      &recordingConverseRuntime{},
+	}
+	newRequest := func() *model.Request {
+		req := &model.Request{
+			Messages: []*model.Message{{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "draft the task"}},
+			}},
+			Thinking: &model.ThinkingOptions{
+				Enable:       true,
+				BudgetTokens: 2048,
+			},
+			StructuredOutput: &model.StructuredOutput{
+				Name:        "complete_draft",
+				Description: "Return the completed task draft.",
+				Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
+			},
+		}
+		require.NoError(t, model.SetCompletionValidator(
+			req,
+			func(*model.Response, *model.Completion) error { return nil },
+		))
+		return req
+	}
+
+	t.Run("unary", func(t *testing.T) {
+		_, err := client.Complete(t.Context(), newRequest())
+		require.EqualError(t, err, "bedrock: manual thinking cannot be combined with forced tool choice")
+	})
+	t.Run("streaming", func(t *testing.T) {
+		_, err := client.Stream(t.Context(), newRequest())
+		require.EqualError(t, err, "bedrock: manual thinking cannot be combined with forced tool choice")
+	})
 }
 
 // TestCompleteAnthropicStructuredOutputReifiesToolCall proves the adapter turns

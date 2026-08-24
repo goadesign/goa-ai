@@ -211,7 +211,7 @@ func (r *Runtime) normalizePlanResultContract(result *PlanResult) (stepProgram, 
 		plannerResult.ToolCalls[index] = planner.ToolRequest{
 			Name:       call.TranscriptName(),
 			Payload:    call.TranscriptPayload(),
-			ToolCallID: call.ToolCallID,
+			ModelToolCallID: call.ToolCallID,
 		}
 	}
 	if err := validatePlannerResultPayloads(plannerResult); err != nil {

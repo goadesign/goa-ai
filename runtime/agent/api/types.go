@@ -513,6 +513,10 @@ type (
 		// ToolCallID uniquely identifies this invocation across runtime records.
 		ToolCallID string
 
+		// ModelToolCallID is the provider correlation ID preserved only for
+		// rebuilding a model transcript. It is empty for planner-authored calls.
+		ModelToolCallID string
+
 		// ParentToolCallID identifies the parent call for nested execution.
 		ParentToolCallID string
 
@@ -586,10 +590,8 @@ type (
 		Usage model.TokenUsage
 
 		// PlannerEvents contains accepted events for the workflow to publish with
-		// deterministic identities after this activity succeeds. Omitting an
-		// empty batch keeps planner activities with no events readable by earlier
-		// workers during a hard worker replacement.
-		PlannerEvents []*PlannerEventRecord `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+		// deterministic identities after this activity succeeds.
+		PlannerEvents []*PlannerEventRecord
 
 		// SessionEnded reports that the run's durable session was ended before
 		// this turn could be planned: the activity refused to plan and Result
@@ -784,8 +786,9 @@ type (
 	// ProvidedToolSuccess carries a successful external result and its optional
 	// bounded-result metadata.
 	ProvidedToolSuccess struct {
-		// Result contains canonical JSON for the tool's result contract. JSON
-		// null remains a successful result when the registered codec permits it.
+		// Result contains canonical JSON for the tool's result contract. It must
+		// be empty when the registered tool has no result contract. JSON null
+		// remains a successful result when a registered codec permits it.
 		Result rawjson.Message
 
 		// Bounds carries bounded-result metadata when the tool contract requires it.
@@ -839,7 +842,7 @@ const (
 	PendingInputKindToolResults PendingInputKind = "tool_results"
 
 	// RunSuspensionVersion is the checkpoint schema emitted by this runtime.
-	RunSuspensionVersion = "goa-ai.run-suspension.v2"
+	RunSuspensionVersion = "goa-ai.run-suspension.v3"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.

@@ -101,11 +101,18 @@ func main() {
 ```go
 func main() {
     // Temporal engine for durable execution
-    temporalEng, _ := temporal.NewWorker(temporal.Options{
+    temporalEng, err := temporal.NewWorker(temporal.Options{
         ClientOptions: &client.Options{HostPort: "temporal:7233"},
         WorkerOptions: temporal.WorkerOptions{TaskQueue: "orchestrator.chat"},
     })
-    defer temporalEng.Close()
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer func() {
+        if err := temporalEng.Close(); err != nil {
+            log.Printf("close Temporal engine: %v", err)
+        }
+    }()
 
     // MongoDB stores for persistence.
     // The low-level client is a *mongo.Client from go.mongodb.org/mongo-driver/v2/mongo.
@@ -274,7 +281,12 @@ Typed completion helpers are intentionally strict:
 - Providers that do not implement structured output surface `model.ErrStructuredOutputUnsupported`.
 - Generated schemas are canonical and provider-neutral; provider adapters may normalize them to a supported subset, but must fail explicitly when they cannot preserve the declared contract.
 
-### Model output bounds and canonical values
+### Model request and output bounds
+
+Every model request is checked before the client copies it or calls observers
+and providers. Messages, media, prompt references, tool names and schemas, and
+structured-output contracts share one limit of 16 MiB and 100,000 visited
+values. Collections are checked before the client allocates their copies.
 
 Every unary model response is checked before the runtime copies, fingerprints,
 or decodes it. Model-controlled strings, raw JSON, binary data, citation source
@@ -292,6 +304,11 @@ Internal fingerprints, ownership copies, observer copies, and planner text
 accumulation do not create additional budget charges. A stream that exceeds
 either limit fails before growing chunk accumulators or copying its complete
 response.
+
+`TokenUsage.Model` records only a concrete model identity reported by the
+provider. It remains empty when the provider omits that identity; the client
+does not substitute `Request.Model`. `TokenUsage.ModelClass` records the logical
+class from the immutable request contract.
 
 Canonical metadata and tool-result values may contain nil, booleans, finite
 numbers, valid UTF-8 strings, byte slices, arrays, slices, and maps with valid
@@ -322,9 +339,9 @@ planner and runtime streaming:
 | Streaming usage and stop chunks | Supported |
 | Model-class routing (`default`, `high-reasoning`, `small`) | Supported |
 | Structured output (`completion_delta` + final `completion`) | Supported via OpenAI `json_schema` response format, but not in combination with tools |
-| Strict schemas | Tool and structured-output schemas are always sent with `strict:true`; the adapter projects canonical schemas onto the strict subset (closed objects, all members required, optionals nullable) and canonicalizes returned payloads by dropping the null members the projection introduced. Contracts strict mode cannot represent (open objects, map-style `additionalProperties`) are rejected explicitly |
+| Strict schemas | Tool and structured-output schemas are always sent with `strict:true`; the adapter projects canonical schemas onto the strict subset (closed objects, all members required, optionals nullable) and canonicalizes returned payloads by dropping the null members the projection introduced. Root unions, unsupported composition and validation keywords, open objects or schema-valued `additionalProperties`, more than 5,000 properties, more than 1,000 enum values, more than 120,000 characters across property names, definition names, enum strings, and string constants, or nesting beyond 10 levels are rejected before the provider call. An enum with more than 250 string values may contain at most 15,000 characters. Fine-tuned model IDs beginning with `ft:` additionally reject unsupported string, numeric, array, and `patternProperties` constraints |
 | Cache options / cache checkpoints | Rejected explicitly |
-| Thinking | Only the representable subset is supported: `Thinking.Enable` may map to configured OpenAI `reasoning_effort`; budgeted or interleaved thinking requests fail fast |
+| Thinking | Only the representable subset is supported: `Thinking.Enable` maps to configured OpenAI `reasoning_effort`; budgeted or interleaved thinking requests fail fast. A request that explicitly combines thinking with temperature also fails; a configured default temperature is omitted from thinking requests |
 
 This is the intended migration seam for Aura-style inference backends: swap the
 provider adapter, keep planners and runtime flow unchanged.
@@ -360,8 +377,8 @@ reconstruct every provider-required field from the canonical part.
 ### Sampling parameters on current-generation Claude models
 
 Anthropic removed the `temperature`/`top_p`/`top_k` sampling parameters from
-current-generation Claude models (Opus 4.7 and later, Sonnet 5 and later, and
-the Fable/Mythos generation): a request carrying a non-default value is
+current-generation Claude models (Opus 4.7 and later, Sonnet 5 and later,
+Haiku 5 and later, and the Fable/Mythos generation): a request carrying a non-default value is
 rejected with a 400 `invalid_request_error` ("temperature is deprecated for
 this model"). The Anthropic adapter (`features/model/anthropic`, which also
 backs Claude-on-Vertex) and the Bedrock adapter (`features/model/bedrock`)
@@ -371,8 +388,34 @@ its own default sampling behavior, and a configured `Options.Temperature` or
 `Request.Temperature` has no effect. The Anthropic adapter records the
 omission on the ambient trace span (`gen_ai.request.temperature_omitted`).
 Steer output behavior through prompting on these models; older generations
-(Opus ≤ 4.6, Sonnet 4.x, Haiku 4.5) keep honoring the configured value
+(Opus ≤ 4.6, Sonnet 4.x, and Haiku ≤ 4.5) keep honoring the configured value
 unchanged.
+
+### Thinking and tool choice on Claude
+
+Claude models with adaptive thinking accept tools and forced tool choice.
+Models with older manual thinking accept tools selected with `auto` or `none`,
+but reject forced choices (`any` or one named tool) while thinking is enabled.
+Mythos Preview is the exception among adaptive models: it also rejects forced
+tool choice. The Anthropic and Bedrock adapters resolve the model and the
+effective tool choice, including a private structured-output tool when needed,
+before sending the request. Unsupported combinations fail locally.
+
+The direct Anthropic Messages adapter uses native structured output on Claude
+Sonnet, Opus, and Haiku 4.5 or later. Bedrock Converse uses native
+`OutputConfig` only for the Claude 4.5 and 4.6 models Bedrock documents as
+supporting it. Other Claude models on Bedrock use one private forced tool and
+the framework validates its result against the same completion contract.
+
+### Thinking on Gemini 3
+
+Gemini 3 uses thinking levels rather than numeric thinking-token budgets, and
+thinking cannot be disabled. The provider-neutral request can enable the
+model's default thinking behavior, but a numeric budget or explicit
+`Thinking.Enable=false` is rejected. Gemini 3 also runs at temperature 1; a
+different configured or per-request temperature fails before the provider
+call. A client-level numeric `ThinkingBudget` applies only to older Gemini
+models that accept token budgets; Gemini 3 does not inherit it.
 
 ---
 
@@ -637,7 +680,7 @@ Workflow step boundary:
 `LimitTerminalPlans` and `CompletionTool` add fields to the Temporal workflow
 input. Deploy the runtime, generated workers, and callers as one coordinated
 cutover. Mixed versions are unsupported. New suspensions use
-`goa-ai.run-suspension.v2`; workers accept only that exact checkpoint version,
+`goa-ai.run-suspension.v3`; workers accept only that exact checkpoint version,
 so work and suspensions created by the previous release may fail after the
 cutover.
 
@@ -893,11 +936,10 @@ point cannot change which output the stream accepts.
 Tool definitions built from a generated `tools.ToolSpec` retain that tool's
 generated payload decoder inside the process. Unary responses and final
 streamed tool-call chunks must name a tool present in the request and pass that
-decoder before planner code receives them. A definition built only with
-`model.AdvertisedToolInputFromSchema` has no generated decoder. It may describe
-a planner-owned local tool to the provider, but the model boundary checks only
-that its returned payload is valid JSON. The planner must validate the
-advertised fields and values before selecting effects.
+decoder before planner code receives them. Caller-authored tools built with
+`model.AdvertisedToolInputFromSchema` compile their JSON Schema once and apply
+it at the same boundary. Requests reject tool definitions that carry only
+schema bytes without either validation path.
 When `PlanResult` contains tool calls, the runtime
 matches their model-facing IDs, names, and payload bytes to exactly one
 candidate and persists only that response's assistant transcript. Mixed,
@@ -932,9 +974,9 @@ model-client boundary — before either streaming style above ever produces a
 call identities match the plan result. `planner.ToolRequest` never carries a
 signature field; planners and custom `Planner` implementations do not need to
 know signatures exist. Planners that hand-build `ToolRequest` values from a
-`Complete` response must carry `Response.ToolCalls()[i].ID`, name, and payload
-through unchanged; those model-facing values identify the response without
-exposing a separate transcript handle.
+`Complete` response should use `planner.ToolRequestFromModelCall`. The returned
+request carries the provider correlation ID. Planner-authored requests have no
+provider ID. In both cases the runtime assigns the execution ID.
 
 ---
 
@@ -944,8 +986,8 @@ exposing a separate transcript handle.
 
 1. **Model emits tool call** — Provider adapters produce a streamed or final tool call with canonical JSON bytes.
 2. **Model boundary checks generated payload** — The call must name a tool in the exact request. Generated tools are decoded with their generated payload codec before planner code receives the call.
-3. **Planner returns `ToolRequest`** — The planner supplies only `Name`, canonical `Payload`, and the model's `ToolCallID`.
-4. **Runtime checks and compiles the request** — The activity decodes the selected payload with the registered generated codec, correlates the call with the selected model response, and creates a runtime-owned `ToolCall` containing transcript and execution metadata.
+3. **Planner returns `ToolRequest`** — The planner supplies `Name` and canonical `Payload`. A request forwarded from a model call also carries `ModelToolCallID`; a planner-authored request leaves it empty.
+4. **Runtime checks and compiles the request** — The activity decodes the selected payload with the registered generated codec, verifies any provider ID against the selected model response, and creates a runtime-owned `ToolCall` with a deterministic execution ID. Original model name and payload stay separate from executable planner intent.
 5. **Executor runs tool** — Receives typed or raw payload depending on configuration.
 6. **Runtime encodes result** — Uses generated codecs and persists canonical `ToolOutput` history.
 7. **Planner resumes from `ToolOutputs`** — `PlanResumeInput.ToolOutputs` is the canonical execution-history boundary for budgeted tools only.
@@ -1303,13 +1345,11 @@ Incoming `run_id`, `session_id`, `turn_id`, `tool_call_id`, and
 bytes and reject NUL at the generated transport boundary; provider and
 incarnation IDs reject NUL as well. An invalid identifier is rejected before
 any tool-call publication.
-Planner tool calls without provider IDs use a runtime-generated identifier from
-the run, turn, attempt, tool name, and batch index. The runtime preserves that
-readable identifier when it fits the 256-byte limit. If it is longer, the
-runtime emits `call-` plus lowercase SHA-256 over
-`goa-ai/runtime-tool-call-id/v1\0` and the complete readable identifier. The
-opaque overflow form is deterministic across workflow replay and still changes
-when any identity input changes.
+Every accepted planner request receives a runtime execution ID equal to `call-`
+plus lowercase SHA-256 over `goa-ai/runtime-tool-call-id/v1\0` and
+length-delimited run ID, turn ID, attempt, batch index, and tool name. The
+opaque ID is deterministic across workflow replay and changes when any identity
+input changes. A provider's own correlation ID remains separate.
 The gateway requires `tool_call_id` and derives the global transport
 `tool_use_id` as lowercase SHA-256 over the domain
 `goa-ai/tool-registry-use/v1\0` plus uint64-length-delimited `run_id` and
@@ -1886,7 +1926,7 @@ Ongoing workflows and saved suspensions may fail when they reach the new
 contract. Historical completed-session records remain stored unchanged; this
 release policy does not alter their persistence schema.
 
-`goa-ai.run-suspension.v2` is the only supported suspension schema. The runtime
+`goa-ai.run-suspension.v3` is the only supported suspension schema. The runtime
 rejects older persisted shapes; it does not infer missing fields, migrate them,
 or provide a compatibility execution path.
 
@@ -1901,12 +1941,24 @@ the model for a replacement. It also changes source and workflow contracts:
   provider-side wrappers with `model.WrapClient`. Direct provider callers use
   `model.NewRequestContract`; ordinary callers use the opaque client.
 - `planner.ConsumeStream` accepts that validated stream directly. Remove stream
-  wrappers and caller-side validation helpers.
-- `planner.ToolRequest` now contains only `Name`, `Payload`, and `ToolCallID`.
+  wrappers and caller-side validation helpers. Stream observers may inspect
+  `Response()` during callbacks but must not call `Recv()` or `Close()` on the
+  same stream; lifecycle operations wait for the active callback.
+- Temporal engines now require `ClientOptions` and always install the Goa-AI
+  data converter. Remove `Options.Client` and custom `DataConverter` wiring;
+  construction rejects a non-nil custom converter.
+  Every workflow and activity call has one aggregate 1 MiB encoded limit.
+  Tool executors must persist larger domain results before returning and place
+  their durable reference in the typed result; the runtime never truncates or
+  infers a replacement.
+- `planner.ToolRequest` now contains `Name`, `Payload`, and optional
+  `ModelToolCallID`. Use `planner.ToolRequestFromModelCall` when forwarding a
+  validated provider call; leave the provider ID empty for planner-authored
+  requests.
   Tool executors receive `*runtime.ToolCall`, which contains runtime-assigned
-  labels and execution identifiers. Replace authored request literals and the
-  removed `CallOption` API with generated
-  `New<Tool>Call(toolCallID, args)` helpers.
+  labels and execution identifiers. Replace the removed `CallOption` API with
+  `planner.NewToolRequest(gentool.<Tool>Tool(), args)`. The runtime assigns each
+  call ID.
 - Rate-limit middleware construction now returns `(model.Client, error)`.
   Check and propagate the setup error instead of treating `Middleware(...)` as
   an infallible client value.
@@ -1917,8 +1969,10 @@ the model for a replacement. It also changes source and workflow contracts:
   `model.NewClient`, and install middleware with `model.WrapClient`.
 - Generated tools must use `model.ToolDefinitionFromSpec` so the generated
   payload decoder runs before planner code sees a tool call. Caller-authored
-  schema-only tools use `model.AdvertisedToolInputFromSchema`; decoded
-  inter-process contracts use `model.ToolInputFromContract`.
+  tools use `model.AdvertisedToolInputFromSchema`, which compiles their schema.
+  `model.ToolInputFromContract` reconstructs provider-facing schema documents
+  after transport; it does not make a transport projection eligible for use as
+  a validated client request.
 - Generated completion packages keep codec-bearing specs private. Replace
   direct `completion.Complete` / `completion.Stream` calls that passed
   `Spec<Name>` with generated `Complete<Name>` / `StreamComplete<Name>`
@@ -1932,7 +1986,11 @@ the model for a replacement. It also changes source and workflow contracts:
   failure as `goa_ai.output_contract_error`; the earlier planner-specific type
   is not decoded as a compatibility alias.
 - Planner activity results and accepted planner-event records have new Temporal
-  payload shapes. Suspension schema `goa-ai.run-suspension.v2` is required.
+  payload shapes. Suspension schema `goa-ai.run-suspension.v3` is required and
+  is decoded with exact numbers, unknown-field rejection, and no trailing data.
+- Child workflow IDs now append the exact runtime tool-call ID to the nested
+  agent run path. Existing in-progress child workflows are not compatible with
+  the new ID derivation.
 
 Regenerate all generated agents and completion packages, then deploy them with
 the runtime as described in [Coordinated generated-system
@@ -2499,17 +2557,22 @@ trigger budget from the exact-retention budget:
   the newest turn and keeps only whole logical turns that fit the budget.
 - Token counts are computed at runtime through `HistoryModel`, because provider
   tokenization depends on the deployed model. Token-budget compression requires
-  a history model that implements `model.TokenCounter` with exact counts; the
-  Bedrock adapter does this with Bedrock's native `CountTokens` API.
-- When Bedrock returns its canonical `prompt is too long: N tokens > M
-  maximum` `ValidationException`, the adapter decodes that complete provider
-  message as an exact count. This allows history compression to run after the
-  request has crossed the model context window. Every other validation error
-  remains an error.
-- Counts exclude replayed thinking blocks: thinking signatures only verify on
-  the model that issued them, and the history model class can differ from the
-  model that produced the transcript. This matches Anthropic billing, which
-  strips prior-turn thinking from input.
+  a history model that implements `model.TokenCounter` with exact counts.
+- One history-policy count includes the preserved system messages, candidate
+  complete turns, and the currently advertised tools. It does not claim to
+  include thinking or structured output that a planner may choose later.
+- `CompressAtMaxInputTokens` is an exclusive trigger: a count equal to the
+  threshold fits, while a larger count triggers compression. The runtime checks
+  the newest turn even when retention uses only `KeepMaxTurns`, and rejects a
+  generated summary that still leaves the history-policy request over the
+  threshold.
+- Bedrock uses its native Runtime `CountTokens` operation when the resolved
+  model supports it. Claude Opus 4.7, Sonnet 5, and Mythos 5 require AWS's
+  separate Mantle token-count endpoint, so this adapter returns
+  `model.ErrTokenCountingUnsupported` for those models. Structured output is
+  also unsupported for Bedrock counting because Runtime `CountTokens` cannot
+  carry `OutputConfig`. Provider validation errors remain errors; the adapter
+  never parses an error message into a fabricated count.
 
 ```go
 // DSL
@@ -2688,8 +2751,8 @@ rl := mdlmw.NewAdaptiveRateLimiter(
     ctx,
     throughputMap,     // *rmap.Map for cluster-wide state (nil for local)
     "bedrock:sonnet",  // Model family key
-    80_000,            // Initial TPM
-    1_000_000,         // Max TPM
+    80_000,            // Initial input tokens per minute
+    1_000_000,         // Maximum input tokens per minute
 )
 
 limitedClient, err := rl.Middleware()(modelClient)
@@ -2700,6 +2763,11 @@ if err := rt.RegisterModel("bedrock", limitedClient); err != nil {
     return err
 }
 ```
+
+The limiter reserves the provider's exact input-token count before each
+request. It does not meter output-token quotas. For streams, it increases
+capacity only after clean end-of-stream and reduces capacity when a terminal
+stream error is rate limited.
 
 ---
 
@@ -2825,7 +2893,7 @@ Schedule-to-Close expiration carries server-owned timeout provenance.
 ```go
 import temporal "goa.design/goa-ai/runtime/agent/engine/temporal"
 
-eng, _ := temporal.NewWorker(temporal.Options{
+eng, err := temporal.NewWorker(temporal.Options{
     ClientOptions: &client.Options{
         HostPort:  "temporal:7233",
         Namespace: "default",
@@ -2844,17 +2912,23 @@ eng, _ := temporal.NewWorker(temporal.Options{
         },
     },
 })
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 **Temporal client** — Start/query/cancel without local polling:
 
 ```go
-eng, _ := temporal.NewClient(temporal.Options{
+eng, err := temporal.NewClient(temporal.Options{
     ClientOptions: &client.Options{
         HostPort:  "temporal:7233",
         Namespace: "default",
     },
 })
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 In this split:
@@ -3127,8 +3201,8 @@ rl := mdlmw.NewAdaptiveRateLimiter(
     ctx,
     throughputMap,     // *rmap.Map for cluster-wide state (nil for local)
     "bedrock:sonnet",  // Model family key
-    80_000,            // Initial TPM (tokens per minute)
-    1_000_000,         // Max TPM
+    80_000,            // Initial input tokens per minute
+    1_000_000,         // Maximum input tokens per minute
 )
 
 limitedClient, err := rl.Middleware()(modelClient)
@@ -3140,8 +3214,10 @@ if err := rt.RegisterModel("bedrock", limitedClient); err != nil {
 }
 ```
 
-The rate limiter automatically adjusts throughput based on provider responses and
-handles 429 (rate limited) errors with exponential backoff.
+The rate limiter reserves the provider's exact input-token count and adjusts
+that input-token budget from terminal provider outcomes. It probes upward after
+a unary response or stream ends successfully and backs off after a unary or
+streaming rate-limit error. It does not meter output-token quotas.
 
 ---
 

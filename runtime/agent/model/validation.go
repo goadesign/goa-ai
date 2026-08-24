@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"unicode/utf8"
 
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -273,13 +274,25 @@ func validateTokenUsage(usage TokenUsage) error {
 		usage.CacheReadTokens < 0 || usage.CacheWriteTokens < 0 {
 		return errors.New("model: token usage cannot be negative")
 	}
-	if len(usage.Model) > maxTokenUsageModelBytes {
-		return fmt.Errorf("model: token usage model exceeds %d bytes", maxTokenUsageModelBytes)
+	if err := validateTokenUsageModel(usage.Model); err != nil {
+		return err
 	}
 	switch usage.ModelClass {
 	case "", ModelClassDefault, ModelClassHighReasoning, ModelClassSmall:
 	default:
 		return fmt.Errorf("model: token usage has unsupported model class %q", usage.ModelClass)
+	}
+	return nil
+}
+
+// validateTokenUsageModel checks the provider model identifier before it
+// enters usage records or token-count results.
+func validateTokenUsageModel(model string) error {
+	if len(model) > maxTokenUsageModelBytes {
+		return fmt.Errorf("model: token usage model exceeds %d bytes", maxTokenUsageModelBytes)
+	}
+	if !utf8.ValidString(model) {
+		return errors.New("model: token usage model is not valid UTF-8")
 	}
 	return nil
 }

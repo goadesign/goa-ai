@@ -66,9 +66,9 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 				BackoffCoefficient: 2,
 			},
 		},
-		Specs:              specs.Specs,
+		Specs:              specs.Specs(),
 		ToolMetadataLookup: specs.MetadataByName,
-		RequiredLabels:     specs.RequiredLabels,
+		RequiredLabels:     specs.RequiredLabels(),
 		Policy:             agentsruntime.RunPolicy{},
 	}); err != nil {
 		return err
@@ -87,7 +87,7 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		reg := agentsruntime.ToolsetRegistration{
 			Name: "calc-remote",
 			// Use the used-toolset specs package for strong-contract payload/result codecs.
-			Specs:              calc_remote2.Specs,
+			Specs:              calc_remote2.Specs(),
 			ToolMetadataLookup: calc_remote2.MetadataByName,
 			Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
 				if call == nil {

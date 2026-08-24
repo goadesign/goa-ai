@@ -15,6 +15,15 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
+// mustGatewayToolInput compiles a static test schema.
+func mustGatewayToolInput(schema rawjson.Message) model.ToolInput {
+	input, err := model.AdvertisedToolInputFromSchema(schema)
+	if err != nil {
+		panic(err)
+	}
+	return input
+}
+
 func TestRemoteClientRejectsInvalidRequestBeforeTransport(t *testing.T) {
 	transportCalls := 0
 	client := requireRemoteClient(t,
@@ -41,6 +50,47 @@ func TestRemoteClientRequiresConfiguredCallbacksBeforeRequestValidation(t *testi
 	client, err := NewRemoteClient(nil, nil)
 	require.Nil(t, client)
 	require.EqualError(t, err, "gateway: complete callback is required")
+}
+
+func TestCountingRemoteClientPreservesTokenCounter(t *testing.T) {
+	client, err := NewCountingRemoteClient(
+		func(context.Context, *model.Request) (*model.Response, error) {
+			return nil, errors.New("unexpected complete call")
+		},
+		func(context.Context, *model.Request) (model.Streamer, error) {
+			return nil, errors.New("unexpected stream call")
+		},
+		func(_ context.Context, req *model.Request) (model.TokenCount, error) {
+			return model.TokenCount{
+				Model:       req.Model,
+				ModelClass:  req.ModelClass,
+				InputTokens: 42,
+				Exact:       true,
+			}, nil
+		},
+	)
+	require.NoError(t, err)
+
+	count, err := client.CountTokens(t.Context(), &model.Request{
+		Model:      "remote-model",
+		ModelClass: model.ModelClassDefault,
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, model.TokenCount{
+		Model:       "remote-model",
+		ModelClass:  model.ModelClassDefault,
+		InputTokens: 42,
+		Exact:       true,
+	}, count)
+}
+
+func TestRemoteClientWithoutCounterReportsUnsupported(t *testing.T) {
+	client := requireRemoteClient(t, nil, nil)
+
+	_, err := client.CountTokens(t.Context(), &model.Request{})
+
+	require.ErrorIs(t, err, model.ErrTokenCountingUnsupported)
 }
 
 func TestRemoteClientClosesStreamReturnedWithError(t *testing.T) {
@@ -163,7 +213,7 @@ func requireRemoteClient(
 func advertisedGatewayTool(name string) *model.ToolDefinition {
 	return &model.ToolDefinition{
 		Name:  name,
-		Input: model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`)),
+		Input: mustGatewayToolInput(rawjson.Message(`{"type":"object"}`)),
 	}
 }
 

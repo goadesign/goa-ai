@@ -55,6 +55,35 @@ func TestUnmarshalAddPayloadInvalidFieldType(t *testing.T) {
 		t.Fatalf("unexpected issue: %#v", issue)
 	}
 }
+
+func TestUnmarshalAddPayloadReportsFractionalIntegerAsNumber(t *testing.T) {
+	_, err := UnmarshalAddPayload([]byte(`+"`"+`{"left":1.5,"right":2}`+"`"+`))
+	assertAddIntegerIssue(t, err)
+}
+
+func TestUnmarshalAddPayloadReportsOverflowingIntegerAsNumber(t *testing.T) {
+	_, err := UnmarshalAddPayload([]byte(`+"`"+`{"left":1e100,"right":2}`+"`"+`))
+	assertAddIntegerIssue(t, err)
+}
+
+func assertAddIntegerIssue(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var validation *tools.ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("expected ValidationError, got %T: %v", err, err)
+	}
+	issues := validation.Issues()
+	if len(issues) != 1 {
+		t.Fatalf("expected one issue, got %d", len(issues))
+	}
+	issue := issues[0]
+	if issue.Field != "left" || issue.Constraint != "invalid_field_type" || issue.ExpectedJSONType != "integer" || issue.ActualJSONType != "number" {
+		t.Fatalf("unexpected issue: %#v", issue)
+	}
+}
 `)
 
 	runGeneratedMathGoTest(t, root)
@@ -86,7 +115,7 @@ func TestUnmarshalValidatePayloadRejectsUnknownRootField(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	assertUnknownFieldIssue(t, err, "scope_context", []string{"child", "labels", "root"})
+	assertUnknownFieldIssue(t, err, "scope_context", []string{"child", "counts", "groups", "labels", "objects", "root"})
 }
 
 func TestUnmarshalValidatePayloadRejectsUnknownNestedField(t *testing.T) {
@@ -104,6 +133,62 @@ func TestUnmarshalValidatePayloadPreservesOpenMapKeys(t *testing.T) {
 	}
 	if payload.Labels["scope_context"] != "compressor_2" || payload.Labels["custom"] != "value" {
 		t.Fatalf("unexpected labels: %#v", payload.Labels)
+	}
+}
+
+func TestUnmarshalValidatePayloadAcceptsGeneratedMapValueTypes(t *testing.T) {
+	payload, err := UnmarshalValidatePayload([]byte(`+"`"+`{"root":"r","child":{"mid":"m","child":{"leaf":"l"}},"labels":{"site.one":"ok"},"objects":{"site/one":{"leaf":"ready"}},"groups":{"group~one":{"sensor/name":"online"}},"counts":{"site":1}}`+"`"+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.Labels["site.one"] != "ok" {
+		t.Fatalf("unexpected labels: %#v", payload.Labels)
+	}
+	if payload.Objects["site/one"].Leaf != "ready" {
+		t.Fatalf("unexpected objects: %#v", payload.Objects)
+	}
+	if payload.Groups["group~one"]["sensor/name"] != "online" {
+		t.Fatalf("unexpected groups: %#v", payload.Groups)
+	}
+	if payload.Counts["site"] != 1 {
+		t.Fatalf("unexpected counts: %#v", payload.Counts)
+	}
+}
+
+func TestUnmarshalValidatePayloadReportsPrimitiveMapValuePath(t *testing.T) {
+	_, err := UnmarshalValidatePayload([]byte(`+"`"+`{"root":"r","child":{"mid":"m","child":{"leaf":"l"}},"labels":{"site":1}}`+"`"+`))
+	assertInvalidFieldTypeIssue(t, err, "/labels/site", "string", "number", "Open labels keyed by source")
+}
+
+func TestUnmarshalValidatePayloadReportsObjectMapValuePath(t *testing.T) {
+	_, err := UnmarshalValidatePayload([]byte(`+"`"+`{"root":"r","child":{"mid":"m","child":{"leaf":"l"}},"objects":{"site.one":"bad"}}`+"`"+`))
+	assertInvalidFieldTypeIssue(t, err, "/objects/site.one", "object", "string", "Open objects keyed by source")
+}
+
+func TestUnmarshalValidatePayloadReportsNestedMapValuePointer(t *testing.T) {
+	_, err := UnmarshalValidatePayload([]byte(`+"`"+`{"root":"r","child":{"mid":"m","child":{"leaf":"l"}},"groups":{"group/one":{"sensor~name":false}}}`+"`"+`))
+	assertInvalidFieldTypeIssue(t, err, "/groups/group~1one/sensor~0name", "string", "boolean", "Nested labels keyed by group and source")
+}
+
+func assertInvalidFieldTypeIssue(t *testing.T, err error, field, expected, actual, description string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var validation *tools.ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("expected ValidationError, got %T: %v", err, err)
+	}
+	issues := validation.Issues()
+	if len(issues) != 1 {
+		t.Fatalf("expected one issue, got %d", len(issues))
+	}
+	issue := issues[0]
+	if issue.Field != field || issue.Constraint != "invalid_field_type" || issue.ExpectedJSONType != expected || issue.ActualJSONType != actual {
+		t.Fatalf("unexpected issue: %#v", issue)
+	}
+	if validation.Descriptions()[field] != description {
+		t.Fatalf("unexpected descriptions: %#v", validation.Descriptions())
 	}
 }
 
@@ -258,7 +343,7 @@ func TestArrayServerDataRoundTrip(t *testing.T) {
 }
 
 func TestGeneratedServerDataCanonicalizer(t *testing.T) {
-	canonicalize := SpecByID.CanonicalizeServerData
+	canonicalize := SpecByID().CanonicalizeServerData
 	if canonicalize == nil {
 		t.Fatal("expected generated canonicalizer")
 	}
@@ -299,9 +384,127 @@ func TestGeneratedServerDataCanonicalizer(t *testing.T) {
 		})
 	}
 }
+
+func TestGeneratedSpecsReturnIsolatedContracts(t *testing.T) {
+	first := Specs()
+	second := Specs()
+	if len(first) != 1 || len(second) != 1 {
+		t.Fatalf("unexpected specs lengths: %d and %d", len(first), len(second))
+	}
+	first[0].Description = "changed"
+	first[0].Payload.Schema[0] = '['
+	for key := range first[0].Payload.FieldDescriptions {
+		first[0].Payload.FieldDescriptions[key] = "changed"
+	}
+	if second[0].Description == "changed" {
+		t.Fatal("description mutation escaped returned spec")
+	}
+	if second[0].Payload.Schema[0] == '[' {
+		t.Fatal("schema mutation escaped returned spec")
+	}
+	for _, value := range second[0].Payload.FieldDescriptions {
+		if value == "changed" {
+			t.Fatal("field metadata mutation escaped returned spec")
+		}
+	}
+}
 `)
 
 	runGeneratedLookupGoTest(t, root)
+}
+
+func TestGeneratedProviderMethodAritiesCompile(t *testing.T) {
+	tests := []struct {
+		name   string
+		design func()
+		stub   string
+		http   string
+	}{
+		{
+			name:   "no result",
+			design: testscenarios.NoResultMethod(),
+			stub: `package tasks
+
+import "context"
+
+type PurgePayload struct {
+	SessionID string
+}
+
+type Service interface {
+	Purge(context.Context, *PurgePayload) error
+	Heartbeat(context.Context) error
+}
+`,
+			http: `package http
+
+func ValidatePurgePayloadTransport(*PurgePayloadTransport) error {
+	return nil
+}
+`,
+		},
+		{
+			name:   "empty payload",
+			design: testscenarios.EmptyPayloadResultMethod(),
+			stub: `package tasks
+
+import "context"
+
+type Service interface {
+	Status(context.Context) (string, error)
+}
+`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", test.design)
+			root := writeGeneratedModuleWithPath(t, "generated.local/gen", files)
+			writeGeneratedPackageTest(t, root, "tasks/service.go", test.stub)
+			if test.http != "" {
+				writeGeneratedPackageTest(t, root, "alpha/toolsets/ops/http/validate_stub.go", test.http)
+			}
+			if test.name == "no result" {
+				writeGeneratedPackageTest(t, root, "alpha/toolsets/ops/no_result_spec_test.go", `package ops
+
+import (
+	"testing"
+
+	"goa.design/goa-ai/runtime/agent/tools"
+)
+
+func TestNoResultToolsHaveNoResultContract(t *testing.T) {
+	for _, spec := range []struct {
+		name string
+		spec func() tools.ToolSpec
+	}{
+		{name: "purge", spec: SpecPurge},
+		{name: "heartbeat", spec: SpecHeartbeat},
+	} {
+		result := spec.spec().Result
+		if result.Name != "" ||
+			len(result.Schema) != 0 ||
+			len(result.SchemaWithoutRootExample) != 0 ||
+			len(result.ExampleJSON) != 0 ||
+			len(result.FieldDescriptions) != 0 ||
+			len(result.FieldJSONTypes) != 0 ||
+			result.Codec.ToJSON != nil ||
+			result.Codec.FromJSON != nil {
+			t.Fatalf("%s generated a result contract: %#v", spec.name, result)
+		}
+	}
+}
+`)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			runGeneratedGoTestCommand(
+				t,
+				root,
+				exec.CommandContext(ctx, "go", "test", "-mod=mod", "./alpha/toolsets/ops"),
+			)
+		})
+	}
 }
 
 func TestGeneratedCodecUnionInvalidFieldTypeBehavior(t *testing.T) {
