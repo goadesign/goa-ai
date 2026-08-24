@@ -34,4 +34,3 @@ func TestGolden_RunPolicyHistoryCompression(t *testing.T) {
 	require.Contains(t, cfg, "HistoryCompression *agentsruntime.HistoryCompressionConfig")
 	require.Contains(t, cfg, "c.HistoryCompression.Validate()")
 }
-

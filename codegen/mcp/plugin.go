@@ -1,4 +1,4 @@
-// This file adds MCP services before Goa chooses Go names, then adds files that
+// Package codegen adds MCP services before Goa chooses Go names, then adds files that
 // register MCP methods, call the user service, and pass policy headers to MCP
 // handlers.
 package codegen
@@ -16,6 +16,11 @@ import (
 	goaservice "goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
+)
+
+const (
+	anyTypeName      = "any"
+	codecPackageName = "mcpcodec"
 )
 
 type (
@@ -123,11 +128,11 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 		services := planned.servicePlan.Services()
 		mcpService := services.Get(planned.prepared.mcpService.Name)
 		if mcpService == nil {
-			return nil, fmt.Errorf("Goa did not plan MCP service %q", planned.prepared.mcpService.Name)
+			return nil, fmt.Errorf("goa did not plan MCP service %q", planned.prepared.mcpService.Name)
 		}
 		userService := services.Get(planned.prepared.userService.Name)
 		if userService == nil {
-			return nil, fmt.Errorf("Goa did not plan original service %q", planned.prepared.userService.Name)
+			return nil, fmt.Errorf("goa did not plan original service %q", planned.prepared.userService.Name)
 		}
 		if err := bindUserServiceMethods(services, userService, planned); err != nil {
 			return nil, err
@@ -156,11 +161,7 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 			planned.prepared.userService,
 			planned.adapterData,
 		)...)
-		files = append(files, generateMCPClientAdapter(
-			services.GenPkg(),
-			planned.prepared.userService,
-			planned.adapterData,
-		)...)
+		files = append(files, generateMCPClientAdapter(planned.adapterData)...)
 	}
 	applyMCPPolicyHeadersToJSONRPCMount(files, p.planned)
 	return files, nil
@@ -194,7 +195,7 @@ func planMCPPackagePaths(
 func bindMCPJSONRPCMethods(plan *goagenerator.Plan, planned *plannedMCPService) error {
 	jsonrpcPlan, ok := plan.JSONRPC(planned.prepared.root)
 	if !ok {
-		return fmt.Errorf("Goa did not plan JSON-RPC for MCP service %q", planned.prepared.mcpService.Name)
+		return fmt.Errorf("goa did not plan JSON-RPC for MCP service %q", planned.prepared.mcpService.Name)
 	}
 	var transport *expr.HTTPServiceExpr
 	for _, service := range planned.prepared.root.API.JSONRPC.Services {
@@ -204,11 +205,11 @@ func bindMCPJSONRPCMethods(plan *goagenerator.Plan, planned *plannedMCPService) 
 		}
 	}
 	if transport == nil {
-		return fmt.Errorf("Goa did not plan JSON-RPC transport for MCP service %q", planned.prepared.mcpService.Name)
+		return fmt.Errorf("goa did not plan JSON-RPC transport for MCP service %q", planned.prepared.mcpService.Name)
 	}
 	service, ok := jsonrpcPlan.Service(transport)
 	if !ok {
-		return fmt.Errorf("Goa did not link JSON-RPC service %q", planned.prepared.mcpService.Name)
+		return fmt.Errorf("goa did not link JSON-RPC service %q", planned.prepared.mcpService.Name)
 	}
 	for _, notification := range planned.adapterData.Notifications {
 		var found bool
@@ -222,7 +223,7 @@ func bindMCPJSONRPCMethods(plan *goagenerator.Plan, planned *plannedMCPService) 
 			break
 		}
 		if !found {
-			return fmt.Errorf("Goa did not plan JSON-RPC notification method %q", notification.WireMethodName)
+			return fmt.Errorf("goa did not plan JSON-RPC notification method %q", notification.WireMethodName)
 		}
 	}
 	return nil
@@ -274,7 +275,7 @@ func planMCPImports(
 		return fmt.Errorf("plan MCP server service import: %w", err)
 	}
 	if data.NeedsServerCodec {
-		if err := data.mcpPackage.ReserveGeneratedImport(goacodegen.NewImport("mcpcodec", data.CodecImportPath)); err != nil {
+		if err := data.mcpPackage.ReserveGeneratedImport(goacodegen.NewImport(codecPackageName, data.CodecImportPath)); err != nil {
 			return fmt.Errorf("plan MCP server codec import: %w", err)
 		}
 		data.serverImportPaths = append(data.serverImportPaths, data.CodecImportPath)
@@ -383,7 +384,7 @@ func planMCPClientImports(
 		}
 	}
 	if data.NeedsClientCodec {
-		if err := clientPackage.ReserveGeneratedImport(goacodegen.NewImport("mcpcodec", data.CodecImportPath)); err != nil {
+		if err := clientPackage.ReserveGeneratedImport(goacodegen.NewImport(codecPackageName, data.CodecImportPath)); err != nil {
 			return fmt.Errorf("plan MCP client codec import: %w", err)
 		}
 		data.clientImportPaths = append(data.clientImportPaths, data.CodecImportPath)
@@ -485,7 +486,7 @@ func bindMCPServiceMethods(data *AdapterData, service *goaservice.Data) error {
 	for _, notification := range data.Notifications {
 		method := service.Method(notification.WireMethodName)
 		if method == nil {
-			return fmt.Errorf("Goa did not plan MCP notification method %q", notification.WireMethodName)
+			return fmt.Errorf("goa did not plan MCP notification method %q", notification.WireMethodName)
 		}
 		notification.MCPMethodName = method.VarName
 		notification.PayloadRef = method.PayloadRef
@@ -604,7 +605,7 @@ func bindUserServiceMethods(
 		for index, tool := range data.Tools {
 			payloadType := tool.PayloadType
 			if payloadType == "" {
-				payloadType = "any"
+				payloadType = anyTypeName
 			}
 			data.Register.Tools[index].PayloadType = payloadType
 		}
@@ -623,13 +624,13 @@ func bindUserServiceMethod(
 ) (*goaservice.MethodData, string, error) {
 	method := service.Method(methodName)
 	if method == nil {
-		return nil, "", fmt.Errorf("Goa did not plan original service method %q", methodName)
+		return nil, "", fmt.Errorf("goa did not plan original service method %q", methodName)
 	}
 	if !hasPayload {
 		return method, "", nil
 	}
 	if method.PayloadRef == "" {
-		return nil, "", fmt.Errorf("Goa method %q has no planned payload type", methodName)
+		return nil, "", fmt.Errorf("goa method %q has no planned payload type", methodName)
 	}
 	return method, attributor.Ref(serviceExpr.Method(method.Name).Payload, ""), nil
 }
@@ -705,7 +706,7 @@ func planMCPCodecs(
 		methodCodecs[method.Name] = values
 	}
 	data.CodecImportPath = codecImportPath
-	data.CodecPackage = "mcpcodec"
+	data.CodecPackage = codecPackageName
 	return planned, methodCodecs, nil
 }
 

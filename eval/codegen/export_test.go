@@ -1,4 +1,4 @@
-// This file lets external tests run the private eval generation plan.
+// Package codegen lets external tests run the private eval generation plan.
 package codegen
 
 import (

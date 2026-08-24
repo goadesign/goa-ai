@@ -17,17 +17,20 @@ func TestExampleInternal_MethodBacked(t *testing.T) {
 	files := buildAndGenerateExample(t, testscenarios.MethodComplexEmbedded())
 
 	// Bootstrap
-	boot := fileContent(t, files, "internal/agents/bootstrap/bootstrap.go")
+	boot := fileContent(t, files, "internal/agents/alpha/bootstrap/bootstrap.go")
 	assertGoldenGo(t, "example_internal_method", "bootstrap.go.golden", boot)
 
 	// Planner stub
 	plan := fileContent(t, files, "internal/agents/scribe/planner/planner.go")
+	require.NotContains(t, plan, "decode generated")
+	require.Contains(t, plan, "Hello from example planner.")
 	assertGoldenGo(t, "example_internal_method", "planner.go.golden", plan)
 
 	// Executor stub for toolset profiles
 	exec := fileContent(t, files, "internal/agents/scribe/toolsets/profiles/execute.go")
-	require.Contains(t, exec, "profilesspecs.UpsertPayloadCodec.FromJSON(call.Payload)")
-	require.Contains(t, exec, "profilesspecs.SpecUpsert.Payload.ExampleJSON")
+	require.NotContains(t, exec, `rawjson.Message("")`)
+	require.NotContains(t, exec, `"goa.design/goa-ai/runtime/agent/rawjson"`)
+	require.Contains(t, exec, "generated executor requires an application implementation")
 	assertGoldenGo(t, "example_internal_method", "executor.go.golden", exec)
 }
 
@@ -35,7 +38,7 @@ func TestExampleInternal_MCP(t *testing.T) {
 	files := buildAndGenerateExample(t, testscenarios.MCPUse())
 
 	// Bootstrap should include MCP caller stubs
-	boot := fileContent(t, files, "internal/agents/bootstrap/bootstrap.go")
+	boot := fileContent(t, files, "internal/agents/alpha/bootstrap/bootstrap.go")
 	assertGoldenGo(t, "example_internal_mcp", "bootstrap.go.golden", boot)
 
 	// Planner stub exists
@@ -43,26 +46,42 @@ func TestExampleInternal_MCP(t *testing.T) {
 	assertGoldenGo(t, "example_internal_mcp", "planner.go.golden", plan)
 }
 
+// TestExampleInternalSeparatesServiceBootstraps checks that each service
+// command starts only the agents declared by that service.
+func TestExampleInternalSeparatesServiceBootstraps(t *testing.T) {
+	files := buildAndGenerateExample(t, multiServiceExampleDesign())
+
+	alphaBootstrap := renderedFileContent(t, files, "internal/agents/alpha/bootstrap/bootstrap.go")
+	require.Contains(t, alphaBootstrap, `"goa.design/goa-ai/gen/alpha/agents/alpha_worker"`)
+	require.NotContains(t, alphaBootstrap, "beta_worker")
+
+	betaBootstrap := renderedFileContent(t, files, "internal/agents/beta/bootstrap/bootstrap.go")
+	require.Contains(t, betaBootstrap, `"goa.design/goa-ai/gen/beta/agents/beta_worker"`)
+	require.NotContains(t, betaBootstrap, "alpha_worker")
+
+	alphaMain := renderedFileContent(t, files, "cmd/alpha/main.go")
+	require.Contains(t, alphaMain, `"goa.design/goa-ai/internal/agents/alpha/bootstrap"`)
+	require.NotContains(t, alphaMain, "internal/agents/beta/bootstrap")
+
+	betaMain := renderedFileContent(t, files, "cmd/beta/main.go")
+	require.Contains(t, betaMain, `"goa.design/goa-ai/internal/agents/beta/bootstrap"`)
+	require.NotContains(t, betaMain, "internal/agents/alpha/bootstrap")
+}
+
 // TestExampleInternalUsesGeneratedToolNames checks that independently planned
 // example files call the exact names written by goa gen.
 func TestExampleInternalUsesGeneratedToolNames(t *testing.T) {
 	design := exampleToolNameCollisionDesign()
 	generated := buildAndGenerate(t, design)
-	codecs := fileContent(t, generated, "gen/alpha/toolsets/ops/codecs.go")
 	specs := fileContent(t, generated, "gen/alpha/toolsets/ops/specs.go")
 
 	examples := buildAndGenerateExample(t, design)
 	executor := renderedFileContent(t, examples, "internal/agents/worker/toolsets/ops/execute.go")
 
-	codecRefs := regexp.MustCompile(`opsspecs\.([A-Za-z0-9]+PayloadCodec)\.FromJSON`).FindAllStringSubmatch(executor, -1)
-	require.Len(t, codecRefs, 2)
-	for _, match := range codecRefs {
-		require.Contains(t, codecs, match[1]+" = tools.JSONCodec")
-	}
-	specRefs := regexp.MustCompile(`opsspecs\.(Spec[A-Za-z0-9]+)\.Payload\.ExampleJSON`).FindAllStringSubmatch(executor, -1)
-	require.Len(t, specRefs, 2)
-	for _, match := range specRefs {
-		require.Contains(t, specs, match[1]+" = tools.ToolSpec")
+	toolRefs := regexp.MustCompile(`opsspecs\.([A-Za-z0-9]+)\(\)\.Payload\.FromJSON`).FindAllStringSubmatch(executor, -1)
+	require.Len(t, toolRefs, 2)
+	for _, match := range toolRefs {
+		require.Contains(t, specs, "func "+match[1]+"() tools.TypedTool")
 	}
 	for _, file := range examples {
 		require.False(t, strings.HasPrefix(file.Path, "gen/"), file.Path)
@@ -103,3 +122,15 @@ func exampleToolNameCollisionDesign() func() {
 	}
 }
 
+// multiServiceExampleDesign defines two services that each own one agent.
+func multiServiceExampleDesign() func() {
+	return func() {
+		API("multi_service", func() {})
+		Service("alpha", func() {
+			aidsl.Agent("alpha_worker", "Handles alpha work", func() {})
+		})
+		Service("beta", func() {
+			aidsl.Agent("beta_worker", "Handles beta work", func() {})
+		})
+	}
+}

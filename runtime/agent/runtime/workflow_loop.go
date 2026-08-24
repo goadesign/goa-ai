@@ -108,4 +108,3 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 		}
 	}
 }
-

@@ -39,7 +39,7 @@ func DraftTaskExample() rawjson.Message {
 	return slices.Clone(specDraftTask().ExampleJSON)
 }
 
-// CompleteDraftTask runs the typed completion for draft_task.
+// CompleteDraftTask runs the unary typed completion for draft_task.
 func CompleteDraftTask(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[*DraftTaskResult], error) {
 	return completion.Complete(ctx, client, req, specDraftTask())
 }

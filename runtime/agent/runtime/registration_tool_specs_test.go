@@ -182,4 +182,3 @@ func assertToolSpecReaderDetached(t *testing.T, read func() tools.ToolSpec) {
 	require.Equal(t, "evidence", stored.ServerData[0].Kind)
 	require.JSONEq(t, `{"type":"object"}`, string(stored.ServerData[0].Type.Schema))
 }
-

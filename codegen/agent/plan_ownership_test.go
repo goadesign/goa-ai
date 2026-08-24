@@ -1,4 +1,4 @@
-// This file checks that agent generation uses the design and owners saved by
+// Package codegen_test checks that agent generation uses the design and owners saved by
 // the current generation command.
 package codegen_test
 

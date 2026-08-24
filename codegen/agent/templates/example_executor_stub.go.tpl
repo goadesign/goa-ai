@@ -1,10 +1,5 @@
-// {{ $.Toolset.Name }} executor stub for {{ $.Agent.StructName }}
-//
-// This starter runs the tools in {{ $.Toolset.Name }} that are handled by
-// service methods. Replace each TODO with the matching service call. Import
-// this package from the code that starts the agents.
-
-// Register makes the toolset available to the agent runtime.
+{{- if .Register }}
+// Register registers the method-backed toolset with the runtime using Execute.
 func Register(ctx context.Context, rt *runtime.Runtime) error {
     if rt == nil {
         return errors.New("runtime is required")
@@ -12,9 +7,12 @@ func Register(ctx context.Context, rt *runtime.Runtime) error {
     reg := {{ $.AgentImport.Name }}.New{{ $.Agent.GoName }}{{ goify $.Toolset.PathName true }}ToolsetRegistration(runtime.ToolCallExecutorFunc(Execute))
     return rt.RegisterToolset(reg)
 }
+{{- end }}
 
-// Execute validates each tool input before the application calls its service.
-func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
+// Execute checks one tool call against its generated argument contract. The
+// initial implementation returns the result example from the design;
+// applications replace that result with their service call.
+func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
     if call == nil {
         return nil, errors.New("tool request is nil")
     }
@@ -23,11 +21,13 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
     }
     switch call.Name {
     {{- range .Tools }}
-    {{- if .Tool.IsMethodBacked }}
-    case "{{ .Tool.Name }}":
-        // Decode and validate the payload. Keep the returned value when adding
-        // the service call below.
-        _, err := {{ $.SpecsAlias }}.{{ .Spec.Payload.ExportedCodec }}.FromJSON(call.Payload)
+    case "{{ .ID }}":
+        // Decode the JSON arguments with the generated {{ .ID }} contract.
+        {{- if .InjectDecodeFunc }}
+        _, err := {{ $.SpecsAlias }}.{{ .InjectDecodeFunc }}(call.Payload, *meta, meta.Labels)
+        {{- else }}
+        _, err := {{ $.SpecsAlias }}.{{ .TypedTool }}().Payload.FromJSON(call.Payload)
+        {{- end }}
         if err != nil {
             var issuer interface {
                 Issues() []*tools.FieldIssue
@@ -44,22 +44,28 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
                     Recovery: planner.RecoveryDirective{
                         Action: planner.RecoveryCorrectCall,
                         Issues: issues,
-                        PriorInput: append(rawjson.Message(nil), call.Payload...),
-                        ExampleJSON: append(
-                            rawjson.Message(nil),
-                            {{ $.SpecsAlias }}.{{ .Spec.SpecVar }}.Payload.ExampleJSON...,
-                        ),
                     },
                 },
 			}), nil
         }
-        // TODO: Call the service and return its result.
+        {{- if .HasResult }}
+        {{- if .HasResultExample }}
+        result, err := {{ $.SpecsAlias }}.{{ .TypedTool }}().Result.FromJSON(
+            rawjson.Message({{ printf "%q" .ResultExample }}),
+        )
+        if err != nil {
+            return nil, fmt.Errorf("decode {{ .ID }} example result: %w", err)
+        }
         return runtime.Executed(&planner.ToolResult{
-			Result: map[string]any{
-				"status": "ok",
-			},
+            Name:   call.Name,
+            Result: result,
 		}), nil
-    {{- end }}
+        {{- else }}
+        return nil, fmt.Errorf("execute %s: generated executor requires an application implementation", call.Name)
+        {{- end }}
+        {{- else }}
+        return runtime.Executed(&planner.ToolResult{Name: call.Name}), nil
+        {{- end }}
     {{- end }}
     default:
         return runtime.Executed(&planner.ToolResult{
@@ -72,4 +78,3 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
 		}), nil
     }
 }
-

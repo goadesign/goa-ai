@@ -160,4 +160,3 @@ func InjectMixedBoundUnboundExample() func() {
 		})
 	}
 }
-

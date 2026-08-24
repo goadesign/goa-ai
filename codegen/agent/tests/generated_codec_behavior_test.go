@@ -229,7 +229,7 @@ func sameStrings(got, want []string) bool {
 
 func TestGeneratedCodecRequiredUserTypePrimitiveRoundTrip(t *testing.T) {
 	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ArgsUserType())
-	root := writeGeneratedModuleWithPath(t, "generated.local/gen", files)
+	root := writeGeneratedModule(t, files)
 	writeGeneratedPackageTest(
 		t,
 		root,
@@ -288,7 +288,7 @@ func TestRequiredUserTypePrimitiveRoundTrip(t *testing.T) {
 }
 
 func TestGeneratedCodecBoundedResultProjectionBehavior(t *testing.T) {
-	root := writeGeneratedModuleWithPath(t, "generated.local/gen", testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ServiceToolsetBindSelfBoundedResult()))
+	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ServiceToolsetBindSelfBoundedResult()))
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/provider.go")
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/transforms.go")
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/http/validate_stub.go", `package http
@@ -360,7 +360,7 @@ func sameStrings(got, want []string) bool {
 
 func TestGeneratedCodecArrayServerDataRoundTrip(t *testing.T) {
 	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ServiceToolsetBindSelfServerData())
-	root := writeGeneratedModuleWithPath(t, "generated.local/gen", files)
+	root := writeGeneratedModule(t, files)
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/provider.go")
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/transforms.go")
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/http/validate_stub.go", `package http
@@ -519,7 +519,7 @@ type Service interface {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", test.design)
-			root := writeGeneratedModuleWithPath(t, "generated.local/gen", files)
+			root := writeGeneratedModule(t, files)
 			writeGeneratedPackageTest(t, root, "tasks/service.go", test.stub)
 			if test.http != "" {
 				writeGeneratedPackageTest(t, root, "alpha/toolsets/ops/http/validate_stub.go", test.http)
@@ -847,15 +847,11 @@ func TestMarshalInspectDevicePayloadEmitsSnakeCase(t *testing.T) {
 }
 
 func writeGeneratedModule(t *testing.T, files []*gcodegen.File) string {
-	return writeGeneratedModuleWithPath(t, "generated.local/gen", files)
-}
-
-func writeGeneratedModuleWithPath(t *testing.T, modulePath string, files []*gcodegen.File) string {
 	t.Helper()
 	root := t.TempDir()
 	repoRoot, err := filepath.Abs("../../..")
 	require.NoError(t, err)
-	goMod := "module " + modulePath + "\n\ngo 1.24\n\nrequire goa.design/goa-ai v0.0.0\n\nreplace goa.design/goa-ai => " + filepath.ToSlash(repoRoot) + "\n"
+	goMod := "module generated.local/gen\n\ngo 1.24\n\nrequire goa.design/goa-ai v0.0.0\n\nreplace goa.design/goa-ai => " + filepath.ToSlash(repoRoot) + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o600))
 	for _, file := range files {
 		rel := strings.TrimPrefix(filepath.ToSlash(file.Path), "gen/")

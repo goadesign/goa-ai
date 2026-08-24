@@ -1,4 +1,4 @@
-// This file registers MCP code generation with Goa.
+// Package codegen registers MCP code generation with Goa.
 package codegen
 
 import (

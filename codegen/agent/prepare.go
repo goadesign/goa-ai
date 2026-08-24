@@ -1,4 +1,4 @@
-// This file prepares tool shapes and adds tool-only user types to the Goa
+// Package codegen prepares tool shapes and adds tool-only user types to the Goa
 // design before Goa chooses generated names.
 package codegen
 

@@ -1,4 +1,4 @@
-// This file remembers which agent files to write and the service types and
+// Package codegen remembers which agent files to write and the service types and
 // package names those files use.
 package codegen
 

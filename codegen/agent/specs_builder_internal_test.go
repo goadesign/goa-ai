@@ -54,8 +54,8 @@ func TestBuildToolSpecsDataUsesScopedConstNameForInjectDecoder(t *testing.T) {
 	require.Len(t, data.Services, 1)
 	require.Len(t, data.Services[0].Agents, 1)
 	agent := data.Services[0].Agents[0]
-	specs, err := codegen.BuildToolSpecsDataForTest(agent)
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(agent)
+	require.NotNil(t, specs)
 
 	var sourceName string
 	for _, tool := range agent.Tools {
@@ -66,7 +66,7 @@ func TestBuildToolSpecsDataUsesScopedConstNameForInjectDecoder(t *testing.T) {
 	}
 	constNames, injectDecoders := codegen.CollectToolNamesForTest(specs)
 	require.NotEmpty(t, sourceName)
-	require.NotEqual(t, sourceName, constNames["helpers.lookup_1"])
+	require.Equal(t, sourceName, constNames["helpers.lookup_1"])
 	require.Equal(
 		t,
 		"Decode"+constNames["helpers.lookup_1"],

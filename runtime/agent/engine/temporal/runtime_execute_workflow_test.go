@@ -530,4 +530,3 @@ func anyJSONToolSpec(name tools.Ident, toolset string) tools.ToolSpec {
 		Result:  tools.TypeSpec{Name: string(name) + "_result", Codec: codec},
 	}
 }
-

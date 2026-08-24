@@ -1,4 +1,4 @@
-// This file records every Go name and type conversion used by generated tool
+// Package codegen records every Go name and type conversion used by generated tool
 // and completion packages before Goa chooses the final names. Public types and
 // JSON-decoding types are recorded separately because they are written to
 // different Go packages.
@@ -799,7 +799,13 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 	if err != nil {
 		return err
 	}
-	names, err := p.declareTypeNames(key, preferred, publicDeclaration, transportDeclaration)
+	names, err := p.declareTypeNames(
+		key,
+		preferred,
+		owner.Kind == contractTypeOwnerCompletion,
+		publicDeclaration,
+		transportDeclaration,
+	)
 	if err != nil {
 		return err
 	}
@@ -829,7 +835,7 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 }
 
 // declareTypeNames records the variables and functions written with one type.
-func (p *toolSpecsPackagePlan) declareTypeNames(key, preferred string, public, transport *goacodegen.NameDeclaration) (*plannedSpecType, error) {
+func (p *toolSpecsPackagePlan) declareTypeNames(key, preferred string, completion bool, public, transport *goacodegen.NameDeclaration) (*plannedSpecType, error) {
 	names := &plannedSpecType{}
 	declarePublic := func(kind goacodegen.PackageNameKind, prefix, suffix, role string) (*goacodegen.NameDeclaration, error) {
 		return p.public.DeclareDependentName(
@@ -841,7 +847,11 @@ func (p *toolSpecsPackagePlan) declareTypeNames(key, preferred string, public, t
 		)
 	}
 	var err error
-	names.exportedCodec, err = declarePublic(goacodegen.NameVariable, "", "Codec", "codec")
+	codecPrefix := ""
+	if completion {
+		codecPrefix = "new"
+	}
+	names.exportedCodec, err = declarePublic(goacodegen.NameVariable, codecPrefix, "Codec", "codec")
 	if err != nil {
 		return nil, err
 	}
@@ -854,11 +864,17 @@ func (p *toolSpecsPackagePlan) declareTypeNames(key, preferred string, public, t
 	if err := p.public.DeclareName(names.genericCodec); err != nil {
 		return nil, err
 	}
-	names.marshal, err = declarePublic(goacodegen.NameFunction, "Marshal", "", "marshal")
+	marshalPrefix := "Marshal"
+	unmarshalPrefix := "Unmarshal"
+	if completion {
+		marshalPrefix = "marshal"
+		unmarshalPrefix = "unmarshal"
+	}
+	names.marshal, err = declarePublic(goacodegen.NameFunction, marshalPrefix, "", "marshal")
 	if err != nil {
 		return nil, err
 	}
-	names.unmarshal, err = declarePublic(goacodegen.NameFunction, "Unmarshal", "", "unmarshal")
+	names.unmarshal, err = declarePublic(goacodegen.NameFunction, unmarshalPrefix, "", "unmarshal")
 	if err != nil {
 		return nil, err
 	}

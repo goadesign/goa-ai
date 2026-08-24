@@ -73,20 +73,20 @@ func WithClient(client *{{ .ServicePkgAlias }}.Client) ExecOpt {
         if c.callers == nil {
             c.callers = make(map[tools.Ident]func(context.Context, any) (any, error))
         }
-		{{- range .Tools }}
-		{{- if .Tool.IsMethodBacked }}
-		c.callers[tools.Ident({{ printf "%q" .Tool.QualifiedName }})] = func(ctx context.Context, args any) (any, error) {
-			{{- if .Tool.HasResult }}
-				{{- if .Tool.MethodPayloadTypeRef }}
-			return client.{{ .Tool.MethodGoName }}(ctx, args.({{ .Tool.MethodPayloadTypeRef }}))
-				{{- else }}
-			return client.{{ .Tool.MethodGoName }}(ctx)
-				{{- end }}
-			{{- else }}
-				{{- if .Tool.MethodPayloadTypeRef }}
-			err := client.{{ .Tool.MethodGoName }}(ctx, args.({{ .Tool.MethodPayloadTypeRef }}))
-				{{- else }}
-			err := client.{{ .Tool.MethodGoName }}(ctx)
+        {{- range .Toolset.Tools }}
+        {{- if .IsMethodBacked }}
+        c.callers[tools.Ident({{ printf "%q" .QualifiedName }})] = func(ctx context.Context, args any) (any, error) {
+            {{- if .HasResult }}
+                {{- if .MethodPayloadTypeRef }}
+            return client.{{ .MethodGoName }}(ctx, args.({{ .MethodPayloadTypeRef }}))
+                {{- else }}
+            return client.{{ .MethodGoName }}(ctx)
+                {{- end }}
+            {{- else }}
+                {{- if .MethodPayloadTypeRef }}
+            err := client.{{ .MethodGoName }}(ctx, args.({{ .MethodPayloadTypeRef }}))
+                {{- else }}
+            err := client.{{ .MethodGoName }}(ctx)
                 {{- end }}
             return nil, err
             {{- end }}
@@ -96,20 +96,19 @@ func WithClient(client *{{ .ServicePkgAlias }}.Client) ExecOpt {
     })
 }
 
-{{- range .Tools }}
-{{- if .Tool.IsMethodBacked }}
-// With{{ goify .Tool.Name true }} sets the caller for {{ .Tool.QualifiedName }}.
-func With{{ goify .Tool.Name true }}(f func(context.Context, any) (any, error)) ExecOpt {
+{{- range .Toolset.Tools }}
+{{- if .IsMethodBacked }}
+// With{{ goify .Name true }} sets the caller for {{ .QualifiedName }}.
+func With{{ goify .Name true }}(f func(context.Context, any) (any, error)) ExecOpt {
     return execOptFunc(func(c *seCfg) {
         if c.callers == nil {
             c.callers = make(map[tools.Ident]func(context.Context, any) (any, error))
         }
-		c.callers[tools.Ident({{ printf "%q" .Tool.QualifiedName }})] = f
+        c.callers[tools.Ident({{ printf "%q" .QualifiedName }})] = f
     })
 }
 {{- end }}
 {{- end }}
-
 // New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec returns a ToolCallExecutor that
 // decodes tool payloads with generated codecs, applies optional mappers, calls user-provided
 // per-tool callers (wired from the client via WithClient), and maps results back.
@@ -125,11 +124,11 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
     // Preflight: ensure callers are provided for all method-backed tools.
     {
         var missing []string
-		{{- range .Tools }}
-		{{- if .Tool.IsMethodBacked }}
-		if cfg.callers == nil || cfg.callers[tools.Ident({{ printf "%q" .Tool.QualifiedName }})] == nil {
-			// report the fully-qualified tool for clarity
-			missing = append(missing, {{ printf "%q" .Tool.QualifiedName }})
+        {{- range .Toolset.Tools }}
+        {{- if .IsMethodBacked }}
+        if cfg.callers == nil || cfg.callers[tools.Ident({{ printf "%q" .QualifiedName }})] == nil {
+            // report the fully-qualified tool for clarity
+            missing = append(missing, {{ printf "%q" .QualifiedName }})
         }
         {{- end }}
         {{- end }}
@@ -137,7 +136,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             panic(fmt.Errorf("service executor missing callers for tools: %s", strings.Join(missing, ", ")))
         }
     }
-    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
+    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
         if call == nil {
             return runtime.Executed(failedServiceToolResult("", errors.New("tool request is nil"))), nil
         }
@@ -145,37 +144,35 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             return runtime.Executed(failedServiceToolResult(call.Name, errors.New("tool call meta is nil"))), nil
         }
         switch call.Name {
-		{{- range .Tools }}
-		{{- if .Tool.IsMethodBacked }}
-			{{- $toolHasSource := false }}
-			{{- range .ServerData }}
-				{{- if .Data.MethodResultField }}
-					{{- $toolHasSource = true }}
-				{{- end }}
-			{{- end }}
-			{{- $hasBoundsProjection := and .Tool.Bounds .Tool.Bounds.Projection .Tool.Bounds.Projection.Returned .Tool.Bounds.Projection.Truncated }}
-		case tools.Ident({{ printf "%q" .Tool.QualifiedName }}):
+        {{- range .Toolset.Tools }}
+        {{- if .IsMethodBacked }}
+            {{- $toolHasSource := false }}
+            {{- range .ServerData }}
+                {{- if .MethodResultField }}
+                    {{- $toolHasSource = true }}
+                {{- end }}
+            {{- end }}
+            {{- $hasBoundsProjection := and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
+        case tools.Ident({{ printf "%q" .QualifiedName }}):
             caller := cfg.callers[call.Name]
             if caller == nil {
                 panic(fmt.Errorf("service executor missing caller for tool %q", call.Name))
             }
             var toolArgs any
-			{{- if .Tool.MethodPayloadTypeRef }}
-			{
-				val, err := {{ $.Toolset.SpecsPackageName }}.{{ .Spec.Payload.ExportedCodec }}.FromJSON(call.Payload)
+            {{- if .MethodPayloadTypeRef }}
+            {
+                val, err := {{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}PayloadCodec().FromJSON(call.Payload)
                 if err != nil {
                     return runtime.Executed(invalidServiceToolCall(
                         call,
                         err,
-						{{ $.Toolset.SpecsPackageName }}.{{ .Spec.SpecVar }}.Payload.ExampleJSON,
                     )), nil
                 }
-				{{- if .Tool.Injected }}
-				if err := {{ $.Toolset.SpecsPackageName }}.{{ .Spec.InjectFunc }}(val, *meta, call.Labels); err != nil {
+                {{- if .Injected }}
+                if err := {{ $.Toolset.SpecsPackageName }}.Inject{{ .ConstName }}(val, *meta, call.Labels); err != nil {
                     return runtime.Executed(failedServiceCallResult(
                         call,
                         err,
-						{{ $.Toolset.SpecsPackageName }}.{{ .Spec.SpecVar }}.Payload.ExampleJSON,
                     )), nil
                 }
                 {{- end }}
@@ -190,15 +187,14 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     return runtime.Executed(failedServiceCallResult(
                         call,
                         err,
-						{{ $.Toolset.SpecsPackageName }}.{{ .Spec.SpecVar }}.Payload.ExampleJSON,
                     )), nil
                 }
             } else {
-				{{- if .Tool.MethodPayloadTypeRef }}
-					{{- if .Tool.PayloadAliasesMethod }}
-				methodIn = toolArgs
-					{{- else }}
-				methodIn = {{ $.Toolset.SpecsPackageName }}.{{ .Spec.MethodPayloadTransform }}(toolArgs.(*{{ $.Toolset.SpecsPackageName }}.{{ .Spec.Payload.TypeName }}))
+                {{- if .MethodPayloadTypeRef }}
+                    {{- if .PayloadAliasesMethod }}
+                methodIn = toolArgs
+                    {{- else }}
+                methodIn = {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}MethodPayload(toolArgs.(*{{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}Payload))
                     {{- end }}
                 {{- end }}
             }
@@ -207,7 +203,6 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     return runtime.Executed(failedServiceCallResult(
                         call,
                         err,
-						{{ $.Toolset.SpecsPackageName }}.{{ .Spec.SpecVar }}.Payload.ExampleJSON,
                     )), nil
                 }
             }
@@ -216,7 +211,6 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                 return runtime.Executed(failedServiceCallResult(
                     call,
                     err,
-					{{ $.Toolset.SpecsPackageName }}.{{ .Spec.SpecVar }}.Payload.ExampleJSON,
                 )), nil
             }
             var result any
@@ -227,50 +221,47 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     return runtime.Executed(failedServiceCallResult(
                         call,
                         e,
-						{{ $.Toolset.SpecsPackageName }}.{{ .Spec.SpecVar }}.Payload.ExampleJSON,
                     )), nil
                 }
             } else {
-				{{- if .Tool.HasResult }}
-					{{- if .Tool.ResultAliasesMethod }}
-				result = methodOut
-					{{- else }}
-				result = {{ $.Toolset.SpecsPackageName }}.{{ .Spec.ToolResultTransform }}(methodOut.({{ .Tool.MethodResultTypeRef }}))
+                {{- if .HasResult }}
+                    {{- if .ResultAliasesMethod }}
+                result = methodOut
+                    {{- else }}
+                result = {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}ToolResult(methodOut.({{ .MethodResultTypeRef }}))
                     {{- end }}
                 {{- end }}
             }
             {{- if or $hasBoundsProjection $toolHasSource }}
-			mr, ok := methodOut.({{ .Tool.MethodResultTypeRef }})
+            mr, ok := methodOut.({{ .MethodResultTypeRef }})
             if !ok {
                 return runtime.Executed(failedServiceCallResult(
                     call,
                     fmt.Errorf("unexpected method result type for %q: %T", call.Name, methodOut),
-					{{ $.Toolset.SpecsPackageName }}.{{ .Spec.SpecVar }}.Payload.ExampleJSON,
                 )), nil
             }
             {{- end }}
             {{- if $hasBoundsProjection }}
-			bounds := init{{ goify .Tool.Name true }}Bounds(mr)
+            bounds := init{{ goify .Name true }}Bounds(mr)
             {{- end }}
             {{- if $toolHasSource }}
             var serverItems []*toolregistry.ServerDataItem
             {{- $tool := . }}
             {{- range .ServerData }}
-			{{- if .Data.MethodResultField }}
-			{
-				data := {{ $.Toolset.SpecsPackageName }}.{{ .Spec.Transform }}(mr.{{ goify .Data.MethodResultField true }})
-				dataJSON, err := {{ $.Toolset.SpecsPackageName }}.{{ .Spec.Type.ExportedCodec }}.ToJSON(data)
+            {{- if .MethodResultField }}
+            {
+                data := {{ $.Toolset.SpecsPackageName }}.Init{{ $tool.ConstName }}{{ goify .Kind true }}ServerData(mr.{{ goify .MethodResultField true }})
+                dataJSON, err := {{ $.Toolset.SpecsPackageName }}.{{ $tool.ConstName }}{{ goify .Kind true }}ServerDataCodec().ToJSON(data)
                 if err != nil {
                     return runtime.Executed(failedServiceCallResult(
                         call,
                         err,
-						{{ $.Toolset.SpecsPackageName }}.{{ $tool.Spec.SpecVar }}.Payload.ExampleJSON,
                     )), nil
                 }
                 if string(dataJSON) != "null" {
                     serverItems = append(serverItems, &toolregistry.ServerDataItem{
-						Kind:     {{ printf "%q" .Data.Kind }},
-						Audience: {{ printf "%q" .Data.Audience }},
+                        Kind:     {{ printf "%q" .Kind }},
+                        Audience: {{ printf "%q" .Audience }},
                         Data:     dataJSON,
                     })
                 }
@@ -284,7 +275,6 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     return runtime.Executed(failedServiceCallResult(
                         call,
                         err,
-						{{ $.Toolset.SpecsPackageName }}.{{ .Spec.SpecVar }}.Payload.ExampleJSON,
                     )), nil
                 }
                 serverData = rawjson.Message(b)
@@ -327,26 +317,22 @@ func failedServiceToolResult(name tools.Ident, err error) *planner.ToolResult {
 }
 
 // failedServiceCallResult applies a service-owned failure classification at
-// every stage of an admitted call and attaches call-owned correction data.
-func failedServiceCallResult(call *planner.ToolRequest, err error, example rawjson.Message) *planner.ToolResult {
+// every stage of an admitted call. The workflow owns correction evidence.
+func failedServiceCallResult(call *runtime.ToolCall, err error) *planner.ToolResult {
     var provider planner.ToolFailureProvider
     if !errors.As(err, &provider) {
         return failedServiceToolResult(call.Name, err)
     }
     failure := planner.CloneToolFailure(provider.ToolFailure(call.Name))
-    if failure.Recovery.Action == planner.RecoveryCorrectCall {
-        failure.Recovery.PriorInput = append(rawjson.Message(nil), call.Payload...)
-        failure.Recovery.ExampleJSON = append(rawjson.Message(nil), example...)
-    }
     return &planner.ToolResult{
         Name:    call.Name,
         Failure: failure,
     }
 }
 
-// invalidServiceToolCall preserves generated validation issues and canonical
-// payload metadata for a same-tool correction turn.
-func invalidServiceToolCall(call *planner.ToolRequest, err error, example rawjson.Message) *planner.ToolResult {
+// invalidServiceToolCall preserves generated validation issues for the
+// workflow to combine with its retained model call.
+func invalidServiceToolCall(call *runtime.ToolCall, err error) *planner.ToolResult {
     var issuer interface {
         Issues() []*tools.FieldIssue
     }
@@ -360,27 +346,25 @@ func invalidServiceToolCall(call *planner.ToolRequest, err error, example rawjso
             Kind:  planner.FailureInvalidCall,
             Error: planner.ToolErrorFromError(err),
             Recovery: planner.RecoveryDirective{
-                Action:      planner.RecoveryCorrectCall,
-                Issues:      issues,
-                PriorInput:  append(rawjson.Message(nil), call.Payload...),
-                ExampleJSON: example,
+                Action: planner.RecoveryCorrectCall,
+                Issues: issues,
             },
         },
     }
 }
 
-{{- range .Tools }}
-{{- if and .Tool.IsMethodBacked .Tool.Bounds .Tool.Bounds.Projection .Tool.Bounds.Projection.Returned .Tool.Bounds.Projection.Truncated }}
+{{- range .Toolset.Tools }}
+{{- if and .IsMethodBacked .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
 {{- $tool := . }}
 
-// init{{ goify .Tool.Name true }}Bounds copies the bounded result fields from
-// the service method result.
-func init{{ goify .Tool.Name true }}Bounds(mr {{ .Tool.MethodResultTypeRef }}) *agent.Bounds {
+// init{{ goify .Name true }}Bounds projects canonical bounds metadata from the
+// bound method result.
+func init{{ goify .Name true }}Bounds(mr {{ .MethodResultTypeRef }}) *agent.Bounds {
     bounds := &agent.Bounds{}
-    {{- with .Tool.Bounds.Projection.Returned }}
+    {{- with .Bounds.Projection.Returned }}
     bounds.Returned = mr.{{ .Name }}
     {{- end }}
-    {{- with .Tool.Bounds.Projection.Total }}
+    {{- with .Bounds.Projection.Total }}
         {{- if .Required }}
     total := mr.{{ .Name }}
     bounds.Total = &total
@@ -388,13 +372,13 @@ func init{{ goify .Tool.Name true }}Bounds(mr {{ .Tool.MethodResultTypeRef }}) *
     bounds.Total = mr.{{ .Name }}
         {{- end }}
     {{- end }}
-    {{- with .Tool.Bounds.Projection.Truncated }}
+    {{- with .Bounds.Projection.Truncated }}
     bounds.Truncated = mr.{{ .Name }}
     {{- end }}
-    {{- with .Tool.Bounds.Projection.NextCursor }}
+    {{- with .Bounds.Projection.NextCursor }}
     bounds.NextCursor = mr.{{ .Name }}
     {{- end }}
-    {{- with .Tool.Bounds.Projection.RefinementHint }}
+    {{- with .Bounds.Projection.RefinementHint }}
         {{- if .Required }}
     bounds.RefinementHint = mr.{{ .Name }}
         {{- else }}
@@ -407,4 +391,3 @@ func init{{ goify .Tool.Name true }}Bounds(mr {{ .Tool.MethodResultTypeRef }}) *
 }
 {{- end }}
 {{- end }}
-

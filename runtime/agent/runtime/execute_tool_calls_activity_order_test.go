@@ -169,7 +169,7 @@ func TestExecuteToolCalls_ServiceToolCancellationCancelsRun(t *testing.T) {
 				toolsets:      map[string]ToolsetRegistration{"svc.tools": {}},
 			}
 			seedTestToolSpecs(rt, spec)
-			call := planner.ToolRequest{
+			call := ToolCall{
 				Name:       tools.Ident("svc.tools.cancel"),
 				RunID:      "run-1",
 				SessionID:  "sess-1",
@@ -194,7 +194,7 @@ func TestExecuteToolCalls_ServiceToolCancellationCancelsRun(t *testing.T) {
 				agent.Ident("agent-1"),
 				&run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"},
 				nil,
-				[]planner.ToolRequest{call},
+				[]ToolCall{call},
 				0,
 				nil,
 				time.Time{},

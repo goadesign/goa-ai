@@ -1,4 +1,4 @@
-// This file writes the adapters that connect generated MCP methods to the
+// Package codegen writes adapters that connect generated MCP methods to the
 // user service and the MCP JSON-RPC client.
 package codegen
 
@@ -155,7 +155,7 @@ func generateMCPTransport(_ string, svc *expr.ServiceExpr, data *AdapterData) []
 
 // generateMCPClientAdapter generates a client adapter that exposes the original
 // service endpoints while calling MCP JSON-RPC methods under the hood.
-func generateMCPClientAdapter(_ string, svc *expr.ServiceExpr, data *AdapterData) []*codegen.File {
+func generateMCPClientAdapter(data *AdapterData) []*codegen.File {
 	files := make([]*codegen.File, 0, 1)
 
 	// Extend data passed to template with aliases needed by imports

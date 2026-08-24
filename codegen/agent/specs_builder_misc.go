@@ -1,4 +1,4 @@
-// This file builds JSON schemas, examples, and field details used by generated
+// Package codegen builds JSON schemas, examples, and field details used by generated
 // tool descriptions and JSON errors.
 package codegen
 

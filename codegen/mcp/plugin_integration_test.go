@@ -1,14 +1,16 @@
-// This file checks that Goa core and the MCP plugin write one attached service
+// Package codegen checks that Goa core and the MCP plugin write one attached service
 // from the same generation run.
 package codegen
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
@@ -135,7 +137,8 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 	root.API.Version = "1.0"
 	root.API.GRPC = &expr.GRPCExpr{}
 	root.API.RandomizerFactory = expr.NewDeterministicRandomizerFactory()
-	root.Types = append(namedTypes, locatedRenderPayload)
+	root.Types = append(root.Types, namedTypes...)
+	root.Types = append(root.Types, locatedRenderPayload)
 	for _, current := range []*expr.ServiceExpr{service, formatter, selector, contextService, fmtService, prompts, staticPrompts, notifications, resources} {
 		for _, method := range current.Methods {
 			method.Prepare()
@@ -247,13 +250,18 @@ replace goa.design/goa/v3 => %s
 	require.NoError(t, err)
 	require.FileExists(t, filepath.Join(dir, "gen", "mcp_calc", "service.go"))
 	require.FileExists(t, filepath.Join(dir, "gen", "mcp_calc", "adapter_server.go"))
-	serviceSource, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_calc", "service.go"))
+	generatedRoot, err := os.OpenRoot(filepath.Join(dir, "gen"))
 	require.NoError(t, err)
-	adapterSource, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_calc", "adapter_server.go"))
+	t.Cleanup(func() {
+		require.NoError(t, generatedRoot.Close())
+	})
+	serviceSource, err := generatedRoot.ReadFile("mcp_calc/service.go")
+	require.NoError(t, err)
+	adapterSource, err := generatedRoot.ReadFile("mcp_calc/adapter_server.go")
 	require.NoError(t, err)
 	require.Contains(t, string(serviceSource), "package mcpcalc")
 	require.Contains(t, string(adapterSource), "package mcpcalc")
-	codec, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_calc", "internal", "codec", "codec.go"))
+	codec, err := generatedRoot.ReadFile("mcp_calc/internal/codec/codec.go")
 	require.NoError(t, err)
 	require.Contains(t, string(codec), "func EncodeAddPayload(")
 	require.Contains(t, string(codec), "func DecodeAddPayload(")
@@ -268,7 +276,7 @@ replace goa.design/goa/v3 => %s
 	require.Contains(t, string(codec), "v *calc.Calculation")
 	require.Contains(t, string(codec), "func EncodeSubtractPayload(")
 	require.Contains(t, string(codec), "func DecodeSubtractPayload(")
-	adapterServer, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_calc", "adapter_server.go"))
+	adapterServer, err := generatedRoot.ReadFile("mcp_calc/adapter_server.go")
 	require.NoError(t, err)
 	require.Contains(t, string(adapterServer), "mcpcodec.DecodeAddPayload(arguments)")
 	require.Contains(t, string(adapterServer), "mcpcodec.EncodeAddResult(result)")
@@ -276,7 +284,7 @@ replace goa.design/goa/v3 => %s
 	require.NotContains(t, string(adapterServer), "\n\t\"io\"\n")
 	require.NotContains(t, string(adapterServer), "\n\t\"net/http\"\n")
 	require.NotContains(t, string(adapterServer), "\n\t\"strings\"\n")
-	adapterClient, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_calc", "adapter", "client", "adapter.go"))
+	adapterClient, err := generatedRoot.ReadFile("mcp_calc/adapter/client/adapter.go")
 	require.NoError(t, err)
 	require.Contains(t, string(adapterClient), `shared "generated.local/gen/alpha/shared"`)
 	require.Contains(t, string(adapterClient), `shared2 "generated.local/gen/zeta/shared"`)
@@ -288,76 +296,76 @@ replace goa.design/goa/v3 => %s
 	require.NotContains(t, string(adapterClient), "/jsonrpc/calc/client")
 	_, err = os.Stat(filepath.Join(dir, "gen", "jsonrpc", "calc", "client"))
 	require.ErrorIs(t, err, os.ErrNotExist)
-	server, err := os.ReadFile(filepath.Join(dir, "gen", "jsonrpc", "mcp_calc", "server", "server.go"))
+	server, err := generatedRoot.ReadFile("jsonrpc/mcp_calc/server/server.go")
 	require.NoError(t, err)
 	require.Contains(t, string(server), "withMCPPolicyHeaders(h.ServeHTTP)")
-	formatterCodec, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_formatter", "internal", "codec", "codec.go"))
+	formatterCodec, err := generatedRoot.ReadFile("mcp_formatter/internal/codec/codec.go")
 	require.NoError(t, err)
 	require.Contains(t, string(formatterCodec), "func EncodeRenderPayload(")
 	require.Contains(t, string(formatterCodec), "func DecodeRenderPayload(")
 	require.Contains(t, string(formatterCodec), "func EncodeRenderResult(")
 	require.Contains(t, string(formatterCodec), "func DecodeRenderResult(")
-	formatterServer, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_formatter", "adapter_server.go"))
+	formatterServer, err := generatedRoot.ReadFile("mcp_formatter/adapter_server.go")
 	require.NoError(t, err)
 	require.Contains(t, string(formatterServer), "mcpcodec.DecodeRenderPayload(arguments)")
 	require.Contains(t, string(formatterServer), "mcpcodec.EncodeRenderResult(result)")
-	formatterClient, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_formatter", "adapter", "client", "adapter.go"))
+	formatterClient, err := generatedRoot.ReadFile("mcp_formatter/adapter/client/adapter.go")
 	require.NoError(t, err)
 	require.Contains(t, string(formatterClient), `mcpcodec2 "generated.local/gen/mcpcodec"`)
 	require.Contains(t, string(formatterClient), "mcpcodec.EncodeRenderPayload(v.(*mcpcodec2.RenderPayload))")
 	require.Contains(t, string(formatterClient), "mcpcodec.DecodeRenderResult([]byte(*r.Content[0].Text))")
-	promptProvider, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_prompts", "prompt_provider.go"))
+	promptProvider, err := generatedRoot.ReadFile("mcp_prompts/prompt_provider.go")
 	require.NoError(t, err)
 	require.Contains(t, string(promptProvider), "GetDailyReportPrompt(ctx context.Context")
 	require.Contains(t, string(promptProvider), "GetDailyReportPromptStatic(arguments json.RawMessage)")
-	promptServer, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_prompts", "adapter_server.go"))
+	promptServer, err := generatedRoot.ReadFile("mcp_prompts/adapter_server.go")
 	require.NoError(t, err)
 	require.Contains(t, string(promptServer), "a.promptProvider.GetDailyReportPrompt(ctx, p.Arguments)")
 	require.Contains(t, string(promptServer), "a.promptProvider.GetDailyReportPromptStatic(p.Arguments)")
-	staticProvider, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_static_prompts", "prompt_provider.go"))
+	staticProvider, err := generatedRoot.ReadFile("mcp_static_prompts/prompt_provider.go")
 	require.NoError(t, err)
 	require.NotContains(t, string(staticProvider), `"context"`)
 	require.NotContains(t, string(staticProvider), `generated.local/gen/static_prompts`)
-	staticClient, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_static_prompts", "adapter", "client", "adapter.go"))
+	staticClient, err := generatedRoot.ReadFile("mcp_static_prompts/adapter/client/adapter.go")
 	require.NoError(t, err)
 	require.NotContains(t, string(staticClient), `"context"`)
 	require.NotContains(t, string(staticClient), `/mcp_static_prompts"`)
 	require.NotContains(t, string(staticClient), `/jsonrpc/mcp_static_prompts/client"`)
-	fmtClient, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_fmt", "adapter", "client", "adapter.go"))
+	fmtClient, err := generatedRoot.ReadFile("mcp_fmt/adapter/client/adapter.go")
 	require.NoError(t, err)
 	require.Contains(t, string(fmtClient), `fmt_ "generated.local/gen/fmt_"`)
 	require.Contains(t, string(fmtClient), "mcpcodec.EncodeEchoPayload(v.(string))")
-	notificationClient, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_notifications", "adapter", "client", "adapter.go"))
+	notificationClient, err := generatedRoot.ReadFile("mcp_notifications/adapter/client/adapter.go")
 	require.NoError(t, err)
 	require.Contains(t, string(notificationClient), "BuildNotifyStatusUpdateRequest(ctx, nil)")
 	require.Contains(t, string(notificationClient), "BuildNotifyStatusUpdateEndpointRequest(ctx, nil)")
 	require.Contains(t, string(notificationClient), "DecodeNotifyStatusUpdateResponse(dec, false)")
 	require.Contains(t, string(notificationClient), "DecodeNotifyStatusUpdateEndpointResponse(dec, false)")
-	selectorService, err := os.ReadFile(filepath.Join(dir, "gen", "selector", "service.go"))
+	selectorService, err := generatedRoot.ReadFile("selector/service.go")
 	require.NoError(t, err)
 	require.Contains(t, string(selectorService), "ReadValue(context.Context) (res string, err error)")
 	require.Contains(t, string(selectorService), "ReadValueEndpoint(context.Context) (res string, err error)")
-	selectorServer, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_selector", "adapter_server.go"))
+	selectorServer, err := generatedRoot.ReadFile("mcp_selector/adapter_server.go")
 	require.NoError(t, err)
 	require.Contains(t, string(selectorServer), "a.service.ReadValue(ctx)")
 	require.Contains(t, string(selectorServer), "a.service.ReadValueEndpoint(ctx)")
-	selectorClient, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_selector", "adapter", "client", "adapter.go"))
+	selectorClient, err := generatedRoot.ReadFile("mcp_selector/adapter/client/adapter.go")
 	require.NoError(t, err)
 	require.Contains(t, string(selectorClient), "e.ReadValue =")
 	require.Contains(t, string(selectorClient), "e.ReadValueEndpoint =")
 	require.Contains(t, string(selectorClient), "e.ReadValue,\n\t\te.ReadValueEndpoint,")
-	selectorJSONRPCStream, err := os.ReadFile(filepath.Join(dir, "gen", "jsonrpc", "mcp_selector", "client", "stream.go"))
+	selectorJSONRPCStream, err := generatedRoot.ReadFile("jsonrpc/mcp_selector/client/stream.go")
 	require.NoError(t, err)
 	require.Contains(t, string(selectorJSONRPCStream), `mcpselector "generated.local/gen/mcp_selector"`)
-	selectorCaller, err := os.ReadFile(filepath.Join(dir, "gen", "jsonrpc", "mcp_selector", "client", "caller.go"))
+	selectorCaller, err := generatedRoot.ReadFile("jsonrpc/mcp_selector/client/caller.go")
 	require.NoError(t, err)
 	require.Contains(t, string(selectorCaller), `mcpselector "generated.local/gen/mcp_selector"`)
-	resourceClient, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_resources", "adapter", "client", "adapter.go"))
+	resourceClient, err := generatedRoot.ReadFile("mcp_resources/adapter/client/adapter.go")
 	require.NoError(t, err)
 	require.Contains(t, string(resourceClient), `query.Add("cursor", string(payload.OriginalCursor))`)
 	require.Contains(t, string(resourceClient), "if payload.Offset != nil {")
 	require.NotContains(t, string(resourceClient), "payload.Cursor")
-	resourceServer, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_resources", "adapter_server.go"))
+	resourceServer, err := generatedRoot.ReadFile("mcp_resources/adapter_server.go")
 	require.NoError(t, err)
 	require.Contains(t, string(resourceServer), "transport := new(mcpcodec.ReadDocumentPayloadTransport)")
 	require.Contains(t, string(resourceServer), "transport.OriginalCursor = &converted")
@@ -368,16 +376,22 @@ replace goa.design/goa/v3 => %s
 	require.Contains(t, string(resourceServer), "payload, err := mcpcodec.NewReadDocumentPayload(transport)")
 	require.NotContains(t, string(resourceServer), "Field0")
 	require.NotContains(t, string(resourceServer), "json.Marshal(&arguments)")
-	resourceCodec, err := os.ReadFile(filepath.Join(dir, "gen", "mcp_resources", "internal", "codec", "codec.go"))
+	resourceCodec, err := generatedRoot.ReadFile("mcp_resources/internal/codec/codec.go")
 	require.NoError(t, err)
 	require.Contains(t, string(resourceCodec), "func NewReadDocumentPayload(body *ReadDocumentPayloadTransport)")
 	require.NotContains(t, string(resourceCodec), "func DecodeReadDocumentPayload(data []byte)")
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dir, "gen", "mcp_resources", "resource_query_test.go"),
-		[]byte(resourceQueryGeneratedTestSource),
+	resourceTest, err := generatedRoot.OpenFile(
+		"mcp_resources/resource_query_test.go",
+		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,
 		0o600,
-	))
-	command := exec.Command("go", "test", "-mod=mod", "./gen/...")
+	)
+	require.NoError(t, err)
+	_, err = resourceTest.WriteString(resourceQueryGeneratedTestSource)
+	require.NoError(t, err)
+	require.NoError(t, resourceTest.Close())
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	command := exec.CommandContext(ctx, "go", "test", "-mod=mod", "./gen/...")
 	command.Dir = dir
 	command.Env = append(os.Environ(), "GOWORK=off")
 	output, err := command.CombinedOutput()
@@ -508,23 +522,15 @@ func setNamedMCPMethodTypes(add, subtract *expr.MethodExpr) []expr.UserType {
 	return []expr.UserType{operand, request, subtrahend, subtractRequest, calculation, response}
 }
 
-// testMCPToolPayload returns the object shape that travels from an MCP client
-// to an attached Goa service.
-func testMCPToolPayload() *expr.AttributeExpr {
-	return &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "value", Attribute: &expr.AttributeExpr{Type: expr.String}},
-		},
-		Validation: &expr.ValidationExpr{Required: []string{"value"}},
-	}
-}
-
 // testModuleDirectory returns the local module selected by the workspace that
 // compiled this test.
 func testModuleDirectory(t *testing.T, module string) string {
 	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	args := []string{"list", "-m", "-f", "{{.Dir}}", module}
-	command := exec.Command("go", args...)
+	// #nosec G204 -- the module name comes from this test file.
+	command := exec.CommandContext(ctx, "go", args...)
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
 	return strings.TrimSpace(string(output))

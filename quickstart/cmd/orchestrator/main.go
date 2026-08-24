@@ -15,7 +15,7 @@ import (
 
 	chat "example.com/quickstart/gen/orchestrator/agents/chat"
 	"example.com/quickstart/gen/orchestrator/completions"
-	"example.com/quickstart/internal/agents/bootstrap"
+	"example.com/quickstart/internal/agents/orchestrator/bootstrap"
 	model "goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )

@@ -1,4 +1,4 @@
-// This file writes the public and HTTP packages for generated toolsets. The
+// Package codegen writes the public and HTTP packages for generated toolsets. The
 // package data and all Go names are built before these files are written.
 package codegen
 
@@ -32,9 +32,9 @@ type toolProviderFileData struct {
 // types, JSON functions, tool descriptions, service conversion functions, and
 // an HTTP subpackage used while decoding JSON. Registry toolsets write only
 // their tool descriptions.
-func toolsetSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
+func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 	if data == nil || len(data.Services) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	type specCandidate struct {
@@ -261,7 +261,7 @@ func toolsetSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 		}
 	}
 
-	return out, nil
+	return out
 }
 
 // toolEntriesHaveServerData reports whether specs.go needs server data

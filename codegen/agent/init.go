@@ -1,4 +1,4 @@
-// This file registers new agent plugins for each Goa generation command.
+// Package codegen registers new agent plugins for each Goa generation command.
 package codegen
 
 import (

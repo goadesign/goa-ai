@@ -202,4 +202,3 @@ func TestToolCallMetaCopiesRunLabels(t *testing.T) {
 
 	require.Equal(t, "events:7", meta.Labels["source"])
 }
-

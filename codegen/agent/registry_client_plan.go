@@ -1,4 +1,4 @@
-// This file saves each generated registry client package and its Go names
+// Package codegen saves each generated registry client package and its Go names
 // before any files are written.
 package codegen
 

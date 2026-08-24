@@ -181,7 +181,6 @@ func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
 		require.False(t, received)
 	}
 }
-
 func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 	recorder := &recordingHooks{}
 	spec := newAnyJSONSpec("agent.cancel.child", "agent.cancel")
@@ -261,4 +260,3 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 		require.False(t, received)
 	}
 }
-

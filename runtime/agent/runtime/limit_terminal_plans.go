@@ -179,4 +179,3 @@ func agentToolSpec(specs []tools.ToolSpec, name tools.Ident) (tools.ToolSpec, bo
 	}
 	return tools.ToolSpec{}, false
 }
-

@@ -3,7 +3,7 @@
 func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
     suite := {{ printf "%q" .Toolset.QualifiedName }}
 
-    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
+    return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
         if call == nil {
             return runtime.Executed(failedMCPToolResult("", planner.FailureInternal, planner.RecoveryFinish, errors.New("tool request is nil"))), nil
         }
@@ -19,13 +19,11 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller 
 				Payload: json.RawMessage(call.Payload),
             })
             if err != nil {
-                return runtime.Executed(mcpCallFailure(call, err,
-                    {{ $.Toolset.SpecsPackageName }}.{{ .SpecVar }}.Payload.ExampleJSON,
-                )), nil
+                return runtime.Executed(mcpCallFailure(call, err)), nil
             }
             var value any
             {{- if .HasResult }}
-            v, err := {{ $.Toolset.SpecsPackageName }}.{{ .ResultGenericCodec }}.FromJSON(resp.Result)
+            v, err := {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}().Result.Codec.FromJSON(resp.Result)
             if err != nil {
                 return runtime.Executed(failedMCPToolResult(
                     call.Name,
@@ -63,7 +61,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller 
 
 // mcpCallFailure classifies MCP protocol and transport failures without
 // converting error text into control flow.
-func mcpCallFailure(call *planner.ToolRequest, err error, example rawjson.Message) *planner.ToolResult {
+func mcpCallFailure(call *runtime.ToolCall, err error) *planner.ToolResult {
     kind := planner.FailureUnavailable
     action := planner.RecoveryReplan
     if errors.Is(err, context.DeadlineExceeded) {
@@ -91,9 +89,7 @@ func mcpCallFailure(call *planner.ToolRequest, err error, example rawjson.Messag
                     Kind:  planner.FailureInvalidCall,
                     Error: planner.ToolErrorFromError(err),
                     Recovery: planner.RecoveryDirective{
-                        Action:      planner.RecoveryCorrectCall,
-                        PriorInput:  append(rawjson.Message(nil), call.Payload...),
-                        ExampleJSON: example,
+                        Action: planner.RecoveryCorrectCall,
                     },
                 },
             }
@@ -120,4 +116,3 @@ func failedMCPToolResult(name tools.Ident, kind planner.FailureKind, action plan
         },
     }
 }
-

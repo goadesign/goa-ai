@@ -1,4 +1,4 @@
-// This file verifies matching generated conversion functions are declared once
+// Package tests verifies matching generated conversion functions are declared once
 // and that required and optional nested values keep different functions.
 package tests
 

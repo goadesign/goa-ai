@@ -43,4 +43,3 @@ if [[ -n "${GITHUB_PATH:-}" ]]; then
 fi
 
 make tools
-

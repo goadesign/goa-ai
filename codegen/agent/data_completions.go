@@ -1,5 +1,5 @@
-// This file stores the completion information read by generated completion
-// packages and example commands.
+// Package codegen stores the completion information read by generated
+// completion packages and example commands.
 package codegen
 
 import (
@@ -27,6 +27,8 @@ type (
 		StreamFunc string
 		// Result is the typed assistant-output contract.
 		Result *goaexpr.AttributeExpr
+		// HasExample reports whether the completion has an authored result example.
+		HasExample bool
 		// DecodeChunkFunc names the generated function that reads the final stream value.
 		DecodeChunkFunc string
 	}
@@ -43,6 +45,6 @@ func newCompletionDataFromIR(completion *ir.Completion) *CompletionData {
 		Description: completion.Description,
 		GoName:      completion.GoName,
 		Result:      completion.Expr.Return,
+		HasExample:  authoredExampleForAttribute(completion.Expr.Return) != nil,
 	}
 }
-

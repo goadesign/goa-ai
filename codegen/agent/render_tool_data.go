@@ -1,4 +1,4 @@
-// This file pairs each tool's DSL meaning with the final Go names selected for
+// Package codegen pairs each tool's DSL meaning with the final Go names selected for
 // its generated package. Templates read behavior from Tool and names from Spec.
 package codegen
 

@@ -1,4 +1,4 @@
-// This file verifies that generated MCP server adapters accept only the query
+// Package codegen verifies that generated MCP server adapters accept only the query
 // fields and arguments declared by the original Goa methods.
 package codegen
 
@@ -8,6 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	gcodegen "goa.design/goa/v3/codegen"
+)
+
+const (
+	testCodecImportPath = "example.com/assistant/gen/mcp_assistant/internal/codec"
+	testCodecPackage    = "mcpcodec"
 )
 
 func TestGenerateMCPTransportParsesResourceQueryFieldsByDeclaredType(t *testing.T) {
@@ -30,8 +35,8 @@ func TestGenerateMCPTransportParsesResourceQueryFieldsByDeclaredType(t *testing.
 		newMCPExprBuilder(svc, mcp, nil).BuildServiceMapping(),
 	).buildAdapterData()
 	require.NoError(t, err)
-	data.CodecImportPath = "example.com/assistant/gen/mcp_assistant/internal/codec"
-	data.CodecPackage = "mcpcodec"
+	data.CodecImportPath = testCodecImportPath
+	data.CodecPackage = testCodecPackage
 	data.NeedsServerCodec = true
 	data.Resources[0].Codec = &MethodCodecData{
 		PayloadNew:       "NewReadDocumentPayload",
@@ -111,8 +116,8 @@ func TestGenerateMCPTransportRejectsInputForMethodsWithoutPayloads(t *testing.T)
 		newMCPExprBuilder(svc, mcp, prompts).BuildServiceMapping(),
 	).buildAdapterData()
 	require.NoError(t, err)
-	data.CodecImportPath = "example.com/assistant/gen/mcp_assistant/internal/codec"
-	data.CodecPackage = "mcpcodec"
+	data.CodecImportPath = testCodecImportPath
+	data.CodecPackage = testCodecPackage
 	data.NeedsServerCodec = true
 	data.Tools[0].Codec = &MethodCodecData{ResultEncode: "EncodeRunResult"}
 	data.Resources[0].Codec = &MethodCodecData{ResultEncode: "EncodeReadStatusResult"}

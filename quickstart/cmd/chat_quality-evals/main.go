@@ -20,7 +20,7 @@ import (
 	genevalchatquality "example.com/quickstart/gen/evals/chat_quality"
 	genchat "example.com/quickstart/gen/orchestrator/agents/chat"
 	genhelpers "example.com/quickstart/gen/orchestrator/toolsets/helpers"
-	"example.com/quickstart/internal/agents/bootstrap"
+	"example.com/quickstart/internal/agents/orchestrator/bootstrap"
 	eval "goa.design/goa-ai/eval"
 	"goa.design/goa-ai/eval/evidence"
 	model "goa.design/goa-ai/runtime/agent/model"

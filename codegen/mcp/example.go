@@ -1,4 +1,4 @@
-// This file connects generated MCP services to Goa's example server.
+// Package codegen connects generated MCP services to Goa's example server.
 package codegen
 
 import (
@@ -94,11 +94,11 @@ func bindExampleMCPServices(
 		service := &services[index]
 		user := planned.Get(service.service.Name)
 		if user == nil {
-			return fmt.Errorf("Goa did not plan example service %q", service.service.Name)
+			return fmt.Errorf("goa did not plan example service %q", service.service.Name)
 		}
 		mcp := planned.Get("mcp_" + service.service.Name)
 		if mcp == nil {
-			return fmt.Errorf("Goa did not plan MCP example service %q", service.service.Name)
+			return fmt.Errorf("goa did not plan MCP example service %q", service.service.Name)
 		}
 		service.stubPath = filepath.ToSlash(mcp.PathName + ".go")
 		service.mcpPackagePath = mcp.PathName

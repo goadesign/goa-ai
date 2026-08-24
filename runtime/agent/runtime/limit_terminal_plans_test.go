@@ -91,7 +91,6 @@ func TestValidateLimitTerminalPlans(t *testing.T) {
 		})
 	}
 }
-
 func TestValidateLimitTerminalPlansRejectsNonTerminalTool(t *testing.T) {
 	t.Parallel()
 
@@ -637,4 +636,3 @@ func testLimitTerminalPlans(name tools.Ident) *LimitTerminalPlans {
 		},
 	}
 }
-

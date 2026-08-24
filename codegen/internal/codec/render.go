@@ -1,4 +1,4 @@
-// This file links planned names and writes the generated JSON codec source.
+// Package codec links planned names and writes the generated JSON codec source.
 package codec
 
 import (

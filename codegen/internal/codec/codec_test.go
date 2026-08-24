@@ -1,7 +1,8 @@
-// This file checks the JSON contract shared by generated MCP clients and servers.
+// Package codec checks the JSON contract shared by generated MCP clients and servers.
 package codec
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	goacodegen "goa.design/goa/v3/codegen"
@@ -65,7 +67,7 @@ func TestPlanRendersOneExactJSONContract(t *testing.T) {
 	require.NoError(t, generation.Freeze())
 
 	service := goacodegen.NewAttributeContext(false, false, true, "widgets", servicePackage.Scope())
-	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope, "widgets")))
+	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope)))
 	files, err := planned.Files()
 	require.NoError(t, err)
 	require.Len(t, files, 1)
@@ -167,7 +169,7 @@ func TestGeneratedCodecBehavior(t *testing.T) {
 	require.NoError(t, value.PlanTransportConstructor())
 	require.NoError(t, generation.Freeze())
 	service := goacodegen.NewAttributeContext(false, false, true, "widgets", servicePackage.Scope())
-	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope, "widgets")))
+	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope)))
 	files, err := planned.Files()
 	require.NoError(t, err)
 	_, err = files[0].Render(moduleDirectory)
@@ -189,11 +191,7 @@ replace goa.design/goa/v3 => %s
 		codecBehaviorTestSource,
 	)
 
-	command := exec.Command("go", "test", "-mod=mod", "./...")
-	command.Dir = moduleDirectory
-	command.Env = append(os.Environ(), "GOWORK=off")
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, string(output))
+	runGeneratedCodecTests(t, moduleDirectory)
 }
 
 // TestPlanUsesCodecPackageImportScope checks that an import name used by
@@ -222,7 +220,7 @@ func TestPlanUsesCodecPackageImportScope(t *testing.T) {
 	require.Equal(t, "json", planned.pkg.ImportName("encoding/json"))
 
 	service := goacodegen.NewAttributeContext(false, false, true, "widgets", servicePackage.Scope())
-	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope, "widgets")))
+	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope)))
 	files, err := planned.Files()
 	require.NoError(t, err)
 	directory := t.TempDir()
@@ -417,7 +415,7 @@ func TestPlanHandlesRecursiveAndRepeatedTypes(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, generation.Freeze())
 	service := goacodegen.NewAttributeContext(false, false, true, "widgets", servicePackage.Scope())
-	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope, "widgets")))
+	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope)))
 	files, err := planned.Files()
 	require.NoError(t, err)
 
@@ -449,11 +447,7 @@ require goa.design/goa/v3 v3.0.0
 replace goa.design/goa/v3 => %s
 `, filepath.ToSlash(goaModuleDirectory(t))))
 	writeTestFile(t, filepath.Join(moduleDirectory, "codec/codec.go"), forward)
-	command := exec.Command("go", "test", "-mod=mod", "./...")
-	command.Dir = moduleDirectory
-	command.Env = append(os.Environ(), "GOWORK=off")
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, string(output))
+	runGeneratedCodecTests(t, moduleDirectory)
 }
 
 // TestPlanEmitsOnlyRequestedDirection checks that one-way callers do not leave
@@ -639,7 +633,7 @@ func renderDirectionalCodec(t *testing.T, direction Direction) (string, *Value) 
 		})
 	}
 	service := goacodegen.NewAttributeContext(false, false, true, "widgets", servicePackage.Scope())
-	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope, "widgets")))
+	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope)))
 	files, err := planned.Files()
 	require.NoError(t, err)
 	directory := t.TempDir()
@@ -665,11 +659,7 @@ replace goa.design/goa/v3 => %s
 `, filepath.ToSlash(goaModuleDirectory(t))))
 	writeTestFile(t, filepath.Join(moduleDirectory, "gen/widgets/service.go"), serviceSource)
 	writeTestFile(t, filepath.Join(moduleDirectory, "gen/mcp_widgets/internal/codec/codec.go"), codecSource)
-	command := exec.Command("go", "test", "-mod=mod", "./...")
-	command.Dir = moduleDirectory
-	command.Env = append(os.Environ(), "GOWORK=off")
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, string(output))
+	runGeneratedCodecTests(t, moduleDirectory)
 }
 
 // compileImportPriorityCodec builds the rendered codec with both types from
@@ -702,11 +692,7 @@ type CollisionPayload struct {
 	Authored shared.Value
 }
 `)
-	command := exec.Command("go", "test", "-mod=mod", "./...")
-	command.Dir = moduleDirectory
-	command.Env = append(os.Environ(), "GOWORK=off")
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, string(output))
+	runGeneratedCodecTests(t, moduleDirectory)
 }
 
 // declareCodecTestServiceTypes reserves the names used by the service writer
@@ -753,8 +739,13 @@ func exprState(attribute *goaexpr.AttributeExpr) *goaexpr.Union {
 // readOnlyGoFile reads the single Go file rendered below directory.
 func readOnlyGoFile(t *testing.T, directory string) string {
 	t.Helper()
+	root, err := os.OpenRoot(directory)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, root.Close())
+	})
 	var source []byte
-	err := filepath.WalkDir(directory, func(path string, entry fs.DirEntry, err error) error {
+	err = filepath.WalkDir(directory, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -764,7 +755,11 @@ func readOnlyGoFile(t *testing.T, directory string) string {
 		if source != nil {
 			t.Fatalf("more than one Go file was rendered below %s", directory)
 		}
-		source, err = os.ReadFile(path)
+		relativePath, err := filepath.Rel(directory, path)
+		if err != nil {
+			return err
+		}
+		source, err = root.ReadFile(relativePath)
 		return err
 	})
 	require.NoError(t, err)
@@ -775,10 +770,25 @@ func readOnlyGoFile(t *testing.T, directory string) string {
 // goaModuleDirectory returns the local Goa module selected by the active workspace.
 func goaModuleDirectory(t *testing.T) string {
 	t.Helper()
-	command := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "goa.design/goa/v3")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "go", "list", "-m", "-f", "{{.Dir}}", "goa.design/goa/v3")
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
 	return strings.TrimSpace(string(output))
+}
+
+// runGeneratedCodecTests compiles every package in one temporary module and
+// fails the calling test when compilation does not finish within two minutes.
+func runGeneratedCodecTests(t *testing.T, moduleDirectory string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	command := exec.CommandContext(ctx, "go", "test", "-mod=mod", "./...")
+	command.Dir = moduleDirectory
+	command.Env = append(os.Environ(), "GOWORK=off")
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
 }
 
 // writeTestFile writes one source file in the disposable generated module.
@@ -790,8 +800,8 @@ func writeTestFile(t *testing.T, path, source string) {
 
 // newCodecTestServiceAttributor returns the service type writer used by the
 // generated-module tests.
-func newCodecTestServiceAttributor(attributor goacodegen.Attributor, packageName string) goacodegen.Attributor {
-	return &codecTestTypeWriter{Attributor: attributor, packageName: packageName}
+func newCodecTestServiceAttributor(attributor goacodegen.Attributor) goacodegen.Attributor {
+	return &codecTestTypeWriter{Attributor: attributor, packageName: "widgets"}
 }
 
 // Name writes Goa's empty service type as an unnamed empty struct.

@@ -1,4 +1,4 @@
-// This file assigns one Go function declaration to matching type conversions
+// Package codegen assigns one Go function declaration to matching type conversions
 // in a generated tool package. The comparison uses the generated types and
 // field rules that determine the function body, so later rendering only writes
 // each matching function once.

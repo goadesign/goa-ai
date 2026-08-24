@@ -45,7 +45,7 @@ func TestGenerateTypedSuiteAndExample(t *testing.T) {
 		})
 	})
 
-	files := generateEvalFiles(t, "example.com/project/gen", roots, false)
+	files := generateEvalFiles(t, roots, false)
 	require.Len(t, files, 1)
 	assert.Equal(t, filepath.Join("gen", "evals", "chat_quality", "suite.go"), files[0].Path)
 	content := render(t, files[0])
@@ -59,7 +59,7 @@ func TestGenerateTypedSuiteAndExample(t *testing.T) {
 	assert.Contains(t, content, "utf8.RuneCountInString")
 	assert.NotContains(t, content, "reflect")
 
-	examples := generateEvalFiles(t, "example.com/project/gen", roots, true)
+	examples := generateEvalFiles(t, roots, true)
 	require.Len(t, examples, 1)
 	assert.Equal(t, filepath.Join("cmd", "chat_quality-evals", "main.go"), examples[0].Path)
 	assert.True(t, examples[0].SkipExist)
@@ -117,7 +117,7 @@ func TestGenerateInputFormsAndDistinctCustomizations(t *testing.T) {
 		})
 	})
 
-	files := generateEvalFiles(t, "example.com/project/gen", roots, false)
+	files := generateEvalFiles(t, roots, false)
 	require.Len(t, files, 1)
 	content := render(t, files[0])
 	assert.Contains(t, content, "Primitive(context.Context, string)")
@@ -148,7 +148,7 @@ func TestGeneratePresenceOnlyInputValidator(t *testing.T) {
 		})
 	})
 
-	files := generateEvalFiles(t, "example.com/project/gen", roots, false)
+	files := generateEvalFiles(t, roots, false)
 	require.Len(t, files, 1)
 	content := render(t, files[0])
 	assert.Contains(t, content, "// New validates application inputs and builds the evaluation suite.")
@@ -232,7 +232,7 @@ func TestGenerateAgentAttachedReachableToolContracts(t *testing.T) {
 
 func TestGenerateWithoutEvalRootDoesNothing(t *testing.T) {
 	existing := []*goacodegen.File{{Path: "gen/existing.go"}}
-	files := generateEvalFiles(t, "example.com/project/gen", nil, false, existing...)
+	files := generateEvalFiles(t, nil, false, existing...)
 	assert.Equal(t, existing, files)
 }
 
@@ -420,13 +420,12 @@ func TestEvalExamplePlanUsesPackageNamesChosenAfterPlanning(t *testing.T) {
 // name, and returns those files.
 func generateEvalFiles(
 	t *testing.T,
-	genpkg string,
 	roots []eval.Root,
 	example bool,
 	files ...*goacodegen.File,
 ) []*goacodegen.File {
 	t.Helper()
-	plan, err := evalcodegen.PlanForTest(genpkg, roots, example)
+	plan, err := evalcodegen.PlanForTest("example.com/project/gen", roots, example)
 	require.NoError(t, err)
 	generated, err := plan.Generate(files)
 	require.NoError(t, err)

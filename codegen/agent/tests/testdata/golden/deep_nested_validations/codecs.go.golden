@@ -331,7 +331,7 @@ func MarshalValidatePayload(v *ValidatePayload) ([]byte, error) {
 				out.Objects[tk] = nil
 				continue
 			}
-			out.Objects[tk] = encodeLevel3ToToolhttpLevel3Transport(val)
+			out.Objects[tk] = encodeLevel3ToLevel3Transport2(val)
 		}
 	}
 	if in.Groups != nil {
@@ -399,7 +399,7 @@ func UnmarshalValidatePayload(data []byte) (*ValidatePayload, error) {
 				out.Objects[tk] = nil
 				continue
 			}
-			out.Objects[tk] = decodeToolhttpLevel3TransportToLevel3(val)
+			out.Objects[tk] = decodeLevel3TransportToLevel32(val)
 		}
 	}
 	if in.Groups != nil {
@@ -454,7 +454,7 @@ func MarshalValidateResult(v *ValidateResult) ([]byte, error) {
 				out.Objects[tk] = nil
 				continue
 			}
-			out.Objects[tk] = encodeLevel3ToToolhttpLevel3Transport(val)
+			out.Objects[tk] = encodeLevel3ToLevel3Transport2(val)
 		}
 	}
 	if in.Groups != nil {
@@ -522,7 +522,7 @@ func UnmarshalValidateResult(data []byte) (*ValidateResult, error) {
 				out.Objects[tk] = nil
 				continue
 			}
-			out.Objects[tk] = decodeToolhttpLevel3TransportToLevel3(val)
+			out.Objects[tk] = decodeLevel3TransportToLevel32(val)
 		}
 	}
 	if in.Groups != nil {
@@ -853,6 +853,16 @@ func decodeLevel3TransportToLevel3(v *toolhttp.Level3Transport) *Level3 {
 
 	return res
 }
+func decodeLevel3TransportToLevel32(v *toolhttp.Level3Transport) *Level3 {
+	if v == nil {
+		return nil
+	}
+	res := &Level3{
+		Leaf: *v.Leaf,
+	}
+
+	return res
+}
 func encodeLevel2ToLevel2Transport(v *Level2) *toolhttp.Level2Transport {
 	res := &toolhttp.Level2Transport{
 		Mid: &v.Mid,
@@ -862,6 +872,16 @@ func encodeLevel2ToLevel2Transport(v *Level2) *toolhttp.Level2Transport {
 	return res
 }
 func encodeLevel3ToLevel3Transport(v *Level3) *toolhttp.Level3Transport {
+	res := &toolhttp.Level3Transport{
+		Leaf: &v.Leaf,
+	}
+
+	return res
+}
+func encodeLevel3ToLevel3Transport2(v *Level3) *toolhttp.Level3Transport {
+	if v == nil {
+		return nil
+	}
 	res := &toolhttp.Level3Transport{
 		Leaf: &v.Leaf,
 	}

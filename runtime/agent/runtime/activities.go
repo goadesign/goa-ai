@@ -1166,4 +1166,3 @@ func (r *Runtime) toolCodec(toolName tools.Ident, payload bool) (*tools.JSONCode
 	}
 	return &spec.Result.Codec, true
 }
-

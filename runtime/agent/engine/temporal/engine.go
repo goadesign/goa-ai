@@ -685,4 +685,3 @@ func (e *Engine) releaseWorkflowContext(runID string) {
 	}
 	e.workflowContexts.Delete(runID)
 }
-

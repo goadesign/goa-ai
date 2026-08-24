@@ -146,7 +146,10 @@ func writeLocalModule(t *testing.T, root string) {
 // moduleDir returns the local directory for one module used by the test.
 func moduleDir(t *testing.T, module string) string {
 	t.Helper()
-	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", module)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	// #nosec G204 -- the module name comes from this test file.
+	cmd := exec.CommandContext(ctx, "go", "list", "-m", "-f", "{{.Dir}}", module)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
 	dir := strings.TrimSpace(string(output))
@@ -161,6 +164,7 @@ func runGeneratedGoTest(t *testing.T, root string, packages ...string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	args := append([]string{"test", "-mod=mod"}, packages...)
+	// #nosec G204 -- package names come from this test file.
 	cmd := exec.CommandContext(ctx, "go", args...)
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "GOWORK=off")

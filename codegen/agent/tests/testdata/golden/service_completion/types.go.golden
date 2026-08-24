@@ -13,16 +13,16 @@ type (
 		AssistantText string
 		Draft         Draft
 	}
-	// CompletionDraft is a nested type used by generated tool data.
+	// CompletionDraft is a nested type used by the generated JSON contract.
 	CompletionDraft = struct {
 		// Draft steps
 		Steps []*CompletionStep
 	}
-	// CompletionStep is a nested type used by generated tool data.
+	// CompletionStep is a nested type used by the generated JSON contract.
 	CompletionStep = struct {
 		// User-visible step label
 		Label string
 	}
-	// DraftExistingTaskID is a nested type used by generated tool data.
+	// DraftExistingTaskID is a nested type used by the generated JSON contract.
 	DraftExistingTaskID = string
 )

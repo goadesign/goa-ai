@@ -1,4 +1,4 @@
-// This file builds the saved tool names, types, schemas, and JSON functions
+// Package codegen builds the saved tool names, types, schemas, and JSON functions
 // that generated files read.
 package codegen
 
@@ -53,9 +53,12 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 			// supplied by the server.
 			payload.InjectDecodeFunc = names.decode.Name()
 		}
-		result, err := builder.typeFor(owner, tool.Return, usageResult)
-		if err != nil {
-			return nil, err
+		var result *typeData
+		if tool.HasResult {
+			result, err = builder.typeFor(owner, tool.Return, usageResult)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if payload != nil {
 			tool.PayloadTypeName = payload.TypeName
@@ -93,6 +96,7 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 			ExportingAgentID:  tool.ExportingAgentID,
 			Payload:           payload,
 			Result:            result,
+			HasResult:         tool.HasResult,
 			Bounds:            tool.Bounds,
 			TerminalRun:       tool.TerminalRun,
 			Bookkeeping:       tool.Bookkeeping,
@@ -562,4 +566,3 @@ func serverDataEntriesForTool(tool *ToolData, builder *toolSpecBuilder) ([]*serv
 	}
 	return out, nil
 }
-

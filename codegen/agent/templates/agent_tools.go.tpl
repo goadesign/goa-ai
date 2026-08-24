@@ -61,7 +61,6 @@ func installGeneratedHints(reg *runtime.ToolsetRegistration) error {
     return nil
 }
 {{- end }}
-
 // New{{ .Toolset.Agent.GoName }}ToolsetRegistration creates a toolset registration for the {{ .Toolset.Agent.Name }} agent.
 // The returned registration can be used with runtime.RegisterToolset to make the agent
 // available as a tool to other agents. When invoked, the agent runs its full planning loop

@@ -1,4 +1,5 @@
-// This file copies service attributes into transport-only types without changing the design.
+// Package codec copies service attributes into transport-only types without
+// changing the design.
 package codec
 
 import (

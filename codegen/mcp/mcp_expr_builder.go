@@ -1,4 +1,4 @@
-// This file builds the Goa service, types, and JSON-RPC routes that implement
+// Package codegen builds the Goa service, types, and JSON-RPC routes that implement
 // MCP for one user service.
 package codegen
 

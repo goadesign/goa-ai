@@ -40,10 +40,10 @@ func {{ .InjectFunc }}(p *{{ .PayloadTypeName }}, meta runtime.ToolCallMeta, lab
 // the fields supplied by the server.
 //
 // Custom executors for {{ .QualifiedName }} must call this function. Calling
-// {{ .PayloadCodecName }}.FromJSON alone does not fill fields marked by
+// {{ .PayloadCodecName }}().FromJSON alone does not fill fields marked by
 // Inject().
 func {{ .DecodeFunc }}(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*{{ .PayloadTypeName }}, error) {
-	p, err := {{ .PayloadCodecName }}.FromJSON(payload)
+	p, err := {{ .PayloadCodecName }}().FromJSON(payload)
 	if err != nil {
 		return nil, err
 	}
@@ -54,4 +54,3 @@ func {{ .DecodeFunc }}(payload []byte, meta runtime.ToolCallMeta, labels map[str
 }
 {{- end }}
 {{- end }}
-

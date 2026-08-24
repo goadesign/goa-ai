@@ -1,13 +1,15 @@
-// This file checks that MCP example stubs use the final service names chosen
+// Package codegen checks that MCP example stubs use the final service names chosen
 // by the same Goa generation run.
 package codegen
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
@@ -54,7 +56,9 @@ replace goa.design/goa/v3 => %s
 	_, err = goagenerator.Generate(dir, "example", false)
 	require.NoError(t, err)
 
-	command := exec.Command("go", "test", "-mod=mod", "./...")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	command := exec.CommandContext(ctx, "go", "test", "-mod=mod", "./...")
 	command.Dir = dir
 	command.Env = append(os.Environ(), "GOWORK=off")
 	output, err := command.CombinedOutput()

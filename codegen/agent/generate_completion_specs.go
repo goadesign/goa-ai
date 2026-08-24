@@ -1,4 +1,4 @@
-// This file writes generated completion result types, JSON functions, and the
+// Package codegen writes generated completion result types, JSON functions, and the
 // functions that run direct completions.
 package codegen
 
@@ -199,9 +199,10 @@ func completionSpecsFiles(data *GeneratorData, planned *toolSpecsPlan) ([]*codeg
 
 		specImports := []*codegen.ImportSpec{
 			{Path: "context"},
+			{Path: "slices"},
 			{Path: "goa.design/goa-ai/runtime/agent/completion"},
 			{Path: "goa.design/goa-ai/runtime/agent/model"},
-			{Path: "goa.design/goa-ai/runtime/agent/tools"},
+			{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
 		}
 		specSections := []*codegen.SectionTemplate{
 			codegen.Header(svc.Service.Name+" completion specs", packageName, specImports),
@@ -295,4 +296,3 @@ func newCompletionContractTypeOwner(svc *service.Data, completion *CompletionDat
 		ScopeName:     svc.Name + ".completions",
 	}
 }
-

@@ -160,4 +160,3 @@ func cloneTypeSpec(spec tools.TypeSpec) tools.TypeSpec {
 	spec.FieldJSONTypes = maps.Clone(spec.FieldJSONTypes)
 	return spec
 }
-

@@ -1,4 +1,4 @@
-// This file writes agent packages from names and types chosen before file
+// Package codegen writes agent packages from names and types chosen before file
 // generation starts.
 package codegen
 
@@ -24,11 +24,7 @@ func generateAgentFiles(data *GeneratorData, roots []eval.Root, specsPlan *toolS
 
 	var generated []*codegen.File
 
-	toolsetFiles, err := toolsetSpecsFiles(data)
-	if err != nil {
-		return nil, err
-	}
-	generated = append(generated, toolsetFiles...)
+	generated = append(generated, toolsetSpecsFiles(data)...)
 	completionFiles, err := completionSpecsFiles(data, specsPlan)
 	if err != nil {
 		return nil, err

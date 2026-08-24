@@ -1,4 +1,4 @@
-// This file verifies that generated model JSON codecs preserve null array
+// Package tests verifies that generated model JSON codecs preserve null array
 // elements until Goa validation runs, then return ordinary public values.
 package tests
 
@@ -17,7 +17,7 @@ import (
 // cannot send null where the Goa design requires a string alias value.
 func TestGeneratedCodecRejectsNullRequiredAliasArrayElement(t *testing.T) {
 	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", requiredAliasArrayDesign())
-	root := writeGeneratedModuleWithPath(t, "generated.local/gen", files)
+	root := writeGeneratedModule(t, files)
 	writeGeneratedPackageTest(
 		t,
 		root,
@@ -49,8 +49,18 @@ func TestRequiredAliasArray(t *testing.T) {
 		t.Fatalf("expected validation error, got %v", err)
 	}
 	issues := validation.Issues()
-	if len(issues) != 1 || issues[0].Field != "values" || issues[0].Constraint != "missing_field" {
-		t.Fatalf("unexpected validation issues: %#v", issues)
+	if len(issues) != 1 || issues[0].Field != "values" || issues[0].Constraint != "invalid_field_type" ||
+		issues[0].ActualJSONType != "null" {
+		if len(issues) == 0 {
+			t.Fatal("expected one validation issue")
+		}
+		t.Fatalf(
+			"unexpected validation issue: field=%q constraint=%q expected=%q actual=%q",
+			issues[0].Field,
+			issues[0].Constraint,
+			issues[0].ExpectedJSONType,
+			issues[0].ActualJSONType,
+		)
 	}
 }
 `)

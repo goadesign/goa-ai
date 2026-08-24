@@ -157,4 +157,3 @@ func completionToolFromPolicy(runPolicy *PolicyOverrides) tools.Ident {
 func completionToolRequiredError(completion tools.Ident, reason any) error {
 	return fmt.Errorf("completion tool %q did not succeed: %v", completion, reason)
 }
-

@@ -1,4 +1,4 @@
-// This file lists the files written for one agent and writes the JSON document
+// Package codegen lists the files written for one agent and writes the JSON document
 // that describes all of its tools.
 package codegen
 

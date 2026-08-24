@@ -82,7 +82,20 @@ type (
 		Toolset     *ToolsetData
 		AgentImport *codegen.ImportSpec
 		SpecsAlias  string
-		Tools       []*toolRenderData
+		Tools       []*exampleExecutorToolData
+		Register    bool
+	}
+
+	// exampleExecutorToolData describes one generated branch in a starter
+	// executor. All names come from the saved tool package plan.
+	exampleExecutorToolData struct {
+		ID               string
+		ConstName        string
+		TypedTool        string
+		InjectDecodeFunc string
+		ResultExample    string
+		HasResult        bool
+		HasResultExample bool
 	}
 
 	mcpExecutorFileData struct {

@@ -412,9 +412,15 @@ func (v *Value) planTypes() error {
 				return goacodegen.GoTypeBinding{}, err
 			}
 			return goacodegen.GoTypeBinding{Owner: v.plan.pkg.ImportPath(), Union: declaration}, nil
-		default:
+		case goacodegen.GoPrimitive,
+			goacodegen.GoArray,
+			goacodegen.GoMap,
+			goacodegen.GoStruct,
+			goacodegen.GoEmpty,
+			goacodegen.GoServiceError:
 			return goacodegen.GoTypeBinding{}, fmt.Errorf("unsupported transport type kind %s", request.Kind)
 		}
+		return goacodegen.GoTypeBinding{}, fmt.Errorf("unsupported transport type kind %s", request.Kind)
 	}
 	policy := transportPolicy()
 	for _, planned := range v.types {

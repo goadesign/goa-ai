@@ -1,4 +1,4 @@
-// This file builds the information needed to write each agent toolset. It reads
+// Package codegen builds the information needed to write each agent toolset. It reads
 // the evaluated tool definitions, finds their Goa services, and sorts the tools
 // before templates write the generated files.
 package codegen
@@ -216,6 +216,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		Bookkeeping:        expr.Bookkeeping,
 		ResultReminder:     expr.ResultReminder,
 	}
+	tool.HasResult = tool.Return != nil && tool.Return.Type != goaexpr.Empty
 	tool.ModelHiddenPayloadFields = modelHiddenPayloadFields(expr)
 	// Resolve each injected field from the complete public input. The private
 	// JSON input hides these fields separately.
@@ -267,6 +268,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		if me != nil && me.Payload.Type != goaexpr.Empty {
 			// Expose attribute for template default adapter generation.
 			tool.MethodPayloadAttr = me.Payload
+			tool.HasMethodPayload = true
 			if md.PayloadLoc != nil && md.PayloadLoc.PackageName() != "" {
 				tool.MethodPayloadTypeRef = md.PayloadRef
 			} else {
@@ -277,6 +279,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		}
 		if me != nil && me.Result.Type != goaexpr.Empty {
 			tool.MethodResultAttr = me.Result
+			tool.HasMethodResult = true
 			if md.ResultLoc != nil && md.ResultLoc.PackageName() != "" {
 				tool.MethodResultTypeRef = md.ResultRef
 			} else {
@@ -298,8 +301,8 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 			ts.SourceService.Name,
 		)
 	}
-	// Derive HasResult from tool.Return or bound method result.
-	tool.HasResult = (tool.Return != nil && tool.Return.Type != goaexpr.Empty) || (tool.MethodResultAttr != nil && tool.MethodResultAttr.Type != goaexpr.Empty)
+	// A bound method may return a value even when the tool does not declare one.
+	tool.HasResult = tool.HasResult || (tool.MethodResultAttr != nil && tool.MethodResultAttr.Type != goaexpr.Empty)
 	// Compute aliasing flags for payload and result against method types when bound.
 	if tool.IsMethodBacked {
 		tool.PayloadAliasesMethod = ToolAttrAliasesMethod(tool.Args, tool.MethodPayloadAttr)
@@ -529,4 +532,3 @@ func mustFindMethodExpr(root *goaexpr.RootExpr, serviceName, methodName string) 
 	}
 	return svc.Method(methodName)
 }
-

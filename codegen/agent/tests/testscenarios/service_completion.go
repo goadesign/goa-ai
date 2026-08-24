@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -31,8 +31,8 @@ func ServiceCompletion() func() {
 		})
 
 		Service("tasks", func() {
-			aidsl.Completion("draft_from_transcript", "Synthesize a task draft from a transcript", func() {
-				aidsl.Return(CompletionResult)
+			Completion("draft_from_transcript", "Synthesize a task draft from a transcript", func() {
+				Return(CompletionResult)
 			})
 		})
 	}

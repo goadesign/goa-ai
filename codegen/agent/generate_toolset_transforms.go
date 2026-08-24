@@ -1,4 +1,4 @@
-// This file builds the functions that copy values between a tool package and
+// Package codegen builds the functions that copy values between a tool package and
 // its Goa service. The names and conversion steps are saved before files are
 // written, so every file uses the same final names.
 package codegen
@@ -8,6 +8,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"goa.design/goa-ai/codegen/naming"
 	"goa.design/goa-ai/codegen/shared"
@@ -114,7 +115,12 @@ func (p *toolSpecsPackagePlan) linkToolTransforms(genpkg string, ts *ToolsetData
 	}
 
 	if len(specs.adapterTransforms) > 0 {
-		specs.adapterImports = adapterTransformImports(svcAlias, svcImport, extraImports)
+		specs.adapterImports = adapterTransformImports(
+			svcAlias,
+			svcImport,
+			specs.adapterTransforms,
+			extraImports,
+		)
 	}
 	return nil
 }
@@ -140,9 +146,23 @@ func renderToolTransform(plan *codegen.TransformPlan, source, target *codegen.At
 
 // adapterTransformImports returns imports in path order and gives each package
 // a different local name.
-func adapterTransformImports(serviceAlias, serviceImport string, extra map[string]*codegen.ImportSpec) []*codegen.ImportSpec {
-	imports := []*codegen.ImportSpec{{Name: serviceAlias, Path: serviceImport}}
-	used := map[string]struct{}{serviceAlias: {}}
+func adapterTransformImports(
+	serviceAlias, serviceImport string,
+	transforms []transformFuncData,
+	extra map[string]*codegen.ImportSpec,
+) []*codegen.ImportSpec {
+	var imports []*codegen.ImportSpec
+	used := make(map[string]struct{})
+	qualifier := serviceAlias + "."
+	for _, transform := range transforms {
+		if strings.Contains(transform.ParamTypeRef, qualifier) ||
+			strings.Contains(transform.ResultTypeRef, qualifier) ||
+			strings.Contains(transform.Body, qualifier) {
+			imports = append(imports, &codegen.ImportSpec{Name: serviceAlias, Path: serviceImport})
+			used[serviceAlias] = struct{}{}
+			break
+		}
+	}
 	paths := make([]string, 0, len(extra))
 	for importPath := range extra {
 		if importPath != "" && importPath != serviceImport {
@@ -199,4 +219,3 @@ func serverDataSourceMayBeNil(result *expr.AttributeExpr, field string, source *
 	}
 	return result.IsPrimitivePointer(field, false)
 }
-

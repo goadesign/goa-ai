@@ -1,4 +1,4 @@
-// This file defines a reusable injected toolset with direct Goa and goa-ai DSL calls.
+// Package testscenarios defines reusable Goa and goa-ai designs for generator tests.
 package testscenarios
 
 import (

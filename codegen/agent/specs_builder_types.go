@@ -1,4 +1,4 @@
-// This file stores the tool names, types, schemas, and JSON functions read by
+// Package codegen stores the tool names, types, schemas, and JSON functions read by
 // generated tool files.
 package codegen
 
@@ -101,6 +101,8 @@ type (
 		Payload *typeData
 		// Type metadata for the tool's output result.
 		Result *typeData
+		// HasResult reports whether the tool returns a value.
+		HasResult bool
 		// Bounds declares the out-of-band bounded-result contract for this tool.
 		// It is propagated into ToolSpec for runtime consumers.
 		Bounds *ToolBoundsData
@@ -192,6 +194,9 @@ type (
 		// available. For payloads, it is derived from Goa examples and can be used
 		// by runtimes to surface concrete examples in correction directives or UI prompts.
 		ExampleJSON []byte
+		// ScaffoldExampleJSON holds a result example for starter application code.
+		// It is not included in the schema shown to the model.
+		ScaffoldExampleJSON []byte
 		// Typed codec variable name (e.g., "MyToolPayloadCodec").
 		ExportedCodec string
 		// InjectDecodeFunc is the generated composed decode helper name
@@ -345,4 +350,3 @@ const (
 	usageResult     typeUsage = "result"
 	usageServerData typeUsage = "server-data"
 )
-

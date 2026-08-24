@@ -1,4 +1,4 @@
-// This file verifies that generated MCP services publish the JSON-RPC errors
+// Package codegen verifies that generated MCP services publish the JSON-RPC errors
 // returned by their adapters.
 package codegen
 

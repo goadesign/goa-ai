@@ -1,4 +1,4 @@
-// This file checks the pairing between semantic tool data and the final names
+// Package codegen checks the pairing between tool data and the final names
 // selected for the generated tool package.
 package codegen
 

@@ -21,14 +21,14 @@ type (
 		// Address
 		Address *Address
 	}
-	// Address is a nested type used by generated tool data.
+	// Address is a nested type used by the generated JSON contract.
 	Address = struct {
 		// Street
 		Street string
 		// City
 		City string
 	}
-	// Profile is a nested type used by generated tool data.
+	// Profile is a nested type used by the generated JSON contract.
 	Profile = struct {
 		// Identifier
 		ID string

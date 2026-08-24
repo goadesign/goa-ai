@@ -1,4 +1,4 @@
-// This file stores the agent design and exact Goa service plan used by one
+// Package codegen stores the agent design and exact Goa service plan used by one
 // generation command. File writing uses only these saved values.
 package codegen
 
@@ -41,7 +41,7 @@ func (p *agentPluginPlan) plan(core *goagenerator.Plan) error {
 		return fmt.Errorf("agent root not found in evaluated designs")
 	}
 	if goaRoot == nil {
-		return fmt.Errorf("Goa service root not found in evaluated designs")
+		return fmt.Errorf("goa service root not found in evaluated designs")
 	}
 	servicePlan := core.Service(goaRoot)
 	var err error

@@ -724,9 +724,17 @@ func resourceQueryValueType(dt expr.DataType) (string, string) {
 		return "float32", "32"
 	case expr.Float64Kind:
 		return "float64", "64"
-	default:
+	case expr.BytesKind,
+		expr.ArrayKind,
+		expr.ObjectKind,
+		expr.MapKind,
+		expr.UnionKind,
+		expr.UserTypeKind,
+		expr.ResultTypeKind,
+		expr.AnyKind:
 		panic(fmt.Sprintf("unsupported resource query type %q", underlying.Name()))
 	}
+	panic(fmt.Sprintf("unsupported resource query type %q", underlying.Name()))
 }
 
 // attributeDataType recovers the full attribute metadata for base and reference
@@ -804,7 +812,7 @@ func resourceQueryUnderlyingType(dt expr.DataType) expr.DataType {
 
 // buildDynamicPromptAdapters creates adapter data for dynamic prompts
 func (g *adapterGenerator) buildDynamicPromptAdapters() []*DynamicPromptAdapter {
-	var adapters []*DynamicPromptAdapter
+	adapters := make([]*DynamicPromptAdapter, 0, len(g.dynamicPrompts))
 
 	for _, dp := range g.dynamicPrompts {
 		hasRealPayload := dp.Method.Payload != nil && dp.Method.Payload.Type != expr.Empty

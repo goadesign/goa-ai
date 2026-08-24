@@ -72,17 +72,11 @@ func BuildAndGenerateWithPkg(t *testing.T, genpkg string, design func()) []*gcod
 // generated import contract into a standalone module.
 func BuildAndGenerateWithExamplePkg(t *testing.T, genpkg string, design func()) []*gcodegen.File {
 	t.Helper()
-	SetupEvalRoots(t)
+	roots := SetupEvalRoots(t)
 	ok := eval.Execute(design, nil)
 	require.True(t, ok, eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	roots := []eval.Root{goaexpr.Root, agentsExpr.Root, evalsExpr.Root}
-	require.NoError(t, codegen.Prepare(genpkg, roots))
-	files, err := codegen.Generate(genpkg, roots, nil)
-	require.NoError(t, err)
-	files, err = codegen.GenerateExample(genpkg, roots, files)
-	require.NoError(t, err)
-	return files
+	return buildAgentFiles(t, genpkg, roots, true)
 }
 
 // BuildAndGenerateExample executes the DSL, runs example-phase codegen and returns files.

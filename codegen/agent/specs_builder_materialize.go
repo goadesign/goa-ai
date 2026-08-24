@@ -1,4 +1,4 @@
-// This file turns Goa types into the public Go types and HTTP decoding types
+// Package codegen turns Goa types into the public Go types and HTTP decoding types
 // written for generated tools and completions.
 package codegen
 
@@ -137,7 +137,7 @@ func (b *toolSpecBuilder) materializeNestedLocalTypes(scope *codegen.NameScope, 
 		b.types[key] = &typeData{
 			Key:         key,
 			TypeName:    name,
-			Doc:         name + " is a nested type used by generated tool data.",
+			Doc:         name + " is a nested type used by the generated JSON contract.",
 			Def:         name + " = " + scope.GoTypeDef(ut.AttributeExpr, ptr, useDefault),
 			FullRef:     name,
 			NeedType:    true,

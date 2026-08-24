@@ -16,6 +16,8 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
+const readDocumentMethod = "ReadDocument"
+
 func TestPrepareServices_RejectsUnmappedMCPMethods(t *testing.T) {
 	restore := resetMCPCodegenState(t)
 	defer restore()
@@ -102,7 +104,7 @@ func TestGenerateMCPClientAdapter_DoesNotRenderOriginalClientFallback(t *testing
 	data.Tools[0].ServiceMethodName = "Add"
 	data.clientMethodNames = []string{"Add"}
 	setTestClientRenderNames(data, svc)
-	files := generateMCPClientAdapter("example.com/calc/gen", svc, data)
+	files := generateMCPClientAdapter(data)
 
 	require.Len(t, files, 1)
 	require.NotContains(t, renderGeneratedFile(t, files[0]), "origClient")
@@ -133,8 +135,8 @@ func TestGenerateMCPClientAdapter_RendersNotificationEndpoints(t *testing.T) {
 	).buildAdapterData()
 
 	require.NoError(t, err)
-	data.CodecImportPath = "example.com/assistant/gen/mcp_assistant/internal/codec"
-	data.CodecPackage = "mcpcodec"
+	data.CodecImportPath = testCodecImportPath
+	data.CodecPackage = testCodecPackage
 	data.NeedsClientCodec = true
 	data.Notifications[0].ServiceMethodName = "SendNotification"
 	data.Notifications[0].PayloadType = "*assistant.SendNotificationPayload"
@@ -144,7 +146,7 @@ func TestGenerateMCPClientAdapter_RendersNotificationEndpoints(t *testing.T) {
 	data.Notifications[0].Codec = &MethodCodecData{PayloadEncode: "EncodeSendNotificationPayload"}
 	data.clientMethodNames = []string{"SendNotification"}
 	setTestClientRenderNames(data, svc)
-	files := generateMCPClientAdapter("example.com/assistant/gen", svc, data)
+	files := generateMCPClientAdapter(data)
 
 	require.Len(t, files, 1)
 	rendered := renderGeneratedFile(t, files[0])
@@ -213,15 +215,15 @@ func TestGenerateMCPClientAdapter_DecodesResourceResultsWithGeneratedCodec(t *te
 	).buildAdapterData()
 
 	require.NoError(t, err)
-	data.CodecImportPath = "example.com/assistant/gen/mcp_assistant/internal/codec"
-	data.CodecPackage = "mcpcodec"
+	data.CodecImportPath = testCodecImportPath
+	data.CodecPackage = testCodecPackage
 	data.NeedsClientCodec = true
-	data.Resources[0].ServiceMethodName = "ReadDocument"
+	data.Resources[0].ServiceMethodName = readDocumentMethod
 	data.Resources[0].PayloadType = "*assistant.ReadDocumentPayload"
 	data.Resources[0].Codec = &MethodCodecData{ResultDecode: "DecodeReadDocumentResult"}
-	data.clientMethodNames = []string{"ReadDocument"}
+	data.clientMethodNames = []string{readDocumentMethod}
 	setTestClientRenderNames(data, svc)
-	files := generateMCPClientAdapter("example.com/assistant/gen", svc, data)
+	files := generateMCPClientAdapter(data)
 
 	require.Len(t, files, 1)
 	rendered := renderGeneratedFile(t, files[0])
@@ -252,14 +254,14 @@ func TestGenerateMCPClientAdapter_DecodesDynamicPromptResultsWithGeneratedCodec(
 	).buildAdapterData()
 
 	require.NoError(t, err)
-	data.CodecImportPath = "example.com/assistant/gen/mcp_assistant/internal/codec"
-	data.CodecPackage = "mcpcodec"
+	data.CodecImportPath = testCodecImportPath
+	data.CodecPackage = testCodecPackage
 	data.NeedsClientCodec = true
 	data.DynamicPrompts[0].ServiceMethodName = "GeneratePrompt"
 	data.DynamicPrompts[0].Codec = &MethodCodecData{ResultDecode: "DecodeGeneratePromptResult"}
 	data.clientMethodNames = []string{"GeneratePrompt"}
 	setTestClientRenderNames(data, svc)
-	files := generateMCPClientAdapter("example.com/assistant/gen", svc, data)
+	files := generateMCPClientAdapter(data)
 
 	require.Len(t, files, 1)
 	rendered := renderGeneratedFile(t, files[0])
@@ -293,16 +295,16 @@ func TestGenerateMCPClientAdapter_SpecializesResourceQueryConstruction(t *testin
 	).buildAdapterData()
 
 	require.NoError(t, err)
-	data.CodecImportPath = "example.com/assistant/gen/mcp_assistant/internal/codec"
-	data.CodecPackage = "mcpcodec"
+	data.CodecImportPath = testCodecImportPath
+	data.CodecPackage = testCodecPackage
 	data.NeedsClientCodec = true
-	data.Resources[0].ServiceMethodName = "ReadDocument"
+	data.Resources[0].ServiceMethodName = readDocumentMethod
 	data.Resources[0].PayloadType = "*assistant.ReadDocumentPayload"
 	data.Resources[0].Codec = &MethodCodecData{ResultDecode: "DecodeReadDocumentResult"}
-	data.clientMethodNames = []string{"ReadDocument"}
+	data.clientMethodNames = []string{readDocumentMethod}
 	setTestResourceQuerySelectors(t, data.Resources[0])
 	setTestClientRenderNames(data, svc)
-	files := generateMCPClientAdapter("example.com/assistant/gen", svc, data)
+	files := generateMCPClientAdapter(data)
 
 	require.Len(t, files, 1)
 	rendered := renderGeneratedFile(t, files[0])
@@ -619,8 +621,8 @@ func TestPrepareServices_AcceptedPureMCPServiceAssignsEveryOriginalEndpoint(t *t
 	require.Equal(t, "read_document", data.Resources[0].userMethodName)
 	require.Equal(t, "generate_prompt", data.DynamicPrompts[0].userMethodName)
 	require.Equal(t, "send_notification", data.Notifications[0].userMethodName)
-	data.CodecImportPath = "example.com/assistant/gen/mcp_assistant/internal/codec"
-	data.CodecPackage = "mcpcodec"
+	data.CodecImportPath = testCodecImportPath
+	data.CodecPackage = testCodecPackage
 	data.NeedsClientCodec = true
 	data.Tools[0].HasPayload = true
 	data.Tools[0].PayloadType = "*assistant.AnalyzeRequest"
@@ -646,13 +648,13 @@ func TestPrepareServices_AcceptedPureMCPServiceAssignsEveryOriginalEndpoint(t *t
 	data.Notifications[0].MCPMethodName = "NotifyStatusUpdate"
 	data.Notifications[0].PayloadRef = "*SendNotificationPayload"
 	data.Tools[0].ServiceMethodName = "Analyze"
-	data.Resources[0].ServiceMethodName = "ReadDocument"
+	data.Resources[0].ServiceMethodName = readDocumentMethod
 	data.DynamicPrompts[0].ServiceMethodName = "GeneratePrompt"
 	data.Notifications[0].ServiceMethodName = "SendNotification"
-	data.clientMethodNames = []string{"Analyze", "ReadDocument", "GeneratePrompt", "SendNotification"}
+	data.clientMethodNames = []string{"Analyze", readDocumentMethod, "GeneratePrompt", "SendNotification"}
 	setTestClientRenderNames(data, svc)
 
-	files := generateMCPClientAdapter("example.com/assistant/gen", svc, data)
+	files := generateMCPClientAdapter(data)
 	require.Len(t, files, 1)
 
 	rendered := renderGeneratedFile(t, files[0])

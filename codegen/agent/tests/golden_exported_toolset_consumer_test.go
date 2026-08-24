@@ -1,4 +1,4 @@
-// This file verifies that an agent consuming another agent's tools uses the
+// Package tests verifies that an agent consuming another agent's tools uses the
 // exact Go names declared in the exporting agent's generated package.
 package tests
 
@@ -16,7 +16,7 @@ func TestGoldenExportedToolsetConsumer(t *testing.T) {
 	files := buildAndGenerate(t, exportedToolsetConsumerDesign())
 	aggregate := fileContent(t, files, "gen/consumer/agents/worker/specs/specs.go")
 
-	require.Contains(t, aggregate, "ada.SpecFetch")
+	require.Contains(t, aggregate, "ada.Spec(ada.Fetch)")
 	require.Contains(t, aggregate, "ada.Fetch")
 	require.NotContains(t, aggregate, "ada.,")
 	assertGoldenGo(t, "exported_toolset_consumer", "specs.go.golden", aggregate)

@@ -1,4 +1,4 @@
-// This file reads the final names for unions and builds the data used to write
+// Package codegen reads the final names for unions and builds the data used to write
 // each union type, branch constructor, and JSON function.
 package codegen
 

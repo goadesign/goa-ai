@@ -1,4 +1,4 @@
-// This file builds clients that read tool definitions from configured
+// Package codegen builds clients that read tool definitions from configured
 // registries.
 package codegen
 

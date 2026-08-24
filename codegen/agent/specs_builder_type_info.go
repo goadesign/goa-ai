@@ -1,4 +1,4 @@
-// This file builds each generated type together with its JSON schema, example,
+// Package codegen builds each generated type together with its JSON schema, example,
 // validation code, and conversion functions.
 package codegen
 
@@ -99,10 +99,11 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	schemaAttr := cloneModelSchemaAttribute(transportAttr)
 
 	// Only examples written by the design author are shown to the model.
+	authoredExample := authoredExampleForAttribute(att)
 	var example *exampleData
 	if usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion) {
 		// Union examples use the {type,value} JSON form accepted by the decoder.
-		example = authoredExampleForAttribute(att)
+		example = authoredExample
 	}
 
 	var err error
@@ -206,6 +207,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		SchemaJSON:                   schemaBytes,
 		SchemaWithoutRootExampleJSON: schemaWithoutRootExampleBytes,
 		ExampleJSON:                  exampleBytes,
+		ScaffoldExampleJSON:          exampleJSON(authoredExample),
 		ExportedCodec:                planned.exportedCodec.Name(),
 		GenericCodec:                 planned.genericCodec.Name(),
 		MarshalFunc:                  planned.marshal.Name(),
@@ -525,4 +527,3 @@ func modelVisibleNextCursorField(bounds *ToolBoundsData) string {
 // isEmptyStruct reports whether the provided attribute ultimately resolves to
 // an object with no fields (empty struct). It follows user type aliases to
 // inspect the underlying attribute graph.
-

@@ -1,4 +1,4 @@
-// This file checks how agent code generation reads Goa-backed MCP tools.
+// Package codegen checks how agent code generation reads Goa-backed MCP tools.
 package codegen
 
 import (

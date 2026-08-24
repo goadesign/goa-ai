@@ -342,4 +342,3 @@ func TestReusableProviderInjectsSession(t *testing.T) {
 	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-count=1",
 		"./gen/atlas/toolsets/helpers", "./gen/chat/agents/assistant/helpers"))
 }
-
