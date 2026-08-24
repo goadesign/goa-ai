@@ -412,10 +412,10 @@ the framework validates its result against the same completion contract.
 Gemini 3 uses thinking levels rather than numeric thinking-token budgets, and
 thinking cannot be disabled. The provider-neutral request can enable the
 model's default thinking behavior, but a numeric budget or explicit
-`Thinking.Enable=false` is rejected. Gemini 3 also runs at temperature 1; a
-different configured or per-request temperature fails before the provider
-call. A client-level numeric `ThinkingBudget` applies only to older Gemini
-models that accept token budgets; Gemini 3 does not inherit it.
+`Thinking.Enable=false` is rejected. API-valid configured and per-request
+temperatures are forwarded to Vertex unchanged. A client-level numeric
+`ThinkingBudget` applies only to older Gemini models that accept token budgets;
+Gemini 3 does not inherit it.
 
 ---
 
