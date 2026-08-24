@@ -974,8 +974,8 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 
 Recovery activities preserve the caller-authorized catalog for `correct_call`
 failures and remove tools selected only by `replan` failures. Caller
-`WithRestrictToTool` continues to define the largest tool list available for
-the entire run.
+`WithRestrictToTool` policy remains run-scoped and continues to define the
+maximum available catalog.
 
 `WithTiming(Timing)` sets semantic run/planner/tool budgets. It does not expose
 engine-level queue-wait or heartbeat tuning.

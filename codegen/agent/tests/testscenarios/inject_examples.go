@@ -1,13 +1,13 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
-// InjectBoundMetaExample defines a bound tool that fills session_id from call
-// metadata and household_id from labels fixed when the run starts. The
-// generated provider must pass both values to the bound service method.
+// InjectBoundMetaExample defines a BindTo tool that injects session_id from
+// call metadata and household_id from immutable run labels. It exercises the
+// complete generated registry provider path for both injection sources.
 func InjectBoundMetaExample() func() {
 	return func() {
 		API("atlas", func() {})
@@ -24,11 +24,11 @@ func InjectBoundMetaExample() func() {
 					Required("ok")
 				})
 			})
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("helpers", func() {
-					aidsl.Tool("get_data", "Get data", func() {
-						aidsl.BindTo("get_data")
-						aidsl.Inject("household_id", "session_id")
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("get_data", "Get data", func() {
+						BindTo("get_data")
+						Inject("household_id", "session_id")
 					})
 				})
 			})
@@ -55,12 +55,12 @@ func InjectLabelExample() func() {
 			Required("ok")
 		})
 		Service("calc", func() {
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("helpers", func() {
-					aidsl.Tool("lookup_household", "Lookup scoped to a household", func() {
-						aidsl.Args(LookupByHousehold)
-						aidsl.Return(LookupResult)
-						aidsl.Inject("household_id", "session_id")
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("lookup_household", "Lookup scoped to a household", func() {
+						Args(LookupByHousehold)
+						Return(LookupResult)
+						Inject("household_id", "session_id")
 					})
 				})
 			})
@@ -79,34 +79,34 @@ func InjectMultiToolsetLabelsExample() func() {
 	return func() {
 		API("calc", func() {})
 		Service("calc", func() {
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("helpers", func() {
-					aidsl.Tool("lookup_household", "Lookup scoped to a household", func() {
-						aidsl.Args(func() {
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("lookup_household", "Lookup scoped to a household", func() {
+						Args(func() {
 							Attribute("household_id", String, "Household to scope the search to.")
 							Attribute("query", String, "Search query.")
 							Required("household_id", "query")
 						})
-						aidsl.Return(func() {
+						Return(func() {
 							Attribute("ok", Boolean, "Whether the lookup succeeded.")
 							Required("ok")
 						})
-						aidsl.Inject("household_id")
+						Inject("household_id")
 					})
 				})
-				aidsl.Use("audit", func() {
-					aidsl.Tool("record_access", "Record a data access", func() {
-						aidsl.Args(func() {
+				Use("audit", func() {
+					Tool("record_access", "Record a data access", func() {
+						Args(func() {
 							Attribute("tenant_id", String, "Tenant that owns the audit trail.")
 							Attribute("household_id", String, "Household the access touched.")
 							Attribute("action", String, "Action performed.")
 							Required("tenant_id", "household_id", "action")
 						})
-						aidsl.Return(func() {
+						Return(func() {
 							Attribute("ok", Boolean, "Whether the record was written.")
 							Required("ok")
 						})
-						aidsl.Inject("tenant_id", "household_id")
+						Inject("tenant_id", "household_id")
 					})
 				})
 			})
@@ -115,7 +115,7 @@ func InjectMultiToolsetLabelsExample() func() {
 }
 
 // InjectMixedBoundUnboundExample defines a single toolset mixing a
-// method-backed (BindTo) tool that declares NO aidsl.Inject() fields with an
+// method-backed (BindTo) tool that declares NO Inject() fields with an
 // unbound tool that injects a label-backed field. The generated registry
 // provider.go only emits dispatch cases for method-backed tools, so its
 // runtime.ToolCallMeta construction must be gated on injecting
@@ -136,24 +136,24 @@ func InjectMixedBoundUnboundExample() func() {
 					Required("ok")
 				})
 			})
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("helpers", func() {
-					aidsl.Tool("get_data", "Get data", func() {
-						aidsl.BindTo("get_data")
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("get_data", "Get data", func() {
+						BindTo("get_data")
 					})
-					aidsl.Tool("lookup_household", "Lookup scoped to a household", func() {
-						aidsl.Args(func() {
+					Tool("lookup_household", "Lookup scoped to a household", func() {
+						Args(func() {
 							Attribute("household_id", String, "Household to scope the search to.", func() {
 								Pattern("^[a-z0-9-]+$")
 							})
 							Attribute("query", String, "Search query.")
 							Required("household_id", "query")
 						})
-						aidsl.Return(func() {
+						Return(func() {
 							Attribute("ok", Boolean, "Whether the lookup succeeded.")
 							Required("ok")
 						})
-						aidsl.Inject("household_id")
+						Inject("household_id")
 					})
 				})
 			})

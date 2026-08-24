@@ -1,8 +1,7 @@
-// Package codegen turns Goa types into the public Go types and HTTP decoding types
-// written for generated tools and completions.
 package codegen
 
 import (
+	"path"
 	"sort"
 	"strings"
 
@@ -12,28 +11,35 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// buildTypeDefinition builds one Go type definition, the name used to refer to
-// it, and its imports.
+// materialize computes the Go type definition (or alias), its fully-qualified
+// reference, and required imports for the given attribute.
 //
-// useDefault controls whether a primitive field with a default is stored as a
-// value or a pointer.
-func (b *toolSpecBuilder) buildTypeDefinition(typeName string, att *goaexpr.AttributeExpr, scope *codegen.NameScope, defineType bool, ptr bool, useDefault bool) (tt *goaexpr.AttributeExpr, defLine string, fullRef string, imports []*codegen.ImportSpec) {
+// useDefault controls default-value pointer elision for primitive fields in
+// object types (see goa expr.AttributeExpr.IsPrimitivePointer).
+func (b *toolSpecBuilder) materialize(typeName string, att *goaexpr.AttributeExpr, scope *codegen.NameScope, defineType bool, ptr bool, useDefault bool) (tt *goaexpr.AttributeExpr, defLine string, fullRef string, imports []*codegen.ImportSpec) {
 	if att.Type == goaexpr.Empty {
-		// Give an empty payload a named empty struct so generated functions can
-		// always refer to a concrete type.
+		// Synthesize a concrete, named empty payload type so templates
+		// always have a valid type reference. Using an alias keeps
+		// pointer/value semantics straightforward and avoids generating
+		// unnecessary struct declarations.
 		if defineType {
 			return att, typeName + " struct{}", typeName, nil
 		}
 		return att, typeName + " = struct{}", typeName, nil
 	}
 
+	// Base imports from attribute metadata and locations
 	imports = shared.GatherAttributeImports(b.genpkg, att)
 
+	// Use Goa's type definition helpers to compute RHS of the type definition.
 	switch dt := att.Type.(type) {
 	case goaexpr.UserType:
-		// Ignore the source type's package setting when defining the new local
-		// type. Nested types keep their package settings, so a type such as
-		// types.TaskDefinition keeps the types prefix.
+		// Materialize a local shape based on the underlying attribute.
+		// The tool specs package is always the "current" package for these types.
+		// Do NOT let struct:pkg:path on the *source* user type influence the
+		// qualification decisions inside inline structs: it would treat nested
+		// shared types (pkg "types") as if they were local and emit
+		// `TaskDefinition` instead of `types.TaskDefinition`.
 		rhs := scope.GoTypeDef(stripStructPkgMeta(dt.Attribute()), ptr, useDefault)
 		if defineType {
 			defLine = typeName + " " + rhs
@@ -41,27 +47,87 @@ func (b *toolSpecBuilder) buildTypeDefinition(typeName string, att *goaexpr.Attr
 			defLine = typeName + " = " + rhs
 		}
 		fullRef = typeName
-		// Use the underlying attribute for schema and validation so we do not write
+		// Use the underlying attribute for schema/validation walks so we don't emit
 		// validators for the *design* user type name (which does not exist in the
 		// generated specs package).
 		tt = dt.Attribute()
-	case *goaexpr.Array, *goaexpr.Map:
+	case *goaexpr.Array:
+		// Build alias to composite; if self-referential, introduce element helper.
 		comp := scope.GoTypeDef(att, ptr, useDefault)
-		defLine = typeName + " = " + comp
-		fullRef = typeName
+		if strings.Contains(comp, typeName) {
+			elemName := typeName + "Item"
+			elemKey := "name:" + elemName
+			if _, exists := b.types[elemKey]; !exists {
+				elemComp := scope.GoTypeDef(dt.ElemType, ptr, useDefault)
+				b.types[elemKey] = &typeData{
+					Key:           elemKey,
+					TypeName:      elemName,
+					Doc:           elemName + " is a helper element for " + typeName + ".",
+					Def:           elemName + " = " + elemComp,
+					FullRef:       elemName,
+					NeedType:      true,
+					TypeImports:   shared.GatherAttributeImports(b.genpkg, dt.ElemType),
+					ExportedCodec: "",
+					GenericCodec:  "",
+					GenerateCodec: false,
+				}
+			}
+			defLine = typeName + " = []" + elemName
+			fullRef = typeName
+		} else {
+			defLine = typeName + " = " + comp
+			fullRef = typeName
+		}
+	case *goaexpr.Map:
+		comp := scope.GoTypeDef(att, ptr, useDefault)
+		if strings.Contains(comp, typeName) {
+			valName := typeName + "Value"
+			valKey := "name:" + valName
+			if _, exists := b.types[valKey]; !exists {
+				valComp := scope.GoTypeDef(dt.ElemType, ptr, useDefault)
+				b.types[valKey] = &typeData{
+					Key:           valKey,
+					TypeName:      valName,
+					Doc:           valName + " is a helper value for " + typeName + ".",
+					Def:           valName + " = " + valComp,
+					FullRef:       valName,
+					NeedType:      true,
+					TypeImports:   shared.GatherAttributeImports(b.genpkg, dt.ElemType),
+					ExportedCodec: "",
+					GenericCodec:  "",
+					GenerateCodec: false,
+				}
+			}
+			keyRef := scope.GoTypeDef(dt.KeyType, ptr, useDefault)
+			defLine = typeName + " = map[" + keyRef + "]" + valName
+			fullRef = typeName
+		} else {
+			defLine = typeName + " = " + comp
+			fullRef = typeName
+		}
 	case *goaexpr.Union:
+		// Unions are generated as named sum types. Alias the tool-facing type to
+		// the union type name so codecs and schemas can refer to the tool name
+		// while preserving the union method set.
 		rhs := scope.GoTypeDef(att, false, true)
 		defLine = typeName + " = " + rhs
 		fullRef = typeName
 	case *goaexpr.Object, goaexpr.CompositeExpr:
+		// Alias to inline struct definition using Goa's type def helper without
+		// service package qualification so nested service user types are
+		// referenced locally.
 		rhs := scope.GoTypeDef(att, ptr, useDefault)
 		if defineType {
+			// Emit a concrete struct type when code generation needs a named
+			// definition instead of a type alias.
 			defLine = typeName + " " + rhs
 		} else {
 			defLine = typeName + " = " + rhs
 		}
 		fullRef = typeName
 	default:
+		// Primitives (and other scalar types): alias to the underlying type so
+		// the specs package always exposes a stable, tool-scoped type name.
 		rhs := scope.GoTypeDef(att, false, true)
 		defLine = typeName + " = " + rhs
 		fullRef = typeName
@@ -72,8 +138,8 @@ func (b *toolSpecBuilder) buildTypeDefinition(typeName string, att *goaexpr.Attr
 	return tt, defLine, fullRef, imports
 }
 
-// stableTypeKey returns a map key made from the toolset, tool, value kind, and
-// server-data kind.
+// stableTypeKey returns a deterministic cache key for a contract-owned public
+// type name within its generation scope.
 func stableTypeKey(owner *contractTypeOwner, usage typeUsage, qualifier string) string {
 	if owner == nil {
 		return ""
@@ -84,7 +150,7 @@ func stableTypeKey(owner *contractTypeOwner, usage typeUsage, qualifier string) 
 		tn += "Payload"
 	case usageResult:
 		tn += "Result"
-	case usageServerData:
+	case usageSidecar:
 		if qualifier != "" {
 			tn += codegen.Goify(qualifier, true)
 		}
@@ -102,102 +168,55 @@ func newToolSpecsData(genpkg string, svc *service.Data) *toolSpecsData {
 	}
 }
 
-// newToolSpecBuilder creates one builder that reads the final names saved for
-// the public package and its HTTP package.
-func newToolSpecBuilder(genpkg string, svc *service.Data, planned *toolSpecsPackagePlan, api *goaexpr.APIExpr) *toolSpecBuilder {
-	publicScope := planned.public.Scope().Fork()
-	transportScope := planned.transport.Scope().Fork()
+// newToolSpecBuilder constructs a builder for one specs package generation run.
+func newToolSpecBuilder(genpkg string, svc *service.Data) *toolSpecBuilder {
+	// Use a fresh NameScope per specs package generation. This matches Goa’s
+	// transport generators and avoids accumulating suffixes across multiple
+	// generator passes (e.g., Find3).
+	scope := codegen.NewNameScope()
+	svcImports := make(map[string]*codegen.ImportSpec)
+	for _, im := range svc.UserTypeImports {
+		if im.Path == "" {
+			continue
+		}
+		alias := im.Name
+		if alias == "" {
+			alias = path.Base(im.Path)
+		}
+		svcImports[alias] = im
+	}
 	return &toolSpecBuilder{
-		genpkg:               genpkg,
-		service:              svc,
-		api:                  api,
-		publicScope:          publicScope,
-		transportScope:       transportScope,
-		publicPackage:        planned.public,
-		transportPackage:     planned.transport,
-		publicUnionErrors:    planned.publicUnionErrors,
-		transportUnionErrors: planned.transportUnionErrors,
-		planned:              planned,
-		svcScope:             publicScope,
-		types:                make(map[string]*typeData),
-		helperScope:          publicScope,
-		unions:               make(map[codegen.UnionTypeID]*unionTypeData),
-		transportUnions:      make(map[codegen.UnionTypeID]*unionTypeData),
+		genpkg:                   genpkg,
+		service:                  svc,
+		svcScope:                 scope,
+		svcImports:               svcImports,
+		types:                    make(map[string]*typeData),
+		helperScope:              scope,
+		unions:                   make(map[string]*unionTypeData),
+		codecTransformHelperKeys: make(map[string]struct{}),
 	}
 }
 
-// materializeNestedLocalTypes writes the public nested types saved by the plan.
-func (b *toolSpecBuilder) materializeNestedLocalTypes(scope *codegen.NameScope, locals []*goaexpr.UserTypeExpr, ptr, useDefault bool) {
-	for _, ut := range locals {
-		name := scope.GoTypeName(&goaexpr.AttributeExpr{Type: ut})
-		key := "name:" + name
-		if _, exists := b.types[key]; exists {
-			continue
-		}
-		b.types[key] = &typeData{
-			Key:         key,
-			TypeName:    name,
-			Doc:         name + " is a nested type used by the generated JSON contract.",
-			Def:         name + " = " + scope.GoTypeDef(ut.AttributeExpr, ptr, useDefault),
-			FullRef:     name,
-			NeedType:    true,
-			TypeImports: shared.GatherAttributeImports(b.genpkg, ut.AttributeExpr),
-		}
-	}
-}
-
-// materializeNestedTransportTypes writes the nested types used to decode JSON.
-func (b *toolSpecBuilder) materializeNestedTransportTypes(scope *codegen.NameScope, locals []*goaexpr.UserTypeExpr) {
-	for _, ut := range locals {
-		name := scope.GoTypeName(&goaexpr.AttributeExpr{Type: ut})
-		validateFunc := b.planned.transportValidators[ut.Hash()].Name()
-		key := "transport:" + name
-		if _, exists := b.types[key]; exists {
-			continue
-		}
-		// Primitive aliases stay values at the top level. Objects and unions stay
-		// pointers so validation can distinguish a missing value from an empty one.
-		httpctx := modelJSONTransportContext(scope, !goaexpr.IsPrimitive(ut), "")
-		vcode := codegen.ValidationCode(ut.AttributeExpr, ut, httpctx, true, goaexpr.IsAlias(ut), false, "body")
-		var vlines []string
-		if strings.TrimSpace(vcode) != "" {
-			vlines = strings.Split(vcode, "\n")
-		}
-		tref := scope.GoTypeRef(&goaexpr.AttributeExpr{Type: ut})
-		transportCtx := modelJSONTransportContext(scope, true, "")
-		b.types[key] = &typeData{
-			Key:                    key,
-			TypeName:               name,
-			Doc:                    name + " is a nested type used while decoding tool JSON.",
-			NeedType:               false,
-			IsToolType:             false,
-			GenerateCodec:          false,
-			TypeImports:            shared.GatherAttributeImports(b.genpkg, ut.AttributeExpr),
-			TransportTypeName:      name,
-			ValidateFunc:           validateFunc,
-			TransportDef:           name + " " + transportTypeDef(scope, ut.AttributeExpr, transportCtx),
-			TransportImports:       shared.GatherAttributeImports(b.genpkg, ut.AttributeExpr),
-			TransportValidationSrc: vlines,
-			TransportTypeRef:       tref,
-			TransportPointer:       strings.HasPrefix(tref, "*"),
-		}
-	}
-}
-
-// localizeNestedTypes copies att and replaces nested service types with types
-// that will be written in the selected output package. HTTP helper types also
-// receive JSON field names and pointer rules used by request decoding.
-func localizeNestedTypes(att *goaexpr.AttributeExpr, transport bool) (*goaexpr.AttributeExpr, []*goaexpr.UserTypeExpr) {
+// ensureNestedLocalTypes walks att and materializes local aliases for nested
+// *service-local* user types (types without explicit package location).
+//
+// Public tool-facing types are service-level shapes: they should keep any
+// design-owned type locations (`struct:pkg:path`) intact so nested types can be
+// referenced via imports (e.g. `types.FacilityFact`). Only service-local types
+// that would otherwise be unqualified and undefined in the specs package are
+// localized.
+func (b *toolSpecBuilder) ensureNestedLocalTypes(scope *codegen.NameScope, att *goaexpr.AttributeExpr, ptr bool, useDefault bool) *goaexpr.AttributeExpr {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return att, nil
+		return att
 	}
 	cloned := goaexpr.DupAtt(att)
 	localByID := make(map[string]goaexpr.UserType)
-	localsByHash := make(map[string]*goaexpr.UserTypeExpr)
+	localsByName := make(map[string]*goaexpr.UserTypeExpr)
 	_ = codegen.Walk(cloned, func(a *goaexpr.AttributeExpr) error {
 		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
 			return nil
 		}
+		// Do not rewrite the root type itself; only localize nested user types.
 		if a == cloned {
 			return nil
 		}
@@ -205,10 +224,13 @@ func localizeNestedTypes(att *goaexpr.AttributeExpr, transport bool) (*goaexpr.A
 		if !ok || ut == nil {
 			return nil
 		}
-		if !transport && codegen.UserTypeLocation(ut) != nil {
+		// Only localize service-local user types. External user types are referenced
+		// via their package imports and do not need local aliases here.
+		if codegen.UserTypeLocation(ut) != nil {
 			return nil
 		}
 
+		// Determine the type name for the nested user type.
 		var name string
 		switch u := ut.(type) {
 		case *goaexpr.UserTypeExpr:
@@ -225,9 +247,6 @@ func localizeNestedTypes(att *goaexpr.AttributeExpr, transport bool) (*goaexpr.A
 			return nil
 		}
 
-		if transport {
-			name += "Transport"
-		}
 		id := ut.ID()
 		if id != "" {
 			if cached, ok := localByID[id]; ok && cached != nil {
@@ -236,29 +255,168 @@ func localizeNestedTypes(att *goaexpr.AttributeExpr, transport bool) (*goaexpr.A
 			}
 		}
 		base := stripStructPkgMeta(goaexpr.DupAtt(ut.Attribute()))
-		if transport {
-			normalizeModelJSONTransportAttrRecursive(base)
-		}
 		local := &goaexpr.UserTypeExpr{
 			AttributeExpr: base,
-			TypeName:      name,
+			// IMPORTANT (Goa-style): do not pre-reserve a helper name using the
+			// *source* user type as the NameScope key. NameScope keys user types by
+			// their hash (which includes the type name). If we reserve "Foo" under
+			// the hash for the design user type, later references to the *helper*
+			// user type (a distinct hash) become "Foo2" while the emitted definition
+			// stays "Foo", producing undefined identifiers in generated code.
+			//
+			// Instead, set the helper's own base name and let NameScope derive the
+			// final symbol for both references and emitted definitions.
+			TypeName: name,
 		}
 		if id != "" {
 			localByID[id] = local
 		}
-		localsByHash[local.Hash()] = local
+		localsByName[ut.Hash()] = local
 		a.Type = local
 		return nil
 	})
 
-	hashes := make([]string, 0, len(localsByHash))
-	for hash := range localsByHash {
-		hashes = append(hashes, hash)
+	// Emit local nested helpers after the attribute graph has been fully rewritten.
+	// This guarantees helper defs reference other local helpers (not external
+	// service packages like `gen/types`).
+	localNames := make([]string, 0, len(localsByName))
+	for name := range localsByName {
+		localNames = append(localNames, name)
 	}
-	sort.Strings(hashes)
-	locals := make([]*goaexpr.UserTypeExpr, len(hashes))
-	for index, hash := range hashes {
-		locals[index] = localsByHash[hash]
+	sort.Strings(localNames)
+	for _, localName := range localNames {
+		ut := localsByName[localName]
+		name := scope.GoTypeName(&goaexpr.AttributeExpr{Type: ut})
+		key := "name:" + name
+		if _, exists := b.types[key]; exists {
+			continue
+		}
+		b.types[key] = &typeData{
+			Key:         key,
+			TypeName:    name,
+			Doc:         name + " is a helper type materialized for nested references.",
+			Def:         name + " = " + scope.GoTypeDef(ut.AttributeExpr, ptr, useDefault),
+			FullRef:     name,
+			NeedType:    true,
+			TypeImports: shared.GatherAttributeImports(b.genpkg, ut.AttributeExpr),
+		}
 	}
-	return cloned, locals
+	return cloned
+}
+
+// ensureNestedLocalTransportTypes rewrites nested user type references in att
+// to point at locally materialized transport types and records those type
+// definitions for emission in codecs.go.
+//
+// Transport types are internal: they exist only to decode/validate JSON using
+// HTTP server-body conventions (pointer primitives + explicit json field names)
+// before converting to the public tool types used throughout the codebase.
+func (b *toolSpecBuilder) ensureNestedLocalTransportTypes(scope *codegen.NameScope, att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return att
+	}
+	cloned := goaexpr.DupAtt(att)
+	localByID := make(map[string]goaexpr.UserType)
+	localsByName := make(map[string]*goaexpr.UserTypeExpr)
+	_ = codegen.Walk(cloned, func(a *goaexpr.AttributeExpr) error {
+		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
+			return nil
+		}
+		// Do not rewrite the root type itself; only localize nested user types.
+		if a == cloned {
+			return nil
+		}
+		ut, ok := a.Type.(goaexpr.UserType)
+		if !ok || ut == nil {
+			return nil
+		}
+
+		// Determine the type name for the nested user type.
+		var name string
+		switch u := ut.(type) {
+		case *goaexpr.UserTypeExpr:
+			name = codegen.Goify(u.TypeName, true)
+		case *goaexpr.ResultTypeExpr:
+			name = codegen.Goify(u.TypeName, true)
+		default:
+			return nil
+		}
+		if name == "" {
+			name = codegen.Goify(ut.Name(), true)
+		}
+		if name == "" {
+			return nil
+		}
+
+		// IMPORTANT (Goa-style): do not pre-reserve a helper name using the *source*
+		// user type as the scope key. Goa's NameScope keys user types by (hashed) name.
+		// Reserving "FooTransport" under the hash for "Foo" causes later references to
+		// the helper user type (hash "FooTransport") to become "FooTransport2" while the
+		// emitted definition stays "FooTransport".
+		//
+		// Instead, insert a helper user type whose *own name* is the intended base
+		// ("FooTransport") and let NameScope consistently derive the final symbol for
+		// both references and emitted definitions.
+		uniqueName := name + "Transport"
+		id := ut.ID()
+		if id != "" {
+			if cached, ok := localByID[id]; ok && cached != nil {
+				a.Type = cached
+				return nil
+			}
+		}
+		base := stripStructPkgMeta(goaexpr.DupAtt(ut.Attribute()))
+		normalizeModelJSONTransportAttrRecursive(base)
+		local := &goaexpr.UserTypeExpr{
+			AttributeExpr: base,
+			TypeName:      uniqueName,
+		}
+		if id != "" {
+			localByID[id] = local
+		}
+		localsByName[uniqueName] = local
+		a.Type = local
+		return nil
+	})
+
+	localNames := make([]string, 0, len(localsByName))
+	for name := range localsByName {
+		localNames = append(localNames, name)
+	}
+	sort.Strings(localNames)
+	for _, localName := range localNames {
+		ut := localsByName[localName]
+		name := scope.GoTypeName(&goaexpr.AttributeExpr{Type: ut})
+		key := "transport:" + name
+		if _, exists := b.types[key]; exists {
+			continue
+		}
+		// Primitive aliases are values at the root; objects and unions retain
+		// pointer presence until generated validation completes.
+		httpctx := modelJSONTransportContext(scope, !goaexpr.IsPrimitive(ut), "")
+		vcode := codegen.ValidationCode(ut.AttributeExpr, ut, httpctx, true, goaexpr.IsAlias(ut), false, "body")
+		var vlines []string
+		if strings.TrimSpace(vcode) != "" {
+			vlines = strings.Split(vcode, "\n")
+		}
+		tref := scope.GoTypeRef(&goaexpr.AttributeExpr{Type: ut})
+		transportCtx := modelJSONTransportContext(scope, true, "")
+		b.types[key] = &typeData{
+			Key:                    key,
+			TypeName:               name,
+			Doc:                    name + " is an internal transport helper type materialized for nested references.",
+			NeedType:               false,
+			IsToolType:             false,
+			GenerateCodec:          false,
+			TypeImports:            shared.GatherAttributeImports(b.genpkg, ut.AttributeExpr),
+			TransportTypeName:      name,
+			TransportDef:           name + " " + transportTypeDef(scope, ut.AttributeExpr, transportCtx),
+			TransportImports:       shared.GatherAttributeImports(b.genpkg, ut.AttributeExpr),
+			TransportValidationSrc: vlines,
+			TransportTypeRef:       tref,
+			TransportPointer:       strings.HasPrefix(tref, "*"),
+		}
+	}
+
+	return cloned
 }

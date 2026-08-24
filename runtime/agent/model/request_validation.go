@@ -4,7 +4,6 @@
 package model
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -171,26 +170,6 @@ func (e *OutputValidationError) Usage() *TokenUsage {
 	}
 	usage := *e.usage
 	return &usage
-}
-
-// RestoreOutputValidationError reconstructs a model-output rejection after a
-// trusted transport decodes its bounded evidence. It rejects inconsistent
-// evidence or usage instead of accepting a forged validation result.
-func RestoreOutputValidationError(cause error, evidence ResponseEvidence, usage *TokenUsage) (*OutputValidationError, error) {
-	if cause == nil {
-		return nil, errors.New("model: output validation error requires a cause")
-	}
-	if err := validateResponseEvidence(evidence); err != nil {
-		return nil, fmt.Errorf("model: restore output validation error: %w", err)
-	}
-	if usage != nil {
-		if err := validateTokenUsage(*usage); err != nil {
-			return nil, fmt.Errorf("model: restore output validation error usage: %w", err)
-		}
-		cloned := *usage
-		usage = &cloned
-	}
-	return newOutputValidationError(cause, evidence, nil, usage), nil
 }
 
 // validateOwnedResponse applies the request rules after the model boundary has
@@ -399,18 +378,6 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 		if validate == nil {
 			return nil, fmt.Errorf("model request tool %q has no payload validator", name)
 		}
-		if definition.NoArguments {
-			if !definition.Input.acceptsNoArguments {
-				return nil, fmt.Errorf("model request tool %q declares no arguments but its schema declares fields", name)
-			}
-			validators[name] = func(call ToolCall) error {
-				if string(call.Payload) != "{}" {
-					return fmt.Errorf("model tool %q payload is not the canonical empty object", call.Name)
-				}
-				return nil
-			}
-			continue
-		}
 		validators[name] = func(call ToolCall) error {
 			if err := validate(call.Payload); err != nil {
 				return fmt.Errorf("model tool %q payload failed its request contract: %w", call.Name, err)
@@ -530,39 +497,6 @@ func newStreamValidationContract(request *Request) streamValidationContract {
 		contract.structuredOutputName = request.StructuredOutput.Name
 	}
 	return contract
-}
-
-// validateResponseEvidence checks that optional response identity is either
-// absent, present without a fingerprint, or a complete versioned fingerprint.
-func validateResponseEvidence(evidence ResponseEvidence) error {
-	if !evidence.Present {
-		if evidence.Version != "" || evidence.SHA256 != "" || evidence.Size != 0 {
-			return errors.New("response evidence without a response must be empty")
-		}
-		return nil
-	}
-	if evidence.SHA256 == "" {
-		if evidence.Version != "" || evidence.Size != 0 {
-			return errors.New("response evidence without a digest must not include a version or size")
-		}
-		return nil
-	}
-	if evidence.Version != responseevidence.VersionV1 {
-		return fmt.Errorf("response evidence has unsupported version %q", evidence.Version)
-	}
-	if len(evidence.SHA256) != 64 {
-		return errors.New("response evidence SHA-256 must contain 64 hexadecimal characters")
-	}
-	if evidence.SHA256 != strings.ToLower(evidence.SHA256) {
-		return errors.New("response evidence SHA-256 must use lowercase hexadecimal characters")
-	}
-	if _, err := hex.DecodeString(evidence.SHA256); err != nil {
-		return fmt.Errorf("response evidence SHA-256: %w", err)
-	}
-	if evidence.Size <= 0 {
-		return errors.New("response evidence with a digest must have a positive size")
-	}
-	return nil
 }
 
 // responseEvidence computes bounded identity without retaining provider-owned

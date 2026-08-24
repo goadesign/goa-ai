@@ -7,8 +7,8 @@ import (
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 )
 
-func TestGolden_ServerDataNilEncodesNull(t *testing.T) {
-	files := buildAndGenerate(t, testscenarios.ServiceToolsetBindSelfServerDataOptional())
+func TestGolden_SidecarNilEncodesNull(t *testing.T) {
+	files := buildAndGenerate(t, testscenarios.ServiceToolsetBindSelfServerDataPointerSidecar())
 
 	codecs := generatedContentBySuffix(t, files, "toolsets/lookup/codecs.go")
 	require.Contains(t, codecs, `return []byte("null"), nil`)

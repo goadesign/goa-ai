@@ -109,6 +109,7 @@ func With{{ goify .Name true }}(f func(context.Context, any) (any, error)) ExecO
 }
 {{- end }}
 {{- end }}
+
 // New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec returns a ToolCallExecutor that
 // decodes tool payloads with generated codecs, applies optional mappers, calls user-provided
 // per-tool callers (wired from the client via WithClient), and maps results back.

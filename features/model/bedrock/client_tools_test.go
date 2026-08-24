@@ -37,27 +37,6 @@ func TestEncodeTools_NoChoice(t *testing.T) {
 	require.Len(t, sanToCanon, 1)
 }
 
-// TestPrepareRequestRetainsNoArgumentToolNames verifies that stream decoding
-// receives the runtime fact under the canonical name restored from Bedrock.
-func TestPrepareRequestRetainsNoArgumentToolNames(t *testing.T) {
-	client := &provider{defaultModel: "us.anthropic.claude-sonnet-5"}
-	parts, err := client.prepareRequest(&model.Request{
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "continue"}},
-		}},
-		Tools: []*model.ToolDefinition{{
-			Name:        "ada.continue_alarms",
-			Description: "Continue the alarm listing.",
-			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
-			NoArguments: true,
-		}},
-	})
-
-	require.NoError(t, err)
-	require.Contains(t, parts.noArgumentTools, "ada.continue_alarms")
-}
-
 func TestEncodeTools_ModeAny(t *testing.T) {
 	cfg, _, canonToSan, sanToCanon, err := encodeTools("amazon.nova-pro-v1:0", []*model.ToolDefinition{
 		{

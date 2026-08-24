@@ -1,12 +1,12 @@
-// Package codegen registers MCP code generation with Goa.
 package codegen
 
 import (
-	goagenerator "goa.design/goa/v3/codegen/generator"
+	goacodegen "goa.design/goa/v3/codegen"
 )
 
-// Register both normal generation and example generation.
+// Register MCP code generation plugins with Goa.
+// This ensures the plugin hooks run during both generation and example scaffolding.
 func init() {
-	goagenerator.RegisterPluginFirst("mcp", "gen", newMCPPlugin)
-	goagenerator.RegisterPlugin("mcp", "example", newMCPExamplePlugin)
+	goacodegen.RegisterPluginFirst("mcp", "gen", PrepareServices, Generate)
+	goacodegen.RegisterPlugin("mcp", "example", PrepareExample, ModifyExampleFiles)
 }

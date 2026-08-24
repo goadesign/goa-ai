@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	toolhttp "goa.design/goa-ai/gen/alpha/toolsets/profiles/http"
+	toolhttp "goa.design/goa-ai/alpha/toolsets/profiles/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 	"io"
@@ -259,7 +259,7 @@ func MarshalUpsertPayload(v *UpsertPayload) ([]byte, error) {
 	_ = in
 	var out *toolhttp.UpsertPayloadTransport
 	out = &toolhttp.UpsertPayloadTransport{}
-	out.Profile = encodeProfileToProfileTransport(in.Profile)
+	out.Profile = encodeProfileToToolhttpProfileTransport(in.Profile)
 	return json.Marshal(out)
 }
 
@@ -285,7 +285,7 @@ func UnmarshalUpsertPayload(data []byte) (*UpsertPayload, error) {
 	_ = in
 	var out *UpsertPayload
 	out = &UpsertPayload{}
-	out.Profile = decodeProfileTransportToProfile(in.Profile)
+	out.Profile = decodeToolhttpProfileTransportToProfile(in.Profile)
 	return out, nil
 }
 
@@ -301,7 +301,7 @@ func MarshalUpsertResult(v *UpsertResult) ([]byte, error) {
 		ID:   &in.ID,
 		Name: in.Name,
 	}
-	out.Address = encodeAddressToAddressTransport(in.Address)
+	out.Address = encodeAddressToToolhttpAddressTransport(in.Address)
 	return json.Marshal(out)
 }
 
@@ -330,7 +330,7 @@ func UnmarshalUpsertResult(data []byte) (*UpsertResult, error) {
 		ID:   *in.ID,
 		Name: in.Name,
 	}
-	out.Address = decodeAddressTransportToAddress(in.Address)
+	out.Address = decodeToolhttpAddressTransportToAddress(in.Address)
 	return out, nil
 }
 
@@ -623,16 +623,16 @@ func unknownJSONFieldError(path, field string, allowed []string) error {
 }
 
 // Helper transform functions
-func decodeProfileTransportToProfile(v *toolhttp.ProfileTransport) *Profile {
+func decodeToolhttpProfileTransportToProfile(v *toolhttp.ProfileTransport) *Profile {
 	res := &Profile{
 		ID:   *v.ID,
 		Name: v.Name,
 	}
-	res.Address = decodeAddressTransportToAddress(v.Address)
+	res.Address = decodeToolhttpAddressTransportToAddress(v.Address)
 
 	return res
 }
-func decodeAddressTransportToAddress(v *toolhttp.AddressTransport) *Address {
+func decodeToolhttpAddressTransportToAddress(v *toolhttp.AddressTransport) *Address {
 	res := &Address{
 		Street: *v.Street,
 		City:   *v.City,
@@ -640,16 +640,16 @@ func decodeAddressTransportToAddress(v *toolhttp.AddressTransport) *Address {
 
 	return res
 }
-func encodeProfileToProfileTransport(v *Profile) *toolhttp.ProfileTransport {
+func encodeProfileToToolhttpProfileTransport(v *Profile) *toolhttp.ProfileTransport {
 	res := &toolhttp.ProfileTransport{
 		ID:   &v.ID,
 		Name: v.Name,
 	}
-	res.Address = encodeAddressToAddressTransport(v.Address)
+	res.Address = encodeAddressToToolhttpAddressTransport(v.Address)
 
 	return res
 }
-func encodeAddressToAddressTransport(v *Address) *toolhttp.AddressTransport {
+func encodeAddressToToolhttpAddressTransport(v *Address) *toolhttp.AddressTransport {
 	res := &toolhttp.AddressTransport{
 		Street: &v.Street,
 		City:   &v.City,

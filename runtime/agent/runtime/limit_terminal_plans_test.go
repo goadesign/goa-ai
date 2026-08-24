@@ -91,6 +91,7 @@ func TestValidateLimitTerminalPlans(t *testing.T) {
 		})
 	}
 }
+
 func TestValidateLimitTerminalPlansRejectsNonTerminalTool(t *testing.T) {
 	t.Parallel()
 

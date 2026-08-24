@@ -1677,14 +1677,11 @@ func TestPlanStartActivityAdvertisesHistoricalContinuation(t *testing.T) {
 		definitions := input.Agent.AdvertisedToolDefinitions()
 		require.Len(t, definitions, 2)
 		require.Equal(t, actionName.String(), definitions[1].Name)
-		require.True(t, definitions[1].NoArguments)
 		require.Equal(
 			t,
 			`Continue the unfinished tools.search query with original input {"query":"alarms"}. The latest page returned 1 items.`,
 			definitions[1].Description,
 		)
-		_, err := model.NewRequestContract(&model.Request{Tools: definitions})
-		require.NoError(t, err)
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
 			Name:    actionName,
 			Payload: rawjson.Message(`{}`),

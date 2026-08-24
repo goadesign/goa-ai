@@ -7,7 +7,7 @@
 package specs
 
 import (
-	helpers "goa.design/goa-ai/gen/alpha/toolsets/helpers"
+	helpers "goa.design/goa-ai/alpha/toolsets/helpers"
 	"goa.design/goa-ai/runtime/agent/policy"
 	tools "goa.design/goa-ai/runtime/agent/tools"
 )

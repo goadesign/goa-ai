@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -11,19 +11,19 @@ func ExportsWithHints() func() {
 	return func() {
 		API("alpha", func() {})
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Export("search", func() {
-					aidsl.Tool("find", "Find documents", func() {
-						aidsl.Args(func() {
+			Agent("scribe", "Doc helper", func() {
+				Export("search", func() {
+					Tool("find", "Find documents", func() {
+						Args(func() {
 							Attribute("query", String, "Query")
 							Required("query")
 						})
-						aidsl.Return(func() {
+						Return(func() {
 							Attribute("count", Int, "Count")
 							Required("count")
 						})
-						aidsl.CallHintTemplate("Searching for {{ .Query }}")
-						aidsl.ResultHintTemplate("Found {{ .Result.Count }}")
+						CallHintTemplate("Searching for {{ .Query }}")
+						ResultHintTemplate("Found {{ .Result.Count }}")
 					})
 				})
 			})

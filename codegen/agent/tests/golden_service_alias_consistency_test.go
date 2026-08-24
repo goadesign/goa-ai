@@ -3,12 +3,12 @@ package tests
 import (
 	"testing"
 
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
-// TestGolden_ServiceAlias_Consistency checks that generated JSON code imports
-// a service type with the same package name used in its Go reference.
+// Ensures service-local user types use the same import alias as referenced by
+// Goa's NameScope when generating type references in codecs.
 func TestGolden_ServiceAlias_Consistency(t *testing.T) {
 	files := buildAndGenerate(t, func() {
 		// Service name contains underscore to exercise alias vs path base.
@@ -21,11 +21,11 @@ func TestGolden_ServiceAlias_Consistency(t *testing.T) {
 		})
 
 		Service("atlas_data_agent", func() {
-			aidsl.Agent("reader", "", func() {
-				aidsl.Use("docs", func() {
-					aidsl.Tool("read", "Read", func() {
-						aidsl.Args(Doc)
-						aidsl.Return(Doc)
+			Agent("reader", "", func() {
+				Use("docs", func() {
+					Tool("read", "Read", func() {
+						Args(Doc)
+						Return(Doc)
 					})
 				})
 			})

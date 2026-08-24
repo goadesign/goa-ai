@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -35,12 +35,12 @@ func MethodComplexEmbedded() func() {
 				Payload(Profile)
 				Result(Profile)
 			})
-			aidsl.Agent("scribe", "Profile helper", func() {
-				aidsl.Use("profiles", func() {
-					aidsl.Tool("upsert", "Upsert a profile", func() {
-						aidsl.Args(UpsertArgs)
-						aidsl.Return(Profile)
-						aidsl.BindTo("alpha", "UpsertProfile")
+			Agent("scribe", "Profile helper", func() {
+				Use("profiles", func() {
+					Tool("upsert", "Upsert a profile", func() {
+						Args(UpsertArgs)
+						Return(Profile)
+						BindTo("alpha", "UpsertProfile")
 					})
 				})
 			})

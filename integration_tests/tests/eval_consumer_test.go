@@ -22,8 +22,6 @@ func TestEvalConsumer(t *testing.T) {
 	require.NoError(t, os.CopyFS(consumerRoot, os.DirFS(fixtureRoot)))
 
 	runGoCommand(t, consumerRoot, "mod", "edit", "-replace", "goa.design/goa-ai="+repoRoot)
-	goaRoot := goModuleDirectory(t, repoRoot, "goa.design/goa/v3")
-	runGoCommand(t, consumerRoot, "mod", "edit", "-replace", "goa.design/goa/v3="+goaRoot)
 	runGoCommand(t, consumerRoot, "mod", "tidy")
 	runGoCommand(
 		t,
@@ -80,24 +78,12 @@ func TestEvalConsumer(t *testing.T) {
 	)
 }
 
-// goModuleDirectory returns the module source used to compile this checkout so
-// the copied consumer verifies the same Goa and goa-ai code together.
-func goModuleDirectory(t *testing.T, directory, modulePath string) string {
-	t.Helper()
-	command := exec.CommandContext(t.Context(), "go", "list", "-m", "-f={{.Dir}}", modulePath) // #nosec G204
-	command.Dir = directory
-	output, err := command.CombinedOutput()
-	require.NoError(t, err, "find module %s: %s", modulePath, output)
-	return strings.TrimSpace(string(output))
-}
-
 // runGoCommand fails with the complete command output so generation and consumer
 // compilation errors remain actionable in CI.
 func runGoCommand(t *testing.T, directory string, arguments ...string) {
 	t.Helper()
 	command := exec.CommandContext(t.Context(), "go", arguments...) // #nosec G204
 	command.Dir = directory
-	command.Env = append(os.Environ(), "GOWORK=off")
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, "%s: %s", fmt.Sprintf("go %v", arguments), output)
 }

@@ -12,7 +12,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,62 +23,18 @@ import (
 	"goa.design/goa/v3/jsonrpc"
 )
 
-type (
-	// EventsStreamClientStream reads results sent as server-sent events.
-	EventsStreamClientStream interface {
-		Recv() (*mcpassistant.EventsStreamResult, error)
-		RecvWithContext(context.Context) (*mcpassistant.EventsStreamResult, error)
-		Close() error
-	}
-
-	// EventsStreamStreamImpl reads and decodes events for events/stream.
-	EventsStreamStreamImpl struct {
-		// resp is the open server response.
-		resp *http.Response
-		// reader reads one line at a time from resp.
-		reader *bufio.Reader
-		// decoder converts each result into its service type.
-		decoder func(*http.Response) goahttp.Decoder
-		// closed records whether Close was called or the response ended.
-		closed bool
-		// closeOnce ensures the response body is closed only once.
-		closeOnce sync.Once
-		// closeErr stores the response body close error.
-		closeErr error
-		// lock prevents two calls from reading or closing the response at once.
-		lock sync.Mutex
-	}
-)
-
-// NewEventsStreamStream creates a stream that reads server-sent events from
-// resp.
-func NewEventsStreamStream(resp *http.Response, decoder func(*http.Response) goahttp.Decoder) EventsStreamClientStream {
-	return &EventsStreamStreamImpl{
-		resp:    resp,
-		reader:  bufio.NewReader(resp.Body),
-		decoder: decoder,
-	}
+// ToolsCallClientStream implements the mcpassistant.ToolsCallClientStream
+// interface using Server-Sent Events.
+type ToolsCallClientStream struct {
+	resp    *http.Response                       // HTTP response object
+	reader  *bufio.Reader                        // Buffered reader for SSE parsing
+	decoder func(*http.Response) goahttp.Decoder // User-provided decoder
+	closed  bool                                 // Whether the stream has been closed
+	lock    sync.Mutex                           // Mutex to protect state
 }
 
-// parseSSEEvent reads one complete event from the response. Ending ctx closes
-// the response body so a blocked read returns.
-func (s *EventsStreamStreamImpl) parseSSEEvent(ctx context.Context) (eventType string, data []byte, err error) {
-	closeResult := make(chan struct{}, 1)
-	stopClose := context.AfterFunc(ctx, func() {
-		s.closeBody()
-		closeResult <- struct{}{}
-	})
-	defer func() {
-		if stopClose() {
-			return
-		}
-		<-closeResult
-		if contextErr := ctx.Err(); contextErr != nil {
-			eventType = ""
-			data = nil
-			err = contextErr
-		}
-	}()
+// parseSSEEvent parses a single SSE event from the stream
+func (s *ToolsCallClientStream) parseSSEEvent() (eventType string, data []byte, err error) {
 	var event strings.Builder
 	var dataLines []string
 
@@ -87,7 +42,7 @@ func (s *EventsStreamStreamImpl) parseSSEEvent(ctx context.Context) (eventType s
 		line, err := s.reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF && len(dataLines) > 0 {
-				// Return the last event even when the response has no final blank line.
+				// Process final event
 				break
 			}
 			return "", nil, err
@@ -97,7 +52,7 @@ func (s *EventsStreamStreamImpl) parseSSEEvent(ctx context.Context) (eventType s
 		line = strings.TrimSuffix(line, "\r")
 
 		if line == "" {
-			// A blank line ends the current event.
+			// Empty line marks end of event
 			if len(dataLines) > 0 {
 				break
 			}
@@ -109,7 +64,185 @@ func (s *EventsStreamStreamImpl) parseSSEEvent(ctx context.Context) (eventType s
 		} else if strings.HasPrefix(line, "data:") {
 			dataLines = append(dataLines, strings.TrimSpace(line[5:]))
 		}
-		// This client does not use the id and retry fields.
+		// Ignore other fields like id:, retry:
+	}
+
+	if len(dataLines) > 0 {
+		data = []byte(strings.Join(dataLines, "\n"))
+	}
+
+	return event.String(), data, nil
+}
+
+// Recv reads instances of "ToolsCallResult" from the stream.
+func (s *ToolsCallClientStream) Recv(ctx context.Context) (*mcpassistant.ToolsCallResult, error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	var zero *mcpassistant.ToolsCallResult
+
+	if s.closed {
+		return zero, io.EOF
+	}
+
+	for {
+		eventType, data, err := s.parseSSEEvent()
+		if err != nil {
+			s.closed = true
+			return zero, err
+		}
+
+		switch eventType {
+		case "notification":
+			// Parse JSON-RPC notification
+			var notification struct {
+				JSONRPC string          `json:"jsonrpc"`
+				Method  string          `json:"method"`
+				Params  json.RawMessage `json:"params"`
+			}
+			if err := json.Unmarshal(data, &notification); err != nil {
+				return zero, fmt.Errorf("failed to parse notification: %w", err)
+			}
+
+			// Validate notification
+			if notification.JSONRPC != "2.0" {
+				return zero, fmt.Errorf("invalid JSON-RPC version: %s", notification.JSONRPC)
+			}
+
+			if notification.Method != "tools/call" {
+				// Skip notifications for other methods
+				continue
+			}
+
+			// Decode the result from params
+			result, err := s.decodeResult(notification.Params)
+			if err != nil {
+				return zero, fmt.Errorf("failed to decode result: %w", err)
+			}
+			return result, nil
+
+		case "response":
+			// Final response - parse and return
+			var response jsonrpc.Response
+			if err := json.Unmarshal(data, &response); err != nil {
+				return zero, fmt.Errorf("failed to parse response: %w", err)
+			}
+
+			if response.Error != nil {
+				return zero, response.Error
+			}
+			// Decode the final result
+			if response.Result == nil {
+				return zero, fmt.Errorf("missing result in response")
+			}
+			// Convert response.Result to json.RawMessage
+			resultBytes, err := json.Marshal(response.Result)
+			if err != nil {
+				return zero, fmt.Errorf("failed to marshal result: %w", err)
+			}
+			result, err := s.decodeResult(json.RawMessage(resultBytes))
+			if err != nil {
+				return zero, fmt.Errorf("failed to decode final result: %w", err)
+			}
+
+			// Mark stream as closed after final response
+			s.closed = true
+			return result, nil
+
+		case "error":
+			// Error response
+			var response jsonrpc.Response
+			if err := json.Unmarshal(data, &response); err != nil {
+				return zero, fmt.Errorf("failed to parse error response: %w", err)
+			}
+
+			s.closed = true
+			if response.Error != nil {
+				return zero, response.Error
+			}
+			return zero, fmt.Errorf("unexpected error response")
+
+		default:
+			// Ignore unknown event types
+			continue
+		}
+	}
+}
+
+// decodeResult decodes JSON-RPC result data using the user-provided decoder
+func (s *ToolsCallClientStream) decodeResult(data json.RawMessage) (*mcpassistant.ToolsCallResult, error) {
+	// Create minimal HTTP response with raw JSON data for user's decoder
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(data)),
+	}
+
+	// Use the user-provided decoder to decode the result
+	decoder := s.decoder(resp)
+	var result *mcpassistant.ToolsCallResult
+	if err := decoder.Decode(&result); err != nil {
+		return result, err
+	}
+
+	return result, nil
+}
+
+// Close closes the stream.
+func (s *ToolsCallClientStream) Close() error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if !s.closed {
+		s.closed = true
+		if s.resp != nil && s.resp.Body != nil {
+			return s.resp.Body.Close()
+		}
+	}
+	return nil
+}
+
+// EventsStreamClientStream implements the
+// mcpassistant.EventsStreamClientStream interface using Server-Sent Events.
+type EventsStreamClientStream struct {
+	resp    *http.Response                       // HTTP response object
+	reader  *bufio.Reader                        // Buffered reader for SSE parsing
+	decoder func(*http.Response) goahttp.Decoder // User-provided decoder
+	closed  bool                                 // Whether the stream has been closed
+	lock    sync.Mutex                           // Mutex to protect state
+}
+
+// parseSSEEvent parses a single SSE event from the stream
+func (s *EventsStreamClientStream) parseSSEEvent() (eventType string, data []byte, err error) {
+	var event strings.Builder
+	var dataLines []string
+
+	for {
+		line, err := s.reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF && len(dataLines) > 0 {
+				// Process final event
+				break
+			}
+			return "", nil, err
+		}
+
+		line = strings.TrimSuffix(line, "\n")
+		line = strings.TrimSuffix(line, "\r")
+
+		if line == "" {
+			// Empty line marks end of event
+			if len(dataLines) > 0 {
+				break
+			}
+			continue
+		}
+
+		if strings.HasPrefix(line, "event:") {
+			event.WriteString(strings.TrimSpace(line[6:]))
+		} else if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimSpace(line[5:]))
+		}
+		// Ignore other fields like id:, retry:
 	}
 
 	if len(dataLines) > 0 {
@@ -120,13 +253,7 @@ func (s *EventsStreamStreamImpl) parseSSEEvent(ctx context.Context) (eventType s
 }
 
 // Recv reads instances of "EventsStreamResult" from the stream.
-func (s *EventsStreamStreamImpl) Recv() (*mcpassistant.EventsStreamResult, error) {
-	return s.RecvWithContext(context.Background())
-}
-
-// RecvWithContext reads instances of "EventsStreamResult" from the stream with
-// context.
-func (s *EventsStreamStreamImpl) RecvWithContext(ctx context.Context) (*mcpassistant.EventsStreamResult, error) {
+func (s *EventsStreamClientStream) Recv(ctx context.Context) (*mcpassistant.EventsStreamResult, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
@@ -137,93 +264,98 @@ func (s *EventsStreamStreamImpl) RecvWithContext(ctx context.Context) (*mcpassis
 	}
 
 	for {
-		eventType, data, err := s.parseSSEEvent(ctx)
+		eventType, data, err := s.parseSSEEvent()
 		if err != nil {
-			return zero, s.endStream(err)
+			s.closed = true
+			return zero, err
 		}
 
 		switch eventType {
 		case "notification":
-			// Read the streamed service result from the notification parameters.
+			// Parse JSON-RPC notification
 			var notification struct {
 				JSONRPC string          `json:"jsonrpc"`
 				Method  string          `json:"method"`
 				Params  json.RawMessage `json:"params"`
 			}
 			if err := json.Unmarshal(data, &notification); err != nil {
-				return zero, s.endStream(fmt.Errorf("failed to parse notification: %w", err))
+				return zero, fmt.Errorf("failed to parse notification: %w", err)
 			}
 
+			// Validate notification
 			if notification.JSONRPC != "2.0" {
-				return zero, s.endStream(fmt.Errorf("invalid JSON-RPC version: %s", notification.JSONRPC))
+				return zero, fmt.Errorf("invalid JSON-RPC version: %s", notification.JSONRPC)
 			}
 
 			if notification.Method != "events/stream" {
-				return zero, s.endStream(fmt.Errorf("received notification for JSON-RPC method %q", notification.Method))
+				// Skip notifications for other methods
+				continue
 			}
 
+			// Decode the result from params
 			result, err := s.decodeResult(notification.Params)
 			if err != nil {
-				return zero, s.endStream(fmt.Errorf("failed to decode result: %w", err))
+				return zero, fmt.Errorf("failed to decode result: %w", err)
 			}
 			return result, nil
 
 		case "response":
-			// A successful response completes the stream. Stream values arrive in
-			// the notifications handled above.
+			// Final response - parse and return
 			var response jsonrpc.Response
 			if err := json.Unmarshal(data, &response); err != nil {
-				return zero, s.endStream(fmt.Errorf("failed to parse response: %w", err))
+				return zero, fmt.Errorf("failed to parse response: %w", err)
 			}
 
 			if response.Error != nil {
-				return zero, s.endStream(response.Error)
+				return zero, response.Error
 			}
-			return zero, s.endStream(io.EOF)
+			// Decode the final result
+			if response.Result == nil {
+				return zero, fmt.Errorf("missing result in response")
+			}
+			// Convert response.Result to json.RawMessage
+			resultBytes, err := json.Marshal(response.Result)
+			if err != nil {
+				return zero, fmt.Errorf("failed to marshal result: %w", err)
+			}
+			result, err := s.decodeResult(json.RawMessage(resultBytes))
+			if err != nil {
+				return zero, fmt.Errorf("failed to decode final result: %w", err)
+			}
+
+			// Mark stream as closed after final response
+			s.closed = true
+			return result, nil
 
 		case "error":
-			// A JSON-RPC error completes the stream.
+			// Error response
 			var response jsonrpc.Response
 			if err := json.Unmarshal(data, &response); err != nil {
-				return zero, s.endStream(fmt.Errorf("failed to parse error response: %w", err))
+				return zero, fmt.Errorf("failed to parse error response: %w", err)
 			}
+
+			s.closed = true
 			if response.Error != nil {
-				return zero, s.endStream(response.Error)
+				return zero, response.Error
 			}
-			return zero, s.endStream(fmt.Errorf("JSON-RPC error event did not contain an error"))
+			return zero, fmt.Errorf("unexpected error response")
 
 		default:
-			return zero, s.endStream(fmt.Errorf("unsupported server-sent event type %q", eventType))
+			// Ignore unknown event types
+			continue
 		}
 	}
 }
 
-// closeBody closes the HTTP response body once and returns its close error.
-func (s *EventsStreamStreamImpl) closeBody() error {
-	s.closeOnce.Do(func() {
-		s.closeErr = s.resp.Body.Close()
-	})
-	return s.closeErr
-}
-
-// endStream marks the stream closed and preserves both the receive error and
-// any error returned while closing the HTTP response body.
-func (s *EventsStreamStreamImpl) endStream(err error) error {
-	s.closed = true
-	if closeErr := s.closeBody(); closeErr != nil {
-		return errors.Join(err, closeErr)
-	}
-	return err
-}
-
-// decodeResult passes one successful stream item to the decoder configured by NewClient.
-func (s *EventsStreamStreamImpl) decodeResult(data json.RawMessage) (*mcpassistant.EventsStreamResult, error) {
-	// Give the configured decoder the successful result bytes as an HTTP response body.
+// decodeResult decodes JSON-RPC result data using the user-provided decoder
+func (s *EventsStreamClientStream) decodeResult(data json.RawMessage) (*mcpassistant.EventsStreamResult, error) {
+	// Create minimal HTTP response with raw JSON data for user's decoder
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
 		Body:       io.NopCloser(bytes.NewReader(data)),
 	}
 
+	// Use the user-provided decoder to decode the result
 	decoder := s.decoder(resp)
 	var result *mcpassistant.EventsStreamResult
 	if err := decoder.Decode(&result); err != nil {
@@ -234,13 +366,15 @@ func (s *EventsStreamStreamImpl) decodeResult(data json.RawMessage) (*mcpassista
 }
 
 // Close closes the stream.
-func (s *EventsStreamStreamImpl) Close() error {
+func (s *EventsStreamClientStream) Close() error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
 	if !s.closed {
 		s.closed = true
-		return s.closeBody()
+		if s.resp != nil && s.resp.Body != nil {
+			return s.resp.Body.Close()
+		}
 	}
 	return nil
 }

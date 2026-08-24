@@ -517,8 +517,6 @@ func continuationTestSpecs() (tools.ToolSpec, tools.ToolSpec) {
 		NextCursorField: "next_cursor",
 	}}
 	continuation := newAnyJSONSpec("tools.continue_search", "svc.tools")
-	continuation.Payload.Schema = rawjson.Message(`{"type":"object"}`)
-	continuation.Payload.FieldJSONTypes = map[string]string{"$payload": "object"}
 	continuation.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{
 		ContinueTool:    continuation.Name,
 		SourceTool:      search.Name,

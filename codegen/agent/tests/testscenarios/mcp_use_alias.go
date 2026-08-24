@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -12,7 +12,7 @@ func MCPUseAlias() func() {
 	return func() {
 		API("alpha", func() {})
 		Service("calc", func() {
-			aidsl.MCP("core", "1.0.0")
+			MCP("core", "1.0.0")
 			Method("add", func() {
 				Payload(func() {
 					Attribute("a", Int, "First operand")
@@ -20,13 +20,13 @@ func MCPUseAlias() func() {
 					Required("a", "b")
 				})
 				Result(Int)
-				aidsl.Tool("add", "Add two numbers")
+				Tool("add", "Add two numbers")
 			})
 		})
-		var CalcRemote = aidsl.Toolset("calc-remote", aidsl.FromMCP("calc", "core"))
+		var CalcRemote = Toolset("calc-remote", FromMCP("calc", "core"))
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use(CalcRemote)
+			Agent("scribe", "Doc helper", func() {
+				Use(CalcRemote)
 			})
 		})
 	}

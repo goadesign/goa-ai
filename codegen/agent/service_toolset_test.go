@@ -50,7 +50,7 @@ func TestServiceToolsetIncludesMeta(t *testing.T) {
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
 
-	files, err := codegen.BuildFilesForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root}, false)
+	files, err := codegen.Generate("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
 	require.NoError(t, err)
 
 	// Locate the service_toolset.go file and assert content mentions ToolCallMeta and meta param usage.

@@ -8,12 +8,29 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
-// TestMultiServiceGeneratesAdapterStubs verifies that each generated MCP
-// service is backed by its matching user service in example servers.
-func TestMultiServiceGeneratesAdapterStubs(t *testing.T) {
+// Ensures CLI patching and adapter stub generation work for multiple MCP-enabled services.
+func TestMultiService_GeneratesCLIAndStubs(t *testing.T) {
 	// Two services with one method each
 	alpha := &expr.ServiceExpr{Name: "Alpha", Methods: []*expr.MethodExpr{{Name: "One"}}}
 	beta := &expr.ServiceExpr{Name: "Beta", Methods: []*expr.MethodExpr{{Name: "Two"}}}
+
+	// Server referencing both services
+	svr := &expr.ServerExpr{Name: "orchestrator", Services: []string{"Alpha", "Beta"}}
+
+	// CLI file for server
+	cliHeader := &codegen.SectionTemplate{
+		Name: headerSection,
+		Data: map[string]any{
+			"Imports": []*codegen.ImportSpec{
+				{Path: "example.com/assistant/gen/jsonrpc/cli/orchestrator/cli"},
+			},
+		},
+	}
+	cliStart := &codegen.SectionTemplate{Name: "cli-http-start", Source: "// original"}
+	cliFile := &codegen.File{
+		Path:             "cmd/orchestrator-cli/jsonrpc.go",
+		SectionTemplates: []*codegen.SectionTemplate{cliHeader, cliStart},
+	}
 
 	// Existing example stubs (to be replaced)
 	alphaHeader := &codegen.SectionTemplate{Name: headerSection, Data: map[string]any{
@@ -37,24 +54,29 @@ func TestMultiServiceGeneratesAdapterStubs(t *testing.T) {
 	}
 	betaStub := &codegen.File{Path: "mcp_beta.go", SectionTemplates: []*codegen.SectionTemplate{betaHeader, betaBody}}
 
-	files := []*codegen.File{alphaStub, betaStub}
+	files := []*codegen.File{cliFile, alphaStub, betaStub}
+
+	// Patch CLI to use adapter clients for both services
+	files = patchCLIForServer("orchestrator", svr, []*expr.ServiceExpr{alpha, beta}, files)
 
 	// Generate adapter stubs for both services and replace bodies
-	_, err := generateExampleAdapterStubs([]exampleMCPService{
-		{
-			service:             alpha,
-			mcpConstructorName:  "NewMcpAlpha",
-			userConstructorName: "NewAlpha",
-			mcpServiceInterface: "Service",
-		},
-		{
-			service:             beta,
-			mcpConstructorName:  "NewMcpBeta",
-			userConstructorName: "NewBeta",
-			mcpServiceInterface: "Service",
-		},
-	}, files)
+	_, err := generateExampleAdapterStubs([]*expr.ServiceExpr{alpha, beta}, files)
 	require.NoError(t, err)
+
+	// Validate CLI header contains both adapter client imports
+	var importPaths []string
+	if data, ok := cliHeader.Data.(map[string]any); ok {
+		if imv, ok2 := data["Imports"]; ok2 {
+			if specs, ok3 := imv.([]*codegen.ImportSpec); ok3 {
+				for _, s := range specs {
+					importPaths = append(importPaths, s.Path)
+				}
+			}
+		}
+	}
+	require.Contains(t, importPaths, "example.com/assistant/gen/mcp_alpha/adapter/client")
+	require.Contains(t, importPaths, "example.com/assistant/gen/mcp_beta/adapter/client")
+	require.NotEqual(t, "// original", cliStart.Source)
 
 	// Validate stubs were replaced with template section
 	var alphaHasStub, betaHasStub bool

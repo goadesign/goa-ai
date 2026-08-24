@@ -7,8 +7,8 @@
 package specs
 
 import (
-	math "goa.design/goa-ai/gen/alpha/toolsets/math"
-	ops "goa.design/goa-ai/gen/alpha/toolsets/ops"
+	math "goa.design/goa-ai/alpha/toolsets/math"
+	ops "goa.design/goa-ai/alpha/toolsets/ops"
 	"goa.design/goa-ai/runtime/agent/policy"
 	tools "goa.design/goa-ai/runtime/agent/tools"
 )

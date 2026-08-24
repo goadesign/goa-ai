@@ -12,22 +12,29 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	codegen "goa.design/goa-ai/codegen/agent"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 	"goa.design/goa-ai/codegen/testhelpers"
 	gcodegen "goa.design/goa/v3/codegen"
 )
 
-// buildWithPrepareAndPkg mirrors buildWithPrepare but generates against an
-// explicit genpkg. Realistic genpkgs end in "/gen" (the goa CLI always passes
-// "<module>/gen"), which keeps the generator's two service import forms --
-// shared.JoinImportPath (inserts /gen/) and plain path.Join -- identical.
-func buildWithPrepareAndPkg(t *testing.T, genpkg string, design func()) []*gcodegen.File {
+// buildWithPrepareForGeneratedModule generates against the package path used by
+// the temporary module below. Real package paths end in "/gen" because the Goa
+// CLI passes "<module>/gen", which keeps both generated service import forms
+// identical.
+func buildWithPrepareForGeneratedModule(t *testing.T, design func()) []*gcodegen.File {
 	t.Helper()
-	return testhelpers.BuildAndGenerateWithPkg(t, genpkg, design)
+	const genpkg = "generated.local/gen"
+	_, roots := testhelpers.RunDesign(t, design)
+	require.NoError(t, codegen.Prepare(genpkg, roots))
+	files, err := codegen.Generate(genpkg, roots, nil)
+	require.NoError(t, err)
+	return files
 }
 
 // writeGeneratedModuleKeepingGen writes files into a temp module at their
@@ -38,18 +45,232 @@ func buildWithPrepareAndPkg(t *testing.T, genpkg string, design func()) []*gcode
 // rendered through gcodegen.File.Render -- the same pipeline `goa gen` uses,
 // including gofmt and unused-import pruning -- so the tree compiles exactly
 // as a real generation run would.
-func writeGeneratedModuleKeepingGen(t *testing.T, modulePath string, files []*gcodegen.File) string {
+func writeGeneratedModuleKeepingGen(t *testing.T, files []*gcodegen.File) string {
 	t.Helper()
 	root := t.TempDir()
 	repoRoot, err := filepath.Abs("../../..")
 	require.NoError(t, err)
-	goMod := "module " + modulePath + "\n\ngo 1.24\n\nrequire goa.design/goa-ai v0.0.0\n\nreplace goa.design/goa-ai => " + filepath.ToSlash(repoRoot) + "\n"
+	goMod := "module generated.local\n\ngo 1.24\n\nrequire goa.design/goa-ai v0.0.0\n\nreplace goa.design/goa-ai => " + filepath.ToSlash(repoRoot) + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o600))
 	for _, file := range files {
 		_, err := file.Render(root)
 		require.NoErrorf(t, err, "render %s", file.Path)
 	}
 	return root
+}
+
+// applicationExecutorBuildCommand returns a fixed compile command for each
+// application executor scenario so test data cannot alter subprocess arguments.
+func applicationExecutorBuildCommand(ctx context.Context, scenario string) *exec.Cmd {
+	switch scenario {
+	case "no result only":
+		return exec.CommandContext(ctx, "go", "build", "-mod=mod", "./internal/agents/scribe/toolsets/ops")
+	case "result without example":
+		return exec.CommandContext(ctx, "go", "build", "-mod=mod", "./internal/agents/scribe/toolsets/profiles")
+	default:
+		panic("unknown application executor compile scenario: " + scenario)
+	}
+}
+
+// mcpExecutorBuildCommand returns fixed package arguments for each generated
+// MCP executor variant so the subprocess never consumes a dynamic path.
+func mcpExecutorBuildCommand(ctx context.Context, scenario string) *exec.Cmd {
+	switch scenario {
+	case "Goa-backed result", "Goa-backed no result":
+		return exec.CommandContext(ctx, "go", "build", "-mod=mod", "./gen/alpha/agents/scribe/core")
+	case "aliased Goa-backed executor":
+		return exec.CommandContext(ctx, "go", "build", "-mod=mod", "./gen/alpha/agents/scribe/calc_remote")
+	case "external inline inject":
+		return exec.CommandContext(ctx, "go", "build", "-mod=mod", "./gen/alpha/agents/scribe/remote_search")
+	default:
+		panic("unknown MCP executor compile scenario: " + scenario)
+	}
+}
+
+// TestGeneratedApplicationExecutorsCompile proves application-owned executor
+// files import rawjson only when their generated implementation decodes an
+// authored result example. These two designs exercise the branches that do not:
+// tools with no result and a tool whose result has no authored example.
+func TestGeneratedApplicationExecutorsCompile(t *testing.T) {
+	tests := []struct {
+		name        string
+		design      func()
+		servicePath string
+		serviceStub string
+		agentStub   string
+	}{
+		{
+			name:        "no result only",
+			design:      testscenarios.NoResultMethod(),
+			servicePath: "gen/tasks/service_stub.go",
+			serviceStub: `package tasks
+
+import "context"
+
+type PurgePayload struct {
+	SessionID string
+}
+
+type Service interface {
+	Purge(context.Context, *PurgePayload) error
+	Heartbeat(context.Context) error
+}
+
+type Client struct{}
+
+func (c *Client) Purge(context.Context, *PurgePayload) error {
+	return nil
+}
+
+func (c *Client) Heartbeat(context.Context) error {
+	return nil
+}
+`,
+			agentStub: `package scribe
+
+import "goa.design/goa-ai/runtime/agent/runtime"
+
+func NewScribeOpsToolsetRegistration(runtime.ToolCallExecutor) runtime.ToolsetRegistration {
+	return runtime.ToolsetRegistration{}
+}
+`,
+		},
+		{
+			name:        "result without example",
+			design:      testscenarios.MethodComplexEmbedded(),
+			servicePath: "gen/alpha/service_stub.go",
+			serviceStub: `package alpha
+
+import "context"
+
+type Address struct {
+	Street string
+	City   string
+}
+
+type Profile struct {
+	ID      string
+	Name    *string
+	Address *Address
+}
+
+type Service interface {
+	UpsertProfile(context.Context, *Profile) (*Profile, error)
+}
+
+type Client struct{}
+
+func (c *Client) UpsertProfile(context.Context, *Profile) (*Profile, error) {
+	return &Profile{}, nil
+}
+`,
+			agentStub: `package scribe
+
+import "goa.design/goa-ai/runtime/agent/runtime"
+
+func NewScribeProfilesToolsetRegistration(runtime.ToolCallExecutor) runtime.ToolsetRegistration {
+	return runtime.ToolsetRegistration{}
+}
+`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			files := testhelpers.BuildAndGenerateWithExamplePkg(
+				t,
+				"generated.local/gen",
+				test.design,
+			)
+			root := writeGeneratedModuleKeepingGen(t, files)
+			writeGeneratedPackageTest(t, root, test.servicePath, test.serviceStub)
+			writeGeneratedPackageTest(
+				t,
+				root,
+				"gen/alpha/agents/scribe/registration_stub.go",
+				test.agentStub,
+			)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			runGeneratedGoTestCommand(
+				t,
+				root,
+				applicationExecutorBuildCommand(ctx, test.name),
+			)
+		})
+	}
+}
+
+// TestGeneratedMCPExecutorsCompile asks the Go compiler to type-check each
+// available MCP executor shape together with the exact generated specs package
+// it imports. The small service stub represents Goa service codegen, which the
+// agent generator does not emit.
+func TestGeneratedMCPExecutorsCompile(t *testing.T) {
+	const calcServiceStub = `package calc
+
+// AddPayload mirrors the method payload emitted by Goa service codegen.
+type AddPayload struct {
+	A int
+	B int
+}
+`
+	tests := []struct {
+		name            string
+		design          func()
+		executorPackage string
+		specsPrefix     string
+		serviceStub     string
+	}{
+		{
+			name:            "Goa-backed result",
+			design:          testscenarios.MCPUse(),
+			executorPackage: "gen/alpha/agents/scribe/core",
+			specsPrefix:     "gen/calc/toolsets/core/",
+			serviceStub:     calcServiceStub,
+		},
+		{
+			name:            "Goa-backed no result",
+			design:          testscenarios.MCPUseNoResult(),
+			executorPackage: "gen/alpha/agents/scribe/core",
+			specsPrefix:     "gen/calc/toolsets/core/",
+			serviceStub:     calcServiceStub,
+		},
+		{
+			name:            "aliased Goa-backed executor",
+			design:          testscenarios.MCPUseAlias(),
+			executorPackage: "gen/alpha/agents/scribe/calc_remote",
+			specsPrefix:     "gen/calc/toolsets/calc_remote/",
+			serviceStub:     calcServiceStub,
+		},
+		{
+			name:            "external inline inject",
+			design:          testscenarios.MCPUseExternalInlineInject(),
+			executorPackage: "gen/alpha/agents/scribe/remote_search",
+			specsPrefix:     "gen/remote/toolsets/remote_search/",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			files := buildWithPrepareForGeneratedModule(t, test.design)
+			compileFiles := make([]*gcodegen.File, 0, len(files))
+			executorFile := filepath.ToSlash(filepath.Join(test.executorPackage, "mcp_executor.go"))
+			for _, file := range files {
+				path := filepath.ToSlash(file.Path)
+				if path == executorFile || strings.HasPrefix(path, test.specsPrefix) {
+					compileFiles = append(compileFiles, file)
+				}
+			}
+			require.NotEmpty(t, compileFiles)
+			root := writeGeneratedModuleKeepingGen(t, compileFiles)
+			if test.serviceStub != "" {
+				writeGeneratedPackageTest(t, root, "gen/calc/service_stub.go", test.serviceStub)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			runGeneratedGoTestCommand(t, root, mcpExecutorBuildCommand(ctx, test.name))
+		})
+	}
 }
 
 // TestGeneratedMixedInjectPackagesCompile generates the mixed
@@ -61,8 +282,8 @@ func writeGeneratedModuleKeepingGen(t *testing.T, modulePath string, files []*gc
 // (which agent codegen does not emit) is stubbed; every agent-generated
 // file, including http/validate.go, is compiled verbatim.
 func TestGeneratedMixedInjectPackagesCompile(t *testing.T) {
-	files := buildWithPrepareAndPkg(t, "generated.local/gen", testscenarios.InjectMixedBoundUnboundExample())
-	root := writeGeneratedModuleKeepingGen(t, "generated.local", files)
+	files := buildWithPrepareForGeneratedModule(t, testscenarios.InjectMixedBoundUnboundExample())
+	root := writeGeneratedModuleKeepingGen(t, files)
 
 	// Stub the Goa-core service package (emitted by `goa gen`'s service
 	// codegen, not by the agent generator): the generated provider,
@@ -102,20 +323,62 @@ func (c *Client) GetData(ctx context.Context, p *GetDataPayload) (*GetDataResult
 		"./gen/atlas/toolsets/helpers", "./gen/atlas/agents/scribe/helpers"))
 }
 
+// TestGeneratedServerDataPackagesCompile compiles both generated call sites
+// that encode server-only method result data: the registry provider and the
+// agent-side service executor.
+func TestGeneratedServerDataPackagesCompile(t *testing.T) {
+	files := buildWithPrepareForGeneratedModule(t, testscenarios.ServiceToolsetBindSelfServerData())
+	root := writeGeneratedModuleKeepingGen(t, files)
+
+	// Stub the Goa service package that normal `goa gen` output supplies.
+	writeGeneratedPackageTest(t, root, "gen/alpha/service_stub.go", `package alpha
+
+import "context"
+
+type Evidence struct {
+	Kind string
+}
+
+type FindPayload struct {
+	Ident string
+}
+
+type FindResult struct {
+	Okay     bool
+	Evidence []*Evidence
+}
+
+type Service interface {
+	Find(context.Context, *FindPayload) (*FindResult, error)
+}
+
+type Client struct{}
+
+func (c *Client) Find(ctx context.Context, p *FindPayload) (*FindResult, error) {
+	return &FindResult{Okay: true, Evidence: []*Evidence{{Kind: "alarm"}}}, nil
+}
+`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "build", "-mod=mod",
+		"./gen/alpha/toolsets/lookup", "./gen/alpha/agents/scribe/lookup"))
+}
+
 // TestGeneratedBoundMetaInjectPackagesCompile is the bound half of the
 // compile matrix: a BindTo tool injecting a meta-backed field (session_id),
 // whose provider.go DOES declare the runtime.ToolCallMeta and call
-// Inject<Tool>, and whose transforms copy the injected field into the required
-// method payload field. Locks the metadata emission, assignment in inject.go,
-// and the tool-payload to method-payload transform
+// Inject<Tool>, and whose transforms deref the pointer injected field into
+// the required method payload field. Locks the meta emission, the pointer
+// assignment in inject.go, and the tool-payload -> method-payload transform
 // as a compilable whole -- and, via the provider_exec_test.go file written
 // into the generated module, EXECUTES the full generated chain
-// (PayloadCodec.FromJSON -> InjectGetData -> InitGetDataMethodPayload ->
-// service call) with `go test`, asserting the bound method
+// (PayloadCodec.FromJSON -> InjectGetData -> InitGetDataMethodPayload
+// pointer deref -> service call) with `go test`, asserting the bound method
 // payload actually receives session metadata and immutable labels end to end.
 func TestGeneratedBoundMetaInjectPackagesCompile(t *testing.T) {
-	files := buildWithPrepareAndPkg(t, "generated.local/gen", testscenarios.InjectBoundMetaExample())
-	root := writeGeneratedModuleKeepingGen(t, "generated.local", files)
+	files := buildWithPrepareForGeneratedModule(t, testscenarios.InjectBoundMetaExample())
+	root := writeGeneratedModuleKeepingGen(t, files)
 
 	writeGeneratedPackageTest(t, root, "gen/atlas/service_stub.go", `package atlas
 
@@ -149,8 +412,8 @@ func (c *Client) GetData(ctx context.Context, p *GetDataPayload) (*GetDataResult
 
 	// Executing regression test for the registry provider path: compiled by
 	// `go test` inside the generated module, it drives the generated
-	// Provider.HandleToolCall and asserts the injected metadata value survives
-	// injection and conversion into the bound method
+	// Provider.HandleToolCall and asserts the injected meta value survives
+	// the Inject -> pointer -> transform-deref chain onto the bound method
 	// payload. Text-level golden assertions cannot prove this chain RUNS;
 	// only executing the generated code can.
 	writeGeneratedPackageTest(t, root, "gen/atlas/toolsets/helpers/provider_exec_test.go", `package helpers
@@ -180,8 +443,9 @@ func (s *capturingService) GetData(ctx context.Context, p *atlas.GetDataPayload)
 // TestHandleToolCallInjectsContext executes the full generated chain:
 // GetDataPayloadCodec.FromJSON decodes the wire payload (no session_id on
 // the wire -- injected fields are hidden from the model), InjectGetData assigns
-// the session metadata and immutable household label to required payload fields,
-// and InitGetDataMethodPayload copies them into the required method payload
+// the session metadata and immutable household label to pointer payload fields,
+// and
+// InitGetDataMethodPayload derefs it into the required method payload
 // field the service receives.
 func TestHandleToolCallInjectsContext(t *testing.T) {
 	svc := &capturingService{}
@@ -239,106 +503,4 @@ func TestHandleToolCallInjectsContext(t *testing.T) {
 	// files and is compile-checked only).
 	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-count=1",
 		"./gen/atlas/toolsets/helpers", "./gen/atlas/agents/scribe/helpers"))
-}
-
-// TestGoaAndGoaAIDSLDotImportsCompile evaluates a design that calls both DSLs
-// directly. Go compilation fails before this test runs if the packages export
-// the same name.
-func TestGoaAndGoaAIDSLDotImportsCompile(t *testing.T) {
-	testhelpers.RunDesign(t, testscenarios.InjectReusableExportExample())
-}
-
-// TestGeneratedReusableInjectPackagesCompile verifies that a shared toolset
-// exported by one service and used by another produces one complete contract.
-// The generated provider test also proves a hidden session ID reaches the
-// bound service method.
-func TestGeneratedReusableInjectPackagesCompile(t *testing.T) {
-	files := buildWithPrepareAndPkg(t, "generated.local/gen", testscenarios.InjectReusableExportExample())
-	root := writeGeneratedModuleKeepingGen(t, "generated.local", files)
-
-	writeGeneratedPackageTest(t, root, "gen/atlas/service_stub.go", `package atlas
-
-import "context"
-
-type InheritedPayload struct {
-	SessionID string
-	Query string
-}
-
-type ExplicitArgs struct {
-	SessionID string
-	Query string
-}
-
-type Service interface {
-	Inherited(context.Context, *InheritedPayload) (string, error)
-	Explicit(context.Context, *ExplicitArgs) (string, error)
-}
-
-type Client struct{}
-
-func (c *Client) Inherited(context.Context, *InheritedPayload) (string, error) {
-	return "ok", nil
-}
-
-func (c *Client) Explicit(context.Context, *ExplicitArgs) (string, error) {
-	return "ok", nil
-}
-`)
-
-	writeGeneratedPackageTest(t, root, "gen/atlas/toolsets/helpers/provider_exec_test.go", `package helpers
-
-import (
-	"context"
-	"testing"
-
-	atlas "generated.local/gen/atlas"
-	"goa.design/goa-ai/runtime/toolregistry"
-)
-
-type capturingReusableService struct {
-	got *atlas.InheritedPayload
-}
-
-func (s *capturingReusableService) Inherited(_ context.Context, p *atlas.InheritedPayload) (string, error) {
-	s.got = p
-	return "ok", nil
-}
-
-func (s *capturingReusableService) Explicit(_ context.Context, _ *atlas.ExplicitArgs) (string, error) {
-	return "ok", nil
-}
-
-func TestReusableProviderInjectsSession(t *testing.T) {
-	svc := &capturingReusableService{}
-	provider := NewProvider(svc)
-	ctx := toolregistry.WithToolUseID(context.Background(), "use-1")
-	result, err := provider.HandleToolCall(ctx, toolregistry.ToolCallMessage{
-		ToolUseID: "use-1",
-		Tool: Inherited,
-		Payload: []byte("{\"query\":\"weather\"}"),
-		Meta: &toolregistry.ToolCallMeta{SessionID: "sess-42"},
-	})
-	if err != nil {
-		t.Fatalf("HandleToolCall returned error: %v", err)
-	}
-	if result.Error != nil {
-		t.Fatalf("HandleToolCall returned tool error: %+v", result.Error)
-	}
-	if svc.got == nil {
-		t.Fatal("bound service method was never called")
-	}
-	if svc.got.SessionID != "sess-42" {
-		t.Fatalf("SessionID = %q, want sess-42", svc.got.SessionID)
-	}
-	if svc.got.Query != "weather" {
-		t.Fatalf("Query = %q, want weather", svc.got.Query)
-	}
-}
-`)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-count=1",
-		"./gen/atlas/toolsets/helpers", "./gen/chat/agents/assistant/helpers"))
 }

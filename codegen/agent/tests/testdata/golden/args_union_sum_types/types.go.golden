@@ -21,17 +21,17 @@ type (
 		Value         Value
 		OptionalValue OptionalValue
 	}
-	// OptionalValueNumber is a nested type used by the generated JSON contract.
+	// OptionalValueNumber is a helper type materialized for nested references.
 	OptionalValueNumber = int32
-	// OptionalValueText is a nested type used by the generated JSON contract.
+	// OptionalValueText is a helper type materialized for nested references.
 	OptionalValueText = string
-	// StructuredValue is a nested type used by the generated JSON contract.
+	// StructuredValue is a helper type materialized for nested references.
 	StructuredValue = struct {
 		// Structured value label
 		Label string
 	}
-	// ValueNumber is a nested type used by the generated JSON contract.
+	// ValueNumber is a helper type materialized for nested references.
 	ValueNumber = int32
-	// ValueText is a nested type used by the generated JSON contract.
+	// ValueText is a helper type materialized for nested references.
 	ValueText = string
 )

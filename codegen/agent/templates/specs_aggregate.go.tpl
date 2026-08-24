@@ -13,7 +13,7 @@ func Names() []tools.Ident {
 {{- range .Toolsets }}
     {{- $pkg := .SpecsPackageName }}
     {{- range .Tools }}
-        {{ $pkg }}.{{ .Spec.ConstName }},
+        {{ $pkg }}.{{ .ConstName }},
     {{- end }}
 {{- end }}
     }
@@ -35,8 +35,8 @@ func Spec(name tools.Ident) (tools.ToolSpec, bool) {
     {{- range .Toolsets }}
         {{- $pkg := .SpecsPackageName }}
         {{- range .Tools }}
-    case tools.Ident({{ printf "%q" .Tool.QualifiedName }}):
-        return {{ $pkg }}.Spec({{ $pkg }}.{{ .Spec.ConstName }})
+    case tools.Ident({{ printf "%q" .QualifiedName }}):
+        return {{ $pkg }}.Spec({{ $pkg }}.{{ .ConstName }})
         {{- end }}
     {{- end }}
     default:
@@ -50,15 +50,15 @@ func Metadata() []policy.ToolMetadata {
     {{- range .Toolsets }}
         {{- range .Tools }}
         {
-            ID:          tools.Ident({{ printf "%q" .Tool.QualifiedName }}),
-            Title:       {{ printf "%q" .Tool.Title }},
-            Description: {{ printf "%q" .Tool.Description }},
+            ID:          tools.Ident({{ printf "%q" .QualifiedName }}),
+            Title:       {{ printf "%q" .Title }},
+            Description: {{ printf "%q" .Description }},
             Tags: []string{
-            {{- range .Tool.Tags }}
+            {{- range .Tags }}
                 {{ printf "%q" . }},
             {{- end }}
             },
-            BudgetClass: policy.ToolBudgetClass{{ if .Tool.Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
+            BudgetClass: policy.ToolBudgetClass{{ if .Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
         },
         {{- end }}
     {{- end }}
@@ -70,17 +70,17 @@ func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
     switch name {
     {{- range .Toolsets }}
         {{- range .Tools }}
-    case tools.Ident({{ printf "%q" .Tool.QualifiedName }}):
+    case tools.Ident({{ printf "%q" .QualifiedName }}):
         return policy.ToolMetadata{
-            ID:          tools.Ident({{ printf "%q" .Tool.QualifiedName }}),
-            Title:       {{ printf "%q" .Tool.Title }},
-            Description: {{ printf "%q" .Tool.Description }},
+            ID:          tools.Ident({{ printf "%q" .QualifiedName }}),
+            Title:       {{ printf "%q" .Title }},
+            Description: {{ printf "%q" .Description }},
             Tags: []string{
-            {{- range .Tool.Tags }}
+            {{- range .Tags }}
                 {{ printf "%q" . }},
             {{- end }}
             },
-            BudgetClass: policy.ToolBudgetClass{{ if .Tool.Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
+            BudgetClass: policy.ToolBudgetClass{{ if .Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
         }, true
         {{- end }}
     {{- end }}

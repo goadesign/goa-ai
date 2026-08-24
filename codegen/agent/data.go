@@ -7,10 +7,10 @@ import (
 
 	ir "goa.design/goa-ai/codegen/ir"
 	agentsExpr "goa.design/goa-ai/expr/agent"
-	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
+	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
@@ -31,8 +31,6 @@ type (
 	GeneratorData struct {
 		// Genpkg is the Go import path to the generated code root (typically `<module>/gen`).
 		Genpkg string
-		// DisableAgentDocs reports whether this design omits the generated guide.
-		DisableAgentDocs bool
 		// Services bundles the agent metadata grouped by Goa service.
 		Services []*ServiceAgentsData
 	}
@@ -56,8 +54,6 @@ type (
 		Agents []*AgentData
 		// Completions lists each typed assistant-output contract declared by the service.
 		Completions []*CompletionData
-		// RegistryClients lists the registry clients written under this service.
-		RegistryClients []*RegistryClientData
 		// HasMCP indicates whether any agent under this service references external
 		// MCP toolsets. Example-phase generators use this to decide whether to emit
 		// MCP caller scaffolding/imports.
@@ -293,8 +289,6 @@ type (
 	//
 	// Created by newToolsetData during agent data construction; immutable afterward.
 	ToolsetData struct {
-		// definition is the saved toolset whose generated package this reference uses.
-		definition *ir.Toolset
 		// Expr is the original toolset expression.
 		Expr *agentsExpr.ToolsetExpr
 		// Name is the DSL-specified toolset identifier.
@@ -313,6 +307,9 @@ type (
 		// SourceService points to the Goa service that originally declared the toolset.
 		// For external providers (e.g., MCP) this differs from the consuming agent service.
 		SourceService *service.Data
+		// SourceServiceImports caches the user type imports for the source service. This
+		// enables tool spec generation to reference external service types.
+		SourceServiceImports map[string]*codegen.ImportSpec
 		// QualifiedName is the toolset-scoped identifier (`toolset`).
 		QualifiedName string
 		// TaskQueue is the derived Temporal/engine queue for tool execution.
@@ -346,9 +343,6 @@ type (
 		AgentToolsImportPath string
 		// Tools lists the tools defined inside the toolset.
 		Tools []*ToolData
-		// specs stores the tool names and types selected for this generated specs
-		// package before its files are written.
-		specs *toolSpecsData
 		// MCP describes the external MCP helper metadata when this toolset references
 		// an MCP server/toolset.
 		MCP *MCPToolsetMeta
@@ -468,28 +462,6 @@ type (
 		// ConstName is a Go-safe exported identifier for referencing this tool
 		// in generated code (e.g., AnalyzeData for tool name "analyze_data").
 		ConstName string
-		// InjectFunc names the generated function that fills server-owned fields.
-		InjectFunc string
-		// DecodeFunc names the generated function that decodes and fills a payload.
-		DecodeFunc string
-		// SpecVar names the generated variable that stores the tool specification.
-		SpecVar string
-		// PayloadTypeName names the generated payload type.
-		PayloadTypeName string
-		// PayloadCodecName names the generated payload codec.
-		PayloadCodecName string
-		// ResultTypeName names the generated result type.
-		ResultTypeName string
-		// ResultCodecName names the generated result codec.
-		ResultCodecName string
-		// MethodPayloadTransform names the generated function that builds the service payload.
-		MethodPayloadTransform string
-		// ToolResultTransform names the generated function that builds the tool result.
-		ToolResultTransform string
-		// ServerDataTransforms maps a server data kind to its generated conversion function.
-		ServerDataTransforms map[string]string
-		// ServerDataCodecNames maps a server data kind to its generated codec.
-		ServerDataCodecNames map[string]string
 		// Description is the DSL description for docs and planners.
 		Description string
 		// QualifiedName is the toolset-scoped identifier (`toolset.tool`).
@@ -517,7 +489,8 @@ type (
 		HasMethodPayload bool
 
 		// MethodResultAttr is the Goa attribute for the bound service result
-		// type. It supplies the generated result when the tool has no Return.
+		// (resolved user type). Used to generate default result adapters and to
+		// materialize specs when the tool Return is not specified.
 		MethodResultAttr *goaexpr.AttributeExpr
 		// HasMethodResult reports whether the bound Goa method returns a value in
 		// addition to an error.
@@ -604,8 +577,9 @@ type (
 		// cursor from the preceding bounded result.
 		ModelHiddenPayloadFields []string
 
-		// Bounds describes result limits such as returned rows and a next cursor.
-		// Generated helpers read these values without changing the tool result.
+		// Bounds declares the out-of-band bounded-result contract for this tool.
+		// When non-nil, codegen emits runtime specs and method-result projection
+		// helpers without mutating the semantic result schema.
 		Bounds *ToolBoundsData
 
 		// TerminalRun indicates that once this tool executes, the runtime should
@@ -837,24 +811,28 @@ const (
 	defaultPlannerActivityTimeout = 2 * time.Minute
 )
 
-// buildGeneratorDataFromIR combines the saved agent design with the service
-// types and package names chosen for this command.
-func buildGeneratorDataFromIR(
-	design *ir.Design,
-	servicesData *service.ServicesData,
-	mcpRoot *mcpexpr.RootExpr,
-) (*GeneratorData, error) {
+// buildGeneratorData builds render data from the canonical IR.
+func buildGeneratorData(genpkg string, roots []eval.Root) (*GeneratorData, error) {
+	design, err := ir.Build(genpkg, roots)
+	if err != nil {
+		return nil, err
+	}
+	return buildGeneratorDataFromIR(design)
+}
+
+func buildGeneratorDataFromIR(design *ir.Design) (*GeneratorData, error) {
 	if design == nil {
 		return &GeneratorData{}, nil
 	}
+	servicesData := service.NewServicesData(design.GoaRoot)
 	services := make([]*ServiceAgentsData, 0, len(design.Services))
 	for _, svcIR := range design.Services {
 		if svcIR == nil || (len(svcIR.Agents) == 0 && len(svcIR.Completions) == 0) {
 			continue
 		}
-		svc := &ServiceAgentsData{Service: servicesData.Get(svcIR.Name)}
+		svc := &ServiceAgentsData{Service: svcIR.Goa}
 		for _, agentIR := range svcIR.Agents {
-			agentData, err := newAgentData(design.Genpkg, agentIR, servicesData, mcpRoot)
+			agentData, err := newAgentData(design.Genpkg, agentIR, servicesData)
 			if err != nil {
 				return nil, err
 			}
@@ -868,19 +846,10 @@ func buildGeneratorDataFromIR(
 		}
 		services = append(services, svc)
 	}
-	return &GeneratorData{
-		Genpkg:           design.Genpkg,
-		DisableAgentDocs: design.AgentsRoot.DisableAgentDocs,
-		Services:         services,
-	}, nil
+	return &GeneratorData{Genpkg: design.Genpkg, Services: services}, nil
 }
 
-func newAgentData(
-	genpkg string,
-	agentIR *ir.Agent,
-	servicesData *service.ServicesData,
-	mcpRoot *mcpexpr.RootExpr,
-) (*AgentData, error) {
+func newAgentData(genpkg string, agentIR *ir.Agent, servicesData *service.ServicesData) (*AgentData, error) {
 	agent := &AgentData{
 		Genpkg:                genpkg,
 		Name:                  agentIR.Name,
@@ -888,7 +857,7 @@ func newAgentData(
 		ID:                    agentIR.ID,
 		GoName:                codegen.Goify(agentIR.Name, true),
 		Slug:                  agentIR.Slug,
-		Service:               servicesData.Get(agentIR.Service.Name),
+		Service:               agentIR.Service.Goa,
 		PackageName:           agentIR.PackageName,
 		PathName:              agentIR.PathName,
 		Dir:                   agentIR.Dir,
@@ -951,11 +920,11 @@ func newAgentData(
 			agent.Runtime.ExecuteTool.StartToCloseTimeout = agent.RunPolicy.ToolTimeout
 		}
 	}
-	usedToolsets, err := collectToolsets(agent, agentIR.UsedToolsets, servicesData, mcpRoot)
+	usedToolsets, err := collectToolsets(agent, agentIR.UsedToolsets, servicesData)
 	if err != nil {
 		return nil, err
 	}
-	exportedToolsets, err := collectToolsets(agent, agentIR.ExportedToolsets, servicesData, mcpRoot)
+	exportedToolsets, err := collectToolsets(agent, agentIR.ExportedToolsets, servicesData)
 	if err != nil {
 		return nil, err
 	}

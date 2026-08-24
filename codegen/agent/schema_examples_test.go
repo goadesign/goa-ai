@@ -63,7 +63,8 @@ func TestToolSchemasContainOnlyAuthoredRootExamples(t *testing.T) {
 
 	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
-	specs := codegen.ToolSpecsDataForTest(data.Services[0].Agents[0])
+	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
+	require.NoError(t, err)
 
 	schemas := codegen.CollectTypeSchemasForTest(specs)
 	var schema map[string]any

@@ -104,7 +104,6 @@ func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefiniti
 		definition := toolDefinitionFromSpec(action.spec)
 		definition.Name = action.modelName.String()
 		definition.Description = action.description
-		definition.NoArguments = true
 		definitions = append(definitions, definition)
 	}
 	return definitions

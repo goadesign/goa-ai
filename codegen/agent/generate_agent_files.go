@@ -1,28 +1,23 @@
-// Package codegen lists the files written for one agent and writes the JSON document
-// that describes all of its tools.
 package codegen
 
 import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"sort"
 
 	"goa.design/goa/v3/codegen"
 )
 
-// agentFiles returns all files written for one agent.
-func agentFiles(agent *AgentData) ([]*codegen.File, error) {
+// agentFiles collects all files generated for a single agent.
+func agentFiles(agent *AgentData) []*codegen.File {
 	files := []*codegen.File{
 		agentImplFile(agent),
 		agentConfigFile(agent),
 		agentRegistryFile(agent),
 	}
-	agg, err := agentSpecsAggregatorFile(agent)
-	if err != nil {
-		return nil, err
-	}
-	if agg != nil {
+	// Emit agent-level aggregator and embedded schemas; toolset specs/codecs are
+	// generated separately once per owning toolset.
+	if agg := agentSpecsAggregatorFile(agent); agg != nil {
 		files = append(files, agg)
 	}
 	if jsonFile := agentSpecsJSONFile(agent); jsonFile != nil {
@@ -30,13 +25,12 @@ func agentFiles(agent *AgentData) ([]*codegen.File, error) {
 	}
 	files = append(files, agentToolsFiles(agent)...)
 	files = append(files, agentToolsConsumerFiles(agent)...)
+	// Do not emit service toolset registrations; executors map tool payloads to service methods.
 	files = append(files, mcpExecutorFiles(agent)...)
+	// Emit typed helpers for Used toolsets (method-backed) to align planner UX.
 	files = append(files, usedToolsFiles(agent)...)
-	serviceFiles, err := serviceExecutorFiles(agent)
-	if err != nil {
-		return nil, err
-	}
-	files = append(files, serviceFiles...)
+	// Emit default service executor factories for method-backed Used toolsets.
+	files = append(files, serviceExecutorFiles(agent)...)
 
 	var filtered []*codegen.File
 	for _, f := range files {
@@ -44,11 +38,20 @@ func agentFiles(agent *AgentData) ([]*codegen.File, error) {
 			filtered = append(filtered, f)
 		}
 	}
-	return filtered, nil
+	return filtered
 }
 
-// agentSpecsJSONFile writes specs/tool_schemas.json with every tool name, input,
-// output, and server data schema used by the agent.
+// agentRouteRegisterFile emits Register<Agent>Route(ctx, rt) so caller processes can
+// register route-only metadata for cross-process composition.
+//
+// agentRouteRegisterFile removed: agent-tools embed strong-contract route metadata in
+// their generated toolset registrations, so no separate route registry is required.
+
+// agentSpecsJSONFile emits specs/tool_schemas.json for an agent, capturing the
+// JSON schemas for all tools declared across its toolsets. The file aggregates
+// payload, result, and optional sidecar schemas in a backend-agnostic format
+// that can be consumed by frontends or other tooling without depending on
+// generated Go types.
 //
 // The JSON structure is:
 //
@@ -69,8 +72,8 @@ func agentFiles(agent *AgentData) ([]*codegen.File, error) {
 //	        "name": "ResultType",
 //	        "schema": { /* JSON Schema */ }
 //	      },
-//	      "server_data": {
-//	        "name": "ServerDataType",
+//	      "sidecar": {
+//	        "name": "SidecarType",
 //	        "schema": { /* JSON Schema */ }
 //	      }
 //	    }
@@ -78,9 +81,19 @@ func agentFiles(agent *AgentData) ([]*codegen.File, error) {
 //	}
 //
 // Schemas are emitted only when available; tools without payload, result, or
-// server data schemas still appear with their names.
+// sidecar schemas still appear with name metadata so callers can rely on a
+// stable catalogue.
 func agentSpecsJSONFile(agent *AgentData) *codegen.File {
-	data := agentToolSpecsData(agent)
+	data, err := buildToolSpecsData(agent)
+	if err != nil {
+		// Schema generation failures indicate a broken design or codegen bug and
+		// must surface loudly so callers do not observe partial or drifting
+		// tool catalogues. Fail generation instead of silently omitting schemas.
+		panic(fmt.Errorf("goa-ai: tool schema generation failed for agent %q: %w", agent.Name, err))
+	}
+	if data == nil {
+		return nil
+	}
 	if len(data.tools) == 0 {
 		return nil
 	}
@@ -211,9 +224,9 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 
 	payload, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
-		panic(fmt.Errorf("encode tool schemas for agent %q: %w", agent.Name, err))
+		return nil
 	}
-	// End the file with a newline so text tools display it cleanly.
+	// Ensure a trailing newline for POSIX-friendly files and cleaner diffs.
 	payload = append(payload, '\n')
 
 	sections := []*codegen.SectionTemplate{
@@ -228,30 +241,4 @@ func agentSpecsJSONFile(agent *AgentData) *codegen.File {
 		Path:             path,
 		SectionTemplates: sections,
 	}
-}
-
-// agentToolSpecsData combines the saved names, types, and schemas for every
-// tool package used by agent.
-func agentToolSpecsData(agent *AgentData) *toolSpecsData {
-	data := newToolSpecsData(agent.Genpkg, agent.Service)
-	seen := make(map[*toolSpecsData]struct{})
-	for _, toolset := range agent.AllToolsets {
-		if len(toolset.Tools) == 0 {
-			continue
-		}
-		if _, ok := seen[toolset.specs]; ok {
-			continue
-		}
-		seen[toolset.specs] = struct{}{}
-		for _, tool := range toolset.specs.tools {
-			data.addTool(tool)
-		}
-		for _, typ := range toolset.specs.typesList() {
-			data.addType(typ)
-		}
-	}
-	sort.Slice(data.tools, func(left, right int) bool {
-		return data.tools[left].Name < data.tools[right].Name
-	})
-	return data
 }

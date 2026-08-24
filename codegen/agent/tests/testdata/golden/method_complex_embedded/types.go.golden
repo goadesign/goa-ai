@@ -21,14 +21,14 @@ type (
 		// Address
 		Address *Address
 	}
-	// Address is a nested type used by the generated JSON contract.
+	// Address is a helper type materialized for nested references.
 	Address = struct {
 		// Street
 		Street string
 		// City
 		City string
 	}
-	// Profile is a nested type used by the generated JSON contract.
+	// Profile is a helper type materialized for nested references.
 	Profile = struct {
 		// Identifier
 		ID string

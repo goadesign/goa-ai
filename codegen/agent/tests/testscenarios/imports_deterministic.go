@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -15,11 +15,11 @@ func ImportsDeterministic() func() {
 			Required("id")
 		})
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("docs", func() {
-					aidsl.Tool("store", "Store", func() {
-						aidsl.Args(Doc)
-						aidsl.Return(Doc)
+			Agent("scribe", "Doc helper", func() {
+				Use("docs", func() {
+					Tool("store", "Store", func() {
+						Args(Doc)
+						Return(Doc)
 					})
 				})
 			})

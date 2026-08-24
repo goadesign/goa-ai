@@ -1,5 +1,3 @@
-// Package codegen stores the tool names, types, schemas, and JSON functions read by
-// generated tool files.
 package codegen
 
 import (
@@ -9,8 +7,10 @@ import (
 )
 
 type (
-	// toolSpecsData stores the tool names, types, schemas, and JSON functions
-	// written for one generated tool package.
+	// toolSpecsData aggregates all type and codec metadata for a set of tools
+	// owned by a single Goa service. It collects type definitions, schemas, and
+	// codec functions during the generation process and provides them to
+	// templates for rendering.
 	toolSpecsData struct {
 		// svc is the Goa service that owns the tools.
 		svc *service.Data
@@ -35,14 +35,10 @@ type (
 		// These are emitted once per package to support recursive types without
 		// duplicating helper declarations.
 		CodecTransformHelpers []*codegen.TransformFunctionData
-		// Scope contains the final names used in the public tool package.
+		// Scope captures the name scope used to materialize nested local types for
+		// this toolset. It is reused by other generator passes (e.g., adapter
+		// transforms) to compute type references that match the specs package.
 		Scope *codegen.NameScope
-		// adapterTransforms contains functions that copy tool values to and from service values.
-		adapterTransforms []transformFuncData
-		// adapterHelpers contains extra copy functions needed by types that contain themselves.
-		adapterHelpers []*codegen.TransformFunctionData
-		// adapterImports contains packages used by the copy functions.
-		adapterImports []*codegen.ImportSpec
 	}
 
 	// toolEntry pairs a tool declaration with its payload/result type metadata.
@@ -53,27 +49,14 @@ type (
 		Name string
 		// GoName is the Go-friendly identifier for this tool (e.g., "GetTimeSeries").
 		GoName string
-		// ConstName is the saved Go constant name for this tool's ID.
+		// ConstName is the Go constant identifier for this tool's ID, computed
+		// using the name scope to ensure uniqueness within the package.
 		ConstName string
-		// SpecVar names the variable that stores this tool's full specification.
-		SpecVar string
-		// InjectFunc names the function that fills server-owned payload fields.
-		InjectFunc string
-		// DecodeFunc names the function that decodes and fills a tool payload.
-		DecodeFunc string
-		// MethodPayloadTransform names the function that builds the service payload.
-		MethodPayloadTransform string
-		// ToolResultTransform names the function that builds the tool result.
-		ToolResultTransform string
-		// TypedToolVar is the exported typed descriptor variable name (e.g.,
-		// "SummarizeDocTool") pairing the tool identifier with its typed
-		// payload and result codecs. Empty when the tool lacks a payload or
-		// result type, in which case no descriptor is generated.
+		// TypedToolVar is the exported typed descriptor factory name (e.g.,
+		// "SummarizeDocTool") pairing the tool identifier with its typed payload
+		// and result codecs. Empty when the tool lacks a payload type, in which
+		// case no descriptor is generated.
 		TypedToolVar string
-		// CanonicalizeServerDataFunc names the function that checks all server data.
-		CanonicalizeServerDataFunc string
-		// CanonicalizeServerDataItemFunc names the function that checks one server data item.
-		CanonicalizeServerDataItemFunc string
 		// Title is the human-friendly display title.
 		Title string
 		// Service name that owns the tool.
@@ -101,7 +84,8 @@ type (
 		Payload *typeData
 		// Type metadata for the tool's output result.
 		Result *typeData
-		// HasResult reports whether the tool returns a value.
+		// HasResult reports whether the design declares a result. Generated
+		// empty transport types do not change this semantic fact.
 		HasResult bool
 		// Bounds declares the out-of-band bounded-result contract for this tool.
 		// It is propagated into ToolSpec for runtime consumers.
@@ -124,27 +108,22 @@ type (
 		Audience    string
 		Description string
 		Type        *typeData
-		// Transform names the function that builds this server result from the
-		// service method result field.
-		Transform string
 	}
 
 	unionTypeData struct {
-		Name               string
-		KindName           string
-		DiscriminatorError string
-		Fields             []*unionFieldData
+		Name     string
+		KindName string
+		Fields   []*unionFieldData
 	}
 
 	unionFieldData struct {
-		Name        string
-		KindConst   string
-		Constructor string
-		FieldName   string
-		FieldType   string
-		Nilable     bool
-		JSONType    string
-		TypeTag     string
+		Name      string
+		KindConst string
+		FieldName string
+		FieldType string
+		Nilable   bool
+		JSONType  string
+		TypeTag   string
 	}
 
 	toolMetaPair struct {
@@ -194,10 +173,13 @@ type (
 		// available. For payloads, it is derived from Goa examples and can be used
 		// by runtimes to surface concrete examples in correction directives or UI prompts.
 		ExampleJSON []byte
-		// ScaffoldExampleJSON holds a result example for starter application code.
-		// It is not included in the schema shown to the model.
+		// ScaffoldExampleJSON holds an authored result example for generated
+		// application scaffolds. It remains private generator data so tool result
+		// examples do not become model-facing TypeSpec metadata.
 		ScaffoldExampleJSON []byte
-		// Typed codec variable name (e.g., "MyToolPayloadCodec").
+		// ExportedCodec names the typed codec factory. Tool contracts export it
+		// (for example, "MyToolPayloadCodec"); completion contracts keep it
+		// private behind their generated Complete and StreamComplete operations.
 		ExportedCodec string
 		// InjectDecodeFunc is the generated composed decode helper name
 		// (e.g., "DecodeGetData") when this type is the payload of a tool
@@ -213,16 +195,6 @@ type (
 		UnmarshalFunc string
 		// Validation function name (e.g., "ValidateMyToolPayload").
 		ValidateFunc string
-		// FieldDescsVar names the map that stores field descriptions.
-		FieldDescsVar string
-		// FieldJSONTypesVar names the map that stores each field's JSON type.
-		FieldJSONTypesVar string
-		// FieldAllowedObjectKeysVar names the map of accepted object fields.
-		FieldAllowedObjectKeysVar string
-		// EnrichValidationFunc names the function that adds field descriptions to an error.
-		EnrichValidationFunc string
-		// InvalidFieldTypeFunc names the function that reports the expected JSON type.
-		InvalidFieldTypeFunc string
 		// Validation code body.
 		Validation string
 		// PublicType is the Goa expression for the tool-facing public type as it
@@ -266,7 +238,8 @@ type (
 		EncodeTransform string
 		// Whether to generate a type definition.
 		NeedType bool
-		// IsToolType is true for a tool input, output, or server data type.
+		// IsToolType is true when this entry represents a top-level tool-facing
+		// payload/result/sidecar type (not a nested helper type or JSON helper).
 		IsToolType bool
 		// Import spec for the type's package (when aliasing external types).
 		Import *codegen.ImportSpec
@@ -309,34 +282,27 @@ type (
 		genpkg string
 		// Service data for the owning service.
 		service *service.Data
-		// api is the Goa API supplied to this generation command.
-		api *goaexpr.APIExpr
-		// publicScope contains names written in the public tool package.
-		publicScope *codegen.NameScope
-		// transportScope contains names written in the HTTP package.
-		transportScope *codegen.NameScope
-		// publicPackage contains the union declarations for the public tool package.
-		publicPackage *codegen.GeneratedPackage
-		// transportPackage contains the union declarations for the HTTP package.
-		transportPackage     *codegen.GeneratedPackage
-		publicUnionErrors    map[codegen.UnionTypeID]*codegen.NameDeclaration
-		transportUnionErrors map[codegen.UnionTypeID]*codegen.NameDeclaration
-		// planned contains the saved types, names, and copy functions for both packages.
-		planned *toolSpecsPackagePlan
-		// svcScope contains names used in service type references.
+		// Name scope for service type references.
 		svcScope *codegen.NameScope
-		// types stores each generated type by its tool and use.
+		// Import specs for service types.
+		svcImports map[string]*codegen.ImportSpec
+		// Cache of generated type metadata indexed by cache key.
 		types map[string]*typeData
-		// helperScope contains helper function names written in the public tool package.
+		// helperScope provides a global scope to assign short, unique names
+		// to transform helper functions across all generated tool payloads.
+		// Using a shared scope ensures there are no collisions while keeping
+		// names compact and readable.
 		helperScope *codegen.NameScope
-		// unions contains input, output, and server data unions indexed by their
-		// generated definition.
-		unions map[codegen.UnionTypeID]*unionTypeData
-		// transportUnions contains HTTP decoding unions indexed by their generated
-		// definition.
-		transportUnions map[codegen.UnionTypeID]*unionTypeData
-		// codecTransformHelpers contains extra copy functions needed by recursive types.
-		codecTransformHelpers []*codegen.TransformFunctionData
+		// unions accumulates all union sum types referenced by generated tool
+		// payload/result/sidecar types in this specs package, indexed by union hash.
+		unions map[string]*unionTypeData
+		// transportUnions accumulates all union sum types referenced by transport
+		// helper graphs emitted into the toolset-local http package.
+		transportUnions map[string]*unionTypeData
+		// codecTransformHelpers accumulates unique GoTransform helper functions
+		// required by codec-local conversions (transport <-> public).
+		codecTransformHelpers    []*codegen.TransformFunctionData
+		codecTransformHelperKeys map[string]struct{}
 	}
 
 	typeUsage string
@@ -346,7 +312,7 @@ const (
 	contractTypeOwnerTool       contractTypeOwnerKind = "tool"
 	contractTypeOwnerCompletion contractTypeOwnerKind = "completion"
 
-	usagePayload    typeUsage = "payload"
-	usageResult     typeUsage = "result"
-	usageServerData typeUsage = "server-data"
+	usagePayload typeUsage = "payload"
+	usageResult  typeUsage = "result"
+	usageSidecar typeUsage = "sidecar"
 )

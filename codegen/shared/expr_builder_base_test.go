@@ -1,11 +1,14 @@
 package shared
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/leanovate/gopter"
 	"github.com/leanovate/gopter/gen"
 	"github.com/leanovate/gopter/prop"
+	"github.com/stretchr/testify/require"
+	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
 
@@ -198,6 +201,108 @@ func TestTypes(t *testing.T) {
 	if _, ok := types["TestType"]; !ok {
 		t.Error("expected 'TestType' in types map")
 	}
+}
+
+// TestPrepareAndValidate verifies the PrepareAndValidate method.
+// Note: Full integration testing of PrepareAndValidate is done through the
+// MCP expression builders which construct complete root expressions.
+// These unit tests focus on the method's contract: restoring global state.
+func TestPrepareAndValidate(t *testing.T) {
+	t.Run("restores original expr.Root after execution", func(t *testing.T) {
+		builder := NewProtocolExprBuilderBase()
+		originalRoot := expr.Root
+
+		// Create a minimal root - validation may fail but that's OK
+		// The key behavior we're testing is that expr.Root is restored
+		service := &expr.ServiceExpr{
+			Name:    "TestService",
+			Methods: []*expr.MethodExpr{},
+		}
+
+		httpExpr := &expr.HTTPExpr{
+			Services: []*expr.HTTPServiceExpr{},
+		}
+
+		root := &expr.RootExpr{
+			Services: []*expr.ServiceExpr{service},
+			API: &expr.APIExpr{
+				Name: "TestAPI",
+				HTTP: httpExpr,
+				GRPC: &expr.GRPCExpr{Services: []*expr.GRPCServiceExpr{}},
+			},
+		}
+
+		// Use defer/recover to handle any panics and still check restoration
+		func() {
+			defer func() {
+				// Recover from any panic - we just want to verify restoration
+				_ = recover()
+			}()
+			_ = builder.PrepareAndValidate(root)
+		}()
+
+		if expr.Root != originalRoot {
+			t.Error("PrepareAndValidate should restore original expr.Root")
+		}
+	})
+
+	t.Run("restores original eval errors after validation failure", func(t *testing.T) {
+		builder := NewProtocolExprBuilderBase()
+		sentinel := &eval.Error{GoError: errors.New("sentinel")}
+		eval.Context.Errors = eval.MultiError{sentinel}
+
+		root := &expr.RootExpr{
+			Types: []expr.UserType{
+				&expr.UserTypeExpr{
+					TypeName:      "Duplicate",
+					AttributeExpr: &expr.AttributeExpr{Type: expr.String},
+				},
+				&expr.UserTypeExpr{
+					TypeName:      "Duplicate",
+					AttributeExpr: &expr.AttributeExpr{Type: expr.Int},
+				},
+			},
+			API: &expr.APIExpr{
+				Name: "TestAPI",
+				HTTP: &expr.HTTPExpr{Services: []*expr.HTTPServiceExpr{}},
+				JSONRPC: &expr.JSONRPCExpr{
+					HTTPExpr: expr.HTTPExpr{Services: []*expr.HTTPServiceExpr{}},
+				},
+				GRPC: &expr.GRPCExpr{Services: []*expr.GRPCServiceExpr{}},
+			},
+		}
+
+		err := builder.PrepareAndValidate(root)
+
+		require.Error(t, err)
+		require.Len(t, eval.Context.Errors, 1)
+		require.Same(t, sentinel, eval.Context.Errors[0])
+	})
+
+	t.Run("returns pending validation errors without mutating eval context", func(t *testing.T) {
+		builder := NewProtocolExprBuilderBase()
+		sentinel := &eval.Error{GoError: errors.New("sentinel")}
+		eval.Context.Errors = eval.MultiError{sentinel}
+		builder.RecordValidationError(errors.New("missing JSONRPC POST path"))
+
+		root := &expr.RootExpr{
+			API: &expr.APIExpr{
+				Name: "TestAPI",
+				HTTP: &expr.HTTPExpr{Services: []*expr.HTTPServiceExpr{}},
+				JSONRPC: &expr.JSONRPCExpr{
+					HTTPExpr: expr.HTTPExpr{Services: []*expr.HTTPServiceExpr{}},
+				},
+				GRPC: &expr.GRPCExpr{Services: []*expr.GRPCServiceExpr{}},
+			},
+		}
+
+		err := builder.PrepareAndValidate(root)
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "missing JSONRPC POST path")
+		require.Len(t, eval.Context.Errors, 1)
+		require.Same(t, sentinel, eval.Context.Errors[0])
+	})
 }
 
 // TestDeterministicUserTypeCollection verifies Property 1: Deterministic User Type Collection.

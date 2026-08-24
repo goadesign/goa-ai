@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -10,7 +10,7 @@ func MCPDSL() func() {
 	return func() {
 		API("alpha", func() {})
 		Service("calc", func() {
-			aidsl.MCP("core", "1.0.0")
+			MCP("core", "1.0.0")
 			Method("add", func() {
 				Payload(func() {
 					Attribute("a", Int, "First operand")
@@ -18,13 +18,13 @@ func MCPDSL() func() {
 					Required("a", "b")
 				})
 				Result(Int)
-				aidsl.Tool("add", "Add two numbers")
+				Tool("add", "Add two numbers")
 			})
 		})
-		var CalcCore = aidsl.Toolset(aidsl.FromMCP("calc", "core"))
+		var CalcCore = Toolset(FromMCP("calc", "core"))
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use(CalcCore)
+			Agent("scribe", "Doc helper", func() {
+				Use(CalcCore)
 			})
 		})
 	}

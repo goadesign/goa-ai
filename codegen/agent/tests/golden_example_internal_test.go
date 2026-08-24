@@ -1,14 +1,12 @@
 package tests
 
 import (
-	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
-	aidsl "goa.design/goa-ai/dsl"
-	. "goa.design/goa/v3/dsl"
+	"goa.design/goa-ai/codegen/testhelpers"
 )
 
 // buildAndGenerateExample provided by golden_helpers_test.go
@@ -17,7 +15,7 @@ func TestExampleInternal_MethodBacked(t *testing.T) {
 	files := buildAndGenerateExample(t, testscenarios.MethodComplexEmbedded())
 
 	// Bootstrap
-	boot := fileContent(t, files, "internal/agents/alpha/bootstrap/bootstrap.go")
+	boot := fileContent(t, files, "internal/agents/bootstrap/bootstrap.go")
 	assertGoldenGo(t, "example_internal_method", "bootstrap.go.golden", boot)
 
 	// Planner stub
@@ -31,6 +29,8 @@ func TestExampleInternal_MethodBacked(t *testing.T) {
 	require.NotContains(t, exec, `rawjson.Message("")`)
 	require.NotContains(t, exec, `"goa.design/goa-ai/runtime/agent/rawjson"`)
 	require.Contains(t, exec, "generated executor requires an application implementation")
+	require.NotContains(t, exec, "PriorInput:")
+	require.NotContains(t, exec, "ExampleJSON:")
 	assertGoldenGo(t, "example_internal_method", "executor.go.golden", exec)
 }
 
@@ -38,7 +38,7 @@ func TestExampleInternal_MCP(t *testing.T) {
 	files := buildAndGenerateExample(t, testscenarios.MCPUse())
 
 	// Bootstrap should include MCP caller stubs
-	boot := fileContent(t, files, "internal/agents/alpha/bootstrap/bootstrap.go")
+	boot := fileContent(t, files, "internal/agents/bootstrap/bootstrap.go")
 	assertGoldenGo(t, "example_internal_mcp", "bootstrap.go.golden", boot)
 
 	// Planner stub exists
@@ -46,91 +46,68 @@ func TestExampleInternal_MCP(t *testing.T) {
 	assertGoldenGo(t, "example_internal_mcp", "planner.go.golden", plan)
 }
 
-// TestExampleInternalSeparatesServiceBootstraps checks that each service
-// command starts only the agents declared by that service.
-func TestExampleInternalSeparatesServiceBootstraps(t *testing.T) {
-	files := buildAndGenerateExample(t, multiServiceExampleDesign())
+func TestExampleInternal_NoResultToolReturnsEmptySuccess(t *testing.T) {
+	files := buildAndGenerateExample(t, testscenarios.NoResultMethod())
+	plan := fileContent(t, files, "internal/agents/scribe/planner/planner.go")
+	exec := fileContent(t, files, "internal/agents/scribe/toolsets/ops/execute.go")
 
-	alphaBootstrap := renderedFileContent(t, files, "internal/agents/alpha/bootstrap/bootstrap.go")
-	require.Contains(t, alphaBootstrap, `"goa.design/goa-ai/gen/alpha/agents/alpha_worker"`)
-	require.NotContains(t, alphaBootstrap, "beta_worker")
-
-	betaBootstrap := renderedFileContent(t, files, "internal/agents/beta/bootstrap/bootstrap.go")
-	require.Contains(t, betaBootstrap, `"goa.design/goa-ai/gen/beta/agents/beta_worker"`)
-	require.NotContains(t, betaBootstrap, "alpha_worker")
-
-	alphaMain := renderedFileContent(t, files, "cmd/alpha/main.go")
-	require.Contains(t, alphaMain, `"goa.design/goa-ai/internal/agents/alpha/bootstrap"`)
-	require.NotContains(t, alphaMain, "internal/agents/beta/bootstrap")
-
-	betaMain := renderedFileContent(t, files, "cmd/beta/main.go")
-	require.Contains(t, betaMain, `"goa.design/goa-ai/internal/agents/beta/bootstrap"`)
-	require.NotContains(t, betaMain, "internal/agents/alpha/bootstrap")
+	require.Contains(t, plan, "build generated ops.purge call")
+	require.Contains(t, plan, "Tool %s completed successfully")
+	require.Contains(t, exec, "return runtime.Executed(&planner.ToolResult{Name: call.Name}), nil")
+	require.NotContains(t, exec, "generated executor requires an application implementation")
+	require.NotContains(t, exec, `"fmt"`)
+	require.NotContains(t, exec, `"goa.design/goa-ai/runtime/agent/rawjson"`)
 }
 
-// TestExampleInternalUsesGeneratedToolNames checks that independently planned
-// example files call the exact names written by goa gen.
-func TestExampleInternalUsesGeneratedToolNames(t *testing.T) {
-	design := exampleToolNameCollisionDesign()
-	generated := buildAndGenerate(t, design)
-	specs := fileContent(t, generated, "gen/alpha/toolsets/ops/specs.go")
+func TestExampleInternal_InjectedToolUsesComposedDecoder(t *testing.T) {
+	files := buildAndGenerateExample(t, testscenarios.InjectLabelExample())
+	exec := fileContent(t, files, "internal/agents/scribe/toolsets/helpers/execute.go")
 
-	examples := buildAndGenerateExample(t, design)
-	executor := renderedFileContent(t, examples, "internal/agents/worker/toolsets/ops/execute.go")
-
-	toolRefs := regexp.MustCompile(`opsspecs\.([A-Za-z0-9]+)\(\)\.Payload\.FromJSON`).FindAllStringSubmatch(executor, -1)
-	require.Len(t, toolRefs, 2)
-	for _, match := range toolRefs {
-		require.Contains(t, specs, "func "+match[1]+"() tools.TypedTool")
-	}
-	for _, file := range examples {
-		require.False(t, strings.HasPrefix(file.Path, "gen/"), file.Path)
-	}
+	require.Contains(
+		t,
+		exec,
+		"helpersspecs.DecodeLookupHousehold(call.Payload, *meta, meta.Labels)",
+	)
+	require.NotContains(t, exec, "SpecLookupHousehold().Payload.Codec.FromJSON")
 }
 
-// exampleToolNameCollisionDesign defines two method-backed tools whose names
-// become the same Go name before the package chooses unique spellings.
-func exampleToolNameCollisionDesign() func() {
-	return func() {
-		API("example_names", func() {})
-		Service("alpha", func() {
-			Method("by_dash", func() {
-				Payload(func() {
-					Attribute("id", String, "Item ID")
-					Required("id")
-				})
-				Result(String)
-			})
-			Method("by_underscore", func() {
-				Payload(func() {
-					Attribute("id", String, "Item ID")
-					Required("id")
-				})
-				Result(String)
-			})
-			aidsl.Agent("worker", "Worker", func() {
-				aidsl.Use("ops", func() {
-					aidsl.Tool("by-id", "Find by ID", func() {
-						aidsl.BindTo("by_dash")
-					})
-					aidsl.Tool("by_id", "Find by ID", func() {
-						aidsl.BindTo("by_underscore")
-					})
-				})
-			})
-		})
-	}
+func TestExampleInternal_BoundedToolIsNotSelectedWithoutExecutorBounds(t *testing.T) {
+	files := buildAndGenerateExample(t, testscenarios.ServiceToolsetBindSelfBoundedResult())
+	plan := fileContent(t, files, "internal/agents/scribe/planner/planner.go")
+	exec := fileContent(t, files, "internal/agents/scribe/toolsets/lookup/execute.go")
+
+	require.Contains(t, plan, "Hello from example planner.")
+	require.NotContains(t, plan, "build generated search call")
+	require.Contains(t, exec, `"goa.design/goa-ai/runtime/agent/rawjson"`)
+	require.Contains(t, exec, "rawjson.Message(")
 }
 
-// multiServiceExampleDesign defines two services that each own one agent.
-func multiServiceExampleDesign() func() {
-	return func() {
-		API("multi_service", func() {})
-		Service("alpha", func() {
-			aidsl.Agent("alpha_worker", "Handles alpha work", func() {})
-		})
-		Service("beta", func() {
-			aidsl.Agent("beta_worker", "Handles beta work", func() {})
-		})
-	}
+func TestExampleInternal_CompletionWithoutExampleIsNotExecuted(t *testing.T) {
+	files := buildAndGenerateExample(t, testscenarios.ServiceCompletionWithoutExampleWithAgent())
+	main := fileContent(t, files, "cmd/tasks/main.go")
+
+	require.NotContains(t, main, "newExampleCompletionClient")
+	require.NotContains(t, main, "DraftFromTranscriptExample")
+}
+
+func TestGeneratedProviderUsesExactMethodCallArity(t *testing.T) {
+	noResultFiles := testhelpers.BuildAndGenerateWithPkg(
+		t,
+		"generated.local/gen",
+		testscenarios.NoResultMethod(),
+	)
+	noResultProvider := generatedContentBySuffix(t, noResultFiles, "alpha/toolsets/ops/provider.go")
+	require.Contains(t, noResultProvider, "err = p.svc.Purge(ctx, methodIn)")
+	require.Contains(t, noResultProvider, "err = p.svc.Heartbeat(ctx)")
+	require.NotContains(t, noResultProvider, "methodOut")
+
+	resultFiles := testhelpers.BuildAndGenerateWithPkg(
+		t,
+		"generated.local/gen",
+		testscenarios.EmptyPayloadResultMethod(),
+	)
+	resultProvider := generatedContentBySuffix(t, resultFiles, "alpha/toolsets/ops/provider.go")
+
+	require.Contains(t, resultProvider, "methodOut, err := p.svc.Status(ctx)")
+	require.NotContains(t, resultProvider, "InitStatusMethodPayload")
 }

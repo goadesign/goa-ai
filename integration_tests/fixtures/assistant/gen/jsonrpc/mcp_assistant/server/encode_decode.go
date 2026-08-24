@@ -317,9 +317,10 @@ func DecodeNotifyStatusUpdateRequest(mux goahttp.Muxer, decoder func(*http.Reque
 	}
 }
 
-// unmarshalClientInfoRequestBodyToMcpassistantClientInfo builds a value of
-// type *mcpassistant.ClientInfo from a value of type *ClientInfoRequestBody.
-func unmarshalClientInfoRequestBodyToMcpassistantClientInfo(v *ClientInfoRequestBody) *mcpassistant.ClientInfo {
+// unmarshalClientInfoRequestBodyRequestBodyRequestBodyRequestBodyToMcpassistantClientInfo
+// builds a value of type *mcpassistant.ClientInfo from a value of type
+// *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody.
+func unmarshalClientInfoRequestBodyRequestBodyRequestBodyRequestBodyToMcpassistantClientInfo(v *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody) *mcpassistant.ClientInfo {
 	res := &mcpassistant.ClientInfo{
 		Name:    *v.Name,
 		Version: *v.Version,
@@ -328,64 +329,65 @@ func unmarshalClientInfoRequestBodyToMcpassistantClientInfo(v *ClientInfoRequest
 	return res
 }
 
-// marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBody builds
-// a value of type *ServerCapabilitiesResponseBody from a value of type
-// *mcpassistant.ServerCapabilities.
-func marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBody(v *mcpassistant.ServerCapabilities) *ServerCapabilitiesResponseBody {
-	res := &ServerCapabilitiesResponseBody{}
+// marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBodyResponseBody
+// builds a value of type *ServerCapabilitiesResponseBodyResponseBody from a
+// value of type *mcpassistant.ServerCapabilities.
+func marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBodyResponseBody(v *mcpassistant.ServerCapabilities) *ServerCapabilitiesResponseBodyResponseBody {
+	res := &ServerCapabilitiesResponseBodyResponseBody{}
 	if v.Tools != nil {
-		res.Tools = marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBodyOptional(v.Tools)
+		res.Tools = marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBodyResponseBody(v.Tools)
 	}
 	if v.Resources != nil {
-		res.Resources = marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBodyOptional(v.Resources)
+		res.Resources = marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBodyResponseBody(v.Resources)
 	}
 	if v.Prompts != nil {
-		res.Prompts = marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBodyOptional(v.Prompts)
+		res.Prompts = marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBodyResponseBody(v.Prompts)
 	}
 
 	return res
 }
 
-// marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBodyOptional
-// builds a value of type *ToolsCapabilityResponseBody from a value of type
-// *mcpassistant.ToolsCapability.
-func marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBodyOptional(v *mcpassistant.ToolsCapability) *ToolsCapabilityResponseBody {
+// marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBodyResponseBody
+// builds a value of type *ToolsCapabilityResponseBodyResponseBody from a value
+// of type *mcpassistant.ToolsCapability.
+func marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBodyResponseBody(v *mcpassistant.ToolsCapability) *ToolsCapabilityResponseBodyResponseBody {
 	if v == nil {
 		return nil
 	}
-	res := &ToolsCapabilityResponseBody{}
+	res := &ToolsCapabilityResponseBodyResponseBody{}
 
 	return res
 }
 
-// marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBodyOptional
-// builds a value of type *ResourcesCapabilityResponseBody from a value of type
-// *mcpassistant.ResourcesCapability.
-func marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBodyOptional(v *mcpassistant.ResourcesCapability) *ResourcesCapabilityResponseBody {
+// marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBodyResponseBody
+// builds a value of type *ResourcesCapabilityResponseBodyResponseBody from a
+// value of type *mcpassistant.ResourcesCapability.
+func marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBodyResponseBody(v *mcpassistant.ResourcesCapability) *ResourcesCapabilityResponseBodyResponseBody {
 	if v == nil {
 		return nil
 	}
-	res := &ResourcesCapabilityResponseBody{}
+	res := &ResourcesCapabilityResponseBodyResponseBody{}
 
 	return res
 }
 
-// marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBodyOptional
-// builds a value of type *PromptsCapabilityResponseBody from a value of type
-// *mcpassistant.PromptsCapability.
-func marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBodyOptional(v *mcpassistant.PromptsCapability) *PromptsCapabilityResponseBody {
+// marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBodyResponseBody
+// builds a value of type *PromptsCapabilityResponseBodyResponseBody from a
+// value of type *mcpassistant.PromptsCapability.
+func marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBodyResponseBody(v *mcpassistant.PromptsCapability) *PromptsCapabilityResponseBodyResponseBody {
 	if v == nil {
 		return nil
 	}
-	res := &PromptsCapabilityResponseBody{}
+	res := &PromptsCapabilityResponseBodyResponseBody{}
 
 	return res
 }
 
-// marshalMcpassistantServerInfoToServerInfoResponseBody builds a value of type
-// *ServerInfoResponseBody from a value of type *mcpassistant.ServerInfo.
-func marshalMcpassistantServerInfoToServerInfoResponseBody(v *mcpassistant.ServerInfo) *ServerInfoResponseBody {
-	res := &ServerInfoResponseBody{
+// marshalMcpassistantServerInfoToServerInfoResponseBodyResponseBody builds a
+// value of type *ServerInfoResponseBodyResponseBody from a value of type
+// *mcpassistant.ServerInfo.
+func marshalMcpassistantServerInfoToServerInfoResponseBodyResponseBody(v *mcpassistant.ServerInfo) *ServerInfoResponseBodyResponseBody {
+	res := &ServerInfoResponseBodyResponseBody{
 		Name:    v.Name,
 		Version: v.Version,
 	}
@@ -393,10 +395,11 @@ func marshalMcpassistantServerInfoToServerInfoResponseBody(v *mcpassistant.Serve
 	return res
 }
 
-// marshalMcpassistantToolInfoToToolInfoResponseBody builds a value of type
-// *ToolInfoResponseBody from a value of type *mcpassistant.ToolInfo.
-func marshalMcpassistantToolInfoToToolInfoResponseBody(v *mcpassistant.ToolInfo) *ToolInfoResponseBody {
-	res := &ToolInfoResponseBody{
+// marshalMcpassistantToolInfoToToolInfoResponseBodyResponseBody builds a value
+// of type *ToolInfoResponseBodyResponseBody from a value of type
+// *mcpassistant.ToolInfo.
+func marshalMcpassistantToolInfoToToolInfoResponseBodyResponseBody(v *mcpassistant.ToolInfo) *ToolInfoResponseBodyResponseBody {
+	res := &ToolInfoResponseBodyResponseBody{
 		Name:        v.Name,
 		Description: v.Description,
 		InputSchema: v.InputSchema,
@@ -405,10 +408,11 @@ func marshalMcpassistantToolInfoToToolInfoResponseBody(v *mcpassistant.ToolInfo)
 	return res
 }
 
-// marshalMcpassistantContentItemToContentItemResponseBody builds a value of
-// type *ContentItemResponseBody from a value of type *mcpassistant.ContentItem.
-func marshalMcpassistantContentItemToContentItemResponseBody(v *mcpassistant.ContentItem) *ContentItemResponseBody {
-	res := &ContentItemResponseBody{
+// marshalMcpassistantContentItemToContentItemResponseBodyResponseBody builds a
+// value of type *ContentItemResponseBodyResponseBody from a value of type
+// *mcpassistant.ContentItem.
+func marshalMcpassistantContentItemToContentItemResponseBodyResponseBody(v *mcpassistant.ContentItem) *ContentItemResponseBodyResponseBody {
+	res := &ContentItemResponseBodyResponseBody{
 		Type:     v.Type,
 		Text:     v.Text,
 		Data:     v.Data,
@@ -419,11 +423,11 @@ func marshalMcpassistantContentItemToContentItemResponseBody(v *mcpassistant.Con
 	return res
 }
 
-// marshalMcpassistantResourceInfoToResourceInfoResponseBody builds a value of
-// type *ResourceInfoResponseBody from a value of type
+// marshalMcpassistantResourceInfoToResourceInfoResponseBodyResponseBody builds
+// a value of type *ResourceInfoResponseBodyResponseBody from a value of type
 // *mcpassistant.ResourceInfo.
-func marshalMcpassistantResourceInfoToResourceInfoResponseBody(v *mcpassistant.ResourceInfo) *ResourceInfoResponseBody {
-	res := &ResourceInfoResponseBody{
+func marshalMcpassistantResourceInfoToResourceInfoResponseBodyResponseBody(v *mcpassistant.ResourceInfo) *ResourceInfoResponseBodyResponseBody {
+	res := &ResourceInfoResponseBodyResponseBody{
 		URI:         v.URI,
 		Name:        v.Name,
 		Description: v.Description,
@@ -433,11 +437,11 @@ func marshalMcpassistantResourceInfoToResourceInfoResponseBody(v *mcpassistant.R
 	return res
 }
 
-// marshalMcpassistantResourceContentToResourceContentResponseBody builds a
-// value of type *ResourceContentResponseBody from a value of type
-// *mcpassistant.ResourceContent.
-func marshalMcpassistantResourceContentToResourceContentResponseBody(v *mcpassistant.ResourceContent) *ResourceContentResponseBody {
-	res := &ResourceContentResponseBody{
+// marshalMcpassistantResourceContentToResourceContentResponseBodyResponseBody
+// builds a value of type *ResourceContentResponseBodyResponseBody from a value
+// of type *mcpassistant.ResourceContent.
+func marshalMcpassistantResourceContentToResourceContentResponseBodyResponseBody(v *mcpassistant.ResourceContent) *ResourceContentResponseBodyResponseBody {
+	res := &ResourceContentResponseBodyResponseBody{
 		URI:      v.URI,
 		MimeType: v.MimeType,
 		Text:     v.Text,
@@ -447,35 +451,36 @@ func marshalMcpassistantResourceContentToResourceContentResponseBody(v *mcpassis
 	return res
 }
 
-// marshalMcpassistantPromptInfoToPromptInfoResponseBody builds a value of type
-// *PromptInfoResponseBody from a value of type *mcpassistant.PromptInfo.
-func marshalMcpassistantPromptInfoToPromptInfoResponseBody(v *mcpassistant.PromptInfo) *PromptInfoResponseBody {
-	res := &PromptInfoResponseBody{
+// marshalMcpassistantPromptInfoToPromptInfoResponseBodyResponseBody builds a
+// value of type *PromptInfoResponseBodyResponseBody from a value of type
+// *mcpassistant.PromptInfo.
+func marshalMcpassistantPromptInfoToPromptInfoResponseBodyResponseBody(v *mcpassistant.PromptInfo) *PromptInfoResponseBodyResponseBody {
+	res := &PromptInfoResponseBodyResponseBody{
 		Name:        v.Name,
 		Description: v.Description,
 	}
 	if v.Arguments != nil {
-		res.Arguments = make([]*PromptArgumentResponseBody, len(v.Arguments))
+		res.Arguments = make([]*PromptArgumentResponseBodyResponseBody, len(v.Arguments))
 		for i, val := range v.Arguments {
 			if val == nil {
 				res.Arguments[i] = nil
 				continue
 			}
-			res.Arguments[i] = marshalMcpassistantPromptArgumentToPromptArgumentResponseBodyOptional(val)
+			res.Arguments[i] = marshalMcpassistantPromptArgumentToPromptArgumentResponseBodyResponseBody(val)
 		}
 	}
 
 	return res
 }
 
-// marshalMcpassistantPromptArgumentToPromptArgumentResponseBodyOptional builds
-// a value of type *PromptArgumentResponseBody from a value of type
-// *mcpassistant.PromptArgument.
-func marshalMcpassistantPromptArgumentToPromptArgumentResponseBodyOptional(v *mcpassistant.PromptArgument) *PromptArgumentResponseBody {
+// marshalMcpassistantPromptArgumentToPromptArgumentResponseBodyResponseBody
+// builds a value of type *PromptArgumentResponseBodyResponseBody from a value
+// of type *mcpassistant.PromptArgument.
+func marshalMcpassistantPromptArgumentToPromptArgumentResponseBodyResponseBody(v *mcpassistant.PromptArgument) *PromptArgumentResponseBodyResponseBody {
 	if v == nil {
 		return nil
 	}
-	res := &PromptArgumentResponseBody{
+	res := &PromptArgumentResponseBodyResponseBody{
 		Name:        v.Name,
 		Description: v.Description,
 		Required:    v.Required,
@@ -484,25 +489,25 @@ func marshalMcpassistantPromptArgumentToPromptArgumentResponseBodyOptional(v *mc
 	return res
 }
 
-// marshalMcpassistantPromptMessageToPromptMessageResponseBody builds a value
-// of type *PromptMessageResponseBody from a value of type
-// *mcpassistant.PromptMessage.
-func marshalMcpassistantPromptMessageToPromptMessageResponseBody(v *mcpassistant.PromptMessage) *PromptMessageResponseBody {
-	res := &PromptMessageResponseBody{
+// marshalMcpassistantPromptMessageToPromptMessageResponseBodyResponseBody
+// builds a value of type *PromptMessageResponseBodyResponseBody from a value
+// of type *mcpassistant.PromptMessage.
+func marshalMcpassistantPromptMessageToPromptMessageResponseBodyResponseBody(v *mcpassistant.PromptMessage) *PromptMessageResponseBodyResponseBody {
+	res := &PromptMessageResponseBodyResponseBody{
 		Role: v.Role,
 	}
 	if v.Content != nil {
-		res.Content = marshalMcpassistantMessageContentToMessageContentResponseBody(v.Content)
+		res.Content = marshalMcpassistantMessageContentToMessageContentResponseBodyResponseBody(v.Content)
 	}
 
 	return res
 }
 
-// marshalMcpassistantMessageContentToMessageContentResponseBody builds a value
-// of type *MessageContentResponseBody from a value of type
-// *mcpassistant.MessageContent.
-func marshalMcpassistantMessageContentToMessageContentResponseBody(v *mcpassistant.MessageContent) *MessageContentResponseBody {
-	res := &MessageContentResponseBody{
+// marshalMcpassistantMessageContentToMessageContentResponseBodyResponseBody
+// builds a value of type *MessageContentResponseBodyResponseBody from a value
+// of type *mcpassistant.MessageContent.
+func marshalMcpassistantMessageContentToMessageContentResponseBodyResponseBody(v *mcpassistant.MessageContent) *MessageContentResponseBodyResponseBody {
+	res := &MessageContentResponseBodyResponseBody{
 		Type:     v.Type,
 		Text:     v.Text,
 		Data:     v.Data,

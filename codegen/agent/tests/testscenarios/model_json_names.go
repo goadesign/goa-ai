@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -56,11 +56,11 @@ func ModelJSONNames() func() {
 		})
 
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Inspection helper", func() {
-				aidsl.Use("inspect", func() {
-					aidsl.Tool("inspect_device", "Inspect a device.", func() {
-						aidsl.Args(InspectPayload)
-						aidsl.Return(InspectResult)
+			Agent("scribe", "Inspection helper", func() {
+				Use("inspect", func() {
+					Tool("inspect_device", "Inspect a device.", func() {
+						Args(InspectPayload)
+						Return(InspectResult)
 					})
 				})
 			})

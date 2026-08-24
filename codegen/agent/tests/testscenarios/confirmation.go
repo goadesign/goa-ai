@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -22,23 +22,23 @@ func ConfirmationDSL() func() {
 			Required("summary", "key")
 		})
 
-		var Commands = aidsl.Toolset("atlas.commands", func() {
+		var Commands = Toolset("atlas.commands", func() {
 			Description("Write operations that require explicit operator confirmation.")
 
-			aidsl.Tool("dangerous_write", "Write a stateful change", func() {
-				aidsl.Args(DangerousWriteArgs)
-				aidsl.Return(DangerousWriteResult)
-				aidsl.Confirmation(func() {
+			Tool("dangerous_write", "Write a stateful change", func() {
+				Args(DangerousWriteArgs)
+				Return(DangerousWriteResult)
+				Confirmation(func() {
 					Title("Confirm change")
-					aidsl.PromptTemplate(`Approve write: set {{ .Key }} to {{ .Value }}`)
-					aidsl.DeniedResultTemplate(`{"summary":"Cancelled","key":"{{ .Key }}"}`)
+					PromptTemplate(`Approve write: set {{ .Key }} to {{ .Value }}`)
+					DeniedResultTemplate(`{"summary":"Cancelled","key":"{{ .Key }}"}`)
 				})
 			})
 		})
 
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use(Commands)
+			Agent("scribe", "Doc helper", func() {
+				Use(Commands)
 			})
 		})
 	}

@@ -370,7 +370,7 @@ func (r *RootExpr) serviceExportScopeLabel(se *ServiceExportsExpr) string {
 func (r *RootExpr) validateOwnerScopedToolsetSlugs(verr *eval.ValidationErrors) {
 	owners := make(map[string]*ToolsetExpr)
 	refs := r.collectToolsetOwnerRefs()
-	for _, ts := range r.DefiningToolsets() {
+	for _, ts := range r.definingToolsetsForOwnerValidation() {
 		namespace, ok := r.toolsetOwnerNamespace(ts, refs[ts])
 		if !ok {
 			continue
@@ -441,9 +441,10 @@ func (r *RootExpr) collectToolsetOwnerRefs() map[*ToolsetExpr][]toolsetOwnerRef 
 	return refs
 }
 
-// DefiningToolsets returns each toolset that owns a generated contract exactly
-// once, whether it was declared at the top level or inline under Use or Export.
-func (r *RootExpr) DefiningToolsets() []*ToolsetExpr {
+// definingToolsetsForOwnerValidation returns each defining toolset exactly once
+// regardless of whether it was declared top-level, inline under Use/Export, or
+// inside a service export block.
+func (r *RootExpr) definingToolsetsForOwnerValidation() []*ToolsetExpr {
 	seen := make(map[*ToolsetExpr]struct{})
 	var toolsets []*ToolsetExpr
 	record := func(ts *ToolsetExpr) {

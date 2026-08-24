@@ -1076,7 +1076,7 @@ A contextual quickstart file `AGENTS_QUICKSTART.md` is emitted at the module roo
 
 The `goa example` phase generates application-owned scaffold under `internal/agents/`:
 
-- `internal/agents/<service>/bootstrap/bootstrap.go`: constructs a minimal runtime and registers that service's generated agents
+- `internal/agents/bootstrap/bootstrap.go`: constructs a minimal runtime and registers generated agents
 - `internal/agents/<agent>/planner/planner.go`: planner stub implementing `PlanStart`/`PlanResume`
 - `internal/agents/<agent>/toolsets/<toolset>/adapter.go`: stubs for mapping method-backed tools
 

@@ -68,7 +68,7 @@ protoc-check:
 		echo "Run 'make setup' to install protoc $(PROTOC_VERSION)."; \
 		exit 1; \
 	fi
-	@version="$$( $(PROTOC) --version | awk '{ print $$2 }')"; \
+	@version="$$(protoc --version | awk '{ print $$2 }')"; \
 	if [ "$$version" != "$(PROTOC_VERSION)" ]; then \
 		echo "Error: protoc $(PROTOC_VERSION) is required, but $$version is in PATH."; \
 		echo "Run 'make setup' to install the required version."; \

@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -10,16 +10,16 @@ import (
 func ToolsetNamedTools() func() {
 	return func() {
 		Service("alpha", func() {
-			aidsl.Agent("helper", "Helper agent", func() {
+			Agent("helper", "Helper agent", func() {
 				// Toolset named "tools" - this should not conflict with
 				// goa.design/goa-ai/runtime/agent/tools import
-				aidsl.Use("tools", func() {
-					aidsl.Tool("do_something", "Does something", func() {
-						aidsl.Args(func() {
+				Use("tools", func() {
+					Tool("do_something", "Does something", func() {
+						Args(func() {
 							Attribute("input", String, "Input value")
 							Required("input")
 						})
-						aidsl.Return(func() {
+						Return(func() {
 							Attribute("output", String, "Output value")
 							Required("output")
 						})

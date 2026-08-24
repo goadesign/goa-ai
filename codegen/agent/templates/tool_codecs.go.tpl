@@ -187,7 +187,7 @@ func invalid{{ .TypeName }}FieldTypeError(err error) error {
 func {{ .MarshalFunc }}(v {{ if .Pointer }}*{{ end }}{{ .FullRef }}) ([]byte, error) {
     {{- if .Pointer }}
     if v == nil {
-        {{- if eq .Usage "server-data" }}
+        {{- if eq .Usage "sidecar" }}
         return []byte("null"), nil
         {{- else }}
         return nil, fmt.Errorf("{{ .NilError }}")

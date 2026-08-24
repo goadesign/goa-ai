@@ -1,19 +1,13 @@
 {{ comment "Notifications and events stream" }}
 
-{{- range .Notifications }}
-func (a *MCPAdapter) {{ .MCPMethodName }}(ctx context.Context, p {{ .PayloadRef }}) error {
+func (a *MCPAdapter) NotifyStatusUpdate(ctx context.Context, n *mcpruntime.Notification) error {
     if !a.isInitialized() {
         return goa.PermanentError("invalid_params", "Not initialized")
     }
-    if p == nil || p.Type == "" {
+    if n == nil || n.Type == "" {
         return goa.PermanentError("invalid_params", "Missing notification type")
     }
-    notification := &mcpruntime.Notification{
-        Type: p.Type,
-        Message: p.Message,
-        Data: p.Data,
-    }
-    s, err := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, notification)
+    s, err := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, n)
     if err != nil {
         return err
     }
@@ -25,7 +19,6 @@ func (a *MCPAdapter) {{ .MCPMethodName }}(ctx context.Context, p {{ .PayloadRef 
     a.Publish(ev)
     return nil
 }
-{{- end }}
 
 func (a *MCPAdapter) EventsStream(ctx context.Context, stream EventsStreamServerStream) error {
     if !a.isInitialized() {
@@ -44,9 +37,16 @@ func (a *MCPAdapter) EventsStream(ctx context.Context, stream EventsStreamServer
             if !ok {
                 return nil
             }
-            if err := stream.Send(ev.(*EventsStreamResult)); err != nil {
+            // Ensure published events implement the generated EventsStreamEvent marker.
+            evt, ok := ev.(EventsStreamEvent)
+            if !ok {
+                continue
+            }
+            if err := stream.Send(ctx, evt); err != nil { 
                 return goa.PermanentError("internal_error", "Failed to send event: %v", err)
             }
         }
     }
 }
+
+

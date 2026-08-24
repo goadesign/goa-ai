@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	toolhttp "goa.design/goa-ai/gen/alpha/toolsets/docs/http"
+	toolhttp "goa.design/goa-ai/alpha/toolsets/docs/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 	"io"

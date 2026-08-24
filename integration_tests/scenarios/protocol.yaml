@@ -1,6 +1,45 @@
 # MCP Protocol Compliance Test Scenarios (new shape)
 
 scenarios:
+  - name: tools_call_typed_error_invalid_params
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: call_missing_field
+        op: ToolsCall
+        headers:
+          Accept: text/event-stream
+        input:
+          name: analyze_sentiment
+          arguments: { text: "" }
+        stream_expect:
+          min_events: 1
+          events:
+            - event: error
+              data:
+                error: { code: -32602 }
+
+  - name: tools_call_typed_error_method_not_found
+    defaults:
+      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: call_unknown_tool
+        op: ToolsCall
+        headers:
+          Accept: text/event-stream
+        input:
+          name: does_not_exist
+          arguments: {}
+        stream_expect:
+          min_events: 1
+          events:
+            - event: error
+              data:
+                error: { code: -32602 }
   - name: initialize_basic
     defaults:
       client: jsonrpc.mcp_assistant

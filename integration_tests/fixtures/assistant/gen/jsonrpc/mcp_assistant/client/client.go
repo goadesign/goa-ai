@@ -8,9 +8,9 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +25,9 @@ import (
 type Client struct {
 	// Doer is the HTTP client used to make requests to the mcp_assistant service.
 	Doer goahttp.Doer
+	// ToolsCall Doer is the HTTP client used to make requests to the tools/call
+	// endpoint.
+	ToolsCallDoer goahttp.Doer
 	// EventsStream Doer is the HTTP client used to make requests to the
 	// events/stream endpoint.
 	EventsStreamDoer goahttp.Doer
@@ -38,12 +41,13 @@ type Client struct {
 	decoder func(*http.Response) goahttp.Decoder
 }
 
-// bufferPool reuses byte buffers while requests are encoded.
+// bufferPool is a pool of bytes.Buffers for encoding requests.
 var bufferPool = sync.Pool{
 	New: func() any { return new(bytes.Buffer) },
 }
 
-// NewClient creates HTTP clients for all the mcp_assistant service servers.
+// NewClient instantiates HTTP clients for all the mcp_assistant service
+// servers.
 func NewClient(
 	scheme string,
 	host string,
@@ -52,8 +56,10 @@ func NewClient(
 	dec func(*http.Response) goahttp.Decoder,
 	restoreBody bool,
 ) *Client {
+
 	return &Client{
 		Doer:                doer,
+		ToolsCallDoer:       doer,
 		EventsStreamDoer:    doer,
 		RestoreResponseBody: restoreBody,
 		scheme:              scheme,
@@ -136,8 +142,7 @@ func (c *Client) ToolsList() goa.Endpoint {
 // mcp_assistant service tools/call method.
 func (c *Client) ToolsCall() goa.Endpoint {
 	var (
-		encodeRequest  = EncodeToolsCallRequest(c.encoder)
-		decodeResponse = DecodeToolsCallResponse(c.decoder, c.RestoreResponseBody)
+		encodeRequest = EncodeToolsCallRequest(c.encoder)
 	)
 	return func(ctx context.Context, v any) (any, error) {
 		req, err := c.BuildToolsCallRequest(ctx, v)
@@ -147,11 +152,32 @@ func (c *Client) ToolsCall() goa.Endpoint {
 		if err := encodeRequest(req, v); err != nil {
 			return nil, err
 		}
+		// For SSE endpoints, send JSON-RPC request and establish stream
 		resp, err := c.Doer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("mcp_assistant", "tools/call", err)
 		}
-		return decodeResponse(resp)
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "tools/call", resp.StatusCode, string(body))
+		}
+
+		contentType := resp.Header.Get("Content-Type")
+		if contentType != "" && !strings.HasPrefix(contentType, "text/event-stream") {
+			resp.Body.Close()
+			return nil, fmt.Errorf("unexpected content type: %s (expected text/event-stream)", contentType)
+		}
+
+		// Create the SSE client stream
+		stream := &ToolsCallClientStream{
+			resp:    resp,
+			reader:  bufio.NewReader(resp.Body),
+			decoder: c.decoder,
+		}
+
+		return stream, nil
 	}
 }
 
@@ -337,24 +363,24 @@ func (c *Client) EventsStream() goa.Endpoint {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			body, readErr := io.ReadAll(resp.Body)
-			closeErr := resp.Body.Close()
-			if err := errors.Join(readErr, closeErr); err != nil {
-				return nil, goahttp.ErrDecodingError("mcp_assistant", "events/stream", err)
-			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
 			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "events/stream", resp.StatusCode, string(body))
 		}
 
 		contentType := resp.Header.Get("Content-Type")
 		if contentType != "" && !strings.HasPrefix(contentType, "text/event-stream") {
-			contentTypeErr := fmt.Errorf("unexpected content type: %s (expected text/event-stream)", contentType)
-			if err := resp.Body.Close(); err != nil {
-				return nil, errors.Join(contentTypeErr, goahttp.ErrDecodingError("mcp_assistant", "events/stream", err))
-			}
-			return nil, contentTypeErr
+			resp.Body.Close()
+			return nil, fmt.Errorf("unexpected content type: %s (expected text/event-stream)", contentType)
 		}
 
 		// Create the SSE client stream
-		return NewEventsStreamStream(resp, c.decoder), nil
+		stream := &EventsStreamClientStream{
+			resp:    resp,
+			reader:  bufio.NewReader(resp.Body),
+			decoder: c.decoder,
+		}
+
+		return stream, nil
 	}
 }

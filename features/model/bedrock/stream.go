@@ -36,15 +36,14 @@ type bedrockStreamer struct {
 	closeOnce sync.Once
 	closeErr  error
 
-	responseMu               sync.RWMutex
-	response                 *model.Response
-	toolNameMap              map[string]string
-	modelID                  string
-	modelClass               model.ModelClass
-	output                   *model.StructuredOutput
+	responseMu       sync.RWMutex
+	response         *model.Response
+	toolNameMap      map[string]string
+	modelID          string
+	modelClass       model.ModelClass
+	output           *model.StructuredOutput
 	structuredOutputToolName string
-	noArgumentTools          map[string]struct{}
-	contract                 *model.RequestContract
+	contract         *model.RequestContract
 }
 
 // newBedrockStreamer adapts a Bedrock ConverseStream to model.Streamer.
@@ -60,23 +59,21 @@ func newBedrockStreamer(
 	modelClass model.ModelClass,
 	output *model.StructuredOutput,
 	structuredOutputToolName string,
-	noArgumentTools map[string]struct{},
 	contract *model.RequestContract,
 ) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
 	bs := &bedrockStreamer{
-		ctx:                      cctx,
-		cancel:                   cancel,
-		stream:                   stream,
-		chunks:                   make(chan model.Chunk, 32),
-		done:                     make(chan struct{}),
-		toolNameMap:              nameMap,
-		modelID:                  modelID,
-		modelClass:               modelClass,
-		output:                   output,
+		ctx:              cctx,
+		cancel:           cancel,
+		stream:           stream,
+		chunks:           make(chan model.Chunk, 32),
+		done:             make(chan struct{}),
+		toolNameMap:      nameMap,
+		modelID:          modelID,
+		modelClass:       modelClass,
+		output:           output,
 		structuredOutputToolName: structuredOutputToolName,
-		noArgumentTools:          noArgumentTools,
-		contract:                 contract,
+		contract:         contract,
 	}
 	go bs.run()
 	return bs
@@ -136,7 +133,6 @@ func (s *bedrockStreamer) run() {
 		s.output,
 		s.structuredOutputToolName,
 	)
-	processor.noArgumentTools = s.noArgumentTools
 	events := s.stream.Events()
 
 	for {
@@ -243,12 +239,11 @@ type chunkProcessor struct {
 	canonicalParts   map[int]model.Part
 	openBlocks       map[int]struct{}
 
-	toolNameMap              map[string]string
-	modelID                  string
-	modelClass               model.ModelClass
-	output                   *model.StructuredOutput
+	toolNameMap      map[string]string
+	modelID          string
+	modelClass       model.ModelClass
+	output           *model.StructuredOutput
 	structuredOutputToolName string
-	noArgumentTools          map[string]struct{}
 
 	canonical       model.Response
 	started         bool
@@ -272,18 +267,18 @@ func newChunkProcessor(
 	structuredOutputToolName string,
 ) *chunkProcessor {
 	return &chunkProcessor{
-		emit:                     emit,
-		toolBlocks:               make(map[int]*toolBuffer),
-		reasoningBlocks:          make(map[int]*reasoningBuffer),
-		reasoningIndexes:         make(map[int]int),
-		textBlocks:               make(map[int]*strings.Builder),
-		citationBlocks:           make(map[int][]model.Citation),
-		canonicalParts:           make(map[int]model.Part),
-		openBlocks:               make(map[int]struct{}),
-		toolNameMap:              nameMap,
-		modelID:                  modelID,
-		modelClass:               modelClass,
-		output:                   output,
+		emit:             emit,
+		toolBlocks:       make(map[int]*toolBuffer),
+		reasoningBlocks:  make(map[int]*reasoningBuffer),
+		reasoningIndexes: make(map[int]int),
+		textBlocks:       make(map[int]*strings.Builder),
+		citationBlocks:   make(map[int][]model.Citation),
+		canonicalParts:   make(map[int]model.Part),
+		openBlocks:       make(map[int]struct{}),
+		toolNameMap:      nameMap,
+		modelID:          modelID,
+		modelClass:       modelClass,
+		output:           output,
 		structuredOutputToolName: structuredOutputToolName,
 	}
 }
@@ -360,12 +355,7 @@ func (p *chunkProcessor) Handle(event any) error {
 				p.completion = &completionBuffer{name: p.output.Name, index: idx}
 				return nil
 			}
-			_, noArguments := p.noArgumentTools[name]
-			p.toolBlocks[idx] = &toolBuffer{
-				name:        name,
-				id:          id,
-				noArguments: noArguments,
-			}
+			p.toolBlocks[idx] = &toolBuffer{id: id, name: name}
 			return nil
 		}
 		return nil
@@ -496,12 +486,6 @@ func (p *chunkProcessor) Handle(event any) error {
 				if err := p.retainString(fragment); err != nil {
 					return err
 				}
-				// The runtime already owns every execution value for this tool.
-				// Charge provider output against stream limits, but do not turn
-				// meaningless argument text into model-authored state.
-				if tb.noArguments {
-					return nil
-				}
 				tb.fragments.WriteString(fragment)
 				if tb.id == "" {
 					return fmt.Errorf("bedrock stream: tool JSON delta missing tool call id")
@@ -558,13 +542,9 @@ func (p *chunkProcessor) Handle(event any) error {
 			}
 		}
 		if tb := p.toolBlocks[idx]; tb != nil {
-			payload := rawjson.Message(`{}`)
-			if !tb.noArguments {
-				var err error
-				payload, err = decodeToolPayload(tb.finalInput())
-				if err != nil {
-					return fmt.Errorf("bedrock stream: finalize tool payload %q: %w", tb.id, err)
-				}
+			payload, err := decodeToolPayload(tb.finalInput())
+			if err != nil {
+				return fmt.Errorf("bedrock stream: finalize tool payload %q: %w", tb.id, err)
 			}
 			delete(p.toolBlocks, idx)
 			call := model.ToolCall{
@@ -707,10 +687,9 @@ func (p *chunkProcessor) finishStream() error {
 }
 
 type toolBuffer struct {
-	name        string
-	id          string
-	noArguments bool
-	fragments   strings.Builder
+	name      string
+	id        string
+	fragments strings.Builder
 }
 
 // completionBuffer accumulates one structured-output content block until the

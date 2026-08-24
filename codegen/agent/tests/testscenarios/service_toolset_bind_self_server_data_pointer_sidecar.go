@@ -1,16 +1,17 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
-// ServiceToolsetBindSelfServerDataOptional returns a design with optional
-// server data read from a service method result.
+// ServiceToolsetBindSelfServerDataPointerSidecar returns a DSL design function for a
+// method-backed toolset that emits pointer-typed server_data from an optional
+// bound method result field.
 //
-// The generated codec writes a nil value as JSON null instead of returning an
-// error.
-func ServiceToolsetBindSelfServerDataOptional() func() {
+// The generated codecs must treat nil sidecar values as "no server_data" and
+// therefore encode them to JSON null rather than returning an error.
+func ServiceToolsetBindSelfServerDataPointerSidecar() func() {
 	return func() {
 		API("alpha", func() {})
 
@@ -40,14 +41,14 @@ func ServiceToolsetBindSelfServerDataOptional() func() {
 				})
 			})
 
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("lookup", func() {
-					aidsl.Tool("by_id", "Lookup by ID", func() {
-						aidsl.Args(IDPayload)
-						aidsl.Return(OKResult)
-						aidsl.BindTo("alpha", "Find")
-						aidsl.ServerData("aura.chart", Chart, func() {
-							aidsl.FromMethodResultField("chart")
+			Agent("scribe", "Doc helper", func() {
+				Use("lookup", func() {
+					Tool("by_id", "Lookup by ID", func() {
+						Args(IDPayload)
+						Return(OKResult)
+						BindTo("alpha", "Find")
+						ServerData("aura.chart", Chart, func() {
+							FromMethodResultField("chart")
 						})
 					})
 				})

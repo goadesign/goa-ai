@@ -7,7 +7,9 @@
 
 package http
 
-import goa "goa.design/goa/v3/pkg"
+import (
+	goa "goa.design/goa/v3/pkg"
+)
 
 // ValidateDraftTaskResultTransport runs the validations defined on DraftTaskResultTransport.
 func ValidateDraftTaskResultTransport(body *DraftTaskResultTransport) (err error) {

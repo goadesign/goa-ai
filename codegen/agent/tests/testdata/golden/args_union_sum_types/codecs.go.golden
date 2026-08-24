@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	toolhttp "goa.design/goa-ai/gen/alpha/toolsets/union/http"
+	toolhttp "goa.design/goa-ai/alpha/toolsets/union/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 	"io"
@@ -236,7 +236,7 @@ func MarshalEchoPayload(v *EchoPayload) ([]byte, error) {
 	out = &toolhttp.EchoPayloadTransport{
 		ID: &in.ID,
 	}
-	var valueValue toolhttp.Value
+	var valueValue toolhttp.Value2
 	switch string(in.Value.Kind()) {
 	case "number":
 		actual, _ := in.Value.AsNumber()
@@ -254,17 +254,14 @@ func MarshalEchoPayload(v *EchoPayload) ([]byte, error) {
 		valueValue = u
 	case "structured":
 		actual, _ := in.Value.AsStructured()
-		var obj *toolhttp.StructuredValueTransport
-		if actual != nil {
-			obj = encodeStructuredValueToStructuredValueTransport(actual)
-		}
+		obj := encodeStructuredValueToToolhttpStructuredValueTransport(actual)
 		u := valueValue
 		u.SetStructured((*toolhttp.StructuredValueTransport)(obj))
 		valueValue = u
 	}
 	out.Value = &valueValue
 	if in.OptionalValue.Kind() != "" {
-		var optionalValueValue toolhttp.OptionalValue
+		var optionalValueValue toolhttp.OptionalValue2
 		switch string(in.OptionalValue.Kind()) {
 		case "number":
 			actual, _ := in.OptionalValue.AsNumber()
@@ -327,10 +324,7 @@ func UnmarshalEchoPayload(data []byte) (*EchoPayload, error) {
 		out.Value = u
 	case "structured":
 		actual, _ := in.Value.AsStructured()
-		var obj *StructuredValue
-		if actual != nil {
-			obj = decodeStructuredValueTransportToStructuredValue(actual)
-		}
+		obj := decodeToolhttpStructuredValueTransportToStructuredValue(actual)
 		u := out.Value
 		u.SetStructured((*StructuredValue)(obj))
 		out.Value = u
@@ -367,7 +361,7 @@ func MarshalEchoResult(v *EchoResult) ([]byte, error) {
 	out = &toolhttp.EchoResultTransport{
 		ID: &in.ID,
 	}
-	var valueValue toolhttp.Value
+	var valueValue toolhttp.Value2
 	switch string(in.Value.Kind()) {
 	case "number":
 		actual, _ := in.Value.AsNumber()
@@ -385,17 +379,14 @@ func MarshalEchoResult(v *EchoResult) ([]byte, error) {
 		valueValue = u
 	case "structured":
 		actual, _ := in.Value.AsStructured()
-		var obj *toolhttp.StructuredValueTransport
-		if actual != nil {
-			obj = encodeStructuredValueToStructuredValueTransport(actual)
-		}
+		obj := encodeStructuredValueToToolhttpStructuredValueTransport(actual)
 		u := valueValue
 		u.SetStructured((*toolhttp.StructuredValueTransport)(obj))
 		valueValue = u
 	}
 	out.Value = &valueValue
 	if in.OptionalValue.Kind() != "" {
-		var optionalValueValue toolhttp.OptionalValue
+		var optionalValueValue toolhttp.OptionalValue2
 		switch string(in.OptionalValue.Kind()) {
 		case "number":
 			actual, _ := in.OptionalValue.AsNumber()
@@ -458,10 +449,7 @@ func UnmarshalEchoResult(data []byte) (*EchoResult, error) {
 		out.Value = u
 	case "structured":
 		actual, _ := in.Value.AsStructured()
-		var obj *StructuredValue
-		if actual != nil {
-			obj = decodeStructuredValueTransportToStructuredValue(actual)
-		}
+		obj := decodeToolhttpStructuredValueTransportToStructuredValue(actual)
 		u := out.Value
 		u.SetStructured((*StructuredValue)(obj))
 		out.Value = u
@@ -776,14 +764,14 @@ func unknownJSONFieldError(path, field string, allowed []string) error {
 }
 
 // Helper transform functions
-func decodeStructuredValueTransportToStructuredValue(v *toolhttp.StructuredValueTransport) *StructuredValue {
+func decodeToolhttpStructuredValueTransportToStructuredValue(v *toolhttp.StructuredValueTransport) *StructuredValue {
 	res := &StructuredValue{
 		Label: *v.Label,
 	}
 
 	return res
 }
-func encodeStructuredValueToStructuredValueTransport(v *StructuredValue) *toolhttp.StructuredValueTransport {
+func encodeStructuredValueToToolhttpStructuredValueTransport(v *StructuredValue) *toolhttp.StructuredValueTransport {
 	res := &toolhttp.StructuredValueTransport{
 		Label: &v.Label,
 	}

@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -35,11 +35,11 @@ func DeepNestedValidations() func() {
 		})
 
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Deep nested validator test", func() {
-				aidsl.Use("deep", func() {
-					aidsl.Tool("validate", "Validate nested payload", func() {
-						aidsl.Args(Level1)
-						aidsl.Return(Level1)
+			Agent("scribe", "Deep nested validator test", func() {
+				Use("deep", func() {
+					Tool("validate", "Validate nested payload", func() {
+						Args(Level1)
+						Return(Level1)
 					})
 				})
 			})

@@ -1,16 +1,12 @@
-// Package codegen writes generated completion result types, JSON functions, and the
-// functions that run direct completions.
 package codegen
 
 import (
-	"fmt"
 	"path"
 	"path/filepath"
 	"sort"
 
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
-	goaexpr "goa.design/goa/v3/expr"
 )
 
 type (
@@ -23,19 +19,14 @@ type (
 		Name        string
 		GoName      string
 		ConstName   string
-		SpecVar     string
-		DecodeFunc  string
-		DecodeChunk string
-		Complete    string
-		Stream      string
 		Description string
 		Result      *typeData
 	}
 )
 
-// completionSpecsFiles writes one completion package for each service that
-// declares completion results.
-func completionSpecsFiles(data *GeneratorData, planned *toolSpecsPlan) ([]*codegen.File, error) {
+// completionSpecsFiles emits one service-owned completions package per service
+// that declares typed assistant-output contracts.
+func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 	if data == nil || len(data.Services) == 0 {
 		return nil, nil
 	}
@@ -53,13 +44,12 @@ func completionSpecsFiles(data *GeneratorData, planned *toolSpecsPlan) ([]*codeg
 		if svc == nil || svc.Service == nil || len(svc.Completions) == 0 {
 			continue
 		}
-		packagePlan := planned.completions[svc.Service.Name]
-		if packagePlan == nil {
-			return nil, fmt.Errorf("service %q completion package was not planned", svc.Service.Name)
+		specsData, err := buildCompletionSpecsData(data.Genpkg, svc.Service, svc.Completions)
+		if err != nil {
+			return nil, err
 		}
-		specsData := packagePlan.completion
 		if specsData == nil {
-			return nil, fmt.Errorf("service %q has no planned completion specs data", svc.Service.Name)
+			continue
 		}
 		dir := filepath.Join(codegen.Gendir, svc.Service.PathName, dirName)
 		importPath := path.Join(data.Genpkg, svc.Service.PathName, dirName)
@@ -86,21 +76,28 @@ func completionSpecsFiles(data *GeneratorData, planned *toolSpecsPlan) ([]*codeg
 				SectionTemplates: transportSections,
 			})
 
-			if validateImports := specsData.transportValidationImports(); len(validateImports) > 0 {
-				validateSections := []*codegen.SectionTemplate{
-					codegen.Header(svc.Service.Name+" completion transport validators", transportPkgName, validateImports),
-					{
-						Name:    "completion-transport-validate",
-						Source:  agentsTemplates.Read(toolTransportValidateFileT),
-						Data:    toolTransportTypesFileData{Types: transportTypes},
-						FuncMap: templateFuncMap(),
-					},
-				}
-				out = append(out, &codegen.File{
-					Path:             filepath.Join(dir, transportDirName, "validate.go"),
-					SectionTemplates: validateSections,
-				})
+			validateImports := []*codegen.ImportSpec{
+				codegen.SimpleImport("encoding/json"),
+				codegen.SimpleImport("fmt"),
+				codegen.GoaImport(""),
 			}
+			validateImports = append(validateImports, timports...)
+			if specsData.needsUnicodeImport() {
+				validateImports = append(validateImports, codegen.SimpleImport("unicode/utf8"))
+			}
+			validateSections := []*codegen.SectionTemplate{
+				codegen.Header(svc.Service.Name+" completion transport validators", transportPkgName, validateImports),
+				{
+					Name:    "completion-transport-validate",
+					Source:  agentsTemplates.Read(toolTransportValidateFileT),
+					Data:    toolTransportTypesFileData{Types: transportTypes},
+					FuncMap: templateFuncMap(),
+				},
+			}
+			out = append(out, &codegen.File{
+				Path:             filepath.Join(dir, transportDirName, "validate.go"),
+				SectionTemplates: validateSections,
+			})
 			if len(specsData.TransportUnions) > 0 {
 				unionImports := make([]*codegen.ImportSpec, 0, 3+len(timports))
 				unionImports = append(unionImports,
@@ -226,41 +223,38 @@ func completionSpecsFiles(data *GeneratorData, planned *toolSpecsPlan) ([]*codeg
 	return out, nil
 }
 
-// buildCompletionSpecsDataForPackage builds one service's completion results,
-// schemas, and JSON functions with the saved package names.
-func buildCompletionSpecsDataForPackage(genpkg string, svc *service.Data, completions []*CompletionData, planned *toolSpecsPackagePlan, api *goaexpr.APIExpr) (*completionSpecsData, error) {
+// buildCompletionSpecsData reuses the shared contract type builder to
+// materialize result types, schemas, unions, and codecs for direct completions
+// without cloning the type-generation pipeline.
+func buildCompletionSpecsData(genpkg string, svc *service.Data, completions []*CompletionData) (*completionSpecsData, error) {
 	if svc == nil || len(completions) == 0 {
 		return nil, nil
 	}
 	data := &completionSpecsData{toolSpecsData: newToolSpecsData(genpkg, svc)}
-	builder := newToolSpecBuilder(genpkg, svc, planned, api)
+	builder := newToolSpecBuilder(genpkg, svc)
 	for _, completion := range completions {
 		if completion == nil {
 			continue
 		}
-		names := planned.completionNames[completion.Name]
+		scope := builder.scopeForTool()
+		constName := scope.Unique(completion.GoName)
 		result, err := builder.typeFor(newCompletionContractTypeOwner(svc, completion), completion.Result, usageResult)
 		if err != nil {
 			return nil, err
 		}
-		entry := &completionEntry{
+		// Completion callers use the generated Complete<Name> and
+		// StreamComplete<Name> operations. Keep their codec plumbing private so
+		// applications cannot bypass those typed boundaries.
+		result.ExportedCodec = "new" + result.TypeName + "Codec"
+		result.MarshalFunc = "marshal" + result.TypeName
+		result.UnmarshalFunc = "unmarshal" + result.TypeName
+		data.completions = append(data.completions, &completionEntry{
 			Name:        completion.Name,
 			GoName:      completion.GoName,
-			ConstName:   names.constant.Name(),
-			SpecVar:     names.spec.Name(),
-			DecodeFunc:  names.decode.Name(),
-			DecodeChunk: names.decodeChunk.Name(),
-			Complete:    names.complete.Name(),
-			Stream:      names.streamComplete.Name(),
+			ConstName:   constName,
 			Description: completion.Description,
 			Result:      result,
-		}
-		completion.ConstName = entry.ConstName
-		completion.SpecVar = entry.SpecVar
-		completion.CompleteFunc = entry.Complete
-		completion.StreamFunc = entry.Stream
-		completion.DecodeChunkFunc = entry.DecodeChunk
-		data.completions = append(data.completions, entry)
+		})
 		data.addType(result)
 	}
 	data.Scope = builder.helperScope

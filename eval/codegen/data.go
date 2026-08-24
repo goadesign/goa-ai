@@ -1,15 +1,12 @@
 // Package codegen generates typed evaluation suites and application scaffolds.
-// This file copies suite inputs and the agent's tool packages before generated
-// files are written.
+// This file owns input materialization and nested-agent contract traversal.
 package codegen
 
 import (
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	agentir "goa.design/goa-ai/codegen/ir"
 	"goa.design/goa-ai/codegen/shared"
@@ -20,97 +17,6 @@ import (
 )
 
 type (
-	// suitePlan stores a suite description, its scenarios and inputs, and the Go
-	// names used when its file is written.
-	suitePlan struct {
-		Name         string
-		ID           string
-		Description  string
-		Package      string
-		GenPkg       string
-		ImportPath   string
-		Output       string
-		PackagePlan  *goacodegen.GeneratedPackage
-		Scenarios    []scenarioPlan
-		Types        []*inputTypePlan
-		Validators   []*validatorPlan
-		Imports      []*goacodegen.ImportSpec
-		Hooks        *goacodegen.NameDeclaration
-		Inputs       *goacodegen.NameDeclaration
-		New          *goacodegen.NameDeclaration
-		ToolContract *goacodegen.NameDeclaration
-		Contract     *contractPlan
-	}
-
-	// examplePlan keeps one suite and the command names used by its starter file.
-	examplePlan struct {
-		Suite          *suitePlan
-		Output         string
-		PackagePlan    *goacodegen.GeneratedPackage
-		Hooks          *goacodegen.NameDeclaration
-		Values         *goacodegen.NameDeclaration
-		Options        *goacodegen.NameDeclaration
-		Main           *goacodegen.NameDeclaration
-		Run            *goacodegen.NameDeclaration
-		ScenarioInputs *goacodegen.NameDeclaration
-	}
-
-	// scenarioPlan keeps one copied scenario and its saved input validator.
-	scenarioPlan struct {
-		ID             string
-		RawID          string
-		Description    string
-		Method         string
-		Tags           []string
-		Timeout        int64
-		Input          *goaexpr.AttributeExpr
-		InputValidator *goacodegen.NameDeclaration
-	}
-
-	// inputTypePlan keeps one local input type and its package declarations.
-	inputTypePlan struct {
-		Description string
-		Attribute   *goaexpr.AttributeExpr
-		Type        goaexpr.UserType
-		Declaration *goacodegen.NameDeclaration
-		Validator   *validatorPlan
-	}
-
-	// validatorPlan keeps one input check and the function that writes it.
-	validatorPlan struct {
-		Attribute         *goaexpr.AttributeExpr
-		Reference         *goaexpr.AttributeExpr
-		Parent            goaexpr.UserType
-		Declaration       *goacodegen.NameDeclaration
-		NestedDeclaration *goacodegen.NameDeclaration
-	}
-
-	// contractPlan stores the agent ID and tool packages until the file chooses
-	// local import names.
-	contractPlan struct {
-		AgentID string
-		Specs   []contractSpecPlan
-	}
-
-	contractSpecPlan struct {
-		Package string
-		Path    string
-	}
-
-	// evalNameOrder sorts names that request the same spelling.
-	evalNameOrder struct {
-		Suite  string
-		Role   string
-		Symbol string
-	}
-
-	// evalAttributeScope supplies saved validator calls while Goa writes one
-	// suite file.
-	evalAttributeScope struct {
-		goacodegen.Attributor
-		validators map[string]*goacodegen.NameDeclaration
-	}
-
 	// suiteData contains fully evaluated values consumed by generated suite and
 	// example templates.
 	suiteData struct {
@@ -126,23 +32,9 @@ type (
 		NeedsUTF8      bool
 		ExamplePackage string
 		ExampleAlias   string
-		Hooks          string
-		Inputs         string
-		New            string
 	}
 
-	// exampleData contains the final suite and command names used by one file.
-	exampleData struct {
-		*suiteData
-		ExampleHooks          string
-		ExampleValues         string
-		ExampleOptions        string
-		ExampleMain           string
-		ExampleRun            string
-		ExampleScenarioInputs string
-	}
-
-	// scenarioData contains one generated hook method and copied case data.
+	// scenarioData contains one generated hook method and immutable case data.
 	scenarioData struct {
 		ID              string
 		RawID           string
@@ -158,27 +50,30 @@ type (
 		ExampleInputRef string
 	}
 
-	// inputTypeData stores one public Go definition written for a scenario input.
+	// inputTypeData describes one public Go type materialized in the eval
+	// package from a scenario input schema.
 	inputTypeData struct {
 		Name        string
 		Description string
 		Def         string
+		Ref         string
+		Validator   string
+		Attribute   *goaexpr.AttributeExpr
+		Type        goaexpr.UserType
 	}
 
 	// validatorData contains one generated validation function body.
 	validatorData struct {
-		Name       string
-		NestedName string
-		Ref        string
-		Pointer    bool
-		Lines      []string
+		Name    string
+		Ref     string
+		Pointer bool
+		Lines   []string
 	}
 
-	// contractData lists the generated tool packages checked in order.
+	// contractData lists aggregate agent specs packages in lookup order.
 	contractData struct {
-		AgentID          string
-		MustToolContract string
-		Specs            []contractSpecData
+		AgentID string
+		Specs   []contractSpecData
 	}
 
 	contractSpecData struct {
@@ -187,300 +82,107 @@ type (
 	}
 )
 
-// ComparePackageName orders eval declarations by copied suite and symbol names.
-func (o evalNameOrder) ComparePackageName(other goacodegen.PackageNameOrder) int {
-	right := other.(evalNameOrder)
-	if compared := strings.Compare(o.Suite, right.Suite); compared != 0 {
-		return compared
-	}
-	if compared := strings.Compare(o.Role, right.Role); compared != 0 {
-		return compared
-	}
-	return strings.Compare(o.Symbol, right.Symbol)
-}
-
-// Enter keeps saved validator names while checking fields inside an input.
-func (s *evalAttributeScope) Enter(attribute *goaexpr.AttributeExpr) goacodegen.Attributor {
-	return &evalAttributeScope{
-		Attributor: s.Attributor.Enter(attribute),
-		validators: s.validators,
-	}
-}
-
-// ValidatorCall uses the saved private function for a nested input and keeps
-// the field path supplied by its parent validator.
-func (s *evalAttributeScope) ValidatorCall(
-	attribute *goaexpr.AttributeExpr,
-	_, target, path string,
-) string {
-	userType, ok := attribute.Type.(goaexpr.UserType)
-	if !ok {
-		panic(fmt.Sprintf("eval validator requested for non-user type %T", attribute.Type))
-	}
-	declaration := s.validators[userType.ID()]
-	if declaration == nil {
-		panic(fmt.Sprintf("eval validator for input type %q was not saved", userType.Name()))
-	}
-	return fmt.Sprintf("%s(%s, %s)", declaration.Name(), target, path)
-}
-
-// planSuite copies one suite and declares every name written in its package.
-func planSuite(
-	generation *goacodegen.Generation,
-	suite *evalexpr.SuiteExpr,
-	contract *contractPlan,
-) (*suitePlan, error) {
-	importPath := shared.JoinImportPath(generation.GenPkg(), "evals/"+suite.Name)
-	pkg, err := generation.ClaimPackage(importPath)
-	if err != nil {
-		return nil, err
-	}
-	planned := &suitePlan{
-		Name:        suite.Name,
-		ID:          strconv.Quote(suite.Name),
-		Description: strconv.Quote(suite.Description),
-		Package:     goacodegen.Goify(strings.ReplaceAll(suite.Name, "_", ""), false),
-		GenPkg:      generation.GenPkg(),
-		ImportPath:  importPath,
-		Output:      filepath.Join(goacodegen.Gendir, "evals", suite.Name, "suite.go"),
-		PackagePlan: pkg,
-		Scenarios:   make([]scenarioPlan, len(suite.Scenarios)),
-		Contract:    contract,
-	}
-	planned.Hooks, err = declareEvalName(pkg, goacodegen.NameType, "Hooks", goacodegen.ExportedName, suite.Name, "suite")
-	if err != nil {
-		return nil, err
-	}
-	planned.Inputs, err = declareEvalName(pkg, goacodegen.NameType, "Inputs", goacodegen.ExportedName, suite.Name, "suite")
-	if err != nil {
-		return nil, err
-	}
-	planned.New, err = declareEvalName(pkg, goacodegen.NameFunction, "New", goacodegen.ExportedName, suite.Name, "suite")
-	if err != nil {
-		return nil, err
-	}
-	if contract != nil {
-		planned.ToolContract, err = declareEvalName(
-			pkg,
-			goacodegen.NameFunction,
-			"MustToolContract",
-			goacodegen.ExportedName,
-			suite.Name,
-			"contract",
-		)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	seenTypes := make(map[string]*inputTypePlan)
-	imports := make(map[string]*goacodegen.ImportSpec)
-	for index, scenario := range suite.Scenarios {
-		item, err := planScenario(planned, scenario, suite.Timeout, seenTypes, imports)
-		if err != nil {
-			return nil, err
-		}
-		planned.Scenarios[index] = item
-	}
-	paths := make([]string, 0, len(imports))
-	for importPath := range imports {
-		paths = append(paths, importPath)
-	}
-	sort.Strings(paths)
-	for _, importPath := range paths {
-		planned.Imports = append(planned.Imports, imports[importPath])
-	}
-	return planned, nil
-}
-
-// planScenario copies one scenario and declares names used by its input.
-func planScenario(
-	suite *suitePlan,
-	scenario *evalexpr.ScenarioExpr,
-	suiteTimeout time.Duration,
-	seenTypes map[string]*inputTypePlan,
-	imports map[string]*goacodegen.ImportSpec,
-) (scenarioPlan, error) {
-	timeout := scenario.Timeout
-	if timeout == 0 {
-		timeout = suiteTimeout
-	}
-	tags := make([]string, len(scenario.Tags))
-	for index, tag := range scenario.Tags {
-		tags[index] = strconv.Quote(tag)
-	}
-	method := goacodegen.Goify(scenario.Name, true)
-	planned := scenarioPlan{
-		ID:          strconv.Quote(scenario.Name),
-		RawID:       scenario.Name,
-		Description: strconv.Quote(scenario.Description),
-		Method:      method,
-		Tags:        tags,
-		Timeout:     int64(timeout),
-	}
-	if scenario.Input == nil {
-		return planned, nil
-	}
-	input, err := localizeInput(scenario.Input)
-	if err != nil {
-		return scenarioPlan{}, fmt.Errorf("localize input for scenario %q: %w", scenario.Name, err)
-	}
-	if _, ok := input.Type.(*goaexpr.Object); ok {
-		localType := &goaexpr.UserTypeExpr{
-			AttributeExpr: input,
-			TypeName:      method + "Input",
-		}
-		input = &goaexpr.AttributeExpr{
-			Type:        localType,
-			Description: scenario.Input.Description,
-		}
-	}
-	planned.Input = input
-	newTypes, err := planInputTypes(suite, input, seenTypes)
-	if err != nil {
-		return scenarioPlan{}, err
-	}
-	for _, inputType := range newTypes {
-		for _, spec := range shared.GatherAttributeImports(suite.GenPkg, inputType.Attribute) {
-			imports[spec.Path] = spec
-		}
-	}
-	if userType, ok := input.Type.(goaexpr.UserType); ok {
-		planned.InputValidator = seenTypes[userType.ID()].Validator.Declaration
-		return planned, nil
-	}
-	if !goacodegen.NeedsValidation(input, goacodegen.GoLayoutPolicy{
-		UseDefault: true,
-		SumType:    true,
-	}) {
-		return planned, nil
-	}
-	validatorName := "validate" + method + "Input"
-	declaration, err := declareEvalName(
-		suite.PackagePlan,
-		goacodegen.NameFunction,
-		validatorName,
-		goacodegen.UnexportedName,
-		suite.Name,
-		"validator "+method,
-	)
-	if err != nil {
-		return scenarioPlan{}, err
-	}
-	validator := &validatorPlan{
-		Attribute:   input,
-		Reference:   input,
-		Declaration: declaration,
-	}
-	validator.NestedDeclaration, err = suite.PackagePlan.DeclareDependentName(
-		goacodegen.NameFunction,
-		declaration,
-		"",
-		"At",
-		evalNameOrder{Suite: suite.Name, Role: "nested validator", Symbol: method},
-	)
-	if err != nil {
-		return scenarioPlan{}, err
-	}
-	suite.Validators = append(suite.Validators, validator)
-	planned.InputValidator = declaration
-	return planned, nil
-}
-
-// linkSuiteData builds template values from the saved suite description,
-// scenarios, inputs, and chosen Go names.
-func linkSuiteData(planned *suitePlan, exampleAlias string) *suiteData {
-	scope := planned.PackagePlan.Scope().Fork()
+// buildSuiteData localizes scenario input schemas and partially evaluates all
+// static suite decisions before rendering runtime code.
+func buildSuiteData(genpkg string, suite *evalexpr.SuiteExpr) (*suiteData, error) {
+	scope := goacodegen.NewNameScope()
 	data := &suiteData{
-		Name:           planned.Name,
-		ID:             planned.ID,
-		Description:    planned.Description,
-		Package:        planned.Package,
-		Scenarios:      make([]scenarioData, len(planned.Scenarios)),
-		Imports:        append([]*goacodegen.ImportSpec(nil), planned.Imports...),
-		ExamplePackage: planned.ImportPath,
-		ExampleAlias:   exampleAlias,
-		Hooks:          planned.Hooks.Name(),
-		Inputs:         planned.Inputs.Name(),
-		New:            planned.New.Name(),
+		Name:           suite.Name,
+		ID:             strconv.Quote(suite.Name),
+		Description:    strconv.Quote(suite.Description),
+		Package:        goacodegen.Goify(strings.ReplaceAll(suite.Name, "_", ""), false),
+		Scenarios:      make([]scenarioData, len(suite.Scenarios)),
+		ExamplePackage: shared.JoinImportPath(genpkg, "evals/"+suite.Name),
 	}
-	validatorNames := make(map[string]*goacodegen.NameDeclaration, len(planned.Types))
-	for _, inputType := range planned.Types {
-		description := inputType.Declaration.Name() + " is a generated evaluation input type."
-		if inputType.Description != "" {
-			description += " " + inputType.Description
+	data.ExampleAlias = "geneval" + data.Package
+	seenTypes := make(map[string]struct{})
+	seenValidators := make(map[string]struct{})
+	imports := make(map[string]*goacodegen.ImportSpec)
+
+	for index, scenario := range suite.Scenarios {
+		timeout := scenario.Timeout
+		if timeout == 0 {
+			timeout = suite.Timeout
 		}
-		data.Types = append(data.Types, inputTypeData{
-			Name:        inputType.Declaration.Name(),
-			Description: description,
-			Def:         scope.GoTypeDef(inputType.Attribute, false, true),
-		})
-		validatorNames[inputType.Type.ID()] = inputType.Validator.NestedDeclaration
-	}
-	for index, scenario := range planned.Scenarios {
-		linked := scenarioData{
-			ID:          scenario.ID,
-			RawID:       scenario.RawID,
-			Description: scenario.Description,
-			Method:      scenario.Method,
-			Tags:        append([]string(nil), scenario.Tags...),
-			Timeout:     scenario.Timeout,
+		tags := make([]string, len(scenario.Tags))
+		for tagIndex, tag := range scenario.Tags {
+			tags[tagIndex] = strconv.Quote(tag)
+		}
+		method := goacodegen.Goify(scenario.Name, true)
+		scenarioData := scenarioData{
+			ID:          strconv.Quote(scenario.Name),
+			RawID:       scenario.Name,
+			Description: strconv.Quote(scenario.Description),
+			Method:      method,
+			Tags:        tags,
+			Timeout:     int64(timeout),
 		}
 		if scenario.Input != nil {
-			linked.HasInput = true
-			linked.InputField = scenario.Method
-			linked.InputRef = scope.GoTypeRef(scenario.Input)
-			if exampleAlias != "" {
-				linked.ExampleInputRef = scope.GoFullTypeRef(scenario.Input, exampleAlias)
-				linked.InputZero = zeroValue(linked.ExampleInputRef)
+			input, err := localizeInput(scenario.Input)
+			if err != nil {
+				return nil, fmt.Errorf("localize input for scenario %q: %w", scenario.Name, err)
 			}
-			if scenario.InputValidator != nil {
-				linked.InputValidator = scenario.InputValidator.Name()
+			if _, ok := input.Type.(*goaexpr.Object); ok {
+				localType := &goaexpr.UserTypeExpr{
+					AttributeExpr: input,
+					TypeName:      method + "Input",
+				}
+				input = &goaexpr.AttributeExpr{
+					Type:        localType,
+					Description: scenario.Input.Description,
+				}
+			}
+			scenarioData.HasInput = true
+			scenarioData.InputField = method
+			scenarioData.InputRef = scope.GoTypeRef(input)
+			scenarioData.ExampleInputRef = scope.GoFullTypeRef(input, data.ExampleAlias)
+			scenarioData.InputZero = zeroValue(scenarioData.ExampleInputRef)
+
+			types := collectInputTypes(input, scope, seenTypes)
+			for _, inputType := range types {
+				data.Types = append(data.Types, inputType)
+				for _, spec := range shared.GatherAttributeImports(genpkg, inputType.Attribute) {
+					imports[spec.Path] = spec
+				}
+				if _, exists := seenValidators[inputType.Validator]; exists {
+					continue
+				}
+				validator := buildValidator(
+					inputType.Attribute,
+					inputType.Type,
+					inputType.Validator,
+					inputType.Ref,
+					scope,
+				)
+				data.Validators = append(data.Validators, validator)
+				seenValidators[validator.Name] = struct{}{}
+				recordValidationImports(data, validator)
+			}
+
+			if _, ok := input.Type.(goaexpr.UserType); ok {
+				typeName := scope.GoTypeName(input)
+				scenarioData.InputValidator = "Validate" + typeName
+			} else {
+				validatorName := "validate" + method + "Input"
+				validator := buildValidator(input, nil, validatorName, scenarioData.InputRef, scope)
+				if len(validator.Lines) > 0 {
+					scenarioData.InputValidator = validatorName
+					data.Validators = append(data.Validators, validator)
+					recordValidationImports(data, validator)
+				}
 			}
 		}
-		data.Scenarios[index] = linked
+		data.Scenarios[index] = scenarioData
 	}
-	for _, validator := range planned.Validators {
-		linked := buildValidator(
-			validator,
-			scope,
-			validatorNames,
-		)
-		data.Validators = append(data.Validators, linked)
-		recordValidationImports(data, linked)
+	paths := make([]string, 0, len(imports))
+	for path := range imports {
+		paths = append(paths, path)
 	}
-	return data
-}
-
-// linkContractData chooses import names for one contract file.
-func linkContractData(planned *suitePlan) *contractData {
-	scope := planned.PackagePlan.Scope().Fork()
-	data := &contractData{
-		AgentID:          planned.Contract.AgentID,
-		MustToolContract: planned.ToolContract.Name(),
+	sort.Strings(paths)
+	for _, path := range paths {
+		data.Imports = append(data.Imports, imports[path])
 	}
-	for _, spec := range planned.Contract.Specs {
-		data.Specs = append(data.Specs, contractSpecData{
-			Alias: scope.Unique(spec.Package),
-			Path:  spec.Path,
-		})
-	}
-	return data
-}
-
-// linkExampleData chooses command names and its eval package import name.
-func linkExampleData(planned *examplePlan) *exampleData {
-	fileScope := planned.PackagePlan.Scope().Fork()
-	alias := fileScope.Unique("geneval" + planned.Suite.Package)
-	return &exampleData{
-		suiteData:             linkSuiteData(planned.Suite, alias),
-		ExampleHooks:          planned.Hooks.Name(),
-		ExampleValues:         planned.Values.Name(),
-		ExampleOptions:        planned.Options.Name(),
-		ExampleMain:           planned.Main.Name(),
-		ExampleRun:            planned.Run.Name(),
-		ExampleScenarioInputs: planned.ScenarioInputs.Name(),
-	}
+	return data, nil
 }
 
 // localizeInput copies an input schema and removes package placement metadata
@@ -505,153 +207,84 @@ func localizeInput(input *goaexpr.AttributeExpr) (*goaexpr.AttributeExpr, error)
 	return local, nil
 }
 
-// planInputTypes declares every local user type reachable from input.
-func planInputTypes(
-	suite *suitePlan,
+// collectInputTypes gathers every local user type reachable from input.
+func collectInputTypes(
 	input *goaexpr.AttributeExpr,
-	seen map[string]*inputTypePlan,
-) ([]*inputTypePlan, error) {
+	scope *goacodegen.NameScope,
+	seen map[string]struct{},
+) []inputTypeData {
 	if input == nil || input.Type == goaexpr.Empty {
-		return nil, nil
+		return nil
 	}
-	var result []*inputTypePlan
-	var collect func(*goaexpr.AttributeExpr) error
-	collect = func(attribute *goaexpr.AttributeExpr) error {
+	var result []inputTypeData
+	var collect func(*goaexpr.AttributeExpr)
+	collect = func(attribute *goaexpr.AttributeExpr) {
 		if attribute == nil {
-			return nil
+			return
 		}
 		switch actual := attribute.Type.(type) {
 		case goaexpr.UserType:
 			if _, exists := seen[actual.ID()]; exists {
-				return nil
+				return
 			}
-			name := goacodegen.Goify(actual.Name(), true)
-			declaration, err := declareEvalName(
-				suite.PackagePlan,
-				goacodegen.NameType,
-				name,
-				goacodegen.ExportedName,
-				suite.Name,
-				"input type "+actual.ID(),
-				actual,
-			)
-			if err != nil {
-				return err
+			seen[actual.ID()] = struct{}{}
+			name := scope.GoTypeName(attribute)
+			description := name + " is a generated evaluation input type."
+			if authored := strings.TrimSpace(actual.Attribute().Description); authored != "" {
+				description += " " + authored
 			}
-			validatorDeclaration, err := suite.PackagePlan.DeclareDependentName(
-				goacodegen.NameFunction,
-				declaration,
-				"Validate",
-				"",
-				evalNameOrder{Suite: suite.Name, Role: "validator", Symbol: actual.ID()},
-			)
-			if err != nil {
-				return err
-			}
-			nestedValidatorDeclaration, err := suite.PackagePlan.DeclareDependentName(
-				goacodegen.NameFunction,
-				declaration,
-				"validate",
-				"",
-				evalNameOrder{Suite: suite.Name, Role: "nested validator", Symbol: actual.ID()},
-			)
-			if err != nil {
-				return err
-			}
-			validator := &validatorPlan{
-				Attribute:         actual.Attribute(),
-				Reference:         attribute,
-				Parent:            actual,
-				Declaration:       validatorDeclaration,
-				NestedDeclaration: nestedValidatorDeclaration,
-			}
-			planned := &inputTypePlan{
-				Description: strings.TrimSpace(actual.Attribute().Description),
+			result = append(result, inputTypeData{
+				Name:        name,
+				Description: description,
+				Def:         scope.GoTypeDef(actual.Attribute(), false, true),
+				Ref:         scope.GoTypeRef(attribute),
+				Validator:   "Validate" + name,
 				Attribute:   actual.Attribute(),
 				Type:        actual,
-				Declaration: declaration,
-				Validator:   validator,
-			}
-			seen[actual.ID()] = planned
-			result = append(result, planned)
-			suite.Types = append(suite.Types, planned)
-			suite.Validators = append(suite.Validators, validator)
-			return collect(actual.Attribute())
+			})
+			collect(actual.Attribute())
 		case *goaexpr.Object:
 			for _, named := range *actual {
-				if err := collect(named.Attribute); err != nil {
-					return err
-				}
+				collect(named.Attribute)
 			}
 		case *goaexpr.Array:
-			return collect(actual.ElemType)
+			collect(actual.ElemType)
 		case *goaexpr.Map:
-			if err := collect(actual.KeyType); err != nil {
-				return err
-			}
-			return collect(actual.ElemType)
+			collect(actual.KeyType)
+			collect(actual.ElemType)
 		}
-		return nil
 	}
-	if err := collect(input); err != nil {
-		return nil, err
-	}
-	return result, nil
+	collect(input)
+	return result
 }
 
-// declareEvalName records one name and how Goa sorts competing requests.
-func declareEvalName(
-	pkg *goacodegen.GeneratedPackage,
-	kind goacodegen.PackageNameKind,
-	preferred string,
-	visibility goacodegen.PackageNameVisibility,
-	suite, role string,
-	keys ...goacodegen.Hasher,
-) (*goacodegen.NameDeclaration, error) {
-	declaration := goacodegen.NewPreferredName(
-		kind,
-		preferred,
-		visibility,
-		evalNameOrder{Suite: suite, Role: role, Symbol: preferred},
-	)
-	if err := pkg.DeclareName(declaration, keys...); err != nil {
-		return nil, err
-	}
-	return declaration, nil
-}
-
-// buildValidator writes Goa's checks with names chosen for this file.
+// buildValidator emits Goa's canonical recursive validation for one input.
 func buildValidator(
-	plan *validatorPlan,
+	attribute *goaexpr.AttributeExpr,
+	parent goaexpr.UserType,
+	name string,
+	ref string,
 	scope *goacodegen.NameScope,
-	validators map[string]*goacodegen.NameDeclaration,
 ) validatorData {
 	context := goacodegen.NewAttributeContext(false, false, true, "", scope)
-	context.Scope = &evalAttributeScope{
-		Attributor: context.Scope,
-		validators: validators,
-	}
-	source := goacodegen.ValidationCodeWithPathParameter(
-		plan.Attribute,
-		plan.Parent,
+	source := goacodegen.ValidationCode(
+		attribute,
+		parent,
 		context,
 		true,
-		plan.Parent != nil && goaexpr.IsAlias(plan.Parent),
+		parent != nil && goaexpr.IsAlias(parent),
 		false,
 		"value",
-		"path",
 	)
 	var lines []string
 	if strings.TrimSpace(source) != "" {
 		lines = strings.Split(source, "\n")
 	}
-	ref := scope.GoTypeRef(plan.Reference)
 	return validatorData{
-		Name:       plan.Declaration.Name(),
-		NestedName: plan.NestedDeclaration.Name(),
-		Ref:        ref,
-		Pointer:    strings.HasPrefix(ref, "*"),
-		Lines:      lines,
+		Name:    name,
+		Ref:     ref,
+		Pointer: strings.HasPrefix(ref, "*"),
+		Lines:   lines,
 	}
 }
 
@@ -675,8 +308,9 @@ func zeroValue(ref string) string {
 	return "*new(" + ref + ")"
 }
 
-// planContract copies the tool packages reachable from the suite's agent.
-func planContract(suite *evalexpr.SuiteExpr, design *agentir.Design) (*contractPlan, error) {
+// buildContractData computes the exact static toolset specs reachable from the
+// agent attached to suite. The root agent is searched before nested agents.
+func buildContractData(suite *evalexpr.SuiteExpr, design *agentir.Design) (*contractData, error) {
 	if suite.Agent == nil || design == nil {
 		return nil, nil
 	}
@@ -684,7 +318,8 @@ func planContract(suite *evalexpr.SuiteExpr, design *agentir.Design) (*contractP
 	if root == nil {
 		return nil, fmt.Errorf("resolve agent attached to evaluation suite %q", suite.Name)
 	}
-	result := &contractPlan{AgentID: root.ID}
+	scope := goacodegen.NewNameScope()
+	result := &contractData{AgentID: root.ID}
 	queue := []*agentir.Agent{root}
 	seenAgents := make(map[string]struct{})
 	seenSpecs := make(map[string]struct{})
@@ -712,9 +347,13 @@ func planContract(suite *evalexpr.SuiteExpr, design *agentir.Design) (*contractP
 					)
 				}
 				if _, exists := seenSpecs[reference.SpecsImportPath]; !exists {
-					result.Specs = append(result.Specs, contractSpecPlan{
-						Package: "gen" + strings.ReplaceAll(reference.SpecsPackageName, "_", ""),
-						Path:    reference.SpecsImportPath,
+					alias := scope.Unique(
+						"gen" +
+							strings.ReplaceAll(reference.SpecsPackageName, "_", ""),
+					)
+					result.Specs = append(result.Specs, contractSpecData{
+						Alias: alias,
+						Path:  reference.SpecsImportPath,
 					})
 					seenSpecs[reference.SpecsImportPath] = struct{}{}
 				}

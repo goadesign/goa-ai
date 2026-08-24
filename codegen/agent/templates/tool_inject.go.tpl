@@ -2,19 +2,26 @@
 {{- if .Injected }}
 {{- $tool := . }}
 
-// {{ .InjectFunc }} fills the fields that Inject() marked on the
-// {{ .QualifiedName }} tool input. It copies call information from meta and
-// reads named values from labels. Missing or invalid values return an error
-// that names the tool and field.
+// Inject{{ .ConstName }} populates the server-owned fields Inject() marked on
+// the {{ .QualifiedName }} tool payload. Meta-backed fields are copied
+// directly from the run's ToolCallMeta. Label-backed fields are read from the
+// run's labels, converted to their declared type, and validated using the
+// same rules enforced on the design; a missing label or a validation failure
+// is a precise, actionable error naming the tool and the field.
 //
-// Generated executors call this after decoding and before running the tool.
-// The model never supplies these fields.
-func {{ .InjectFunc }}(p *{{ .PayloadTypeName }}, meta runtime.ToolCallMeta, labels map[string]string) error {
+// Both topologies (in-process executors and the registry-served provider)
+// call this function between decode and execute so injection behaves
+// identically regardless of where the tool runs.
+//
+// Injected fields are pointers on the tool payload struct: the model-facing
+// contract marks them optional (the model never supplies them), so this
+// function is the single point that fills them in.
+func Inject{{ .ConstName }}(p *{{ .ConstName }}Payload, meta runtime.ToolCallMeta, labels map[string]string) error {
 {{- range .Injected }}
 {{- if .IsMetaBacked }}
 	{
 		v := meta.{{ .MetaField }}
-		p.{{ .GoFieldName }} = v
+		p.{{ .GoFieldName }} = &v
 	}
 {{- else }}
 	{
@@ -29,25 +36,30 @@ func {{ .InjectFunc }}(p *{{ .PayloadTypeName }}, meta runtime.ToolCallMeta, lab
 			return fmt.Errorf("tool %q: label %q failed validation: %w", {{ printf "%q" $tool.QualifiedName }}, {{ printf "%q" .LabelKey }}, err)
 		}
 		{{- end }}
-		p.{{ .GoFieldName }} = v
+		p.{{ .GoFieldName }} = &v
 	}
 {{- end }}
 {{- end }}
 	return nil
 }
 
-// {{ .DecodeFunc }} decodes payload into a {{ .PayloadTypeName }} and fills
-// the fields supplied by the server.
+// Decode{{ .ConstName }} decodes payload into a {{ .ConstName }}Payload and
+// populates its Inject()-ed fields in one call, composing
+// {{ .ConstName }}PayloadCodec().FromJSON with Inject{{ .ConstName }}.
 //
-// Custom executors for {{ .QualifiedName }} must call this function. Calling
-// {{ .PayloadCodecName }}().FromJSON alone does not fill fields marked by
-// Inject().
-func {{ .DecodeFunc }}(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*{{ .PayloadTypeName }}, error) {
-	p, err := {{ .PayloadCodecName }}().FromJSON(payload)
+// Custom ToolCallExecutors for the {{ .QualifiedName }} tool must call THIS
+// function, not {{ .ConstName }}PayloadCodec().FromJSON followed by a manual
+// Inject{{ .ConstName }} call: decoding with the codec alone leaves every
+// injected field at its Go zero value with no error, because injected fields
+// carry a `json:"-"` wire tag (hidden from the model) and are therefore never
+// "missing" from the codec's point of view. Decode{{ .ConstName }} is the one
+// path that cannot silently skip injection.
+func Decode{{ .ConstName }}(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*{{ .ConstName }}Payload, error) {
+	p, err := {{ .ConstName }}PayloadCodec().FromJSON(payload)
 	if err != nil {
 		return nil, err
 	}
-	if err := {{ .InjectFunc }}(p, meta, labels); err != nil {
+	if err := Inject{{ .ConstName }}(p, meta, labels); err != nil {
 		return nil, err
 	}
 	return p, nil

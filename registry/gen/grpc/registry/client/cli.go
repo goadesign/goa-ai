@@ -8,11 +8,11 @@
 package client
 
 import (
+	"encoding/json"
 	"fmt"
 
 	registrypb "goa.design/goa-ai/registry/gen/grpc/registry/pb"
 	registry "goa.design/goa-ai/registry/gen/registry"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // BuildRegisterPayload builds the payload for the registry Register endpoint
@@ -22,9 +22,9 @@ func BuildRegisterPayload(registryRegisterMessage string) (*registry.RegisterPay
 	var message registrypb.RegisterRequest
 	{
 		if registryRegisterMessage != "" {
-			err = protojson.Unmarshal([]byte(registryRegisterMessage), &message)
+			err = json.Unmarshal([]byte(registryRegisterMessage), &message)
 			if err != nil {
-				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"admission_revision\": \"2026-07-23.4+441534ae50f6\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 8\n   }'")
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"admission_revision\": \"2026-07-23.4+441534ae50f6\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Fetch a time series for a point over a time window.\",\n            \"name\": \"atlas.read.get_time_series\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"atlas\",\n               \"data\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 8\n   }'")
 			}
 		}
 	}
@@ -75,7 +75,7 @@ func BuildReleaseProviderPayload(registryReleaseProviderMessage string) (*regist
 	var message registrypb.ReleaseProviderRequest
 	{
 		if registryReleaseProviderMessage != "" {
-			err = protojson.Unmarshal([]byte(registryReleaseProviderMessage), &message)
+			err = json.Unmarshal([]byte(registryReleaseProviderMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\"\n   }'")
 			}
@@ -98,7 +98,7 @@ func BuildDrainProviderPayload(registryDrainProviderMessage string) (*registry.D
 	var message registrypb.DrainProviderRequest
 	{
 		if registryDrainProviderMessage != "" {
-			err = protojson.Unmarshal([]byte(registryDrainProviderMessage), &message)
+			err = json.Unmarshal([]byte(registryDrainProviderMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"settlement_duration_ms\": 30000\n   }'")
 			}
@@ -122,7 +122,7 @@ func BuildUnregisterPayload(registryUnregisterMessage string) (*registry.Unregis
 	var message registrypb.UnregisterRequest
 	{
 		if registryUnregisterMessage != "" {
-			err = protojson.Unmarshal([]byte(registryUnregisterMessage), &message)
+			err = json.Unmarshal([]byte(registryUnregisterMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"name\": \"data-tools\"\n   }'")
 			}
@@ -143,7 +143,7 @@ func BuildPongPayload(registryPongMessage string) (*registry.PongPayload, error)
 	var message registrypb.PongRequest
 	{
 		if registryPongMessage != "" {
-			err = protojson.Unmarshal([]byte(registryPongMessage), &message)
+			err = json.Unmarshal([]byte(registryPongMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"ping_id\": \"ping-xyz789\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"toolset\": \"data-tools\"\n   }'")
 			}
@@ -166,7 +166,7 @@ func BuildListToolsetsPayload(registryListToolsetsMessage string) (*registry.Lis
 	var message registrypb.ListToolsetsRequest
 	{
 		if registryListToolsetsMessage != "" {
-			err = protojson.Unmarshal([]byte(registryListToolsetsMessage), &message)
+			err = json.Unmarshal([]byte(registryListToolsetsMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"tags\": [\n         \"data\",\n         \"etl\"\n      ]\n   }'")
 			}
@@ -190,7 +190,7 @@ func BuildGetToolsetPayload(registryGetToolsetMessage string) (*registry.GetTool
 	var message registrypb.GetToolsetRequest
 	{
 		if registryGetToolsetMessage != "" {
-			err = protojson.Unmarshal([]byte(registryGetToolsetMessage), &message)
+			err = json.Unmarshal([]byte(registryGetToolsetMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"name\": \"data-tools\"\n   }'")
 			}
@@ -210,7 +210,7 @@ func BuildSearchPayload(registrySearchMessage string) (*registry.SearchPayload, 
 	var message registrypb.SearchRequest
 	{
 		if registrySearchMessage != "" {
-			err = protojson.Unmarshal([]byte(registrySearchMessage), &message)
+			err = json.Unmarshal([]byte(registrySearchMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"query\": \"data processing\"\n   }'")
 			}
@@ -230,7 +230,7 @@ func BuildCallToolPayload(registryCallToolMessage string) (*registry.CallToolPay
 	var message registrypb.CallToolRequest
 	{
 		if registryCallToolMessage != "" {
-			err = protojson.Unmarshal([]byte(registryCallToolMessage), &message)
+			err = json.Unmarshal([]byte(registryCallToolMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"meta\": {\n         \"parent_tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX19Z\",\n         \"run_id\": \"run_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"session_id\": \"sess_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"turn_id\": \"turn_0001\"\n      },\n      \"payload_json\": \"eyJxdWVyeSI6ImNvbXByZXNzb3JfMSBrZXkgZXZlbnRzIn0=\",\n      \"tool\": \"atlas.read.get_time_series\",\n      \"toolset\": \"atlas_data.atlas.read\",\n      \"wire_protocol_version\": 8\n   }'")
 			}
@@ -243,7 +243,7 @@ func BuildCallToolPayload(registryCallToolMessage string) (*registry.CallToolPay
 		WireProtocolVersion: int(message.WireProtocolVersion),
 	}
 	if message.Meta != nil {
-		v.Meta = transformProtoCallToolRequestToolCallMetaToCallToolPayloadToolCallMeta(message.Meta)
+		v.Meta = protobufRegistrypbToolCallMetaToRegistryToolCallMeta(message.Meta)
 	}
 
 	return v, nil
@@ -256,7 +256,7 @@ func BuildRetryToolPayload(registryRetryToolMessage string) (*registry.RetryTool
 	var message registrypb.RetryToolRequest
 	{
 		if registryRetryToolMessage != "" {
-			err = protojson.Unmarshal([]byte(registryRetryToolMessage), &message)
+			err = json.Unmarshal([]byte(registryRetryToolMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"meta\": {\n         \"parent_tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX19Z\",\n         \"run_id\": \"run_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"session_id\": \"sess_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"turn_id\": \"turn_0001\"\n      },\n      \"payload_json\": \"eyJxdWVyeSI6ImNvbXByZXNzb3JfMSBrZXkgZXZlbnRzIn0=\",\n      \"tool\": \"atlas.read.get_time_series\",\n      \"toolset\": \"atlas_data.atlas.read\",\n      \"wire_protocol_version\": 8\n   }'")
 			}
@@ -270,7 +270,7 @@ func BuildRetryToolPayload(registryRetryToolMessage string) (*registry.RetryTool
 		WireProtocolVersion:       int(message.WireProtocolVersion),
 	}
 	if message.Meta != nil {
-		v.Meta = transformProtoRetryToolRequestToolCallMetaToRetryToolPayloadToolCallMeta(message.Meta)
+		v.Meta = protobufRegistrypbToolCallMetaToRegistryToolCallMeta(message.Meta)
 	}
 
 	return v, nil
@@ -283,7 +283,7 @@ func BuildCompleteToolCallPayload(registryCompleteToolCallMessage string) (*regi
 	var message registrypb.CompleteToolCallRequest
 	{
 		if registryCompleteToolCallMessage != "" {
-			err = protojson.Unmarshal([]byte(registryCompleteToolCallMessage), &message)
+			err = json.Unmarshal([]byte(registryCompleteToolCallMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"provider_registration_token\": \"7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82\",\n      \"registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"result_json\": \"eyJyZWdpc3RyYXRpb25fdG9rZW4iOiIyNzBhNjU5ZDM4ZmYzMzE0MDEyODBhZDdiMGM4ZmRiYTY3M2ZkMDJlNzExNGI4NTZhMmYxMmUxYzQ5ZWVjMzRjIiwidG9vbF91c2VfaWQiOiI1YzFkOTFlN2VhNmExYWExYmIzYzM5NWUwYTdlMDk5MDFhODVkZjY2ZmIwNjRhNjc5ZDZmMGZmMGQxMmE1MTZlIiwicmVzdWx0X2pzb24iOnsib2siOnRydWV9fQ==\",\n      \"tool_use_id\": \"5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
 			}
@@ -310,7 +310,7 @@ func BuildPublishToolOutputDeltaPayload(registryPublishToolOutputDeltaMessage st
 	var message registrypb.PublishToolOutputDeltaRequest
 	{
 		if registryPublishToolOutputDeltaMessage != "" {
-			err = protojson.Unmarshal([]byte(registryPublishToolOutputDeltaMessage), &message)
+			err = json.Unmarshal([]byte(registryPublishToolOutputDeltaMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"call_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"delta\": \"processed 10 rows\\n\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"provider_registration_token\": \"7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"stream\": \"stdout\",\n      \"tool_use_id\": \"5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
 			}
@@ -338,7 +338,7 @@ func BuildReportToolCallOverloadPayload(registryReportToolCallOverloadMessage st
 	var message registrypb.ReportToolCallOverloadRequest
 	{
 		if registryReportToolCallOverloadMessage != "" {
-			err = protojson.Unmarshal([]byte(registryReportToolCallOverloadMessage), &message)
+			err = json.Unmarshal([]byte(registryReportToolCallOverloadMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"call_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"provider_registration_token\": \"7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"tool_use_id\": \"5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
 			}
@@ -364,7 +364,7 @@ func BuildClaimToolCallPayload(registryClaimToolCallMessage string) (*registry.P
 	var message registrypb.ClaimToolCallRequest
 	{
 		if registryClaimToolCallMessage != "" {
-			err = protojson.Unmarshal([]byte(registryClaimToolCallMessage), &message)
+			err = json.Unmarshal([]byte(registryClaimToolCallMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"call_registration_token\": \"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c\",\n      \"provider_id\": \"atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read\",\n      \"provider_incarnation_id\": \"8af45fe9-5c32-4b46-8da5-d350e98b68f3\",\n      \"provider_registration_token\": \"7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"tool_use_id\": \"5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e\",\n      \"toolset\": \"atlas_data.atlas.read\"\n   }'")
 			}

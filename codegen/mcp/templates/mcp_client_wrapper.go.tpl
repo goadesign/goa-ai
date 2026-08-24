@@ -1,4 +1,50 @@
-// NewEndpoints returns the original service endpoints backed by an MCP client.
+// encodeOriginalPayload serializes an original-service payload without a
+// JSON-RPC envelope so MCP tool and prompt calls can forward raw arguments.
+func encodeOriginalPayload(
+    ctx context.Context,
+    enc func(*http.Request) goahttp.Encoder,
+    payload any,
+) ([]byte, error) {
+    req, err := http.NewRequestWithContext(ctx, http.MethodPost, "", nil)
+    if err != nil {
+        return nil, err
+    }
+    if err := enc(req).Encode(payload); err != nil {
+        return nil, err
+    }
+    return io.ReadAll(req.Body)
+}
+
+{{- if .NeedsOriginalClient }}
+// decodeOriginalJSONRPCResult rehydrates one MCP result as the original
+// service's JSON-RPC response shape and decodes it with Goa's generated client.
+func decodeOriginalJSONRPCResult(
+    enc func(*http.Request) goahttp.Encoder,
+    req *http.Request,
+    result []byte,
+    decode func(*http.Response) (any, error),
+) (any, error) {
+    raw := &jsonrpc.RawResponse{
+        JSONRPC: "2.0",
+        Result:  result,
+    }
+    if err := enc(req).Encode(raw); err != nil {
+        return nil, err
+    }
+    bodyBytes, err := io.ReadAll(req.Body)
+    if err != nil {
+        return nil, err
+    }
+    resp := &http.Response{
+        StatusCode: http.StatusOK,
+        Body:       io.NopCloser(bytes.NewReader(bodyBytes)),
+    }
+    return decode(resp)
+}
+{{- end }}
+
+// NewEndpoints creates endpoints that expose the original service API while
+// invoking the MCP transport under the hood.
 func NewEndpoints(
     scheme string,
     host string,
@@ -11,32 +57,59 @@ func NewEndpoints(
     {{- if .NeedsMCPClient }}
     mcpC := {{ .MCPJSONRPCCAlias }}.NewClient(scheme, host, doer, enc, dec, restore)
     {{- end }}
+    {{- if .NeedsOriginalClient }}
+    origC := {{ .SvcJSONRPCCAlias }}.NewClient(scheme, host, doer, enc, dec, restore)
+    {{- end }}
+
     // Build endpoints matching the original service
     e := &{{ .ServicePkg }}.Endpoints{}
 
     {{- range .Tools }}
-    // Tool: {{ .Name }} -> {{ .ServiceMethodName }}
-    e.{{ .ServiceMethodName }} = func(ctx context.Context, v any) (any, error) {
+    // Tool: {{ .Name }} -> {{ .OriginalMethodName }}
+    e.{{ .OriginalMethodName }} = func(ctx context.Context, v any) (any, error) {
+        // Encode original payload to raw JSON using Goa encoder (no JSON-RPC envelope)
+        var payload any
         {{- if .HasPayload }}
-        args, err := {{ $.CodecPackage }}.{{ .Codec.PayloadEncode }}(v.({{ .PayloadType }}))
-        if err != nil {
-            return nil, err
-        }
+        payload = v.(*{{ $.ServicePkg }}.{{ .OriginalMethodName }}Payload)
         {{- else }}
-        args := []byte("{}")
+        payload = struct{}{}
         {{- end }}
-
-        // Call the MCP tool and read its single result.
-        ires, err := mcpC.ToolsCall()(ctx, &{{ $.MCPPkgAlias }}.ToolsCallPayload{Name: "{{ .Name }}", Arguments: args})
+        args, err := encodeOriginalPayload(ctx, enc, payload)
         if err != nil {
             return nil, err
         }
-        r := ires.(*{{ $.MCPPkgAlias }}.ToolsCallResult)
+
+        // Call MCP tools/call via transport endpoint (SSE stream)
+        streamAny, err := mcpC.ToolsCall()(ctx, &{{ $.MCPPkgAlias }}.ToolsCallPayload{Name: "{{ .Name }}", Arguments: args})
+        if err != nil {
+            return nil, err
+        }
+        stream, ok := streamAny.(*{{ $.MCPJSONRPCCAlias }}.ToolsCallClientStream)
+        if !ok {
+            return nil, fmt.Errorf("unexpected stream type for {{ .Name }}")
+        }
+        var r *{{ $.MCPPkgAlias }}.ToolsCallResult
+        for {
+            ev, recvErr := stream.Recv(ctx)
+            if recvErr == io.EOF {
+                break
+            }
+            if recvErr != nil {
+                return nil, recvErr
+            }
+            r = ev
+        }
         if r == nil || r.Content == nil || len(r.Content) == 0 || r.Content[0] == nil || r.Content[0].Text == nil {
             return nil, fmt.Errorf("empty MCP tool response for {{ .Name }}")
         }
         {{- if .HasResult }}
-        return {{ $.CodecPackage }}.{{ .Codec.ResultDecode }}([]byte(*r.Content[0].Text))
+        // Build JSON-RPC response envelope and decode using Goa-generated decoder
+        req3, err := origC.Build{{ .OriginalMethodName }}Request(ctx, v)
+        if err != nil {
+            return nil, err
+        }
+        decode := {{ $.SvcJSONRPCCAlias }}.Decode{{ .OriginalMethodName }}Response(dec, false)
+        return decodeOriginalJSONRPCResult(enc, req3, []byte(*r.Content[0].Text), decode)
         {{- else }}
         return nil, nil
         {{- end }}
@@ -44,34 +117,26 @@ func NewEndpoints(
     {{- end }}
 
     {{- range .Resources }}
-    // Resource: {{ .URI }} -> {{ .ServiceMethodName }}
-    e.{{ .ServiceMethodName }} = func(ctx context.Context, v any) (any, error) {
+    // Resource: {{ .URI }} -> {{ .OriginalMethodName }}
+    e.{{ .OriginalMethodName }} = func(ctx context.Context, v any) (any, error) {
         // Forward original payload parameters via URI query string when applicable
         uri := "{{ .URI }}"
         {{- if .HasPayload }}
-        payload := v.({{ .PayloadType }})
+        payload := v.(*{{ $.ServicePkg }}.{{ .OriginalMethodName }}Payload)
         query := url.Values{}
         {{- range .QueryFields }}
-        {{- if .Repeated }}
-        for _, value := range payload.{{ .ClientSelector }} {
-            query.Add({{ printf "%q" .QueryKey }}, {{ queryValueExpr .FormatKind "value" }})
-        }
-        {{- else if .ClientPointer }}
-        if payload.{{ .ClientSelector }} != nil {
-            query.Add({{ printf "%q" .QueryKey }}, {{ queryValueExpr .FormatKind (printf "*payload.%s" .ClientSelector) }})
-        }
-        {{- else if .Optional }}
-        {{- if eq .FormatKind "string" }}
-        if payload.{{ .ClientSelector }} != "" {
-        {{- else if eq .FormatKind "bool" }}
-        if payload.{{ .ClientSelector }} {
-        {{- else }}
-        if payload.{{ .ClientSelector }} != 0 {
+        {{- if .GuardExpr }}
+        if {{ .GuardExpr }} {
         {{- end }}
-            query.Add({{ printf "%q" .QueryKey }}, {{ queryValueExpr .FormatKind (printf "payload.%s" .ClientSelector) }})
-        }
+        {{- if .Repeated }}
+            for _, value := range {{ .CollectionExpr }} {
+                query.Add({{ printf "%q" .QueryKey }}, {{ queryValueExpr .FormatKind .ValueExpr }})
+            }
         {{- else }}
-        query.Add({{ printf "%q" .QueryKey }}, {{ queryValueExpr .FormatKind (printf "payload.%s" .ClientSelector) }})
+            query.Add({{ printf "%q" .QueryKey }}, {{ queryValueExpr .FormatKind .ValueExpr }})
+        {{- end }}
+        {{- if .GuardExpr }}
+        }
         {{- end }}
         {{- end }}
         if encoded := query.Encode(); encoded != "" {
@@ -87,7 +152,13 @@ func NewEndpoints(
             return nil, fmt.Errorf("empty MCP resource response for {{ .URI }}")
         }
         {{- if .HasResult }}
-        return {{ $.CodecPackage }}.{{ .Codec.ResultDecode }}([]byte(*rr.Contents[0].Text))
+        // Build JSON-RPC response envelope and decode using Goa-generated decoder
+        req3, err := origC.Build{{ .OriginalMethodName }}Request(ctx, v)
+        if err != nil {
+            return nil, err
+        }
+        decode := {{ $.SvcJSONRPCCAlias }}.Decode{{ .OriginalMethodName }}Response(dec, false)
+        return decodeOriginalJSONRPCResult(enc, req3, []byte(*rr.Contents[0].Text), decode)
         {{- else }}
         return nil, nil
         {{- end }}
@@ -95,16 +166,18 @@ func NewEndpoints(
     {{- end }}
 
     {{- range .DynamicPrompts }}
-    // Dynamic Prompt: {{ .Name }} -> {{ .ServiceMethodName }}
-    e.{{ .ServiceMethodName }} = func(ctx context.Context, v any) (any, error) {
+    // Dynamic Prompt: {{ .Name }} -> {{ .OriginalMethodName }}
+    e.{{ .OriginalMethodName }} = func(ctx context.Context, v any) (any, error) {
+        var payload any
         {{- if .HasPayload }}
-        args, err := {{ $.CodecPackage }}.{{ .Codec.PayloadEncode }}(v.({{ .PayloadType }}))
+        payload = v.(*{{ $.ServicePkg }}.{{ .OriginalMethodName }}Payload)
+        {{- else }}
+        payload = struct{}{}
+        {{- end }}
+        args, err := encodeOriginalPayload(ctx, enc, payload)
         if err != nil {
             return nil, err
         }
-        {{- else }}
-        args := []byte("{}")
-        {{- end }}
         ires, err := mcpC.PromptsGet()(ctx, &{{ $.MCPPkgAlias }}.PromptsGetPayload{Name: "{{ .Name }}", Arguments: args})
         if err != nil {
             return nil, err
@@ -113,37 +186,44 @@ func NewEndpoints(
         if r == nil || r.Messages == nil || len(r.Messages) == 0 || r.Messages[0] == nil || r.Messages[0].Content == nil || r.Messages[0].Content.Text == nil {
             return nil, fmt.Errorf("empty MCP prompt response for {{ .Name }}")
         }
-        return {{ $.CodecPackage }}.{{ .Codec.ResultDecode }}([]byte(*r.Messages[0].Content.Text))
+        // Build JSON-RPC response envelope and decode using Goa-generated decoder
+        req3, err := origC.Build{{ .OriginalMethodName }}Request(ctx, v)
+        if err != nil {
+            return nil, err
+        }
+        decode := {{ $.SvcJSONRPCCAlias }}.Decode{{ .OriginalMethodName }}Response(dec, false)
+        return decodeOriginalJSONRPCResult(enc, req3, []byte(*r.Messages[0].Content.Text), decode)
     }
     {{- end }}
 
     {{- range .Notifications }}
-    // Notification: {{ .Name }} -> {{ .ServiceMethodName }}
-    e.{{ .ServiceMethodName }} = func(ctx context.Context, v any) (any, error) {
-        // The generated codec checks the original service payload before it is sent.
-        params, err := {{ $.CodecPackage }}.{{ .Codec.PayloadEncode }}(v.({{ .PayloadType }}))
+    // Notification: {{ .Name }} -> {{ .OriginalMethodName }}
+    e.{{ .OriginalMethodName }} = func(ctx context.Context, v any) (any, error) {
+        // Pure-MCP validation guarantees the original payload shape matches
+        // the generated SendNotificationPayload contract.
+        params, err := encodeOriginalPayload(ctx, enc, v.(*{{ $.ServicePkg }}.{{ .OriginalMethodName }}Payload))
         if err != nil {
             return nil, err
         }
 
-        req, err := mcpC.{{ .RequestBuilderName }}(ctx, nil)
+        req, err := mcpC.Build{{ printf "notify_%s" .Name | goify }}Request(ctx, nil)
         if err != nil {
             return nil, err
         }
         body := &jsonrpc.Request{
             JSONRPC: "2.0",
-            Method: "{{ .WireMethodName }}",
+            Method: "{{ printf "notify_%s" .Name }}",
             Params:  json.RawMessage(params),
             ID:      uuid.New().String(),
         }
         if err := enc(req).Encode(body); err != nil {
-            return nil, goahttp.ErrEncodingError("{{ $.MCPPackage }}", "{{ .WireMethodName }}", err)
+            return nil, goahttp.ErrEncodingError("{{ $.MCPPackage }}", "{{ printf "notify_%s" .Name }}", err)
         }
         resp, err := doer.Do(req)
         if err != nil {
-            return nil, goahttp.ErrRequestError("{{ $.MCPPackage }}", "{{ .WireMethodName }}", err)
+            return nil, goahttp.ErrRequestError("{{ $.MCPPackage }}", "{{ printf "notify_%s" .Name }}", err)
         }
-        _, err = {{ $.MCPJSONRPCCAlias }}.{{ .ResponseDecoderName }}(dec, false)(resp)
+        _, err = {{ $.MCPJSONRPCCAlias }}.Decode{{ printf "notify_%s" .Name | goify }}Response(dec, false)(resp)
         return nil, err
     }
     {{- end }}
@@ -160,14 +240,11 @@ func NewClient(
     dec func(*http.Response) goahttp.Decoder,
     restore bool,
 ) *{{ .ServicePkg }}.Client {
-    {{- if .AllMethods }}
     e := NewEndpoints(scheme, host, doer, enc, dec, restore)
     return {{ .ServicePkg }}.NewClient(
         {{- range $i, $method := .AllMethods }}
         e.{{ $method }},
         {{- end }}
     )
-    {{- else }}
-    return {{ .ServicePkg }}.NewClient()
-    {{- end }}
 }
+

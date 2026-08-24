@@ -1,5 +1,3 @@
-// Package codegen builds clients that read tool definitions from configured
-// registries.
 package codegen
 
 import (
@@ -13,8 +11,8 @@ import (
 )
 
 type (
-	// RegistryClientData contains the values written to one generated registry
-	// client package.
+	// RegistryClientData holds the template-ready data for generating a registry
+	// client. Each declared Registry in the DSL produces one client package.
 	RegistryClientData struct {
 		// Name is the DSL-provided registry identifier.
 		Name string
@@ -46,7 +44,7 @@ type (
 		Federation *FederationData
 	}
 
-	// RetryPolicyData contains the retry settings written to a registry client.
+	// RetryPolicyData holds retry configuration for code generation.
 	RetryPolicyData struct {
 		// MaxRetries is the maximum number of retry attempts.
 		MaxRetries int
@@ -56,7 +54,7 @@ type (
 		BackoffMax time.Duration
 	}
 
-	// SecuritySchemeData contains one generated registry authentication method.
+	// SecuritySchemeData holds security scheme information for code generation.
 	SecuritySchemeData struct {
 		// Name is the security scheme name.
 		Name string
@@ -68,14 +66,9 @@ type (
 		ParamName string
 		// Scopes lists required OAuth2 scopes.
 		Scopes []string
-		// AuthTypeName is the generated authentication type name.
-		AuthTypeName string
-		// OptionName is the generated option function name.
-		OptionName string
 	}
 
-	// FederationData contains the namespace patterns written to a registry
-	// client.
+	// FederationData holds federation configuration for code generation.
 	FederationData struct {
 		// Include patterns for namespaces to import.
 		Include []string
@@ -89,15 +82,31 @@ const (
 	authorizationHeader = "Authorization"
 )
 
-// registryClientFiles writes the saved registry clients for one service.
-func registryClientFiles(svc *ServiceAgentsData) []*codegen.File {
+// registryClientFiles generates the registry client files for all declared
+// registries. Each registry produces a client package under
+// gen/<service>/registry/<name>/.
+func registryClientFiles(genpkg string, svc *ServiceAgentsData) []*codegen.File {
+	if svc == nil || svc.Service == nil {
+		return nil
+	}
+
 	var files []*codegen.File
-	for _, data := range svc.RegistryClients {
+	for _, reg := range agentsExpr.Root.Registries {
+		if reg == nil {
+			continue
+		}
+		data := newRegistryClientData(genpkg, svc.Service.PathName, reg)
+		if data == nil {
+			continue
+		}
+
+		// Generate client.go
 		clientFile := registryClientFile(data)
 		if clientFile != nil {
 			files = append(files, clientFile)
 		}
 
+		// Generate options.go
 		optionsFile := registryClientOptionsFile(data)
 		if optionsFile != nil {
 			files = append(files, optionsFile)
@@ -106,13 +115,12 @@ func registryClientFiles(svc *ServiceAgentsData) []*codegen.File {
 	return files
 }
 
-// newRegistryClientData reads one registry definition and the names chosen for
-// its generated package.
-func newRegistryClientData(
-	genpkg, svcPath string,
-	reg *agentsExpr.RegistryExpr,
-	planned *plannedRegistryClient,
-) *RegistryClientData {
+// newRegistryClientData transforms a RegistryExpr into template-ready data.
+func newRegistryClientData(genpkg, svcPath string, reg *agentsExpr.RegistryExpr) *RegistryClientData {
+	if reg == nil {
+		return nil
+	}
+
 	goName := codegen.Goify(reg.Name, true)
 	pkgName := codegen.SnakeCase(reg.Name)
 	dir := filepath.Join("gen", svcPath, "registry", pkgName)
@@ -149,10 +157,8 @@ func newRegistryClientData(
 				continue
 			}
 			schemeData := &SecuritySchemeData{
-				Name:         scheme.SchemeName,
-				Kind:         scheme.Kind,
-				AuthTypeName: planned.security[scheme].authType.Name(),
-				OptionName:   planned.security[scheme].option.Name(),
+				Name: scheme.SchemeName,
+				Kind: scheme.Kind,
 			}
 			switch scheme.Kind {
 			case goaexpr.APIKeyKind:

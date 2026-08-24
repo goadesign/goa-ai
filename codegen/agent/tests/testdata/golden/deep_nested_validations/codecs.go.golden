@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	toolhttp "goa.design/goa-ai/gen/alpha/toolsets/deep/http"
+	toolhttp "goa.design/goa-ai/alpha/toolsets/deep/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 	"io"
@@ -314,7 +314,7 @@ func MarshalValidatePayload(v *ValidatePayload) ([]byte, error) {
 	out = &toolhttp.ValidatePayloadTransport{
 		Root: &in.Root,
 	}
-	out.Child = encodeLevel2ToLevel2Transport(in.Child)
+	out.Child = encodeLevel2ToToolhttpLevel2Transport(in.Child)
 	if in.Labels != nil {
 		out.Labels = make(map[string]string, len(in.Labels))
 		for key, val := range in.Labels {
@@ -331,7 +331,7 @@ func MarshalValidatePayload(v *ValidatePayload) ([]byte, error) {
 				out.Objects[tk] = nil
 				continue
 			}
-			out.Objects[tk] = encodeLevel3ToLevel3Transport2(val)
+			out.Objects[tk] = encodeLevel3ToToolhttpLevel3Transport(val)
 		}
 	}
 	if in.Groups != nil {
@@ -382,7 +382,7 @@ func UnmarshalValidatePayload(data []byte) (*ValidatePayload, error) {
 	out = &ValidatePayload{
 		Root: *in.Root,
 	}
-	out.Child = decodeLevel2TransportToLevel2(in.Child)
+	out.Child = decodeToolhttpLevel2TransportToLevel2(in.Child)
 	if in.Labels != nil {
 		out.Labels = make(map[string]string, len(in.Labels))
 		for key, val := range in.Labels {
@@ -399,7 +399,7 @@ func UnmarshalValidatePayload(data []byte) (*ValidatePayload, error) {
 				out.Objects[tk] = nil
 				continue
 			}
-			out.Objects[tk] = decodeLevel3TransportToLevel32(val)
+			out.Objects[tk] = decodeToolhttpLevel3TransportToLevel3(val)
 		}
 	}
 	if in.Groups != nil {
@@ -437,7 +437,7 @@ func MarshalValidateResult(v *ValidateResult) ([]byte, error) {
 	out = &toolhttp.ValidateResultTransport{
 		Root: &in.Root,
 	}
-	out.Child = encodeLevel2ToLevel2Transport(in.Child)
+	out.Child = encodeLevel2ToToolhttpLevel2Transport(in.Child)
 	if in.Labels != nil {
 		out.Labels = make(map[string]string, len(in.Labels))
 		for key, val := range in.Labels {
@@ -454,7 +454,7 @@ func MarshalValidateResult(v *ValidateResult) ([]byte, error) {
 				out.Objects[tk] = nil
 				continue
 			}
-			out.Objects[tk] = encodeLevel3ToLevel3Transport2(val)
+			out.Objects[tk] = encodeLevel3ToToolhttpLevel3Transport(val)
 		}
 	}
 	if in.Groups != nil {
@@ -505,7 +505,7 @@ func UnmarshalValidateResult(data []byte) (*ValidateResult, error) {
 	out = &ValidateResult{
 		Root: *in.Root,
 	}
-	out.Child = decodeLevel2TransportToLevel2(in.Child)
+	out.Child = decodeToolhttpLevel2TransportToLevel2(in.Child)
 	if in.Labels != nil {
 		out.Labels = make(map[string]string, len(in.Labels))
 		for key, val := range in.Labels {
@@ -522,7 +522,7 @@ func UnmarshalValidateResult(data []byte) (*ValidateResult, error) {
 				out.Objects[tk] = nil
 				continue
 			}
-			out.Objects[tk] = decodeLevel3TransportToLevel32(val)
+			out.Objects[tk] = decodeToolhttpLevel3TransportToLevel3(val)
 		}
 	}
 	if in.Groups != nil {
@@ -838,50 +838,30 @@ func unknownJSONFieldError(path, field string, allowed []string) error {
 }
 
 // Helper transform functions
-func decodeLevel2TransportToLevel2(v *toolhttp.Level2Transport) *Level2 {
+func decodeToolhttpLevel2TransportToLevel2(v *toolhttp.Level2Transport) *Level2 {
 	res := &Level2{
 		Mid: *v.Mid,
 	}
-	res.Child = decodeLevel3TransportToLevel3(v.Child)
+	res.Child = decodeToolhttpLevel3TransportToLevel3(v.Child)
 
 	return res
 }
-func decodeLevel3TransportToLevel3(v *toolhttp.Level3Transport) *Level3 {
+func decodeToolhttpLevel3TransportToLevel3(v *toolhttp.Level3Transport) *Level3 {
 	res := &Level3{
 		Leaf: *v.Leaf,
 	}
 
 	return res
 }
-func decodeLevel3TransportToLevel32(v *toolhttp.Level3Transport) *Level3 {
-	if v == nil {
-		return nil
-	}
-	res := &Level3{
-		Leaf: *v.Leaf,
-	}
-
-	return res
-}
-func encodeLevel2ToLevel2Transport(v *Level2) *toolhttp.Level2Transport {
+func encodeLevel2ToToolhttpLevel2Transport(v *Level2) *toolhttp.Level2Transport {
 	res := &toolhttp.Level2Transport{
 		Mid: &v.Mid,
 	}
-	res.Child = encodeLevel3ToLevel3Transport(v.Child)
+	res.Child = encodeLevel3ToToolhttpLevel3Transport(v.Child)
 
 	return res
 }
-func encodeLevel3ToLevel3Transport(v *Level3) *toolhttp.Level3Transport {
-	res := &toolhttp.Level3Transport{
-		Leaf: &v.Leaf,
-	}
-
-	return res
-}
-func encodeLevel3ToLevel3Transport2(v *Level3) *toolhttp.Level3Transport {
-	if v == nil {
-		return nil
-	}
+func encodeLevel3ToToolhttpLevel3Transport(v *Level3) *toolhttp.Level3Transport {
 	res := &toolhttp.Level3Transport{
 		Leaf: &v.Leaf,
 	}

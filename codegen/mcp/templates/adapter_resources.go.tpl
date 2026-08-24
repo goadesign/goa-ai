@@ -21,14 +21,6 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
         return nil, goa.PermanentError("invalid_params", "Not initialized")
     }
     a.log(ctx, "request", map[string]any{"method": "resources/read", "uri": p.URI})
-    resourceURI, err := url.Parse(p.URI)
-    if err != nil {
-        return nil, goa.PermanentError("invalid_params", "invalid resource URI: %s", err)
-    }
-    query, err := url.ParseQuery(resourceURI.RawQuery)
-    if err != nil {
-        return nil, goa.PermanentError("invalid_params", "invalid resource query: %s", err)
-    }
     baseURI := p.URI
     if i := strings.Index(baseURI, "?"); i >= 0 {
         baseURI = baseURI[:i]
@@ -40,187 +32,39 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
             return nil, goa.PermanentError("invalid_params", "%s", err.Error())
         }
         {{- if .HasPayload }}
-        transport := new({{ .Codec.PayloadTransport }})
-        for name, values := range query {
-            switch name {
-            {{- range $field := .QueryFields }}
-            case {{ quote $field.QueryKey }}:
-                {{- if not $field.Repeated }}
-                if len(values) != 1 {
-                    return nil, goa.PermanentError("invalid_params", "query parameter %q must contain exactly one value", name)
-                }
-                {{- end }}
-                {{- if eq $field.FormatKind "string" }}
-                {{- if $field.Repeated }}
-                parsed := make({{ $field.TransportType }}, len(values))
-                for index, raw := range values {
-                    converted := {{ $field.TransportElementType }}(raw)
-                    {{- if $field.TransportElementPointer }}
-                    parsed[index] = &converted
-                    {{- else }}
-                    parsed[index] = converted
-                    {{- end }}
-                }
-                transport.{{ $field.TransportSelector }} = parsed
-                {{- else }}
-                converted := {{ $field.TransportValueType }}(values[0])
-                {{- if $field.TransportPointer }}
-                transport.{{ $field.TransportSelector }} = &converted
-                {{- else }}
-                transport.{{ $field.TransportSelector }} = converted
-                {{- end }}
-                {{- end }}
-                {{- else if eq $field.FormatKind "bool" }}
-                {{- if $field.Repeated }}
-                parsed := make({{ $field.TransportType }}, len(values))
-                for index, raw := range values {
-                    value, err := strconv.ParseBool(raw)
-                    if err != nil {
-                        return nil, goa.PermanentError("invalid_params", "query parameter %q must contain boolean values: %s", name, err)
-                    }
-                    converted := {{ $field.TransportElementType }}(value)
-                    {{- if $field.TransportElementPointer }}
-                    parsed[index] = &converted
-                    {{- else }}
-                    parsed[index] = converted
-                    {{- end }}
-                }
-                transport.{{ $field.TransportSelector }} = parsed
-                {{- else }}
-                value, err := strconv.ParseBool(values[0])
-                if err != nil {
-                    return nil, goa.PermanentError("invalid_params", "query parameter %q must be a boolean: %s", name, err)
-                }
-                converted := {{ $field.TransportValueType }}(value)
-                {{- if $field.TransportPointer }}
-                transport.{{ $field.TransportSelector }} = &converted
-                {{- else }}
-                transport.{{ $field.TransportSelector }} = converted
-                {{- end }}
-                {{- end }}
-                {{- else if eq $field.FormatKind "int" }}
-                {{- if $field.Repeated }}
-                parsed := make({{ $field.TransportType }}, len(values))
-                for index, raw := range values {
-                    value, err := strconv.ParseInt(raw, 10, {{ $field.ParseBitSize }})
-                    if err != nil {
-                        return nil, goa.PermanentError("invalid_params", "query parameter %q must contain valid {{ $field.ValueType }} values: %s", name, err)
-                    }
-                    converted := {{ $field.TransportElementType }}(value)
-                    {{- if $field.TransportElementPointer }}
-                    parsed[index] = &converted
-                    {{- else }}
-                    parsed[index] = converted
-                    {{- end }}
-                }
-                transport.{{ $field.TransportSelector }} = parsed
-                {{- else }}
-                value, err := strconv.ParseInt(values[0], 10, {{ $field.ParseBitSize }})
-                if err != nil {
-                    return nil, goa.PermanentError("invalid_params", "query parameter %q must be a valid {{ $field.ValueType }} value: %s", name, err)
-                }
-                converted := {{ $field.TransportValueType }}(value)
-                {{- if $field.TransportPointer }}
-                transport.{{ $field.TransportSelector }} = &converted
-                {{- else }}
-                transport.{{ $field.TransportSelector }} = converted
-                {{- end }}
-                {{- end }}
-                {{- else if eq $field.FormatKind "uint" }}
-                {{- if $field.Repeated }}
-                parsed := make({{ $field.TransportType }}, len(values))
-                for index, raw := range values {
-                    value, err := strconv.ParseUint(raw, 10, {{ $field.ParseBitSize }})
-                    if err != nil {
-                        return nil, goa.PermanentError("invalid_params", "query parameter %q must contain valid {{ $field.ValueType }} values: %s", name, err)
-                    }
-                    converted := {{ $field.TransportElementType }}(value)
-                    {{- if $field.TransportElementPointer }}
-                    parsed[index] = &converted
-                    {{- else }}
-                    parsed[index] = converted
-                    {{- end }}
-                }
-                transport.{{ $field.TransportSelector }} = parsed
-                {{- else }}
-                value, err := strconv.ParseUint(values[0], 10, {{ $field.ParseBitSize }})
-                if err != nil {
-                    return nil, goa.PermanentError("invalid_params", "query parameter %q must be a valid {{ $field.ValueType }} value: %s", name, err)
-                }
-                converted := {{ $field.TransportValueType }}(value)
-                {{- if $field.TransportPointer }}
-                transport.{{ $field.TransportSelector }} = &converted
-                {{- else }}
-                transport.{{ $field.TransportSelector }} = converted
-                {{- end }}
-                {{- end }}
-                {{- else }}
-                {{- if $field.Repeated }}
-                parsed := make({{ $field.TransportType }}, len(values))
-                for index, raw := range values {
-                    value, err := strconv.ParseFloat(raw, {{ $field.ParseBitSize }})
-                    if err != nil {
-                        return nil, goa.PermanentError("invalid_params", "query parameter %q must contain valid {{ $field.ValueType }} values: %s", name, err)
-                    }
-                    converted := {{ $field.TransportElementType }}(value)
-                    {{- if $field.TransportElementPointer }}
-                    parsed[index] = &converted
-                    {{- else }}
-                    parsed[index] = converted
-                    {{- end }}
-                }
-                transport.{{ $field.TransportSelector }} = parsed
-                {{- else }}
-                value, err := strconv.ParseFloat(values[0], {{ $field.ParseBitSize }})
-                if err != nil {
-                    return nil, goa.PermanentError("invalid_params", "query parameter %q must be a valid {{ $field.ValueType }} value: %s", name, err)
-                }
-                converted := {{ $field.TransportValueType }}(value)
-                {{- if $field.TransportPointer }}
-                transport.{{ $field.TransportSelector }} = &converted
-                {{- else }}
-                transport.{{ $field.TransportSelector }} = converted
-                {{- end }}
-                {{- end }}
-                {{- end }}
-            {{- end }}
-            default:
-                return nil, goa.PermanentError("invalid_params", "unknown query parameter %q", name)
-            }
+        args, aerr := parseQueryParamsToJSON(p.URI)
+        if aerr != nil {
+            return nil, goa.PermanentError("invalid_params", "%s", aerr.Error())
         }
-        payload, err := {{ $.CodecPackage }}.{{ .Codec.PayloadNew }}(transport)
-        if err != nil {
+        req := &http.Request{ Body: io.NopCloser(bytes.NewReader(args)), Header: http.Header{"Content-Type": []string{"application/json"}}, }
+        var payload {{ .PayloadType }}
+        if err := goahttp.RequestDecoder(req).Decode(&payload); err != nil {
             return nil, goa.PermanentError("invalid_params", "%s", err.Error())
-        }
-        {{- else }}
-        if resourceURI.ForceQuery || len(query) > 0 {
-            return nil, goa.PermanentError("invalid_params", "resource %q does not accept query parameters", baseURI)
         }
         {{- end }}
         {{- if .HasResult }}
         {{- if .HasPayload }}
-        result, err := a.service.{{ .ServiceMethodName }}(ctx, payload)
+        result, err := a.service.{{ .OriginalMethodName }}(ctx, payload)
         {{- else }}
-        result, err := a.service.{{ .ServiceMethodName }}(ctx)
+        result, err := a.service.{{ .OriginalMethodName }}(ctx)
         {{- end }}
         if err != nil {
             return nil, a.mapError(err)
         }
-        encoded, err := {{ $.CodecPackage }}.{{ .Codec.ResultEncode }}(result)
-        if err != nil {
-            return nil, goa.PermanentError("internal_error", "%s", err.Error())
+        s, serr := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, result)
+        if serr != nil {
+            return nil, goa.PermanentError("invalid_params", "%s", serr.Error())
         }
-        s := string(encoded)
         res := &ResourcesReadResult{ Contents: []*ResourceContent{ { URI: baseURI, MimeType: stringPtr({{ quote .MimeType }}), Text: &s } } }
         a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": baseURI})
         return res, nil
         {{- else }}
         {{- if .HasPayload }}
-        if err := a.service.{{ .ServiceMethodName }}(ctx, payload); err != nil {
+        if err := a.service.{{ .OriginalMethodName }}(ctx, payload); err != nil {
             return nil, a.mapError(err)
         }
         {{- else }}
-        if err := a.service.{{ .ServiceMethodName }}(ctx); err != nil {
+        if err := a.service.{{ .OriginalMethodName }}(ctx); err != nil {
             return nil, a.mapError(err)
         }
         {{- end }}
@@ -230,7 +74,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
         {{- end }}
     {{- end }}
     default:
-        return nil, goa.PermanentError("invalid_params", "Unknown resource: %s", p.URI)
+        return nil, goa.PermanentError("method_not_found", "Unknown resource: %s", p.URI)
     }
 }
 
@@ -296,7 +140,7 @@ func (a *MCPAdapter) ResourcesSubscribe(ctx context.Context, p *ResourcesSubscri
         return nil
     {{- end }}
     {{- end }}
-    default: return goa.PermanentError("invalid_params", "Unknown resource: %s", p.URI)
+    default: return goa.PermanentError("method_not_found", "Unknown resource: %s", p.URI)
     }
 }
 
@@ -321,7 +165,7 @@ func (a *MCPAdapter) ResourcesUnsubscribe(ctx context.Context, p *ResourcesUnsub
         {{- end }}
     {{- end }}
     default:
-        return goa.PermanentError("invalid_params", "Unknown resource: %s", p.URI)
+        return goa.PermanentError("method_not_found", "Unknown resource: %s", p.URI)
     }
 }
 

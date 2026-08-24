@@ -191,7 +191,6 @@ func cloneRequest(request *Request) (*Request, error) {
 			schemaWithoutRootExample: slices.Clone(definition.Input.schemaWithoutRootExample),
 			exampleJSON:              slices.Clone(definition.Input.exampleJSON),
 			validate:                 definition.Input.validate,
-			acceptsNoArguments:       definition.Input.acceptsNoArguments,
 		}
 		owned.Tools[i] = &cloned
 	}

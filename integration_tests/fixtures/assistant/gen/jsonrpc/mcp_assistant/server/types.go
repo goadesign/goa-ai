@@ -20,7 +20,7 @@ type InitializeRequestBody struct {
 	// MCP protocol version
 	ProtocolVersion *string `form:"protocolVersion,omitempty" json:"protocolVersion,omitempty" xml:"protocolVersion,omitempty"`
 	// Client information
-	ClientInfo *ClientInfoRequestBody `form:"clientInfo,omitempty" json:"clientInfo,omitempty" xml:"clientInfo,omitempty"`
+	ClientInfo *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody `form:"clientInfo,omitempty" json:"clientInfo,omitempty" xml:"clientInfo,omitempty"`
 }
 
 // ToolsListRequestBody is the type of the "mcp_assistant" service "tools/list"
@@ -96,566 +96,102 @@ type NotifyStatusUpdateRequestBody struct {
 
 // InitializeResponseBody is the type of the "mcp_assistant" service
 // "initialize" endpoint HTTP response body.
-type InitializeResponseBody struct {
-	// MCP protocol version
-	ProtocolVersion string `form:"protocolVersion" json:"protocolVersion" xml:"protocolVersion"`
-	// Server capabilities
-	Capabilities *ServerCapabilitiesResponseBody `form:"capabilities" json:"capabilities" xml:"capabilities"`
-	// Server information
-	ServerInfo *ServerInfoResponseBody `form:"serverInfo" json:"serverInfo" xml:"serverInfo"`
-}
+type InitializeResponseBody InitializeResponseBodyResponseBody
 
 // PingResponseBody is the type of the "mcp_assistant" service "ping" endpoint
 // HTTP response body.
-type PingResponseBody struct {
-	// Response to ping
-	Pong bool `form:"pong" json:"pong" xml:"pong"`
-}
+type PingResponseBody PingResponseBodyResponseBody
 
 // ToolsListResponseBody is the type of the "mcp_assistant" service
 // "tools/list" endpoint HTTP response body.
-type ToolsListResponseBody struct {
-	// List of available tools
-	Tools []*ToolInfoResponseBody `form:"tools" json:"tools" xml:"tools"`
-}
+type ToolsListResponseBody ToolsListResponseBodyResponseBody
 
 // ToolsCallResponseBody is the type of the "mcp_assistant" service
 // "tools/call" endpoint HTTP response body.
-type ToolsCallResponseBody struct {
-	// Tool execution results
-	Content []*ContentItemResponseBody `form:"content" json:"content" xml:"content"`
-	// Whether the tool encountered an error
-	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
-}
+type ToolsCallResponseBody ToolsCallResponseBodyResponseBody
 
 // ResourcesListResponseBody is the type of the "mcp_assistant" service
 // "resources/list" endpoint HTTP response body.
-type ResourcesListResponseBody struct {
-	// List of available resources
-	Resources []*ResourceInfoResponseBody `form:"resources" json:"resources" xml:"resources"`
-}
+type ResourcesListResponseBody ResourcesListResponseBodyResponseBody
 
 // ResourcesReadResponseBody is the type of the "mcp_assistant" service
 // "resources/read" endpoint HTTP response body.
-type ResourcesReadResponseBody struct {
-	// Resource contents
-	Contents []*ResourceContentResponseBody `form:"contents" json:"contents" xml:"contents"`
-}
+type ResourcesReadResponseBody ResourcesReadResponseBodyResponseBody
 
 // PromptsListResponseBody is the type of the "mcp_assistant" service
 // "prompts/list" endpoint HTTP response body.
-type PromptsListResponseBody struct {
-	// List of available prompts
-	Prompts []*PromptInfoResponseBody `form:"prompts" json:"prompts" xml:"prompts"`
-}
+type PromptsListResponseBody PromptsListResponseBodyResponseBody
 
 // PromptsGetResponseBody is the type of the "mcp_assistant" service
 // "prompts/get" endpoint HTTP response body.
-type PromptsGetResponseBody struct {
-	// Prompt description
-	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
-	// Prompt messages
-	Messages []*PromptMessageResponseBody `form:"messages" json:"messages" xml:"messages"`
-}
+type PromptsGetResponseBody PromptsGetResponseBodyResponseBody
 
 // EventsStreamResponseBody is the type of the "mcp_assistant" service
 // "events/stream" endpoint HTTP response body.
-type EventsStreamResponseBody struct {
-	// Tool execution results
-	Content []*ContentItemResponseBody `form:"content" json:"content" xml:"content"`
-	// Whether the tool encountered an error
-	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
-}
+type EventsStreamResponseBody EventsStreamResponseBodyResponseBody
 
-// InitializeInvalidParamsResponseBody is the type of the "mcp_assistant"
-// service "initialize" endpoint HTTP response body for the "invalid_params"
-// error.
-type InitializeInvalidParamsResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// InitializeInternalErrorResponseBody is the type of the "mcp_assistant"
-// service "initialize" endpoint HTTP response body for the "internal_error"
-// error.
-type InitializeInternalErrorResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// PingInvalidParamsResponseBody is the type of the "mcp_assistant" service
-// "ping" endpoint HTTP response body for the "invalid_params" error.
-type PingInvalidParamsResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// PingInternalErrorResponseBody is the type of the "mcp_assistant" service
-// "ping" endpoint HTTP response body for the "internal_error" error.
-type PingInternalErrorResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ToolsListInvalidParamsResponseBody is the type of the "mcp_assistant"
-// service "tools/list" endpoint HTTP response body for the "invalid_params"
-// error.
-type ToolsListInvalidParamsResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ToolsListInternalErrorResponseBody is the type of the "mcp_assistant"
-// service "tools/list" endpoint HTTP response body for the "internal_error"
-// error.
-type ToolsListInternalErrorResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ToolsCallInvalidParamsResponseBody is the type of the "mcp_assistant"
-// service "tools/call" endpoint HTTP response body for the "invalid_params"
-// error.
-type ToolsCallInvalidParamsResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ToolsCallInternalErrorResponseBody is the type of the "mcp_assistant"
-// service "tools/call" endpoint HTTP response body for the "internal_error"
-// error.
-type ToolsCallInternalErrorResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ResourcesListInvalidParamsResponseBody is the type of the "mcp_assistant"
-// service "resources/list" endpoint HTTP response body for the
-// "invalid_params" error.
-type ResourcesListInvalidParamsResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ResourcesListInternalErrorResponseBody is the type of the "mcp_assistant"
-// service "resources/list" endpoint HTTP response body for the
-// "internal_error" error.
-type ResourcesListInternalErrorResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ResourcesReadInvalidParamsResponseBody is the type of the "mcp_assistant"
-// service "resources/read" endpoint HTTP response body for the
-// "invalid_params" error.
-type ResourcesReadInvalidParamsResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ResourcesReadInternalErrorResponseBody is the type of the "mcp_assistant"
-// service "resources/read" endpoint HTTP response body for the
-// "internal_error" error.
-type ResourcesReadInternalErrorResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ResourcesSubscribeInvalidParamsResponseBody is the type of the
-// "mcp_assistant" service "resources/subscribe" endpoint HTTP response body
-// for the "invalid_params" error.
-type ResourcesSubscribeInvalidParamsResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ResourcesSubscribeInternalErrorResponseBody is the type of the
-// "mcp_assistant" service "resources/subscribe" endpoint HTTP response body
-// for the "internal_error" error.
-type ResourcesSubscribeInternalErrorResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ResourcesUnsubscribeInvalidParamsResponseBody is the type of the
-// "mcp_assistant" service "resources/unsubscribe" endpoint HTTP response body
-// for the "invalid_params" error.
-type ResourcesUnsubscribeInvalidParamsResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ResourcesUnsubscribeInternalErrorResponseBody is the type of the
-// "mcp_assistant" service "resources/unsubscribe" endpoint HTTP response body
-// for the "internal_error" error.
-type ResourcesUnsubscribeInternalErrorResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// PromptsListInvalidParamsResponseBody is the type of the "mcp_assistant"
-// service "prompts/list" endpoint HTTP response body for the "invalid_params"
-// error.
-type PromptsListInvalidParamsResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// PromptsListInternalErrorResponseBody is the type of the "mcp_assistant"
-// service "prompts/list" endpoint HTTP response body for the "internal_error"
-// error.
-type PromptsListInternalErrorResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// PromptsGetInvalidParamsResponseBody is the type of the "mcp_assistant"
-// service "prompts/get" endpoint HTTP response body for the "invalid_params"
-// error.
-type PromptsGetInvalidParamsResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// PromptsGetInternalErrorResponseBody is the type of the "mcp_assistant"
-// service "prompts/get" endpoint HTTP response body for the "internal_error"
-// error.
-type PromptsGetInternalErrorResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// NotifyStatusUpdateInvalidParamsResponseBody is the type of the
-// "mcp_assistant" service "notify_status_update" endpoint HTTP response body
-// for the "invalid_params" error.
-type NotifyStatusUpdateInvalidParamsResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// NotifyStatusUpdateInternalErrorResponseBody is the type of the
-// "mcp_assistant" service "notify_status_update" endpoint HTTP response body
-// for the "internal_error" error.
-type NotifyStatusUpdateInternalErrorResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// EventsStreamInvalidParamsResponseBody is the type of the "mcp_assistant"
-// service "events/stream" endpoint HTTP response body for the "invalid_params"
-// error.
-type EventsStreamInvalidParamsResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// EventsStreamInternalErrorResponseBody is the type of the "mcp_assistant"
-// service "events/stream" endpoint HTTP response body for the "internal_error"
-// error.
-type EventsStreamInternalErrorResponseBody struct {
-	// Name is the name of this class of errors.
-	Name string `form:"name" json:"name" xml:"name"`
-	// ID is a unique identifier for this particular occurrence of the problem.
-	ID string `form:"id" json:"id" xml:"id"`
-	// Message is a human-readable explanation specific to this occurrence of the
-	// problem.
-	Message string `form:"message" json:"message" xml:"message"`
-	// Is the error temporary?
-	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
-	// Is the error a timeout?
-	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
-	// Is the error a server-side fault?
-	Fault bool `form:"fault" json:"fault" xml:"fault"`
-}
-
-// ServerCapabilitiesResponseBody is used to define fields on response body
+// InitializeResponseBodyResponseBody is used to define fields on response body
 // types.
-type ServerCapabilitiesResponseBody struct {
+type InitializeResponseBodyResponseBody struct {
+	// MCP protocol version
+	ProtocolVersion string `form:"protocolVersion" json:"protocolVersion" xml:"protocolVersion"`
+	// Server capabilities
+	Capabilities *ServerCapabilitiesResponseBodyResponseBody `form:"capabilities" json:"capabilities" xml:"capabilities"`
+	// Server information
+	ServerInfo *ServerInfoResponseBodyResponseBody `form:"serverInfo" json:"serverInfo" xml:"serverInfo"`
+}
+
+// ServerCapabilitiesResponseBodyResponseBody is used to define fields on
+// response body types.
+type ServerCapabilitiesResponseBodyResponseBody struct {
 	// Tool capabilities
-	Tools *ToolsCapabilityResponseBody `form:"tools,omitempty" json:"tools,omitempty" xml:"tools,omitempty"`
+	Tools *ToolsCapabilityResponseBodyResponseBody `form:"tools,omitempty" json:"tools,omitempty" xml:"tools,omitempty"`
 	// Resource capabilities
-	Resources *ResourcesCapabilityResponseBody `form:"resources,omitempty" json:"resources,omitempty" xml:"resources,omitempty"`
+	Resources *ResourcesCapabilityResponseBodyResponseBody `form:"resources,omitempty" json:"resources,omitempty" xml:"resources,omitempty"`
 	// Prompt capabilities
-	Prompts *PromptsCapabilityResponseBody `form:"prompts,omitempty" json:"prompts,omitempty" xml:"prompts,omitempty"`
+	Prompts *PromptsCapabilityResponseBodyResponseBody `form:"prompts,omitempty" json:"prompts,omitempty" xml:"prompts,omitempty"`
 }
 
-// ToolsCapabilityResponseBody is used to define fields on response body types.
-type ToolsCapabilityResponseBody struct {
+// ToolsCapabilityResponseBodyResponseBody is used to define fields on response
+// body types.
+type ToolsCapabilityResponseBodyResponseBody struct {
 }
 
-// ResourcesCapabilityResponseBody is used to define fields on response body
+// ResourcesCapabilityResponseBodyResponseBody is used to define fields on
+// response body types.
+type ResourcesCapabilityResponseBodyResponseBody struct {
+}
+
+// PromptsCapabilityResponseBodyResponseBody is used to define fields on
+// response body types.
+type PromptsCapabilityResponseBodyResponseBody struct {
+}
+
+// ServerInfoResponseBodyResponseBody is used to define fields on response body
 // types.
-type ResourcesCapabilityResponseBody struct {
-}
-
-// PromptsCapabilityResponseBody is used to define fields on response body
-// types.
-type PromptsCapabilityResponseBody struct {
-}
-
-// ServerInfoResponseBody is used to define fields on response body types.
-type ServerInfoResponseBody struct {
+type ServerInfoResponseBodyResponseBody struct {
 	// Server name
 	Name string `form:"name" json:"name" xml:"name"`
 	// Server version
 	Version string `form:"version" json:"version" xml:"version"`
 }
 
-// ToolInfoResponseBody is used to define fields on response body types.
-type ToolInfoResponseBody struct {
+// PingResponseBodyResponseBody is used to define fields on response body types.
+type PingResponseBodyResponseBody struct {
+	// Response to ping
+	Pong bool `form:"pong" json:"pong" xml:"pong"`
+}
+
+// ToolsListResponseBodyResponseBody is used to define fields on response body
+// types.
+type ToolsListResponseBodyResponseBody struct {
+	// List of available tools
+	Tools []*ToolInfoResponseBodyResponseBody `form:"tools" json:"tools" xml:"tools"`
+}
+
+// ToolInfoResponseBodyResponseBody is used to define fields on response body
+// types.
+type ToolInfoResponseBodyResponseBody struct {
 	// Tool name
 	Name string `form:"name" json:"name" xml:"name"`
 	// Tool description
@@ -664,8 +200,18 @@ type ToolInfoResponseBody struct {
 	InputSchema any `form:"inputSchema,omitempty" json:"inputSchema,omitempty" xml:"inputSchema,omitempty"`
 }
 
-// ContentItemResponseBody is used to define fields on response body types.
-type ContentItemResponseBody struct {
+// ToolsCallResponseBodyResponseBody is used to define fields on response body
+// types.
+type ToolsCallResponseBodyResponseBody struct {
+	// Tool execution results
+	Content []*ContentItemResponseBodyResponseBody `form:"content" json:"content" xml:"content"`
+	// Whether the tool encountered an error
+	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
+}
+
+// ContentItemResponseBodyResponseBody is used to define fields on response
+// body types.
+type ContentItemResponseBodyResponseBody struct {
 	// Content type
 	Type string `form:"type" json:"type" xml:"type"`
 	// Text content
@@ -678,8 +224,16 @@ type ContentItemResponseBody struct {
 	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
 }
 
-// ResourceInfoResponseBody is used to define fields on response body types.
-type ResourceInfoResponseBody struct {
+// ResourcesListResponseBodyResponseBody is used to define fields on response
+// body types.
+type ResourcesListResponseBodyResponseBody struct {
+	// List of available resources
+	Resources []*ResourceInfoResponseBodyResponseBody `form:"resources" json:"resources" xml:"resources"`
+}
+
+// ResourceInfoResponseBodyResponseBody is used to define fields on response
+// body types.
+type ResourceInfoResponseBodyResponseBody struct {
 	// Resource URI
 	URI string `form:"uri" json:"uri" xml:"uri"`
 	// Resource name
@@ -690,8 +244,16 @@ type ResourceInfoResponseBody struct {
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
 }
 
-// ResourceContentResponseBody is used to define fields on response body types.
-type ResourceContentResponseBody struct {
+// ResourcesReadResponseBodyResponseBody is used to define fields on response
+// body types.
+type ResourcesReadResponseBodyResponseBody struct {
+	// Resource contents
+	Contents []*ResourceContentResponseBodyResponseBody `form:"contents" json:"contents" xml:"contents"`
+}
+
+// ResourceContentResponseBodyResponseBody is used to define fields on response
+// body types.
+type ResourceContentResponseBodyResponseBody struct {
 	// Resource URI
 	URI string `form:"uri" json:"uri" xml:"uri"`
 	// Content MIME type
@@ -702,18 +264,27 @@ type ResourceContentResponseBody struct {
 	Blob *string `form:"blob,omitempty" json:"blob,omitempty" xml:"blob,omitempty"`
 }
 
-// PromptInfoResponseBody is used to define fields on response body types.
-type PromptInfoResponseBody struct {
+// PromptsListResponseBodyResponseBody is used to define fields on response
+// body types.
+type PromptsListResponseBodyResponseBody struct {
+	// List of available prompts
+	Prompts []*PromptInfoResponseBodyResponseBody `form:"prompts" json:"prompts" xml:"prompts"`
+}
+
+// PromptInfoResponseBodyResponseBody is used to define fields on response body
+// types.
+type PromptInfoResponseBodyResponseBody struct {
 	// Prompt name
 	Name string `form:"name" json:"name" xml:"name"`
 	// Prompt description
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
 	// Prompt arguments
-	Arguments []*PromptArgumentResponseBody `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
+	Arguments []*PromptArgumentResponseBodyResponseBody `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
 }
 
-// PromptArgumentResponseBody is used to define fields on response body types.
-type PromptArgumentResponseBody struct {
+// PromptArgumentResponseBodyResponseBody is used to define fields on response
+// body types.
+type PromptArgumentResponseBodyResponseBody struct {
 	// Argument name
 	Name string `form:"name" json:"name" xml:"name"`
 	// Argument description
@@ -722,16 +293,27 @@ type PromptArgumentResponseBody struct {
 	Required bool `form:"required" json:"required" xml:"required"`
 }
 
-// PromptMessageResponseBody is used to define fields on response body types.
-type PromptMessageResponseBody struct {
+// PromptsGetResponseBodyResponseBody is used to define fields on response body
+// types.
+type PromptsGetResponseBodyResponseBody struct {
+	// Prompt description
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Prompt messages
+	Messages []*PromptMessageResponseBodyResponseBody `form:"messages" json:"messages" xml:"messages"`
+}
+
+// PromptMessageResponseBodyResponseBody is used to define fields on response
+// body types.
+type PromptMessageResponseBodyResponseBody struct {
 	// Message role
 	Role string `form:"role" json:"role" xml:"role"`
 	// Message content
-	Content *MessageContentResponseBody `form:"content" json:"content" xml:"content"`
+	Content *MessageContentResponseBodyResponseBody `form:"content" json:"content" xml:"content"`
 }
 
-// MessageContentResponseBody is used to define fields on response body types.
-type MessageContentResponseBody struct {
+// MessageContentResponseBodyResponseBody is used to define fields on response
+// body types.
+type MessageContentResponseBodyResponseBody struct {
 	// Content type
 	Type string `form:"type" json:"type" xml:"type"`
 	// Text content
@@ -744,8 +326,18 @@ type MessageContentResponseBody struct {
 	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
 }
 
-// ClientInfoRequestBody is used to define fields on request body types.
-type ClientInfoRequestBody struct {
+// EventsStreamResponseBodyResponseBody is used to define fields on response
+// body types.
+type EventsStreamResponseBodyResponseBody struct {
+	// Tool execution results
+	Content []*ContentItemResponseBodyResponseBody `form:"content" json:"content" xml:"content"`
+	// Whether the tool encountered an error
+	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
+}
+
+// ClientInfoRequestBodyRequestBodyRequestBodyRequestBody is used to define
+// fields on request body types.
+type ClientInfoRequestBodyRequestBodyRequestBodyRequestBody struct {
 	// Client name
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// Client version
@@ -759,10 +351,10 @@ func NewInitializeResponseBody(res *mcpassistant.InitializeResult) *InitializeRe
 		ProtocolVersion: res.ProtocolVersion,
 	}
 	if res.Capabilities != nil {
-		body.Capabilities = marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBody(res.Capabilities)
+		body.Capabilities = marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBodyResponseBody(res.Capabilities)
 	}
 	if res.ServerInfo != nil {
-		body.ServerInfo = marshalMcpassistantServerInfoToServerInfoResponseBody(res.ServerInfo)
+		body.ServerInfo = marshalMcpassistantServerInfoToServerInfoResponseBodyResponseBody(res.ServerInfo)
 	}
 	return body
 }
@@ -781,16 +373,16 @@ func NewPingResponseBody(res *mcpassistant.PingResult) *PingResponseBody {
 func NewToolsListResponseBody(res *mcpassistant.ToolsListResult) *ToolsListResponseBody {
 	body := &ToolsListResponseBody{}
 	if res.Tools != nil {
-		body.Tools = make([]*ToolInfoResponseBody, len(res.Tools))
+		body.Tools = make([]*ToolInfoResponseBodyResponseBody, len(res.Tools))
 		for i, val := range res.Tools {
 			if val == nil {
 				body.Tools[i] = nil
 				continue
 			}
-			body.Tools[i] = marshalMcpassistantToolInfoToToolInfoResponseBody(val)
+			body.Tools[i] = marshalMcpassistantToolInfoToToolInfoResponseBodyResponseBody(val)
 		}
 	} else {
-		body.Tools = []*ToolInfoResponseBody{}
+		body.Tools = []*ToolInfoResponseBodyResponseBody{}
 	}
 	return body
 }
@@ -802,16 +394,16 @@ func NewToolsCallResponseBody(res *mcpassistant.ToolsCallResult) *ToolsCallRespo
 		IsError: res.IsError,
 	}
 	if res.Content != nil {
-		body.Content = make([]*ContentItemResponseBody, len(res.Content))
+		body.Content = make([]*ContentItemResponseBodyResponseBody, len(res.Content))
 		for i, val := range res.Content {
 			if val == nil {
 				body.Content[i] = nil
 				continue
 			}
-			body.Content[i] = marshalMcpassistantContentItemToContentItemResponseBody(val)
+			body.Content[i] = marshalMcpassistantContentItemToContentItemResponseBodyResponseBody(val)
 		}
 	} else {
-		body.Content = []*ContentItemResponseBody{}
+		body.Content = []*ContentItemResponseBodyResponseBody{}
 	}
 	return body
 }
@@ -821,16 +413,16 @@ func NewToolsCallResponseBody(res *mcpassistant.ToolsCallResult) *ToolsCallRespo
 func NewResourcesListResponseBody(res *mcpassistant.ResourcesListResult) *ResourcesListResponseBody {
 	body := &ResourcesListResponseBody{}
 	if res.Resources != nil {
-		body.Resources = make([]*ResourceInfoResponseBody, len(res.Resources))
+		body.Resources = make([]*ResourceInfoResponseBodyResponseBody, len(res.Resources))
 		for i, val := range res.Resources {
 			if val == nil {
 				body.Resources[i] = nil
 				continue
 			}
-			body.Resources[i] = marshalMcpassistantResourceInfoToResourceInfoResponseBody(val)
+			body.Resources[i] = marshalMcpassistantResourceInfoToResourceInfoResponseBodyResponseBody(val)
 		}
 	} else {
-		body.Resources = []*ResourceInfoResponseBody{}
+		body.Resources = []*ResourceInfoResponseBodyResponseBody{}
 	}
 	return body
 }
@@ -840,16 +432,16 @@ func NewResourcesListResponseBody(res *mcpassistant.ResourcesListResult) *Resour
 func NewResourcesReadResponseBody(res *mcpassistant.ResourcesReadResult) *ResourcesReadResponseBody {
 	body := &ResourcesReadResponseBody{}
 	if res.Contents != nil {
-		body.Contents = make([]*ResourceContentResponseBody, len(res.Contents))
+		body.Contents = make([]*ResourceContentResponseBodyResponseBody, len(res.Contents))
 		for i, val := range res.Contents {
 			if val == nil {
 				body.Contents[i] = nil
 				continue
 			}
-			body.Contents[i] = marshalMcpassistantResourceContentToResourceContentResponseBody(val)
+			body.Contents[i] = marshalMcpassistantResourceContentToResourceContentResponseBodyResponseBody(val)
 		}
 	} else {
-		body.Contents = []*ResourceContentResponseBody{}
+		body.Contents = []*ResourceContentResponseBodyResponseBody{}
 	}
 	return body
 }
@@ -859,16 +451,16 @@ func NewResourcesReadResponseBody(res *mcpassistant.ResourcesReadResult) *Resour
 func NewPromptsListResponseBody(res *mcpassistant.PromptsListResult) *PromptsListResponseBody {
 	body := &PromptsListResponseBody{}
 	if res.Prompts != nil {
-		body.Prompts = make([]*PromptInfoResponseBody, len(res.Prompts))
+		body.Prompts = make([]*PromptInfoResponseBodyResponseBody, len(res.Prompts))
 		for i, val := range res.Prompts {
 			if val == nil {
 				body.Prompts[i] = nil
 				continue
 			}
-			body.Prompts[i] = marshalMcpassistantPromptInfoToPromptInfoResponseBody(val)
+			body.Prompts[i] = marshalMcpassistantPromptInfoToPromptInfoResponseBodyResponseBody(val)
 		}
 	} else {
-		body.Prompts = []*PromptInfoResponseBody{}
+		body.Prompts = []*PromptInfoResponseBodyResponseBody{}
 	}
 	return body
 }
@@ -880,16 +472,16 @@ func NewPromptsGetResponseBody(res *mcpassistant.PromptsGetResult) *PromptsGetRe
 		Description: res.Description,
 	}
 	if res.Messages != nil {
-		body.Messages = make([]*PromptMessageResponseBody, len(res.Messages))
+		body.Messages = make([]*PromptMessageResponseBodyResponseBody, len(res.Messages))
 		for i, val := range res.Messages {
 			if val == nil {
 				body.Messages[i] = nil
 				continue
 			}
-			body.Messages[i] = marshalMcpassistantPromptMessageToPromptMessageResponseBody(val)
+			body.Messages[i] = marshalMcpassistantPromptMessageToPromptMessageResponseBodyResponseBody(val)
 		}
 	} else {
-		body.Messages = []*PromptMessageResponseBody{}
+		body.Messages = []*PromptMessageResponseBodyResponseBody{}
 	}
 	return body
 }
@@ -901,358 +493,16 @@ func NewEventsStreamResponseBody(res *mcpassistant.EventsStreamResult) *EventsSt
 		IsError: res.IsError,
 	}
 	if res.Content != nil {
-		body.Content = make([]*ContentItemResponseBody, len(res.Content))
+		body.Content = make([]*ContentItemResponseBodyResponseBody, len(res.Content))
 		for i, val := range res.Content {
 			if val == nil {
 				body.Content[i] = nil
 				continue
 			}
-			body.Content[i] = marshalMcpassistantContentItemToContentItemResponseBody(val)
+			body.Content[i] = marshalMcpassistantContentItemToContentItemResponseBodyResponseBody(val)
 		}
 	} else {
-		body.Content = []*ContentItemResponseBody{}
-	}
-	return body
-}
-
-// NewInitializeInvalidParamsResponseBody builds the HTTP response body from
-// the result of the "initialize" endpoint of the "mcp_assistant" service.
-func NewInitializeInvalidParamsResponseBody(res *goa.ServiceError) *InitializeInvalidParamsResponseBody {
-	body := &InitializeInvalidParamsResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewInitializeInternalErrorResponseBody builds the HTTP response body from
-// the result of the "initialize" endpoint of the "mcp_assistant" service.
-func NewInitializeInternalErrorResponseBody(res *goa.ServiceError) *InitializeInternalErrorResponseBody {
-	body := &InitializeInternalErrorResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewPingInvalidParamsResponseBody builds the HTTP response body from the
-// result of the "ping" endpoint of the "mcp_assistant" service.
-func NewPingInvalidParamsResponseBody(res *goa.ServiceError) *PingInvalidParamsResponseBody {
-	body := &PingInvalidParamsResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewPingInternalErrorResponseBody builds the HTTP response body from the
-// result of the "ping" endpoint of the "mcp_assistant" service.
-func NewPingInternalErrorResponseBody(res *goa.ServiceError) *PingInternalErrorResponseBody {
-	body := &PingInternalErrorResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewToolsListInvalidParamsResponseBody builds the HTTP response body from the
-// result of the "tools/list" endpoint of the "mcp_assistant" service.
-func NewToolsListInvalidParamsResponseBody(res *goa.ServiceError) *ToolsListInvalidParamsResponseBody {
-	body := &ToolsListInvalidParamsResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewToolsListInternalErrorResponseBody builds the HTTP response body from the
-// result of the "tools/list" endpoint of the "mcp_assistant" service.
-func NewToolsListInternalErrorResponseBody(res *goa.ServiceError) *ToolsListInternalErrorResponseBody {
-	body := &ToolsListInternalErrorResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewToolsCallInvalidParamsResponseBody builds the HTTP response body from the
-// result of the "tools/call" endpoint of the "mcp_assistant" service.
-func NewToolsCallInvalidParamsResponseBody(res *goa.ServiceError) *ToolsCallInvalidParamsResponseBody {
-	body := &ToolsCallInvalidParamsResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewToolsCallInternalErrorResponseBody builds the HTTP response body from the
-// result of the "tools/call" endpoint of the "mcp_assistant" service.
-func NewToolsCallInternalErrorResponseBody(res *goa.ServiceError) *ToolsCallInternalErrorResponseBody {
-	body := &ToolsCallInternalErrorResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewResourcesListInvalidParamsResponseBody builds the HTTP response body from
-// the result of the "resources/list" endpoint of the "mcp_assistant" service.
-func NewResourcesListInvalidParamsResponseBody(res *goa.ServiceError) *ResourcesListInvalidParamsResponseBody {
-	body := &ResourcesListInvalidParamsResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewResourcesListInternalErrorResponseBody builds the HTTP response body from
-// the result of the "resources/list" endpoint of the "mcp_assistant" service.
-func NewResourcesListInternalErrorResponseBody(res *goa.ServiceError) *ResourcesListInternalErrorResponseBody {
-	body := &ResourcesListInternalErrorResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewResourcesReadInvalidParamsResponseBody builds the HTTP response body from
-// the result of the "resources/read" endpoint of the "mcp_assistant" service.
-func NewResourcesReadInvalidParamsResponseBody(res *goa.ServiceError) *ResourcesReadInvalidParamsResponseBody {
-	body := &ResourcesReadInvalidParamsResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewResourcesReadInternalErrorResponseBody builds the HTTP response body from
-// the result of the "resources/read" endpoint of the "mcp_assistant" service.
-func NewResourcesReadInternalErrorResponseBody(res *goa.ServiceError) *ResourcesReadInternalErrorResponseBody {
-	body := &ResourcesReadInternalErrorResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewResourcesSubscribeInvalidParamsResponseBody builds the HTTP response body
-// from the result of the "resources/subscribe" endpoint of the "mcp_assistant"
-// service.
-func NewResourcesSubscribeInvalidParamsResponseBody(res *goa.ServiceError) *ResourcesSubscribeInvalidParamsResponseBody {
-	body := &ResourcesSubscribeInvalidParamsResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewResourcesSubscribeInternalErrorResponseBody builds the HTTP response body
-// from the result of the "resources/subscribe" endpoint of the "mcp_assistant"
-// service.
-func NewResourcesSubscribeInternalErrorResponseBody(res *goa.ServiceError) *ResourcesSubscribeInternalErrorResponseBody {
-	body := &ResourcesSubscribeInternalErrorResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewResourcesUnsubscribeInvalidParamsResponseBody builds the HTTP response
-// body from the result of the "resources/unsubscribe" endpoint of the
-// "mcp_assistant" service.
-func NewResourcesUnsubscribeInvalidParamsResponseBody(res *goa.ServiceError) *ResourcesUnsubscribeInvalidParamsResponseBody {
-	body := &ResourcesUnsubscribeInvalidParamsResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewResourcesUnsubscribeInternalErrorResponseBody builds the HTTP response
-// body from the result of the "resources/unsubscribe" endpoint of the
-// "mcp_assistant" service.
-func NewResourcesUnsubscribeInternalErrorResponseBody(res *goa.ServiceError) *ResourcesUnsubscribeInternalErrorResponseBody {
-	body := &ResourcesUnsubscribeInternalErrorResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewPromptsListInvalidParamsResponseBody builds the HTTP response body from
-// the result of the "prompts/list" endpoint of the "mcp_assistant" service.
-func NewPromptsListInvalidParamsResponseBody(res *goa.ServiceError) *PromptsListInvalidParamsResponseBody {
-	body := &PromptsListInvalidParamsResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewPromptsListInternalErrorResponseBody builds the HTTP response body from
-// the result of the "prompts/list" endpoint of the "mcp_assistant" service.
-func NewPromptsListInternalErrorResponseBody(res *goa.ServiceError) *PromptsListInternalErrorResponseBody {
-	body := &PromptsListInternalErrorResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewPromptsGetInvalidParamsResponseBody builds the HTTP response body from
-// the result of the "prompts/get" endpoint of the "mcp_assistant" service.
-func NewPromptsGetInvalidParamsResponseBody(res *goa.ServiceError) *PromptsGetInvalidParamsResponseBody {
-	body := &PromptsGetInvalidParamsResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewPromptsGetInternalErrorResponseBody builds the HTTP response body from
-// the result of the "prompts/get" endpoint of the "mcp_assistant" service.
-func NewPromptsGetInternalErrorResponseBody(res *goa.ServiceError) *PromptsGetInternalErrorResponseBody {
-	body := &PromptsGetInternalErrorResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewNotifyStatusUpdateInvalidParamsResponseBody builds the HTTP response body
-// from the result of the "notify_status_update" endpoint of the
-// "mcp_assistant" service.
-func NewNotifyStatusUpdateInvalidParamsResponseBody(res *goa.ServiceError) *NotifyStatusUpdateInvalidParamsResponseBody {
-	body := &NotifyStatusUpdateInvalidParamsResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewNotifyStatusUpdateInternalErrorResponseBody builds the HTTP response body
-// from the result of the "notify_status_update" endpoint of the
-// "mcp_assistant" service.
-func NewNotifyStatusUpdateInternalErrorResponseBody(res *goa.ServiceError) *NotifyStatusUpdateInternalErrorResponseBody {
-	body := &NotifyStatusUpdateInternalErrorResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewEventsStreamInvalidParamsResponseBody builds the HTTP response body from
-// the result of the "events/stream" endpoint of the "mcp_assistant" service.
-func NewEventsStreamInvalidParamsResponseBody(res *goa.ServiceError) *EventsStreamInvalidParamsResponseBody {
-	body := &EventsStreamInvalidParamsResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
-	}
-	return body
-}
-
-// NewEventsStreamInternalErrorResponseBody builds the HTTP response body from
-// the result of the "events/stream" endpoint of the "mcp_assistant" service.
-func NewEventsStreamInternalErrorResponseBody(res *goa.ServiceError) *EventsStreamInternalErrorResponseBody {
-	body := &EventsStreamInternalErrorResponseBody{
-		Name:      res.Name,
-		ID:        res.ID,
-		Message:   res.Message,
-		Temporary: res.Temporary,
-		Timeout:   res.Timeout,
-		Fault:     res.Fault,
+		body.Content = []*ContentItemResponseBodyResponseBody{}
 	}
 	return body
 }
@@ -1263,7 +513,7 @@ func NewInitializePayload(body *InitializeRequestBody) *mcpassistant.InitializeP
 	v := &mcpassistant.InitializePayload{
 		ProtocolVersion: *body.ProtocolVersion,
 	}
-	v.ClientInfo = unmarshalClientInfoRequestBodyToMcpassistantClientInfo(body.ClientInfo)
+	v.ClientInfo = unmarshalClientInfoRequestBodyRequestBodyRequestBodyRequestBodyToMcpassistantClientInfo(body.ClientInfo)
 
 	return v
 }
@@ -1372,7 +622,7 @@ func ValidateInitializeRequestBody(body *InitializeRequestBody) (err error) {
 		err = goa.MergeErrors(err, goa.MissingFieldError("clientInfo", "body"))
 	}
 	if body.ClientInfo != nil {
-		if err2 := validateClientInfoRequestBody(body.ClientInfo, "body.clientInfo"); err2 != nil {
+		if err2 := ValidateClientInfoRequestBodyRequestBodyRequestBodyRequestBody(body.ClientInfo); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -1380,7 +630,7 @@ func ValidateInitializeRequestBody(body *InitializeRequestBody) (err error) {
 }
 
 // ValidateToolsCallRequestBody runs the validations defined on
-// ToolsCallRequestBody
+// Tools/CallRequestBody
 func ValidateToolsCallRequestBody(body *ToolsCallRequestBody) (err error) {
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
@@ -1389,7 +639,7 @@ func ValidateToolsCallRequestBody(body *ToolsCallRequestBody) (err error) {
 }
 
 // ValidateResourcesReadRequestBody runs the validations defined on
-// ResourcesReadRequestBody
+// Resources/ReadRequestBody
 func ValidateResourcesReadRequestBody(body *ResourcesReadRequestBody) (err error) {
 	if body.URI == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
@@ -1401,7 +651,7 @@ func ValidateResourcesReadRequestBody(body *ResourcesReadRequestBody) (err error
 }
 
 // ValidateResourcesSubscribeRequestBody runs the validations defined on
-// ResourcesSubscribeRequestBody
+// Resources/SubscribeRequestBody
 func ValidateResourcesSubscribeRequestBody(body *ResourcesSubscribeRequestBody) (err error) {
 	if body.URI == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
@@ -1410,7 +660,7 @@ func ValidateResourcesSubscribeRequestBody(body *ResourcesSubscribeRequestBody) 
 }
 
 // ValidateResourcesUnsubscribeRequestBody runs the validations defined on
-// ResourcesUnsubscribeRequestBody
+// Resources/UnsubscribeRequestBody
 func ValidateResourcesUnsubscribeRequestBody(body *ResourcesUnsubscribeRequestBody) (err error) {
 	if body.URI == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
@@ -1419,7 +669,7 @@ func ValidateResourcesUnsubscribeRequestBody(body *ResourcesUnsubscribeRequestBo
 }
 
 // ValidatePromptsGetRequestBody runs the validations defined on
-// PromptsGetRequestBody
+// Prompts/GetRequestBody
 func ValidatePromptsGetRequestBody(body *PromptsGetRequestBody) (err error) {
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
@@ -1428,7 +678,7 @@ func ValidatePromptsGetRequestBody(body *PromptsGetRequestBody) (err error) {
 }
 
 // ValidateNotifyStatusUpdateRequestBody runs the validations defined on
-// NotifyStatusUpdateRequestBody
+// notify_status_update_request_body
 func ValidateNotifyStatusUpdateRequestBody(body *NotifyStatusUpdateRequestBody) (err error) {
 	if body.Type == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
@@ -1436,25 +686,14 @@ func ValidateNotifyStatusUpdateRequestBody(body *NotifyStatusUpdateRequestBody) 
 	return
 }
 
-// ValidateClientInfoRequestBody runs the validations defined on ClientInfo
-func ValidateClientInfoRequestBody(body *ClientInfoRequestBody) (err error) {
+// ValidateClientInfoRequestBodyRequestBodyRequestBodyRequestBody runs the
+// validations defined on ClientInfoRequestBodyRequestBodyRequestBodyRequestBody
+func ValidateClientInfoRequestBodyRequestBodyRequestBodyRequestBody(body *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody) (err error) {
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
 	if body.Version == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
-	}
-	return
-}
-
-// validateClientInfoRequestBody checks ClientInfo and reports errors using the
-// path supplied by its caller
-func validateClientInfoRequestBody(body *ClientInfoRequestBody, path string) (err error) {
-	if body.Name == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
-	}
-	if body.Version == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("version", path))
 	}
 	return
 }

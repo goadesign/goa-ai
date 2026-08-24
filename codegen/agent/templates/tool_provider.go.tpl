@@ -188,3 +188,4 @@ func init{{ goify .Name true }}Bounds(mr {{ .MethodResultTypeRef }}) *agent.Boun
 {{- end }}
 {{- end }}
 
+

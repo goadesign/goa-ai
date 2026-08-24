@@ -16,5 +16,5 @@ func TestCompletionOnlyServiceGeneration(t *testing.T) {
 
 	exampleFiles := buildAndGenerateExample(t, testscenarios.ServiceCompletion())
 	require.False(t, fileExists(exampleFiles, "cmd/tasks/main.go"))
-	require.False(t, fileExists(exampleFiles, "internal/agents/tasks/bootstrap/bootstrap.go"))
+	require.False(t, fileExists(exampleFiles, "internal/agents/bootstrap/bootstrap.go"))
 }

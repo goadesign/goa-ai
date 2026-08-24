@@ -6,9 +6,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
+	"slices"
+	"sort"
 	"strings"
 
 	goa "goa.design/goa/v3/pkg"
@@ -61,12 +62,14 @@ func main() {
 	}
 
 	var (
-		err error
+		endpoint goa.Endpoint
+		payload  any
+		err      error
 	)
 	{
 		switch scheme {
 		case "http", "https":
-			err = doJSONRPC(context.Background(), scheme, host, timeout, debug, os.Stdout)
+			endpoint, payload, err = doJSONRPC(scheme, host, timeout, debug)
 		default:
 			fmt.Fprintf(os.Stderr, "invalid scheme: %q (valid schemes: http)\n", scheme)
 			os.Exit(1)
@@ -81,52 +84,23 @@ func main() {
 		os.Exit(1)
 	}
 
-}
-
-// writeEndpointResult calls one normal endpoint and writes its result as JSON.
-func writeEndpointResult(ctx context.Context, stdout io.Writer, endpoint goa.Endpoint, payload any) error {
-	data, err := endpoint(ctx, payload)
+	data, err := endpoint(context.Background(), payload)
 	if err != nil {
-		return err
+		fmt.Fprintln(os.Stderr, err.Error())
+		os.Exit(1)
 	}
-	return writeJSON(stdout, data)
-}
 
-// writeStreamResults writes each server result until the server ends the stream.
-func writeStreamResults[T any](ctx context.Context, stdout io.Writer, recv func(context.Context) (T, error)) error {
-	for {
-		data, err := recv(ctx)
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("receive result: %w", err)
-		}
-		if err := writeJSON(stdout, data); err != nil {
-			return err
-		}
+	if data != nil {
+		m, _ := json.MarshalIndent(data, "", "    ")
+		fmt.Println(string(m))
 	}
-}
-
-// writeJSON writes one indented JSON value followed by a newline.
-func writeJSON(stdout io.Writer, data any) error {
-	if data == nil {
-		return nil
-	}
-	encoded, err := json.MarshalIndent(data, "", "    ")
-	if err != nil {
-		return fmt.Errorf("encode result: %w", err)
-	}
-	if _, err := fmt.Fprintln(stdout, string(encoded)); err != nil {
-		return fmt.Errorf("write result: %w", err)
-	}
-	return nil
 }
 
 func usage() {
-	usageCommands := []string{
-		"mcp-assistant (initialize|ping|tools-list|tools-call|resources-list|resources-read|resources-subscribe|resources-unsubscribe|prompts-list|prompts-get|notify-status-update|events-stream)",
-	}
+	var usageCommands []string
+	usageCommands = append(usageCommands, jsonrpcUsageCommands()...)
+	sort.Strings(usageCommands)
+	usageCommands = slices.Compact(usageCommands)
 	fmt.Fprintf(os.Stderr, `%s is a command line client for the assistant API.
 
 Usage:

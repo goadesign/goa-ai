@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -10,13 +10,13 @@ func RunPolicyBasic() func() {
 	return func() {
 		API("alpha", func() {})
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.RunPolicy(func() {
-					aidsl.DefaultCaps(aidsl.MaxToolCalls(5), aidsl.MaxConsecutiveFailedToolCalls(2))
-					aidsl.TimeBudget("30s")
+			Agent("scribe", "Doc helper", func() {
+				RunPolicy(func() {
+					DefaultCaps(MaxToolCalls(5), MaxConsecutiveFailedToolCalls(2))
+					TimeBudget("30s")
 				})
-				aidsl.Use("helpers", func() {
-					aidsl.Tool("noop", "Noop", func() {})
+				Use("helpers", func() {
+					Tool("noop", "Noop", func() {})
 				})
 			})
 		})
@@ -29,12 +29,12 @@ func RunPolicyHistoryCompressTokens() func() {
 	return func() {
 		API("alpha", func() {})
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.RunPolicy(func() {
-					aidsl.History(func() {
-						aidsl.CompressAtMaxInputTokens(120000)
-						aidsl.KeepMaxInputTokens(40000)
-						aidsl.KeepMaxTurns(12)
+			Agent("scribe", "Doc helper", func() {
+				RunPolicy(func() {
+					History(func() {
+						CompressAtMaxInputTokens(120000)
+						KeepMaxInputTokens(40000)
+						KeepMaxTurns(12)
 					})
 				})
 			})

@@ -69,7 +69,7 @@ go run ./cmd/<service>/
 ```
 
 This generates:
-- `internal/agents/<service>/bootstrap/bootstrap.go` — Wires runtime and registers that service's agents
+- `internal/agents/bootstrap/bootstrap.go` — Wires runtime and registers agents
 - `internal/agents/<agent>/planner/planner.go` — Stub planner (edit to connect your LLM)
 - `cmd/<service>/main.go` — Example main that uses the bootstrap
 - `gen/<service>/completions/` — Typed completion helpers when your service declares `Completion(...)`

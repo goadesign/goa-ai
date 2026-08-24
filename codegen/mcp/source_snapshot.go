@@ -68,3 +68,11 @@ func (s *sourceSnapshot) jsonrpcRoute(serviceName string) (sourceJSONRPCRoute, b
 	route, ok := s.jsonrpcRoutes[serviceName]
 	return route, ok
 }
+
+func (s *sourceSnapshot) jsonrpcPath(serviceName string) (string, bool) {
+	route, ok := s.jsonrpcRoute(serviceName)
+	if !ok || route.path == "" {
+		return "", false
+	}
+	return route.path, true
+}

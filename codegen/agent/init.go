@@ -1,11 +1,12 @@
-// Package codegen registers new agent plugins for each Goa generation command.
 package codegen
 
 import (
-	goagenerator "goa.design/goa/v3/codegen/generator"
+	goacodegen "goa.design/goa/v3/codegen"
 )
 
+// Register agent code generation plugins with Goa.
+// This ensures the plugin hooks run during both generation and example scaffolding.
 func init() {
-	goagenerator.RegisterPluginFirst("agent", "gen", newAgentPluginFactory(false))
-	goagenerator.RegisterPlugin("agent", "example", newAgentPluginFactory(true))
+	goacodegen.RegisterPluginFirst("agent", "gen", Prepare, Generate)
+	goacodegen.RegisterPlugin("agent", "example", nil, GenerateExample)
 }

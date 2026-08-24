@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -46,11 +46,11 @@ func MethodExternalAlias() func() {
 		})
 
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Test agent", func() {
-				aidsl.Use("svcset", func() {
-					aidsl.Tool("fetch", "Fetch data", func() {
-						aidsl.Return(ToolRes)
-						aidsl.BindTo("svc", "Fetch")
+			Agent("scribe", "Test agent", func() {
+				Use("svcset", func() {
+					Tool("fetch", "Fetch data", func() {
+						Return(ToolRes)
+						BindTo("svc", "Fetch")
 					})
 				})
 			})

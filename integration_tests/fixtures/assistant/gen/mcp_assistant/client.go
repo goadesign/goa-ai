@@ -19,6 +19,7 @@ type Client struct {
 	PingEndpoint                 goa.Endpoint
 	ToolsListEndpoint            goa.Endpoint
 	ToolsCallEndpoint            goa.Endpoint
+	ToolsCallStreamEndpoint      goa.Endpoint
 	ResourcesListEndpoint        goa.Endpoint
 	ResourcesReadEndpoint        goa.Endpoint
 	ResourcesSubscribeEndpoint   goa.Endpoint
@@ -27,15 +28,17 @@ type Client struct {
 	PromptsGetEndpoint           goa.Endpoint
 	NotifyStatusUpdateEndpoint   goa.Endpoint
 	EventsStreamEndpoint         goa.Endpoint
+	EventsStreamStreamEndpoint   goa.Endpoint
 }
 
 // NewClient initializes a "mcp_assistant" service client given the endpoints.
-func NewClient(initialize, ping, toolsList, toolsCall, resourcesList, resourcesRead, resourcesSubscribe, resourcesUnsubscribe, promptsList, promptsGet, notifyStatusUpdate, eventsStream goa.Endpoint) *Client {
+func NewClient(initialize, ping, toolsList, toolsCall, toolsCallStream, resourcesList, resourcesRead, resourcesSubscribe, resourcesUnsubscribe, promptsList, promptsGet, notifyStatusUpdate, eventsStream, eventsStreamStream goa.Endpoint) *Client {
 	return &Client{
 		InitializeEndpoint:           initialize,
 		PingEndpoint:                 ping,
 		ToolsListEndpoint:            toolsList,
 		ToolsCallEndpoint:            toolsCall,
+		ToolsCallStreamEndpoint:      toolsCallStream,
 		ResourcesListEndpoint:        resourcesList,
 		ResourcesReadEndpoint:        resourcesRead,
 		ResourcesSubscribeEndpoint:   resourcesSubscribe,
@@ -44,14 +47,11 @@ func NewClient(initialize, ping, toolsList, toolsCall, resourcesList, resourcesR
 		PromptsGetEndpoint:           promptsGet,
 		NotifyStatusUpdateEndpoint:   notifyStatusUpdate,
 		EventsStreamEndpoint:         eventsStream,
+		EventsStreamStreamEndpoint:   eventsStreamStream,
 	}
 }
 
 // Initialize calls the "initialize" endpoint of the "mcp_assistant" service.
-// Initialize may return the following errors:
-//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
-//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
-//   - error: internal error
 func (c *Client) Initialize(ctx context.Context, p *InitializePayload) (res *InitializeResult, err error) {
 	var ires any
 	ires, err = c.InitializeEndpoint(ctx, p)
@@ -62,10 +62,6 @@ func (c *Client) Initialize(ctx context.Context, p *InitializePayload) (res *Ini
 }
 
 // Ping calls the "ping" endpoint of the "mcp_assistant" service.
-// Ping may return the following errors:
-//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
-//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
-//   - error: internal error
 func (c *Client) Ping(ctx context.Context) (res *PingResult, err error) {
 	var ires any
 	ires, err = c.PingEndpoint(ctx, nil)
@@ -76,10 +72,6 @@ func (c *Client) Ping(ctx context.Context) (res *PingResult, err error) {
 }
 
 // ToolsList calls the "tools/list" endpoint of the "mcp_assistant" service.
-// ToolsList may return the following errors:
-//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
-//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
-//   - error: internal error
 func (c *Client) ToolsList(ctx context.Context, p *ToolsListPayload) (res *ToolsListResult, err error) {
 	var ires any
 	ires, err = c.ToolsListEndpoint(ctx, p)
@@ -90,10 +82,6 @@ func (c *Client) ToolsList(ctx context.Context, p *ToolsListPayload) (res *Tools
 }
 
 // ToolsCall calls the "tools/call" endpoint of the "mcp_assistant" service.
-// ToolsCall may return the following errors:
-//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
-//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
-//   - error: internal error
 func (c *Client) ToolsCall(ctx context.Context, p *ToolsCallPayload) (res *ToolsCallResult, err error) {
 	var ires any
 	ires, err = c.ToolsCallEndpoint(ctx, p)
@@ -103,12 +91,19 @@ func (c *Client) ToolsCall(ctx context.Context, p *ToolsCallPayload) (res *Tools
 	return ires.(*ToolsCallResult), nil
 }
 
+// ToolsCallStream calls the "tools/call" endpoint of the "mcp_assistant"
+// service with server streaming enabled.
+func (c *Client) ToolsCallStream(ctx context.Context, p *ToolsCallPayload) (res ToolsCallClientStream, err error) {
+	var ires any
+	ires, err = c.ToolsCallStreamEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(ToolsCallClientStream), nil
+}
+
 // ResourcesList calls the "resources/list" endpoint of the "mcp_assistant"
 // service.
-// ResourcesList may return the following errors:
-//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
-//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
-//   - error: internal error
 func (c *Client) ResourcesList(ctx context.Context, p *ResourcesListPayload) (res *ResourcesListResult, err error) {
 	var ires any
 	ires, err = c.ResourcesListEndpoint(ctx, p)
@@ -120,10 +115,6 @@ func (c *Client) ResourcesList(ctx context.Context, p *ResourcesListPayload) (re
 
 // ResourcesRead calls the "resources/read" endpoint of the "mcp_assistant"
 // service.
-// ResourcesRead may return the following errors:
-//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
-//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
-//   - error: internal error
 func (c *Client) ResourcesRead(ctx context.Context, p *ResourcesReadPayload) (res *ResourcesReadResult, err error) {
 	var ires any
 	ires, err = c.ResourcesReadEndpoint(ctx, p)
@@ -135,10 +126,6 @@ func (c *Client) ResourcesRead(ctx context.Context, p *ResourcesReadPayload) (re
 
 // ResourcesSubscribe calls the "resources/subscribe" endpoint of the
 // "mcp_assistant" service.
-// ResourcesSubscribe may return the following errors:
-//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
-//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
-//   - error: internal error
 func (c *Client) ResourcesSubscribe(ctx context.Context, p *ResourcesSubscribePayload) (err error) {
 	_, err = c.ResourcesSubscribeEndpoint(ctx, p)
 	return
@@ -146,20 +133,12 @@ func (c *Client) ResourcesSubscribe(ctx context.Context, p *ResourcesSubscribePa
 
 // ResourcesUnsubscribe calls the "resources/unsubscribe" endpoint of the
 // "mcp_assistant" service.
-// ResourcesUnsubscribe may return the following errors:
-//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
-//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
-//   - error: internal error
 func (c *Client) ResourcesUnsubscribe(ctx context.Context, p *ResourcesUnsubscribePayload) (err error) {
 	_, err = c.ResourcesUnsubscribeEndpoint(ctx, p)
 	return
 }
 
 // PromptsList calls the "prompts/list" endpoint of the "mcp_assistant" service.
-// PromptsList may return the following errors:
-//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
-//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
-//   - error: internal error
 func (c *Client) PromptsList(ctx context.Context, p *PromptsListPayload) (res *PromptsListResult, err error) {
 	var ires any
 	ires, err = c.PromptsListEndpoint(ctx, p)
@@ -170,10 +149,6 @@ func (c *Client) PromptsList(ctx context.Context, p *PromptsListPayload) (res *P
 }
 
 // PromptsGet calls the "prompts/get" endpoint of the "mcp_assistant" service.
-// PromptsGet may return the following errors:
-//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
-//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
-//   - error: internal error
 func (c *Client) PromptsGet(ctx context.Context, p *PromptsGetPayload) (res *PromptsGetResult, err error) {
 	var ires any
 	ires, err = c.PromptsGetEndpoint(ctx, p)
@@ -185,10 +160,6 @@ func (c *Client) PromptsGet(ctx context.Context, p *PromptsGetPayload) (res *Pro
 
 // NotifyStatusUpdate calls the "notify_status_update" endpoint of the
 // "mcp_assistant" service.
-// NotifyStatusUpdate may return the following errors:
-//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
-//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
-//   - error: internal error
 func (c *Client) NotifyStatusUpdate(ctx context.Context, p *SendNotificationPayload) (err error) {
 	_, err = c.NotifyStatusUpdateEndpoint(ctx, p)
 	return
@@ -196,13 +167,20 @@ func (c *Client) NotifyStatusUpdate(ctx context.Context, p *SendNotificationPayl
 
 // EventsStream calls the "events/stream" endpoint of the "mcp_assistant"
 // service.
-// EventsStream may return the following errors:
-//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
-//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
-//   - error: internal error
-func (c *Client) EventsStream(ctx context.Context) (res EventsStreamClientStream, err error) {
+func (c *Client) EventsStream(ctx context.Context) (res *EventsStreamResult, err error) {
 	var ires any
 	ires, err = c.EventsStreamEndpoint(ctx, nil)
+	if err != nil {
+		return
+	}
+	return ires.(*EventsStreamResult), nil
+}
+
+// EventsStreamStream calls the "events/stream" endpoint of the "mcp_assistant"
+// service with server streaming enabled.
+func (c *Client) EventsStreamStream(ctx context.Context) (res EventsStreamClientStream, err error) {
+	var ires any
+	ires, err = c.EventsStreamStreamEndpoint(ctx, nil)
 	if err != nil {
 		return
 	}

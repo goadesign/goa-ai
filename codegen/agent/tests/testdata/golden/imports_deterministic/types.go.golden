@@ -6,6 +6,8 @@
 
 package docs
 
+import types "goa.design/goa-ai/gen/example.com/mod/gen/types"
+
 type (
 	// StorePayload defines the JSON payload for the docs.store tool.
 	StorePayload = struct {

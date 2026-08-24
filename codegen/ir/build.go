@@ -1,5 +1,9 @@
-// Package ir builds the saved services, agents, toolsets, and output paths used
-// while goa-ai writes files.
+// Package ir builds the canonical generator-facing model from evaluated Goa and
+// goa-ai roots.
+//
+// The builder performs ownership selection, output path derivation, and
+// deterministic ordering exactly once so downstream generators can consume a
+// stable design graph instead of rebuilding the same facts independently.
 package ir
 
 import (
@@ -12,6 +16,7 @@ import (
 	"goa.design/goa-ai/codegen/naming"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	goacodegen "goa.design/goa/v3/codegen"
+	"goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -34,8 +39,7 @@ type toolsetOwnerRef struct {
 	agentSlug string
 }
 
-// Build reads evaluated Goa roots and returns all values needed to generate
-// agent code.
+// Build constructs a Design IR from evaluated Goa roots.
 func Build(genpkg string, roots []eval.Root) (*Design, error) {
 	agentsRoot, err := findAgentsRoot(roots)
 	if err != nil {
@@ -45,7 +49,10 @@ func Build(genpkg string, roots []eval.Root) (*Design, error) {
 	if err != nil {
 		return nil, err
 	}
-	services := buildServices(goaRoot)
+	goacodegen.NormalizeRoot(goaRoot)
+
+	servicesData := service.NewServicesData(goaRoot)
+	services := buildServices(goaRoot, servicesData)
 	servicesByName := make(map[string]*Service, len(services))
 	for _, svc := range services {
 		servicesByName[svc.Name] = svc
@@ -76,14 +83,13 @@ func Build(genpkg string, roots []eval.Root) (*Design, error) {
 			return strings.Compare(a.Name, b.Name)
 		})
 	}
-	registries := buildRegistries(agentsRoot)
 
 	refsByToolset := collectToolsetOwnerRefs(agentsRoot, servicesByName)
 	toolsets, toolsetsByName, err := buildToolsets(genpkg, agentsRoot, refsByToolset, servicesByName)
 	if err != nil {
 		return nil, err
 	}
-	if err := attachToolsetRefs(genpkg, servicesByName, toolsetsByName, agents); err != nil {
+	if err := attachToolsetRefs(genpkg, servicesData, servicesByName, toolsetsByName, agents); err != nil {
 		return nil, err
 	}
 
@@ -95,7 +101,6 @@ func Build(genpkg string, roots []eval.Root) (*Design, error) {
 		Agents:      agents,
 		Toolsets:    toolsets,
 		Completions: completions,
-		Registries:  registries,
 	}, nil
 }
 
@@ -117,16 +122,20 @@ func findGoaRoot(roots []eval.Root) (*goaexpr.RootExpr, error) {
 	return nil, fmt.Errorf("goa root not found in eval roots")
 }
 
-func buildServices(root *goaexpr.RootExpr) []*Service {
+func buildServices(root *goaexpr.RootExpr, servicesData *service.ServicesData) []*Service {
 	out := make([]*Service, 0, len(root.Services))
 	for _, svc := range root.Services {
 		if svc == nil {
 			continue
 		}
+		sd := servicesData.Get(svc.Name)
+		if sd == nil {
+			continue
+		}
 		out = append(out, &Service{
-			Expr:     svc,
-			Name:     svc.Name,
-			PathName: goacodegen.SnakeCase(svc.Name),
+			Name:     sd.Name,
+			PathName: sd.PathName,
+			Goa:      sd,
 		})
 	}
 	slices.SortFunc(out, func(a, b *Service) int {
@@ -216,21 +225,6 @@ func buildCompletions(root *agentsExpr.RootExpr, servicesByName map[string]*Serv
 		return strings.Compare(a.Name, b.Name)
 	})
 	return completions, nil
-}
-
-// buildRegistries copies registry definitions into name order.
-func buildRegistries(root *agentsExpr.RootExpr) []*Registry {
-	registries := make([]*Registry, 0, len(root.Registries))
-	for _, registry := range root.Registries {
-		if registry == nil {
-			continue
-		}
-		registries = append(registries, &Registry{Expr: registry, Name: registry.Name})
-	}
-	slices.SortFunc(registries, func(a, b *Registry) int {
-		return strings.Compare(a.Name, b.Name)
-	})
-	return registries
 }
 
 func collectToolsetOwnerRefs(root *agentsExpr.RootExpr, servicesByName map[string]*Service) map[string][]toolsetOwnerRef {
@@ -338,8 +332,37 @@ func buildToolsets(
 
 func collectDefiningToolsets(root *agentsExpr.RootExpr) map[string]*agentsExpr.ToolsetExpr {
 	toolsets := make(map[string]*agentsExpr.ToolsetExpr)
-	for _, ts := range root.DefiningToolsets() {
+	consider := func(ts *agentsExpr.ToolsetExpr) {
+		if ts == nil || ts.Name == "" || ts.Origin != nil {
+			return
+		}
 		toolsets[ts.Name] = ts
+	}
+	for _, ts := range root.Toolsets {
+		consider(ts)
+	}
+	for _, serviceExport := range root.ServiceExports {
+		if serviceExport == nil {
+			continue
+		}
+		for _, ts := range serviceExport.Toolsets {
+			consider(ts)
+		}
+	}
+	for _, agent := range root.Agents {
+		if agent == nil {
+			continue
+		}
+		if agent.Exported != nil {
+			for _, ts := range agent.Exported.Toolsets {
+				consider(ts)
+			}
+		}
+		if agent.Used != nil {
+			for _, ts := range agent.Used.Toolsets {
+				consider(ts)
+			}
+		}
 	}
 	return toolsets
 }
@@ -442,16 +465,17 @@ func newToolset(genpkg string, expr *agentsExpr.ToolsetExpr, owner Owner) (*Tool
 
 func attachToolsetRefs(
 	genpkg string,
+	servicesData *service.ServicesData,
 	servicesByName map[string]*Service,
 	toolsetsByName map[string]*Toolset,
 	agents []*Agent,
 ) error {
 	for _, agent := range agents {
-		used, err := buildAgentToolsetRefs(genpkg, servicesByName, toolsetsByName, agent, agent.Expr.Used, ToolsetRefKindUsed)
+		used, err := buildAgentToolsetRefs(genpkg, servicesData, servicesByName, toolsetsByName, agent, agent.Expr.Used, ToolsetRefKindUsed)
 		if err != nil {
 			return err
 		}
-		exported, err := buildAgentToolsetRefs(genpkg, servicesByName, toolsetsByName, agent, agent.Expr.Exported, ToolsetRefKindExported)
+		exported, err := buildAgentToolsetRefs(genpkg, servicesData, servicesByName, toolsetsByName, agent, agent.Expr.Exported, ToolsetRefKindExported)
 		if err != nil {
 			return err
 		}
@@ -463,6 +487,7 @@ func attachToolsetRefs(
 
 func buildAgentToolsetRefs(
 	genpkg string,
+	servicesData *service.ServicesData,
 	servicesByName map[string]*Service,
 	toolsetsByName map[string]*Toolset,
 	agent *Agent,
@@ -474,7 +499,7 @@ func buildAgentToolsetRefs(
 	}
 	refs := make([]*ToolsetRef, 0, len(group.Toolsets))
 	for _, expr := range group.Toolsets {
-		ref, err := newToolsetRef(genpkg, servicesByName, toolsetsByName, agent, expr, kind)
+		ref, err := newToolsetRef(genpkg, servicesData, servicesByName, toolsetsByName, agent, expr, kind)
 		if err != nil {
 			return nil, err
 		}
@@ -488,6 +513,7 @@ func buildAgentToolsetRefs(
 
 func newToolsetRef(
 	genpkg string,
+	servicesData *service.ServicesData,
 	servicesByName map[string]*Service,
 	toolsetsByName map[string]*Toolset,
 	agent *Agent,
@@ -509,7 +535,7 @@ func newToolsetRef(
 	if slug == "" {
 		return nil, fmt.Errorf("toolset reference %q has no sanitized identifier", expr.Name)
 	}
-	sourceService, sourceServiceName := resolveSourceService(servicesByName, agent.Service, expr)
+	sourceService, sourceServiceName := resolveSourceService(servicesData, servicesByName, agent.Service, expr)
 	qualifiedName := qualifyToolsetName(agent, expr, kind, sourceServiceName)
 	ref := &ToolsetRef{
 		Expr:                 expr,
@@ -543,6 +569,7 @@ func newToolsetRef(
 }
 
 func resolveSourceService(
+	servicesData *service.ServicesData,
 	servicesByName map[string]*Service,
 	defaultService *Service,
 	expr *agentsExpr.ToolsetExpr,
@@ -559,7 +586,7 @@ func resolveSourceService(
 		}
 	}
 	isMCPBacked := expr.Provider != nil && expr.Provider.Kind == agentsExpr.ProviderMCP
-	if !isMCPBacked && len(expr.Tools) > 0 {
+	if !isMCPBacked && servicesData != nil && len(expr.Tools) > 0 {
 		if svcName := expr.Tools[0].BoundServiceName(); svcName != "" {
 			if svc := servicesByName[svcName]; svc != nil {
 				sourceService = svc

@@ -48,18 +48,19 @@ scenarios:
             code: -32602
             message: "Not initialized"
 
-  - name: mcp_notification_cli
+  - name: assistant_send_notification_cli
     defaults:
-      client: jsonrpc.mcp_assistant
+      client: jsonrpc.assistant
       client_mode: cli
     pre:
       auto_initialize: true
     steps:
-      - name: notify_status_update
-        op: NotifyStatusUpdate
+      - name: send_notification
+        op: SendNotification
         input:
           type: info
           message: "Server status ok"
         expect:
           status: success
+
 

@@ -13,16 +13,16 @@ type (
 		AssistantText string
 		Draft         Draft
 	}
-	// CompletionDraft is a nested type used by the generated JSON contract.
+	// CompletionDraft is a helper type materialized for nested references.
 	CompletionDraft = struct {
 		// Draft steps
 		Steps []*CompletionStep
 	}
-	// CompletionStep is a nested type used by the generated JSON contract.
+	// CompletionStep is a helper type materialized for nested references.
 	CompletionStep = struct {
 		// User-visible step label
 		Label string
 	}
-	// DraftExistingTaskID is a nested type used by the generated JSON contract.
+	// DraftExistingTaskID is a helper type materialized for nested references.
 	DraftExistingTaskID = string
 )

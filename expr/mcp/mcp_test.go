@@ -140,19 +140,6 @@ func TestToolExpr_Validate(t *testing.T) {
 			wantErr: true,
 			errMsg:  "tool description is required",
 		},
-		{
-			name: "streaming method",
-			tool: &ToolExpr{
-				Name:        "test-tool",
-				Description: "A test tool",
-				Method: &expr.MethodExpr{
-					Name:   "watch",
-					Stream: expr.ServerStreamKind,
-				},
-			},
-			wantErr: true,
-			errMsg:  `tool "test-tool" uses streaming method "watch"; MCP tools must return one result from one request`,
-		},
 	}
 
 	for _, tt := range tests {
@@ -198,19 +185,6 @@ func TestResourceExpr_Validate(t *testing.T) {
 			},
 			wantErr: true,
 			errMsg:  "resource URI is required",
-		},
-		{
-			name: "streaming method",
-			resource: &ResourceExpr{
-				Name: "test-resource",
-				URI:  "file:///test",
-				Method: &expr.MethodExpr{
-					Name:   "watch",
-					Stream: expr.ServerStreamKind,
-				},
-			},
-			wantErr: true,
-			errMsg:  `resource "test-resource" uses streaming method "watch"; MCP resources must return one result from one request`,
 		},
 	}
 

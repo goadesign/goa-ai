@@ -46,7 +46,7 @@ func TestRegistryClientStaticURLPaths(t *testing.T) {
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
 
-	files, err := codegen.BuildFilesForTest("example.com/static_url", []eval.Root{goaexpr.Root, agentsExpr.Root}, false)
+	files, err := codegen.Generate("example.com/static_url", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
 	require.NoError(t, err)
 
 	var clientContent string
@@ -115,7 +115,7 @@ func TestRegistryClientStaticEndpoint(t *testing.T) {
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
 
-	files, err := codegen.BuildFilesForTest("example.com/static_endpoint", []eval.Root{goaexpr.Root, agentsExpr.Root}, false)
+	files, err := codegen.Generate("example.com/static_endpoint", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
 	require.NoError(t, err)
 
 	var clientContent string
@@ -175,7 +175,7 @@ func TestTypeSpecificValidatorsGenerated(t *testing.T) {
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
 
-	files, err := codegen.BuildFilesForTest("example.com/validator", []eval.Root{goaexpr.Root, agentsExpr.Root}, false)
+	files, err := codegen.Generate("example.com/validator", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
 	require.NoError(t, err)
 
 	// Look for the specs file which should contain validation functions

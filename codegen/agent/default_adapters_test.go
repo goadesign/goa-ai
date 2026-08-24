@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	codegen "goa.design/goa-ai/codegen/agent"
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	gcodegen "goa.design/goa/v3/codegen"
 	. "goa.design/goa/v3/dsl"
@@ -46,12 +46,12 @@ func TestServiceToolset_ConfigNoDefaults(t *testing.T) {
 				})
 			})
 			// Agent with a tool bound to svc.Do (within service DSL)
-			aidsl.Agent("a", "", func() {
-				aidsl.Use("ts", func() {
-					aidsl.Tool("do", "", func() {
-						aidsl.Args(String)
-						aidsl.Return(Boolean)
-						aidsl.BindTo("Do")
+			Agent("a", "", func() {
+				Use("ts", func() {
+					Tool("do", "", func() {
+						Args(String)
+						Return(Boolean)
+						BindTo("Do")
 					})
 				})
 			})
@@ -60,7 +60,7 @@ func TestServiceToolset_ConfigNoDefaults(t *testing.T) {
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
 
-	files, err := codegen.BuildFilesForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root}, false)
+	files, err := codegen.Generate("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
 	require.NoError(t, err)
 
 	// Find generated service_toolset.go and render content

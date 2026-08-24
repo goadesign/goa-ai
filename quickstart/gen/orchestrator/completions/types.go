@@ -19,7 +19,7 @@ type (
 		// Ordered draft steps
 		Steps []*DraftTaskStep
 	}
-	// DraftTaskStep is a nested type used by the generated JSON contract.
+	// DraftTaskStep is a helper type materialized for nested references.
 	DraftTaskStep = struct {
 		// Short step title
 		Title string

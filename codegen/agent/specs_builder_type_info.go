@@ -1,5 +1,3 @@
-// Package codegen builds each generated type together with its JSON schema, example,
-// validation code, and conversion functions.
 package codegen
 
 import (
@@ -17,19 +15,31 @@ import (
 
 const jsonSchemaTypeObject = "object"
 
-// scopeForTool returns the names saved for the public specs package.
+// scopeForTool returns the NameScope used to derive all type and helper names
+// for the specs package being generated.
 func (b *toolSpecBuilder) scopeForTool() *codegen.NameScope {
+	// Always use the builder scope so naming is stable for this generated package
+	// across generator passes.
+	if b == nil || b.svcScope == nil {
+		panic("agent/specs_builder: nil toolSpecBuilder scope")
+	}
 	return b.svcScope
 }
 
-// typeFor builds the names, Go types, schemas, and JSON functions for one tool
-// input, output, or server data value.
+// typeFor returns type metadata for a contract payload/result/sidecar attribute,
+// applying owner-specific shape selection rules (e.g., method-backed result
+// selection) before materialization.
 func (b *toolSpecBuilder) typeFor(owner *contractTypeOwner, att *goaexpr.AttributeExpr, usage typeUsage) (*typeData, error) {
-	// A tool's declared result controls the JSON shown to the model. When the
-	// tool has no result, use the result of its Goa service method.
+	// For method-backed tools, prefer the tool Return type for RESULTs when it
+	// is explicitly declared in the DSL so that model-facing schemas reflect
+	// the tool contract (e.g., AtlasListDevicesToolReturn). When no Return is
+	// provided, fall back to the bound service method result type so specs
+	// alias the concrete service result directly.
 	//
-	// Tool inputs always use the tool's own arguments. Fields supplied by the
-	// server must not appear in the JSON accepted from the model.
+	// For PAYLOADs, always use the tool's own argument type to prevent
+	// server-only fields (e.g., session_id) from leaking into tool-visible
+	// schemas. Server fields are injected post-decode by adapters before
+	// making the actual service method call.
 	if owner != nil && owner.PreferMethodResult && usage == usageResult {
 		if (att == nil || att.Type == goaexpr.Empty) &&
 			owner.MethodResultAttr != nil && owner.MethodResultAttr.Type != goaexpr.Empty {
@@ -38,8 +48,9 @@ func (b *toolSpecBuilder) typeFor(owner *contractTypeOwner, att *goaexpr.Attribu
 	}
 
 	if usage == usagePayload && att.Type == goaexpr.Empty {
-		// Inputs with no arguments still use a named empty object so every tool has
-		// a concrete input type and JSON decoder.
+		// For payloads with no arguments, synthesize an empty object.
+		// This ensures a concrete Payload type is always generated for adapters and codecs,
+		// avoiding nil checks in generated code.
 		att = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
 	}
 
@@ -50,73 +61,119 @@ func (b *toolSpecBuilder) typeFor(owner *contractTypeOwner, att *goaexpr.Attribu
 	return info, nil
 }
 
-// buildTypeInfo builds one named Go type and the data needed to write its JSON
-// schema, decoder, encoder, and validator.
+// buildTypeInfo generates a standalone type definition and metadata for a
+// contract payload/result/sidecar shape using a simplified materialization policy.
 func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.AttributeExpr, usage typeUsage, qualifier string) (*typeData, error) {
 	if owner == nil || owner.ScopeName == "" {
 		return nil, fmt.Errorf("invalid contract metadata: missing owner scope")
 	}
-	// A missing type means the generator received an invalid design value.
+	// Enforce core invariants early: attributes must have a non-nil Type and
+	// user types must always carry a non-nil AttributeExpr. Violations are
+	// treated as generator bugs and must be fixed at the construction site.
 	assertNoNilTypes(att, owner, usage, "contract-attr")
+	typeName := codegen.Goify(owner.Name, true)
+	switch usage {
+	case usagePayload:
+		typeName += "Payload"
+	case usageResult:
+		typeName += "Result"
+	case usageSidecar:
+		if qualifier != "" {
+			typeName += codegen.Goify(qualifier, true)
+		}
+		typeName += "ServerData"
+	}
+
+	scope := b.scopeForTool()
+	// Reserve the tool-facing type name using HashedUnique on a synthetic local
+	// user type that represents this tool type. This does two things:
+	//   1. It seeds the scope so later nested HashedUnique calls disambiguate
+	//      colliding service/local user type names (e.g. GetTimeSeriesResult).
+	//   2. It ensures subsequent transform generation (GoTransform) that uses
+	//      the same synthetic user type does NOT rename it to "<TypeName>2"
+	//      due to prior reservations.
+	//
+	// We intentionally do NOT bind design user types (like a shared Doc type)
+	// to the tool-facing name, because payload and result may both alias the
+	// same underlying type hash but must remain distinct tool types.
+	baseAttr := att
+	if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
+		baseAttr = ut.Attribute()
+	}
+	if baseAttr.Type == goaexpr.Empty {
+		baseAttr = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
+	}
+	toolUT := &goaexpr.UserTypeExpr{
+		AttributeExpr: stripStructPkgMeta(baseAttr),
+		TypeName:      typeName,
+	}
+	typeName = scope.HashedUnique(toolUT, typeName)
+	toolUT.TypeName = typeName
+
+	// Stable cache key: reference for service-alias, otherwise deterministic name
 	key := stableTypeKey(owner, usage, qualifier)
 	if existing := b.types[key]; existing != nil {
 		return existing, nil
 	}
-	scope := b.scopeForTool()
-	planned := b.planned.typeFor(owner, usage, qualifier)
-	if planned == nil {
-		return nil, fmt.Errorf("type %q was not planned", key)
-	}
-	baseAttr := planned.publicShape
-	typeName := planned.publicDeclaration.Name()
 
+	// Preserve user types so codecs reference service user types explicitly
+	// (e.g., *alpha.Doc) even for non-method-backed tools. This ensures
+	// deterministic aliasing and imports and matches the repository tests
+	// which assert service-qualified references in generated codecs.
+	//
 	defineType := false
-	// Public tool types keep required fields as values and apply Goa defaults.
+	// Materialize the PUBLIC tool-facing type as a service-level shape:
+	// required fields are non-pointers; defaults behave normally.
 	const (
 		publicPtr      = false
 		publicDefaults = true
 	)
-	b.materializeNestedLocalTypes(scope, planned.publicTypes, publicPtr, publicDefaults)
-	tt, defLine, fullRef, imports := b.buildTypeDefinition(typeName, planned.public, scope, defineType, publicPtr, publicDefaults)
+	att = b.ensureNestedLocalTypes(scope, att, publicPtr, publicDefaults)
+	tt, defLine, fullRef, imports := b.materialize(typeName, att, scope, defineType, publicPtr, publicDefaults)
+	// Collect any union sum types referenced by this tool type so the toolset
+	// package can emit their definitions once.
 	b.collectUnionSumTypes(scope, tt)
+	// Determine pointer semantics for top-level alias/value.
 	aliasIsPointer := strings.Contains(defLine, "= *")
 	ptr := aliasIsPointer || strings.HasPrefix(fullRef, "*")
-	// Inputs and object outputs use pointers while JSON is decoded and checked.
+	// Payloads and object-shaped results/sidecars use pointer codecs so decode
+	// paths can validate the tagged transport shape before transforming into the
+	// public local type.
 	if usage == usagePayload {
 		ptr = true
 	}
-	if (usage == usageResult || usage == usageServerData) && goaexpr.AsObject(baseAttr.Type) != nil {
+	if (usage == usageResult || usage == usageSidecar) && goaexpr.AsObject(baseAttr.Type) != nil {
 		ptr = true
 	}
 
-	// The HTTP type carries JSON field names and pointer fields needed to detect
-	// missing required values.
-	transportTypeName := planned.transportDeclaration.Name()
-	transportScope := b.transportScope
-	transportAttr := planned.transportShape
-	b.materializeNestedTransportTypes(transportScope, planned.transportTypes)
-	b.collectTransportUnionSumTypes(transportScope, transportAttr)
+	// Internal transport type used only by codecs for JSON decode+validation.
+	// This is the actual JSON contract (schema property names + missing detection).
+	transportTypeName := typeName + "Transport"
+	transportAttr := cloneWithModelJSONTags(tt)
+	transportAttr = b.ensureNestedLocalTransportTypes(scope, transportAttr)
+	// Collect union sum types as they appear in the transport graph (after
+	// localization). These are emitted into the toolset-local http package.
+	b.collectTransportUnionSumTypes(scope, transportAttr)
 	schemaAttr := cloneModelSchemaAttribute(transportAttr)
 
-	// Only examples written by the design author are shown to the model.
+	// Example JSON for externally visible request/response contracts. Only
+	// authored Goa Example(...) values become top-level schema examples and model
+	// input examples; synthesized attribute examples stay out of provider tool
+	// definitions so prompts only include examples the DSL author chose.
 	authoredExample := authoredExampleForAttribute(att)
 	var example *exampleData
 	if usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion) {
-		// Union examples use the {type,value} JSON form accepted by the decoder.
+		// Examples must reflect the JSON wire contract, not the public tool type.
+		// In particular, unions are encoded as canonical {type,value} objects in
+		// the transport graph; deriving examples from the public type produces a
+		// flattened shape that misleads callers and generated examples.
+		//
 		example = authoredExample
 	}
 
+	// JSON schema from model schema attribute.
 	var err error
-	exampleIdentity := goaexpr.UserTypeExampleIdentity(&goaexpr.UserTypeExpr{
-		TypeName: key,
-		UID:      "goa-ai:tool-spec:" + key,
-	})
-	schemaBytes, schemaWithoutRootExampleBytes, err := schemaVariantsForAttribute(
-		b.api,
-		schemaAttr,
-		exampleValue(example),
-		exampleIdentity,
-	)
+	schemaBytes, schemaWithoutRootExampleBytes, err := schemaVariantsForAttribute(schemaAttr, exampleValue(example))
 	if err != nil {
 		return nil, err
 	}
@@ -152,38 +209,55 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	if owner.Kind == contractTypeOwnerCompletion {
 		doc = fmt.Sprintf("%s defines the JSON %s for the completion %s.", typeName, usage, owner.QualifiedName)
 	}
-	transportCtx := modelJSONTransportContext(transportScope, true, "")
-	transportDef := transportTypeName + " " + transportTypeDef(transportScope, transportAttr, transportCtx)
+	transportCtx := modelJSONTransportContext(scope, true, "")
+	transportDef := transportTypeName + " " + transportTypeDef(scope, transportAttr, transportCtx)
 	transportImports := shared.GatherAttributeImports(b.genpkg, transportAttr)
-	httpctx := modelJSONTransportContext(transportScope, !goaexpr.IsPrimitive(schemaAttr.Type), "")
+	httpctx := modelJSONTransportContext(scope, !goaexpr.IsPrimitive(schemaAttr.Type), "")
 	transportValidation := validationCodeWithContext(schemaAttr, nil, httpctx, true, false, false, "body", owner, usage, "transport")
 	var transportValidationSrc []string
 	if strings.TrimSpace(transportValidation) != "" {
 		transportValidationSrc = strings.Split(transportValidation, "\n")
 	}
 
-	src := planned.transport
-	dst := planned.public
-	srcCtx := modelJSONTransportContext(transportScope, true, "toolhttp")
-	tgtCtx := codegen.NewAttributeContext(false, false, true, "", scope)
-	encSrcCtx := codegen.NewAttributeContext(false, false, true, "", scope)
-	encTgtCtx := modelJSONTransportContext(transportScope, true, "toolhttp")
-	if err := planned.decode.BindContexts(srcCtx, tgtCtx); err != nil {
-		return nil, err
+	src := &goaexpr.AttributeExpr{
+		Type: &goaexpr.UserTypeExpr{
+			AttributeExpr: transportAttr,
+			TypeName:      transportTypeName,
+		},
 	}
-	decodeBody, decodeHelpers, err := planned.decode.Render("in", "out", false)
+	dst := &goaexpr.AttributeExpr{
+		Type: &goaexpr.UserTypeExpr{
+			// Public tool types are local to the specs package: strip any root
+			// struct:pkg:* locator metadata inherited from the *source* design type.
+			// This is a shallow operation: nested shared types (e.g. gen/types) keep
+			// their locators and remain qualified correctly.
+			AttributeExpr: stripStructPkgMeta(tt),
+			TypeName:      typeName,
+		},
+	}
+	srcCtx := modelJSONTransportContext(scope, true, "toolhttp")
+	tgtCtx := codegen.NewAttributeContextForConversion(false, false, true, "", scope)
+	decodeBody, decodeHelpers, err := codegen.GoTransform(src, dst, "in", "out", srcCtx, tgtCtx, "decode", false)
 	if err != nil {
 		return nil, err
 	}
-	if err := planned.encode.BindContexts(encSrcCtx, encTgtCtx); err != nil {
-		return nil, err
-	}
-	encodeBody, encodeHelpers, err := planned.encode.Render("in", "out", false)
+	encSrcCtx := codegen.NewAttributeContextForConversion(false, false, true, "", scope)
+	encTgtCtx := modelJSONTransportContext(scope, true, "toolhttp")
+	encodeBody, encodeHelpers, err := codegen.GoTransform(dst, src, "in", "out", encSrcCtx, encTgtCtx, "encode", false)
 	if err != nil {
 		return nil, err
 	}
-	b.codecTransformHelpers = codegen.AppendHelpers(b.codecTransformHelpers, decodeHelpers)
-	b.codecTransformHelpers = codegen.AppendHelpers(b.codecTransformHelpers, encodeHelpers)
+	for _, h := range append(decodeHelpers, encodeHelpers...) {
+		if h == nil {
+			continue
+		}
+		key := h.Name + "|" + h.ParamTypeRef + "|" + h.ResultTypeRef
+		if _, ok := b.codecTransformHelperKeys[key]; ok {
+			continue
+		}
+		b.codecTransformHelperKeys[key] = struct{}{}
+		b.codecTransformHelpers = append(b.codecTransformHelpers, h)
+	}
 	emitTransport := ptr || owner.Kind == contractTypeOwnerTool
 	transportTypeNameOut := ""
 	transportDefOut := ""
@@ -196,8 +270,8 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		transportDefOut = transportDef
 		transportImportsOut = transportImports
 		transportValidationSrcOut = transportValidationSrc
-		transportTypeRefOut = transportScope.GoTypeRef(src)
-		transportPointerOut = strings.HasPrefix(transportScope.GoTypeRef(src), "*")
+		transportTypeRefOut = scope.GoTypeRef(src)
+		transportPointerOut = strings.HasPrefix(scope.GoTypeRef(src), "*")
 	}
 	info := &typeData{
 		Key:                          key,
@@ -208,19 +282,14 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		SchemaWithoutRootExampleJSON: schemaWithoutRootExampleBytes,
 		ExampleJSON:                  exampleBytes,
 		ScaffoldExampleJSON:          exampleJSON(authoredExample),
-		ExportedCodec:                planned.exportedCodec.Name(),
-		GenericCodec:                 planned.genericCodec.Name(),
-		MarshalFunc:                  planned.marshal.Name(),
-		UnmarshalFunc:                planned.unmarshal.Name(),
-		ValidateFunc:                 planned.transportValidator.Name(),
-		FieldDescsVar:                planned.fieldDescriptions.Name(),
-		FieldJSONTypesVar:            planned.fieldJSONTypes.Name(),
-		FieldAllowedObjectKeysVar:    planned.allowedObjectKeys.Name(),
-		EnrichValidationFunc:         planned.enrichValidation.Name(),
-		InvalidFieldTypeFunc:         planned.invalidFieldType.Name(),
+		ExportedCodec:                typeName + "Codec",
+		GenericCodec:                 lowerCamel(typeName) + "Codec",
+		MarshalFunc:                  "Marshal" + typeName,
+		UnmarshalFunc:                "Unmarshal" + typeName,
+		ValidateFunc:                 "",
 		FullRef:                      fullRef,
 		NeedType:                     defLine != "",
-		IsToolType:                   usage == usagePayload || usage == usageResult || usage == usageServerData,
+		IsToolType:                   usage == usagePayload || usage == usageResult || usage == usageSidecar,
 		PublicType:                   dst,
 		NilError:                     fmt.Sprintf("%s is nil", lowerCamel(typeName)),
 		DecodeError:                  fmt.Sprintf("decode %s", lowerCamel(typeName)),
@@ -241,6 +310,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		DecodeTransform:              decodeBody,
 		EncodeTransform:              encodeBody,
 	}
+	// Validation is performed on the internal transport type during Unmarshal.
 	// Accept empty JSON for payloads that are empty structs (no fields).
 	if usage == usagePayload && isEmptyStruct(att) {
 		info.AcceptEmpty = true
@@ -261,30 +331,14 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		info.FieldAllowedObjectKeys = allowed
 	}
 	b.types[key] = info
-	// Also index by Go name so the same type is not written twice.
+	// Also index by the public type name so auxiliary passes (e.g.,
+	// validator collection) can detect that a concrete alias already
+	// exists and avoid emitting duplicate helpers for the same name.
 	nameKey := "name:" + typeName
 	if _, exists := b.types[nameKey]; !exists {
 		b.types[nameKey] = info
 	}
 	return info, nil
-}
-
-// typeFor returns the saved type record for one tool or completion value.
-func (p *toolSpecsPackagePlan) typeFor(owner *contractTypeOwner, usage typeUsage, qualifier string) *plannedSpecType {
-	if owner.Kind == contractTypeOwnerCompletion {
-		return p.completionNames[owner.Name].resultType
-	}
-	names := p.tools[owner.Name]
-	switch usage {
-	case usagePayload:
-		return names.payloadType
-	case usageResult:
-		return names.resultType
-	case usageServerData:
-		return names.serverDataTypes[qualifier]
-	default:
-		panic(fmt.Sprintf("unknown type use %q", usage))
-	}
 }
 
 // projectHiddenPayloadSchema removes runtime-supplied root fields from the

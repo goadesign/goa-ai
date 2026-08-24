@@ -3,76 +3,17 @@ package codegen
 import (
 	"strings"
 
-	"goa.design/goa/v3/codegen"
-	"goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/eval"
-	goaexpr "goa.design/goa/v3/expr"
 )
 
-// BuildDataForTest chooses service and agent names exactly as generation does,
-// then returns the agent data used to write files.
+// BuildDataForTest exposes buildGeneratorData to external tests.
 func BuildDataForTest(genpkg string, roots []eval.Root) (*GeneratorData, error) {
-	plan, err := buildAgentPlanForTest(genpkg, roots, false)
-	if err != nil {
-		return nil, err
-	}
-	return plan.data, nil
+	return buildGeneratorData(genpkg, roots)
 }
 
-// BuildFilesForTest runs the same name selection and file-building steps as the
-// agent plugin without writing files to disk.
-func BuildFilesForTest(genpkg string, roots []eval.Root, example bool) ([]*codegen.File, error) {
-	plan, err := buildAgentPlanForTest(genpkg, roots, example)
-	if err != nil {
-		return nil, err
-	}
-	return plan.Files(nil)
-}
-
-// buildAgentPlanForTest chooses every Goa and agent name and builds the data
-// used by a focused generator test.
-func buildAgentPlanForTest(genpkg string, roots []eval.Root, example bool) (*Plan, error) {
-	if err := Prepare(genpkg, roots); err != nil {
-		return nil, err
-	}
-	generation, err := codegen.NewGeneration(genpkg, roots)
-	if err != nil {
-		return nil, err
-	}
-	goaRoot, _ := agentDesignRoots(generation.Roots())
-	servicePlan, err := service.NewPlan(
-		goaRoot,
-		generation,
-		goaexpr.NewExampleGenerator(goaRoot.API.RandomizerFactory),
-	)
-	if err != nil {
-		return nil, err
-	}
-	var plan *Plan
-	if example {
-		plan, err = NewExamplePlan(generation, servicePlan)
-	} else {
-		plan, err = NewPlan(generation, servicePlan)
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err := generation.Freeze(); err != nil {
-		return nil, err
-	}
-	if err := servicePlan.Link(); err != nil {
-		return nil, err
-	}
-	if err := plan.Link(); err != nil {
-		return nil, err
-	}
-	return plan, nil
-}
-
-// ToolSpecsDataForTest returns the names, types, and schemas already built for
-// the agent's tool packages.
-func ToolSpecsDataForTest(agent *AgentData) *toolSpecsData {
-	return agentToolSpecsData(agent)
+// BuildToolSpecsDataForTest exposes buildToolSpecsData to external tests.
+func BuildToolSpecsDataForTest(agent *AgentData) (*toolSpecsData, error) {
+	return buildToolSpecsData(agent)
 }
 
 // CollectToolNamesForTest returns each generated tool constant and injected
@@ -173,8 +114,9 @@ func CollectTypeImportAliasesForTest(specs *toolSpecsData, nameContains string) 
 	return out
 }
 
-// CollectAllImportAliasesForTest returns every import name used by generated
-// tool type, description, and JSON files.
+// CollectAllImportAliasesForTest returns all import aliases used across the
+// tool specs files (types/specs/codecs). This leverages the aggregate
+// computation used by templates to render imports.
 func CollectAllImportAliasesForTest(specs *toolSpecsData) []string {
 	seen := make(map[string]struct{})
 	out := make([]string, 0, 8)

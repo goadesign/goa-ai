@@ -69,5 +69,5 @@ func (*examplePlanner) PlanResume(_ context.Context, in *planner.PlanResumeInput
 				Parts: []model.Part{model.TextPart{Text: answer}},
 			},
 		},
-    }, nil
+	}, nil
 }

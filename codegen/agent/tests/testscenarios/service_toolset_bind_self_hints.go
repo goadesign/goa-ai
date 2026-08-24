@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -29,14 +29,14 @@ func ServiceToolsetBindSelfHints() func() {
 					Required("okay")
 				})
 			})
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("lookup", func() {
-					aidsl.Tool("by_id", "Lookup by ID", func() {
-						aidsl.Args(idPayload)
-						aidsl.Return(okResult)
-						aidsl.BindTo("alpha", "Find")
-						aidsl.CallHintTemplate("Lookup {{ .ID }}")
-						aidsl.ResultHintTemplate("Done {{ .Result.Ok }}")
+			Agent("scribe", "Doc helper", func() {
+				Use("lookup", func() {
+					Tool("by_id", "Lookup by ID", func() {
+						Args(idPayload)
+						Return(okResult)
+						BindTo("alpha", "Find")
+						CallHintTemplate("Lookup {{ .ID }}")
+						ResultHintTemplate("Done {{ .Result.Ok }}")
 					})
 				})
 			})
