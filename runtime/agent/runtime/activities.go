@@ -803,9 +803,11 @@ func validatePlannerResultPayloadCodecs(
 	return nil
 }
 
-// validatePlannerToolPayloadWithCodec decodes one tool payload with the global
-// generated codec or the exact per-run continuation codec advertised to the
-// planner.
+// validatePlannerToolPayloadWithCodec decodes one ordinary tool payload with
+// its generated codec. A generated continuation action accepts only the empty
+// object shown to the model; compilePlannerToolCallsForRun later replaces that
+// object with the cursor-bearing payload and validates it with the canonical
+// continuation tool's generated codec.
 func validatePlannerToolPayloadWithCodec(
 	ctx context.Context,
 	r *Runtime,
@@ -823,7 +825,7 @@ func validatePlannerToolPayloadWithCodec(
 		if continuation.modelName != name {
 			continue
 		}
-		if _, err := continuation.spec.Payload.Codec.FromJSON(payload); err != nil {
+		if err := validateEmptyContinuationPayload(payload); err != nil {
 			return fmt.Errorf("tool %q payload does not satisfy its continuation contract: %w", name, err)
 		}
 		return nil

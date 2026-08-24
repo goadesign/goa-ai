@@ -1761,6 +1761,132 @@ func TestPlanStartActivityAdvertisesHistoricalContinuation(t *testing.T) {
 	require.JSONEq(t, `{"cursor":"opaque-next"}`, string(out.Result.ToolCalls[0].Payload))
 }
 
+func TestPlanResumeActivityBindsModelSelectedContinuation(t *testing.T) {
+	search, continuation := continuationTestSpecs()
+	continuation.Payload.Codec = tools.JSONCodec[any]{
+		ToJSON: json.Marshal,
+		FromJSON: func(data []byte) (any, error) {
+			var payload struct {
+				Cursor string `json:"cursor"`
+			}
+			if err := json.Unmarshal(data, &payload); err != nil {
+				return nil, err
+			}
+			if payload.Cursor == "" {
+				return nil, errors.New("cursor is required")
+			}
+			return payload, nil
+		},
+	}
+	actionName := continuationActionName(continuation.Name, "source-1")
+	modelCall := model.ToolCall{
+		ID:      "continue-call-1",
+		Name:    actionName,
+		Payload: rawjson.Message(`{}`),
+	}
+	pl := &stubPlanner{resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+		definitions := input.Agent.AdvertisedToolDefinitions()
+		require.Len(t, definitions, 2)
+		require.Equal(t, actionName.String(), definitions[1].Name)
+		client, ok := input.Agent.PlannerModelClient("test")
+		require.True(t, ok)
+		stream, err := client.Stream(ctx, &model.Request{
+			Model: "test",
+			Tools: definitions,
+		})
+		require.NoError(t, err)
+		return &planner.PlanResult{ToolCalls: stream.ToolCalls}, nil
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	seedTestToolSpecs(rt, search, continuation)
+	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
+		"service.agent": {search, continuation},
+	}
+	rt.models["test"] = mustTestModelClient(stubModelClient{
+		stream: func(_ context.Context, request *model.Request) (model.Streamer, error) {
+			require.Len(t, request.Tools, 2)
+			require.Equal(t, actionName.String(), request.Tools[1].Name)
+			return &chunkStreamer{
+				chunks: []model.Chunk{
+					model.ToolCallChunk{ToolCall: modelCall},
+					model.StopChunk{Reason: "tool_use"},
+				},
+				response: testModelResponse(nil, modelCall),
+			}, nil
+		},
+	})
+	require.NoError(t, rt.publishHookErr(
+		t.Context(),
+		hooks.NewToolCallScheduledEvent(
+			"run-123",
+			"service.agent",
+			"",
+			search.Name,
+			"source-1",
+			rawjson.Message(`{"query":"alarms"}`),
+			"queue",
+			"",
+			0,
+		),
+		"",
+	))
+	cursor := "opaque-next"
+	require.NoError(t, rt.publishHookErr(
+		t.Context(),
+		hooks.NewToolResultReceivedEvent(
+			"run-123",
+			"service.agent",
+			"",
+			"run-123",
+			search.Name,
+			"source-1",
+			"",
+			rawjson.Message(`{"items":["page-1"]}`),
+			len(`{"items":["page-1"]}`),
+			false,
+			"",
+			nil,
+			"page 1",
+			&agent.Bounds{Returned: 1, Truncated: true, NextCursor: &cursor},
+			time.Second,
+			nil,
+			nil,
+		),
+		"",
+	))
+
+	out, err := rt.PlanResumeActivity(t.Context(), &PlanActivityInput{
+		AgentID: "service.agent",
+		RunID:   "run-123",
+		Messages: []*model.Message{
+			{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Search alarms."}}},
+			{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{
+				ID: "source-1", Name: search.Name.String(), Input: rawjson.Message(`{"query":"alarms"}`),
+			}}},
+			{Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{
+				ToolUseID: "source-1", Content: map[string]any{"items": []any{"page-1"}},
+			}}},
+			{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "First page."}}},
+			{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Show the next page."}}},
+		},
+		RunContext: run.Context{RunID: "run-123"},
+		ToolOutputs: []*api.ToolOutputRef{{
+			CallRunID:   "run-123",
+			ResultRunID: "run-123",
+			ToolCallID:  "source-1",
+		}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out.Result)
+	require.Len(t, out.Result.ToolCalls, 1)
+	require.Equal(t, continuation.Name, out.Result.ToolCalls[0].Name)
+	require.Equal(t, actionName, out.Result.ToolCalls[0].ModelName)
+	require.Equal(t, modelCall.ID, out.Result.ToolCalls[0].ModelToolCallID)
+	require.Equal(t, "source-1", out.Result.ToolCalls[0].ContinuationRootToolCallID)
+	require.JSONEq(t, `{"cursor":"opaque-next"}`, string(out.Result.ToolCalls[0].Payload))
+}
+
 func TestPlanStartActivityReturnsNativeProviderError(t *testing.T) {
 	providerErr := model.NewProviderError(
 		"anthropic",
