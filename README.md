@@ -97,10 +97,9 @@ absence came from a deployment or an outage. Exact
 retries cannot execute that identity while the run-scoped decision is retained,
 so executors may safely replan; only published calls with ambiguous execution
 become `outcome_unknown`.
-This decision contract is wire protocol version 8. Quiesce traffic, drain calls
-and providers, stop version 7 registries, and remove version 7 catalog entries
-before starting version 8. Preserve retained call records for validated
-bounded migration; do not roll registry replicas across these versions.
+This decision contract is wire protocol version 8. Registry replicas and
+retained catalog records must use that exact protocol; do not overlap registry
+versions or infer how to translate unknown records.
 `Serve` also exposes the canonical ToolUseID through context for durable method
 deduplication without changing tool payloads. Workers recheck the
 absolute deadline when dispatching local backlog and acknowledge expired calls
@@ -642,15 +641,11 @@ therefore pair the result with the exact `tool_start` without searching prior
 runs.
 
 Generated agents, completion packages, runtime workers, and their callers form
-one release unit. Regenerate every consumer, stop new work that depends on the
-old generated contract, and deploy the generated code and runtime together.
-`goa-ai.run-suspension.v4` is the only supported suspension schema. Its
-model-authored await items preserve the runtime `ToolCallID` separately from the
-provider `ModelToolCallID`. Suspensions written by older runtimes, including
-v3, cannot be resumed across this coordinated release; the runtime does not
-dual-read, fall back to, or migrate older shapes. See [Coordinated generated-system
-releases](docs/runtime.md#coordinated-generated-system-releases) for the
-deployment contract.
+one release unit and use one generated contract. `goa-ai.run-suspension.v4` is
+the only supported suspension schema. Its model-authored await items preserve
+the runtime `ToolCallID` separately from the provider `ModelToolCallID`.
+Suspensions with another shape fail at the typed checkpoint boundary; the
+runtime does not dual-read, fall back to, or rewrite them.
 
 Sensitive tools can require approval before execution:
 
@@ -831,10 +826,9 @@ zero children does not turn a success or correctable failure into run
 finalization.
 
 Recovery turns carry the selected failed call IDs in `PlanActivityInput`.
-Empty IDs are omitted, so start and ordinary resume activities retain their
-previous JSON shape. Deploy runtime workers, generated packages, and callers as
-one coordinated hard cutover. Mixed versions are unsupported; ongoing
-workflows and saved suspensions may fail against the new contract.
+Empty IDs are omitted from start and ordinary resume activities. Runtime
+workers, generated packages, and callers must use the same generated input
+contract; mixed shapes are unsupported.
 
 The flag is valid only on a tool-only result, keeping execution and answer
 synthesis as separate turns without relying on process-local state. The batch

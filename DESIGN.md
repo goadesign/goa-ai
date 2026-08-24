@@ -262,14 +262,12 @@ models cannot choose or replace the reason. Ordinary tool calls do not receive
 this label: the runtime removes the reserved key if any of those sources
 supplies it.
 
-`runtime.LimitReasonLabel` and `goa-ai.limit_reason` were removed. Consumers of
-fixed-limit and planner-authored finalization calls, including `tool_failure`,
-must use `runtime.FinalizationReasonLabel` and
-`goa-ai.finalization_reason`.
+Consumers of fixed-limit and planner-authored finalization calls, including
+`tool_failure`, read the termination reason from
+`runtime.FinalizationReasonLabel` (`goa-ai.finalization_reason`).
 
-The additional workflow-input field requires a pinned Temporal Worker
-Deployment cutover: old and new strict decoders cannot share one unversioned
-task queue during rollout.
+Temporal workers strictly decode planner activity input. Every worker and
+caller on one task queue must use the same generated input contract.
 
 This order makes recovery explicit rather than presence-based. `ToolFailure`
 classifies why execution failed independently from its `RecoveryDirective`:
@@ -347,8 +345,7 @@ names are recorded, and
 `Runtime.ValidateContinuation` rejects a checkpoint when the new worker does
 not register one of them. Restoration passes every concrete saved payload and
 result through the current generated codec. A value the current contract cannot
-decode fails at that typed boundary; the runtime does not preserve continuation
-compatibility across releases. A tool call created in an earlier workflow
+decode fails at that typed boundary. A tool call created in an earlier workflow
 retains that workflow's run ID while its result records the new workflow's run
 ID. The tool-result hook and `tool_end` stream payload carry the original call
 run ID explicitly; the result event's own run ID identifies the workflow that
@@ -364,21 +361,15 @@ and exact call/result provenance. The consuming application owns release
 routing for the runtime workers, generated packages, and callers that use those
 contracts. They form one release unit: consumers regenerate every package from
 the same Goa-AI revision and deploy the complete generated system together.
-Goa-AI does not provide backward compatibility, mixed-version operation, or a
-persisted-suspension migration mode. Workflows and suspensions created by the
-previous release may fail after deployment. Historical completed-session
-records remain owned by the session store and are not rewritten for a runtime
-contract release.
+Historical completed-session records remain owned by the session store and are
+not rewritten for a runtime contract release.
 
-`ValidateContinuation` checks the checkpoint and registered tool contracts; it
-does not make an incompatible persisted value compatible. Suspension schema
-`goa-ai.run-suspension.v4` is the only supported shape. Every model-authored
+`ValidateContinuation` accepts only suspension schema
+`goa-ai.run-suspension.v4` and its registered tool contracts. Every model-authored
 await item preserves the runtime `ToolCallID` separately from the provider
 `ModelToolCallID`, so execution records and provider transcript reconstruction
-never substitute one identity for the other. Suspensions written by older
-runtimes, including v3, cannot be resumed after this coordinated release. The
-runtime has no dual read, fallback, or migration mode; incompatible checkpoints
-fail validation.
+never substitute one identity for the other. Any other checkpoint shape fails
+validation.
 
 Coordinated generated-code deployment does not own ordinary service
 availability. Services called by activities must keep a ready endpoint
@@ -504,9 +495,9 @@ plus a fresh current-epoch pong.
 
 Registry construction enumerates every authoritative catalog key and applies
 the same strict current-format parser used by registration and routing before
-health tracking starts. Unknown fields, legacy lease values, or any other
-incompatible record keep the registry unready and report every affected key;
-startup never rewrites or decodes an older format.
+health tracking starts. Unknown fields or any other non-current record keep the
+registry unready and report every affected key; startup never rewrites a stored
+record.
 
 The wire-visible `RegistrationToken` is not a secret. It is the lowercase
 SHA-256 digest of the domain `goa-ai/tool-registry-admission/v2\0`, the uint32
@@ -544,29 +535,20 @@ selected provider is still routable. If draining won that race, the
 unpublished call selects the replacement and tries publication again; only a
 published call has an immutable provider assignment.
 Graceful releases permit immediate server-owned handoff, while crashes delay
-handoff until lease expiry. A wire protocol change remains a coordinated hard
-cutover because registry servers and consumers do not negotiate envelope
-versions.
+handoff until lease expiry. Registry servers and consumers use one exact wire
+protocol; they do not negotiate envelope versions.
 `Unregister` is not rollout orchestration; it intentionally changes active to
 retired while preserving leases. Same-token retirement retry succeeds, a stale
 expected token returns `admission_conflict`, retired toolsets are unavailable to
 discovery and calls, and the retired exact token cannot register again.
 
-Wire protocol changes use a hard cutover. There is no legacy envelope, optional
-fallback, capability negotiation, or dual decoder. Quiesce consumers, drain
-admitted calls and provider leases, then stop every old registry replica. Back
-up the catalog and atomically remove entries owned by the old wire version while
-preserving retained call records. Start the new registry against that cleaned
-catalog, then start matching providers and finally consumers. Wire protocol
-version 8 uses this order; version 7 and version 8 registries never serve
-concurrently.
-
-The new registry rejects an old consumer's missing version before service
+The wire protocol has no optional fallback, capability negotiation, or dual
+decoder. The registry rejects a missing or mismatched version before service
 invocation, catalog lookup, health checks, result-stream creation, call
-admission, or Pulse publication. It rejects an old provider on Register or
-renewal before provider admission. The one runtime-owned version therefore
-fences both independent rollout populations, while the version-bound
-registration token preserves the existing provider-generation fence.
+admission, or Pulse publication. Register and renewal apply the same check
+before provider admission. The runtime-owned version therefore fences both
+producers of protocol bytes, while the version-bound registration token
+preserves the provider-generation fence.
 
 Supported rmap `Destroy`, stream destruction, and ticker loss recover live under
 the same registry name without a process restart: renewal reconstructs the
@@ -634,9 +616,9 @@ run-scoped decision is retained, so the executor may safely replan. Generated
 decision record. Errors after request publication remain ambiguous and produce
 `outcome_unknown`, which forbids replacement execution because an effect may
 have occurred.
-The explicit decision record is wire protocol version 8. Version 7 and version
-8 registry replicas cannot serve concurrently; deployment replaces the complete
-registry replica set before providers and consumers roll forward.
+The explicit decision record is wire protocol version 8. Registry replicas,
+providers, and consumers use that exact protocol. Records with another shape
+are rejected and never rewritten.
 `CallTool` owns only initial admission and publication. `RetryTool` owns overload
 republication and requires both the
 existing admission record and its still-active token. The request-stream append
@@ -664,11 +646,10 @@ without consumer groups, acknowledgements, or keepalive metadata. No consumer
 destroys the stream; abandoned, completed, and recreated state expires at the
 record's absolute deadline.
 
-The one-time cleanup of pre-contract Redis records and queued unfenced messages
-is an operational hard-cutover concern, not a compatibility mechanism. See
-[`docs/POST_ROLLOUT_CLEANUP.md`](docs/POST_ROLLOUT_CLEANUP.md). Deterministic
-admission identity, catalog-owned leases, token fencing, flat shared streams,
-server-owned handoff, and incompatible-admission non-overlap remain permanent.
+Deterministic admission identity, catalog-owned leases, token fencing, flat
+shared streams, server-owned handoff, and incompatible-admission non-overlap
+are permanent. Catalog and queued records must match the current wire protocol;
+the runtime rejects unknown records instead of guessing how to translate them.
 
 Health tracking and provider registration self-heal after Redis state loss.
 Ping scheduling uses expiring per-toolset Redis leases that the next scheduler
@@ -790,9 +771,8 @@ redeploys.
   succeeds. Recovery call IDs extend the planner activity payload and select the
   canonical failed outputs that shape both reminders and the advertised catalog.
   Empty recovery IDs are omitted from ordinary activity payloads. Runtime
-  workers, generated packages, and callers deploy as one coordinated hard
-  cutover. Mixed versions are unsupported; ongoing workflows and saved
-  suspensions may fail after the cutover.
+  workers, generated packages, and callers use one generated contract and
+  deploy as one release unit. Mixed contracts are unsupported.
   Current run policy still applies while the fixed terminal call is prepared.
   For example, `WithRestrictToTool` can reject that call because the
   restriction applies to every tool in the run.
@@ -810,10 +790,9 @@ redeploys.
   error instead of fabricating success after the required side effect did not
   occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
   because they assign different outcomes to the same exhausted limits.
-  Completion-aware suspensions use checkpoint version 2 so older runtimes
-  reject, rather than ignore, the saved policy. Current runtimes reject
-  version-1 checkpoints; deployments must complete or discard older
-  suspensions before upgrading.
+  Completion-aware suspensions use the exact `goa-ai.run-suspension.v4`
+  checkpoint contract. The saved policy is required and decoded without
+  fallback; a checkpoint with another version fails at that typed boundary.
 - **Visible reasoning contract**: when a caller enables thinking for a Bedrock
   adaptive Claude model, the adapter asks for summarized reasoning display
   explicitly so streamed `thinking` events contain text. This includes Claude
