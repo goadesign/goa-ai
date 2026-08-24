@@ -43,6 +43,7 @@ type bedrockStreamer struct {
 	modelClass       model.ModelClass
 	output           *model.StructuredOutput
 	toolFallbackName string
+	noArgumentTools  map[string]struct{}
 	contract         *model.RequestContract
 }
 
@@ -59,6 +60,7 @@ func newBedrockStreamer(
 	modelClass model.ModelClass,
 	output *model.StructuredOutput,
 	toolFallbackName string,
+	noArgumentTools map[string]struct{},
 	contract *model.RequestContract,
 ) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
@@ -73,6 +75,7 @@ func newBedrockStreamer(
 		modelClass:       modelClass,
 		output:           output,
 		toolFallbackName: toolFallbackName,
+		noArgumentTools:  noArgumentTools,
 		contract:         contract,
 	}
 	go bs.run()
@@ -133,6 +136,7 @@ func (s *bedrockStreamer) run() {
 		s.output,
 		s.toolFallbackName,
 	)
+	processor.noArgumentTools = s.noArgumentTools
 	events := s.stream.Events()
 
 	for {
@@ -244,6 +248,7 @@ type chunkProcessor struct {
 	modelClass       model.ModelClass
 	output           *model.StructuredOutput
 	toolFallbackName string
+	noArgumentTools  map[string]struct{}
 
 	canonical       model.Response
 	started         bool
@@ -355,7 +360,12 @@ func (p *chunkProcessor) Handle(event any) error {
 				p.completion = &completionBuffer{name: p.output.Name, index: idx}
 				return nil
 			}
-			p.toolBlocks[idx] = &toolBuffer{id: id, name: name}
+			_, noArguments := p.noArgumentTools[name]
+			p.toolBlocks[idx] = &toolBuffer{
+				name:        name,
+				id:          id,
+				noArguments: noArguments,
+			}
 			return nil
 		}
 		return nil
@@ -486,6 +496,12 @@ func (p *chunkProcessor) Handle(event any) error {
 				if err := p.retainString(fragment); err != nil {
 					return err
 				}
+				// The runtime already owns every execution value for this tool.
+				// Charge provider output against stream limits, but do not turn
+				// meaningless argument text into model-authored state.
+				if tb.noArguments {
+					return nil
+				}
 				tb.fragments.WriteString(fragment)
 				if tb.id == "" {
 					return fmt.Errorf("bedrock stream: tool JSON delta missing tool call id")
@@ -542,9 +558,13 @@ func (p *chunkProcessor) Handle(event any) error {
 			}
 		}
 		if tb := p.toolBlocks[idx]; tb != nil {
-			payload, err := decodeToolPayload(tb.finalInput())
-			if err != nil {
-				return fmt.Errorf("bedrock stream: finalize tool payload %q: %w", tb.id, err)
+			payload := rawjson.Message(`{}`)
+			if !tb.noArguments {
+				var err error
+				payload, err = decodeToolPayload(tb.finalInput())
+				if err != nil {
+					return fmt.Errorf("bedrock stream: finalize tool payload %q: %w", tb.id, err)
+				}
 			}
 			delete(p.toolBlocks, idx)
 			call := model.ToolCall{
@@ -687,9 +707,10 @@ func (p *chunkProcessor) finishStream() error {
 }
 
 type toolBuffer struct {
-	name      string
-	id        string
-	fragments strings.Builder
+	name        string
+	id          string
+	noArguments bool
+	fragments   strings.Builder
 }
 
 // completionBuffer accumulates one structured-output content block until the

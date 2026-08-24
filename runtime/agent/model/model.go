@@ -284,6 +284,11 @@ type (
 		// Input describes the model-facing tool payload contract.
 		Input ToolInput
 
+		// NoArguments reports that choosing the tool is the complete model
+		// decision. Adapters may derive the canonical empty object instead of
+		// retaining provider-authored argument text.
+		NoArguments bool
+
 		// Strict asks providers that support strict tools to enforce Input before
 		// returning a tool call. Adapters fail when a strict tool cannot be
 		// represented instead of silently weakening its contract.
@@ -296,6 +301,7 @@ type (
 		schemaWithoutRootExample rawjson.Message
 		exampleJSON              rawjson.Message
 		validate                 func(rawjson.Message) error
+		acceptsNoArguments       bool
 	}
 
 	// ToolInputContract is the provider-neutral raw JSON projection of a tool
@@ -834,6 +840,8 @@ func (e TokenEstimator) minimumTokens() int {
 }
 
 const (
+	jsonObjectType = "object"
+
 	// ConversationRoleSystem is the role for system messages.
 	ConversationRoleSystem ConversationRole = "system"
 
@@ -1076,11 +1084,18 @@ func ToolDefinitionFromSpec(spec tools.ToolSpec) *ToolDefinition {
 		_, err := spec.Payload.Codec.FromJSON(payload)
 		return err
 	}
+	input.acceptsNoArguments = typeSpecDeclaresNoArguments(spec.Payload)
 	return &ToolDefinition{
 		Name:        spec.Name.String(),
 		Description: spec.Description,
 		Input:       input,
 	}
+}
+
+// typeSpecDeclaresNoArguments reads generated field metadata instead of
+// reparsing its schema. A model-facing empty object has only the root marker.
+func typeSpecDeclaresNoArguments(spec tools.TypeSpec) bool {
+	return len(spec.FieldJSONTypes) == 1 && spec.FieldJSONTypes["$payload"] == jsonObjectType
 }
 
 // AdvertisedToolInputFromSchema builds the model-facing contract for a
@@ -1097,8 +1112,9 @@ func AdvertisedToolInputFromSchema(schema rawjson.Message) (ToolInput, error) {
 		return ToolInput{}, fmt.Errorf("model: caller-authored input schema: %w", err)
 	}
 	return ToolInput{
-		jsonSchema: validated,
-		validate:   validate,
+		jsonSchema:         validated,
+		validate:           validate,
+		acceptsNoArguments: schemaDeclaresNoArguments(validated),
 	}, nil
 }
 
@@ -1152,7 +1168,27 @@ func ToolInputFromContract(toolName string, contract ToolInputContract) (ToolInp
 		schemaWithoutRootExample: schemaWithoutRootExample,
 		exampleJSON:              exampleJSON,
 		validate:                 validate,
+		acceptsNoArguments:       schemaDeclaresNoArguments(schema),
 	}, nil
+}
+
+// schemaDeclaresNoArguments reports whether an external schema declares an
+// object with no named model-authored fields.
+func schemaDeclaresNoArguments(schema rawjson.Message) bool {
+	document, err := decodeSingleJSONDocument(schema)
+	if err != nil {
+		return false
+	}
+	object, ok := document.(map[string]any)
+	if !ok || object["type"] != jsonObjectType {
+		return false
+	}
+	properties, ok := object["properties"]
+	if !ok {
+		return true
+	}
+	fields, ok := properties.(map[string]any)
+	return ok && len(fields) == 0
 }
 
 // validateSchemaWithoutRootExample proves that the alternate provider schema

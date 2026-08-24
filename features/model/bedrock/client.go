@@ -119,6 +119,7 @@ type requestParts struct {
 	additionalModelFields   map[string]any
 	toolNameCanonicalToProv map[string]string
 	toolNameProvToCanonical map[string]string
+	noArgumentTools         map[string]struct{}
 
 	// structuredOutputToolName is non-empty exactly when prepareRequest chose
 	// to express Request.StructuredOutput as the forced tool call described in
@@ -330,6 +331,7 @@ func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Stream
 		parts.modelClass,
 		req.StructuredOutput,
 		parts.structuredOutputToolName,
+		parts.noArgumentTools,
 		contract,
 	)
 	return streamer, nil
@@ -408,6 +410,12 @@ func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 	if useToolFallback {
 		structuredOutputToolName = req.StructuredOutput.Name
 	}
+	noArgumentTools := make(map[string]struct{})
+	for _, def := range toolDefs {
+		if def.NoArguments {
+			noArgumentTools[def.Name] = struct{}{}
+		}
+	}
 	// Bedrock requires toolConfig when messages contain tool_use or tool_result
 	// blocks. Fail fast with a clear error rather than letting Bedrock reject
 	// the request with a generic validation error.
@@ -437,6 +445,7 @@ func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 		additionalModelFields:    additionalModelFields,
 		toolNameCanonicalToProv:  canonToSan,
 		toolNameProvToCanonical:  sanToCanon,
+		noArgumentTools:          noArgumentTools,
 		structuredOutputToolName: structuredOutputToolName,
 	}, nil
 }
