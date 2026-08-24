@@ -128,6 +128,84 @@ func TestCountTokens_UsesConverseRequestPreparation(t *testing.T) {
 	require.NotNil(t, converse.Value.ToolConfig)
 }
 
+// TestCountTokensPreparesStructuredOutputToolFallback verifies that token
+// counting receives the same forced tool and thinking configuration that
+// Converse uses for Opus 5 structured output.
+func TestCountTokensPreparesStructuredOutputToolFallback(t *testing.T) {
+	rt := &countTokensRuntimeClient{}
+	client := &provider{
+		runtime:      rt,
+		defaultModel: "us.anthropic.claude-opus-5",
+	}
+
+	count, err := client.CountTokens(t.Context(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "judge this claim"}},
+		}},
+		Thinking: &model.ThinkingOptions{Enable: true},
+		StructuredOutput: &model.StructuredOutput{
+			Name:        "eval_judgments",
+			Description: "One judgment for each supplied claim.",
+			Schema: rawjson.Message(
+				`{"type":"object","properties":{"label":{"type":"string"}},"required":["label"]}`,
+			),
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 42, count.InputTokens)
+
+	require.NotNil(t, rt.input)
+	converse, ok := rt.input.Input.(*brtypes.CountTokensInputMemberConverse)
+	require.True(t, ok)
+	require.NotNil(t, converse.Value.ToolConfig)
+	require.Len(t, converse.Value.ToolConfig.Tools, 1)
+	tool, ok := converse.Value.ToolConfig.Tools[0].(*brtypes.ToolMemberToolSpec)
+	require.True(t, ok)
+	require.NotNil(t, tool.Value.Strict)
+	require.True(t, *tool.Value.Strict)
+	choice, ok := converse.Value.ToolConfig.ToolChoice.(*brtypes.ToolChoiceMemberTool)
+	require.True(t, ok)
+	require.Equal(t, *tool.Value.Name, *choice.Value.Name)
+
+	require.NotNil(t, converse.Value.AdditionalModelRequestFields)
+	fields, err := converse.Value.AdditionalModelRequestFields.MarshalSmithyDocument()
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"thinking": {
+			"type": "adaptive",
+			"display": "summarized"
+		}
+	}`, string(fields))
+}
+
+// TestCountTokensRejectsNativeStructuredOutput verifies that CountTokens fails
+// before the provider call when Bedrock's count request cannot carry the
+// OutputConfig used by Converse.
+func TestCountTokensRejectsNativeStructuredOutput(t *testing.T) {
+	rt := &countTokensRuntimeClient{}
+	client := &provider{
+		runtime:      rt,
+		defaultModel: "anthropic.claude-opus-4-6",
+	}
+
+	count, err := client.CountTokens(t.Context(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "return JSON"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "answer",
+			Schema: rawjson.Message(`{"type":"object"}`),
+		},
+	})
+
+	require.Equal(t, model.TokenCount{}, count)
+	require.ErrorIs(t, err, model.ErrTokenCountingUnsupported)
+	require.ErrorContains(t, err, "cannot represent native structured output")
+	require.Nil(t, rt.input)
+}
+
 // TestCountTokens_SendsFoundationModelID verifies that a count configured with
 // a cross-region inference profile sends the backing foundation model ID on the
 // wire (Runtime CountTokens rejects the profile ID), while the returned

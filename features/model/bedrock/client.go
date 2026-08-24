@@ -208,15 +208,15 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 // CountTokens asks Bedrock to count the exact input that Converse would
 // receive, including prior reasoning blocks and their provider signatures.
 func (c *provider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
-	if req.StructuredOutput != nil {
-		return model.TokenCount{}, fmt.Errorf(
-			"bedrock: CountTokens cannot represent structured output: %w",
-			model.ErrTokenCountingUnsupported,
-		)
-	}
 	parts, err := c.prepareRequest(req)
 	if err != nil {
 		return model.TokenCount{}, err
+	}
+	if parts.outputConfig != nil {
+		return model.TokenCount{}, fmt.Errorf(
+			"bedrock: CountTokens cannot represent native structured output: %w",
+			model.ErrTokenCountingUnsupported,
+		)
 	}
 	if !claudecaps.BedrockRuntimeTokenCountSupported(parts.modelID) {
 		return model.TokenCount{}, fmt.Errorf(
@@ -435,7 +435,7 @@ func (c *provider) buildConverseInput(
 // is the foundation model ID resolved from parts.modelID (see FoundationModelID);
 // CountTokens rejects the cross-region inference-profile ID that Converse uses.
 func (c *provider) buildCountTokensInput(parts *requestParts, req *model.Request, foundationModelID string) *bedrockruntime.CountTokensInput {
-	fields := additionalModelFieldsForRequest(parts.additionalModelFields, req)
+	fields := requestModelFields(parts, req)
 	converse := brtypes.ConverseTokensRequest{
 		Messages: parts.messages,
 		System:   parts.system,

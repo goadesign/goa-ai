@@ -2616,10 +2616,11 @@ trigger budget from the exact-retention budget:
 - Bedrock uses its native Runtime `CountTokens` operation when the resolved
   model supports it. Claude Opus 4.7, Sonnet 5, and Mythos 5 require AWS's
   separate Mantle token-count endpoint, so this adapter returns
-  `model.ErrTokenCountingUnsupported` for those models. Structured output is
-  also unsupported for Bedrock counting because Runtime `CountTokens` cannot
-  carry `OutputConfig`. Provider validation errors remain errors; the adapter
-  never parses an error message into a fabricated count.
+  `model.ErrTokenCountingUnsupported` for those models. Structured output
+  lowered to a forced tool is included in Runtime token counts. Native
+  structured output remains unsupported because Runtime `CountTokens` cannot
+  carry the `OutputConfig` sent to Converse. Provider validation errors remain
+  errors; the adapter never parses an error message into a fabricated count.
 
 ```go
 // DSL
