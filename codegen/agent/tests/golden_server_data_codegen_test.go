@@ -14,7 +14,7 @@ func TestGolden_ServerData_UsesGeneratedCodec(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.ServiceToolsetBindSelfServerData())
 
 	provider := generatedContentBySuffix(t, files, "toolsets/lookup/provider.go")
-	require.Contains(t, provider, "ByIDAuraEvidenceServerDataCodec.ToJSON")
+	require.Contains(t, provider, "ByIDAuraEvidenceServerDataCodec().ToJSON")
 	require.Contains(t, provider, "InitByIDAuraEvidenceServerData(methodOut.Evidence)")
 	require.NotContains(t, provider, "json.Marshal(methodOut.")
 
@@ -28,7 +28,7 @@ func TestGolden_ServerData_UsesGeneratedCodec(t *testing.T) {
 	require.NotContains(t, specs, "tools.ServerDataItem")
 
 	executor := generatedContentBySuffix(t, files, "agents/scribe/lookup/service_executor.go")
-	require.Contains(t, executor, "ByIDAuraEvidenceServerDataCodec.ToJSON")
+	require.Contains(t, executor, "ByIDAuraEvidenceServerDataCodec().ToJSON")
 	require.Contains(t, executor, "lookup.InitByIDAuraEvidenceServerData(mr.Evidence)")
 	require.NotContains(t, executor, "json.Marshal(mr.")
 	require.Contains(t, executor, "var serverData rawjson.Message")
