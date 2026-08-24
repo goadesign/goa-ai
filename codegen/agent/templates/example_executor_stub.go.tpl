@@ -1,15 +1,10 @@
 // {{ $.Toolset.Name }} executor stub for {{ $.Agent.StructName }}
 //
-// This file declares a minimal executor implementation for the method-backed
-// toolset {{ $.Toolset.Name }}. Replace the TODOs with real client calls and
-// optional transforms. Keep business logic out of main; import this package
-// from your service bootstrap when wiring agents.
-//
-// Header above defines package and imports; code below focuses on logic.
+// This starter runs the tools in {{ $.Toolset.Name }} that are handled by
+// service methods. Replace each TODO with the matching service call. Import
+// this package from the code that starts the agents.
 
-// Register registers the toolset with the runtime using the Execute stub below.
-// Replace Execute with a real implementation that calls the bound service client
-// and uses generated transforms when available.
+// Register makes the toolset available to the agent runtime.
 func Register(ctx context.Context, rt *runtime.Runtime) error {
     if rt == nil {
         return errors.New("runtime is required")
@@ -18,8 +13,7 @@ func Register(ctx context.Context, rt *runtime.Runtime) error {
     return rt.RegisterToolset(reg)
 }
 
-// Execute demonstrates per-tool branching with typed decode. Replace placeholders
-// with client calls and optional transforms from the specs package (transforms.go).
+// Execute validates each tool input before the application calls its service.
 func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.ToolRequest) (*runtime.ToolExecutionResult, error) {
     if call == nil {
         return nil, errors.New("tool request is nil")
@@ -29,9 +23,11 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
     }
     switch call.Name {
     {{- range .Tools }}
-    case "{{ .ID }}":
-        // Decode typed payload
-        args, err := {{ $.SpecsAlias }}.{{ .PayloadUnmarshal }}(call.Payload)
+    {{- if .Tool.IsMethodBacked }}
+    case "{{ .Tool.Name }}":
+        // Decode and validate the payload. Keep the returned value when adding
+        // the service call below.
+        _, err := {{ $.SpecsAlias }}.{{ .Spec.Payload.ExportedCodec }}.FromJSON(call.Payload)
         if err != nil {
             var issuer interface {
                 Issues() []*tools.FieldIssue
@@ -51,21 +47,19 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *planner.Tool
                         PriorInput: append(rawjson.Message(nil), call.Payload...),
                         ExampleJSON: append(
                             rawjson.Message(nil),
-                            {{ $.SpecsAlias }}.Spec{{ .ConstName }}.Payload.ExampleJSON...,
+                            {{ $.SpecsAlias }}.{{ .Spec.SpecVar }}.Payload.ExampleJSON...,
                         ),
                     },
                 },
 			}), nil
         }
-        // Optional: transform to method payload if compatible
-        // mp, _ := {{ $.SpecsAlias }}.ToMethodPayload_{{ .GoName }}(args)
-        // TODO: Call your service client with mp (or args), map result back:
-        // tr, _ := {{ $.SpecsAlias }}.ToToolReturn_{{ .GoName }}(methodRes)
+        // TODO: Call the service and return its result.
         return runtime.Executed(&planner.ToolResult{
 			Result: map[string]any{
 				"status": "ok",
 			},
 		}), nil
+    {{- end }}
     {{- end }}
     default:
         return runtime.Executed(&planner.ToolResult{

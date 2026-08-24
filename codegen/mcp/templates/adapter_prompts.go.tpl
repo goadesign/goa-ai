@@ -34,8 +34,11 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
     switch p.Name {
     {{ range .StaticPrompts }}
     case "{{ .Name }}":
+        if err := validateNoArguments(p.Arguments); err != nil {
+            return nil, goa.PermanentError("invalid_params", "prompt %q does not accept arguments: %s", p.Name, err)
+        }
         if a.promptProvider != nil {
-            if res, err := a.promptProvider.Get{{ goify .Name }}Prompt(p.Arguments); err == nil && res != nil {
+            if res, err := a.promptProvider.{{ .ProviderMethodName }}(p.Arguments); err == nil && res != nil {
                 a.log(ctx, "response", map[string]any{"method": "prompts/get", "name": p.Name})
                 return res, nil
             } else if err != nil {
@@ -64,33 +67,23 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
     switch p.Name {
         {{ range .DynamicPrompts }}
     case "{{ .Name }}":
-        {
-            {{ $hasRequired := false }}
-            {{ range .Arguments }}
-                {{ if .Required }}
-                    {{ $hasRequired = true }}
-                {{ end }}
-            {{ end }}
-            {{ if $hasRequired }}
-            var args map[string]any
-            if len(p.Arguments) > 0 {
-                if err := json.Unmarshal(p.Arguments, &args); err != nil {
-                    return nil, goa.PermanentError("invalid_params", "%s", err.Error())
-                }
-            }
-            {{ range .Arguments }}
-                {{ if .Required }}
-            if _, ok := args["{{ .Name }}"]; !ok {
-                return nil, goa.PermanentError("invalid_params", "Missing required argument: {{ .Name }}")
-            }
-                {{ end }}
-            {{ end }}
-            {{ end }}
+        {{- if .HasPayload }}
+        arguments := p.Arguments
+        if len(arguments) == 0 {
+            arguments = json.RawMessage("{}")
         }
+        if _, err := {{ $.CodecPackage }}.{{ .Codec.PayloadDecode }}(arguments); err != nil {
+            return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+        }
+        {{- else }}
+        if err := validateNoArguments(p.Arguments); err != nil {
+            return nil, goa.PermanentError("invalid_params", "prompt %q does not accept arguments: %s", p.Name, err)
+        }
+        {{- end }}
         if a.promptProvider == nil {
             return nil, goa.PermanentError("invalid_params", "No prompt provider configured for dynamic prompts")
         }
-        res, err := a.promptProvider.Get{{ goify .Name }}Prompt(ctx, p.Arguments)
+        res, err := a.promptProvider.{{ .ProviderMethodName }}(ctx, p.Arguments)
         if err != nil {
             return nil, a.mapError(err)
         }
@@ -99,8 +92,6 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
         {{ end }}
     }
     {{ end }}
-    return nil, goa.PermanentError("method_not_found", "Unknown prompt: %s", p.Name)
+    return nil, goa.PermanentError("invalid_params", "Unknown prompt: %s", p.Name)
 }
 {{- end }}
-
-

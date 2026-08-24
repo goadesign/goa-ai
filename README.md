@@ -233,16 +233,22 @@ out, err = client.OneShotRun(ctx, []*model.Message{{
 ### 5. Replace the Stub Planner
 
 Planners decide what happens next: final response, tool calls, await human input,
-or terminal tool result. During runtime-forced finalization, planners may also
-close through terminal bookkeeping tools; the runtime executes only
-`TerminalRun()` tools in that path (`TerminalRun()` implies bookkeeping) and
-requires the terminal side effects to succeed inside the remaining
-hard-deadline window. A `correct_call` failure keeps the failed tool available
-and supplies its rejected input and generated validation issues to the next
-planner turn. The planner may retry one or more calls, combine work, use another
-advertised tool, ask for input, or finish from evidence already collected.
-Caller `WithRestrictToTool` policy remains run-scoped and still applies to every
-tool. Tool executors decide how work is performed.
+or terminal tool result. By default, a run that reaches a time or call limit
+loads saved messages and asks the planner to finish. Applications whose terminal
+result is a fixed structured record may instead supply `LimitTerminalPlans`:
+one payload-only terminal call for each configured limit. The runtime validates
+all three calls before planning, then executes the matching `TerminalRun()` tool
+without loading saved messages. The individual `tool_failure` termination case
+always uses saved messages because its final response may depend on the failed
+result. A `correct_call` failure keeps the failed tool available and supplies
+its rejected input and generated validation issues to the next planner turn.
+The planner may retry one or more calls, combine work, use another advertised
+tool, ask for input, or finish from evidence already collected. Caller
+`WithRestrictToTool` still applies to every tool call for the entire run.
+For side-effect-owned operations, `WithRunCompletionTool` instead requires one
+declared non-terminal tool to succeed; planner text and limit finalization
+cannot substitute for that success.
+Tool executors decide how work is performed.
 
 ```go
 func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
@@ -492,13 +498,47 @@ Per-run options can further restrict execution:
 ```go
 out, err := client.Run(ctx, "session-1", messages,
 	runtime.WithRunTimeBudget(2*time.Minute),
+	runtime.WithLimitTerminalPlans(runtime.LimitTerminalPlans{
+		TimeBudget: runtime.LimitTerminalCall{
+			Name: "jobs.complete",
+			Payload: rawjson.Message(`{"outcome":"time_limit"}`),
+		},
+		ToolCallCap: runtime.LimitTerminalCall{
+			Name: "jobs.complete",
+			Payload: rawjson.Message(`{"outcome":"tool_limit"}`),
+		},
+		FailedToolCallCap: runtime.LimitTerminalCall{
+			Name: "jobs.complete",
+			Payload: rawjson.Message(`{"outcome":"failed_tool_limit"}`),
+		},
+	}),
+)
+```
+
+Tool filters remain independent run options:
+
+```go
+out, err := client.Run(ctx, "session-2", messages,
 	runtime.WithRestrictToTool("docs.search"),
+	runtime.WithRunCompletionTool("docs.search"),
 	runtime.WithTagPolicyClauses([]runtime.TagPolicyClause{
 		{AllowedAny: []string{"read", "safe"}},
 		{DeniedAny: []string{"destructive"}},
 	}),
 )
 ```
+
+`WithRunCompletionTool` is for operations whose success is the tool side effect,
+not a later assistant response. The named tool must belong to the executing
+agent, be budgeted, be non-terminal, and be allowed by the other run policies.
+Its call must be the only action in that planner response: another call or an
+await request is rejected. The run cannot request post-tool synthesis because
+the resulting terminal planner answer cannot satisfy the completion policy. A
+successful call ends the run immediately.
+Correctable failures may retry within the normal caps. Planner text, forced
+finalization, and exhausted caps or deadlines cannot substitute for the
+required tool success; those paths fail the run. Do not combine this option with
+`LimitTerminalPlans`, which assigns a different outcome to exhausted limits.
 
 ### External Input and Continuations
 
@@ -1116,6 +1156,10 @@ be distinguished safely from planner code returning a timeout-shaped error.
 ## Contributing
 
 Issues and PRs are welcome. Include a Goa design, a failing test, or a clear reproduction when reporting behavior. See [`AGENTS.md`](AGENTS.md) for repository guidelines.
+
+Run `make setup` once after cloning or when `.tool-versions` or `.go-install`
+changes. It installs the exact protobuf compiler and Go generators used by CI.
+Normal `make` targets verify those versions before building or generating code.
 
 ## License
 

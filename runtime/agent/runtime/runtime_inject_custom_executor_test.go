@@ -189,3 +189,16 @@ func TestCustomExecutorLabelInjection_MalformedLabelProducesPreciseToolError(t *
 	require.Contains(t, out.Failure.Error.Error(), `label "household_id" failed validation`)
 	require.Empty(t, gotHouseholdID)
 }
+
+// TestToolCallMetaCopiesRunLabels proves executors receive immutable run
+// context rather than a map shared with the workflow's tool request.
+func TestToolCallMetaCopiesRunLabels(t *testing.T) {
+	call := planner.ToolRequest{
+		Labels: map[string]string{"source": "events:7"},
+	}
+
+	meta := ToolCallMetaFromRequest(call)
+	call.Labels["source"] = "events:8"
+
+	require.Equal(t, "events:7", meta.Labels["source"])
+}

@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -18,12 +18,12 @@ func ServiceToolsetBindCross() func() {
 			})
 		})
 		Service("alpha", func() {
-			Agent("scribe", "Doc helper", func() {
-				Use("lookup", func() {
-					Tool("by_id", "Lookup by ID", func() {
-						Args(IDPayload)
-						Return(OKResult)
-						BindTo("bravo", "Lookup")
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use("lookup", func() {
+					aidsl.Tool("by_id", "Lookup by ID", func() {
+						aidsl.Args(IDPayload)
+						aidsl.Return(OKResult)
+						aidsl.BindTo("bravo", "Lookup")
 					})
 				})
 			})

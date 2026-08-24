@@ -7,7 +7,7 @@ const (
 
 var (
 {{- range .Completions }}
-    Spec{{ .ConstName }} = completion.Spec[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}]{
+    {{ .SpecVar }} = completion.Spec[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}]{
         Name:        {{ .ConstName }},
         Description: {{ printf "%q" .Description }},
         Result: tools.TypeSpec{
@@ -33,23 +33,23 @@ var (
 )
 
 {{- range .Completions }}
-// Decode{{ .ConstName }} decodes the structured assistant response for {{ .Name }}.
-func Decode{{ .ConstName }}(resp *model.Response) ({{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}, error) {
-    return completion.DecodeResponse(resp, Spec{{ .ConstName }})
+// {{ .DecodeFunc }} decodes the structured assistant response for {{ .Name }}.
+func {{ .DecodeFunc }}(resp *model.Response) ({{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}, error) {
+    return completion.DecodeResponse(resp, {{ .SpecVar }})
 }
 
-// Decode{{ .ConstName }}Chunk decodes the final structured completion chunk for {{ .Name }}.
-func Decode{{ .ConstName }}Chunk(chunk model.Chunk) ({{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}, bool, error) {
-    return completion.DecodeChunk(chunk, Spec{{ .ConstName }})
+// {{ .DecodeChunk }} decodes the final structured completion chunk for {{ .Name }}.
+func {{ .DecodeChunk }}(chunk model.Chunk) ({{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}, bool, error) {
+    return completion.DecodeChunk(chunk, {{ .SpecVar }})
 }
 
-// Complete{{ .ConstName }} runs the unary typed completion for {{ .Name }}.
-func Complete{{ .ConstName }}(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}], error) {
-    return completion.Complete(ctx, client, req, Spec{{ .ConstName }})
+// {{ .Complete }} runs the typed completion for {{ .Name }}.
+func {{ .Complete }}(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}], error) {
+    return completion.Complete(ctx, client, req, {{ .SpecVar }})
 }
 
-// StreamComplete{{ .ConstName }} starts the typed completion stream for {{ .Name }}.
-func StreamComplete{{ .ConstName }}(ctx context.Context, client model.Client, req *model.Request) (model.Streamer, error) {
-    return completion.Stream(ctx, client, req, Spec{{ .ConstName }})
+// {{ .Stream }} starts the typed completion stream for {{ .Name }}.
+func {{ .Stream }}(ctx context.Context, client model.Client, req *model.Request) (model.Streamer, error) {
+    return completion.Stream(ctx, client, req, {{ .SpecVar }})
 }
 {{- end }}

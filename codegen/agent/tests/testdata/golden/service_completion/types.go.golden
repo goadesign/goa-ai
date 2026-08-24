@@ -13,16 +13,16 @@ type (
 		AssistantText string
 		Draft         Draft
 	}
-	// CompletionDraft is a helper type materialized for nested references.
+	// CompletionDraft is a nested type used by generated tool data.
 	CompletionDraft = struct {
 		// Draft steps
 		Steps []*CompletionStep
 	}
-	// CompletionStep is a helper type materialized for nested references.
+	// CompletionStep is a nested type used by generated tool data.
 	CompletionStep = struct {
 		// User-visible step label
 		Label string
 	}
-	// DraftExistingTaskID is a helper type materialized for nested references.
+	// DraftExistingTaskID is a nested type used by generated tool data.
 	DraftExistingTaskID = string
 )

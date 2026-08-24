@@ -1,5 +1,8 @@
 package runtime
 
+// This file exposes the runtime input, output, policy, and registration values
+// used by generated agents, callers, and workflow workers.
+
 import (
 	"context"
 	"errors"
@@ -29,6 +32,15 @@ type (
 	// PolicyOverrides configures per-run policy constraints.
 	// All fields are optional; zero values mean no override.
 	PolicyOverrides = api.PolicyOverrides
+
+	// LimitTerminalPlans contains the terminal tool calls selected when a run
+	// reaches its time, tool-call, or failed-call limit.
+	LimitTerminalPlans = api.LimitTerminalPlans
+
+	// LimitTerminalCall contains one terminal tool name and a JSON payload that
+	// its generated codec accepts. Goa-AI supplies all execution identifiers and
+	// labels.
+	LimitTerminalCall = api.LimitTerminalCall
 
 	// TagPolicyClause describes one tag-policy clause applied to advertised and
 	// executable tools for a run.
@@ -75,6 +87,11 @@ type (
 		// invocation is a child (for example a tool launched by an agent-tool).
 		// UIs and subscribers use it to reconstruct the call tree.
 		ParentToolCallID string
+
+		// Labels is a copy of the immutable run labels attached before the
+		// workflow started. Executors may use it for mechanical context that
+		// must not be supplied by the model.
+		Labels map[string]string
 	}
 
 	// ResultMaterializer enriches a typed tool result before the runtime encodes

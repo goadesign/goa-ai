@@ -44,7 +44,7 @@ var (
 {{- /* Emit field descriptions map per type if available */ -}}
 {{- range .Types }}
 {{- if .FieldDescs }}
-var {{ .TypeName }}FieldDescs = map[string]string{
+var {{ .FieldDescsVar }} = map[string]string{
     {{- range $k, $v := .FieldDescs }}
     {{ printf "%q" $k }}: {{ printf "%q" $v }},
     {{- end }}
@@ -55,7 +55,7 @@ var {{ .TypeName }}FieldDescs = map[string]string{
 {{- /* Emit generated JSON type metadata per type if available */ -}}
 {{- range .Types }}
 {{- if .FieldJSONTypes }}
-var {{ .TypeName }}FieldJSONTypes = map[string]string{
+var {{ .FieldJSONTypesVar }} = map[string]string{
     {{- range $k, $v := .FieldJSONTypes }}
     {{ printf "%q" $k }}: {{ printf "%q" $v }},
     {{- end }}
@@ -66,7 +66,7 @@ var {{ .TypeName }}FieldJSONTypes = map[string]string{
 {{- /* Emit generated closed-object key metadata per type if available */ -}}
 {{- range .Types }}
 {{- if .FieldAllowedObjectKeys }}
-var {{ .TypeName }}FieldAllowedObjectKeys = map[string][]string{
+var {{ .FieldAllowedObjectKeysVar }} = map[string][]string{
     {{- range $path, $keys := .FieldAllowedObjectKeys }}
     {{ printf "%q" $path }}: {
         {{- range $keys }}
@@ -123,7 +123,7 @@ func newValidationError(err error) error {
 {{- /* Per-type enrichment attaching descriptions for any type with validation (payload or non-payload) */ -}}
 {{- range .Types }}
 {{- if and .FieldDescs .TransportValidationSrc (ne (index .TransportValidationSrc 0) "") }}
-func enrich{{ .TypeName }}ValidationError(err error) error {
+func {{ .EnrichValidationFunc }}(err error) error {
     var ve *tools.ValidationError
     if !errors.As(err, &ve) {
         return err
@@ -135,7 +135,7 @@ func enrich{{ .TypeName }}ValidationError(err error) error {
     m := make(map[string]string)
     {{- if .FieldDescs }}
     for _, is := range issues {
-        if d, ok := {{ .TypeName }}FieldDescs[is.Field]; ok && d != "" {
+        if d, ok := {{ .FieldDescsVar }}[is.Field]; ok && d != "" {
             m[is.Field] = d
         }
     }
@@ -147,7 +147,7 @@ func enrich{{ .TypeName }}ValidationError(err error) error {
 
 {{- range .Types }}
 {{- if .FieldJSONTypes }}
-func invalid{{ .TypeName }}FieldTypeError(err error) error {
+func {{ .InvalidFieldTypeFunc }}(err error) error {
     var typeErr *json.UnmarshalTypeError
     if !errors.As(err, &typeErr) {
         return err
@@ -159,7 +159,7 @@ func invalid{{ .TypeName }}FieldTypeError(err error) error {
     if field == "" {
         field = "$payload"
     }
-    expected, ok := {{ .TypeName }}FieldJSONTypes[field]
+    expected, ok := {{ .FieldJSONTypesVar }}[field]
     if !ok {
         return err
     }
@@ -219,7 +219,7 @@ func ResultCodec(name string) (*tools.JSONCodec[any], bool) {
 func {{ .MarshalFunc }}(v {{ if .Pointer }}*{{ end }}{{ .FullRef }}) ([]byte, error) {
     {{- if .Pointer }}
     if v == nil {
-        {{- if eq .Usage "sidecar" }}
+        {{- if eq .Usage "server-data" }}
         return []byte("null"), nil
         {{- else }}
         return nil, fmt.Errorf("{{ .NilError }}")
@@ -257,7 +257,7 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     {{- if .TransportTypeName }}
     var tv toolhttp.{{ .TransportTypeName }}
     {{- if .FieldAllowedObjectKeys }}
-    if err := decodeKnownJSON(data, &tv, {{ .TypeName }}FieldAllowedObjectKeys); err != nil {
+    if err := decodeKnownJSON(data, &tv, {{ .FieldAllowedObjectKeysVar }}); err != nil {
     {{- else if eq .Usage "payload" }}
     if err := decodeStrictJSON(data, &tv); err != nil {
     {{- else }}
@@ -265,9 +265,9 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     {{- end }}
         {{- if .FieldJSONTypes }}
         {{- if .Pointer }}
-        return nil, invalid{{ .TypeName }}FieldTypeError(err)
+        return nil, {{ .InvalidFieldTypeFunc }}(err)
         {{- else }}
-        return zero, invalid{{ .TypeName }}FieldTypeError(err)
+        return zero, {{ .InvalidFieldTypeFunc }}(err)
         {{- end }}
         {{- else }}
         {{- if .Pointer }}
@@ -278,10 +278,10 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
         {{- end }}
     }
     {{- if .TransportValidationSrc }}
-    if err := toolhttp.Validate{{ .TransportTypeName }}({{ if .TransportPointer }}&{{ end }}tv); err != nil {
+    if err := toolhttp.{{ .ValidateFunc }}({{ if .TransportPointer }}&{{ end }}tv); err != nil {
         err = newValidationError(err)
         {{- if .FieldDescs }}
-        err = enrich{{ .TypeName }}ValidationError(err)
+        err = {{ .EnrichValidationFunc }}(err)
         {{- end }}
         {{- if .Pointer }}
         return nil, err
@@ -298,14 +298,14 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     {{- else }}
     var v {{ .FullRef }}
     {{- if .FieldAllowedObjectKeys }}
-    if err := decodeKnownJSON(data, &v, {{ .TypeName }}FieldAllowedObjectKeys); err != nil {
+    if err := decodeKnownJSON(data, &v, {{ .FieldAllowedObjectKeysVar }}); err != nil {
     {{- else if eq .Usage "payload" }}
     if err := decodeStrictJSON(data, &v); err != nil {
     {{- else }}
     if err := json.Unmarshal(data, &v); err != nil {
     {{- end }}
         {{- if .FieldJSONTypes }}
-        err = invalid{{ .TypeName }}FieldTypeError(err)
+        err = {{ .InvalidFieldTypeFunc }}(err)
         {{- end }}
         {{- if .Pointer }}
         return nil, fmt.Errorf("{{ .DecodeError }}: %w", err)

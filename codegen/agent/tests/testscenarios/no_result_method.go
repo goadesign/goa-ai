@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -22,10 +22,10 @@ func NoResultMethod() func() {
 		})
 		// Agent on a different service binds a tool to the tasks.purge method.
 		Service("alpha", func() {
-			Agent("scribe", "Ops", func() {
-				Use("ops", func() {
-					Tool("purge", "Purge", func() {
-						BindTo("tasks", "purge")
+			aidsl.Agent("scribe", "Ops", func() {
+				aidsl.Use("ops", func() {
+					aidsl.Tool("purge", "Purge", func() {
+						aidsl.BindTo("tasks", "purge")
 					})
 				})
 			})

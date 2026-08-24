@@ -10,6 +10,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -63,21 +64,31 @@ func EncodeInitializeRequest(encoder func(*http.Request) goahttp.Encoder) func(*
 // mcp_assistant service initialize JSON-RPC method. restoreBody controls
 // whether the response body should be restored after having been read.
 func DecodeInitializeResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
 		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "initialize", err)
 			}
 			resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			defer func() {
 				resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("mcp_assistant", "initialize", err))
+				}
+			}()
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "initialize", err)
+			}
 			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "initialize", resp.StatusCode, string(body))
 		}
 
@@ -88,9 +99,38 @@ func DecodeInitializeResponse(decoder func(*http.Response) goahttp.Decoder, rest
 
 		if jresp.Error != nil {
 			switch jresp.Error.Code {
+			case -32602:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body InitializeInvalidParamsResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "initialize", err)
+				}
+				err = ValidateInitializeInvalidParamsResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "initialize", err)
+				}
+				return nil, NewInitializeInvalidParams(&body)
+			case -32603:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body InitializeInternalErrorResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "initialize", err)
+				}
+				err = ValidateInitializeInternalErrorResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "initialize", err)
+				}
+				return nil, NewInitializeInternalError(&body)
 			default:
-				body, _ := io.ReadAll(resp.Body)
-				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "initialize", resp.StatusCode, string(body))
+				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "initialize", resp.StatusCode, string(jresp.Error.Data))
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
@@ -149,21 +189,31 @@ func EncodePingRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.R
 // mcp_assistant service ping JSON-RPC method. restoreBody controls whether the
 // response body should be restored after having been read.
 func DecodePingResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
 		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "ping", err)
 			}
 			resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			defer func() {
 				resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("mcp_assistant", "ping", err))
+				}
+			}()
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "ping", err)
+			}
 			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "ping", resp.StatusCode, string(body))
 		}
 
@@ -174,9 +224,38 @@ func DecodePingResponse(decoder func(*http.Response) goahttp.Decoder, restoreBod
 
 		if jresp.Error != nil {
 			switch jresp.Error.Code {
+			case -32602:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body PingInvalidParamsResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "ping", err)
+				}
+				err = ValidatePingInvalidParamsResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "ping", err)
+				}
+				return nil, NewPingInvalidParams(&body)
+			case -32603:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body PingInternalErrorResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "ping", err)
+				}
+				err = ValidatePingInternalErrorResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "ping", err)
+				}
+				return nil, NewPingInternalError(&body)
 			default:
-				body, _ := io.ReadAll(resp.Body)
-				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "ping", resp.StatusCode, string(body))
+				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "ping", resp.StatusCode, string(jresp.Error.Data))
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
@@ -240,21 +319,31 @@ func EncodeToolsListRequest(encoder func(*http.Request) goahttp.Encoder) func(*h
 // mcp_assistant service tools/list JSON-RPC method. restoreBody controls
 // whether the response body should be restored after having been read.
 func DecodeToolsListResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
 		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "tools/list", err)
 			}
 			resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			defer func() {
 				resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("mcp_assistant", "tools/list", err))
+				}
+			}()
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "tools/list", err)
+			}
 			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "tools/list", resp.StatusCode, string(body))
 		}
 
@@ -265,9 +354,38 @@ func DecodeToolsListResponse(decoder func(*http.Response) goahttp.Decoder, resto
 
 		if jresp.Error != nil {
 			switch jresp.Error.Code {
+			case -32602:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body ToolsListInvalidParamsResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "tools/list", err)
+				}
+				err = ValidateToolsListInvalidParamsResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "tools/list", err)
+				}
+				return nil, NewToolsListInvalidParams(&body)
+			case -32603:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body ToolsListInternalErrorResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "tools/list", err)
+				}
+				err = ValidateToolsListInternalErrorResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "tools/list", err)
+				}
+				return nil, NewToolsListInternalError(&body)
 			default:
-				body, _ := io.ReadAll(resp.Body)
-				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "tools/list", resp.StatusCode, string(body))
+				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "tools/list", resp.StatusCode, string(jresp.Error.Data))
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
@@ -331,21 +449,31 @@ func EncodeToolsCallRequest(encoder func(*http.Request) goahttp.Encoder) func(*h
 // mcp_assistant service tools/call JSON-RPC method. restoreBody controls
 // whether the response body should be restored after having been read.
 func DecodeToolsCallResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
 		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "tools/call", err)
 			}
 			resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			defer func() {
 				resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("mcp_assistant", "tools/call", err))
+				}
+			}()
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "tools/call", err)
+			}
 			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "tools/call", resp.StatusCode, string(body))
 		}
 
@@ -356,9 +484,38 @@ func DecodeToolsCallResponse(decoder func(*http.Response) goahttp.Decoder, resto
 
 		if jresp.Error != nil {
 			switch jresp.Error.Code {
+			case -32602:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body ToolsCallInvalidParamsResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "tools/call", err)
+				}
+				err = ValidateToolsCallInvalidParamsResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "tools/call", err)
+				}
+				return nil, NewToolsCallInvalidParams(&body)
+			case -32603:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body ToolsCallInternalErrorResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "tools/call", err)
+				}
+				err = ValidateToolsCallInternalErrorResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "tools/call", err)
+				}
+				return nil, NewToolsCallInternalError(&body)
 			default:
-				body, _ := io.ReadAll(resp.Body)
-				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "tools/call", resp.StatusCode, string(body))
+				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "tools/call", resp.StatusCode, string(jresp.Error.Data))
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
@@ -422,21 +579,31 @@ func EncodeResourcesListRequest(encoder func(*http.Request) goahttp.Encoder) fun
 // mcp_assistant service resources/list JSON-RPC method. restoreBody controls
 // whether the response body should be restored after having been read.
 func DecodeResourcesListResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
 		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/list", err)
 			}
 			resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			defer func() {
 				resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("mcp_assistant", "resources/list", err))
+				}
+			}()
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/list", err)
+			}
 			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/list", resp.StatusCode, string(body))
 		}
 
@@ -447,9 +614,38 @@ func DecodeResourcesListResponse(decoder func(*http.Response) goahttp.Decoder, r
 
 		if jresp.Error != nil {
 			switch jresp.Error.Code {
+			case -32602:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body ResourcesListInvalidParamsResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/list", err)
+				}
+				err = ValidateResourcesListInvalidParamsResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "resources/list", err)
+				}
+				return nil, NewResourcesListInvalidParams(&body)
+			case -32603:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body ResourcesListInternalErrorResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/list", err)
+				}
+				err = ValidateResourcesListInternalErrorResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "resources/list", err)
+				}
+				return nil, NewResourcesListInternalError(&body)
 			default:
-				body, _ := io.ReadAll(resp.Body)
-				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/list", resp.StatusCode, string(body))
+				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/list", resp.StatusCode, string(jresp.Error.Data))
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
@@ -513,21 +709,31 @@ func EncodeResourcesReadRequest(encoder func(*http.Request) goahttp.Encoder) fun
 // mcp_assistant service resources/read JSON-RPC method. restoreBody controls
 // whether the response body should be restored after having been read.
 func DecodeResourcesReadResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
 		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/read", err)
 			}
 			resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			defer func() {
 				resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("mcp_assistant", "resources/read", err))
+				}
+			}()
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/read", err)
+			}
 			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/read", resp.StatusCode, string(body))
 		}
 
@@ -538,9 +744,38 @@ func DecodeResourcesReadResponse(decoder func(*http.Response) goahttp.Decoder, r
 
 		if jresp.Error != nil {
 			switch jresp.Error.Code {
+			case -32602:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body ResourcesReadInvalidParamsResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/read", err)
+				}
+				err = ValidateResourcesReadInvalidParamsResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "resources/read", err)
+				}
+				return nil, NewResourcesReadInvalidParams(&body)
+			case -32603:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body ResourcesReadInternalErrorResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/read", err)
+				}
+				err = ValidateResourcesReadInternalErrorResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "resources/read", err)
+				}
+				return nil, NewResourcesReadInternalError(&body)
 			default:
-				body, _ := io.ReadAll(resp.Body)
-				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/read", resp.StatusCode, string(body))
+				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/read", resp.StatusCode, string(jresp.Error.Data))
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
@@ -605,21 +840,31 @@ func EncodeResourcesSubscribeRequest(encoder func(*http.Request) goahttp.Encoder
 // the mcp_assistant service resources/subscribe JSON-RPC method. restoreBody
 // controls whether the response body should be restored after having been read.
 func DecodeResourcesSubscribeResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
 		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/subscribe", err)
 			}
 			resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			defer func() {
 				resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("mcp_assistant", "resources/subscribe", err))
+				}
+			}()
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/subscribe", err)
+			}
 			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/subscribe", resp.StatusCode, string(body))
 		}
 
@@ -630,9 +875,38 @@ func DecodeResourcesSubscribeResponse(decoder func(*http.Response) goahttp.Decod
 
 		if jresp.Error != nil {
 			switch jresp.Error.Code {
+			case -32602:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body ResourcesSubscribeInvalidParamsResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/subscribe", err)
+				}
+				err = ValidateResourcesSubscribeInvalidParamsResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "resources/subscribe", err)
+				}
+				return nil, NewResourcesSubscribeInvalidParams(&body)
+			case -32603:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body ResourcesSubscribeInternalErrorResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/subscribe", err)
+				}
+				err = ValidateResourcesSubscribeInternalErrorResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "resources/subscribe", err)
+				}
+				return nil, NewResourcesSubscribeInternalError(&body)
 			default:
-				body, _ := io.ReadAll(resp.Body)
-				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/subscribe", resp.StatusCode, string(body))
+				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/subscribe", resp.StatusCode, string(jresp.Error.Data))
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
@@ -685,21 +959,31 @@ func EncodeResourcesUnsubscribeRequest(encoder func(*http.Request) goahttp.Encod
 // restoreBody controls whether the response body should be restored after
 // having been read.
 func DecodeResourcesUnsubscribeResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
 		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/unsubscribe", err)
 			}
 			resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			defer func() {
 				resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("mcp_assistant", "resources/unsubscribe", err))
+				}
+			}()
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/unsubscribe", err)
+			}
 			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/unsubscribe", resp.StatusCode, string(body))
 		}
 
@@ -710,9 +994,38 @@ func DecodeResourcesUnsubscribeResponse(decoder func(*http.Response) goahttp.Dec
 
 		if jresp.Error != nil {
 			switch jresp.Error.Code {
+			case -32602:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body ResourcesUnsubscribeInvalidParamsResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/unsubscribe", err)
+				}
+				err = ValidateResourcesUnsubscribeInvalidParamsResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "resources/unsubscribe", err)
+				}
+				return nil, NewResourcesUnsubscribeInvalidParams(&body)
+			case -32603:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body ResourcesUnsubscribeInternalErrorResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/unsubscribe", err)
+				}
+				err = ValidateResourcesUnsubscribeInternalErrorResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "resources/unsubscribe", err)
+				}
+				return nil, NewResourcesUnsubscribeInternalError(&body)
 			default:
-				body, _ := io.ReadAll(resp.Body)
-				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/unsubscribe", resp.StatusCode, string(body))
+				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/unsubscribe", resp.StatusCode, string(jresp.Error.Data))
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
@@ -763,21 +1076,31 @@ func EncodePromptsListRequest(encoder func(*http.Request) goahttp.Encoder) func(
 // mcp_assistant service prompts/list JSON-RPC method. restoreBody controls
 // whether the response body should be restored after having been read.
 func DecodePromptsListResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
 		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "prompts/list", err)
 			}
 			resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			defer func() {
 				resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("mcp_assistant", "prompts/list", err))
+				}
+			}()
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "prompts/list", err)
+			}
 			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "prompts/list", resp.StatusCode, string(body))
 		}
 
@@ -788,9 +1111,38 @@ func DecodePromptsListResponse(decoder func(*http.Response) goahttp.Decoder, res
 
 		if jresp.Error != nil {
 			switch jresp.Error.Code {
+			case -32602:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body PromptsListInvalidParamsResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "prompts/list", err)
+				}
+				err = ValidatePromptsListInvalidParamsResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "prompts/list", err)
+				}
+				return nil, NewPromptsListInvalidParams(&body)
+			case -32603:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body PromptsListInternalErrorResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "prompts/list", err)
+				}
+				err = ValidatePromptsListInternalErrorResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "prompts/list", err)
+				}
+				return nil, NewPromptsListInternalError(&body)
 			default:
-				body, _ := io.ReadAll(resp.Body)
-				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "prompts/list", resp.StatusCode, string(body))
+				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "prompts/list", resp.StatusCode, string(jresp.Error.Data))
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
@@ -854,21 +1206,31 @@ func EncodePromptsGetRequest(encoder func(*http.Request) goahttp.Encoder) func(*
 // mcp_assistant service prompts/get JSON-RPC method. restoreBody controls
 // whether the response body should be restored after having been read.
 func DecodePromptsGetResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
 		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "prompts/get", err)
 			}
 			resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			defer func() {
 				resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("mcp_assistant", "prompts/get", err))
+				}
+			}()
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "prompts/get", err)
+			}
 			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "prompts/get", resp.StatusCode, string(body))
 		}
 
@@ -879,9 +1241,38 @@ func DecodePromptsGetResponse(decoder func(*http.Response) goahttp.Decoder, rest
 
 		if jresp.Error != nil {
 			switch jresp.Error.Code {
+			case -32602:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body PromptsGetInvalidParamsResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "prompts/get", err)
+				}
+				err = ValidatePromptsGetInvalidParamsResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "prompts/get", err)
+				}
+				return nil, NewPromptsGetInvalidParams(&body)
+			case -32603:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body PromptsGetInternalErrorResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "prompts/get", err)
+				}
+				err = ValidatePromptsGetInternalErrorResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "prompts/get", err)
+				}
+				return nil, NewPromptsGetInternalError(&body)
 			default:
-				body, _ := io.ReadAll(resp.Body)
-				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "prompts/get", resp.StatusCode, string(body))
+				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "prompts/get", resp.StatusCode, string(jresp.Error.Data))
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
@@ -946,21 +1337,31 @@ func EncodeNotifyStatusUpdateRequest(encoder func(*http.Request) goahttp.Encoder
 // the mcp_assistant service notify_status_update JSON-RPC method. restoreBody
 // controls whether the response body should be restored after having been read.
 func DecodeNotifyStatusUpdateResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
 		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "notify_status_update", err)
 			}
 			resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			defer func() {
 				resp.Body = io.NopCloser(bytes.NewBuffer(b))
 			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("mcp_assistant", "notify_status_update", err))
+				}
+			}()
 		}
-		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "notify_status_update", err)
+			}
 			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "notify_status_update", resp.StatusCode, string(body))
 		}
 
@@ -971,9 +1372,38 @@ func DecodeNotifyStatusUpdateResponse(decoder func(*http.Response) goahttp.Decod
 
 		if jresp.Error != nil {
 			switch jresp.Error.Code {
+			case -32602:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body NotifyStatusUpdateInvalidParamsResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "notify_status_update", err)
+				}
+				err = ValidateNotifyStatusUpdateInvalidParamsResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "notify_status_update", err)
+				}
+				return nil, NewNotifyStatusUpdateInvalidParams(&body)
+			case -32603:
+				resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Error.Data))
+				var (
+					body NotifyStatusUpdateInternalErrorResponseBody
+					err  error
+				)
+				err = decoder(resp).Decode(&body)
+				if err != nil {
+					return nil, goahttp.ErrDecodingError("mcp_assistant", "notify_status_update", err)
+				}
+				err = ValidateNotifyStatusUpdateInternalErrorResponseBody(&body)
+				if err != nil {
+					return nil, goahttp.ErrValidationError("mcp_assistant", "notify_status_update", err)
+				}
+				return nil, NewNotifyStatusUpdateInternalError(&body)
 			default:
-				body, _ := io.ReadAll(resp.Body)
-				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "notify_status_update", resp.StatusCode, string(body))
+				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "notify_status_update", resp.StatusCode, string(jresp.Error.Data))
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
@@ -1015,64 +1445,10 @@ func EncodeEventsStreamRequest(encoder func(*http.Request) goahttp.Encoder) func
 	}
 }
 
-// DecodeEventsStreamResponse returns a decoder for responses returned by the
-// mcp_assistant service events/stream JSON-RPC method. restoreBody controls
-// whether the response body should be restored after having been read.
-func DecodeEventsStreamResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (any, error) {
-		if restoreBody {
-			b, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, err
-			}
-			resp.Body = io.NopCloser(bytes.NewBuffer(b))
-			defer func() {
-				resp.Body = io.NopCloser(bytes.NewBuffer(b))
-			}()
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "events/stream", resp.StatusCode, string(body))
-		}
-
-		var jresp jsonrpc.RawResponse
-		if err := decoder(resp).Decode(&jresp); err != nil {
-			return nil, goahttp.ErrDecodingError("mcp_assistant", "events/stream", err)
-		}
-
-		if jresp.Error != nil {
-			switch jresp.Error.Code {
-			default:
-				body, _ := io.ReadAll(resp.Body)
-				return nil, goahttp.ErrInvalidResponse("mcp_assistant", "events/stream", resp.StatusCode, string(body))
-			}
-		}
-		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
-		var (
-			body EventsStreamResponseBody
-			err  error
-		)
-		err = decoder(resp).Decode(&body)
-		if err != nil {
-			return nil, goahttp.ErrDecodingError("mcp_assistant", "events/stream", err)
-		}
-		err = ValidateEventsStreamResponseBody(&body)
-		if err != nil {
-			return nil, goahttp.ErrValidationError("mcp_assistant", "events/stream", err)
-		}
-		res := NewEventsStreamResultOK(&body)
-		return res, nil
-	}
-}
-
-// marshalMcpassistantClientInfoToClientInfoRequestBodyRequestBodyRequestBodyRequestBody
-// builds a value of type
-// *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody from a value of type
-// *mcpassistant.ClientInfo.
-func marshalMcpassistantClientInfoToClientInfoRequestBodyRequestBodyRequestBodyRequestBody(v *mcpassistant.ClientInfo) *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody {
-	res := &ClientInfoRequestBodyRequestBodyRequestBodyRequestBody{
+// marshalMcpassistantClientInfoToClientInfoRequestBody builds a value of type
+// *ClientInfoRequestBody from a value of type *mcpassistant.ClientInfo.
+func marshalMcpassistantClientInfoToClientInfoRequestBody(v *mcpassistant.ClientInfo) *ClientInfoRequestBody {
+	res := &ClientInfoRequestBody{
 		Name:    v.Name,
 		Version: v.Version,
 	}
@@ -1080,10 +1456,9 @@ func marshalMcpassistantClientInfoToClientInfoRequestBodyRequestBodyRequestBodyR
 	return res
 }
 
-// marshalClientInfoRequestBodyRequestBodyRequestBodyRequestBodyToMcpassistantClientInfo
-// builds a value of type *mcpassistant.ClientInfo from a value of type
-// *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody.
-func marshalClientInfoRequestBodyRequestBodyRequestBodyRequestBodyToMcpassistantClientInfo(v *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody) *mcpassistant.ClientInfo {
+// marshalClientInfoRequestBodyToMcpassistantClientInfo builds a value of type
+// *mcpassistant.ClientInfo from a value of type *ClientInfoRequestBody.
+func marshalClientInfoRequestBodyToMcpassistantClientInfo(v *ClientInfoRequestBody) *mcpassistant.ClientInfo {
 	res := &mcpassistant.ClientInfo{
 		Name:    v.Name,
 		Version: v.Version,
@@ -1092,28 +1467,28 @@ func marshalClientInfoRequestBodyRequestBodyRequestBodyRequestBodyToMcpassistant
 	return res
 }
 
-// unmarshalServerCapabilitiesResponseBodyResponseBodyToMcpassistantServerCapabilities
+// unmarshalServerCapabilitiesResponseBodyToMcpassistantServerCapabilities
 // builds a value of type *mcpassistant.ServerCapabilities from a value of type
-// *ServerCapabilitiesResponseBodyResponseBody.
-func unmarshalServerCapabilitiesResponseBodyResponseBodyToMcpassistantServerCapabilities(v *ServerCapabilitiesResponseBodyResponseBody) *mcpassistant.ServerCapabilities {
+// *ServerCapabilitiesResponseBody.
+func unmarshalServerCapabilitiesResponseBodyToMcpassistantServerCapabilities(v *ServerCapabilitiesResponseBody) *mcpassistant.ServerCapabilities {
 	res := &mcpassistant.ServerCapabilities{}
 	if v.Tools != nil {
-		res.Tools = unmarshalToolsCapabilityResponseBodyResponseBodyToMcpassistantToolsCapability(v.Tools)
+		res.Tools = unmarshalToolsCapabilityResponseBodyToMcpassistantToolsCapabilityOptional(v.Tools)
 	}
 	if v.Resources != nil {
-		res.Resources = unmarshalResourcesCapabilityResponseBodyResponseBodyToMcpassistantResourcesCapability(v.Resources)
+		res.Resources = unmarshalResourcesCapabilityResponseBodyToMcpassistantResourcesCapabilityOptional(v.Resources)
 	}
 	if v.Prompts != nil {
-		res.Prompts = unmarshalPromptsCapabilityResponseBodyResponseBodyToMcpassistantPromptsCapability(v.Prompts)
+		res.Prompts = unmarshalPromptsCapabilityResponseBodyToMcpassistantPromptsCapabilityOptional(v.Prompts)
 	}
 
 	return res
 }
 
-// unmarshalToolsCapabilityResponseBodyResponseBodyToMcpassistantToolsCapability
+// unmarshalToolsCapabilityResponseBodyToMcpassistantToolsCapabilityOptional
 // builds a value of type *mcpassistant.ToolsCapability from a value of type
-// *ToolsCapabilityResponseBodyResponseBody.
-func unmarshalToolsCapabilityResponseBodyResponseBodyToMcpassistantToolsCapability(v *ToolsCapabilityResponseBodyResponseBody) *mcpassistant.ToolsCapability {
+// *ToolsCapabilityResponseBody.
+func unmarshalToolsCapabilityResponseBodyToMcpassistantToolsCapabilityOptional(v *ToolsCapabilityResponseBody) *mcpassistant.ToolsCapability {
 	if v == nil {
 		return nil
 	}
@@ -1122,10 +1497,10 @@ func unmarshalToolsCapabilityResponseBodyResponseBodyToMcpassistantToolsCapabili
 	return res
 }
 
-// unmarshalResourcesCapabilityResponseBodyResponseBodyToMcpassistantResourcesCapability
+// unmarshalResourcesCapabilityResponseBodyToMcpassistantResourcesCapabilityOptional
 // builds a value of type *mcpassistant.ResourcesCapability from a value of
-// type *ResourcesCapabilityResponseBodyResponseBody.
-func unmarshalResourcesCapabilityResponseBodyResponseBodyToMcpassistantResourcesCapability(v *ResourcesCapabilityResponseBodyResponseBody) *mcpassistant.ResourcesCapability {
+// type *ResourcesCapabilityResponseBody.
+func unmarshalResourcesCapabilityResponseBodyToMcpassistantResourcesCapabilityOptional(v *ResourcesCapabilityResponseBody) *mcpassistant.ResourcesCapability {
 	if v == nil {
 		return nil
 	}
@@ -1134,10 +1509,10 @@ func unmarshalResourcesCapabilityResponseBodyResponseBodyToMcpassistantResources
 	return res
 }
 
-// unmarshalPromptsCapabilityResponseBodyResponseBodyToMcpassistantPromptsCapability
+// unmarshalPromptsCapabilityResponseBodyToMcpassistantPromptsCapabilityOptional
 // builds a value of type *mcpassistant.PromptsCapability from a value of type
-// *PromptsCapabilityResponseBodyResponseBody.
-func unmarshalPromptsCapabilityResponseBodyResponseBodyToMcpassistantPromptsCapability(v *PromptsCapabilityResponseBodyResponseBody) *mcpassistant.PromptsCapability {
+// *PromptsCapabilityResponseBody.
+func unmarshalPromptsCapabilityResponseBodyToMcpassistantPromptsCapabilityOptional(v *PromptsCapabilityResponseBody) *mcpassistant.PromptsCapability {
 	if v == nil {
 		return nil
 	}
@@ -1146,10 +1521,9 @@ func unmarshalPromptsCapabilityResponseBodyResponseBodyToMcpassistantPromptsCapa
 	return res
 }
 
-// unmarshalServerInfoResponseBodyResponseBodyToMcpassistantServerInfo builds a
-// value of type *mcpassistant.ServerInfo from a value of type
-// *ServerInfoResponseBodyResponseBody.
-func unmarshalServerInfoResponseBodyResponseBodyToMcpassistantServerInfo(v *ServerInfoResponseBodyResponseBody) *mcpassistant.ServerInfo {
+// unmarshalServerInfoResponseBodyToMcpassistantServerInfo builds a value of
+// type *mcpassistant.ServerInfo from a value of type *ServerInfoResponseBody.
+func unmarshalServerInfoResponseBodyToMcpassistantServerInfo(v *ServerInfoResponseBody) *mcpassistant.ServerInfo {
 	res := &mcpassistant.ServerInfo{
 		Name:    *v.Name,
 		Version: *v.Version,
@@ -1158,10 +1532,9 @@ func unmarshalServerInfoResponseBodyResponseBodyToMcpassistantServerInfo(v *Serv
 	return res
 }
 
-// unmarshalToolInfoResponseBodyResponseBodyToMcpassistantToolInfo builds a
-// value of type *mcpassistant.ToolInfo from a value of type
-// *ToolInfoResponseBodyResponseBody.
-func unmarshalToolInfoResponseBodyResponseBodyToMcpassistantToolInfo(v *ToolInfoResponseBodyResponseBody) *mcpassistant.ToolInfo {
+// unmarshalToolInfoResponseBodyToMcpassistantToolInfo builds a value of type
+// *mcpassistant.ToolInfo from a value of type *ToolInfoResponseBody.
+func unmarshalToolInfoResponseBodyToMcpassistantToolInfo(v *ToolInfoResponseBody) *mcpassistant.ToolInfo {
 	res := &mcpassistant.ToolInfo{
 		Name:        *v.Name,
 		Description: v.Description,
@@ -1171,10 +1544,9 @@ func unmarshalToolInfoResponseBodyResponseBodyToMcpassistantToolInfo(v *ToolInfo
 	return res
 }
 
-// unmarshalContentItemResponseBodyResponseBodyToMcpassistantContentItem builds
-// a value of type *mcpassistant.ContentItem from a value of type
-// *ContentItemResponseBodyResponseBody.
-func unmarshalContentItemResponseBodyResponseBodyToMcpassistantContentItem(v *ContentItemResponseBodyResponseBody) *mcpassistant.ContentItem {
+// unmarshalContentItemResponseBodyToMcpassistantContentItem builds a value of
+// type *mcpassistant.ContentItem from a value of type *ContentItemResponseBody.
+func unmarshalContentItemResponseBodyToMcpassistantContentItem(v *ContentItemResponseBody) *mcpassistant.ContentItem {
 	res := &mcpassistant.ContentItem{
 		Type:     *v.Type,
 		Text:     v.Text,
@@ -1186,10 +1558,10 @@ func unmarshalContentItemResponseBodyResponseBodyToMcpassistantContentItem(v *Co
 	return res
 }
 
-// unmarshalResourceInfoResponseBodyResponseBodyToMcpassistantResourceInfo
-// builds a value of type *mcpassistant.ResourceInfo from a value of type
-// *ResourceInfoResponseBodyResponseBody.
-func unmarshalResourceInfoResponseBodyResponseBodyToMcpassistantResourceInfo(v *ResourceInfoResponseBodyResponseBody) *mcpassistant.ResourceInfo {
+// unmarshalResourceInfoResponseBodyToMcpassistantResourceInfo builds a value
+// of type *mcpassistant.ResourceInfo from a value of type
+// *ResourceInfoResponseBody.
+func unmarshalResourceInfoResponseBodyToMcpassistantResourceInfo(v *ResourceInfoResponseBody) *mcpassistant.ResourceInfo {
 	res := &mcpassistant.ResourceInfo{
 		URI:         *v.URI,
 		Name:        v.Name,
@@ -1200,10 +1572,10 @@ func unmarshalResourceInfoResponseBodyResponseBodyToMcpassistantResourceInfo(v *
 	return res
 }
 
-// unmarshalResourceContentResponseBodyResponseBodyToMcpassistantResourceContent
-// builds a value of type *mcpassistant.ResourceContent from a value of type
-// *ResourceContentResponseBodyResponseBody.
-func unmarshalResourceContentResponseBodyResponseBodyToMcpassistantResourceContent(v *ResourceContentResponseBodyResponseBody) *mcpassistant.ResourceContent {
+// unmarshalResourceContentResponseBodyToMcpassistantResourceContent builds a
+// value of type *mcpassistant.ResourceContent from a value of type
+// *ResourceContentResponseBody.
+func unmarshalResourceContentResponseBodyToMcpassistantResourceContent(v *ResourceContentResponseBody) *mcpassistant.ResourceContent {
 	res := &mcpassistant.ResourceContent{
 		URI:      *v.URI,
 		MimeType: v.MimeType,
@@ -1214,10 +1586,9 @@ func unmarshalResourceContentResponseBodyResponseBodyToMcpassistantResourceConte
 	return res
 }
 
-// unmarshalPromptInfoResponseBodyResponseBodyToMcpassistantPromptInfo builds a
-// value of type *mcpassistant.PromptInfo from a value of type
-// *PromptInfoResponseBodyResponseBody.
-func unmarshalPromptInfoResponseBodyResponseBodyToMcpassistantPromptInfo(v *PromptInfoResponseBodyResponseBody) *mcpassistant.PromptInfo {
+// unmarshalPromptInfoResponseBodyToMcpassistantPromptInfo builds a value of
+// type *mcpassistant.PromptInfo from a value of type *PromptInfoResponseBody.
+func unmarshalPromptInfoResponseBodyToMcpassistantPromptInfo(v *PromptInfoResponseBody) *mcpassistant.PromptInfo {
 	res := &mcpassistant.PromptInfo{
 		Name:        *v.Name,
 		Description: v.Description,
@@ -1229,17 +1600,17 @@ func unmarshalPromptInfoResponseBodyResponseBodyToMcpassistantPromptInfo(v *Prom
 				res.Arguments[i] = nil
 				continue
 			}
-			res.Arguments[i] = unmarshalPromptArgumentResponseBodyResponseBodyToMcpassistantPromptArgument(val)
+			res.Arguments[i] = unmarshalPromptArgumentResponseBodyToMcpassistantPromptArgumentOptional(val)
 		}
 	}
 
 	return res
 }
 
-// unmarshalPromptArgumentResponseBodyResponseBodyToMcpassistantPromptArgument
+// unmarshalPromptArgumentResponseBodyToMcpassistantPromptArgumentOptional
 // builds a value of type *mcpassistant.PromptArgument from a value of type
-// *PromptArgumentResponseBodyResponseBody.
-func unmarshalPromptArgumentResponseBodyResponseBodyToMcpassistantPromptArgument(v *PromptArgumentResponseBodyResponseBody) *mcpassistant.PromptArgument {
+// *PromptArgumentResponseBody.
+func unmarshalPromptArgumentResponseBodyToMcpassistantPromptArgumentOptional(v *PromptArgumentResponseBody) *mcpassistant.PromptArgument {
 	if v == nil {
 		return nil
 	}
@@ -1252,22 +1623,22 @@ func unmarshalPromptArgumentResponseBodyResponseBodyToMcpassistantPromptArgument
 	return res
 }
 
-// unmarshalPromptMessageResponseBodyResponseBodyToMcpassistantPromptMessage
-// builds a value of type *mcpassistant.PromptMessage from a value of type
-// *PromptMessageResponseBodyResponseBody.
-func unmarshalPromptMessageResponseBodyResponseBodyToMcpassistantPromptMessage(v *PromptMessageResponseBodyResponseBody) *mcpassistant.PromptMessage {
+// unmarshalPromptMessageResponseBodyToMcpassistantPromptMessage builds a value
+// of type *mcpassistant.PromptMessage from a value of type
+// *PromptMessageResponseBody.
+func unmarshalPromptMessageResponseBodyToMcpassistantPromptMessage(v *PromptMessageResponseBody) *mcpassistant.PromptMessage {
 	res := &mcpassistant.PromptMessage{
 		Role: *v.Role,
 	}
-	res.Content = unmarshalMessageContentResponseBodyResponseBodyToMcpassistantMessageContent(v.Content)
+	res.Content = unmarshalMessageContentResponseBodyToMcpassistantMessageContent(v.Content)
 
 	return res
 }
 
-// unmarshalMessageContentResponseBodyResponseBodyToMcpassistantMessageContent
-// builds a value of type *mcpassistant.MessageContent from a value of type
-// *MessageContentResponseBodyResponseBody.
-func unmarshalMessageContentResponseBodyResponseBodyToMcpassistantMessageContent(v *MessageContentResponseBodyResponseBody) *mcpassistant.MessageContent {
+// unmarshalMessageContentResponseBodyToMcpassistantMessageContent builds a
+// value of type *mcpassistant.MessageContent from a value of type
+// *MessageContentResponseBody.
+func unmarshalMessageContentResponseBodyToMcpassistantMessageContent(v *MessageContentResponseBody) *mcpassistant.MessageContent {
 	res := &mcpassistant.MessageContent{
 		Type:     *v.Type,
 		Text:     v.Text,

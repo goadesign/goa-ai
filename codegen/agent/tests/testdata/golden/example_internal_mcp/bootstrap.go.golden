@@ -10,7 +10,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	scribe "goa.design/goa-ai/alpha/agents/scribe"
+	scribe "goa.design/goa-ai/gen/alpha/agents/scribe"
 	plannerscribe "goa.design/goa-ai/internal/agents/scribe/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	mcpruntime "goa.design/goa-ai/runtime/mcp"

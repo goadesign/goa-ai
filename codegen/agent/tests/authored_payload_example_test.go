@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	codegen "goa.design/goa-ai/codegen/agent"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 	"goa.design/goa-ai/codegen/testhelpers"
 )
@@ -21,10 +20,7 @@ func TestAuthoredPayloadExamplePreservedInToolSpecs(t *testing.T) {
 }
 
 func TestAuthoredPayloadExamplePreservedThroughPrepareInToolSpecs(t *testing.T) {
-	genpkg, roots := testhelpers.RunDesign(t, testscenarios.AuthoredPayloadExampleThroughPrepare())
-	require.NoError(t, codegen.Prepare(genpkg, roots))
-	files, err := codegen.Generate(genpkg, roots, nil)
-	require.NoError(t, err)
+	files := testhelpers.BuildAndGenerate(t, testscenarios.AuthoredPayloadExampleThroughPrepare())
 	specsSrc := fileContent(t, files, "gen/calc/toolsets/helpers/specs.go")
 
 	require.Contains(t, specsSrc, `\"example\":{\"query\":{\"type\":\"by_name\",\"value\":{\"name\":\"compressor_1\"}}}`)

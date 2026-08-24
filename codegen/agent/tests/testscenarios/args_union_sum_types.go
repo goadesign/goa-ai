@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -30,11 +30,11 @@ func ArgsUnionSumTypes() func() {
 		})
 
 		Service("alpha", func() {
-			Agent("scribe", "Doc helper", func() {
-				Use("union", func() {
-					Tool("echo", "Echo union", func() {
-						Args(UnionPayload)
-						Return(UnionPayload)
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use("union", func() {
+					aidsl.Tool("echo", "Echo union", func() {
+						aidsl.Args(UnionPayload)
+						aidsl.Return(UnionPayload)
 					})
 				})
 			})

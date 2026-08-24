@@ -1,12 +1,12 @@
 // Package codegen generates typed evaluation suites and application scaffolds.
-// This file renders suite, input, contract, and application-owned templates.
+// This file writes generated suite, input, tool, and starter command files.
 package codegen
 
 import (
 	"goa.design/goa/v3/codegen"
 )
 
-// suiteSections renders one self-contained generated eval package file.
+// suiteSections writes one complete generated eval package file.
 func suiteSections(data *suiteData) []*codegen.SectionTemplate {
 	imports := []*codegen.ImportSpec{
 		{Path: "context"},
@@ -32,8 +32,7 @@ func suiteSections(data *suiteData) []*codegen.SectionTemplate {
 	}
 }
 
-// contractSections renders a precomputed lookup over the attached agent's
-// reachable generated specs packages.
+// contractSections writes the tool descriptions available to the suite's agent.
 func contractSections(packageName string, data *contractData) []*codegen.SectionTemplate {
 	imports := make([]*codegen.ImportSpec, 0, 2+len(data.Specs))
 	imports = append(imports,
@@ -59,17 +58,17 @@ const suiteTemplate = `type (
 	{{ .Name }} {{ .Def }}
 
 {{- end }}
-	// Hooks is implemented by the application running this evaluation suite.
-	// Methods may run concurrently and each owns its complete system interaction.
-	Hooks interface {
+	// {{ .Hooks }} is implemented by the application running this evaluation suite.
+	// Methods can run at the same time. Each method completes one scenario.
+	{{ .Hooks }} interface {
 {{- range .Scenarios }}
 		// {{ .Method }} executes the {{ .RawID }} scenario.
 		{{ .Method }}(context.Context{{ if .HasInput }}, {{ .InputRef }}{{ end }}) (eval.Result, error)
 {{- end }}
 	}
 
-	// Inputs supplies the application-owned value for every typed scenario.
-	Inputs struct {
+	// {{ .Inputs }} contains the application value for every typed scenario.
+	{{ .Inputs }} struct {
 {{- range .Scenarios }}
 	{{- if .HasInput }}
 		// {{ .InputField }} is passed to the {{ .RawID }} hook.
@@ -79,9 +78,8 @@ const suiteTemplate = `type (
 	}
 )
 
-// New validates application inputs and binds hooks to the immutable generated
-// suite definition.
-func New(hooks Hooks, inputs Inputs) (eval.Suite, error) {
+// {{ .New }} validates application inputs and builds the evaluation suite.
+func {{ .New }}(hooks {{ .Hooks }}, inputs {{ .Inputs }}) (eval.Suite, error) {
 	if hooks == nil {
 		return eval.Suite{}, fmt.Errorf("evaluation hooks are required")
 	}
@@ -113,24 +111,34 @@ func New(hooks Hooks, inputs Inputs) (eval.Suite, error) {
 
 {{- range .Validators }}
 // {{ .Name }} validates a generated evaluation input.
-func {{ .Name }}(value {{ .Ref }}) (err error) {
+func {{ .Name }}(value {{ .Ref }}) error {
 {{- if .Pointer }}
 	if value == nil {
 		return goa.MissingFieldError("input", "evaluation scenario")
 	}
 {{- end }}
+	{{- if .Lines }}
+	return {{ .NestedName }}(value, "input")
+	{{- else }}
+	return nil
+	{{- end }}
+}
+
+{{- if .Lines }}
+// {{ .NestedName }} validates value and starts error field names at path.
+func {{ .NestedName }}(value {{ .Ref }}, path string) (err error) {
 {{- range .Lines }}
 	{{ . }}
 {{- end }}
 	return
 }
+{{- end }}
 
 {{- end }}`
 
-const contractTemplate = `// MustToolContract returns the generated production
-// contract for a tool reachable from {{ .AgentID }}. An unknown identifier is
-// an evaluation programming error.
-func MustToolContract(name tools.Ident) *tools.ToolSpec {
+const contractTemplate = `// {{ .MustToolContract }} returns the generated description
+// for a tool available to {{ .AgentID }}. An unknown name is a programming error.
+func {{ .MustToolContract }}(name tools.Ident) *tools.ToolSpec {
 {{- range .Specs }}
 	if spec, ok := {{ .Alias }}.Spec(name); ok {
 		return spec

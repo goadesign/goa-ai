@@ -1,5 +1,8 @@
 package runtime
 
+// This file implements the workflow activities that call planners, execute
+// tools, and validate their values before they cross the workflow boundary.
+
 import (
 	"bytes"
 	"context"
@@ -269,6 +272,9 @@ func validatePlannerResultPayloads(result *planner.PlanResult) error {
 			return fmt.Errorf("planner final response: %w", err)
 		}
 	}
+	if err := validatePlannerFinalToolResult(result.FinalToolResult); err != nil {
+		return err
+	}
 	for index, call := range result.ToolCalls {
 		if err := validatePlannerToolPayload(call.Payload); err != nil {
 			return fmt.Errorf("planner tool call %d payload: %w", index, err)
@@ -325,6 +331,43 @@ func validatePlannerResultPayloads(result *planner.PlanResult) error {
 		default:
 			return fmt.Errorf("planner await item %d has unsupported kind %q", itemIndex, item.Kind)
 		}
+	}
+	return nil
+}
+
+// validatePlannerFinalToolResult rejects malformed or contradictory values
+// before a planner result crosses the activity boundary.
+func validatePlannerFinalToolResult(final *planner.FinalToolResult) error {
+	if final == nil {
+		return nil
+	}
+	resultJSON := bytes.TrimSpace(final.Result)
+	serverJSON := bytes.TrimSpace(final.ServerData)
+	if len(resultJSON) > 0 && !json.Valid(resultJSON) {
+		return errors.New("planner final tool result is not valid JSON")
+	}
+	if len(serverJSON) > 0 && !json.Valid(serverJSON) {
+		return errors.New("planner final tool server data is not valid JSON")
+	}
+	if final.ResultBytes < 0 {
+		return errors.New("planner final tool result byte count cannot be negative")
+	}
+	if final.Failure != nil {
+		if len(resultJSON) > 0 || final.ResultOmitted {
+			return errors.New("planner final tool result contains both a failure and a result")
+		}
+	} else if !final.ResultOmitted && len(resultJSON) == 0 {
+		return errors.New("planner final tool result is missing its result")
+	}
+	if final.ResultOmitted {
+		if len(resultJSON) > 0 {
+			return errors.New("planner final tool result is marked omitted but contains a result")
+		}
+		if final.ResultOmittedReason == "" {
+			return errors.New("planner final tool result is marked omitted without a reason")
+		}
+	} else if final.ResultOmittedReason != "" {
+		return errors.New("planner final tool result has an omission reason but is not omitted")
 	}
 	return nil
 }
@@ -464,7 +507,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		ParentToolCallID: req.ParentToolCallID,
 		ToolCallID:       req.ToolCallID,
 	}
-	meta := toolCallMeta(call)
+	meta := ToolCallMetaFromRequest(call)
 	start := time.Now()
 	execResult, err := reg.Execute(ctx, &call)
 	if err != nil {

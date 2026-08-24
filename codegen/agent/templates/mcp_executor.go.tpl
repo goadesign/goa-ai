@@ -20,7 +20,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller 
             })
             if err != nil {
                 return runtime.Executed(mcpCallFailure(call, err,
-                    {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}.Payload.ExampleJSON,
+                    {{ $.Toolset.SpecsPackageName }}.{{ .SpecVar }}.Payload.ExampleJSON,
                 )), nil
             }
             var value any

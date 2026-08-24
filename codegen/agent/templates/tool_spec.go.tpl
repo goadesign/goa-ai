@@ -7,13 +7,13 @@ const (
 
 var Specs = []tools.ToolSpec{
 {{- range .Tools }}
-    Spec{{ .ConstName }},
+    {{ .SpecVar }},
 {{- end }}
 }
 
 var (
 {{- range .Tools }}
-    Spec{{ .ConstName }} = tools.ToolSpec{
+    {{ .SpecVar }} = tools.ToolSpec{
         Name:        {{ .ConstName }},
         Service:     {{ printf "%q" .Service }},
         Toolset:     {{ printf "%q" .Toolset }},
@@ -85,7 +85,7 @@ var (
             },
         {{- end }}
         },
-        CanonicalizeServerData: canonicalize{{ .GoName }}ServerData,
+        CanonicalizeServerData: {{ .CanonicalizeServerDataFunc }},
         {{- end }}
         {{- if .ResultReminder }}
         ResultReminder: {{ printf "%q" .ResultReminder }},
@@ -153,13 +153,13 @@ var {{ .TypedToolVar }} = tools.TypedTool[{{ if .Payload.Pointer }}*{{ end }}{{ 
 
 // canonicalize{{ .GoName }}ServerData validates the server-only payloads
 // declared by {{ .Name }} and returns their canonical envelope.
-func canonicalize{{ .GoName }}ServerData(data tools.RawJSON) (tools.RawJSON, error) {
-    return toolserverdata.Canonicalize(data, canonicalize{{ .GoName }}ServerDataItem)
+func {{ .CanonicalizeServerDataFunc }}(data tools.RawJSON) (tools.RawJSON, error) {
+    return toolserverdata.Canonicalize(data, {{ .CanonicalizeServerDataItemFunc }})
 }
 
 // canonicalize{{ .GoName }}ServerDataItem validates one kind-specific payload
 // and returns the audience and JSON declared by {{ .Name }}.
-func canonicalize{{ .GoName }}ServerDataItem(kind, audience string, data tools.RawJSON) (string, tools.RawJSON, error) {
+func {{ .CanonicalizeServerDataItemFunc }}(kind, audience string, data tools.RawJSON) (string, tools.RawJSON, error) {
     switch kind {
     {{- range .ServerData }}
     case {{ printf "%q" .Kind }}:
@@ -227,7 +227,7 @@ func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
     switch name {
     {{- range .Tools }}
     case {{ .ConstName }}:
-        return &Spec{{ .ConstName }}, true
+        return &{{ .SpecVar }}, true
     {{- end }}
     default:
         return nil, false
@@ -239,7 +239,7 @@ func PayloadSchema(name tools.Ident) ([]byte, bool) {
     switch name {
     {{- range .Tools }}
     case {{ .ConstName }}:
-        return Spec{{ .ConstName }}.Payload.Schema, true
+        return {{ .SpecVar }}.Payload.Schema, true
     {{- end }}
     default:
         return nil, false
@@ -251,7 +251,7 @@ func ResultSchema(name tools.Ident) ([]byte, bool) {
     switch name {
     {{- range .Tools }}
     case {{ .ConstName }}:
-        return Spec{{ .ConstName }}.Result.Schema, true
+        return {{ .SpecVar }}.Result.Schema, true
     {{- end }}
     default:
         return nil, false

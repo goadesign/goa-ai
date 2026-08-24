@@ -4,6 +4,7 @@ go 1.25.5
 
 require (
 	github.com/google/uuid v1.6.0
+	github.com/stretchr/testify v1.11.1
 	goa.design/clue v1.2.6
 	goa.design/goa-ai v0.0.0
 	goa.design/goa/v3 v3.29.2-0.20260811021529-654fe1efea0f
@@ -51,7 +52,6 @@ require (
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect

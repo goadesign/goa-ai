@@ -196,12 +196,28 @@ The runtime keeps execution policy and planner intent separate:
 
 | Completed step | Next state |
 | --- | --- |
-| A cap or deadline requires finalization | `PlanResumeInput.Finalize` |
-| A successful `TerminalRun` tool completed | End the run without another planner turn |
-| Any failed tool requires `finish` recovery | `PlanResumeInput.Finalize` with reason `tool_failure` |
+| The configured `CompletionTool` executed successfully | End the run without another planner turn |
+| `CompletionTool` is configured and another terminal condition occurs | Fail because the required tool did not succeed |
+| A cap or deadline requires finalization and the run supplied `LimitTerminalPlans` | Execute the matching terminal call without loading saved messages |
+| A cap or deadline requires finalization without either completion policy | `PlanResumeInput.Finalize` |
+| A successful `TerminalRun` tool completed without `CompletionTool` | End the run without another planner turn |
+| Any failed tool requires `finish` recovery without `CompletionTool` | `PlanResumeInput.Finalize` with reason `tool_failure` |
 | Any failed tool has a `ToolFailure` whose recovery action permits tools | Runtime-enforced correction or replan turn |
-| A successful batch has `SynthesizeAfterTools` set | `PlanResumeInput.SynthesisOnly` |
+| A successful batch has `SynthesizeAfterTools` set without `CompletionTool` | `PlanResumeInput.SynthesisOnly` |
 | Otherwise | Normal continuation turn |
+
+`LimitTerminalPlans` is one optional run-policy value containing exactly three
+payload-only calls: time budget, tool-call cap, and consecutive failed-call cap.
+Before the first planner call, the runtime requires every payload to pass the
+registered generated codec and every target to be a `TerminalRun` bookkeeping
+tool owned by the agent that does not require confirmation. At a matching limit,
+the workflow adds its current identifiers and labels, records the reason in
+`runtime.LimitReasonLabel`, and executes the call through the normal
+terminal-tool path. The individual `tool_failure` termination case never
+selects these calls because its final result may depend on saved tool evidence.
+The additional workflow-input field requires a pinned Temporal Worker
+Deployment cutover: old and new strict decoders cannot share one unversioned
+task queue during rollout.
 
 This order makes recovery explicit rather than presence-based. `ToolFailure`
 classifies why execution failed independently from its `RecoveryDirective`:
@@ -270,8 +286,10 @@ checkpoint restores the transcript, planner state, labels, policy,
 nested-agent identity, and exact tool-call/result provenance. Required tool
 names are recorded, and
 `Runtime.ValidateContinuation` rejects a checkpoint when the new worker does
-not register one of them. Restoration passes every concrete saved payload and
-result through the current generated codec. Compatible tool evolution can
+not register one of them. It also rejects every checkpoint version other than
+the worker's current version; deployments must complete or discard older
+suspensions before upgrading. Restoration passes every concrete saved payload
+and result through the current generated codec. Compatible tool evolution can
 therefore continue across releases, while a value the new contract cannot
 decode fails at that typed boundary. A tool call created in an earlier workflow
 retains that workflow's run ID while its result records the new workflow's run
@@ -664,9 +682,26 @@ redeploys.
   worker until it completes or suspends. A continuation is a new workflow and
   may start on the current deployment after `ValidateContinuation` accepts the
   saved checkpoint and tool schemas.
-  These restrictions never constrain forced finalization. Caller
-  `WithRestrictToTool` policy remains run-scoped and still applies to every
-  tool.
+  Current run policy still applies while the fixed terminal call is prepared.
+  For example, `WithRestrictToTool` can reject that call because the
+  restriction applies to every tool in the run.
+- **Required completion operations**: callers use
+  `WithRunCompletionTool(tool_name)` when one successful budgeted tool call is
+  the operation's complete outcome. The serialized run policy survives
+  suspension and continuation. The completion tool must belong to the executing
+  agent, be non-bookkeeping and non-terminal, and be allowed by every tool
+  filter applied to the run. A planner response containing that tool cannot contain another
+  call or an await request. The run cannot request post-tool synthesis because
+  its required next terminal answer cannot satisfy the completion policy. A
+  successful result closes the run without another planner turn; correctable
+  failures retain ordinary recovery and cap accounting. A planner terminal response,
+  forced-finalization request, exhausted cap, or deadline ends the run with an
+  error instead of fabricating success after the required side effect did not
+  occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
+  because they assign different outcomes to the same exhausted limits.
+  Suspensions use checkpoint version 2 so older runtimes reject, rather than
+  ignore, the saved policy. Complete or discard version-1 suspensions before
+  upgrading because the current runtime accepts only version 2.
 - **Visible reasoning contract**: when a caller enables thinking for a Bedrock
   adaptive Claude model, the adapter asks for summarized reasoning display
   explicitly so streamed `thinking` events contain text. This includes Claude
@@ -729,6 +764,12 @@ consumers know exactly when to stop reading.
 - **Cancellation is not an error**
   - For `status="canceled"`, the stream payload **must not** include a user-facing `error`.
   - Consumers should treat cancellation as a terminal, non-error end state.
+  - Cancellation from a service activity, inline tool, or agent child cancels
+    the owning run and does not synthesize a failed `ToolResult`.
+  - Engine adapters normalize backend cancellation to `context.Canceled` while
+    runtime hooks are recorded, then restore the backend's cancellation type at
+    the workflow boundary. Temporal therefore records the execution as canceled
+    rather than failed.
 
 - **Failures are structured**
   - For `status="failed"`, the stream payload includes:

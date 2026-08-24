@@ -1,5 +1,8 @@
 package temporal
 
+// This file checks Temporal workflow-context adapters for activities, child
+// workflows, timers, cancellation, and error translation.
+
 import (
 	"context"
 	"errors"

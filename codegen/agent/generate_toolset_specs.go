@@ -1,3 +1,5 @@
+// This file writes the public and HTTP packages for generated toolsets. The
+// package data and all Go names are built before these files are written.
 package codegen
 
 import (
@@ -21,37 +23,18 @@ type toolProviderFileData struct {
 	PackageName    string
 	ServiceTypeRef string
 	Tools          []*ToolData
-	// NeedsInject indicates at least one METHOD-BACKED tool declares Inject()
-	// fields, so the generated HandleToolCall must build a
-	// runtime.ToolCallMeta from the wire toolregistry.ToolCallMeta once,
-	// ahead of the tool dispatch switch. Unbound tools never appear in
-	// HandleToolCall, so their Inject() fields must not trigger the meta
-	// declaration (it would be declared and unused -- a compile error).
+	// NeedsInject reports whether a service method tool needs call information
+	// while filling fields marked by Inject().
 	NeedsInject bool
 }
 
-// toolsetSpecsFiles emits toolset-owned packages (types, unions, codecs, specs,
-// and optional transforms) for all toolsets reachable from the generator input.
-//
-// The function groups toolset references by `SpecsDir` so each toolset's
-// tool-facing specs/codecs are emitted exactly once at the chosen owner anchor
-// (service-owned toolsets under `gen/<service>/toolsets/<toolset>`, and
-// agent-exported toolsets under `gen/<service>/agents/<agent>/exports/<toolset>`).
-//
-// For each distinct toolset package it emits:
-//   - `types.go` for tool payload/result/optional server-data types (when any are needed)
-//   - `unions.go` for sum-type unions referenced by the tool types (when any)
-//   - `codecs.go` for canonical JSON encoding/decoding and validation helpers
-//   - `specs.go` for runtime tool discovery metadata and schemas
-//   - `transforms.go` when method-backed tools can be adapted via GoTransform
-//
-// Registry-backed toolsets are handled separately and emit only `specs.go`
-// (registry adapters provide the codec and execution wiring).
-//
-// The function returns nil when there are no services or no eligible toolsets.
-func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
+// toolsetSpecsFiles writes each tool package once. A package can contain public
+// types, JSON functions, tool descriptions, service conversion functions, and
+// an HTTP subpackage used while decoding JSON. Registry toolsets write only
+// their tool descriptions.
+func toolsetSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 	if data == nil || len(data.Services) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	type specCandidate struct {
@@ -85,7 +68,7 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 		if len(cands) == 0 {
 			continue
 		}
-		// Pick a canonical toolset view deterministically.
+		// Choose one reference for this output directory in a repeatable order.
 		slices.SortFunc(cands, func(a, b specCandidate) int {
 			// Prefer exported toolsets when present: they are agent-owned.
 			if a.toolset.Kind != b.toolset.Kind {
@@ -97,7 +80,8 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 				}
 				return strings.Compare(string(a.toolset.Kind), string(b.toolset.Kind))
 			}
-			// Prefer lexicographically smallest owning agent id for determinism.
+			// When candidates use the same toolset kind, choose the agent with the
+			// alphabetically first ID.
 			if a.agent != nil && b.agent != nil {
 				if d := strings.Compare(a.agent.ID, b.agent.ID); d != 0 {
 					return d
@@ -113,11 +97,7 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 		if len(ts.Tools) == 0 {
 			continue
 		}
-		svc := ts.SourceService
-		specsData, err := buildToolSpecsDataFor(data.Genpkg, svc, ts.Tools)
-		if err != nil || specsData == nil {
-			continue
-		}
+		specsData := ts.specs
 
 		const (
 			transportDirName  = "http"
@@ -144,26 +124,18 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 				},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, transportDirName, "types.go"), SectionTemplates: transportSections})
-			// http/validate.go
-			validateImports := []*codegen.ImportSpec{
-				codegen.SimpleImport("encoding/json"),
-				codegen.SimpleImport("fmt"),
-				codegen.GoaImport(""),
+			if validateImports := specsData.transportValidationImports(); len(validateImports) > 0 {
+				validateSections := []*codegen.SectionTemplate{
+					codegen.Header(ts.Name+" tool transport validators", transportPkgName, validateImports),
+					{
+						Name:    "tool-transport-validate",
+						Source:  agentsTemplates.Read(toolTransportValidateFileT),
+						Data:    toolTransportTypesFileData{Types: transportTypes},
+						FuncMap: templateFuncMap(),
+					},
+				}
+				out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, transportDirName, "validate.go"), SectionTemplates: validateSections})
 			}
-			validateImports = append(validateImports, timports...)
-			if specsData.needsUnicodeImport() {
-				validateImports = append(validateImports, codegen.SimpleImport("unicode/utf8"))
-			}
-			validateSections := []*codegen.SectionTemplate{
-				codegen.Header(ts.Name+" tool transport validators", transportPkgName, validateImports),
-				{
-					Name:    "tool-transport-validate",
-					Source:  agentsTemplates.Read(toolTransportValidateFileT),
-					Data:    toolTransportTypesFileData{Types: transportTypes},
-					FuncMap: templateFuncMap(),
-				},
-			}
-			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, transportDirName, "validate.go"), SectionTemplates: validateSections})
 			if len(specsData.TransportUnions) > 0 {
 				unionImports := make([]*codegen.ImportSpec, 0, 3+len(timports))
 				unionImports = append(unionImports,
@@ -228,8 +200,8 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 			types := specsData.typesList()
 			// codecs.go
 			codecImports := specsData.codecsImports()
-			// Inject tool transport package import (must be before strings import to
-			// preserve golden import ordering).
+			// Add the HTTP package before strings so generated imports keep their
+			// expected order.
 			if ts.SpecsImportPath != "" {
 				transportImport := &codegen.ImportSpec{Name: transportPkgAlias, Path: ts.SpecsImportPath + "/" + transportDirName}
 				if len(codecImports) > 0 && codecImports[len(codecImports)-1].Path == "strings" {
@@ -266,8 +238,7 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 				{Name: "tool-specs", Source: agentsTemplates.Read(toolSpecFileT), Data: toolSpecFileData{PackageName: ts.SpecsPackageName, Tools: specsData.tools, Types: specsData.typesList(), RequiredLabels: ts.RequiredLabels}, FuncMap: templateFuncMap()},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "specs.go"), SectionTemplates: specSections})
-			// inject.go: compiled Inject() population, shared by every topology
-			// that executes this toolset's tools.
+			// inject.go fills fields supplied by the server.
 			if toolsNeedInject(ts.Tools) {
 				injectSections := []*codegen.SectionTemplate{
 					codegen.Header(ts.Name+" tool injection", ts.SpecsPackageName, toolInjectImports(ts.Tools)),
@@ -282,7 +253,7 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 			}
 		}
 
-		if f := toolsetAdapterTransformsFile(data.Genpkg, ts); f != nil {
+		if f := toolsetAdapterTransformsFile(ts); f != nil {
 			out = append(out, f)
 		}
 		if f := toolsetProviderFile(data.Genpkg, ts); f != nil {
@@ -290,11 +261,11 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 		}
 	}
 
-	return out
+	return out, nil
 }
 
-// toolEntriesHaveServerData reports whether specs.go must emit generated
-// server-data canonicalizers and their imports.
+// toolEntriesHaveServerData reports whether specs.go needs server data
+// functions and imports.
 func toolEntriesHaveServerData(tools []*toolEntry) bool {
 	for _, tool := range tools {
 		if len(tool.ServerData) > 0 {

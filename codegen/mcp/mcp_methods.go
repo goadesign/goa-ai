@@ -1,7 +1,6 @@
 package codegen
 
 import (
-	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa/v3/expr"
 )
 
@@ -82,17 +81,12 @@ func (b *mcpExprBuilder) buildToolsListMethod() *expr.MethodExpr {
 
 // buildToolsCallMethod creates the tools/call method
 func (b *mcpExprBuilder) buildToolsCallMethod() *expr.MethodExpr {
-	m := &expr.MethodExpr{
+	return &expr.MethodExpr{
 		Name:        "tools/call",
 		Description: "Call a tool",
 		Payload:     b.userTypeAttr("ToolsCallPayload", b.buildToolsCallPayloadType),
 		Result:      b.userTypeAttr("ToolsCallResult", b.buildToolsCallResultType),
 	}
-	// Always expose tools/call as a server stream. For non-streaming tools the
-	// adapter sends a single final event via SendAndClose; clients use SSE.
-	m.Stream = expr.ServerStreamKind
-	m.StreamingResult = b.userTypeAttr("ToolsCallResult", b.buildToolsCallResultType)
-	return m
 }
 
 // buildResourcesListMethod creates the resources/list method
@@ -107,17 +101,12 @@ func (b *mcpExprBuilder) buildResourcesListMethod() *expr.MethodExpr {
 
 // buildResourcesReadMethod creates the resources/read method
 func (b *mcpExprBuilder) buildResourcesReadMethod() *expr.MethodExpr {
-	m := &expr.MethodExpr{
+	return &expr.MethodExpr{
 		Name:        "resources/read",
 		Description: "Read a resource",
 		Payload:     b.userTypeAttr("ResourcesReadPayload", b.buildResourcesReadPayloadType),
 		Result:      b.userTypeAttr("ResourcesReadResult", b.buildResourcesReadResultType),
 	}
-	if b.anyResourceStreaming() {
-		m.Stream = expr.ServerStreamKind
-		m.StreamingResult = b.userTypeAttr("ResourcesReadResult", b.buildResourcesReadResultType)
-	}
-	return m
 }
 
 // buildResourcesSubscribeMethod creates the resources/subscribe method
@@ -198,12 +187,11 @@ func (b *mcpExprBuilder) buildSubscriptionMethods() []*expr.MethodExpr {
 // buildEventsStreamMethod creates the events/stream server-sent events method
 func (b *mcpExprBuilder) buildEventsStreamMethod() *expr.MethodExpr {
 	m := &expr.MethodExpr{
-		Name:        "events/stream",
-		Description: "Stream server-sent events (notifications)",
-		Result:      b.userTypeAttr("EventsStreamResult", b.buildEventsStreamResultType),
+		Name:            "events/stream",
+		Description:     "Stream server-sent events (notifications)",
+		StreamingResult: b.userTypeAttr("EventsStreamResult", b.buildEventsStreamResultType),
 	}
 	m.Stream = expr.ServerStreamKind
-	m.StreamingResult = b.userTypeAttr("EventsStreamResult", b.buildEventsStreamResultType)
 	return m
 }
 
@@ -212,23 +200,5 @@ func (b *mcpExprBuilder) hasPrompts() bool {
 	if len(b.mcp.Prompts) > 0 {
 		return true
 	}
-
-	if mcpexpr.Root != nil {
-		dynamicPrompts := mcpexpr.Root.DynamicPrompts[b.originalService.Name]
-		if len(dynamicPrompts) > 0 {
-			return true
-		}
-	}
-
-	return false
-}
-
-// anyResourceStreaming returns true if any referenced resource method is streaming
-func (b *mcpExprBuilder) anyResourceStreaming() bool {
-	for _, r := range b.mcp.Resources {
-		if r != nil && r.Method != nil && r.Method.Stream == expr.ServerStreamKind {
-			return true
-		}
-	}
-	return false
+	return len(b.dynamicPrompts) > 0
 }

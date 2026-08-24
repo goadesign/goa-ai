@@ -177,11 +177,11 @@ func main() {
 {{- range .Completions }}
 
 	{
-		client, err := newExampleCompletionClient(string(completions.{{ .GoName }}), completions.Spec{{ .GoName }}.Result.ExampleJSON)
+		client, err := newExampleCompletionClient(string(completions.{{ .ConstName }}), completions.{{ .SpecVar }}.Result.ExampleJSON)
 		if err != nil {
 			log.Fatalf("completion client setup failed: %v", err)
 		}
-		out, err := completions.Complete{{ .GoName }}(ctx, client, &model.Request{
+		out, err := completions.{{ .CompleteFunc }}(ctx, client, &model.Request{
 			Messages: []*model.Message{
 				{
 					Role:  model.ConversationRoleUser,
@@ -192,19 +192,19 @@ func main() {
 		if err != nil {
 			log.Fatalf("completion run failed: %v", err)
 		}
-		rendered, err := completions.Spec{{ .GoName }}.Result.Codec.ToJSON(out.Value)
+		rendered, err := completions.{{ .SpecVar }}.Result.Codec.ToJSON(out.Value)
 		if err != nil {
 			log.Fatalf("completion render failed: %v", err)
 		}
-		fmt.Printf("Completion %s: %s\n", completions.{{ .GoName }}, rendered)
+		fmt.Printf("Completion %s: %s\n", completions.{{ .ConstName }}, rendered)
 	}
 
 	{
-		client, err := newExampleCompletionClient(string(completions.{{ .GoName }}), completions.Spec{{ .GoName }}.Result.ExampleJSON)
+		client, err := newExampleCompletionClient(string(completions.{{ .ConstName }}), completions.{{ .SpecVar }}.Result.ExampleJSON)
 		if err != nil {
 			log.Fatalf("completion stream client setup failed: %v", err)
 		}
-		stream, err := completions.StreamComplete{{ .GoName }}(ctx, client, &model.Request{
+		stream, err := completions.{{ .StreamFunc }}(ctx, client, &model.Request{
 			Messages: []*model.Message{
 				{
 					Role:  model.ConversationRoleUser,
@@ -224,18 +224,18 @@ func main() {
 				log.Fatalf("completion stream failed: %v", err)
 			}
 			if delta, ok := chunk.(model.CompletionDeltaChunk); ok {
-				fmt.Printf("Completion delta %s: %s\n", completions.{{ .GoName }}, delta.Delta.Delta)
+				fmt.Printf("Completion delta %s: %s\n", completions.{{ .ConstName }}, delta.Delta.Delta)
 			}
-			value, ok, err := completions.Decode{{ .GoName }}Chunk(chunk)
+			value, ok, err := completions.{{ .DecodeChunkFunc }}(chunk)
 			if err != nil {
 				log.Fatalf("completion chunk decode failed: %v", err)
 			}
 			if ok {
-				rendered, err := completions.Spec{{ .GoName }}.Result.Codec.ToJSON(value)
+				rendered, err := completions.{{ .SpecVar }}.Result.Codec.ToJSON(value)
 				if err != nil {
 					log.Fatalf("completion stream render failed: %v", err)
 				}
-				fmt.Printf("Completion stream %s: %s\n", completions.{{ .GoName }}, rendered)
+				fmt.Printf("Completion stream %s: %s\n", completions.{{ .ConstName }}, rendered)
 			}
 		}
 		if err := stream.Close(); err != nil {

@@ -110,7 +110,7 @@ func (r *Runtime) applyResultMaterializer(ctx context.Context, spec tools.ToolSp
 	if !ok || reg.ResultMaterializer == nil {
 		return nil
 	}
-	if err := reg.ResultMaterializer(ctx, toolCallMeta(call), &call, result); err != nil {
+	if err := reg.ResultMaterializer(ctx, ToolCallMetaFromRequest(call), &call, result); err != nil {
 		return fmt.Errorf("materialize %s tool result: %w", call.Name, err)
 	}
 	return nil
@@ -227,12 +227,16 @@ func canonicalProvidedToolFailure(spec tools.ToolSpec, call planner.ToolRequest,
 	return failure
 }
 
-func toolCallMeta(call planner.ToolRequest) ToolCallMeta {
+// ToolCallMetaFromRequest copies the run, turn, call, and label values from a
+// tool request. Generated service, MCP, and custom executors therefore receive
+// the same values.
+func ToolCallMetaFromRequest(call planner.ToolRequest) ToolCallMeta {
 	return ToolCallMeta{
 		RunID:            call.RunID,
 		SessionID:        call.SessionID,
 		TurnID:           call.TurnID,
 		ToolCallID:       call.ToolCallID,
 		ParentToolCallID: call.ParentToolCallID,
+		Labels:           cloneLabels(call.Labels),
 	}
 }

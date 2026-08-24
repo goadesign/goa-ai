@@ -544,18 +544,65 @@ Workflow step boundary:
   terminal-tool finish, or forced finalization,
 - terminal planner payloads are exclusive except for hidden, non-terminal
   bookkeeping side effects that complete successfully in the same step,
-- when forced finalization is active (`PlanResumeInput.Finalize != nil`), a
-  planner may close through terminal bookkeeping tools instead of prose; the
-  runtime admits only `TerminalRun()` calls (`TerminalRun()` implies
-  bookkeeping), executes them inside the remaining hard-deadline window, stamps
-  generated tool-call IDs with the finalization attempt, and requires every
-  terminal side effect in the batch to complete successfully,
+- a run may supply `LimitTerminalPlans`, one payload-only `TerminalRun()` call
+  for each of the time, tool-call, and consecutive failed-call limits; before
+  the first planner activity, the runtime validates the complete set against
+  the agent's registered generated codecs and rejects tools that require
+  confirmation,
+- when one of those limits is reached, the workflow selects the matching call
+  without loading saved messages, adds current run identifiers and labels,
+  writes the reason to `runtime.LimitReasonLabel`, and executes the call through
+  the existing terminal-tool path,
+- when the run omitted `LimitTerminalPlans`, or a tool failure requires
+  finalization, `PlanResumeInput.Finalize` is non-nil and the planner may close
+  through terminal bookkeeping tools instead of prose; the runtime admits only
+  `TerminalRun()` calls (`TerminalRun()` implies bookkeeping), executes them
+  inside the remaining hard-deadline window, stamps generated tool-call IDs
+  with the finalization attempt, and requires every terminal side effect in the
+  batch to complete successfully,
 - recoverable failures supply one normal planner activity with their structured
   evidence and do not constrain this validated terminal bookkeeping path;
-  caller-supplied `WithRestrictToTool` remains run-scoped and still applies,
+  caller-supplied `WithRestrictToTool` still applies for the entire run,
 - deadline checks happen before admitting new work; in-flight tool batches
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.
+
+Non-nil `LimitTerminalPlans` adds a field to the Temporal workflow input.
+Deploy this runtime with pinned Temporal Worker Deployment Versioning and route
+new workflows that use the field only after every worker in the new deployment
+runs the same code. Old strict decoders reject the field, so mixed old and new
+workers on one unversioned task queue cannot run workflows that set it.
+This version also serializes the new `CompletionTool` field whenever
+`PolicyOverrides` is present, including its empty value. Deploy every worker
+that may decode those workflow inputs before routing new workflows from this
+version to the queue. New suspensions use `goa-ai.run-suspension.v2`, which
+prevents an older worker from silently ignoring the saved completion policy.
+Workers accept only that exact checkpoint version. Complete or discard every
+version-1 suspension before upgrading; the runtime does not infer missing state
+or carry a legacy checkpoint decoder.
+
+Required completion tool:
+
+- `WithRunCompletionTool(tool_name)` makes one successful execution of the
+  named budgeted tool the run's complete result; the runtime ends immediately
+  without asking the planner for a final assistant response,
+- the completion attempt must be the only action in its planner response; it
+  cannot accompany another call or an await request, and no call in a
+  completion-policy run may request post-tool synthesis because the required
+  next terminal answer cannot complete that run,
+- the planner cannot delegate the completion tool through external await work,
+  and denying its execution at a confirmation prompt fails the run,
+- correctable failures return to the planner while the normal tool and failure
+  budgets permit another attempt,
+- a planner-authored final response, a non-recoverable tool failure, exhausted
+  caps, or an exhausted deadline fails the run when the completion tool has not
+  succeeded,
+- the named tool must belong to the executing agent, be non-bookkeeping,
+  non-terminal, and be allowed by every other run tool policy,
+- `CompletionTool` and `LimitTerminalPlans` cannot be set on the same run
+  because they assign conflicting outcomes to exhausted limits. The requirement
+  applies only to runs that set `WithRunCompletionTool`; other runs use the tool
+  normally.
 
 ### Planner step and failed-result contracts
 
@@ -591,14 +638,17 @@ These fields answer different questions:
 | `ToolOutput.Failure.Recovery.Action` | One failed result | Must the planner correct this call, replan, or finish without tools? |
 | `PlanResult.SynthesizeAfterTools` | One selected batch | If the batch has no recoverable failure, must the next turn answer? |
 | `PlanResumeInput.SynthesisOnly` | One planner activity | Must this planner result be terminal and tool-free? |
-| `PlanResumeInput.Finalize` | Runtime-forced termination | Did a cap or deadline prohibit normal work? |
+| `PlanResumeInput.Finalize` | Runtime-forced planner termination | Did an unconfigured cap or deadline, or one tool failure, require the planner to finish? |
 
 The runtime applies them in this order:
 
 | Completed step | Next state |
 | --- | --- |
-| Cap or deadline exhausted | Forced `Finalize` turn |
-| Successful `TerminalRun` tool | End immediately |
+| Configured `CompletionTool` executed successfully | End immediately |
+| `CompletionTool` is configured and another terminal condition occurs | Fail because the required tool did not succeed |
+| Cap or deadline exhausted with `LimitTerminalPlans` | Execute the matching terminal call |
+| Cap or deadline exhausted without either completion policy | Forced `Finalize` turn |
+| Successful `TerminalRun` tool without `CompletionTool` | End immediately |
 | Any failure permits tools | Runtime-enforced correction or replan turn |
 | `SynthesizeAfterTools` requested | `SynthesisOnly` turn |
 | Otherwise | Normal continuation turn |
@@ -847,10 +897,16 @@ type ToolsetRegistration struct {
     Inline      bool                       // Execute in workflow context
     CallHints   map[tools.Ident]*template.Template   // Tool call DisplayHint templates (typed payload only)
     ResultHints map[tools.Ident]*template.Template   // Success result preview templates (typed result only)
-    ResultAdapter  func(...)               // Post-encode transformation
+    ResultMaterializer ResultMaterializer  // Typed result enrichment before encoding
     AgentTool   *AgentToolConfig           // Agent-as-tool configuration
 }
 ```
+
+Generated `RegisterUsedToolsets` functions own each service-backed toolset
+registration. Applications provide the required executor with
+`With<Toolset>Executor`. When a result needs application-owned data before
+encoding, provide `With<Toolset>ResultMaterializer` in the same registration
+call. Do not register the toolset a second time.
 
 ### Tool Call Display Hints (DisplayHint)
 
@@ -1375,8 +1431,13 @@ type ToolCallMeta struct {
     TurnID           string  // Conversational turn identifier
     ToolCallID       string  // Unique tool invocation ID
     ParentToolCallID string  // Parent tool call (for agent-as-tool)
+    Labels            map[string]string // Copied immutable run labels
 }
 ```
+
+`Labels` exposes server-authored run context to custom executors without
+placing those values in the model payload. Mutating this map does not change
+the workflow's saved labels or another tool call.
 
 ### Injected Fields (`Inject()`)
 

@@ -35,6 +35,9 @@ type (
 		// ToolCallID.
 		ToolCallID       string `json:"tool_call_id"`
 		ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
+		// Labels carries values fixed by the caller when the run starts. Providers
+		// pass them to generated executors but never add them to model payloads.
+		Labels map[string]string `json:"labels,omitempty"`
 	}
 
 	// ToolCallRef identifies one registry-routed invocation and the exact

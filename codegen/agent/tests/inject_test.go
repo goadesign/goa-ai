@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	codegen "goa.design/goa-ai/codegen/agent"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 	"goa.design/goa-ai/codegen/testhelpers"
 	gcodegen "goa.design/goa/v3/codegen"
@@ -17,28 +16,21 @@ import (
 // would silently hide the schema-hiding regression these tests guard.
 func buildWithPrepare(t *testing.T, design func()) []*gcodegen.File {
 	t.Helper()
-	genpkg, roots := testhelpers.RunDesign(t, design)
-	require.NoError(t, codegen.Prepare(genpkg, roots))
-	files, err := codegen.Generate(genpkg, roots, nil)
-	require.NoError(t, err)
-	return files
+	return testhelpers.BuildAndGenerate(t, design)
 }
 
-// TestInjectMetaBackedBoundToolBackwardCompatible proves the non-negotiable
-// constraint: a BindTo tool injecting session_id (the historical, only
-// supported case) regenerates to behaviorally identical population -- Task 2
-// retires provider.go's inline `methodIn.SessionID = msg.Meta.SessionID`
-// assignment in favor of calling the topology-shared InjectGetData function
-// (the "one canonical implementation" goal), so session_id still resolves to
-// the same runtime.ToolCallMeta.SessionID value.
-func TestInjectMetaBackedBoundToolBackwardCompatible(t *testing.T) {
+// TestInjectBoundToolUsesGeneratedContext proves a BindTo tool receives
+// metadata-backed and label-backed fields through one generated InjectGetData
+// implementation before the bound service method runs.
+func TestInjectBoundToolUsesGeneratedContext(t *testing.T) {
 	files := buildWithPrepare(t, testscenarios.InjectBoundMetaExample())
 
 	inject := fileContent(t, files, "gen/atlas/toolsets/helpers/inject.go")
 	require.Contains(t, inject, "func InjectGetData(p *GetDataPayload, meta runtime.ToolCallMeta, labels map[string]string) error {")
 	require.Contains(t, inject, "v := meta.SessionID")
-	require.Contains(t, inject, "p.SessionID = &v",
-		"injected fields are pointers on the tool payload (hidden fields are optional in the model-facing contract)")
+	require.Contains(t, inject, `v, ok := labels["household_id"]`)
+	require.Contains(t, inject, "p.SessionID = v",
+		"the runtime fills the required public tool input after model JSON is decoded")
 	require.Contains(t, inject, "func DecodeGetData(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*GetDataPayload, error) {",
 		"the composed decode helper must exist beside Inject<Tool> for custom executors")
 	require.Contains(t, inject, "p, err := GetDataPayloadCodec.FromJSON(payload)")
@@ -48,11 +40,13 @@ func TestInjectMetaBackedBoundToolBackwardCompatible(t *testing.T) {
 	require.NotContains(t, provider, "methodIn.SessionID = msg.Meta.SessionID",
 		"provider.go must retire its own inline meta assignment in favor of the shared Inject<Tool> function")
 	require.Contains(t, provider, "meta := runtime.ToolCallMeta{")
-	require.Contains(t, provider, "if err := InjectGetData(args, meta, nil); err != nil {",
-		"registry-served (bound) tools never carry labels, so the shared Inject fn is called with a nil labels map")
+	require.Contains(t, provider, "Labels:           msg.Meta.Labels,")
+	require.Contains(t, provider, "if err := InjectGetData(args, meta, meta.Labels); err != nil {",
+		"registry-served bound tools receive the same immutable run labels as local executors")
 
 	specs := fileContent(t, files, "gen/atlas/toolsets/helpers/specs.go")
 	require.NotContains(t, specs, `"session_id"`, "session_id must stay hidden from the model-facing schema")
+	require.NotContains(t, specs, `\"household_id\"`, "household_id must stay hidden from the model-facing schema")
 }
 
 // TestInjectLocalServiceExecutorCallsGeneratedInject proves the local
@@ -99,10 +93,10 @@ func TestInjectLabelBackedWithValidation(t *testing.T) {
 	require.Contains(t, inject, `v, ok := labels["household_id"]`)
 	require.Contains(t, inject, `return fmt.Errorf("tool %q: required label %q is missing; call WithLabels(%q, ...) at run start", "helpers.lookup_household", "household_id", "household_id")`)
 	require.Contains(t, inject, `goa.ValidatePattern("household_id", v, "^[a-z0-9-]+$")`)
-	require.Contains(t, inject, "p.HouseholdID = &v",
-		"injected fields are pointers on the tool payload (hidden fields are optional in the model-facing contract)")
+	require.Contains(t, inject, "p.HouseholdID = v",
+		"the runtime fills the required public tool input after model JSON is decoded")
 	require.Contains(t, inject, "v := meta.SessionID", "mixed tool: session_id stays meta-backed alongside the label-backed field")
-	require.Contains(t, inject, "p.SessionID = &v")
+	require.Contains(t, inject, "p.SessionID = v")
 	require.Contains(t, inject, "func DecodeLookupHousehold(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*LookupHouseholdPayload, error) {",
 		"the composed decode helper must exist for unbound (custom-executor-eligible) injecting tools too")
 
@@ -116,6 +110,29 @@ func TestInjectLabelBackedWithValidation(t *testing.T) {
 }`)
 	require.NotContains(t, specs, `"household_id"`+":", "household_id must stay hidden from the model-facing schema")
 	require.NotContains(t, specs, `\"session_id\"`, "session_id must stay hidden from the model-facing schema")
+}
+
+// TestInjectReusableExportUsesDefiningContract proves shared generated types
+// use the prepared defining toolset rather than an unprepared consumer copy.
+func TestInjectReusableExportUsesDefiningContract(t *testing.T) {
+	files := buildWithPrepare(t, testscenarios.InjectReusableExportExample())
+
+	types := fileContent(t, files, "gen/atlas/toolsets/helpers/types.go")
+	require.Equal(t, 2, strings.Count(types, "SessionID string"))
+	require.Equal(t, 2, strings.Count(types, "Query string"))
+
+	inject := fileContent(t, files, "gen/atlas/toolsets/helpers/inject.go")
+	require.Contains(t, inject, "func InjectInherited(p *InheritedPayload")
+	require.Contains(t, inject, "func InjectExplicit(p *ExplicitPayload")
+	require.Contains(t, inject, "p.SessionID = v")
+	require.NotContains(t, inject, "p.SessionID = &v")
+
+	specs := fileContent(t, files, "gen/atlas/toolsets/helpers/specs.go")
+	require.Contains(t, specs, `\"query\"`)
+	require.NotContains(t, specs, `\"session_id\"`)
+
+	transport := fileContent(t, files, "gen/atlas/toolsets/helpers/http/types.go")
+	require.Contains(t, transport, "SessionID *string `json:\"-\"`")
 }
 
 // TestInjectNoLabelsToolsetHasEmptyRequiredLabels proves RequiredLabels is

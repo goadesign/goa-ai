@@ -57,6 +57,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		TurnID:           msg.Meta.TurnID,
 		ToolCallID:       msg.Meta.ToolCallID,
 		ParentToolCallID: msg.Meta.ParentToolCallID,
+		Labels:           msg.Meta.Labels,
 	}
 {{- end }}
 
@@ -64,7 +65,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- range .Tools }}
 {{- if .IsMethodBacked }}
 	case {{ .ConstName }}:
-		args, err := {{ .ConstName }}PayloadCodec.FromJSON(msg.Payload)
+		args, err := {{ .PayloadCodecName }}.FromJSON(msg.Payload)
 		if err != nil {
 			if issues := toolregistry.ValidationIssues(err); len(issues) > 0 {
 				return toolregistry.NewToolResultInvalidArgumentsMessage(msg.RegistrationToken, msg.ToolUseID, err.Error(), issues), nil
@@ -72,18 +73,18 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
 {{- if .Injected }}
-		if err := Inject{{ .ConstName }}(args, meta, nil); err != nil {
+		if err := {{ .InjectFunc }}(args, meta, meta.Labels); err != nil {
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
 {{- end }}
-		methodIn := Init{{ .ConstName }}MethodPayload(args)
+		methodIn := {{ .MethodPayloadTransform }}(args)
 		methodOut, err := p.svc.{{ .MethodGoName }}(ctx, methodIn)
 		if err != nil {
 			return toolregistry.NewToolResultServiceErrorMessage(msg.RegistrationToken, msg.ToolUseID, msg.Tool, toolErrorCode(err), err), nil
 		}
 {{- if .HasResult }}
-		result := Init{{ .ConstName }}ToolResult(methodOut)
-		resultJSON, err := {{ .ConstName }}ResultCodec.ToJSON(result)
+		result := {{ .ToolResultTransform }}(methodOut)
+		resultJSON, err := {{ .ResultCodecName }}.ToJSON(result)
 		if err != nil {
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
 		}
@@ -95,8 +96,8 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- range .ServerData }}
 {{- if .MethodResultField }}
 		{
-			data := Init{{ $tool.ConstName }}{{ goify .Kind true }}ServerData(methodOut.{{ goify .MethodResultField true }})
-			dataJSON, err := {{ $tool.ConstName }}{{ goify .Kind true }}ServerDataCodec.ToJSON(data)
+			data := {{ index $tool.ServerDataTransforms .Kind }}(methodOut.{{ goify .MethodResultField true }})
+			dataJSON, err := {{ index $tool.ServerDataCodecNames .Kind }}.ToJSON(data)
 			if err != nil {
 				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
 			}
@@ -176,5 +177,3 @@ func init{{ goify .Name true }}Bounds(mr {{ .MethodResultTypeRef }}) *agent.Boun
 }
 {{- end }}
 {{- end }}
-
-

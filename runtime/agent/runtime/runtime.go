@@ -159,6 +159,10 @@ type (
 		// construction time.
 		workers map[agent.Ident]WorkerConfig
 
+		// registrationMu serializes agent and toolset registration so one global
+		// tool name cannot change contract between validation and storage.
+		registrationMu sync.Mutex
+
 		// registrationClosed prevents late agent/toolset registration after the
 		// runtime has been explicitly sealed or the first run has been submitted,
 		// avoiding dynamic handler registration on active workers.
@@ -279,8 +283,6 @@ type (
 		Planner planner.Planner
 		// Workflow describes the durable workflow registered with the engine.
 		Workflow engine.WorkflowDefinition
-		// Toolsets enumerates tool registrations exposed by this agent package.
-		Toolsets []ToolsetRegistration
 		// PlanActivityName names the activity used for PlanStart.
 		PlanActivityName string
 		// PlanActivityOptions describes retry/timeout behavior for the PlanStart activity.
@@ -594,6 +596,17 @@ func WithTiming(t Timing) RunOption {
 	}
 }
 
+// WithLimitTerminalPlans sets the complete terminal tool-call set used when
+// this run reaches a configured time, tool-call, or failed-call limit.
+func WithLimitTerminalPlans(plans LimitTerminalPlans) RunOption {
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.LimitTerminalPlans = cloneLimitTerminalPlans(&plans)
+	}
+}
+
 // WithRunMaxToolCalls sets a per-run cap on total tool executions.
 // The caller must supply a positive override value; omit the option to use the
 // agent's design default.
@@ -621,6 +634,22 @@ func WithRunMaxConsecutiveFailedToolCalls(n int) RunOption {
 			in.Policy = &PolicyOverrides{}
 		}
 		in.Policy.MaxConsecutiveFailedToolCalls = n
+	}
+}
+
+// WithRunCompletionTool requires one budgeted tool to succeed before the run
+// can complete. Its first successful execution ends the run without a final
+// planner response; attempts and correctable failures retain normal cap and
+// recovery semantics.
+func WithRunCompletionTool(id tools.Ident) RunOption {
+	if id == "" {
+		panic("runtime: WithRunCompletionTool requires a tool identifier")
+	}
+	return func(in *RunInput) {
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.CompletionTool = id
 	}
 }
 
@@ -976,6 +1005,9 @@ func WithQueue(name string) WorkerOption {
 // later RegisterAgent/RegisterToolset calls fail fast even if activation later
 // fails. Callers may retry Seal after a context-limited activation failure.
 func (r *Runtime) Seal(ctx context.Context) error {
+	r.registrationMu.Lock()
+	defer r.registrationMu.Unlock()
+
 	r.mu.Lock()
 	alreadyActivated := r.activationComplete
 	r.registrationClosed = true
@@ -1014,6 +1046,9 @@ func (r *Runtime) Seal(ctx context.Context) error {
 // All agents must be registered before workflows can be started. Generated code
 // calls this during initialization.
 func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) error {
+	r.registrationMu.Lock()
+	defer r.registrationMu.Unlock()
+
 	r.mu.RLock()
 	if r.registrationClosed {
 		r.mu.RUnlock()
@@ -1044,6 +1079,13 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if err := validateSpecs(reg.Specs, reg.ToolMetadataLookup); err != nil {
 		return err
 	}
+	if err := r.validateToolSpecRegistrations(toolSpecRegistration{
+		specs:  reg.Specs,
+		lookup: reg.ToolMetadataLookup,
+	}); err != nil {
+		return err
+	}
+	reg = cloneAgentRegistration(reg)
 	if r.Engine == nil {
 		return ErrEngineNotConfigured
 	}
@@ -1116,13 +1158,6 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 		copy(cp, reg.Specs)
 		r.agentToolSpecs[reg.ID] = cp
 	}
-	for _, ts := range reg.Toolsets {
-		if err := validateToolsetSpecs(ts); err != nil {
-			r.mu.Unlock()
-			return err
-		}
-		r.addToolsetLocked(ts)
-	}
 	r.mu.Unlock()
 
 	return nil
@@ -1156,6 +1191,9 @@ func (r *Runtime) ensureRecordActivityRegistered(ctx context.Context) error {
 // feature modules that expose shared toolsets. Returns an error if required fields
 // (Name, Execute) are missing.
 func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
+	r.registrationMu.Lock()
+	defer r.registrationMu.Unlock()
+
 	r.mu.RLock()
 	if r.registrationClosed {
 		r.mu.RUnlock()
@@ -1171,6 +1209,19 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	if err := validateToolsetSpecs(ts); err != nil {
 		return err
 	}
+	r.mu.RLock()
+	_, exists := r.toolsets[ts.Name]
+	r.mu.RUnlock()
+	if exists {
+		return fmt.Errorf("%w: toolset %q is already registered", ErrInvalidConfig, ts.Name)
+	}
+	if err := r.validateToolSpecRegistrations(toolSpecRegistration{
+		specs:  ts.Specs,
+		lookup: ts.ToolMetadataLookup,
+	}); err != nil {
+		return err
+	}
+	ts = cloneToolsetRegistration(ts)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.addToolsetLocked(ts)
@@ -1534,6 +1585,9 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	if err := r.Seal(ctx); err != nil {
 		return nil, err
 	}
+	if err := validateWorkflowRunInput(input); err != nil {
+		return nil, err
+	}
 	if input.RunID == "" {
 		input.RunID = generateRunID(string(input.AgentID))
 	}
@@ -1557,6 +1611,7 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	reg, _ := r.agentByID(input.AgentID)
 	runLabels := input.Labels
 	runMetadata := input.Metadata
+	effectivePolicy := input.Policy
 	if input.Continuation != nil {
 		checkpoint, err := decodeWorkflowCheckpointState(input.Continuation.Suspension)
 		if err != nil {
@@ -1567,8 +1622,20 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		}
 		runLabels = checkpoint.Labels
 		runMetadata = checkpoint.Metadata
+		effectivePolicy = checkpoint.Policy
 	}
 	if err := validateRequiredLabels(reg, runLabels); err != nil {
+		return nil, err
+	}
+	if reg.ID != "" && effectivePolicy != nil {
+		if err := r.validateCompletionToolPolicy(reg, effectivePolicy); err != nil {
+			return nil, err
+		}
+		if err := r.validateLimitTerminalPlans(reg, effectivePolicy.LimitTerminalPlans); err != nil {
+			return nil, err
+		}
+	}
+	if err := validateCompletionToolWorkflowRetry(effectivePolicy, input.WorkflowOptions); err != nil {
 		return nil, err
 	}
 	req := engine.WorkflowStartRequest{
@@ -1845,6 +1912,9 @@ func (r *Runtime) addToolSpecsLocked(specs []tools.ToolSpec, lookup ToolMetadata
 		r.policyToolMetadata = make(map[tools.Ident]policy.ToolMetadata)
 	}
 	for _, spec := range specs {
+		if _, exists := r.toolSpecs[spec.Name]; exists {
+			continue
+		}
 		r.toolSpecs[spec.Name] = spec
 		r.policyToolMetadata[spec.Name] = canonicalToolMetadata(spec, lookup)
 	}

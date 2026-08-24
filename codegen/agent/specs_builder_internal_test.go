@@ -56,8 +56,7 @@ func TestBuildToolSpecsData_DeterministicRefs(t *testing.T) {
 	require.Len(t, data.Services, 1)
 
 	ag := data.Services[0].Agents[0]
-	specs, err := codegen.BuildToolSpecsDataForTest(ag)
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(ag)
 	require.NotNil(t, specs)
 
 	// Look for summarize_doc payload/result types and assert deterministic generation:
@@ -121,8 +120,7 @@ func TestBuildToolSpecsData_FieldJSONTypes(t *testing.T) {
 
 	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
-	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(data.Services[0].Agents[0])
 
 	jsonTypes := codegen.CollectTypeJSONTypesForTest(specs)
 
@@ -172,8 +170,7 @@ func TestBuildToolSpecsData_FieldJSONTypes_DoNotFlattenUnionVariants(t *testing.
 
 	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
-	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(data.Services[0].Agents[0])
 
 	jsonTypes := codegen.CollectTypeJSONTypesForTest(specs)
 
@@ -218,8 +215,7 @@ func TestBuildToolSpecsData_UnionSchemasUseCanonicalEnvelope(t *testing.T) {
 
 	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
-	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(data.Services[0].Agents[0])
 
 	schemas := codegen.CollectTypeSchemasForTest(specs)
 	var schema map[string]any
@@ -298,8 +294,7 @@ func TestBuildToolSpecsData_UnionSchemasSpecializeDefinitions(t *testing.T) {
 
 	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
-	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(data.Services[0].Agents[0])
 
 	schemas := codegen.CollectTypeSchemasForTest(specs)
 	var schema map[string]any
@@ -380,8 +375,7 @@ func TestBuildToolSpecsData_UnionSchemasIncludeEmptyObjectVariants(t *testing.T)
 
 	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
-	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(data.Services[0].Agents[0])
 
 	schemas := codegen.CollectTypeSchemasForTest(specs)
 	var schema map[string]any
@@ -456,8 +450,7 @@ func TestBuildToolSpecsData_ExtendFieldsMaterialized(t *testing.T) {
 	require.Len(t, data.Services, 1)
 
 	ag := data.Services[0].Agents[0]
-	specs, err := codegen.BuildToolSpecsDataForTest(ag)
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(ag)
 	require.NotNil(t, specs)
 
 	schemas := codegen.CollectTypeSchemasForTest(specs)

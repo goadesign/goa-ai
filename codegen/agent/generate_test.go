@@ -63,7 +63,7 @@ func TestExecutorTemplatesUseSpecializedDispatch(t *testing.T) {
 	assert.NotContains(t, mcp, "strings.HasPrefix")
 
 	service := agentsTemplates.Read(serviceExecutorFileT)
-	assert.Contains(t, service, "{{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}PayloadCodec.FromJSON(call.Payload)")
+	assert.Contains(t, service, "{{ $.Toolset.SpecsPackageName }}.{{ .Spec.Payload.ExportedCodec }}.FromJSON(call.Payload)")
 	assert.NotContains(t, service, "PayloadCodec(string(call.Name))")
 	assert.NotContains(t, service, "bounds = init")
 }

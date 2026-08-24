@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -51,15 +51,15 @@ func serviceToolsetBindSelfBoundedResult(exactTotal bool) func() {
 					}
 				})
 			})
-			Agent("scribe", "Doc helper", func() {
-				Use("lookup", func() {
-					Tool("search", "Search", func() {
-						Args(SearchPayload)
-						Return(SearchResult)
-						BindTo("alpha", "Search")
-						BoundedResult(func() {
-							Cursor("cursor")
-							NextCursor("next_cursor")
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use("lookup", func() {
+					aidsl.Tool("search", "Search", func() {
+						aidsl.Args(SearchPayload)
+						aidsl.Return(SearchResult)
+						aidsl.BindTo("alpha", "Search")
+						aidsl.BoundedResult(func() {
+							aidsl.Cursor("cursor")
+							aidsl.NextCursor("next_cursor")
 						})
 					})
 				})

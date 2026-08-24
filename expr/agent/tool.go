@@ -186,20 +186,6 @@ type (
 	}
 )
 
-// runtimeMetaFieldNames is the fixed set of runtime.ToolCallMeta Go field
-// names (post-Goify) that Inject() compiles to a direct meta read instead of
-// a run-label lookup. Kept in lockstep with
-// codegen/agent/inject.go:metaFieldByGoName -- expr/agent cannot import
-// codegen/agent (which imports expr/agent), so the fixed, rarely-changing set
-// is duplicated here rather than shared via import.
-var runtimeMetaFieldNames = map[string]struct{}{
-	"RunID":            {},
-	"SessionID":        {},
-	"TurnID":           {},
-	"ToolCallID":       {},
-	"ParentToolCallID": {},
-}
-
 // AddMeta adds metadata to the tool expression.
 //
 // This method exists so Goa's standard Meta DSL helper can attach metadata to
@@ -326,7 +312,6 @@ func (t *ToolExpr) Validate() error {
 		if codegen.Goify(m.Name, true) == desired {
 			t.Method = m
 			validateInjectedFields(t, injectTargets(t, m), verr)
-			validateNoLabelBackedInjectOnBoundTool(t, verr)
 			if err := t.validateShapes(); err != nil {
 				verr.AddError(t, err)
 				return verr
@@ -476,34 +461,6 @@ func targetDefiningField(targets []injectTarget, name string) (injectTarget, boo
 		}
 	}
 	return injectTarget{}, false
-}
-
-// validateNoLabelBackedInjectOnBoundTool rejects label-backed Inject() fields
-// on tools bound to a service method via BindTo.
-//
-// codegen always emits a registry-served Provider.HandleToolCall case for
-// every method-backed tool (provider.go is generated unconditionally,
-// independent of whether any given deployment actually uses the registry
-// topology), and the toolregistry wire protocol (ToolCallMessage/ToolCallMeta)
-// carries no run labels today. A label-backed field on a bound tool would
-// therefore compile to code that can never receive a value over the wire,
-// silently failing at runtime for every registry-served call instead of
-// failing loudly here. Until the wire protocol grows label support (a named
-// follow-up), bound tools may only Inject() the fixed ToolCallMeta-backed
-// names.
-func validateNoLabelBackedInjectOnBoundTool(t *ToolExpr, verr *eval.ValidationErrors) {
-	for _, name := range t.InjectedFields {
-		if name == "" {
-			continue
-		}
-		if _, ok := runtimeMetaFieldNames[codegen.Goify(name, true)]; ok {
-			continue
-		}
-		verr.Add(t, "Inject field %q is label-backed, but tool %q is bound to a service method via BindTo; "+
-			"registry-served (bound) tools can only inject the fixed ToolCallMeta-backed names "+
-			"(sessionId, runId, turnId, toolCallId, parentToolCallId) because the toolregistry wire "+
-			"protocol does not carry run labels yet -- leave this tool unbound to use a label-backed field", name, t.Name)
-	}
 }
 
 func (t *ToolExpr) validateShapes() error {

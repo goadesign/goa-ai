@@ -7,9 +7,7 @@
 
 package http
 
-import (
-	goa "goa.design/goa/v3/pkg"
-)
+import goa "goa.design/goa/v3/pkg"
 
 // ValidateAnswerPayloadTransport runs the validations defined on AnswerPayloadTransport.
 func ValidateAnswerPayloadTransport(body *AnswerPayloadTransport) (err error) {

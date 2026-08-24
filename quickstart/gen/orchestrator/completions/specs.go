@@ -47,7 +47,7 @@ func DecodeDraftTaskChunk(chunk model.Chunk) (*DraftTaskResult, bool, error) {
 	return completion.DecodeChunk(chunk, SpecDraftTask)
 }
 
-// CompleteDraftTask runs the unary typed completion for draft_task.
+// CompleteDraftTask runs the typed completion for draft_task.
 func CompleteDraftTask(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[*DraftTaskResult], error) {
 	return completion.Complete(ctx, client, req, SpecDraftTask)
 }

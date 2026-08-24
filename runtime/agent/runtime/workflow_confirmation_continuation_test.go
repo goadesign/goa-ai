@@ -95,3 +95,90 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 	require.Equal(t, 1, executions)
 	require.Len(t, second.ToolEvents, 1)
 }
+
+func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
+	tool := newAnyJSONSpec("svc.persist", "svc")
+	executions := 0
+	runtime := New(
+		WithLogger(telemetry.NoopLogger{}),
+		WithToolConfirmation(&ToolConfirmationConfig{Confirm: map[tools.Ident]*ToolConfirmation{
+			tool.Name: {
+				Prompt: func(context.Context, *planner.ToolRequest) (string, error) {
+					return "Persist the result?", nil
+				},
+				DeniedResult: func(context.Context, *planner.ToolRequest) (any, error) {
+					return map[string]any{"persisted": false}, nil
+				},
+			},
+		}}),
+	)
+	require.NoError(t, runtime.RegisterToolset(ToolsetRegistration{
+		Name: "svc",
+		Execute: wrapExecute(func(_ context.Context, call *planner.ToolRequest) (*planner.ToolResult, error) {
+			executions++
+			return &planner.ToolResult{
+				Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"persisted": true},
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{tool},
+	}))
+	registration := AgentRegistration{
+		ID:                  "agent-1",
+		ExecuteToolActivity: "execute",
+		Specs:               []tools.ToolSpec{tool},
+	}
+	runtime.agents[registration.ID] = registration
+	runtime.agentToolSpecs[registration.ID] = registration.Specs
+
+	firstInput := &RunInput{
+		AgentID:   registration.ID,
+		RunID:     "run-1",
+		SessionID: "session-1",
+		TurnID:    "turn-1",
+		Policy:    &PolicyOverrides{CompletionTool: tool.Name},
+	}
+	seedRunMeta(t, runtime, firstInput)
+	first, err := runtime.runLoop(
+		&testWorkflowContext{ctx: t.Context(), runtime: runtime},
+		registration,
+		firstInput,
+		&planner.PlanInput{RunContext: run.Context{
+			RunID: firstInput.RunID, SessionID: firstInput.SessionID, TurnID: firstInput.TurnID, Attempt: 1,
+		}},
+		&planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+			Name: tool.Name, ToolCallID: "call-1", Payload: rawjson.Message(`{}`),
+		}}},
+		policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1},
+		time.Time{}, time.Time{}, firstInput.TurnID, nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, first.Suspension)
+	require.Zero(t, executions)
+
+	checkpoint, err := runtime.decodeWorkflowCheckpoint(first.Suspension)
+	require.NoError(t, err)
+	confirmation := first.Suspension.Pending[0].Confirmation
+	secondInput := &RunInput{
+		AgentID: registration.ID, RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
+		Continuation: &api.RunContinuationInput{
+			Suspension: first.Suspension,
+			Response: &api.PendingInputResponse{Confirmation: &api.ConfirmationDecision{
+				ID: confirmation.ID, Approved: false, RequestedBy: "operator",
+			}},
+		},
+	}
+	require.NoError(t, restoreContinuationRunInput(secondInput, checkpoint))
+	seedRunMeta(t, runtime, secondInput)
+
+	second, err := runtime.resumeSuspendedWorkflow(
+		&testWorkflowContext{ctx: t.Context(), runtime: runtime},
+		registration,
+		secondInput,
+		checkpoint,
+	)
+
+	require.Nil(t, second)
+	require.ErrorContains(t, err, `completion tool "svc.persist" did not succeed`)
+	require.ErrorContains(t, err, "execution was denied by confirmation")
+	require.Zero(t, executions)
+}

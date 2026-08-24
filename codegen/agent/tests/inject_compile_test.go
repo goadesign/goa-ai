@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	codegen "goa.design/goa-ai/codegen/agent"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 	"goa.design/goa-ai/codegen/testhelpers"
 	gcodegen "goa.design/goa/v3/codegen"
@@ -28,11 +27,7 @@ import (
 // shared.JoinImportPath (inserts /gen/) and plain path.Join -- identical.
 func buildWithPrepareAndPkg(t *testing.T, genpkg string, design func()) []*gcodegen.File {
 	t.Helper()
-	_, roots := testhelpers.RunDesign(t, design)
-	require.NoError(t, codegen.Prepare(genpkg, roots))
-	files, err := codegen.Generate(genpkg, roots, nil)
-	require.NoError(t, err)
-	return files
+	return testhelpers.BuildAndGenerateWithPkg(t, genpkg, design)
 }
 
 // writeGeneratedModuleKeepingGen writes files into a temp module at their
@@ -110,14 +105,14 @@ func (c *Client) GetData(ctx context.Context, p *GetDataPayload) (*GetDataResult
 // TestGeneratedBoundMetaInjectPackagesCompile is the bound half of the
 // compile matrix: a BindTo tool injecting a meta-backed field (session_id),
 // whose provider.go DOES declare the runtime.ToolCallMeta and call
-// Inject<Tool>, and whose transforms deref the pointer injected field into
-// the required method payload field. Locks the meta emission, the pointer
-// assignment in inject.go, and the tool-payload -> method-payload transform
+// Inject<Tool>, and whose transforms copy the injected field into the required
+// method payload field. Locks the metadata emission, assignment in inject.go,
+// and the tool-payload to method-payload transform
 // as a compilable whole -- and, via the provider_exec_test.go file written
 // into the generated module, EXECUTES the full generated chain
-// (PayloadCodec.FromJSON -> InjectGetData -> InitGetDataMethodPayload
-// pointer deref -> service call) with `go test`, asserting the bound method
-// payload actually receives msg.Meta.SessionID end to end.
+// (PayloadCodec.FromJSON -> InjectGetData -> InitGetDataMethodPayload ->
+// service call) with `go test`, asserting the bound method
+// payload actually receives session metadata and immutable labels end to end.
 func TestGeneratedBoundMetaInjectPackagesCompile(t *testing.T) {
 	files := buildWithPrepareAndPkg(t, "generated.local/gen", testscenarios.InjectBoundMetaExample())
 	root := writeGeneratedModuleKeepingGen(t, "generated.local", files)
@@ -128,6 +123,7 @@ import "context"
 
 // GetDataPayload mirrors the bound method payload emitted by Goa service codegen.
 type GetDataPayload struct {
+	HouseholdID string
 	SessionID string
 	Query     string
 }
@@ -153,14 +149,15 @@ func (c *Client) GetData(ctx context.Context, p *GetDataPayload) (*GetDataResult
 
 	// Executing regression test for the registry provider path: compiled by
 	// `go test` inside the generated module, it drives the generated
-	// Provider.HandleToolCall and asserts the injected meta value survives
-	// the Inject -> pointer -> transform-deref chain onto the bound method
+	// Provider.HandleToolCall and asserts the injected metadata value survives
+	// injection and conversion into the bound method
 	// payload. Text-level golden assertions cannot prove this chain RUNS;
 	// only executing the generated code can.
 	writeGeneratedPackageTest(t, root, "gen/atlas/toolsets/helpers/provider_exec_test.go", `package helpers
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	atlas "generated.local/gen/atlas"
@@ -180,17 +177,17 @@ func (s *capturingService) GetData(ctx context.Context, p *atlas.GetDataPayload)
 	return &atlas.GetDataResult{OK: true}, nil
 }
 
-// TestHandleToolCallInjectsSessionID executes the full generated chain:
+// TestHandleToolCallInjectsContext executes the full generated chain:
 // GetDataPayloadCodec.FromJSON decodes the wire payload (no session_id on
-// the wire -- it is hidden from the model), InjectGetData assigns
-// &meta.SessionID onto the pointer tool-payload field, and
-// InitGetDataMethodPayload derefs it into the required method payload
+// the wire -- injected fields are hidden from the model), InjectGetData assigns
+// the session metadata and immutable household label to required payload fields,
+// and InitGetDataMethodPayload copies them into the required method payload
 // field the service receives.
-func TestHandleToolCallInjectsSessionID(t *testing.T) {
+func TestHandleToolCallInjectsContext(t *testing.T) {
 	svc := &capturingService{}
 	p := NewProvider(svc)
 	ctx := toolregistry.WithToolUseID(context.Background(), "use-1")
-	out, err := p.HandleToolCall(ctx, toolregistry.ToolCallMessage{
+	message := toolregistry.ToolCallMessage{
 		ToolUseID: "use-1",
 		Tool:      GetData,
 		Payload:   []byte("{\"query\":\"weather\"}"),
@@ -199,8 +196,18 @@ func TestHandleToolCallInjectsSessionID(t *testing.T) {
 			SessionID:  "sess-42",
 			TurnID:     "turn-1",
 			ToolCallID: "call-1",
+			Labels:     map[string]string{"household_id": "household-7"},
 		},
-	})
+	}
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		t.Fatalf("marshal ToolCallMessage: %v", err)
+	}
+	var decoded toolregistry.ToolCallMessage
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal ToolCallMessage: %v", err)
+	}
+	out, err := p.HandleToolCall(ctx, decoded)
 	if err != nil {
 		t.Fatalf("HandleToolCall returned error: %v", err)
 	}
@@ -212,6 +219,9 @@ func TestHandleToolCallInjectsSessionID(t *testing.T) {
 	}
 	if svc.got.SessionID != "sess-42" {
 		t.Fatalf("method payload SessionID = %q, want %q (injected from msg.Meta.SessionID)", svc.got.SessionID, "sess-42")
+	}
+	if svc.got.HouseholdID != "household-7" {
+		t.Fatalf("method payload HouseholdID = %q, want %q (injected from msg.Meta.Labels)", svc.got.HouseholdID, "household-7")
 	}
 	if svc.got.Query != "weather" {
 		t.Fatalf("method payload Query = %q, want %q", svc.got.Query, "weather")
@@ -229,4 +239,106 @@ func TestHandleToolCallInjectsSessionID(t *testing.T) {
 	// files and is compile-checked only).
 	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-count=1",
 		"./gen/atlas/toolsets/helpers", "./gen/atlas/agents/scribe/helpers"))
+}
+
+// TestGoaAndGoaAIDSLDotImportsCompile evaluates a design that calls both DSLs
+// directly. Go compilation fails before this test runs if the packages export
+// the same name.
+func TestGoaAndGoaAIDSLDotImportsCompile(t *testing.T) {
+	testhelpers.RunDesign(t, testscenarios.InjectReusableExportExample())
+}
+
+// TestGeneratedReusableInjectPackagesCompile verifies that a shared toolset
+// exported by one service and used by another produces one complete contract.
+// The generated provider test also proves a hidden session ID reaches the
+// bound service method.
+func TestGeneratedReusableInjectPackagesCompile(t *testing.T) {
+	files := buildWithPrepareAndPkg(t, "generated.local/gen", testscenarios.InjectReusableExportExample())
+	root := writeGeneratedModuleKeepingGen(t, "generated.local", files)
+
+	writeGeneratedPackageTest(t, root, "gen/atlas/service_stub.go", `package atlas
+
+import "context"
+
+type InheritedPayload struct {
+	SessionID string
+	Query string
+}
+
+type ExplicitArgs struct {
+	SessionID string
+	Query string
+}
+
+type Service interface {
+	Inherited(context.Context, *InheritedPayload) (string, error)
+	Explicit(context.Context, *ExplicitArgs) (string, error)
+}
+
+type Client struct{}
+
+func (c *Client) Inherited(context.Context, *InheritedPayload) (string, error) {
+	return "ok", nil
+}
+
+func (c *Client) Explicit(context.Context, *ExplicitArgs) (string, error) {
+	return "ok", nil
+}
+`)
+
+	writeGeneratedPackageTest(t, root, "gen/atlas/toolsets/helpers/provider_exec_test.go", `package helpers
+
+import (
+	"context"
+	"testing"
+
+	atlas "generated.local/gen/atlas"
+	"goa.design/goa-ai/runtime/toolregistry"
+)
+
+type capturingReusableService struct {
+	got *atlas.InheritedPayload
+}
+
+func (s *capturingReusableService) Inherited(_ context.Context, p *atlas.InheritedPayload) (string, error) {
+	s.got = p
+	return "ok", nil
+}
+
+func (s *capturingReusableService) Explicit(_ context.Context, _ *atlas.ExplicitArgs) (string, error) {
+	return "ok", nil
+}
+
+func TestReusableProviderInjectsSession(t *testing.T) {
+	svc := &capturingReusableService{}
+	provider := NewProvider(svc)
+	ctx := toolregistry.WithToolUseID(context.Background(), "use-1")
+	result, err := provider.HandleToolCall(ctx, toolregistry.ToolCallMessage{
+		ToolUseID: "use-1",
+		Tool: Inherited,
+		Payload: []byte("{\"query\":\"weather\"}"),
+		Meta: &toolregistry.ToolCallMeta{SessionID: "sess-42"},
+	})
+	if err != nil {
+		t.Fatalf("HandleToolCall returned error: %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("HandleToolCall returned tool error: %+v", result.Error)
+	}
+	if svc.got == nil {
+		t.Fatal("bound service method was never called")
+	}
+	if svc.got.SessionID != "sess-42" {
+		t.Fatalf("SessionID = %q, want sess-42", svc.got.SessionID)
+	}
+	if svc.got.Query != "weather" {
+		t.Fatalf("Query = %q, want weather", svc.got.Query)
+	}
+}
+`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-count=1",
+		"./gen/atlas/toolsets/helpers", "./gen/chat/agents/assistant/helpers"))
 }

@@ -1,11 +1,8 @@
-// Package codegen keeps example-only scaffolding separate from the main agent
-// generator.
+// This file writes starter application code for generated agents.
 //
-// This file owns the `goa example` path: it emits application-side bootstrap,
-// planner, executor, and main wiring files that live outside `gen/`. The
-// helpers are idempotent over Goa's in-memory example file list so rerunning
-// generation updates scaffolded files without affecting the regular `gen`
-// output produced by the main generator entrypoint.
+// The goa example command writes startup, planning, tool execution, and main
+// files outside gen. Running it again updates those starter files without
+// changing files written by goa gen.
 package codegen
 
 import (
@@ -20,17 +17,15 @@ import (
 )
 
 type (
-	// quickstartData feeds the AGENTS_QUICKSTART.md template. It bundles the
-	// agent-bearing services with the evaluation suites declared in the design
-	// so the generated guide documents both.
+	// quickstartData holds the agents and evaluation suites listed in the
+	// generated quickstart guide.
 	quickstartData struct {
 		*GeneratorData
 		// Suites lists the declared evaluation suites in declaration order.
 		Suites []*quickstartSuiteData
 	}
 
-	// quickstartSuiteData describes one declared evaluation suite for the
-	// generated guide.
+	// quickstartSuiteData describes one evaluation suite in the generated guide.
 	quickstartSuiteData struct {
 		// Name is the suite identifier, e.g. "chat_quality".
 		Name string
@@ -57,28 +52,16 @@ type (
 	}
 )
 
-// GenerateExample appends a service-local bootstrap helper and planner stub(s)
-// so developers can run agents inside the service process with no manual wiring.
-//
-// Behavior:
-//   - For each service that declares at least one agent, emits:
-//   - cmd/<service>/agents_bootstrap.go
-//   - cmd/<service>/agents_planner_<agent>.go (one per agent)
-//   - Patches cmd/<service>/main.go to call bootstrapAgents(ctx) at process start.
-//
-// The function is idempotent over the in-memory file list provided by Goa’s example
-// pipeline. It does not modify gen/ output; it only adds/patches service-side files.
-func GenerateExample(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
-	data, err := buildGeneratorData(genpkg, roots)
-	if err != nil {
-		return nil, err
-	}
+// generateExampleFiles adds startup code and starter implementations for each
+// generated agent.
+func generateExampleFiles(data *GeneratorData, files []*codegen.File) ([]*codegen.File, error) {
 	if len(data.Services) == 0 {
 		return files, nil
 	}
 
-	// Emit application-owned scaffold under internal/agents/; do not patch main.
-	moduleBase := moduleBaseImport(genpkg)
+	// Write application-owned files under internal/agents without changing an
+	// existing main package.
+	moduleBase := moduleBaseImport(data.Genpkg)
 	for _, svc := range data.Services {
 		if len(svc.Agents) == 0 {
 			continue
@@ -105,7 +88,11 @@ func GenerateExample(genpkg string, roots []eval.Root, files []*codegen.File) ([
 				if !has {
 					continue
 				}
-				if f := emitExecutorInternalStub(ag, ts); f != nil {
+				f, err := emitExecutorInternalStub(ag, ts)
+				if err != nil {
+					return nil, err
+				}
+				if f != nil {
 					files = append(files, f)
 				}
 			}
@@ -124,8 +111,8 @@ func moduleBaseImport(genpkg string) string {
 	return base
 }
 
-// emitInternalBootstrap emits internal/agents/bootstrap/bootstrap.go with a
-// simple New(ctx) bootstrap for every generated agent in one service.
+// emitInternalBootstrap writes a New function that starts every generated
+// agent in one service.
 func emitInternalBootstrap(svc *ServiceAgentsData, moduleBase string) *codegen.File {
 	if svc == nil || len(svc.Agents) == 0 {
 		return nil
@@ -140,7 +127,7 @@ func emitInternalBootstrap(svc *ServiceAgentsData, moduleBase string) *codegen.F
 		imports = append(imports, &codegen.ImportSpec{Path: "flag"})
 		imports = append(imports, &codegen.ImportSpec{Name: "mcpruntime", Path: "goa.design/goa-ai/runtime/mcp"})
 	}
-	// Import generated agent registration packages and per-agent planner packages.
+	// Import each generated agent and its application-owned planner.
 	type toolsetImport struct{ Alias, Path string }
 	type agentImport struct {
 		Alias, Path, PlannerAlias, PlannerPath string
@@ -153,7 +140,7 @@ func emitInternalBootstrap(svc *ServiceAgentsData, moduleBase string) *codegen.F
 		palias := "planner" + ag.PathName
 		ppath := filepath.ToSlash(filepath.Join(moduleBase, "internal", "agents", ag.PathName, "planner"))
 		imports = append(imports, &codegen.ImportSpec{Path: ppath, Name: palias})
-		// Import internal toolset executor packages for method-backed toolsets.
+		// Import the application code that runs tools handled by service methods.
 		var tsImports []toolsetImport
 		for _, ts := range ag.MethodBackedToolsets {
 			tpath := filepath.ToSlash(filepath.Join(moduleBase, "internal", "agents", ag.PathName, "toolsets", ts.PathName))
@@ -186,8 +173,7 @@ func emitInternalBootstrap(svc *ServiceAgentsData, moduleBase string) *codegen.F
 	return &codegen.File{Path: path, SectionTemplates: sections}
 }
 
-// emitPlannerInternalStub emits internal/agents/<agent>/planner/planner.go
-// with the minimal planner scaffold for an example application.
+// emitPlannerInternalStub writes a starter planner for an example application.
 func emitPlannerInternalStub(_ string, ag *AgentData) *codegen.File {
 	if ag == nil {
 		return nil
@@ -205,14 +191,14 @@ func emitPlannerInternalStub(_ string, ag *AgentData) *codegen.File {
 	return &codegen.File{Path: path, SectionTemplates: sections}
 }
 
-// emitExecutorInternalStub emits
-// internal/agents/<agent>/toolsets/<toolset>/execute.go for method-backed tools.
-func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
+// emitExecutorInternalStub writes starter execution code for tools handled by
+// service methods.
+func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) (*codegen.File, error) {
 	src := ts.SourceService
 	if src == nil {
-		return nil
+		return nil, nil
 	}
-	// Build imports: agent package for registration.
+	// Import the generated agent package used during registration.
 	agentImport := &codegen.ImportSpec{Path: ag.ImportPath, Name: ag.PackageName}
 	imports := make([]*codegen.ImportSpec, 0, 6)
 	imports = append(imports,
@@ -224,55 +210,31 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
 		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/tools"},
 	)
-	// Import specs package for typed payloads and transforms.
+	// Import the generated package that decodes tool inputs.
 	specsAlias := ts.SpecsPackageName + "specs"
 	imports = append(imports, &codegen.ImportSpec{Path: ts.SpecsImportPath, Name: specsAlias})
 
-	// Build tool switch metadata.
-	type execTool struct {
-		ID               string
-		ConstName        string
-		GoName           string
-		PayloadUnmarshal string
-		PayloadType      string
-	}
-	count := 0
-	for _, t := range ts.Tools {
-		if t.IsMethodBacked {
-			count++
-		}
-	}
-	tools := make([]execTool, 0, count)
-	for _, t := range ts.Tools {
-		if !t.IsMethodBacked {
-			continue
-		}
-		g := codegen.Goify(t.Name, true)
-		tools = append(tools, execTool{
-			ID:               t.Name,
-			ConstName:        t.ConstName,
-			GoName:           g,
-			PayloadUnmarshal: "Unmarshal" + g + "Payload",
-			PayloadType:      g + "Payload",
-		})
+	tools, err := buildToolRenderData(ts)
+	if err != nil {
+		return nil, err
 	}
 	sections := []*codegen.SectionTemplate{
 		codegen.Header(ts.Name+" executor stub for "+ag.StructName, ts.PathName, imports),
 		{
 			Name:   "example-executor-stub",
 			Source: agentsTemplates.Read(exampleExecutorStubT),
-			Data: struct {
-				Agent       *AgentData
-				Toolset     *ToolsetData
-				AgentImport *codegen.ImportSpec
-				SpecsAlias  string
-				Tools       []execTool
-			}{ag, ts, agentImport, specsAlias, tools},
+			Data: exampleExecutorFileData{
+				Agent:       ag,
+				Toolset:     ts,
+				AgentImport: agentImport,
+				SpecsAlias:  specsAlias,
+				Tools:       tools,
+			},
 			FuncMap: templateFuncMap(),
 		},
 	}
 	path := filepath.Join("internal", "agents", ag.PathName, "toolsets", ts.PathName, "execute.go")
-	return &codegen.File{Path: path, SectionTemplates: sections}
+	return &codegen.File{Path: path, SectionTemplates: sections}, nil
 }
 
 // quickstartReadmeFile builds the contextual quickstart README at the module

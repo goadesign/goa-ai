@@ -1,5 +1,8 @@
 package runtime
 
+// This file checks that lifecycle hooks receive workflow-owned activity
+// context, identifiers, ordering, and error handling.
+
 import (
 	"context"
 	"encoding/json"

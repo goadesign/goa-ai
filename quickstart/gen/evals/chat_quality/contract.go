@@ -14,9 +14,8 @@ import (
 	tools "goa.design/goa-ai/runtime/agent/tools"
 )
 
-// MustToolContract returns the generated production
-// contract for a tool reachable from orchestrator.chat. An unknown identifier is
-// an evaluation programming error.
+// MustToolContract returns the generated description
+// for a tool available to orchestrator.chat. An unknown name is a programming error.
 func MustToolContract(name tools.Ident) *tools.ToolSpec {
 	if spec, ok := genhelpers.Spec(name); ok {
 		return spec

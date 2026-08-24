@@ -1,6 +1,9 @@
 //nolint:lll // allow long lines in test literals for readability
 package runtime
 
+// This file checks runtime registration, startup, planner execution, and
+// engine integration contracts shared by generated agents.
+
 import (
 	"context"
 	"errors"

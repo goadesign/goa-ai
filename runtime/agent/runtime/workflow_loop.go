@@ -91,6 +91,9 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 		if err := l.r.rewriteRecoveryCatalogToolCalls(l.st.PendingRecoveryCatalog, l.st.Result); err != nil {
 			return nil, err
 		}
+		if err := l.r.validateCompletionToolPlanResult(l.st.Result, completionTool(l.input)); err != nil {
+			return nil, err
+		}
 		program, err := l.r.normalizeStep(l.st.Result)
 		if err != nil {
 			return nil, err

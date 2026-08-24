@@ -4,7 +4,7 @@ var (
     {{- range .Toolsets }}
         {{- $pkg := .SpecsPackageName }}
         {{- range .Tools }}
-        {{ $pkg }}.Spec{{ .ConstName }},
+        {{ $pkg }}.{{ .Spec.SpecVar }},
         {{- end }}
     {{- end }}
     }
@@ -14,15 +14,15 @@ var (
     {{- range .Toolsets }}
         {{- range .Tools }}
         {
-            ID:          tools.Ident({{ printf "%q" .QualifiedName }}),
-            Title:       {{ printf "%q" .Title }},
-            Description: {{ printf "%q" .Description }},
+            ID:          tools.Ident({{ printf "%q" .Tool.QualifiedName }}),
+            Title:       {{ printf "%q" .Tool.Title }},
+            Description: {{ printf "%q" .Tool.Description }},
             Tags: []string{
-            {{- range .Tags }}
+            {{- range .Tool.Tags }}
                 {{ printf "%q" . }},
             {{- end }}
             },
-            BudgetClass: policy.ToolBudgetClass{{ if .Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
+            BudgetClass: policy.ToolBudgetClass{{ if .Tool.Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
         },
         {{- end }}
     {{- end }}
@@ -33,7 +33,7 @@ var (
     {{- range .Toolsets }}
         {{- $pkg := .SpecsPackageName }}
         {{- range .Tools }}
-        {{ $pkg }}.{{ .ConstName }},
+        {{ $pkg }}.{{ .Spec.ConstName }},
         {{- end }}
     {{- end }}
     }
@@ -60,8 +60,8 @@ func Spec(name tools.Ident) (*tools.ToolSpec, bool) {
     {{- range .Toolsets }}
         {{- $pkg := .SpecsPackageName }}
         {{- range .Tools }}
-    case tools.Ident({{ printf "%q" .QualifiedName }}):
-        return &{{ $pkg }}.Spec{{ .ConstName }}, true
+    case tools.Ident({{ printf "%q" .Tool.QualifiedName }}):
+        return &{{ $pkg }}.{{ .Spec.SpecVar }}, true
         {{- end }}
     {{- end }}
     default:
@@ -75,8 +75,8 @@ func PayloadSchema(name tools.Ident) ([]byte, bool) {
     {{- range .Toolsets }}
         {{- $pkg := .SpecsPackageName }}
         {{- range .Tools }}
-    case tools.Ident({{ printf "%q" .QualifiedName }}):
-        return {{ $pkg }}.Spec{{ .ConstName }}.Payload.Schema, true
+    case tools.Ident({{ printf "%q" .Tool.QualifiedName }}):
+        return {{ $pkg }}.{{ .Spec.SpecVar }}.Payload.Schema, true
         {{- end }}
     {{- end }}
     default:
@@ -90,8 +90,8 @@ func ResultSchema(name tools.Ident) ([]byte, bool) {
     {{- range .Toolsets }}
         {{- $pkg := .SpecsPackageName }}
         {{- range .Tools }}
-    case tools.Ident({{ printf "%q" .QualifiedName }}):
-        return {{ $pkg }}.Spec{{ .ConstName }}.Result.Schema, true
+    case tools.Ident({{ printf "%q" .Tool.QualifiedName }}):
+        return {{ $pkg }}.{{ .Spec.SpecVar }}.Result.Schema, true
         {{- end }}
     {{- end }}
     default:
@@ -114,17 +114,17 @@ func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
     switch name {
     {{- range .Toolsets }}
         {{- range .Tools }}
-    case tools.Ident({{ printf "%q" .QualifiedName }}):
+    case tools.Ident({{ printf "%q" .Tool.QualifiedName }}):
         return policy.ToolMetadata{
-            ID:          tools.Ident({{ printf "%q" .QualifiedName }}),
-            Title:       {{ printf "%q" .Title }},
-            Description: {{ printf "%q" .Description }},
+            ID:          tools.Ident({{ printf "%q" .Tool.QualifiedName }}),
+            Title:       {{ printf "%q" .Tool.Title }},
+            Description: {{ printf "%q" .Tool.Description }},
             Tags: []string{
-            {{- range .Tags }}
+            {{- range .Tool.Tags }}
                 {{ printf "%q" . }},
             {{- end }}
             },
-            BudgetClass: policy.ToolBudgetClass{{ if .Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
+            BudgetClass: policy.ToolBudgetClass{{ if .Tool.Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
         }, true
         {{- end }}
     {{- end }}

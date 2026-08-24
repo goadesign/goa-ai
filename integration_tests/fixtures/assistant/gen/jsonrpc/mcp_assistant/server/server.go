@@ -13,7 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
@@ -98,8 +100,7 @@ func New(
 		encoder:              encoder,
 		errhandler:           errhandler,
 	}
-	// Default HTTP handler per transport kind
-	// Plain HTTP JSON-RPC
+	// Install the request handler required by this service's methods.
 	s.Handler = http.HandlerFunc(s.ServeHTTP)
 	return s
 }
@@ -115,97 +116,249 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 // MethodNames returns the methods served.
 func (s *Server) MethodNames() []string { return mcpassistant.MethodNames[:] }
 
-// ServeHTTP handles JSON-RPC requests with content negotiation for mixed HTTP/SSE transports.
+// ServeHTTP decodes one request and uses the response type designed for its method.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Check Accept header for SSE
-	accept := r.Header.Get("Accept")
-	if strings.Contains(accept, "text/event-stream") {
-		// Route to SSE handler for streaming methods
-		s.handleSSE(w, r)
-		return
-	}
-
-	// Otherwise handle as regular JSON-RPC HTTP request
-	s.handleHTTP(w, r)
-}
-
-// handleHTTP handles JSON-RPC requests.
-func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	// Peek at the first byte to determine request type
-	bufReader := bufio.NewReader(r.Body)
-	peek, err := bufReader.Peek(1)
-	if err != nil && err != io.EOF {
-		r.Body.Close()
-		s.errhandler(r.Context(), w, fmt.Errorf("failed to read request body: %w", err))
-		return
-	}
-
-	// Wrap the buffered reader with the original closer
-	r.Body = struct {
-		io.Reader
-		io.Closer
-	}{
-		Reader: bufReader,
-		Closer: r.Body,
-	}
-	defer func(r *http.Request) {
-		if err := r.Body.Close(); err != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("failed to close request body: %w", err))
+	acceptJSON := false
+	acceptSSE := false
+	acceptValues := r.Header.Values("Accept")
+	if len(acceptValues) == 0 || len(acceptValues) == 1 && strings.TrimSpace(acceptValues[0]) == "" {
+		acceptJSON = true
+		acceptSSE = true
+	} else {
+		for _, header := range acceptValues {
+			for _, value := range strings.Split(header, ",") {
+				mediaType, params, err := mime.ParseMediaType(value)
+				if err != nil {
+					continue
+				}
+				quality := 1.0
+				if value, ok := params["q"]; ok {
+					quality, err = strconv.ParseFloat(value, 64)
+					if err != nil {
+						continue
+					}
+				}
+				if quality <= 0 {
+					continue
+				}
+				switch mediaType {
+				case "*/*":
+					acceptJSON = true
+					acceptSSE = true
+				case "application/json", "application/*":
+					acceptJSON = true
+				case "text/event-stream", "text/*":
+					acceptSSE = true
+				}
+			}
 		}
-	}(r)
+	}
 
-	// Route to appropriate handler
+	originalBody := r.Body
+	bufReader := bufio.NewReader(originalBody)
+	var peek []byte
+	for {
+		var err error
+		peek, err = bufReader.Peek(1)
+		if err != nil && err != io.EOF {
+			closeErr := originalBody.Close()
+			s.errhandler(r.Context(), w, fmt.Errorf("failed to read request body: %w", errors.Join(err, closeErr)))
+			return
+		}
+		if len(peek) == 0 || (peek[0] != ' ' && peek[0] != '\t' && peek[0] != '\n' && peek[0] != '\r') {
+			break
+		}
+		if _, err := bufReader.Discard(1); err != nil {
+			closeErr := originalBody.Close()
+			s.errhandler(r.Context(), w, fmt.Errorf("failed to read request body: %w", errors.Join(err, closeErr)))
+			return
+		}
+	}
+	r.Body = io.NopCloser(bufReader)
+
+	// Request arrays always use ordinary JSON-RPC responses. Streaming methods
+	// in an array receive one method error and are not called.
 	if len(peek) > 0 && peek[0] == '[' {
+		defer func() {
+			if err := originalBody.Close(); err != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("failed to close request body: %w", err))
+			}
+		}()
+		if !acceptJSON {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
 		s.handleBatch(w, r)
 		return
 	}
-	s.handleSingle(w, r)
-}
 
-// handleSingle handles a single JSON-RPC request.
-func (s *Server) handleSingle(w http.ResponseWriter, r *http.Request) {
+	// Decode the request once so the generated method switch below can choose
+	// both the handler and its response type.
 	var req jsonrpc.RawRequest
 	if err := s.decoder(r).Decode(&req); err != nil {
-		// JSON-RPC parse error with null id and generic message
-		response := jsonrpc.MakeErrorResponse(nil, jsonrpc.ParseError, "Parse error", nil)
-		if encErr := s.encoder(r.Context(), w).Encode(response); encErr != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("failed to encode parse error response: %w", encErr))
+		closeErr := originalBody.Close()
+		s.errhandler(r.Context(), w, fmt.Errorf("failed to read request body: %w", errors.Join(err, closeErr)))
+		switch {
+		case acceptJSON:
+			response := jsonrpc.MakeErrorResponse(nil, jsonrpc.ParseError, "Parse error", nil)
+			if encErr := s.encoder(r.Context(), w).Encode(response); encErr != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("failed to encode parse error response: %w", encErr))
+			}
+		case acceptSSE:
+			stream := &sseServerStream{w: w, encoder: s.encoder}
+			if sendErr := stream.sendError(r.Context(), nil, jsonrpc.ParseError, "Parse error", nil); sendErr != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("write parse error event: %w", sendErr))
+			}
+		default:
+			w.WriteHeader(http.StatusNotAcceptable)
 		}
 		return
 	}
-	s.processRequest(r.Context(), r, &req, w)
+	defer func() {
+		if err := originalBody.Close(); err != nil {
+			s.errhandler(r.Context(), w, fmt.Errorf("failed to close request body: %w", err))
+		}
+	}()
+
+	// Invalid and unknown requests do not have a designed response type. Use
+	// JSON when the client accepts it, then events, or reject the response.
+	if req.Invalid || req.JSONRPC != "2.0" || req.Method == "" {
+		switch {
+		case acceptJSON:
+			s.processRequest(r.Context(), r, &req, w)
+		case acceptSSE:
+			s.processSSERequest(r.Context(), r, &req, w)
+		default:
+			w.WriteHeader(http.StatusNotAcceptable)
+		}
+		return
+	}
+
+	switch req.Method {
+	case "initialize":
+		if !acceptJSON {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		s.processRequest(r.Context(), r, &req, w)
+	case "ping":
+		if !acceptJSON {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		s.processRequest(r.Context(), r, &req, w)
+	case "tools/list":
+		if !acceptJSON {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		s.processRequest(r.Context(), r, &req, w)
+	case "tools/call":
+		if !acceptJSON {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		s.processRequest(r.Context(), r, &req, w)
+	case "resources/list":
+		if !acceptJSON {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		s.processRequest(r.Context(), r, &req, w)
+	case "resources/read":
+		if !acceptJSON {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		s.processRequest(r.Context(), r, &req, w)
+	case "resources/subscribe":
+		if !acceptJSON {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		s.processRequest(r.Context(), r, &req, w)
+	case "resources/unsubscribe":
+		if !acceptJSON {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		s.processRequest(r.Context(), r, &req, w)
+	case "prompts/list":
+		if !acceptJSON {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		s.processRequest(r.Context(), r, &req, w)
+	case "prompts/get":
+		if !acceptJSON {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		s.processRequest(r.Context(), r, &req, w)
+	case "notify_status_update":
+		if !acceptJSON {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		s.processRequest(r.Context(), r, &req, w)
+	case "events/stream":
+		if !acceptSSE {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		s.processSSERequest(r.Context(), r, &req, w)
+	default:
+		switch {
+		case acceptJSON:
+			s.processRequest(r.Context(), r, &req, w)
+		case acceptSSE:
+			s.processSSERequest(r.Context(), r, &req, w)
+		default:
+			w.WriteHeader(http.StatusNotAcceptable)
+		}
+	}
 }
 
-// handleBatch handles a batch of JSON-RPC requests.
+// handleBatch handles an array of JSON-RPC values and writes the required responses.
 func (s *Server) handleBatch(w http.ResponseWriter, r *http.Request) {
 	var reqs []jsonrpc.RawRequest
 	if err := s.decoder(r).Decode(&reqs); err != nil {
-		// JSON-RPC parse error for batch with null id and generic message
+		// An array that cannot be decoded receives the JSON-RPC parse error.
 		response := jsonrpc.MakeErrorResponse(nil, jsonrpc.ParseError, "Parse error", nil)
 		if encErr := s.encoder(r.Context(), w).Encode(response); encErr != nil {
 			s.errhandler(r.Context(), w, fmt.Errorf("failed to encode parse error response: %w", encErr))
 		}
 		return
 	}
+	if len(reqs) == 0 {
+		// JSON-RPC defines an empty request array as one invalid request.
+		response := jsonrpc.MakeErrorResponse(nil, jsonrpc.InvalidRequest, "Invalid request", nil)
+		if err := s.encoder(r.Context(), w).Encode(response); err != nil {
+			s.errhandler(r.Context(), w, fmt.Errorf("failed to encode invalid request response: %w", err))
+		}
+		return
+	}
 
-	// Write responses
+	// Write every response into one JSON array.
 	w.Header().Set("Content-Type", "application/json")
 	writer := &batchWriter{Writer: w}
 
 	for _, req := range reqs {
-		// Process the request with batch writer
+		// The writer inserts the array separators around each response.
 		s.processRequest(r.Context(), r, &req, writer)
 	}
 
-	// Close the batch array
+	// Write the closing bracket only when at least one request produced a response.
 	if writer.written {
-		writer.Writer.Write([]byte{']'})
+		if _, err := writer.Writer.Write([]byte{']'}); err != nil {
+			s.errhandler(r.Context(), w, fmt.Errorf("failed to close JSON-RPC batch response: %w", err))
+		}
 	}
 }
 
-// ProcessRequest processes a single JSON-RPC request.
+// processRequest validates the JSON-RPC version and method, then calls the matching handler.
 func (s *Server) processRequest(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) {
-	if req.JSONRPC != "2.0" {
+	if req.Invalid || req.JSONRPC != "2.0" {
 		s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
 		return
 	}
@@ -261,15 +414,18 @@ func (s *Server) processRequest(ctx context.Context, r *http.Request, req *jsonr
 			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "notify_status_update", err))
 		}
 	case "events/stream":
-		if err := s.EventsStream(ctx, r, req, w); err != nil {
-			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "events/stream", err))
+		if req.HasID {
+			s.encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, "Method is not available in a batch request", nil)
 		}
 	default:
-		s.encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, "Method not found", nil)
+		if req.HasID {
+			s.encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, "Method not found", nil)
+		}
 	}
 }
 
-// batchWriter is a helper type that implements http.ResponseWriter for writing multiple JSON-RPC responses
+// batchWriter inserts JSON array separators around responses from one request
+// array.
 type batchWriter struct {
 	io.Writer
 	header     http.Header
@@ -292,69 +448,62 @@ func (rb *batchWriter) WriteHeader(statusCode int) {
 }
 
 func (rb *batchWriter) Write(data []byte) (int, error) {
+	separator := byte(',')
 	if !rb.written {
-		rb.written = true
-		rb.Writer.Write([]byte{'['})
-	} else {
-		rb.Writer.Write([]byte{','})
+		separator = '['
 	}
+	if _, err := rb.Writer.Write([]byte{separator}); err != nil {
+		return 0, err
+	}
+	rb.written = true
 	return rb.Writer.Write(data)
 }
 
-// handleSSE handles JSON-RPC SSE requests by dispatching to the appropriate method.
-func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+// processSSERequest validates and runs one server-sent-event request.
+func (s *Server) processSSERequest(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) {
 
-	// Read the JSON-RPC request
-	var req jsonrpc.RawRequest
-	if err := s.decoder(r).Decode(&req); err != nil {
-		// Emit JSON-RPC parse error as SSE event
-		stream := &sseServerStream{w: w, r: r, encoder: s.encoder}
-		_ = stream.sendError(ctx, nil, jsonrpc.ParseError, "Parse error", nil)
-		return
-	}
-
-	// Validate JSON-RPC request
-	if req.JSONRPC != "2.0" {
-		stream := &sseServerStream{w: w, r: r, encoder: s.encoder}
-		_ = stream.sendError(ctx, req.ID, jsonrpc.InvalidRequest, "Invalid request", nil)
+	// Reject requests that do not use JSON-RPC 2.0.
+	if req.Invalid || req.JSONRPC != "2.0" {
+		stream := &sseServerStream{w: w, encoder: s.encoder}
+		if err := stream.sendError(ctx, req.ID, jsonrpc.InvalidRequest, "Invalid request", nil); err != nil {
+			s.errhandler(ctx, w, fmt.Errorf("write invalid request event: %w", err))
+		}
 		return
 	}
 
 	if req.Method == "" {
-		stream := &sseServerStream{w: w, r: r, encoder: s.encoder}
-		_ = stream.sendError(ctx, req.ID, jsonrpc.InvalidRequest, "Invalid request", nil)
+		stream := &sseServerStream{w: w, encoder: s.encoder}
+		if err := stream.sendError(ctx, req.ID, jsonrpc.InvalidRequest, "Invalid request", nil); err != nil {
+			s.errhandler(ctx, w, fmt.Errorf("write invalid request event: %w", err))
+		}
 		return
 	}
 
-	// Find the appropriate handler based on method name
+	// Find the function for the requested method.
 	var handler func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	switch req.Method {
-	case "tools/call":
-		handler = s.ToolsCall
 	case "events/stream":
 		handler = s.EventsStream
 	default:
-		stream := &sseServerStream{w: w, r: r, encoder: s.encoder}
-		_ = stream.sendError(ctx, req.ID, jsonrpc.MethodNotFound, "Method not found", nil)
+		if !req.HasID {
+			return
+		}
+		stream := &sseServerStream{w: w, encoder: s.encoder}
+		if err := stream.sendError(ctx, req.ID, jsonrpc.MethodNotFound, "Method not found", nil); err != nil {
+			s.errhandler(ctx, w, fmt.Errorf("write method not found event: %w", err))
+		}
 		return
 	}
 
-	// Call the handler for the specific method
-	if err := handler(ctx, r, &req, w); err != nil {
+	// Call the requested method.
+	if err := handler(ctx, r, req, w); err != nil {
 		s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", req.Method, err))
-		return
 	}
+}
 
-	// For notifications (requests without ID) that don't stream, return 204 No Content
-	switch req.Method {
-	}
-} // Mount configures the mux to serve the JSON-RPC mcp_assistant service methods.
+// Mount configures the mux to serve the JSON-RPC mcp_assistant service methods.
 func Mount(mux goahttp.Muxer, h *Server) {
-	// Mixed transports: mount unified handler that negotiates HTTP vs SSE by Accept header.
-	//
-	// MCP policy headers are propagated via request context so the service
-	// implementation can enforce per-request allow/deny lists.
+	// ServeHTTP checks the Accept header and chooses one response or a stream of events.
 	mux.Handle("POST", "/rpc", withMCPPolicyHeaders(h.ServeHTTP))
 }
 
@@ -363,18 +512,7 @@ func (s *Server) Mount(mux goahttp.Muxer) {
 	Mount(mux, s)
 }
 
-// withMCPPolicyHeaders propagates MCP policy header values into the request context.
-//
-// The MCP adapter enforces resource allow/deny policies based on context values:
-//   - "mcp_allow_names" (CSV list of resource names)
-//   - "mcp_deny_names"  (CSV list of resource names)
-//
-// This helper maps those values from the corresponding HTTP headers:
-//   - x-mcp-allow-names
-//   - x-mcp-deny-names
-//
-// It is installed by the JSON-RPC Mount functions so consumers do not need
-// to patch example servers or wire middleware manually.
+// withMCPPolicyHeaders makes the request's allow and deny headers available to the MCP service.
 func withMCPPolicyHeaders(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -403,61 +541,47 @@ func NewInitializeHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+			if req.HasID {
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the decode error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
 			}
 			return nil
 		}
 		res, err := endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
+			if req.HasID {
 				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+				if errors.As(err, &en) {
+					switch en.GoaErrorName() {
+					case "invalid_params":
+						encodeJSONRPCError(ctx, w, req, -32602, err.Error(), err, encoder, errhandler)
+						return nil
+					case "internal_error":
+						encodeJSONRPCError(ctx, w, req, -32603, err.Error(), err, encoder, errhandler)
+						return nil
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
 				}
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the service error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
 			return nil
 		}
-
-		// For methods with no result, check if this is a notification
+		if !req.HasID {
+			// A notification has no ID field and receives no response.
+			return nil
+		}
 
 		// For methods with results, determine the ID to use for the response
 		var id any
 		// No ID field in result - use request ID
 		id = req.ID
 
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
 		// Send response with the result
-		// Convert result to response body with proper JSON tags
+		// Build the response body with the fields and JSON names declared by the service.
 		body := NewInitializeResponseBody(res.(*mcpassistant.InitializeResult))
 		response := jsonrpc.MakeSuccessResponse(id, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
@@ -481,46 +605,37 @@ func NewPingHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		res, err := endpoint(ctx, nil)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
+			if req.HasID {
 				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+				if errors.As(err, &en) {
+					switch en.GoaErrorName() {
+					case "invalid_params":
+						encodeJSONRPCError(ctx, w, req, -32602, err.Error(), err, encoder, errhandler)
+						return nil
+					case "internal_error":
+						encodeJSONRPCError(ctx, w, req, -32603, err.Error(), err, encoder, errhandler)
+						return nil
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
 				}
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the service error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
 			return nil
 		}
-
-		// For methods with no result, check if this is a notification
+		if !req.HasID {
+			// A notification has no ID field and receives no response.
+			return nil
+		}
 
 		// For methods with results, determine the ID to use for the response
 		var id any
 		// No ID field in result - use request ID
 		id = req.ID
 
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
 		// Send response with the result
-		// Convert result to response body with proper JSON tags
+		// Build the response body with the fields and JSON names declared by the service.
 		body := NewPingResponseBody(res.(*mcpassistant.PingResult))
 		response := jsonrpc.MakeSuccessResponse(id, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
@@ -545,61 +660,47 @@ func NewToolsListHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+			if req.HasID {
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the decode error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
 			}
 			return nil
 		}
 		res, err := endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
+			if req.HasID {
 				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+				if errors.As(err, &en) {
+					switch en.GoaErrorName() {
+					case "invalid_params":
+						encodeJSONRPCError(ctx, w, req, -32602, err.Error(), err, encoder, errhandler)
+						return nil
+					case "internal_error":
+						encodeJSONRPCError(ctx, w, req, -32603, err.Error(), err, encoder, errhandler)
+						return nil
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
 				}
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the service error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
 			return nil
 		}
-
-		// For methods with no result, check if this is a notification
+		if !req.HasID {
+			// A notification has no ID field and receives no response.
+			return nil
+		}
 
 		// For methods with results, determine the ID to use for the response
 		var id any
 		// No ID field in result - use request ID
 		id = req.ID
 
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
 		// Send response with the result
-		// Convert result to response body with proper JSON tags
+		// Build the response body with the fields and JSON names declared by the service.
 		body := NewToolsListResponseBody(res.(*mcpassistant.ToolsListResult))
 		response := jsonrpc.MakeSuccessResponse(id, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
@@ -618,38 +719,57 @@ func NewToolsCallHandler(
 	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
 	errhandler func(context.Context, http.ResponseWriter, error),
 ) func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error {
+	decodeParams := DecodeToolsCallRequest(mux, decoder)
 	return func(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) error {
 		ctx = context.WithValue(ctx, goa.MethodKey, "tools/call")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
-		// Initialize SSE stream early so decode errors can be sent as SSE error events
-		strm := &ToolsCallServerStream{
-			sseServerStream: sseServerStream{
-				w:       w,
-				r:       r,
-				encoder: encoder,
-			},
-			requestID: req.ID,
-		}
-		decodeParams := DecodeToolsCallRequest(mux, decoder)
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Send error via SSE (JSON-RPC error event) to match SSE transport semantics
-			if req.ID != nil && req.ID != "" {
-				strm.SendError(ctx, jsonrpc.IDToString(req.ID), err)
+			if req.HasID {
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
+			} else {
+				// A notification receives no JSON-RPC response, so pass the decode error to the configured error handler.
+				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
 			}
 			return nil
 		}
-		v := &mcpassistant.ToolsCallEndpointInput{
-			Stream:  strm,
-			Payload: params,
-		}
-		if _, err := endpoint(ctx, v); err != nil {
-			// Send the error as a JSON-RPC error event; SendError applies the
-			// design-driven error code mapping.
-			if req.ID != nil && req.ID != "" {
-				return strm.SendError(ctx, jsonrpc.IDToString(req.ID), err)
+		res, err := endpoint(ctx, params)
+		if err != nil {
+			if req.HasID {
+				var en goa.GoaErrorNamer
+				if errors.As(err, &en) {
+					switch en.GoaErrorName() {
+					case "invalid_params":
+						encodeJSONRPCError(ctx, w, req, -32602, err.Error(), err, encoder, errhandler)
+						return nil
+					case "internal_error":
+						encodeJSONRPCError(ctx, w, req, -32603, err.Error(), err, encoder, errhandler)
+						return nil
+					}
+				}
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
+			} else {
+				// A notification receives no JSON-RPC response, so pass the service error to the configured error handler.
+				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
 			return nil
+		}
+		if !req.HasID {
+			// A notification has no ID field and receives no response.
+			return nil
+		}
+
+		// For methods with results, determine the ID to use for the response
+		var id any
+		// No ID field in result - use request ID
+		id = req.ID
+
+		// Send response with the result
+		// Build the response body with the fields and JSON names declared by the service.
+		body := NewToolsCallResponseBody(res.(*mcpassistant.ToolsCallResult))
+		response := jsonrpc.MakeSuccessResponse(id, body)
+		if err := encoder(ctx, w).Encode(response); err != nil {
+			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
 		}
 		return nil
 	}
@@ -670,61 +790,47 @@ func NewResourcesListHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+			if req.HasID {
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the decode error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
 			}
 			return nil
 		}
 		res, err := endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
+			if req.HasID {
 				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+				if errors.As(err, &en) {
+					switch en.GoaErrorName() {
+					case "invalid_params":
+						encodeJSONRPCError(ctx, w, req, -32602, err.Error(), err, encoder, errhandler)
+						return nil
+					case "internal_error":
+						encodeJSONRPCError(ctx, w, req, -32603, err.Error(), err, encoder, errhandler)
+						return nil
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
 				}
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the service error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
 			return nil
 		}
-
-		// For methods with no result, check if this is a notification
+		if !req.HasID {
+			// A notification has no ID field and receives no response.
+			return nil
+		}
 
 		// For methods with results, determine the ID to use for the response
 		var id any
 		// No ID field in result - use request ID
 		id = req.ID
 
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
 		// Send response with the result
-		// Convert result to response body with proper JSON tags
+		// Build the response body with the fields and JSON names declared by the service.
 		body := NewResourcesListResponseBody(res.(*mcpassistant.ResourcesListResult))
 		response := jsonrpc.MakeSuccessResponse(id, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
@@ -749,61 +855,47 @@ func NewResourcesReadHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+			if req.HasID {
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the decode error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
 			}
 			return nil
 		}
 		res, err := endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
+			if req.HasID {
 				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+				if errors.As(err, &en) {
+					switch en.GoaErrorName() {
+					case "invalid_params":
+						encodeJSONRPCError(ctx, w, req, -32602, err.Error(), err, encoder, errhandler)
+						return nil
+					case "internal_error":
+						encodeJSONRPCError(ctx, w, req, -32603, err.Error(), err, encoder, errhandler)
+						return nil
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
 				}
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the service error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
 			return nil
 		}
-
-		// For methods with no result, check if this is a notification
+		if !req.HasID {
+			// A notification has no ID field and receives no response.
+			return nil
+		}
 
 		// For methods with results, determine the ID to use for the response
 		var id any
 		// No ID field in result - use request ID
 		id = req.ID
 
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
 		// Send response with the result
-		// Convert result to response body with proper JSON tags
+		// Build the response body with the fields and JSON names declared by the service.
 		body := NewResourcesReadResponseBody(res.(*mcpassistant.ResourcesReadResult))
 		response := jsonrpc.MakeSuccessResponse(id, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
@@ -828,53 +920,40 @@ func NewResourcesSubscribeHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+			if req.HasID {
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the decode error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
 			}
 			return nil
 		}
 		_, err = endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
+			if req.HasID {
 				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+				if errors.As(err, &en) {
+					switch en.GoaErrorName() {
+					case "invalid_params":
+						encodeJSONRPCError(ctx, w, req, -32602, err.Error(), err, encoder, errhandler)
+						return nil
+					case "internal_error":
+						encodeJSONRPCError(ctx, w, req, -32603, err.Error(), err, encoder, errhandler)
+						return nil
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
 				}
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the service error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
 			return nil
 		}
-
-		// For methods with no result, check if this is a notification
-		if req.ID == nil || req.ID == "" {
-			// Notification - no response
+		if !req.HasID {
+			// A notification has no ID field and receives no response.
 			return nil
 		}
-		// Request with no result - send empty success response
+		// A method with no result returns a JSON null result.
 		response := jsonrpc.MakeSuccessResponse(req.ID, nil)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
@@ -898,53 +977,40 @@ func NewResourcesUnsubscribeHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+			if req.HasID {
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the decode error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
 			}
 			return nil
 		}
 		_, err = endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
+			if req.HasID {
 				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+				if errors.As(err, &en) {
+					switch en.GoaErrorName() {
+					case "invalid_params":
+						encodeJSONRPCError(ctx, w, req, -32602, err.Error(), err, encoder, errhandler)
+						return nil
+					case "internal_error":
+						encodeJSONRPCError(ctx, w, req, -32603, err.Error(), err, encoder, errhandler)
+						return nil
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
 				}
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the service error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
 			return nil
 		}
-
-		// For methods with no result, check if this is a notification
-		if req.ID == nil || req.ID == "" {
-			// Notification - no response
+		if !req.HasID {
+			// A notification has no ID field and receives no response.
 			return nil
 		}
-		// Request with no result - send empty success response
+		// A method with no result returns a JSON null result.
 		response := jsonrpc.MakeSuccessResponse(req.ID, nil)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
@@ -968,61 +1034,47 @@ func NewPromptsListHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+			if req.HasID {
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the decode error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
 			}
 			return nil
 		}
 		res, err := endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
+			if req.HasID {
 				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+				if errors.As(err, &en) {
+					switch en.GoaErrorName() {
+					case "invalid_params":
+						encodeJSONRPCError(ctx, w, req, -32602, err.Error(), err, encoder, errhandler)
+						return nil
+					case "internal_error":
+						encodeJSONRPCError(ctx, w, req, -32603, err.Error(), err, encoder, errhandler)
+						return nil
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
 				}
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the service error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
 			return nil
 		}
-
-		// For methods with no result, check if this is a notification
+		if !req.HasID {
+			// A notification has no ID field and receives no response.
+			return nil
+		}
 
 		// For methods with results, determine the ID to use for the response
 		var id any
 		// No ID field in result - use request ID
 		id = req.ID
 
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
 		// Send response with the result
-		// Convert result to response body with proper JSON tags
+		// Build the response body with the fields and JSON names declared by the service.
 		body := NewPromptsListResponseBody(res.(*mcpassistant.PromptsListResult))
 		response := jsonrpc.MakeSuccessResponse(id, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
@@ -1047,61 +1099,47 @@ func NewPromptsGetHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+			if req.HasID {
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the decode error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
 			}
 			return nil
 		}
 		res, err := endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
+			if req.HasID {
 				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+				if errors.As(err, &en) {
+					switch en.GoaErrorName() {
+					case "invalid_params":
+						encodeJSONRPCError(ctx, w, req, -32602, err.Error(), err, encoder, errhandler)
+						return nil
+					case "internal_error":
+						encodeJSONRPCError(ctx, w, req, -32603, err.Error(), err, encoder, errhandler)
+						return nil
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
 				}
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the service error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
 			return nil
 		}
-
-		// For methods with no result, check if this is a notification
+		if !req.HasID {
+			// A notification has no ID field and receives no response.
+			return nil
+		}
 
 		// For methods with results, determine the ID to use for the response
 		var id any
 		// No ID field in result - use request ID
 		id = req.ID
 
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
 		// Send response with the result
-		// Convert result to response body with proper JSON tags
+		// Build the response body with the fields and JSON names declared by the service.
 		body := NewPromptsGetResponseBody(res.(*mcpassistant.PromptsGetResult))
 		response := jsonrpc.MakeSuccessResponse(id, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
@@ -1126,53 +1164,40 @@ func NewNotifyStatusUpdateHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+			if req.HasID {
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the decode error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
 			}
 			return nil
 		}
 		_, err = endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
+			if req.HasID {
 				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+				if errors.As(err, &en) {
+					switch en.GoaErrorName() {
+					case "invalid_params":
+						encodeJSONRPCError(ctx, w, req, -32602, err.Error(), err, encoder, errhandler)
+						return nil
+					case "internal_error":
+						encodeJSONRPCError(ctx, w, req, -32603, err.Error(), err, encoder, errhandler)
+						return nil
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
 				}
+				encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			} else {
-				// No ID means notification - just log error
+				// A notification receives no JSON-RPC response, so pass the service error to the configured error handler.
 				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
 			return nil
 		}
-
-		// For methods with no result, check if this is a notification
-		if req.ID == nil || req.ID == "" {
-			// Notification - no response
+		if !req.HasID {
+			// A notification has no ID field and receives no response.
 			return nil
 		}
-		// Request with no result - send empty success response
+		// A method with no result returns a JSON null result.
 		response := jsonrpc.MakeSuccessResponse(req.ID, nil)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
@@ -1193,38 +1218,54 @@ func NewEventsStreamHandler(
 	return func(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) error {
 		ctx = context.WithValue(ctx, goa.MethodKey, "events/stream")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
-		// Initialize SSE stream early so decode errors can be sent as SSE error events
+		// Create the stream before decoding so request failures can be sent on the
+		// same HTTP response.
 		strm := &EventsStreamServerStream{
 			sseServerStream: sseServerStream{
 				w:       w,
-				r:       r,
 				encoder: encoder,
 			},
-			requestID: req.ID,
 		}
 		v := &mcpassistant.EventsStreamEndpointInput{
 			Stream: strm,
 		}
-		if _, err := endpoint(ctx, v); err != nil {
-			// Send the error as a JSON-RPC error event; SendError applies the
-			// design-driven error code mapping.
-			if req.ID != nil && req.ID != "" {
-				return strm.SendError(ctx, jsonrpc.IDToString(req.ID), err)
+		_, err := endpoint(ctx, v)
+		if err != nil {
+			if !req.HasID {
+				return nil
 			}
+			var named goa.GoaErrorNamer
+			if errors.As(err, &named) {
+				switch named.GoaErrorName() {
+				case "invalid_params":
+					return strm.sendError(ctx, req.ID, -32602, err.Error(), err)
+				case "internal_error":
+					return strm.sendError(ctx, req.ID, -32603, err.Error(), err)
+				}
+			}
+			return strm.sendError(ctx, req.ID, jsonrpc.InternalError, err.Error(), nil)
+		}
+		if !req.HasID {
 			return nil
 		}
-		return nil
+
+		response := map[string]any{
+			"jsonrpc": "2.0",
+			"id":      req.ID,
+			"result":  nil,
+		}
+		return strm.sendSSEEvent(ctx, "response", response)
 	}
 }
 
-// encodeJSONRPCError creates and sends a JSON-RPC error response (handles nil
-// ID gracefully)
+// encodeJSONRPCError writes one error, copying the request ID or using null
+// when none is available.
 func (s *Server) encodeJSONRPCError(ctx context.Context, w http.ResponseWriter, req *jsonrpc.RawRequest, code jsonrpc.Code, message string, data any) {
 	encodeJSONRPCError(ctx, w, req, code, message, data, s.encoder, s.errhandler)
 }
 
-// encodeJSONRPCError creates and sends a JSON-RPC error response (handles nil
-// ID gracefully)
+// encodeJSONRPCError writes one error, copying the request ID or using null
+// when none is available.
 func encodeJSONRPCError(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -1235,10 +1276,8 @@ func encodeJSONRPCError(
 	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
 	errhandler func(context.Context, http.ResponseWriter, error),
 ) {
-	if req.ID != nil {
-		response := jsonrpc.MakeErrorResponse(req.ID, code, message, data)
-		if err := encoder(ctx, w).Encode(response); err != nil {
-			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
-		}
+	response := jsonrpc.MakeErrorResponse(req.ID, code, message, data)
+	if err := encoder(ctx, w).Encode(response); err != nil {
+		errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
 	}
 }

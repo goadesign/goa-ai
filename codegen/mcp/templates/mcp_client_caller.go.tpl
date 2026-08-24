@@ -1,23 +1,10 @@
-package client
-
-import (
-    "context"
-    "encoding/json"
-    "errors"
-    "io"
-
-    genjsonrpc "goa.design/goa/v3/jsonrpc"
-    mcpruntime "goa.design/goa-ai/runtime/mcp"
-    mcppkg "{{ .MCPImportPath }}"
-)
-
-// Caller adapts the generated MCP JSON-RPC client to the runtime Caller interface.
+// Caller lets the runtime call tools through the generated MCP client.
 type Caller struct {
     suite string
     client *Client
 }
 
-// NewCaller wraps the generated Client so it can register with the goa-ai runtime.
+// NewCaller returns a runtime caller that uses the generated MCP client.
 func NewCaller(client *Client, suite string) mcpruntime.Caller {
     if client == nil {
         panic("MCP caller requires a generated client")
@@ -25,77 +12,46 @@ func NewCaller(client *Client, suite string) mcpruntime.Caller {
     return Caller{suite: suite, client: client}
 }
 
-// CallTool invokes tools/call via the generated JSON-RPC client and normalizes the response.
+// CallTool sends one tools/call request and returns its content to the runtime.
 func (c Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
-    payload := &mcppkg.ToolsCallPayload{Name: req.Tool, Arguments: json.RawMessage(req.Payload)}
-    streamEndpoint := c.client.ToolsCall()
-    stream, err := streamEndpoint(ctx, payload)
-    if err != nil{
-
-        return mcpruntime.CallResponse{
-
-    }, callerError(err)
+    payload := &{{ .MCPPackage }}.ToolsCallPayload{Name: req.Tool, Arguments: json.RawMessage(req.Payload)}
+    ires, err := c.client.ToolsCall()(ctx, payload)
+    if err != nil {
+        return mcpruntime.CallResponse{}, callerError(err)
     }
-    clientStream, ok := stream.(*ToolsCallClientStream)
-    if !ok{
-
-        return mcpruntime.CallResponse{
-
-    }, mcpruntime.NewInternalError(errors.New("invalid tools/call stream type"))
+    result := ires.(*{{ .MCPPackage }}.ToolsCallResult)
+    if result == nil || len(result.Content) == 0 {
+        return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(errors.New("empty MCP response"))
     }
-    var last *mcppkg.ToolsCallResult
-    for {
-        ev, recvErr := clientStream.Recv(ctx)
-        if recvErr == io.EOF {
-            break
-        }
-        if recvErr != nil{
-
-            return mcpruntime.CallResponse{
-
-        }, callerError(recvErr)
-        }
-        last = ev
-    }
-    if last == nil || len(last.Content) == 0{
-
-        return mcpruntime.CallResponse{
-
-    }, mcpruntime.NewMalformedResponseError(errors.New("empty MCP response"))
-    }
-    item := last.Content[0]
-    var result json.RawMessage
+    item := result.Content[0]
+    var rawResult json.RawMessage
     if item.Text != nil {
         txt := []byte(*item.Text)
         if json.Valid(txt) {
-            result = append(json.RawMessage(nil), txt...)
+            rawResult = append(json.RawMessage(nil), txt...)
         } else {
             marshaled, err := json.Marshal(*item.Text)
-            if err != nil{
-
-                return mcpruntime.CallResponse{
-
-            }, err
+            if err != nil {
+                return mcpruntime.CallResponse{}, err
             }
-            result = marshaled
+            rawResult = marshaled
         }
     } else {
-        result = json.RawMessage("null")
+        rawResult = json.RawMessage("null")
     }
-    if last.IsError != nil && *last.IsError {
-        return mcpruntime.CallResponse{}, mcpruntime.NewToolExecutionError(result)
+    if result.IsError != nil && *result.IsError {
+        return mcpruntime.CallResponse{}, mcpruntime.NewToolExecutionError(rawResult)
     }
     var structured json.RawMessage
     if item.MimeType != nil && *item.MimeType == "application/json" {
-        structured = append(json.RawMessage(nil), result...)
+        structured = append(json.RawMessage(nil), rawResult...)
     }
-    return mcpruntime.CallResponse{Result: result, Structured: structured}, nil
+    return mcpruntime.CallResponse{Result: rawResult, Structured: structured}, nil
 }
 
-// callerError preserves JSON-RPC error codes across the generated transport
-// boundary so agent recovery can classify protocol failures structurally.
+// callerError copies a JSON-RPC error code and message into the runtime error.
 func callerError(err error) error {
-    var rpcErr *genjsonrpc.ErrorResponse
+    var rpcErr *{{ .JSONRPCPackage }}.ErrorResponse
     if errors.As(err, &rpcErr) {
         return &mcpruntime.Error{
             Code:    int(rpcErr.Code),

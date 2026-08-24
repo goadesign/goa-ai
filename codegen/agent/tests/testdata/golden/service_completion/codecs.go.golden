@@ -11,8 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	toolhttp "goa.design/goa-ai/gen/tasks/completions/http"
 	"goa.design/goa-ai/runtime/agent/tools"
-	toolhttp "goa.design/goa-ai/tasks/completions/http"
 	goa "goa.design/goa/v3/pkg"
 	"io"
 	"slices"
@@ -146,11 +146,14 @@ func MarshalDraftFromTranscriptResult(v *DraftFromTranscriptResult) ([]byte, err
 	out = &toolhttp.DraftFromTranscriptResultTransport{
 		AssistantText: &in.AssistantText,
 	}
-	var draftValue toolhttp.Draft2
+	var draftValue toolhttp.Draft
 	switch string(in.Draft.Kind()) {
 	case "new_task":
 		actual, _ := in.Draft.AsNewTask()
-		obj := encodeCompletionDraftToToolhttpCompletionDraftTransport(actual)
+		var obj *toolhttp.CompletionDraftTransport
+		if actual != nil {
+			obj = encodeCompletionDraftToCompletionDraftTransport(actual)
+		}
 		u := draftValue
 		u.SetNewTask((*toolhttp.CompletionDraftTransport)(obj))
 		draftValue = u
@@ -189,7 +192,10 @@ func UnmarshalDraftFromTranscriptResult(data []byte) (*DraftFromTranscriptResult
 	switch string(in.Draft.Kind()) {
 	case "new_task":
 		actual, _ := in.Draft.AsNewTask()
-		obj := decodeToolhttpCompletionDraftTransportToCompletionDraft(actual)
+		var obj *CompletionDraft
+		if actual != nil {
+			obj = decodeCompletionDraftTransportToCompletionDraft(actual)
+		}
 		u := out.Draft
 		u.SetNewTask((*CompletionDraft)(obj))
 		out.Draft = u
@@ -294,7 +300,7 @@ func unknownJSONFieldError(path, field string, allowed []string) error {
 }
 
 // Helper transform functions
-func decodeToolhttpCompletionDraftTransportToCompletionDraft(v *toolhttp.CompletionDraftTransport) *CompletionDraft {
+func decodeCompletionDraftTransportToCompletionDraft(v *toolhttp.CompletionDraftTransport) *CompletionDraft {
 	res := &CompletionDraft{}
 	res.Steps = make([]*CompletionStep, len(v.Steps))
 	for i, val := range v.Steps {
@@ -302,19 +308,19 @@ func decodeToolhttpCompletionDraftTransportToCompletionDraft(v *toolhttp.Complet
 			res.Steps[i] = nil
 			continue
 		}
-		res.Steps[i] = decodeToolhttpCompletionStepTransportToCompletionStep(val)
+		res.Steps[i] = decodeCompletionStepTransportToCompletionStep(val)
 	}
 
 	return res
 }
-func decodeToolhttpCompletionStepTransportToCompletionStep(v *toolhttp.CompletionStepTransport) *CompletionStep {
+func decodeCompletionStepTransportToCompletionStep(v *toolhttp.CompletionStepTransport) *CompletionStep {
 	res := &CompletionStep{
 		Label: *v.Label,
 	}
 
 	return res
 }
-func encodeCompletionDraftToToolhttpCompletionDraftTransport(v *CompletionDraft) *toolhttp.CompletionDraftTransport {
+func encodeCompletionDraftToCompletionDraftTransport(v *CompletionDraft) *toolhttp.CompletionDraftTransport {
 	res := &toolhttp.CompletionDraftTransport{}
 	res.Steps = make([]*toolhttp.CompletionStepTransport, len(v.Steps))
 	for i, val := range v.Steps {
@@ -322,12 +328,12 @@ func encodeCompletionDraftToToolhttpCompletionDraftTransport(v *CompletionDraft)
 			res.Steps[i] = nil
 			continue
 		}
-		res.Steps[i] = encodeCompletionStepToToolhttpCompletionStepTransport(val)
+		res.Steps[i] = encodeCompletionStepToCompletionStepTransport(val)
 	}
 
 	return res
 }
-func encodeCompletionStepToToolhttpCompletionStepTransport(v *CompletionStep) *toolhttp.CompletionStepTransport {
+func encodeCompletionStepToCompletionStepTransport(v *CompletionStep) *toolhttp.CompletionStepTransport {
 	res := &toolhttp.CompletionStepTransport{
 		Label: &v.Label,
 	}

@@ -8,6 +8,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -16,50 +17,36 @@ import (
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
 	goahttp "goa.design/goa/v3/http"
 	"goa.design/goa/v3/jsonrpc"
-	goa "goa.design/goa/v3/pkg"
 )
 
-// sseServerStream provides the SSE event encoding machinery shared by all
-// JSON-RPC SSE server streams of the service.
-type sseServerStream struct {
-	// once ensures the headers are written once.
-	once sync.Once
-	// w is the HTTP response writer used to send the SSE events.
-	w http.ResponseWriter
-	// r is the HTTP request.
-	r *http.Request
-	// encoder is the response encoder.
-	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder
-}
-
-// sseEventWriter wraps http.ResponseWriter to format output as SSE events.
-type sseEventWriter struct {
-	w         http.ResponseWriter
-	eventType string
-	started   bool
-}
-
-func (s *sseEventWriter) Header() http.Header        { return s.w.Header() }
-func (s *sseEventWriter) WriteHeader(statusCode int) { s.w.WriteHeader(statusCode) }
-func (s *sseEventWriter) Write(data []byte) (int, error) {
-	if !s.started {
-		s.started = true
-		if s.eventType != "" {
-			fmt.Fprintf(s.w, "event: %s\n", s.eventType)
-		}
-		s.w.Write([]byte("data: "))
+type (
+	// sseServerStream writes JSON-RPC messages as server-sent events.
+	sseServerStream struct {
+		// once writes the HTTP headers only for the first event.
+		once sync.Once
+		// w receives the HTTP headers and event bytes.
+		w http.ResponseWriter
+		// encoder turns one JSON-RPC message into bytes.
+		encoder func(context.Context, http.ResponseWriter) goahttp.Encoder
 	}
-	return s.w.Write(data)
-}
 
-func (s *sseEventWriter) finish() {
-	if s.started {
-		s.w.Write([]byte("\n\n"))
-		http.NewResponseController(s.w).Flush()
+	// sseEventBuffer stores an encoded event before any HTTP output is written.
+	sseEventBuffer struct {
+		bytes.Buffer
+		header http.Header
 	}
+)
+
+// Header returns the headers written while the event is being encoded.
+func (b *sseEventBuffer) Header() http.Header {
+	return b.header
 }
 
-// initSSEHeaders initializes the SSE response headers
+// WriteHeader leaves the response status for the real HTTP response writer.
+func (b *sseEventBuffer) WriteHeader(int) {
+}
+
+// initSSEHeaders writes the response headers before the first event.
 func (s *sseServerStream) initSSEHeaders() {
 	s.once.Do(func() {
 		header := s.w.Header()
@@ -71,202 +58,66 @@ func (s *sseServerStream) initSSEHeaders() {
 	})
 }
 
-// sendSSEEvent sends a single SSE event by creating an encoder that writes to the event writer
-func (s *sseServerStream) sendSSEEvent(eventType string, v any) error {
+// sendSSEEvent encodes one event before starting the response, then writes and
+// flushes that complete event.
+func (s *sseServerStream) sendSSEEvent(ctx context.Context, eventType string, value any) error {
+	event := &sseEventBuffer{header: make(http.Header)}
+	if err := s.encoder(ctx, event).Encode(value); err != nil {
+		return err
+	}
+
 	s.initSSEHeaders()
-
-	// Create SSE event writer that wraps the response writer
-	ew := &sseEventWriter{w: s.w, eventType: eventType}
-
-	// Create encoder with the event writer and encode the value
-	err := s.encoder(context.Background(), ew).Encode(v)
-
-	// Finish the SSE event (adds newlines and flushes)
-	ew.finish()
-
-	return err
+	if _, err := fmt.Fprintf(s.w, "event: %s\n", eventType); err != nil {
+		return fmt.Errorf("write server-sent event name: %w", err)
+	}
+	if _, err := s.w.Write([]byte("data: ")); err != nil {
+		return fmt.Errorf("write server-sent event data label: %w", err)
+	}
+	if _, err := s.w.Write(event.Bytes()); err != nil {
+		return fmt.Errorf("write server-sent event data: %w", err)
+	}
+	if _, err := s.w.Write([]byte("\n\n")); err != nil {
+		return fmt.Errorf("finish server-sent event: %w", err)
+	}
+	if err := http.NewResponseController(s.w).Flush(); err != nil {
+		return fmt.Errorf("flush server-sent event: %w", err)
+	}
+	return nil
 }
 
-// sendError sends a JSON-RPC error response to the SSE stream
+// sendError writes one JSON-RPC error as a server-sent event.
 func (s *sseServerStream) sendError(ctx context.Context, id any, code jsonrpc.Code, message string, data any) error {
 	response := jsonrpc.MakeErrorResponse(id, code, message, data)
-	return s.sendSSEEvent("error", response)
-}
-
-// ToolsCallServerStream implements the mcpassistant.ToolsCallServerStream
-// interface using Server-Sent Events.
-type ToolsCallServerStream struct {
-	// sseServerStream provides the shared SSE event encoding machinery
-	sseServerStream
-	// requestID is the JSON-RPC request ID for sending final response
-	requestID any
-	// closed indicates if the stream has been closed via SendAndClose
-	closed bool
-	// mu protects the closed flag
-	mu sync.Mutex
-}
-
-// Send sends a JSON-RPC notification to the client.
-// Notifications do not expect a response from the client.
-func (s *ToolsCallServerStream) Send(ctx context.Context, event mcpassistant.ToolsCallEvent) error {
-	// Check if stream is closed
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return fmt.Errorf("stream closed")
-	}
-	s.mu.Unlock()
-
-	// Type assert to the specific result type
-	result, ok := event.(*mcpassistant.ToolsCallResult)
-	if !ok {
-		return fmt.Errorf("unexpected event type: %T", event)
-	}
-	// Convert to response body type for proper JSON encoding
-	body := NewToolsCallResponseBody(result)
-
-	// Send as notification (no ID)
-	message := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "tools/call",
-		"params":  body,
-	}
-
-	return s.sendSSEEvent("notification", message)
-}
-
-// SendAndClose sends a final JSON-RPC response to the client and closes the
-// stream.
-// The response will include the original request ID unless the result has an
-// ID field populated.
-// After calling this method, no more events can be sent on this stream.
-func (s *ToolsCallServerStream) SendAndClose(ctx context.Context, event mcpassistant.ToolsCallEvent) error {
-	// Check if stream is already closed
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return fmt.Errorf("stream already closed")
-	}
-	s.closed = true
-	s.mu.Unlock()
-
-	// Type assert to the specific result type
-	result, ok := event.(*mcpassistant.ToolsCallResult)
-	if !ok {
-		return fmt.Errorf("unexpected event type: %T", event)
-	}
-
-	// Determine the ID to use for the response
-	var id any = s.requestID
-	// Convert to response body type for proper JSON encoding
-	body := NewToolsCallResponseBody(result)
-
-	// Send as response with ID
-	message := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"result":  body,
-	}
-
-	return s.sendSSEEvent("response", message)
-}
-
-// SendError sends a JSON-RPC error response.
-func (s *ToolsCallServerStream) SendError(ctx context.Context, id string, err error) error {
-	// No custom errors defined - check if it's a validation error, otherwise use
-	// internal error
-	code := jsonrpc.InternalError
-	if _, ok := err.(*goa.ServiceError); ok {
-		code = jsonrpc.InvalidParams
-	}
-	return s.sendError(ctx, id, code, err.Error(), nil)
+	return s.sendSSEEvent(ctx, "error", response)
 }
 
 // EventsStreamServerStream implements the
 // mcpassistant.EventsStreamServerStream interface using Server-Sent Events.
 type EventsStreamServerStream struct {
-	// sseServerStream provides the shared SSE event encoding machinery
+	// sseServerStream writes JSON-RPC messages as server-sent events.
 	sseServerStream
-	// requestID is the JSON-RPC request ID for sending final response
-	requestID any
-	// closed indicates if the stream has been closed via SendAndClose
-	closed bool
-	// mu protects the closed flag
-	mu sync.Mutex
 }
 
-// Send sends a JSON-RPC notification to the client.
-// Notifications do not expect a response from the client.
-func (s *EventsStreamServerStream) Send(ctx context.Context, event mcpassistant.EventsStreamEvent) error {
-	// Check if stream is closed
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return fmt.Errorf("stream closed")
-	}
-	s.mu.Unlock()
+// Send streams instances of "EventsStreamResult".
+func (s *EventsStreamServerStream) Send(event *mcpassistant.EventsStreamResult) error {
+	return s.SendWithContext(context.Background(), event)
+}
 
-	// Type assert to the specific result type
-	result, ok := event.(*mcpassistant.EventsStreamResult)
-	if !ok {
-		return fmt.Errorf("unexpected event type: %T", event)
-	}
-	// Convert to response body type for proper JSON encoding
+// SendWithContext streams instances of "EventsStreamResult" with context.
+func (s *EventsStreamServerStream) SendWithContext(ctx context.Context, event *mcpassistant.EventsStreamResult) error {
+	result := event
 	body := NewEventsStreamResponseBody(result)
 
-	// Send as notification (no ID)
 	message := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  "events/stream",
 		"params":  body,
 	}
-
-	return s.sendSSEEvent("notification", message)
+	return s.sendSSEEvent(ctx, "notification", message)
 }
 
-// SendAndClose sends a final JSON-RPC response to the client and closes the
-// stream.
-// The response will include the original request ID unless the result has an
-// ID field populated.
-// After calling this method, no more events can be sent on this stream.
-func (s *EventsStreamServerStream) SendAndClose(ctx context.Context, event mcpassistant.EventsStreamEvent) error {
-	// Check if stream is already closed
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return fmt.Errorf("stream already closed")
-	}
-	s.closed = true
-	s.mu.Unlock()
-
-	// Type assert to the specific result type
-	result, ok := event.(*mcpassistant.EventsStreamResult)
-	if !ok {
-		return fmt.Errorf("unexpected event type: %T", event)
-	}
-
-	// Determine the ID to use for the response
-	var id any = s.requestID
-	// Convert to response body type for proper JSON encoding
-	body := NewEventsStreamResponseBody(result)
-
-	// Send as response with ID
-	message := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"result":  body,
-	}
-
-	return s.sendSSEEvent("response", message)
-}
-
-// SendError sends a JSON-RPC error response.
-func (s *EventsStreamServerStream) SendError(ctx context.Context, id string, err error) error {
-	// No custom errors defined - check if it's a validation error, otherwise use
-	// internal error
-	code := jsonrpc.InternalError
-	if _, ok := err.(*goa.ServiceError); ok {
-		code = jsonrpc.InvalidParams
-	}
-	return s.sendError(ctx, id, code, err.Error(), nil)
+// Close does nothing because the HTTP response closes when the service method
+// returns.
+func (s *EventsStreamServerStream) Close() error {
+	return nil
 }

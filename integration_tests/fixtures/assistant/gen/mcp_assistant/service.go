@@ -10,6 +10,8 @@ package mcpassistant
 import (
 	"context"
 	"encoding/json"
+
+	goa "goa.design/goa/v3/pkg"
 )
 
 // MCP protocol service for assistant
@@ -21,7 +23,7 @@ type Service interface {
 	// List available tools
 	ToolsList(context.Context, *ToolsListPayload) (res *ToolsListResult, err error)
 	// Call a tool
-	ToolsCall(context.Context, *ToolsCallPayload, ToolsCallServerStream) (res *ToolsCallResult, err error)
+	ToolsCall(context.Context, *ToolsCallPayload) (res *ToolsCallResult, err error)
 	// List available resources
 	ResourcesList(context.Context, *ResourcesListPayload) (res *ResourcesListResult, err error)
 	// Read a resource
@@ -37,11 +39,11 @@ type Service interface {
 	// Send status updates to client
 	NotifyStatusUpdate(context.Context, *SendNotificationPayload) (err error)
 	// Stream server-sent events (notifications)
-	EventsStream(context.Context, EventsStreamServerStream) (res *EventsStreamResult, err error)
+	EventsStream(context.Context, EventsStreamServerStream) (err error)
 }
 
 // APIName is the name of the API as defined in the design.
-const APIName = "MCP"
+const APIName = "assistant"
 
 // APIVersion is the version of the API as defined in the design.
 const APIVersion = "1.0"
@@ -56,68 +58,15 @@ const ServiceName = "mcp_assistant"
 // MethodKey key.
 var MethodNames = [12]string{"initialize", "ping", "tools/list", "tools/call", "resources/list", "resources/read", "resources/subscribe", "resources/unsubscribe", "prompts/list", "prompts/get", "notify_status_update", "events/stream"}
 
-// ToolsCallEvent is the interface implemented by the result type for the
-// tools/call method.
-type ToolsCallEvent interface {
-	isToolsCallEvent()
-}
-
-// isToolsCallEvent implements the ToolsCallEvent interface.
-func (*ToolsCallResult) isToolsCallEvent() {}
-
-// ToolsCallServerStream allows streaming instances of *ToolsCallResult over
-// SSE.
-type ToolsCallServerStream interface {
-	// Send streams JSON-RPC notifications with "ToolsCallResult". Notifications do
-	// not expect a response.
-	// IMPORTANT: Send only sends JSON-RPC notifications. Use SendAndClose to send
-	// a final response.
-	Send(ctx context.Context, event ToolsCallEvent) error
-	// SendAndClose sends a final response with "ToolsCallResult" and closes the
-	// stream.
-	// The result will be sent as a JSON-RPC response with the original request ID.
-	// If the result has an ID field populated, that ID will be used instead of the
-	// request ID.
-	SendAndClose(ctx context.Context, event ToolsCallEvent) error
-	// SendError sends a JSON-RPC error response.
-	SendError(ctx context.Context, id string, err error) error
-}
-
-// ToolsCallClientStream allows streaming instances of *ToolsCallResult to the
-// client.
-type ToolsCallClientStream interface {
-	// Recv reads instances of "ToolsCallResult" from the stream.
-	Recv() (*ToolsCallResult, error)
-	// RecvWithContext reads instances of "ToolsCallResult" from the stream with
-	// context.
-	RecvWithContext(context.Context) (*ToolsCallResult, error)
-}
-
-// EventsStreamEvent is the interface implemented by the result type for the
-// events/stream method.
-type EventsStreamEvent interface {
-	isEventsStreamEvent()
-}
-
-// isEventsStreamEvent implements the EventsStreamEvent interface.
-func (*EventsStreamResult) isEventsStreamEvent() {}
-
 // EventsStreamServerStream allows streaming instances of *EventsStreamResult
-// over SSE.
+// to the client.
 type EventsStreamServerStream interface {
-	// Send streams JSON-RPC notifications with "EventsStreamResult". Notifications
-	// do not expect a response.
-	// IMPORTANT: Send only sends JSON-RPC notifications. Use SendAndClose to send
-	// a final response.
-	Send(ctx context.Context, event EventsStreamEvent) error
-	// SendAndClose sends a final response with "EventsStreamResult" and closes the
-	// stream.
-	// The result will be sent as a JSON-RPC response with the original request ID.
-	// If the result has an ID field populated, that ID will be used instead of the
-	// request ID.
-	SendAndClose(ctx context.Context, event EventsStreamEvent) error
-	// SendError sends a JSON-RPC error response.
-	SendError(ctx context.Context, id string, err error) error
+	// Send streams instances of "EventsStreamResult".
+	Send(*EventsStreamResult) error
+	// SendWithContext streams instances of "EventsStreamResult" with context.
+	SendWithContext(context.Context, *EventsStreamResult) error
+	// Close closes the stream.
+	Close() error
 }
 
 // EventsStreamClientStream allows streaming instances of *EventsStreamResult
@@ -129,53 +78,6 @@ type EventsStreamClientStream interface {
 	// context.
 	RecvWithContext(context.Context) (*EventsStreamResult, error)
 }
-
-// Stream defines the interface for managing an SSE streaming connection in the
-// mcp_assistant server. It allows sending notifications and final responses.
-// This interface is used by the service to interact with clients over SSE
-// using JSON-RPC.
-type Stream interface {
-	// Send sends an event (notification or response) to the client.
-	// For notifications, the result should not have an ID field.
-	// For responses, the result must have an ID field.
-	// Accepted types: *InitializeResult, *PingResult, *ToolsListResult,
-	// *ToolsCallResult, *ResourcesListResult, *ResourcesReadResult,
-	// *PromptsListResult, *PromptsGetResult, *EventsStreamResult
-	Send(ctx context.Context, event Event) error
-}
-
-// Event is the interface implemented by all result types that can be sent via
-// the mcp_assistant Stream.
-type Event interface {
-	ismcpAssistantEvent()
-}
-
-// ismcpAssistantEvent implements the Event interface.
-func (*InitializeResult) ismcpAssistantEvent() {}
-
-// ismcpAssistantEvent implements the Event interface.
-func (*PingResult) ismcpAssistantEvent() {}
-
-// ismcpAssistantEvent implements the Event interface.
-func (*ToolsListResult) ismcpAssistantEvent() {}
-
-// ismcpAssistantEvent implements the Event interface.
-func (*ToolsCallResult) ismcpAssistantEvent() {}
-
-// ismcpAssistantEvent implements the Event interface.
-func (*ResourcesListResult) ismcpAssistantEvent() {}
-
-// ismcpAssistantEvent implements the Event interface.
-func (*ResourcesReadResult) ismcpAssistantEvent() {}
-
-// ismcpAssistantEvent implements the Event interface.
-func (*PromptsListResult) ismcpAssistantEvent() {}
-
-// ismcpAssistantEvent implements the Event interface.
-func (*PromptsGetResult) ismcpAssistantEvent() {}
-
-// ismcpAssistantEvent implements the Event interface.
-func (*EventsStreamResult) ismcpAssistantEvent() {}
 
 type ClientInfo struct {
 	// Client name
@@ -444,4 +346,14 @@ type ToolsListPayload struct {
 type ToolsListResult struct {
 	// List of available tools
 	Tools []*ToolInfo
+}
+
+// MakeInvalidParams builds a goa.ServiceError from an error.
+func MakeInvalidParams(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "invalid_params", false, false, false)
+}
+
+// MakeInternalError builds a goa.ServiceError from an error.
+func MakeInternalError(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "internal_error", false, false, false)
 }

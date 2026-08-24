@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -10,10 +10,10 @@ func TagsBasic() func() {
 	return func() {
 		API("alpha", func() {})
 		Service("alpha", func() {
-			Agent("scribe", "Doc helper", func() {
-				Use("helpers", func() {
-					Tool("summarize", "Summarize a document", func() {
-						Tags("nlp", "summarization")
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use("helpers", func() {
+					aidsl.Tool("summarize", "Summarize a document", func() {
+						aidsl.Tags("nlp", "summarization")
 					})
 				})
 			})

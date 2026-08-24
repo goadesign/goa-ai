@@ -7,9 +7,7 @@
 
 package http
 
-import (
-	goa "goa.design/goa/v3/pkg"
-)
+import goa "goa.design/goa/v3/pkg"
 
 // ValidateEchoPayloadTransport runs the validations defined on EchoPayloadTransport.
 func ValidateEchoPayloadTransport(body *EchoPayloadTransport) (err error) {
