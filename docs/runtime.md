@@ -402,10 +402,12 @@ effective tool choice, including a private structured-output tool when needed,
 before sending the request. Unsupported combinations fail locally.
 
 The direct Anthropic Messages adapter uses native structured output on Claude
-Sonnet, Opus, and Haiku 4.5 or later. Bedrock Converse uses native
-`OutputConfig` only for the Claude 4.5 and 4.6 models Bedrock documents as
-supporting it. Other Claude models on Bedrock use one private forced tool and
-the framework validates its result against the same completion contract.
+Sonnet, Opus, and Haiku 4.5 or later. On Bedrock, Claude 4.6 uses one private
+forced tool with `strict: true`, so Converse and Runtime `CountTokens` receive
+the same provider-enforced schema. Claude 4.5 retains native `OutputConfig`
+because its manual thinking mode cannot use forced tools. Other Claude models
+fail with `model.ErrStructuredOutputUnsupported` unless AWS documents
+structured-output support for them.
 
 ### Thinking on Gemini 3
 
@@ -2525,14 +2527,14 @@ trigger budget from the exact-retention budget:
 - Bedrock uses Runtime `CountTokens` when the resolved model supports it.
   Claude Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, and Mythos 5 use the optional
   `bedrock.Options.MantleTokenCounter` instead. Before delegating, the Bedrock
-  adapter resolves the foundation model ID and preserves the effective tools,
-  including the forced tool used to represent structured output on models that
-  do not support native structured outputs. Without that configured Mantle
-  counter, these models return
+  adapter resolves the foundation model ID and preserves the effective tools.
+  Without that configured Mantle counter, these models return
   `model.ErrTokenCountingUnsupported`. Native structured output remains
-  unsupported because neither AWS count request can carry the `OutputConfig`
-  sent to Converse. Provider validation errors remain errors; the adapter never
-  parses an error message into a fabricated count.
+  unsupported in Mantle because its count request cannot carry Bedrock
+  `OutputConfig` or a strict tool. Claude 4.6 structured output uses the same
+  strict tool in Runtime counting and Converse instead. Provider validation
+  errors remain errors; the adapter never parses an error message into a
+  fabricated count.
 
 ```go
 // DSL

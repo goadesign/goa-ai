@@ -24,11 +24,6 @@ type countTokensRuntimeClient struct {
 	err   error
 }
 
-type recordingMantleCounter struct {
-	request *model.Request
-	count   model.TokenCount
-}
-
 func (c *countTokensRuntimeClient) Converse(
 	_ context.Context,
 	_ *bedrockruntime.ConverseInput,
@@ -56,11 +51,6 @@ func (c *countTokensRuntimeClient) CountTokens(
 	}
 	tokens := int32(42)
 	return &bedrockruntime.CountTokensOutput{InputTokens: &tokens}, nil
-}
-
-func (c *recordingMantleCounter) CountTokens(_ context.Context, req *model.Request) (model.TokenCount, error) {
-	c.request = req
-	return c.count, nil
 }
 
 func TestCountTokensRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
@@ -148,17 +138,13 @@ func TestCountTokens_UsesConverseRequestPreparation(t *testing.T) {
 	}`, string(fields))
 }
 
-// TestCountTokensUsesMantleForStructuredOutputToolFallback verifies that Opus
-// 5 counting receives the same forced tool that Converse uses.
-func TestCountTokensUsesMantleForStructuredOutputToolFallback(t *testing.T) {
+// TestCountTokensUsesStrictStructuredOutputTool verifies that Opus 4.6
+// Runtime counting receives the same provider-enforced tool as Converse.
+func TestCountTokensUsesStrictStructuredOutputTool(t *testing.T) {
 	rt := &countTokensRuntimeClient{}
-	mantle := &recordingMantleCounter{
-		count: model.TokenCount{InputTokens: 73, Exact: true},
-	}
 	client := &provider{
 		runtime:      rt,
-		defaultModel: "us.anthropic.claude-opus-5",
-		mantle:       mantle,
+		defaultModel: "global.anthropic.claude-opus-4-6-v1",
 	}
 
 	count, err := client.CountTokens(t.Context(), &model.Request{
@@ -176,21 +162,20 @@ func TestCountTokensUsesMantleForStructuredOutputToolFallback(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, 73, count.InputTokens)
-	require.Equal(t, "us.anthropic.claude-opus-5", count.Model)
+	require.Equal(t, 42, count.InputTokens)
+	require.Equal(t, "global.anthropic.claude-opus-4-6-v1", count.Model)
 	require.True(t, count.Exact)
-	require.Nil(t, rt.input)
-
-	require.NotNil(t, mantle.request)
-	require.Equal(t, "anthropic.claude-opus-5", mantle.request.Model)
-	require.Nil(t, mantle.request.StructuredOutput)
-	require.Len(t, mantle.request.Tools, 1)
-	require.Equal(t, "eval_judgments", mantle.request.Tools[0].Name)
-	require.Equal(t, &model.ToolChoice{
-		Mode: model.ToolChoiceModeTool,
-		Name: "eval_judgments",
-	}, mantle.request.ToolChoice)
-	require.Equal(t, &model.ThinkingOptions{Enable: true}, mantle.request.Thinking)
+	require.NotNil(t, rt.input)
+	require.Equal(t, "anthropic.claude-opus-4-6-v1", *rt.input.ModelId)
+	converse, ok := rt.input.Input.(*brtypes.CountTokensInputMemberConverse)
+	require.True(t, ok)
+	require.NotNil(t, converse.Value.ToolConfig)
+	require.Len(t, converse.Value.ToolConfig.Tools, 1)
+	spec, ok := converse.Value.ToolConfig.Tools[0].(*brtypes.ToolMemberToolSpec)
+	require.True(t, ok)
+	require.True(t, *spec.Value.Strict)
+	require.Equal(t, "eval_judgments", *spec.Value.Name)
+	require.IsType(t, &brtypes.ToolChoiceMemberTool{}, converse.Value.ToolConfig.ToolChoice)
 }
 
 // TestCountTokensRejectsNativeStructuredOutput verifies that CountTokens fails
@@ -200,7 +185,7 @@ func TestCountTokensRejectsNativeStructuredOutput(t *testing.T) {
 	rt := &countTokensRuntimeClient{}
 	client := &provider{
 		runtime:      rt,
-		defaultModel: "anthropic.claude-opus-4-6",
+		defaultModel: "anthropic.claude-opus-4-5",
 	}
 
 	count, err := client.CountTokens(t.Context(), &model.Request{

@@ -122,7 +122,7 @@ type requestParts struct {
 
 	// structuredOutputToolName is non-empty exactly when prepareRequest chose
 	// to express Request.StructuredOutput as the forced tool call described in
-	// structuredOutputUsesToolFallback. Complete and Stream read this single
+	// structuredOutputUsesStrictTool. Complete and Stream read this single
 	// decision instead of re-deriving it from modelID.
 	structuredOutputToolName string
 }
@@ -210,7 +210,7 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 		return nil, contract.RejectProviderOutput(&usage, err)
 	}
 	if parts.structuredOutputToolName != "" {
-		if err := reifyStructuredOutputToolFallback(resp, parts.structuredOutputToolName); err != nil {
+		if err := reifyStructuredOutputTool(resp, parts.structuredOutputToolName); err != nil {
 			return nil, contract.RejectResponse(resp, err)
 		}
 	}
@@ -343,12 +343,22 @@ func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Claude models without Bedrock's native output format use one private tool
-	// call. Derive that tool choice before thinking so unsupported manual
-	// thinking and forced-tool combinations fail before the provider call.
+	if req.StructuredOutput != nil &&
+		isAnthropicBedrockModel(modelID) &&
+		!claudecaps.BedrockNativeStructuredOutputSupported(modelID) {
+		return nil, fmt.Errorf(
+			"bedrock: model %q does not support structured output: %w",
+			modelID,
+			model.ErrStructuredOutputUnsupported,
+		)
+	}
+	// Claude 4.6 uses one private strict tool so Runtime CountTokens and
+	// Converse receive the same provider-enforced schema. Derive that tool
+	// choice before thinking so unsupported manual-thinking combinations fail
+	// before the provider call.
 	toolDefs, toolChoice := req.Tools, req.ToolChoice
-	useToolFallback := structuredOutputUsesToolFallback(modelID, req.StructuredOutput)
-	if useToolFallback {
+	useStructuredOutputTool := structuredOutputUsesStrictTool(modelID, req.StructuredOutput)
+	if useStructuredOutputTool {
 		if len(req.Tools) > 0 || req.ToolChoice != nil {
 			return nil, errors.New("bedrock: structured output cannot be combined with request tool definitions")
 		}
@@ -397,15 +407,20 @@ func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 	if err != nil {
 		return nil, err
 	}
+	if useStructuredOutputTool {
+		if err := requireStrictStructuredOutputTool(toolConfig, additionalModelFields); err != nil {
+			return nil, err
+		}
+	}
 	var outputConfig *brtypes.OutputConfig
-	if req.StructuredOutput != nil && !useToolFallback {
+	if req.StructuredOutput != nil && !useStructuredOutputTool {
 		outputConfig, err = encodeOutputConfig(req.StructuredOutput)
 		if err != nil {
 			return nil, err
 		}
 	}
 	structuredOutputToolName := ""
-	if useToolFallback {
+	if useStructuredOutputTool {
 		structuredOutputToolName = req.StructuredOutput.Name
 	}
 	// Bedrock requires toolConfig when messages contain tool_use or tool_result
@@ -553,19 +568,20 @@ func encodeOutputConfig(output *model.StructuredOutput) (*brtypes.OutputConfig, 
 	}, nil
 }
 
-// structuredOutputUsesToolFallback reports whether a Claude model needs a
-// private forced tool because Bedrock does not support OutputConfig for that
-// model. The adapter validates the returned tool JSON against the caller's
-// completion contract before exposing it.
-func structuredOutputUsesToolFallback(modelID string, output *model.StructuredOutput) bool {
+// structuredOutputUsesStrictTool reports whether Bedrock can enforce and count
+// the same Claude structured-output request through one private strict tool.
+// Claude 4.5 keeps using OutputConfig because forced tools cannot be combined
+// with its manual thinking mode.
+func structuredOutputUsesStrictTool(modelID string, output *model.StructuredOutput) bool {
 	return output != nil &&
 		isAnthropicBedrockModel(modelID) &&
-		!claudecaps.BedrockNativeStructuredOutputSupported(modelID)
+		claudecaps.BedrockNativeStructuredOutputSupported(modelID) &&
+		claudecaps.AdaptiveThinkingSupported(modelID)
 }
 
 // structuredOutputToolDefinition adapts a provider-neutral structured-output
 // request into the single forced tool definition used by
-// structuredOutputUsesToolFallback. The tool name and description are the
+// structuredOutputUsesStrictTool. The tool name and description are the
 // request's own Name/Description. Its object-shaped input privately wraps the
 // declared completion value because Bedrock tools cannot accept an array or
 // primitive as their top-level input.
@@ -587,13 +603,50 @@ func structuredOutputToolDefinition(output *model.StructuredOutput) (*model.Tool
 	}, nil
 }
 
-// reifyStructuredOutputToolFallback rewrites the forced tool_use response
-// produced by structuredOutputUsesToolFallback into canonical completion text.
+// requireStrictStructuredOutputTool marks the one private completion tool as
+// provider-enforced. Bedrock receives tools either through ToolConfig or
+// AdditionalModelRequestFields when an authored input example is present; this
+// helper updates the active representation and rejects any unexpected shape.
+func requireStrictStructuredOutputTool(
+	toolConfig *brtypes.ToolConfiguration,
+	additionalModelFields map[string]any,
+) error {
+	if rawTools, ok := additionalModelFields["tools"]; ok {
+		tools, ok := rawTools.([]map[string]any)
+		if !ok || len(tools) != 1 {
+			return errors.New("bedrock: structured output requires exactly one provider-native tool")
+		}
+		tools[0]["strict"] = true
+		return nil
+	}
+	if toolConfig == nil {
+		return errors.New("bedrock: structured output requires one tool")
+	}
+	var spec *brtypes.ToolSpecification
+	for _, tool := range toolConfig.Tools {
+		member, ok := tool.(*brtypes.ToolMemberToolSpec)
+		if !ok {
+			continue
+		}
+		if spec != nil {
+			return errors.New("bedrock: structured output requires exactly one tool")
+		}
+		spec = &member.Value
+	}
+	if spec == nil {
+		return errors.New("bedrock: structured output requires one tool")
+	}
+	spec.Strict = aws.Bool(true)
+	return nil
+}
+
+// reifyStructuredOutputTool rewrites the forced tool_use response
+// produced by structuredOutputUsesStrictTool into canonical completion text.
 // Provider-issued thinking remains in place; exactly one matching tool call is
 // required and every other content part is rejected.
-func reifyStructuredOutputToolFallback(resp *model.Response, toolName string) error {
+func reifyStructuredOutputTool(resp *model.Response, toolName string) error {
 	if len(resp.Content) != 1 {
-		return fmt.Errorf("bedrock: structured output tool fallback expected exactly one assistant message, got %d", len(resp.Content))
+		return fmt.Errorf("bedrock: structured output tool expected exactly one assistant message, got %d", len(resp.Content))
 	}
 	parts := resp.Content[0].Parts
 	canonical := make([]model.Part, 0, len(parts))
@@ -604,23 +657,23 @@ func reifyStructuredOutputToolFallback(resp *model.Response, toolName string) er
 			canonical = append(canonical, value)
 		case model.ToolUsePart:
 			if found {
-				return fmt.Errorf("bedrock: structured output tool fallback returned multiple tool calls")
+				return fmt.Errorf("bedrock: structured output tool returned multiple tool calls")
 			}
 			if value.Name != toolName {
-				return fmt.Errorf("bedrock: structured output tool fallback did not return the forced tool call %q", toolName)
+				return fmt.Errorf("bedrock: structured output did not return the forced tool call %q", toolName)
 			}
 			payload, err := unwrapStructuredOutputValue(value.Input)
 			if err != nil {
-				return fmt.Errorf("bedrock: structured output tool fallback %q: %w", toolName, err)
+				return fmt.Errorf("bedrock: structured output tool %q: %w", toolName, err)
 			}
 			canonical = append(canonical, model.TextPart{Text: string(payload)})
 			found = true
 		default:
-			return fmt.Errorf("bedrock: structured output tool fallback returned unexpected content part %T", part)
+			return fmt.Errorf("bedrock: structured output tool returned unexpected content part %T", part)
 		}
 	}
 	if !found {
-		return fmt.Errorf("bedrock: structured output tool fallback did not return the forced tool call %q", toolName)
+		return fmt.Errorf("bedrock: structured output did not return the forced tool call %q", toolName)
 	}
 	resp.Content[0].Parts = canonical
 	return nil

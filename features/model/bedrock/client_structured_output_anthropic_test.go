@@ -56,12 +56,12 @@ func smithyDocumentFromJSON(t *testing.T, raw string) document.Interface {
 	return document.NewLazyDocument(v)
 }
 
-// These tests prove that Bedrock uses OutputConfig for Claude models that
-// support it and one private tool for Claude models that do not. Both paths
-// return the same provider-neutral structured completion.
+// These tests prove that Bedrock uses one strict private tool for adaptive
+// Claude models whose schema can be represented in Runtime CountTokens. Older
+// Claude models retain OutputConfig, and unsupported models fail locally.
 
-func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
-	client := &provider{defaultModel: "us.anthropic.claude-opus-5"}
+func TestPrepareRequestAnthropicStructuredOutputUsesStrictTool(t *testing.T) {
+	client := &provider{defaultModel: "global.anthropic.claude-opus-4-6-v1"}
 	req := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
@@ -89,11 +89,12 @@ func TestPrepareRequestAnthropicStructuredOutputUsesToolFallback(t *testing.T) {
 	spec, ok := parts.toolConfig.Tools[0].(*brtypes.ToolMemberToolSpec)
 	require.True(t, ok)
 	require.Equal(t, "Return the completed task draft.", *spec.Value.Description)
-	require.Nil(t, spec.Value.Strict)
+	require.Nil(t, spec.Value.Strict, "provider-native example fields replace ToolConfig on the wire")
 	require.Equal(t, []string{"tool-examples-2025-10-29"}, parts.additionalModelFields["anthropic_beta"])
 	tools, ok := parts.additionalModelFields["tools"].([]map[string]any)
 	require.True(t, ok)
 	require.Len(t, tools, 1)
+	require.Equal(t, true, tools[0]["strict"])
 	require.Equal(t, []map[string]any{{
 		"value": map[string]any{"title": "Inspect evaporator"},
 	}}, tools[0]["input_examples"])
@@ -131,6 +132,26 @@ func TestPrepareRequestNovaStructuredOutputUsesNativeOutputConfig(t *testing.T) 
 	require.Nil(t, parts.toolConfig)
 }
 
+func TestPrepareRequestAnthropicStructuredOutputRejectsUnsupportedModel(t *testing.T) {
+	client := &provider{defaultModel: "global.anthropic.claude-sonnet-5"}
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "draft the task"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:        "complete_draft",
+			Description: "Return the completed task draft.",
+			Schema:      []byte(`{"type":"object"}`),
+		},
+	}
+
+	_, err := client.prepareRequest(req)
+
+	require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+	require.ErrorContains(t, err, `model "global.anthropic.claude-sonnet-5"`)
+}
+
 func TestPrepareRequestClaude45StructuredOutputUsesNativeOutputConfig(t *testing.T) {
 	client := &provider{defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"}
 	req := &model.Request{
@@ -153,7 +174,7 @@ func TestPrepareRequestClaude45StructuredOutputUsesNativeOutputConfig(t *testing
 }
 
 func TestPrepareRequestStructuredOutputRejectsExplicitTools(t *testing.T) {
-	client := &provider{defaultModel: "us.anthropic.claude-opus-5"}
+	client := &provider{defaultModel: "global.anthropic.claude-opus-4-6-v1"}
 	req := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
@@ -171,42 +192,29 @@ func TestPrepareRequestStructuredOutputRejectsExplicitTools(t *testing.T) {
 	require.ErrorContains(t, err, "structured output cannot be combined with request tool definitions")
 }
 
-func TestAnthropicStructuredOutputRejectsLegacyThinkingBeforeProviderCall(t *testing.T) {
-	client := &provider{
-		defaultModel: "us.anthropic.claude-sonnet-4-0",
-		runtime:      &recordingConverseRuntime{},
-	}
-	newRequest := func() *model.Request {
-		req := &model.Request{
-			Messages: []*model.Message{{
-				Role:  model.ConversationRoleUser,
-				Parts: []model.Part{model.TextPart{Text: "draft the task"}},
-			}},
-			Thinking: &model.ThinkingOptions{
-				Enable:       true,
-				BudgetTokens: 2048,
-			},
-			StructuredOutput: &model.StructuredOutput{
-				Name:        "complete_draft",
-				Description: "Return the completed task draft.",
-				Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
-			},
-		}
-		require.NoError(t, model.SetCompletionValidator(
-			req,
-			func(*model.Response, *model.Completion) error { return nil },
-		))
-		return req
+func TestClaude45StructuredOutputUsesNativeOutputConfigWithLegacyThinking(t *testing.T) {
+	client := &provider{defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0"}
+	req := &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "draft the task"}},
+		}},
+		Thinking: &model.ThinkingOptions{
+			Enable:       true,
+			BudgetTokens: 2048,
+		},
+		StructuredOutput: &model.StructuredOutput{
+			Name:        "complete_draft",
+			Description: "Return the completed task draft.",
+			Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
+		},
 	}
 
-	t.Run("unary", func(t *testing.T) {
-		_, err := client.Complete(t.Context(), newRequest())
-		require.EqualError(t, err, "bedrock: manual thinking cannot be combined with forced tool choice")
-	})
-	t.Run("streaming", func(t *testing.T) {
-		_, err := client.Stream(t.Context(), newRequest())
-		require.EqualError(t, err, "bedrock: manual thinking cannot be combined with forced tool choice")
-	})
+	parts, err := client.prepareRequest(req)
+
+	require.NoError(t, err)
+	require.NotNil(t, parts.outputConfig)
+	require.Nil(t, parts.toolConfig)
 }
 
 // TestCompleteAnthropicStructuredOutputReifiesToolCall proves the adapter turns
@@ -236,7 +244,7 @@ func TestCompleteAnthropicStructuredOutputReifiesToolCall(t *testing.T) {
 			}},
 		},
 	}
-	client := &provider{defaultModel: "us.anthropic.claude-opus-5", runtime: runtime}
+	client := &provider{defaultModel: "global.anthropic.claude-opus-4-6-v1", runtime: runtime}
 	req := &model.Request{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
@@ -264,11 +272,11 @@ func TestCompleteAnthropicStructuredOutputReifiesToolCall(t *testing.T) {
 	require.Empty(t, resp.ToolCalls(), "the canonical response must not surface tool calls")
 }
 
-// TestChunkProcessorStructuredOutputToolFallbackEmitsCompletion proves the
+// TestChunkProcessorStructuredOutputToolEmitsCompletion proves the
 // streaming decoder removes the private tool envelope and emits the same final
 // completion payload as native OutputConfig streaming. It suppresses preview
 // deltas because the synthetic tool fragments contain the private envelope.
-func TestChunkProcessorStructuredOutputToolFallbackEmitsCompletion(t *testing.T) {
+func TestChunkProcessorStructuredOutputToolEmitsCompletion(t *testing.T) {
 	idx := int32(0)
 	var chunks []model.Chunk
 
