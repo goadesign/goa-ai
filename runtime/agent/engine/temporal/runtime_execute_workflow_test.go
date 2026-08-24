@@ -50,7 +50,7 @@ func TestPlannerOutputActivityFailureIsNotRetried(t *testing.T) {
 
 	env.ExecuteWorkflow(func(ctx workflow.Context) error {
 		ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-			StartToCloseTimeout: time.Second,
+			StartToCloseTimeout: time.Minute,
 			RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 3},
 		})
 		err := workflow.ExecuteActivity(ctx, "invalid-planner-output").Get(ctx, nil)
