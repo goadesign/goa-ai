@@ -178,7 +178,7 @@ func (r *Runtime) rewriteRecoveryCatalogToolCalls(catalog *RecoveryCatalog, resu
 		if call.Name == tools.ToolUnavailable {
 			continue
 		}
-		if _, ok := allowed[call.Name]; ok {
+		if _, ok := allowed[call.TranscriptName()]; ok {
 			continue
 		}
 		rewritten, err := r.rewriteToolCallUnavailable(call)

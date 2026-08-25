@@ -742,7 +742,10 @@ implement `runlog.SessionReader`. Names matching `continue_` plus exactly 24
 lowercase hexadecimal characters are reserved for these runtime-generated
 tools; agent and toolset registration reject them. Similar authored names such
 as `continue_search` and qualified names such as `tools.continue_search` remain
-valid.
+valid. If another call in the same parallel batch requires `finish` recovery,
+the runtime closes new domain work but keeps these already-started continuation
+actions available. Without a live continuation, the same failure enters
+finalization immediately.
 
 Use `Cursor` directly only when repeating the original arguments is part of the
 public contract. Truncated results must carry a continuation: bound method

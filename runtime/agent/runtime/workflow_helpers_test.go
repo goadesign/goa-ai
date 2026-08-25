@@ -688,7 +688,8 @@ func TestRecoveryRemindersDescribeSelectedTransition(t *testing.T) {
 	}
 	finishReminders := rt.recoveryReminders(outputs[1:])
 	require.Len(t, finishReminders, 1)
-	require.Contains(t, finishReminders[0].Text, "Do not call more tools.")
+	require.Contains(t, finishReminders[0].Text, "Do not retry this failed tool.")
+	require.Contains(t, finishReminders[0].Text, "advertised continuation")
 	require.NotContains(t, finishReminders[0].Text, "remains available")
 
 	correctionReminders := rt.recoveryReminders(outputs[:1])

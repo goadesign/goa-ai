@@ -335,9 +335,9 @@ func TestRecoveryCatalogAndMixedFailureContracts(t *testing.T) {
 		recoveryOutput(list.Name, "list-replan", planner.RecoveryReplan),
 	}
 
-	assert.Equal(t, []tools.Ident{list.Name}, replanUnavailableTools(outputs))
 	rt := New()
 	seedTestToolSpecs(rt, search, list)
+	assert.Equal(t, []tools.Ident{list.Name}, rt.recoveryUnavailableTools("", outputs))
 	reminders := rt.recoveryReminders(outputs)
 	require.Len(t, reminders, 3)
 	assert.Contains(t, reminders[0].Text, "remains available")
@@ -452,6 +452,86 @@ func TestFinishFailureFinalizesWithExactCause(t *testing.T) {
 	assert.Equal(t, "partial result", agentMessageText(out.Final))
 	assert.Equal(t, 1, resumes)
 	assert.Equal(t, []string{"load-call"}, h.workflow.lastPlannerCall.Input.RecoveryToolCallIDs)
+}
+
+func TestFinishFailurePreservesLiveContinuation(t *testing.T) {
+	search, continuation := continuationTestSpecs()
+	search.Toolset = "catalog"
+	continuation.Toolset = "catalog"
+	load := newAnyJSONSpec("catalog.load", "catalog")
+	continueAction := continuationActionName(continuation.Name, "search-call")
+	var resumes int
+	h := newRecoveryHarness(
+		t,
+		"finish-with-continuation",
+		[]tools.ToolSpec{search, continuation, load},
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			switch call.Name {
+			case search.Name:
+				result := successfulToolResult(call)
+				result.Bounds = &agent.Bounds{
+					Returned:   40,
+					Truncated:  true,
+					NextCursor: pointer("page-2"),
+				}
+				return result, nil
+			case continuation.Name:
+				assert.JSONEq(t, `{"cursor":"page-2"}`, string(call.Payload))
+				result := successfulToolResult(call)
+				result.Bounds = &agent.Bounds{Returned: 7}
+				return result, nil
+			case load.Name:
+				return &planner.ToolResult{
+					Name:       call.Name,
+					ToolCallID: call.ToolCallID,
+					Failure: testToolFailure(
+						planner.FailureInternal,
+						planner.RecoveryFinish,
+						"load failed",
+					),
+				}, nil
+			case tools.ToolUnavailable:
+				require.FailNow(t, "runtime unavailable tool reached catalog executor")
+				return nil, nil
+			default:
+				require.FailNow(t, "unexpected tool call", call.Name)
+				return nil, nil
+			}
+		},
+		func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			resumes++
+			switch resumes {
+			case 1:
+				require.False(t, input.SynthesisOnly)
+				assertAdvertisedTools(t, input, continueAction)
+				require.Len(t, input.Reminders, 1)
+				assert.Contains(t, input.Reminders[0].Text, "load failed")
+				return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+					Name:    continueAction,
+					Payload: rawjson.Message(`{}`),
+				}}}, nil
+			case 2:
+				require.False(t, input.SynthesisOnly)
+				assertAdvertisedTools(t, input, search.Name, load.Name)
+				assert.Empty(t, input.Reminders)
+				return finalPlannerResult("all pages collected"), nil
+			default:
+				require.FailNow(t, "unexpected planner resume")
+				return nil, nil
+			}
+		},
+	)
+
+	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{
+		{Name: search.Name, ToolCallID: "search-call", Payload: rawjson.Message(`{"query":"alarms"}`)},
+		{Name: load.Name, ToolCallID: "load-call", Payload: rawjson.Message(`{"id":"one"}`)},
+	}}, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "all pages collected", agentMessageText(out.Final))
+	assert.Equal(t, 2, resumes)
+	assert.Len(t, out.ToolEvents, 3)
 }
 
 // newRecoveryHarness assembles one in-memory workflow whose planner and tool

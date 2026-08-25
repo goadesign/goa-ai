@@ -15,8 +15,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -805,10 +807,21 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 
 	action, failed := dominantRecoveryAction(batch.records)
+	recovery := pendingRecoveryOutputs(batch.records)
 	if failed && action == planner.RecoveryFinish {
-		return l.finalizeRecoveryStep(dominantRecoveryOutputs(batch.records))
+		continuations, err := l.r.availableContinuationActions(l.input.AgentID, l.st.ToolOutputs)
+		if err != nil {
+			return nil, err
+		}
+		if len(continuations) == 0 {
+			return l.finalizeRecoveryStep(dominantRecoveryOutputs(batch.records))
+		}
+		// A successful sibling query still owns its unfinished pages. Preserve
+		// the finish failure as exact recovery evidence while the next planner
+		// turn chooses whether to continue those already-started queries.
+		recovery = dominantRecoveryOutputs(batch.records)
 	}
-	pendingRecovery := append(pendingRecoveryOutputs(batch.records), l.st.PendingRecovery...)
+	pendingRecovery := slices.Concat(recovery, l.st.PendingRecovery)
 	synthesisOnly := !failed && batch.program.result.SynthesizeAfterTools
 	if out, err := l.resumePlanner(pendingRecovery, synthesisOnly); err != nil || out != nil {
 		return out, err
@@ -888,10 +901,28 @@ func validateRecoveryCatalog(
 	return nil
 }
 
-// replanUnavailableTools returns the tools excluded from the next planner
-// turn. Replan chooses another capability; same-tool payload correction belongs
-// to correct-call recovery.
-func replanUnavailableTools(outputs []*planner.ToolOutput) []tools.Ident {
+// recoveryUnavailableTools returns authored tools excluded from the next
+// planner turn. A finish failure closes all new domain work while preserving
+// runtime-generated continuations for successful queries that already started.
+// Replan excludes only rejected tools, and same-tool payload correction keeps
+// the failed tool available.
+func (r *Runtime) recoveryUnavailableTools(
+	agentID agent.Ident,
+	outputs []*planner.ToolOutput,
+) []tools.Ident {
+	for _, output := range outputs {
+		if output.Failure == nil || output.Failure.Recovery.Action != planner.RecoveryFinish {
+			continue
+		}
+		var unavailable []tools.Ident
+		for _, spec := range r.ToolSpecsForAgent(agentID) {
+			if !isDedicatedContinuationSpec(spec) {
+				unavailable = append(unavailable, spec.Name)
+			}
+		}
+		return unavailable
+	}
+
 	correctable := make(map[tools.Ident]struct{})
 	for _, output := range outputs {
 		if output.Failure != nil && output.Failure.Recovery.Action == planner.RecoveryCorrectCall {

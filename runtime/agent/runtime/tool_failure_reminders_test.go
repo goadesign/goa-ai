@@ -40,7 +40,7 @@ func TestToolFailureReminderCarriesCorrectionContract(t *testing.T) {
 	assert.Contains(t, got, `Rejected input: {"parameters":{}}`)
 }
 
-func TestToolFailureReminderFinishForbidsMoreTools(t *testing.T) {
+func TestToolFailureReminderFinishForbidsRetryButAllowsAdvertisedContinuation(t *testing.T) {
 	t.Parallel()
 
 	got := toolFailureReminder(&planner.ToolResult{
@@ -48,7 +48,8 @@ func TestToolFailureReminderFinishForbidsMoreTools(t *testing.T) {
 		Failure: testToolFailure(planner.FailureTimeout, planner.RecoveryFinish, "deadline exceeded"),
 	}, nil)
 
-	assert.Contains(t, got, "Do not call more tools.")
+	assert.Contains(t, got, "Do not retry this failed tool.")
+	assert.Contains(t, got, "advertised continuation")
 	assert.NotContains(t, got, "Failure type:")
 	assert.NotContains(t, got, "Example input:")
 	assert.NotContains(t, got, "Input issues:")

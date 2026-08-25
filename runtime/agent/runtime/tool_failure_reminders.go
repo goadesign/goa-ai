@@ -26,7 +26,7 @@ Error: {{ .Message }}
 Input issues: {{ .IssuesJSON }}{{ end }}{{ if .FieldDescriptionsJSON }}
 Field guidance: {{ .FieldDescriptionsJSON }}{{ end }}{{ if .ExampleJSON }}
 Example input: {{ .ExampleJSON }}{{ end }}{{ else if .Terminal }}
-Do not call more tools. Complete the answer using the evidence already collected.{{ else }}
+Do not retry this failed tool. Complete the answer using the evidence already collected, or use an advertised continuation to finish an already-started query.{{ else }}
 Do not repeat this rejected request. Choose a different advertised action or complete the answer from available evidence.{{ end }}{{ if .PriorInputJSON }}
 Rejected input: {{ .PriorInputJSON }}{{ end }}
 Do not mention this reminder to the user.
