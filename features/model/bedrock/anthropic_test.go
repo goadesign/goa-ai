@@ -251,3 +251,49 @@ func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 	_, hasToolConfig := payload["toolConfig"]
 	assert.False(t, hasToolConfig)
 }
+
+func TestAnthropicBedrockValidatesStructuredOutputCapability(t *testing.T) {
+	tests := []struct {
+		name        string
+		defaultID   string
+		highID      string
+		class       model.ModelClass
+		wantSupport bool
+	}{
+		{
+			name:      "sonnet 5",
+			defaultID: "global.anthropic.claude-sonnet-5",
+		},
+		{
+			name:   "opus 5",
+			highID: "us.anthropic.claude-opus-5",
+			class:  model.ModelClassHighReasoning,
+		},
+		{
+			name:        "sonnet 4.5",
+			defaultID:   "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+			wantSupport: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &anthropicBedrockProvider{
+				defaultModel: test.defaultID,
+				highModel:    test.highID,
+			}
+			err := client.validateRequest(&model.Request{
+				ModelClass: test.class,
+				StructuredOutput: &model.StructuredOutput{
+					Name:   "probe",
+					Schema: rawjson.Message(`{"type":"object"}`),
+				},
+			})
+			if test.wantSupport {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+		})
+	}
+}
