@@ -145,7 +145,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		ctx,
 		input,
 		continuationActions,
-		r.recoveryUnavailableTools(input.AgentID, recoveryOutputs),
+		r.recoveryUnavailableTools(input.AgentID, recoveryOutputs, input.Finalize != nil),
 	)
 	if err != nil {
 		return nil, err

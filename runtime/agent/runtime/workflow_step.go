@@ -902,13 +902,16 @@ func validateRecoveryCatalog(
 }
 
 // recoveryUnavailableTools returns authored tools excluded from the next
-// planner turn. A finish failure closes all new domain work while preserving
-// runtime-generated continuations for successful queries that already started.
-// Replan excludes only rejected tools, and same-tool payload correction keeps
-// the failed tool available.
+// planner turn. A finish failure closes all new domain work. The finalization
+// turn retains terminal tools so the planner can persist the run's required
+// result, while an earlier continuation turn exposes only runtime-generated
+// actions for successful queries that already started. Replan excludes only
+// rejected tools, and same-tool payload correction keeps the failed tool
+// available.
 func (r *Runtime) recoveryUnavailableTools(
 	agentID agent.Ident,
 	outputs []*planner.ToolOutput,
+	finalizing bool,
 ) []tools.Ident {
 	for _, output := range outputs {
 		if output.Failure == nil || output.Failure.Recovery.Action != planner.RecoveryFinish {
@@ -916,9 +919,10 @@ func (r *Runtime) recoveryUnavailableTools(
 		}
 		var unavailable []tools.Ident
 		for _, spec := range r.ToolSpecsForAgent(agentID) {
-			if !isDedicatedContinuationSpec(spec) {
-				unavailable = append(unavailable, spec.Name)
+			if isDedicatedContinuationSpec(spec) || finalizing && spec.TerminalRun {
+				continue
 			}
+			unavailable = append(unavailable, spec.Name)
 		}
 		return unavailable
 	}

@@ -337,7 +337,7 @@ func TestRecoveryCatalogAndMixedFailureContracts(t *testing.T) {
 
 	rt := New()
 	seedTestToolSpecs(rt, search, list)
-	assert.Equal(t, []tools.Ident{list.Name}, rt.recoveryUnavailableTools("", outputs))
+	assert.Equal(t, []tools.Ident{list.Name}, rt.recoveryUnavailableTools("", outputs, false))
 	reminders := rt.recoveryReminders(outputs)
 	require.Len(t, reminders, 3)
 	assert.Contains(t, reminders[0].Text, "remains available")
@@ -452,6 +452,62 @@ func TestFinishFailureFinalizesWithExactCause(t *testing.T) {
 	assert.Equal(t, "partial result", agentMessageText(out.Final))
 	assert.Equal(t, 1, resumes)
 	assert.Equal(t, []string{"load-call"}, h.workflow.lastPlannerCall.Input.RecoveryToolCallIDs)
+}
+
+func TestFinishFailureFinalizationRetainsOnlyTerminalTools(t *testing.T) {
+	load := newAnyJSONSpec("catalog.load", "catalog")
+	progress := newAnyJSONSpec("catalog.progress", "catalog")
+	progress.Bookkeeping = true
+	complete := newAnyJSONSpec("catalog.complete", "catalog")
+	complete.Bookkeeping = true
+	complete.TerminalRun = true
+	var completeCalls int
+	h := newRecoveryHarness(
+		t,
+		"finish-with-terminal-tool",
+		[]tools.ToolSpec{load, progress, complete},
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			switch call.Name {
+			case load.Name:
+				return &planner.ToolResult{
+					Name:       call.Name,
+					ToolCallID: call.ToolCallID,
+					Failure: testToolFailure(
+						planner.FailureInternal,
+						planner.RecoveryFinish,
+						"load failed",
+					),
+				}, nil
+			case complete.Name:
+				completeCalls++
+				return successfulToolResult(call), nil
+			case tools.ToolUnavailable:
+				require.FailNow(t, "runtime unavailable tool reached catalog executor")
+				return nil, nil
+			default:
+				require.FailNow(t, "unexpected recovery tool", call.Name)
+				return nil, nil
+			}
+		},
+		func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			require.NotNil(t, input.Finalize)
+			assert.Equal(t, planner.TerminationReasonToolFailure, input.Finalize.Reason)
+			assertAdvertisedTools(t, input, complete.Name)
+			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+				Name:    complete.Name,
+				Payload: rawjson.Message(`{"result":"partial"}`),
+			}}}, nil
+		},
+	)
+
+	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
+		Name: load.Name, ToolCallID: "load-call", Payload: rawjson.Message(`{"id":"one"}`),
+	}}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, 1, completeCalls)
+	assert.Len(t, out.ToolEvents, 2)
 }
 
 func TestFinishFailurePreservesLiveContinuation(t *testing.T) {
