@@ -124,14 +124,15 @@ they must fail explicitly instead of redefining the service contract.
 The Bedrock Converse adapter uses a private strict tool for Claude 4.6 so
 Runtime `CountTokens` and Converse receive the same schema. Claude 4.5 retains
 native `OutputConfig` because its manual thinking mode cannot use forced tools.
-Bedrock Claude models that AWS does not list as supporting structured output
-fail before the provider call. For listed models, the Claude-on-Bedrock
-Messages adapter reuses the Anthropic adapter's native structured-output
-contract and sends it through Bedrock `InvokeModel`; the model-visible request
-does not pass through Converse translation. The same Anthropic adapter encodes
-user-message `ImagePart` bytes as base64 image blocks for PNG, JPEG, GIF, and
-WebP, so direct Anthropic, Claude-on-Vertex, and Claude-on-Bedrock clients share
-one multimodal message contract.
+The Claude-on-Bedrock Messages adapter chooses between native output formatting
+and the same private-tool contract before `InvokeModel`. Sonnet 5 and Opus 5
+use one forced non-strict tool because Bedrock Messages rejects both
+`output_config.format` and the `strict` tool property. The adapter converts the
+private tool result into the caller's canonical completion, and the validated
+client rejects malformed or schema-invalid JSON before exposing it. The same
+Anthropic adapter encodes user-message `ImagePart` bytes as base64 image blocks
+for PNG, JPEG, GIF, and WebP, so direct Anthropic, Claude-on-Vertex, and
+Claude-on-Bedrock clients share one multimodal message contract.
 Adapters with provider-native structured-output examples receive the generated
 root example separately from the schema. Unary helpers ask the model once for a
 structured value. If the generated codec rejects the response, the helper
@@ -777,9 +778,12 @@ redeploys.
   structured output. Claude 4.6 instead uses the same strict private tool for
   Runtime counting and Converse.
   The Claude-on-Bedrock Messages adapter requires an exact Anthropic counter.
-  It passes the same canonical request to that counter after replacing a
-  cross-region inference-profile model ID with its foundation model ID. The
-  Messages adapter never counts a different Converse representation.
+  It first selects native output formatting or the private forced tool, then
+  passes that effective request to the counter after replacing a cross-region
+  inference-profile model ID with its foundation model ID. Sonnet 5 and Opus 5
+  therefore send the same private tool definition and forced choice to
+  `InvokeModel` and Mantle. The Messages adapter never counts a different
+  Converse representation.
   When encoded tools carry authored `input_examples`, completion, streaming,
   and counting all attach the same Anthropic tool-examples beta header.
   Exact retention always keeps whole recent turns; it never truncates

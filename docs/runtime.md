@@ -412,6 +412,11 @@ typed completions, but Bedrock does not enforce the schema: the adapter unwraps
 the private tool value, the validated `model.Client` rejects malformed JSON,
 and generated typed-completion decoders reject schema-invalid output as
 `model.OutputValidationError` before the caller can observe a response.
+`bedrock.NewAnthropic` makes the same selection before Anthropic Messages
+encoding. Sonnet 5 and Opus 5 use the private non-strict tool because Bedrock
+Messages rejects `output_config.format` and every `strict` property. Unary and
+streaming responses are converted back into canonical completions, and Mantle
+counts the same tool definition and forced choice sent to `InvokeModel`.
 
 Bedrock may omit tool-input delta events when a model selects a tool without
 supplying any arguments. The streaming adapter emits the canonical `{}` payload
@@ -2591,6 +2596,11 @@ trigger budget from the exact-retention budget:
   uses the same strict tool in Runtime counting and Converse instead. Provider
   validation errors remain errors; the adapter never parses an error message
   into a fabricated count.
+- `bedrock.NewAnthropic` also resolves structured output before counting.
+  Sonnet 5 and Opus 5 send one private non-strict tool to both `InvokeModel`
+  and Mantle, then expose the tool payload as a canonical completion. Models
+  that keep native `output_config.format` require a counter endpoint that
+  accepts that same native field.
 
 ```go
 // DSL
