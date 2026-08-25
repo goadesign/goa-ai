@@ -133,7 +133,7 @@ func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{
   "type": "content_block_start",
   "index": 1,
-  "content_block": { "type": "tool_use", "id": "t1", "name": "tool_a" }
+  "content_block": { "type": "tool_use", "id": "t1", "name": "tool_a", "input": {} }
 }`), &toolStart); err != nil {
 		t.Fatalf("unmarshal tool start: %v", err)
 	}
@@ -236,6 +236,7 @@ func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
 			if string(actual.ToolCall.Name) != "toolset.tool" {
 				t.Fatalf("unexpected tool name %q", actual.ToolCall.Name)
 			}
+			require.JSONEq(t, `{"x":1}`, string(actual.ToolCall.Payload))
 		case model.UsageChunk:
 			emittedUsage.InputTokens += actual.Usage.InputTokens
 			emittedUsage.OutputTokens += actual.Usage.OutputTokens
@@ -771,10 +772,10 @@ func TestThinkingBufferFinalizeRequiresCanonicalVariant(t *testing.T) {
 	}
 }
 
-// TestAnthropicChunkProcessorCanonicalizesNoArgumentTools verifies that an
-// Anthropic tool-use block with no JSON deltas becomes the canonical empty
-// object only when the request declared that code owns every argument.
-func TestAnthropicChunkProcessorCanonicalizesNoArgumentTools(t *testing.T) {
+// TestAnthropicChunkProcessorPreservesInitialToolInput verifies that an
+// Anthropic tool-use block with no JSON deltas keeps the input carried by its
+// start event. No-argument tools still produce the code-owned empty object.
+func TestAnthropicChunkProcessorPreservesInitialToolInput(t *testing.T) {
 	var messageStart sdk.MessageStreamEventUnion
 	require.NoError(t, json.Unmarshal([]byte(`{
 		"type":"message_start",
@@ -798,6 +799,16 @@ func TestAnthropicChunkProcessorCanonicalizesNoArgumentTools(t *testing.T) {
 			"input":{}
 		}
 	}`), &toolStart))
+	var missingInputToolStart sdk.MessageStreamEventUnion
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"type":"content_block_start",
+		"index":0,
+		"content_block":{
+			"type":"tool_use",
+			"id":"toolu_1",
+			"name":"continue_abcd"
+		}
+	}`), &missingInputToolStart))
 	var toolStop sdk.MessageStreamEventUnion
 	require.NoError(t, json.Unmarshal([]byte(`{
 		"type":"content_block_stop",
@@ -806,17 +817,25 @@ func TestAnthropicChunkProcessorCanonicalizesNoArgumentTools(t *testing.T) {
 
 	tests := []struct {
 		name              string
+		start             sdk.MessageStreamEventUnion
 		noArgumentTools   map[string]struct{}
 		wantPayload       string
 		wantErrorContains string
 	}{
 		{
 			name:            "no-argument tool",
+			start:           toolStart,
 			noArgumentTools: map[string]struct{}{"ada.continue_alarms": {}},
 			wantPayload:     `{}`,
 		},
 		{
-			name:              "ordinary tool",
+			name:        "ordinary tool with empty object",
+			start:       toolStart,
+			wantPayload: `{}`,
+		},
+		{
+			name:              "ordinary tool without input",
+			start:             missingInputToolStart,
 			wantErrorContains: "tool payload is not valid JSON",
 		},
 	}
@@ -836,7 +855,7 @@ func TestAnthropicChunkProcessorCanonicalizesNoArgumentTools(t *testing.T) {
 			)
 
 			require.NoError(t, processor.Handle(messageStart))
-			require.NoError(t, processor.Handle(toolStart))
+			require.NoError(t, processor.Handle(test.start))
 			err := processor.Handle(toolStop)
 			if test.wantErrorContains != "" {
 				require.ErrorContains(t, err, test.wantErrorContains)

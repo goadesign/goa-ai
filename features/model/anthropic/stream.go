@@ -362,9 +362,12 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			tb.name = canonical
 			tb.id = toolUse.ID
 			_, tb.noArguments = p.noArgumentTools[canonical]
-			if err := p.retain(""); err != nil {
+			initialInput := string(toolUse.Input)
+			if err := p.retain(initialInput); err != nil {
 				return err
 			}
+			tb.initialEmptyObject = initialInput == "{}"
+			tb.fragments.WriteString(initialInput)
 			p.toolBlocks[idx] = tb
 			return nil
 		}
@@ -443,7 +446,7 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 				if tb.noArguments {
 					return nil
 				}
-				tb.fragments.WriteString(delta.PartialJSON)
+				tb.appendFragment(delta.PartialJSON)
 				if tb.id == "" {
 					return fmt.Errorf("anthropic stream: tool JSON delta missing tool call id")
 				}
@@ -687,12 +690,26 @@ func (p *anthropicChunkProcessor) attributedUsage(modelID string, modelClass mod
 }
 
 type toolBuffer struct {
-	name        string
-	id          string
-	noArguments bool
-	fragments   strings.Builder
+	name               string
+	id                 string
+	noArguments        bool
+	initialEmptyObject bool
+	deltaSeen          bool
+	fragments          strings.Builder
 }
 
+// appendFragment replaces Anthropic's initial empty-object placeholder with
+// the JSON deltas that contain the model-authored arguments.
+func (tb *toolBuffer) appendFragment(fragment string) {
+	if !tb.deltaSeen && tb.initialEmptyObject {
+		tb.fragments.Reset()
+	}
+	tb.deltaSeen = true
+	tb.fragments.WriteString(fragment)
+}
+
+// finalInput returns the initial input when Anthropic emitted no JSON deltas,
+// or the complete delta document when the streamed arguments replaced it.
 func (tb *toolBuffer) finalInput() string {
 	return tb.fragments.String()
 }
