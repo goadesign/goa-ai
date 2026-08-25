@@ -108,10 +108,9 @@ type (
 		// RegisterWorkflow registers a workflow definition with the engine.
 		RegisterWorkflow(ctx context.Context, def WorkflowDefinition) error
 
-		// RegisterRecordActivity registers a typed activity that persists
-		// workflow-emitted runtime records outside of the deterministic workflow
-		// thread. The activity accepts *api.RecordActivityInput and returns an error.
-		RegisterRecordActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.RecordActivityInput) error) error
+		// RegisterRecordActivity registers the typed activity that persists one
+		// non-empty ordered record batch outside the deterministic workflow thread.
+		RegisterRecordActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.RecordActivityBatchInput) error) error
 
 		// RegisterPlannerActivity registers a typed planner activity (PlanStart or
 		// PlanResume) that accepts *api.PlanActivityInput and returns *api.PlanActivityOutput.
@@ -213,11 +212,10 @@ type (
 		// and run-level correlation.
 		RunID() string
 
-		// PublishRecord schedules the runtime record activity and waits for completion.
-		// Implementations must run record persistence outside of the deterministic
-		// workflow thread (e.g., via activities in Temporal) so downstream record
-		// consumers can perform I/O.
-		PublishRecord(call RecordActivityCall) error
+		// PublishRecords schedules one activity for a non-empty ordered record
+		// batch and waits for completion. Implementations must run persistence
+		// outside the deterministic workflow thread so record consumers can do I/O.
+		PublishRecords(call RecordActivityCall) error
 
 		// ExecutePlannerActivity schedules a planner activity (PlanStart/PlanResume)
 		// and blocks until it completes. Planner activities are executed outside the
@@ -331,14 +329,14 @@ type (
 		HeartbeatTimeout time.Duration
 	}
 
-	// RecordActivityCall describes a single invocation of the runtime record
-	// activity from inside workflow code.
+	// RecordActivityCall describes one ordered record publication activity from
+	// inside workflow code.
 	RecordActivityCall struct {
 		// Name identifies the registered record activity.
 		Name string
 
-		// Input is the typed payload passed to the activity handler.
-		Input *api.RecordActivityInput
+		// Input contains the immutable records published in order.
+		Input *api.RecordActivityBatchInput
 
 		// Options overrides the registered activity defaults for this invocation.
 		Options ActivityOptions

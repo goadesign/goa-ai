@@ -233,7 +233,16 @@ func (r *Runtime) preparePlannerActivity(
 	unavailableTools []tools.Ident,
 ) (*plannerActivityInvocation, error) {
 	events := newPlannerEvents(input.AgentID, input.RunID, input.RunContext.SessionID)
-	invocations := &modelInvocationJournal{}
+	publicationBatchID := uuid.NewString()
+	invocations := &modelInvocationJournal{
+		runtime:        r,
+		runID:          input.RunID,
+		sessionID:      input.RunContext.SessionID,
+		presentationID: publicationBatchID,
+	}
+	if err := invocations.startPresentation(ctx); err != nil {
+		return nil, fmt.Errorf("start provisional model presentation: %w", err)
+	}
 	reg, agentCtx, err := r.plannerContext(
 		ctx,
 		input,
@@ -262,7 +271,7 @@ func (r *Runtime) preparePlannerActivity(
 		messages:           messages,
 		reminders:          rems,
 		runContext:         input.RunContext,
-		publicationBatchID: uuid.NewString(),
+		publicationBatchID: publicationBatchID,
 	}, nil
 }
 
@@ -305,7 +314,6 @@ func (a *plannerActivityInvocation) output(
 		SynthesizeAfterTools: result.SynthesizeAfterTools,
 		FinalResponse:        result.FinalResponse,
 		FinalToolResult:      result.FinalToolResult,
-		Streamed:             result.Streamed,
 		Await:                result.Await,
 		ExpectedChildren:     result.ExpectedChildren,
 		Notes:                result.Notes,
@@ -326,7 +334,7 @@ func (a *plannerActivityInvocation) acceptedOutput(
 	result *PlanResult,
 	transcript []*model.Message,
 ) (*PlanActivityOutput, error) {
-	a.invocations.publishSelectedPresentation(ctx, a.events)
+	a.invocations.publishUsage(ctx, a.events)
 	output := &PlanActivityOutput{
 		PublicationBatchID: a.publicationBatchID,
 		Result:             result,
@@ -359,6 +367,9 @@ func (a *plannerActivityInvocation) outputContractFailure(
 	ctx context.Context,
 	err error,
 ) (*PlanActivityOutput, error) {
+	if discardErr := a.invocations.discardPresentations(ctx); discardErr != nil {
+		err = errors.Join(err, fmt.Errorf("discard rejected model presentation: %w", discardErr))
+	}
 	var outputErr *planner.OutputContractError
 	if !errors.As(err, &outputErr) {
 		return nil, err

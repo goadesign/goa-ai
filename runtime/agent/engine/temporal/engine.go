@@ -312,15 +312,14 @@ func (e *Engine) temporalWorkflowHandler(
 }
 
 // RegisterRecordActivity registers a typed runtime-record activity with the
-// Temporal engine. Record activities persist workflow-emitted records outside
-// of deterministic workflow code. The activity accepts
-// *api.RecordActivityInput and returns an error.
-func (e *Engine) RegisterRecordActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.RecordActivityInput) error) error {
+// Temporal engine. The activity persists one non-empty ordered batch outside
+// deterministic workflow code.
+func (e *Engine) RegisterRecordActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.RecordActivityBatchInput) error) error {
 	if err := e.requireWorkerMode("register record activities"); err != nil {
 		return err
 	}
 	opts = e.applyActivityClassDefaults(activityKindRecord, opts)
-	wrapped := func(ctx context.Context, in *api.RecordActivityInput) error {
+	wrapped := func(ctx context.Context, in *api.RecordActivityBatchInput) error {
 		return temporalerrors.Wrap(fn(e.injectWorkflowContextIntoActivity(ctx), in))
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)

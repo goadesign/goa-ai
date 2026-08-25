@@ -136,10 +136,14 @@ type modelInvocationSink interface {
 		err error,
 	) error
 	recordRejectedModelUsageTotal(invocationID modelInvocationID, usage model.TokenUsage) error
-	recordRejectedModelUsageDelta(invocationID modelInvocationID, usage model.TokenUsage) error
+	recordRejectedModelUsageDelta(
+		ctx context.Context,
+		invocationID modelInvocationID,
+		usage model.TokenUsage,
+	) error
 	recordValidatedModelResponse(invocationID modelInvocationID, response *model.Response) error
-	recordModelChunk(invocationID modelInvocationID, chunk model.Chunk) error
-	finishModelInvocation(invocationID modelInvocationID, err error) error
+	recordModelChunk(ctx context.Context, invocationID modelInvocationID, chunk model.Chunk) error
+	finishModelInvocation(ctx context.Context, invocationID modelInvocationID, err error) error
 }
 
 // modelInvocationProvider saves each model call after the opaque client has
@@ -157,6 +161,7 @@ type modelInvocationProvider struct {
 type modelInvocationCall struct {
 	provider     *modelInvocationProvider
 	invocationID modelInvocationID
+	ctx          context.Context
 }
 
 // newModelInvocationClient adds response checking and storage. It returns inner
@@ -209,13 +214,14 @@ func (c *modelInvocationProvider) PrepareClientCall(
 	}
 	if c.designated {
 		if err := c.sink.designateModelInvocation(invocationID); err != nil {
-			cleanupErr := c.sink.finishModelInvocation(invocationID, err)
+			cleanupErr := c.sink.finishModelInvocation(invocationCtx, invocationID, err)
 			return ctx, nil, errors.Join(err, cleanupErr)
 		}
 	}
 	return invocationCtx, &modelInvocationCall{
 		provider:     c,
 		invocationID: invocationID,
+		ctx:          invocationCtx,
 	}, nil
 }
 
@@ -274,6 +280,7 @@ func (c *modelInvocationCall) ObserveClientStream(err error) (model.StreamObserv
 	journaled := &modelInvocationStreamer{
 		sink:         c.provider.sink,
 		invocationID: c.invocationID,
+		ctx:          c.ctx,
 		reject:       c.provider.latchTerminalError,
 	}
 	return journaled, nil
@@ -286,12 +293,12 @@ func (c *modelInvocationCall) Finish(err error) error {
 	if errors.As(err, &outputErr) {
 		c.provider.latchTerminalError(err)
 	}
-	return c.provider.sink.finishModelInvocation(c.invocationID, err)
+	return c.provider.sink.finishModelInvocation(c.ctx, c.invocationID, err)
 }
 
 // Abort releases invocation state when a later observer cannot prepare.
 func (c *modelInvocationCall) Abort(err error) error {
-	return c.provider.sink.finishModelInvocation(c.invocationID, err)
+	return c.provider.sink.finishModelInvocation(c.ctx, c.invocationID, err)
 }
 
 // terminalError returns the first terminal output failure observed by this
@@ -319,6 +326,7 @@ func (c *modelInvocationProvider) latchTerminalError(err error) {
 type modelInvocationStreamer struct {
 	sink         modelInvocationSink
 	invocationID modelInvocationID
+	ctx          context.Context
 	response     *model.Response
 	finished     bool
 	terminalErr  error
@@ -342,7 +350,7 @@ func (s *modelInvocationStreamer) ObserveStreamRecv(observation model.StreamObse
 			if observation.RejectedUsageDelta != nil {
 				err = errors.Join(
 					err,
-					s.sink.recordRejectedModelUsageDelta(s.invocationID, *observation.RejectedUsageDelta),
+					s.sink.recordRejectedModelUsageDelta(s.ctx, s.invocationID, *observation.RejectedUsageDelta),
 				)
 			}
 			if observation.RejectedUsageTotal != nil {
@@ -385,7 +393,7 @@ func (s *modelInvocationStreamer) ObserveStreamRecv(observation model.StreamObse
 		}
 		return nil
 	}
-	if err := s.sink.recordModelChunk(s.invocationID, observation.Chunk); err != nil {
+	if err := s.sink.recordModelChunk(s.ctx, s.invocationID, observation.Chunk); err != nil {
 		return s.finish(err)
 	}
 	return nil

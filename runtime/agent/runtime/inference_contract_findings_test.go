@@ -473,7 +473,7 @@ func TestModelFailureDropsOversizedUsageEventsButKeepsEvidence(t *testing.T) {
 	)
 }
 
-func TestSuccessfulOutputPublicationRetriesImmutableBatch(t *testing.T) {
+func TestSuccessfulOutputReturnsExhaustedPublicationErrorWithoutReplanning(t *testing.T) {
 	plannerCalls := 0
 	rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{
 		start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
@@ -505,13 +505,12 @@ func TestSuccessfulOutputPublicationRetriesImmutableBatch(t *testing.T) {
 		time.Time{},
 	)
 
-	require.NoError(t, err)
-	require.NotNil(t, output)
+	require.ErrorContains(t, err, "record backend unavailable")
+	require.Nil(t, output)
 	require.Equal(t, 1, plannerCalls)
-	require.Equal(t, 1, store.storedCount())
+	require.Zero(t, store.storedCount())
 	attempts := store.eventKeyAttempts()
-	require.Len(t, attempts, 2)
-	require.Equal(t, attempts[0], attempts[1])
+	require.Len(t, attempts, 1)
 }
 
 func TestNormalizePlanResultContractPreservesProviderIdentityInValidationProjection(t *testing.T) {
@@ -639,7 +638,7 @@ func TestInvalidPlannerActivityResultPublishesNoRecords(t *testing.T) {
 	}
 }
 
-func TestOutputFailurePublicationRetriesStableBatchWithoutReplanning(t *testing.T) {
+func TestOutputFailureReturnsExhaustedPublicationErrorWithoutReplanning(t *testing.T) {
 	providerCalls := 0
 	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		client, ok := input.Agent.ModelClient("test")
@@ -681,45 +680,18 @@ func TestOutputFailurePublicationRetriesStableBatchWithoutReplanning(t *testing.
 		time.Time{},
 	)
 
-	require.NotNil(t, output)
-	var outputErr *planner.OutputContractError
-	require.ErrorAs(t, err, &outputErr)
-	require.True(t, temporalerrors.IsOutputContract(err))
-	require.Equal(t, 2, store.storedCount())
+	require.Nil(t, output)
+	require.ErrorContains(t, err, "record backend unavailable")
+	require.False(t, temporalerrors.IsOutputContract(err))
+	require.Equal(t, 1, store.storedCount())
 	require.Equal(t, 1, providerCalls)
 	attempts := store.eventKeyAttempts()
-	require.Len(t, attempts, 4)
-	require.Equal(t, attempts[0], attempts[2])
-	require.Equal(t, attempts[1], attempts[3])
+	require.Len(t, attempts, 2)
 	require.NotEqual(t, attempts[0], attempts[1])
-	require.Equal(t, 1, store.countType(hooks.ModelOutputRejected))
-
-	secondOutput, secondErr := rt.runPlanActivity(
-		&testWorkflowContext{
-			ctx:         context.Background(),
-			workflowID:  "workflow-publication-replay",
-			runtime:     rt,
-			hookRuntime: rt,
-		},
-		"plan",
-		engine.ActivityOptions{},
-		input,
-		time.Time{},
-	)
-
-	require.NotNil(t, secondOutput)
-	require.ErrorAs(t, secondErr, &outputErr)
-	require.True(t, temporalerrors.IsOutputContract(secondErr))
-	require.Equal(t, 4, store.storedCount())
-	require.Equal(t, 2, providerCalls)
-	secondAttempts := store.eventKeyAttempts()
-	require.Len(t, secondAttempts, 6)
-	require.NotEqual(t, secondAttempts[0], secondAttempts[4])
-	require.NotEqual(t, secondAttempts[1], secondAttempts[5])
-	require.Equal(t, 2, store.countType(hooks.ModelOutputRejected))
+	require.Zero(t, store.countType(hooks.ModelOutputRejected))
 }
 
-func TestOutputFailurePublicationCancellationWinsDuringBackoff(t *testing.T) {
+func TestOutputFailurePublicationDoesNotMaskActivityErrorAfterCancellation(t *testing.T) {
 	plannerCalls := 0
 	rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{
 		start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
@@ -754,8 +726,9 @@ func TestOutputFailurePublicationCancellationWinsDuringBackoff(t *testing.T) {
 	)
 
 	require.Nil(t, output)
-	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorContains(t, err, "record backend unavailable")
 	require.False(t, temporalerrors.IsOutputContract(err))
+	require.ErrorIs(t, ctx.Err(), context.Canceled)
 	require.Equal(t, 1, plannerCalls)
 }
 

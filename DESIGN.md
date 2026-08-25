@@ -11,6 +11,16 @@ Build intelligent agents, MCP servers, and registry-integrated toolsets from you
 - **Registries**: Centralized tool catalogs with federation, caching, and semantic search
 - **Unified Toolsets**: Single `Toolset` construct with providers (local, MCP, registry)
 
+Agent streams send validated assistant text and thinking from the designated
+planner model call directly to clients as provisional output. One
+execution-scoped presentation ID associates its fragments with a discard marker
+and differs from every retry execution. The workflow's
+canonical assistant-turn event alone finalizes accepted output. Provisional
+fragments never enter the run log, hook bus, or memory. Partial tool arguments
+stay inside model validation until one complete tool call is available. After
+planner selection, the canonical response is persisted once, and its ordered
+runtime records are published through one idempotent activity batch.
+
 ## How it works
 
 For each service annotated with agents or MCP, the plugin:

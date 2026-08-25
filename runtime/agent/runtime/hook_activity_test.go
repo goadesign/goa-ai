@@ -27,6 +27,14 @@ type recordingRunlog struct {
 	delay  time.Duration
 }
 
+// failOnceRunlog simulates a storage outage at one record while preserving the
+// successful prefix in the real idempotent in-memory store.
+type failOnceRunlog struct {
+	store   runlog.Store
+	failKey string
+	failed  bool
+}
+
 func (r *recordingRunlog) Append(_ context.Context, e *runlog.Event) (runlog.AppendResult, error) {
 	if r.err != nil {
 		return runlog.AppendResult{}, r.err
@@ -43,6 +51,18 @@ func (r *recordingRunlog) Append(_ context.Context, e *runlog.Event) (runlog.App
 
 func (r *recordingRunlog) List(context.Context, string, string, int) (runlog.Page, error) {
 	return runlog.Page{}, errors.New("not implemented")
+}
+
+func (r *failOnceRunlog) Append(ctx context.Context, event *runlog.Event) (runlog.AppendResult, error) {
+	if event.EventKey == r.failKey && !r.failed {
+		r.failed = true
+		return runlog.AppendResult{}, errors.New("record backend unavailable")
+	}
+	return r.store.Append(ctx, event)
+}
+
+func (r *failOnceRunlog) List(ctx context.Context, runID, cursor string, limit int) (runlog.Page, error) {
+	return r.store.List(ctx, runID, cursor, limit)
 }
 
 func mustEncodeHookRecord(t *testing.T, evt hooks.Event, eventKey string, timestampMS int64) *runlog.ActivityInput {
@@ -98,7 +118,7 @@ func TestHookActivityAppendsBeforePublish(t *testing.T) {
 		1,
 	)
 
-	err = rt.recordActivity(context.Background(), input)
+	err = rt.recordActivity(context.Background(), testRecordBatch(input))
 	require.NoError(t, err)
 
 	require.NotNil(t, published)
@@ -106,6 +126,50 @@ func TestHookActivityAppendsBeforePublish(t *testing.T) {
 	require.Equal(t, "run-1", rl.events[0].RunID)
 	require.Equal(t, hooks.PlannerNote, rl.events[0].Type)
 	require.Equal(t, input.Payload, rl.events[0].Payload)
+}
+
+func TestRecordActivityRetryPreservesOrderWithoutDuplicateDelivery(t *testing.T) {
+	ctx := context.Background()
+	store := &failOnceRunlog{
+		store:   runloginmem.New(),
+		failKey: "event-2",
+	}
+	bus := hooks.NewBus()
+	var delivered []string
+	sub, err := bus.Register(hooks.SubscriberFunc(func(_ context.Context, event hooks.Event) error {
+		delivered = append(delivered, event.EventKey())
+		return nil
+	}))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sub.Close()) })
+
+	rt := &Runtime{
+		RunEventStore: store,
+		Bus:           bus,
+	}
+	batch := testRecordBatch(
+		mustEncodeHookRecord(t, hooks.NewPlannerNoteEvent("run-1", "svc.agent", "", "first", nil), "event-1", 1),
+		mustEncodeHookRecord(t, hooks.NewPlannerNoteEvent("run-1", "svc.agent", "", "second", nil), "event-2", 2),
+		mustEncodeHookRecord(t, hooks.NewPlannerNoteEvent("run-1", "svc.agent", "", "third", nil), "event-3", 3),
+	)
+
+	require.Error(t, rt.recordActivity(ctx, batch))
+	require.NoError(t, rt.recordActivity(ctx, batch))
+
+	page, err := store.List(ctx, "run-1", "", 10)
+	require.NoError(t, err)
+	require.Len(t, page.Events, 3)
+	require.Equal(t, []string{"event-1", "event-2", "event-3"}, []string{
+		page.Events[0].EventKey,
+		page.Events[1].EventKey,
+		page.Events[2].EventKey,
+	})
+	require.Equal(t, []int64{1, 2, 3}, []int64{
+		page.Events[0].Timestamp.UnixMilli(),
+		page.Events[1].Timestamp.UnixMilli(),
+		page.Events[2].Timestamp.UnixMilli(),
+	})
+	require.Equal(t, []string{"event-1", "event-2", "event-3"}, delivered)
 }
 
 func TestGenAITimelineSubscriberEmitsSpans(t *testing.T) {
@@ -163,8 +227,8 @@ func TestGenAITimelineSubscriberEmitsSpans(t *testing.T) {
 		"svc.child",
 	)
 
-	require.NoError(t, rt.recordActivity(context.Background(), mustEncodeHookRecord(t, toolEvent, "evt-tool", 1_000)))
-	require.NoError(t, rt.recordActivity(context.Background(), mustEncodeHookRecord(t, childEvent, "evt-child", 2_000)))
+	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(mustEncodeHookRecord(t, toolEvent, "evt-tool", 1_000))))
+	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(mustEncodeHookRecord(t, childEvent, "evt-child", 2_000))))
 
 	require.Len(t, tracer.spans, 2)
 
@@ -226,7 +290,7 @@ func TestHookActivityAppendFailureAbortsPublish(t *testing.T) {
 		2,
 	)
 
-	err = rt.recordActivity(context.Background(), input)
+	err = rt.recordActivity(context.Background(), testRecordBatch(input))
 	require.ErrorIs(t, err, appendErr)
 	require.Nil(t, published)
 }
@@ -268,8 +332,8 @@ func TestHookActivity_ReplayedChildRunLinkDoesNotDuplicateSessionProjection(t *t
 		3,
 	)
 
-	require.NoError(t, rt.recordActivity(context.Background(), input))
-	require.NoError(t, rt.recordActivity(context.Background(), input))
+	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
+	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
 
 	parent, err := store.LoadRun(context.Background(), "parent-run")
 	require.NoError(t, err)
@@ -311,7 +375,7 @@ func TestHookActivityRecordsHeartbeatsWhenConfigured(t *testing.T) {
 	ctx = engine.WithActivityHeartbeatRecorder(ctx, recorder)
 	ctx = engine.WithActivityHeartbeatTimeout(ctx, 3*time.Millisecond)
 
-	require.NoError(t, rt.recordActivity(ctx, input))
+	require.NoError(t, rt.recordActivity(ctx, testRecordBatch(input)))
 	require.GreaterOrEqual(t, recorder.Count(), 1)
 }
 
@@ -364,7 +428,7 @@ func TestHookActivity_EnrichesToolCallScheduledDisplayHintInRunlog(t *testing.T)
 
 	input := mustEncodeHookRecord(t, ev, "evt-5", 5)
 
-	require.NoError(t, rt.recordActivity(context.Background(), input))
+	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
 	require.Len(t, rl.events, 1)
 	require.Equal(t, hooks.ToolCallScheduled, rl.events[0].Type)
 	require.Contains(t, string(rl.events[0].Payload), "Checking hourly energy rates")
@@ -423,7 +487,7 @@ func TestHookActivity_EnrichesMalformedToolCallScheduledDisplayHintInRunlog(t *t
 
 	input := mustEncodeHookRecord(t, ev, "evt-malformed", 5)
 
-	require.NoError(t, rt.recordActivity(context.Background(), input))
+	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
 	require.Len(t, rl.events, 1)
 	require.Equal(t, hooks.ToolCallScheduled, rl.events[0].Type)
 	require.Contains(t, string(rl.events[0].Payload), "Check Energy Rates")
@@ -468,7 +532,7 @@ func TestHookActivity_EnrichesToolUnavailableDisplayHintInRunlog(t *testing.T) {
 
 	input := mustEncodeHookRecord(t, ev, "evt-6", 6)
 
-	require.NoError(t, rt.recordActivity(context.Background(), input))
+	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
 	require.Len(t, rl.events, 1)
 	require.Equal(t, hooks.ToolCallScheduled, rl.events[0].Type)
 	require.Contains(t, string(rl.events[0].Payload), "Tool not available: ada.resolve_time_series_sources")
@@ -510,10 +574,10 @@ func TestHookActivityAccumulatesPromptRefsOnRunMeta(t *testing.T) {
 		},
 	)
 	input := mustEncodeHookRecord(t, ev, "evt-6", 6)
-	require.NoError(t, rt.recordActivity(context.Background(), input))
+	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
 
 	input2 := mustEncodeHookRecord(t, ev, "evt-7", 7)
-	require.NoError(t, rt.recordActivity(context.Background(), input2))
+	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input2)))
 
 	run, err := store.LoadRun(context.Background(), "run-1")
 	require.NoError(t, err)
@@ -559,8 +623,8 @@ func TestHookActivityLinksChildRunsOnParentRunMeta(t *testing.T) {
 		"svc.child",
 	)
 	input := mustEncodeHookRecord(t, linked, "evt-8", 8)
-	require.NoError(t, rt.recordActivity(context.Background(), input))
-	require.NoError(t, rt.recordActivity(context.Background(), input))
+	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
+	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
 
 	parentRun, err := store.LoadRun(context.Background(), "run-parent")
 	require.NoError(t, err)

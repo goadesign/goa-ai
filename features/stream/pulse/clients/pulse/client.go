@@ -63,6 +63,9 @@ type (
 		// Add publishes an event with the given name and payload to the stream, returning
 		// the event ID assigned by Redis (e.g., "1234567890-0").
 		Add(ctx context.Context, event string, payload []byte) (string, error)
+		// AddOnce publishes one immutable event for the idempotency key. Exact
+		// retries return the first Redis event ID; changed event content fails.
+		AddOnce(ctx context.Context, idempotencyKey string, event string, payload []byte) (string, error)
 		// Snapshot returns every event retained at one Redis linearization point.
 		// It creates no reader, cursor, consumer group, or acknowledgement state.
 		Snapshot(ctx context.Context) ([]SnapshotEvent, error)
@@ -184,6 +187,32 @@ func (h *handle) Add(ctx context.Context, event string, payload []byte) (string,
 	id, err := h.stream.Add(ctx, event, payload)
 	if err != nil {
 		return "", fmt.Errorf("pulse add: %w", err)
+	}
+	return id, nil
+}
+
+// AddOnce publishes an event exactly once for its stable idempotency key.
+func (h *handle) AddOnce(ctx context.Context, idempotencyKey string, event string, payload []byte) (string, error) {
+	if idempotencyKey == "" {
+		return "", errors.New("idempotency key is required")
+	}
+	if event == "" {
+		return "", errors.New("event name is required")
+	}
+	if h.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, h.timeout)
+		defer cancel()
+	}
+	// AddOnce requires an established stream lifetime. Open binds this fresh
+	// handle to the active generation and creates its configured lifetime when
+	// this is the first event.
+	if err := h.stream.Open(ctx); err != nil {
+		return "", fmt.Errorf("pulse open for add once: %w", err)
+	}
+	id, err := h.stream.AddOnce(ctx, idempotencyKey, event, payload)
+	if err != nil {
+		return "", fmt.Errorf("pulse add once: %w", err)
 	}
 	return id, nil
 }

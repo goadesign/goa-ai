@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	agent "goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -449,14 +450,15 @@ func (r *Runtime) publishPreparedHook(
 	in *RecordActivityInput,
 	options engine.ActivityOptions,
 ) error {
+	batch := &api.RecordActivityBatchInput{Records: []*RecordActivityInput{in}}
 	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
-		return wfCtx.PublishRecord(engine.RecordActivityCall{
+		return wfCtx.PublishRecords(engine.RecordActivityCall{
 			Name:    recordActivityName,
-			Input:   in,
+			Input:   batch,
 			Options: options,
 		})
 	}
-	return r.recordActivity(ctx, in)
+	return r.recordActivity(ctx, batch)
 }
 
 // toolLifecycleEventKey gives each tool-call lifecycle transition one stable
@@ -517,13 +519,14 @@ func (r *Runtime) publishTranscriptMessagesErr(
 		TimestampMS: meta.TimestampMS,
 		Payload:     payload,
 	}
+	batch := &api.RecordActivityBatchInput{Records: []*RecordActivityInput{input}}
 	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
-		return wfCtx.PublishRecord(engine.RecordActivityCall{
+		return wfCtx.PublishRecords(engine.RecordActivityCall{
 			Name:  recordActivityName,
-			Input: input,
+			Input: batch,
 		})
 	}
-	return r.recordActivity(ctx, input)
+	return r.recordActivity(ctx, batch)
 }
 
 // publishTranscriptSeedErr persists canonical transcript seed messages for a

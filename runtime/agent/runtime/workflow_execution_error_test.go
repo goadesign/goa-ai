@@ -51,17 +51,19 @@ func (w *failingRecordWorkflowContext) WithCancel() (engine.WorkflowContext, fun
 	}, cancel
 }
 
-func (w *failingRecordWorkflowContext) PublishRecord(call engine.RecordActivityCall) error {
-	w.state.calls++
-	failAtCall := w.state.failAt > 0 && w.state.calls == w.state.failAt
-	failAtType := w.state.failType != "" &&
-		string(call.Input.Type) == w.state.failType &&
-		!w.state.failed
-	if failAtCall || failAtType {
-		w.state.failed = true
-		return w.state.err
+func (w *failingRecordWorkflowContext) PublishRecords(call engine.RecordActivityCall) error {
+	for _, record := range call.Input.Records {
+		w.state.calls++
+		failAtCall := w.state.failAt > 0 && w.state.calls == w.state.failAt
+		failAtType := w.state.failType != "" &&
+			string(record.Type) == w.state.failType &&
+			!w.state.failed
+		if failAtCall || failAtType {
+			w.state.failed = true
+			return w.state.err
+		}
 	}
-	return w.testWorkflowContext.PublishRecord(call)
+	return w.testWorkflowContext.PublishRecords(call)
 }
 
 func TestRunLoopRecordsPartialInlineResultsBeforeExecutionError(t *testing.T) {

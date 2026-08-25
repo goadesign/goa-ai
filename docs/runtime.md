@@ -738,7 +738,6 @@ type PlanResult struct {
     SynthesizeAfterTools bool      // Synthesize after success; repair remains allowed
     FinalResponse *FinalResponse   // Terminal assistant message
     FinalToolResult *FinalToolResult // Terminal tool result for nested agent runs
-    Streamed      bool             // True if text was already streamed via Events
     Await         *Await           // Request clarification or external tool results
     ExpectedChildren int           // Optional hint for nested child results
     Notes         []PlannerAnnotation
@@ -880,15 +879,14 @@ error after decoding the trusted transport.
 
 ### PlannerEvents
 
-`PlannerEvents` lets planner code publish its own semantic progress. Model
-response text, thinking, tool-argument previews, and usage are recorded and
-published by the runtime; `planner.ConsumeStream` never emits events:
+`PlannerEvents` lets planner code publish semantic progress and usage that the
+planner produces itself. Model-client text and thinking bypass this interface:
+the runtime sends each validated fragment from the designated planner call
+directly to the session stream. Partial tool arguments remain inside model
+validation until the complete call is available.
 
 ```go
 type PlannerEvents interface {
-    AssistantChunk(ctx context.Context, text string)
-    ToolCallArgsDelta(ctx context.Context, toolCallID string, toolName tools.Ident, delta string)
-    PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart)
     PlannerThought(ctx context.Context, note string, labels map[string]string)
     UsageDelta(ctx context.Context, usage model.TokenUsage)
 }
@@ -904,12 +902,14 @@ Choose one per planner call.
 ### Option 1: PlannerModelClient (Recommended)
 
 `PlannerContext.PlannerModelClient(id)` returns a planner-scoped client that
-records `AssistantChunk`, `PlannerThinkingBlock`, and tool-argument presentation
-with its invocation. Its `Stream(...)` method drains the underlying provider
-stream and returns a `planner.StreamSummary`. After `PlanResult` selects the
-response, the runtime publishes that presentation and usage from every attempted
-invocation. A planner client is single-use for the selected response; run probes
-through `ModelClient` before obtaining it:
+sends validated assistant text and thinking to the session stream while its
+`Stream(...)` method drains the provider response. It returns a
+`planner.StreamSummary` containing accumulated text and complete validated tool
+calls. The selected response becomes canonical only when the workflow appends
+its transcript and emits `assistant_turn`; rejected provisional output receives
+a discard event. Usage includes every attempted invocation. A planner client is
+single-use for the selected response; run probes through `ModelClient` before
+obtaining it:
 
 ```go
 func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error) {
@@ -933,7 +933,6 @@ func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*Pl
     }
     return &PlanResult{
         FinalResponse: sum.FinalResponse(),
-        Streamed: true, // Text was already streamed
     }, nil
 }
 ```
@@ -962,9 +961,11 @@ if err != nil {
 }
 ```
 
-This helper only drains the stream and returns a `StreamSummary` with
-accumulated text and tool calls. The runtime journal owns later presentation
-and usage publication.
+This helper drains the stream and returns a `StreamSummary` with accumulated
+text and complete tool calls. While it drains the designated
+`PlannerModelClient` call, the runtime sends each validated text and thinking
+fragment directly to the session stream so clients can display progress without
+waiting for inference to finish.
 
 `ConsumeStream` accepts the `*model.ValidatedStream` returned by every public
 model client. Provider and transport adapters capture a `model.RequestContract`
@@ -972,9 +973,28 @@ before inference and pass their internal `model.Streamer` to `ValidateStream`;
 planner code never wraps or revalidates streams.
 
 Each runtime-managed model call creates an isolated response candidate before
-planner code receives the response or stream chunk. The candidate retains its
-ordered text, thinking, and tool-argument deltas until the planner selects a
-response. Every successful stream ends its typed chunks with clean EOF and
+planner code receives the response or stream chunk. Only the one call made
+through `PlannerModelClient` may produce provisional UI events. Those events
+carry one presentation ID for that activity execution and bypass the run log,
+hook bus, and memory. The activity sends the `started` lifecycle event before
+planner setup or model work, so a retry removes output left by the failed
+execution even when the retry never produces a visible fragment. Assistant,
+thinking, and lifecycle events still pass through the configured
+`StreamProfile`.
+The runtime sends a discarded marker when validation or planner selection
+rejects the response. The workflow's canonical assistant-turn event is the only
+acceptance marker. Each Temporal activity execution has a different
+presentation ID. A retry's started marker replaces fragments left by the
+previous execution, and clients ignore late fragments that still carry the old
+ID.
+
+Text and thinking fragments are sent as soon as they arrive because delaying or
+combining them would remove the real-time behavior. Tool argument fragments
+remain inside the model validation boundary: partial JSON is neither executable
+nor independently useful, so only the complete validated tool call reaches the
+planner and workflow.
+
+Every successful stream ends its typed chunks with clean EOF and
 exposes exactly one canonical response through `ValidatedStream.Response()`. The
 runtime captures and validates that response before returning EOF to planner
 code, including when the provider is behind a model gateway. Incomplete
@@ -1002,9 +1022,16 @@ make exactly one selected call through `PlannerModelClient`. Terminal helpers
 return the selected provider message without exposing transcript identity or
 matching mechanics. Later session turns therefore replay the provider's signed
 thinking while only the selected provider response becomes user-facing.
-Retryable or rejected attempts never leak partial presentation. Usage events
-still include every invocation. After atomic tool-batch admission, the workflow
-commits the complete selected response once before any effects.
+Provisional presentation is never canonical output. A rejected response may be
+visible briefly in a live client, but its discarded marker removes the matching
+text and thoughts, and none of those fragments are persisted or published as
+hooks. Usage events still include every invocation. After atomic tool-batch
+admission, the workflow commits the complete selected response once before any
+effects. The workflow publishes each accepted ordered record batch through one
+record activity; stable event keys make a retried prefix idempotent without
+creating one Temporal activity per record. Keyed stream publications use the
+same identity, so a retry completes a failed delivery without appending a
+duplicate client event.
 
 Provider adapters own reasoning-block validity. Streaming Bedrock and Anthropic
 calls reject plaintext reasoning that closes without its provider signature;
@@ -2831,6 +2858,7 @@ type Engine interface {
     QueryRunStatus(ctx, runID string) (RunStatus, error)
     QueryRunCompletion(ctx, runID string) (*api.RunOutput, error)
 }
+
 ```
 
 ### WorkflowContext
@@ -2844,7 +2872,7 @@ type WorkflowContext interface {
     RunID() string
     Now() time.Time  // Deterministic time
     NextSequence() uint64
-    PublishRecord(call engine.RecordActivityCall) error
+    PublishRecords(call engine.RecordActivityCall) error
     ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error)
     ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error)
     ExecuteToolActivityAsync(call engine.ToolActivityCall) (Future[*api.ToolOutput], error)
@@ -2855,10 +2883,16 @@ type WorkflowContext interface {
     WithCancel() (WorkflowContext, func())
     SetQueryHandler(name string, handler any) error
 }
+
 ```
 
-Custom engine adapters must implement the activity methods with the signatures
-shown above. The activity methods and `Await` no longer accept a separate
+Custom engine adapters must implement `RegisterRecordActivity` and
+`PublishRecords` with `RecordActivityBatchInput`. The runtime sends every
+publication as a non-empty ordered batch; a singular lifecycle event is a
+one-item batch. Returning to one activity per record does not satisfy the
+contract.
+
+The activity methods and `Await` no longer accept a separate
 `context.Context`; the `WorkflowContext` receiver owns cancellation for
 scheduled work and deterministic waits. This is a source-breaking change for
 custom adapters, which must remove the extra argument and use their

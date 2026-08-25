@@ -43,7 +43,14 @@ func (h *hintingSink) Send(ctx context.Context, ev stream.Event) error {
 			return err
 		}
 		data.DisplayHint = hint
-		base := stream.NewBaseWithEventKey(e.Type(), e.RunID(), e.SessionID(), data, e.EventKey())
+		base := stream.NewBaseWithEventKey(
+			e.Type(),
+			e.RunID(),
+			e.SessionID(),
+			data,
+			e.EventKey(),
+			e.OccurredAt(),
+		)
 		return h.sink.Send(ctx, stream.ToolStart{
 			Base: base,
 			Data: data,

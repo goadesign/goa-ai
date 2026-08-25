@@ -45,9 +45,11 @@ func (r *Runtime) persistRunSuspension(wfCtx engine.WorkflowContext, input *RunI
 			engine.MaxPayloadBytes,
 		)
 	}
-	return wfCtx.PublishRecord(engine.RecordActivityCall{
-		Name:  recordActivityName,
-		Input: record,
+	return wfCtx.PublishRecords(engine.RecordActivityCall{
+		Name: recordActivityName,
+		Input: &api.RecordActivityBatchInput{
+			Records: []*RecordActivityInput{record},
+		},
 	})
 }
 
