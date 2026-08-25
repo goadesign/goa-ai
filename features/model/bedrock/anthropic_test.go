@@ -252,48 +252,132 @@ func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 	assert.False(t, hasToolConfig)
 }
 
-func TestAnthropicBedrockValidatesStructuredOutputCapability(t *testing.T) {
-	tests := []struct {
-		name        string
-		defaultID   string
-		highID      string
-		class       model.ModelClass
-		wantSupport bool
-	}{
-		{
-			name:      "sonnet 5",
-			defaultID: "global.anthropic.claude-sonnet-5",
+func TestAnthropicBedrockStructuredOutputUsesForcedTool(t *testing.T) {
+	var requestBody []byte
+	handlerErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var err error
+		requestBody, err = io.ReadAll(req.Body)
+		if err != nil {
+			handlerErr <- err
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, err = io.WriteString(w, `{
+			"id":"msg_structured",
+			"type":"message",
+			"role":"assistant",
+			"content":[{
+				"type":"tool_use",
+				"id":"toolu_01STRUCTUREDOUTPUT",
+				"name":"eval_judgments",
+				"input":{"value":{"passed":true}}
+			}],
+			"model":"us.anthropic.claude-opus-5",
+			"stop_reason":"tool_use",
+			"usage":{"input_tokens":10,"output_tokens":5}
+		}`)
+		handlerErr <- err
+	}))
+	t.Cleanup(server.Close)
+
+	counter := &recordingAnthropicCounter{}
+	client, err := NewAnthropic(
+		aws.Config{
+			Region:      "us-west-2",
+			Credentials: aws.NewCredentialsCache(testCredentialsProvider{}),
 		},
-		{
-			name:   "opus 5",
-			highID: "us.anthropic.claude-opus-5",
-			class:  model.ModelClassHighReasoning,
+		counter,
+		AnthropicOptions{
+			DefaultModel: "global.anthropic.claude-sonnet-5",
+			HighModel:    "us.anthropic.claude-opus-5",
+			MaxTokens:    128,
 		},
-		{
-			name:        "sonnet 4.5",
-			defaultID:   "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-			wantSupport: true,
+		option.WithBaseURL(server.URL),
+	)
+	require.NoError(t, err)
+
+	output := &model.StructuredOutput{
+		Name:        "eval_judgments",
+		Description: "Return one judgment for each assertion.",
+		Schema: rawjson.Message(`{
+			"type":"object",
+			"additionalProperties":false,
+			"properties":{"passed":{"type":"boolean"}},
+			"required":["passed"],
+			"example":{"passed":true}
+		}`),
+		SchemaWithoutRootExample: rawjson.Message(`{
+			"type":"object",
+			"additionalProperties":false,
+			"properties":{"passed":{"type":"boolean"}},
+			"required":["passed"]
+		}`),
+		ExampleJSON: rawjson.Message(`{"passed":true}`),
+	}
+	request := &model.Request{
+		ModelClass: model.ModelClassHighReasoning,
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "Judge the assertion."}},
+		}},
+		StructuredOutput: output,
+	}
+	response, err := client.Complete(t.Context(), request)
+	require.NoError(t, err)
+	require.NoError(t, <-handlerErr)
+	require.Len(t, response.Content, 1)
+	assert.Equal(t, []model.Part{
+		model.TextPart{Text: `{"passed":true}`},
+	}, response.Content[0].Parts)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(requestBody, &payload))
+	assert.NotContains(t, payload, "output_config")
+	assert.Equal(t, map[string]any{
+		"type": "tool",
+		"name": "eval_judgments",
+	}, payload["tool_choice"])
+	tools, ok := payload["tools"].([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	tool, ok := tools[0].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, tool, "strict")
+	inputSchema, ok := tool["input_schema"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{
+		"value": map[string]any{"passed": true},
+	}, inputSchema["example"])
+
+	count, err := client.CountTokens(t.Context(), request)
+	require.NoError(t, err)
+	assert.True(t, count.Exact)
+	require.NotNil(t, counter.request)
+	assert.Nil(t, counter.request.StructuredOutput)
+	assert.Equal(t, "anthropic.claude-opus-5", counter.request.Model)
+	require.Len(t, counter.request.Tools, 1)
+	assert.Equal(t, "eval_judgments", counter.request.Tools[0].Name)
+	assert.Equal(t, &model.ToolChoice{
+		Mode: model.ToolChoiceModeTool,
+		Name: "eval_judgments",
+	}, counter.request.ToolChoice)
+}
+
+func TestAnthropicBedrockKeepsNativeStructuredOutputWhenBedrockSupportsIt(t *testing.T) {
+	client := &anthropicBedrockProvider{
+		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+	}
+	request := &model.Request{
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "probe",
+			Schema: rawjson.Message(`{"type":"object"}`),
 		},
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			client := &anthropicBedrockProvider{
-				defaultModel: test.defaultID,
-				highModel:    test.highID,
-			}
-			err := client.validateRequest(&model.Request{
-				ModelClass: test.class,
-				StructuredOutput: &model.StructuredOutput{
-					Name:   "probe",
-					Schema: rawjson.Message(`{"type":"object"}`),
-				},
-			})
-			if test.wantSupport {
-				require.NoError(t, err)
-				return
-			}
-			require.Error(t, err)
-			assert.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
-		})
-	}
+
+	effective, toolName, err := client.prepareRequest(request)
+
+	require.NoError(t, err)
+	assert.Same(t, request, effective)
+	assert.Empty(t, toolName)
 }

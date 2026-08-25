@@ -294,11 +294,11 @@ Anthropic Messages requests through Bedrock `InvokeModel`, so authored tool
 examples, forced tool choice, thinking, and prompt caching keep one
 representation on initial and resumed turns. User-message `ImagePart` values
 are sent as Anthropic base64 image blocks for PNG, JPEG, GIF, and WebP content.
-Structured output is sent only for model IDs AWS lists as supporting it; other
-models fail with `model.ErrStructuredOutputUnsupported` before a provider call.
-Its required exact counter receives the same canonical request with the Bedrock
-inference-profile prefix removed for a compatible counting endpoint such as
-Bedrock Mantle.
+For models such as Sonnet 5 and Opus 5 that accept forced tools but reject
+`output_config.format`, structured output uses one private forced tool and is
+returned to callers as the same canonical completion. Its required exact
+counter receives that same effective request with the Bedrock inference-profile
+prefix removed for a compatible counting endpoint such as Bedrock Mantle.
 `bedrock.New` remains the Converse adapter for other Bedrock models and existing
 Converse integrations.
 
@@ -474,10 +474,13 @@ stream ends normally and the complete provider response contains exactly the
 same JSON bytes, including surrounding whitespace. Providers that cannot
 preserve the structured-output contract fail explicitly with
 `model.ErrStructuredOutputUnsupported`.
-On Bedrock, Claude 4.6 uses one private strict tool so Runtime `CountTokens`
-and Converse receive the same enforced schema. Claude 4.5 retains native
-`OutputConfig`; Bedrock Claude models that AWS does not list as supporting
-structured output fail before a provider request.
+The Bedrock Converse adapter uses one private strict tool for Claude 4.6 and a
+private non-strict tool for models that expose forced tools before native
+`OutputConfig`. `bedrock.NewAnthropic` applies the same provider-neutral
+contract before `InvokeModel`: Sonnet 5 and Opus 5 receive one forced private
+tool because Bedrock Messages rejects both `output_config.format` and `strict`.
+The adapter removes the private object wrapper and exposes one canonical
+completion; its exact counter receives the same tool definition and choice.
 
 When updating generated completion callers, replace direct `Spec<Name>` access
 with `Complete<Name>(...)` or `StreamComplete<Name>(...)`. Use
