@@ -127,7 +127,7 @@ func (s *anthropicStreamer) run() {
 		default:
 		}
 		if !s.stream.Next() {
-			if err := s.stream.Err(); err != nil {
+			if err := s.stream.Err(); err != nil && !errors.Is(err, io.EOF) {
 				s.setErr(wrapAnthropicError("stream_recv", err))
 			} else if err := s.ctx.Err(); err != nil {
 				s.setErr(err)
