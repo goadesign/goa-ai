@@ -438,9 +438,21 @@ func (s *Subscriber) sendTerminalWorkflow(ctx context.Context, event hooks.Event
 	}); err != nil {
 		return err
 	}
+	// One terminal hook event produces both the final workflow state and the
+	// marker that closes this run's live stream. Give the marker its own stable
+	// key so exact publication can retry both entries without treating their
+	// different types and payloads as conflicting content.
+	endPayload := RunStreamEndPayload{}
 	return s.sink.Send(ctx, RunStreamEnd{
-		Base: newBaseFromHook(event, EventRunStreamEnd, RunStreamEndPayload{}),
-		Data: RunStreamEndPayload{},
+		Base: NewBaseWithEventKey(
+			EventRunStreamEnd,
+			event.RunID(),
+			event.SessionID(),
+			endPayload,
+			fmt.Sprintf("%s/%s", event.EventKey(), EventRunStreamEnd),
+			time.UnixMilli(event.Timestamp()).UTC(),
+		),
+		Data: endPayload,
 	})
 }
 
