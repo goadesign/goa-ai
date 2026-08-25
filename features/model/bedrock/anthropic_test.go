@@ -323,9 +323,25 @@ func TestAnthropicBedrockStructuredOutputUsesForcedTool(t *testing.T) {
 		}},
 		StructuredOutput: output,
 	}
+	decoded := false
+	require.NoError(t, model.SetCompletionValidator(
+		request,
+		func(response *model.Response, completion *model.Completion) error {
+			require.NotNil(t, response)
+			assert.Nil(t, completion)
+			require.Len(t, response.Content, 1)
+			require.Len(t, response.Content[0].Parts, 1)
+			text, ok := response.Content[0].Parts[0].(model.TextPart)
+			require.True(t, ok)
+			assert.JSONEq(t, `{"passed":true}`, text.Text)
+			decoded = true
+			return nil
+		},
+	))
 	response, err := client.Complete(t.Context(), request)
 	require.NoError(t, err)
 	require.NoError(t, <-handlerErr)
+	assert.True(t, decoded)
 	require.Len(t, response.Content, 1)
 	assert.Equal(t, []model.Part{
 		model.TextPart{Text: `{"passed":true}`},
