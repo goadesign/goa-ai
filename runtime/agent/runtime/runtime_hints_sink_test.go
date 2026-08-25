@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 	"text/template"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,6 +72,7 @@ func TestHintingSinkRendersHintForNilAndEmptyPayload(t *testing.T) {
 					"session-1",
 					payload,
 					"event-1",
+					time.Unix(1, 0).UTC(),
 				),
 				Data: payload,
 			}

@@ -547,9 +547,6 @@ type (
 		// FinalToolResult ends a nested run with a canonical parent tool result.
 		FinalToolResult *planner.FinalToolResult
 
-		// Streamed reports whether FinalResponse text was already streamed.
-		Streamed bool
-
 		// Await requests external input before planning resumes.
 		Await *planner.Await
 
@@ -652,6 +649,15 @@ type (
 	// RecordActivityInput is the canonical workflow-to-activity envelope for
 	// durable runtime records.
 	RecordActivityInput = runlog.ActivityInput
+
+	// RecordActivityBatchInput carries one non-empty immutable ordered
+	// publication to the activity that persists and broadcasts it.
+	RecordActivityBatchInput struct {
+		// Records preserves the workflow-assigned event keys, timestamps, and
+		// publication order. Singular events use one item, and retries must reuse
+		// the exact list.
+		Records []*RecordActivityInput
+	}
 
 	// ToolInput carries the execution payload for one tool call from workflow
 	// code to its activity. The workflow retains model-authored transcript data.

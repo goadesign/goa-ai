@@ -153,34 +153,11 @@ type AgentState interface {
 	Keys() []string
 }
 
-// PlannerEvents allows planners to publish streaming updates to subscribers.
-// Runtime-managed model clients capture provider transcript state independently
-// at the model boundary, so event emission never owns replay correctness.
+// PlannerEvents lets planners publish durable annotations and model usage.
+// Runtime-managed model clients stream provisional text and thinking directly
+// from the validated inference boundary; planners never receive or republish
+// partial tool JSON.
 type PlannerEvents interface {
-	// AssistantChunk emits an assistant text delta. Use this for incremental
-	// streaming output instead of returning a full FinalResponse at the end.
-	AssistantChunk(ctx context.Context, text string)
-
-	// ToolCallArgsDelta emits an incremental tool-call argument fragment as the
-	// model streams tool input JSON.
-	//
-	// Naming note:
-	//   - AssistantChunk streams user-visible assistant text in chunks.
-	//   - ToolCallArgsDelta streams non-canonical argument fragments; we call it
-	//     a delta because fragments are not guaranteed to be valid JSON boundaries
-	//     and are strictly optional to consume.
-	//
-	// Contract:
-	//   - This is a best-effort UX signal. Consumers may ignore it entirely.
-	//   - Deltas are not guaranteed to be valid JSON on their own.
-	//   - The canonical tool payload is still delivered via the final tool call
-	//     (model.ChunkTypeToolCall) and the runtime's tool_start event.
-	ToolCallArgsDelta(ctx context.Context, toolCallID string, toolName tools.Ident, delta string)
-
-	// PlannerThinkingBlock emits a structured thinking block (for models that
-	// support rich thinking parts) for debugging/trace visibility.
-	PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart)
-
 	// PlannerThought emits a planner note with optional labels for debugging.
 	PlannerThought(ctx context.Context, note string, labels map[string]string)
 
@@ -689,12 +666,6 @@ type PlanResult struct {
 	// FinalToolResult ends a nested agent run with a canonical parent tool result
 	// instead of an assistant message.
 	FinalToolResult *FinalToolResult
-
-	// Streamed reports whether assistant text for this result has already been
-	// streamed via PlannerEvents.AssistantChunk. When true, runtimes should
-	// avoid emitting an additional full AssistantMessageEvent for the
-	// FinalResponse to prevent duplicate assistant messages.
-	Streamed bool
 
 	// Await requests that the current workflow end with required external input.
 	Await *Await

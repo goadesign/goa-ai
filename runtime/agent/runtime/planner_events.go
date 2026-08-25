@@ -1,5 +1,5 @@
-// Package runtime waits to publish user-visible planner events until the
-// planner result has passed every runtime check.
+// Package runtime collects durable planner annotations and usage while model
+// text and thinking travel directly from inference to the live session stream.
 package runtime
 
 import (
@@ -10,7 +10,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -38,20 +37,6 @@ func newPlannerEvents(agentID agent.Ident, runID, sessionID string) *runtimePlan
 	}
 }
 
-func (e *runtimePlannerEvents) AssistantChunk(ctx context.Context, text string) {
-	if text == "" {
-		return
-	}
-	e.publish(ctx, hooks.NewAssistantMessageEvent(e.runID, e.agentID, e.sessionID, text, nil))
-}
-
-func (e *runtimePlannerEvents) ToolCallArgsDelta(ctx context.Context, toolCallID string, toolName tools.Ident, delta string) {
-	if toolCallID == "" || delta == "" {
-		return
-	}
-	e.publish(ctx, hooks.NewToolCallArgsDeltaEvent(e.runID, e.agentID, e.sessionID, toolCallID, toolName, delta))
-}
-
 func (e *runtimePlannerEvents) PlannerThought(ctx context.Context, note string, labels map[string]string) {
 	if note == "" {
 		return
@@ -61,13 +46,6 @@ func (e *runtimePlannerEvents) PlannerThought(ctx context.Context, note string, 
 
 func (e *runtimePlannerEvents) UsageDelta(ctx context.Context, usage model.TokenUsage) {
 	e.publish(ctx, hooks.NewUsageEvent(e.runID, e.agentID, e.sessionID, usage))
-}
-
-func (e *runtimePlannerEvents) PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart) {
-	e.publish(ctx, hooks.NewThinkingBlockEvent(
-		e.runID, e.agentID, e.sessionID,
-		block.Text, block.Signature, block.Redacted, block.Index, block.Final,
-	))
 }
 
 // acceptedRecords freezes all accepted planner events into activity output.

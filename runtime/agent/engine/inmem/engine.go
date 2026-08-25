@@ -63,7 +63,7 @@ type (
 	}
 
 	recordActivityDef struct {
-		handler func(context.Context, *api.RecordActivityInput) error
+		handler func(context.Context, *api.RecordActivityBatchInput) error
 		opts    engine.ActivityOptions
 	}
 
@@ -131,9 +131,9 @@ func (e *eng) RegisterWorkflow(_ context.Context, def engine.WorkflowDefinition)
 	return nil
 }
 
-// RegisterRecordActivity registers a typed runtime-record activity that persists
-// workflow-emitted records outside of deterministic workflow code.
-func (e *eng) RegisterRecordActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.RecordActivityInput) error) error {
+// RegisterRecordActivity registers a typed runtime-record activity that
+// persists one non-empty ordered batch outside deterministic workflow code.
+func (e *eng) RegisterRecordActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.RecordActivityBatchInput) error) error {
 	if name == "" {
 		return errors.New("record activity name is required")
 	}
@@ -425,7 +425,7 @@ func (w *wfCtx) Await(condition func() bool) error {
 	}
 }
 
-func (w *wfCtx) PublishRecord(call engine.RecordActivityCall) error {
+func (w *wfCtx) PublishRecords(call engine.RecordActivityCall) error {
 	if call.Name == "" {
 		return errors.New("record activity name is required")
 	}

@@ -1616,6 +1616,14 @@ func (s *fakeStream) Add(ctx context.Context, event string, payload []byte) (str
 	return "", assert.AnError
 }
 
+func (s *fakeStream) AddOnce(
+	ctx context.Context,
+	idempotencyKey, event string,
+	payload []byte,
+) (string, error) {
+	return "", assert.AnError
+}
+
 func (s *fakeStream) Snapshot(context.Context) ([]pulse.SnapshotEvent, error) {
 	return nil, nil
 }

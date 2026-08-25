@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -11,9 +12,9 @@ import (
 )
 
 type (
-	// Subscriber receives runtime events and forwards certain ones to a
-	// stream.Sink, such as a WebSocket, SSE, or message bus. It acts as a
-	// bridge between the internal event bus and an external stream client.
+	// Subscriber receives persisted hook events and provisional model events,
+	// applies one audience profile, and forwards allowed client events to a
+	// stream.Sink such as a WebSocket, SSE connection, or message bus.
 	//
 	// Only the sink actually "sends" messages; the subscriber listens for
 	// incoming events, translates those of interest, and hands them off to
@@ -68,6 +69,29 @@ func NewSubscriberWithProfile(sink Sink, profile StreamProfile) (*Subscriber, er
 		sink:    sink,
 		profile: profile,
 	}, nil
+}
+
+// HandleProvisionalEvent applies the configured audience profile to one
+// activity-owned model presentation event and sends it to the same sink used
+// for hook-derived events. Only assistant text, planner thinking, and their
+// shared lifecycle may enter this path.
+func (s *Subscriber) HandleProvisionalEvent(ctx context.Context, event Event) error {
+	eventType := event.Type()
+	if eventType != EventAssistantReply &&
+		eventType != EventPlannerThought &&
+		eventType != EventModelPresentation {
+		return fmt.Errorf("unsupported provisional stream event %q", eventType)
+	}
+	if eventType == EventAssistantReply && !s.profile.Assistant {
+		return nil
+	}
+	if eventType == EventPlannerThought && !s.profile.Thoughts {
+		return nil
+	}
+	if eventType == EventModelPresentation && !s.profile.Assistant && !s.profile.Thoughts {
+		return nil
+	}
+	return s.sink.Send(ctx, event)
 }
 
 // HandleEvent implements the Subscriber interface by translating hook events
@@ -421,7 +445,14 @@ func (s *Subscriber) sendTerminalWorkflow(ctx context.Context, event hooks.Event
 }
 
 func newBaseFromHook(evt hooks.Event, eventType EventType, payload any) Base {
-	return NewBaseWithEventKey(eventType, evt.RunID(), evt.SessionID(), payload, evt.EventKey())
+	return NewBaseWithEventKey(
+		eventType,
+		evt.RunID(),
+		evt.SessionID(),
+		payload,
+		evt.EventKey(),
+		time.UnixMilli(evt.Timestamp()).UTC(),
+	)
 }
 
 // clampPreview normalizes whitespace and clamps result previews to a reasonable

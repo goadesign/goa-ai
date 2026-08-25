@@ -510,7 +510,6 @@ func TestPlanStartActivitySelectsIdenticalStreamMessageByOrigin(t *testing.T) {
 		require.NoError(t, err)
 		return &planner.PlanResult{
 			FinalResponse: summary.FinalResponse(),
-			Streamed:      true,
 		}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
@@ -1115,8 +1114,8 @@ func TestPlanStartActivityReturnsEventsForWorkflowPublication(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, 2, providerCalls)
-	require.Len(t, first.PlannerEvents, 2)
-	require.Len(t, second.PlannerEvents, 2)
+	require.Len(t, first.PlannerEvents, 1)
+	require.Len(t, second.PlannerEvents, 1)
 	require.Empty(t, recorder.events)
 
 	wfCtx := &testWorkflowContext{
@@ -1126,8 +1125,8 @@ func TestPlanStartActivityReturnsEventsForWorkflowPublication(t *testing.T) {
 	}
 	batch, err := preparePlannerPublicationBatch(wfCtx, *input, first)
 	require.NoError(t, err)
-	require.NoError(t, rt.publishPlannerPublicationBatch(wfCtx, batch))
-	require.Len(t, recorder.events, 2)
+	require.NoError(t, publishPlannerPublicationBatch(wfCtx, batch))
+	require.Len(t, recorder.events, 1)
 }
 
 func TestRunPlanActivityPublishesUsageAndRejectedResponseBeforeOutputContractFailure(t *testing.T) {

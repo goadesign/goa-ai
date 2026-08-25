@@ -214,7 +214,6 @@ func plannerResultValidationProjection(result *PlanResult) *planner.PlanResult {
 		SynthesizeAfterTools: result.SynthesizeAfterTools,
 		FinalResponse:        result.FinalResponse,
 		FinalToolResult:      result.FinalToolResult,
-		Streamed:             result.Streamed,
 		Await:                result.Await,
 		ExpectedChildren:     result.ExpectedChildren,
 		Notes:                result.Notes,

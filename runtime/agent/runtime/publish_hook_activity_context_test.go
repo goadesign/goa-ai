@@ -51,8 +51,8 @@ func (panicWorkflowContext) Detached() engine.WorkflowContext {
 	return panicWorkflowContext{}
 }
 
-func (panicWorkflowContext) PublishRecord(call engine.RecordActivityCall) error {
-	panic("unexpected PublishRecord from activity context")
+func (panicWorkflowContext) PublishRecords(call engine.RecordActivityCall) error {
+	panic("unexpected PublishRecords from activity context")
 }
 
 func (panicWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
@@ -120,8 +120,9 @@ func TestPublishHookErr_UsesWorkflowScopedRecordMetadata(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, recordActivityName, wfCtx.lastHookCall.Name)
-	require.Equal(t, int64(0), wfCtx.lastHookCall.Input.TimestampMS)
-	require.Equal(t, testWorkflowID+"/1", wfCtx.lastHookCall.Input.EventKey)
+	require.Len(t, wfCtx.lastHookCall.Input.Records, 1)
+	require.Equal(t, int64(0), wfCtx.lastHookCall.Input.Records[0].TimestampMS)
+	require.Equal(t, testWorkflowID+"/1", wfCtx.lastHookCall.Input.Records[0].EventKey)
 }
 
 func TestPublishHookErr_CrossRunWorkflowEventsDoNotCollide(t *testing.T) {
@@ -160,8 +161,8 @@ func TestPublishHookErr_CrossRunWorkflowEventsDoNotCollide(t *testing.T) {
 		"",
 	)
 	require.NoError(t, err)
-	require.Equal(t, "run-parent%2Fagent%2Ftooluse_one/8", wfCtxOne.lastHookCall.Input.EventKey)
-	require.Equal(t, "run-parent%2Fagent%2Ftooluse_two/8", wfCtxTwo.lastHookCall.Input.EventKey)
+	require.Equal(t, "run-parent%2Fagent%2Ftooluse_one/8", wfCtxOne.lastHookCall.Input.Records[0].EventKey)
+	require.Equal(t, "run-parent%2Fagent%2Ftooluse_two/8", wfCtxTwo.lastHookCall.Input.Records[0].EventKey)
 
 	page, err := store.List(context.Background(), parentRunID, "", 10)
 	require.NoError(t, err)
@@ -320,13 +321,17 @@ func (w *cancelOnPlannerWorkflowContext) RunID() string {
 	return testRunID
 }
 
-func (w *cancelOnPlannerWorkflowContext) PublishRecord(call engine.RecordActivityCall) error {
+func (w *cancelOnPlannerWorkflowContext) PublishRecords(call engine.RecordActivityCall) error {
 	if err := w.ctx.Err(); err != nil {
 		return err
 	}
 	// Record only successful terminal hook emission attempts.
-	if call.Input != nil && call.Input.Type == hooks.RunCompleted {
-		w.state.terminalSent = true
+	if call.Input != nil {
+		for _, record := range call.Input.Records {
+			if record != nil && record.Type == hooks.RunCompleted {
+				w.state.terminalSent = true
+			}
+		}
 	}
 	return nil
 }

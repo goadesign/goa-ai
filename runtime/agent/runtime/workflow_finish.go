@@ -78,21 +78,6 @@ func (r *Runtime) materializeTerminalPlannerResult(
 	if result.FinalResponse != nil {
 		finalMsg = result.FinalResponse.Message
 	}
-	if result.FinalResponse != nil && !result.Streamed {
-		if err := r.publishHook(
-			ctx,
-			hooks.NewAssistantMessageEvent(
-				base.RunContext.RunID,
-				input.AgentID,
-				base.RunContext.SessionID,
-				agentMessageText(finalMsg),
-				nil,
-			),
-			turnID,
-		); err != nil {
-			return nil, err
-		}
-	}
 	for _, note := range result.Notes {
 		if err := r.publishHook(
 			ctx,

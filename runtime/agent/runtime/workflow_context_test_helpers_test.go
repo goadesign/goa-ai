@@ -156,7 +156,7 @@ func (r *routeWorkflowContext) StartChildWorkflow(
 	}, nil
 }
 
-func (r *routeWorkflowContext) PublishRecord(call engine.RecordActivityCall) error {
+func (r *routeWorkflowContext) PublishRecords(call engine.RecordActivityCall) error {
 	r.lastHookCall = call
 	if call.Name != recordActivityName {
 		return fmt.Errorf("unexpected record activity name %q", call.Name)

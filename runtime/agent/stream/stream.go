@@ -3,10 +3,10 @@
 // client-facing updates (tool progress, assistant replies) while hook events
 // provide comprehensive internal observability across the entire runtime lifecycle.
 //
-// The StreamSubscriber in the hooks package bridges selected hook events into
-// stream events, filtering out internal-only events (policy decisions, memory
-// operations) and transforming runtime state into wire-friendly payloads suitable
-// for Server-Sent Events, WebSockets, or message buses like Pulse.
+// Subscriber converts selected persisted hook events into stream events and
+// also applies the same audience profile to provisional model text, thinking,
+// and lifecycle events. Internal-only events such as policy decisions and
+// memory operations never reach the sink.
 //
 // All event types implement the Event interface and can be safely sent concurrently
 // through a Sink implementation. Implementations are responsible for marshaling
@@ -39,6 +39,8 @@ type (
 		// Send publishes an event to the sink's underlying transport. The implementation
 		// is responsible for marshaling the event into the wire format and handling
 		// transport-specific delivery semantics (retry, buffering, backpressure).
+		// When EventKey is non-empty, exact retries carry the same event body and
+		// Send must return the original publication instead of creating a duplicate.
 		//
 		// Send should return an error if delivery fails (connection closed, serialization
 		// error, transport unavailable). The runtime propagates Send errors to the hook
@@ -91,6 +93,11 @@ type (
 		// attach a durable identity.
 		EventKey() string
 
+		// OccurredAt returns the stable source timestamp for keyed events. Events
+		// without a durable key may return the zero time and let the sink timestamp
+		// their one-time publication.
+		OccurredAt() time.Time
+
 		// Payload returns the event-specific data in a JSON-serializable form. Sinks use
 		// this for generic marshaling when they don't need typed access. For example, the
 		// Pulse sink calls Payload() and marshals the result to JSON without knowing the
@@ -104,15 +111,21 @@ type (
 	}
 
 	// AssistantReply streams incremental assistant message content as the planner
-	// produces the final response. Clients receive these events to display streaming
-	// text with a typewriter effect. Multiple AssistantReply events may be sent for
-	// a single response as the planner generates content progressively.
+	// receives validated provider chunks. Clients display these provisional
+	// fragments immediately, remove them after a matching discard event, and
+	// finalize them only when the canonical AssistantTurn arrives.
 	AssistantReply struct {
 		Base
-		// Data contains the assistant reply payload. Clients should concatenate
-		// Data.Text from sequential AssistantReply events to reconstruct the
-		// full message.
+		// Data contains one text fragment and the presentation it belongs to.
 		Data AssistantReplyPayload
+	}
+
+	// ModelPresentation marks the lifecycle of one provisional model response.
+	// Clients use the presentation ID to reject late output from an earlier
+	// activity execution without disturbing canonical assistant turns.
+	ModelPresentation struct {
+		Base
+		Data ModelPresentationPayload
 	}
 
 	// AssistantTurn streams a canonical assistant transcript message after the
@@ -270,9 +283,18 @@ type (
 	}
 
 	// AssistantReplyPayload is the typed wire payload for assistant reply events.
-	// It mirrors AssistantReply.Text for consumers decoding Base.Payload().
+	// PresentationID binds the fragment to the exact model invocation that
+	// produced it so retries and rejection can be handled without heuristics.
 	AssistantReplyPayload struct {
-		Text string `json:"text"`
+		PresentationID string `json:"presentation_id"`
+		Text           string `json:"text"`
+	}
+
+	// ModelPresentationPayload identifies one provisional model response and
+	// reports whether clients should start or remove its visible output.
+	ModelPresentationPayload struct {
+		PresentationID string                 `json:"presentation_id"`
+		State          ModelPresentationState `json:"state"`
 	}
 
 	// AssistantTurnPayload carries the committed assistant transcript message.
@@ -285,12 +307,13 @@ type (
 	// Structured thinking blocks also populate Text/Signature or Redacted with
 	// ContentIndex and Final flags matching the provider content blocks.
 	PlannerThoughtPayload struct {
-		Note         string `json:"note,omitempty"`
-		Text         string `json:"text,omitempty"`
-		Signature    string `json:"signature,omitempty"`
-		Redacted     []byte `json:"redacted,omitempty"`
-		ContentIndex int    `json:"content_index,omitempty"`
-		Final        bool   `json:"final,omitempty"`
+		PresentationID string `json:"presentation_id,omitempty"`
+		Note           string `json:"note,omitempty"`
+		Text           string `json:"text,omitempty"`
+		Signature      string `json:"signature,omitempty"`
+		Redacted       []byte `json:"redacted,omitempty"`
+		ContentIndex   int    `json:"content_index,omitempty"`
+		Final          bool   `json:"final,omitempty"`
 	}
 
 	// PromptRenderedPayload describes one rendered prompt reference and scope.
@@ -600,6 +623,9 @@ type (
 		s string
 		// k is the stable logical identity propagated from the originating hook event.
 		k string
+		// at is the source event time. Keyed retries preserve it so exact stream
+		// publication sees byte-identical envelopes.
+		at time.Time
 		// p is the JSON-serializable payload returned by the Payload() method. Sinks
 		// marshal this value when publishing events. Set P to the appropriate payload
 		// type for the event (e.g., ToolStartPayload for ToolStart events).
@@ -641,8 +667,8 @@ type (
 	}
 
 	// StreamProfile describes which event kinds are emitted for a particular
-	// audience. Profiles are applied by the Subscriber when mapping hook events
-	// → stream events.
+	// audience. Subscriber applies the profile to both mapped hook events and
+	// provisional model presentation events.
 	StreamProfile struct {
 		// Assistant controls assistant reply emission.
 		Assistant bool
@@ -727,10 +753,24 @@ func MetricsProfile() StreamProfile {
 	}
 }
 
-// EventType enumerates stream payload flavors.
-type EventType string
+type (
+	// EventType enumerates stream payload flavors.
+	EventType string
+
+	// ModelPresentationState identifies the client action for one provisional
+	// model response.
+	ModelPresentationState string
+)
 
 const (
+	// ModelPresentationStarted tells clients that subsequent text and thought
+	// fragments belong to a new model invocation.
+	ModelPresentationStarted ModelPresentationState = "started"
+
+	// ModelPresentationDiscarded tells clients to remove provisional output
+	// from this model response because it failed or was not selected.
+	ModelPresentationDiscarded ModelPresentationState = "discarded"
+
 	// EventPlannerThought streams incremental planner reasoning and annotations during
 	// execution. These events allow clients to display "thinking..." indicators and show
 	// intermediate planner thoughts before tool calls complete. Emitted by StreamSubscriber
@@ -779,6 +819,10 @@ const (
 	// AssistantMessageEvent hooks fire. Payload is AssistantReplyPayload.
 	EventAssistantReply EventType = "assistant_reply"
 
+	// EventModelPresentation reports the lifecycle of one provisional model
+	// response so clients can replace retries and remove rejected output.
+	EventModelPresentation EventType = "model_presentation"
+
 	// EventAssistantTurn streams one canonical assistant transcript message after
 	// the runtime has durably appended it to the run log.
 	EventAssistantTurn EventType = "assistant_turn"
@@ -821,13 +865,19 @@ const (
 // NewBase constructs a Base event with the given type, run ID, optional
 // session ID, and payload.
 func NewBase(t EventType, runID, sessionID string, payload any) Base {
-	return NewBaseWithEventKey(t, runID, sessionID, payload, "")
+	return Base{t: t, r: runID, s: sessionID, p: payload}
 }
 
 // NewBaseWithEventKey constructs a Base event and attaches the stable logical
-// identity of the originating hook event when one is available.
-func NewBaseWithEventKey(t EventType, runID, sessionID string, payload any, eventKey string) Base {
-	return Base{t: t, r: runID, s: sessionID, k: eventKey, p: payload}
+// identity and source timestamp of the originating hook event.
+func NewBaseWithEventKey(
+	t EventType,
+	runID, sessionID string,
+	payload any,
+	eventKey string,
+	occurredAt time.Time,
+) Base {
+	return Base{t: t, r: runID, s: sessionID, k: eventKey, at: occurredAt, p: payload}
 }
 
 // Type implements Event.Type.
@@ -841,6 +891,9 @@ func (e Base) SessionID() string { return e.s }
 
 // EventKey implements Event.EventKey.
 func (e Base) EventKey() string { return e.k }
+
+// OccurredAt implements Event.OccurredAt.
+func (e Base) OccurredAt() time.Time { return e.at }
 
 // Payload implements Event.Payload.
 func (e Base) Payload() any { return e.p }
