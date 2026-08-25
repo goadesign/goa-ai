@@ -279,7 +279,8 @@ Register model clients during bootstrap with `rt.RegisterModel(...)` or runtime
 factories such as `rt.NewOpenAIModelClient(...)`, `rt.NewBedrockModelClient(...)`,
 `rt.NewVertexGeminiModelClient(...)`, and `rt.NewVertexAnthropicModelClient(...)`.
 Provider adapters now separate raw transport work from consumer validation.
-`openai.New`, `anthropic.New`, `bedrock.New`, `vertex.New`, and
+`openai.New`, `anthropic.New`, `bedrock.New`, `bedrock.NewAnthropic`,
+`vertex.New`, and
 `gateway.NewRemoteClient` return an opaque validated `model.Client`. Use the
 matching `NewProvider` constructor for provider-side middleware, gateways, or
 other code that deliberately operates before canonical output validation. A
@@ -288,6 +289,15 @@ responses or streams. Pass it to `model.NewClient` before using an API that
 requires canonical model output. External packages cannot implement a valid
 `model.Client`; APIs that accept one verify the package-owned opaque client
 before inference.
+
+Use `bedrock.NewAnthropic` for Claude deployments on Amazon Bedrock. It sends
+Anthropic Messages requests through Bedrock `InvokeModel`, so native tool
+examples, forced tool choice, thinking, prompt caching, and structured output
+keep one representation on initial and resumed turns. Its required exact
+counter receives the same canonical request with the Bedrock inference-profile
+prefix removed for a compatible counting endpoint such as Bedrock Mantle.
+`bedrock.New` remains the Converse adapter for other Bedrock models and existing
+Converse integrations.
 
 Remote transports that expose exact token counting use
 `gateway.NewCountingRemoteClient`; it forwards a separate count operation in
@@ -1121,7 +1131,7 @@ Production checklist:
 | `runtime/mcp` | MCP callers for stdio, HTTP, and SSE |
 | `runtime/toolregistry` | Registry wire protocol, executor, provider support, schema validation |
 | `features/model/openai` | OpenAI Responses API adapter |
-| `features/model/bedrock` | AWS Bedrock adapter with visible Claude thinking and model-aware Runtime/Mantle token counting |
+| `features/model/bedrock` | Amazon Bedrock adapters for Converse and native Claude Messages over InvokeModel, with exact Runtime/Mantle token counting |
 | `features/model/anthropic` | Anthropic Messages adapter with streaming and exact token counting; also composes with compatible gateways such as Bedrock Mantle |
 | `features/model/vertex` | Google Vertex AI adapters: Gemini (`vertex.New`) and Claude-on-Vertex (`vertex.NewAnthropicClient`), both with native token counting and provider-error classification. |
 | `features/model/gateway` | Remote model gateway client |

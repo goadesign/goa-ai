@@ -111,11 +111,14 @@ Providers that do not implement structured output fail explicitly with
 Generated schemas stay provider-neutral. Provider adapters may normalize that
 canonical schema to a provider-specific subset for constrained decoding, but
 they must fail explicitly instead of redefining the service contract.
-The Bedrock adapter uses a private strict tool for Claude 4.6 so Runtime
-`CountTokens` and Converse receive the same schema. Claude 4.5 retains native
-`OutputConfig` because its manual thinking mode cannot use forced tools.
+The Bedrock Converse adapter uses a private strict tool for Claude 4.6 so
+Runtime `CountTokens` and Converse receive the same schema. Claude 4.5 retains
+native `OutputConfig` because its manual thinking mode cannot use forced tools.
 Bedrock Claude models that AWS does not list as supporting structured output
-fail before the provider call.
+fail before the provider call. The Claude-on-Bedrock Messages adapter instead
+reuses the Anthropic adapter's native structured-output contract and sends it
+through Bedrock `InvokeModel`; the model-visible request does not pass through
+Converse translation.
 Adapters with provider-native structured-output examples receive the generated
 root example separately from the schema. Unary helpers ask the model once for a
 structured value. If the generated codec rejects the response, the helper
@@ -749,13 +752,17 @@ redeploys.
   preserves exact counting only when its transport supplies the separate
   count operation through `NewCountingRemoteClient`; otherwise counting
   returns `model.ErrTokenCountingUnsupported`.
-  The Bedrock adapter routes models supported by Runtime `CountTokens` there.
-  For Claude Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, and Mythos 5, it delegates
-  the resolved Bedrock-effective request to an optional Mantle counter.
-  Without that configured counter it returns
-  `model.ErrTokenCountingUnsupported`.
-  Mantle cannot represent Bedrock structured output. Claude 4.6 instead uses
-  the same strict private tool for Runtime counting and Converse.
+  The Bedrock Converse adapter routes models supported by Runtime
+  `CountTokens` there. For Claude Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, and
+  Mythos 5, it delegates the resolved Bedrock-effective request to an optional
+  Mantle counter. Without that configured counter it returns
+  `model.ErrTokenCountingUnsupported`. Mantle cannot represent Bedrock
+  structured output. Claude 4.6 instead uses the same strict private tool for
+  Runtime counting and Converse.
+  The Claude-on-Bedrock Messages adapter requires an exact Anthropic counter.
+  It passes the same canonical request to that counter after replacing a
+  cross-region inference-profile model ID with its foundation model ID. The
+  Messages adapter never counts a different Converse representation.
   When encoded tools carry authored `input_examples`, completion, streaming,
   and counting all attach the same Anthropic tool-examples beta header.
   Exact retention always keeps whole recent turns; it never truncates
@@ -1044,17 +1051,23 @@ schema omits that root for providers that carry it through a native
 tool-examples field.
 
 Provider adapters choose between the precomputed projections. Providers that
-consume JSON Schema annotations use the annotated schema. Direct Anthropic and
-Bedrock Claude use top-level `input_examples` with the schema that omits the root
-example; Bedrock carries those examples through Anthropic's provider-native
-request fields in `additionalModelRequestFields` when the required beta contract
-applies, while the direct Anthropic adapter attaches the corresponding beta
-header (additively, preserving caller-configured betas) to completion,
+consume JSON Schema annotations use the annotated schema. Anthropic Messages
+uses top-level `input_examples` with the schema that omits the root example.
+That contract applies both to direct Anthropic and to Claude-on-Bedrock through
+`bedrock.NewAnthropic`, including resumed turns that contain prior
+`tool_use`/`tool_result` blocks. The Anthropic adapter attaches the corresponding
+beta header (additively, preserving caller-configured betas) to completion,
 streaming, and token-count requests. The header is attached only when a tool
 carries authored examples because header-compatible gateways such as Bedrock
-Mantle reject beta identifiers they do not recognize. Claude-on-Vertex serves
-the same native contract: it delivers `input_examples` with no beta
-activation and ignores the header (live-verified via rawPredict
+Mantle reject beta identifiers they do not recognize.
+
+The Converse adapter can carry the same examples through Anthropic's
+provider-native request fields in `additionalModelRequestFields` only on turns
+where Bedrock does not require a competing `ToolConfig` declaration. Applications
+that require examples and tools to remain identical across Claude turns use the
+Messages transport instead of relying on that split representation.
+Claude-on-Vertex serves the same native contract: it delivers `input_examples`
+with no beta activation and ignores the header (live-verified via rawPredict
 `usage.input_tokens`). Runtime and product code do not inspect or rewrite
 schemas to infer provider-specific shapes.
 
