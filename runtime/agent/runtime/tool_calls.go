@@ -348,6 +348,7 @@ func newToolCallScheduledEvent(
 		parentToolCallID,
 		expectedChildren,
 	)
+	event.ModelToolCallID = call.ModelToolCallID
 	event.ContinuationRootToolCallID = call.ContinuationRootToolCallID
 	return event
 }

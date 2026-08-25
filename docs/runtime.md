@@ -643,9 +643,13 @@ type PlanResumeInput struct {
 Planners receive fully hydrated `ToolOutputs`, but the workflow/activity wire
 format no longer carries raw tool payloads or result bodies inline.
 `PlanActivityInput.ToolOutputs` ships tool-call references only, and the runtime
-rehydrates `Payload`, `Result`, `ServerData`, and planner-visible result
-metadata from the canonical run log inside `PlanResumeActivity` before invoking
-the planner.
+rehydrates `Payload`, `Result`, `ServerData`, `ModelToolCallID`, and
+planner-visible result metadata from the canonical run log inside
+`PlanResumeActivity` before invoking the planner. `ToolCallID` identifies the
+runtime execution. `ModelToolCallID` identifies the exact provider transcript
+tool-use part that produced the call and is empty for planner-authored calls.
+Planners must not use `ModelToolCallID` for execution, retry, or persistence
+correlation.
 
 Bookkeeping exception:
 
@@ -749,11 +753,12 @@ type PlanResult struct {
 }
 
 type ToolOutput struct {
-    Name       tools.Ident
-    ToolCallID string
-    Payload    rawjson.Message
-    Result     rawjson.Message
-    Failure    *ToolFailure        // Mutually exclusive with Result
+    Name            tools.Ident
+    ToolCallID      string
+    ModelToolCallID string          // Provider transcript ID; empty for planner-authored calls
+    Payload         rawjson.Message
+    Result          rawjson.Message
+    Failure         *ToolFailure    // Mutually exclusive with Result
 }
 ```
 

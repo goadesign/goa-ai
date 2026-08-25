@@ -177,6 +177,9 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 		},
 		resume: func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 			require.NoError(t, transcript.ValidatePlannerTranscript(input.Messages))
+			require.Len(t, input.ToolOutputs, 1)
+			require.Equal(t, providerToolCallID, input.ToolOutputs[0].ModelToolCallID)
+			require.NotEqual(t, input.ToolOutputs[0].ToolCallID, input.ToolOutputs[0].ModelToolCallID)
 			return finalPlannerResult("done"), nil
 		},
 	}
@@ -274,6 +277,7 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 	require.NotNil(t, scheduled)
 	require.NotNil(t, received)
 	require.Equal(t, executionToolCallID, scheduled.ToolCallID)
+	require.Equal(t, providerToolCallID, scheduled.ModelToolCallID)
 	require.Equal(t, executionToolCallID, received.ToolCallID)
 }
 

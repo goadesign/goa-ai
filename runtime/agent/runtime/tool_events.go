@@ -76,6 +76,7 @@ func (r *Runtime) buildPlannerToolOutputRecords(ctx context.Context, records []s
 			ResultRunID:                record.resultRunID,
 			Name:                       call.Name,
 			ToolCallID:                 call.ToolCallID,
+			ModelToolCallID:            call.ModelToolCallID,
 			ContinuationRootToolCallID: call.ContinuationRootToolCallID,
 			Payload:                    append(rawjson.Message(nil), call.Payload...),
 			ResultBytes:                result.ResultBytes,

@@ -121,6 +121,7 @@ func plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID str
 		ResultRunID:                resultRunID,
 		Name:                       callEvents.scheduled.ToolName,
 		ToolCallID:                 toolCallID,
+		ModelToolCallID:            callEvents.scheduled.ModelToolCallID,
 		ContinuationRootToolCallID: callEvents.scheduled.ContinuationRootToolCallID,
 		Payload:                    append(rawjson.Message(nil), callEvents.scheduled.Payload...),
 		ResultBytes:                resultEvents.result.ResultBytes,
