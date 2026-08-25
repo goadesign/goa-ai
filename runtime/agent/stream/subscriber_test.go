@@ -292,6 +292,7 @@ func TestStreamSubscriber_WorkflowFromRunCompleted(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "success", run.PhaseCompleted, nil, nil, nil)
+	evt.SetEventKey("r1/12")
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 2)
 	wf, ok := sink.events[0].(Workflow)
@@ -299,10 +300,18 @@ func TestStreamSubscriber_WorkflowFromRunCompleted(t *testing.T) {
 	require.Equal(t, EventWorkflow, wf.Type())
 	require.Equal(t, "completed", wf.Data.Phase)
 	require.Equal(t, "success", wf.Data.Status)
+	require.Equal(t, evt.EventKey(), wf.EventKey())
 	end, ok := sink.events[1].(RunStreamEnd)
 	require.True(t, ok)
 	require.Equal(t, EventRunStreamEnd, end.Type())
 	require.Equal(t, "r1", end.RunID())
+	require.Equal(t, evt.EventKey()+"/"+string(EventRunStreamEnd), end.EventKey())
+	require.NotEqual(t, wf.EventKey(), end.EventKey())
+
+	require.NoError(t, sub.HandleEvent(ctx, evt))
+	require.Len(t, sink.events, 4)
+	require.Equal(t, sink.events[0], sink.events[2])
+	require.Equal(t, sink.events[1], sink.events[3])
 }
 
 func TestStreamSubscriberWorkflowFromRunSuspended(t *testing.T) {
