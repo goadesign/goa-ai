@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 
 	anthropicprovider "goa.design/goa-ai/features/model/anthropic"
+	"goa.design/goa-ai/features/model/internal/claudecaps"
 	"goa.design/goa-ai/features/model/internal/modelid"
 	"goa.design/goa-ai/runtime/agent/model"
 )
@@ -45,7 +46,9 @@ var (
 // NewAnthropic constructs a validated Claude client that sends Anthropic
 // Messages requests through Amazon Bedrock. The counter must count Anthropic
 // Messages requests on an endpoint such as Bedrock Mantle; callers should not
-// pass a counter for the Bedrock Converse representation.
+// pass a counter for the Bedrock Converse representation. A counter built with
+// the Anthropic adapter for Bedrock must set ToolExamplesInSchema so counting
+// receives the same schema example representation as inference.
 //
 // Request options are installed on the Anthropic SDK client after the Bedrock
 // transport. Applications use them for HTTP observation or other transport
@@ -64,9 +67,10 @@ func NewAnthropic(
 }
 
 // NewAnthropicProvider constructs the raw Claude-on-Bedrock provider used
-// beneath model.NewClient. Anthropic owns the model-visible request and response
-// formats; this constructor only binds that adapter to AWS and delegates exact
-// counting after converting inference-profile model IDs to foundation IDs.
+// beneath model.NewClient. It binds the Anthropic adapter to AWS, keeps authored
+// tool examples inside input_schema because Bedrock rejects input_examples, and
+// delegates exact counting after converting inference-profile model IDs to
+// foundation IDs.
 func NewAnthropicProvider(
 	cfg aws.Config,
 	counter model.TokenCounter,
@@ -85,6 +89,7 @@ func NewAnthropicProvider(
 	clientOpts = append(clientOpts, requestOpts...)
 	client := sdk.NewClient(clientOpts...)
 
+	opts.ToolExamplesInSchema = true
 	inference, err := anthropicprovider.NewProvider(&client.Messages, opts)
 	if err != nil {
 		return nil, fmt.Errorf("bedrock: create Anthropic Messages provider: %w", err)
@@ -100,12 +105,18 @@ func NewAnthropicProvider(
 
 // Complete sends one canonical request through Anthropic Messages on Bedrock.
 func (c *anthropicBedrockProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	if err := c.validateRequest(req); err != nil {
+		return nil, err
+	}
 	return c.inference.Complete(ctx, req)
 }
 
 // Stream sends one canonical streaming request through Anthropic Messages on
 // Bedrock and returns the Anthropic adapter's validated provider stream.
 func (c *anthropicBedrockProvider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
+	if err := c.validateRequest(req); err != nil {
+		return nil, err
+	}
 	return c.inference.Stream(ctx, req)
 }
 
@@ -113,6 +124,9 @@ func (c *anthropicBedrockProvider) Stream(ctx context.Context, req *model.Reques
 // counter after replacing a Bedrock cross-region inference profile with the
 // foundation model ID accepted by the counting endpoint.
 func (c *anthropicBedrockProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	if err := c.validateRequest(req); err != nil {
+		return model.TokenCount{}, err
+	}
 	resolved, err := modelid.Resolve(
 		bedrockProviderName,
 		req,
@@ -130,4 +144,31 @@ func (c *anthropicBedrockProvider) CountTokens(ctx context.Context, req *model.R
 	countReq := *req
 	countReq.Model = foundation
 	return c.counter.CountTokens(ctx, &countReq)
+}
+
+// validateRequest rejects endpoint features that the resolved Bedrock model
+// cannot receive, so callers see the stable framework capability error instead
+// of a provider-specific HTTP 400.
+func (c *anthropicBedrockProvider) validateRequest(req *model.Request) error {
+	if req.StructuredOutput == nil {
+		return nil
+	}
+	resolved, err := modelid.Resolve(
+		bedrockProviderName,
+		req,
+		c.defaultModel,
+		c.highModel,
+		c.smallModel,
+	)
+	if err != nil {
+		return err
+	}
+	if claudecaps.BedrockNativeStructuredOutputSupported(resolved) {
+		return nil
+	}
+	return fmt.Errorf(
+		"bedrock: model %q does not support structured output over Anthropic Messages: %w",
+		resolved,
+		model.ErrStructuredOutputUnsupported,
+	)
 }

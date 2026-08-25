@@ -291,13 +291,15 @@ requires canonical model output. External packages cannot implement a valid
 before inference.
 
 Use `bedrock.NewAnthropic` for Claude deployments on Amazon Bedrock. It sends
-Anthropic Messages requests through Bedrock `InvokeModel`, so native tool
-examples, forced tool choice, thinking, prompt caching, and structured output
-keep one representation on initial and resumed turns. User-message `ImagePart`
-values are sent as Anthropic base64 image blocks for PNG, JPEG, GIF, and WebP
-content. Its required exact counter receives the same canonical request with
-the Bedrock inference-profile prefix removed for a compatible counting endpoint
-such as Bedrock Mantle.
+Anthropic Messages requests through Bedrock `InvokeModel`, so authored tool
+examples, forced tool choice, thinking, and prompt caching keep one
+representation on initial and resumed turns. User-message `ImagePart` values
+are sent as Anthropic base64 image blocks for PNG, JPEG, GIF, and WebP content.
+Structured output is sent only for model IDs AWS lists as supporting it; other
+models fail with `model.ErrStructuredOutputUnsupported` before a provider call.
+Its required exact counter receives the same canonical request with the Bedrock
+inference-profile prefix removed for a compatible counting endpoint such as
+Bedrock Mantle.
 `bedrock.New` remains the Converse adapter for other Bedrock models and existing
 Converse integrations.
 
@@ -383,10 +385,10 @@ var Docs = Toolset("docs", func() {
   on the tool payload. Codegen removes synthesized placeholder examples from
   the complete schema graph, then precomputes the annotated schema, the schema
   with the authored root `example` removed, and the parsed example input so
-  OpenAI-style
-  providers consume schema annotations while Anthropic, Bedrock Claude, and
-  Claude-on-Vertex receive provider-native `input_examples` under the required
-  tool-examples beta contract, including exact Anthropic token counting.
+  OpenAI-style providers and Claude through `bedrock.NewAnthropic` consume
+  schema annotations while direct Anthropic and Claude-on-Vertex receive
+  provider-native `input_examples` under the required tool-examples contract,
+  including exact Anthropic token counting.
 - Explicit control-plane contracts: `Bookkeeping()` keeps calls durable and
   model-visible while exempting them from retrieval/failure budgets and omitting
   successful results from typed future `ToolOutputs`

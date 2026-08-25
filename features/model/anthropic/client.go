@@ -100,17 +100,24 @@ type (
 		// enabled. When zero or negative, callers must supply
 		// Request.Thinking.BudgetTokens explicitly.
 		ThinkingBudget int64
+
+		// ToolExamplesInSchema keeps authored tool examples as root JSON Schema
+		// annotations instead of sending Anthropic's input_examples field. Set
+		// this for Messages-compatible endpoints that reject input_examples,
+		// such as Amazon Bedrock.
+		ToolExamplesInSchema bool
 	}
 
 	// provider translates canonical requests to Anthropic Claude Messages.
 	provider struct {
-		msg          MessagesClient
-		defaultModel string
-		highModel    string
-		smallModel   string
-		maxTok       int
-		temp         float64
-		think        int64
+		msg                  MessagesClient
+		defaultModel         string
+		highModel            string
+		smallModel           string
+		maxTok               int
+		temp                 float64
+		think                int64
+		toolExamplesInSchema bool
 	}
 )
 
@@ -153,13 +160,14 @@ func NewProvider(msg MessagesClient, opts Options) (model.Provider, error) {
 	thinkBudget := opts.ThinkingBudget
 
 	c := &provider{
-		msg:          msg,
-		defaultModel: opts.DefaultModel,
-		highModel:    opts.HighModel,
-		smallModel:   opts.SmallModel,
-		maxTok:       maxTokens,
-		temp:         opts.Temperature,
-		think:        thinkBudget,
+		msg:                  msg,
+		defaultModel:         opts.DefaultModel,
+		highModel:            opts.HighModel,
+		smallModel:           opts.SmallModel,
+		maxTok:               maxTokens,
+		temp:                 opts.Temperature,
+		think:                thinkBudget,
+		toolExamplesInSchema: opts.ToolExamplesInSchema,
 	}
 	return c, nil
 }
@@ -329,7 +337,12 @@ func (c *provider) encodeRequest(ctx context.Context, req *model.Request) (*enco
 		cacheAfterSystem = req.Cache.AfterSystem
 		cacheAfterTools = req.Cache.AfterTools
 	}
-	tools, canonToProv, provToCanon, err := encodeTools(ctx, req.Tools, cacheAfterTools)
+	tools, canonToProv, provToCanon, err := encodeTools(
+		ctx,
+		req.Tools,
+		cacheAfterTools,
+		c.toolExamplesInSchema,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -637,7 +650,11 @@ func encodeToolResult(v model.ToolResultPart, providerToolUseID string) (sdk.Con
 	return sdk.NewToolResultBlock(providerToolUseID, content, v.IsError), nil
 }
 
-func encodeTools(ctx context.Context, defs []*model.ToolDefinition, cacheAfterTools bool) ([]sdk.ToolUnionParam, map[string]string, map[string]string, error) {
+func encodeTools(
+	ctx context.Context,
+	defs []*model.ToolDefinition,
+	cacheAfterTools, examplesInSchema bool,
+) ([]sdk.ToolUnionParam, map[string]string, map[string]string, error) {
 	if len(defs) == 0 {
 		return nil, nil, nil, nil
 	}
@@ -650,7 +667,7 @@ func encodeTools(ctx context.Context, defs []*model.ToolDefinition, cacheAfterTo
 		if def.Description == "" {
 			return nil, nil, nil, fmt.Errorf("anthropic: tool %q is missing description", def.Name)
 		}
-		input, examples, err := anthropicToolInput(ctx, def)
+		input, examples, err := anthropicToolInput(ctx, def, examplesInSchema)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("anthropic: tool %q schema: %w", def.Name, err)
 		}
@@ -665,14 +682,18 @@ func encodeTools(ctx context.Context, defs []*model.ToolDefinition, cacheAfterTo
 	return toolList, canonToProv, provToCanon, nil
 }
 
-// anthropicToolInput projects one tool definition into the SDK schema and
-// optional provider-native examples: a tool with an authored root example
-// pairs the schema without that example with input_examples; otherwise the
-// annotated schema travels alone.
-func anthropicToolInput(ctx context.Context, def *model.ToolDefinition) (sdk.ToolInputSchemaParam, []map[string]any, error) {
+// anthropicToolInput projects one tool definition into the representation
+// selected when the provider was constructed. Direct Anthropic pairs the plain
+// schema with input_examples. Messages-compatible gateways such as Bedrock
+// retain the authored root example inside the schema instead.
+func anthropicToolInput(
+	ctx context.Context,
+	def *model.ToolDefinition,
+	exampleInSchema bool,
+) (sdk.ToolInputSchemaParam, []map[string]any, error) {
 	input := def.Input.Contract()
 	example := input.ExampleJSON
-	if example == nil {
+	if example == nil || exampleInSchema {
 		schema, err := toolInputSchema(ctx, input.Schema)
 		return schema, nil, err
 	}

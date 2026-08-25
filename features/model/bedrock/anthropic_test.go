@@ -67,7 +67,7 @@ func TestAnthropicBedrockCountTokensUsesFoundationModel(t *testing.T) {
 	assert.Equal(t, model.ModelClassHighReasoning, counter.request.ModelClass)
 }
 
-func TestAnthropicBedrockResumeKeepsNativeToolExampleAndChoice(t *testing.T) {
+func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 	var requestBody []byte
 	handlerErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -208,13 +208,14 @@ func TestAnthropicBedrockResumeKeepsNativeToolExampleAndChoice(t *testing.T) {
 	require.Len(t, tools, 1)
 	tool, ok := tools[0].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, []any{
-		map[string]any{
-			"detail_blocks": []any{
-				map[string]any{"type": "markdown", "text": "Done"},
-			},
+	assert.NotContains(t, tool, "input_examples")
+	inputSchema, ok := tool["input_schema"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{
+		"detail_blocks": []any{
+			map[string]any{"type": "markdown", "text": "Done"},
 		},
-	}, tool["input_examples"])
+	}, inputSchema["example"])
 	assert.Equal(t, map[string]any{
 		"type": "tool",
 		"name": "tasks_progress_complete",
@@ -246,7 +247,53 @@ func TestAnthropicBedrockResumeKeepsNativeToolExampleAndChoice(t *testing.T) {
 		"media_type": "image/webp",
 		"data":       base64.StdEncoding.EncodeToString([]byte("equipment photo")),
 	}, imageSource)
-	assert.Contains(t, payload["anthropic_beta"], "tool-examples-2025-10-29")
+	assert.NotContains(t, payload, "anthropic_beta")
 	_, hasToolConfig := payload["toolConfig"]
 	assert.False(t, hasToolConfig)
+}
+
+func TestAnthropicBedrockValidatesStructuredOutputCapability(t *testing.T) {
+	tests := []struct {
+		name        string
+		defaultID   string
+		highID      string
+		class       model.ModelClass
+		wantSupport bool
+	}{
+		{
+			name:      "sonnet 5",
+			defaultID: "global.anthropic.claude-sonnet-5",
+		},
+		{
+			name:   "opus 5",
+			highID: "us.anthropic.claude-opus-5",
+			class:  model.ModelClassHighReasoning,
+		},
+		{
+			name:        "sonnet 4.5",
+			defaultID:   "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+			wantSupport: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &anthropicBedrockProvider{
+				defaultModel: test.defaultID,
+				highModel:    test.highID,
+			}
+			err := client.validateRequest(&model.Request{
+				ModelClass: test.class,
+				StructuredOutput: &model.StructuredOutput{
+					Name:   "probe",
+					Schema: rawjson.Message(`{"type":"object"}`),
+				},
+			})
+			if test.wantSupport {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+		})
+	}
 }

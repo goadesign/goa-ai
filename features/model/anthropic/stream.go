@@ -116,7 +116,7 @@ func (s *anthropicStreamer) run() {
 		}
 	}()
 
-	processor := newAnthropicChunkProcessor(s.emitChunk, s.toolNameMap, s.output)
+	processor := newAnthropicChunkProcessor(s.emitAttributedChunk, s.toolNameMap, s.output)
 	var response sdk.Message
 
 	for {
@@ -164,6 +164,17 @@ func (s *anthropicStreamer) run() {
 			return
 		}
 	}
+}
+
+// emitAttributedChunk attaches the invocation's resolved model identity to
+// token deltas before callers compare them with the complete response.
+func (s *anthropicStreamer) emitAttributedChunk(chunk model.Chunk) error {
+	if usage, ok := chunk.(model.UsageChunk); ok {
+		usage.Usage.Model = s.modelID
+		usage.Usage.ModelClass = s.modelClass
+		chunk = usage
+	}
+	return s.emitChunk(chunk)
 }
 
 // closeProviderStream closes the Anthropic SSE stream once and returns the

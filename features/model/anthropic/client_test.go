@@ -528,6 +528,42 @@ func TestCountTokensEnablesToolExamplesBeta(t *testing.T) {
 	)
 }
 
+func TestEncodeToolsKeepsExamplesInSchema(t *testing.T) {
+	input, err := model.ToolInputFromContract("reports.concurrent", model.ToolInputContract{
+		Schema: rawjson.Message(
+			`{"type":"object","properties":{"minimum":{"type":"integer"}},"required":["minimum"],"example":{"minimum":3}}`,
+		),
+		SchemaWithoutRootExample: rawjson.Message(
+			`{"type":"object","properties":{"minimum":{"type":"integer"}},"required":["minimum"]}`,
+		),
+		ExampleJSON: rawjson.Message(`{"minimum":3}`),
+	})
+	require.NoError(t, err)
+
+	encoded, _, _, err := encodeTools(
+		t.Context(),
+		[]*model.ToolDefinition{{
+			Name:        "reports.concurrent",
+			Description: "Check concurrent reports",
+			Input:       input,
+		}},
+		false,
+		true,
+	)
+
+	require.NoError(t, err)
+	require.Len(t, encoded, 1)
+	require.NotNil(t, encoded[0].OfTool)
+	assert.Empty(t, encoded[0].OfTool.InputExamples)
+	schema, err := json.Marshal(encoded[0].OfTool.InputSchema)
+	require.NoError(t, err)
+	require.JSONEq(
+		t,
+		`{"type":"object","properties":{"minimum":{"type":"integer"}},"required":["minimum"],"example":{"minimum":3}}`,
+		string(schema),
+	)
+}
+
 // The beta must be opt-in per request: gateways that proxy the Messages API
 // (Bedrock Mantle) reject beta identifiers they do not recognize, so a tool set
 // carrying no authored examples must go out with no beta header at all.
@@ -616,7 +652,7 @@ func TestComplete_ToolUse(t *testing.T) {
 		},
 	}
 
-	tools, canon, prov, err := encodeTools(context.Background(), req.Tools, false)
+	tools, canon, prov, err := encodeTools(context.Background(), req.Tools, false, false)
 	if err != nil {
 		t.Fatalf("encodeTools: %v", err)
 	}
