@@ -204,12 +204,6 @@ func (h *handle) AddOnce(ctx context.Context, idempotencyKey string, event strin
 		ctx, cancel = context.WithTimeout(ctx, h.timeout)
 		defer cancel()
 	}
-	// AddOnce requires an established stream lifetime. Open binds this fresh
-	// handle to the active generation and creates its configured lifetime when
-	// this is the first event.
-	if err := h.stream.Open(ctx); err != nil {
-		return "", fmt.Errorf("pulse open for add once: %w", err)
-	}
 	id, err := h.stream.AddOnce(ctx, idempotencyKey, event, payload)
 	if err != nil {
 		return "", fmt.Errorf("pulse add once: %w", err)
