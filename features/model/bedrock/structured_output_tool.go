@@ -115,6 +115,14 @@ func wrapStructuredOutputSchema(schema []byte) (rawjson.Message, error) {
 		},
 	}
 	if object, ok := inner.(map[string]any); ok {
+		// Local references such as "#/$defs/Draft" start at the wrapped tool
+		// schema, not at the schema stored under "value". Move the generated
+		// definitions to that root so the runtime and Bedrock resolve the same
+		// completion fields the caller declared.
+		if definitions, present := object["$defs"]; present {
+			envelope["$defs"] = definitions
+			delete(object, "$defs")
+		}
 		if example, present := object["example"]; present {
 			envelope["example"] = map[string]any{structuredOutputValueField: example}
 			delete(object, "example")

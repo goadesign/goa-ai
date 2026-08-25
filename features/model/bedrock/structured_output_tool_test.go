@@ -50,6 +50,47 @@ func TestStructuredOutputToolContractSupportsAnyJSONResult(t *testing.T) {
 	}
 }
 
+func TestStructuredOutputToolContractPreservesRootDefinitions(t *testing.T) {
+	const schema = `{
+		"$defs": {
+			"Draft": {
+				"type": "object",
+				"properties": {"name": {"type": "string"}},
+				"required": ["name"]
+			}
+		},
+		"type": "object",
+		"properties": {"draft": {"$ref": "#/$defs/Draft"}},
+		"required": ["draft"]
+	}`
+	input, err := structuredOutputToolInput(&model.StructuredOutput{
+		Name:                     "complete_draft",
+		Schema:                   rawjson.Message(schema),
+		SchemaWithoutRootExample: rawjson.Message(schema),
+	})
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `{
+		"$defs": {
+			"Draft": {
+				"type": "object",
+				"properties": {"name": {"type": "string"}},
+				"required": ["name"]
+			}
+		},
+		"type": "object",
+		"additionalProperties": false,
+		"required": ["value"],
+		"properties": {
+			"value": {
+				"type": "object",
+				"properties": {"draft": {"$ref": "#/$defs/Draft"}},
+				"required": ["draft"]
+			}
+		}
+	}`, string(input.Contract().SchemaWithoutRootExample))
+}
+
 func TestUnwrapStructuredOutputValueRejectsInvalidEnvelope(t *testing.T) {
 	tests := []struct {
 		name    string
