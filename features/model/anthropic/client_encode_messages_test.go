@@ -126,6 +126,40 @@ func TestEncodeMessagesImages(t *testing.T) {
 	}
 }
 
+func TestEncodeMessagesPreservesMixedTextImageOrder(t *testing.T) {
+	messages, _, err := encodeMessages([]*model.Message{{
+		Role: model.ConversationRoleUser,
+		Parts: []model.Part{
+			model.TextPart{Text: "front view"},
+			model.ImagePart{Format: model.ImageFormatPNG, Bytes: []byte("front")},
+			model.TextPart{Text: "side view"},
+			model.ImagePart{Format: model.ImageFormatJPEG, Bytes: []byte("side")},
+		},
+	}}, nil, false)
+
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].Content, 4)
+	require.NotNil(t, messages[0].Content[0].OfText)
+	require.NotNil(t, messages[0].Content[1].OfImage)
+	require.NotNil(t, messages[0].Content[1].OfImage.Source.OfBase64)
+	require.NotNil(t, messages[0].Content[2].OfText)
+	require.NotNil(t, messages[0].Content[3].OfImage)
+	require.NotNil(t, messages[0].Content[3].OfImage.Source.OfBase64)
+	require.Equal(t, "front view", messages[0].Content[0].OfText.Text)
+	require.Equal(
+		t,
+		base64.StdEncoding.EncodeToString([]byte("front")),
+		messages[0].Content[1].OfImage.Source.OfBase64.Data,
+	)
+	require.Equal(t, "side view", messages[0].Content[2].OfText.Text)
+	require.Equal(
+		t,
+		base64.StdEncoding.EncodeToString([]byte("side")),
+		messages[0].Content[3].OfImage.Source.OfBase64.Data,
+	)
+}
+
 func TestEncodeMessagesRejectsInvalidImages(t *testing.T) {
 	tests := []struct {
 		name    string
