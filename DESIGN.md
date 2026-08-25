@@ -118,7 +118,10 @@ Bedrock Claude models that AWS does not list as supporting structured output
 fail before the provider call. The Claude-on-Bedrock Messages adapter instead
 reuses the Anthropic adapter's native structured-output contract and sends it
 through Bedrock `InvokeModel`; the model-visible request does not pass through
-Converse translation.
+Converse translation. The same Anthropic adapter encodes user-message
+`ImagePart` bytes as base64 image blocks for PNG, JPEG, GIF, and WebP, so direct
+Anthropic, Claude-on-Vertex, and Claude-on-Bedrock clients share one multimodal
+message contract.
 Adapters with provider-native structured-output examples receive the generated
 root example separately from the schema. Unary helpers ask the model once for a
 structured value. If the generated codec rejects the response, the helper

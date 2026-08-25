@@ -293,9 +293,11 @@ before inference.
 Use `bedrock.NewAnthropic` for Claude deployments on Amazon Bedrock. It sends
 Anthropic Messages requests through Bedrock `InvokeModel`, so native tool
 examples, forced tool choice, thinking, prompt caching, and structured output
-keep one representation on initial and resumed turns. Its required exact
-counter receives the same canonical request with the Bedrock inference-profile
-prefix removed for a compatible counting endpoint such as Bedrock Mantle.
+keep one representation on initial and resumed turns. User-message `ImagePart`
+values are sent as Anthropic base64 image blocks for PNG, JPEG, GIF, and WebP
+content. Its required exact counter receives the same canonical request with
+the Bedrock inference-profile prefix removed for a compatible counting endpoint
+such as Bedrock Mantle.
 `bedrock.New` remains the Converse adapter for other Bedrock models and existing
 Converse integrations.
 

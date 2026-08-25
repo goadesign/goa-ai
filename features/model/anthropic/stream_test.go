@@ -20,18 +20,26 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
-// testDecoder feeds a fixed sequence of events to the ssestream.Stream.
-type testDecoder struct {
-	events []ssestream.Event
-	i      int
-	err    error
-}
+type (
+	// testDecoder feeds a fixed sequence of events to the ssestream.Stream.
+	testDecoder struct {
+		events []ssestream.Event
+		i      int
+		err    error
+	}
 
-type nonIdempotentAnthropicDecoder struct {
-	mu         sync.Mutex
-	closeErr   error
-	closeCalls int
-}
+	// bedrockEOFDecoder matches the Anthropic SDK's Bedrock decoder, which
+	// returns io.EOF after its final AWS event-stream message.
+	bedrockEOFDecoder struct {
+		testDecoder
+	}
+
+	nonIdempotentAnthropicDecoder struct {
+		mu         sync.Mutex
+		closeErr   error
+		closeCalls int
+	}
+)
 
 func (*nonIdempotentAnthropicDecoder) Event() ssestream.Event { return ssestream.Event{} }
 func (*nonIdempotentAnthropicDecoder) Next() bool             { return false }
@@ -62,6 +70,13 @@ func (d *testDecoder) Next() bool {
 
 func (d *testDecoder) Close() error { return nil }
 func (d *testDecoder) Err() error   { return d.err }
+
+func (d *bedrockEOFDecoder) Err() error {
+	if d.i >= len(d.events) {
+		return io.EOF
+	}
+	return d.err
+}
 
 func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
 	messageStart := sdk.MessageStreamEventUnion{}
@@ -246,6 +261,89 @@ func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
 	if !sawTool {
 		t.Fatalf("expected tool_call chunk")
 	}
+}
+
+func TestAnthropicStreamerTreatsBedrockEOFAsCleanCompletion(t *testing.T) {
+	rawEvents := []struct {
+		eventType string
+		data      string
+	}{
+		{
+			eventType: "message_start",
+			data: `{
+				"type":"message_start",
+				"message":{
+					"id":"msg_1",
+					"type":"message",
+					"role":"assistant",
+					"content":[],
+					"model":"claude-test",
+					"stop_reason":null,
+					"stop_sequence":null,
+					"usage":{"input_tokens":3,"output_tokens":0}
+				}
+			}`,
+		},
+		{
+			eventType: "content_block_start",
+			data:      `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		},
+		{
+			eventType: "content_block_delta",
+			data:      `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}`,
+		},
+		{
+			eventType: "content_block_stop",
+			data:      `{"type":"content_block_stop","index":0}`,
+		},
+		{
+			eventType: "message_delta",
+			data:      `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":3,"output_tokens":1}}`,
+		},
+		{
+			eventType: "message_stop",
+			data:      `{"type":"message_stop"}`,
+		},
+	}
+	events := make([]ssestream.Event, len(rawEvents))
+	for i, raw := range rawEvents {
+		var event sdk.MessageStreamEventUnion
+		require.NoError(t, json.Unmarshal([]byte(raw.data), &event))
+		events[i] = ssestream.Event{Type: raw.eventType, Data: mustJSON(event)}
+	}
+	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](
+		&bedrockEOFDecoder{testDecoder: testDecoder{events: events}},
+		nil,
+	)
+	translated := newAnthropicStreamer(
+		t.Context(),
+		stream,
+		nil,
+		"claude-test",
+		model.ModelClassDefault,
+		nil,
+		anthropicTestContract(t),
+	)
+	defer func() { require.NoError(t, translated.Close()) }()
+
+	for {
+		_, err := translated.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+	}
+	response := translated.Response()
+	require.NotNil(t, response)
+	require.Equal(t, "end_turn", response.StopReason)
+	require.Equal(t, []model.Message{{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{
+			model.TextPart{Text: "OK"},
+		},
+	}}, response.Content)
+	require.Equal(t, 3, response.Usage.InputTokens)
+	require.Equal(t, 1, response.Usage.OutputTokens)
 }
 
 func TestAnthropicStreamerValidatesNativeStructuredOutput(t *testing.T) {

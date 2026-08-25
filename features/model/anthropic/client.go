@@ -8,6 +8,7 @@ package anthropic
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -497,6 +498,9 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 					}
 				case model.CitationsPart:
 					return nil, nil, errors.New("anthropic: replaying canonical citations is not supported")
+				case model.ImagePart:
+					_, err := encodeImage(v, m.Role)
+					return nil, nil, err
 				default:
 					return nil, nil, fmt.Errorf("anthropic: unsupported system message part %T", p)
 				}
@@ -529,6 +533,14 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 				if v.Text != "" {
 					blocks = append(blocks, sdk.NewTextBlock(v.Text))
 				}
+				continue
+			}
+			if v, ok := part.(model.ImagePart); ok {
+				image, err := encodeImage(v, m.Role)
+				if err != nil {
+					return nil, nil, err
+				}
+				blocks = append(blocks, image)
 				continue
 			}
 			if _, ok := part.(model.CitationsPart); ok {
@@ -574,6 +586,36 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 		system[len(system)-1].CacheControl = sdk.NewCacheControlEphemeralParam()
 	}
 	return conversation, system, nil
+}
+
+// encodeImage converts user-supplied image bytes into the base64 source shape
+// accepted by Anthropic Messages. Claude does not accept image blocks in
+// system or assistant messages, so callers receive an error before any
+// provider request is sent.
+func encodeImage(image model.ImagePart, role model.ConversationRole) (sdk.ContentBlockParamUnion, error) {
+	if role != model.ConversationRoleUser {
+		return sdk.ContentBlockParamUnion{}, fmt.Errorf(
+			"anthropic: image parts are only supported in user messages (role=%s)",
+			role,
+		)
+	}
+	var mediaType sdk.Base64ImageSourceMediaType
+	switch image.Format {
+	case model.ImageFormatPNG:
+		mediaType = sdk.Base64ImageSourceMediaTypeImagePNG
+	case model.ImageFormatJPEG:
+		mediaType = sdk.Base64ImageSourceMediaTypeImageJPEG
+	case model.ImageFormatGIF:
+		mediaType = sdk.Base64ImageSourceMediaTypeImageGIF
+	case model.ImageFormatWEBP:
+		mediaType = sdk.Base64ImageSourceMediaTypeImageWebP
+	default:
+		return sdk.ContentBlockParamUnion{}, fmt.Errorf("anthropic: unsupported image format %q", image.Format)
+	}
+	return sdk.NewImageBlock(sdk.Base64ImageSourceParam{
+		Data:      base64.StdEncoding.EncodeToString(image.Bytes),
+		MediaType: mediaType,
+	}), nil
 }
 
 func encodeToolResult(v model.ToolResultPart, providerToolUseID string) (sdk.ContentBlockParamUnion, error) {

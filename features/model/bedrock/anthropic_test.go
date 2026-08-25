@@ -2,6 +2,7 @@ package bedrock
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -175,6 +176,11 @@ func TestAnthropicBedrockResumeKeepsNativeToolExampleAndChoice(t *testing.T) {
 						ToolUseID: "toolu_01PRIORABCDEFGHIJKLMNOP",
 						Content:   rawjson.Message(`{"status":"completed"}`),
 					},
+					model.TextPart{Text: "Use this equipment photo when finishing."},
+					model.ImagePart{
+						Format: model.ImageFormatWEBP,
+						Bytes:  []byte("equipment photo"),
+					},
 				},
 			},
 		},
@@ -216,6 +222,30 @@ func TestAnthropicBedrockResumeKeepsNativeToolExampleAndChoice(t *testing.T) {
 	messages, ok := payload["messages"].([]any)
 	require.True(t, ok)
 	require.Len(t, messages, 3)
+	resume, ok := messages[2].(map[string]any)
+	require.True(t, ok)
+	resumeContent, ok := resume["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, resumeContent, 3)
+	resultBlock, ok := resumeContent[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "tool_result", resultBlock["type"])
+	textBlock, ok := resumeContent[1].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{
+		"type": "text",
+		"text": "Use this equipment photo when finishing.",
+	}, textBlock)
+	imageBlock, ok := resumeContent[2].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "image", imageBlock["type"])
+	imageSource, ok := imageBlock["source"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{
+		"type":       "base64",
+		"media_type": "image/webp",
+		"data":       base64.StdEncoding.EncodeToString([]byte("equipment photo")),
+	}, imageSource)
 	assert.Contains(t, payload["anthropic_beta"], "tool-examples-2025-10-29")
 	_, hasToolConfig := payload["toolConfig"]
 	assert.False(t, hasToolConfig)

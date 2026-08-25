@@ -1,9 +1,11 @@
 package anthropic
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
+	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/features/model/toolname"
@@ -71,6 +73,132 @@ func TestEncodeMessagesMapsToolUseIDsBijectively(t *testing.T) {
 	require.Equal(t, "t1", messages[0].Content[1].OfToolUse.ID)
 	require.Equal(t, "t2", messages[1].Content[0].OfToolResult.ToolUseID)
 	require.Equal(t, "t1", messages[1].Content[1].OfToolResult.ToolUseID)
+}
+
+func TestEncodeMessagesImages(t *testing.T) {
+	imageBytes := []byte("image bytes")
+	tests := []struct {
+		name      string
+		format    model.ImageFormat
+		mediaType sdk.Base64ImageSourceMediaType
+	}{
+		{
+			name:      "PNG",
+			format:    model.ImageFormatPNG,
+			mediaType: sdk.Base64ImageSourceMediaTypeImagePNG,
+		},
+		{
+			name:      "JPEG",
+			format:    model.ImageFormatJPEG,
+			mediaType: sdk.Base64ImageSourceMediaTypeImageJPEG,
+		},
+		{
+			name:      "GIF",
+			format:    model.ImageFormatGIF,
+			mediaType: sdk.Base64ImageSourceMediaTypeImageGIF,
+		},
+		{
+			name:      "WebP",
+			format:    model.ImageFormatWEBP,
+			mediaType: sdk.Base64ImageSourceMediaTypeImageWebP,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			messages, _, err := encodeMessages([]*model.Message{{
+				Role: model.ConversationRoleUser,
+				Parts: []model.Part{model.ImagePart{
+					Format: test.format,
+					Bytes:  imageBytes,
+				}},
+			}}, nil, false)
+
+			require.NoError(t, err)
+			require.Len(t, messages, 1)
+			require.Len(t, messages[0].Content, 1)
+			image := messages[0].Content[0].OfImage
+			require.NotNil(t, image)
+			source := image.Source.OfBase64
+			require.NotNil(t, source)
+			require.Equal(t, test.mediaType, source.MediaType)
+			require.Equal(t, base64.StdEncoding.EncodeToString(imageBytes), source.Data)
+		})
+	}
+}
+
+func TestEncodeMessagesPreservesMixedTextImageOrder(t *testing.T) {
+	messages, _, err := encodeMessages([]*model.Message{{
+		Role: model.ConversationRoleUser,
+		Parts: []model.Part{
+			model.TextPart{Text: "front view"},
+			model.ImagePart{Format: model.ImageFormatPNG, Bytes: []byte("front")},
+			model.TextPart{Text: "side view"},
+			model.ImagePart{Format: model.ImageFormatJPEG, Bytes: []byte("side")},
+		},
+	}}, nil, false)
+
+	require.NoError(t, err)
+	require.Len(t, messages, 1)
+	require.Len(t, messages[0].Content, 4)
+	require.NotNil(t, messages[0].Content[0].OfText)
+	require.NotNil(t, messages[0].Content[1].OfImage)
+	require.NotNil(t, messages[0].Content[1].OfImage.Source.OfBase64)
+	require.NotNil(t, messages[0].Content[2].OfText)
+	require.NotNil(t, messages[0].Content[3].OfImage)
+	require.NotNil(t, messages[0].Content[3].OfImage.Source.OfBase64)
+	require.Equal(t, "front view", messages[0].Content[0].OfText.Text)
+	require.Equal(
+		t,
+		base64.StdEncoding.EncodeToString([]byte("front")),
+		messages[0].Content[1].OfImage.Source.OfBase64.Data,
+	)
+	require.Equal(t, "side view", messages[0].Content[2].OfText.Text)
+	require.Equal(
+		t,
+		base64.StdEncoding.EncodeToString([]byte("side")),
+		messages[0].Content[3].OfImage.Source.OfBase64.Data,
+	)
+}
+
+func TestEncodeMessagesRejectsInvalidImages(t *testing.T) {
+	tests := []struct {
+		name    string
+		role    model.ConversationRole
+		format  model.ImageFormat
+		wantErr string
+	}{
+		{
+			name:    "system role",
+			role:    model.ConversationRoleSystem,
+			format:  model.ImageFormatPNG,
+			wantErr: "anthropic: image parts are only supported in user messages (role=system)",
+		},
+		{
+			name:    "assistant role",
+			role:    model.ConversationRoleAssistant,
+			format:  model.ImageFormatPNG,
+			wantErr: "anthropic: image parts are only supported in user messages (role=assistant)",
+		},
+		{
+			name:    "unsupported format",
+			role:    model.ConversationRoleUser,
+			format:  model.ImageFormat("bmp"),
+			wantErr: `anthropic: unsupported image format "bmp"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, err := encodeMessages([]*model.Message{{
+				Role: test.role,
+				Parts: []model.Part{model.ImagePart{
+					Format: test.format,
+					Bytes:  []byte("image bytes"),
+				}},
+			}}, nil, false)
+
+			require.EqualError(t, err, test.wantErr)
+		})
+	}
 }
 
 func TestEncodeMessagesThinkingVariants(t *testing.T) {
