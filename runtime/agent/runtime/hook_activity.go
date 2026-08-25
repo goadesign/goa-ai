@@ -136,6 +136,15 @@ func (r *Runtime) record(ctx context.Context, input *RecordActivityInput) error 
 		}
 	}
 
+	// Publish a newly saved event before live stream delivery. If the stream
+	// fails, its retry sees the existing event and does not publish duplicate
+	// memory or telemetry records.
+	if inserted && input.Type != hooks.ToolCallArgsDelta {
+		if err := r.Bus.Publish(ctx, evt); err != nil {
+			r.logWarn(ctx, "hook publish failed", err, "event", evt.Type())
+		}
+	}
+
 	// Streaming is explicitly session-scoped. One-shot runs (empty SessionID) are
 	// runlog-only and must never publish to stream sinks. A retry re-sends an
 	// already-appended record because the previous attempt may have failed before
@@ -152,13 +161,6 @@ func (r *Runtime) record(ctx context.Context, input *RecordActivityInput) error 
 		}
 	}
 
-	// Tool call argument deltas are streaming-only; they do not participate in
-	// derived stores like memory.
-	if inserted && input.Type != hooks.ToolCallArgsDelta {
-		if err := r.Bus.Publish(ctx, evt); err != nil {
-			r.logWarn(ctx, "hook publish failed", err, "event", evt.Type())
-		}
-	}
 	if isTerminalRunEventType(input.Type) {
 		r.storeWorkflowHandle(input.RunID, nil)
 	}

@@ -14,6 +14,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/session"
 	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/stream"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
@@ -142,7 +143,7 @@ func TestHookActivity_StreamFailureNoopAfterSessionEnded(t *testing.T) {
 	require.Equal(t, hooks.PlannerNote, rl.events[0].Type)
 }
 
-func TestHookActivity_RetryCompletesOneKeyedStreamPublication(t *testing.T) {
+func TestHookActivity_RetryCompletesStreamAndTelemetryOnce(t *testing.T) {
 	ctx := context.Background()
 	store := sessioninmem.New()
 	_, err := store.CreateSession(ctx, "sess-1", time.Unix(0, 0).UTC())
@@ -153,14 +154,38 @@ func TestHookActivity_RetryCompletesOneKeyedStreamPublication(t *testing.T) {
 	}
 	sub, err := stream.NewSubscriber(sink)
 	require.NoError(t, err)
+	tracer := &recordingTelemetryTracer{}
+	bus := hooks.NewBus()
 	rt := &Runtime{
 		RunEventStore:    runloginmem.New(),
-		Bus:              hooks.NewBus(),
+		Bus:              bus,
 		SessionStore:     store,
 		streamSubscriber: sub,
+		tracer:           tracer,
 	}
+	telemetrySub, err := bus.Register(hooks.SubscriberFunc(rt.recordGenAITelemetryEvent))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = telemetrySub.Close() })
 	input, err := hooks.EncodeToRecordInput(
-		hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil),
+		hooks.NewToolResultReceivedEvent(
+			"run-1",
+			"svc.agent",
+			"sess-1",
+			"run-1",
+			"svc.tools.complete",
+			"call-1",
+			"",
+			nil,
+			0,
+			false,
+			"",
+			nil,
+			"",
+			nil,
+			50*time.Millisecond,
+			nil,
+			nil,
+		),
 		hooks.EncodeOptions{
 			TurnID:      "turn-1",
 			EventKey:    "evt-retry",
@@ -177,6 +202,11 @@ func TestHookActivity_RetryCompletesOneKeyedStreamPublication(t *testing.T) {
 	require.Len(t, page.Events, 1)
 	require.Len(t, sink.events, 1)
 	require.Contains(t, sink.events, "evt-retry")
+	require.Len(t, tracer.spans, 1)
+	require.Equal(t, "execute_tool svc.tools.complete", tracer.spans[0].name)
+	attrs := attrsByKey(tracer.spans[0].attrs)
+	require.Equal(t, "sess-1", attrs[telemetry.AttrGenAIConversationID].AsString())
+	require.Equal(t, "call-1", attrs[telemetry.AttrGenAIToolCallID].AsString())
 }
 
 func TestRecordActivity_TranscriptDeltaSkipsBusAndNonAssistantStreamEvents(t *testing.T) {
