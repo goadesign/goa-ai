@@ -37,17 +37,19 @@ type anthropicStreamer struct {
 	responseMu sync.RWMutex
 	response   *model.Response
 
-	toolNameMap map[string]string
-	modelID     string
-	modelClass  model.ModelClass
-	output      *model.StructuredOutput
-	contract    *model.RequestContract
+	toolNameMap     map[string]string
+	noArgumentTools map[string]struct{}
+	modelID         string
+	modelClass      model.ModelClass
+	output          *model.StructuredOutput
+	contract        *model.RequestContract
 }
 
 func newAnthropicStreamer(
 	ctx context.Context,
 	stream *ssestream.Stream[sdk.MessageStreamEventUnion],
 	nameMap map[string]string,
+	noArgumentTools map[string]struct{},
 	modelID string,
 	modelClass model.ModelClass,
 	output *model.StructuredOutput,
@@ -55,16 +57,17 @@ func newAnthropicStreamer(
 ) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
 	as := &anthropicStreamer{
-		ctx:         cctx,
-		cancel:      cancel,
-		stream:      stream,
-		chunks:      make(chan model.Chunk, 32),
-		done:        make(chan struct{}),
-		toolNameMap: nameMap,
-		modelID:     modelID,
-		modelClass:  modelClass,
-		output:      output,
-		contract:    contract,
+		ctx:             cctx,
+		cancel:          cancel,
+		stream:          stream,
+		chunks:          make(chan model.Chunk, 32),
+		done:            make(chan struct{}),
+		toolNameMap:     nameMap,
+		noArgumentTools: noArgumentTools,
+		modelID:         modelID,
+		modelClass:      modelClass,
+		output:          output,
+		contract:        contract,
 	}
 	go as.run()
 	return as
@@ -116,7 +119,12 @@ func (s *anthropicStreamer) run() {
 		}
 	}()
 
-	processor := newAnthropicChunkProcessor(s.emitAttributedChunk, s.toolNameMap, s.output)
+	processor := newAnthropicChunkProcessor(
+		s.emitAttributedChunk,
+		s.toolNameMap,
+		s.noArgumentTools,
+		s.output,
+	)
 	var response sdk.Message
 
 	for {
@@ -242,8 +250,9 @@ type anthropicChunkProcessor struct {
 	completionSeen  bool
 	openBlocks      map[int]struct{}
 
-	toolNameMap map[string]string
-	output      *model.StructuredOutput
+	toolNameMap     map[string]string
+	noArgumentTools map[string]struct{}
+	output          *model.StructuredOutput
 
 	stopReason     string
 	usage          model.TokenUsage
@@ -256,6 +265,7 @@ type anthropicChunkProcessor struct {
 func newAnthropicChunkProcessor(
 	emit func(model.Chunk) error,
 	nameMap map[string]string,
+	noArgumentTools map[string]struct{},
 	output *model.StructuredOutput,
 ) *anthropicChunkProcessor {
 	return &anthropicChunkProcessor{
@@ -265,6 +275,7 @@ func newAnthropicChunkProcessor(
 		thinkingIndexes: make(map[int]int),
 		openBlocks:      make(map[int]struct{}),
 		toolNameMap:     nameMap,
+		noArgumentTools: noArgumentTools,
 		output:          output,
 	}
 }
@@ -350,6 +361,7 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			}
 			tb.name = canonical
 			tb.id = toolUse.ID
+			_, tb.noArguments = p.noArgumentTools[canonical]
 			if err := p.retain(""); err != nil {
 				return err
 			}
@@ -427,6 +439,9 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			if tb := p.toolBlocks[idx]; tb != nil {
 				if err := p.retain(delta.PartialJSON); err != nil {
 					return err
+				}
+				if tb.noArguments {
+					return nil
 				}
 				tb.fragments.WriteString(delta.PartialJSON)
 				if tb.id == "" {
@@ -547,9 +562,13 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			}
 		}
 		if tb := p.toolBlocks[idx]; tb != nil {
-			payload, err := decodeToolPayload(tb.finalInput())
-			if err != nil {
-				return fmt.Errorf("anthropic stream: finalize tool payload %q: %w", tb.id, err)
+			payload := rawjson.Message(`{}`)
+			if !tb.noArguments {
+				var err error
+				payload, err = decodeToolPayload(tb.finalInput())
+				if err != nil {
+					return fmt.Errorf("anthropic stream: finalize tool payload %q: %w", tb.id, err)
+				}
 			}
 			delete(p.toolBlocks, idx)
 			return p.emit(model.ToolCallChunk{
@@ -668,9 +687,10 @@ func (p *anthropicChunkProcessor) attributedUsage(modelID string, modelClass mod
 }
 
 type toolBuffer struct {
-	name      string
-	id        string
-	fragments strings.Builder
+	name        string
+	id          string
+	noArguments bool
+	fragments   strings.Builder
 }
 
 func (tb *toolBuffer) finalInput() string {
