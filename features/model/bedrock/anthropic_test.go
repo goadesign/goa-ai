@@ -67,7 +67,7 @@ func TestAnthropicBedrockCountTokensUsesFoundationModel(t *testing.T) {
 	assert.Equal(t, model.ModelClassHighReasoning, counter.request.ModelClass)
 }
 
-func TestAnthropicBedrockResumeKeepsNativeToolExampleAndChoice(t *testing.T) {
+func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 	var requestBody []byte
 	handlerErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -208,13 +208,14 @@ func TestAnthropicBedrockResumeKeepsNativeToolExampleAndChoice(t *testing.T) {
 	require.Len(t, tools, 1)
 	tool, ok := tools[0].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, []any{
-		map[string]any{
-			"detail_blocks": []any{
-				map[string]any{"type": "markdown", "text": "Done"},
-			},
+	assert.NotContains(t, tool, "input_examples")
+	inputSchema, ok := tool["input_schema"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, map[string]any{
+		"detail_blocks": []any{
+			map[string]any{"type": "markdown", "text": "Done"},
 		},
-	}, tool["input_examples"])
+	}, inputSchema["example"])
 	assert.Equal(t, map[string]any{
 		"type": "tool",
 		"name": "tasks_progress_complete",
@@ -246,7 +247,7 @@ func TestAnthropicBedrockResumeKeepsNativeToolExampleAndChoice(t *testing.T) {
 		"media_type": "image/webp",
 		"data":       base64.StdEncoding.EncodeToString([]byte("equipment photo")),
 	}, imageSource)
-	assert.Contains(t, payload["anthropic_beta"], "tool-examples-2025-10-29")
+	assert.NotContains(t, payload, "anthropic_beta")
 	_, hasToolConfig := payload["toolConfig"]
 	assert.False(t, hasToolConfig)
 }

@@ -383,10 +383,10 @@ var Docs = Toolset("docs", func() {
   on the tool payload. Codegen removes synthesized placeholder examples from
   the complete schema graph, then precomputes the annotated schema, the schema
   with the authored root `example` removed, and the parsed example input so
-  OpenAI-style
-  providers consume schema annotations while Anthropic, Bedrock Claude, and
-  Claude-on-Vertex receive provider-native `input_examples` under the required
-  tool-examples beta contract, including exact Anthropic token counting.
+  OpenAI-style providers and Claude through `bedrock.NewAnthropic` consume
+  schema annotations while direct Anthropic and Claude-on-Vertex receive
+  provider-native `input_examples` under the required tool-examples contract,
+  including exact Anthropic token counting.
 - Explicit control-plane contracts: `Bookkeeping()` keeps calls durable and
   model-visible while exempting them from retrieval/failure budgets and omitting
   successful results from typed future `ToolOutputs`
