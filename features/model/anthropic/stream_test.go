@@ -199,6 +199,7 @@ func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
 		context.Background(),
 		stream,
 		nameMap,
+		nil,
 		"claude-test",
 		model.ModelClassDefault,
 		nil,
@@ -319,6 +320,7 @@ func TestAnthropicStreamerTreatsBedrockEOFAsCleanCompletion(t *testing.T) {
 		t.Context(),
 		stream,
 		nil,
+		nil,
 		"claude-test",
 		model.ModelClassDefault,
 		nil,
@@ -432,6 +434,7 @@ func TestAnthropicStreamerValidatesNativeStructuredOutput(t *testing.T) {
 		t.Context(),
 		providerStream,
 		nil,
+		nil,
 		"claude-sonnet-5",
 		model.ModelClassDefault,
 		output,
@@ -478,6 +481,7 @@ func TestAnthropicStreamerRejectsOversizedSDKSnapshotBeforeAccumulation(t *testi
 	validated := newAnthropicStreamer(
 		t.Context(),
 		stream,
+		nil,
 		nil,
 		"claude-test",
 		model.ModelClassDefault,
@@ -531,6 +535,7 @@ func TestAnthropicStreamerRejectsMissingToolCallIDWithUsage(t *testing.T) {
 		t.Context(),
 		stream,
 		map[string]string{"lookup": "svc.lookup"},
+		nil,
 		"claude-test",
 		model.ModelClassDefault,
 		nil,
@@ -562,6 +567,7 @@ func TestAnthropicStreamer_MidStream429Classified(t *testing.T) {
 		context.Background(),
 		stream,
 		nil,
+		nil,
 		"claude-test",
 		model.ModelClassDefault,
 		nil,
@@ -589,6 +595,7 @@ func TestAnthropicStreamer_ContextCancelPassthrough(t *testing.T) {
 		context.Background(),
 		stream,
 		nil,
+		nil,
 		"claude-test",
 		model.ModelClassDefault,
 		nil,
@@ -614,6 +621,7 @@ func TestAnthropicStreamerClassifiesEventlessStreamAsEmptyStream(t *testing.T) {
 	s := newAnthropicStreamer(
 		context.Background(),
 		stream,
+		nil,
 		nil,
 		"claude-test",
 		model.ModelClassDefault,
@@ -643,6 +651,7 @@ func TestAnthropicStreamerClassifiesMessageStopWithoutStartAsEmptyStream(t *test
 	s := newAnthropicStreamer(
 		context.Background(),
 		stream,
+		nil,
 		nil,
 		"claude-test",
 		model.ModelClassDefault,
@@ -699,6 +708,7 @@ func TestAnthropicStreamerRejectsMessageStopWithOpenContentBlock(t *testing.T) {
 	s := newAnthropicStreamer(
 		context.Background(),
 		stream,
+		nil,
 		nil,
 		"claude-test",
 		model.ModelClassDefault,
@@ -761,6 +771,86 @@ func TestThinkingBufferFinalizeRequiresCanonicalVariant(t *testing.T) {
 	}
 }
 
+// TestAnthropicChunkProcessorCanonicalizesNoArgumentTools verifies that an
+// Anthropic tool-use block with no JSON deltas becomes the canonical empty
+// object only when the request declared that code owns every argument.
+func TestAnthropicChunkProcessorCanonicalizesNoArgumentTools(t *testing.T) {
+	var messageStart sdk.MessageStreamEventUnion
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"type":"message_start",
+		"message":{
+			"id":"msg_1",
+			"type":"message",
+			"role":"assistant",
+			"content":[],
+			"model":"claude-test",
+			"usage":{"input_tokens":1,"output_tokens":0}
+		}
+	}`), &messageStart))
+	var toolStart sdk.MessageStreamEventUnion
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"type":"content_block_start",
+		"index":0,
+		"content_block":{
+			"type":"tool_use",
+			"id":"toolu_1",
+			"name":"continue_abcd",
+			"input":{}
+		}
+	}`), &toolStart))
+	var toolStop sdk.MessageStreamEventUnion
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"type":"content_block_stop",
+		"index":0
+	}`), &toolStop))
+
+	tests := []struct {
+		name              string
+		noArgumentTools   map[string]struct{}
+		wantPayload       string
+		wantErrorContains string
+	}{
+		{
+			name:            "no-argument tool",
+			noArgumentTools: map[string]struct{}{"ada.continue_alarms": {}},
+			wantPayload:     `{}`,
+		},
+		{
+			name:              "ordinary tool",
+			wantErrorContains: "tool payload is not valid JSON",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var calls []model.ToolCall
+			processor := newAnthropicChunkProcessor(
+				func(chunk model.Chunk) error {
+					if call, ok := chunk.(model.ToolCallChunk); ok {
+						calls = append(calls, call.ToolCall)
+					}
+					return nil
+				},
+				map[string]string{"continue_abcd": "ada.continue_alarms"},
+				test.noArgumentTools,
+				nil,
+			)
+
+			require.NoError(t, processor.Handle(messageStart))
+			require.NoError(t, processor.Handle(toolStart))
+			err := processor.Handle(toolStop)
+			if test.wantErrorContains != "" {
+				require.ErrorContains(t, err, test.wantErrorContains)
+				require.Empty(t, calls)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, calls, 1)
+			require.Equal(t, "ada.continue_alarms", string(calls[0].Name))
+			require.JSONEq(t, test.wantPayload, string(calls[0].Payload))
+		})
+	}
+}
+
 func TestAnthropicChunkProcessorAssignsDenseThinkingIndexes(t *testing.T) {
 	var finalIndexes []int
 	var finalSignatures []string
@@ -775,7 +865,7 @@ func TestAnthropicChunkProcessorAssignsDenseThinkingIndexes(t *testing.T) {
 			finalSignatures = append(finalSignatures, part.Signature)
 		}
 		return nil
-	}, nil, nil)
+	}, nil, nil, nil)
 
 	var messageStart sdk.MessageStreamEventUnion
 	require.NoError(t, json.Unmarshal([]byte(`{
@@ -821,6 +911,7 @@ func TestAnthropicStreamerClosesProviderStreamOnce(t *testing.T) {
 	streamer := newAnthropicStreamer(
 		t.Context(),
 		providerStream,
+		nil,
 		nil,
 		"claude-test",
 		model.ModelClassDefault,

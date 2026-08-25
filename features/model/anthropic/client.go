@@ -50,14 +50,15 @@ type (
 	// bundling them here makes it impossible for a call path to send one
 	// without the other.
 	encodedRequest struct {
-		model        string
-		messages     []sdk.MessageParam
-		system       []sdk.TextBlockParam
-		tools        []sdk.ToolUnionParam
-		toolChoice   sdk.ToolChoiceUnionParam
-		outputConfig sdk.OutputConfigParam
-		provToCanon  map[string]string
-		opts         []option.RequestOption
+		model           string
+		messages        []sdk.MessageParam
+		system          []sdk.TextBlockParam
+		tools           []sdk.ToolUnionParam
+		toolChoice      sdk.ToolChoiceUnionParam
+		outputConfig    sdk.OutputConfigParam
+		provToCanon     map[string]string
+		noArgumentTools map[string]struct{}
+		opts            []option.RequestOption
 	}
 
 	// Options configures optional Anthropic adapter behavior.
@@ -290,6 +291,7 @@ func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Stream
 		ctx,
 		stream,
 		enc.provToCanon,
+		enc.noArgumentTools,
 		enc.model,
 		req.ModelClass,
 		req.StructuredOutput,
@@ -346,18 +348,25 @@ func (c *provider) encodeRequest(ctx context.Context, req *model.Request) (*enco
 	if err != nil {
 		return nil, err
 	}
+	noArgumentTools := make(map[string]struct{})
+	for _, definition := range req.Tools {
+		if definition.NoArguments {
+			noArgumentTools[definition.Name] = struct{}{}
+		}
+	}
 	msgs, system, err := encodeMessages(req.Messages, canonToProv, cacheAfterSystem)
 	if err != nil {
 		return nil, err
 	}
 	enc := &encodedRequest{
-		model:        modelID,
-		messages:     msgs,
-		system:       system,
-		tools:        tools,
-		outputConfig: outputConfig,
-		provToCanon:  provToCanon,
-		opts:         toolExampleOptions(tools),
+		model:           modelID,
+		messages:        msgs,
+		system:          system,
+		tools:           tools,
+		outputConfig:    outputConfig,
+		provToCanon:     provToCanon,
+		noArgumentTools: noArgumentTools,
+		opts:            toolExampleOptions(tools),
 	}
 	if req.ToolChoice != nil {
 		tc, err := encodeToolChoice(req.ToolChoice, canonToProv, req.Tools)
