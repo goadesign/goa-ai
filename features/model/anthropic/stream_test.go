@@ -326,12 +326,16 @@ func TestAnthropicStreamerTreatsBedrockEOFAsCleanCompletion(t *testing.T) {
 	)
 	defer func() { require.NoError(t, translated.Close()) }()
 
+	var usageChunks []model.TokenUsage
 	for {
-		_, err := translated.Recv()
+		chunk, err := translated.Recv()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
+		if usage, ok := chunk.(model.UsageChunk); ok {
+			usageChunks = append(usageChunks, usage.Usage)
+		}
 	}
 	response := translated.Response()
 	require.NotNil(t, response)
@@ -344,6 +348,13 @@ func TestAnthropicStreamerTreatsBedrockEOFAsCleanCompletion(t *testing.T) {
 	}}, response.Content)
 	require.Equal(t, 3, response.Usage.InputTokens)
 	require.Equal(t, 1, response.Usage.OutputTokens)
+	require.Equal(t, "claude-test", response.Usage.Model)
+	require.Equal(t, model.ModelClassDefault, response.Usage.ModelClass)
+	require.Len(t, usageChunks, 2)
+	for _, usage := range usageChunks {
+		require.Equal(t, response.Usage.Model, usage.Model)
+		require.Equal(t, response.Usage.ModelClass, usage.ModelClass)
+	}
 }
 
 func TestAnthropicStreamerValidatesNativeStructuredOutput(t *testing.T) {
