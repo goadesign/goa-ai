@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/prompt"
@@ -22,8 +23,9 @@ import (
 // runtime records and fans out hook-backed records on behalf of workflow code.
 const recordActivityName = "runtime.record_event"
 
-// recordActivity persists workflow-emitted runtime records outside of
-// deterministic workflow execution.
+// recordActivity persists one non-empty ordered list of workflow-emitted
+// runtime records outside deterministic workflow execution. Singular lifecycle
+// and tool publications created by current code use a one-item list.
 //
 // Contract:
 //   - The canonical record of runtime events is the run event log. Appending to
@@ -43,9 +45,32 @@ const recordActivityName = "runtime.record_event"
 //   - Publishing to the hook bus is best-effort. The bus drives derived storage
 //     (memory) and local observability, but it must not be allowed to corrupt or
 //     block the canonical transcript.
-func (r *Runtime) recordActivity(ctx context.Context, input *RecordActivityInput) error {
+//   - If an attempt fails after a prefix, Temporal retries the same list. Stable
+//     event keys make already-appended records idempotent.
+func (r *Runtime) recordActivity(ctx context.Context, input *api.RecordActivityBatchInput) error {
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
+	if input == nil {
+		return errors.New("runtime: record activity input is nil")
+	}
+	if len(input.Records) == 0 {
+		return errors.New("runtime: record activity batch is empty")
+	}
+	for index, record := range input.Records {
+		if record == nil {
+			return fmt.Errorf("runtime: record activity item %d is nil", index)
+		}
+		if err := r.record(ctx, record); err != nil {
+			return fmt.Errorf("runtime: record activity item %d: %w", index, err)
+		}
+	}
+	return nil
+}
+
+// record appends and broadcasts one workflow-owned record. Activity entry
+// points own heartbeats so a batch can call this helper without starting one
+// heartbeat goroutine per item.
+func (r *Runtime) record(ctx context.Context, input *RecordActivityInput) error {
 	if input == nil {
 		return errors.New("runtime: record input is nil")
 	}
@@ -83,8 +108,9 @@ func (r *Runtime) recordActivity(ctx context.Context, input *RecordActivityInput
 	//
 	// Consumers must treat ToolCallArgsDelta as optional; the canonical tool
 	// payload is still emitted via tool_start/tool_end and the finalized tool call.
+	inserted := true
 	if input.Type != hooks.ToolCallArgsDelta {
-		if _, err := r.RunEventStore.Append(ctx, &runlog.Event{
+		appendResult, err := r.RunEventStore.Append(ctx, &runlog.Event{
 			EventKey:  input.EventKey,
 			RunID:     input.RunID,
 			AgentID:   input.AgentID,
@@ -93,12 +119,16 @@ func (r *Runtime) recordActivity(ctx context.Context, input *RecordActivityInput
 			Type:      input.Type,
 			Payload:   payload,
 			Timestamp: time.UnixMilli(evt.Timestamp()).UTC(),
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
+		inserted = appendResult.Inserted
 
 		// Session-derived metadata exists only for sessionful runs. One-shot runs
 		// intentionally bypass SessionStore and keep canonical state in RunEventStore.
+		// A retry repeats this idempotent update because the first attempt may have
+		// appended the run-log event and then failed before metadata completed.
 		if input.SessionID != "" {
 			if err := r.updateRunMetaFromHookEvent(ctx, evt); err != nil {
 				return err
@@ -107,7 +137,9 @@ func (r *Runtime) recordActivity(ctx context.Context, input *RecordActivityInput
 	}
 
 	// Streaming is explicitly session-scoped. One-shot runs (empty SessionID) are
-	// runlog-only and must never publish to stream sinks.
+	// runlog-only and must never publish to stream sinks. A retry re-sends an
+	// already-appended record because the previous attempt may have failed before
+	// stream delivery. Keyed sinks must publish that immutable event idempotently.
 	if input.SessionID != "" && r.streamSubscriber != nil {
 		sess, err := r.SessionStore.LoadSession(ctx, input.SessionID)
 		if err != nil {
@@ -122,7 +154,7 @@ func (r *Runtime) recordActivity(ctx context.Context, input *RecordActivityInput
 
 	// Tool call argument deltas are streaming-only; they do not participate in
 	// derived stores like memory.
-	if input.Type != hooks.ToolCallArgsDelta {
+	if inserted && input.Type != hooks.ToolCallArgsDelta {
 		if err := r.Bus.Publish(ctx, evt); err != nil {
 			r.logWarn(ctx, "hook publish failed", err, "event", evt.Type())
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -65,7 +66,8 @@ func TestSendPublishesEnvelopeEventKey(t *testing.T) {
 		require.Equal(t, "session/session-123", name)
 		return str, nil
 	})
-	str.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
+	str.AddAddOnce(func(ctx context.Context, idempotencyKey, event string, payload []byte) (string, error) {
+		require.Equal(t, streamPublicationKey("run-123", "evt-1"), idempotencyKey)
 		var env Envelope
 		require.NoError(t, json.Unmarshal(payload, &env))
 		require.Equal(t, "evt-1", env.EventKey)
@@ -81,10 +83,21 @@ func TestSendPublishesEnvelopeEventKey(t *testing.T) {
 			"session-123",
 			stream.AssistantReplyPayload{Text: "ok"},
 			"evt-1",
+			time.Unix(1, 0).UTC(),
 		),
 		Data: stream.AssistantReplyPayload{Text: "ok"},
 	})
 	require.NoError(t, err)
+}
+
+func TestStreamPublicationKeyScopesEventKeyToRun(t *testing.T) {
+	first := streamPublicationKey("run-1", "event-1")
+	retry := streamPublicationKey("run-1", "event-1")
+	otherRun := streamPublicationKey("run-2", "event-1")
+
+	require.Equal(t, first, retry)
+	require.NotEqual(t, first, otherRun)
+	require.LessOrEqual(t, len(first), 256)
 }
 
 func TestOnPublishedCalled(t *testing.T) {

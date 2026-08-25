@@ -155,6 +155,12 @@ func testModelResponseWithUsage(
 	return response
 }
 
+// testRecordBatch wraps records in the activity contract used by every durable
+// publication, including singular lifecycle events.
+func testRecordBatch(records ...*RecordActivityInput) *api.RecordActivityBatchInput {
+	return &api.RecordActivityBatchInput{Records: records}
+}
+
 // testWorkflowContext is a lightweight engine.WorkflowContext implementation used by tests.
 type testWorkflowContext struct {
 	ctx context.Context
@@ -378,7 +384,7 @@ func (t *testWorkflowContext) StartChildWorkflow(ctx context.Context, req engine
 	}, nil
 }
 
-func (t *testWorkflowContext) PublishRecord(call engine.RecordActivityCall) error {
+func (t *testWorkflowContext) PublishRecords(call engine.RecordActivityCall) error {
 	t.lastHookCall = call
 	hookRT := t.hookRuntime
 	if hookRT == nil {
@@ -608,7 +614,7 @@ type stubEngine struct {
 }
 
 func (s *stubEngine) RegisterWorkflow(context.Context, engine.WorkflowDefinition) error { return nil }
-func (s *stubEngine) RegisterRecordActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.RecordActivityInput) error) error {
+func (s *stubEngine) RegisterRecordActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.RecordActivityBatchInput) error) error {
 	if s.registeredRecordActivityOptions == nil {
 		s.registeredRecordActivityOptions = make(map[string]engine.ActivityOptions)
 	}

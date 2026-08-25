@@ -83,6 +83,15 @@ func (f *fakeStream) Add(ctx context.Context, event string, payload []byte) (str
 	return "0-0", nil
 }
 
+func (f *fakeStream) AddOnce(
+	ctx context.Context,
+	idempotencyKey, event string,
+	payload []byte,
+) (string, error) {
+	f.addPayload = payload
+	return "0-0", nil
+}
+
 func (f *fakeStream) NewSink(ctx context.Context, name string, opts ...streamopts.Sink) (clientspulse.Sink, error) {
 	f.lastSink = name
 	return f.sink, nil

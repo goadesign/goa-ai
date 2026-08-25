@@ -717,7 +717,6 @@ func TestRunLoopBookkeepingToolTerminalRejectsClarification(t *testing.T) {
 				Parts: []model.Part{model.TextPart{Text: "premature terminal text"}},
 			},
 		},
-		Streamed: true,
 	}
 
 	out, err := rt.runLoop(

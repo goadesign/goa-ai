@@ -31,6 +31,7 @@ type (
 	}
 
 	StreamAddFunc         func(ctx context.Context, event string, payload []byte) (string, error)
+	StreamAddOnceFunc     func(ctx context.Context, idempotencyKey, event string, payload []byte) (string, error)
 	StreamSnapshotFunc    func(ctx context.Context) ([]pulse.SnapshotEvent, error)
 	StreamOpenFunc        func(ctx context.Context) error
 	StreamNewSinkFunc     func(ctx context.Context, name string, opts ...options.Sink) (pulse.Sink, error)
@@ -124,6 +125,23 @@ func (m *Stream) Add(ctx context.Context, event string, payload []byte) (string,
 	}
 	m.t.Helper()
 	m.t.Error("unexpected Add call")
+	return "", nil
+}
+
+func (m *Stream) AddAddOnce(f StreamAddOnceFunc) {
+	m.m.Add("AddOnce", f)
+}
+
+func (m *Stream) SetAddOnce(f StreamAddOnceFunc) {
+	m.m.Set("AddOnce", f)
+}
+
+func (m *Stream) AddOnce(ctx context.Context, idempotencyKey, event string, payload []byte) (string, error) {
+	if f := m.m.Next("AddOnce"); f != nil {
+		return f.(StreamAddOnceFunc)(ctx, idempotencyKey, event, payload)
+	}
+	m.t.Helper()
+	m.t.Error("unexpected AddOnce call")
 	return "", nil
 }
 

@@ -82,31 +82,6 @@ func TestRuntimePlannerEventsTerminalResultNeedsNoInvocationReplay(t *testing.T)
 	require.Nil(t, transcript)
 }
 
-func TestRuntimePlannerEventsMatchesStreamedFinalResponse(t *testing.T) {
-	e := &modelInvocationJournal{}
-	invocation := mustBeginModelInvocation(t, e)
-	response := &model.Response{
-		Content: []model.Message{{
-			Role: model.ConversationRoleAssistant,
-			Parts: []model.Part{
-				model.ThinkingPart{Text: "reasoning", Signature: "sig", Final: true},
-				model.TextPart{Text: "done"},
-			},
-		}},
-		StopReason: "end_turn",
-	}
-	mustRecordModelResponse(t, e, invocation, response)
-
-	transcript, err := e.exportModelInvocation(&planner.PlanResult{
-		FinalResponse: &planner.FinalResponse{Message: &response.Content[0]},
-		Streamed:      true,
-	})
-
-	require.NoError(t, err)
-	require.Len(t, transcript, 1)
-	require.Equal(t, model.ThinkingPart{Text: "reasoning", Signature: "sig", Final: true}, transcript[0].Parts[0])
-}
-
 func TestRuntimePlannerEventsMatchesCompleteFinalResponse(t *testing.T) {
 	e := &modelInvocationJournal{}
 	invocation := mustBeginModelInvocation(t, e)
@@ -194,7 +169,6 @@ func TestRuntimePlannerEventsDistinguishesIdenticalMessagesByOrigin(t *testing.T
 	mustRecordModelResponse(t, e, invocation, response)
 	result := &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{Message: &response.Content[1]},
-		Streamed:      true,
 	}
 
 	transcript, err := e.exportModelInvocation(result)
@@ -206,62 +180,25 @@ func TestRuntimePlannerEventsDistinguishesIdenticalMessagesByOrigin(t *testing.T
 }
 
 func TestRuntimePlannerEventsRejectsModifiedProviderContent(t *testing.T) {
-	for _, streamed := range []bool{false, true} {
-		t.Run(map[bool]string{false: "complete", true: "streamed"}[streamed], func(t *testing.T) {
-			e := &modelInvocationJournal{}
-			invocation := mustBeginModelInvocation(t, e)
-			response := &model.Response{
-				Content: []model.Message{{
-					Role:  model.ConversationRoleAssistant,
-					Parts: []model.Part{model.TextPart{Text: "original"}},
-				}},
-				StopReason: "end_turn",
-			}
-			mustRecordModelResponse(t, e, invocation, response)
-			presentation := &response.Content[0]
-			presentation.Parts = []model.Part{model.TextPart{Text: "modified"}}
-
-			transcript, err := e.exportModelInvocation(&planner.PlanResult{
-				FinalResponse: &planner.FinalResponse{Message: presentation},
-				Streamed:      streamed,
-			})
-
-			require.EqualError(t, err, "planner result modified provider-owned message content")
-			require.Nil(t, transcript)
-		})
-	}
-}
-
-func TestPresentationFromChunkIncludesCitationText(t *testing.T) {
-	presentation := presentationFromChunk(model.TextChunk{Message: model.Message{
-		Role: model.ConversationRoleAssistant,
-		Parts: []model.Part{
-			model.TextPart{Text: "plain "},
-			model.CitationsPart{
-				Text:      "cited",
-				Citations: []model.Citation{{Title: "source"}},
-			},
-		},
-	}})
-
-	require.Len(t, presentation, 1)
-	require.Equal(t, "plain cited", presentation[0].text)
-}
-
-func TestPresentationFromChunkOwnsReasoningBytes(t *testing.T) {
-	redacted := []byte("original")
-	presentation := presentationFromChunk(model.ThinkingChunk{Message: model.Message{
-		Role: model.ConversationRoleAssistant,
-		Parts: []model.Part{model.ThinkingPart{
-			Redacted: redacted,
-			Final:    true,
+	e := &modelInvocationJournal{}
+	invocation := mustBeginModelInvocation(t, e)
+	response := &model.Response{
+		Content: []model.Message{{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "original"}},
 		}},
-	}})
+		StopReason: "end_turn",
+	}
+	mustRecordModelResponse(t, e, invocation, response)
+	presentation := &response.Content[0]
+	presentation.Parts = []model.Part{model.TextPart{Text: "modified"}}
 
-	redacted[0] = 'X'
+	transcript, err := e.exportModelInvocation(&planner.PlanResult{
+		FinalResponse: &planner.FinalResponse{Message: presentation},
+	})
 
-	require.Len(t, presentation, 1)
-	require.Equal(t, []byte("original"), presentation[0].thinking.Redacted)
+	require.EqualError(t, err, "planner result modified provider-owned message content")
+	require.Nil(t, transcript)
 }
 
 func TestRuntimePlannerEventsRejectsCallsMixedAcrossInvocations(t *testing.T) {
@@ -448,7 +385,7 @@ func TestRuntimePlannerEventsRejectsAmbiguousInvocation(t *testing.T) {
 func TestRuntimePlannerEventsCanonicalResponseReplacesStreamDeltas(t *testing.T) {
 	e := &modelInvocationJournal{}
 	invocation := mustBeginModelInvocation(t, e)
-	require.NoError(t, e.recordModelChunk(invocation, model.TextChunk{
+	require.NoError(t, e.recordModelChunk(t.Context(), invocation, model.TextChunk{
 		Message: model.Message{
 			Role:  model.ConversationRoleAssistant,
 			Parts: []model.Part{model.TextPart{Text: "partial"}},
@@ -478,7 +415,7 @@ func TestRuntimePlannerEventsCanonicalResponseReplacesStreamDeltas(t *testing.T)
 func TestRuntimePlannerEventsRejectsCallsAfterMalformedResponse(t *testing.T) {
 	e := &modelInvocationJournal{}
 	incomplete := mustBeginModelInvocation(t, e)
-	require.NoError(t, e.recordModelChunk(incomplete, model.ToolCallChunk{
+	require.NoError(t, e.recordModelChunk(t.Context(), incomplete, model.ToolCallChunk{
 		ToolCall: model.ToolCall{ID: "incomplete", Name: "svc.lookup", Payload: []byte(`{}`)},
 	}))
 	invalid := mustBeginModelInvocation(t, e)

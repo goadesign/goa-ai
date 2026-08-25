@@ -22,10 +22,7 @@ import (
 
 type (
 	recordingPlannerEvents struct {
-		chunks     []string
-		thinking   []model.ThinkingPart
-		toolDeltas []string
-		usage      []model.TokenUsage
+		usage []model.TokenUsage
 	}
 
 	chunkStreamer struct {
@@ -67,23 +64,6 @@ func newTestModelInvocationClient(provider model.Provider, sink modelInvocationS
 
 func newTestDesignatedModelInvocationClient(provider model.Provider, sink modelInvocationSink) model.Client {
 	return newDesignatedModelInvocationClient(mustTestModelClient(provider), sink)
-}
-
-func (e *recordingPlannerEvents) AssistantChunk(_ context.Context, text string) {
-	e.chunks = append(e.chunks, text)
-}
-
-func (e *recordingPlannerEvents) ToolCallArgsDelta(
-	_ context.Context,
-	_ string,
-	_ tools.Ident,
-	delta string,
-) {
-	e.toolDeltas = append(e.toolDeltas, delta)
-}
-
-func (e *recordingPlannerEvents) PlannerThinkingBlock(_ context.Context, thinking model.ThinkingPart) {
-	e.thinking = append(e.thinking, thinking)
 }
 
 func (e *recordingPlannerEvents) PlannerThought(context.Context, string, map[string]string) {}
@@ -423,7 +403,7 @@ func TestRejectedTerminalStreamUsageReplacesPriorDeltas(t *testing.T) {
 	require.Equal(t, usage, invocations.exportUsage())
 }
 
-func TestModelPresentationPublishesOnlySelectedInvocation(t *testing.T) {
+func TestModelPresentationPublishesUsageForEveryInvocation(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -451,7 +431,6 @@ func TestModelPresentationPublishesOnlySelectedInvocation(t *testing.T) {
 	require.NoError(t, err)
 	_, err = planner.ConsumeStream(ctx, failedStream)
 	require.EqualError(t, err, "retryable provider failure")
-	require.Empty(t, events.chunks)
 	require.Empty(t, events.usage)
 
 	response := &model.Response{
@@ -482,15 +461,13 @@ func TestModelPresentationPublishesOnlySelectedInvocation(t *testing.T) {
 	require.NoError(t, err)
 	summary, err := planner.ConsumeStream(ctx, selectedStream)
 	require.NoError(t, err)
-	require.Empty(t, events.chunks)
 	require.Empty(t, events.usage)
 
-	result := &planner.PlanResult{FinalResponse: summary.FinalResponse(), Streamed: true}
+	result := &planner.PlanResult{FinalResponse: summary.FinalResponse()}
 	_, err = invocations.exportModelInvocation(result)
 	require.NoError(t, err)
-	invocations.publishSelectedPresentation(ctx, events)
+	invocations.publishUsage(ctx, events)
 
-	require.Equal(t, []string{"selected answer"}, events.chunks)
 	require.Equal(t, []model.TokenUsage{
 		{
 			Model:        "provider-mini",
@@ -616,7 +593,6 @@ func TestSimplePlannerContextPlannerModelClientOwnsEventEmission(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "hello", summary.Text)
-	require.Empty(t, events.chunks)
 	require.Len(t, summary.ToolCalls, 1)
 	require.Equal(t, tools.Ident("svc.lookup"), summary.ToolCalls[0].Name)
 	require.Equal(t, "tool_use", summary.StopReason)
@@ -850,7 +826,7 @@ func (*fakeModelInvocationSink) recordRejectedModelUsageTotal(_ modelInvocationI
 	return nil
 }
 
-func (*fakeModelInvocationSink) recordRejectedModelUsageDelta(_ modelInvocationID, _ model.TokenUsage) error {
+func (*fakeModelInvocationSink) recordRejectedModelUsageDelta(context.Context, modelInvocationID, model.TokenUsage) error {
 	return nil
 }
 
@@ -864,7 +840,11 @@ func (s *fakeModelInvocationSink) recordValidatedModelResponse(
 	return s.recordModelResponse(invocationID, response)
 }
 
-func (s *fakeModelInvocationSink) recordModelChunk(invocationID modelInvocationID, chunk model.Chunk) error {
+func (s *fakeModelInvocationSink) recordModelChunk(
+	_ context.Context,
+	invocationID modelInvocationID,
+	chunk model.Chunk,
+) error {
 	if s.chunks == nil {
 		s.chunks = make(map[modelInvocationID][]model.Chunk)
 	}
@@ -872,7 +852,11 @@ func (s *fakeModelInvocationSink) recordModelChunk(invocationID modelInvocationI
 	return nil
 }
 
-func (s *fakeModelInvocationSink) finishModelInvocation(invocationID modelInvocationID, err error) error {
+func (s *fakeModelInvocationSink) finishModelInvocation(
+	_ context.Context,
+	invocationID modelInvocationID,
+	err error,
+) error {
 	if s.finished == nil {
 		s.finished = make(map[modelInvocationID]error)
 	}
@@ -965,9 +949,6 @@ func TestPlannerModelClientScopesCompleteResponseTranscript(t *testing.T) {
 
 	_, err := client.Complete(context.Background(), testModelRequest("svc.lookup"))
 	require.NoError(t, err)
-	require.Empty(t, events.chunks)
-	require.Empty(t, events.thinking)
-
 	transcript, err := invocations.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: []planner.ToolRequest{{
 			ModelToolCallID: "call-1",
@@ -976,14 +957,7 @@ func TestPlannerModelClientScopesCompleteResponseTranscript(t *testing.T) {
 		}},
 	})
 	require.NoError(t, err)
-	invocations.publishSelectedPresentation(context.Background(), events)
-	require.Equal(t, []string{"answer"}, events.chunks)
-	require.Equal(t, []model.ThinkingPart{{
-		Text:      "reasoning",
-		Signature: "thinking-signature",
-		Index:     0,
-		Final:     true,
-	}}, events.thinking)
+	invocations.publishUsage(context.Background(), events)
 	require.Len(t, transcript, 1)
 	require.Equal(t, model.ConversationRoleAssistant, transcript[0].Role)
 	require.Equal(t, []model.Part{
@@ -1313,24 +1287,13 @@ func TestRawModelInvocationSelectionKeepsResponsesIsolated(t *testing.T) {
 	require.NoError(t, err)
 	accepted, err := planner.ConsumeStream(context.Background(), stream)
 	require.NoError(t, err)
-	require.Empty(t, events.chunks)
-	require.Empty(t, events.thinking)
-	require.Empty(t, events.toolDeltas)
 	require.Empty(t, events.usage)
 
 	transcript, err := invocations.exportModelInvocation(&planner.PlanResult{
 		ToolCalls: accepted.ToolCalls,
 	})
 	require.NoError(t, err)
-	invocations.publishSelectedPresentation(context.Background(), events)
-	require.Equal(t, []string{"accepted response"}, events.chunks)
-	require.Equal(t, []model.ThinkingPart{{
-		Text:      "accepted reasoning",
-		Signature: "accepted-thinking-signature",
-		Index:     0,
-		Final:     true,
-	}}, events.thinking)
-	require.Equal(t, []string{`{}`}, events.toolDeltas)
+	invocations.publishUsage(context.Background(), events)
 	require.Len(t, transcript, 1)
 	require.Equal(t, []model.Part{
 		model.ThinkingPart{

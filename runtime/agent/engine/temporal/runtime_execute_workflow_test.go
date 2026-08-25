@@ -127,14 +127,15 @@ func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) 
 	}))
 
 	recorder := &publicationRetryRecorder{
-		stored: make(map[string]*api.RecordActivityInput),
+		activityIDs: make(map[string]struct{}),
+		stored:      make(map[string]*api.RecordActivityInput),
 	}
 	eng := &Engine{
 		defaultQueue: taskQueue,
 		activityOptions: map[string]engine.ActivityOptions{
 			"runtime.record_event": {
 				StartToCloseTimeout: time.Second,
-				RetryPolicy:         engine.RetryPolicy{MaxAttempts: 1},
+				RetryPolicy:         engine.RetryPolicy{MaxAttempts: 2},
 			},
 		},
 	}
@@ -154,7 +155,9 @@ func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) 
 
 	require.NoError(t, env.GetWorkflowError())
 	require.EqualValues(t, 1, plannerStub.calls.Load())
-	attempts, stored := recorder.snapshot()
+	activityCalls, scheduledActivities, attempts, stored := recorder.snapshot()
+	require.Equal(t, 2, activityCalls)
+	require.Equal(t, 1, scheduledActivities)
 	require.Len(t, attempts, 4)
 	require.Equal(t, attempts[0].EventKey, attempts[2].EventKey)
 	require.Equal(t, attempts[1].EventKey, attempts[3].EventKey)
@@ -360,10 +363,12 @@ type (
 	// publicationRetryRecorder stores planner-publication records by idempotency
 	// key, fails the second first-time record, and rejects changed duplicate input.
 	publicationRetryRecorder struct {
-		mu       sync.Mutex
-		failed   bool
-		attempts []*api.RecordActivityInput
-		stored   map[string]*api.RecordActivityInput
+		mu            sync.Mutex
+		failed        bool
+		activityCalls int
+		activityIDs   map[string]struct{}
+		attempts      []*api.RecordActivityInput
+		stored        map[string]*api.RecordActivityInput
 	}
 
 	// hookRecorder decodes runtime records and tracks suspension persistence.
@@ -392,7 +397,31 @@ func (*publicationRetryPlanner) PlanResume(context.Context, *planner.PlanResumeI
 
 // Record persists non-publication records normally and exercises immutable
 // idempotency for the planner completion batch.
-func (r *publicationRetryRecorder) Record(_ context.Context, input *api.RecordActivityInput) error {
+func (r *publicationRetryRecorder) Record(ctx context.Context, batch *api.RecordActivityBatchInput) error {
+	hasPlannerPublication := false
+	for _, input := range batch.Records {
+		if strings.Contains(input.EventKey, "/planner-publication/") {
+			hasPlannerPublication = true
+			break
+		}
+	}
+	if hasPlannerPublication {
+		r.mu.Lock()
+		r.activityCalls++
+		r.activityIDs[activity.GetInfo(ctx).ActivityID] = struct{}{}
+		r.mu.Unlock()
+	}
+	for _, input := range batch.Records {
+		if err := r.record(input); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// record stores one item from the ordered activity input and fails once after
+// the first planner record has been saved.
+func (r *publicationRetryRecorder) record(input *api.RecordActivityInput) error {
 	if !strings.Contains(input.EventKey, "/planner-publication/") {
 		return nil
 	}
@@ -416,7 +445,12 @@ func (r *publicationRetryRecorder) Record(_ context.Context, input *api.RecordAc
 
 // snapshot returns isolated publication attempts and stored records after the
 // Temporal workflow has completed.
-func (r *publicationRetryRecorder) snapshot() ([]*api.RecordActivityInput, map[string]*api.RecordActivityInput) {
+func (r *publicationRetryRecorder) snapshot() (
+	int,
+	int,
+	[]*api.RecordActivityInput,
+	map[string]*api.RecordActivityInput,
+) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	attempts := make([]*api.RecordActivityInput, 0, len(r.attempts))
@@ -427,7 +461,7 @@ func (r *publicationRetryRecorder) snapshot() ([]*api.RecordActivityInput, map[s
 	for key, input := range r.stored {
 		stored[key] = cloneRecordActivityInput(input)
 	}
-	return attempts, stored
+	return r.activityCalls, len(r.activityIDs), attempts, stored
 }
 
 // cloneRecordActivityInput copies the complete record passed across the
@@ -481,7 +515,17 @@ func (p *awaitQuestionsPlanner) ResumeCalls() int {
 	return p.resumeCalls
 }
 
-func (r *hookRecorder) Record(_ context.Context, input *api.RecordActivityInput) error {
+func (r *hookRecorder) Record(_ context.Context, batch *api.RecordActivityBatchInput) error {
+	for _, input := range batch.Records {
+		if err := r.record(input); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// record captures one ordered item from the runtime record activity.
+func (r *hookRecorder) record(input *api.RecordActivityInput) error {
 	if input.Type == transcript.RunLogMessagesSeeded || input.Type == transcript.RunLogMessagesAppended {
 		return nil
 	}

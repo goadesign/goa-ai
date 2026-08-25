@@ -295,7 +295,6 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscript(t *testing.T) {
 					Parts: []model.Part{model.TextPart{Text: "done"}},
 				},
 			},
-			Streamed: true,
 		},
 		Transcript: []*model.Message{{
 			Role: model.ConversationRoleAssistant,
@@ -360,7 +359,6 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *te
 					}},
 				},
 			},
-			Streamed: true,
 		},
 	}
 	require.NoError(t, rt.appendSelectedModelResponse(ctx, input.AgentID, base, "turn-1", st.Result, st.Transcript))

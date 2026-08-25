@@ -45,6 +45,7 @@ type (
 		run string
 		s   string
 		k   string
+		at  time.Time
 		b   json.RawMessage
 	}
 )
@@ -53,6 +54,7 @@ func (e decodedEvent) Type() stream.EventType { return e.t }
 func (e decodedEvent) RunID() string          { return e.run }
 func (e decodedEvent) SessionID() string      { return e.s }
 func (e decodedEvent) EventKey() string       { return e.k }
+func (e decodedEvent) OccurredAt() time.Time  { return e.at }
 func (e decodedEvent) Payload() any           { return e.b }
 
 // NewSubscriber constructs a Pulse-backed subscriber. The Client field in opts
@@ -179,6 +181,7 @@ func decodeEnvelope(payload []byte) (stream.Event, error) {
 		run: env.RunID,
 		s:   env.SessionID,
 		k:   env.EventKey,
+		at:  env.Timestamp,
 		b:   env.Payload,
 	}, nil
 }

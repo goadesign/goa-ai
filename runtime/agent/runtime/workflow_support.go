@@ -31,9 +31,6 @@ import (
 )
 
 const (
-	plannerPublicationInitialBackoff = 100 * time.Millisecond
-	plannerPublicationMaxBackoff     = 5 * time.Second
-
 	// FinalizationReasonLabel records why Goa-AI is executing a terminal tool
 	// call during finalization. The runtime writes the exact planner termination
 	// reason after run and policy labels have been applied.
@@ -653,7 +650,7 @@ func (r *Runtime) runPlanActivity(
 	if err != nil {
 		return nil, err
 	}
-	if err := r.publishPlannerPublicationBatch(wfCtx, batch); err != nil {
+	if err := publishPlannerPublicationBatch(wfCtx, batch); err != nil {
 		return nil, err
 	}
 	if out.OutputContractFailure != nil {
@@ -830,36 +827,22 @@ func plannerOutputRejectionEvent(
 	)
 }
 
-// publishPlannerPublicationBatch retries the exact immutable batch from its
-// first record after any exhausted record-activity failure. Record activity
-// retries remain in force, and stable event keys make an already stored prefix
-// idempotent.
-func (r *Runtime) publishPlannerPublicationBatch(
+// publishPlannerPublicationBatch sends the exact immutable planner publication
+// through one activity. If an attempt writes only a prefix, the activity retries
+// the same ordered records and stable event keys make those appends idempotent.
+func publishPlannerPublicationBatch(
 	wfCtx engine.WorkflowContext,
 	records []*RecordActivityInput,
 ) error {
-	backoff := plannerPublicationInitialBackoff
-	for {
-		var publicationErr error
-		for index, record := range records {
-			if err := r.publishPreparedHook(wfCtx.Context(), record, engine.ActivityOptions{}); err != nil {
-				publicationErr = fmt.Errorf("publish planner record %d: %w", index, err)
-				break
-			}
-		}
-		if publicationErr == nil {
-			return nil
-		}
-		r.logger.Error(wfCtx.Context(), "planner publication batch failed", "error", publicationErr)
-		timer, err := wfCtx.NewTimer(wfCtx.Context(), backoff)
-		if err != nil {
-			return err
-		}
-		if _, err := timer.Get(wfCtx.Context()); err != nil {
-			return err
-		}
-		backoff = min(backoff*2, plannerPublicationMaxBackoff)
+	if len(records) == 0 {
+		return nil
 	}
+	return wfCtx.PublishRecords(engine.RecordActivityCall{
+		Name: recordActivityName,
+		Input: &api.RecordActivityBatchInput{
+			Records: records,
+		},
+	})
 }
 
 // formatPlannerPublicationEventKey identifies one immutable record within one

@@ -756,7 +756,6 @@ type PlanResult struct {
     SynthesizeAfterTools bool      // Synthesize after success; repair stays allowed
     FinalResponse *FinalResponse   // Terminal assistant message
     FinalToolResult *FinalToolResult // Terminal tool result for nested agent runs
-    Streamed      bool             // True if text already streamed via Events
     Await         *Await           // Pause for human input
     ExpectedChildren int           // Optional hint for nested child results
     Notes         []PlannerAnnotation // Intermediate reasoning
@@ -799,14 +798,13 @@ type PlannerContext interface {
 
 ### PlannerEvents
 
-Planner-authored semantic progress during planning. Model response presentation
-and usage are published later from the runtime's validated invocation journal:
+Planner-authored semantic progress and usage during planning. The designated
+planner model call sends validated text and thinking directly to the session
+stream; partial tool arguments stay inside model validation until the complete
+call is available.
 
 ```go
 type PlannerEvents interface {
-    AssistantChunk(ctx context.Context, text string)
-    ToolCallArgsDelta(ctx context.Context, toolCallID string, toolName tools.Ident, delta string)
-    PlannerThinkingBlock(ctx context.Context, block model.ThinkingPart)
     PlannerThought(ctx context.Context, note string, labels map[string]string)
     UsageDelta(ctx context.Context, usage model.TokenUsage)
 }

@@ -6,6 +6,7 @@ package pulse
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -108,9 +109,9 @@ func NewSink(opts Options) (*Sink, error) {
 	}, nil
 }
 
-// Send publishes the event to the derived Pulse stream. It derives the stream ID,
-// wraps the event in an envelope, marshals it to JSON, and publishes it via the
-// Pulse client. Thread-safe for concurrent calls.
+// Send publishes the event to the derived Pulse stream. Events with a stable
+// event key use Pulse's exact publication operation, so activity retries return
+// the first stream entry instead of appending duplicate UI events.
 func (s *Sink) Send(ctx context.Context, event stream.Event) error {
 	streamID, err := s.opts.streamID(event)
 	if err != nil {
@@ -120,12 +121,19 @@ func (s *Sink) Send(ctx context.Context, event stream.Event) error {
 	if err != nil {
 		return err
 	}
+	occurredAt := event.OccurredAt()
+	if occurredAt.IsZero() {
+		if event.EventKey() != "" {
+			return errors.New("pulse sink: keyed event is missing its source timestamp")
+		}
+		occurredAt = time.Now().UTC()
+	}
 	env := Envelope{
 		Type:      string(event.Type()),
 		EventKey:  event.EventKey(),
 		RunID:     event.RunID(),
 		SessionID: event.SessionID(),
-		Timestamp: time.Now().UTC(),
+		Timestamp: occurredAt,
 		Payload:   event.Payload(),
 	}
 	switch ev := event.(type) {
@@ -139,7 +147,17 @@ func (s *Sink) Send(ctx context.Context, event stream.Event) error {
 	if err != nil {
 		return err
 	}
-	entryID, err := handle.Add(ctx, env.Type, payload)
+	var entryID string
+	if env.EventKey == "" {
+		entryID, err = handle.Add(ctx, env.Type, payload)
+	} else {
+		entryID, err = handle.AddOnce(
+			ctx,
+			streamPublicationKey(env.RunID, env.EventKey),
+			env.Type,
+			payload,
+		)
+	}
 	if err != nil {
 		return err
 	}
@@ -151,6 +169,13 @@ func (s *Sink) Send(ctx context.Context, event stream.Event) error {
 		})
 	}
 	return nil
+}
+
+// streamPublicationKey scopes a run-log event key to its run before using it
+// in a session-owned Pulse stream, where events from multiple runs coexist.
+func streamPublicationKey(runID, eventKey string) string {
+	identity := fmt.Sprintf("%d:%s%d:%s", len(runID), runID, len(eventKey), eventKey)
+	return fmt.Sprintf("event:%x", sha256.Sum256([]byte(identity)))
 }
 
 // Close releases resources owned by the sink. This delegates to the underlying

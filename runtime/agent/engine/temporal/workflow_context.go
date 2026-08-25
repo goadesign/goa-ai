@@ -193,7 +193,7 @@ func (w *temporalWorkflowContext) RunID() string {
 	return w.runID
 }
 
-func (w *temporalWorkflowContext) PublishRecord(call engine.RecordActivityCall) error {
+func (w *temporalWorkflowContext) PublishRecords(call engine.RecordActivityCall) error {
 	if call.Name == "" {
 		return errors.New("record activity name is required")
 	}

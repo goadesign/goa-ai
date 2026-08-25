@@ -1,16 +1,15 @@
 package runtime
 
-// model_invocation_journal.go keeps each model response private until the
-// planner returns its result. It checks every response, keeps concurrent calls
-// separate, and saves only the response that exactly matches that result.
+// model_invocation_journal.go validates and correlates every model response
+// made during one planner activity. Text and thinking from the designated
+// planner call stream immediately as provisional UI updates; only the complete
+// response that exactly matches the planner result becomes durable transcript.
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"reflect"
-	"slices"
-	"strings"
 	"sync"
 
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
@@ -18,30 +17,15 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
-	// modelPresentationKind identifies one user-visible event captured from a
-	// provider response before the planner selects that response.
-	modelPresentationKind uint8
-
-	// modelPresentationEvent is the immutable provider output projected from one
-	// model chunk or unary response.
-	modelPresentationEvent struct {
-		kind       modelPresentationKind
-		text       string
-		thinking   model.ThinkingPart
-		toolCallID string
-		toolName   tools.Ident
-	}
-
 	// modelInvocationCandidate holds one complete model call until the planner
 	// returns the result that selected it.
 	modelInvocationCandidate struct {
 		response                 *model.Response
-		presentation             []modelPresentationEvent
-		streamed                 bool
 		usageSeen                bool
 		finished                 bool
 		requestModelClass        model.ModelClass
@@ -70,23 +54,23 @@ type (
 	// modelInvocationJournal keeps every model call made during one planner
 	// activity separate from user-visible event publication.
 	modelInvocationJournal struct {
-		mu          sync.Mutex
-		invocations map[modelInvocationID]*modelInvocationCandidate
-		order       []modelInvocationID
-		designated  modelInvocationID
-		selected    modelInvocationID
-		usage       model.TokenUsage
-		outputErr   error
-		sealed      bool
-		sealedErr   error
-		sealDone    chan struct{}
+		runtime               *Runtime
+		runID                 string
+		sessionID             string
+		presentationID        string
+		mu                    sync.Mutex
+		invocations           map[modelInvocationID]*modelInvocationCandidate
+		order                 []modelInvocationID
+		designated            modelInvocationID
+		selected              modelInvocationID
+		usage                 model.TokenUsage
+		outputErr             error
+		presentationStarted   bool
+		presentationFinalized bool
+		sealed                bool
+		sealedErr             error
+		sealDone              chan struct{}
 	}
-)
-
-const (
-	modelPresentationText modelPresentationKind = iota + 1
-	modelPresentationThinking
-	modelPresentationToolCallDelta
 )
 
 // beginModelInvocation creates a place to save one model response and the
@@ -266,10 +250,11 @@ func (j *modelInvocationJournal) recordRejectedModelUsageTotal(
 // recordRejectedModelUsageDelta retains valid counts from one rejected usage
 // chunk without treating them as an invocation total.
 func (j *modelInvocationJournal) recordRejectedModelUsageDelta(
+	ctx context.Context,
 	invocationID modelInvocationID,
 	delta model.TokenUsage,
 ) error {
-	return j.recordModelChunk(invocationID, model.UsageChunk{Usage: delta})
+	return j.recordModelChunk(ctx, invocationID, model.UsageChunk{Usage: delta})
 }
 
 // recordValidatedModelResponse saves a stream response already accepted by the
@@ -282,7 +267,7 @@ func (j *modelInvocationJournal) recordValidatedModelResponse(
 }
 
 // saveModelResponse owns and stores one response for later planner-result
-// matching and delayed event publication.
+// matching and durable transcript publication.
 func (j *modelInvocationJournal) saveModelResponse(
 	invocationID modelInvocationID,
 	response *model.Response,
@@ -304,11 +289,6 @@ func (j *modelInvocationJournal) saveModelResponse(
 		return err
 	}
 	candidate.response = captured
-	if !candidate.streamed {
-		for i := range response.Content {
-			candidate.presentation = append(candidate.presentation, presentationFromMessage(&response.Content[i])...)
-		}
-	}
 	if !candidate.usageSeen && hasTokenCounts(response.Usage) {
 		responseUsage := candidate.attributeUsage(response.Usage)
 		usage, err := addTokenUsage(j.usage, responseUsage)
@@ -327,23 +307,38 @@ func (j *modelInvocationJournal) saveModelResponse(
 	return nil
 }
 
-// recordModelChunk records one model-owned validated chunk for usage and
-// delayed presentation. The complete response is saved when the stream ends.
-func (j *modelInvocationJournal) recordModelChunk(invocationID modelInvocationID, chunk model.Chunk) error {
+// recordModelChunk accounts for one validated model chunk and immediately sends
+// user-visible text or thinking from the designated planner invocation.
+//
+// Text and thinking fragments cannot be aggregated here: each fragment is
+// useful by itself, and holding it until inference completes would remove the
+// real-time UI behavior. Tool argument fragments have the opposite contract.
+// A fragment is incomplete JSON and cannot execute or stand alone, so the
+// inference client aggregates it and only the complete validated tool call may
+// leave this boundary.
+func (j *modelInvocationJournal) recordModelChunk(
+	ctx context.Context,
+	invocationID modelInvocationID,
+	chunk model.Chunk,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	j.mu.Lock()
-	defer j.mu.Unlock()
 	if err := j.sealedError(); err != nil {
+		j.mu.Unlock()
 		return err
 	}
 	candidate := j.invocations[invocationID]
 	if candidate == nil {
+		j.mu.Unlock()
 		return errors.New("model chunk references an unknown invocation")
 	}
-	candidate.streamed = true
 	if usage, ok := chunk.(model.UsageChunk); ok {
 		attributed := candidate.attributeUsage(usage.Usage)
 		activityUsage, err := addTokenUsage(j.usage, attributed)
 		if err != nil {
+			j.mu.Unlock()
 			return outputcontract.NewWithOrigin(
 				fmt.Errorf("aggregate model usage: %w", err),
 				planner.OutputContractOriginPlanner,
@@ -351,6 +346,7 @@ func (j *modelInvocationJournal) recordModelChunk(invocationID modelInvocationID
 		}
 		accumulated, err := addTokenUsage(candidate.usage, attributed)
 		if err != nil {
+			j.mu.Unlock()
 			return outputcontract.NewWithOrigin(
 				fmt.Errorf("aggregate invocation usage: %w", err),
 				planner.OutputContractOriginPlanner,
@@ -361,16 +357,36 @@ func (j *modelInvocationJournal) recordModelChunk(invocationID modelInvocationID
 		candidate.usageSeen = true
 		j.usage = activityUsage
 		candidate.usage = accumulated
+		j.mu.Unlock()
 		return nil
 	}
-	candidate.presentation = append(candidate.presentation, presentationFromChunk(chunk)...)
+	if invocationID != j.designated {
+		j.mu.Unlock()
+		return nil
+	}
+	events := j.presentationEventsLocked(chunk)
+	if len(events) == 0 {
+		j.mu.Unlock()
+		return nil
+	}
+	j.mu.Unlock()
+
+	for _, event := range events {
+		if err := j.publishPresentation(ctx, event); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 // finishModelInvocation records a failed call or verifies that a successful
 // stream supplied its complete response. It returns only bookkeeping errors
 // that are additive to the terminal error supplied by the caller.
-func (j *modelInvocationJournal) finishModelInvocation(invocationID modelInvocationID, err error) error {
+func (j *modelInvocationJournal) finishModelInvocation(
+	ctx context.Context,
+	invocationID modelInvocationID,
+	err error,
+) error {
 	j.mu.Lock()
 	candidate := j.invocations[invocationID]
 	if candidate == nil {
@@ -401,9 +417,16 @@ func (j *modelInvocationJournal) finishModelInvocation(invocationID modelInvocat
 		additionalErr = candidate.err
 	}
 	sealedErr := j.sealedError()
+	discard := invocationID == j.designated &&
+		j.presentationStarted &&
+		candidate.err != nil &&
+		!j.presentationFinalized
 	close(candidate.done)
 	j.mu.Unlock()
 	cancel()
+	if discard {
+		additionalErr = errors.Join(additionalErr, j.discardPresentations(ctx))
+	}
 	if sealedErr != nil && !errors.Is(err, sealedErr) {
 		additionalErr = errors.Join(additionalErr, sealedErr)
 	}
@@ -601,28 +624,50 @@ func (j *modelInvocationJournal) rejectModelInvocation(invocationID modelInvocat
 	return err
 }
 
-// publishSelectedPresentation emits only the provider output selected by the
-// planner result. Usage remains activity-wide so failed probes and retries are
-// still accounted for.
-func (j *modelInvocationJournal) publishSelectedPresentation(ctx context.Context, events planner.PlannerEvents) {
+// startPresentation replaces provisional output left by an earlier planner
+// activity execution before this execution can perform model work. The stream
+// publication must succeed before the journal records that the lifecycle began.
+func (j *modelInvocationJournal) startPresentation(ctx context.Context) error {
+	payload := stream.ModelPresentationPayload{
+		PresentationID: j.presentationID,
+		State:          stream.ModelPresentationStarted,
+	}
+	if err := j.publishPresentation(ctx, stream.ModelPresentation{
+		Base: stream.NewBase(stream.EventModelPresentation, j.runID, j.sessionID, payload),
+		Data: payload,
+	}); err != nil {
+		return err
+	}
 	j.mu.Lock()
-	var presentation []modelPresentationEvent
-	if selected := j.invocations[j.selected]; selected != nil {
-		presentation = append(presentation, selected.presentation...)
-	}
+	j.presentationStarted = true
 	j.mu.Unlock()
+	return nil
+}
 
-	for _, event := range presentation {
-		switch event.kind {
-		case modelPresentationText:
-			events.AssistantChunk(ctx, event.text)
-		case modelPresentationThinking:
-			events.PlannerThinkingBlock(ctx, event.thinking)
-		case modelPresentationToolCallDelta:
-			events.ToolCallArgsDelta(ctx, event.toolCallID, event.toolName, event.text)
-		}
+// discardPresentations removes provisional output when the planner activity
+// cannot return a canonical response. Successful output is finalized later by
+// the workflow's durable assistant-turn event, never by this activity.
+func (j *modelInvocationJournal) discardPresentations(ctx context.Context) error {
+	j.mu.Lock()
+	discard := j.presentationStarted && !j.presentationFinalized
+	j.mu.Unlock()
+	if !discard {
+		return nil
 	}
-	j.publishUsage(ctx, events)
+	payload := stream.ModelPresentationPayload{
+		PresentationID: j.presentationID,
+		State:          stream.ModelPresentationDiscarded,
+	}
+	if err := j.publishPresentation(ctx, stream.ModelPresentation{
+		Base: stream.NewBase(stream.EventModelPresentation, j.runID, j.sessionID, payload),
+		Data: payload,
+	}); err != nil {
+		return err
+	}
+	j.mu.Lock()
+	j.presentationFinalized = true
+	j.mu.Unlock()
+	return nil
 }
 
 // publishUsage copies every provider usage report into the supplied activity
@@ -661,84 +706,67 @@ func hasTokenCounts(usage model.TokenUsage) bool {
 		usage.CacheWriteTokens != 0
 }
 
-// presentationFromMessage projects unary response parts in provider order.
-func presentationFromMessage(message *model.Message) []modelPresentationEvent {
-	if message == nil {
-		return nil
-	}
-	var presentation []modelPresentationEvent
-	for _, part := range message.Parts {
-		switch actual := part.(type) {
-		case model.TextPart:
-			if actual.Text != "" {
-				presentation = append(presentation, modelPresentationEvent{
-					kind: modelPresentationText,
-					text: actual.Text,
-				})
-			}
-		case model.CitationsPart:
-			if actual.Text != "" {
-				presentation = append(presentation, modelPresentationEvent{
-					kind: modelPresentationText,
-					text: actual.Text,
-				})
-			}
-		case model.ThinkingPart:
-			presentation = append(presentation, modelPresentationEvent{
-				kind:     modelPresentationThinking,
-				thinking: ownThinkingPart(actual),
-			})
-		}
-	}
-	return presentation
-}
-
-// presentationFromChunk projects streaming provider output in receive order.
-func presentationFromChunk(chunk model.Chunk) []modelPresentationEvent {
+// presentationEventsLocked converts one validated provider chunk into the
+// provisional client events that are independently useful. The caller holds
+// j.mu while it reads the activity execution's presentation identifier.
+func (j *modelInvocationJournal) presentationEventsLocked(chunk model.Chunk) []stream.Event {
 	switch actual := chunk.(type) {
 	case model.TextChunk:
-		var text strings.Builder
+		var events []stream.Event
 		for _, part := range actual.Message.Parts {
+			var text string
 			switch value := part.(type) {
 			case model.TextPart:
-				text.WriteString(value.Text)
+				text = value.Text
 			case model.CitationsPart:
-				text.WriteString(value.Text)
+				text = value.Text
 			}
+			if text == "" {
+				continue
+			}
+			payload := stream.AssistantReplyPayload{
+				PresentationID: j.presentationID,
+				Text:           text,
+			}
+			events = append(events, stream.AssistantReply{
+				Base: stream.NewBase(stream.EventAssistantReply, j.runID, j.sessionID, payload),
+				Data: payload,
+			})
 		}
-		if text.Len() > 0 {
-			return []modelPresentationEvent{{
-				kind: modelPresentationText,
-				text: text.String(),
-			}}
-		}
+		return events
 	case model.ThinkingChunk:
-		var presentation []modelPresentationEvent
+		var events []stream.Event
 		for _, part := range actual.Message.Parts {
-			if value, ok := part.(model.ThinkingPart); ok {
-				presentation = append(presentation, modelPresentationEvent{
-					kind:     modelPresentationThinking,
-					thinking: ownThinkingPart(value),
-				})
+			value, ok := part.(model.ThinkingPart)
+			if !ok || value.Text == "" {
+				continue
 			}
+			payload := stream.PlannerThoughtPayload{
+				PresentationID: j.presentationID,
+				Note:           value.Text,
+			}
+			events = append(events, stream.PlannerThought{
+				Base: stream.NewBase(stream.EventPlannerThought, j.runID, j.sessionID, payload),
+				Data: payload,
+			})
 		}
-		return presentation
+		return events
 	case model.ToolCallDeltaChunk:
-		return []modelPresentationEvent{{
-			kind:       modelPresentationToolCallDelta,
-			text:       actual.Delta.Delta,
-			toolCallID: actual.Delta.ID,
-			toolName:   actual.Delta.Name,
-		}}
+		// Partial tool arguments stay inside the model client. The provider
+		// adapter aggregates these fragments and validation produces one complete
+		// model.ToolCall that the planner and workflow can safely consume.
+		return nil
 	}
 	return nil
 }
 
-// ownThinkingPart copies opaque reasoning bytes retained after the source
-// response or chunk returns to planner code.
-func ownThinkingPart(part model.ThinkingPart) model.ThinkingPart {
-	part.Redacted = slices.Clone(part.Redacted)
-	return part
+// publishPresentation sends one provisional event directly to the session
+// stream. It deliberately bypasses PlannerEvents, the run log, and the hook bus.
+func (j *modelInvocationJournal) publishPresentation(ctx context.Context, event stream.Event) error {
+	if j.runtime == nil {
+		return nil
+	}
+	return j.runtime.publishModelPresentation(ctx, j.sessionID, event)
 }
 
 // planResultModelToolCalls returns every provider-native tool call that the

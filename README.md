@@ -44,7 +44,7 @@ You describe the agent system in the same design-first style as Goa services. `g
 | Repeatable agent checks | Generated evaluation hooks, exact scenario selection, bounded concurrency, and calibrated semantic judging |
 | Multi-agent systems | First-class agent-as-tool composition with child runs and linked streams |
 | Human approval | Await/clarification flows plus design-time and runtime tool confirmation |
-| Real-time UI | Typed stream events for tool progress, assistant text, usage, awaits, workflow status, and child links |
+| Real-time UI | Provisional assistant text and thinking sent as each validated fragment arrives, with explicit acceptance or removal and canonical transcript persistence only after planner selection |
 | External tools | MCP callers, generated MCP servers, external MCP schemas, and token-fenced registry routing with incarnation leases plus catalog-owned health epochs |
 | Production operations | Mongo-backed stores, Pulse streaming, OpenAI/Bedrock/Anthropic/gateway clients, telemetry hooks |
 
@@ -270,7 +270,6 @@ func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planne
 	}
 	return &planner.PlanResult{
 		FinalResponse: summary.FinalResponse(),
-		Streamed:      true,
 	}, nil
 }
 ```
