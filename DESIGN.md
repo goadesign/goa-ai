@@ -259,7 +259,8 @@ The runtime keeps execution policy and planner intent separate:
 | A cap or deadline requires finalization and the run supplied `LimitTerminalPlans` | Execute the matching terminal call without loading saved messages |
 | A cap or deadline requires finalization without either completion policy | `PlanResumeInput.Finalize` |
 | A successful `TerminalRun` tool completed without `CompletionTool` | End the run without another planner turn |
-| Any failed tool requires `finish` recovery without `CompletionTool` | `PlanResumeInput.Finalize` with reason `tool_failure` |
+| A failed tool requires `finish` recovery and no successful query has another page | `PlanResumeInput.Finalize` with reason `tool_failure` |
+| A failed tool requires `finish` recovery while a successful query has another page | Recovery turn containing the failure evidence and only the generated continuation actions |
 | Any failed tool has a `ToolFailure` whose recovery action permits tools | Runtime-enforced correction or replan turn |
 | A successful batch has `SynthesizeAfterTools` set without `CompletionTool` | `PlanResumeInput.SynthesisOnly` |
 | Otherwise | Normal continuation turn |
@@ -309,13 +310,16 @@ historical canonical tool names independently of the current catalog.
 advertised action, input request, or answer. A direct model call to an excluded
 tool is rejected as invalid planner output before any sibling call executes.
 Planner-owned tool-backed awaits remain strict because they encode suspension
-rather than a raw model request. `finish` forbids more domain
-work and enters finalization. The finalizer may return a final response or
-registered terminal bookkeeping calls, such as committing a Task report. When
-the same tool has both correction and replan failures in one batch, the
-correctable failure keeps that tool available. A recovery turn may end with an
-input suspension; its evidence remains available when a new workflow continues
-after the answer.
+rather than a raw model request. `finish` forbids new domain work. It enters
+finalization unless a successful sibling query already has another page. In
+that case the recovery turn excludes every authored domain tool and retains only
+the generated continuation actions for those unfinished queries; the planner
+may continue them or answer from the evidence already collected. The finalizer
+may return a final response or registered terminal bookkeeping calls, such as
+committing a Task report. When the same tool has both correction and replan
+failures in one batch, the correctable failure keeps that tool available. A
+recovery turn may end with an input suspension; its evidence remains available
+when a new workflow continues after the answer.
 A failed batch never enters `SynthesisOnly` and does not preserve its earlier
 `SynthesizeAfterTools` intent; a planner that retries work selects synthesis
 again on that new batch.
