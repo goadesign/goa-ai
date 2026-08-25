@@ -170,6 +170,11 @@ type (
 		// ToolCallID uniquely identifies the scheduled tool invocation so progress
 		// updates can correlate with the original request.
 		ToolCallID string
+		// ModelToolCallID is the provider correlation identifier from the model
+		// call that produced this invocation. It is empty for planner-authored
+		// calls. Consumers use it only to match the scheduled execution to the
+		// exact model transcript part.
+		ModelToolCallID string
 		// ToolName is the globally unique tool identifier (simple DSL name).
 		ToolName tools.Ident
 		// Payload contains the canonical JSON tool arguments for the scheduled tool.

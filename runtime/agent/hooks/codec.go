@@ -311,6 +311,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			return nil, fmt.Errorf("decode %s payload: %w", ToolCallScheduled, err)
 		}
 		scheduled := NewToolCallScheduledEvent(input.RunID, input.AgentID, input.SessionID, p.ToolName, p.ToolCallID, p.Payload, p.Queue, p.ParentToolCallID, p.ExpectedChildrenTotal)
+		scheduled.ModelToolCallID = p.ModelToolCallID
 		scheduled.ContinuationRootToolCallID = p.ContinuationRootToolCallID
 		evt = scheduled
 

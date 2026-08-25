@@ -968,10 +968,11 @@ func pendingRecoveryOutputs(records []stepToolRecord) []*planner.ToolOutput {
 			continue
 		}
 		outputs = append(outputs, &planner.ToolOutput{
-			Name:       record.call.Name,
-			ToolCallID: record.call.ToolCallID,
-			Payload:    append(rawjson.Message(nil), record.call.Payload...),
-			Failure:    record.result.Failure,
+			Name:            record.call.Name,
+			ToolCallID:      record.call.ToolCallID,
+			ModelToolCallID: record.call.ModelToolCallID,
+			Payload:         append(rawjson.Message(nil), record.call.Payload...),
+			Failure:         record.result.Failure,
 		})
 	}
 	return outputs
@@ -993,10 +994,11 @@ func dominantRecoveryOutputs(records []stepToolRecord) []*planner.ToolOutput {
 			continue
 		}
 		outputs = append(outputs, &planner.ToolOutput{
-			Name:       record.call.Name,
-			ToolCallID: record.call.ToolCallID,
-			Payload:    append(rawjson.Message(nil), record.call.Payload...),
-			Failure:    record.result.Failure,
+			Name:            record.call.Name,
+			ToolCallID:      record.call.ToolCallID,
+			ModelToolCallID: record.call.ModelToolCallID,
+			Payload:         append(rawjson.Message(nil), record.call.Payload...),
+			Failure:         record.result.Failure,
 		})
 	}
 	return outputs

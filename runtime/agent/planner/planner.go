@@ -283,6 +283,12 @@ type ToolOutput struct {
 	// ToolCallID is the correlation identifier for this tool invocation.
 	ToolCallID string
 
+	// ModelToolCallID is the provider correlation identifier from the model call
+	// that produced this tool invocation. It is empty when planner code authored
+	// the call. Planners use it only to match this output to the exact tool-use
+	// part in the model transcript; ToolCallID remains the execution identity.
+	ModelToolCallID string
+
 	// ContinuationRootToolCallID identifies the original bounded query advanced
 	// by this continuation result. It is empty for source queries and ordinary
 	// tool calls.
