@@ -11,11 +11,7 @@ import types "goa.design/goa-ai/gen/types"
 type (
 	// SetStepStatusPayload defines the JSON payload for the progress.set_step_status tool.
 	SetStepStatusPayload = struct {
-		// Step identifier.
-		StepID string
-		// New step status.
-		Status types.Status
-		// Optional note about progress.
-		Note *string
+		// Status event to record.
+		Event *types.StatusChangedEvent
 	}
 )

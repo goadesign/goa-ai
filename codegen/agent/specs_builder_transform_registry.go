@@ -28,11 +28,16 @@ type (
 // setTransformLayouts attaches the complete generated source and target forms
 // to the conversion recorded by declareTransform.
 func (p *toolSpecsPackagePlan) setTransformLayouts(plan *goacodegen.TransformPlan, source, target *goacodegen.GoTypePlan) {
+	transform := p.transformFor(plan)
+	transform.sourceLayout = source
+	transform.targetLayout = target
+}
+
+// transformFor returns the saved type layouts for one conversion plan.
+func (p *toolSpecsPackagePlan) transformFor(plan *goacodegen.TransformPlan) *plannedPackageTransform {
 	for _, transform := range p.transformPlans {
 		if transform.plan == plan {
-			transform.sourceLayout = source
-			transform.targetLayout = target
-			return
+			return transform
 		}
 	}
 	panic("tool conversion plan was not recorded")

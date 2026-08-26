@@ -111,13 +111,23 @@ func TestPrepare_DoesNotSynthesizeUnionBranchTypes(t *testing.T) {
 	agentsExpr.Root = &agentsExpr.RootExpr{}
 	goaexpr.Root.Types = nil
 
+	branch := func(name string, primitive goaexpr.Primitive) *goaexpr.NamedAttributeExpr {
+		value := &goaexpr.AttributeExpr{Type: primitive}
+		return &goaexpr.NamedAttributeExpr{
+			Name: name,
+			Attribute: &goaexpr.AttributeExpr{Type: &goaexpr.UserTypeExpr{
+				AttributeExpr: value,
+				TypeName:      "Value" + goaexpr.Title(name),
+			}},
+		}
+	}
 	u := &goaexpr.Union{
 		TypeName: "Value",
 		Values: []*goaexpr.NamedAttributeExpr{
-			{Name: "number_value", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.Float64}},
-			{Name: "boolean_value", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.Boolean}},
-			{Name: "enum_value", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.String}},
-			{Name: "text_value", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.String}},
+			branch("number_value", goaexpr.Float64),
+			branch("boolean_value", goaexpr.Boolean),
+			branch("enum_value", goaexpr.String),
+			branch("text_value", goaexpr.String),
 		},
 	}
 	propertyValueObj := &goaexpr.Object{
@@ -152,6 +162,7 @@ func TestPrepare_DoesNotSynthesizeUnionBranchTypes(t *testing.T) {
 
 	got := goaexpr.Root.UserType("PropertyValue")
 	require.NotNil(t, got)
+	require.Len(t, goaexpr.Root.Types, 1)
 	_, ok := got.Attribute().Meta["type:generate:force"]
 	require.True(t, ok, "PropertyValue must be marked type:generate:force")
 	require.Equal(t, []string{"false"}, got.Attribute().Meta["openapi:generate"])

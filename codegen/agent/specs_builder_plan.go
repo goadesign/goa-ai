@@ -164,6 +164,7 @@ type (
 		publicTypes    []*localizedType
 		transport      *goaexpr.AttributeExpr
 		transportTypes []*localizedType
+		usesTransport  bool
 	}
 
 	// plannedToolNames stores every name written for one tool.
@@ -1270,32 +1271,6 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		return err
 	}
 
-	transport := shapes.transport
-	transportTypes := shapes.transportTypes
-	if err := p.declareLocalTypes(p.transport, p.transportTypes, p.transportTypeUses, transportTypes); err != nil {
-		return err
-	}
-	transportType := &goaexpr.UserTypeExpr{
-		AttributeExpr: transport,
-		TypeName:      preferred + "Transport",
-	}
-	transportAttribute := &goaexpr.AttributeExpr{Type: transportType}
-	transportTypeDeclaration, err := p.transport.DeclareGeneratedType(
-		transportType.TypeName,
-		specNameOrder{packagePath: p.transport.ImportPath(), key: key + ":transport"},
-	)
-	if err != nil {
-		return err
-	}
-	if err := p.transport.BindGeneratedType(transportType, transportTypeDeclaration); err != nil {
-		return err
-	}
-	transportDeclaration := transportTypeDeclaration.Declaration()
-	p.transportTypeUses[transportType] = transportDeclaration
-	if err := declareAttributeUnions(p.transport, p.transportFixed, p.transportUnionErrors, transport); err != nil {
-		return err
-	}
-
 	publicLayout, err := p.planDeclaredTypeLayout(
 		publicAttribute,
 		p.public,
@@ -1304,27 +1279,58 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 	if err != nil {
 		return err
 	}
-	transportLayout, err := p.planDeclaredTypeLayout(
-		transportAttribute,
-		p.transport,
-		goacodegen.GoLayoutPolicy{
-			Pointer:             true,
-			UnionPointer:        true,
-			ArrayElementPointer: true,
-			SumType:             true,
-		},
-	)
-	if err != nil {
-		return err
-	}
 
-	decode, err := p.declareTransform(key+":decode", transportAttribute, publicAttribute, "decode")
-	if err != nil {
-		return err
-	}
-	encode, err := p.declareTransform(key+":encode", publicAttribute, transportAttribute, "encode")
-	if err != nil {
-		return err
+	var (
+		transportAttribute   *goaexpr.AttributeExpr
+		transportDeclaration *goacodegen.NameDeclaration
+		transportLayout      *goacodegen.GoTypePlan
+		decode, encode       *goacodegen.TransformPlan
+	)
+	if shapes.usesTransport {
+		if err := p.declareLocalTypes(p.transport, p.transportTypes, p.transportTypeUses, shapes.transportTypes); err != nil {
+			return err
+		}
+		transportType := &goaexpr.UserTypeExpr{
+			AttributeExpr: shapes.transport,
+			TypeName:      preferred + "Transport",
+		}
+		transportAttribute = &goaexpr.AttributeExpr{Type: transportType}
+		transportTypeDeclaration, declareErr := p.transport.DeclareGeneratedType(
+			transportType.TypeName,
+			specNameOrder{packagePath: p.transport.ImportPath(), key: key + ":transport"},
+		)
+		if declareErr != nil {
+			return declareErr
+		}
+		if err := p.transport.BindGeneratedType(transportType, transportTypeDeclaration); err != nil {
+			return err
+		}
+		transportDeclaration = transportTypeDeclaration.Declaration()
+		p.transportTypeUses[transportType] = transportDeclaration
+		if err := declareAttributeUnions(p.transport, p.transportFixed, p.transportUnionErrors, shapes.transport); err != nil {
+			return err
+		}
+		transportLayout, err = p.planDeclaredTypeLayout(
+			transportAttribute,
+			p.transport,
+			goacodegen.GoLayoutPolicy{
+				Pointer:             true,
+				UnionPointer:        true,
+				ArrayElementPointer: true,
+				SumType:             true,
+			},
+		)
+		if err != nil {
+			return err
+		}
+		decode, err = p.declareTransform(key+":decode", transportAttribute, publicAttribute, "decode")
+		if err != nil {
+			return err
+		}
+		encode, err = p.declareTransform(key+":encode", publicAttribute, transportAttribute, "encode")
+		if err != nil {
+			return err
+		}
 	}
 	names, err := p.declareTypeNames(
 		key,
@@ -1336,7 +1342,7 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 	if err != nil {
 		return err
 	}
-	jsonValidator, err := p.declareJSONValidator(key, preferred, cloneModelSchemaAttribute(transport), owner, usage)
+	jsonValidator, err := p.declareJSONValidator(key, preferred, cloneModelSchemaAttribute(shapes.transport), owner, usage)
 	if err != nil {
 		return err
 	}
@@ -1346,9 +1352,9 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		publicLayout:         publicLayout,
 		transportLayout:      transportLayout,
 		publicShape:          public,
-		transportShape:       transport,
+		transportShape:       shapes.transport,
 		publicTypes:          publicTypes,
-		transportTypes:       transportTypes,
+		transportTypes:       shapes.transportTypes,
 		public:               publicAttribute,
 		transport:            transportAttribute,
 		decode:               decode,
@@ -1364,8 +1370,10 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		invalidFieldType:     names.invalidFieldType,
 		jsonValidator:        jsonValidator,
 	}
-	p.setTransformLayouts(decode, transportLayout, publicLayout)
-	p.setTransformLayouts(encode, publicLayout, transportLayout)
+	if shapes.usesTransport {
+		p.setTransformLayouts(decode, transportLayout, publicLayout)
+		p.setTransformLayouts(encode, publicLayout, transportLayout)
+	}
 	return nil
 }
 
@@ -1386,6 +1394,9 @@ func (p *toolSpecsPackagePlan) declareTypeImports(owner *contractTypeOwner, attr
 	}
 	if err := p.fileImports.publicUnions.AddTypeExpressions(shapes.public); err != nil {
 		return err
+	}
+	if !shapes.usesTransport {
+		return nil
 	}
 	for _, localized := range shapes.transportTypes {
 		if err := p.fileImports.transportTypes.AddTypeExpressions(localized.generated.AttributeExpr); err != nil {
@@ -1422,6 +1433,7 @@ func localizedSpecShapes(owner *contractTypeOwner, attribute *goaexpr.AttributeE
 		publicTypes:    publicTypes,
 		transport:      transport,
 		transportTypes: transportTypes,
+		usesTransport:  owner.Kind == contractTypeOwnerTool || goaexpr.IsObject(public.Type) || goaexpr.IsUnion(public.Type),
 	}
 }
 
@@ -1544,15 +1556,17 @@ func (p *toolSpecsPackagePlan) declareTypeNames(key, preferred string, completio
 	if err != nil {
 		return nil, err
 	}
-	names.transportValidator, err = p.transport.DeclareDependentName(
-		goacodegen.NameFunction,
-		transport,
-		"Validate",
-		"",
-		specNameOrder{packagePath: p.transport.ImportPath(), key: key + ":validate"},
-	)
-	if err != nil {
-		return nil, err
+	if transport != nil {
+		names.transportValidator, err = p.transport.DeclareDependentName(
+			goacodegen.NameFunction,
+			transport,
+			"Validate",
+			"",
+			specNameOrder{packagePath: p.transport.ImportPath(), key: key + ":validate"},
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return names, nil
 }
@@ -1644,6 +1658,9 @@ func declareAttributeUnions(pkg *goacodegen.GeneratedPackage, fixed map[string]*
 		}
 		switch actual := current.Type.(type) {
 		case goaexpr.UserType:
+			if goacodegen.UserTypeLocation(actual) != nil {
+				return nil
+			}
 			origin := actual.Origin()
 			if _, ok := seenTypes[origin]; ok {
 				return nil

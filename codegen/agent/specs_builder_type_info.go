@@ -79,13 +79,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	b.collectUnionSumTypes(scope, tt)
 	ptr := planned.publicLayout.ReferenceIsPointer()
 
-	// The HTTP type carries JSON field names and pointer fields needed to detect
-	// missing required values.
-	transportTypeName := planned.transportDeclaration.Name()
-	transportScope := b.transportScope
 	transportAttr := planned.transportShape
-	b.materializeNestedTransportTypes(transportScope, planned.transportTypes)
-	b.collectTransportUnionSumTypes(transportScope, transportAttr)
 	schemaAttr := cloneModelSchemaAttribute(transportAttr)
 
 	// Only examples written by the design author are shown to the model.
@@ -142,49 +136,76 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	if owner.Kind == contractTypeOwnerCompletion {
 		doc = fmt.Sprintf("%s defines the JSON %s for the completion %s.", typeName, usage, owner.QualifiedName)
 	}
-	transportCtx := modelJSONTransportContext(transportScope, true, "")
-	transportDef := transportTypeName + " " + transportTypeDef(transportScope, transportAttr, transportCtx)
-	httpctx := modelJSONTransportContext(transportScope, !goaexpr.IsPrimitive(schemaAttr.Type), "")
-	transportValidation := validationCodeWithContext(schemaAttr, nil, httpctx, true, false, false, "body", owner, usage, "transport")
-	var transportValidationSrc []string
-	if strings.TrimSpace(transportValidation) != "" {
-		transportValidationSrc = strings.Split(transportValidation, "\n")
-	}
-
-	src := planned.transport
 	dst := planned.public
-	srcCtx := modelJSONTransportContext(transportScope, true, "toolhttp")
-	tgtCtx := codegen.NewAttributeContext(false, false, true, "", scope)
-	encSrcCtx := codegen.NewAttributeContext(false, false, true, "", scope)
-	encTgtCtx := modelJSONTransportContext(transportScope, true, "toolhttp")
-	if err := planned.decode.BindContexts(srcCtx, tgtCtx); err != nil {
-		return nil, err
-	}
-	decodeBody, decodeHelpers, err := planned.decode.Render("in", "out", false)
-	if err != nil {
-		return nil, err
-	}
-	if err := planned.encode.BindContexts(encSrcCtx, encTgtCtx); err != nil {
-		return nil, err
-	}
-	encodeBody, encodeHelpers, err := planned.encode.Render("in", "out", false)
-	if err != nil {
-		return nil, err
-	}
-	b.codecTransformHelpers = codegen.AppendHelpers(b.codecTransformHelpers, decodeHelpers)
-	b.codecTransformHelpers = codegen.AppendHelpers(b.codecTransformHelpers, encodeHelpers)
-	emitTransport := ptr || owner.Kind == contractTypeOwnerTool
-	transportTypeNameOut := ""
-	transportDefOut := ""
-	var transportValidationSrcOut []string
-	transportTypeRefOut := ""
-	transportPointerOut := false
-	if emitTransport {
-		transportTypeNameOut = transportTypeName
-		transportDefOut = transportDef
-		transportValidationSrcOut = transportValidationSrc
-		transportTypeRefOut = transportScope.GoTypeRef(src)
-		transportPointerOut = planned.transportLayout.ReferenceIsPointer()
+	var (
+		transportTypeName      string
+		transportDef           string
+		transportValidationSrc []string
+		transportTypeRef       string
+		transportPointer       bool
+		transportValidator     string
+		decodeBody             string
+		encodeBody             string
+	)
+	if planned.transportDeclaration != nil {
+		// The HTTP type carries JSON field names and pointer fields needed to
+		// distinguish missing values from zero values.
+		transportScope := b.transportScope
+		b.materializeNestedTransportTypes(transportScope, planned.transportTypes)
+		b.collectTransportUnionSumTypes(transportScope, transportAttr)
+		transportTypeName = planned.transportDeclaration.Name()
+		transportCtx := modelJSONTransportContext(transportScope, true, "")
+		transportDef = transportTypeName + " " + transportTypeDef(transportScope, transportAttr, transportCtx)
+		httpctx := modelJSONTransportContext(transportScope, !goaexpr.IsPrimitive(schemaAttr.Type), "")
+		transportValidation := validationCodeWithContext(schemaAttr, nil, httpctx, true, false, false, "body", owner, usage, "transport")
+		if strings.TrimSpace(transportValidation) != "" {
+			transportValidationSrc = strings.Split(transportValidation, "\n")
+		}
+
+		src := planned.transport
+		srcCtx := modelJSONTransportContext(transportScope, true, "toolhttp")
+		tgtCtx := codegen.NewAttributeContext(false, false, true, "", scope)
+		encSrcCtx := codegen.NewAttributeContext(false, false, true, "", scope)
+		encTgtCtx := modelJSONTransportContext(transportScope, true, "toolhttp")
+		outputPath := b.publicPackage.ImportPath()
+		importName := b.publicPackage.ImportName
+		srcCtx, err = srcCtx.WithGoTypeLayout(planned.transportLayout.Link(outputPath, importName))
+		if err != nil {
+			return nil, err
+		}
+		tgtCtx, err = tgtCtx.WithGoTypeLayout(planned.publicLayout.Link(outputPath, importName))
+		if err != nil {
+			return nil, err
+		}
+		encSrcCtx, err = encSrcCtx.WithGoTypeLayout(planned.publicLayout.Link(outputPath, importName))
+		if err != nil {
+			return nil, err
+		}
+		encTgtCtx, err = encTgtCtx.WithGoTypeLayout(planned.transportLayout.Link(outputPath, importName))
+		if err != nil {
+			return nil, err
+		}
+		if err := planned.decode.BindContexts(srcCtx, tgtCtx); err != nil {
+			return nil, err
+		}
+		var decodeHelpers []*codegen.TransformFunctionData
+		decodeBody, decodeHelpers, err = planned.decode.Render("in", "out", false)
+		if err != nil {
+			return nil, err
+		}
+		if err := planned.encode.BindContexts(encSrcCtx, encTgtCtx); err != nil {
+			return nil, err
+		}
+		var encodeHelpers []*codegen.TransformFunctionData
+		encodeBody, encodeHelpers, err = planned.encode.Render("in", "out", false)
+		if err != nil {
+			return nil, err
+		}
+		b.codecTransformHelpers = codegen.AppendHelpers(b.codecTransformHelpers, decodeHelpers)
+		b.codecTransformHelpers = codegen.AppendHelpers(b.codecTransformHelpers, encodeHelpers)
+		transportTypeRef = transportScope.GoTypeRef(src)
+		transportPointer = planned.transportLayout.ReferenceIsPointer()
+		transportValidator = planned.transportValidator.Name()
 	}
 	jsonValidatorFunc, jsonValueValidatorFunc := materializeJSONValidatorGraph(planned.jsonValidator)
 	info := &typeData{
@@ -200,7 +221,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		GenericCodec:                 planned.genericCodec.Name(),
 		MarshalFunc:                  planned.marshal.Name(),
 		UnmarshalFunc:                planned.unmarshal.Name(),
-		ValidateFunc:                 planned.transportValidator.Name(),
+		ValidateFunc:                 transportValidator,
 		FieldDescsVar:                planned.fieldDescriptions.Name(),
 		FieldJSONTypesVar:            planned.fieldJSONTypes.Name(),
 		JSONValidatorFunc:            jsonValidatorFunc,
@@ -220,11 +241,11 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		Pointer:                      ptr,
 		MarshalArg:                   "v",
 		UnmarshalArg:                 "v",
-		TransportTypeName:            transportTypeNameOut,
-		TransportDef:                 transportDefOut,
-		TransportValidationSrc:       transportValidationSrcOut,
-		TransportTypeRef:             transportTypeRefOut,
-		TransportPointer:             transportPointerOut,
+		TransportTypeName:            transportTypeName,
+		TransportDef:                 transportDef,
+		TransportValidationSrc:       transportValidationSrc,
+		TransportTypeRef:             transportTypeRef,
+		TransportPointer:             transportPointer,
 		DecodeTransform:              decodeBody,
 		EncodeTransform:              encodeBody,
 	}

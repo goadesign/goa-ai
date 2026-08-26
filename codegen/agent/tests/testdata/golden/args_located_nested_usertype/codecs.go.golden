@@ -44,15 +44,19 @@ var (
 	}
 )
 var setStepStatusPayloadFieldDescs = map[string]string{
-	"note":    "Optional note about progress.",
-	"status":  "New step status.",
-	"step_id": "Step identifier.",
+	"event":         "Status event to record.",
+	"event.note":    "Optional note about progress.",
+	"event.state":   "Selected step state.",
+	"event.status":  "New step status.",
+	"event.step_id": "Step identifier.",
 }
 var setStepStatusPayloadFieldJSONTypes = map[string]string{
-	"$payload": "object",
-	"note":     "string",
-	"status":   "string",
-	"step_id":  "string",
+	"$payload":      "object",
+	"event":         "object",
+	"event.note":    "string",
+	"event.state":   "object",
+	"event.status":  "string",
+	"event.step_id": "string",
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -143,12 +147,8 @@ func MarshalSetStepStatusPayload(v *SetStepStatusPayload) ([]byte, error) {
 	in := v
 	_ = in
 	var out *toolhttp.SetStepStatusPayloadTransport
-	out = &toolhttp.SetStepStatusPayloadTransport{
-		StepID: &in.StepID,
-		Note:   in.Note,
-	}
-	status := toolhttp.StatusTransport(in.Status)
-	out.Status = &status
+	out = &toolhttp.SetStepStatusPayloadTransport{}
+	out.Event = encodeStatusChangedEventToStatusChangedEventTransport(in.Event)
 	return json.Marshal(out)
 }
 
@@ -172,11 +172,8 @@ func UnmarshalSetStepStatusPayload(data []byte) (*SetStepStatusPayload, error) {
 	in := &tv
 	_ = in
 	var out *SetStepStatusPayload
-	out = &SetStepStatusPayload{
-		StepID: *in.StepID,
-		Status: types.Status(*in.Status),
-		Note:   in.Note,
-	}
+	out = &SetStepStatusPayload{}
+	out.Event = decodeStatusChangedEventTransportToStatusChangedEvent(in.Event)
 	return out, nil
 }
 
@@ -215,10 +212,53 @@ func validateSetStepStatusPayloadJSONValue(path string, value any, description s
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
+		case "event":
+			if err := validateSetStepStatusPayloadStatusChangedEventTransportJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Status event to record.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"event",
+			})
+		}
+	}
+	return nil
+}
+
+// validateSetStepStatusPayloadStatusChangedEventTransportJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateSetStepStatusPayloadStatusChangedEventTransportJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
 		case "note":
 			if err := validateStringJSONValue(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional note about progress.",
+			); err != nil {
+				return err
+			}
+		case "state":
+			if err := validateObjectJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Selected step state.",
 			); err != nil {
 				return err
 			}
@@ -239,6 +279,7 @@ func validateSetStepStatusPayloadJSONValue(path string, value any, description s
 		default:
 			return unknownJSONFieldError(path, key, []string{
 				"note",
+				"state",
 				"status",
 				"step_id",
 			})
@@ -259,6 +300,23 @@ func validateStringJSONValue(path string, value any, description string) error {
 	typed, ok := value.(string)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	_ = typed
+	return nil
+}
+
+// validateObjectJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateObjectJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
 	}
 	_ = typed
 	return nil
@@ -391,4 +449,105 @@ func unknownJSONFieldError(path, field string, allowed []string) error {
 		},
 		nil,
 	)
+}
+
+// Helper transform functions
+func decodeStatusChangedEventTransportToStatusChangedEvent(v *toolhttp.StatusChangedEventTransport) *types.StatusChangedEvent {
+	res := &types.StatusChangedEvent{
+		StepID: *v.StepID,
+		Status: types.Status(*v.Status),
+		Note:   v.Note,
+	}
+	switch string(v.State.Kind()) {
+	case "active":
+		actual, _ := v.State.AsActive()
+		var obj *types.ActiveStatus
+		if actual != nil {
+			obj = decodeActiveStatusTransportToActiveStatus(actual)
+		}
+		u := res.State
+		u.SetActive((*types.ActiveStatus)(obj))
+		res.State = u
+	case "inactive":
+		actual, _ := v.State.AsInactive()
+		var obj *types.InactiveStatus
+		if actual != nil {
+			obj = decodeInactiveStatusTransportToInactiveStatus(actual)
+		}
+		u := res.State
+		u.SetInactive((*types.InactiveStatus)(obj))
+		res.State = u
+	case "since":
+		actual, _ := v.State.AsSince()
+		obj := types.StepStateBranchSince(actual)
+
+		u := res.State
+		u.SetSince((types.StepStateBranchSince)(obj))
+		res.State = u
+	}
+
+	return res
+}
+func decodeActiveStatusTransportToActiveStatus(v *toolhttp.ActiveStatusTransport) *types.ActiveStatus {
+	res := &types.ActiveStatus{
+		Status: types.Status(*v.Status),
+	}
+
+	return res
+}
+func decodeInactiveStatusTransportToInactiveStatus(v *toolhttp.InactiveStatusTransport) *types.InactiveStatus {
+	res := &types.InactiveStatus{}
+
+	return res
+}
+func encodeStatusChangedEventToStatusChangedEventTransport(v *types.StatusChangedEvent) *toolhttp.StatusChangedEventTransport {
+	res := &toolhttp.StatusChangedEventTransport{
+		StepID: &v.StepID,
+		Note:   v.Note,
+	}
+	status := toolhttp.StatusTransport(v.Status)
+	res.Status = &status
+	var stateValue toolhttp.StepState
+	switch string(v.State.Kind()) {
+	case "active":
+		actual, _ := v.State.AsActive()
+		var obj *toolhttp.ActiveStatusTransport
+		if actual != nil {
+			obj = encodeActiveStatusToActiveStatusTransport(actual)
+		}
+		u := stateValue
+		u.SetActive((*toolhttp.ActiveStatusTransport)(obj))
+		stateValue = u
+	case "inactive":
+		actual, _ := v.State.AsInactive()
+		var obj *toolhttp.InactiveStatusTransport
+		if actual != nil {
+			obj = encodeInactiveStatusToInactiveStatusTransport(actual)
+		}
+		u := stateValue
+		u.SetInactive((*toolhttp.InactiveStatusTransport)(obj))
+		stateValue = u
+	case "since":
+		actual, _ := v.State.AsSince()
+		obj := toolhttp.StepStateSinceTransport(actual)
+
+		u := stateValue
+		u.SetSince((toolhttp.StepStateSinceTransport)(obj))
+		stateValue = u
+	}
+	res.State = &stateValue
+
+	return res
+}
+func encodeActiveStatusToActiveStatusTransport(v *types.ActiveStatus) *toolhttp.ActiveStatusTransport {
+	res := &toolhttp.ActiveStatusTransport{}
+	status := toolhttp.StatusTransport(v.Status)
+	res.Status = &status
+
+	return res
+}
+func encodeInactiveStatusToInactiveStatusTransport(v *types.InactiveStatus) *toolhttp.InactiveStatusTransport {
+	res := &toolhttp.InactiveStatusTransport{}
+
+	return res
 }

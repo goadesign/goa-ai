@@ -11,6 +11,20 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
+type (
+	// nestedTypeLocalizer copies unlocated nested types into one generated tool
+	// package. Public types stop at declarations owned by another package, while
+	// HTTP transport types copy the complete shape so null values remain visible
+	// to generated validation.
+	nestedTypeLocalizer struct {
+		transport     bool
+		sourceTypes   map[goaexpr.UserType]goaexpr.UserType
+		localBySource map[goaexpr.UserType]*localizedType
+		seen          map[goaexpr.UserType]struct{}
+		locals        []*localizedType
+	}
+)
+
 // buildTypeDefinition builds one Go type definition and the name used to refer
 // to it.
 //
@@ -238,63 +252,98 @@ func localizeNestedTypes(att *goaexpr.AttributeExpr, transport bool, sourceTypes
 		return att, nil
 	}
 	cloned := goaexpr.DupAtt(att)
-	localBySource := make(map[goaexpr.UserType]*localizedType)
-	var locals []*localizedType
-	_ = codegen.Walk(cloned, func(a *goaexpr.AttributeExpr) error {
-		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
-			return nil
-		}
-		if a == cloned {
-			return nil
-		}
-		ut, ok := a.Type.(goaexpr.UserType)
-		if !ok || ut == nil {
-			return nil
-		}
-		if !transport && codegen.UserTypeLocation(ut) != nil {
-			return nil
-		}
+	localizer := &nestedTypeLocalizer{
+		transport:     transport,
+		sourceTypes:   sourceTypes,
+		localBySource: make(map[goaexpr.UserType]*localizedType),
+		seen:          make(map[goaexpr.UserType]struct{}),
+	}
+	localizer.walk(cloned, true)
+	return cloned, localizer.locals
+}
 
-		var name string
-		switch u := ut.(type) {
-		case *goaexpr.UserTypeExpr:
-			name = codegen.Goify(u.TypeName, true)
-		case *goaexpr.ResultTypeExpr:
-			name = codegen.Goify(u.TypeName, true)
-		default:
-			return nil
+// walk copies one nested declaration and then visits only the fields that the
+// selected generated package owns. A located public type is one complete
+// external declaration, so none of its children may be rebound locally.
+func (l *nestedTypeLocalizer) walk(attribute *goaexpr.AttributeExpr, root bool) {
+	if attribute == nil || attribute.Type == nil || attribute.Type == goaexpr.Empty {
+		return
+	}
+	if !root {
+		if userType, ok := attribute.Type.(goaexpr.UserType); ok {
+			if !l.transport && codegen.UserTypeLocation(userType) != nil {
+				return
+			}
+			attribute.Type = l.localType(userType)
 		}
-		if name == "" {
-			name = codegen.Goify(ut.Name(), true)
-		}
-		if name == "" {
-			return nil
-		}
+	}
 
-		if transport {
-			name += "Transport"
+	switch actual := attribute.Type.(type) {
+	case goaexpr.UserType:
+		origin := actual.Origin()
+		if _, ok := l.seen[origin]; ok {
+			return
 		}
-		source := ut.Origin()
-		if original := sourceTypes[source]; original != nil {
-			source = original
+		l.seen[origin] = struct{}{}
+		l.walk(actual.Attribute(), false)
+	case *goaexpr.Object:
+		for _, field := range *actual {
+			l.walk(field.Attribute, false)
 		}
-		if cached := localBySource[source]; cached != nil {
-			a.Type = cached.generated
-			return nil
+	case *goaexpr.Array:
+		l.walk(actual.ElemType, false)
+	case *goaexpr.Map:
+		l.walk(actual.KeyType, false)
+		l.walk(actual.ElemType, false)
+	case *goaexpr.Union:
+		for _, branch := range actual.Values {
+			l.walk(branch.Attribute, false)
 		}
-		base := stripStructPkgMeta(goaexpr.DupAtt(ut.Attribute()))
-		if transport {
-			normalizeModelJSONTransportAttrRecursive(base)
-		}
-		generated := &goaexpr.UserTypeExpr{
-			AttributeExpr: base,
-			TypeName:      name,
-		}
-		local := &localizedType{source: source, generated: generated}
-		localBySource[source] = local
-		locals = append(locals, local)
-		a.Type = generated
-		return nil
-	})
-	return cloned, locals
+	}
+}
+
+// localType returns the one generated copy used for source throughout this
+// package. Transport copies remove source package metadata because their
+// pointer-aware definitions are written beside the generated HTTP codecs.
+func (l *nestedTypeLocalizer) localType(userType goaexpr.UserType) goaexpr.UserType {
+	source := userType.Origin()
+	if original := l.sourceTypes[source]; original != nil {
+		source = original
+	}
+	if cached := l.localBySource[source]; cached != nil {
+		return cached.generated
+	}
+
+	name := localizedTypeName(userType)
+	if l.transport {
+		name += "Transport"
+	}
+	base := stripStructPkgMeta(goaexpr.DupAtt(userType.Attribute()))
+	if l.transport {
+		normalizeModelJSONTransportAttrRecursive(base)
+	}
+	generated := &goaexpr.UserTypeExpr{
+		AttributeExpr: base,
+		TypeName:      name,
+	}
+	local := &localizedType{source: source, generated: generated}
+	l.localBySource[source] = local
+	l.locals = append(l.locals, local)
+	return generated
+}
+
+// localizedTypeName returns the authored type name used as the preferred name
+// in the generated tool package. Service-only Go name overrides do not apply
+// to this separate package.
+func localizedTypeName(userType goaexpr.UserType) string {
+	var name string
+	switch actual := userType.(type) {
+	case *goaexpr.UserTypeExpr:
+		name = actual.TypeName
+	case *goaexpr.ResultTypeExpr:
+		name = actual.TypeName
+	default:
+		panic(fmt.Sprintf("cannot localize Goa type %T", userType))
+	}
+	return codegen.Goify(name, true)
 }

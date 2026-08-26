@@ -3,6 +3,8 @@ package tests
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 )
 
@@ -40,11 +42,19 @@ func TestGolden_Args_UserType(t *testing.T) {
 func TestGolden_Args_LocatedNestedUserType(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.ArgsLocatedNestedUserType())
 	types := fileContent(t, files, "gen/alpha/toolsets/progress/types.go")
+	transportTypes := fileContent(t, files, "gen/alpha/toolsets/progress/http/types.go")
+	transportUnions := fileContent(t, files, "gen/alpha/toolsets/progress/http/unions.go")
 	codecs := fileContent(t, files, "gen/alpha/toolsets/progress/codecs.go")
 	specs := fileContent(t, files, "gen/alpha/toolsets/progress/specs.go")
 	assertGoldenGo(t, "args_located_nested_usertype", "types.go.golden", types)
+	assert.False(t, fileExists(files, "gen/alpha/toolsets/progress/unions.go"))
+	assertGoldenGo(t, "args_located_nested_usertype", "transport_types.go.golden", transportTypes)
+	assertGoldenGo(t, "args_located_nested_usertype", "transport_unions.go.golden", transportUnions)
 	assertGoldenGo(t, "args_located_nested_usertype", "codecs.go.golden", codecs)
 	assertGoldenGo(t, "args_located_nested_usertype", "specs.go.golden", specs)
+
+	complete := buildCompleteGeneratedFiles(t, testscenarios.ArgsLocatedNestedUserType())
+	runCompleteGeneratedPackageTest(t, complete, "./gen/alpha/toolsets/progress/...")
 }
 
 func TestGolden_Args_UnionSumTypes(t *testing.T) {

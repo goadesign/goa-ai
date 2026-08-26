@@ -47,10 +47,15 @@ func (p *toolSpecsPackagePlan) linkToolTransforms(ts *ToolsetData, services *ser
 		}
 		names := p.tools[tool.Name]
 		if names.methodPayloadTransformPlan != nil {
+			planned := p.transformFor(names.methodPayloadTransformPlan)
 			payload := names.payloadType.public
 			source := codegen.NewAttributeContext(false, false, true, "", scope)
+			source, err := source.WithGoTypeLayout(planned.sourceLayout.Link(p.public.ImportPath(), p.public.ImportName))
+			if err != nil {
+				return fmt.Errorf("link method payload conversion for tool %q: %w", tool.QualifiedName, err)
+			}
 			target := serviceAttributeContext(serviceAttributor)
-			body, helpers, err := renderToolTransform(names.methodPayloadTransformPlan, source, target)
+			body, helpers, err := renderToolTransform(planned.plan, source, target)
 			if err != nil {
 				return fmt.Errorf("build method payload conversion for tool %q: %w", tool.QualifiedName, err)
 			}
@@ -64,10 +69,15 @@ func (p *toolSpecsPackagePlan) linkToolTransforms(ts *ToolsetData, services *ser
 		}
 
 		if names.toolResultTransformPlan != nil {
+			planned := p.transformFor(names.toolResultTransformPlan)
 			result := names.resultType.public
 			source := serviceAttributeContext(serviceAttributor)
 			target := codegen.NewAttributeContext(false, false, true, "", scope)
-			body, helpers, err := renderToolTransform(names.toolResultTransformPlan, source, target)
+			target, err := target.WithGoTypeLayout(planned.targetLayout.Link(p.public.ImportPath(), p.public.ImportName))
+			if err != nil {
+				return fmt.Errorf("link tool result conversion for tool %q: %w", tool.QualifiedName, err)
+			}
+			body, helpers, err := renderToolTransform(planned.plan, source, target)
 			if err != nil {
 				return fmt.Errorf("build tool result conversion for tool %q: %w", tool.QualifiedName, err)
 			}
@@ -85,11 +95,16 @@ func (p *toolSpecsPackagePlan) linkToolTransforms(ts *ToolsetData, services *ser
 			if plan == nil {
 				continue
 			}
+			planned := p.transformFor(plan)
 			sourceAttribute := tool.MethodResultAttr.Find(serverData.MethodResultField)
 			targetAttribute := names.serverDataTypes[serverData.Kind].public
 			source := serviceAttributeContext(serviceAttributor)
 			target := codegen.NewAttributeContext(false, false, true, "", scope)
-			body, helpers, err := renderToolTransform(plan, source, target)
+			target, err := target.WithGoTypeLayout(planned.targetLayout.Link(p.public.ImportPath(), p.public.ImportName))
+			if err != nil {
+				return fmt.Errorf("link server data conversion for tool %q kind %q: %w", tool.QualifiedName, serverData.Kind, err)
+			}
+			body, helpers, err := renderToolTransform(planned.plan, source, target)
 			if err != nil {
 				return fmt.Errorf("build server data conversion for tool %q kind %q: %w", tool.QualifiedName, serverData.Kind, err)
 			}

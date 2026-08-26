@@ -1,27 +1,38 @@
-// Package codegen prepares tool shapes and adds tool-only user types to the Goa
-// design before Goa chooses generated names.
+// Package codegen prepares agent contract shapes and adds externally generated
+// user types to the Goa design before Goa chooses packages and names.
 package codegen
 
 import (
 	"fmt"
 
+	goacodegen "goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 
 	agentsExpr "goa.design/goa-ai/expr/agent"
-	gcodegen "goa.design/goa/v3/codegen"
 )
 
-// Prepare ensures that any external user types referenced by agent tool shapes
-// (including method-backed tools) are present in the Goa root and marked for
-// generation. This allows core Goa codegen to emit the corresponding Go types
-// in their intended packages when only referenced indirectly by agent specs.
+type (
+	// contractTypeCollector marks design types that Goa must generate before
+	// agent packages can reference them. When locatedOnly is true, unlocated
+	// types remain owned by the generated agent package.
+	contractTypeCollector struct {
+		root        *goaexpr.RootExpr
+		designTypes map[goaexpr.UserType]struct{}
+		rootTypes   map[goaexpr.UserType]struct{}
+		visited     map[goaexpr.UserType]struct{}
+		locatedOnly bool
+	}
+)
+
+// Prepare ensures that external user types referenced only by agent contracts
+// are present in the Goa root and marked for generation. This allows Goa to
+// claim their requested packages before agent packages plan references to them.
 //
-// The function is intentionally conservative: it walks tool Args/Return and, if
-// available, bound method payload/result attributes to collect all referenced
-// user types. For each user type, if it is not already part of goaexpr.Root.Types,
-// it is appended and marked with the "type:generate:force" meta so core codegen
-// generates it even when not directly used by a service method payload/result.
+// Tool inputs and results may be used outside Goa service methods, so every
+// design type they reach is generated. Direct completions already generate
+// unlocated types in their own package; preparation only claims types with an
+// explicit struct:pkg:path and leaves all other completion types local.
 //
 // This function must not synthesize additional user types (for example, union
 // branch aliases). Goa's generators already emit all required union helpers when
@@ -35,13 +46,21 @@ func Prepare(_ string, roots []eval.Root) error {
 	if goaRoot == nil {
 		return fmt.Errorf("agent design requires a Goa service design")
 	}
-	// Build quick lookups of existing user type IDs/names to avoid duplicates.
-	existingByID := make(map[string]struct{})
-	existingByName := make(map[string]struct{})
+	// This set never changes during collection. It distinguishes types already
+	// present in the evaluated Goa design from wrappers Goa creates for primitive
+	// OneOf branches.
+	designTypes := make(map[goaexpr.UserType]struct{}, len(goaRoot.Types)+len(goaRoot.ResultTypes)+1)
+	// The root-type set tracks the mutable slice that receives types forced solely by
+	// agent contracts. Result types are appended there only when they are forced.
+	rootTypes := make(map[goaexpr.UserType]struct{}, len(goaRoot.Types))
 	for _, ut := range goaRoot.Types {
-		existingByID[ut.ID()] = struct{}{}
-		existingByName[ut.Name()] = struct{}{}
+		designTypes[ut.Origin()] = struct{}{}
+		rootTypes[ut.Origin()] = struct{}{}
 	}
+	for _, rt := range goaRoot.ResultTypes {
+		designTypes[rt.Origin()] = struct{}{}
+	}
+	designTypes[goaexpr.ErrorResult.Origin()] = struct{}{}
 	for _, ts := range agentRoot.DefiningToolsets() {
 		for _, t := range ts.Tools {
 			// Prepare the tool expression (inheritance from method)
@@ -56,13 +75,12 @@ func Prepare(_ string, roots []eval.Root) error {
 
 			// Walk Args and Return shapes only. Goa will generate method
 			// payloads and results as part of service generation.
-			if err := collectAndForceTypes(goaRoot, t.Args, existingByID, existingByName); err != nil {
-				return err
-			}
-			if err := collectAndForceTypes(goaRoot, t.Return, existingByID, existingByName); err != nil {
-				return err
-			}
+			collectAndForceTypes(goaRoot, t.Args, designTypes, rootTypes, false)
+			collectAndForceTypes(goaRoot, t.Return, designTypes, rootTypes, false)
 		}
+	}
+	for _, completion := range agentRoot.Completions {
+		collectAndForceTypes(goaRoot, completion.Return, designTypes, rootTypes, true)
 	}
 	return nil
 }
@@ -119,62 +137,31 @@ func modelTransportShape(att *goaexpr.AttributeExpr, hidden []string) *goaexpr.A
 	return newAtt
 }
 
-// collectAndForceTypes walks the attribute recursively and ensures any
-// encountered user types are marked for Go generation and present in
-// goaexpr.Root.Types. The walk recurses into user type attributes as well
-// (including alias bases and extended bases) using a visited set.
-func collectAndForceTypes(root *goaexpr.RootExpr, att *goaexpr.AttributeExpr, existingByID, existingByName map[string]struct{}) error {
+// collectAndForceTypes marks design types reachable from one agent contract.
+// locatedOnly keeps completion-owned types in the completion package while
+// still finding explicitly located types nested inside them.
+func collectAndForceTypes(
+	root *goaexpr.RootExpr,
+	att *goaexpr.AttributeExpr,
+	designTypes, rootTypes map[goaexpr.UserType]struct{},
+	locatedOnly bool,
+) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return nil
+		return
 	}
-	visited := make(map[string]struct{})
-	var walkUT func(ut goaexpr.UserType) error
-	walkUT = func(ut goaexpr.UserType) error {
-		if ut == nil {
-			return nil
-		}
-		if _, seen := visited[ut.ID()]; seen {
-			return nil
-		}
-		visited[ut.ID()] = struct{}{}
-
-		markToolTypeForGeneration(ut)
-		if _, ok := existingByID[ut.ID()]; !ok {
-			root.Types = append(root.Types, ut)
-			existingByID[ut.ID()] = struct{}{}
-			existingByName[ut.Name()] = struct{}{}
-		}
-
-		// Recurse into the user type attribute to catch nested user types as well as
-		// dependencies captured via attribute bases/references and union branches.
-		if err := gcodegen.Walk(ut.Attribute(), func(a *goaexpr.AttributeExpr) error {
-			if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
-				return nil
-			}
-			return walkAttributeDependencyTypes(a, walkUT)
-		}); err != nil {
-			return err
-		}
-
-		return nil
+	collector := &contractTypeCollector{
+		root:        root,
+		designTypes: designTypes,
+		rootTypes:   rootTypes,
+		visited:     make(map[goaexpr.UserType]struct{}),
+		locatedOnly: locatedOnly,
 	}
-
-	if err := gcodegen.Walk(att, func(a *goaexpr.AttributeExpr) error {
-		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
-			return nil
-		}
-		return walkAttributeDependencyTypes(a, walkUT)
-	}); err != nil {
-		return err
-	}
-
-	return nil
+	collector.walk(att, false)
 }
 
-// markToolTypeForGeneration preserves Goa type generation for tool-only shapes
-// without forcing private agent schemas into service OpenAPI documents. Goa
-// still includes the type in OpenAPI when it is reached from an HTTP endpoint.
-func markToolTypeForGeneration(ut goaexpr.UserType) {
+// markTypeForGeneration asks Goa to emit a type without adding private agent
+// schemas to service OpenAPI documents. HTTP endpoints still include the type.
+func markTypeForGeneration(ut goaexpr.UserType) {
 	attr := ut.Attribute()
 	attr.AddMeta("type:generate:force")
 	if _, ok := attr.Meta["openapi:generate"]; !ok {
@@ -182,37 +169,59 @@ func markToolTypeForGeneration(ut goaexpr.UserType) {
 	}
 }
 
-func walkAttributeDependencyTypes(att *goaexpr.AttributeExpr, walkUT func(goaexpr.UserType) error) error {
+// walk follows one agent contract value. unionBranch is true only for the
+// immediate type Goa placed around a OneOf branch that was primitive in the
+// design.
+func (c *contractTypeCollector) walk(att *goaexpr.AttributeExpr, unionBranch bool) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return nil
+		return
 	}
-
-	// Primary type reference.
-	if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
-		if err := walkUT(ut); err != nil {
-			return err
-		}
-	}
-
-	// Bases and references may carry user types even when att.Type is a primitive.
-	for _, dt := range att.Bases {
-		ut, ok := dt.(goaexpr.UserType)
-		if !ok || ut == nil {
-			continue
-		}
-		if err := walkUT(ut); err != nil {
-			return err
-		}
-	}
-	for _, dt := range att.References {
-		ut, ok := dt.(goaexpr.UserType)
-		if !ok || ut == nil {
-			continue
-		}
-		if err := walkUT(ut); err != nil {
-			return err
+	for _, dataType := range append(append([]goaexpr.DataType{}, att.Bases...), att.References...) {
+		if userType, ok := dataType.(goaexpr.UserType); ok {
+			c.walkUserType(userType)
 		}
 	}
 
-	return nil
+	switch actual := att.Type.(type) {
+	case goaexpr.UserType:
+		if unionBranch {
+			if _, declared := c.designTypes[actual.Origin()]; !declared {
+				c.walk(actual.Attribute(), false)
+				return
+			}
+		}
+		c.walkUserType(actual)
+	case *goaexpr.Object:
+		for _, field := range *actual {
+			c.walk(field.Attribute, false)
+		}
+	case *goaexpr.Array:
+		c.walk(actual.ElemType, false)
+	case *goaexpr.Map:
+		c.walk(actual.KeyType, false)
+		c.walk(actual.ElemType, false)
+	case *goaexpr.Union:
+		for _, branch := range actual.Values {
+			c.walk(branch.Attribute, true)
+		}
+	}
+}
+
+// walkUserType follows one design type and forces it when the active contract
+// requires Goa to own its generated declaration. The original declaration
+// identifies the same type across Goa copies.
+func (c *contractTypeCollector) walkUserType(userType goaexpr.UserType) {
+	origin := userType.Origin()
+	if _, seen := c.visited[origin]; seen {
+		return
+	}
+	c.visited[origin] = struct{}{}
+	if !c.locatedOnly || goacodegen.UserTypeLocation(userType) != nil {
+		markTypeForGeneration(userType)
+		if _, exists := c.rootTypes[origin]; !exists {
+			c.root.Types = append(c.root.Types, userType)
+			c.rootTypes[origin] = struct{}{}
+		}
+	}
+	c.walk(userType.Attribute(), false)
 }

@@ -81,6 +81,9 @@ func collectUnionSumTypes(
 		if dt == nil {
 			return
 		}
+		if codegen.UserTypeLocation(dt) != nil {
+			return
+		}
 		origin := dt.Origin()
 		if _, ok := seen[origin]; ok {
 			return
