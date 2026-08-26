@@ -7,7 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	scribe "goa.design/goa-ai/alpha/agents/scribe"
+	scribe "goa.design/goa-ai/gen/alpha/agents/scribe"
 	plannerscribe "goa.design/goa-ai/internal/agents/scribe/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
@@ -30,7 +30,10 @@ func New(ctx context.Context) (*agentsruntime.Runtime, func(), error) {
 		// Configure MCP callers for external toolsets.
 		cfg.MCPCallers = map[string]mcpruntime.Caller{}
 		if mcpCalcCoreEndpoint != nil && *mcpCalcCoreEndpoint != "" {
-			caller, err := mcpruntime.NewHTTPCaller(ctx, mcpruntime.HTTPOptions{Endpoint: *mcpCalcCoreEndpoint})
+			caller, err := mcpruntime.NewHTTPCaller(ctx, mcpruntime.HTTPOptions{
+				Endpoint:   *mcpCalcCoreEndpoint,
+				ClientInfo: mcpruntime.ClientInfo{Name: "alpha", Version: "1.2.3"},
+			})
 			if err != nil {
 				return nil, nil, err
 			}

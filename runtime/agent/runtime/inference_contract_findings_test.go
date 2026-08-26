@@ -520,7 +520,7 @@ func TestNormalizePlanResultContractPreservesProviderIdentityInValidationProject
 }
 
 func TestInvalidPlannerActivityResultPublishesNoRecords(t *testing.T) {
-	toolSpec := newAnyJSONSpec("svc.tools.lookup", "svc.tools")
+	toolSpec := newAnyJSONSpec("svc.tools.lookup")
 	final := finalPlannerResult("done").FinalResponse
 	tests := []struct {
 		name   string

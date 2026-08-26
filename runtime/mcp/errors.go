@@ -1,20 +1,18 @@
-// Package mcp exposes typed protocol-boundary errors so agent adapters can
-// classify MCP failures without parsing transport messages.
+// Package mcp defines errors that callers can inspect without parsing text.
 package mcp
 
 import (
-	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type (
-	// MalformedResponseError reports an MCP response that violated the expected
-	// response envelope or tool-result contract.
+	// MalformedResponseError reports an MCP response with missing or invalid fields.
 	MalformedResponseError struct {
 		cause error
 	}
 
-	// InternalError reports an MCP client invariant or implementation failure.
+	// InternalError reports a bug in the MCP client.
 	InternalError struct {
 		cause error
 	}
@@ -22,7 +20,8 @@ type (
 	// ToolExecutionError reports an MCP tools/call response whose isError flag
 	// says the remote tool rejected or failed the call.
 	ToolExecutionError struct {
-		result json.RawMessage
+		// Response contains the text and structured data returned by the tool.
+		Response CallResponse
 	}
 )
 
@@ -44,7 +43,7 @@ func (e *MalformedResponseError) Unwrap() error {
 	return e.cause
 }
 
-// NewInternalError wraps an MCP client invariant or implementation failure.
+// NewInternalError wraps a bug in the MCP client.
 func NewInternalError(cause error) *InternalError {
 	if cause == nil {
 		panic("mcp: internal error requires a cause")
@@ -62,16 +61,18 @@ func (e *InternalError) Unwrap() error {
 	return e.cause
 }
 
-// NewToolExecutionError preserves the exact valid JSON result returned with an
-// MCP tool execution error.
-func NewToolExecutionError(result json.RawMessage) *ToolExecutionError {
-	if len(result) == 0 || !json.Valid(result) {
-		panic("mcp: tool execution error requires a valid JSON result")
-	}
-	return &ToolExecutionError{result: append(json.RawMessage(nil), result...)}
+// NewToolExecutionError preserves the validated result returned by a tool that
+// set MCP's isError flag.
+func NewToolExecutionError(response CallResponse) *ToolExecutionError {
+	response.Content = append([]string(nil), response.Content...)
+	response.StructuredContent = append([]byte(nil), response.StructuredContent...)
+	return &ToolExecutionError{Response: response}
 }
 
 // Error implements error.
 func (e *ToolExecutionError) Error() string {
-	return fmt.Sprintf("MCP tool execution error: %s", e.result)
+	if len(e.Response.Content) == 0 {
+		return "MCP tool execution error"
+	}
+	return "MCP tool execution error: " + strings.Join(e.Response.Content, "\n")
 }

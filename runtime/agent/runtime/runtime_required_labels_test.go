@@ -127,7 +127,7 @@ func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 			},
 		},
 	}
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(rt, spec)
 	_, err := rt.CreateSession(context.Background(), "session-1")
 	require.NoError(t, err)

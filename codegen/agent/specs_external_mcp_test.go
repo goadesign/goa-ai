@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	codegen "goa.design/goa-ai/codegen/agent"
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	. "goa.design/goa/v3/dsl"
 	"goa.design/goa/v3/eval"
@@ -27,21 +27,21 @@ func TestExternalMCPToolset_SelfContainedTypes(t *testing.T) {
 		API("svc", func() {})
 		// Provider service referenced by FromMCP
 		Service("assistant", func() {})
-		assistantSuite := Toolset(FromExternalMCP("assistant", "assistant-mcp"), func() {
-			Tool("search", "Search", func() {
-				Args(func() {
+		assistantSuite := aidsl.Toolset(aidsl.FromExternalMCP("assistant", "assistant-mcp"), func() {
+			aidsl.Tool("search", "Search", func() {
+				aidsl.Args(func() {
 					Attribute("query", String, "Query")
 					Required("query")
 				})
-				Return(func() {
+				aidsl.Return(func() {
 					Attribute("results", ArrayOf(String), "Results")
 					Required("results")
 				})
 			})
 		})
 		Service("svc", func() {
-			Agent("a", "", func() {
-				Use(assistantSuite)
+			aidsl.Agent("a", "", func() {
+				aidsl.Use(assistantSuite)
 			})
 		})
 	}
@@ -53,8 +53,8 @@ func TestExternalMCPToolset_SelfContainedTypes(t *testing.T) {
 	require.NotNil(t, data)
 	svc := data.Services[0]
 	ag := svc.Agents[0]
-	specs, err := codegen.BuildToolSpecsDataForTest(ag)
-	require.NoError(t, err)
+	require.Len(t, ag.MCPToolsets, 1)
+	specs := codegen.ToolSpecsDataForTest(ag)
 
 	defs := codegen.CollectTypeInfoForTest(specs)
 	// Look for assistant-mcp types; ensure no "= <pkg>." aliasing appears.
@@ -77,10 +77,10 @@ func TestGoaBackedMCPToolset_RequiresDesignMCPDefinition(t *testing.T) {
 	design := func() {
 		API("svc", func() {})
 		Service("assistant", func() {})
-		assistantSuite := Toolset(FromMCP("assistant", "assistant-mcp"))
+		assistantSuite := aidsl.Toolset(aidsl.FromMCP("assistant", "assistant-mcp"))
 		Service("svc", func() {
-			Agent("a", "", func() {
-				Use(assistantSuite)
+			aidsl.Agent("a", "", func() {
+				aidsl.Use(assistantSuite)
 			})
 		})
 	}

@@ -23,6 +23,7 @@ import (
 type blockingHandler struct {
 	started  chan struct{}
 	unblock  chan struct{}
+	canceled chan struct{}
 	deadline chan time.Time
 	callSeen atomic.Bool
 }
@@ -62,7 +63,16 @@ func (h *blockingHandler) HandleToolCall(ctx context.Context, msg toolregistry.T
 		deadline, _ := ctx.Deadline()
 		h.deadline <- deadline
 	}
-	<-h.unblock
+	if h.canceled == nil {
+		<-h.unblock
+	} else {
+		select {
+		case <-ctx.Done():
+			close(h.canceled)
+			<-h.unblock
+		case <-h.unblock:
+		}
+	}
 	return toolregistry.NewToolResultMessage(msg.RegistrationToken, msg.ToolUseID, json.RawMessage(`{"ok":true}`)), nil
 }
 
@@ -1313,7 +1323,11 @@ func TestServeReportsHandlerSettlementTimeoutAndWithholdsRelease(t *testing.T) {
 		}
 		return resultStream, nil
 	})
-	handler := &blockingHandler{started: make(chan struct{}), unblock: make(chan struct{})}
+	handler := &blockingHandler{
+		started:  make(chan struct{}),
+		unblock:  make(chan struct{}),
+		canceled: make(chan struct{}),
+	}
 	released := atomic.Bool{}
 	registration := successfulRegistration()
 	registration.Release = func(context.Context, string, string, string, string) error {
@@ -1334,7 +1348,9 @@ func TestServeReportsHandlerSettlementTimeoutAndWithholdsRelease(t *testing.T) {
 	select {
 	case err := <-errc:
 		t.Fatalf("Serve returned before the claimed call's worker joined: %v", err)
-	case <-time.After(40 * time.Millisecond):
+	case <-handler.canceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not cancel the tool worker after its settlement deadline")
 	}
 	close(handler.unblock)
 	err := <-errc

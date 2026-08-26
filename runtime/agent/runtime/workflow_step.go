@@ -713,13 +713,8 @@ func (l *workflowLoop) prepareRecoveryRecords(batch *stepBatch) {
 		}
 		record.scheduleQueue = l.toolOpts.Queue
 		if record.scheduleQueue == "" {
-			if spec, ok := l.r.toolSpec(record.call.Name); ok {
-				l.r.mu.RLock()
-				toolset, exists := l.r.toolsets[spec.Toolset]
-				l.r.mu.RUnlock()
-				if exists {
-					record.scheduleQueue = toolset.TaskQueue
-				}
+			if _, toolset, ok := l.r.toolsetForTool(record.call.Name); ok {
+				record.scheduleQueue = toolset.TaskQueue
 			}
 		}
 		record.expectedChildren = batch.program.result.ExpectedChildren

@@ -37,12 +37,27 @@ func ToJSONSchema(attr *expr.AttributeExpr) (string, error) {
 	return string(b), nil
 }
 
+// IsStringType reports whether dataType is a string or a named string.
+func IsStringType(dataType expr.DataType) bool {
+	switch actual := dataType.(type) {
+	case expr.Primitive:
+		return actual == expr.String
+	case *expr.UserTypeExpr:
+		return IsStringType(actual.Type)
+	case *expr.ResultTypeExpr:
+		return IsStringType(actual.Type)
+	default:
+		return false
+	}
+}
+
 // inlineSchema represents a JSON Schema without $ref references.
 // Field names use camelCase per JSON Schema specification.
 //
 //nolint:tagliatelle // JSON Schema specification requires camelCase field names
 type inlineSchema struct {
 	Type                 string                   `json:"type,omitempty"`
+	AnyOf                []*inlineSchema          `json:"anyOf,omitempty"`
 	Description          string                   `json:"description,omitempty"`
 	Required             []string                 `json:"required,omitempty"`
 	Properties           map[string]*inlineSchema `json:"properties,omitempty"`
@@ -90,6 +105,31 @@ func buildInlineSchema(attr *expr.AttributeExpr, visited map[any]struct{}) (*inl
 			schema.AdditionalProperties = properties
 		} else {
 			schema.AdditionalProperties = true
+		}
+	case *expr.Union:
+		// Each branch describes both the exact tag and the value that goes
+		// with it. This prevents a tag from being paired with another branch's
+		// value schema.
+		schema.Type = jsonTypeObject
+		typeKey := t.GetTypeKey()
+		valueKey := t.GetValueKey()
+		for _, value := range t.Values {
+			valueSchema, err := buildInlineSchema(value.Attribute, visited)
+			if err != nil {
+				return nil, err
+			}
+			schema.AnyOf = append(schema.AnyOf, &inlineSchema{
+				Type:                 jsonTypeObject,
+				AdditionalProperties: false,
+				Properties: map[string]*inlineSchema{
+					typeKey: {
+						Type: jsonTypeString,
+						Enum: []any{value.Name},
+					},
+					valueKey: valueSchema,
+				},
+				Required: []string{typeKey, valueKey},
+			})
 		}
 	case *expr.Object:
 		schema.Type = jsonTypeObject
@@ -204,7 +244,7 @@ func primitiveToJSONType(p expr.Primitive) string {
 	case expr.Bytes:
 		return jsonTypeString
 	case expr.Any:
-		return jsonTypeObject
+		return ""
 	default:
 		return jsonTypeString
 	}

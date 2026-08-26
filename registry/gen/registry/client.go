@@ -53,10 +53,10 @@ func NewClient(register, releaseProvider, drainProvider, unregister, pong, listT
 
 // Register calls the "Register" endpoint of the "registry" service.
 // Register may return the following errors:
-//   - "admission_blocked" (type *goa.ServiceError)
-//   - "admission_retired" (type *goa.ServiceError)
-//   - "validation_error" (type *goa.ServiceError)
-//   - "service_unavailable" (type *goa.ServiceError)
+//   - "admission_blocked" (type *goa.ServiceError): Another admission still has active provider leases
+//   - "admission_retired" (type *goa.ServiceError): The requested admission was intentionally retired
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
 func (c *Client) Register(ctx context.Context, p *RegisterPayload) (res *RegisterResult, err error) {
 	var ires any
@@ -70,7 +70,7 @@ func (c *Client) Register(ctx context.Context, p *RegisterPayload) (res *Registe
 // ReleaseProvider calls the "ReleaseProvider" endpoint of the "registry"
 // service.
 // ReleaseProvider may return the following errors:
-//   - "service_unavailable" (type *goa.ServiceError)
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
 func (c *Client) ReleaseProvider(ctx context.Context, p *ReleaseProviderPayload) (err error) {
 	_, err = c.ReleaseProviderEndpoint(ctx, p)
@@ -79,7 +79,7 @@ func (c *Client) ReleaseProvider(ctx context.Context, p *ReleaseProviderPayload)
 
 // DrainProvider calls the "DrainProvider" endpoint of the "registry" service.
 // DrainProvider may return the following errors:
-//   - "service_unavailable" (type *goa.ServiceError)
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
 func (c *Client) DrainProvider(ctx context.Context, p *DrainProviderPayload) (err error) {
 	_, err = c.DrainProviderEndpoint(ctx, p)
@@ -88,8 +88,8 @@ func (c *Client) DrainProvider(ctx context.Context, p *DrainProviderPayload) (er
 
 // Unregister calls the "Unregister" endpoint of the "registry" service.
 // Unregister may return the following errors:
-//   - "admission_conflict" (type *goa.ServiceError)
-//   - "service_unavailable" (type *goa.ServiceError)
+//   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
 func (c *Client) Unregister(ctx context.Context, p *UnregisterPayload) (err error) {
 	_, err = c.UnregisterEndpoint(ctx, p)
@@ -114,7 +114,7 @@ func (c *Client) ListToolsets(ctx context.Context, p *ListToolsetsPayload) (res 
 
 // GetToolset calls the "GetToolset" endpoint of the "registry" service.
 // GetToolset may return the following errors:
-//   - "not_found" (type *goa.ServiceError)
+//   - "not_found" (type *goa.ServiceError): Toolset or tool not found
 //   - error: internal error
 func (c *Client) GetToolset(ctx context.Context, p *GetToolsetPayload) (res *Toolset, err error) {
 	var ires any
@@ -137,10 +137,10 @@ func (c *Client) Search(ctx context.Context, p *SearchPayload) (res *SearchResul
 
 // CallTool calls the "CallTool" endpoint of the "registry" service.
 // CallTool may return the following errors:
-//   - "not_found" (type *goa.ServiceError)
-//   - "validation_error" (type *goa.ServiceError)
-//   - "service_unavailable" (type *goa.ServiceError)
-//   - "call_not_admitted" (type *goa.ServiceError)
+//   - "not_found" (type *goa.ServiceError): Toolset or tool not found
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - "call_not_admitted" (type *goa.ServiceError): The registry chose a rejected decision for this tool-use identity before provider publication, so no exact retry can execute while the run-scoped decision is retained
 //   - error: internal error
 func (c *Client) CallTool(ctx context.Context, p *CallToolPayload) (res *CallToolResult, err error) {
 	var ires any
@@ -153,10 +153,10 @@ func (c *Client) CallTool(ctx context.Context, p *CallToolPayload) (res *CallToo
 
 // RetryTool calls the "RetryTool" endpoint of the "registry" service.
 // RetryTool may return the following errors:
-//   - "not_found" (type *goa.ServiceError)
-//   - "validation_error" (type *goa.ServiceError)
-//   - "service_unavailable" (type *goa.ServiceError)
-//   - "admission_conflict" (type *goa.ServiceError)
+//   - "not_found" (type *goa.ServiceError): Toolset or tool not found
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record
 //   - error: internal error
 func (c *Client) RetryTool(ctx context.Context, p *RetryToolPayload) (res *CallToolResult, err error) {
 	var ires any
@@ -170,8 +170,8 @@ func (c *Client) RetryTool(ctx context.Context, p *RetryToolPayload) (res *CallT
 // CompleteToolCall calls the "CompleteToolCall" endpoint of the "registry"
 // service.
 // CompleteToolCall may return the following errors:
-//   - "validation_error" (type *goa.ServiceError)
-//   - "service_unavailable" (type *goa.ServiceError)
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
 func (c *Client) CompleteToolCall(ctx context.Context, p *CompleteToolCallPayload) (err error) {
 	_, err = c.CompleteToolCallEndpoint(ctx, p)
@@ -181,8 +181,8 @@ func (c *Client) CompleteToolCall(ctx context.Context, p *CompleteToolCallPayloa
 // PublishToolOutputDelta calls the "PublishToolOutputDelta" endpoint of the
 // "registry" service.
 // PublishToolOutputDelta may return the following errors:
-//   - "validation_error" (type *goa.ServiceError)
-//   - "service_unavailable" (type *goa.ServiceError)
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
 func (c *Client) PublishToolOutputDelta(ctx context.Context, p *PublishToolOutputDeltaPayload) (err error) {
 	_, err = c.PublishToolOutputDeltaEndpoint(ctx, p)
@@ -192,8 +192,8 @@ func (c *Client) PublishToolOutputDelta(ctx context.Context, p *PublishToolOutpu
 // ReportToolCallOverload calls the "ReportToolCallOverload" endpoint of the
 // "registry" service.
 // ReportToolCallOverload may return the following errors:
-//   - "validation_error" (type *goa.ServiceError)
-//   - "service_unavailable" (type *goa.ServiceError)
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
 func (c *Client) ReportToolCallOverload(ctx context.Context, p *ProviderToolCallClaimPayload) (err error) {
 	_, err = c.ReportToolCallOverloadEndpoint(ctx, p)
@@ -202,8 +202,8 @@ func (c *Client) ReportToolCallOverload(ctx context.Context, p *ProviderToolCall
 
 // ClaimToolCall calls the "ClaimToolCall" endpoint of the "registry" service.
 // ClaimToolCall may return the following errors:
-//   - "validation_error" (type *goa.ServiceError)
-//   - "service_unavailable" (type *goa.ServiceError)
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
 func (c *Client) ClaimToolCall(ctx context.Context, p *ProviderToolCallClaimPayload) (res *ClaimToolCallResult, err error) {
 	var ires any

@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -18,17 +18,17 @@ func MultiToolset() func() {
 			Attribute("sum", Int32, "Sum")
 		})
 		Service("alpha", func() {
-			Agent("scribe", "Doc helper", func() {
-				Use("ops", func() {
-					Tool("echo", "Echo", func() {
-						Args(String)
-						Return(String)
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use("ops", func() {
+					aidsl.Tool("echo", "Echo", func() {
+						aidsl.Args(String)
+						aidsl.Return(String)
 					})
 				})
-				Use("math", func() {
-					Tool("add", "Add", func() {
-						Args(AddPayload)
-						Return(AddResult)
+				aidsl.Use("math", func() {
+					aidsl.Tool("add", "Add", func() {
+						aidsl.Args(AddPayload)
+						aidsl.Return(AddResult)
 					})
 				})
 			})

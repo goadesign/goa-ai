@@ -112,9 +112,9 @@ func TestAdvanceStepBudgetDeadline(t *testing.T) {
 }
 
 func TestAdvanceStepUsesAgentToolResultContractWhenNoChildrenRan(t *testing.T) {
-	agentTool := newAnyJSONSpec("specialist.inspect", "specialist")
+	agentTool := newAnyJSONSpec("specialist.inspect")
 	agentTool.IsAgentTool = true
-	nativeTool := newAnyJSONSpec("catalog.lookup", "catalog")
+	nativeTool := newAnyJSONSpec("catalog.lookup")
 
 	tests := []struct {
 		name            string

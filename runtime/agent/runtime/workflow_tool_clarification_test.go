@@ -25,7 +25,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 	events := &recordingHooks{}
 	rt.Bus = events
-	tool := newAnyJSONSpec(tools.Ident("assistant.ask_clarification"), "assistant")
+	tool := newAnyJSONSpec(tools.Ident("assistant.ask_clarification"))
 	seedTestToolSpecs(rt, tool)
 
 	wfCtx := &testWorkflowContext{ctx: t.Context()}
@@ -145,7 +145,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 	events := &recordingHooks{}
 	rt.Bus = events
-	tool := newAnyJSONSpec(tools.Ident("assistant.ask_question"), "assistant")
+	tool := newAnyJSONSpec(tools.Ident("assistant.ask_question"))
 	seedTestToolSpecs(rt, tool)
 
 	base := &planner.PlanInput{RunContext: run.Context{
@@ -244,8 +244,8 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 	events := &recordingHooks{}
 	rt.Bus = events
-	firstTool := newAnyJSONSpec(tools.Ident("external.read_first"), "external")
-	secondTool := newAnyJSONSpec(tools.Ident("external.read_second"), "external")
+	firstTool := newAnyJSONSpec(tools.Ident("external.read_first"))
+	secondTool := newAnyJSONSpec(tools.Ident("external.read_second"))
 	seedTestToolSpecs(rt, firstTool, secondTool)
 
 	base := &planner.PlanInput{RunContext: run.Context{

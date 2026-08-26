@@ -33,7 +33,7 @@ import (
 //     byte for byte.
 func TestToolCallThoughtSignatureRoundTripsProviderChunkToTranscript(t *testing.T) {
 	rt := New()
-	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.read", "svc.tools"))
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.read"))
 	agentID := agent.Ident("agent-1")
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 

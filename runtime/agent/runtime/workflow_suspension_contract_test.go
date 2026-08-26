@@ -22,7 +22,7 @@ import (
 
 func TestValidateContinuationRejectsSavedServerDataOutsideCurrentContract(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	canonicalizerCalled := false
 	spec.CanonicalizeServerData = func(rawjson.Message) (rawjson.Message, error) {
 		canonicalizerCalled = true
@@ -48,7 +48,7 @@ func TestValidateContinuationRejectsSavedServerDataOutsideCurrentContract(t *tes
 
 func TestValidateContinuationRejectsRemovedTool(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	delete(runtime.toolSpecs, spec.Name)
@@ -58,7 +58,7 @@ func TestValidateContinuationRejectsRemovedTool(t *testing.T) {
 
 func TestValidateContinuationChecksSavedLimitTerminalPlans(t *testing.T) {
 	runtime := New()
-	lookup := newAnyJSONSpec("svc.lookup", "svc")
+	lookup := newAnyJSONSpec("svc.lookup")
 	terminal := strictLimitTerminalSpec()
 	seedTestToolSpecs(runtime, lookup, terminal)
 	runtime.agents["svc.agent"] = AgentRegistration{
@@ -133,7 +133,7 @@ func TestValidateContinuationChecksSavedCompletionToolPolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runtime := New()
-			spec := newAnyJSONSpec("svc.persist", "svc")
+			spec := newAnyJSONSpec("svc.persist")
 			tt.mutateSpec(&spec)
 			seedTestToolSpecs(runtime, spec)
 			var agentSpecs []tools.ToolSpec
@@ -159,7 +159,7 @@ func TestValidateContinuationChecksSavedCompletionToolPolicy(t *testing.T) {
 
 func TestValidateContinuationRejectsNoncurrentSuspensionVersion(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
@@ -173,7 +173,7 @@ func TestValidateContinuationRejectsNoncurrentSuspensionVersion(t *testing.T) {
 
 func TestValidateContinuationRejectsMissingRecoveryTurnMaximum(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
@@ -190,8 +190,8 @@ func TestValidateContinuationRejectsMissingRecoveryTurnMaximum(t *testing.T) {
 
 func TestValidateContinuationChecksSavedCompletionPlan(t *testing.T) {
 	runtime := New()
-	completion := newAnyJSONSpec("svc.persist", "svc")
-	lookup := newAnyJSONSpec("svc.lookup", "svc")
+	completion := newAnyJSONSpec("svc.persist")
+	lookup := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, completion, lookup)
 	runtime.agents["svc.agent"] = AgentRegistration{
 		ID:    "svc.agent",
@@ -218,7 +218,7 @@ func TestValidateContinuationChecksSavedCompletionPlan(t *testing.T) {
 
 func TestValidateContinuationRejectsIncompatibleSavedResult(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	spec.Result.Codec = tools.JSONCodec[any]{
 		FromJSON: func([]byte) (any, error) {
 			return nil, errors.New("value must be a string")
@@ -239,7 +239,7 @@ func TestValidateContinuationRejectsIncompatibleSavedResult(t *testing.T) {
 
 func TestValidateContinuationRejectsIncompatibleSavedPayload(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	spec.Payload.Codec = tools.JSONCodec[any]{
 		FromJSON: func([]byte) (any, error) {
 			return nil, errors.New("query must use a numeric identifier")
@@ -255,7 +255,7 @@ func TestValidateContinuationRejectsIncompatibleSavedPayload(t *testing.T) {
 
 func TestValidateContinuationRejectsPublicPendingMutation(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	suspension.Pending[0].Await.Clarification.Question = "different question"
@@ -265,7 +265,7 @@ func TestValidateContinuationRejectsPublicPendingMutation(t *testing.T) {
 
 func TestValidateContinuationRejectsUnknownSavedAwaitKind(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 
@@ -278,7 +278,7 @@ func TestValidateContinuationRejectsUnknownSavedAwaitKind(t *testing.T) {
 
 func TestValidateContinuationRejectsUnknownSavedStepKind(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
@@ -340,7 +340,7 @@ func TestDecodeWorkflowCheckpointPreservesMetadataIntegers(t *testing.T) {
 
 func TestValidateContinuationRejectsNilSavedToolValue(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
@@ -352,7 +352,7 @@ func TestValidateContinuationRejectsNilSavedToolValue(t *testing.T) {
 
 func TestValidateContinuationRequiresRecoveryCatalog(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
@@ -370,7 +370,7 @@ func TestValidateContinuationRequiresRecoveryCatalog(t *testing.T) {
 
 func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 
 	newCorrectCallSuspension := func(t *testing.T, version string, catalog *RecoveryCatalog) *api.RunSuspension {
@@ -451,7 +451,7 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 
 func TestLoadPlannerToolOutputsCombinesDifferentRunLogs(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	require.NoError(t, runtime.publishHookErr(t.Context(), hooks.NewToolCallScheduledEvent(
 		"run-call", "svc.agent", "session-1", spec.Name, "call-1",

@@ -22,7 +22,7 @@ import (
 func TestRunLoopBookkeepingTerminalExecutesWithExhaustedBudget(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	terminal := newAnyJSONSpec(tools.Ident("workflow.complete"), "workflow.progress")
+	terminal := newAnyJSONSpec(tools.Ident("workflow.complete"))
 	terminal.TerminalRun = true
 	terminal.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{

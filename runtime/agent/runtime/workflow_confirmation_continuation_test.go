@@ -19,7 +19,7 @@ import (
 )
 
 func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
-	tool := newAnyJSONSpec("svc.update", "svc")
+	tool := newAnyJSONSpec("svc.update")
 	tool.Bookkeeping = true
 	tool.TerminalRun = true
 	executions := 0
@@ -96,7 +96,7 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 }
 
 func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
-	tool := newAnyJSONSpec("svc.persist", "svc")
+	tool := newAnyJSONSpec("svc.persist")
 	executions := 0
 	runtime := New(
 		WithLogger(telemetry.NoopLogger{}),

@@ -281,7 +281,14 @@ func (r *Runtime) correctCallSpecs(outputs []*planner.ToolOutput) ([]tools.ToolS
 		if !registered {
 			return nil, fmt.Errorf("correct-call recovery references unregistered tool %q", name)
 		}
-		registration, registered := r.toolsets[globalSpec.Toolset]
+		toolsetName, registered := r.toolsetNames[name]
+		if !registered {
+			return nil, fmt.Errorf(
+				"correct-call recovery tool %q has no executable toolset registration",
+				name,
+			)
+		}
+		registration, registered := r.toolsets[toolsetName]
 		if !registered || registration.Execute == nil {
 			return nil, fmt.Errorf(
 				"correct-call recovery tool %q has no executable toolset registration",
@@ -296,7 +303,7 @@ func (r *Runtime) correctCallSpecs(outputs []*planner.ToolOutput) ([]tools.ToolS
 				name,
 			)
 		}
-		if registration.Name != spec.Toolset ||
+		if registration.Name != toolsetName ||
 			!equivalentToolSpec(globalSpec, spec) {
 			return nil, fmt.Errorf(
 				"correct-call recovery tool %q has mismatched global and executable registrations",
@@ -1117,8 +1124,8 @@ func validatePlannerResultPayloadCodecs(
 // validatePlannerToolPayloadWithCodec decodes one ordinary tool payload with
 // its generated codec. A generated continuation action accepts only the empty
 // object shown to the model; compilePlannerToolCallsForRun later replaces that
-// object with the cursor-bearing payload and validates it with the canonical
-// continuation tool's generated codec.
+// object with a payload containing the saved cursor and validates it with the
+// generated codec for the real continuation tool.
 func validatePlannerToolPayloadWithCodec(
 	ctx context.Context,
 	r *Runtime,
@@ -1183,19 +1190,14 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		}
 		return nil, fmt.Errorf("agent-as-tool %q must run in workflow context", req.ToolName)
 	}
-	sName := req.ToolsetName
-	if sName == "" {
-		spec, ok := r.toolSpec(req.ToolName)
-		if !ok {
-			return nil, fmt.Errorf("unknown tool %q", req.ToolName)
-		}
-		sName = spec.Toolset
+	if req.ToolsetName == "" {
+		return nil, errors.New("toolset name is required")
 	}
 	r.mu.RLock()
-	reg, ok := r.toolsets[sName]
+	reg, ok := r.toolsets[req.ToolsetName]
 	r.mu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("toolset %q is not registered", sName)
+		return nil, fmt.Errorf("toolset %q is not registered", req.ToolsetName)
 	}
 
 	// Rebuild the activity-local call from execution data only. The workflow

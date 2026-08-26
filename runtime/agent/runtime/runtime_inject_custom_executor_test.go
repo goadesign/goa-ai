@@ -105,7 +105,7 @@ func newCustomLookupHouseholdToolset(t *testing.T, resultHouseholdID *string) To
 			*resultHouseholdID = *p.HouseholdID
 			return &planner.ToolResult{Name: call.Name, Result: map[string]any{"ok": true}}, nil
 		}),
-		Specs: []tools.ToolSpec{newAnyJSONSpec(tools.Ident("helpers.lookup_household"), "helpers")},
+		Specs: []tools.ToolSpec{newAnyJSONSpec(tools.Ident("helpers.lookup_household"))},
 	}
 }
 

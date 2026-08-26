@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -9,12 +9,12 @@ import (
 func ReUse() func() {
 	return func() {
 		API("alpha", func() {})
-		var Shared = Toolset("shared", func() {
-			Tool("ping", "Ping", func() {})
+		var Shared = aidsl.Toolset("shared", func() {
+			aidsl.Tool("ping", "Ping", func() {})
 		})
 		Service("alpha", func() {
-			Agent("scribe", "Doc helper", func() {
-				Use(Shared)
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use(Shared)
 			})
 		})
 	}

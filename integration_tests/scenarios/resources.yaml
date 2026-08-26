@@ -1,41 +1,11 @@
-# MCP Resources Test Scenarios (new shape)
+# MCP resource scenarios verify fixed resource reads and access rules.
 
 scenarios:
-  - name: resources_read_denied_by_name
-    defaults:
-      client: jsonrpc.mcp_assistant
-      headers:
-        Accept: application/json
-        x-mcp-deny-names: "system_info"
-    pre:
-      auto_initialize: true
-    steps:
-      - name: read_denied_by_name
-        op: ResourcesRead
-        input: { uri: "system://info" }
-        expect:
-          status: error
-          error: { code: -32602 }
-
-  - name: resources_read_uninitialized
-    defaults:
-      client: jsonrpc.mcp_assistant
-      headers:
-        Accept: application/json
-    steps:
-      - name: read_before_init
-        op: ResourcesRead
-        input: { uri: "system://info" }
-        expect:
-          status: error
-          error: { code: -32602, message: "Not initialized" }
-
   - name: resources_list
     defaults:
       client: jsonrpc.mcp_assistant
       headers:
-        Accept: application/json
-        x-mcp-allow-names: "documents,system_info,conversation_history"
+        Accept: "application/json, text/event-stream"
     pre:
       auto_initialize: true
     steps:
@@ -46,12 +16,26 @@ scenarios:
           status: success
           result: { resources: [ {} ] }
 
+  - name: resources_list_rejects_cursor
+    defaults:
+      client: jsonrpc.mcp_assistant
+      headers:
+        Accept: "application/json, text/event-stream"
+    pre:
+      auto_initialize: true
+    steps:
+      - name: list
+        op: ResourcesList
+        input: { cursor: "not-issued-by-this-server" }
+        expect:
+          status: error
+          error: { code: -32602 }
+
   - name: resources_read_system
     defaults:
       client: jsonrpc.mcp_assistant
       headers:
-        Accept: application/json
-        x-mcp-allow-names: "system_info"
+        Accept: "application/json, text/event-stream"
     pre:
       auto_initialize: true
     steps:
@@ -61,63 +45,32 @@ scenarios:
         expect:
           status: success
           result:
-            contents: [ { uri: "system://info", mimeType: "application/json" } ]
+            contents: [ { uri: "system://info", mimeType: "application/json", text: "{}" } ]
 
-  - name: resources_read_conversation_with_params
+  - name: resources_read_conversation
     defaults:
       client: jsonrpc.mcp_assistant
       headers:
-        Accept: application/json
-        x-mcp-allow-names: "conversation_history"
+        Accept: "application/json, text/event-stream"
     pre:
       auto_initialize: true
     steps:
-      - name: read_with_params
+      - name: read
         op: ResourcesRead
-        input: { uri: "conversation://history?limit=10" }
+        input: { uri: "conversation://history" }
         expect:
           status: success
           result:
-            contents: [ { uri: "conversation://history", mimeType: "application/json" } ]
+            contents:
+              - uri: "conversation://history"
+                mimeType: "application/json"
+                text: "{}"
 
-  - name: resources_read_coercions
+  - name: resources_read_unknown_resource
     defaults:
       client: jsonrpc.mcp_assistant
       headers:
-        Accept: application/json
-        x-mcp-allow-names: "conversation_history"
-    pre:
-      auto_initialize: true
-    steps:
-      - name: read_with_types
-        op: ResourcesRead
-        input: { uri: "conversation://history?limit=10&flag=true&nums=1&nums=2.5" }
-        expect:
-          status: success
-          result:
-            contents: [ { uri: "conversation://history" } ]
-
-  - name: resources_read_invalid_query_type
-    defaults:
-      client: jsonrpc.mcp_assistant
-      headers:
-        Accept: application/json
-        x-mcp-allow-names: "conversation_history"
-    pre:
-      auto_initialize: true
-    steps:
-      - name: read_with_bad_types
-        op: ResourcesRead
-        input: { uri: "conversation://history?limit=abc" }
-        expect:
-          status: error
-          error: { code: -32602 }
-
-  - name: resources_read_invalid
-    defaults:
-      client: jsonrpc.mcp_assistant
-      headers:
-        Accept: application/json
+        Accept: "application/json, text/event-stream"
     pre:
       auto_initialize: true
     steps:
@@ -126,38 +79,4 @@ scenarios:
         input: { uri: "invalid://resource" }
         expect:
           status: error
-          error: { code: -32601 }
-
-  - name: resources_read_denied_uri
-    defaults:
-      client: jsonrpc.mcp_assistant
-      headers:
-        Accept: application/json
-    pre:
-      auto_initialize: true
-    steps:
-      - name: read_denied
-        op: ResourcesRead
-        input: { uri: "system://info" }
-        expect:
-          status: error
           error: { code: -32602 }
-
-  - name: resources_subscribe_unsubscribe
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: subscribe
-        op: ResourcesSubscribe
-        input: { uri: "doc://list" }
-        expect:
-          status: error
-          error: { code: -32601 }
-      - name: unsubscribe
-        op: ResourcesUnsubscribe
-        input: { uri: "doc://list" }
-        expect:
-          status: error
-          error: { code: -32601 }

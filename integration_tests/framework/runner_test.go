@@ -3,10 +3,31 @@ package framework
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestGenerationEnvironmentUsesActiveWorkspace(t *testing.T) {
+	t.Setenv("GOWORK", "/tmp/local.go.work")
+	t.Setenv("GOFLAGS", "-trimpath")
+
+	environment := generationEnvironment()
+
+	require.Contains(t, environment, "GOWORK=/tmp/local.go.work")
+	require.Contains(t, environment, "GOFLAGS=-trimpath")
+	require.False(t, slices.Contains(environment, "GOFLAGS=-mod=mod"))
+}
+
+func TestGenerationEnvironmentAllowsFixtureDependencyUpdatesWithoutWorkspace(t *testing.T) {
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOFLAGS", "-trimpath")
+
+	environment := generationEnvironment()
+
+	require.Equal(t, "GOFLAGS=-mod=mod", environment[len(environment)-1])
+}
 
 func TestCleanGeneratedExampleArtifacts(t *testing.T) {
 	root := t.TempDir()

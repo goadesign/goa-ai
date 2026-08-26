@@ -185,7 +185,8 @@ response. Streaming never restarts after exposing output.
 When agent A "uses" a toolset exported by agent B, Goa‑AI wires composition automatically:
 
 - The exporter (agent B) package includes a generated `agenttools` package with typed tool IDs and
-`NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)` helpers.
+  `ToolsetName`, which contains the exact registration route, and
+  `NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)` helpers.
 - The consumer registers the returned `runtime.ToolsetRegistration` with its runtime. The consumer
 does not need the exporter’s planner locally; it only needs routing metadata.
 - At runtime, invoking an exported tool starts the exporter agent as a **child workflow** using the
@@ -450,19 +451,12 @@ shape it will send to the provider.
 | Function                             | Context                            | Purpose                                        |
 | ------------------------------------ | ---------------------------------- | ---------------------------------------------- |
 | `MCP(name, version, opts...)`        | Inside `Service`                   | Enables MCP protocol for the service           |
-| `ProtocolVersion(version)`           | Option for `MCP`                   | Sets MCP protocol version (e.g., "2025-06-18") |
+| `ProtocolVersion(version)`           | Option for `MCP`                   | Sets the generated client and server version    |
 | `Tool(name, description)`            | Inside `Method` (with MCP enabled) | Marks method as MCP tool                       |
 | `Resource(name, uri, mime)`          | Inside `Method`                    | Marks method as MCP resource provider          |
-| `WatchableResource(name, uri, mime)` | Inside `Method`                    | MCP resource with subscription support         |
 | `StaticPrompt(name, desc, msgs...)`  | Inside `Service` (with MCP)        | Defines static MCP prompt template             |
-| `DynamicPrompt(name, description)`   | Inside `Method`                    | Marks method as dynamic prompt generator       |
-| `Notification(name, description)`    | Inside `Method`                    | Marks method as MCP notification sender        |
-| `Subscription(resourceName)`         | Inside `Method`                    | Defines subscription handler for a resource    |
-| `SubscriptionMonitor(name)`          | Inside `Method`                    | Defines SSE monitor for subscriptions          |
-
 
 ### Registry Functions
-
 
 | Function                     | Context                                | Purpose                                   |
 | ---------------------------- | -------------------------------------- | ----------------------------------------- |
@@ -557,6 +551,12 @@ Agent("orchestrator", "Main coordinator", func() {
 })
 ```
 
+When exactly one agent in another service exports a shared `Toolset`
+expression, `Use(shared)` selects that exporter automatically. When more than
+one agent exports it, use `AgentToolset(service, agent, toolset)` to name the
+agent that should run. Generation rejects an ambiguous plain `Use` instead of
+choosing an exporter by file or name order.
+
 ### Passthrough
 
 `Passthrough` defines deterministic forwarding for an exported tool to a Goa service method.
@@ -613,6 +613,9 @@ Use `FromMCP` when your MCP server is defined in the same design using the
 ```go
 Service("assistant", func() {
     MCP("assistant-mcp", "1.0.0")
+    JSONRPC(func() {
+        POST("/mcp")
+    })
     Method("search", func() {
         Payload(SearchParams)
         Result(SearchResults)
@@ -725,6 +728,9 @@ The method's payload becomes the tool input schema and the result becomes the ou
 ```go
 Service("calculator", func() {
     MCP("calc", "1.0.0")
+    JSONRPC(func() {
+        POST("/mcp")
+    })
     Method("add", func() {
         Payload(func() {
             Attribute("a", Int, "First number")
@@ -1318,6 +1324,9 @@ Enable MCP protocol for a service with `MCP`:
 ```go
 Service("calculator", func() {
     MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+    JSONRPC(func() {
+        POST("/mcp")
+    })
 
     Method("add", func() {
         Payload(func() {
@@ -1335,27 +1344,65 @@ Service("calculator", func() {
         Resource("readme", "file:///docs/README.md", "text/markdown")
     })
 
-    Method("status", func() {
-        Result(func() {
-            Attribute("status", String)
-        })
-        WatchableResource("status", "status://system", "application/json")
-    })
-
     StaticPrompt("greeting", "Friendly greeting",
-        "system", "You are a helpful assistant",
+        "user", "You are a helpful assistant",
         "user", "Hello!")
-    
-    Method("code_review", func() {
-        Payload(func() {
-            Attribute("language", String)
-            Attribute("code", String)
-        })
-        Result(ArrayOf(Message))
-        DynamicPrompt("code_review", "Generate code review prompt")
-    })
 })
 ```
+
+`ProtocolVersion` writes one supported version into the generated client and
+server. During initialization, the server returns that version even when the
+client offers another version. A generated client disconnects if a server
+returns a version it does not support. Adapter options cannot replace the
+version at runtime.
+
+This release implements MCP `2025-06-18`. A tool payload must be an object. A
+resource method must have no payload and maps to one exact URI. The URI must
+include a scheme, such as `file:///docs/README.md` or `atlas://status`; resource
+templates are not generated. A `text/*` resource returns a string, while an
+`application/json` resource may return any Goa result that the generated codec
+can encode. Prompts are static message sequences declared on the service, and
+their roles must be `user` or `assistant`.
+
+After regeneration, the generated JSON-RPC client package provides `NewCaller`.
+It accepts the calling application's identity, initializes the MCP session, and
+returns the protocol-level `runtime/mcp.Caller` used by agent runtimes:
+
+```go
+client := genmcpjsonrpc.NewClient(scheme, host, doer, enc, dec, restore)
+caller, err := genmcpjsonrpc.NewCaller(
+    ctx,
+    client,
+    mcpruntime.ClientInfo{Name: "calculator-cli", Version: "1.0.0"},
+)
+```
+
+Missing identity, a failed initialize request, and a different protocol version
+all stop construction before a tool can run. After the server returns the exact
+generated version, `NewCaller` sends
+`notifications/initialized` without a JSON-RPC ID. The generated adapter is
+shared by HTTP clients and does not store client initialization state; the
+generated caller owns this ordering.
+
+Goa-AI does not generate a client that implements the original Goa service
+interface through MCP. MCP tool failures do not preserve Goa's named service
+errors, so such a client would promise a contract the protocol cannot deliver.
+Code that needs the original service interface must use that service's HTTP or
+gRPC client instead. Enabling MCP replaces that service's ordinary JSON-RPC
+transport because both contracts own the same Goa transport. An application
+that needs both must declare a separate service for the ordinary JSON-RPC
+methods.
+
+The service-level JSON-RPC `POST` sets the MCP path. An MCP-enabled service may
+also expose ordinary HTTP routes, `Files(...)`, and gRPC. Goa preserves those
+endpoints and rejects only an ordinary HTTP route whose method and final route
+pattern would collide with the MCP endpoint.
+
+The generated HTTP mount also registers GET on that path and returns HTTP 405,
+which states that the server does not offer a long-lived event stream. POST
+accepts one MCP message, rejects request arrays, checks browser Origin, and
+requires the negotiated protocol-version header after initialize. Generated
+clients accept either JSON or server-sent events in a POST response.
 
 ### MCP Capabilities
 
@@ -1364,12 +1411,7 @@ Service("calculator", func() {
 | ---------------------------- | ------------------------------------------------------ |
 | `Tool(name, desc)` in Method | `tools/list`, `tools/call`                             |
 | `Resource(name, uri, mime)`  | `resources/list`, `resources/read`                     |
-| `WatchableResource(...)`     | Resources with `resources/subscribe`                   |
 | `StaticPrompt(...)`          | `prompts/list`, `prompts/get` (static)                 |
-| `DynamicPrompt(...)`         | `prompts/list`, `prompts/get` (dynamic, method-backed) |
-| `Notification(...)`          | Notification senders                                   |
-| `Subscription(...)`          | Subscription handlers                                  |
-| `SubscriptionMonitor(...)`   | SSE subscription monitors                              |
 
 
 ---
@@ -1512,7 +1554,9 @@ Generated once per defining toolset (the owner), and imported by all consumers.
 
 - `types.go` — tool-local payload/result/sidecar Go types
 - `codecs.go` — canonical JSON codecs for payload/result/sidecar
-- `specs.go` — `[]tools.ToolSpec` entries for the toolset
+- `specs.go` — reusable `[]tools.ToolSpec` entries with schemas, codecs, and
+  planner metadata; local execution routes are added by each generated
+  `runtime.ToolsetRegistration`
 - `transforms.go` — method-backed transforms when `BindTo` is used and shapes are compatible
 
 ### Agent Specs (`specs/`)
@@ -1520,7 +1564,8 @@ Generated once per defining toolset (the owner), and imported by all consumers.
 The agent package contains an aggregated tool catalog used by planners/runtime.
 
 - `specs.go` — aggregated `[]tools.ToolSpec` for all `Use`d toolsets
-- `tool_schemas.json` — backend-agnostic JSON catalog (payload/result JSON Schemas)
+- `tool_schemas.json` — backend-agnostic JSON catalog with this agent's service
+  and toolset attribution plus payload/result JSON Schemas
 
 Tool schemas are also written to:
 
@@ -1539,7 +1584,10 @@ Generated when an agent exports toolsets (agent-as-tool). Export packages provid
 ### MCP Packages
 
 When a service declares MCP (`MCP(...)`), `goa gen` emits JSON-RPC client/server code under
-`gen/jsonrpc/<service>/...` and runtime registration helpers in the service package.
+`gen/jsonrpc/mcp_<service>/...` and runtime registration helpers under
+`gen/mcp_<service>/...`. For example, the `assistant` service emits its JSON-RPC
+client under `gen/jsonrpc/mcp_assistant/client` and its runtime registration
+helpers under `gen/mcp_assistant`.
 
 ---
 
@@ -1558,8 +1606,17 @@ if err := chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{
 }
 
 // MCP toolset wiring
-caller := mcp.NewHTTPCaller("https://assistant.example.com/mcp")
-if err := mcpassistant.RegisterAssistantToolset(ctx, rt, caller); err != nil {
+caller, err := mcp.NewHTTPCaller(ctx, mcp.HTTPOptions{
+	Endpoint: "https://assistant.example.com/mcp",
+	ClientInfo: mcp.ClientInfo{
+		Name:    "chat-api",
+		Version: "1.0.0",
+	},
+})
+if err != nil {
+    log.Fatal(err)
+}
+if err := mcpassistant.RegisterAssistantAssistantMcpToolset(ctx, rt, caller); err != nil {
     log.Fatal(err)
 }
 

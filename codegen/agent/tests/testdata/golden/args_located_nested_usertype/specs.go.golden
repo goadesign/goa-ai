@@ -28,8 +28,6 @@ func Specs() []tools.ToolSpec {
 func newSpecSetStepStatus() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        SetStepStatus,
-		Service:     "alpha",
-		Toolset:     "alpha.progress",
 		Description: "Set step status",
 		Tags:        []string{},
 		Payload: tools.TypeSpec{

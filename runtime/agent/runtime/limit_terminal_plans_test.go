@@ -91,7 +91,6 @@ func TestValidateLimitTerminalPlans(t *testing.T) {
 		})
 	}
 }
-
 func TestValidateLimitTerminalPlansRejectsNonTerminalTool(t *testing.T) {
 	t.Parallel()
 
@@ -415,10 +414,10 @@ func executeWorkflowLimitTerminalPlan(
 		rt.Policy = limitTerminalLabelPolicy{}
 	}
 	terminal := strictLimitTerminalSpec()
-	work := newAnyJSONSpec("service.tools.work", terminal.Toolset)
+	work := newAnyJSONSpec("service.tools.work")
 	var executed *ToolCall
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: terminal.Toolset,
+		Name: "service.tools",
 		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			if call.Name == work.Name {
 				assert.NotContains(t, call.Labels, FinalizationReasonLabel)
@@ -607,7 +606,6 @@ func strictLimitTerminalSpec() tools.ToolSpec {
 	}
 	return tools.ToolSpec{
 		Name:        "service.tools.complete",
-		Toolset:     "service.tools",
 		Bookkeeping: true,
 		TerminalRun: true,
 		Payload: tools.TypeSpec{

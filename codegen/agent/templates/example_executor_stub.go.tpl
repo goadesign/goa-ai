@@ -1,14 +1,3 @@
-{{- if .Register }}
-// Register registers the method-backed toolset with the runtime using Execute.
-func Register(ctx context.Context, rt *runtime.Runtime) error {
-    if rt == nil {
-        return errors.New("runtime is required")
-    }
-    reg := {{ $.AgentImport.Name }}.New{{ $.Agent.GoName }}{{ goify $.Toolset.PathName true }}ToolsetRegistration(runtime.ToolCallExecutorFunc(Execute))
-    return rt.RegisterToolset(reg)
-}
-{{- end }}
-
 // Execute checks one tool call against its generated argument contract. The
 // initial implementation returns the result example from the design;
 // applications replace that result with their service call.

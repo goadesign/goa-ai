@@ -67,9 +67,9 @@ func (w *failingRecordWorkflowContext) PublishRecords(call engine.RecordActivity
 
 func TestRunLoopRecordsPartialInlineResultsBeforeExecutionError(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
-	first := newAnyJSONSpec(tools.Ident("svc.first"), "svc")
-	second := newAnyJSONSpec(tools.Ident("svc.second"), "svc")
-	third := newAnyJSONSpec(tools.Ident("svc.third"), "svc")
+	first := newAnyJSONSpec(tools.Ident("svc.first"))
+	second := newAnyJSONSpec(tools.Ident("svc.second"))
+	third := newAnyJSONSpec(tools.Ident("svc.third"))
 	executed := make([]tools.Ident, 0, 3)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name:   "svc",
@@ -131,8 +131,8 @@ func TestRunLoopRecordsPartialInlineResultsBeforeExecutionError(t *testing.T) {
 
 func TestRunLoopPreservesConcreteResultAndContinuesBookkeepingAfterHookError(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
-	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
-	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"))
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"))
 	bookkeeping.Bookkeeping = true
 	executed := make([]tools.Ident, 0, 2)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
@@ -192,8 +192,8 @@ func TestRunLoopPreservesConcreteResultAndContinuesBookkeepingAfterHookError(t *
 
 func TestRunLoopRecordsCompleteCapDenialBeforePublicationError(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
-	first := newAnyJSONSpec(tools.Ident("svc.first"), "svc")
-	second := newAnyJSONSpec(tools.Ident("svc.second"), "svc")
+	first := newAnyJSONSpec(tools.Ident("svc.first"))
+	second := newAnyJSONSpec(tools.Ident("svc.second"))
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
 		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {

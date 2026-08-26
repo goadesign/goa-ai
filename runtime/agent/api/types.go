@@ -708,7 +708,7 @@ type (
 		// AgentID identifies the agent that owns this tool call.
 		AgentID agent.Ident
 
-		// ToolsetName identifies the owning toolset when known; it may be empty when inferred by ToolName.
+		// ToolsetName identifies the registered toolset that executes ToolName.
 		ToolsetName string
 
 		// ToolName is the fully-qualified tool identifier.

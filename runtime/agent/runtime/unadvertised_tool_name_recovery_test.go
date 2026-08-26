@@ -107,8 +107,8 @@ func TestModelInvocationJournalExcludesNonOutputFailures(t *testing.T) {
 }
 
 func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
-	originalCatalog := newAnyJSONSpec("catalog.items.list_original", "catalog.items")
-	catalog := newAnyJSONSpec("catalog.items.list_items", "catalog.items")
+	originalCatalog := newAnyJSONSpec("catalog.items.list_original")
+	catalog := newAnyJSONSpec("catalog.items.list_items")
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 	sessionID := "session-unadvertised-tool"
 	_, err := rt.CreateSession(t.Context(), sessionID)
@@ -246,7 +246,7 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 }
 
 func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
-	catalog := newAnyJSONSpec("catalog.items.list_items", "catalog.items")
+	catalog := newAnyJSONSpec("catalog.items.list_items")
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 	sessionID := "session-repeated-unadvertised-tool"
 	_, err := rt.CreateSession(t.Context(), sessionID)

@@ -66,9 +66,9 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- if .IsMethodBacked }}
 	case {{ .ConstName }}:
 {{- if or .HasMethodPayload .Injected }}
-		args, err := {{ .ConstName }}PayloadCodec().FromJSON(msg.Payload)
+		args, err := {{ .PayloadCodecName }}().FromJSON(msg.Payload)
 {{- else }}
-		_, err := {{ .ConstName }}PayloadCodec().FromJSON(msg.Payload)
+		_, err := {{ .PayloadCodecName }}().FromJSON(msg.Payload)
 {{- end }}
 		if err != nil {
 			if issues := toolregistry.ValidationIssues(err); len(issues) > 0 {
@@ -77,12 +77,12 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
 {{- if .Injected }}
-		if err := Inject{{ .ConstName }}(args, meta, meta.Labels); err != nil {
+		if err := {{ .InjectFunc }}(args, meta, meta.Labels); err != nil {
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
 {{- end }}
 {{- if .HasMethodPayload }}
-		methodIn := Init{{ .ConstName }}MethodPayload(args)
+		methodIn := {{ .MethodPayloadTransform }}(args)
 {{- end }}
 {{- if .HasMethodResult }}
 		methodOut, err := p.svc.{{ .MethodGoName }}(ctx{{ if .HasMethodPayload }}, methodIn{{ end }})
@@ -93,21 +93,20 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			return toolregistry.NewToolResultServiceErrorMessage(msg.RegistrationToken, msg.ToolUseID, msg.Tool, toolErrorCode(err), err), nil
 		}
 {{- if .HasResult }}
-		result := Init{{ .ConstName }}ToolResult(methodOut)
-		resultJSON, err := {{ .ConstName }}ResultCodec().ToJSON(result)
+		result := {{ .ToolResultTransform }}(methodOut)
+		resultJSON, err := {{ .ResultCodecName }}().ToJSON(result)
 		if err != nil {
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
 		}
 {{- if and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
-		bounds := init{{ goify .Name true }}Bounds(methodOut)
+		bounds := {{ .BoundsFunc }}(methodOut)
 {{- end }}
 		var server []*toolregistry.ServerDataItem
-{{- $tool := . }}
 {{- range .ServerData }}
 {{- if .MethodResultField }}
 		{
-			data := Init{{ $tool.ConstName }}{{ goify .Kind true }}ServerData(methodOut.{{ goify .MethodResultField true }})
-			dataJSON, err := {{ $tool.ConstName }}{{ goify .Kind true }}ServerDataCodec().ToJSON(data)
+			data := {{ .Transform }}(methodOut.{{ .MethodResultFieldName }})
+			dataJSON, err := {{ .CodecName }}().ToJSON(data)
 			if err != nil {
 				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
 			}
@@ -153,9 +152,9 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- range .Tools }}
 {{- if and .IsMethodBacked .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
 
-// init{{ goify .Name true }}Bounds projects canonical bounds metadata from the
+// {{ .BoundsFunc }} projects canonical bounds metadata from the
 // bound method result.
-func init{{ goify .Name true }}Bounds(mr {{ .MethodResultTypeRef }}) *agent.Bounds {
+func {{ .BoundsFunc }}(mr {{ .MethodResultTypeRef }}) *agent.Bounds {
 	bounds := &agent.Bounds{}
 	{{- with .Bounds.Projection.Returned }}
 	bounds.Returned = mr.{{ .Name }}
@@ -187,5 +186,3 @@ func init{{ goify .Name true }}Bounds(mr {{ .MethodResultTypeRef }}) *agent.Boun
 }
 {{- end }}
 {{- end }}
-
-

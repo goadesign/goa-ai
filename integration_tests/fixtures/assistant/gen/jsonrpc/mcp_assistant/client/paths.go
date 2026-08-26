@@ -12,6 +12,11 @@ func InitializeMcpAssistantPath() string {
 	return "/rpc"
 }
 
+// NotificationsInitializedMcpAssistantPath returns the URL path to the mcp_assistant service notifications/initialized HTTP endpoint.
+func NotificationsInitializedMcpAssistantPath() string {
+	return "/rpc"
+}
+
 // PingMcpAssistantPath returns the URL path to the mcp_assistant service ping HTTP endpoint.
 func PingMcpAssistantPath() string {
 	return "/rpc"
@@ -37,16 +42,6 @@ func ResourcesReadMcpAssistantPath() string {
 	return "/rpc"
 }
 
-// ResourcesSubscribeMcpAssistantPath returns the URL path to the mcp_assistant service resources/subscribe HTTP endpoint.
-func ResourcesSubscribeMcpAssistantPath() string {
-	return "/rpc"
-}
-
-// ResourcesUnsubscribeMcpAssistantPath returns the URL path to the mcp_assistant service resources/unsubscribe HTTP endpoint.
-func ResourcesUnsubscribeMcpAssistantPath() string {
-	return "/rpc"
-}
-
 // PromptsListMcpAssistantPath returns the URL path to the mcp_assistant service prompts/list HTTP endpoint.
 func PromptsListMcpAssistantPath() string {
 	return "/rpc"
@@ -54,15 +49,5 @@ func PromptsListMcpAssistantPath() string {
 
 // PromptsGetMcpAssistantPath returns the URL path to the mcp_assistant service prompts/get HTTP endpoint.
 func PromptsGetMcpAssistantPath() string {
-	return "/rpc"
-}
-
-// NotifyStatusUpdateMcpAssistantPath returns the URL path to the mcp_assistant service notify_status_update HTTP endpoint.
-func NotifyStatusUpdateMcpAssistantPath() string {
-	return "/rpc"
-}
-
-// EventsStreamMcpAssistantPath returns the URL path to the mcp_assistant service events/stream HTTP endpoint.
-func EventsStreamMcpAssistantPath() string {
 	return "/rpc"
 }

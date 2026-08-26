@@ -28,8 +28,6 @@ func Specs() []tools.ToolSpec {
 func newSpecDangerousWrite() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        DangerousWrite,
-		Service:     "alpha",
-		Toolset:     "alpha.catalog.commands",
 		Description: "Write a stateful change",
 		Tags:        []string{},
 		Confirmation: &tools.ConfirmationSpec{

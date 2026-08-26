@@ -8,33 +8,37 @@
 package client
 
 import (
-	"encoding/json"
 	"fmt"
 
 	registrypb "goa.design/goa-ai/registry/gen/grpc/registry/pb"
 	registry "goa.design/goa-ai/registry/gen/registry"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // BuildRegisterPayload builds the payload for the registry Register endpoint
 // from CLI flags.
-func BuildRegisterPayload(registryRegisterMessage string) (*registry.RegisterPayload, error) {
+func BuildRegisterPayload(registryRegisterMessage *string) (*registry.RegisterPayload, error) {
 	var err error
 	var message registrypb.RegisterRequest
 	{
-		if registryRegisterMessage != "" {
-			err = json.Unmarshal([]byte(registryRegisterMessage), &message)
+		if registryRegisterMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryRegisterMessage), &message)
 			if err != nil {
-				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"admission_revision\": \"example-release+schema-v1\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 8\n   }'")
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"admission_revision\": \"example-release+schema-v1\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 8\n   }'")
 			}
 		}
 	}
+	if err := ValidateRegisterRequest(&message); err != nil {
+		var zero *registry.RegisterPayload
+		return zero, err
+	}
 	v := &registry.RegisterPayload{
-		Name:                  message.Name,
+		Name:                  *message.Name,
 		Description:           message.Description,
-		ProviderID:            message.ProviderId,
-		AdmissionRevision:     message.AdmissionRevision,
-		ProviderIncarnationID: message.ProviderIncarnationId,
-		WireProtocolVersion:   int(message.WireProtocolVersion),
+		ProviderID:            *message.ProviderId,
+		AdmissionRevision:     *message.AdmissionRevision,
+		ProviderIncarnationID: *message.ProviderIncarnationId,
+		WireProtocolVersion:   int(*message.WireProtocolVersion),
 	}
 	if message.Version != nil {
 		version := registry.SemVer(*message.Version)
@@ -50,7 +54,7 @@ func BuildRegisterPayload(registryRegisterMessage string) (*registry.RegisterPay
 		v.Tools = make([]*registry.ToolSchema, len(message.Tools))
 		for i, val := range message.Tools {
 			v.Tools[i] = &registry.ToolSchema{
-				Name:          val.Name,
+				Name:          *val.Name,
 				Description:   val.Description,
 				PayloadSchema: val.PayloadSchema,
 				ResultSchema:  val.ResultSchema,
@@ -70,22 +74,26 @@ func BuildRegisterPayload(registryRegisterMessage string) (*registry.RegisterPay
 
 // BuildReleaseProviderPayload builds the payload for the registry
 // ReleaseProvider endpoint from CLI flags.
-func BuildReleaseProviderPayload(registryReleaseProviderMessage string) (*registry.ReleaseProviderPayload, error) {
+func BuildReleaseProviderPayload(registryReleaseProviderMessage *string) (*registry.ReleaseProviderPayload, error) {
 	var err error
 	var message registrypb.ReleaseProviderRequest
 	{
-		if registryReleaseProviderMessage != "" {
-			err = json.Unmarshal([]byte(registryReleaseProviderMessage), &message)
+		if registryReleaseProviderMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryReleaseProviderMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\"\n   }'")
 			}
 		}
 	}
+	if err := ValidateReleaseProviderRequest(&message); err != nil {
+		var zero *registry.ReleaseProviderPayload
+		return zero, err
+	}
 	v := &registry.ReleaseProviderPayload{
-		Name:                      message.Name,
-		ProviderID:                message.ProviderId,
-		ExpectedRegistrationToken: message.ExpectedRegistrationToken,
-		ProviderIncarnationID:     message.ProviderIncarnationId,
+		Name:                      *message.Name,
+		ProviderID:                *message.ProviderId,
+		ExpectedRegistrationToken: *message.ExpectedRegistrationToken,
+		ProviderIncarnationID:     *message.ProviderIncarnationId,
 	}
 
 	return v, nil
@@ -93,23 +101,27 @@ func BuildReleaseProviderPayload(registryReleaseProviderMessage string) (*regist
 
 // BuildDrainProviderPayload builds the payload for the registry DrainProvider
 // endpoint from CLI flags.
-func BuildDrainProviderPayload(registryDrainProviderMessage string) (*registry.DrainProviderPayload, error) {
+func BuildDrainProviderPayload(registryDrainProviderMessage *string) (*registry.DrainProviderPayload, error) {
 	var err error
 	var message registrypb.DrainProviderRequest
 	{
-		if registryDrainProviderMessage != "" {
-			err = json.Unmarshal([]byte(registryDrainProviderMessage), &message)
+		if registryDrainProviderMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryDrainProviderMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"settlement_duration_ms\": 30000\n   }'")
 			}
 		}
 	}
+	if err := ValidateDrainProviderRequest(&message); err != nil {
+		var zero *registry.DrainProviderPayload
+		return zero, err
+	}
 	v := &registry.DrainProviderPayload{
-		SettlementDurationMs:      message.SettlementDurationMs,
-		Name:                      message.Name,
-		ProviderID:                message.ProviderId,
-		ExpectedRegistrationToken: message.ExpectedRegistrationToken,
-		ProviderIncarnationID:     message.ProviderIncarnationId,
+		SettlementDurationMs:      *message.SettlementDurationMs,
+		Name:                      *message.Name,
+		ProviderID:                *message.ProviderId,
+		ExpectedRegistrationToken: *message.ExpectedRegistrationToken,
+		ProviderIncarnationID:     *message.ProviderIncarnationId,
 	}
 
 	return v, nil
@@ -117,20 +129,24 @@ func BuildDrainProviderPayload(registryDrainProviderMessage string) (*registry.D
 
 // BuildUnregisterPayload builds the payload for the registry Unregister
 // endpoint from CLI flags.
-func BuildUnregisterPayload(registryUnregisterMessage string) (*registry.UnregisterPayload, error) {
+func BuildUnregisterPayload(registryUnregisterMessage *string) (*registry.UnregisterPayload, error) {
 	var err error
 	var message registrypb.UnregisterRequest
 	{
-		if registryUnregisterMessage != "" {
-			err = json.Unmarshal([]byte(registryUnregisterMessage), &message)
+		if registryUnregisterMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryUnregisterMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"name\": \"data-tools\"\n   }'")
 			}
 		}
 	}
+	if err := ValidateUnregisterRequest(&message); err != nil {
+		var zero *registry.UnregisterPayload
+		return zero, err
+	}
 	v := &registry.UnregisterPayload{
-		Name:                      message.Name,
-		ExpectedRegistrationToken: message.ExpectedRegistrationToken,
+		Name:                      *message.Name,
+		ExpectedRegistrationToken: *message.ExpectedRegistrationToken,
 	}
 
 	return v, nil
@@ -138,22 +154,26 @@ func BuildUnregisterPayload(registryUnregisterMessage string) (*registry.Unregis
 
 // BuildPongPayload builds the payload for the registry Pong endpoint from CLI
 // flags.
-func BuildPongPayload(registryPongMessage string) (*registry.PongPayload, error) {
+func BuildPongPayload(registryPongMessage *string) (*registry.PongPayload, error) {
 	var err error
 	var message registrypb.PongRequest
 	{
-		if registryPongMessage != "" {
-			err = json.Unmarshal([]byte(registryPongMessage), &message)
+		if registryPongMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryPongMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"ping_id\": \"ping-xyz789\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"toolset\": \"data-tools\"\n   }'")
 			}
 		}
 	}
+	if err := ValidatePongRequest(&message); err != nil {
+		var zero *registry.PongPayload
+		return zero, err
+	}
 	v := &registry.PongPayload{
-		PingID:                message.PingId,
-		Toolset:               message.Toolset,
-		ProviderID:            message.ProviderId,
-		ProviderIncarnationID: message.ProviderIncarnationId,
+		PingID:                *message.PingId,
+		Toolset:               *message.Toolset,
+		ProviderID:            *message.ProviderId,
+		ProviderIncarnationID: *message.ProviderIncarnationId,
 	}
 
 	return v, nil
@@ -161,12 +181,12 @@ func BuildPongPayload(registryPongMessage string) (*registry.PongPayload, error)
 
 // BuildListToolsetsPayload builds the payload for the registry ListToolsets
 // endpoint from CLI flags.
-func BuildListToolsetsPayload(registryListToolsetsMessage string) (*registry.ListToolsetsPayload, error) {
+func BuildListToolsetsPayload(registryListToolsetsMessage *string) (*registry.ListToolsetsPayload, error) {
 	var err error
 	var message registrypb.ListToolsetsRequest
 	{
-		if registryListToolsetsMessage != "" {
-			err = json.Unmarshal([]byte(registryListToolsetsMessage), &message)
+		if registryListToolsetsMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryListToolsetsMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"tags\": [\n         \"data\",\n         \"etl\"\n      ]\n   }'")
 			}
@@ -185,19 +205,23 @@ func BuildListToolsetsPayload(registryListToolsetsMessage string) (*registry.Lis
 
 // BuildGetToolsetPayload builds the payload for the registry GetToolset
 // endpoint from CLI flags.
-func BuildGetToolsetPayload(registryGetToolsetMessage string) (*registry.GetToolsetPayload, error) {
+func BuildGetToolsetPayload(registryGetToolsetMessage *string) (*registry.GetToolsetPayload, error) {
 	var err error
 	var message registrypb.GetToolsetRequest
 	{
-		if registryGetToolsetMessage != "" {
-			err = json.Unmarshal([]byte(registryGetToolsetMessage), &message)
+		if registryGetToolsetMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryGetToolsetMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"name\": \"data-tools\"\n   }'")
 			}
 		}
 	}
+	if err := ValidateGetToolsetRequest(&message); err != nil {
+		var zero *registry.GetToolsetPayload
+		return zero, err
+	}
 	v := &registry.GetToolsetPayload{
-		Name: message.Name,
+		Name: *message.Name,
 	}
 
 	return v, nil
@@ -205,19 +229,23 @@ func BuildGetToolsetPayload(registryGetToolsetMessage string) (*registry.GetTool
 
 // BuildSearchPayload builds the payload for the registry Search endpoint from
 // CLI flags.
-func BuildSearchPayload(registrySearchMessage string) (*registry.SearchPayload, error) {
+func BuildSearchPayload(registrySearchMessage *string) (*registry.SearchPayload, error) {
 	var err error
 	var message registrypb.SearchRequest
 	{
-		if registrySearchMessage != "" {
-			err = json.Unmarshal([]byte(registrySearchMessage), &message)
+		if registrySearchMessage != nil {
+			err = protojson.Unmarshal([]byte(*registrySearchMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"query\": \"data processing\"\n   }'")
 			}
 		}
 	}
+	if err := ValidateSearchRequest(&message); err != nil {
+		var zero *registry.SearchPayload
+		return zero, err
+	}
 	v := &registry.SearchPayload{
-		Query: message.Query,
+		Query: *message.Query,
 	}
 
 	return v, nil
@@ -225,25 +253,29 @@ func BuildSearchPayload(registrySearchMessage string) (*registry.SearchPayload, 
 
 // BuildCallToolPayload builds the payload for the registry CallTool endpoint
 // from CLI flags.
-func BuildCallToolPayload(registryCallToolMessage string) (*registry.CallToolPayload, error) {
+func BuildCallToolPayload(registryCallToolMessage *string) (*registry.CallToolPayload, error) {
 	var err error
 	var message registrypb.CallToolRequest
 	{
-		if registryCallToolMessage != "" {
-			err = json.Unmarshal([]byte(registryCallToolMessage), &message)
+		if registryCallToolMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryCallToolMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"meta\": {\n         \"parent_tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX19Z\",\n         \"run_id\": \"run_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"session_id\": \"sess_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"turn_id\": \"turn_0001\"\n      },\n      \"payload_json\": \"eyJxdWVyeSI6InJlY2VudCBvcmRlcnMifQ==\",\n      \"tool\": \"catalog.lookup.find_records\",\n      \"toolset\": \"catalog.lookup\",\n      \"wire_protocol_version\": 8\n   }'")
 			}
 		}
 	}
+	if err := ValidateCallToolRequest(&message); err != nil {
+		var zero *registry.CallToolPayload
+		return zero, err
+	}
 	v := &registry.CallToolPayload{
-		Toolset:             message.Toolset,
-		Tool:                message.Tool,
+		Toolset:             *message.Toolset,
+		Tool:                *message.Tool,
 		PayloadJSON:         message.PayloadJson,
-		WireProtocolVersion: int(message.WireProtocolVersion),
+		WireProtocolVersion: int(*message.WireProtocolVersion),
 	}
 	if message.Meta != nil {
-		v.Meta = protobufRegistrypbToolCallMetaToRegistryToolCallMeta(message.Meta)
+		v.Meta = transformProtoCallToolRequestToolCallMetaToCallToolPayloadToolCallMeta(message.Meta)
 	}
 
 	return v, nil
@@ -251,26 +283,30 @@ func BuildCallToolPayload(registryCallToolMessage string) (*registry.CallToolPay
 
 // BuildRetryToolPayload builds the payload for the registry RetryTool endpoint
 // from CLI flags.
-func BuildRetryToolPayload(registryRetryToolMessage string) (*registry.RetryToolPayload, error) {
+func BuildRetryToolPayload(registryRetryToolMessage *string) (*registry.RetryToolPayload, error) {
 	var err error
 	var message registrypb.RetryToolRequest
 	{
-		if registryRetryToolMessage != "" {
-			err = json.Unmarshal([]byte(registryRetryToolMessage), &message)
+		if registryRetryToolMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryRetryToolMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"meta\": {\n         \"parent_tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX19Z\",\n         \"run_id\": \"run_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"session_id\": \"sess_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"tool_call_id\": \"call_01J3K9Q9T6E2G7N0G2ZQH2KX1A\",\n         \"turn_id\": \"turn_0001\"\n      },\n      \"payload_json\": \"eyJxdWVyeSI6InJlY2VudCBvcmRlcnMifQ==\",\n      \"tool\": \"catalog.lookup.find_records\",\n      \"toolset\": \"catalog.lookup\",\n      \"wire_protocol_version\": 8\n   }'")
 			}
 		}
 	}
+	if err := ValidateRetryToolRequest(&message); err != nil {
+		var zero *registry.RetryToolPayload
+		return zero, err
+	}
 	v := &registry.RetryToolPayload{
-		ExpectedRegistrationToken: message.ExpectedRegistrationToken,
-		Toolset:                   message.Toolset,
-		Tool:                      message.Tool,
+		ExpectedRegistrationToken: *message.ExpectedRegistrationToken,
+		Toolset:                   *message.Toolset,
+		Tool:                      *message.Tool,
 		PayloadJSON:               message.PayloadJson,
-		WireProtocolVersion:       int(message.WireProtocolVersion),
+		WireProtocolVersion:       int(*message.WireProtocolVersion),
 	}
 	if message.Meta != nil {
-		v.Meta = protobufRegistrypbToolCallMetaToRegistryToolCallMeta(message.Meta)
+		v.Meta = transformProtoRetryToolRequestToolCallMetaToRetryToolPayloadToolCallMeta(message.Meta)
 	}
 
 	return v, nil
@@ -278,26 +314,30 @@ func BuildRetryToolPayload(registryRetryToolMessage string) (*registry.RetryTool
 
 // BuildCompleteToolCallPayload builds the payload for the registry
 // CompleteToolCall endpoint from CLI flags.
-func BuildCompleteToolCallPayload(registryCompleteToolCallMessage string) (*registry.CompleteToolCallPayload, error) {
+func BuildCompleteToolCallPayload(registryCompleteToolCallMessage *string) (*registry.CompleteToolCallPayload, error) {
 	var err error
 	var message registrypb.CompleteToolCallRequest
 	{
-		if registryCompleteToolCallMessage != "" {
-			err = json.Unmarshal([]byte(registryCompleteToolCallMessage), &message)
+		if registryCompleteToolCallMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryCompleteToolCallMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"provider_registration_token\": \"2222222222222222222222222222222222222222222222222222222222222222\",\n      \"registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"result_json\": \"eyJyZWdpc3RyYXRpb25fdG9rZW4iOiIxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExIiwidG9vbF91c2VfaWQiOiIzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzIiwicmVzdWx0X2pzb24iOnsib2siOnRydWV9fQ==\",\n      \"tool_use_id\": \"3333333333333333333333333333333333333333333333333333333333333333\",\n      \"toolset\": \"catalog.lookup\"\n   }'")
 			}
 		}
 	}
+	if err := ValidateCompleteToolCallRequest(&message); err != nil {
+		var zero *registry.CompleteToolCallPayload
+		return zero, err
+	}
 	v := &registry.CompleteToolCallPayload{
-		Toolset:                   message.Toolset,
-		ProviderID:                message.ProviderId,
-		ProviderIncarnationID:     message.ProviderIncarnationId,
-		RegistrationToken:         message.RegistrationToken,
-		ToolUseID:                 message.ToolUseId,
+		Toolset:                   *message.Toolset,
+		ProviderID:                *message.ProviderId,
+		ProviderIncarnationID:     *message.ProviderIncarnationId,
+		RegistrationToken:         *message.RegistrationToken,
+		ToolUseID:                 *message.ToolUseId,
 		ResultJSON:                message.ResultJson,
-		RequestEventID:            message.RequestEventId,
-		ProviderRegistrationToken: message.ProviderRegistrationToken,
+		RequestEventID:            *message.RequestEventId,
+		ProviderRegistrationToken: *message.ProviderRegistrationToken,
 	}
 
 	return v, nil
@@ -305,27 +345,31 @@ func BuildCompleteToolCallPayload(registryCompleteToolCallMessage string) (*regi
 
 // BuildPublishToolOutputDeltaPayload builds the payload for the registry
 // PublishToolOutputDelta endpoint from CLI flags.
-func BuildPublishToolOutputDeltaPayload(registryPublishToolOutputDeltaMessage string) (*registry.PublishToolOutputDeltaPayload, error) {
+func BuildPublishToolOutputDeltaPayload(registryPublishToolOutputDeltaMessage *string) (*registry.PublishToolOutputDeltaPayload, error) {
 	var err error
 	var message registrypb.PublishToolOutputDeltaRequest
 	{
-		if registryPublishToolOutputDeltaMessage != "" {
-			err = json.Unmarshal([]byte(registryPublishToolOutputDeltaMessage), &message)
+		if registryPublishToolOutputDeltaMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryPublishToolOutputDeltaMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"call_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"delta\": \"processed 10 rows\\n\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"provider_registration_token\": \"2222222222222222222222222222222222222222222222222222222222222222\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"stream\": \"stdout\",\n      \"tool_use_id\": \"3333333333333333333333333333333333333333333333333333333333333333\",\n      \"toolset\": \"catalog.lookup\"\n   }'")
 			}
 		}
 	}
+	if err := ValidatePublishToolOutputDeltaRequest(&message); err != nil {
+		var zero *registry.PublishToolOutputDeltaPayload
+		return zero, err
+	}
 	v := &registry.PublishToolOutputDeltaPayload{
-		Stream:                    message.Stream,
-		Delta:                     message.Delta,
-		Toolset:                   message.Toolset,
-		ProviderID:                message.ProviderId,
-		ProviderIncarnationID:     message.ProviderIncarnationId,
-		ProviderRegistrationToken: message.ProviderRegistrationToken,
-		CallRegistrationToken:     message.CallRegistrationToken,
-		ToolUseID:                 message.ToolUseId,
-		RequestEventID:            message.RequestEventId,
+		Stream:                    *message.Stream,
+		Delta:                     *message.Delta,
+		Toolset:                   *message.Toolset,
+		ProviderID:                *message.ProviderId,
+		ProviderIncarnationID:     *message.ProviderIncarnationId,
+		ProviderRegistrationToken: *message.ProviderRegistrationToken,
+		CallRegistrationToken:     *message.CallRegistrationToken,
+		ToolUseID:                 *message.ToolUseId,
+		RequestEventID:            *message.RequestEventId,
 	}
 
 	return v, nil
@@ -333,25 +377,29 @@ func BuildPublishToolOutputDeltaPayload(registryPublishToolOutputDeltaMessage st
 
 // BuildReportToolCallOverloadPayload builds the payload for the registry
 // ReportToolCallOverload endpoint from CLI flags.
-func BuildReportToolCallOverloadPayload(registryReportToolCallOverloadMessage string) (*registry.ProviderToolCallClaimPayload, error) {
+func BuildReportToolCallOverloadPayload(registryReportToolCallOverloadMessage *string) (*registry.ProviderToolCallClaimPayload, error) {
 	var err error
 	var message registrypb.ReportToolCallOverloadRequest
 	{
-		if registryReportToolCallOverloadMessage != "" {
-			err = json.Unmarshal([]byte(registryReportToolCallOverloadMessage), &message)
+		if registryReportToolCallOverloadMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryReportToolCallOverloadMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"call_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"provider_registration_token\": \"2222222222222222222222222222222222222222222222222222222222222222\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"tool_use_id\": \"3333333333333333333333333333333333333333333333333333333333333333\",\n      \"toolset\": \"catalog.lookup\"\n   }'")
 			}
 		}
 	}
+	if err := ValidateReportToolCallOverloadRequest(&message); err != nil {
+		var zero *registry.ProviderToolCallClaimPayload
+		return zero, err
+	}
 	v := &registry.ProviderToolCallClaimPayload{
-		Toolset:                   message.Toolset,
-		ProviderID:                message.ProviderId,
-		ProviderIncarnationID:     message.ProviderIncarnationId,
-		ProviderRegistrationToken: message.ProviderRegistrationToken,
-		CallRegistrationToken:     message.CallRegistrationToken,
-		ToolUseID:                 message.ToolUseId,
-		RequestEventID:            message.RequestEventId,
+		Toolset:                   *message.Toolset,
+		ProviderID:                *message.ProviderId,
+		ProviderIncarnationID:     *message.ProviderIncarnationId,
+		ProviderRegistrationToken: *message.ProviderRegistrationToken,
+		CallRegistrationToken:     *message.CallRegistrationToken,
+		ToolUseID:                 *message.ToolUseId,
+		RequestEventID:            *message.RequestEventId,
 	}
 
 	return v, nil
@@ -359,25 +407,29 @@ func BuildReportToolCallOverloadPayload(registryReportToolCallOverloadMessage st
 
 // BuildClaimToolCallPayload builds the payload for the registry ClaimToolCall
 // endpoint from CLI flags.
-func BuildClaimToolCallPayload(registryClaimToolCallMessage string) (*registry.ProviderToolCallClaimPayload, error) {
+func BuildClaimToolCallPayload(registryClaimToolCallMessage *string) (*registry.ProviderToolCallClaimPayload, error) {
 	var err error
 	var message registrypb.ClaimToolCallRequest
 	{
-		if registryClaimToolCallMessage != "" {
-			err = json.Unmarshal([]byte(registryClaimToolCallMessage), &message)
+		if registryClaimToolCallMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryClaimToolCallMessage), &message)
 			if err != nil {
 				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"call_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"provider_registration_token\": \"2222222222222222222222222222222222222222222222222222222222222222\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"tool_use_id\": \"3333333333333333333333333333333333333333333333333333333333333333\",\n      \"toolset\": \"catalog.lookup\"\n   }'")
 			}
 		}
 	}
+	if err := ValidateClaimToolCallRequest(&message); err != nil {
+		var zero *registry.ProviderToolCallClaimPayload
+		return zero, err
+	}
 	v := &registry.ProviderToolCallClaimPayload{
-		Toolset:                   message.Toolset,
-		ProviderID:                message.ProviderId,
-		ProviderIncarnationID:     message.ProviderIncarnationId,
-		ProviderRegistrationToken: message.ProviderRegistrationToken,
-		CallRegistrationToken:     message.CallRegistrationToken,
-		ToolUseID:                 message.ToolUseId,
-		RequestEventID:            message.RequestEventId,
+		Toolset:                   *message.Toolset,
+		ProviderID:                *message.ProviderId,
+		ProviderIncarnationID:     *message.ProviderIncarnationId,
+		ProviderRegistrationToken: *message.ProviderRegistrationToken,
+		CallRegistrationToken:     *message.CallRegistrationToken,
+		ToolUseID:                 *message.ToolUseId,
+		RequestEventID:            *message.RequestEventId,
 	}
 
 	return v, nil

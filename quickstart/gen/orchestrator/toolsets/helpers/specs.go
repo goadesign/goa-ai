@@ -29,8 +29,6 @@ func Specs() []tools.ToolSpec {
 func newSpecAnswer() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        Answer,
-		Service:     "orchestrator",
-		Toolset:     "orchestrator.helpers",
 		Description: "Answer a simple question",
 		Tags:        []string{},
 		Payload: tools.TypeSpec{

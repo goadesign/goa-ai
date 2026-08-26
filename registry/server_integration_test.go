@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -102,7 +103,7 @@ func TestServerIntegration(t *testing.T) {
 			Tools: []*genregistry.ToolSchema{
 				{
 					Name:          "transform",
-					Description:   strPtr("Transform data"),
+					Description:   proto.String("Transform data"),
 					PayloadSchema: []byte(`{"type":"object","properties":{"input":{"type":"string"}}}`),
 					ResultSchema:  []byte(`{"type":"object"}`),
 				},
@@ -510,14 +511,14 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 
 	_, err = rawClient.Unregister(ctx, &registrypb.UnregisterRequest{
-		Name:                      "status-tools",
-		ExpectedRegistrationToken: testStaleToken,
+		Name:                      proto.String("status-tools"),
+		ExpectedRegistrationToken: proto.String(testStaleToken),
 	})
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	_, err = rawClient.Unregister(ctx, &registrypb.UnregisterRequest{
-		Name:                      "status-tools",
-		ExpectedRegistrationToken: first.GetRegistrationToken(),
+		Name:                      proto.String("status-tools"),
+		ExpectedRegistrationToken: proto.String(first.GetRegistrationToken()),
 	})
 	require.NoError(t, err)
 	_, err = rawClient.Register(ctx, grpcRegisterRequest(
@@ -529,13 +530,13 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	_, err = rawClient.CallTool(ctx, &registrypb.CallToolRequest{
-		Toolset:     "status-tools",
-		Tool:        "status.lookup",
+		Toolset:     proto.String("status-tools"),
+		Tool:        proto.String("status.lookup"),
 		PayloadJson: []byte(`{}`),
 		Meta: &registrypb.ToolCallMeta{
-			RunId:      "run-1",
-			SessionId:  "session-1",
-			ToolCallId: "old-consumer-call",
+			RunId:      proto.String("run-1"),
+			SessionId:  proto.String("session-1"),
+			ToolCallId: proto.String("old-consumer-call"),
 		},
 	})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -543,14 +544,14 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 
 	overlongID := strings.Repeat("x", 257)
 	_, err = rawClient.CallTool(ctx, &registrypb.CallToolRequest{
-		Toolset:             "status-tools",
-		Tool:                "status.lookup",
+		Toolset:             proto.String("status-tools"),
+		Tool:                proto.String("status.lookup"),
 		PayloadJson:         []byte(`{}`),
-		WireProtocolVersion: int32(toolregistry.WireProtocolVersion),
+		WireProtocolVersion: proto.Int32(toolregistry.WireProtocolVersion),
 		Meta: &registrypb.ToolCallMeta{
-			RunId:      "run-1",
-			SessionId:  "session-1",
-			ToolCallId: overlongID,
+			RunId:      proto.String("run-1"),
+			SessionId:  proto.String("session-1"),
+			ToolCallId: proto.String(overlongID),
 		},
 	})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -576,14 +577,14 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	require.ErrorAs(t, err, &serviceErr)
 	assert.Equal(t, "call_not_admitted", serviceErr.Name)
 	_, err = rejectedRawClient.CallTool(ctx, &registrypb.CallToolRequest{
-		Toolset:             "status-tools",
-		Tool:                "status.lookup",
+		Toolset:             proto.String("status-tools"),
+		Tool:                proto.String("status.lookup"),
 		PayloadJson:         []byte(`{}`),
-		WireProtocolVersion: int32(toolregistry.WireProtocolVersion),
+		WireProtocolVersion: proto.Int32(toolregistry.WireProtocolVersion),
 		Meta: &registrypb.ToolCallMeta{
-			RunId:      "run-1",
-			SessionId:  "session-1",
-			ToolCallId: "rejected-call",
+			RunId:      proto.String("run-1"),
+			SessionId:  proto.String("session-1"),
+			ToolCallId: proto.String("rejected-call"),
 		},
 	})
 	assert.Equal(t, codes.Unavailable, status.Code(err))
@@ -662,20 +663,16 @@ func grpcRegisterRequest(
 	name, description, revision, providerID string,
 ) *registrypb.RegisterRequest {
 	return &registrypb.RegisterRequest{
-		Name:                  name,
+		Name:                  proto.String(name),
 		Description:           &description,
-		ProviderId:            providerID,
-		ProviderIncarnationId: testIncarnationA,
-		AdmissionRevision:     revision,
-		WireProtocolVersion:   int32(toolregistry.WireProtocolVersion),
+		ProviderId:            proto.String(providerID),
+		ProviderIncarnationId: proto.String(testIncarnationA),
+		AdmissionRevision:     proto.String(revision),
+		WireProtocolVersion:   proto.Int32(toolregistry.WireProtocolVersion),
 		Tools: []*registrypb.ToolSchema{{
-			Name:          "status.lookup",
+			Name:          proto.String("status.lookup"),
 			PayloadSchema: []byte(`{"type":"object"}`),
 			ResultSchema:  []byte(`{"type":"object"}`),
 		}},
 	}
-}
-
-func strPtr(s string) *string {
-	return &s
 }

@@ -16,7 +16,7 @@ import (
 
 func TestSaveAndLoadRunSuspension(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	require.NoError(t, runtime.SessionStore.UpsertRun(context.Background(), session.RunMeta{
@@ -38,7 +38,7 @@ func TestSaveAndLoadRunSuspension(t *testing.T) {
 
 func TestSaveRunSuspensionRejectsMismatchedActivityIdentity(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	payload, err := json.Marshal(suspension)

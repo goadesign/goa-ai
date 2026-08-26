@@ -136,6 +136,9 @@ type (
 		agents    map[agent.Ident]AgentRegistration
 		toolsets  map[string]ToolsetRegistration
 		toolSpecs map[tools.Ident]tools.ToolSpec
+		// toolsetNames maps each global tool name to the one registered toolset
+		// that executes it in this runtime.
+		toolsetNames map[tools.Ident]string
 		// policyToolMetadata stores canonical per-tool policy metadata resolved at
 		// registration time from generated lookups or, for manual registrations,
 		// derived once from the supplied specs.
@@ -748,6 +751,7 @@ func newFromOptions(opts Options) *Runtime {
 		agents:                make(map[agent.Ident]AgentRegistration),
 		toolsets:              make(map[string]ToolsetRegistration),
 		toolSpecs:             make(map[tools.Ident]tools.ToolSpec),
+		toolsetNames:          make(map[tools.Ident]string),
 		policyToolMetadata:    make(map[tools.Ident]policy.ToolMetadata),
 		toolSchemas:           make(map[string]map[string]any),
 		models:                make(map[string]model.Client),
@@ -1217,6 +1221,9 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	if exists {
 		return fmt.Errorf("%w: toolset %q is already registered", ErrInvalidConfig, ts.Name)
 	}
+	if err := r.validateToolsetRoutes(ts); err != nil {
+		return err
+	}
 	if err := r.validateToolSpecRegistrations(toolSpecRegistration{
 		specs:  ts.Specs,
 		lookup: ts.ToolMetadataLookup,
@@ -1330,6 +1337,26 @@ func validateAgentToolRegistration(ts ToolsetRegistration) error {
 				"%w: agent tool %q requires a route task queue",
 				ErrInvalidConfig,
 				spec.Name,
+			)
+		}
+	}
+	return nil
+}
+
+// validateToolsetRoutes rejects two local executors for the same global tool
+// name. A planner call names only the tool, so the runtime could not choose
+// between different registrations.
+func (r *Runtime) validateToolsetRoutes(ts ToolsetRegistration) error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, spec := range ts.Specs {
+		if registered, ok := r.toolsetNames[spec.Name]; ok && registered != ts.Name {
+			return fmt.Errorf(
+				"%w: tool %q is already executed by toolset %q and cannot also be registered by %q",
+				ErrInvalidConfig,
+				spec.Name,
+				registered,
+				ts.Name,
 			)
 		}
 	}
@@ -1978,6 +2005,12 @@ func isTerminalRunEventType(eventType runlog.Type) bool {
 // Caller must hold r.mu.
 func (r *Runtime) addToolsetLocked(ts ToolsetRegistration) {
 	r.toolsets[ts.Name] = ts
+	if r.toolsetNames == nil {
+		r.toolsetNames = make(map[tools.Ident]string)
+	}
+	for _, spec := range ts.Specs {
+		r.toolsetNames[spec.Name] = ts.Name
+	}
 	r.addToolSpecsLocked(ts.Specs, ts.ToolMetadataLookup)
 	if len(ts.CallHints) > 0 {
 		rthints.RegisterCallHints(ts.CallHints)
@@ -2011,6 +2044,19 @@ func (r *Runtime) toolSpec(name tools.Ident) (tools.ToolSpec, bool) {
 	spec, ok := r.toolSpecs[name]
 	r.mu.RUnlock()
 	return spec, ok
+}
+
+// toolsetForTool returns the executable registration that owns name in this
+// runtime.
+func (r *Runtime) toolsetForTool(name tools.Ident) (string, ToolsetRegistration, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	toolsetName, ok := r.toolsetNames[name]
+	if !ok {
+		return "", ToolsetRegistration{}, false
+	}
+	toolset, ok := r.toolsets[toolsetName]
+	return toolsetName, toolset, ok
 }
 
 func (r *Runtime) policyMetadata(name tools.Ident) (policy.ToolMetadata, bool) {

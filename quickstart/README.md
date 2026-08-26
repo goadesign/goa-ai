@@ -115,7 +115,7 @@ This creates:
   descriptor factory per tool (`helpers.AnswerTool()`) pairing the tool identifier with
   its payload and result codecs
 - **`cmd/orchestrator/main.go`** - Runnable example using the bootstrap
-- **`internal/agents/bootstrap/bootstrap.go`** - Wires runtime, registers agents and toolset executors
+- **`internal/agents/orchestrator/bootstrap/bootstrap.go`** - Wires runtime, registers the orchestrator agents and toolset executors
 - **`internal/agents/chat/planner/planner.go`** - Application-owned planner (edit to connect your LLM)
 - **`gen/<service>/completions/`** - Generated typed direct-completion helpers
 - **`gen/evals/chat_quality/`** - Typed evaluation harness (hooks interface, validated inputs, tool contracts)

@@ -881,7 +881,7 @@ func TestPlanStartActivityRejectsModelToolPayloadBeforeRecovery(t *testing.T) {
 		}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	spec := newAnyJSONSpec(call.Name, "service")
+	spec := newAnyJSONSpec(call.Name)
 	spec.Payload.Codec.FromJSON = func(data []byte) (any, error) {
 		var payload struct {
 			Query string `json:"query"`
@@ -939,7 +939,7 @@ func TestPlanStartActivityRejectsStreamedToolPayloadBeforePlannerExposure(t *tes
 		return finalPlannerResult("planner tried to continue"), nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	spec := newAnyJSONSpec(call.Name, "service")
+	spec := newAnyJSONSpec(call.Name)
 	spec.Payload.Codec.FromJSON = func(data []byte) (any, error) {
 		var payload struct {
 			Query string `json:"query"`
@@ -2711,11 +2711,11 @@ func TestPlanStartActivityAdvertisesPolicyFilteredTools(t *testing.T) {
 		},
 	}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	visible := newAnyJSONSpec("svc.tools.visible", "svc.tools")
+	visible := newAnyJSONSpec("svc.tools.visible")
 	visible.Description = "Visible tool"
 	visible.Payload.Schema = tools.RawJSON(`{"type":"object","properties":{"q":{"type":"string"}}}`)
 	visible.Tags = []string{"system", "profile"}
-	blocked := newAnyJSONSpec("svc.tools.blocked", "svc.tools")
+	blocked := newAnyJSONSpec("svc.tools.blocked")
 	blocked.Tags = []string{"system"}
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
 		"service.agent": {visible, blocked},
@@ -2781,7 +2781,7 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 		}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	seedTestToolSpecs(rt, newAnyJSONSpec(toolName, "svc.tools"))
+	seedTestToolSpecs(rt, newAnyJSONSpec(toolName))
 	require.NoError(t, rt.publishHookErr(
 		context.Background(),
 		hooks.NewToolCallScheduledEvent(
@@ -2907,9 +2907,9 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 }
 
 func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) {
-	first := newAnyJSONSpec("svc.tools.first", "svc.tools")
-	wrong := newAnyJSONSpec("svc.tools.wrong", "svc.tools")
-	second := newAnyJSONSpec("svc.tools.second", "svc.tools")
+	first := newAnyJSONSpec("svc.tools.first")
+	wrong := newAnyJSONSpec("svc.tools.wrong")
+	second := newAnyJSONSpec("svc.tools.second")
 	bookkeeping := newBookkeepingSpec("svc.tools.progress")
 	specs := []tools.ToolSpec{first, wrong, second, bookkeeping}
 
@@ -3011,7 +3011,7 @@ func TestPlanResumeActivityEnforcesSynthesisOnly(t *testing.T) {
 
 func TestPlanResumeActivityFailsWhenCanonicalToolResultIsMissing(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{})
-	seedTestToolSpecs(rt, newAnyJSONSpec("svc.ts.tool", "svc.tools"))
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.ts.tool"))
 	require.NoError(t, rt.publishHookErr(
 		context.Background(),
 		hooks.NewToolCallScheduledEvent(
@@ -3061,8 +3061,8 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 		}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	source := newAnyJSONSpec("svc.ts.tool", "svc.tools")
-	other := newAnyJSONSpec("svc.other.tool", "svc.tools")
+	source := newAnyJSONSpec("svc.ts.tool")
+	other := newAnyJSONSpec("svc.other.tool")
 	seedTestToolSpecs(rt, source, other)
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{"service.agent": {source, other}}
 	require.NoError(t, rt.publishHookErr(
@@ -3124,7 +3124,7 @@ func TestBuildPlannerToolOutputRecordsPreservesOmittedResultMetadata(t *testing.
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
 	}
-	seedTestToolSpecs(rt, newAnyJSONSpec("svc.ts.tool", "svc.tools"))
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.ts.tool"))
 
 	records := stepToolRecordsForTest(
 		t,
@@ -3169,9 +3169,9 @@ func TestBuildPlannerToolOutputRecordsSkipsBookkeepingResults(t *testing.T) {
 	}
 	seedTestToolSpecs(
 		rt,
-		newAnyJSONSpec("svc.ts.tool", "svc.tools"),
+		newAnyJSONSpec("svc.ts.tool"),
 		func() tools.ToolSpec {
-			spec := newAnyJSONSpec("workflow.progress.set_step_status", "workflow.progress")
+			spec := newAnyJSONSpec("workflow.progress.set_step_status")
 			spec.Bookkeeping = true
 			return spec
 		}(),

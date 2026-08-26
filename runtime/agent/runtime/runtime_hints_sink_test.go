@@ -36,7 +36,7 @@ func TestHintingSinkRendersHintForNilAndEmptyPayload(t *testing.T) {
 
 	rt := &Runtime{
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			toolID: newAnyJSONSpec(toolID, "test"),
+			toolID: newAnyJSONSpec(toolID),
 		},
 		logger: telemetry.NoopLogger{},
 	}
@@ -95,7 +95,7 @@ func TestAddToolsetLockedRegistersHints(t *testing.T) {
 	rt.mu.Lock()
 	rt.addToolsetLocked(ToolsetRegistration{
 		Name:  "runtime.hints.test",
-		Specs: []tools.ToolSpec{newAnyJSONSpec(toolID, "runtime.hints.test")},
+		Specs: []tools.ToolSpec{newAnyJSONSpec(toolID)},
 		CallHints: map[tools.Ident]*template.Template{
 			toolID: mustTemplate(t, toolID, "Checking {{.target}}"),
 		},
@@ -287,8 +287,7 @@ func newTypedHintSpec(name tools.Ident) tools.ToolSpec {
 		},
 	}
 	return tools.ToolSpec{
-		Name:    name,
-		Toolset: "runtime.hints",
+		Name: name,
 		Payload: tools.TypeSpec{
 			Name:  string(name) + "_payload",
 			Codec: codec,

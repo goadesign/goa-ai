@@ -1,4 +1,4 @@
-//nolint:lll // example patchers include long string replacements for clarity
+// Package codegen connects generated MCP services to Goa's example server.
 package codegen
 
 import (
@@ -8,96 +8,105 @@ import (
 
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa/v3/codegen"
-	"goa.design/goa/v3/codegen/example"
+	goagenerator "goa.design/goa/v3/codegen/generator"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
 
-// PrepareExample augments the original roots so the Goa example generator
-// includes the MCP JSON-RPC server without manual cmd edits. It runs the same
-// pure-MCP contract validation as Generate so example scaffolding cannot mask
-// invalid MCP mappings.
-func PrepareExample(_ string, roots []eval.Root) error {
-	source := collectSourceSnapshot(roots)
-	for _, root := range roots {
-		r, ok := root.(*expr.RootExpr)
-		if !ok {
-			continue
-		}
-		for _, svc := range r.Services {
-			if !mcpexpr.Root.HasMCP(svc) {
-				continue
-			}
-			mcp := mcpexpr.Root.GetMCP(svc)
-			if err := validatePureMCPService(svc, mcp, source); err != nil {
-				return err
-			}
-			builder := newMCPExprBuilder(svc, mcp, source)
-			mcpService := builder.BuildServiceExpr()
-
-			// Build and validate a temporary MCP root to finalize types
-			mcpTempRoot := builder.BuildRootExpr(mcpService)
-			if err := builder.PrepareAndValidate(mcpTempRoot); err != nil {
-				return err
-			}
-
-			// Inject MCP into original root so example generation mounts it
-			if r.API == nil {
-				r.API = &expr.APIExpr{}
-			}
-			if r.API.HTTP == nil {
-				r.API.HTTP = &expr.HTTPExpr{}
-			}
-			httpSvc := builder.buildHTTPService(mcpService)
-			httpSvc.Root = r.API.HTTP
-			if r.API.JSONRPC == nil {
-				r.API.JSONRPC = &expr.JSONRPCExpr{}
-			}
-			r.API.HTTP.Services = removeHTTPServiceByName(r.API.HTTP.Services, svc.Name)
-			r.API.JSONRPC.Services = replaceHTTPServiceByName(r.API.JSONRPC.Services, svc.Name, httpSvc)
-			// Add mcp service once to top-level services
-			if !serviceInList(r.Services, mcpService.Name) {
-				r.Services = append(r.Services, mcpService)
-			}
-			// Only mount the MCP service on servers that originally exposed the
-			// source service. Example generation should preserve server ownership.
-			for _, srv := range r.API.Servers {
-				if !stringInList(srv.Services, svc.Name) || stringInList(srv.Services, mcpService.Name) {
-					continue
-				}
-				srv.Services = append(srv.Services, mcpService.Name)
-			}
-		}
+type (
+	// mcpExamplePlugin keeps the roots selected for one example command.
+	mcpExamplePlugin struct {
+		mcpRoot     *mcpexpr.RootExpr
+		exampleRoot *expr.RootExpr
 	}
-	return nil
+
+	// exampleMCPService stores one user service and whether its MCP server has prompts.
+	exampleMCPService struct {
+		service             *expr.ServiceExpr
+		hasPrompts          bool
+		stubPath            string
+		mcpPackagePath      string
+		mcpConstructorName  string
+		userConstructorName string
+		mcpServiceInterface string
+	}
+)
+
+// newMCPExamplePlugin returns a plugin whose Prepare and Generate methods share
+// a new mcpExamplePlugin for one command.
+func newMCPExamplePlugin() goagenerator.Plugin {
+	plugin := new(mcpExamplePlugin)
+	return goagenerator.Plugin{
+		Prepare:  plugin.prepare,
+		Generate: plugin.generate,
+	}
 }
 
-// ModifyExampleFiles patches example CLI wiring to target the MCP adapter client
-// and replaces the default MCP stub factory to return the adapter-wrapped
-// service. It avoids touching HTTP server signatures or example mains.
-func ModifyExampleFiles(_ string, roots []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
-	r, ok := firstRootWithJSONRPC(roots)
-	if !ok {
+// prepare selects this run's roots and prepares the generated MCP services.
+func (p *mcpExamplePlugin) prepare(_ string, roots []eval.Root) error {
+	mcpRoot, err := findMCPRoot(roots)
+	if err != nil {
+		return err
+	}
+	p.mcpRoot = mcpRoot
+	p.exampleRoot, _ = firstRootWithJSONRPC(roots)
+	_, err = prepareMCPServicesFromRoot(roots, mcpRoot)
+	return err
+}
+
+// generate makes the example server return the MCP service backed by the user
+// service.
+func (p *mcpExamplePlugin) generate(
+	plan *goagenerator.Plan,
+	files []*codegen.File,
+) ([]*codegen.File, error) {
+	if p.mcpRoot == nil {
+		return nil, fmt.Errorf("MCP example generation was not prepared")
+	}
+	if p.exampleRoot == nil {
 		return files, nil
 	}
 
-	mcpServices := collectMCPServices(r)
+	mcpServices := collectMCPServices(p.exampleRoot, p.mcpRoot)
 	if len(mcpServices) == 0 {
 		return files, nil
 	}
 
-	// Ensure example stub returns the adapter-backed service instead of zero-value stub
+	if err := bindExampleMCPServices(plan, p.exampleRoot, mcpServices); err != nil {
+		return nil, err
+	}
 	files, err := generateExampleAdapterStubs(mcpServices, files)
 	if err != nil {
 		return nil, err
 	}
-
-	for _, svr := range r.API.Servers {
-		dir := example.Servers.Get(svr, r).Dir
-		files = patchCLIForServer(dir, svr, mcpServices, files)
-	}
-
 	return files, nil
+}
+
+// bindExampleMCPServices copies the final constructor, interface, package, and
+// file names chosen by Goa for each example stub.
+func bindExampleMCPServices(
+	plan *goagenerator.Plan,
+	root *expr.RootExpr,
+	services []exampleMCPService,
+) error {
+	planned := plan.Service(root).Services()
+	for index := range services {
+		service := &services[index]
+		user := planned.Get(service.service.Name)
+		if user == nil {
+			return fmt.Errorf("goa did not plan example service %q", service.service.Name)
+		}
+		mcp := planned.Get("mcp_" + service.service.Name)
+		if mcp == nil {
+			return fmt.Errorf("goa did not plan MCP example service %q", service.service.Name)
+		}
+		service.stubPath = filepath.ToSlash(mcp.PathName + ".go")
+		service.mcpPackagePath = mcp.PathName
+		service.mcpConstructorName = mcp.ExampleConstructorDeclaration.Name()
+		service.userConstructorName = user.ExampleConstructorDeclaration.Name()
+		service.mcpServiceInterface = mcp.ServiceDeclaration.Name()
+	}
+	return nil
 }
 
 // firstRootWithJSONRPC returns the first root with JSON-RPC configured.
@@ -113,85 +122,26 @@ func firstRootWithJSONRPC(roots []eval.Root) (*expr.RootExpr, bool) {
 }
 
 // collectMCPServices returns services that have MCP configured in DSL.
-func collectMCPServices(r *expr.RootExpr) []*expr.ServiceExpr {
-	var svcs []*expr.ServiceExpr
+func collectMCPServices(r *expr.RootExpr, mcpRoot *mcpexpr.RootExpr) []exampleMCPService {
+	var services []exampleMCPService
 	for _, sv := range r.Services {
-		if mcpexpr.Root.HasMCP(sv) {
-			svcs = append(svcs, sv)
+		mcp := mcpRoot.GetMCP(sv)
+		if mcp != nil {
+			services = append(services, exampleMCPService{
+				service:    sv,
+				hasPrompts: len(mcp.Prompts) > 0,
+			})
 		}
 	}
-	return svcs
+	return services
 }
 
-// patchCLIForServer locates the generated JSON-RPC CLI support file and rewrites it
-// to instantiate the MCP adapter client endpoints. It also adds required imports.
-func patchCLIForServer(dir string, svr *expr.ServerExpr, mcpServices []*expr.ServiceExpr, files []*codegen.File) []*codegen.File {
-	cliPath := filepath.Join("cmd", dir+"-cli", "jsonrpc.go")
-	var cliFile *codegen.File
-	for _, f := range files {
-		if f.Path != cliPath {
-			continue
-		}
-		cliFile = f
-		break
-	}
-	if cliFile == nil {
-		return files
-	}
-
-	svcMap := make(map[string]*expr.ServiceExpr, len(mcpServices))
-	for _, svc := range mcpServices {
-		svcMap[svc.Name] = svc
-	}
-
-	var targetSvcs []*expr.ServiceExpr
-	for _, name := range svr.Services {
-		if svc := svcMap[name]; svc != nil {
-			targetSvcs = append(targetSvcs, svc)
-		}
-	}
-	if len(targetSvcs) == 0 {
-		return files
-	}
-
-	header := findSection(cliFile, headerSection)
-	if header == nil {
-		return files
-	}
-	baseModule := deriveBaseModuleFromHeader(header)
-	if baseModule == "" {
-		return files
-	}
-
-	serviceData := buildCLIServiceData(targetSvcs, header, baseModule)
-	if len(serviceData) == 0 {
-		return files
-	}
-	replacement := renderCLIDoJSONRPC(serviceData)
-	if replacement == "" {
-		return files
-	}
-
-	codegen.AddImport(header,
-		&codegen.ImportSpec{Path: "fmt"},
-		&codegen.ImportSpec{Path: "os"},
-		&codegen.ImportSpec{Path: "strings"},
-	)
-
-	section := findSectionByName(cliFile, "cli-http-start")
-	if section != nil {
-		section.Source = replacement
-	}
-	if end := findSectionByName(cliFile, "cli-http-end"); end != nil {
-		end.Source = ""
-	}
-	return files
-}
-
-// patchExampleStubForMCP rewrites the generated example stub (mcp_<svc>.go)
-// to return the adapter that wraps the original service implementation, so the
-// server exposes proper MCP behavior.
-func generateExampleAdapterStubs(mcpServices []*expr.ServiceExpr, files []*codegen.File) ([]*codegen.File, error) {
+// generateExampleAdapterStubs changes each MCP example constructor to return a
+// service backed by the matching user service.
+func generateExampleAdapterStubs(
+	mcpServices []exampleMCPService,
+	files []*codegen.File,
+) ([]*codegen.File, error) {
 	if len(mcpServices) == 0 {
 		return files, nil
 	}
@@ -200,9 +150,12 @@ func generateExampleAdapterStubs(mcpServices []*expr.ServiceExpr, files []*codeg
 	for _, f := range files {
 		byPath[filepath.ToSlash(f.Path)] = f
 	}
-	for _, svc := range mcpServices {
-		svcGo := codegen.Goify(svc.Name, true)
+	for _, mcpService := range mcpServices {
+		svc := mcpService.service
 		stubPath := expectedExampleStubPath(svc)
+		if mcpService.stubPath != "" {
+			stubPath = mcpService.stubPath
+		}
 		f := byPath[stubPath]
 		if f == nil {
 			return nil, fmt.Errorf("expected MCP example stub %q for service %q", stubPath, svc.Name)
@@ -211,19 +164,16 @@ func generateExampleAdapterStubs(mcpServices []*expr.ServiceExpr, files []*codeg
 		if header == nil {
 			return nil, fmt.Errorf("example stub %q for service %q is missing %q", f.Path, svc.Name, headerSection)
 		}
-		mcpAlias, err := exampleStubImportAlias(header, svc)
+		mcpAlias, err := exampleStubImportAlias(header, mcpService)
 		if err != nil {
 			return nil, err
 		}
-		// Determine whether prompts are enabled to decide constructor arity
-		hasPrompts := false
-		if m := mcpexpr.Root.GetMCP(svc); m != nil {
-			hasPrompts = m.Capabilities != nil && m.Capabilities.EnablePrompts
-		}
 		body := mcpTemplates.MustRender("example_mcp_stub", map[string]any{
-			"ServiceGo":  svcGo,
-			"MCPAlias":   mcpAlias,
-			"HasPrompts": hasPrompts,
+			"MCPConstructorName":  mcpService.mcpConstructorName,
+			"UserConstructorName": mcpService.userConstructorName,
+			"MCPServiceInterface": mcpService.mcpServiceInterface,
+			"MCPAlias":            mcpAlias,
+			"HasPrompts":          mcpService.hasPrompts,
 		})
 		// Replace file content except header with our body
 		f.SectionTemplates = []*codegen.SectionTemplate{header, {Name: exampleMCPStubSection, Source: body}}
@@ -231,16 +181,15 @@ func generateExampleAdapterStubs(mcpServices []*expr.ServiceExpr, files []*codeg
 	return files, nil
 }
 
-// expectedExampleStubPath returns the canonical example stub file path emitted by
-// Goa for one MCP-enabled service.
+// expectedExampleStubPath returns the example filename Goa writes for one MCP service.
 func expectedExampleStubPath(svc *expr.ServiceExpr) string {
 	return filepath.ToSlash("mcp_" + codegen.SnakeCase(svc.Name) + ".go")
 }
 
-// exampleStubImportAlias returns the explicit import alias for the generated MCP
-// package expected by the example stub header. The stub must already carry this
-// import; example rewriting no longer invents one.
-func exampleStubImportAlias(header *codegen.SectionTemplate, svc *expr.ServiceExpr) (string, error) {
+// exampleStubImportAlias returns the name used to refer to the generated MCP
+// package. The example file must already import that package.
+func exampleStubImportAlias(header *codegen.SectionTemplate, service exampleMCPService) (string, error) {
+	svc := service.service
 	if header == nil || header.Data == nil {
 		return "", fmt.Errorf("example stub %q is missing import metadata", expectedExampleStubPath(svc))
 	}
@@ -257,6 +206,9 @@ func exampleStubImportAlias(header *codegen.SectionTemplate, svc *expr.ServiceEx
 		return "", fmt.Errorf("example stub %q has unexpected imports metadata", expectedExampleStubPath(svc))
 	}
 	wantSuffix := "/gen/mcp_" + codegen.SnakeCase(svc.Name)
+	if service.mcpPackagePath != "" {
+		wantSuffix = "/gen/" + service.mcpPackagePath
+	}
 	for _, spec := range specs {
 		if !strings.HasSuffix(spec.Path, wantSuffix) {
 			continue
@@ -287,47 +239,6 @@ func findSection(f *codegen.File, name string) *codegen.SectionTemplate {
 	return nil
 }
 
-// deriveBaseModuleFromHeader inspects the header imports to find the module path
-// prefix used by the generated example code (by locating the JSON-RPC CLI import).
-func deriveBaseModuleFromHeader(header *codegen.SectionTemplate) string {
-	if header == nil || header.Data == nil {
-		return ""
-	}
-	data, ok := header.Data.(map[string]any)
-	if !ok {
-		return ""
-	}
-	imv, ok := data["Imports"]
-	if !ok {
-		return ""
-	}
-	specs, ok := imv.([]*codegen.ImportSpec)
-	if !ok {
-		return ""
-	}
-	for _, spec := range specs {
-		idx := strings.Index(spec.Path, "/gen/jsonrpc/cli/")
-		if idx >= 0 {
-			return spec.Path[:idx]
-		}
-	}
-	return ""
-}
-
-func removeHTTPServiceByName(services []*expr.HTTPServiceExpr, name string) []*expr.HTTPServiceExpr {
-	if len(services) == 0 {
-		return nil
-	}
-	filtered := make([]*expr.HTTPServiceExpr, 0, len(services))
-	for _, svc := range services {
-		if svc != nil && svc.ServiceExpr != nil && svc.ServiceExpr.Name == name {
-			continue
-		}
-		filtered = append(filtered, svc)
-	}
-	return filtered
-}
-
 func replaceHTTPServiceByName(services []*expr.HTTPServiceExpr, removeName string, replacement *expr.HTTPServiceExpr) []*expr.HTTPServiceExpr {
 	replacementName := ""
 	if replacement != nil && replacement.ServiceExpr != nil {
@@ -347,74 +258,4 @@ func replaceHTTPServiceByName(services []*expr.HTTPServiceExpr, removeName strin
 		filtered = append(filtered, replacement)
 	}
 	return filtered
-}
-
-func serviceInList(list []*expr.ServiceExpr, name string) bool {
-	for _, s := range list {
-		if s.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-func stringInList(list []string, name string) bool {
-	for _, s := range list {
-		if s == name {
-			return true
-		}
-	}
-	return false
-}
-
-func findSectionByName(f *codegen.File, name string) *codegen.SectionTemplate {
-	for _, s := range f.SectionTemplates {
-		if s.Name == name {
-			return s
-		}
-	}
-	return nil
-}
-
-func buildCLIServiceData(
-	services []*expr.ServiceExpr,
-	header *codegen.SectionTemplate,
-	baseModule string,
-) []cliServiceTemplateData {
-	data := make([]cliServiceTemplateData, 0, len(services))
-	for _, svc := range services {
-		if len(svc.Methods) == 0 {
-			continue
-		}
-		svcSnake := codegen.SnakeCase(svc.Name)
-		alias := codegen.Goify("mcp_"+svcSnake, false) + "adapter"
-		path := baseModule + "/gen/mcp_" + svcSnake + "/adapter/client"
-		codegen.AddImport(header, &codegen.ImportSpec{Path: path, Name: alias})
-
-		methods := make([]cliMethodTemplateData, 0, len(svc.Methods))
-		for _, m := range svc.Methods {
-			methods = append(methods, cliMethodTemplateData{
-				Command:  methodCommandName(m.Name),
-				Endpoint: codegen.Goify(m.Name, true),
-			})
-		}
-		data = append(data, cliServiceTemplateData{
-			Name:    svc.Name,
-			Alias:   alias,
-			Methods: methods,
-		})
-	}
-	return data
-}
-
-func renderCLIDoJSONRPC(services []cliServiceTemplateData) string {
-	if len(services) == 0 {
-		return ""
-	}
-	data := cliParseTemplateData{Services: services}
-	return mcpTemplates.MustRender("cli_dojsonrpc", data)
-}
-
-func methodCommandName(name string) string {
-	return strings.ReplaceAll(codegen.SnakeCase(name), "_", "-")
 }

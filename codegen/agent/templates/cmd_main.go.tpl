@@ -178,13 +178,13 @@ func main() {
 
 	{
 		client, err := newExampleCompletionClient(
-			string(completions.{{ .GoName }}),
-			completions.{{ .GoName }}Example(),
+			string(completions.{{ .ConstName }}),
+			completions.{{ .ExampleFunc }}(),
 		)
 		if err != nil {
 			log.Fatalf("completion client setup failed: %v", err)
 		}
-		out, err := completions.Complete{{ .GoName }}(ctx, client, &model.Request{
+		out, err := completions.{{ .CompleteFunc }}(ctx, client, &model.Request{
 			Messages: []*model.Message{
 				{
 					Role:  model.ConversationRoleUser,
@@ -195,18 +195,18 @@ func main() {
 		if err != nil {
 			log.Fatalf("completion run failed: %v", err)
 		}
-		fmt.Printf("Completion %s: %+v\n", completions.{{ .GoName }}, out.Value)
+		fmt.Printf("Completion %s: %+v\n", completions.{{ .ConstName }}, out.Value)
 	}
 
 	{
 		client, err := newExampleCompletionClient(
-			string(completions.{{ .GoName }}),
-			completions.{{ .GoName }}Example(),
+			string(completions.{{ .ConstName }}),
+			completions.{{ .ExampleFunc }}(),
 		)
 		if err != nil {
 			log.Fatalf("completion stream client setup failed: %v", err)
 		}
-		stream, err := completions.StreamComplete{{ .GoName }}(ctx, client, &model.Request{
+		stream, err := completions.{{ .StreamFunc }}(ctx, client, &model.Request{
 			Messages: []*model.Message{
 				{
 					Role:  model.ConversationRoleUser,
@@ -226,14 +226,14 @@ func main() {
 				log.Fatalf("completion stream failed: %v", err)
 			}
 			if delta, ok := chunk.(model.CompletionDeltaChunk); ok {
-				fmt.Printf("Completion delta %s: %s\n", completions.{{ .GoName }}, delta.Delta.Delta)
+				fmt.Printf("Completion delta %s: %s\n", completions.{{ .ConstName }}, delta.Delta.Delta)
 			}
 		}
 		value, ok := stream.Value()
 		if !ok {
 			log.Fatal("completion stream ended without a typed value")
 		}
-		fmt.Printf("Completion stream %s: %+v\n", completions.{{ .GoName }}, value)
+		fmt.Printf("Completion stream %s: %+v\n", completions.{{ .ConstName }}, value)
 		if err := stream.Close(); err != nil {
 			log.Fatalf("completion stream close failed: %v", err)
 		}

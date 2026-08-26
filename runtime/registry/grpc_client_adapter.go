@@ -15,6 +15,7 @@ import (
 	"context"
 
 	registrypb "goa.design/goa-ai/registry/gen/grpc/registry/pb"
+	"google.golang.org/protobuf/proto"
 )
 
 // GRPCClientAdapter wraps a generated gRPC registry client and implements
@@ -40,7 +41,7 @@ func (a *GRPCClientAdapter) ListToolsets(ctx context.Context) ([]*ToolsetInfo, e
 
 // GetToolset retrieves the full schema for a specific toolset.
 func (a *GRPCClientAdapter) GetToolset(ctx context.Context, name string) (*ToolsetSchema, error) {
-	resp, err := a.client.GetToolset(ctx, &registrypb.GetToolsetRequest{Name: name})
+	resp, err := a.client.GetToolset(ctx, &registrypb.GetToolsetRequest{Name: proto.String(name)})
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +50,7 @@ func (a *GRPCClientAdapter) GetToolset(ctx context.Context, name string) (*Tools
 
 // Search performs a keyword search on the registry.
 func (a *GRPCClientAdapter) Search(ctx context.Context, query string) ([]*SearchResult, error) {
-	resp, err := a.client.Search(ctx, &registrypb.SearchRequest{Query: query})
+	resp, err := a.client.Search(ctx, &registrypb.SearchRequest{Query: proto.String(query)})
 	if err != nil {
 		return nil, err
 	}

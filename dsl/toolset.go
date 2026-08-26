@@ -268,10 +268,8 @@ func instantiateToolset(value any, overlay func(), agent *agentsexpr.AgentExpr) 
 // depend on an exported toolset when inference is not possible or ambiguous.
 //
 // When to use AgentToolset vs Toolset:
-//   - Prefer Toolset(X) when you already have an expression handle (e.g., a
-//     top-level Toolset variable or an agent's exported Toolset). Goa-AI will
-//     infer a RemoteAgent provider automatically when exactly one agent in a
-//     different service Exports a toolset with the same name.
+//   - Use a Toolset expression directly when exactly one agent in another
+//     service exports it. Generated code links that exporter automatically.
 //   - Use AgentToolset(service, agent, toolset) when you:
 //   - Do not have an expression handle to the exported toolset, or
 //   - Have ambiguity (multiple agents export a toolset with the same name), or
@@ -282,10 +280,8 @@ func instantiateToolset(value any, overlay func(), agent *agentsexpr.AgentExpr) 
 //   - agent:   Agent name in that service
 //   - toolset: Exported toolset name in that agent
 //
-// The referenced toolset is resolved from the design, and a local reference is
-// recorded with its Origin set to the defining toolset. Provider information is
-// inferred during validation and will classify this as a RemoteAgent provider
-// when the owner service differs from the consumer service.
+// AgentToolset returns the selected Export expression. Use keeps that selection
+// so generated consumer code imports and invokes the named agent.
 func AgentToolset(service, agent, toolset string) *agentsexpr.ToolsetExpr {
 	if service == "" || agent == "" || toolset == "" {
 		eval.ReportError("AgentToolset requires non-empty service, agent, and toolset")

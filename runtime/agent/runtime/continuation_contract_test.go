@@ -109,7 +109,7 @@ func TestValidateWorkflowOutputEnforcesIdentityAndTerminalShape(t *testing.T) {
 
 func TestValidateContinuationIdentityRequiresNewRunAndTurn(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	checkpoint, err := runtime.decodeWorkflowCheckpoint(suspensionContractFixture(t, spec.Name))
 	require.NoError(t, err)

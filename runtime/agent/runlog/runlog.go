@@ -101,16 +101,17 @@ type (
 	// Store is an append-only event store for run introspection.
 	//
 	// Implementations must provide stable ordering within a run. Cursor values are
-	// store-owned and opaque to callers.
+	// store-owned and opaque to callers. The first event for a run fixes its
+	// SessionID. Every later event for that RunID must use the same SessionID.
 	Store interface {
 		// Append stores the event in the run log.
 		//
 		// Store implementations assign the event ID and persist the payload
 		// verbatim. Append must be durable and idempotent on (run_id, event_key):
 		// retries with the same immutable identity and payload return the existing
-		// event ID with Inserted=false. The first append owns the event timestamp;
-		// retry-attempt timestamps are ignored. Conflicting identity or payload
-		// for the same key must fail loudly.
+		// event ID with Inserted=false. The first append owns the event timestamp
+		// and the run's SessionID; retry-attempt timestamps are ignored. Conflicting
+		// identity, payload, or SessionID values must return an error.
 		Append(ctx context.Context, e *Event) (AppendResult, error)
 
 		// List returns the next forward page of events for the given run ID.

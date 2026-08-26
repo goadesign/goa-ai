@@ -878,7 +878,7 @@ Workflow step boundary:
   removes that reserved key if a run, policy, planner, or model supplies it,
 - recoverable failures supply one normal planner activity with their structured
   evidence and do not constrain this validated terminal bookkeeping path;
-  caller-supplied `WithRestrictToTool` remains run-scoped and still applies,
+  caller-supplied `WithRestrictToTool` still applies for the entire run,
 - deadline checks happen before admitting new work; in-flight tool batches
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.
@@ -1406,6 +1406,13 @@ type ToolsetRegistration struct {
 }
 ```
 
+`ToolSpec` describes a tool's name, schemas, codecs, and planner metadata. It
+does not name the service or toolset that executes the tool. This lets one
+generated contract package be reused by agents in different services.
+`ToolsetRegistration.Name` is the local execution route for every tool in its
+`Specs` slice. The runtime rejects two different registration names that claim
+the same global tool name because a tool call contains only that name.
+
 Generated `RegisterUsedToolsets` helpers remain the sole owner of each
 service-backed toolset registration. Applications provide the required
 executor with `With<Toolset>Executor`. When a typed result needs deterministic
@@ -1413,6 +1420,16 @@ application-owned enrichment before canonical encoding—for example, attaching
 server-only display data—provide
 `With<Toolset>ResultMaterializer` in the same registration call. Do not
 register the toolset a second time.
+
+Each directly used, non-MCP toolset also has an exported
+`<Toolset>ToolsetName` constant in the generated agent package. This is the
+same name used by `RegisterUsedToolsets` for executor lookup, result
+materialization, and runtime registration. Code that must name the toolset—for
+example, a registry executor created outside the generated helper—uses this
+constant instead of copying a string such as `"atlas_data.atlas.read"`. The constant is
+agent-specific because two agents may use the same shared tool definition under
+different registration names. After regeneration, replace copied names with
+the generated constant.
 
 ### Tool Call Display Hints (DisplayHint)
 
@@ -1869,10 +1886,16 @@ import (
     toolregexec "goa.design/goa-ai/runtime/toolregistry/executor"
 )
 
-exec := toolregexec.New(registryClient, pulseClient, specs)
+exec, err := toolregexec.New(registryClient, pulseClient, "reports.core", specs)
+if err != nil {
+    return err
+}
 
 // Use exec.Execute as the executor for registry-backed toolsets.
 ```
+
+The third argument is the exact toolset name sent to the remote registry. It
+belongs to this executor, not to the reusable tool specifications.
 
 The registry wire protocol and deterministic stream IDs are defined in `runtime/toolregistry`:
 
@@ -3406,20 +3429,27 @@ type Tracer interface {
 
 ## MCP Callers
 
-The `runtime/mcp` package provides three caller implementations for different MCP server
-transports.
+The `runtime/mcp` package provides callers for MCP servers reached through a
+subprocess or an HTTP endpoint.
 
 ### StdioCaller
 
-Spawns an MCP server as a subprocess and communicates via stdin/stdout:
+Spawns an MCP server as a subprocess and communicates via stdin/stdout. After
+the server returns the requested protocol version, the caller writes
+`notifications/initialized` without a JSON-RPC ID and does not wait for a
+response:
 
 ```go
 import "goa.design/goa-ai/runtime/mcp"
 
-caller, err := mcp.NewStdioCaller(mcp.StdioOptions{
-    Command: "npx",
-    Args:    []string{"-y", "@modelcontextprotocol/server-filesystem"},
-    Env:     []string{"HOME=" + os.Getenv("HOME")},
+caller, err := mcp.NewStdioCaller(ctx, mcp.StdioOptions{
+	Command: "npx",
+	Args:    []string{"-y", "@modelcontextprotocol/server-filesystem"},
+	Env:     []string{"HOME=" + os.Getenv("HOME")},
+	ClientInfo: mcp.ClientInfo{
+		Name:    "document-agent",
+		Version: "1.4.0",
+	},
 })
 if err != nil {
     log.Fatal(err)
@@ -3429,20 +3459,26 @@ defer caller.Close()
 
 ### HTTPCaller
 
-HTTP POST to MCP endpoints:
+Sends Streamable HTTP POST requests to an MCP endpoint. `Endpoint` must be an absolute
+`http` or `https` URL; the caller rejects an empty or non-HTTP URL before it
+sends the initialize request. After the server returns the requested protocol
+version, the caller sends `notifications/initialized` without a JSON-RPC ID.
+It does not decode a JSON-RPC response for that notification. Normal requests
+accept either one JSON response or a server-sent-event stream. While reading an
+event stream, the caller ignores notifications, answers server pings, and waits
+for the response with the matching JSON-RPC ID.
 
 ```go
-caller := mcp.NewHTTPCaller("https://mcp-server.example.com/mcp")
-```
-
-### SSECaller
-
-Server-Sent Events for streaming MCP responses:
-
-```go
-caller := mcp.NewSSECaller(mcp.SSEOptions{
-    URL: "https://mcp-server.example.com/sse",
+caller, err := mcp.NewHTTPCaller(ctx, mcp.HTTPOptions{
+	Endpoint: "https://mcp-server.example.com/mcp",
+	ClientInfo: mcp.ClientInfo{
+		Name:    "document-agent",
+		Version: "1.4.0",
+	},
 })
+if err != nil {
+	log.Fatal(err)
+}
 ```
 
 All callers implement the `mcp.Caller` interface. They return typed transport,
@@ -3450,16 +3486,14 @@ protocol, malformed-response, and tool-execution errors without retrying or
 turning error text into control flow. Generated MCP executors classify those
 errors into the canonical `planner.ToolFailure` contract.
 
-### Server-initiated events (Broadcaster)
+`CallResponse` currently exposes text content blocks and the optional
+`structuredContent` object. A remote tool result containing image, audio, or
+embedded-resource blocks is rejected as a malformed response. Supporting those
+blocks requires a public result type that can preserve their complete data.
 
-Generated MCP adapters can stream server-initiated events (notifications, resource updates) to multiple
-subscribers via `mcp.Broadcaster`. The default in-memory implementation is:
-
-```go
-b := mcp.NewChannelBroadcaster(128, true) // (buf, drop)
-sub, _ := b.Subscribe(ctx)
-defer sub.Close()
-```
+An HTTP 404 for a request carrying a session identifier expires that session.
+The runtime initializes a replacement session for later work but returns the
+failed operation without repeating it.
 
 ## Stream Profiles
 

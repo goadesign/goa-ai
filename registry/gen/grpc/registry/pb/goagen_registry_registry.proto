@@ -107,7 +107,7 @@ service Registry {
 
 message RegisterRequest {
 	// Unique name for the toolset
-	string name = 1;
+	optional string name = 1;
 	// Human-readable description of the toolset
 	optional string description = 2;
 	// Semantic version of the toolset.
@@ -117,54 +117,54 @@ message RegisterRequest {
 	// Tool definitions with their schemas
 	repeated ToolSchema tools = 5;
 	// Stable identity of the provider process registering this toolset.
-	string provider_id = 6;
+	optional string provider_id = 6;
 	// Deployment-issued revision shared by every replica of one fenced admission.
 // Reuse it for same-contract scaling and rolling updates; change it only to
 // create a new fenced admission.
-	string admission_revision = 7;
+	optional string admission_revision = 7;
 	// Runtime-generated UUID identifying one Serve lifecycle. The provider runtime
 // generates it once and reuses it for every renewal.
-	string provider_incarnation_id = 8;
+	optional string provider_incarnation_id = 8;
 	// Required runtime-owned version of the provider message envelope. The
 // registry admits only its exact canonical version.
-	sint32 wire_protocol_version = 9;
+	optional sint32 wire_protocol_version = 9;
 }
 // Tool schema declaration for registration with the tool registry gateway.
 message ToolSchema {
 	// Globally unique tool identifier of the form "toolset.tool".
-	string name = 1;
+	optional string name = 1;
 	// Human-readable description of what the tool does.
 	optional string description = 2;
 	// Optional tags used for policy, routing, or UI filtering.
 	repeated string tags = 3;
 	// Canonical JSON schema for the tool payload.
-	bytes payload_schema = 4;
+	optional bytes payload_schema = 4;
 	// Canonical JSON schema for the tool result.
-	bytes result_schema = 5;
+	optional bytes result_schema = 5;
 	// Canonical JSON schema for the tool sidecar (UI-only), when present.
 	optional bytes sidecar_schema = 6;
 }
 
 message RegisterResponse {
 	// ISO 8601 timestamp of registration
-	string registered_at = 1;
+	optional string registered_at = 1;
 	// Deterministic admission-generation token derived from the wire protocol
 // version, canonical schema fingerprint, and deployment-issued admission
 // revision
-	string registration_token = 2;
+	optional string registration_token = 2;
 	// Duration of the admitted provider lease in milliseconds
-	sint64 lease_duration_ms = 3;
+	optional sint64 lease_duration_ms = 3;
 }
 
 message ReleaseProviderRequest {
 	// Name of the toolset whose provider is leaving
-	string name = 1;
+	optional string name = 1;
 	// Stable identity of the provider process releasing its lease
-	string provider_id = 2;
+	optional string provider_id = 2;
 	// Exact admission-generation token returned by Register
-	string expected_registration_token = 3;
+	optional string expected_registration_token = 3;
 	// Runtime-generated UUID of the exact Serve lifecycle releasing its lease.
-	string provider_incarnation_id = 4;
+	optional string provider_incarnation_id = 4;
 }
 
 message ReleaseProviderResponse {
@@ -173,15 +173,15 @@ message ReleaseProviderResponse {
 message DrainProviderRequest {
 	// Full provider shutdown duration for which the draining lease must retain
 // settlement authority.
-	sint64 settlement_duration_ms = 100;
+	optional sint64 settlement_duration_ms = 100;
 	// Name of the toolset whose provider is leaving
-	string name = 1;
+	optional string name = 1;
 	// Stable identity of the provider process releasing its lease
-	string provider_id = 2;
+	optional string provider_id = 2;
 	// Exact admission-generation token returned by Register
-	string expected_registration_token = 3;
+	optional string expected_registration_token = 3;
 	// Runtime-generated UUID of the exact Serve lifecycle releasing its lease.
-	string provider_incarnation_id = 4;
+	optional string provider_incarnation_id = 4;
 }
 
 message DrainProviderResponse {
@@ -189,10 +189,10 @@ message DrainProviderResponse {
 
 message UnregisterRequest {
 	// Name of the toolset to unregister
-	string name = 1;
+	optional string name = 1;
 	// Exact admission-generation token returned by Register for the stopped
 // provider rollout
-	string expected_registration_token = 2;
+	optional string expected_registration_token = 2;
 }
 
 message UnregisterResponse {
@@ -200,13 +200,13 @@ message UnregisterResponse {
 
 message PongRequest {
 	// ID of the ping being acknowledged
-	string ping_id = 1;
+	optional string ping_id = 1;
 	// Name of the toolset responding
-	string toolset = 2;
+	optional string toolset = 2;
 	// Stable identity of the provider instance responding to the ping.
-	string provider_id = 3;
+	optional string provider_id = 3;
 	// Runtime-generated UUID of the Serve lifecycle responding to the ping.
-	string provider_incarnation_id = 4;
+	optional string provider_incarnation_id = 4;
 }
 
 message PongResponse {
@@ -224,7 +224,7 @@ message ListToolsetsResponse {
 // Toolset metadata for listing and search results
 message ToolsetInfo {
 	// Unique name for the toolset
-	string name = 1;
+	optional string name = 1;
 	// Human-readable description
 	optional string description = 2;
 	// Semantic version of the toolset.
@@ -232,19 +232,19 @@ message ToolsetInfo {
 	// Tags for categorization
 	repeated string tags = 4;
 	// Number of tools in the toolset
-	sint32 tool_count = 5;
+	optional sint32 tool_count = 5;
 	// ISO 8601 registration timestamp
-	string registered_at = 6;
+	optional string registered_at = 6;
 }
 
 message GetToolsetRequest {
 	// Name of the toolset to retrieve
-	string name = 1;
+	optional string name = 1;
 }
 
 message GetToolsetResponse {
 	// Unique name for the toolset
-	string name = 1;
+	optional string name = 1;
 	// Human-readable description
 	optional string description = 2;
 	// Semantic version of the toolset.
@@ -254,12 +254,12 @@ message GetToolsetResponse {
 	// Tool schemas included in the toolset.
 	repeated ToolSchema tools = 5;
 	// ISO 8601 registration timestamp
-	string registered_at = 6;
+	optional string registered_at = 6;
 }
 
 message SearchRequest {
 	// Search query string
-	string query = 1;
+	optional string query = 1;
 }
 
 message SearchResponse {
@@ -270,96 +270,96 @@ message SearchResponse {
 message CallToolRequest {
 	// Toolset registration identifier used for routing (for example,
 // "catalog.lookup").
-	string toolset = 1;
+	optional string toolset = 1;
 	// Globally unique tool identifier of the form "toolset.tool" (for example,
 // "catalog.lookup.find_records").
-	string tool = 2;
+	optional string tool = 2;
 	// Canonical JSON payload for the tool call. Must validate against the
 // registered payload schema.
-	bytes payload_json = 3;
+	optional bytes payload_json = 3;
 	// Execution metadata propagated alongside the tool call.
 	ToolCallMeta meta = 4;
 	// Required runtime-owned version of the consumer message envelope. The
 // registry accepts only its exact canonical version.
-	sint32 wire_protocol_version = 5;
+	optional sint32 wire_protocol_version = 5;
 }
 // Context metadata propagated alongside tool calls for routing, correlation,
 // and domain injection (for example, session-scoped data access).
 message ToolCallMeta {
 	// Run identifier for the agent execution that issued this tool call.
-	string run_id = 1;
+	optional string run_id = 1;
 	// Agent session identifier used to scope tool behavior and persistence.
-	string session_id = 2;
+	optional string session_id = 2;
 	// Turn identifier within the session.
 	optional string turn_id = 3;
 	// Tool call identifier used for correlation with model provider tool calls.
-	string tool_call_id = 4;
+	optional string tool_call_id = 4;
 	// Parent tool call identifier when the tool call is nested.
 	optional string parent_tool_call_id = 5;
 }
 
 message CallToolResponse {
 	// Global transport identifier derived from required run_id and tool_call_id.
-	string tool_use_id = 1;
+	optional string tool_use_id = 1;
 	// Exact admission-generation token stamped on the routed call
-	string registration_token = 2;
+	optional string registration_token = 2;
 	// Absolute Redis-owned deadline that bounds provider execution and caller
 // waiting.
-	string execution_deadline = 3;
+	optional string execution_deadline = 3;
 	// Later absolute Redis-owned expiration shared by the call record and result
 // stream.
-	string result_stream_expires_at = 4;
+	optional string result_stream_expires_at = 4;
 }
 
 message RetryToolRequest {
 	// Exact admission-generation token returned by the original CallTool admission.
-	string expected_registration_token = 100;
+	optional string expected_registration_token = 100;
 	// Toolset registration identifier used for routing (for example,
 // "catalog.lookup").
-	string toolset = 1;
+	optional string toolset = 1;
 	// Globally unique tool identifier of the form "toolset.tool" (for example,
 // "catalog.lookup.find_records").
-	string tool = 2;
+	optional string tool = 2;
 	// Canonical JSON payload for the tool call. Must validate against the
 // registered payload schema.
-	bytes payload_json = 3;
+	optional bytes payload_json = 3;
 	// Execution metadata propagated alongside the tool call.
 	ToolCallMeta meta = 4;
 	// Required runtime-owned version of the consumer message envelope. The
 // registry accepts only its exact canonical version.
-	sint32 wire_protocol_version = 5;
+	optional sint32 wire_protocol_version = 5;
 }
 
 message RetryToolResponse {
 	// Global transport identifier derived from required run_id and tool_call_id.
-	string tool_use_id = 1;
+	optional string tool_use_id = 1;
 	// Exact admission-generation token stamped on the routed call
-	string registration_token = 2;
+	optional string registration_token = 2;
 	// Absolute Redis-owned deadline that bounds provider execution and caller
 // waiting.
-	string execution_deadline = 3;
+	optional string execution_deadline = 3;
 	// Later absolute Redis-owned expiration shared by the call record and result
 // stream.
-	string result_stream_expires_at = 4;
+	optional string result_stream_expires_at = 4;
 }
 
 message CompleteToolCallRequest {
 	// Toolset whose provider completed the call.
-	string toolset = 1;
+	optional string toolset = 1;
 	// Stable provider process identity that executed the call.
-	string provider_id = 2;
+	optional string provider_id = 2;
 	// Runtime UUID of the exact Serve lifecycle that executed the call.
-	string provider_incarnation_id = 3;
+	optional string provider_incarnation_id = 3;
 	// Exact admission-generation token stamped on the call.
-	string registration_token = 4;
+	optional string registration_token = 4;
 	// Global transport identity stamped on the call.
-	string tool_use_id = 5;
+	optional string tool_use_id = 5;
 	// Canonical encoded terminal ToolResultMessage.
-	bytes result_json = 6;
+	optional bytes result_json = 6;
 	// Pulse request-stream event claimed by this provider.
-	string request_event_id = 7;
+	optional string request_event_id = 7;
 	// Exact registration token of the provider lease settling the claim.
-	string provider_registration_token = 8;
+	optional string provider_registration_token = 8;
 }
 
 message CompleteToolCallResponse {
@@ -367,23 +367,23 @@ message CompleteToolCallResponse {
 
 message PublishToolOutputDeltaRequest {
 	// Logical output stream such as stdout or stderr.
-	string stream = 100;
+	optional string stream = 100;
 	// Output fragment emitted by the running tool.
-	string delta = 101;
+	optional string delta = 101;
 	// Toolset whose provider claimed the call.
-	string toolset = 1;
+	optional string toolset = 1;
 	// Stable identity of the provider process.
-	string provider_id = 2;
+	optional string provider_id = 2;
 	// Runtime UUID of the exact Serve lifecycle.
-	string provider_incarnation_id = 3;
+	optional string provider_incarnation_id = 3;
 	// Exact registration token of the provider lease.
-	string provider_registration_token = 4;
+	optional string provider_registration_token = 4;
 	// Admission token stamped on the claimed call.
-	string call_registration_token = 5;
+	optional string call_registration_token = 5;
 	// Global transport identity stamped on the claimed call.
-	string tool_use_id = 6;
+	optional string tool_use_id = 6;
 	// Pulse request-stream event claimed by this provider.
-	string request_event_id = 7;
+	optional string request_event_id = 7;
 }
 
 message PublishToolOutputDeltaResponse {
@@ -391,19 +391,19 @@ message PublishToolOutputDeltaResponse {
 
 message ReportToolCallOverloadRequest {
 	// Toolset whose provider claimed the call.
-	string toolset = 1;
+	optional string toolset = 1;
 	// Stable identity of the provider process.
-	string provider_id = 2;
+	optional string provider_id = 2;
 	// Runtime UUID of the exact Serve lifecycle.
-	string provider_incarnation_id = 3;
+	optional string provider_incarnation_id = 3;
 	// Exact registration token of the provider lease.
-	string provider_registration_token = 4;
+	optional string provider_registration_token = 4;
 	// Admission token stamped on the claimed call.
-	string call_registration_token = 5;
+	optional string call_registration_token = 5;
 	// Global transport identity stamped on the claimed call.
-	string tool_use_id = 6;
+	optional string tool_use_id = 6;
 	// Pulse request-stream event claimed by this provider.
-	string request_event_id = 7;
+	optional string request_event_id = 7;
 }
 
 message ReportToolCallOverloadResponse {
@@ -411,19 +411,19 @@ message ReportToolCallOverloadResponse {
 
 message ClaimToolCallRequest {
 	// Toolset whose provider claimed the call.
-	string toolset = 1;
+	optional string toolset = 1;
 	// Stable identity of the provider process.
-	string provider_id = 2;
+	optional string provider_id = 2;
 	// Runtime UUID of the exact Serve lifecycle.
-	string provider_incarnation_id = 3;
+	optional string provider_incarnation_id = 3;
 	// Exact registration token of the provider lease.
-	string provider_registration_token = 4;
+	optional string provider_registration_token = 4;
 	// Admission token stamped on the claimed call.
-	string call_registration_token = 5;
+	optional string call_registration_token = 5;
 	// Global transport identity stamped on the claimed call.
-	string tool_use_id = 6;
+	optional string tool_use_id = 6;
 	// Pulse request-stream event claimed by this provider.
-	string request_event_id = 7;
+	optional string request_event_id = 7;
 }
 
 message ClaimToolCallResponse {
@@ -431,5 +431,5 @@ message ClaimToolCallResponse {
 // terminal means retained terminal history already exists; claimed means
 // another request delivery owns execution; expired means Redis time settled
 // the call.
-	string disposition = 1;
+	optional string disposition = 1;
 }

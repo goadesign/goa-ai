@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -10,11 +10,11 @@ func ExportsSimple() func() {
 	return func() {
 		API("alpha", func() {})
 		Service("alpha", func() {
-			Agent("scribe", "Doc helper", func() {
-				Export("search", func() {
-					Tool("find", "Find documents", func() {
-						Args(String)
-						Return(String)
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Export("search", func() {
+					aidsl.Tool("find", "Find documents", func() {
+						aidsl.Args(String)
+						aidsl.Return(String)
 					})
 				})
 			})

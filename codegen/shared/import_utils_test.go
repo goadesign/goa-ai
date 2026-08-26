@@ -132,6 +132,22 @@ func TestGatherAttributeImports_UnionVariants(t *testing.T) {
 	require.Equal(t, "goa.design/goa-ai/gen/types", imports[0].Path)
 }
 
+func TestGatherAttributeImports_RecursiveType(t *testing.T) {
+	node := &expr.UserTypeExpr{TypeName: "Node"}
+	node.AttributeExpr = &expr.AttributeExpr{
+		Type: &expr.Object{
+			&expr.NamedAttributeExpr{
+				Name:      "next",
+				Attribute: &expr.AttributeExpr{Type: node},
+			},
+		},
+	}
+
+	imports := GatherAttributeImports("goa.design/goa-ai", &expr.AttributeExpr{Type: node})
+
+	require.Empty(t, imports)
+}
+
 // genValidGenPkg generates valid generation package paths.
 func genValidGenPkg() gopter.Gen {
 	return gen.OneConstOf(

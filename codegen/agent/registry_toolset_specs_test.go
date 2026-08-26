@@ -49,7 +49,7 @@ func TestRegistryToolsetSpecsStructure(t *testing.T) {
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
 
-	files, err := codegen.Generate("example.com/registry", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
+	files, err := codegen.BuildFilesForTest("example.com/registry", []eval.Root{goaexpr.Root, agentsExpr.Root}, false)
 	require.NoError(t, err)
 
 	var specsContent string
@@ -73,13 +73,15 @@ func TestRegistryToolsetSpecsStructure(t *testing.T) {
 	require.Contains(t, specsContent, "func ResultSchema(name tools.Ident) ([]byte, bool)")
 	require.Contains(t, specsContent, "func Metadata() []policy.ToolMetadata")
 	require.Contains(t, specsContent, "func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool)")
-	require.Contains(t, specsContent, "RegistryToolsetID")
+	require.NotContains(t, specsContent, "RegistryToolsetID")
 	require.Contains(t, specsContent, "RegistryName")
 	require.Contains(t, specsContent, "ToolsetName")
 	require.Contains(t, specsContent, "func DiscoverAndPopulate")
 	require.Contains(t, specsContent, "type RegistryClient interface")
 	require.Contains(t, specsContent, "func ValidatePayload")
 	require.Contains(t, specsContent, "func ValidateResult")
+	require.NotContains(t, specsContent, "Service:")
+	require.NotContains(t, specsContent, "Toolset:")
 }
 
 // TestRegistryToolsetSpecsMetadata verifies registry metadata is embedded.
@@ -114,7 +116,7 @@ func TestRegistryToolsetSpecsMetadata(t *testing.T) {
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
 
-	files, err := codegen.Generate("example.com/meta", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
+	files, err := codegen.BuildFilesForTest("example.com/meta", []eval.Root{goaexpr.Root, agentsExpr.Root}, false)
 	require.NoError(t, err)
 
 	var specsContent string

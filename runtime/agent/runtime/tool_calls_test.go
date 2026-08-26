@@ -47,7 +47,7 @@ func TestDispatchToolCallsPropagatesLabelsToActivityInput(t *testing.T) {
 				"svc.tools": {},
 			},
 			toolSpecs: map[tools.Ident]tools.ToolSpec{
-				"search": newAnyJSONSpec("search", "svc.tools"),
+				"search": newAnyJSONSpec("search"),
 			},
 		},
 		activityName: "execute",
@@ -115,7 +115,7 @@ func TestExecuteToolCallsRetainsModelPayloadInWorkflow(t *testing.T) {
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: runloginmem.New(),
 	}
-	seedTestToolSpecs(rt, newAnyJSONSpec(toolName, toolsetName))
+	seedTestToolset(rt, toolsetName, newAnyJSONSpec(toolName))
 	wfCtx := &testWorkflowContext{
 		ctx:     context.Background(),
 		runtime: rt,

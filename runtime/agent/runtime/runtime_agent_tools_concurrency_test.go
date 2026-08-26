@@ -58,14 +58,14 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 	tool1 := tools.Ident("svc.agenttools.tool1")
 	tool2 := tools.Ident("svc.agenttools.tool2")
 
-	spec1 := newAnyJSONSpec(tool1, reg.Name)
+	spec1 := newAnyJSONSpec(tool1)
 	spec1.IsAgentTool = true
 	spec1.AgentID = string(cfg.AgentID)
-	spec2 := newAnyJSONSpec(tool2, reg.Name)
+	spec2 := newAnyJSONSpec(tool2)
 	spec2.IsAgentTool = true
 	spec2.AgentID = string(cfg.AgentID)
 
-	seedTestToolSpecs(rt, spec1, spec2)
+	seedTestToolset(rt, reg.Name, spec1, spec2)
 
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),

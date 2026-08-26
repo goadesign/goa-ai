@@ -163,9 +163,7 @@ func (r *Runtime) materializeActivityToolExecutionResult(
 // applyResultMaterializer invokes the toolset-owned typed result materializer
 // when the toolset registered one.
 func (r *Runtime) applyResultMaterializer(ctx context.Context, spec tools.ToolSpec, call ToolCall, result *planner.ToolResult) error {
-	r.mu.RLock()
-	reg, ok := r.toolsets[spec.Toolset]
-	r.mu.RUnlock()
+	_, reg, ok := r.toolsetForTool(spec.Name)
 	if !ok || reg.ResultMaterializer == nil {
 		return nil
 	}

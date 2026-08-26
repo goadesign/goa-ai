@@ -24,10 +24,9 @@ func TestChildSuspensionPropagatesThroughParentContinuation(t *testing.T) {
 	runtime := New(WithLogger(telemetry.NoopLogger{}))
 	parentRegistration := AgentRegistration{ResumeActivityName: "resume", ExecuteToolActivity: "execute"}
 	runtime.agents["parent.agent"] = parentRegistration
-	tool := newAnyJSONSpec("svc.agent.child", "svc.agent")
+	tool := newAnyJSONSpec("svc.agent.child")
 	tool.IsAgentTool = true
 	tool.AgentID = "nested.agent"
-	seedTestToolSpecs(runtime, tool)
 	cfg := AgentToolConfig{
 		AgentID: "nested.agent",
 		Name:    "svc.agent",
@@ -38,6 +37,7 @@ func TestChildSuspensionPropagatesThroughParentContinuation(t *testing.T) {
 	}
 	registration := NewAgentToolsetRegistration(runtime, cfg)
 	runtime.toolsets[registration.Name] = registration
+	seedTestToolset(runtime, registration.Name, tool)
 
 	firstInput := &RunInput{AgentID: "parent.agent", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
 	seedRunMeta(t, runtime, firstInput)
@@ -70,7 +70,7 @@ func TestChildSuspensionPropagatesThroughParentContinuation(t *testing.T) {
 	}()
 	firstChild := <-firstChildren
 	childRuntime := New(WithLogger(telemetry.NoopLogger{}))
-	childTool := newAnyJSONSpec("child.lookup", "child")
+	childTool := newAnyJSONSpec("child.lookup")
 	seedTestToolSpecs(childRuntime, childTool)
 	childSuspension := suspensionContractFixtureWithContext(
 		t,

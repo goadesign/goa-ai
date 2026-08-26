@@ -413,9 +413,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			}
 			continue
 		}
-		e.r.mu.RLock()
-		ts, hasTS := e.r.toolsets[spec.Toolset]
-		e.r.mu.RUnlock()
+		toolsetName, ts, hasTS := e.r.toolsetForTool(call.Name)
 
 		queue := ""
 		if hasTS && !ts.Inline {
@@ -557,7 +555,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		toolInput := ToolInput{
 			AgentID:          e.agentID,
 			RunID:            e.runID,
-			ToolsetName:      spec.Toolset,
+			ToolsetName:      toolsetName,
 			ToolName:         call.Name,
 			ToolCallID:       call.ToolCallID,
 			Payload:          append(rawjson.Message(nil), call.Payload...),
@@ -906,11 +904,9 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 		for _, call := range calls {
 			call = exec.normalizeToolCall(call)
 			queue := ""
-			spec, ok := r.toolSpec(call.Name)
+			_, ok := r.toolSpec(call.Name)
 			if ok {
-				r.mu.RLock()
-				ts, hasTS := r.toolsets[spec.Toolset]
-				r.mu.RUnlock()
+				_, ts, hasTS := r.toolsetForTool(call.Name)
 				if hasTS && !ts.Inline {
 					queue = toolActOptions.Queue
 					if queue == "" {

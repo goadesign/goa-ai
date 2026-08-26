@@ -20,7 +20,7 @@ import (
 
 func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *testing.T) {
 	recorder := &recordingHooks{ch: make(chan hooks.Event, 128)}
-	agentToolSpec := newAnyJSONSpec("svc.agent.child", "svc.agenttools")
+	agentToolSpec := newAnyJSONSpec("svc.agent.child")
 	agentToolSpec.IsAgentTool = true
 	agentToolSpec.AgentID = "nested.agent"
 	rt := &Runtime{
@@ -44,13 +44,13 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 		Bus:           recorder,
 		SessionStore:  sessioninmem.New(),
 	}
-	seedTestToolSpecs(
+	seedTestToolset(
 		rt,
-		newAnyJSONSpec("svc.tools.a1", "svc.tools"),
-		newAnyJSONSpec("svc.tools.a2", "svc.tools"),
-		newAnyJSONSpec("inline.ts.inline", "inline.ts"),
-		agentToolSpec,
+		"svc.tools",
+		newAnyJSONSpec("svc.tools.a1"),
+		newAnyJSONSpec("svc.tools.a2"),
 	)
+	seedTestToolset(rt, "inline.ts", newAnyJSONSpec("inline.ts.inline"))
 
 	// Register the agent toolset that maps svc.agenttools.* to child workflows.
 	cfg := AgentToolConfig{
@@ -69,6 +69,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 	}
 	reg := NewAgentToolsetRegistration(rt, cfg)
 	rt.toolsets[reg.Name] = reg
+	seedTestToolset(rt, reg.Name, agentToolSpec)
 
 	childHandles := make(chan *controlledChildHandle, 1)
 	act1 := &controlledToolFuture{ready: make(chan struct{}), out: &ToolOutput{Payload: []byte("1")}}
@@ -134,7 +135,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 
 func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
 	recorder := &recordingHooks{}
-	spec := newAnyJSONSpec("inline.cancel.cancel", "inline.cancel")
+	spec := newAnyJSONSpec("inline.cancel.cancel")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"inline.cancel": {
@@ -150,7 +151,7 @@ func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
 		RunEventStore: runloginmem.New(),
 		Bus:           recorder,
 	}
-	seedTestToolSpecs(rt, spec)
+	seedTestToolset(rt, "inline.cancel", spec)
 	runCtx := &run.Context{RunID: "run-inline-canceled", SessionID: "session-1", TurnID: "turn-1"}
 	call := ToolCall{
 		Name:       spec.Name,
@@ -181,10 +182,9 @@ func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
 		require.False(t, received)
 	}
 }
-
 func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 	recorder := &recordingHooks{}
-	spec := newAnyJSONSpec("agent.cancel.child", "agent.cancel")
+	spec := newAnyJSONSpec("agent.cancel.child")
 	spec.IsAgentTool = true
 	spec.AgentID = "nested.cancel"
 	rt := &Runtime{
@@ -196,7 +196,6 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 		Bus:           recorder,
 		SessionStore:  sessioninmem.New(),
 	}
-	seedTestToolSpecs(rt, spec)
 	registration := NewAgentToolsetRegistration(rt, AgentToolConfig{
 		AgentID: agent.Ident("nested.cancel"),
 		Name:    "agent.cancel",
@@ -212,6 +211,7 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 		},
 	})
 	rt.toolsets[registration.Name] = registration
+	seedTestToolset(rt, registration.Name, spec)
 	childHandles := make(chan *controlledChildHandle, 1)
 	wfCtx := &testWorkflowContext{
 		ctx:                    context.Background(),

@@ -7,8 +7,8 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-// Ensures service-local user types use the same import alias as referenced by
-// Goa's NameScope when generating type references in codecs.
+// TestGolden_ServiceAlias_Consistency checks that generated JSON code imports
+// a service type with the same package name used in its Go reference.
 func TestGolden_ServiceAlias_Consistency(t *testing.T) {
 	files := buildAndGenerate(t, func() {
 		// Service name contains underscore to exercise alias vs path base.

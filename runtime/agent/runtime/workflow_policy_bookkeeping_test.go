@@ -30,19 +30,19 @@ func newRuntimeWithSpecs(specs ...tools.ToolSpec) *Runtime {
 
 // newBookkeepingSpec returns a bookkeeping-tagged stub tool spec.
 func newBookkeepingSpec(name tools.Ident) tools.ToolSpec {
-	spec := newAnyJSONSpec(name, "tests.toolset")
+	spec := newAnyJSONSpec(name)
 	spec.Bookkeeping = true
 	return spec
 }
 
 // newRetrievalSpec returns a retrieval (budgeted) stub tool spec.
 func newRetrievalSpec(name tools.Ident) tools.ToolSpec {
-	return newAnyJSONSpec(name, "tests.toolset")
+	return newAnyJSONSpec(name)
 }
 
 // newTerminalSpec returns a normalized terminal stub tool spec.
 func newTerminalSpec(name tools.Ident) tools.ToolSpec {
-	spec := newAnyJSONSpec(name, "tests.toolset")
+	spec := newAnyJSONSpec(name)
 	spec.TerminalRun = true
 	spec.Bookkeeping = true
 	return spec
@@ -51,7 +51,7 @@ func newTerminalSpec(name tools.Ident) tools.ToolSpec {
 // newInvalidTerminalSpec returns a terminal stub tool spec that violates the
 // runtime contract and should be rejected at registration time.
 func newInvalidTerminalSpec(name tools.Ident) tools.ToolSpec {
-	spec := newAnyJSONSpec(name, "tests.toolset")
+	spec := newAnyJSONSpec(name)
 	spec.TerminalRun = true
 	return spec
 }

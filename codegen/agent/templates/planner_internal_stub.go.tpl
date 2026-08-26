@@ -9,7 +9,7 @@ type examplePlanner struct{}
 // PlanStart requests the example tool call selected from the design.
 func (*examplePlanner) PlanStart(_ context.Context, _ *planner.PlanInput) (*planner.PlanResult, error) {
 	{{- if .Tool }}
-    args, err := gentool.{{ .Tool.Payload.ExportedCodec }}().FromJSON(gentool.Spec{{ .Tool.ConstName }}().Payload.ExampleJSON)
+    args, err := gentool.{{ .Tool.Payload.ExportedCodec }}().FromJSON(gentool.{{ .Tool.SpecVar }}().Payload.ExampleJSON)
 	if err != nil {
 		return nil, fmt.Errorf("decode generated {{ .Tool.Name }} example: %w", err)
 	}
@@ -69,5 +69,5 @@ func (*examplePlanner) PlanResume(_ context.Context, in *planner.PlanResumeInput
 				Parts: []model.Part{model.TextPart{Text: answer}},
 			},
 		},
-	}, nil
+    }, nil
 }

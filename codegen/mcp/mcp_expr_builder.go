@@ -1,3 +1,5 @@
+// Package codegen builds the Goa service, types, and JSON-RPC routes that implement
+// MCP for one user service.
 package codegen
 
 import (
@@ -9,41 +11,67 @@ import (
 	"goa.design/goa-ai/codegen/shared"
 )
 
-// mcpExprBuilder builds Goa expressions for the MCP protocol service.
-// It embeds the shared ProtocolExprBuilderBase for common functionality.
-type mcpExprBuilder struct {
-	*shared.ProtocolExprBuilderBase
-	originalService *expr.ServiceExpr
-	mcp             *mcpexpr.MCPExpr
-	source          *sourceSnapshot
-	mcpService      *expr.ServiceExpr
-	root            *expr.RootExpr
-}
+type (
+	// mcpExprBuilder builds the Goa service that handles MCP requests.
+	mcpExprBuilder struct {
+		*shared.ProtocolExprBuilderBase
+		originalService *expr.ServiceExpr
+		mcp             *mcpexpr.MCPExpr
+		mcpService      *expr.ServiceExpr
+	}
 
-// mcpHTTPServiceConfig carries the resolved JSON-RPC path into the shared HTTP
-// service builder. MCP-specific metadata stays in this package; the shared
-// builder only owns the transport shape.
-type mcpHTTPServiceConfig struct {
-	jsonrpcPath string
-}
+	// mcpHTTPServiceConfig gives the shared route builder the JSON-RPC path.
+	mcpHTTPServiceConfig struct {
+		jsonrpcPath string
+	}
+
+	// mcpErrorDefinition describes one error returned by an MCP method and the
+	// JSON-RPC code sent to clients.
+	mcpErrorDefinition struct {
+		name        string
+		description string
+		code        int
+	}
+)
+
+var (
+	// mcpInvalidParamsError is returned when request values do not identify a
+	// valid operation supported by the generated server.
+	mcpInvalidParamsError = mcpErrorDefinition{
+		name:        "invalid_params",
+		description: "The request parameters do not match the MCP method.",
+		code:        expr.RPCInvalidParams,
+	}
+	// mcpInternalError is returned when a selected operation cannot complete.
+	mcpInternalError = mcpErrorDefinition{
+		name:        "internal_error",
+		description: "The MCP service could not complete the request.",
+		code:        expr.RPCInternalError,
+	}
+	// mcpDispatchErrors are returned by methods that validate a selection and
+	// then call authored service code.
+	mcpDispatchErrors = [...]mcpErrorDefinition{mcpInvalidParamsError, mcpInternalError}
+)
 
 // newMCPExprBuilder creates a new MCP expression builder for the given
 // original service and its associated MCP expression configuration.
-func newMCPExprBuilder(svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, source *sourceSnapshot) *mcpExprBuilder {
+func newMCPExprBuilder(
+	svc *expr.ServiceExpr,
+	mcp *mcpexpr.MCPExpr,
+) *mcpExprBuilder {
 	return &mcpExprBuilder{
 		ProtocolExprBuilderBase: shared.NewProtocolExprBuilderBase(),
 		originalService:         svc,
 		mcp:                     mcp,
-		source:                  source,
 	}
 }
 
+// JSONRPCPath returns the path used by the generated MCP service.
 func (c mcpHTTPServiceConfig) JSONRPCPath() string {
 	return c.jsonrpcPath
 }
 
-// BuildServiceExpr creates the Goa service expression that models the MCP
-// protocol surface for the original service.
+// BuildServiceExpr creates the Goa service that handles MCP for the user service.
 func (b *mcpExprBuilder) BuildServiceExpr() *expr.ServiceExpr {
 	b.mcpService = &expr.ServiceExpr{
 		Name:        "mcp_" + b.originalService.Name,
@@ -65,121 +93,79 @@ func (b *mcpExprBuilder) BuildServiceExpr() *expr.ServiceExpr {
 	return b.mcpService
 }
 
-// userTypeAttr returns an attribute that references the MCP user type with the
-// given name. This ensures downstream codegen treats the payload/result as a
-// user type instead of inlining the underlying object, which is important for
-// generated client body init functions to return pointer types consistently.
+// userTypeAttr refers to one named MCP type so generated clients use the same
+// Go type in method fields and helper functions.
 func (b *mcpExprBuilder) userTypeAttr(name string, builder func() *expr.AttributeExpr) *expr.AttributeExpr {
 	return b.UserTypeAttr(name, builder)
 }
 
-// BuildRootExpr creates a temporary Goa root expression containing only the
-// MCP service and its transport setup used to drive code generation.
-func (b *mcpExprBuilder) BuildRootExpr(mcpService *expr.ServiceExpr) *expr.RootExpr {
-	// Build all MCP types
+// Attach adds the MCP service, types, and JSON-RPC transport to root. Goa plans
+// and writes these expressions with the rest of the design.
+func (b *mcpExprBuilder) Attach(root *expr.RootExpr, mcpService *expr.ServiceExpr, jsonrpcPath string) (*expr.HTTPServiceExpr, []expr.UserType) {
 	b.buildMCPTypes()
-
-	// Create HTTP service for JSON-RPC
-	httpService := b.buildHTTPService(mcpService)
-
-	// Create the root
-	b.root = &expr.RootExpr{
-		Services: []*expr.ServiceExpr{mcpService},
-		Types:    b.CollectUserTypes(),
-		API: &expr.APIExpr{
-			Name:    "MCP",
-			Version: "1.0",
-			HTTP: &expr.HTTPExpr{
-				Services: []*expr.HTTPServiceExpr{httpService},
-			},
-			JSONRPC: &expr.JSONRPCExpr{
-				HTTPExpr: expr.HTTPExpr{
-					Services: []*expr.HTTPServiceExpr{httpService},
-				},
-			},
-			GRPC: &expr.GRPCExpr{
-				Services: []*expr.GRPCServiceExpr{}, // Initialize empty to avoid nil
-			},
-			// Add server with service name (not "MCP") for consistent CLI generation
-			Servers: []*expr.ServerExpr{
-				{
-					Name:     mcpService.Name,
-					Services: []string{mcpService.Name},
-				},
-			},
-		},
-	}
-
-	// Initialize the example generator for the API
-	b.root.API.ExampleGenerator = &expr.ExampleGenerator{
-		Randomizer: expr.NewFakerRandomizer("MCP"),
-	}
-
-	// Set Root reference on HTTP service for proper initialization
-	httpService.Root = b.root.API.HTTP
-
-	return b.root
+	httpService := b.buildHTTPService(mcpService, jsonrpcPath)
+	httpService.Root = &root.API.JSONRPC.HTTPExpr
+	root.Services = append(root.Services, mcpService)
+	root.API.JSONRPC.Services = replaceHTTPServiceByName(
+		root.API.JSONRPC.Services,
+		b.originalService.Name,
+		httpService,
+	)
+	return httpService, b.CollectUserTypes()
 }
 
-// buildHTTPService creates the HTTP/JSON-RPC service expression for MCP. The
-// builder owns path resolution from the source service, then delegates the
-// transport shape to shared.BuildHTTPServiceBase so JSON-RPC route wiring stays
-// consistent across protocol generators.
-func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr) *expr.HTTPServiceExpr {
-	// Get the JSONRPC path from the stored original configuration
-	jsonrpcPath := ""
-
-	if path, ok := b.source.jsonrpcPath(b.originalService.Name); ok && path != "" {
-		jsonrpcPath = path
-	} else {
-		// The shared pure-MCP contract validator should reject this before the
-		// builder runs. Keep the local error as a last-resort guard so direct
-		// builder use still fails deterministically.
-		b.RecordValidationError(fmt.Errorf(missingJSONRPCRouteMessage, b.originalService.Name))
-		jsonrpcPath = "/rpc"
-	}
-	return shared.BuildHTTPServiceBase(mcpService, mcpHTTPServiceConfig{jsonrpcPath: jsonrpcPath})
-}
-
-// BuildServiceMapping creates the mapping between MCP methods and original
-// service methods, used by templates to wire adapters and clients.
-func (b *mcpExprBuilder) BuildServiceMapping() *ServiceMethodMapping {
-	mapping := &ServiceMethodMapping{
-		ToolMethods:          make(map[string]string),
-		ResourceMethods:      make(map[string]string),
-		DynamicPromptMethods: make(map[string]string),
-	}
-
-	// Map tools to methods
-	for _, tool := range b.mcp.Tools {
-		mapping.ToolMethods[tool.Name] = tool.Method.Name
-	}
-
-	// Map resources to methods
-	for _, resource := range b.mcp.Resources {
-		mapping.ResourceMethods[resource.Name] = resource.Method.Name
-	}
-
-	// Map dynamic prompts to methods
-	if mcpexpr.Root != nil {
-		dynamicPrompts := mcpexpr.Root.DynamicPrompts[b.originalService.Name]
-		for _, dp := range dynamicPrompts {
-			mapping.DynamicPromptMethods[dp.Name] = dp.Method.Name
+// buildHTTPService gives the generated MCP service the JSON-RPC path declared
+// by the user service.
+func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr, jsonrpcPath string) *expr.HTTPServiceExpr {
+	httpService := shared.BuildHTTPServiceBase(mcpService, mcpHTTPServiceConfig{jsonrpcPath: jsonrpcPath})
+	for _, endpoint := range httpService.HTTPEndpoints {
+		if endpoint.MethodExpr.Name == "notifications/initialized" {
+			endpoint.JSONRPCNotification = true
+		}
+		if len(endpoint.MethodExpr.Errors) > 0 {
+			endpoint.HTTPErrors = buildMCPHTTPErrorMappings(endpoint)
 		}
 	}
-
-	return mapping
+	return httpService
 }
 
-// getOrCreateType retrieves or creates a named user type used by the MCP model.
-// This delegates to the embedded base type.
+// getOrCreateType returns the shared named type or creates it on first use.
 func (b *mcpExprBuilder) getOrCreateType(name string, builder func() *expr.AttributeExpr) *expr.UserTypeExpr {
 	return b.GetOrCreateType(name, builder)
 }
 
-// ServiceMethodMapping maps MCP operations to original service methods.
-type ServiceMethodMapping struct {
-	ToolMethods          map[string]string
-	ResourceMethods      map[string]string
-	DynamicPromptMethods map[string]string
+// buildMCPMethodErrors declares the errors returned by one generated adapter
+// method before Goa plans the service code.
+func buildMCPMethodErrors(definitions ...mcpErrorDefinition) []*expr.ErrorExpr {
+	errors := make([]*expr.ErrorExpr, len(definitions))
+	for index, definition := range definitions {
+		errors[index] = &expr.ErrorExpr{
+			Name: definition.name,
+			AttributeExpr: &expr.AttributeExpr{
+				Type:        expr.ErrorResult,
+				Description: definition.description,
+			},
+		}
+	}
+	return errors
+}
+
+// buildMCPHTTPErrorMappings assigns each method error its JSON-RPC response
+// code before Goa plans the transport code.
+func buildMCPHTTPErrorMappings(endpoint *expr.HTTPEndpointExpr) []*expr.HTTPErrorExpr {
+	errors := make([]*expr.HTTPErrorExpr, 0, len(endpoint.MethodExpr.Errors))
+	for _, definition := range mcpDispatchErrors {
+		if endpoint.MethodExpr.Error(definition.name) == nil {
+			continue
+		}
+		errors = append(errors, &expr.HTTPErrorExpr{
+			Name: definition.name,
+			Response: &expr.HTTPResponseExpr{
+				StatusCode:  definition.code,
+				Description: definition.description,
+				Parent:      endpoint,
+			},
+		})
+	}
+	return errors
 }

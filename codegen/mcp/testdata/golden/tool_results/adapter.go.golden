@@ -1,0 +1,128 @@
+
+// Tools handling
+
+// ToolsList returns the tools declared in the Goa design.
+func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*ToolsListResult, error) {
+	a.log(ctx, "request", map[string]any{"method": "tools/list"})
+	if p.Cursor != nil {
+		return nil, goa.PermanentError("invalid_params", "tools/list does not accept a cursor")
+	}
+	tools := []*ToolInfo{
+		{
+			Name:         "summarize",
+			Description:  stringPtr("Summarize a report"),
+			InputSchema:  json.RawMessage("{\"type\":\"object\",\"additionalProperties\":false}"),
+			OutputSchema: json.RawMessage("{\"type\":\"object\",\"additionalProperties\":false}"),
+		},
+		{
+			Name:        "title",
+			Description: stringPtr("Return a title"),
+			InputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+		},
+		{
+			Name:        "tags",
+			Description: stringPtr("Return report tags"),
+			InputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+		},
+		{
+			Name:        "notify",
+			Description: stringPtr("Send a notification"),
+			InputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+		},
+	}
+	res := &ToolsListResult{Tools: tools}
+	a.log(ctx, "response", map[string]any{"method": "tools/list"})
+	return res, nil
+}
+
+// toolCallError returns a service failure as an MCP tool result.
+func toolCallError(message string) *ToolsCallResult {
+	return &ToolsCallResult{
+		Content: []*ContentItem{
+			{Type: "text", Text: message},
+		},
+		IsError: boolPtr(true),
+	}
+}
+
+// ToolsCall validates the arguments and calls the Goa method for the named tool.
+func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*ToolsCallResult, error) {
+	a.log(ctx, "request", map[string]any{"method": "tools/call", "name": p.Name})
+	switch p.Name {
+	case "summarize":
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
+		}
+		payload, err := mcpcodec.DecodeSummarizePayload(arguments)
+		if err != nil {
+			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
+		}
+		result, err := a.service.Summarize(ctx, payload)
+		if err != nil {
+			return toolCallError(a.mapError(err).Error()), nil
+		}
+		encoded, err := mcpcodec.EncodeSummarizeResult(result)
+		if err != nil {
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		text := string(encoded)
+		final := &ToolsCallResult{
+			Content: []*ContentItem{
+				{Type: "text", Text: text},
+			},
+			StructuredContent: json.RawMessage(encoded),
+		}
+		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
+		return final, nil
+	case "title":
+		if err := validateNoArguments(p.Arguments); err != nil {
+			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
+		}
+		result, err := a.service.Title(ctx)
+		if err != nil {
+			return toolCallError(a.mapError(err).Error()), nil
+		}
+		text := string(result)
+		final := &ToolsCallResult{
+			Content: []*ContentItem{
+				{Type: "text", Text: text},
+			},
+		}
+		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
+		return final, nil
+	case "tags":
+		if err := validateNoArguments(p.Arguments); err != nil {
+			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
+		}
+		result, err := a.service.Tags(ctx)
+		if err != nil {
+			return toolCallError(a.mapError(err).Error()), nil
+		}
+		encoded, err := mcpcodec.EncodeTagsResult(result)
+		if err != nil {
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		text := string(encoded)
+		final := &ToolsCallResult{
+			Content: []*ContentItem{
+				{Type: "text", Text: text},
+			},
+		}
+		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
+		return final, nil
+	case "notify":
+		if err := validateNoArguments(p.Arguments); err != nil {
+			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
+		}
+		if err := a.service.Notify(ctx); err != nil {
+			return toolCallError(a.mapError(err).Error()), nil
+		}
+		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
+		return &ToolsCallResult{
+			Content: []*ContentItem{},
+		}, nil
+	default:
+		return nil, goa.PermanentError("invalid_params", "unknown tool: %s", p.Name)
+	}
+}

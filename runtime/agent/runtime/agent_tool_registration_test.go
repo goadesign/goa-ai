@@ -128,7 +128,7 @@ func TestRegisterToolsetValidatesAgentToolExecution(t *testing.T) {
 
 func TestRegisterToolsetLeavesNonAgentToolsUnchanged(t *testing.T) {
 	runtime := New()
-	spec := newAnyJSONSpec("service.tools.lookup", "service.tools")
+	spec := newAnyJSONSpec("service.tools.lookup")
 
 	err := runtime.RegisterToolset(ToolsetRegistration{
 		Name:  "service.tools",
@@ -169,7 +169,7 @@ func TestRegisterToolsetRejectsInvalidAgentToolAtomically(t *testing.T) {
 
 func agentToolRegistrationFixture(runtime *Runtime) ToolsetRegistration {
 	const agentID = agent.Ident("service.worker")
-	spec := newAnyJSONSpec("service.tools.run", "service.tools")
+	spec := newAnyJSONSpec("service.tools.run")
 	spec.IsAgentTool = true
 	spec.AgentID = string(agentID)
 	registration := NewAgentToolsetRegistration(runtime, AgentToolConfig{

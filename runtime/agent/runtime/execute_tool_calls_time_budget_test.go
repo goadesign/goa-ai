@@ -17,7 +17,7 @@ import (
 
 func TestExecuteToolCalls_CancelsInFlightToolsWhenTimeBudgetReached(t *testing.T) {
 	recorder := &recordingHooks{}
-	toolSpec := newAnyJSONSpec("svc.tools.slow", "svc.tools")
+	toolSpec := newAnyJSONSpec("svc.tools.slow")
 	rt := &Runtime{
 		Bus:           recorder,
 		logger:        telemetry.NoopLogger{},

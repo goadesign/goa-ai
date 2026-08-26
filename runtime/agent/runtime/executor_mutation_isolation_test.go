@@ -44,7 +44,7 @@ func TestExecuteToolActivityIsolatesExecutorMutation(t *testing.T) {
 			},
 		},
 	}
-	seedTestToolSpecs(rt, newAnyJSONSpec(toolName, toolset))
+	seedTestToolset(rt, toolset, newAnyJSONSpec(toolName))
 	input := &ToolInput{
 		RunID:            "run-1",
 		AgentID:          "svc.agent",
@@ -104,7 +104,7 @@ func TestInlineToolExecutionIsolatesExecutorMutation(t *testing.T) {
 			},
 		},
 	}
-	seedTestToolSpecs(rt, newAnyJSONSpec(toolName, toolset))
+	seedTestToolset(rt, toolset, newAnyJSONSpec(toolName))
 	canonical := ToolCall{
 		Name:                       toolName,
 		Payload:                    rawjson.Message(`{"query":"status"}`),

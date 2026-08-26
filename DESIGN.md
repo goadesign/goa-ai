@@ -31,7 +31,7 @@ For each service annotated with agents or MCP, the plugin:
 1. Derives service expressions from your DSL (see `expr/agent/` and `expr/mcp.go`).
 2. Runs standard Goa generators:
    - Service layer via `codegen/service` (service, endpoints, client)
-   - JSON-RPC transport via `jsonrpc/codegen` (server, client, types; SSE when streaming)
+   - JSON-RPC transport via `jsonrpc/codegen` (server, client, and types)
    - Agent workflows, activities, tool specs, and completion specs via `codegen/agent`
    - Evaluation suites and typed scenario hooks via `eval/codegen`
 3. Applies small, deterministic transformations so files land under appropriate paths.
@@ -875,6 +875,9 @@ Enable MCP protocol for a service with `MCP`:
 ```go
 Service("calculator", func() {
     MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+    JSONRPC(func() {
+        POST("/mcp")
+    })
     Method("add", func() {
         Payload(func() { Attribute("a", Int); Attribute("b", Int) })
         Result(func() { Attribute("sum", Int) })
@@ -882,6 +885,12 @@ Service("calculator", func() {
     })
 })
 ```
+
+The service-level JSON-RPC `POST` sets the generated MCP path. The same service
+may also expose ordinary HTTP, file, and gRPC endpoints. Goa keeps those
+endpoints and mounts the generated MCP JSON-RPC service beside them. Goa rejects
+an ordinary HTTP route that would register the same method and route pattern as
+the MCP endpoint because only one handler could receive those requests.
 
 ### Protocol version
 
@@ -891,21 +900,94 @@ Set the MCP protocol version in your design using the DSL option on `MCP`:
 MCP("assistant-mcp", "1.0.0", ProtocolVersion("2025-06-18"))
 ```
 
-The generator emits a constant `DefaultProtocolVersion` in `gen/mcp_<service>/protocol_version.go`.
+The generator emits `DefaultProtocolVersion` in
+`gen/mcp_<service>/protocol_version.go`. Generated clients send this value, and
+generated servers accept and return the same value. Adapter construction cannot
+replace the version declared by the design.
+
+### Client identity
+
+Every runtime and generated MCP caller accepts the same `runtime/mcp.ClientInfo`
+value. Its name and version identify the application making the connection.
+Callers reject either missing value before sending an initialize request or
+starting an MCP server process. Generated clients convert this application
+value when they build the generated JSON-RPC initialize payload.
+
+The generated JSON-RPC client package provides `NewCaller`. It initializes the
+MCP session and returns the protocol-level `runtime/mcp.Caller` used by agent
+runtimes:
+
+```go
+client := genmcpjsonrpc.NewClient(scheme, host, doer, enc, dec, restore)
+caller, err := genmcpjsonrpc.NewCaller(
+    ctx,
+    client,
+    mcpruntime.ClientInfo{Name: "calculator-cli", Version: "1.0.0"},
+)
+```
+
+`NewCaller` stops before returning a caller when identity is incomplete, the
+initialize request fails, or the server selects a different protocol version.
+After an accepted initialize response, it sends `notifications/initialized`
+without a JSON-RPC ID. It does not decode or wait for a JSON-RPC response
+because notifications never have one.
+
+Goa-AI does not generate an MCP client that implements the original Goa service
+interface. MCP tool failures do not preserve Goa's named service errors, so that
+client would promise behavior the wire protocol cannot provide. Applications
+that require the original service interface use its HTTP or gRPC client; MCP
+consumers use the generated `Caller`. Enabling MCP replaces that service's
+ordinary JSON-RPC transport because both contracts own the same Goa transport.
+An application that needs both must declare a separate service for the ordinary
+JSON-RPC methods.
+
+HTTP callers also require the application to supply an absolute `http` or
+`https` endpoint. They reject missing, relative, and non-HTTP addresses before
+sending initialization. Stdio callers require the application to supply the
+server command before starting a process.
+
+### Initialization and HTTP sessions
+
+Generated callers own the initialization sequence and do not return a usable
+client until both messages have been sent. For HTTP, one shared session object
+adds the negotiated protocol version, remembers a session identifier only from
+the initialize response, and accepts either a JSON or server-sent-event response
+to a POST. If a request with that session identifier receives HTTP 404, the
+caller clears the expired session and initializes a new one. It returns the
+original failed operation without repeating it because a tool call may have
+already changed external state.
+
+The generated server uses one endpoint for POST and GET. POST accepts one MCP
+message and rejects request arrays. GET returns HTTP 405 because this release
+does not provide a long-lived server event stream. Both methods reject a foreign
+browser Origin. Every POST after initialize must carry the generated
+`MCP-Protocol-Version` value.
 
 ### Adapter options
 
 The generated `MCPAdapterOptions` provides configuration hooks:
 
 - Logger: `func(ctx context.Context, event string, details any)` to observe adapter lifecycle.
-- ErrorMapper: `func(error) error` to normalize errors to JSON-RPC codes.
-- AllowedResourceURIs, DeniedResourceURIs: simple allow/deny lists for resource URIs.
-- StructuredStreamJSON: when true, stream events are emitted as `resource` items with `application/json`.
-- ProtocolVersionOverride: override `DefaultProtocolVersion` at construction time.
+- ErrorMapper: `func(error) error` to change the error message returned in an
+  MCP tool result. Tool failures remain successful JSON-RPC responses marked
+  with `isError`; this hook does not choose JSON-RPC error codes.
 
-## Streaming
+### Supported MCP features
 
-No custom streaming templates. When your methods stream, Goa's JSON-RPC generator emits the SSE stack. We simply adjust paths/imports so it lives under the MCP tree.
+This release implements the MCP 2025-06-18 lifecycle, ping, tools, fixed
+resources, and prompts. Tool payloads must be Goa objects. Object results
+advertise an output schema and return `structuredContent`; the text content is
+also present for MCP clients that display it. A resource method has no payload
+and owns one exact URI. Text resources return a string, and JSON resources use
+the generated Goa result codec. Prompts are static messages declared in the
+service design, with roles limited to `user` or `assistant`.
+
+The caller result currently preserves text blocks and `structuredContent`.
+Image, audio, and embedded-resource tool result blocks are rejected until the
+public caller result can represent their complete data.
+
+Resource templates, resource subscriptions, server notifications, and
+long-lived GET streams are not generated.
 
 ## Agent run lifecycle streaming contract
 
@@ -1151,7 +1233,7 @@ A contextual quickstart file `AGENTS_QUICKSTART.md` is emitted at the module roo
 
 The `goa example` phase generates application-owned scaffold under `internal/agents/`:
 
-- `internal/agents/bootstrap/bootstrap.go`: constructs a minimal runtime and registers generated agents
+- `internal/agents/<service>/bootstrap/bootstrap.go`: constructs a minimal runtime and registers that service's generated agents
 - `internal/agents/<agent>/planner/planner.go`: planner stub implementing `PlanStart`/`PlanResume`
 - `internal/agents/<agent>/toolsets/<toolset>/adapter.go`: stubs for mapping method-backed tools
 

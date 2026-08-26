@@ -94,8 +94,9 @@ service client and go.
 Define tools in an `Export` block, and other agents can `Use` them seamlessly. Ownership stays with
 the service; the agent provides the implementation.
 
-Codegen emits provider‑side helpers with `NewRegistration` and typed builders, plus consumer‑side
-helpers for agents using the exported toolset.
+Codegen emits provider-side helpers with an exact `ToolsetName` route,
+`NewRegistration`, and typed builders. It also emits consumer-side helpers for
+agents using the exported toolset.
 
 ### One Unified Tool Catalog
 
@@ -410,17 +411,18 @@ Per‑turn enforcement of:
 |---------------------|--------------------------------------------------------------------------------------|
 | **Native toolsets** | Your implementations + generated codecs = typed, validated tools                     |
 | **Agent‑as‑tool**   | Child workflow executes the nested agent with linked streams and run links           |
-| **MCP toolsets**    | Generated wrappers preserve JSON schemas and typed transport failures across HTTP/SSE/stdio |
+| **MCP toolsets**    | Generated wrappers preserve JSON schemas and typed transport failures across Streamable HTTP or stdio |
 
 MCP callers in `runtime/mcp` support multiple transports:
 
 - **`StdioCaller`** — Spawns MCP server as subprocess, communicates via stdin/stdout
-- **`HTTPCaller`** — HTTP POST to MCP endpoints
-- **`SSECaller`** — Server‑Sent Events for streaming MCP responses
+- **`HTTPCaller`** — Streamable HTTP POST with JSON or server-sent-event responses
 
 All callers implement the `Caller` interface, preserve structured MCP error data, and include
 distributed tracing. Recovery is selected by the runtime from the typed failure contract rather
 than by parsing error text or retrying transport calls implicitly.
+The current caller result exposes text blocks and `structuredContent`; image,
+audio, and embedded-resource tool results are not yet supported.
 
 ### Memory, Streaming & Telemetry
 
@@ -584,14 +586,9 @@ the toolsets with the runtime.
 | Function | Purpose |
 |----------|---------|
 | `MCP(name, version, opts...)` | Enable MCP support for a service |
-| `ProtocolVersion(string)` | Configure MCP protocol version |
+| `ProtocolVersion(string)` | Set the generated client and server protocol version |
 | `Resource(name, uri, mimeType)` | Mark method as MCP resource provider |
-| `WatchableResource(name, uri, mimeType)` | Mark method as subscribable MCP resource |
 | `StaticPrompt(name, desc, messages...)` | Add static prompt template |
-| `DynamicPrompt(name, desc)` | Mark method as dynamic prompt generator |
-| `Notification(name, desc)` | Mark method as MCP notification sender |
-| `Subscription(resourceName)` | Mark method as subscription handler |
-| `SubscriptionMonitor(name)` | Mark method as SSE subscription monitor |
 
 ---
 
@@ -982,8 +979,8 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 
 Recovery activities preserve the caller-authorized catalog for `correct_call`
 failures and remove tools selected only by `replan` failures. Caller
-`WithRestrictToTool` policy remains run-scoped and continues to define the
-maximum available catalog.
+`WithRestrictToTool` continues to define the largest tool list available for
+the entire run.
 
 `WithTiming(Timing)` sets semantic run/planner/tool budgets. It does not expose
 engine-level queue-wait or heartbeat tuning.
@@ -1073,6 +1070,7 @@ as child workflows, enabling linked streams and run links.
 
 ### Generated Provider Helpers
 
+- **`ToolsetName`** — the exact route used to register this exported toolset
 - **Tool IDs** (fully qualified) and type aliases for codecs
 - **`New<Agent>ToolsetRegistration(rt *runtime.Runtime)`** — creates registration with routing info
 - **`NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)`** — configure per‑tool

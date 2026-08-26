@@ -49,9 +49,9 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 		},
 	})
 	rt.toolsets["svc.tools"] = reg
-	spec := newAnyJSONSpec("svc.tools.do", "svc.tools")
+	spec := newAnyJSONSpec("svc.tools.do")
 	spec.IsAgentTool = true
-	seedTestToolSpecs(rt, spec)
+	seedTestToolset(rt, "svc.tools", spec)
 
 	wfCtx := &testWorkflowContext{
 		ctx:     context.Background(),

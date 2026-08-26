@@ -28,8 +28,6 @@ func Specs() []tools.ToolSpec {
 func newSpecEcho() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        Echo,
-		Service:     "alpha",
-		Toolset:     "alpha.ops",
 		Description: "Echo",
 		Tags:        []string{},
 		Payload: tools.TypeSpec{
@@ -60,10 +58,10 @@ func SpecEcho() tools.ToolSpec {
 // EchoTool pairs the ops.echo identifier with its generated
 // typed payload and result codecs so consumers decode tool JSON without
 // restating the name-to-codec pairing fixed by the design.
-func EchoTool() tools.TypedTool[*EchoPayload, EchoResult] {
-	return tools.TypedTool[*EchoPayload, EchoResult]{
+func EchoTool() tools.TypedTool[EchoPayload, EchoResult] {
+	return tools.TypedTool[EchoPayload, EchoResult]{
 		Name: Echo,
-		Payload: tools.JSONCodec[*EchoPayload]{
+		Payload: tools.JSONCodec[EchoPayload]{
 			ToJSON:   MarshalEchoPayload,
 			FromJSON: UnmarshalEchoPayload,
 		},

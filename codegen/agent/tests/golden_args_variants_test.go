@@ -14,6 +14,9 @@ func TestGolden_Args_Primitive(t *testing.T) {
 	assertGoldenGo(t, "args_primitive", "types.go.golden", types)
 	assertGoldenGo(t, "args_primitive", "codecs.go.golden", codecs)
 	assertGoldenGo(t, "args_primitive", "specs.go.golden", specs)
+
+	complete := buildCompleteGeneratedFiles(t, testscenarios.ArgsPrimitive())
+	runCompleteGeneratedPackageTest(t, complete, "./gen/alpha/toolsets/ops/...")
 }
 
 func TestGolden_Args_InlineObject(t *testing.T) {

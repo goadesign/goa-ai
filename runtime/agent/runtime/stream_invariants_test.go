@@ -110,7 +110,7 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 		},
 	})
 	agentTools.Specs = []tools.ToolSpec{
-		newAnyJSONSpec(invokeToolID, toolsetName),
+		newAnyJSONSpec(invokeToolID),
 	}
 	agentTools.Specs[0].IsAgentTool = true
 	agentTools.Specs[0].AgentID = "child.agent"

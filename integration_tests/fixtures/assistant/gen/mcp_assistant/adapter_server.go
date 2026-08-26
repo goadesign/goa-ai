@@ -8,150 +8,39 @@
 package mcpassistant
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"strings"
-	"sync"
 
 	assistant "example.com/assistant/gen/assistant"
-	mcpruntime "goa.design/goa-ai/runtime/mcp"
-	goahttp "goa.design/goa/v3/http"
+	mcpcodec "example.com/assistant/gen/mcp_assistant/internal/codec"
 	goa "goa.design/goa/v3/pkg"
 )
 
 // MCPAdapter core: types, options, constructor, helpers
 
-type MCPAdapter struct {
-	service        assistant.Service
-	initialized    bool
-	mu             sync.RWMutex
-	opts           *MCPAdapterOptions
-	promptProvider PromptProvider
-	// Minimal subscription registry keyed by resource URI
-	subs   map[string]int
-	subsMu sync.Mutex
-	// Broadcaster for server-initiated events (notifications/resources)
-	broadcaster mcpruntime.Broadcaster
-	// resourceNameToURI holds DSL-derived mapping for policy and lookups
-	resourceNameToURI map[string]string
-}
+type (
+	// MCPAdapter translates MCP protocol requests into calls to the authored
+	// Goa service.
+	MCPAdapter struct {
+		service assistant.Service
+		opts    *MCPAdapterOptions
+	}
 
-// MCPAdapterOptions allows customizing adapter behavior.
-type MCPAdapterOptions struct {
-	// Logger is an optional hook called with internal adapter events.
-	Logger func(ctx context.Context, event string, details any)
-	// ErrorMapper allows mapping arbitrary errors to framework-friendly errors
-	ErrorMapper func(error) error
-	// Allowed/Deny lists for resource URIs; Denied takes precedence unless header allow overrides
-	AllowedResourceURIs []string
-	DeniedResourceURIs  []string
-	// Name-based policy resolved to URIs at construction
-	AllowedResourceNames    []string
-	DeniedResourceNames     []string
-	StructuredStreamJSON    bool
-	ProtocolVersionOverride string
-	// Pluggable broadcaster, else default channel broadcaster
-	Broadcaster     mcpruntime.Broadcaster
-	BroadcastBuffer int
-	DropIfSlow      bool
-}
+	// MCPAdapterOptions allows customizing adapter behavior.
+	MCPAdapterOptions struct {
+		// Logger is an optional hook called with internal adapter events.
+		Logger func(ctx context.Context, event string, details any)
+		// ErrorMapper replaces a service error before the MCP client sees it.
+		ErrorMapper func(error) error
+	}
+)
 
-func NewMCPAdapter(service assistant.Service, promptProvider PromptProvider, opts *MCPAdapterOptions) *MCPAdapter {
-	// Resolve name-based policy to URIs
-	if opts != nil && (len(opts.AllowedResourceNames) > 0 || len(opts.DeniedResourceNames) > 0) {
-		nameToURI := map[string]string{
-			"documents":            "doc://list",
-			"system_info":          "system://info",
-			"conversation_history": "conversation://history",
-		}
-		seen := map[string]struct{}{}
-		for _, n := range opts.AllowedResourceNames {
-			if u, ok := nameToURI[n]; ok {
-				if _, dup := seen["allow:"+u]; !dup {
-					opts.AllowedResourceURIs = append(opts.AllowedResourceURIs, u)
-					seen["allow:"+u] = struct{}{}
-				}
-			}
-		}
-		for _, n := range opts.DeniedResourceNames {
-			if u, ok := nameToURI[n]; ok {
-				if _, dup := seen["deny:"+u]; !dup {
-					opts.DeniedResourceURIs = append(opts.DeniedResourceURIs, u)
-					seen["deny:"+u] = struct{}{}
-				}
-			}
-		}
-	}
-	// Broadcaster
-	var bc mcpruntime.Broadcaster
-	if opts != nil && opts.Broadcaster != nil {
-		bc = opts.Broadcaster
-	} else {
-		buf := 32
-		drop := true
-		if opts != nil {
-			if opts.BroadcastBuffer > 0 {
-				buf = opts.BroadcastBuffer
-			}
-			if opts.DropIfSlow == false {
-				drop = false
-			}
-		}
-		bc = mcpruntime.NewChannelBroadcaster(buf, drop)
-	}
-	// Build name->URI map from generated resources
-	nameToURI := map[string]string{
-		"documents":            "doc://list",
-		"system_info":          "system://info",
-		"conversation_history": "conversation://history",
-	}
+// NewMCPAdapter returns an MCP service that calls the Goa service implementation.
+func NewMCPAdapter(service assistant.Service, opts *MCPAdapterOptions) *MCPAdapter {
 	return &MCPAdapter{
-		service:           service,
-		opts:              opts,
-		promptProvider:    promptProvider,
-		subs:              make(map[string]int),
-		broadcaster:       bc,
-		resourceNameToURI: nameToURI,
+		service: service,
+		opts:    opts,
 	}
-}
-
-// mcpProtocolVersion resolves the protocol version from options or default.
-func (a *MCPAdapter) mcpProtocolVersion() string {
-	if a != nil && a.opts != nil && a.opts.ProtocolVersionOverride != "" {
-		return a.opts.ProtocolVersionOverride
-	}
-	return DefaultProtocolVersion
-}
-
-// parseQueryParamsToJSON converts URI query params into JSON.
-func parseQueryParamsToJSON(uri string) ([]byte, error) {
-	u, err := url.Parse(uri)
-	if err != nil {
-		return nil, fmt.Errorf("invalid resource URI: %w", err)
-	}
-	q := u.Query()
-	if len(q) == 0 {
-		return []byte("{}"), nil
-	}
-	// Copy to plain map[string][]string to avoid depending on url.Values in helper
-	m := make(map[string][]string, len(q))
-	for k, v := range q {
-		m[k] = v
-	}
-	coerced := mcpruntime.CoerceQuery(m)
-	return json.Marshal(coerced)
-}
-
-func (a *MCPAdapter) isInitialized() bool {
-	a.mu.RLock()
-	ok := a.initialized
-	a.mu.RUnlock()
-	return ok
 }
 
 func (a *MCPAdapter) log(ctx context.Context, event string, details any) {
@@ -160,6 +49,7 @@ func (a *MCPAdapter) log(ctx context.Context, event string, details any) {
 	}
 }
 
+// mapError lets the application replace a service error before it is returned.
 func (a *MCPAdapter) mapError(err error) error {
 	if a != nil && a.opts != nil && a.opts.ErrorMapper != nil && err != nil {
 		if m := a.opts.ErrorMapper(err); m != nil {
@@ -172,46 +62,12 @@ func (a *MCPAdapter) mapError(err error) error {
 func stringPtr(s string) *string {
 	return &s
 }
-
-func isLikelyJSON(s string) bool {
-	return json.Valid([]byte(s))
-}
-
-// buildContentItem returns a ContentItem honoring StructuredStreamJSON option.
-func buildContentItem(a *MCPAdapter, s string) *ContentItem {
-	if a != nil && a.opts != nil && a.opts.StructuredStreamJSON && isLikelyJSON(s) {
-		mt := stringPtr("application/json")
-		return &ContentItem{
-			Type:     "text",
-			MimeType: mt,
-			Text:     &s,
-		}
-	}
-	return &ContentItem{
-		Type: "text",
-		Text: &s,
-	}
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 // Initialize handles the MCP initialize request.
-func (a *MCPAdapter) Initialize(ctx context.Context, p *InitializePayload) (*InitializeResult, error) {
-	if p == nil || p.ProtocolVersion == "" {
-		return nil, goa.PermanentError("invalid_params", "Missing protocolVersion")
-	}
-	switch p.ProtocolVersion {
-	case a.mcpProtocolVersion():
-	default:
-		return nil, goa.PermanentError("invalid_params", "Unsupported protocol version")
-	}
-
-	a.mu.Lock()
-	if a.initialized {
-		a.mu.Unlock()
-		return nil, goa.PermanentError("invalid_params", "Already initialized")
-	}
-	a.initialized = true
-	a.mu.Unlock()
-
+func (a *MCPAdapter) Initialize(_ context.Context, _ *InitializePayload) (*InitializeResult, error) {
 	serverInfo := &ServerInfo{
 		Name:    "assistant-mcp",
 		Version: "1.0.0",
@@ -223,79 +79,70 @@ func (a *MCPAdapter) Initialize(ctx context.Context, p *InitializePayload) (*Ini
 	capabilities.Prompts = &PromptsCapability{}
 
 	return &InitializeResult{
-		ProtocolVersion: a.mcpProtocolVersion(),
+		ProtocolVersion: DefaultProtocolVersion,
 		ServerInfo:      serverInfo,
 		Capabilities:    capabilities,
 	}, nil
 }
 
+// NotificationsInitialized accepts the notification sent after initialization.
+// The HTTP transport tracks setup separately for each client session.
+func (a *MCPAdapter) NotificationsInitialized(_ context.Context, _ *InitializedPayload) error {
+	return nil
+}
+
 // Ping handles the MCP ping request.
 func (a *MCPAdapter) Ping(ctx context.Context) (*PingResult, error) {
 	a.log(ctx, "request", map[string]any{"method": "ping"})
-	res := &PingResult{Pong: true}
+	res := &PingResult{}
 	a.log(ctx, "response", map[string]any{"method": "ping"})
 	return res, nil
 }
 
-// Broadcaster and publish helpers for server-initiated events
-
-// Publish sends an event to all event stream subscribers.
-func (a *MCPAdapter) Publish(ev *EventsStreamResult) {
-	if a == nil || a.broadcaster == nil {
-		return
-	}
-	a.broadcaster.Publish(ev)
-}
-
-// PublishStatus is a convenience to publish a status_update message.
-func (a *MCPAdapter) PublishStatus(ctx context.Context, typ string, message string, data any) {
-	n := &mcpruntime.Notification{Type: typ, Message: &message, Data: data}
-	s, err := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, n)
-	if err != nil {
-		return
-	}
-	a.Publish(&EventsStreamResult{
-		Content: []*ContentItem{buildContentItem(a, s)},
-	})
-}
-
 // Tools handling
 
+// ToolsList returns the tools declared in the Goa design.
 func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*ToolsListResult, error) {
-	if !a.isInitialized() {
-		return nil, goa.PermanentError("invalid_params", "Not initialized")
-	}
 	a.log(ctx, "request", map[string]any{"method": "tools/list"})
+	if p.Cursor != nil {
+		return nil, goa.PermanentError("invalid_params", "tools/list does not accept a cursor")
+	}
 	tools := []*ToolInfo{
 		{
-			Name:        "analyze_sentiment",
-			Description: stringPtr("Analyze sentiment of text"),
-			InputSchema: json.RawMessage(`{"type":"object","required":["text"],"properties":{"text":{"type":"string","description":"Input text to analyze"}},"additionalProperties":false}`),
+			Name:         "analyze_sentiment",
+			Description:  stringPtr("Analyze sentiment of text"),
+			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}"),
+			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"sentiment\":{\"type\":\"string\",\"description\":\"Detected sentiment\"}},\"additionalProperties\":false}"),
 		},
 		{
-			Name:        "extract_keywords",
-			Description: stringPtr("Extract keywords from text"),
-			InputSchema: json.RawMessage(`{"type":"object","required":["text"],"properties":{"text":{"type":"string","description":"Input text"}},"additionalProperties":false}`),
+			Name:         "extract_keywords",
+			Description:  stringPtr("Extract keywords from text"),
+			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}"),
+			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"keywords\":{\"type\":\"array\",\"description\":\"Extracted keywords\",\"items\":{\"type\":\"string\"}}},\"additionalProperties\":false}"),
 		},
 		{
-			Name:        "summarize_text",
-			Description: stringPtr("Summarize text"),
-			InputSchema: json.RawMessage(`{"type":"object","required":["text"],"properties":{"text":{"type":"string","description":"Input text to summarize"}},"additionalProperties":false}`),
+			Name:         "summarize_text",
+			Description:  stringPtr("Summarize text"),
+			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}"),
+			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"summary\":{\"type\":\"string\",\"description\":\"Summary\"}},\"additionalProperties\":false}"),
 		},
 		{
-			Name:        "search",
-			Description: stringPtr("Search knowledge base"),
-			InputSchema: json.RawMessage(`{"type":"object","required":["query"],"properties":{"limit":{"type":"integer","description":"Maximum number of results"},"query":{"type":"string","description":"Search query"}},"additionalProperties":false}`),
+			Name:         "search",
+			Description:  stringPtr("Search knowledge base"),
+			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}"),
+			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"description\":\"Search results\",\"items\":{\"type\":\"string\"}}},\"additionalProperties\":false}"),
 		},
 		{
-			Name:        "execute_code",
-			Description: stringPtr("Execute code"),
-			InputSchema: json.RawMessage(`{"type":"object","required":["language","code"],"properties":{"code":{"type":"string","description":"Code to execute"},"language":{"type":"string","description":"Language to execute","enum":["python","javascript"]}},"additionalProperties":false}`),
+			Name:         "execute_code",
+			Description:  stringPtr("Execute code"),
+			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}"),
+			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"output\":{\"type\":\"string\",\"description\":\"Execution output\"}},\"additionalProperties\":false}"),
 		},
 		{
-			Name:        "process_batch",
-			Description: stringPtr("Process a batch of items"),
-			InputSchema: json.RawMessage(`{"type":"object","required":["items"],"properties":{"blob":{"type":"string","description":"Base64 blob"},"format":{"type":"string","description":"Output format","enum":["json","text","blob","uri"]},"items":{"type":"array","description":"Items to process","items":{"type":"string"}},"mimeType":{"type":"string","description":"MIME type"},"uri":{"type":"string","description":"Resource URI"}},"additionalProperties":false}`),
+			Name:         "process_batch",
+			Description:  stringPtr("Process a batch of items"),
+			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"),
+			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"ok\":{\"type\":\"boolean\",\"description\":\"Operation status\"}},\"additionalProperties\":false}"),
 		},
 	}
 	res := &ToolsListResult{Tools: tools}
@@ -303,389 +150,268 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
 	return res, nil
 }
 
-func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload, stream ToolsCallServerStream) error {
-	if !a.isInitialized() {
-		return goa.PermanentError("invalid_params", "Not initialized")
+// toolCallError returns a service failure as an MCP tool result.
+func toolCallError(message string) *ToolsCallResult {
+	return &ToolsCallResult{
+		Content: []*ContentItem{
+			{Type: "text", Text: message},
+		},
+		IsError: boolPtr(true),
 	}
+}
+
+// ToolsCall validates the arguments and calls the Goa method for the named tool.
+func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*ToolsCallResult, error) {
 	a.log(ctx, "request", map[string]any{"method": "tools/call", "name": p.Name})
 	switch p.Name {
 	case "analyze_sentiment":
-		req := &http.Request{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(p.Arguments))}
-		var payload *assistant.AnalyzeSentimentPayload
-		if err := goahttp.RequestDecoder(req).Decode(&payload); err != nil {
-			return goa.PermanentError("invalid_params", "%s", err.Error())
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
 		}
-		{
-			if payload.Text == "" {
-				return goa.PermanentError("invalid_params", "Missing required field: text")
-			}
+		payload, err := mcpcodec.DecodeAnalyzeSentimentPayload(arguments)
+		if err != nil {
+			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
 		}
 		result, err := a.service.AnalyzeSentiment(ctx, payload)
 		if err != nil {
-			return a.mapError(err)
+			return toolCallError(a.mapError(err).Error()), nil
 		}
-		s, serr := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, result)
-		if serr != nil {
-			return serr
+		encoded, err := mcpcodec.EncodeAnalyzeSentimentResult(result)
+		if err != nil {
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
+		text := string(encoded)
 		final := &ToolsCallResult{
 			Content: []*ContentItem{
-				buildContentItem(a, s),
+				{Type: "text", Text: text},
 			},
+			StructuredContent: json.RawMessage(encoded),
 		}
 		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return stream.SendAndClose(ctx, final)
+		return final, nil
 	case "extract_keywords":
-		req := &http.Request{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(p.Arguments))}
-		var payload *assistant.ExtractKeywordsPayload
-		if err := goahttp.RequestDecoder(req).Decode(&payload); err != nil {
-			return goa.PermanentError("invalid_params", "%s", err.Error())
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
 		}
-		{
-			if payload.Text == "" {
-				return goa.PermanentError("invalid_params", "Missing required field: text")
-			}
+		payload, err := mcpcodec.DecodeExtractKeywordsPayload(arguments)
+		if err != nil {
+			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
 		}
 		result, err := a.service.ExtractKeywords(ctx, payload)
 		if err != nil {
-			return a.mapError(err)
+			return toolCallError(a.mapError(err).Error()), nil
 		}
-		s, serr := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, result)
-		if serr != nil {
-			return serr
+		encoded, err := mcpcodec.EncodeExtractKeywordsResult(result)
+		if err != nil {
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
+		text := string(encoded)
 		final := &ToolsCallResult{
 			Content: []*ContentItem{
-				buildContentItem(a, s),
+				{Type: "text", Text: text},
 			},
+			StructuredContent: json.RawMessage(encoded),
 		}
 		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return stream.SendAndClose(ctx, final)
+		return final, nil
 	case "summarize_text":
-		req := &http.Request{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(p.Arguments))}
-		var payload *assistant.SummarizeTextPayload
-		if err := goahttp.RequestDecoder(req).Decode(&payload); err != nil {
-			return goa.PermanentError("invalid_params", "%s", err.Error())
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
 		}
-		{
-			if payload.Text == "" {
-				return goa.PermanentError("invalid_params", "Missing required field: text")
-			}
+		payload, err := mcpcodec.DecodeSummarizeTextPayload(arguments)
+		if err != nil {
+			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
 		}
 		result, err := a.service.SummarizeText(ctx, payload)
 		if err != nil {
-			return a.mapError(err)
+			return toolCallError(a.mapError(err).Error()), nil
 		}
-		s, serr := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, result)
-		if serr != nil {
-			return serr
+		encoded, err := mcpcodec.EncodeSummarizeTextResult(result)
+		if err != nil {
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
+		text := string(encoded)
 		final := &ToolsCallResult{
 			Content: []*ContentItem{
-				buildContentItem(a, s),
+				{Type: "text", Text: text},
 			},
+			StructuredContent: json.RawMessage(encoded),
 		}
 		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return stream.SendAndClose(ctx, final)
+		return final, nil
 	case "search":
-		req := &http.Request{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(p.Arguments))}
-		var payload *assistant.SearchPayload
-		if err := goahttp.RequestDecoder(req).Decode(&payload); err != nil {
-			return goa.PermanentError("invalid_params", "%s", err.Error())
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
 		}
-		{
-			if payload.Query == "" {
-				return goa.PermanentError("invalid_params", "Missing required field: query")
-			}
+		payload, err := mcpcodec.DecodeSearchPayload(arguments)
+		if err != nil {
+			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
 		}
 		result, err := a.service.Search(ctx, payload)
 		if err != nil {
-			return a.mapError(err)
+			return toolCallError(a.mapError(err).Error()), nil
 		}
-		s, serr := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, result)
-		if serr != nil {
-			return serr
+		encoded, err := mcpcodec.EncodeSearchResult(result)
+		if err != nil {
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
+		text := string(encoded)
 		final := &ToolsCallResult{
 			Content: []*ContentItem{
-				buildContentItem(a, s),
+				{Type: "text", Text: text},
 			},
+			StructuredContent: json.RawMessage(encoded),
 		}
 		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return stream.SendAndClose(ctx, final)
+		return final, nil
 	case "execute_code":
-		req := &http.Request{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(p.Arguments))}
-		var payload *assistant.ExecuteCodePayload
-		if err := goahttp.RequestDecoder(req).Decode(&payload); err != nil {
-			return goa.PermanentError("invalid_params", "%s", err.Error())
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
 		}
-		{
-			if payload.Language == "" {
-				return goa.PermanentError("invalid_params", "Missing required field: language")
-			}
-			if payload.Code == "" {
-				return goa.PermanentError("invalid_params", "Missing required field: code")
-			}
-		}
-		{
-			{
-				var __val string
-				__val = payload.Language
-				ok := false
-				switch __val {
-				case "python":
-					ok = true
-				case "javascript":
-					ok = true
-				}
-				if !ok && __val != "" {
-					return goa.PermanentError("invalid_params", "Invalid value for language")
-				}
-			}
+		payload, err := mcpcodec.DecodeExecuteCodePayload(arguments)
+		if err != nil {
+			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
 		}
 		result, err := a.service.ExecuteCode(ctx, payload)
 		if err != nil {
-			return a.mapError(err)
+			return toolCallError(a.mapError(err).Error()), nil
 		}
-		s, serr := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, result)
-		if serr != nil {
-			return serr
+		encoded, err := mcpcodec.EncodeExecuteCodeResult(result)
+		if err != nil {
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
+		text := string(encoded)
 		final := &ToolsCallResult{
 			Content: []*ContentItem{
-				buildContentItem(a, s),
+				{Type: "text", Text: text},
 			},
+			StructuredContent: json.RawMessage(encoded),
 		}
 		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return stream.SendAndClose(ctx, final)
+		return final, nil
 	case "process_batch":
-		req := &http.Request{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(p.Arguments))}
-		var payload *assistant.ProcessBatchPayload
-		if err := goahttp.RequestDecoder(req).Decode(&payload); err != nil {
-			return goa.PermanentError("invalid_params", "%s", err.Error())
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
 		}
-		{
-			{
-				var __val string
-				if payload.Format != nil {
-					__val = *payload.Format
-				}
-				ok := false
-				switch __val {
-				case "json":
-					ok = true
-				case "text":
-					ok = true
-				case "blob":
-					ok = true
-				case "uri":
-					ok = true
-				}
-				if !ok && __val != "" {
-					return goa.PermanentError("invalid_params", "Invalid value for format")
-				}
-			}
+		payload, err := mcpcodec.DecodeProcessBatchPayload(arguments)
+		if err != nil {
+			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
 		}
 		result, err := a.service.ProcessBatch(ctx, payload)
 		if err != nil {
-			return a.mapError(err)
+			return toolCallError(a.mapError(err).Error()), nil
 		}
-		s, serr := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, result)
-		if serr != nil {
-			return serr
+		encoded, err := mcpcodec.EncodeProcessBatchResult(result)
+		if err != nil {
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
+		text := string(encoded)
 		final := &ToolsCallResult{
 			Content: []*ContentItem{
-				buildContentItem(a, s),
+				{Type: "text", Text: text},
 			},
+			StructuredContent: json.RawMessage(encoded),
 		}
 		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return stream.SendAndClose(ctx, final)
+		return final, nil
 	default:
-		return goa.PermanentError("method_not_found", "Unknown tool: %s", p.Name)
+		return nil, goa.PermanentError("invalid_params", "unknown tool: %s", p.Name)
 	}
 }
 
 // Resources handling
 
+// ResourcesList returns the fixed resources declared in the Goa design.
 func (a *MCPAdapter) ResourcesList(ctx context.Context, p *ResourcesListPayload) (*ResourcesListResult, error) {
-	if !a.isInitialized() {
-		return nil, goa.PermanentError("invalid_params", "Not initialized")
-	}
 	a.log(ctx, "request", map[string]any{"method": "resources/list"})
+	if p.Cursor != nil {
+		return nil, goa.PermanentError("invalid_params", "resources/list does not accept a cursor")
+	}
 	resources := []*ResourceInfo{
-		{URI: "doc://list", Name: stringPtr("documents"), Description: stringPtr("List available documents"), MimeType: stringPtr("application/json")},
-		{URI: "system://info", Name: stringPtr("system_info"), Description: stringPtr("Return system info"), MimeType: stringPtr("application/json")},
-		{URI: "conversation://history", Name: stringPtr("conversation_history"), Description: stringPtr("Return conversation history with optional query params"), MimeType: stringPtr("application/json")},
+		{URI: "doc://list", Name: "documents", Description: stringPtr("List available documents"), MimeType: stringPtr("application/json")},
+		{URI: "system://info", Name: "system_info", Description: stringPtr("Return system info"), MimeType: stringPtr("application/json")},
+		{URI: "conversation://history", Name: "conversation_history", Description: stringPtr("Return the complete conversation history"), MimeType: stringPtr("application/json")},
 	}
 	res := &ResourcesListResult{Resources: resources}
 	a.log(ctx, "response", map[string]any{"method": "resources/list"})
 	return res, nil
 }
 
+// ResourcesRead calls the Goa method that owns the requested resource.
 func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload) (*ResourcesReadResult, error) {
-	if !a.isInitialized() {
-		return nil, goa.PermanentError("invalid_params", "Not initialized")
-	}
 	a.log(ctx, "request", map[string]any{"method": "resources/read", "uri": p.URI})
-	baseURI := p.URI
-	if i := strings.Index(baseURI, "?"); i >= 0 {
-		baseURI = baseURI[:i]
-	}
-	switch baseURI {
+	switch p.URI {
 	case "doc://list":
-		if err := a.assertResourceURIAllowed(ctx, p.URI); err != nil {
-			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
-		}
 		result, err := a.service.ListDocuments(ctx)
 		if err != nil {
 			return nil, a.mapError(err)
 		}
-		s, serr := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, result)
-		if serr != nil {
-			return nil, goa.PermanentError("invalid_params", "%s", serr.Error())
+		encoded, err := mcpcodec.EncodeListDocumentsResult(result)
+		if err != nil {
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		res := &ResourcesReadResult{Contents: []*ResourceContent{{URI: baseURI, MimeType: stringPtr("application/json"), Text: &s}}}
-		a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": baseURI})
+		text := string(encoded)
+		res := &ResourcesReadResult{
+			Contents: []*ResourceContent{
+				{URI: p.URI, MimeType: stringPtr("application/json"), Text: text},
+			},
+		}
+		a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": p.URI})
 		return res, nil
 	case "system://info":
-		if err := a.assertResourceURIAllowed(ctx, p.URI); err != nil {
-			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
-		}
 		result, err := a.service.SystemInfo(ctx)
 		if err != nil {
 			return nil, a.mapError(err)
 		}
-		s, serr := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, result)
-		if serr != nil {
-			return nil, goa.PermanentError("invalid_params", "%s", serr.Error())
+		encoded, err := mcpcodec.EncodeSystemInfoResult(result)
+		if err != nil {
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		res := &ResourcesReadResult{Contents: []*ResourceContent{{URI: baseURI, MimeType: stringPtr("application/json"), Text: &s}}}
-		a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": baseURI})
+		text := string(encoded)
+		res := &ResourcesReadResult{
+			Contents: []*ResourceContent{
+				{URI: p.URI, MimeType: stringPtr("application/json"), Text: text},
+			},
+		}
+		a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": p.URI})
 		return res, nil
 	case "conversation://history":
-		if err := a.assertResourceURIAllowed(ctx, p.URI); err != nil {
-			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
-		}
-		args, aerr := parseQueryParamsToJSON(p.URI)
-		if aerr != nil {
-			return nil, goa.PermanentError("invalid_params", "%s", aerr.Error())
-		}
-		req := &http.Request{Body: io.NopCloser(bytes.NewReader(args)), Header: http.Header{"Content-Type": []string{"application/json"}}}
-		var payload *assistant.ConversationHistoryPayload
-		if err := goahttp.RequestDecoder(req).Decode(&payload); err != nil {
-			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
-		}
-		result, err := a.service.ConversationHistory(ctx, payload)
+		result, err := a.service.ConversationHistory(ctx)
 		if err != nil {
 			return nil, a.mapError(err)
 		}
-		s, serr := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, result)
-		if serr != nil {
-			return nil, goa.PermanentError("invalid_params", "%s", serr.Error())
+		encoded, err := mcpcodec.EncodeConversationHistoryResult(result)
+		if err != nil {
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		res := &ResourcesReadResult{Contents: []*ResourceContent{{URI: baseURI, MimeType: stringPtr("application/json"), Text: &s}}}
-		a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": baseURI})
+		text := string(encoded)
+		res := &ResourcesReadResult{
+			Contents: []*ResourceContent{
+				{URI: p.URI, MimeType: stringPtr("application/json"), Text: text},
+			},
+		}
+		a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": p.URI})
 		return res, nil
 	default:
-		return nil, goa.PermanentError("method_not_found", "Unknown resource: %s", p.URI)
-	}
-}
-
-// assertResourceURIAllowed verifies pURI passes allow/deny filters when configured.
-func (a *MCPAdapter) assertResourceURIAllowed(ctx context.Context, pURI string) error {
-	base := pURI
-	if i := strings.Index(base, "?"); i >= 0 {
-		base = base[:i]
-	}
-	// Merge header-driven allow/deny lists from context (CSV of names)
-	var extraAllowURIs, extraDenyURIs []string
-	if ctx != nil {
-		if v := ctx.Value("mcp_allow_names"); v != nil {
-			if s, ok := v.(string); ok {
-				for _, n := range strings.Split(s, ",") {
-					n = n
-					if u, ok2 := a.resourceNameToURI[n]; ok2 {
-						extraAllowURIs = append(extraAllowURIs, u)
-					}
-				}
-			}
-		}
-		if v := ctx.Value("mcp_deny_names"); v != nil {
-			if s, ok := v.(string); ok {
-				for _, n := range strings.Split(s, ",") {
-					n = n
-					if u, ok2 := a.resourceNameToURI[n]; ok2 {
-						extraDenyURIs = append(extraDenyURIs, u)
-					}
-				}
-			}
-		}
-	}
-	for _, allow := range extraAllowURIs {
-		if allow == base {
-			return nil
-		}
-	}
-	var denied []string
-	if a.opts != nil {
-		denied = a.opts.DeniedResourceURIs
-	}
-	for _, d := range append(denied, extraDenyURIs...) {
-		if d == base {
-			return fmt.Errorf("resource URI denied: %s", pURI)
-		}
-	}
-	var allowed []string
-	if a.opts != nil {
-		allowed = a.opts.AllowedResourceURIs
-	}
-	if len(allowed) == 0 && len(extraAllowURIs) == 0 {
-		return fmt.Errorf("resource URI not allowed: %s", pURI)
-	}
-	for _, allow := range append(allowed, extraAllowURIs...) {
-		if allow == base {
-			return nil
-		}
-	}
-	return fmt.Errorf("resource URI not allowed: %s", pURI)
-}
-
-func (a *MCPAdapter) ResourcesSubscribe(ctx context.Context, p *ResourcesSubscribePayload) error {
-	if !a.isInitialized() {
-		return goa.PermanentError("invalid_params", "Not initialized")
-	}
-	switch p.URI {
-	default:
-		return goa.PermanentError("method_not_found", "Unknown resource: %s", p.URI)
-	}
-}
-
-func (a *MCPAdapter) ResourcesUnsubscribe(ctx context.Context, p *ResourcesUnsubscribePayload) error {
-	if !a.isInitialized() {
-		return goa.PermanentError("invalid_params", "Not initialized")
-	}
-	switch p.URI {
-	default:
-		return goa.PermanentError("method_not_found", "Unknown resource: %s", p.URI)
+		return nil, goa.PermanentError("invalid_params", "Unknown resource: %s", p.URI)
 	}
 }
 
 // Prompts handling
 
+// PromptsList returns the fixed prompts declared in the Goa design.
 func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*PromptsListResult, error) {
-	if !a.isInitialized() {
-		return nil, goa.PermanentError("invalid_params", "Not initialized")
-	}
 	a.log(ctx, "request", map[string]any{"method": "prompts/list"})
+	if p.Cursor != nil {
+		return nil, goa.PermanentError("invalid_params", "prompts/list does not accept a cursor")
+	}
 	prompts := []*PromptInfo{
-
-		{Name: "contextual_prompts", Description: stringPtr("Generate prompts based on context"), Arguments: []*PromptArgument{
-
-			{Name: "context", Description: stringPtr("Current context"), Required: true},
-
-			{Name: "task", Description: stringPtr("Task type"), Required: true},
-		}},
 
 		{Name: "code_review", Description: stringPtr("Simple code review prompt")},
 	}
@@ -694,32 +420,22 @@ func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*P
 	return res, nil
 }
 
+// PromptsGet returns the fixed messages for the named prompt.
 func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*PromptsGetResult, error) {
-	if !a.isInitialized() {
-		return nil, goa.PermanentError("invalid_params", "Not initialized")
-	}
-	if p == nil || p.Name == "" {
-		return nil, goa.PermanentError("invalid_params", "Missing prompt name")
-	}
 	a.log(ctx, "request", map[string]any{"method": "prompts/get", "name": p.Name})
 	switch p.Name {
 
 	case "code_review":
-		if a.promptProvider != nil {
-			if res, err := a.promptProvider.GetCodeReviewPrompt(p.Arguments); err == nil && res != nil {
-				a.log(ctx, "response", map[string]any{"method": "prompts/get", "name": p.Name})
-				return res, nil
-			} else if err != nil {
-				return nil, err
-			}
+		if len(p.Arguments) > 0 {
+			return nil, goa.PermanentError("invalid_params", "prompt %q does not accept arguments", p.Name)
 		}
 		msgs := make([]*PromptMessage, 0, 1)
 
 		msgs = append(msgs, &PromptMessage{
-			Role: "system",
+			Role: "user",
 			Content: &MessageContent{
 				Type: "text",
-				Text: stringPtr("Review the provided code and suggest improvements."),
+				Text: "Review the provided code and suggest improvements.",
 			},
 		})
 
@@ -731,90 +447,5 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 		return res, nil
 
 	}
-
-	switch p.Name {
-
-	case "contextual_prompts":
-		{
-
-			var args map[string]any
-			if len(p.Arguments) > 0 {
-				if err := json.Unmarshal(p.Arguments, &args); err != nil {
-					return nil, goa.PermanentError("invalid_params", "%s", err.Error())
-				}
-			}
-
-			if _, ok := args["context"]; !ok {
-				return nil, goa.PermanentError("invalid_params", "Missing required argument: context")
-			}
-
-			if _, ok := args["task"]; !ok {
-				return nil, goa.PermanentError("invalid_params", "Missing required argument: task")
-			}
-
-		}
-		if a.promptProvider == nil {
-			return nil, goa.PermanentError("invalid_params", "No prompt provider configured for dynamic prompts")
-		}
-		res, err := a.promptProvider.GetContextualPromptsPrompt(ctx, p.Arguments)
-		if err != nil {
-			return nil, a.mapError(err)
-		}
-		a.log(ctx, "response", map[string]any{"method": "prompts/get", "name": p.Name})
-		return res, nil
-
-	}
-
-	return nil, goa.PermanentError("method_not_found", "Unknown prompt: %s", p.Name)
-}
-
-// Notifications and events stream
-
-func (a *MCPAdapter) NotifyStatusUpdate(ctx context.Context, n *mcpruntime.Notification) error {
-	if !a.isInitialized() {
-		return goa.PermanentError("invalid_params", "Not initialized")
-	}
-	if n == nil || n.Type == "" {
-		return goa.PermanentError("invalid_params", "Missing notification type")
-	}
-	s, err := mcpruntime.EncodeJSONToString(ctx, goahttp.ResponseEncoder, n)
-	if err != nil {
-		return err
-	}
-	ev := &EventsStreamResult{
-		Content: []*ContentItem{
-			buildContentItem(a, s),
-		},
-	}
-	a.Publish(ev)
-	return nil
-}
-
-func (a *MCPAdapter) EventsStream(ctx context.Context, stream EventsStreamServerStream) error {
-	if !a.isInitialized() {
-		return goa.PermanentError("internal_error", "Not initialized")
-	}
-	sub, err := a.broadcaster.Subscribe(ctx)
-	if err != nil {
-		return goa.PermanentError("internal_error", "Failed to subscribe to events: %v", err)
-	}
-	defer sub.Close()
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case ev, ok := <-sub.C():
-			if !ok {
-				return nil
-			}
-			// Ensure published events implement the generated EventsStreamEvent marker.
-			evt, ok := ev.(EventsStreamEvent)
-			if !ok {
-				continue
-			}
-			if err := stream.Send(ctx, evt); err != nil {
-				return goa.PermanentError("internal_error", "Failed to send event: %v", err)
-			}
-		}
-	}
+	return nil, goa.PermanentError("invalid_params", "Unknown prompt: %s", p.Name)
 }

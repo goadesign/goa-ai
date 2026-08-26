@@ -158,10 +158,12 @@ func Serve(
 	registration Registration,
 	opts Options,
 ) error {
-	return serve(ctx, pulse, toolset, handler, registration, opts)
+	return serve(ctx, pulse, toolset, handler, registration, opts, waitRegistrationDelay)
 }
 
-// serve runs one provider lifecycle.
+// serve runs one provider lifecycle. wait schedules registry retries and
+// renewals; Serve supplies the real timer while focused tests control the
+// ordering without short wall-clock leases.
 func serve(
 	ctx context.Context,
 	pulse pulseclients.Client,
@@ -169,6 +171,7 @@ func serve(
 	handler Handler,
 	registration Registration,
 	opts Options,
+	wait registrationWait,
 ) error {
 	if pulse == nil {
 		return fmt.Errorf("pulse client is required")
@@ -258,7 +261,7 @@ func serve(
 		incarnationID,
 		registrationConfig,
 		logger,
-		waitRegistrationDelay,
+		wait,
 	)
 	if err != nil {
 		return err
@@ -279,7 +282,7 @@ func serve(
 			admittedToken,
 			registrationConfig,
 			logger,
-			waitRegistrationDelay,
+			wait,
 		)
 		return errors.Join(
 			fmt.Errorf(
@@ -357,9 +360,10 @@ func serve(
 	}
 
 	registrationDone := make(chan struct{})
+	var registrationResult error
 	go func() {
 		defer close(registrationDone)
-		if err := superviseRegistration(
+		registrationResult = superviseRegistration(
 			cancelCtx,
 			toolset,
 			opts.ProviderID,
@@ -367,9 +371,10 @@ func serve(
 			registrationState,
 			registrationConfig,
 			logger,
-			waitRegistrationDelay,
-		); err != nil && cancelCtx.Err() == nil {
-			signalStop(err)
+			wait,
+		)
+		if registrationResult != nil && cancelCtx.Err() == nil {
+			signalStop(registrationResult)
 		}
 	}()
 
@@ -648,11 +653,8 @@ func serve(
 	}
 
 	finish := func(runErr error) error {
-		leaseTokens := []string{admittedToken}
-		var changedTokenErr *registrationTokenChangedError
-		if errors.As(runErr, &changedTokenErr) {
-			leaseTokens = append(leaseTokens, changedTokenErr.receivedToken)
-		}
+		// Wait for renewal before cleanup because a successful Register call may
+		// have created another exact lease while shutdown was starting.
 		cancel()
 		registrationCtx, registrationCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 		registrationErr := waitForDone(registrationCtx, registrationDone, "registration renewal")
@@ -660,6 +662,7 @@ func serve(
 		if registrationErr != nil {
 			<-registrationDone
 		}
+		leaseTokens := registrationLeaseTokens(admittedToken, registrationResult)
 
 		settlementCtx, settlementCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 		defer settlementCancel()
@@ -675,7 +678,7 @@ func serve(
 				shutdownTimeout+SettlementAuthorityMargin,
 				registrationConfig,
 				logger,
-				waitRegistrationDelay,
+				wait,
 			))
 		}
 
@@ -732,7 +735,7 @@ func serve(
 					token,
 					registrationConfig,
 					logger,
-					waitRegistrationDelay,
+					wait,
 				),
 			)
 		}
@@ -760,6 +763,18 @@ func serve(
 			}
 		}
 	}
+}
+
+// registrationLeaseTokens returns every exact lease reported by the renewal
+// supervisor. A changed renewal token is rejected, but its successful Register
+// call still created a lease that shutdown must drain and release.
+func registrationLeaseTokens(admittedToken string, registrationErr error) []string {
+	leaseTokens := []string{admittedToken}
+	var changedTokenErr *registrationTokenChangedError
+	if errors.As(registrationErr, &changedTokenErr) {
+		leaseTokens = append(leaseTokens, changedTokenErr.receivedToken)
+	}
+	return leaseTokens
 }
 
 // claimToolCall asks the registry for the one pre-dispatch transition. The

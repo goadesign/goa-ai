@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -27,12 +27,12 @@ func MethodSimpleCompatible() func() {
 					Attribute("ok", Boolean, "OK")
 				})
 			})
-			Agent("scribe", "Doc helper", func() {
-				Use("lookup", func() {
-					Tool("by_id", "Lookup by ID", func() {
-						Args(QPayload)
-						Return(OkResult)
-						BindTo("Do")
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use("lookup", func() {
+					aidsl.Tool("by_id", "Lookup by ID", func() {
+						aidsl.Args(QPayload)
+						aidsl.Return(OkResult)
+						aidsl.BindTo("Do")
 					})
 				})
 			})

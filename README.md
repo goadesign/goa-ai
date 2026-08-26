@@ -983,13 +983,26 @@ Agent("chat", "MCP-enabled assistant", func() {
 })
 ```
 
-Runtime MCP callers support stdio, HTTP, and SSE transports through `runtime/mcp`.
+Runtime MCP callers support stdio and Streamable HTTP through `runtime/mcp`.
+HTTP requests use POST and accept either JSON or server-sent-event responses.
+Every caller
+requires `mcp.ClientInfo` with the connecting application's name and version.
+The caller sends those exact values during MCP
+initialization and rejects an incomplete identity before connecting. HTTP
+callers also require an absolute `http` or `https` endpoint; there is no
+implicit local endpoint. After the server returns the exact requested protocol
+version, the caller sends `notifications/initialized` without a JSON-RPC ID.
+The constructor returns only after that message has been sent, so normal MCP
+requests never run during initialization.
 
 ### Expose Goa Services as MCP Servers
 
 ```go
 Service("calculator", func() {
 	MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+	JSONRPC(func() {
+		POST("/mcp")
+	})
 
 	Method("add", func() {
 		Payload(func() {
@@ -1006,7 +1019,14 @@ Service("calculator", func() {
 })
 ```
 
-The generated MCP adapter maps Goa methods to JSON-RPC tools, resources, prompts, notifications, subscriptions, and SSE where appropriate.
+The generated MCP adapter maps Goa methods to JSON-RPC tools, fixed resources,
+and prompts. This release does not define DSL functions for resource templates,
+server notifications, subscriptions, or subscription monitors.
+
+The service-level JSON-RPC `POST` sets the MCP path. An MCP-enabled service may
+also expose ordinary HTTP routes, `Files(...)`, and gRPC. Goa preserves those
+endpoints and rejects only an ordinary HTTP route whose method and final route
+pattern would collide with the MCP endpoint.
 
 ### Discover Tools Through Registries
 
@@ -1168,7 +1188,7 @@ Production checklist:
 | `runtime/agent/model` | Provider-neutral model client, messages, tool definitions, streaming chunks |
 | `runtime/agent/engine/inmem` | In-memory development engine |
 | `runtime/agent/engine/temporal` | Temporal worker/client engine |
-| `runtime/mcp` | MCP callers for stdio, HTTP, and SSE |
+| `runtime/mcp` | MCP callers for stdio and HTTP |
 | `runtime/toolregistry` | Registry wire protocol, executor, provider support, schema validation |
 | `features/model/openai` | OpenAI Responses API adapter |
 | `features/model/bedrock` | Amazon Bedrock adapters for Converse and native Claude Messages over InvokeModel, with exact Runtime/Mantle token counting |
@@ -1210,7 +1230,9 @@ Declare `BoundedResult()` and make the service return a bounded semantic result 
 
 ### How do I expose existing services to external agents?
 
-Use `MCP(...)` on a Goa service and mark methods with `Tool(...)`, `Resource(...)`, prompts, notifications, or subscriptions. Goa-AI generates MCP adapter code while Goa still owns service and transport generation.
+Use `MCP(...)` on a Goa service and mark methods with `Tool(...)`,
+`Resource(...)`, or prompts. Goa-AI generates MCP adapter code while Goa still
+owns service and transport generation.
 
 ---
 

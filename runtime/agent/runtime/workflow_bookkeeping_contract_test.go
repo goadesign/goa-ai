@@ -24,10 +24,10 @@ import (
 
 func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
-	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
-	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"))
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"))
 	bookkeeping.Bookkeeping = true
-	terminalTool := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
+	terminalTool := newAnyJSONSpec(tools.Ident("svc.complete"))
 	terminalTool.Bookkeeping = true
 	terminalTool.TerminalRun = true
 	seedTestToolSpecs(rt, budgeted, bookkeeping, terminalTool)
@@ -122,7 +122,7 @@ func TestBookkeepingFailureAlwaysRequiresResume(t *testing.T) {
 	t.Parallel()
 
 	rt := New(WithLogger(telemetry.NoopLogger{}))
-	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"))
 	bookkeeping.Bookkeeping = true
 	seedTestToolSpecs(rt, bookkeeping)
 	call := ToolCall{ToolCallID: "bookkeeping-call", Name: bookkeeping.Name}
@@ -139,7 +139,7 @@ func TestBookkeepingFailureAlwaysRequiresResume(t *testing.T) {
 func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"), "workflow.progress")
+	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"))
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "workflow.progress",
@@ -206,7 +206,7 @@ func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) 
 func TestRunLoopBookkeepingOnlyWithoutTerminalPayloadFailsFast(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"), "workflow.progress")
+	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"))
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "workflow.progress",
@@ -266,7 +266,7 @@ func TestRunLoopBookkeepingOnlyWithoutTerminalPayloadFailsFast(t *testing.T) {
 func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	terminal := newAnyJSONSpec(tools.Ident("workflow.progress.complete"), "workflow.progress")
+	terminal := newAnyJSONSpec(tools.Ident("workflow.progress.complete"))
 	terminal.Bookkeeping = true
 	terminal.TerminalRun = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
@@ -423,8 +423,8 @@ func TestRunLoopRejectsMultipleProviderToolCallsWithoutIDs(t *testing.T) {
 func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	budgeted := newAnyJSONSpec(tools.Ident("svc.tools.lookup"), "svc.tools")
-	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"), "workflow.progress")
+	budgeted := newAnyJSONSpec(tools.Ident("svc.tools.lookup"))
+	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"))
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc.tools",
@@ -499,7 +499,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOutput(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"), "workflow.progress")
+	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"))
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "workflow.progress",
@@ -578,7 +578,7 @@ func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOu
 func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	budgeted := newAnyJSONSpec(tools.Ident("workflow.progress.update"), "workflow.progress")
+	budgeted := newAnyJSONSpec(tools.Ident("workflow.progress.update"))
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "workflow.progress",
 		Execute: func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
@@ -656,7 +656,7 @@ func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testin
 func TestRunLoopBookkeepingToolTerminalRejectsClarification(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"), "workflow.progress")
+	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"))
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "workflow.progress",

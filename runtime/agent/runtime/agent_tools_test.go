@@ -113,7 +113,7 @@ func TestAgentToolPlannerOutputFailureSkipsParentResume(t *testing.T) {
 			childID := agent.Ident("service.child")
 			parentID := agent.Ident("service.parent")
 			childTool := tools.Ident("child.tools.run")
-			childSpec := newAnyJSONSpec(childTool, "child.tools")
+			childSpec := newAnyJSONSpec(childTool)
 			childSpec.IsAgentTool = true
 			childSpec.AgentID = string(childID)
 			rt := New(WithLogger(telemetry.NoopLogger{}))
@@ -306,7 +306,7 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 		Name:       tools.Ident("svc.tools.do"),
 		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
-	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
+	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name)
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
@@ -344,8 +344,7 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 	}
 	callName := tools.Ident("svc.tools.get_time_series")
 	rt.toolSpecs[callName] = tools.ToolSpec{
-		Name:    callName,
-		Toolset: "svc.tools",
+		Name: callName,
 		Payload: tools.TypeSpec{
 			Codec: tools.JSONCodec[any]{
 				FromJSON: func(data []byte) (any, error) {
@@ -454,7 +453,7 @@ func TestAgentTool_TextContent(t *testing.T) {
 		Name:       tools.Ident("svc.tools.do"),
 		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
-	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
+	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name)
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
@@ -512,7 +511,7 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 		Name:       tools.Ident("svc.tools.do"),
 		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
-	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
+	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name)
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
@@ -575,7 +574,7 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 		Name:       tools.Ident("svc.tools.do"),
 		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
-	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
+	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name)
 	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
 	_, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)

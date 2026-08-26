@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	codegen "goa.design/goa-ai/codegen/agent"
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -104,7 +104,7 @@ func TestBuildGeneratorData(t *testing.T) {
 
 func TestGenerateProducesFiles(t *testing.T) {
 	roots := runAgentDesign(t, 2)
-	files, err := codegen.Generate("goa.design/goa-ai", roots, nil)
+	files, err := codegen.BuildFilesForTest("goa.design/goa-ai", roots, false)
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
 
@@ -130,7 +130,7 @@ func TestUnconfiguredRecoveryTurnsRemainAuthoredZero(t *testing.T) {
 	require.Zero(t, caps.MaxRecoveryTurns)
 	require.Equal(t, policy.DefaultMaxRecoveryTurns, caps.EffectiveMaxRecoveryTurns)
 
-	files, err := codegen.Generate("goa.design/goa-ai", roots, nil)
+	files, err := codegen.BuildFilesForTest("goa.design/goa-ai", roots, false)
 	require.NoError(t, err)
 	outputDir := t.TempDir()
 	renderedRegistry := false
@@ -180,6 +180,32 @@ func TestBuildGeneratorData_AliasedMCPToolsetUsesDefinitionNameForArtifacts(t *t
 	require.Len(t, used.Tools, 1)
 	require.Equal(t, "add", used.Tools[0].Name)
 	require.Equal(t, "calc-remote.add", used.Tools[0].QualifiedName)
+}
+
+func TestBuildGeneratorDataUsesPassedMCPRoot(t *testing.T) {
+	roots := runAliasedMCPDesign(t)
+	other := mcpexpr.NewRoot()
+	other.MCPServers["calc"] = &mcpexpr.MCPExpr{
+		Name:  "core",
+		Tools: []*mcpexpr.ToolExpr{{Name: "other"}},
+	}
+	previous := mcpexpr.Root
+	mcpexpr.Root = other
+	t.Cleanup(func() { mcpexpr.Root = previous })
+
+	data, err := codegen.BuildDataForTest("goa.design/goa-ai", roots)
+	require.NoError(t, err)
+	var consumerAgent *codegen.AgentData
+	for _, service := range data.Services {
+		if service.Service.Name == alphaServiceName {
+			consumerAgent = service.Agents[0]
+			break
+		}
+	}
+	require.NotNil(t, consumerAgent)
+	require.Len(t, consumerAgent.UsedToolsets, 1)
+	require.Len(t, consumerAgent.UsedToolsets[0].Tools, 1)
+	require.Equal(t, "add", consumerAgent.UsedToolsets[0].Tools[0].Name)
 }
 
 func TestBuildGeneratorData_AliasedMCPToolsetsUseDistinctConstNames(t *testing.T) {
@@ -264,22 +290,22 @@ func runAgentDesign(t *testing.T, maxRecoveryTurns int) []eval.Root {
 			Required("doc_id")
 		})
 		Service("calc", func() {
-			Agent("scribe", "Doc helper", func() {
-				Use("summarize", func() {
-					Tool("summarize_doc", "Summarize a document", func() {
-						Args(SummarizeArgs)
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use("summarize", func() {
+					aidsl.Tool("summarize_doc", "Summarize a document", func() {
+						aidsl.Args(SummarizeArgs)
 					})
 				})
-				Export("docs.export", func() {
-					Tool("draft_reply", "Draft a reply", func() {})
+				aidsl.Export("docs.export", func() {
+					aidsl.Tool("draft_reply", "Draft a reply", func() {})
 				})
-				RunPolicy(func() {
-					caps := []CapsOption{MaxToolCalls(5)}
+				aidsl.RunPolicy(func() {
+					caps := []aidsl.CapsOption{aidsl.MaxToolCalls(5)}
 					if maxRecoveryTurns > 0 {
-						caps = append(caps, MaxRecoveryTurns(maxRecoveryTurns))
+						caps = append(caps, aidsl.MaxRecoveryTurns(maxRecoveryTurns))
 					}
-					DefaultCaps(caps...)
-					TimeBudget("45s")
+					aidsl.DefaultCaps(caps...)
+					aidsl.TimeBudget("45s")
 				})
 			})
 		})
@@ -287,7 +313,7 @@ func runAgentDesign(t *testing.T, maxRecoveryTurns int) []eval.Root {
 
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+	return []eval.Root{goaexpr.Root, mcpexpr.Root, agentsExpr.Root}
 }
 
 func runAliasedMCPDesign(t *testing.T) []eval.Root {
@@ -311,7 +337,10 @@ func runAliasedMCPDesign(t *testing.T) []eval.Root {
 	design := func() {
 		API("calc", func() {})
 		Service("calc", func() {
-			MCP("core", "1.0.0")
+			aidsl.MCP("core", "1.0.0")
+			JSONRPC(func() {
+				POST("/calc")
+			})
 			Method("add", func() {
 				Payload(func() {
 					Attribute("a", Int, "First operand")
@@ -319,21 +348,21 @@ func runAliasedMCPDesign(t *testing.T) []eval.Root {
 					Required("a", "b")
 				})
 				Result(Int)
-				Tool("add", "Add two numbers")
+				aidsl.Tool("add", "Add two numbers")
 			})
 		})
 
-		var CalcRemote = Toolset("calc-remote", FromMCP("calc", "core"))
+		var CalcRemote = aidsl.Toolset("calc-remote", aidsl.FromMCP("calc", "core"))
 		Service(alphaServiceName, func() {
-			Agent("scribe", "Doc helper", func() {
-				Use(CalcRemote)
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use(CalcRemote)
 			})
 		})
 	}
 
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+	return []eval.Root{goaexpr.Root, mcpexpr.Root, agentsExpr.Root}
 }
 
 func runDuplicateAliasedMCPDesign(t *testing.T) []eval.Root {
@@ -357,7 +386,10 @@ func runDuplicateAliasedMCPDesign(t *testing.T) []eval.Root {
 	design := func() {
 		API("calc", func() {})
 		Service("calc", func() {
-			MCP("core", "1.0.0")
+			aidsl.MCP("core", "1.0.0")
+			JSONRPC(func() {
+				POST("/calc")
+			})
 			Method("add", func() {
 				Payload(func() {
 					Attribute("a", Int, "First operand")
@@ -365,23 +397,23 @@ func runDuplicateAliasedMCPDesign(t *testing.T) []eval.Root {
 					Required("a", "b")
 				})
 				Result(Int)
-				Tool("add", "Add two numbers")
+				aidsl.Tool("add", "Add two numbers")
 			})
 		})
 
-		var CalcRemotePrimary = Toolset("calc-remote-primary", FromMCP("calc", "core"))
-		var CalcRemoteSecondary = Toolset("calc-remote-secondary", FromMCP("calc", "core"))
+		var CalcRemotePrimary = aidsl.Toolset("calc-remote-primary", aidsl.FromMCP("calc", "core"))
+		var CalcRemoteSecondary = aidsl.Toolset("calc-remote-secondary", aidsl.FromMCP("calc", "core"))
 		Service(alphaServiceName, func() {
-			Agent("scribe", "Doc helper", func() {
-				Use(CalcRemotePrimary)
-				Use(CalcRemoteSecondary)
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use(CalcRemotePrimary)
+				aidsl.Use(CalcRemoteSecondary)
 			})
 		})
 	}
 
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+	return []eval.Root{goaexpr.Root, mcpexpr.Root, agentsExpr.Root}
 }
 
 func runDirectMCPUseDesign(t *testing.T) []eval.Root {
@@ -405,7 +437,10 @@ func runDirectMCPUseDesign(t *testing.T) []eval.Root {
 	design := func() {
 		API("calc", func() {})
 		Service("calc", func() {
-			MCP("core", "1.0.0")
+			aidsl.MCP("core", "1.0.0")
+			JSONRPC(func() {
+				POST("/calc")
+			})
 			Method("add", func() {
 				Payload(func() {
 					Attribute("a", Int, "First operand")
@@ -413,21 +448,21 @@ func runDirectMCPUseDesign(t *testing.T) []eval.Root {
 					Required("a", "b")
 				})
 				Result(Int)
-				Tool("add", "Add two numbers")
+				aidsl.Tool("add", "Add two numbers")
 			})
 		})
 
-		var Core = Toolset("core", FromMCP("calc", "core"))
+		var Core = aidsl.Toolset("core", aidsl.FromMCP("calc", "core"))
 		Service(alphaServiceName, func() {
-			Agent("scribe", "Doc helper", func() {
-				Use(Core)
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use(Core)
 			})
 		})
 	}
 
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+	return []eval.Root{goaexpr.Root, mcpexpr.Root, agentsExpr.Root}
 }
 
 func runPartitionedMCPConstCollisionDesign(t *testing.T) []eval.Root {
@@ -451,7 +486,10 @@ func runPartitionedMCPConstCollisionDesign(t *testing.T) []eval.Root {
 	design := func() {
 		API("calc", func() {})
 		Service("calc-core", func() {
-			MCP("remote", "1.0.0")
+			aidsl.MCP("remote", "1.0.0")
+			JSONRPC(func() {
+				POST("/calc-core")
+			})
 			Method("add", func() {
 				Payload(func() {
 					Attribute("a", Int, "First operand")
@@ -459,11 +497,14 @@ func runPartitionedMCPConstCollisionDesign(t *testing.T) []eval.Root {
 					Required("a", "b")
 				})
 				Result(Int)
-				Tool("add", "Add two numbers")
+				aidsl.Tool("add", "Add two numbers")
 			})
 		})
 		Service("calc", func() {
-			MCP("core", "1.0.0")
+			aidsl.MCP("core", "1.0.0")
+			JSONRPC(func() {
+				POST("/calc")
+			})
 			Method("multiply", func() {
 				Payload(func() {
 					Attribute("a", Int, "First operand")
@@ -471,21 +512,21 @@ func runPartitionedMCPConstCollisionDesign(t *testing.T) []eval.Root {
 					Required("a", "b")
 				})
 				Result(Int)
-				Tool("multiply", "Multiply two numbers")
+				aidsl.Tool("multiply", "Multiply two numbers")
 			})
 		})
 
-		var CalcCoreAPI = Toolset("api", FromMCP("calc-core", "remote"))
-		var CalcRemoteAPI = Toolset("remote-api", FromMCP("calc", "core"))
+		var CalcCoreAPI = aidsl.Toolset("api", aidsl.FromMCP("calc-core", "remote"))
+		var CalcRemoteAPI = aidsl.Toolset("remote-api", aidsl.FromMCP("calc", "core"))
 		Service(alphaServiceName, func() {
-			Agent("scribe", "Doc helper", func() {
-				Use(CalcCoreAPI)
-				Use(CalcRemoteAPI)
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use(CalcCoreAPI)
+				aidsl.Use(CalcRemoteAPI)
 			})
 		})
 	}
 
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+	return []eval.Root{goaexpr.Root, mcpexpr.Root, agentsExpr.Root}
 }

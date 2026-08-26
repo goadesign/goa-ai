@@ -1,40 +1,36 @@
-// Package codegen keeps toolset and tool metadata construction separate from
-// top-level generator assembly.
-//
-// This file owns the provider-facing part of generator data building: resolving
-// the source service for each toolset, deriving canonical names/imports, and
-// expanding tool expressions into template-ready metadata. The helpers here are
-// pure package-internal builders; they assume Goa evaluation invariants hold and
-// panic only when the evaluated design violates those invariants.
+// Package codegen builds the information needed to write each agent toolset. It reads
+// the evaluated tool definitions, finds their Goa services, and sorts the tools
+// before templates write the generated files.
 package codegen
 
 import (
 	"fmt"
-	"path"
 	"slices"
 	"strings"
 
 	ir "goa.design/goa-ai/codegen/ir"
 	"goa.design/goa-ai/codegen/naming"
 	agentsExpr "goa.design/goa-ai/expr/agent"
+	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// collectToolsets materializes one Used/Exported toolset group into sorted
-// ToolsetData entries for a single agent.
+// collectToolsets builds and sorts one group of toolsets used or exported by an
+// agent.
 func collectToolsets(
 	agent *AgentData,
 	refs []*ir.ToolsetRef,
 	servicesData *service.ServicesData,
+	mcpRoot *mcpexpr.RootExpr,
 ) ([]*ToolsetData, error) {
 	if len(refs) == 0 {
 		return nil, nil
 	}
 	toolsets := make([]*ToolsetData, 0, len(refs))
 	for _, ref := range refs {
-		ts, err := newToolsetData(agent, ref, servicesData)
+		ts, err := newToolsetData(agent, ref, servicesData, mcpRoot)
 		if err != nil {
 			return nil, err
 		}
@@ -46,29 +42,44 @@ func collectToolsets(
 	return toolsets, nil
 }
 
-// newToolsetData resolves one DSL toolset into the generator's canonical
-// ToolsetData shape, including provider ownership, local package paths, and the
-// concrete tool metadata needed by downstream templates.
+// newToolsetData reads one toolset definition and returns the values used to
+// write its generated files.
 func newToolsetData(
 	agent *AgentData,
 	ref *ir.ToolsetRef,
 	servicesData *service.ServicesData,
+	mcpRoot *mcpexpr.RootExpr,
 ) (*ToolsetData, error) {
-	expr := ref.Expr
+	return buildToolsetData(agent, ref, ref.Expr, ref.Definition.Expr, servicesData, mcpRoot)
+}
+
+// buildToolsetData combines the metadata shown for one reference with the
+// reusable tool contract declared by its definition. The reference supplies
+// the service and provider needed to generate code.
+func buildToolsetData(
+	agent *AgentData,
+	ref *ir.ToolsetRef,
+	expr, contract *agentsExpr.ToolsetExpr,
+	servicesData *service.ServicesData,
+	mcpRoot *mcpexpr.RootExpr,
+) (*ToolsetData, error) {
 	toolsetSlug := ref.Slug
 	serviceName := ref.ServiceName
 	sourceServiceName := ref.SourceServiceName
 	var sourceService *service.Data
 	if ref.SourceService != nil {
-		sourceService = ref.SourceService.Goa
-	} else if servicesData != nil && sourceServiceName != "" {
-		sourceService = servicesData.Get(sourceServiceName)
+		sourceService = servicesData.Get(ref.SourceService.Name)
 	}
-	var imports map[string]*codegen.ImportSpec
-	if sourceService != nil {
-		imports = buildServiceImportMap(sourceService)
+	agentToolsRef := ref
+	if ref.SourceExport != nil {
+		agentToolsRef = ref.SourceExport
+	}
+	agentToolAgentID := ""
+	if agentToolsRef.Agent != nil && agentToolsRef.AgentToolsImportPath != "" {
+		agentToolAgentID = agentToolsRef.Agent.ID
 	}
 	ts := &ToolsetData{
+		definition:           ref.Definition,
 		Expr:                 expr,
 		Name:                 ref.Name,
 		Title:                naming.HumanizeTitle(ref.Name),
@@ -83,15 +94,15 @@ func newToolsetData(
 		Agent:                agent,
 		PathName:             toolsetSlug,
 		PackageName:          ref.PackageName,
-		SourceServiceImports: imports,
 		PackageImportPath:    ref.PackageImportPath,
 		Dir:                  ref.Dir,
 		SpecsPackageName:     ref.SpecsPackageName,
 		SpecsImportPath:      ref.SpecsImportPath,
 		SpecsDir:             ref.SpecsDir,
-		AgentToolsPackage:    ref.AgentToolsPackage,
-		AgentToolsDir:        ref.AgentToolsDir,
-		AgentToolsImportPath: ref.AgentToolsImportPath,
+		AgentToolsPackage:    agentToolsRef.AgentToolsPackage,
+		AgentToolsDir:        agentToolsRef.AgentToolsDir,
+		AgentToolsImportPath: agentToolsRef.AgentToolsImportPath,
+		AgentToolAgentID:     agentToolAgentID,
 	}
 	isMCPBacked := ref.Provider != nil && ref.Provider.Kind == agentsExpr.ProviderMCP
 
@@ -115,7 +126,7 @@ func newToolsetData(
 		// structures that are populated via runtime discovery.
 
 	case isMCPBacked:
-		if ref.Provider == nil || ref.Provider.MCP == nil {
+		if ref.Provider.MCP == nil {
 			return nil, fmt.Errorf("toolset %q is MCP-backed but missing MCP metadata", expr.Name)
 		}
 		mcpMeta := ref.Provider.MCP
@@ -128,7 +139,7 @@ func newToolsetData(
 		}
 		switch ts.MCP.Source {
 		case agentsExpr.MCPSourceGoa:
-			if !populateMCPToolset(ts) {
+			if !populateMCPToolset(mcpRoot, ts) {
 				return nil, fmt.Errorf(
 					"toolset %q could not resolve Goa-defined MCP toolset %q on service %q",
 					expr.Name,
@@ -137,7 +148,7 @@ func newToolsetData(
 				)
 			}
 		case agentsExpr.MCPSourceInline:
-			for _, toolExpr := range expr.Tools {
+			for _, toolExpr := range contract.Tools {
 				tool, err := newToolData(ts, toolExpr, servicesData)
 				if err != nil {
 					return nil, err
@@ -152,7 +163,7 @@ func newToolsetData(
 		}
 
 	default:
-		for _, toolExpr := range expr.Tools {
+		for _, toolExpr := range contract.Tools {
 			tool, err := newToolData(ts, toolExpr, servicesData)
 			if err != nil {
 				return nil, err
@@ -162,7 +173,7 @@ func newToolsetData(
 		slices.SortFunc(ts.Tools, func(a, b *ToolData) int {
 			return strings.Compare(a.Name, b.Name)
 		})
-		// Any method-backed tool requires an adapter; no bypass logic.
+		// A tool bound to a service method needs functions that copy its values.
 		for _, t := range ts.Tools {
 			if t.IsMethodBacked {
 				ts.NeedsAdapter = true
@@ -175,50 +186,46 @@ func newToolsetData(
 	return ts, nil
 }
 
+// newDefinitionToolsetData builds one defining toolset's route-free specs using
+// the saved service and provider context.
+func newDefinitionToolsetData(
+	definition *ir.Toolset,
+	servicesData *service.ServicesData,
+	mcpRoot *mcpexpr.RootExpr,
+) (*ToolsetData, error) {
+	reference := definition.Owner.Ref
+	if reference == nil {
+		return nil, fmt.Errorf("toolset %q has no complete owner reference", definition.Name)
+	}
+	var agent *AgentData
+	if reference.Agent != nil {
+		agent = &AgentData{
+			Name:    reference.Agent.Name,
+			ID:      reference.Agent.ID,
+			Service: servicesData.Get(reference.Agent.Service.Name),
+		}
+	}
+	return buildToolsetData(agent, reference, definition.Expr, definition.Expr, servicesData, mcpRoot)
+}
+
 func toolsetKindFromIR(kind ir.ToolsetRefKind) ToolsetKind {
 	switch kind {
 	case ir.ToolsetRefKindUsed:
 		return ToolsetKindUsed
 	case ir.ToolsetRefKindExported:
 		return ToolsetKindExported
+	case ir.ToolsetRefKindServiceExport:
+		return ToolsetKindServiceExport
 	default:
 		panic(fmt.Sprintf("unknown toolset ref kind %q", kind))
 	}
 }
 
-// buildServiceImportMap indexes the user-type imports already computed by Goa
-// service analysis so tool specs can reuse the same aliasing decisions.
-func buildServiceImportMap(svc *service.Data) map[string]*codegen.ImportSpec {
-	if len(svc.UserTypeImports) == 0 {
-		return nil
-	}
-	imports := make(map[string]*codegen.ImportSpec)
-	for _, im := range svc.UserTypeImports {
-		if im == nil || im.Path == "" {
-			continue
-		}
-		alias := im.Name
-		if alias == "" {
-			alias = path.Base(im.Path)
-		}
-		imports[alias] = im
-	}
-	return imports
-}
-
-// newToolData resolves one tool expression into the template data consumed by
-// executor/spec generation, including method binding metadata when applicable.
+// newToolData reads one tool definition and returns the values used to write
+// its generated files.
 func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *service.ServicesData) (*ToolData, error) {
-	// ts is guaranteed non-nil by construction (collectToolsets/newToolsetData)
-	// and ts.QualifiedName is always set there.
 	qualified := fmt.Sprintf("%s.%s", ts.Name, expr.Name)
 
-	// Check if this tool is exported by an agent (agent-as-tool pattern)
-	isExported := ts.Kind == ToolsetKindExported && ts.Agent != nil
-	var exportingAgentID string
-	if isExported {
-		exportingAgentID = ts.Agent.ID
-	}
 	title := expr.Name
 	if expr.Title != "" {
 		title = expr.Title
@@ -235,8 +242,6 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		Args:               expr.Args,
 		Return:             expr.Return,
 		Toolset:            ts,
-		IsExportedByAgent:  isExported,
-		ExportingAgentID:   exportingAgentID,
 		CallHintTemplate:   expr.CallHintTemplate,
 		ResultHintTemplate: expr.ResultHintTemplate,
 		InjectedFields:     expr.InjectedFields,
@@ -246,14 +251,9 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		ResultReminder:     expr.ResultReminder,
 	}
 	tool.HasResult = tool.Return != nil && tool.Return.Type != goaexpr.Empty
-	if isDedicatedContinuation(expr) {
-		tool.ModelHiddenPayloadFields = continuationModelHiddenFields(expr)
-	} else if expr.Bounds != nil && expr.Bounds.Paging != nil && expr.Bounds.Paging.ContinueTool != "" {
-		tool.ModelHiddenPayloadFields = []string{expr.Bounds.Paging.CursorField}
-	}
-	// Resolve Inject() sources now: tool.Args already reflects codegen Prepare's
-	// defaulting (method payload copy for bound tools) and hiding, so this is
-	// the single point where both bound and unbound tools compile identically.
+	tool.ModelHiddenPayloadFields = modelHiddenPayloadFields(expr)
+	// Resolve each injected field from the complete public input. The private
+	// JSON input hides these fields separately.
 	tool.Injected = buildInjectedFields(tool.Args, tool.InjectedFields)
 	tool.ServerData = serverDataData(expr.ServerData)
 	if expr.Confirmation != nil {
@@ -271,6 +271,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		return tool, nil
 	}
 	tool.IsMethodBacked = true
+	tool.method = expr.Method
 	// Populate exact payload/result type names using Goa service metadata.
 	if servicesData == nil || ts.SourceService == nil {
 		return nil, fmt.Errorf("method-backed tool %q requires source service metadata", tool.QualifiedName)
@@ -291,36 +292,14 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		tool.MethodPayloadTypeName = md.Payload
 		tool.MethodResultTypeName = md.Result
 
-		// Resolve fully-qualified type references using Goa name scope.
-		// If the payload/result user types do not specify a custom package
-		// (no struct:pkg:path), Goa leaves PayloadRef/ResultRef unqualified
-		// because the service code is generated in the same package.
-		// Our generated code may live in a different package; qualify
-		// local types with the source service package using the service
-		// name scope to avoid manual string surgery.
-		me := mustFindMethodExpr(servicesData.Root, sd.Name, md.Name)
+		me := expr.Method
 		if me != nil && me.Payload.Type != goaexpr.Empty {
-			// Expose attribute for template default adapter generation.
 			tool.MethodPayloadAttr = me.Payload
 			tool.HasMethodPayload = true
-			if md.PayloadLoc != nil && md.PayloadLoc.PackageName() != "" {
-				tool.MethodPayloadTypeRef = md.PayloadRef
-			} else {
-				// Use Goa's NameScope to compute the fully-qualified type reference.
-				// sd.Scope is guaranteed non-nil by Goa's service data construction.
-				tool.MethodPayloadTypeRef = sd.Scope.GoFullTypeRef(me.Payload, sd.PkgName)
-			}
 		}
 		if me != nil && me.Result.Type != goaexpr.Empty {
 			tool.MethodResultAttr = me.Result
 			tool.HasMethodResult = true
-			if md.ResultLoc != nil && md.ResultLoc.PackageName() != "" {
-				tool.MethodResultTypeRef = md.ResultRef
-			} else {
-				// Use Goa's NameScope to compute the fully-qualified type reference.
-				// sd.Scope is guaranteed non-nil by Goa's service data construction.
-				tool.MethodResultTypeRef = sd.Scope.GoFullTypeRef(me.Result, sd.PkgName)
-			}
 		}
 		// Capture user type locations when specified via struct:pkg:path.
 		tool.MethodPayloadLoc = md.PayloadLoc
@@ -335,8 +314,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 			ts.SourceService.Name,
 		)
 	}
-	// A bound method result also makes the tool result-bearing when the tool
-	// declaration relies on the method contract.
+	// A bound method may return a value even when the tool does not declare one.
 	tool.HasResult = tool.HasResult || (tool.MethodResultAttr != nil && tool.MethodResultAttr.Type != goaexpr.Empty)
 	// Compute aliasing flags for payload and result against method types when bound.
 	if tool.IsMethodBacked {
@@ -446,6 +424,19 @@ func continuationModelHiddenFields(tool *agentsExpr.ToolExpr) []string {
 	return fields
 }
 
+// modelHiddenPayloadFields returns fields filled by generated runtime code and
+// therefore omitted from the JSON accepted from the model.
+func modelHiddenPayloadFields(tool *agentsExpr.ToolExpr) []string {
+	fields := slices.Clone(tool.InjectedFields)
+	if isDedicatedContinuation(tool) {
+		return append(fields, continuationModelHiddenFields(tool)...)
+	}
+	if tool.Bounds != nil && tool.Bounds.Paging != nil && tool.Bounds.Paging.ContinueTool != "" {
+		return append(fields, tool.Bounds.Paging.CursorField)
+	}
+	return fields
+}
+
 // boundsData projects tool bounds metadata and, when a bound method is known,
 // captures the concrete result fields that implement those bounds.
 func boundsData(bounds *agentsExpr.ToolBoundsExpr, method *goaexpr.MethodExpr) *ToolBoundsData {
@@ -490,7 +481,7 @@ func boundsFieldData(result *goaexpr.AttributeExpr, name string) *ToolBoundsFiel
 		return nil
 	}
 	return &ToolBoundsFieldData{
-		Name:     codegen.Goify(name, true),
+		Name:     name,
 		Required: result.IsRequired(name),
 	}
 }
@@ -542,15 +533,4 @@ func serverDataDescription(att *goaexpr.AttributeExpr) string {
 		return ""
 	}
 	return uattr.Description
-}
-
-// mustFindMethodExpr locates the Goa method expression for the given service
-// and method names. It returns nil when the service is absent and otherwise
-// relies on Goa evaluation guarantees for method lookup.
-func mustFindMethodExpr(root *goaexpr.RootExpr, serviceName, methodName string) *goaexpr.MethodExpr {
-	svc := root.Service(serviceName)
-	if svc == nil {
-		return nil
-	}
-	return svc.Method(methodName)
 }

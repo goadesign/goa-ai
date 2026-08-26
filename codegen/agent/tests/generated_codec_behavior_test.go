@@ -17,7 +17,7 @@ import (
 )
 
 func TestGeneratedCodecInvalidFieldTypeBehavior(t *testing.T) {
-	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local", testscenarios.ArgsInlineObject()))
+	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ArgsInlineObject()))
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/math/http/validate_stub.go", `package http
 
 func ValidateAddPayloadTransport(v *AddPayloadTransport) error {
@@ -90,7 +90,7 @@ func assertAddIntegerIssue(t *testing.T, err error) {
 }
 
 func TestGeneratedCodecUnknownFieldBehavior(t *testing.T) {
-	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local", testscenarios.DeepNestedValidations()))
+	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.DeepNestedValidations()))
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/deep/http/validate_stub.go", `package http
 
 func ValidateValidatePayloadTransport(v *ValidatePayloadTransport) error {
@@ -227,8 +227,68 @@ func sameStrings(got, want []string) bool {
 	runGeneratedDeepGoTest(t, root)
 }
 
+func TestGeneratedCodecRequiredUserTypePrimitiveRoundTrip(t *testing.T) {
+	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ArgsUserType())
+	root := writeGeneratedModule(t, files)
+	writeGeneratedPackageTest(
+		t,
+		root,
+		"alpha/toolsets/docs/http/validate.go",
+		fileContent(t, files, "gen/alpha/toolsets/docs/http/validate.go"),
+	)
+	writeGeneratedPackageTest(t, root, "alpha/toolsets/docs/codecs_required_primitive_test.go", `package docs
+
+import (
+	"errors"
+	"testing"
+
+	"goa.design/goa-ai/runtime/agent/tools"
+)
+
+func TestRequiredUserTypePrimitiveRoundTrip(t *testing.T) {
+	want := &StorePayload{}
+	data, err := MarshalStorePayload(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := UnmarshalStorePayload(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != want.ID || got.Title != want.Title {
+		t.Fatalf("unexpected round trip: got %#v want %#v", got, want)
+	}
+
+	_, err = UnmarshalStorePayload([]byte(`+"`"+`{"title":"Runbook"}`+"`"+`))
+	var validation *tools.ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("expected validation error, got %v", err)
+	}
+	issues := validation.Issues()
+	if len(issues) != 1 || issues[0].Field != "id" || issues[0].Constraint != "missing_field" {
+		t.Fatalf("unexpected validation issues: %#v", issues)
+	}
+
+	result := &StoreResult{ID: "doc-1"}
+	data, err = MarshalStoreResult(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := UnmarshalStoreResult(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.ID != result.ID || decoded.Title != nil {
+		t.Fatalf("unexpected optional field round trip: %#v", decoded)
+	}
+}
+`)
+
+	runGeneratedDocsGoTest(t, root)
+}
+
 func TestGeneratedCodecBoundedResultProjectionBehavior(t *testing.T) {
-	root := writeGeneratedModuleWithPath(t, "generated.local/gen", testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ServiceToolsetBindSelfBoundedResult()))
+	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ServiceToolsetBindSelfBoundedResult()))
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/provider.go")
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/transforms.go")
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/http/validate_stub.go", `package http
@@ -282,6 +342,56 @@ func TestUnmarshalSearchResultRejectsUnknownResultField(t *testing.T) {
 	}
 }
 
+func TestUnmarshalSearchResultChecksBoundedProjectionFieldTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		field    string
+		value    string
+		expected string
+		actual   string
+	}{
+		{name: "returned null", field: "returned", value: "null", expected: "integer", actual: "null"},
+		{name: "returned string", field: "returned", value: `+"`"+`"one"`+"`"+`, expected: "integer", actual: "string"},
+		{name: "returned fraction", field: "returned", value: "1.5", expected: "integer", actual: "number"},
+		{name: "returned overflow", field: "returned", value: "1e100", expected: "integer", actual: "number"},
+		{name: "total null", field: "total", value: "null", expected: "integer", actual: "null"},
+		{name: "total boolean", field: "total", value: "true", expected: "integer", actual: "boolean"},
+		{name: "total fraction", field: "total", value: "1.5", expected: "integer", actual: "number"},
+		{name: "total overflow", field: "total", value: "1e100", expected: "integer", actual: "number"},
+		{name: "truncated null", field: "truncated", value: "null", expected: "boolean", actual: "null"},
+		{name: "truncated string", field: "truncated", value: `+"`"+`"false"`+"`"+`, expected: "boolean", actual: "string"},
+		{name: "refinement hint null", field: "refinement_hint", value: "null", expected: "string", actual: "null"},
+		{name: "refinement hint object", field: "refinement_hint", value: "{}", expected: "string", actual: "object"},
+		{name: "cursor null", field: "next_cursor", value: "null", expected: "string", actual: "null"},
+		{name: "cursor number", field: "next_cursor", value: "2", expected: "string", actual: "number"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := UnmarshalSearchResult([]byte(`+"`"+`{"results":["compressor_2"],"`+"`"+` + test.field + `+"`"+`":`+"`"+` + test.value + `+"`"+`}`+"`"+`))
+			assertBoundedTypeIssue(t, err, test.field, test.expected, test.actual)
+		})
+	}
+}
+
+func assertBoundedTypeIssue(t *testing.T, err error, field, expected, actual string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var validation *tools.ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("expected ValidationError, got %T: %v", err, err)
+	}
+	issues := validation.Issues()
+	if len(issues) != 1 {
+		t.Fatalf("expected one issue, got %#v", issues)
+	}
+	issue := issues[0]
+	if issue.Field != field || issue.Constraint != "invalid_field_type" || issue.ExpectedJSONType != expected || issue.ActualJSONType != actual {
+		t.Fatalf("unexpected issue: %#v", issue)
+	}
+}
+
 func sameStrings(got, want []string) bool {
 	if len(got) != len(want) {
 		return false
@@ -300,7 +410,7 @@ func sameStrings(got, want []string) bool {
 
 func TestGeneratedCodecArrayServerDataRoundTrip(t *testing.T) {
 	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ServiceToolsetBindSelfServerData())
-	root := writeGeneratedModuleWithPath(t, "generated.local/gen", files)
+	root := writeGeneratedModule(t, files)
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/provider.go")
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/transforms.go")
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/http/validate_stub.go", `package http
@@ -459,7 +569,7 @@ type Service interface {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", test.design)
-			root := writeGeneratedModuleWithPath(t, "generated.local/gen", files)
+			root := writeGeneratedModule(t, files)
 			writeGeneratedPackageTest(t, root, "tasks/service.go", test.stub)
 			if test.http != "" {
 				writeGeneratedPackageTest(t, root, "alpha/toolsets/ops/http/validate_stub.go", test.http)
@@ -508,7 +618,7 @@ func TestNoResultToolsHaveNoResultContract(t *testing.T) {
 }
 
 func TestGeneratedCodecUnionInvalidFieldTypeBehavior(t *testing.T) {
-	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local", testscenarios.ArgsUnionSumTypes())
+	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ArgsUnionSumTypes())
 	root := writeGeneratedModule(t, files)
 	writeGeneratedPackageTest(
 		t,
@@ -714,7 +824,7 @@ func TestUnmarshalEchoPayloadRejectsUnknownUnionBranchFields(t *testing.T) {
 }
 
 func TestGeneratedCodecModelJSONNamesBehavior(t *testing.T) {
-	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local", testscenarios.ModelJSONNames()))
+	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ModelJSONNames()))
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/review/http/validate_stub.go", `package http
 
 func ValidateReviewRecordPayloadTransport(v *ReviewRecordPayloadTransport) error {
@@ -787,15 +897,11 @@ func TestMarshalReviewRecordPayloadEmitsSnakeCase(t *testing.T) {
 }
 
 func writeGeneratedModule(t *testing.T, files []*gcodegen.File) string {
-	return writeGeneratedModuleWithPath(t, "generated.local", files)
-}
-
-func writeGeneratedModuleWithPath(t *testing.T, modulePath string, files []*gcodegen.File) string {
 	t.Helper()
 	root := t.TempDir()
 	repoRoot, err := filepath.Abs("../../..")
 	require.NoError(t, err)
-	goMod := "module " + modulePath + "\n\ngo 1.24\n\nrequire goa.design/goa-ai v0.0.0\n\nreplace goa.design/goa-ai => " + filepath.ToSlash(repoRoot) + "\n"
+	goMod := "module generated.local/gen\n\ngo 1.24\n\nrequire goa.design/goa-ai v0.0.0\n\nreplace goa.design/goa-ai => " + filepath.ToSlash(repoRoot) + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o600))
 	for _, file := range files {
 		rel := strings.TrimPrefix(filepath.ToSlash(file.Path), "gen/")
@@ -833,6 +939,13 @@ func runGeneratedDeepGoTest(t *testing.T, root string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "./alpha/toolsets/deep"))
+}
+
+func runGeneratedDocsGoTest(t *testing.T, root string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "./alpha/toolsets/docs"))
 }
 
 func runGeneratedLookupGoTest(t *testing.T, root string) {

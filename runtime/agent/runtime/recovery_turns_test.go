@@ -71,8 +71,8 @@ func TestResetRecoveryTurns(t *testing.T) {
 func TestSuccessfulBudgetedResult(t *testing.T) {
 	t.Parallel()
 
-	budgeted := newAnyJSONSpec("catalog.search", "catalog")
-	budgetedOK := newAnyJSONSpec("catalog.lookup", "catalog")
+	budgeted := newAnyJSONSpec("catalog.search")
+	budgetedOK := newAnyJSONSpec("catalog.lookup")
 	progressSpec := newBookkeepingSpec("runs.progress.update")
 
 	rt := New()

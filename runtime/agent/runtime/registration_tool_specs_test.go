@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
 
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,7 @@ func TestValidateToolSpecRegistrationsRejectsConflictingContract(t *testing.T) {
 	t.Parallel()
 
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	runtime.mu.Lock()
 	runtime.addToolSpecsLocked([]tools.ToolSpec{spec}, nil)
 	runtime.mu.Unlock()
@@ -38,7 +39,7 @@ func TestRegisterToolsetRejectsDuplicateExecutableOwner(t *testing.T) {
 	t.Parallel()
 
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	first := ToolsetRegistration{
 		Name:  "svc",
 		Specs: []tools.ToolSpec{spec},
@@ -55,13 +56,35 @@ func TestRegisterToolsetRejectsDuplicateExecutableOwner(t *testing.T) {
 	require.ErrorContains(t, runtime.RegisterToolset(second), `toolset "svc" is already registered`)
 }
 
+func TestRegisterToolsetRejectsDistinctRoutesForOneTool(t *testing.T) {
+	t.Parallel()
+
+	runtime := New()
+	spec := newAnyJSONSpec("shared.lookup")
+	execute := func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
+		return nil, nil
+	}
+	require.NoError(t, runtime.RegisterToolset(ToolsetRegistration{
+		Name:    "alpha.shared",
+		Specs:   []tools.ToolSpec{spec},
+		Execute: execute,
+	}))
+
+	err := runtime.RegisterToolset(ToolsetRegistration{
+		Name:    "beta.shared",
+		Specs:   []tools.ToolSpec{spec},
+		Execute: execute,
+	})
+	require.ErrorContains(t, err, `tool "shared.lookup" is already executed by toolset "alpha.shared"`)
+}
+
 func TestRegisterToolsetOwnsMutableContractData(t *testing.T) {
 	t.Parallel()
 
 	const mutated = "mutated"
 
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	spec.Tags = []string{"lookup"}
 	spec.Payload.Schema = tools.RawJSON(`{"type":"object"}`)
 	spec.Payload.FieldDescriptions = map[string]string{"query": "Lookup query."}
@@ -85,13 +108,70 @@ func TestRegisterToolsetOwnsMutableContractData(t *testing.T) {
 	require.Equal(t, map[string]string{"query": "Lookup query."}, stored.Payload.FieldDescriptions)
 }
 
+func TestToolsetRegistrationOwnsResultMaterializerRoute(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	runtime := New()
+	spec := sharedRouteTestSpec()
+	registration := ToolsetRegistration{
+		Name:  "beta.shared",
+		Specs: []tools.ToolSpec{spec},
+		Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
+			return nil, nil
+		},
+		ResultMaterializer: func(context.Context, ToolCallMeta, *ToolCall, *planner.ToolResult) error {
+			called = true
+			return nil
+		},
+	}
+	require.NoError(t, runtime.RegisterToolset(registration))
+
+	call := ToolCall{Name: spec.Name}
+	result := &planner.ToolResult{Name: spec.Name, Result: "pong"}
+	require.NoError(t, runtime.applyResultMaterializer(context.Background(), spec, call, result))
+	require.True(t, called)
+}
+
+func TestToolsetRegistrationOwnsExecutionRoute(t *testing.T) {
+	t.Parallel()
+
+	executed := false
+	runtime := New()
+	spec := sharedRouteTestSpec()
+	require.NoError(t, runtime.RegisterToolset(ToolsetRegistration{
+		Name:  "beta.shared",
+		Specs: []tools.ToolSpec{spec},
+		Execute: func(_ context.Context, call *ToolCall) (*ToolExecutionResult, error) {
+			executed = true
+			return Executed(&planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Result:     "pong",
+			}), nil
+		},
+	}))
+
+	result, err := runtime.ExecuteToolActivity(context.Background(), &ToolInput{
+		RunID:       "run-1",
+		AgentID:     "beta.worker",
+		ToolsetName: "beta.shared",
+		ToolName:    spec.Name,
+		ToolCallID:  "call-1",
+		Payload:     []byte(`{"message":"ping"}`),
+	})
+	require.NoError(t, err)
+	require.True(t, executed)
+	require.JSONEq(t, `"pong"`, string(result.Payload))
+}
+
 func TestToolSpecAccessorsReturnDetachedSnapshots(t *testing.T) {
 	t.Parallel()
 
 	const agentID agent.Ident = "svc.agent"
 
 	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	spec.Tags = []string{"lookup"}
 	spec.Meta = map[string][]string{"owner": {"service"}}
 	spec.Payload.Schema = tools.RawJSON(`{"type":"object"}`)
@@ -134,7 +214,7 @@ func TestAddToolSpecsKeepsFirstCodecOwner(t *testing.T) {
 	t.Parallel()
 
 	runtime := New()
-	first := newAnyJSONSpec("svc.lookup", "svc")
+	first := newAnyJSONSpec("svc.lookup")
 	first.Payload.Codec.ToJSON = func(any) ([]byte, error) {
 		return []byte(`"first"`), nil
 	}
@@ -181,4 +261,10 @@ func assertToolSpecReaderDetached(t *testing.T, read func() tools.ToolSpec) {
 	require.Equal(t, "Confirm lookup", stored.Confirmation.Title)
 	require.Equal(t, "evidence", stored.ServerData[0].Kind)
 	require.JSONEq(t, `{"type":"object"}`, string(stored.ServerData[0].Type.Schema))
+}
+
+// sharedRouteTestSpec returns a shared contract that can be bound by any local
+// toolset registration.
+func sharedRouteTestSpec() tools.ToolSpec {
+	return newAnyJSONSpec("shared.ping")
 }

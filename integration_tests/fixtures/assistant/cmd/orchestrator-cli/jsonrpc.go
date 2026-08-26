@@ -1,19 +1,18 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
+	"io"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	cli "example.com/assistant/gen/jsonrpc/cli/orchestrator"
-	mcpAssistantadapter "example.com/assistant/gen/mcp_assistant/adapter/client"
 	goahttp "goa.design/goa/v3/http"
-	goa "goa.design/goa/v3/pkg"
 )
 
-func doJSONRPC(scheme, host string, timeout int, debug bool) (goa.Endpoint, any, error) {
+func doJSONRPC(ctx context.Context, scheme, host string, timeout int, debug bool, stdout io.Writer) error {
 	var (
 		doer goahttp.Doer
 	)
@@ -33,62 +32,33 @@ func doJSONRPC(scheme, host string, timeout int, debug bool) (goa.Endpoint, any,
 		debug,
 	)
 	if err != nil {
-		return nil, nil, err
+		return fmt.Errorf("parse endpoint: %w", err)
 	}
 
-	var nonflags []string
-	for i := 1; i < len(os.Args); i++ {
-		a := os.Args[i]
-		if strings.HasPrefix(a, "-") {
-			if !strings.Contains(a, "=") && i+1 < len(os.Args) {
-				i++
-			}
-			continue
+	switch flag.Arg(0) {
+	case "mcp-assistant":
+		switch flag.Arg(1) {
+		case "initialize":
+			return writeEndpointResult(ctx, stdout, endpoint, payload)
+		case "notifications-initialized":
+			return writeEndpointResult(ctx, stdout, endpoint, payload)
+		case "ping":
+			return writeEndpointResult(ctx, stdout, endpoint, payload)
+		case "tools-list":
+			return writeEndpointResult(ctx, stdout, endpoint, payload)
+		case "tools-call":
+			return writeEndpointResult(ctx, stdout, endpoint, payload)
+		case "resources-list":
+			return writeEndpointResult(ctx, stdout, endpoint, payload)
+		case "resources-read":
+			return writeEndpointResult(ctx, stdout, endpoint, payload)
+		case "prompts-list":
+			return writeEndpointResult(ctx, stdout, endpoint, payload)
+		case "prompts-get":
+			return writeEndpointResult(ctx, stdout, endpoint, payload)
 		}
-		nonflags = append(nonflags, a)
 	}
-	if len(nonflags) < 2 {
-		return nil, nil, fmt.Errorf("not enough arguments")
-	}
-
-	service := nonflags[0]
-	subcmd := nonflags[1]
-
-	switch service {
-	case "assistant":
-		e := mcpAssistantadapter.NewEndpoints(scheme, host, doer, goahttp.RequestEncoder, goahttp.ResponseDecoder, debug)
-		switch subcmd {
-		case "list-documents":
-			return e.ListDocuments, payload, nil
-		case "system-info":
-			return e.SystemInfo, payload, nil
-		case "conversation-history":
-			return e.ConversationHistory, payload, nil
-		case "generate-prompts":
-			return e.GeneratePrompts, payload, nil
-		case "send-notification":
-			return e.SendNotification, payload, nil
-		case "analyze-sentiment":
-			return e.AnalyzeSentiment, payload, nil
-		case "extract-keywords":
-			return e.ExtractKeywords, payload, nil
-		case "summarize-text":
-			return e.SummarizeText, payload, nil
-		case "search":
-			return e.Search, payload, nil
-		case "execute-code":
-			return e.ExecuteCode, payload, nil
-		case "process-batch":
-			return e.ProcessBatch, payload, nil
-		}
-		return endpoint, payload, nil
-	}
-
-	return endpoint, payload, nil
-}
-
-func jsonrpcUsageCommands() []string {
-	return cli.UsageCommands()
+	panic("parsed JSON-RPC command has no generated result writer")
 }
 
 func jsonrpcUsageExamples() string {

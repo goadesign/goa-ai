@@ -28,8 +28,6 @@ func Specs() []tools.ToolSpec {
 func newSpecEcho() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        Echo,
-		Service:     "alpha",
-		Toolset:     "alpha.union",
 		Description: "Echo union",
 		Tags:        []string{},
 		Payload: tools.TypeSpec{

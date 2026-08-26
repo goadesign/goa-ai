@@ -1,11 +1,9 @@
 // Define flags for MCP endpoints (if any). Pass values via your cmd main.
-{{- $hasMCP := false }}
-{{- range .Agents }}{{- if .Agent.MCPToolsets }}{{ $hasMCP = true }}{{ end }}{{- end }}
-{{- if $hasMCP }}
+{{- if .HasMCP }}
 var (
     {{- range .Agents }}
-        {{- range .Agent.MCPToolsets }}
-    mcp{{ goify .ServiceName true }}{{ goify .SuiteName true }}Endpoint = flag.String("mcp-{{ ToLower .ServiceName }}-{{ ToLower .SuiteName }}-endpoint", "", "MCP {{ .QualifiedName }} HTTP endpoint (e.g., http://127.0.0.1:8080/rpc)")
+        {{- range .MCPToolsets }}
+    {{ .EndpointVar }} = {{ $.FlagAlias }}.String({{ printf "%q" .FlagName }}, "", "MCP {{ .QualifiedName }} HTTP endpoint (e.g., http://127.0.0.1:8080/rpc)")
         {{- end }}
     {{- end }}
 )
@@ -13,8 +11,8 @@ var (
 
 // New constructs a minimal runtime and registers all agents for this service.
 // Replace options (engine, stores, telemetry) as you adopt production wiring.
-func New(ctx context.Context) (*agentsruntime.Runtime, func(), error) {
-    rt := agentsruntime.New()
+func New(ctx {{ .ContextAlias }}.Context) (*{{ .AgentRuntimeAlias }}.Runtime, func(), error) {
+    rt := {{ .AgentRuntimeAlias }}.New()
     cleanup := func() {}
 
     // Register agents with example planners. Replace with your own planner impls.
@@ -22,39 +20,36 @@ func New(ctx context.Context) (*agentsruntime.Runtime, func(), error) {
     {{- $a := . }}
     {
         cfg := {{ .Alias }}.{{ .Agent.ConfigType }}{ Planner: {{ .PlannerAlias }}.New() }
-        {{- if .Agent.MCPToolsets }}
+        {{- if .MCPToolsets }}
         // Configure MCP callers for external toolsets.
-        cfg.MCPCallers = map[string]mcpruntime.Caller{}
-        {{- range .Agent.MCPToolsets }}
-        if mcp{{ goify .ServiceName true }}{{ goify .SuiteName true }}Endpoint != nil && *mcp{{ goify .ServiceName true }}{{ goify .SuiteName true }}Endpoint != "" {
-            caller, err := mcpruntime.NewHTTPCaller(ctx, mcpruntime.HTTPOptions{Endpoint: *mcp{{ goify .ServiceName true }}{{ goify .SuiteName true }}Endpoint})
+        cfg.MCPCallers = map[string]{{ $.MCPRuntimeAlias }}.Caller{}
+        {{- range .MCPToolsets }}
+        if {{ .EndpointVar }} != nil && *{{ .EndpointVar }} != "" {
+            caller, err := {{ $.MCPRuntimeAlias }}.NewHTTPCaller(ctx, {{ $.MCPRuntimeAlias }}.HTTPOptions{
+                Endpoint: *{{ .EndpointVar }},
+                ClientInfo: {{ $.MCPRuntimeAlias }}.ClientInfo{Name: {{ printf "%q" $.Service.Service.Name }}, Version: {{ printf "%q" $.ClientVersion }}},
+            })
             if err != nil { return nil, nil, err }
             cfg.MCPCallers[{{ $a.Alias }}.{{ .ConstName }}] = caller
         } else {
-            cfg.MCPCallers[{{ $a.Alias }}.{{ .ConstName }}] = mcpruntime.CallerFunc(func(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
-                return mcpruntime.CallResponse{}, fmt.Errorf("configure MCP caller for %s via -mcp-{{ ToLower .ServiceName }}-{{ ToLower .SuiteName }}-endpoint flag", {{ printf "%q" .QualifiedName }})
+            cfg.MCPCallers[{{ $a.Alias }}.{{ .ConstName }}] = {{ $.MCPRuntimeAlias }}.CallerFunc(func(ctx {{ $.ContextAlias }}.Context, req {{ $.MCPRuntimeAlias }}.CallRequest) ({{ $.MCPRuntimeAlias }}.CallResponse, error) {
+                return {{ $.MCPRuntimeAlias }}.CallResponse{}, {{ $.FmtAlias }}.Errorf("configure MCP caller for %s via -{{ .FlagName }} flag", {{ printf "%q" .QualifiedName }})
             })
         }
         {{- end }}
         {{- end }}
-        if err := {{ .Alias }}.Register{{ .Agent.StructName }}(ctx, rt, cfg); err != nil {
+        if err := {{ .Alias }}.{{ .Agent.PackageNames.Register }}(ctx, rt, cfg); err != nil {
             return nil, nil, err
         }
         {{- if .ExampleToolsets }}
         // Register the application-owned example executors.
-        if err := {{ .Alias }}.RegisterUsedToolsets(ctx, rt,
+        if err := {{ .Alias }}.{{ .Agent.PackageNames.RegisterUsedToolsets }}(ctx, rt,
             {{- range .ExampleToolsets }}
-            {{ $a.Alias }}.With{{ goify .Toolset.PathName true }}Executor(
-                agentsruntime.ToolCallExecutorFunc({{ .ExecutorAlias }}.Execute),
+            {{ $a.Alias }}.{{ .Toolset.ExecutorOption }}(
+                {{ $.AgentRuntimeAlias }}.ToolCallExecutorFunc({{ .ExecutorAlias }}.Execute),
             ),
             {{- end }}
         ); err != nil {
-            return nil, nil, err
-        }
-        {{- end }}
-        {{- range .Toolsets }}
-        // Register method-backed toolsets with default executors.
-        if err := {{ .Alias }}.Register(ctx, rt); err != nil {
             return nil, nil, err
         }
         {{- end }}

@@ -3,6 +3,7 @@ package tests
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 )
 
@@ -12,5 +13,7 @@ import (
 func TestGolden_DeepNested_Validations(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.DeepNestedValidations())
 	codecs := fileContent(t, files, "gen/alpha/toolsets/deep/codecs.go")
+	require.NotContains(t, codecs, "validateGeneratedJSONValue")
+	require.Contains(t, codecs, `case "child":`)
 	assertGoldenGo(t, "deep_nested_validations", "codecs.go.golden", codecs)
 }

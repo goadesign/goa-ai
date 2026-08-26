@@ -469,7 +469,7 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 	sessions := sessioninmem.New()
 	_, err := sessions.CreateSession(ctx, "sess-1", time.Now().UTC())
 	require.NoError(t, err)
-	tool := newAnyJSONSpec(tools.Ident("assistant.ask_clarification"), "assistant")
+	tool := newAnyJSONSpec(tools.Ident("assistant.ask_clarification"))
 	rt := &Runtime{
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
@@ -891,7 +891,7 @@ func TestRegisterAgentRejectsTerminalSpecWithoutBookkeeping(t *testing.T) {
 
 func TestRegistrationRejectsGeneratedContinuationToolName(t *testing.T) {
 	reservedName := continuationActionName("svc.tools.continue_results", "source-1")
-	spec := newAnyJSONSpec(reservedName, "svc.tools")
+	spec := newAnyJSONSpec(reservedName)
 
 	t.Run("agent", func(t *testing.T) {
 		rt := New(WithEngine(&stubEngine{}))
@@ -940,7 +940,7 @@ func TestRegistrationRejectsGeneratedContinuationToolName(t *testing.T) {
 			Execute: wrapExecute(func(context.Context, *ToolCall) (*planner.ToolResult, error) {
 				return &planner.ToolResult{}, nil
 			}),
-			Specs: []tools.ToolSpec{newAnyJSONSpec("continue_authored_tool", "svc.tools")},
+			Specs: []tools.ToolSpec{newAnyJSONSpec("continue_authored_tool")},
 		})
 
 		require.NoError(t, err)
@@ -955,7 +955,7 @@ func TestRegisterToolsetRejectsEmptyToolMetadataTitle(t *testing.T) {
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{}, nil
 		}),
-		Specs: []tools.ToolSpec{newAnyJSONSpec(toolID, "svc.tools")},
+		Specs: []tools.ToolSpec{newAnyJSONSpec(toolID)},
 		ToolMetadataLookup: func(name tools.Ident) (policy.ToolMetadata, bool) {
 			return policy.ToolMetadata{
 				ID:          name,
@@ -1028,7 +1028,7 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 }
 
 func TestRecoveryFinishFinalizesWithoutConsumingTurn(t *testing.T) {
-	failSpec := newAnyJSONSpec("fail", "svc.tools")
+	failSpec := newAnyJSONSpec("fail")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
@@ -1043,7 +1043,7 @@ func TestRecoveryFinishFinalizesWithoutConsumingTurn(t *testing.T) {
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
 	}
-	seedTestToolSpecs(rt, failSpec)
+	seedTestToolset(rt, "svc.tools", failSpec)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		asyncResult: ToolOutput{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom")},
@@ -1223,7 +1223,7 @@ func TestSealRetriesAfterActivationFailure(t *testing.T) {
 }
 
 func TestTimeBudgetExceeded(t *testing.T) {
-	toolSpec := newAnyJSONSpec("tool", "svc.ts")
+	toolSpec := newAnyJSONSpec("tool")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
@@ -1235,7 +1235,7 @@ func TestTimeBudgetExceeded(t *testing.T) {
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
 	}
-	seedTestToolSpecs(rt, toolSpec)
+	seedTestToolset(rt, "svc.ts", toolSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
@@ -1350,11 +1350,12 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 			}),
 		},
 	}
-	seedTestToolSpecs(
+	seedTestToolset(
 		rt,
-		newAnyJSONSpec("child1", "nested.tools"),
-		newAnyJSONSpec("child2", "nested.tools"),
-		newAnyJSONSpec("child3", "nested.tools"),
+		"nested.tools",
+		newAnyJSONSpec("child1"),
+		newAnyJSONSpec("child2"),
+		newAnyJSONSpec("child3"),
 	)
 	rt.agentToolSpecs["nested.agent"] = []tools.ToolSpec{
 		rt.toolSpecs["child1"],
@@ -1460,7 +1461,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	// Register parent toolset
 	rt.mu.Lock()
 	rt.toolsets[agentTools.Name] = agentTools
-	seedTestToolSpecs(rt, newAnyJSONSpec("invoke", "svc.agenttools"))
+	seedTestToolset(rt, agentTools.Name, newAnyJSONSpec("invoke"))
 	rt.mu.Unlock()
 
 	// Parent run requests a single agent-tool invocation
@@ -1533,8 +1534,8 @@ func TestChildTrackerLifecycle(t *testing.T) {
 
 func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 	recorder := &recordingHooks{}
-	child1Spec := newAnyJSONSpec("child1", "svc.export")
-	child2Spec := newAnyJSONSpec("child2", "svc.export")
+	child1Spec := newAnyJSONSpec("child1")
+	child2Spec := newAnyJSONSpec("child2")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.export": {
@@ -1551,7 +1552,7 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 		tracer:        telemetry.NoopTracer{},
 		RunEventStore: runloginmem.New(),
 	}
-	seedTestToolSpecs(rt, child1Spec, child2Spec)
+	seedTestToolset(rt, "svc.export", child1Spec, child2Spec)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
@@ -1613,7 +1614,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 			},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			"search": newAnyJSONSpec("search", "svc.tools"),
+			"search": newAnyJSONSpec("search"),
 		},
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},

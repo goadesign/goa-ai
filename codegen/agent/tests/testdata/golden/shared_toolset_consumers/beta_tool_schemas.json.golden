@@ -1,0 +1,34 @@
+{
+  "tools": [
+    {
+      "description": "Return the supplied message.",
+      "id": "shared.ping",
+      "payload": {
+        "name": "PingPayload",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "properties": {
+            "message": {
+              "description": "Message to return.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        }
+      },
+      "result": {
+        "name": "PingResult",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "string"
+        }
+      },
+      "service": "beta",
+      "title": "Ping",
+      "toolset": "beta.shared"
+    }
+  ]
+}

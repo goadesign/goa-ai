@@ -30,23 +30,10 @@ func (s *assistantsrvc) SystemInfo(ctx context.Context) (res *assistant.SystemIn
 	return
 }
 
-// Return conversation history with optional query params
-func (s *assistantsrvc) ConversationHistory(ctx context.Context, p *assistant.ConversationHistoryPayload) (res *assistant.ConversationHistoryResult, err error) {
+// Return the complete conversation history
+func (s *assistantsrvc) ConversationHistory(ctx context.Context) (res *assistant.ConversationHistoryResult, err error) {
 	res = &assistant.ConversationHistoryResult{}
 	log.Printf(ctx, "assistant.conversation_history")
-	return
-}
-
-// Generate context-aware prompts
-func (s *assistantsrvc) GeneratePrompts(ctx context.Context, p *assistant.GeneratePromptsPayload) (res *assistant.PromptTemplates, err error) {
-	res = &assistant.PromptTemplates{}
-	log.Printf(ctx, "assistant.generate_prompts")
-	return
-}
-
-// Send status notification to client
-func (s *assistantsrvc) SendNotification(ctx context.Context, p *assistant.SendNotificationPayload) (err error) {
-	log.Printf(ctx, "assistant.send_notification")
 	return
 }
 

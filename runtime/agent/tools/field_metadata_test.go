@@ -29,6 +29,10 @@ func TestLookupFieldMetadata(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "map name", value)
 
+	value, ok = LookupFieldMetadata(metadata, "/labels/0/name")
+	require.True(t, ok)
+	require.Equal(t, "map name", value)
+
 	value, ok = LookupFieldMetadata(
 		map[string]string{"labels.*": "escaped map value"},
 		"/labels/room~0east",

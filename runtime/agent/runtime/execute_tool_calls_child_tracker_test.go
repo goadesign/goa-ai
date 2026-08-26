@@ -19,7 +19,7 @@ import (
 
 func TestExecuteToolCalls_ChildTrackerUpdateEmittedOnIncrease(t *testing.T) {
 	recorder := &recordingHooks{}
-	toolSpec := newAnyJSONSpec("inline.ts.t", "inline.ts")
+	toolSpec := newAnyJSONSpec("inline.ts.t")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"inline.ts": {

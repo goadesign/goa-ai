@@ -28,8 +28,6 @@ func Specs() []tools.ToolSpec {
 func newSpecSummarizeDoc() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        SummarizeDoc,
-		Service:     "calc",
-		Toolset:     "calc.helpers",
 		Description: "Summarize a document",
 		Tags:        []string{},
 		Payload: tools.TypeSpec{

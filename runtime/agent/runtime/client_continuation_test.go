@@ -45,7 +45,7 @@ func TestStartContinuationRejectsIdentityMismatchBeforeWorkflowStart(t *testing.
 					"svc.other": {ID: "svc.other", Workflow: engine.WorkflowDefinition{Name: "other.workflow", TaskQueue: "q"}},
 				},
 			}
-			spec := newAnyJSONSpec("svc.lookup", "svc")
+			spec := newAnyJSONSpec("svc.lookup")
 			seedTestToolSpecs(runtime, spec)
 			_, err := runtime.CreateSession(context.Background(), "session-1")
 			require.NoError(t, err)

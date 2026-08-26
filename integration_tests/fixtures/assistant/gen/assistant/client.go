@@ -18,8 +18,6 @@ type Client struct {
 	ListDocumentsEndpoint       goa.Endpoint
 	SystemInfoEndpoint          goa.Endpoint
 	ConversationHistoryEndpoint goa.Endpoint
-	GeneratePromptsEndpoint     goa.Endpoint
-	SendNotificationEndpoint    goa.Endpoint
 	AnalyzeSentimentEndpoint    goa.Endpoint
 	ExtractKeywordsEndpoint     goa.Endpoint
 	SummarizeTextEndpoint       goa.Endpoint
@@ -29,13 +27,11 @@ type Client struct {
 }
 
 // NewClient initializes a "assistant" service client given the endpoints.
-func NewClient(listDocuments, systemInfo, conversationHistory, generatePrompts, sendNotification, analyzeSentiment, extractKeywords, summarizeText, search, executeCode, processBatch goa.Endpoint) *Client {
+func NewClient(listDocuments, systemInfo, conversationHistory, analyzeSentiment, extractKeywords, summarizeText, search, executeCode, processBatch goa.Endpoint) *Client {
 	return &Client{
 		ListDocumentsEndpoint:       listDocuments,
 		SystemInfoEndpoint:          systemInfo,
 		ConversationHistoryEndpoint: conversationHistory,
-		GeneratePromptsEndpoint:     generatePrompts,
-		SendNotificationEndpoint:    sendNotification,
 		AnalyzeSentimentEndpoint:    analyzeSentiment,
 		ExtractKeywordsEndpoint:     extractKeywords,
 		SummarizeTextEndpoint:       summarizeText,
@@ -67,31 +63,13 @@ func (c *Client) SystemInfo(ctx context.Context) (res *SystemInfoResult, err err
 
 // ConversationHistory calls the "conversation_history" endpoint of the
 // "assistant" service.
-func (c *Client) ConversationHistory(ctx context.Context, p *ConversationHistoryPayload) (res *ConversationHistoryResult, err error) {
+func (c *Client) ConversationHistory(ctx context.Context) (res *ConversationHistoryResult, err error) {
 	var ires any
-	ires, err = c.ConversationHistoryEndpoint(ctx, p)
+	ires, err = c.ConversationHistoryEndpoint(ctx, nil)
 	if err != nil {
 		return
 	}
 	return ires.(*ConversationHistoryResult), nil
-}
-
-// GeneratePrompts calls the "generate_prompts" endpoint of the "assistant"
-// service.
-func (c *Client) GeneratePrompts(ctx context.Context, p *GeneratePromptsPayload) (res *PromptTemplates, err error) {
-	var ires any
-	ires, err = c.GeneratePromptsEndpoint(ctx, p)
-	if err != nil {
-		return
-	}
-	return ires.(*PromptTemplates), nil
-}
-
-// SendNotification calls the "send_notification" endpoint of the "assistant"
-// service.
-func (c *Client) SendNotification(ctx context.Context, p *SendNotificationPayload) (err error) {
-	_, err = c.SendNotificationEndpoint(ctx, p)
-	return
 }
 
 // AnalyzeSentiment calls the "analyze_sentiment" endpoint of the "assistant"

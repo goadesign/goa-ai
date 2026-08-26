@@ -10,7 +10,7 @@ package chat
 import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
-	runtime "goa.design/goa-ai/runtime/agent/runtime"
+	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 )
 
 // AgentID is the fully-qualified identifier for this agent.
@@ -46,8 +46,8 @@ func NewChatAgent(cfg ChatAgentConfig) (*ChatAgent, error) {
 // NewWorker returns a per-agent worker configuration. Engines that support
 // workers (e.g., Temporal) use this to bind the agent's workflow and activities
 // to a specific queue. Supplying no options uses the generated default queue.
-func NewWorker(opts ...runtime.WorkerOption) runtime.WorkerConfig {
-	var cfg runtime.WorkerConfig
+func NewWorker(opts ...agentsruntime.WorkerOption) agentsruntime.WorkerConfig {
+	var cfg agentsruntime.WorkerConfig
 	for _, o := range opts {
 		if o != nil {
 			o(&cfg)
@@ -58,17 +58,17 @@ func NewWorker(opts ...runtime.WorkerOption) runtime.WorkerConfig {
 
 // Route returns the minimal route required to construct a client in a
 // caller process without registering the agent locally.
-func Route() runtime.AgentRoute {
-	return runtime.AgentRoute{
+func Route() agentsruntime.AgentRoute {
+	return agentsruntime.AgentRoute{
 		ID:               AgentID,
 		WorkflowName:     WorkflowName,
-		DefaultTaskQueue: "orchestrator_chat_workflow",
+		DefaultTaskQueue: DefaultTaskQueue,
 	}
 }
 
 // NewClient returns a runtime.AgentClient bound to this agent. In caller
 // processes that do not register the agent locally, this uses ClientMeta to
 // construct a client that can start workflows against remote workers.
-func NewClient(rt *runtime.Runtime) runtime.AgentClient {
+func NewClient(rt *agentsruntime.Runtime) agentsruntime.AgentClient {
 	return rt.MustClientFor(Route())
 }

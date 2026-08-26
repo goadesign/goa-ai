@@ -520,7 +520,7 @@ func TestBindContinuationRejectsCanonicalToolAndModelArguments(t *testing.T) {
 }
 
 func continuationTestSpecs() (tools.ToolSpec, tools.ToolSpec) {
-	search := newAnyJSONSpec("tools.search", "svc.tools")
+	search := newAnyJSONSpec("tools.search")
 	search.Payload.FieldJSONTypes = map[string]string{
 		"limit": "integer",
 		"query": "string",
@@ -530,7 +530,7 @@ func continuationTestSpecs() (tools.ToolSpec, tools.ToolSpec) {
 		CursorField:     "cursor",
 		NextCursorField: "next_cursor",
 	}}
-	continuation := newAnyJSONSpec("tools.continue_search", "svc.tools")
+	continuation := newAnyJSONSpec("tools.continue_search")
 	continuation.Payload.Schema = rawjson.Message(`{"type":"object"}`)
 	continuation.Payload.FieldJSONTypes = map[string]string{"$payload": "object"}
 	continuation.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{

@@ -915,10 +915,8 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 		return nil, fmt.Errorf("child continuation does not match tool_call_id %s", pending.ToolCallID)
 	}
 
-	l.r.mu.RLock()
-	spec, specOK := l.r.toolSpecs[record.call.Name]
-	toolset, toolsetOK := l.r.toolsets[spec.Toolset]
-	l.r.mu.RUnlock()
+	_, specOK := l.r.toolSpec(record.call.Name)
+	_, toolset, toolsetOK := l.r.toolsetForTool(record.call.Name)
 	if !specOK || !toolsetOK || toolset.AgentTool == nil {
 		return nil, fmt.Errorf("child continuation tool %q is not a registered agent tool", record.call.Name)
 	}

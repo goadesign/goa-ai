@@ -128,9 +128,6 @@ func Tool(name string, args ...any) {
 			Description: description,
 			Method:      parent,
 		}
-		if parent.Payload != nil {
-			tool.InputSchema = parent.Payload
-		}
 		tool.Expression = parent
 		mcp.Tools = append(mcp.Tools, tool)
 	default:

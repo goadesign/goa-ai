@@ -131,6 +131,18 @@ func seedTestToolSpecs(rt *Runtime, specs ...tools.ToolSpec) {
 	}
 }
 
+// seedTestToolset records the local registration that executes the supplied
+// contracts in tests that build Runtime values directly.
+func seedTestToolset(rt *Runtime, name string, specs ...tools.ToolSpec) {
+	seedTestToolSpecs(rt, specs...)
+	if rt.toolsetNames == nil {
+		rt.toolsetNames = make(map[tools.Ident]string)
+	}
+	for _, spec := range specs {
+		rt.toolsetNames[spec.Name] = name
+	}
+}
+
 func testModelRequest(toolNames ...string) *model.Request {
 	definitions := make([]*model.ToolDefinition, len(toolNames))
 	for index, name := range toolNames {
@@ -795,7 +807,7 @@ func (h *testChildHandle) IsReady() bool {
 func (h *testChildHandle) Cancel(ctx context.Context) error { return nil }
 func (h *testChildHandle) RunID() string                    { return "" }
 
-func newAnyJSONSpec(name tools.Ident, toolset string) tools.ToolSpec {
+func newAnyJSONSpec(name tools.Ident) tools.ToolSpec {
 	codec := tools.JSONCodec[any]{
 		ToJSON: json.Marshal,
 		FromJSON: func(data []byte) (any, error) {
@@ -811,7 +823,6 @@ func newAnyJSONSpec(name tools.Ident, toolset string) tools.ToolSpec {
 	}
 	return tools.ToolSpec{
 		Name:    name,
-		Toolset: toolset,
 		Payload: tools.TypeSpec{Name: string(name) + "_payload", Codec: codec},
 		Result:  tools.TypeSpec{Name: string(name + "_result"), Codec: codec},
 	}

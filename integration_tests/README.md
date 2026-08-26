@@ -4,7 +4,8 @@ Comprehensive integration tests for the Model Context Protocol (MCP) plugin usin
 
 ## Overview
 
-These tests validate the MCP plugin's implementation of the Model Context Protocol specification, ensuring correct behavior for all protocol features including tools, resources, prompts, and notifications.
+These tests validate the MCP plugin's generated initialization, tools,
+resources, prompts, and JSON-RPC behavior.
 
 ## Quick Start
 
@@ -86,13 +87,11 @@ Tests core MCP protocol requirements:
 - **Initialize**: Connection initialization and capability negotiation
 - **Error Handling**: Proper error codes and messages
 - **JSON-RPC Compliance**: Valid request/response format
-- **State Management**: Initialization state tracking
 - **Notifications**: Fire-and-forget messages
 
 Example scenarios:
 - `initialize_basic` - Standard initialization
-- `initialize_unsupported_version` - Version negotiation
-- `call_before_init` - State validation
+- `initialize_negotiates_version` - Version negotiation
 - `invalid_jsonrpc` - Protocol format validation
 
 ### 2. Tools Tests (`tools.yaml`)
@@ -102,30 +101,26 @@ Tests MCP tools functionality:
 - **Tool Discovery**: `tools/list` endpoint
 - **Tool Invocation**: `tools/call` with various payloads
 - **Input Validation**: Schema validation for tool arguments
-- **Progress Tracking**: Progress notifications for long-running tools
 - **Error Handling**: Invalid tool names and arguments
 
 Example scenarios:
 - `tools_list` - List all available tools
 - `tool_analyze_text_sentiment` - Call sentiment analysis tool
 - `tool_execute_code_python` - Execute Python code
-- `tool_batch_with_progress` - Track batch processing progress
 
 ### 3. Resources Tests
 
 Tests MCP resources functionality:
 
 - **Resource Discovery**: `resources/list` endpoint
-- **Resource Reading**: `resources/read` with URI templates
+- **Resource Reading**: `resources/read` with exact resource URIs
 - **MIME Type Handling**: Proper content type support
-- **Subscriptions**: Resource update subscriptions
-- **URI Resolution**: Template and parameter handling
+- **URI Resolution**: Exact resource selection and unknown URI errors
 
 Example scenarios:
 - `list_resources` - List all available resources
 - `read_document_resource` - Read document content
 - `read_system_info` - Get system information
-- `subscribe_to_updates` - Subscribe to resource changes
 
 ### 4. Prompts Tests
 
@@ -133,15 +128,14 @@ Tests MCP prompts functionality:
 
 - **Prompt Discovery**: `prompts/list` endpoint
 - **Static Prompts**: Pre-defined prompt templates
-- **Dynamic Prompts**: Context-aware prompt generation
-- **Variable Substitution**: Template variable handling
+- **Argument Rejection**: Static prompts reject request arguments
 - **Message Formatting**: Proper role and content structure
 
 Example scenarios:
-- `list_prompts` - List all available prompts
-- `get_static_prompt` - Retrieve static prompt with variables
-- `get_dynamic_prompt` - Generate context-aware prompt
-- `get_invalid_prompt` - Error handling for missing prompts
+- `prompts_list` - List all available prompts
+- `prompts_get_static_without_arguments` - Retrieve a static prompt
+- `prompts_get_static_rejects_arguments` - Reject arguments for a static prompt
+- `prompts_get_unknown_prompt` - Reject an unknown prompt name
 
 ## Adding New Test Scenarios
 
@@ -268,24 +262,17 @@ TEST_SERVER_URL=http://localhost:8080 TEST_SKIP_GENERATION=true go test ./tests
 - Tool discovery (`tools/list`)
 - Tool invocation (`tools/call`)
 - Input schema validation
-- Progress notifications
 
 ✅ **Resources**
 - Resource discovery (`resources/list`)
 - Resource reading (`resources/read`)
-- URI template resolution
+- Exact URI selection
 - MIME type handling
 
 ✅ **Prompts**
 - Prompt discovery (`prompts/list`)
 - Static prompts (`prompts/get`)
-- Dynamic prompt generation
-- Variable substitution
-
-✅ **Notifications**
-- Progress updates
-- Status notifications
-- Resource change events
+- Static prompt argument rejection
 
 ### Pending Features
 
@@ -293,6 +280,7 @@ TEST_SERVER_URL=http://localhost:8080 TEST_SKIP_GENERATION=true go test ./tests
 ⏳ **Roots** - Filesystem/URI root discovery
 ⏳ **Logging** - Structured logging protocol
 ⏳ **Completion** - Autocomplete support
+⏳ **Server notifications beyond initialization** - Progress, status, and resource changes
 
 ## Continuous Integration
 

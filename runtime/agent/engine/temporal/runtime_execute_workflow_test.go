@@ -37,10 +37,10 @@ import (
 
 const runSuspensionType = "runtime.run_suspension"
 
-func TestPlannerOutputActivityFailureIsNotRetried(t *testing.T) {
+func TestPlannerOutputActivityFailureIsNonRetryable(t *testing.T) {
 	var calls atomic.Int32
 	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
+	env := suite.NewTestActivityEnvironment()
 	env.RegisterActivityWithOptions(func(context.Context) error {
 		calls.Add(1)
 		return temporalerrors.Wrap(planner.NewOutputContractError(
@@ -48,18 +48,9 @@ func TestPlannerOutputActivityFailureIsNotRetried(t *testing.T) {
 		))
 	}, activity.RegisterOptions{Name: "invalid-planner-output"})
 
-	env.ExecuteWorkflow(func(ctx workflow.Context) error {
-		ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-			StartToCloseTimeout: time.Second,
-			RetryPolicy:         &temporal.RetryPolicy{MaximumAttempts: 3},
-		})
-		err := workflow.ExecuteActivity(ctx, "invalid-planner-output").Get(ctx, nil)
-		return temporalerrors.Wrap(err)
-	})
-
-	err := env.GetWorkflowError()
+	_, err := env.ExecuteActivity("invalid-planner-output")
 	require.Error(t, err)
-	require.True(t, temporalerrors.IsOutputContract(err))
+	require.Truef(t, temporalerrors.IsOutputContract(err), "unexpected activity error: %T: %v", err, err)
 	require.EqualValues(t, 1, calls.Load())
 	var appErr *temporal.ApplicationError
 	require.ErrorAs(t, err, &appErr)
@@ -266,7 +257,7 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 
 	agentID := agent.Ident("service.cancel_agent")
 	toolName := tools.Ident("service.cancel.cancel")
-	spec := anyJSONToolSpec(toolName, "service.cancel")
+	spec := anyJSONToolSpec(toolName)
 	runtime := agentruntime.New()
 	_, err := runtime.CreateSession(context.Background(), sessionID)
 	require.NoError(t, err)
@@ -557,7 +548,7 @@ func (r *hookRecorder) SuspensionPersisted() bool {
 	return r.suspensionPersisted
 }
 
-func anyJSONToolSpec(name tools.Ident, toolset string) tools.ToolSpec {
+func anyJSONToolSpec(name tools.Ident) tools.ToolSpec {
 	codec := tools.JSONCodec[any]{
 		ToJSON: json.Marshal,
 		FromJSON: func(data []byte) (any, error) {
@@ -569,7 +560,7 @@ func anyJSONToolSpec(name tools.Ident, toolset string) tools.ToolSpec {
 		},
 	}
 	return tools.ToolSpec{
-		Name: name, Toolset: toolset,
+		Name:    name,
 		Payload: tools.TypeSpec{Name: string(name) + "_payload", Codec: codec},
 		Result:  tools.TypeSpec{Name: string(name) + "_result", Codec: codec},
 	}

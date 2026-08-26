@@ -42,8 +42,8 @@ func restrictedFinalPlanResult(text string) *PlanResult {
 
 func TestPolicyAllowlistRewritesDeniedCalls(t *testing.T) {
 	recorder := &recordingHooks{}
-	allowedSpec := newAnyJSONSpec("allowed", "svc.tools")
-	blockedSpec := newAnyJSONSpec("blocked", "svc.tools")
+	allowedSpec := newAnyJSONSpec("allowed")
+	blockedSpec := newAnyJSONSpec("blocked")
 	rt := New()
 	rt.Bus = recorder
 	rt.Policy = &stubPolicyEngine{decision: policy.Decision{AllowedTools: []tools.Ident{tools.Ident("allowed")}}}
@@ -126,7 +126,7 @@ func TestRewriteToolCallUnavailablePreservesCompiledModelIdentity(t *testing.T) 
 func TestRestrictedRunToolCapFinalizes(t *testing.T) {
 	t.Parallel()
 
-	toolSpec := newAnyJSONSpec("svc.tools.read", "svc.tools")
+	toolSpec := newAnyJSONSpec("svc.tools.read")
 	rt := &Runtime{
 		Bus:           noopHooks{},
 		logger:        telemetry.NoopLogger{},
@@ -178,7 +178,7 @@ func TestRestrictedRunToolCapFinalizes(t *testing.T) {
 func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
 	t.Parallel()
 
-	toolSpec := newAnyJSONSpec("svc.tools.read", "svc.tools")
+	toolSpec := newAnyJSONSpec("svc.tools.read")
 	rt := &Runtime{
 		Bus:           noopHooks{},
 		logger:        telemetry.NoopLogger{},
@@ -237,7 +237,7 @@ func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
 func TestRestrictedRunRecoveryCapFinalizes(t *testing.T) {
 	t.Parallel()
 
-	toolSpec := newAnyJSONSpec("svc.tools.read", "svc.tools")
+	toolSpec := newAnyJSONSpec("svc.tools.read")
 	rt := &Runtime{
 		Bus:           noopHooks{},
 		logger:        telemetry.NoopLogger{},
@@ -336,17 +336,17 @@ func TestRestrictedUnknownToolFailsBeforeExecution(t *testing.T) {
 
 func TestApplyPerRunOverridesRejectsCallsExcludedByAnyTagClause(t *testing.T) {
 	visibleSpec := func() tools.ToolSpec {
-		spec := newAnyJSONSpec("visible", "svc.tools")
+		spec := newAnyJSONSpec("visible")
 		spec.Tags = []string{"system", "profile"}
 		return spec
 	}()
 	missingSpec := func() tools.ToolSpec {
-		spec := newAnyJSONSpec("missing", "svc.tools")
+		spec := newAnyJSONSpec("missing")
 		spec.Tags = []string{"system"}
 		return spec
 	}()
 	deniedSpec := func() tools.ToolSpec {
-		spec := newAnyJSONSpec("denied", "svc.tools")
+		spec := newAnyJSONSpec("denied")
 		spec.Tags = []string{"system", "profile", "blocked"}
 		return spec
 	}()
@@ -499,13 +499,13 @@ func TestFilterToolCallsKeepsToolUnavailable(t *testing.T) {
 
 func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{})
-	visible := newAnyJSONSpec("svc.tools.visible", "svc.tools")
+	visible := newAnyJSONSpec("svc.tools.visible")
 	visible.Description = "Visible tool"
 	visible.Payload.Schema = tools.RawJSON(`{"type":"object","properties":{"q":{"type":"string"}}}`)
 	visible.Payload.SchemaWithoutRootExample = tools.RawJSON(`{"type":"object"}`)
 	visible.Payload.ExampleJSON = tools.RawJSON(`{"q":"status"}`)
 	visible.Tags = []string{"system", "profile"}
-	blocked := newAnyJSONSpec("svc.tools.blocked", "svc.tools")
+	blocked := newAnyJSONSpec("svc.tools.blocked")
 	blocked.Tags = []string{"system"}
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
 		"service.agent": {visible, blocked},
@@ -529,7 +529,7 @@ func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 
 func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
-	spec := newAnyJSONSpec("svc.tools.search", "svc.tools")
+	spec := newAnyJSONSpec("svc.tools.search")
 	spec.Description = "Spec description should not be re-derived"
 	spec.Tags = []string{"spec"}
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
@@ -568,7 +568,7 @@ func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {
 func TestPolicyMetadataPanicsWithoutCanonicalMetadata(t *testing.T) {
 	rt := &Runtime{
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			"svc.tools.search": newAnyJSONSpec("svc.tools.search", "svc.tools"),
+			"svc.tools.search": newAnyJSONSpec("svc.tools.search"),
 		},
 	}
 

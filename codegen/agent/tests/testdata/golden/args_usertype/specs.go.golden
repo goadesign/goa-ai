@@ -28,8 +28,6 @@ func Specs() []tools.ToolSpec {
 func newSpecStore() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        Store,
-		Service:     "alpha",
-		Toolset:     "alpha.docs",
 		Description: "Store",
 		Tags:        []string{},
 		Payload: tools.TypeSpec{

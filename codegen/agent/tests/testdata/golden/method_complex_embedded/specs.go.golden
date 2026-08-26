@@ -28,8 +28,6 @@ func Specs() []tools.ToolSpec {
 func newSpecUpsert() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        Upsert,
-		Service:     "alpha",
-		Toolset:     "alpha.profiles",
 		Description: "Upsert a profile",
 		Tags:        []string{},
 		Payload: tools.TypeSpec{

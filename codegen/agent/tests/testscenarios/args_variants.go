@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	. "goa.design/goa-ai/dsl"
+	aidsl "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -10,11 +10,11 @@ func ArgsPrimitive() func() {
 	return func() {
 		API("alpha", func() {})
 		Service("alpha", func() {
-			Agent("scribe", "Doc helper", func() {
-				Use("ops", func() {
-					Tool("echo", "Echo", func() {
-						Args(String, "text to echo")
-						Return(String, "echoed text")
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use("ops", func() {
+					aidsl.Tool("echo", "Echo", func() {
+						aidsl.Args(String, "text to echo")
+						aidsl.Return(String, "echoed text")
 					})
 				})
 			})
@@ -36,11 +36,11 @@ func ArgsInlineObject() func() {
 			Required("sum")
 		})
 		Service("alpha", func() {
-			Agent("scribe", "Doc helper", func() {
-				Use("math", func() {
-					Tool("add", "Add", func() {
-						Args(AddPayload)
-						Return(AddResult)
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use("math", func() {
+					aidsl.Tool("add", "Add", func() {
+						aidsl.Args(AddPayload)
+						aidsl.Return(AddResult)
 					})
 				})
 			})
@@ -58,11 +58,11 @@ func ArgsUserType() func() {
 			Required("id")
 		})
 		Service("alpha", func() {
-			Agent("scribe", "Doc helper", func() {
-				Use("docs", func() {
-					Tool("store", "Store", func() {
-						Args(Doc, func() { Required("title") })
-						Return(Doc)
+			aidsl.Agent("scribe", "Doc helper", func() {
+				aidsl.Use("docs", func() {
+					aidsl.Tool("store", "Store", func() {
+						aidsl.Args(Doc, func() { Required("title") })
+						aidsl.Return(Doc)
 					})
 				})
 			})

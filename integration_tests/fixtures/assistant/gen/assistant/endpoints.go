@@ -18,8 +18,6 @@ type Endpoints struct {
 	ListDocuments       goa.Endpoint
 	SystemInfo          goa.Endpoint
 	ConversationHistory goa.Endpoint
-	GeneratePrompts     goa.Endpoint
-	SendNotification    goa.Endpoint
 	AnalyzeSentiment    goa.Endpoint
 	ExtractKeywords     goa.Endpoint
 	SummarizeText       goa.Endpoint
@@ -34,8 +32,6 @@ func NewEndpoints(s Service) *Endpoints {
 		ListDocuments:       NewListDocumentsEndpoint(s),
 		SystemInfo:          NewSystemInfoEndpoint(s),
 		ConversationHistory: NewConversationHistoryEndpoint(s),
-		GeneratePrompts:     NewGeneratePromptsEndpoint(s),
-		SendNotification:    NewSendNotificationEndpoint(s),
 		AnalyzeSentiment:    NewAnalyzeSentimentEndpoint(s),
 		ExtractKeywords:     NewExtractKeywordsEndpoint(s),
 		SummarizeText:       NewSummarizeTextEndpoint(s),
@@ -50,8 +46,6 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ListDocuments = m(e.ListDocuments)
 	e.SystemInfo = m(e.SystemInfo)
 	e.ConversationHistory = m(e.ConversationHistory)
-	e.GeneratePrompts = m(e.GeneratePrompts)
-	e.SendNotification = m(e.SendNotification)
 	e.AnalyzeSentiment = m(e.AnalyzeSentiment)
 	e.ExtractKeywords = m(e.ExtractKeywords)
 	e.SummarizeText = m(e.SummarizeText)
@@ -80,26 +74,7 @@ func NewSystemInfoEndpoint(s Service) goa.Endpoint {
 // method "conversation_history" of service "assistant".
 func NewConversationHistoryEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*ConversationHistoryPayload)
-		return s.ConversationHistory(ctx, p)
-	}
-}
-
-// NewGeneratePromptsEndpoint returns an endpoint function that calls the
-// method "generate_prompts" of service "assistant".
-func NewGeneratePromptsEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*GeneratePromptsPayload)
-		return s.GeneratePrompts(ctx, p)
-	}
-}
-
-// NewSendNotificationEndpoint returns an endpoint function that calls the
-// method "send_notification" of service "assistant".
-func NewSendNotificationEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*SendNotificationPayload)
-		return nil, s.SendNotification(ctx, p)
+		return s.ConversationHistory(ctx)
 	}
 }
 

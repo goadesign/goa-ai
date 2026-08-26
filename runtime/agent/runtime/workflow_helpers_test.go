@@ -154,7 +154,7 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 		turnID             = "turn-identity"
 		providerToolCallID = "provider-call-1"
 	)
-	tool := newAnyJSONSpec("service.lookup", "service")
+	tool := newAnyJSONSpec("service.lookup")
 	providerCall := model.ToolCall{
 		ID:      providerToolCallID,
 		Name:    tool.Name,
@@ -618,9 +618,9 @@ func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(
 		rt,
-		newAnyJSONSpec("svc.tools.read", "svc.tools"),
+		newAnyJSONSpec("svc.tools.read"),
 		func() tools.ToolSpec {
-			spec := newAnyJSONSpec("workflow.progress.set_step_status", "workflow.progress")
+			spec := newAnyJSONSpec("workflow.progress.set_step_status")
 			spec.Bookkeeping = true
 			return spec
 		}(),
@@ -662,8 +662,8 @@ func TestRecoveryRemindersDescribeSelectedTransition(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(
 		rt,
-		newAnyJSONSpec("svc.tools.correct", "svc.tools"),
-		newAnyJSONSpec("svc.tools.finish", "svc.tools"),
+		newAnyJSONSpec("svc.tools.correct"),
+		newAnyJSONSpec("svc.tools.finish"),
 	)
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	calls := []ToolCall{
@@ -706,7 +706,7 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 	seedTestToolSpecs(
 		rt,
 		func() tools.ToolSpec {
-			spec := newAnyJSONSpec("workflow.progress.complete", "workflow.progress")
+			spec := newAnyJSONSpec("workflow.progress.complete")
 			spec.Bookkeeping = true
 			spec.TerminalRun = true
 			return spec
