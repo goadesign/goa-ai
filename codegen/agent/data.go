@@ -246,20 +246,20 @@ type (
 
 	// CapsData captures per-run resource limits that restrict agent tool
 	// usage. It prevents runaway execution and excessive resource consumption
-	// by capping the number of tool invocations and consecutive failures
-	// allowed within a single agent run.
+	// by capping the number of tool invocations and replacement planner
+	// activities allowed within a single agent run.
 	//
 	// Zero values indicate no cap is enforced. These limits are transformed
 	// from CapsExpr during policy data construction and are enforced by the
 	// runtime policy engine, not at generation time.
 	//
-	// The runtime increments counters for each tool call and failure,
-	// terminating the agent run with an error if caps are exceeded.
+	// The runtime increments tool-call counters and charges recovery turns when
+	// it schedules replacement planner activities.
 	CapsData struct {
 		// MaxToolCalls caps the number of tool invocations per run (0 = not configured).
 		MaxToolCalls int
-		// MaxConsecutiveFailedToolCalls stops execution after N consecutive failures (0 = not configured).
-		MaxConsecutiveFailedToolCalls int
+		// MaxRecoveryTurns caps consecutive replacement planner activities (0 = not configured).
+		MaxRecoveryTurns int
 	}
 
 	// ToolsetData captures metadata about a toolset and its relationship to agents

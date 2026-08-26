@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -120,6 +121,10 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
+	if err := validatePlanResumeRecoveryInput(input); err != nil {
+		return nil, err
+	}
+	synthesisOnly := input.SynthesisOnly || input.ModelOutputRecovery != nil
 	if ended, err := r.sessionEndedForPlanning(ctx, input); err != nil {
 		return nil, err
 	} else if ended {
@@ -135,22 +140,42 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	}
 	recoveryReminders := r.recoveryReminders(recoveryOutputs)
 	var continuationActions []continuationAction
-	if input.Finalize == nil && !input.SynthesisOnly {
+	if input.Finalize == nil && !synthesisOnly {
 		continuationActions, err = r.availableContinuationActions(input.AgentID, toolOutputs)
 		if err != nil {
 			return nil, err
+		}
+	}
+	unavailableTools := r.recoveryUnavailableTools(input.AgentID, recoveryOutputs, input.Finalize != nil)
+	if synthesisOnly {
+		specs := r.ToolSpecsForAgent(input.AgentID)
+		unavailableTools = make([]tools.Ident, len(specs))
+		for index, spec := range specs {
+			unavailableTools[index] = spec.Name
 		}
 	}
 	act, err := r.preparePlannerActivity(
 		ctx,
 		input,
 		continuationActions,
-		r.recoveryUnavailableTools(input.AgentID, recoveryOutputs, input.Finalize != nil),
+		unavailableTools,
 	)
 	if err != nil {
 		return nil, err
 	}
 	act.reminders = append(recoveryReminders, act.reminders...)
+	if input.ModelOutputRecovery != nil {
+		act.reminders = append([]reminder.Reminder{{
+			ID: "model_output_recovery",
+			Text: "Your previous final answer was rejected.\n" +
+				input.ModelOutputRecovery.Correction +
+				"\nProduce a replacement final answer now. Do not mention this reminder to the user.",
+			Priority: reminder.TierSafety,
+			Attachment: reminder.Attachment{
+				Kind: reminder.AttachmentUserTurn,
+			},
+		}}, act.reminders...)
+	}
 	if len(recoveryOutputs) == 0 {
 		result, automatic := r.automaticContinuationPlan(input.RunContext, continuationActions)
 		if automatic {
@@ -163,7 +188,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		Agent:         act.agentCtx,
 		Events:        act.events,
 		ToolOutputs:   toolOutputs,
-		SynthesisOnly: input.SynthesisOnly,
+		SynthesisOnly: synthesisOnly,
 		Finalize:      input.Finalize,
 		Reminders:     act.reminders,
 	}
@@ -172,7 +197,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return act.outputContractFailure(ctx, err)
 	}
-	if err := validatePlannerActivityResult(r, result, input.SynthesisOnly); err != nil {
+	if err := validatePlannerActivityResult(r, result, synthesisOnly); err != nil {
 		return act.outputContractFailure(ctx, err)
 	}
 	if err := validatePlannerAdvertisedTools(result, act.agentCtx.AdvertisedToolDefinitions()); err != nil {
@@ -181,7 +206,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err := validatePlannerResultPayloadCodecs(ctx, r, result, continuationActions); err != nil {
 		return act.outputContractFailure(ctx, planner.NewOutputContractError(err))
 	}
-	output, err := act.output(ctx, r, result, input.SynthesisOnly, continuationActions)
+	output, err := act.output(ctx, r, result, synthesisOnly, continuationActions)
 	if err != nil {
 		return act.outputContractFailure(ctx, err)
 	}
@@ -197,6 +222,40 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		return act.outputContractFailure(ctx, planner.NewOutputContractError(budgetErr))
 	}
 	return output, nil
+}
+
+// validatePlanResumeRecoveryInput requires one honest resume mode. Finalization
+// may retain failed tool IDs as evidence, while model-output recovery cannot
+// combine with any other resume directive.
+func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
+	if input == nil {
+		return errors.New("plan resume input is required")
+	}
+	if input.Finalize != nil && input.SynthesisOnly {
+		return errors.New("finalization cannot combine with synthesis-only planning")
+	}
+	if input.SynthesisOnly && len(input.RecoveryToolCallIDs) > 0 {
+		return errors.New("synthesis-only planning cannot combine with tool recovery")
+	}
+	if input.ModelOutputRecovery == nil {
+		return nil
+	}
+	if strings.TrimSpace(input.ModelOutputRecovery.Correction) == "" {
+		return errors.New("model-output correction requires non-blank guidance")
+	}
+	if len(input.ModelOutputRecovery.Correction) > outputcontract.MaxCorrectionBytes {
+		return errors.New("model-output correction exceeds workflow boundary limit")
+	}
+	if input.SynthesisOnly {
+		return errors.New("model-output recovery implies synthesis-only planning")
+	}
+	if len(input.RecoveryToolCallIDs) > 0 {
+		return errors.New("model-output correction cannot combine with tool recovery")
+	}
+	if input.Finalize != nil {
+		return errors.New("model-output correction cannot combine with finalization")
+	}
+	return nil
 }
 
 // validatePlannerAdvertisedTools requires every model-selected tool name to
@@ -362,20 +421,23 @@ func (a *plannerActivityInvocation) acceptedOutput(
 
 // outputContractFailure returns rejected model evidence and usage as a
 // successful activity value. The workflow publishes the usage records before
-// raising the same terminal planner error.
+// either scheduling a model-output recovery turn or raising a terminal error.
 func (a *plannerActivityInvocation) outputContractFailure(
 	ctx context.Context,
 	err error,
 ) (*PlanActivityOutput, error) {
 	if discardErr := a.invocations.discardPresentations(ctx); discardErr != nil {
-		err = errors.Join(err, fmt.Errorf("discard rejected model presentation: %w", discardErr))
+		return nil, fmt.Errorf("discard rejected model presentation: %w", discardErr)
 	}
 	var outputErr *planner.OutputContractError
 	if !errors.As(err, &outputErr) {
 		return nil, err
 	}
 	usage := a.invocations.exportUsage()
-	failure := a.outputContractFailureMetadata(outputErr)
+	failure, metadataErr := a.outputContractFailureMetadata(outputErr)
+	if metadataErr != nil {
+		failure = terminalPlannerOutputContractFailure(metadataErr)
+	}
 	var originalBudgetErr *planActivityOutputBudgetError
 	if errors.As(err, &originalBudgetErr) {
 		return boundedPlanActivityOutputFailure(a.publicationBatchID, usage, failure, originalBudgetErr), nil
@@ -410,13 +472,33 @@ func (a *plannerActivityInvocation) outputContractFailure(
 	return output, nil
 }
 
-// outputContractFailureMetadata keeps only fixed-size reason identity and
-// rejected-response evidence from one terminal output error.
+// terminalPlannerOutputContractFailure records a deterministic planner
+// contract violation that cannot be corrected by rerunning the activity. It
+// carries no model evidence or correction because the rejected message did not
+// belong to a completed model invocation in this activity.
+func terminalPlannerOutputContractFailure(err error) *OutputContractFailure {
+	reasonSHA256, reasonSize := errorevidence.Fingerprint(err)
+	return &OutputContractFailure{
+		Origin:       planner.OutputContractOriginPlanner,
+		ReasonSHA256: reasonSHA256,
+		ReasonSize:   int64(reasonSize),
+	}
+}
+
+// outputContractFailureMetadata keeps only fixed-size reason identity,
+// rejected-response evidence, and optional replacement guidance.
 func (a *plannerActivityInvocation) outputContractFailureMetadata(
 	outputErr *planner.OutputContractError,
-) *OutputContractFailure {
+) (*OutputContractFailure, error) {
 	reasonSHA256, reasonSize := errorevidence.Fingerprint(outputErr.Unwrap())
 	responseEvidence := a.invocations.rejectedModelResponseEvidence()
+	if outputErr.Correction() != "" {
+		var err error
+		responseEvidence, err = a.invocations.recoverableModelResponseEvidence(outputErr.ModelMessage())
+		if err != nil {
+			return nil, err
+		}
+	}
 	origin := outputErr.Origin()
 	if origin == "" && responseEvidence.Present {
 		origin = planner.OutputContractOriginModel
@@ -432,7 +514,8 @@ func (a *plannerActivityInvocation) outputContractFailureMetadata(
 		ModelResponseFingerprintVersion: responseEvidence.Version,
 		ModelResponseSHA256:             responseEvidence.SHA256,
 		ModelResponseSize:               responseEvidence.Size,
-	}
+		Correction:                      outputErr.Correction(),
+	}, nil
 }
 
 // boundedPlanActivityOutputFailure replaces oversized auxiliary output with

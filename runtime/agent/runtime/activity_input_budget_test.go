@@ -53,6 +53,7 @@ func TestBuildNextResumeRequestKeepsLargePayloadAndResultsOffWire(t *testing.T) 
 		toolOutputs,
 		nil,
 		true,
+		"",
 		&nextAttempt,
 	)
 	require.NoError(t, err)

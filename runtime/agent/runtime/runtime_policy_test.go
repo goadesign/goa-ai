@@ -230,7 +230,7 @@ func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
 	require.JSONEq(t, `{"q":"x"}`, string(outputs[0].Payload))
 }
 
-func TestRestrictedRunFailureCapFinalizes(t *testing.T) {
+func TestRestrictedRunRecoveryCapFinalizes(t *testing.T) {
 	t.Parallel()
 
 	toolSpec := newAnyJSONSpec("svc.tools.read", "svc.tools")
@@ -248,7 +248,7 @@ func TestRestrictedRunFailureCapFinalizes(t *testing.T) {
 		asyncResult: ToolOutput{
 			Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "invalid arguments"),
 		},
-		planResult:    restrictedFinalPlanResult("finalized after failure cap"),
+		planResult:    restrictedFinalPlanResult("finalized after recovery cap"),
 		hasPlanResult: true,
 	}
 	input := &RunInput{
@@ -272,17 +272,17 @@ func TestRestrictedRunFailureCapFinalizes(t *testing.T) {
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, policy.CapsState{
-		MaxToolCalls:                        5,
-		RemainingToolCalls:                  5,
-		MaxConsecutiveFailedToolCalls:       1,
-		RemainingConsecutiveFailedToolCalls: 1,
+		MaxToolCalls:           5,
+		RemainingToolCalls:     5,
+		MaxRecoveryTurns:       1,
+		RemainingRecoveryTurns: 0,
 	}, time.Time{}, time.Time{}, "turn-1", nil)
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.NotNil(t, out.Final)
 	require.Len(t, out.ToolEvents, 1)
 	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
-	require.Equal(t, planner.TerminationReasonFailureCap, wfCtx.lastPlannerCall.Input.Finalize.Reason)
+	require.Equal(t, planner.TerminationReasonRecoveryCap, wfCtx.lastPlannerCall.Input.Finalize.Reason)
 }
 
 func TestRestrictedUnknownToolFailsBeforeExecution(t *testing.T) {
@@ -317,10 +317,10 @@ func TestRestrictedUnknownToolFailsBeforeExecution(t *testing.T) {
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, policy.CapsState{
-		MaxToolCalls:                        5,
-		RemainingToolCalls:                  5,
-		MaxConsecutiveFailedToolCalls:       1,
-		RemainingConsecutiveFailedToolCalls: 1,
+		MaxToolCalls:           5,
+		RemainingToolCalls:     5,
+		MaxRecoveryTurns:       1,
+		RemainingRecoveryTurns: 1,
 	}, time.Time{}, time.Time{}, "turn-1", nil)
 	require.Error(t, err)
 	assert.Nil(t, out)

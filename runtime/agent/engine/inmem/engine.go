@@ -349,6 +349,10 @@ func (w *wfCtx) RunID() string {
 	return w.runID
 }
 
+func (w *wfCtx) WorkflowVersion(_ string, _, maxSupported int) int {
+	return maxSupported
+}
+
 func (w *wfCtx) StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
 	h, err := w.eng.StartWorkflow(ctx, engine.WorkflowStartRequest{
 		ID:          req.ID,

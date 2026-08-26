@@ -67,7 +67,7 @@ var _ = Service("orchestrator", func() {
 		RunPolicy(func() {
 			DefaultCaps(
 				MaxToolCalls(8),
-				MaxConsecutiveFailedToolCalls(3),
+				MaxRecoveryTurns(3),
 			)
 			TimeBudget("2m")
 			OnMissingFields("await_clarification")
@@ -398,7 +398,7 @@ can also require confirmation dynamically for additional tools via `runtime.With
 | `RunPolicy(dsl)`                   | Inside `Agent`            | Configures runtime execution constraints                                     |
 | `DefaultCaps(opts...)`             | Inside `RunPolicy`        | Sets resource limits using option functions                                  |
 | `MaxToolCalls(n)`                  | Argument to `DefaultCaps` | Maximum budgeted (non-bookkeeping) tool invocations                          |
-| `MaxConsecutiveFailedToolCalls(n)` | Argument to `DefaultCaps` | Maximum consecutive failures before stopping                                 |
+| `MaxRecoveryTurns(n)` | Argument to `DefaultCaps` | Maximum consecutive replacement planner activities after rejected tool or model output |
 | `TimeBudget(duration)`             | Inside `RunPolicy`        | Active-time budget for planner and tool work (e.g., "5m")                    |
 | `OnMissingFields(action)`          | Inside `RunPolicy`        | Validation behavior: `""`, `"finalize"`, `"await_clarification"`, `"resume"` |
 
@@ -1136,7 +1136,7 @@ independently schedule another planner turn.
 Runtime contract:
 
 - bookkeeping calls do not consume the run-level `MaxToolCalls` retrieval budget,
-- bookkeeping results do not change the consecutive-failure counter,
+- successful bookkeeping results do not reset the recovery-turn counter,
 - model-authored call batches are admitted or rejected atomically, with
   bookkeeping calls excluded from the batch's budget cost,
 - bookkeeping results still publish durable run events for hooks, streams, and
@@ -1177,8 +1177,8 @@ Tool("set_step_status", "Update step status", func() {
 })
 ```
 
-`TerminalRun` implies `Bookkeeping`: a terminal commit consumes no retrieval or
-consecutive-failure budget and completes the run when it succeeds. Declare
+`TerminalRun` implies `Bookkeeping`: a terminal commit consumes no tool-call
+budget and completes the run when it succeeds. Declare
 `TerminalRun()` alone; the DSL supplies the bookkeeping classification.
 
 ---
@@ -1192,7 +1192,7 @@ RunPolicy(func() {
     // Resource limits
     DefaultCaps(
         MaxToolCalls(20),
-        MaxConsecutiveFailedToolCalls(3),
+        MaxRecoveryTurns(3),
     )
     
     // Timing
@@ -1225,7 +1225,7 @@ RunPolicy(func() {
 | Option                             | Purpose                                |
 | ---------------------------------- | -------------------------------------- |
 | `MaxToolCalls(n)`                  | Maximum budgeted (non-bookkeeping) tool invocations per run |
-| `MaxConsecutiveFailedToolCalls(n)` | Stop after N consecutive failures      |
+| `MaxRecoveryTurns(n)` | Allow N consecutive replacement planner activities |
 
 
 ### OnMissingFields Values

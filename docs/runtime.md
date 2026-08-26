@@ -680,13 +680,22 @@ Workflow step boundary:
 - terminal planner payloads are exclusive except for hidden, non-terminal
   bookkeeping side effects that complete successfully in the same step,
 - a run may supply `LimitTerminalPlans`, one payload-only `TerminalRun()` call
-  for each of the time, tool-call, and consecutive failed-call limits; before
+  for each of the time, tool-call, and recovery-turn limits; before
   the first planner activity, the runtime validates the complete set against
   the agent's registered generated codecs and rejects tools that require
   confirmation,
 - when one of those limits is reached, the workflow selects the matching call
   without loading saved messages, adds current run identifiers and labels,
   and executes the call through the existing terminal-tool path,
+- a planner may return `NewRecoverableModelOutputError` when it rejects a
+  completed model answer and can state how the model should replace it; the
+  workflow records the rejection and token usage, then schedules the normal
+  synthesis-only resume activity with that guidance,
+- `MaxRecoveryTurns` counts replacement planner activities scheduled after
+  rejected tool or model output; successful budgeted tool work resets this
+  consecutive count; agents that omit the setting receive three turns; the
+  terminal finalization activity that explains or records exhaustion is not a
+  replacement attempt and does not consume this budget,
 - when the run omitted `LimitTerminalPlans`, or a tool failure requires
   finalization, `PlanResumeInput.Finalize` is non-nil and the planner may close
   through terminal bookkeeping tools instead of prose; the runtime admits only
@@ -713,12 +722,18 @@ Consumers of fixed-limit and planner-authored finalization calls, including
 `tool_failure`, read the termination reason from
 `runtime.FinalizationReasonLabel` (`goa-ai.finalization_reason`).
 
-Suspensions use `goa-ai.run-suspension.v4`; workers accept only that exact
-checkpoint version. Deploy any future checkpoint-shape change across the
+This release renames the old failed-tool setting because the same limit now
+applies to replacement answers. Replace
+`MaxConsecutiveFailedToolCalls(n)` with `MaxRecoveryTurns(n)` in the DSL and
+replace `WithRunMaxConsecutiveFailedToolCalls(n)` with
+`WithRunMaxRecoveryTurns(n)` in runtime callers, then regenerate agent code.
+
+New suspensions use `goa-ai.run-suspension.v5`. Workers also accept version 4
+checkpoints and preserve their earlier failed-tool counting behavior while the
+saved run finishes. Deploy any future checkpoint-shape change across the
 runtime, generated workers, and callers as one coordinated release.
 Each model-authored await item stores its runtime `ToolCallID` separately from
-the provider `ModelToolCallID`. Other checkpoint versions cannot resume; there
-is no dual-read, fallback, or shape inference.
+the provider `ModelToolCallID`. Other checkpoint versions cannot resume.
 
 Run-scoped completion tool:
 
@@ -731,8 +746,8 @@ Run-scoped completion tool:
   next terminal answer cannot complete that run,
 - the planner cannot delegate the completion tool through external await work,
   and denying its execution at a confirmation prompt fails the run,
-- correctable failures return to the planner while the normal tool and failure
-  budgets permit another attempt,
+- correctable failures return to the planner while the normal tool-call and
+  recovery-turn budgets permit another attempt,
 - a planner-authored final response, a non-recoverable tool failure, exhausted
   caps, or an exhausted deadline fails the run when the completion tool has not
   succeeded,
@@ -771,7 +786,7 @@ These fields answer different questions:
 | --- | --- | --- |
 | `ToolSpec.Tags` | One tool for every run | Which flat labels are available to generic policy and UI filtering? |
 | `ToolSpec.Meta` | One tool for every run | Which inert generated annotations are available to their named consumers? Metadata alone changes no runtime behavior. |
-| `ToolSpec.Bookkeeping` | One tool for every run | Does this call consume retrieval or failure budget, and does its success independently schedule another planner turn? |
+| `ToolSpec.Bookkeeping` | One tool for every run | Does this call consume the tool-call budget, and does its success independently schedule another planner turn? |
 | `ToolSpec.TerminalRun` | One tool for every run | Does successful execution itself complete the run? |
 | `ToolOutput.Failure.Recovery.Action` | One failed result | Must the planner correct this call, replan, or finish without tools? |
 | `PlanResult.SynthesizeAfterTools` | One selected batch | If the batch has no recoverable failure, must the next turn answer? |
@@ -1085,7 +1100,7 @@ provider ID. In both cases the runtime assigns the execution ID.
 Bookkeeping tools follow the same execution and durability path, but not the
 same accounting or planner-resume path: the runtime records their
 hook/stream/run-log events and preserves their results in the provider
-transcript while charging neither retrieval nor consecutive-failure budget.
+transcript without charging the tool-call budget.
 Successful results are omitted from compact `ToolOutputs`; recoverable failures
 remain visible for repair.
 
@@ -2010,12 +2025,13 @@ Ongoing workflows and saved suspensions must satisfy the exact current
 contract. Historical completed-session records remain stored unchanged because
 this release policy does not alter their persistence schema.
 
-`goa-ai.run-suspension.v4` is the only supported suspension schema. Every
+`goa-ai.run-suspension.v5` is the current suspension schema. Version 4
+checkpoints remain readable so saved runs can finish with their original
+failed-tool counting behavior. Every
 model-authored await item preserves its runtime `ToolCallID` separately from
 the provider `ModelToolCallID`: runtime records and continuation responses use
 the former, while provider transcript reconstruction uses the latter.
-Other suspension schemas are incompatible. The runtime does not dual-read
-checkpoints, substitute missing fields, or infer another shape.
+Other suspension schemas are incompatible.
 
 Ending a session stops future work but retains its run metadata for inspection.
 When the owning application permanently deletes the session's customer data, it
@@ -2440,10 +2456,10 @@ type Decision struct {
 
 ```go
 type CapsState struct {
-    MaxToolCalls                        int
-    RemainingToolCalls                  int
-    MaxConsecutiveFailedToolCalls       int
-    RemainingConsecutiveFailedToolCalls int
+    MaxToolCalls           int
+    RemainingToolCalls     int
+    MaxRecoveryTurns       int
+    RemainingRecoveryTurns int
 }
 ```
 
@@ -2454,6 +2470,7 @@ Callers can override policy for specific runs:
 ```go
 client.Run(ctx, "session-1", msgs,
     runtime.WithRunMaxToolCalls(5),
+    runtime.WithRunMaxRecoveryTurns(2),
     runtime.WithRunTimeBudget(2*time.Minute),
     runtime.WithRestrictToTool(tools.Ident("helpers.search")),
     runtime.WithTagPolicyClauses([]runtime.TagPolicyClause{
@@ -2482,9 +2499,9 @@ Override registered agent policy in-process:
 
 ```go
 err := rt.OverridePolicy(agent.Ident("service.chat"), runtime.RunPolicy{
-    MaxToolCalls:                  10,
-    MaxConsecutiveFailedToolCalls: 2,
-    TimeBudget:                    5 * time.Minute,
+    MaxToolCalls:     10,
+    MaxRecoveryTurns: 2,
+    TimeBudget:       5 * time.Minute,
 })
 ```
 

@@ -75,10 +75,10 @@ func TestCompletionToolFailureCanBeCorrected(t *testing.T) {
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
 		Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-invalid",
 	}}}, policy.CapsState{
-		MaxToolCalls:                        3,
-		RemainingToolCalls:                  3,
-		MaxConsecutiveFailedToolCalls:       2,
-		RemainingConsecutiveFailedToolCalls: 2,
+		MaxToolCalls:           3,
+		RemainingToolCalls:     3,
+		MaxRecoveryTurns:       2,
+		RemainingRecoveryTurns: 2,
 	})
 
 	require.NoError(t, err)
@@ -169,7 +169,7 @@ func TestCompletionToolCapExhaustionFailsWithoutFinalization(t *testing.T) {
 	assert.Zero(t, resumes)
 }
 
-func TestCompletionToolFailureCapFailsWithoutFinalization(t *testing.T) {
+func TestCompletionToolRecoveryCapFailsWithoutFinalization(t *testing.T) {
 	completion := newAnyJSONSpec("briefs.persist", "catalog")
 	resumes := 0
 	h := newRecoveryHarness(
@@ -189,15 +189,15 @@ func TestCompletionToolFailureCapFailsWithoutFinalization(t *testing.T) {
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
 		Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-failure-cap",
 	}}}, policy.CapsState{
-		MaxToolCalls:                        2,
-		RemainingToolCalls:                  2,
-		MaxConsecutiveFailedToolCalls:       1,
-		RemainingConsecutiveFailedToolCalls: 1,
+		MaxToolCalls:           2,
+		RemainingToolCalls:     2,
+		MaxRecoveryTurns:       1,
+		RemainingRecoveryTurns: 1,
 	})
 
 	assert.Nil(t, out)
 	require.ErrorContains(t, err, `completion tool "briefs.persist" did not succeed`)
-	assert.Zero(t, resumes)
+	assert.Equal(t, 1, resumes)
 }
 
 func TestCompletionToolMustBeOnlyActionInPlannerResponse(t *testing.T) {

@@ -2,6 +2,7 @@ package dsl_test
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ func TestAgentDSLExample(t *testing.T) {
 				RunPolicy(func() {
 					DefaultCaps(
 						MaxToolCalls(5),
-						MaxConsecutiveFailedToolCalls(2),
+						MaxRecoveryTurns(2),
 					)
 					TimeBudget("30s")
 				})
@@ -93,6 +94,56 @@ func TestDefaultCapsRequiresPositiveMaxToolCalls(t *testing.T) {
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "MaxToolCalls requires n > 0")
+}
+
+func TestDefaultCapsAcceptsIndependentLimits(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		caps func()
+	}{
+		{
+			name: "recovery turns only",
+			caps: func() {
+				DefaultCaps(MaxRecoveryTurns(2))
+			},
+		},
+		{
+			name: "no overrides",
+			caps: func() {
+				DefaultCaps()
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runDSL(t, func() {
+				API("test", func() {})
+				Service("tasks", func() {
+					Agent("planner", "Planner agent", func() {
+						RunPolicy(test.caps)
+					})
+				})
+			})
+		})
+	}
+}
+
+func TestMaxRecoveryTurnsRequiresPositiveValue(t *testing.T) {
+	for _, value := range []int{-1, 0} {
+		t.Run(fmt.Sprint(value), func(t *testing.T) {
+			err := runDSLWithError(t, func() {
+				API("test", func() {})
+				Service("tasks", func() {
+					Agent("planner", "Planner agent", func() {
+						RunPolicy(func() {
+							DefaultCaps(MaxRecoveryTurns(value))
+						})
+					})
+				})
+			})
+
+			require.ErrorContains(t, err, "MaxRecoveryTurns requires n > 0")
+		})
+	}
 }
 
 func TestTerminalRunImpliesBookkeeping(t *testing.T) {

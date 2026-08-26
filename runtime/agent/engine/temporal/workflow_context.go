@@ -193,6 +193,15 @@ func (w *temporalWorkflowContext) RunID() string {
 	return w.runID
 }
 
+func (w *temporalWorkflowContext) WorkflowVersion(changeID string, minSupported, maxSupported int) int {
+	return int(workflow.GetVersion(
+		w.ctx,
+		changeID,
+		workflow.Version(minSupported),
+		workflow.Version(maxSupported),
+	))
+}
+
 func (w *temporalWorkflowContext) PublishRecords(call engine.RecordActivityCall) error {
 	if call.Name == "" {
 		return errors.New("record activity name is required")

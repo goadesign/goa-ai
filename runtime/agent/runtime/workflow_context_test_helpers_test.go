@@ -104,6 +104,10 @@ func (r *routeWorkflowContext) NextSequence() uint64 {
 	return root.nextSequence
 }
 
+func (r *routeWorkflowContext) WorkflowVersion(_ string, _, maxSupported int) int {
+	return maxSupported
+}
+
 func (r *routeWorkflowContext) NewTimer(ctx context.Context, duration time.Duration) (engine.Future[time.Time], error) {
 	now := time.Now()
 	if duration <= 0 {

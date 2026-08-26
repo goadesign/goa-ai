@@ -47,6 +47,10 @@ func (panicWorkflowContext) RunID() string {
 	return testRunID
 }
 
+func (panicWorkflowContext) WorkflowVersion(_ string, _, maxSupported int) int {
+	return maxSupported
+}
+
 func (panicWorkflowContext) Detached() engine.WorkflowContext {
 	return panicWorkflowContext{}
 }
@@ -319,6 +323,10 @@ func (w *cancelOnPlannerWorkflowContext) WorkflowID() string {
 
 func (w *cancelOnPlannerWorkflowContext) RunID() string {
 	return testRunID
+}
+
+func (w *cancelOnPlannerWorkflowContext) WorkflowVersion(_ string, _, maxSupported int) int {
+	return maxSupported
 }
 
 func (w *cancelOnPlannerWorkflowContext) PublishRecords(call engine.RecordActivityCall) error {

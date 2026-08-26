@@ -15,6 +15,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -168,6 +169,32 @@ func TestValidateContinuationRejectsNoncurrentSuspensionVersion(t *testing.T) {
 
 	require.EqualError(t, runtime.ValidateContinuation(suspension),
 		`unsupported run suspension version "goa-ai.run-suspension.v2"`)
+}
+
+func TestDecodeVersionFourSuspensionPreservesLegacyFailureStreak(t *testing.T) {
+	spec := newAnyJSONSpec("svc.lookup", "svc")
+	suspension := suspensionContractFixture(t, spec.Name)
+	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+		checkpoint.Version = api.RunSuspensionVersionV4
+		checkpoint.Policy = &PolicyOverrides{
+			LimitTerminalPlans: testLimitTerminalPlans(spec.Name),
+		}
+		checkpoint.State.Caps = policy.CapsState{
+			MaxRecoveryTurns:       2,
+			RemainingRecoveryTurns: 1,
+		}
+	})
+	suspension.Version = api.RunSuspensionVersionV4
+	require.Contains(t, string(suspension.Checkpoint), `"FailedToolCallCap"`)
+	require.NotContains(t, string(suspension.Checkpoint), `"RecoveryCap"`)
+
+	checkpoint, err := decodeWorkflowCheckpointState(suspension)
+
+	require.NoError(t, err)
+	require.True(t, checkpoint.State.LegacyFailureStreak)
+	require.Equal(t, 2, checkpoint.State.Caps.MaxRecoveryTurns)
+	require.Equal(t, 1, checkpoint.State.Caps.RemainingRecoveryTurns)
+	require.Equal(t, spec.Name, checkpoint.Policy.LimitTerminalPlans.RecoveryCap.Name)
 }
 
 func TestValidateContinuationChecksSavedCompletionPlan(t *testing.T) {

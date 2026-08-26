@@ -18,6 +18,7 @@ type (
 	RunInput              = api.RunInput
 	PlanActivityInput     = api.PlanActivityInput
 	PlanActivityOutput    = api.PlanActivityOutput
+	ModelOutputRecovery   = api.ModelOutputRecovery
 	PlanResult            = api.PlanResult
 	ToolCall              = api.ToolCall
 	OutputContractFailure = api.OutputContractFailure
@@ -37,7 +38,7 @@ type (
 	PolicyOverrides = api.PolicyOverrides
 
 	// LimitTerminalPlans contains the terminal tool calls selected when a run
-	// reaches its time, tool-call, or failed-call limit.
+	// reaches its time, tool-call, or recovery-turn limit.
 	LimitTerminalPlans = api.LimitTerminalPlans
 
 	// LimitTerminalCall contains one terminal tool name and its canonical JSON

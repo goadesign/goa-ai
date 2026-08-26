@@ -898,7 +898,7 @@ func TestFinalizeWithPlannerRejectsTerminalPayloadWithToolCalls(t *testing.T) {
 		2,
 		input.TurnID,
 		nil,
-		planner.TerminationReasonFailureCap,
+		planner.TerminationReasonRecoveryCap,
 		time.Time{},
 	)
 
@@ -990,7 +990,7 @@ func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
 		2,
 		"turn-1",
 		nil,
-		planner.TerminationReasonFailureCap,
+		planner.TerminationReasonRecoveryCap,
 		time.Time{},
 	)
 
@@ -1034,7 +1034,7 @@ func runTerminalFinalization(t *testing.T, runPolicy *PolicyOverrides) (*RunOutp
 		2,
 		"turn-1",
 		nil,
-		planner.TerminationReasonFailureCap,
+		planner.TerminationReasonRecoveryCap,
 		time.Time{},
 	)
 	return out, wfCtx, terminalTool, base, err

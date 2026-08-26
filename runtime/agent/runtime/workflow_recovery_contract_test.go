@@ -5,6 +5,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -231,16 +232,29 @@ func TestRunLoopInvalidCallReachesFailureFinalization(t *testing.T) {
 		"failure-cap",
 		[]tools.ToolSpec{search},
 		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			if string(call.Payload) == `{"query":"still-bad"}` {
+				return &planner.ToolResult{
+					Name:       call.Name,
+					ToolCallID: call.ToolCallID,
+					Failure: testToolFailure(
+						planner.FailureDomainRejection,
+						planner.RecoveryReplan,
+						"choose another action",
+					),
+				}, nil
+			}
 			return invalidCallResult(call), nil
 		},
 		func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 			if input.Finalize != nil {
-				require.Equal(t, planner.TerminationReasonFailureCap, input.Finalize.Reason)
+				require.Equal(t, planner.TerminationReasonRecoveryCap, input.Finalize.Reason)
 				return finalPlannerResult("stopped after repeated failures"), nil
 			}
 			recoveryTurns++
-			require.FailNow(t, "failure cap must finalize before another planner tool call")
-			return nil, nil
+			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+				Name:    search.Name,
+				Payload: rawjson.Message(`{"query":"still-bad"}`),
+			}}}, nil
 		},
 	)
 
@@ -249,17 +263,17 @@ func TestRunLoopInvalidCallReachesFailureFinalization(t *testing.T) {
 		Name:       search.Name,
 		Payload:    rawjson.Message(`{"query":"bad"}`),
 	}}}, policy.CapsState{
-		MaxToolCalls:                        5,
-		RemainingToolCalls:                  5,
-		MaxConsecutiveFailedToolCalls:       1,
-		RemainingConsecutiveFailedToolCalls: 1,
+		MaxToolCalls:           5,
+		RemainingToolCalls:     5,
+		MaxRecoveryTurns:       1,
+		RemainingRecoveryTurns: 1,
 	})
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	assert.Equal(t, "stopped after repeated failures", agentMessageText(out.Final))
-	assert.Zero(t, recoveryTurns)
-	assert.Len(t, out.ToolEvents, 1)
+	assert.Equal(t, 1, recoveryTurns)
+	assert.Len(t, out.ToolEvents, 2)
 }
 
 func TestRunLoopRecoveryCatalogRejectsExcludedCallBeforeExecution(t *testing.T) {
@@ -590,6 +604,246 @@ func TestFinishFailurePreservesLiveContinuation(t *testing.T) {
 	assert.Len(t, out.ToolEvents, 3)
 }
 
+func TestRunLoopRecoversRejectedModelAnswer(t *testing.T) {
+	search := newAnyJSONSpec("catalog.search", "catalog")
+	resumes := 0
+	h := newRecoveryHarness(
+		t,
+		"model-output",
+		[]tools.ToolSpec{search},
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			return successfulToolResult(call), nil
+		},
+		func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			resumes++
+			if resumes == 1 {
+				client, ok := input.Agent.ModelClient("test")
+				require.True(t, ok)
+				response, err := client.Complete(ctx, &model.Request{Model: "test"})
+				require.NoError(t, err)
+				return nil, planner.NewRecoverableModelOutputError(
+					errors.New("answer used too many references"),
+					&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
+					"Use at most eight evidence references.",
+				)
+			}
+			require.True(t, input.SynthesisOnly)
+			assert.Empty(t, input.Agent.AdvertisedToolDefinitions())
+			require.Len(t, input.Reminders, 1)
+			assert.Contains(t, input.Reminders[0].Text, "Use at most eight evidence references.")
+			return finalPlannerResult("corrected answer"), nil
+		},
+	)
+	h.runtime.models["test"] = newRecoveryTestModel(t)
+
+	out, err := h.run(&PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "search-call",
+			Name:       search.Name,
+			Payload:    rawjson.Message(`{"query":"evidence"}`),
+		}},
+		SynthesizeAfterTools: true,
+	}, policy.CapsState{
+		MaxToolCalls:           2,
+		RemainingToolCalls:     2,
+		MaxRecoveryTurns:       2,
+		RemainingRecoveryTurns: 2,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "corrected answer", agentMessageText(out.Final))
+	assert.Equal(t, 2, resumes)
+	assert.Len(t, out.ToolEvents, 1)
+}
+
+func TestWorkflowRecoversInitialRejectedModelAnswer(t *testing.T) {
+	search := newAnyJSONSpec("catalog.search", "catalog")
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	sessionID := "session-initial-model-output"
+	_, err := rt.CreateSession(context.Background(), sessionID)
+	require.NoError(t, err)
+
+	agentID := agent.Ident("catalog.initial-model-output")
+	resumes := 0
+	registration := AgentRegistration{
+		ID:                 agentID,
+		Specs:              []tools.ToolSpec{search},
+		PlanActivityName:   "plan",
+		ResumeActivityName: "resume",
+		Planner: &stubPlanner{
+			start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+				client, ok := input.Agent.ModelClient("test")
+				require.True(t, ok)
+				response, err := client.Complete(ctx, &model.Request{Model: "test"})
+				require.NoError(t, err)
+				return nil, planner.NewRecoverableModelOutputError(
+					errors.New("answer used too many references"),
+					&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
+					"Use at most eight evidence references.",
+				)
+			},
+			resume: func(
+				_ context.Context,
+				input *planner.PlanResumeInput,
+			) (*planner.PlanResult, error) {
+				resumes++
+				require.True(t, input.SynthesisOnly)
+				assert.Empty(t, input.Agent.AdvertisedToolDefinitions())
+				require.Len(t, input.Reminders, 1)
+				assert.Contains(t, input.Reminders[0].Text, "Use at most eight evidence references.")
+				return finalPlannerResult("corrected initial answer"), nil
+			},
+		},
+		Policy: RunPolicy{MaxRecoveryTurns: 1},
+	}
+	rt.agents[agentID] = registration
+	rt.agentToolSpecs[agentID] = registration.Specs
+	rt.models["test"] = newRecoveryTestModel(t)
+
+	runInput := &RunInput{
+		AgentID:   agentID,
+		RunID:     "run-initial-model-output",
+		SessionID: sessionID,
+		TurnID:    "turn-initial-model-output",
+	}
+	seedRunMeta(t, rt, runInput)
+	wfCtx := &routeWorkflowContext{
+		ctx:         context.Background(),
+		runID:       runInput.RunID,
+		hookRuntime: rt,
+		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+			"plan":   rt.PlanStartActivity,
+			"resume": rt.PlanResumeActivity,
+		},
+	}
+
+	out, err := rt.ExecuteWorkflow(wfCtx, runInput)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "corrected initial answer", agentMessageText(out.Final))
+	assert.Equal(t, 1, resumes)
+	assert.Equal(t, 11, out.Usage.InputTokens)
+}
+
+func TestRunLoopStopsAfterConfiguredModelOutputRecoveryTurns(t *testing.T) {
+	search := newAnyJSONSpec("catalog.search", "catalog")
+	recoveryAttempts := 0
+	h := newRecoveryHarness(
+		t,
+		"model-output-cap",
+		[]tools.ToolSpec{search},
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			return successfulToolResult(call), nil
+		},
+		func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			if input.Finalize != nil {
+				require.Equal(t, planner.TerminationReasonRecoveryCap, input.Finalize.Reason)
+				assert.Contains(t, input.Finalize.Message, "repeated recovery attempts")
+				assert.NotContains(t, input.Finalize.Message, "tool failures")
+				return finalPlannerResult("stopped after recovery cap"), nil
+			}
+			recoveryAttempts++
+			client, ok := input.Agent.ModelClient("test")
+			require.True(t, ok)
+			response, err := client.Complete(ctx, &model.Request{Model: "test"})
+			require.NoError(t, err)
+			return nil, planner.NewRecoverableModelOutputError(
+				errors.New("answer remains invalid"),
+				&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
+				"Replace the invalid final answer.",
+			)
+		},
+	)
+	h.runtime.models["test"] = newRecoveryTestModel(t)
+
+	out, err := h.run(&PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "search-call",
+			Name:       search.Name,
+			Payload:    rawjson.Message(`{"query":"evidence"}`),
+		}},
+		SynthesizeAfterTools: true,
+	}, policy.CapsState{
+		MaxToolCalls:           2,
+		RemainingToolCalls:     2,
+		MaxRecoveryTurns:       2,
+		RemainingRecoveryTurns: 2,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "stopped after recovery cap", agentMessageText(out.Final))
+	assert.Equal(t, 3, recoveryAttempts)
+}
+
+func TestRunLoopPreservesLegacyFailedBatchExhaustion(t *testing.T) {
+	search := newAnyJSONSpec("catalog.search", "catalog")
+	list := newAnyJSONSpec("catalog.list", "catalog")
+	correctionTurns := 0
+	h := newRecoveryHarness(
+		t,
+		"legacy-failure-streak",
+		[]tools.ToolSpec{search, list},
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			return &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Failure: testToolFailure(
+					planner.FailureDomainRejection,
+					planner.RecoveryReplan,
+					"choose another action",
+				),
+			}, nil
+		},
+		func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			if input.Finalize != nil {
+				require.FailNow(t, "finalization should use the prevalidated workflow route")
+			}
+			correctionTurns++
+			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+				Name:    list.Name,
+				Payload: rawjson.Message(`{"query":"still-invalid"}`),
+			}}}, nil
+		},
+	)
+	resumeActivity := h.workflow.plannerRoutes["resume"]
+	finalizationTurns := 0
+	h.workflow.plannerRoutes["resume"] = func(
+		ctx context.Context,
+		input *PlanActivityInput,
+	) (*PlanActivityOutput, error) {
+		if input.Finalize == nil {
+			return resumeActivity(ctx, input)
+		}
+		finalizationTurns++
+		require.Equal(t, planner.TerminationReasonRecoveryCap, input.Finalize.Reason)
+		return &PlanActivityOutput{
+			PublicationBatchID: "00000000-0000-4000-8000-000000000001",
+			Result: &PlanResult{
+				FinalResponse: finalPlannerResult("legacy failure cap exhausted").FinalResponse,
+			},
+		}, nil
+	}
+
+	out, err := h.runLegacy(&PlanResult{ToolCalls: []ToolCall{{
+		ToolCallID: "initial-invalid",
+		Name:       search.Name,
+		Payload:    rawjson.Message(`{"query":"invalid"}`),
+	}}}, policy.CapsState{
+		MaxToolCalls:           4,
+		RemainingToolCalls:     4,
+		MaxRecoveryTurns:       2,
+		RemainingRecoveryTurns: 2,
+	})
+
+	assert.Equal(t, 1, correctionTurns)
+	assert.Equal(t, 1, finalizationTurns)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "legacy failure cap exhausted", agentMessageText(out.Final))
+}
+
 // newRecoveryHarness assembles one in-memory workflow whose planner and tool
 // behavior are supplied by the test. It uses the real resume activity so tests
 // cover canonical run-log loading, recovery reminders, and advertised tools.
@@ -676,6 +930,54 @@ func (h *recoveryHarness) run(
 		h.input.TurnID,
 		nil,
 	)
+}
+
+// runLegacy executes the focused workflow with the failed-batch accounting
+// restored from an older Temporal history or version-four suspension.
+func (h *recoveryHarness) runLegacy(
+	initial *PlanResult,
+	caps policy.CapsState,
+) (*RunOutput, error) {
+	for i := range initial.ToolCalls {
+		if initial.ToolCalls[i].ModelToolCallID == "" {
+			initial.ToolCalls[i].ModelToolCallID = initial.ToolCalls[i].ToolCallID
+		}
+	}
+	state := newRunLoopState(initial, nil, model.TokenUsage{}, caps, 2)
+	state.LegacyFailureStreak = true
+	return h.runtime.runLoopWithState(
+		h.workflow,
+		h.registration,
+		h.input,
+		h.base,
+		state,
+		time.Time{},
+		time.Time{},
+		h.input.TurnID,
+		nil,
+	)
+}
+
+// newRecoveryTestModel returns one validated model client whose completed
+// response can be correlated with a planner-authored recovery error.
+func newRecoveryTestModel(t *testing.T) model.Client {
+	t.Helper()
+	return mustTestModelClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			return &model.Response{
+				Content: []model.Message{{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "answer with too many references"}},
+				}},
+				StopReason: "end_turn",
+				Usage: model.TokenUsage{
+					InputTokens:  11,
+					OutputTokens: 5,
+					TotalTokens:  16,
+				},
+			}, nil
+		},
+	})
 }
 
 // invalidCallResult returns a correctable validation failure while preserving

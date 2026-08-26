@@ -3,12 +3,15 @@
 package runtime
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 )
 
@@ -63,6 +66,44 @@ func TestValidateOutputContractFailureStateMatrix(t *testing.T) {
 				return failure
 			},
 			valid: true,
+		},
+		{
+			name: "recoverable model rejection",
+			failure: func() *OutputContractFailure {
+				failure := validModel()
+				failure.ModelResponsePresent = true
+				failure.ModelResponseFingerprintVersion = api.ModelResponseFingerprintVersionV1
+				failure.ModelResponseSHA256 = responseDigest
+				failure.ModelResponseSize = responseSize
+				failure.Correction = "Use at most eight references."
+				return failure
+			},
+			valid: true,
+		},
+		{
+			name: "planner rejection with correction",
+			failure: func() *OutputContractFailure {
+				failure := validModel()
+				failure.Origin = planner.OutputContractOriginPlanner
+				failure.Correction = "Try again."
+				return failure
+			},
+		},
+		{
+			name: "blank correction",
+			failure: func() *OutputContractFailure {
+				failure := validModel()
+				failure.Correction = " "
+				return failure
+			},
+		},
+		{
+			name: "oversized correction",
+			failure: func() *OutputContractFailure {
+				failure := validModel()
+				failure.Correction = strings.Repeat("x", outputcontract.MaxCorrectionBytes+1)
+				return failure
+			},
 		},
 		{
 			name:    "missing envelope",
@@ -186,4 +227,29 @@ func TestValidateOutputContractFailureStateMatrix(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+func TestBoundedPlanActivityOutputFailureRetainsCorrection(t *testing.T) {
+	reasonDigest, reasonSize := fingerprintBytes([]byte("reason"))
+	responseDigest, responseSize := fingerprintBytes([]byte("response"))
+	failure := &OutputContractFailure{
+		Origin:                          planner.OutputContractOriginModel,
+		ReasonSHA256:                    reasonDigest,
+		ReasonSize:                      reasonSize,
+		ModelResponsePresent:            true,
+		ModelResponseFingerprintVersion: api.ModelResponseFingerprintVersionV1,
+		ModelResponseSHA256:             responseDigest,
+		ModelResponseSize:               responseSize,
+		Correction:                      "Use at most eight references.",
+	}
+
+	output := boundedPlanActivityOutputFailure(
+		"batch-1",
+		model.TokenUsage{TotalTokens: 12},
+		failure,
+		errors.New("planner events exceed activity output budget"),
+	)
+
+	require.Equal(t, failure.Correction, output.OutputContractFailure.Correction)
+	require.NoError(t, validateOutputContractFailure(output.OutputContractFailure))
 }

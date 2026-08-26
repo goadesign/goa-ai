@@ -57,7 +57,7 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		Specs:               specs.Specs,
 		Policy: agentsruntime.RunPolicy{
 			MaxToolCalls:                  5,
-			MaxConsecutiveFailedToolCalls: 2,
+			MaxRecoveryTurns: 2,
 			TimeBudget:                    time.Duration(30000000000),
 		},
 	}); err != nil {

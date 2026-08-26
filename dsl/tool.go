@@ -818,7 +818,7 @@ func TerminalRun() {
 //
 // Runtime contract:
 //   - bookkeeping calls do not consume the run-level MaxToolCalls retrieval budget,
-//   - bookkeeping results do not change the consecutive-failure counter,
+//   - successful bookkeeping results do not reset the recovery-turn counter,
 //   - the runtime admits or rejects each model-authored call batch atomically;
 //     bookkeeping calls do not contribute to that batch's budget cost,
 //   - bookkeeping results remain durable run events for hooks, streams, and

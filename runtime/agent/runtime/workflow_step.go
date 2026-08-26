@@ -73,7 +73,7 @@ type (
 		suspension    *RunOutput
 		pending       []checkpointPendingInput
 		// resumePlannerAfterPending marks a generated clarification emitted
-		// after this batch's caps and failure streak were already applied.
+		// after this batch's tool and recovery limits were already applied.
 		resumePlannerAfterPending bool
 	}
 
@@ -83,6 +83,9 @@ type (
 )
 
 const (
+	recoveryTurnsWorkflowChange  = "goa-ai.recovery-turns.v1"
+	recoveryTurnsWorkflowVersion = 1
+
 	stepKindTerminal stepKind = iota + 1
 	stepKindAwait
 	stepKindTools
@@ -509,12 +512,12 @@ func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
 		program.result.Await = compiled
 		program.awaitItems = compiled.Items
 	}
-	if err := validateRecoveryCatalog(l.st.PendingRecovery, l.st.PendingRecoveryCatalog, program.result); err != nil {
+	recoveryOutputs, recoveryCatalog := toolRecovery(l.st.PendingRecovery)
+	if err := validateRecoveryCatalog(recoveryOutputs, recoveryCatalog, program.result); err != nil {
 		return nil, planner.NewOutputContractError(err)
 	}
 	if program.result.Await == nil {
 		l.st.PendingRecovery = nil
-		l.st.PendingRecoveryCatalog = nil
 	}
 	if len(program.calls) > 0 {
 		program.calls = l.r.prepareAllowedCallsMetadata(
@@ -769,14 +772,16 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 
 	results := batch.results()
-	// The failure streak counts planner decision points whose budgeted work
-	// failed outright: any budgeted success resets the streak, an all-failure
-	// batch consumes one unit regardless of its parallel width, and
-	// bookkeeping results never move the counter. One exploratory batch that
-	// partially fails is progress, not thrash.
-	progress, failed := l.r.budgetedBatchOutcome(batch.records)
-	if applyFailureStreak(&l.st.Caps, progress, failed) {
-		return l.finalizeStep(planner.TerminationReasonFailureCap)
+	progress, failedWork := l.r.budgetedBatchOutcome(batch.records)
+	if l.st.LegacyFailureStreak {
+		if applyLegacyFailureStreak(&l.st.Caps, progress, failedWork) {
+			return l.finalizeStep(planner.TerminationReasonRecoveryCap)
+		}
+	} else if progress {
+		// Successful budgeted work ends the current recovery episode. Failed
+		// work consumes a turn only when the workflow schedules another planner
+		// activity below.
+		resetRecoveryTurns(&l.st.Caps)
 	}
 
 	if out, await, err := l.r.applyMissingFieldsPolicy(
@@ -799,7 +804,11 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		if err := l.r.publishAwaitToolUses(l.wfCtx.Context(), l.input, l.base, l.turnID, *await, 0); err != nil {
 			return nil, err
 		}
-		l.st.PendingRecovery = append(pendingRecoveryOutputs(batch.records), l.st.PendingRecovery...)
+		existing, catalog := toolRecovery(l.st.PendingRecovery)
+		l.st.PendingRecovery = pendingToolRecovery{
+			outputs: append(pendingRecoveryOutputs(batch.records), existing...),
+			catalog: catalog,
+		}
 		batch.awaited = true
 		batch.awaitItems++
 		batch.resumePlannerAfterPending = true
@@ -821,17 +830,28 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		// turn chooses whether to continue those already-started queries.
 		recovery = dominantRecoveryOutputs(batch.records)
 	}
-	pendingRecovery := slices.Concat(recovery, l.st.PendingRecovery)
+	existingRecovery, _ := toolRecovery(l.st.PendingRecovery)
+	pendingRecovery := slices.Concat(recovery, existingRecovery)
 	synthesisOnly := !failed && batch.program.result.SynthesizeAfterTools
-	if out, err := l.resumePlanner(pendingRecovery, synthesisOnly); err != nil || out != nil {
+	if out, err := l.resumePlanner(pendingRecovery, synthesisOnly, ""); err != nil || out != nil {
 		return out, err
 	}
 	return nil, nil
 }
 
-// resumePlanner executes the next planner turn after one fully-accounted step.
-// Callers provide the exact failed outputs that remain eligible for correction.
-func (l *workflowLoop) resumePlanner(pendingRecovery []*planner.ToolOutput, synthesisOnly bool) (*RunOutput, error) {
+// resumePlanner executes the next planner turn after one fully-accounted step
+// or one rejected model answer. Calls caused by a rejection consume one shared
+// recovery turn before the activity is scheduled.
+func (l *workflowLoop) resumePlanner(
+	pendingRecovery []*planner.ToolOutput,
+	synthesisOnly bool,
+	outputCorrection string,
+) (*RunOutput, error) {
+	if !l.st.LegacyFailureStreak &&
+		(len(pendingRecovery) > 0 || outputCorrection != "") &&
+		!consumeRecoveryTurn(&l.st.Caps) {
+		return l.finalizeStep(planner.TerminationReasonRecoveryCap)
+	}
 	resumeReq, err := l.r.buildNextResumeRequest(
 		l.input.AgentID,
 		l.base,
@@ -839,6 +859,7 @@ func (l *workflowLoop) resumePlanner(pendingRecovery []*planner.ToolOutput, synt
 		l.st.ToolOutputs,
 		pendingRecovery,
 		synthesisOnly,
+		outputCorrection,
 		&l.st.NextAttempt,
 	)
 	if err != nil {
@@ -852,18 +873,35 @@ func (l *workflowLoop) resumePlanner(pendingRecovery []*planner.ToolOutput, synt
 		}
 		return nil, err
 	}
-	if resOutput == nil || resOutput.Result == nil {
-		return nil, errors.New("plan activity returned nil result on resume")
+	if resOutput == nil {
+		return nil, errors.New("plan activity returned nil output on resume")
 	}
 	l.st.AggUsage, err = addTokenUsage(l.st.AggUsage, resOutput.Usage)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate run usage: %w", err)
 	}
+	if resOutput.OutputContractFailure != nil {
+		l.st.Result = nil
+		l.st.Transcript = nil
+		l.st.ResponseCommitted = false
+		l.st.PendingRecovery = pendingModelOutputRecovery{
+			correction: resOutput.OutputContractFailure.Correction,
+		}
+		return nil, nil
+	}
+	if resOutput.Result == nil {
+		return nil, errors.New("plan activity returned nil result on resume")
+	}
 	l.st.Result = resOutput.Result
 	l.st.Transcript = resOutput.Transcript
 	l.st.ResponseCommitted = false
-	l.st.PendingRecovery = pendingRecovery
-	l.st.PendingRecoveryCatalog = resOutput.RecoveryCatalog
+	l.st.PendingRecovery = nil
+	if len(pendingRecovery) > 0 {
+		l.st.PendingRecovery = pendingToolRecovery{
+			outputs: pendingRecovery,
+			catalog: resOutput.RecoveryCatalog,
+		}
+	}
 	return nil, nil
 }
 

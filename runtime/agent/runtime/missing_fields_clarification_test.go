@@ -160,10 +160,10 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 	first, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
 		Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-initial",
 	}}}, policy.CapsState{
-		MaxToolCalls:                        3,
-		RemainingToolCalls:                  3,
-		MaxConsecutiveFailedToolCalls:       2,
-		RemainingConsecutiveFailedToolCalls: 2,
+		MaxToolCalls:           3,
+		RemainingToolCalls:     3,
+		MaxRecoveryTurns:       2,
+		RemainingRecoveryTurns: 2,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, first.Suspension)
@@ -173,7 +173,7 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, checkpoint.Batch.ResumePlannerAfterPending)
 	require.Equal(t, 2, checkpoint.State.Caps.RemainingToolCalls)
-	require.Equal(t, 1, checkpoint.State.Caps.RemainingConsecutiveFailedToolCalls)
+	require.Equal(t, 2, checkpoint.State.Caps.RemainingRecoveryTurns)
 
 	nextInput := &RunInput{
 		AgentID:   h.input.AgentID,
