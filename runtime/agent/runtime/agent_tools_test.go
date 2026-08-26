@@ -637,7 +637,7 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 		},
 	}
 
-	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
+	tr, err := rt.adaptAgentChildOutput(cfg, call, run.Context{RunID: "child-run"}, out)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
 	require.Nil(t, tr.Failure)

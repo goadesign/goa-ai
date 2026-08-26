@@ -35,6 +35,55 @@ func TestValidateToolSpecRegistrationsRejectsConflictingContract(t *testing.T) {
 	}), `tool "svc.lookup" is already registered with a different contract`)
 }
 
+func TestValidateToolSpecRegistrationsRejectsIncompleteResultContract(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		result tools.TypeSpec
+		want   string
+	}{
+		{name: "no result"},
+		{name: "complete result", result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
+		{
+			name: "encoder only",
+			result: tools.TypeSpec{Codec: tools.JSONCodec[any]{
+				ToJSON: tools.AnyJSONCodec.ToJSON,
+			}},
+			want: "result codec must define both ToJSON and FromJSON",
+		},
+		{
+			name: "decoder only",
+			result: tools.TypeSpec{Codec: tools.JSONCodec[any]{
+				FromJSON: tools.AnyJSONCodec.FromJSON,
+			}},
+			want: "result codec must define both ToJSON and FromJSON",
+		},
+		{
+			name:   "metadata without codec",
+			result: tools.TypeSpec{Name: "result"},
+			want:   "result metadata requires a complete codec",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := New()
+			err := runtime.validateToolSpecRegistrations(toolSpecRegistration{
+				specs: []tools.ToolSpec{{
+					Name:   "svc.tool",
+					Result: test.result,
+				}},
+			})
+			if test.want == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, test.want)
+			require.ErrorIs(t, err, ErrInvalidConfig)
+		})
+	}
+}
+
 func TestRegisterToolsetRejectsDuplicateExecutableOwner(t *testing.T) {
 	t.Parallel()
 

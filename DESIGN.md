@@ -422,7 +422,9 @@ Historical completed-session records remain owned by the session store and are
 not rewritten for a runtime contract release.
 
 `ValidateContinuation` accepts only the current suspension schema,
-`goa-ai.run-suspension.v5`. Every model-authored
+`goa-ai.run-suspension.v6`. A successful result-bearing tool stores its complete
+generated JSON in the checkpoint. A successful tool without a result type
+stores no result bytes. Failed tools also store no result bytes. Every model-authored
 await item preserves the runtime `ToolCallID` separately from the provider
 `ModelToolCallID`, so execution records and provider transcript reconstruction
 never substitute one identity for the other. Any other checkpoint shape fails
@@ -859,7 +861,7 @@ redeploys.
   error instead of fabricating success after the required side effect did not
   occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
   because they assign different outcomes to the same exhausted limits.
-  Completion-aware suspensions use `goa-ai.run-suspension.v5`. The saved policy
+  Completion-aware suspensions use `goa-ai.run-suspension.v6`. The saved policy
   is required, and a checkpoint with another version fails at that typed
   boundary.
 - **Visible reasoning contract**: when a caller enables thinking for a Bedrock

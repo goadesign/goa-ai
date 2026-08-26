@@ -139,9 +139,6 @@ func TestPlannerToolOutputFromCanonicalEventsRequiresMatchingIdentity(t *testing
 				resultCallID,
 				test.resultParent,
 				rawjson.Message(`{}`),
-				2,
-				false,
-				"",
 				nil,
 				"",
 				nil,
@@ -151,6 +148,7 @@ func TestPlannerToolOutputFromCanonicalEventsRequiresMatchingIdentity(t *testing
 			)}
 
 			output, err := plannerToolOutputFromCanonicalEvents(
+				tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
 				callRunID,
 				resultRunID,
 				toolCallID,
@@ -199,9 +197,6 @@ func TestLoadCanonicalToolEventsValidatesToolResultPlacement(t *testing.T) {
 			"call-1",
 			"",
 			rawjson.Message(`{}`),
-			2,
-			false,
-			"",
 			nil,
 			"",
 			nil,
@@ -295,9 +290,6 @@ func TestLoadCanonicalToolEventsRetainsOnlyWantedCalls(t *testing.T) {
 			callID,
 			"",
 			rawjson.Message(`{}`),
-			2,
-			false,
-			"",
 			nil,
 			"",
 			nil,
@@ -370,9 +362,6 @@ func TestLoadPlannerToolOutputsAcceptsCrossRunContinuationResult(t *testing.T) {
 		"call-1",
 		"parent-1",
 		rawjson.Message(`{"value":"found"}`),
-		len(`{"value":"found"}`),
-		false,
-		"",
 		nil,
 		"",
 		nil,
@@ -382,6 +371,7 @@ func TestLoadPlannerToolOutputsAcceptsCrossRunContinuationResult(t *testing.T) {
 	), "result", 2)
 
 	runtime := &Runtime{RunEventStore: store}
+	seedTestToolSpecs(runtime, newAnyJSONSpec(toolName))
 	outputs, err := runtime.loadPlannerToolOutputs(context.Background(), []*api.ToolOutputRef{{
 		CallRunID:   "call-run",
 		ResultRunID: "result-run",
@@ -397,7 +387,7 @@ func TestLoadPlannerToolOutputsAcceptsCrossRunContinuationResult(t *testing.T) {
 	require.JSONEq(t, `{"value":"found"}`, string(outputs[0].Result))
 }
 
-func TestPlannerToolOutputFromCanonicalEventsRejectsInvalidSuccess(t *testing.T) {
+func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.T) {
 	t.Parallel()
 
 	toolName := tools.Ident("svc.tools.lookup")
@@ -414,31 +404,42 @@ func TestPlannerToolOutputFromCanonicalEventsRejectsInvalidSuccess(t *testing.T)
 	)}
 	tests := []struct {
 		name    string
+		spec    tools.ToolSpec
 		result  *hooks.ToolResultReceivedEvent
 		wantErr string
 	}{
 		{
-			name: "omitted",
-			result: &hooks.ToolResultReceivedEvent{
-				CallRunID:     "run-1",
-				ToolName:      toolName,
-				ToolCallID:    "call-1",
-				ResultOmitted: true,
-				ResultBytes:   2,
-			},
-			wantErr: "canonical successful tool result is omitted",
-		},
-		{
-			name: "empty",
+			name: "result-bearing tool with empty result",
+			spec: tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
 			result: &hooks.ToolResultReceivedEvent{
 				CallRunID:  "run-1",
 				ToolName:   toolName,
 				ToolCallID: "call-1",
 			},
-			wantErr: "canonical successful tool result is empty",
+			wantErr: "tool result is missing",
+		},
+		{
+			name: "no-result tool with empty result",
+			result: &hooks.ToolResultReceivedEvent{
+				CallRunID:  "run-1",
+				ToolName:   toolName,
+				ToolCallID: "call-1",
+			},
+		},
+		{
+			name: "no-result tool with unexpected result",
+			result: &hooks.ToolResultReceivedEvent{
+				CallRunID:   "run-1",
+				ToolName:    toolName,
+				ToolCallID:  "call-1",
+				ResultJSON:  rawjson.Message(`{}`),
+				ResultBytes: 2,
+			},
+			wantErr: "does not define a result but contains one",
 		},
 		{
 			name: "wrong byte count",
+			spec: tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
 			result: &hooks.ToolResultReceivedEvent{
 				CallRunID:   "run-1",
 				ToolName:    toolName,
@@ -453,7 +454,7 @@ func TestPlannerToolOutputFromCanonicalEventsRejectsInvalidSuccess(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			result := hooks.NewToolResultReceivedEvent(
+			resultEvent := hooks.NewToolResultReceivedEvent(
 				"run-1",
 				"svc.agent",
 				"session",
@@ -462,9 +463,6 @@ func TestPlannerToolOutputFromCanonicalEventsRejectsInvalidSuccess(t *testing.T)
 				test.result.ToolCallID,
 				"",
 				test.result.ResultJSON,
-				test.result.ResultBytes,
-				test.result.ResultOmitted,
-				test.result.ResultOmittedReason,
 				nil,
 				"",
 				nil,
@@ -472,16 +470,24 @@ func TestPlannerToolOutputFromCanonicalEventsRejectsInvalidSuccess(t *testing.T)
 				nil,
 				nil,
 			)
+			resultEvent.ResultBytes = test.result.ResultBytes
 			output, err := plannerToolOutputFromCanonicalEvents(
+				test.spec,
 				"run-1",
 				"run-1",
 				"call-1",
 				callEvents,
-				&canonicalToolEvents{result: result},
+				&canonicalToolEvents{result: resultEvent},
 			)
 
-			require.Nil(t, output)
-			require.ErrorContains(t, err, test.wantErr)
+			if test.wantErr != "" {
+				require.Nil(t, output)
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, output)
+			require.Empty(t, output.Result)
 		})
 	}
 }

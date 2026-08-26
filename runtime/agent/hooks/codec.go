@@ -52,20 +52,18 @@ type (
 	}
 
 	toolResultReceivedPayload struct {
-		CallRunID           string                   `json:"call_run_id"`
-		ToolCallID          string                   `json:"tool_call_id"`
-		ParentToolCallID    string                   `json:"parent_tool_call_id,omitempty"`
-		ToolName            tools.Ident              `json:"tool_name"`
-		ResultJSON          rawjson.Message          `json:"result_json,omitempty"`
-		ResultBytes         int                      `json:"result_bytes,omitempty"`
-		ResultOmitted       bool                     `json:"result_omitted,omitempty"`
-		ResultOmittedReason string                   `json:"result_omitted_reason,omitempty"`
-		ServerData          rawjson.Message          `json:"server_data,omitempty"`
-		ResultPreview       string                   `json:"result_preview,omitempty"`
-		Bounds              *agent.Bounds            `json:"bounds,omitempty"`
-		Duration            time.Duration            `json:"duration"`
-		Telemetry           *telemetry.ToolTelemetry `json:"telemetry,omitempty"`
-		Failure             *planner.ToolFailure     `json:"failure,omitempty"`
+		CallRunID        string                   `json:"call_run_id"`
+		ToolCallID       string                   `json:"tool_call_id"`
+		ParentToolCallID string                   `json:"parent_tool_call_id,omitempty"`
+		ToolName         tools.Ident              `json:"tool_name"`
+		ResultJSON       rawjson.Message          `json:"result_json,omitempty"`
+		ResultBytes      int                      `json:"result_bytes,omitempty"`
+		ServerData       rawjson.Message          `json:"server_data,omitempty"`
+		ResultPreview    string                   `json:"result_preview,omitempty"`
+		Bounds           *agent.Bounds            `json:"bounds,omitempty"`
+		Duration         time.Duration            `json:"duration"`
+		Telemetry        *telemetry.ToolTelemetry `json:"telemetry,omitempty"`
+		Failure          *planner.ToolFailure     `json:"failure,omitempty"`
 	}
 )
 
@@ -133,21 +131,22 @@ func EncodeRecordPayload(evt Event) (rawjson.Message, error) {
 		}
 		payload = rawjson.Message(b)
 	case *ToolResultReceivedEvent:
+		if e.Failure != nil && len(e.ResultJSON) > 0 {
+			return nil, errors.New("encode tool result payload: failure and result JSON are both set")
+		}
 		p := toolResultReceivedPayload{
-			CallRunID:           e.CallRunID,
-			ToolCallID:          e.ToolCallID,
-			ParentToolCallID:    e.ParentToolCallID,
-			ToolName:            e.ToolName,
-			ResultJSON:          e.ResultJSON,
-			ResultBytes:         e.ResultBytes,
-			ResultOmitted:       e.ResultOmitted,
-			ResultOmittedReason: e.ResultOmittedReason,
-			ServerData:          e.ServerData,
-			ResultPreview:       e.ResultPreview,
-			Bounds:              e.Bounds,
-			Duration:            e.Duration,
-			Telemetry:           e.Telemetry,
-			Failure:             e.Failure,
+			CallRunID:        e.CallRunID,
+			ToolCallID:       e.ToolCallID,
+			ParentToolCallID: e.ParentToolCallID,
+			ToolName:         e.ToolName,
+			ResultJSON:       e.ResultJSON,
+			ResultBytes:      e.ResultBytes,
+			ServerData:       e.ServerData,
+			ResultPreview:    e.ResultPreview,
+			Bounds:           e.Bounds,
+			Duration:         e.Duration,
+			Telemetry:        e.Telemetry,
+			Failure:          e.Failure,
 		}
 		b, err := json.Marshal(p)
 		if err != nil {
@@ -331,7 +330,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", ToolResultReceived, err)
 		}
-		evt = NewToolResultReceivedEvent(
+		result := NewToolResultReceivedEvent(
 			input.RunID,
 			input.AgentID,
 			input.SessionID,
@@ -340,9 +339,6 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			p.ToolCallID,
 			p.ParentToolCallID,
 			p.ResultJSON,
-			p.ResultBytes,
-			p.ResultOmitted,
-			p.ResultOmittedReason,
 			p.ServerData,
 			p.ResultPreview,
 			p.Bounds,
@@ -350,6 +346,10 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			p.Telemetry,
 			p.Failure,
 		)
+		// Preserve the saved count so replay can detect a record whose JSON bytes
+		// were changed without updating its integrity metadata.
+		result.ResultBytes = p.ResultBytes
+		evt = result
 
 	case PolicyDecision:
 		var p PolicyDecisionEvent

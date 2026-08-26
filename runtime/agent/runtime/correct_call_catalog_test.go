@@ -370,7 +370,7 @@ func TestCorrectCallRecoveryUsesActiveTool(t *testing.T) {
 	assert.Equal(t, 2, resumes)
 }
 
-func TestCorrectCallRecoveryRejectsUnregisteredToolBeforePlanner(t *testing.T) {
+func TestRecoveryRejectsUnregisteredToolBeforePlanner(t *testing.T) {
 	tool := newAnyJSONSpec("catalog.lookup")
 	var plannerCalls int
 	h := newRecoveryHarness(
@@ -401,7 +401,7 @@ func TestCorrectCallRecoveryRejectsUnregisteredToolBeforePlanner(t *testing.T) {
 		Payload:    rawjson.Message(`{"query":"invalid"}`),
 	}}}, initialCaps(RunPolicy{MaxToolCalls: 2}))
 
-	require.ErrorContains(t, err, `correct-call recovery references unregistered tool "catalog.lookup"`)
+	require.ErrorContains(t, err, `canonical tool history references unregistered tool "catalog.lookup"`)
 	require.Zero(t, plannerCalls)
 }
 

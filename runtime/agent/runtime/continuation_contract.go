@@ -64,6 +64,12 @@ func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*work
 	); err != nil {
 		return nil, fmt.Errorf("validate suspended completion plan: %w", err)
 	}
+	if err := r.validatePlannerResultPayloads(
+		plannerResultValidationProjection(checkpoint.Batch.Result),
+		checkpoint.Context.Tool,
+	); err != nil {
+		return nil, fmt.Errorf("validate suspended planner result: %w", err)
+	}
 	program, err := r.normalizeStep(checkpoint.Batch.Result)
 	if err != nil {
 		return nil, fmt.Errorf("validate suspended planner result: %w", err)
@@ -103,7 +109,7 @@ func (r *Runtime) validateCheckpointToolValues(checkpoint *workflowCheckpoint) e
 		}
 	}
 	for _, event := range checkpoint.State.ToolEvents {
-		if _, err := r.decodeCheckpointToolEvent(ctx, event); err != nil {
+		if _, err := r.decodeCheckpointToolEvent(event); err != nil {
 			return err
 		}
 	}
@@ -117,7 +123,7 @@ func (r *Runtime) validateCheckpointToolValues(checkpoint *workflowCheckpoint) e
 			return err
 		}
 		if record.ChildSuspension == nil {
-			if _, err := r.decodeCheckpointToolEvent(ctx, record.Result); err != nil {
+			if _, err := r.decodeCheckpointToolEvent(record.Result); err != nil {
 				return err
 			}
 		}
@@ -160,10 +166,18 @@ func (r *Runtime) validateCheckpointToolOutput(ctx context.Context, output *plan
 	if _, err := r.unmarshalToolValue(ctx, output.Name, output.Payload.RawMessage(), true); err != nil {
 		return fmt.Errorf("decode suspended tool payload for %s: %w", output.Name, err)
 	}
-	if output.Failure == nil && !output.ResultOmitted {
-		if _, err := r.unmarshalToolValue(ctx, output.Name, output.Result.RawMessage(), false); err != nil {
-			return fmt.Errorf("decode suspended tool result for %s: %w", output.Name, err)
+	if output.Failure != nil {
+		if len(output.Result) > 0 {
+			return fmt.Errorf("suspended failed tool result %s contains result JSON", output.Name)
 		}
+		return nil
+	}
+	spec, ok := r.toolSpec(output.Name)
+	if !ok {
+		return fmt.Errorf("suspended tool result references unregistered tool %q", output.Name)
+	}
+	if _, err := decodeSuccessfulToolResult(spec, output.Result); err != nil {
+		return fmt.Errorf("decode suspended tool result for %s: %w", output.Name, err)
 	}
 	return nil
 }

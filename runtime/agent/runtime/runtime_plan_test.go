@@ -178,6 +178,7 @@ func TestRunPlanActivityAcceptsTerminalFinalToolResult(t *testing.T) {
 		tracer:  telemetry.NoopTracer{},
 		Bus:     noopHooks{},
 	}
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.do"))
 	wf := &testWorkflowContext{
 		ctx:           context.Background(),
 		hasPlanResult: true,
@@ -188,7 +189,9 @@ func TestRunPlanActivityAcceptsTerminalFinalToolResult(t *testing.T) {
 		},
 	}
 
-	out, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, time.Time{})
+	out, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{
+		RunContext: run.Context{Tool: "svc.tools.do"},
+	}, time.Time{})
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.NotNil(t, out.Result)
@@ -2343,9 +2346,6 @@ func TestPlanStartActivityAdvertisesHistoricalContinuation(t *testing.T) {
 		"source-1",
 		"",
 		rawjson.Message(`{"items":["page-1"]}`),
-		len(`{"items":["page-1"]}`),
-		false,
-		"",
 		nil,
 		"page 1",
 		&agent.Bounds{Returned: 1, Truncated: true, NextCursor: &cursor},
@@ -2465,9 +2465,6 @@ func TestPlanResumeActivityBindsModelSelectedContinuation(t *testing.T) {
 			"source-1",
 			"",
 			rawjson.Message(`{"items":["page-1"]}`),
-			len(`{"items":["page-1"]}`),
-			false,
-			"",
 			nil,
 			"page 1",
 			&agent.Bounds{Returned: 1, Truncated: true, NextCursor: &cursor},
@@ -2767,7 +2764,6 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 		require.JSONEq(t, `{"from":"test"}`, string(input.ToolOutputs[0].Payload))
 		require.JSONEq(t, `{"status":"ok"}`, string(input.ToolOutputs[0].Result))
 		require.JSONEq(t, `[{"kind":"evidence"}]`, string(input.ToolOutputs[0].ServerData))
-		require.Equal(t, len(resultJSON), input.ToolOutputs[0].ResultBytes)
 		require.NotNil(t, input.ToolOutputs[0].Bounds)
 		require.True(t, input.ToolOutputs[0].Bounds.Truncated)
 		require.Equal(t, "narrow the window", input.ToolOutputs[0].Bounds.RefinementHint)
@@ -2808,9 +2804,6 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 			"call-1",
 			"",
 			resultJSON,
-			len(resultJSON),
-			false,
-			"",
 			serverData,
 			"preview",
 			bounds,
@@ -2828,6 +2821,76 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 		SynthesisOnly: true,
 	}
 	out, err := rt.PlanResumeActivity(context.Background(), &input)
+	require.NoError(t, err)
+	require.True(t, called)
+	require.NotNil(t, out.Result.FinalResponse)
+}
+
+func TestPlanResumeActivityHydratesNoResultSuccess(t *testing.T) {
+	toolName := tools.Ident("svc.ts.notify")
+	called := false
+	pl := &stubPlanner{resume: func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+		called = true
+		require.Len(t, input.ToolOutputs, 1)
+		require.Equal(t, toolName, input.ToolOutputs[0].Name)
+		require.Equal(t, "call-1", input.ToolOutputs[0].ToolCallID)
+		require.Empty(t, input.ToolOutputs[0].Result)
+		require.Nil(t, input.ToolOutputs[0].Failure)
+		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{
+			Message: &model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "done"}},
+			},
+		}}, nil
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	seedTestToolSpecs(rt, tools.ToolSpec{Name: toolName})
+	require.NoError(t, rt.publishHookErr(
+		t.Context(),
+		hooks.NewToolCallScheduledEvent(
+			"run-123",
+			"service.agent",
+			"",
+			toolName,
+			"call-1",
+			nil,
+			"queue",
+			"",
+			0,
+		),
+		"",
+	))
+	require.NoError(t, rt.publishHookErr(
+		t.Context(),
+		hooks.NewToolResultReceivedEvent(
+			"run-123",
+			"service.agent",
+			"",
+			"run-123",
+			toolName,
+			"call-1",
+			"",
+			nil,
+			nil,
+			"",
+			nil,
+			0,
+			nil,
+			nil,
+		),
+		"",
+	))
+
+	out, err := rt.PlanResumeActivity(t.Context(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123"},
+		ToolOutputs: []*api.ToolOutputRef{{
+			CallRunID:   "run-123",
+			ResultRunID: "run-123",
+			ToolCallID:  "call-1",
+		}},
+	})
 	require.NoError(t, err)
 	require.True(t, called)
 	require.NotNil(t, out.Result.FinalResponse)
@@ -2875,9 +2938,6 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 			"source-1",
 			"",
 			resultJSON,
-			len(resultJSON),
-			false,
-			"",
 			nil,
 			"",
 			&agent.Bounds{Returned: 0, Truncated: true, NextCursor: &nextCursor},
@@ -2959,9 +3019,6 @@ func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) 
 				failed.callID,
 				"",
 				nil,
-				0,
-				false,
-				"",
 				nil,
 				"",
 				nil,
@@ -3049,9 +3106,6 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 		called = true
 		require.Len(t, input.ToolOutputs, 1)
 		require.Equal(t, "call-1", input.ToolOutputs[0].ToolCallID)
-		require.False(t, input.ToolOutputs[0].ResultOmitted)
-		require.Empty(t, input.ToolOutputs[0].ResultOmittedReason)
-		require.Equal(t, len(resultJSON), input.ToolOutputs[0].ResultBytes)
 		require.JSONEq(t, string(resultJSON), string(input.ToolOutputs[0].Result))
 		require.JSONEq(t, `[{"kind":"evidence"}]`, string(input.ToolOutputs[0].ServerData))
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
@@ -3091,9 +3145,6 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 			"call-1",
 			"",
 			resultJSON,
-			len(resultJSON),
-			false,
-			"",
 			rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
 			"preview",
 			nil,
@@ -3115,7 +3166,7 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 	require.True(t, called)
 }
 
-func TestBuildPlannerToolOutputRecordsPreservesOmittedResultMetadata(t *testing.T) {
+func TestBuildPlannerToolOutputRecordsEncodesCompleteResult(t *testing.T) {
 	t.Parallel()
 	const runID = "run-123"
 
@@ -3137,12 +3188,10 @@ func TestBuildPlannerToolOutputRecordsPreservesOmittedResultMetadata(t *testing.
 		},
 		[]*planner.ToolResult{
 			{
-				Name:                "svc.ts.tool",
-				ToolCallID:          "call-1",
-				ResultOmitted:       true,
-				ResultOmittedReason: "workflow_budget",
-				ResultBytes:         12345,
-				ServerData:          rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
+				Name:       "svc.ts.tool",
+				ToolCallID: "call-1",
+				Result:     map[string]any{"status": "ok"},
+				ServerData: rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
 			},
 		},
 	)
@@ -3151,10 +3200,7 @@ func TestBuildPlannerToolOutputRecordsPreservesOmittedResultMetadata(t *testing.
 	outputs, err := rt.buildPlannerToolOutputRecords(context.Background(), records)
 	require.NoError(t, err)
 	require.Len(t, outputs, 1)
-	require.True(t, outputs[0].ResultOmitted)
-	require.Equal(t, "workflow_budget", outputs[0].ResultOmittedReason)
-	require.Equal(t, 12345, outputs[0].ResultBytes)
-	require.Empty(t, outputs[0].Result)
+	require.JSONEq(t, `{"status":"ok"}`, string(outputs[0].Result))
 	require.JSONEq(t, `[{"kind":"evidence"}]`, string(outputs[0].ServerData))
 }
 

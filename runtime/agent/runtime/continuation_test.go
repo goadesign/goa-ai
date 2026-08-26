@@ -83,9 +83,6 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 		"source-1",
 		"",
 		rawjson.Message(`{"items":["page-1"]}`),
-		len(`{"items":["page-1"]}`),
-		false,
-		"",
 		nil,
 		"page 1",
 		&agent.Bounds{Returned: 1, Truncated: true, NextCursor: &firstCursor},
@@ -117,9 +114,6 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 		"continue-1",
 		"",
 		rawjson.Message(`{"items":["page-2"]}`),
-		len(`{"items":["page-2"]}`),
-		false,
-		"",
 		nil,
 		"page 2",
 		&agent.Bounds{Returned: 1, Truncated: true, NextCursor: &secondCursor},
@@ -438,9 +432,6 @@ func TestPlannerToolOutputHydrationPreservesContinuationRoot(t *testing.T) {
 		scheduled.ToolCallID,
 		"",
 		rawjson.Message(`{}`),
-		2,
-		false,
-		"",
 		nil,
 		"",
 		nil,
@@ -452,7 +443,14 @@ func TestPlannerToolOutputHydrationPreservesContinuationRoot(t *testing.T) {
 		scheduled: scheduled,
 		result:    result,
 	}
-	output, err := plannerToolOutputFromCanonicalEvents("run-1", "run-1", "continue-1", events, events)
+	output, err := plannerToolOutputFromCanonicalEvents(
+		tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
+		"run-1",
+		"run-1",
+		"continue-1",
+		events,
+		events,
+	)
 	require.NoError(t, err)
 	assert.Equal(t, "source-1", output.ContinuationRootToolCallID)
 }

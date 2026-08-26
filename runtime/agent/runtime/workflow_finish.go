@@ -195,14 +195,11 @@ func finalToolResultEvent(toolName tools.Ident, result *planner.FinalToolResult)
 		return nil
 	}
 	return &api.ToolEvent{
-		Name:                toolName,
-		Result:              append(rawjson.Message(nil), result.Result...),
-		ResultBytes:         result.ResultBytes,
-		ResultOmitted:       result.ResultOmitted,
-		ResultOmittedReason: result.ResultOmittedReason,
-		ServerData:          append(rawjson.Message(nil), result.ServerData...),
-		Bounds:              result.Bounds,
-		Failure:             planner.CloneToolFailure(result.Failure),
-		Telemetry:           result.Telemetry,
+		Name:       toolName,
+		Result:     append(rawjson.Message(nil), result.Result...),
+		ServerData: append(rawjson.Message(nil), result.ServerData...),
+		Bounds:     result.Bounds,
+		Failure:    planner.CloneToolFailure(result.Failure),
+		Telemetry:  result.Telemetry,
 	}
 }

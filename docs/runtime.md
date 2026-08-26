@@ -915,9 +915,16 @@ Suspensions written by this runtime use `goa-ai.run-suspension.v6`; version-four
 suspensions are not accepted. Version-five suspensions remain readable with
 their original shape: a pending recovery must include its serialized
 `PendingRecoveryCatalog`. A version-five checkpoint that omits that catalog is
-invalid. Version six removes only the duplicate catalog for `correct_call`:
-the reader derives the exact ordered names from the saved typed failures and
-rejects a version-six correction checkpoint that also serializes a catalog.
+invalid. Version six derives the exact ordered `correct_call` catalog from the
+saved typed failures and rejects a checkpoint that also serializes that catalog.
+It stores the complete generated JSON for successful result-bearing tools;
+successful tools without a result type and failed tools store no result bytes.
+`ResultOmitted` and `ResultOmittedReason` have been removed from planner,
+workflow, hook, and stream result types. `ResultBytes` has also been removed
+from planner-authored and workflow result types because the runtime calculates
+it from the JSON stored in the durable tool-result event.
+Upgrade only when no runs from the previous runtime are active or suspended,
+then deploy the runtime, generated workers, and callers together.
 Each model-authored await item stores its runtime `ToolCallID` separately from
 the provider `ModelToolCallID`. Other checkpoint versions cannot resume.
 
@@ -1409,6 +1416,9 @@ type ToolsetRegistration struct {
 `ToolSpec` describes a tool's name, schemas, codecs, and planner metadata. It
 does not name the service or toolset that executes the tool. This lets one
 generated contract package be reused by agents in different services.
+Its result is either the zero `tools.TypeSpec` for a tool that returns no value,
+or a complete type whose codec defines both `ToJSON` and `FromJSON`. Runtime
+registration rejects partial result declarations.
 `ToolsetRegistration.Name` is the local execution route for every tool in its
 `Specs` slice. The runtime rejects two different registration names that claim
 the same global tool name because a tool call contains only that name.
@@ -2448,7 +2458,8 @@ response := &api.PendingInputResponse{
 Provided tool results are strict boundary inputs:
 
 - each item must contain exactly one `Success` or `Failure` outcome,
-- `Success.Result` is canonical JSON matching the registered result codec,
+- a result-bearing `Success.Result` is canonical JSON that the registered codec
+  decodes to one non-nil value; a no-result success contains zero bytes,
 - `Failure` supplies the classification, message, and requested recovery
   action; the runtime derives correction metadata from the registered tool
   spec instead of accepting caller-authored schema guidance,

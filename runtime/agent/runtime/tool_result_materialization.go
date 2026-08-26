@@ -15,7 +15,6 @@ package runtime
 //   runtime's internal `api.ToolEvent` envelope.
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -219,13 +218,7 @@ func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolS
 	var err error
 	if item.Success != nil {
 		bounds = agent.CloneBounds(item.Success.Bounds)
-		if spec.Result.Codec.FromJSON == nil {
-			if len(bytes.TrimSpace(item.Success.Result)) > 0 {
-				err = errors.New("tool has no result contract but success contains result JSON")
-			}
-		} else {
-			decoded, err = spec.Result.Codec.FromJSON(item.Success.Result.RawMessage())
-		}
+		decoded, err = decodeSuccessfulToolResult(spec, item.Success.Result)
 	}
 	result := &planner.ToolResult{
 		Name:       call.Name,
@@ -251,9 +244,6 @@ func setMalformedToolResult(result *planner.ToolResult, call ToolCall, cause err
 	result.Name = call.Name
 	result.Result = nil
 	result.Bounds = nil
-	result.ResultBytes = 0
-	result.ResultOmitted = false
-	result.ResultOmittedReason = ""
 	result.ServerData = nil
 	result.Failure = &planner.ToolFailure{
 		Kind: planner.FailureMalformedResult,

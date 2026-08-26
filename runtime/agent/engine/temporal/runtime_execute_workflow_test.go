@@ -191,7 +191,7 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 		PlanActivityName:    planActivityName,
 		ResumeActivityName:  resumeActivityName,
 		ExecuteToolActivity: executeActivityName,
-		Specs:               []tools.ToolSpec{anyJSONToolSpec(questionTool, "assistant.await")},
+		Specs:               []tools.ToolSpec{anyJSONToolSpec(questionTool)},
 	}))
 
 	recorder := &hookRecorder{}

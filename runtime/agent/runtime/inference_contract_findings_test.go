@@ -25,6 +25,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -235,6 +236,7 @@ func TestPlanStartActivityRejectsOversizedResultBranches(t *testing.T) {
 	oversized := strings.Repeat("x", maxPlanActivityOutputBytes+1)
 	tests := []struct {
 		name   string
+		tool   tools.Ident
 		result *planner.PlanResult
 	}{
 		{
@@ -248,6 +250,7 @@ func TestPlanStartActivityRejectsOversizedResultBranches(t *testing.T) {
 		},
 		{
 			name: "final tool result",
+			tool: "service.tools.finish",
 			result: &planner.PlanResult{FinalToolResult: &planner.FinalToolResult{
 				Result: rawjson.Message(`"` + oversized + `"`),
 			}},
@@ -260,11 +263,14 @@ func TestPlanStartActivityRejectsOversizedResultBranches(t *testing.T) {
 					return test.result, nil
 				},
 			})
+			if test.tool != "" {
+				seedTestToolSpecs(rt, newAnyJSONSpec(test.tool))
+			}
 
 			output, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
 				AgentID:    "service.agent",
 				RunID:      "run-oversized-result",
-				RunContext: run.Context{RunID: "run-oversized-result"},
+				RunContext: run.Context{RunID: "run-oversized-result", Tool: test.tool},
 			})
 
 			requirePlannerOutputContractFailure(t, output, err)
@@ -515,7 +521,7 @@ func TestNormalizePlanResultContractPreservesProviderIdentityInValidationProject
 	projected := plannerResultValidationProjection(result)
 	require.Equal(t, "provider-call-1", projected.ToolCalls[0].ModelToolCallID)
 	require.NotEqual(t, result.ToolCalls[0].ToolCallID, projected.ToolCalls[0].ModelToolCallID)
-	_, err := New().normalizePlanResultContract(result)
+	_, err := New().normalizePlanResultContract(result, "")
 	require.NoError(t, err)
 }
 

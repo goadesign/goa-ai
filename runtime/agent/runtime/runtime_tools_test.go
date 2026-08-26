@@ -881,7 +881,26 @@ func TestDecodeProvidedNoResultSuccess(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result.Failure)
 	require.NotNil(t, result.Failure.Error.Cause)
-	require.Contains(t, result.Failure.Error.Cause.Message, "no result contract")
+	require.Contains(t, result.Failure.Error.Cause.Message, "does not define a result")
+	require.Empty(t, resultJSON)
+
+	result, resultJSON, err = rt.decodeProvidedToolResult(
+		context.Background(),
+		spec,
+		call,
+		&api.ProvidedToolResult{
+			Name:       name,
+			ToolCallID: call.ToolCallID,
+			Success: &api.ProvidedToolSuccess{
+				Result: rawjson.Message(` `),
+			},
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Failure)
+	require.NotNil(t, result.Failure.Error.Cause)
+	require.Contains(t, result.Failure.Error.Cause.Message, "does not define a result")
 	require.Empty(t, resultJSON)
 }
 

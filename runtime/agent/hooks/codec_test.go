@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -286,9 +287,6 @@ func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *tes
 		toolCallID,
 		"",
 		resultJSON,
-		len(resultJSON),
-		false,
-		"",
 		serverData,
 		"preview",
 		nil,
@@ -313,9 +311,30 @@ func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *tes
 	require.Equal(t, "call-run", tr.CallRunID)
 	require.Equal(t, toolCallID, tr.ToolCallID)
 	require.Equal(t, len(resultJSON), tr.ResultBytes)
-	require.False(t, tr.ResultOmitted)
-	require.Empty(t, tr.ResultOmittedReason)
 	require.JSONEq(t, string(serverData), string(tr.ServerData))
+}
+
+func TestEncodeRecordPayloadRejectsFailureWithResultJSON(t *testing.T) {
+	event := NewToolResultReceivedEvent(
+		testRunID,
+		"agent-1",
+		testSessionID,
+		"call-run",
+		"svc.tools.lookup",
+		"call-1",
+		"",
+		rawjson.Message(`{"summary":"partial"}`),
+		nil,
+		"",
+		nil,
+		0,
+		nil,
+		&planner.ToolFailure{},
+	)
+
+	_, err := EncodeRecordPayload(event)
+
+	require.EqualError(t, err, "encode tool result payload: failure and result JSON are both set")
 }
 
 func TestDecodeFromRecordInput_PromptRenderedRoundTrip(t *testing.T) {

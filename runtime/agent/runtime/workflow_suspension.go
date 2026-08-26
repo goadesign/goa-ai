@@ -6,7 +6,6 @@ package runtime
 // reconstructs typed planner/tool state with registered codecs.
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -436,19 +435,19 @@ func requiredCheckpointToolNames(checkpoint *workflowCheckpoint) []tools.Ident {
 
 // decodeCheckpointToolEvent restores one runtime-produced tool result with the
 // registered result codec.
-func (r *Runtime) decodeCheckpointToolEvent(ctx context.Context, event *api.ToolEvent) (*planner.ToolResult, error) {
+func (r *Runtime) decodeCheckpointToolEvent(event *api.ToolEvent) (*planner.ToolResult, error) {
 	if event == nil {
 		return nil, errors.New("run suspension contains nil tool event")
 	}
 	if event.Failure != nil && len(event.ServerData) > 0 {
 		return nil, fmt.Errorf("suspended failed tool result %s contains server data", event.Name)
 	}
+	spec, ok := r.toolSpec(event.Name)
+	if !ok {
+		return nil, fmt.Errorf("suspended tool result references unregistered tool %q", event.Name)
+	}
 	serverData := rawjson.Message(nil)
 	if len(event.ServerData) > 0 {
-		spec, ok := r.toolSpec(event.Name)
-		if !ok {
-			return nil, fmt.Errorf("suspended tool result references unregistered tool %q", event.Name)
-		}
 		var err error
 		serverData, err = toolserverdata.Apply(spec.CanonicalizeServerData, event.ServerData)
 		if err != nil {
@@ -456,25 +455,26 @@ func (r *Runtime) decodeCheckpointToolEvent(ctx context.Context, event *api.Tool
 		}
 	}
 	result := &planner.ToolResult{
-		Name:                event.Name,
-		ServerData:          serverData,
-		ResultBytes:         event.ResultBytes,
-		ResultOmitted:       event.ResultOmitted,
-		ResultOmittedReason: event.ResultOmittedReason,
-		Bounds:              event.Bounds,
-		Failure:             planner.CloneToolFailure(event.Failure),
-		Telemetry:           event.Telemetry,
-		ToolCallID:          event.ToolCallID,
-		ChildrenCount:       event.ChildrenCount,
-		RunLink:             event.RunLink,
+		Name:          event.Name,
+		ServerData:    serverData,
+		Bounds:        event.Bounds,
+		Failure:       planner.CloneToolFailure(event.Failure),
+		Telemetry:     event.Telemetry,
+		ToolCallID:    event.ToolCallID,
+		ChildrenCount: event.ChildrenCount,
+		RunLink:       event.RunLink,
 	}
-	if event.Failure == nil && !event.ResultOmitted {
-		decoded, err := r.unmarshalToolValue(ctx, event.Name, event.Result.RawMessage(), false)
-		if err != nil {
-			return nil, fmt.Errorf("decode suspended tool result for %s: %w", event.Name, err)
+	if event.Failure != nil {
+		if len(event.Result) > 0 {
+			return nil, fmt.Errorf("suspended failed tool result %s contains result JSON", event.Name)
 		}
-		result.Result = decoded
+		return result, nil
 	}
+	decoded, err := decodeSuccessfulToolResult(spec, event.Result)
+	if err != nil {
+		return nil, fmt.Errorf("decode suspended tool result for %s: %w", event.Name, err)
+	}
+	result.Result = decoded
 	return result, nil
 }
 
@@ -485,11 +485,11 @@ func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg Agen
 		Messages:   checkpoint.BaseMessages,
 		RunContext: restoreCheckpointRunContext(checkpoint.Context, input),
 	}
-	state, err := r.restoreCheckpointState(wfCtx.Context(), checkpoint.Version, checkpoint.State)
+	state, err := r.restoreCheckpointState(checkpoint.Version, checkpoint.State)
 	if err != nil {
 		return nil, err
 	}
-	batch, err := r.restoreCheckpointBatch(wfCtx.Context(), checkpoint.Batch, input, &base.RunContext)
+	batch, err := r.restoreCheckpointBatch(checkpoint.Batch, input, &base.RunContext)
 	if err != nil {
 		return nil, err
 	}
@@ -627,13 +627,12 @@ func restoreCheckpointRunContext(saved checkpointRunContext, input *RunInput) ru
 // restoreCheckpointState decodes saved tool results and reconstructs pending
 // recovery state according to the checkpoint's explicit version.
 func (r *Runtime) restoreCheckpointState(
-	ctx context.Context,
 	version string,
 	checkpoint checkpointRunState,
 ) (*runLoopState, error) {
 	toolEvents := make([]*planner.ToolResult, 0, len(checkpoint.ToolEvents))
 	for _, event := range checkpoint.ToolEvents {
-		decoded, err := r.decodeCheckpointToolEvent(ctx, event)
+		decoded, err := r.decodeCheckpointToolEvent(event)
 		if err != nil {
 			return nil, err
 		}
@@ -664,7 +663,7 @@ func (r *Runtime) restoreCheckpointState(
 	return state, nil
 }
 
-func (r *Runtime) restoreCheckpointBatch(ctx context.Context, checkpoint checkpointStepBatch, input *RunInput, runContext *run.Context) (stepBatch, error) {
+func (r *Runtime) restoreCheckpointBatch(checkpoint checkpointStepBatch, input *RunInput, runContext *run.Context) (stepBatch, error) {
 	result := checkpoint.Result
 	retargetPlanResult(result, input, runContext)
 	records := make([]stepToolRecord, 0, len(checkpoint.Records))
@@ -672,7 +671,7 @@ func (r *Runtime) restoreCheckpointBatch(ctx context.Context, checkpoint checkpo
 		var decoded *planner.ToolResult
 		if record.ChildSuspension == nil {
 			var err error
-			decoded, err = r.decodeCheckpointToolEvent(ctx, record.Result)
+			decoded, err = r.decodeCheckpointToolEvent(record.Result)
 			if err != nil {
 				return stepBatch{}, err
 			}
@@ -984,7 +983,7 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 			Suspension: out.Suspension,
 		}}}, nil
 	}
-	result, err := l.r.adaptAgentChildOutput(l.wfCtx.Context(), cfg, &currentCall, nested, out)
+	result, err := l.r.adaptAgentChildOutput(cfg, &currentCall, nested, out)
 	if err != nil {
 		return nil, err
 	}

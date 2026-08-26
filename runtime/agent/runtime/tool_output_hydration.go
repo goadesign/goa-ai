@@ -22,6 +22,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type canonicalToolEvents struct {
@@ -77,11 +78,21 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOu
 
 	outputs := make([]*planner.ToolOutput, 0, len(refs))
 	for _, ref := range refs {
+		callEvents := eventsByRun[ref.CallRunID][ref.ToolCallID]
+		var spec tools.ToolSpec
+		if callEvents != nil && callEvents.scheduled != nil {
+			var ok bool
+			spec, ok = r.toolSpec(callEvents.scheduled.ToolName)
+			if !ok {
+				return nil, fmt.Errorf("runtime: canonical tool history references unregistered tool %q", callEvents.scheduled.ToolName)
+			}
+		}
 		output, err := plannerToolOutputFromCanonicalEvents(
+			spec,
 			ref.CallRunID,
 			ref.ResultRunID,
 			ref.ToolCallID,
-			eventsByRun[ref.CallRunID][ref.ToolCallID],
+			callEvents,
 			eventsByRun[ref.ResultRunID][ref.ToolCallID],
 		)
 		if err != nil {
@@ -94,7 +105,7 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOu
 
 // plannerToolOutputFromCanonicalEvents constructs one planner ToolOutput from
 // canonical scheduled/result events in the run log.
-func plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID string, callEvents, resultEvents *canonicalToolEvents) (*planner.ToolOutput, error) {
+func plannerToolOutputFromCanonicalEvents(spec tools.ToolSpec, callRunID, resultRunID, toolCallID string, callEvents, resultEvents *canonicalToolEvents) (*planner.ToolOutput, error) {
 	if callEvents == nil {
 		return nil, fmt.Errorf("runtime: missing canonical tool history in run log (run_id=%s tool_call_id=%s)", callRunID, toolCallID)
 	}
@@ -130,43 +141,43 @@ func plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID str
 		ModelToolCallID:            callEvents.scheduled.ModelToolCallID,
 		ContinuationRootToolCallID: callEvents.scheduled.ContinuationRootToolCallID,
 		Payload:                    append(rawjson.Message(nil), callEvents.scheduled.Payload...),
-		ResultBytes:                resultEvents.result.ResultBytes,
-		ResultOmitted:              resultEvents.result.ResultOmitted,
-		ResultOmittedReason:        resultEvents.result.ResultOmittedReason,
 		ServerData:                 append(rawjson.Message(nil), resultEvents.result.ServerData...),
 		Bounds:                     resultEvents.result.Bounds,
 		Failure:                    resultEvents.result.Failure,
 		Telemetry:                  resultEvents.result.Telemetry,
 	}
-	if resultEvents.result.Failure == nil {
-		if output.ResultOmitted {
-			return nil, fmt.Errorf(
-				"runtime: canonical successful tool result is omitted (run_id=%s tool_call_id=%s tool=%s)",
-				resultRunID,
-				toolCallID,
-				output.Name,
-			)
-		}
-		if len(resultEvents.result.ResultJSON) == 0 {
-			return nil, fmt.Errorf(
-				"runtime: canonical successful tool result is empty (run_id=%s tool_call_id=%s tool=%s)",
-				resultRunID,
-				toolCallID,
-				output.Name,
-			)
-		}
-		if len(resultEvents.result.ResultJSON) != output.ResultBytes {
-			return nil, fmt.Errorf(
-				"runtime: canonical tool result size mismatch (run_id=%s tool_call_id=%s tool=%s got=%d want=%d)",
-				resultRunID,
-				toolCallID,
-				output.Name,
-				len(resultEvents.result.ResultJSON),
-				output.ResultBytes,
-			)
-		}
-		output.Result = append(rawjson.Message(nil), resultEvents.result.ResultJSON...)
+	resultJSON := resultEvents.result.ResultJSON
+	if len(resultJSON) != resultEvents.result.ResultBytes {
+		return nil, fmt.Errorf(
+			"runtime: canonical tool result size mismatch (run_id=%s tool_call_id=%s tool=%s got=%d want=%d)",
+			resultRunID,
+			toolCallID,
+			output.Name,
+			len(resultJSON),
+			resultEvents.result.ResultBytes,
+		)
 	}
+	if resultEvents.result.Failure != nil {
+		if len(resultJSON) > 0 {
+			return nil, fmt.Errorf(
+				"runtime: canonical failed tool result contains result JSON (run_id=%s tool_call_id=%s tool=%s)",
+				resultRunID,
+				toolCallID,
+				output.Name,
+			)
+		}
+		return output, nil
+	}
+	if _, err := decodeSuccessfulToolResult(spec, resultJSON); err != nil {
+		return nil, fmt.Errorf(
+			"runtime: canonical successful tool result is invalid (run_id=%s tool_call_id=%s tool=%s): %w",
+			resultRunID,
+			toolCallID,
+			output.Name,
+			err,
+		)
+	}
+	output.Result = append(rawjson.Message(nil), resultJSON...)
 	return output, nil
 }
 

@@ -373,7 +373,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 				childSuspension: outPtr.Suspension,
 			}, nil
 		}
-		result, err := rt.adaptAgentChildOutput(ctx, &cfg, call, nestedRunCtx, outPtr)
+		result, err := rt.adaptAgentChildOutput(&cfg, call, nestedRunCtx, outPtr)
 		if err != nil {
 			return nil, err
 		}
@@ -584,7 +584,7 @@ func (r *Runtime) buildPromptTemplateData(ctx context.Context, toolName tools.Id
 // becomes the parent-visible text result.
 //
 // In all cases the returned ToolResult is linked back to the child run.
-func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfig, call *ToolCall, nestedRunCtx run.Context, outPtr *RunOutput) (*planner.ToolResult, error) {
+func (r *Runtime) adaptAgentChildOutput(cfg *AgentToolConfig, call *ToolCall, nestedRunCtx run.Context, outPtr *RunOutput) (*planner.ToolResult, error) {
 	handle := &run.Handle{
 		RunID:            nestedRunCtx.RunID,
 		AgentID:          cfg.AgentID,
@@ -593,7 +593,7 @@ func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfi
 	}
 
 	if outPtr.FinalToolResult != nil {
-		tr, err := r.decodeAgentChildFinalToolResult(ctx, call, outPtr.FinalToolResult)
+		tr, err := r.decodeAgentChildFinalToolResult(call, outPtr.FinalToolResult)
 		if err != nil {
 			return nil, err
 		}
@@ -616,28 +616,35 @@ func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfi
 // decodeAgentChildFinalToolResult decodes the workflow-safe final tool-result
 // envelope emitted by a nested child run into the parent planner.ToolResult
 // shape.
-func (r *Runtime) decodeAgentChildFinalToolResult(ctx context.Context, call *ToolCall, event *api.ToolEvent) (*planner.ToolResult, error) {
+func (r *Runtime) decodeAgentChildFinalToolResult(call *ToolCall, event *api.ToolEvent) (*planner.ToolResult, error) {
 	if call == nil {
 		return nil, errors.New("agent-tool final result: tool call is required")
 	}
 	if event == nil {
 		return nil, fmt.Errorf("agent-tool final result for %s: event is nil", call.Name)
 	}
-	result := &planner.ToolResult{
-		Name:                call.Name,
-		ResultBytes:         event.ResultBytes,
-		ResultOmitted:       event.ResultOmitted,
-		ResultOmittedReason: event.ResultOmittedReason,
-		ServerData:          append(rawjson.Message(nil), event.ServerData...),
-		Bounds:              event.Bounds,
-		Failure:             event.Failure,
-		Telemetry:           event.Telemetry,
+	spec, ok := r.toolSpec(call.Name)
+	if !ok {
+		return nil, fmt.Errorf("agent-tool final result references unregistered tool %q", call.Name)
 	}
-	if hasNonNullJSON(event.Result.RawMessage()) && event.Failure == nil {
-		decoded, err := r.unmarshalToolValue(ctx, call.Name, event.Result.RawMessage(), false)
-		if err != nil {
-			return nil, fmt.Errorf("decode final tool result for %s: %w", call.Name, err)
+	result := &planner.ToolResult{
+		Name:       call.Name,
+		ServerData: append(rawjson.Message(nil), event.ServerData...),
+		Bounds:     event.Bounds,
+		Failure:    event.Failure,
+		Telemetry:  event.Telemetry,
+	}
+	if event.Failure != nil {
+		if len(event.Result) > 0 {
+			return nil, fmt.Errorf("agent-tool final result for %s contains both a failure and result JSON", call.Name)
 		}
+		return result, nil
+	}
+	decoded, err := decodeSuccessfulToolResult(spec, event.Result)
+	if err != nil {
+		return nil, fmt.Errorf("decode final tool result for %s: %w", call.Name, err)
+	}
+	if decoded != nil {
 		result.Result = decoded
 	}
 	return result, nil

@@ -664,7 +664,7 @@ func (r *Runtime) runPlanActivity(
 		return nil, fmt.Errorf("runPlanActivity received PlanResult with no ToolCalls, FinalResponse, FinalToolResult, or Await")
 	}
 	if out.Result != nil {
-		if _, err := r.normalizePlanResultForExecution(wfCtx.Context(), out.Result); err != nil {
+		if _, err := r.normalizePlanResultForExecution(wfCtx.Context(), out.Result, input.RunContext.Tool); err != nil {
 			return nil, err
 		}
 	}

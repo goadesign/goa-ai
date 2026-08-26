@@ -40,7 +40,6 @@ func TestBuildNextResumeRequestKeepsLargePayloadAndResultsOffWire(t *testing.T) 
 			ToolCallID:  "tc-1",
 			Payload:     payload,
 			Result:      result,
-			ResultBytes: len(result),
 			ServerData:  serverData,
 		},
 	}

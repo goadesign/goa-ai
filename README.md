@@ -672,7 +672,9 @@ runs.
 
 Generated agents, completion packages, runtime workers, and their callers form
 one release unit and use one generated contract. New saved runs use
-`goa-ai.run-suspension.v5`. Model-authored await items preserve the runtime
+`goa-ai.run-suspension.v6`. Successful tools keep their complete generated JSON
+when they define a result type. Successful tools without a result type and
+failed tools keep no result bytes. Model-authored await items preserve the runtime
 `ToolCallID` separately from the provider `ModelToolCallID`. Suspensions with
 another shape fail at the typed checkpoint boundary.
 

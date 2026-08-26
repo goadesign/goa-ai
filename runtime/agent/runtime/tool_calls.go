@@ -278,10 +278,6 @@ func (e *toolBatchExec) publishToolResultReceived(
 	duration time.Duration,
 ) (*RecordActivityInput, error) {
 	parentID := parentToolCallID(call, e.runCtx)
-	resultBytes := tr.ResultBytes
-	if !tr.ResultOmitted {
-		resultBytes = len(resultJSON)
-	}
 	preview, err := formatToolResultPreviewForCall(ctx, e.r, &call, tr)
 	if err != nil {
 		return nil, err
@@ -295,9 +291,6 @@ func (e *toolBatchExec) publishToolResultReceived(
 		call.ToolCallID,
 		parentID,
 		resultJSON,
-		resultBytes,
-		tr.ResultOmitted,
-		tr.ResultOmittedReason,
 		tr.ServerData,
 		preview,
 		tr.Bounds,
@@ -790,7 +783,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 				}
 				continue
 			}
-			tr, err := e.r.adaptAgentChildOutput(ctx, info.cfg, &info.call, info.nestedRun, outPtr)
+			tr, err := e.r.adaptAgentChildOutput(info.cfg, &info.call, info.nestedRun, outPtr)
 			if err != nil {
 				executionErr = errors.Join(executionErr, err)
 				continue

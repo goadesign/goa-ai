@@ -90,7 +90,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	if err != nil {
 		return act.outputContractFailure(ctx, err)
 	}
-	if err := validatePlannerActivityResult(r, result, false); err != nil {
+	if err := validatePlannerActivityResult(r, result, input.RunContext.Tool, false); err != nil {
 		return act.outputContractFailure(ctx, err)
 	}
 	if err := validatePlannerAdvertisedTools(result, act.agentCtx.AdvertisedToolDefinitions()); err != nil {
@@ -240,7 +240,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return act.outputContractFailure(ctx, err)
 	}
-	if err := validatePlannerActivityResult(r, result, synthesisOnly); err != nil {
+	if err := validatePlannerActivityResult(r, result, input.RunContext.Tool, synthesisOnly); err != nil {
 		return act.outputContractFailure(ctx, err)
 	}
 	if err := validatePlannerAdvertisedTools(result, act.agentCtx.AdvertisedToolDefinitions()); err != nil {
@@ -517,7 +517,7 @@ func (a *plannerActivityInvocation) output(
 	synthesisOnly bool,
 	continuationActions []continuationAction,
 ) (*PlanActivityOutput, error) {
-	if err := validatePlannerActivityResult(r, result, synthesisOnly); err != nil {
+	if err := validatePlannerActivityResult(r, result, a.runContext.Tool, synthesisOnly); err != nil {
 		return nil, err
 	}
 	transcript, err := a.invocations.exportModelInvocation(result)
@@ -776,8 +776,8 @@ func (a *plannerActivityInvocation) planningError(err error) error {
 
 // validatePlannerActivityResult rejects planner values that cannot be
 // executed before any selected model presentation is published.
-func validatePlannerActivityResult(r *Runtime, result *planner.PlanResult, synthesisOnly bool) error {
-	if err := validatePlannerResultPayloads(result); err != nil {
+func validatePlannerActivityResult(r *Runtime, result *planner.PlanResult, parentTool tools.Ident, synthesisOnly bool) error {
+	if err := r.validatePlannerResultPayloads(result, parentTool); err != nil {
 		return planner.NewOutputContractError(err)
 	}
 	if err := validatePlannerToolCallIDs(result); err != nil {
@@ -926,7 +926,7 @@ func validatePlannerToolCallIDs(result *planner.PlanResult) error {
 
 // validatePlannerResultPayloads enforces canonical tool JSON before Temporal
 // serializes planner activity output.
-func validatePlannerResultPayloads(result *planner.PlanResult) error {
+func (r *Runtime) validatePlannerResultPayloads(result *planner.PlanResult, parentTool tools.Ident) error {
 	if result == nil {
 		return errors.New("planner returned a nil result")
 	}
@@ -941,8 +941,17 @@ func validatePlannerResultPayloads(result *planner.PlanResult) error {
 			return fmt.Errorf("planner final response: %w", err)
 		}
 	}
-	if err := validatePlannerFinalToolResult(result.FinalToolResult); err != nil {
-		return err
+	if result.FinalToolResult != nil {
+		if parentTool == "" {
+			return errors.New("planner final tool result requires a parent tool")
+		}
+		spec, ok := r.toolSpec(parentTool)
+		if !ok {
+			return fmt.Errorf("planner final tool result references unregistered parent tool %q", parentTool)
+		}
+		if err := validatePlannerFinalToolResult(spec, result.FinalToolResult); err != nil {
+			return err
+		}
 	}
 	for index, call := range result.ToolCalls {
 		if err := validatePlannerToolPayload(call.Payload); err != nil {
@@ -1001,7 +1010,7 @@ func validatePlannerResultPayloads(result *planner.PlanResult) error {
 
 // validatePlannerFinalToolResult rejects malformed or contradictory values
 // before a planner result crosses the activity boundary.
-func validatePlannerFinalToolResult(final *planner.FinalToolResult) error {
+func validatePlannerFinalToolResult(spec tools.ToolSpec, final *planner.FinalToolResult) error {
 	if final == nil {
 		return nil
 	}
@@ -1013,25 +1022,14 @@ func validatePlannerFinalToolResult(final *planner.FinalToolResult) error {
 	if len(serverJSON) > 0 && !json.Valid(serverJSON) {
 		return errors.New("planner final tool server data is not valid JSON")
 	}
-	if final.ResultBytes < 0 {
-		return errors.New("planner final tool result byte count cannot be negative")
-	}
 	if final.Failure != nil {
-		if len(resultJSON) > 0 || final.ResultOmitted {
+		if len(final.Result) > 0 {
 			return errors.New("planner final tool result contains both a failure and a result")
 		}
-	} else if !final.ResultOmitted && len(resultJSON) == 0 {
-		return errors.New("planner final tool result is missing its result")
+		return nil
 	}
-	if final.ResultOmitted {
-		if len(resultJSON) > 0 {
-			return errors.New("planner final tool result is marked omitted but contains a result")
-		}
-		if final.ResultOmittedReason == "" {
-			return errors.New("planner final tool result is marked omitted without a reason")
-		}
-	} else if final.ResultOmittedReason != "" {
-		return errors.New("planner final tool result has an omission reason but is not omitted")
+	if _, err := decodeSuccessfulToolResult(spec, final.Result); err != nil {
+		return fmt.Errorf("planner final tool result: %w", err)
 	}
 	return nil
 }

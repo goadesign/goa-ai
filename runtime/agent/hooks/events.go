@@ -220,15 +220,9 @@ type (
 		// This is the canonical durable representation consumed by stream sinks,
 		// persistence layers, and planner resume hydration.
 		ResultJSON rawjson.Message
-		// ResultBytes is the size, in bytes, of the canonical JSON result payload
-		// before any workflow-boundary omission is applied.
+		// ResultBytes is the stored size of ResultJSON. Replay verifies this count
+		// before returning the result to a planner.
 		ResultBytes int
-		// ResultOmitted indicates that the canonical result payload was omitted
-		// from the workflow-safe envelope that produced this event.
-		ResultOmitted bool
-		// ResultOmittedReason provides a stable, machine-readable reason for omitting
-		// the canonical result payload. Empty when ResultOmitted is false.
-		ResultOmittedReason string
 		// ServerData carries server-only data emitted by tool providers. This payload
 		// must not be serialized into model provider requests and is treated as opaque
 		// JSON bytes by the runtime.
@@ -906,25 +900,23 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 // identifies the exact run that emitted the matching scheduled-call event;
 // runID identifies the run emitting this result. The canonical result JSON and
 // server-side data are stored exactly once here.
-func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID, callRunID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, resultBytes int, resultOmitted bool, resultOmittedReason string, serverData rawjson.Message, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, failure *planner.ToolFailure) *ToolResultReceivedEvent {
+func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID, callRunID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, serverData rawjson.Message, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, failure *planner.ToolFailure) *ToolResultReceivedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &ToolResultReceivedEvent{
-		baseEvent:           be,
-		CallRunID:           callRunID,
-		ToolCallID:          toolCallID,
-		ParentToolCallID:    parentToolCallID,
-		ToolName:            toolName,
-		ResultJSON:          resultJSON,
-		ResultBytes:         resultBytes,
-		ResultOmitted:       resultOmitted,
-		ResultOmittedReason: resultOmittedReason,
-		ServerData:          serverData,
-		ResultPreview:       resultPreview,
-		Bounds:              agent.CloneBounds(bounds),
-		Duration:            duration,
-		Telemetry:           telemetry,
-		Failure:             planner.CloneToolFailure(failure),
+		baseEvent:        be,
+		CallRunID:        callRunID,
+		ToolCallID:       toolCallID,
+		ParentToolCallID: parentToolCallID,
+		ToolName:         toolName,
+		ResultJSON:       resultJSON,
+		ResultBytes:      len(resultJSON),
+		ServerData:       serverData,
+		ResultPreview:    resultPreview,
+		Bounds:           agent.CloneBounds(bounds),
+		Duration:         duration,
+		Telemetry:        telemetry,
+		Failure:          planner.CloneToolFailure(failure),
 	}
 }
 

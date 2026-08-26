@@ -3,11 +3,14 @@
 package runtime
 
 import (
+	"errors"
 	"fmt"
+	"reflect"
 
 	"goa.design/goa-ai/boundedresult"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -56,6 +59,37 @@ func validateToolResultContract(spec tools.ToolSpec, call ToolCall, tr *planner.
 		}
 	}
 	return validateToolBoundsContract(spec, call, tr.Failure != nil, tr.Bounds)
+}
+
+// decodeSuccessfulToolResult checks the JSON returned for one successful tool.
+// Tools with a result type must return bytes accepted by their generated codec;
+// tools without a result type must return no bytes.
+func decodeSuccessfulToolResult(spec tools.ToolSpec, result rawjson.Message) (any, error) {
+	if spec.Result.Codec.FromJSON == nil {
+		if len(result) > 0 {
+			return nil, errors.New("tool does not define a result but contains one")
+		}
+		return nil, nil
+	}
+	if len(result) == 0 {
+		return nil, errors.New("tool result is missing")
+	}
+	decoded, err := spec.Result.Codec.FromJSON(result)
+	if err != nil {
+		return nil, fmt.Errorf("tool result does not satisfy its generated contract: %w", err)
+	}
+	if decoded == nil {
+		return nil, errors.New("tool result decoded to nil")
+	}
+	value := reflect.ValueOf(decoded)
+	kind := value.Kind()
+	nilResult := kind == reflect.UnsafePointer && value.IsZero()
+	nilable := kind == reflect.Chan || kind == reflect.Func || kind == reflect.Interface ||
+		kind == reflect.Map || kind == reflect.Ptr || kind == reflect.Slice
+	if nilResult || nilable && value.IsNil() {
+		return nil, errors.New("tool result decoded to nil")
+	}
+	return decoded, nil
 }
 
 // validateToolClarificationContract enforces the runtime-owned user-question

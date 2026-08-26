@@ -351,28 +351,6 @@ type (
 		// Result is the canonical JSON result payload encoded using the tool result codec.
 		Result rawjson.Message
 
-		// ResultBytes is the size, in bytes, of the canonical JSON result payload
-		// produced by the runtime before any workflow-boundary trimming is applied.
-		//
-		// When ResultOmitted is true, ResultBytes reports the original size even though
-		// Result is nil.
-		ResultBytes int
-
-		// ResultOmitted indicates that the runtime intentionally omitted Result bytes
-		// from this envelope to satisfy workflow-boundary payload budgets.
-		//
-		// This is used for workflow-safe child/final tool-result envelopes: workflow
-		// orchestration must not shuttle arbitrarily large result payloads. Full tool
-		// results remain available via the canonical run log when that path owns the
-		// execution history.
-		ResultOmitted bool
-
-		// ResultOmittedReason provides a stable, machine-readable reason for omitting
-		// the result bytes. Empty when ResultOmitted is false.
-		//
-		// Example values: "workflow_budget".
-		ResultOmittedReason string
-
 		// ServerData carries server-only data emitted alongside the tool result.
 		// It is never sent to model providers.
 		ServerData rawjson.Message
@@ -839,8 +817,8 @@ type (
 	// bounded-result metadata.
 	ProvidedToolSuccess struct {
 		// Result contains canonical JSON for the tool's result contract. It must
-		// be empty when the registered tool has no result contract. JSON null
-		// remains a successful result when a registered codec permits it.
+		// be empty when the registered tool has no result contract. A tool with a
+		// result contract must decode to one non-nil value.
 		Result rawjson.Message
 
 		// Bounds carries bounded-result metadata when the tool contract requires it.
@@ -895,7 +873,9 @@ const (
 
 	// RunSuspensionVersion is the checkpoint schema emitted by this runtime.
 	// Version 6 derives an exact correct-call catalog from saved typed failures
-	// instead of serializing a duplicate catalog in the checkpoint.
+	// instead of serializing a duplicate catalog in the checkpoint. It also stores
+	// complete successful tool results and omits metadata calculated from those
+	// bytes.
 	RunSuspensionVersion = "goa-ai.run-suspension.v6"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected

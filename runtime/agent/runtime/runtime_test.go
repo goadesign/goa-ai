@@ -189,6 +189,7 @@ func TestRunLoopWithStateAcceptsInitialFinalToolResult(t *testing.T) {
 		RunEventStore: runloginmem.New(),
 		Bus:           noopHooks{},
 	}
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.do"))
 	wf := &testWorkflowContext{ctx: context.Background()}
 	input := &RunInput{
 		AgentID:   "svc.agent",

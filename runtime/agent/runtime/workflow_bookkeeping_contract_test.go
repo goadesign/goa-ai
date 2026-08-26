@@ -284,7 +284,6 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 	wfCtx := &testWorkflowContext{
 		ctx: context.Background(),
 		asyncResult: ToolOutput{
-			Payload: []byte("null"),
 			Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "report.summary length must be <= 600"),
 		},
 		planResult: &PlanResult{

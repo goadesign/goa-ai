@@ -396,7 +396,7 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 		require.NoError(t, runtime.ValidateContinuation(suspension))
 		checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
 		require.NoError(t, err)
-		state, err := runtime.restoreCheckpointState(t.Context(), checkpoint.Version, checkpoint.State)
+		state, err := runtime.restoreCheckpointState(checkpoint.Version, checkpoint.State)
 		require.NoError(t, err)
 		_, catalog := toolRecovery(state.PendingRecovery)
 		require.Equal(t, &RecoveryCatalog{Tools: []tools.Ident{spec.Name}}, catalog)
@@ -416,7 +416,7 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 		require.NoError(t, runtime.ValidateContinuation(suspension))
 		checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
 		require.NoError(t, err)
-		state, err := runtime.restoreCheckpointState(t.Context(), checkpoint.Version, checkpoint.State)
+		state, err := runtime.restoreCheckpointState(checkpoint.Version, checkpoint.State)
 		require.NoError(t, err)
 		_, catalog := toolRecovery(state.PendingRecovery)
 		require.Equal(t, &RecoveryCatalog{Tools: []tools.Ident{spec.Name}}, catalog)
@@ -460,7 +460,7 @@ func TestLoadPlannerToolOutputsCombinesDifferentRunLogs(t *testing.T) {
 	result := rawjson.Message(`{"value":"42"}`)
 	require.NoError(t, runtime.publishHookErr(t.Context(), hooks.NewToolResultReceivedEvent(
 		"run-result", "svc.agent", "session-1", "run-call", spec.Name, "call-1", "",
-		result, len(result), false, "", nil, "", nil, 0, nil, nil,
+		result, nil, "", nil, 0, nil, nil,
 	), "turn-1"))
 
 	outputs, err := runtime.loadPlannerToolOutputs(t.Context(), []*api.ToolOutputRef{{
