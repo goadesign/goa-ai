@@ -1,6 +1,7 @@
-// Package hooks converts typed runtime events to and from durable run-log
-// records. The codec preserves record identity and rejects malformed payloads
-// before replay consumers can observe them.
+// Package hooks encodes runtime hook events into durable run-log records and
+// decodes those records back into typed events for replay consumers. The codec
+// preserves record identity, turn, and timestamp metadata while validating
+// event-specific payload invariants at the storage boundary.
 package hooks
 
 import (
