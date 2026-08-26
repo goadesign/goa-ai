@@ -118,6 +118,242 @@ func TestNewRunSnapshotRejectsNilStoredEvent(t *testing.T) {
 	require.EqualError(t, err, "snapshot run log contains nil event at index 0")
 }
 
+func TestNewRunSnapshotRejectsInvalidRunCompletedHookPayload(t *testing.T) {
+	t.Parallel()
+
+	_, err := newRunSnapshot([]*runlog.Event{{
+		ID:        "event-1",
+		EventKey:  "event-1",
+		RunID:     "run-1",
+		AgentID:   agent.Ident("svc.agent"),
+		SessionID: "sess-1",
+		Type:      hooks.RunCompleted,
+		Payload:   []byte(`{"status":"failed","phase":"failed"}`),
+		Timestamp: time.Unix(1, 0).UTC(),
+	}})
+
+	require.ErrorContains(t, err, "failed run completion requires failure payload")
+}
+
+func TestNewRunSnapshotEnforcesLocalToolOrder(t *testing.T) {
+	t.Parallel()
+
+	const (
+		runID    = "run-1"
+		session  = "session-1"
+		callID   = "call-1"
+		parentID = "parent-1"
+	)
+	toolName := tools.Ident("svc.tools.search")
+	schedule := func(name tools.Ident, parent string) hooks.Event {
+		return hooks.NewToolCallScheduledEvent(
+			runID,
+			"svc.agent",
+			session,
+			name,
+			callID,
+			[]byte(`{"q":"x"}`),
+			"",
+			parent,
+			0,
+		)
+	}
+	result := func(name tools.Ident, parent string) hooks.Event {
+		return hooks.NewToolResultReceivedEvent(
+			runID,
+			"svc.agent",
+			session,
+			runID,
+			name,
+			callID,
+			parent,
+			nil,
+			0,
+			false,
+			"",
+			nil,
+			"",
+			nil,
+			time.Second,
+			nil,
+			testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "failed"),
+		)
+	}
+	tests := []struct {
+		name    string
+		events  []hooks.Event
+		wantErr string
+	}{
+		{
+			name:    "duplicate schedule",
+			events:  []hooks.Event{schedule(toolName, ""), schedule(toolName, "")},
+			wantErr: `duplicate tool schedule for call "call-1"`,
+		},
+		{
+			name: "update before schedule",
+			events: []hooks.Event{
+				hooks.NewToolCallUpdatedEvent(runID, "svc.agent", session, callID, 1),
+			},
+			wantErr: `tool update requires active schedule for call "call-1"`,
+		},
+		{
+			name:    "result before schedule",
+			events:  []hooks.Event{result(toolName, "")},
+			wantErr: "tool schedule is required",
+		},
+		{
+			name:    "result name mismatch",
+			events:  []hooks.Event{schedule(toolName, ""), result("svc.tools.other", "")},
+			wantErr: `tool result name "svc.tools.other" does not match scheduled name "svc.tools.search"`,
+		},
+		{
+			name: "result parent mismatch",
+			events: []hooks.Event{
+				schedule("svc.tools.parent", ""),
+				hooks.NewToolCallScheduledEvent(
+					runID,
+					"svc.agent",
+					session,
+					toolName,
+					"child-1",
+					[]byte(`{}`),
+					"",
+					callID,
+					0,
+				),
+				hooks.NewToolResultReceivedEvent(
+					runID,
+					"svc.agent",
+					session,
+					runID,
+					toolName,
+					"child-1",
+					parentID,
+					nil,
+					0,
+					false,
+					"",
+					nil,
+					"",
+					nil,
+					time.Second,
+					nil,
+					testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "failed"),
+				),
+			},
+			wantErr: `tool result parent "parent-1" does not match scheduled parent "call-1"`,
+		},
+		{
+			name: "update after completion",
+			events: []hooks.Event{
+				schedule(toolName, ""),
+				result(toolName, ""),
+				hooks.NewToolCallUpdatedEvent(runID, "svc.agent", session, callID, 1),
+			},
+			wantErr: `tool update follows completion for call "call-1"`,
+		},
+		{
+			name:    "result after completion",
+			events:  []hooks.Event{schedule(toolName, ""), result(toolName, ""), result(toolName, "")},
+			wantErr: `tool result follows completion for call "call-1"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			events := make([]*runlog.Event, len(test.events))
+			for index, event := range test.events {
+				events[index] = snapshotRunlogEvent(t, event, index+1)
+			}
+			_, err := newRunSnapshot(events)
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
+func TestNewRunSnapshotValidatesToolResultPlacement(t *testing.T) {
+	t.Parallel()
+
+	schedule := func(runID string) hooks.Event {
+		return hooks.NewToolCallScheduledEvent(
+			runID,
+			"svc.agent",
+			"session-1",
+			"svc.tools.search",
+			"call-1",
+			nil,
+			"",
+			"",
+			0,
+		)
+	}
+	result := func(resultRunID, callRunID string) hooks.Event {
+		return hooks.NewToolResultReceivedEvent(
+			resultRunID,
+			"svc.agent",
+			"session-1",
+			callRunID,
+			"svc.tools.search",
+			"call-1",
+			"",
+			nil,
+			0,
+			false,
+			"",
+			nil,
+			"",
+			nil,
+			time.Second,
+			nil,
+			testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "failed"),
+		)
+	}
+	tests := []struct {
+		name    string
+		events  []hooks.Event
+		wantErr string
+	}{
+		{
+			name:   "same run with matching local schedule",
+			events: []hooks.Event{schedule("call-run"), result("call-run", "call-run")},
+		},
+		{
+			name:    "same run without local schedule",
+			events:  []hooks.Event{result("call-run", "call-run")},
+			wantErr: "tool schedule is required",
+		},
+		{
+			name:   "cross run without local schedule",
+			events: []hooks.Event{result("result-run", "call-run")},
+		},
+		{
+			name:    "cross run with local schedule",
+			events:  []hooks.Event{schedule("result-run"), result("result-run", "call-run")},
+			wantErr: "reuses a schedule from result run",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			events := make([]*runlog.Event, len(test.events))
+			for index, event := range test.events {
+				events[index] = snapshotRunlogEvent(t, event, index+1)
+			}
+			snapshot, err := newRunSnapshot(events)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, snapshot.ToolCalls, 1)
+			require.Equal(t, "call-1", snapshot.ToolCalls[0].ToolCallID)
+			require.Equal(t, tools.Ident("svc.tools.search"), snapshot.ToolCalls[0].ToolName)
+		})
+	}
+}
+
 func TestNewRunSnapshotRetainsPendingRequestWhenSuspended(t *testing.T) {
 	t.Parallel()
 
@@ -252,4 +488,26 @@ func TestNewRunSnapshotUsesTranscriptAssistantMessage(t *testing.T) {
 	}})
 	require.NoError(t, err)
 	require.Equal(t, "final hello", snap.LastAssistantMessage)
+}
+
+// snapshotRunlogEvent encodes one hook event into the oldest-first rows consumed
+// by snapshot replay tests.
+func snapshotRunlogEvent(t *testing.T, event hooks.Event, position int) *runlog.Event {
+	t.Helper()
+	input, err := hooks.EncodeToRecordInput(event, hooks.EncodeOptions{
+		TurnID:      "turn-1",
+		EventKey:    fmt.Sprintf("event-%d", position),
+		TimestampMS: int64(position),
+	})
+	require.NoError(t, err)
+	return &runlog.Event{
+		EventKey:  input.EventKey,
+		RunID:     input.RunID,
+		AgentID:   input.AgentID,
+		SessionID: input.SessionID,
+		TurnID:    input.TurnID,
+		Type:      input.Type,
+		Payload:   input.Payload,
+		Timestamp: time.UnixMilli(input.TimestampMS).UTC(),
+	}
 }

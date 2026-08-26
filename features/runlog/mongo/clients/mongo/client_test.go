@@ -451,7 +451,7 @@ func TestRequireReadyStorageRejectsWrongValidatorWithCurrentSentinel(t *testing.
 	}
 	storage := newFakeMigrationStore(nil)
 	markFakeMigrationCurrent(storage)
-	storage.validationLevel = validationModerate
+	storage.validationLevel = "moderate"
 
 	err := requireReadyStorage(context.Background(), schemas, storage)
 

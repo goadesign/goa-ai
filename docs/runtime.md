@@ -649,7 +649,10 @@ planner-visible result metadata from the canonical run log inside
 runtime execution. `ModelToolCallID` identifies the exact provider transcript
 tool-use part that produced the call and is empty for planner-authored calls.
 Planners must not use `ModelToolCallID` for execution, retry, or persistence
-correlation.
+correlation. A result recorded in the same run must follow its scheduled call.
+When supplied external input starts a continuation run, that run may contain the
+result without the earlier schedule; hydration loads the schedule from
+`CallRunID` and requires the call ID, tool name, and parent call to match exactly.
 
 Bookkeeping exception:
 
@@ -2545,35 +2548,30 @@ existing event identities and partial migration fields before generic backfill,
 backfills sequences in the database's current ObjectID order, creates immutable
 run-to-stream bindings, initializes stream counters, creates the sequence
 indexes, removes the old ObjectID cursor indexes, tightens Mongo validation,
-and writes the schema sentinel last. Applying the same migration again
-validates the completed schema without changing event order.
+verifies the final strict validator and exact index options, and writes the
+schema sentinel last. Applying the same migration after a partial failure
+repeats only idempotent writes. Once the sentinel exists, migration verifies the
+strict validator and indexes and returns `AlreadyCurrent` without scanning
+events or writing data, for both dry-run and apply calls.
 
-Applications that own additional meaning in legacy records can set
-`MigrationOptions.PrepareLegacy`. Dry-run calls it with `apply=false` before
-generic validation; the callback must not write. Apply installs the Mongo
-admission barrier first, then calls it again with `apply=true` before sequence
-backfill. Repairs in apply mode must be safe to repeat because rerunning a
-partially completed migration repeats the callback.
-
-This cutover supports a normal rolling release:
+Run this direct state transition while no run-log appends occur:
 
 1. Run the migration without `Apply` and resolve any malformed or conflicting
-   persisted records it reports.
-2. Run with `Apply: true`. Mongo first installs a moderate validator that
-   rejects every new event without a string `stream` and positive 64-bit
-   integer `sequence`, while allowing existing legacy rows to be repaired.
-3. Roll out code that uses the new MongoDB client. Old writers may remain
-   running during the rollout, but their sequence-less appends fail until those
-   processes are replaced. They cannot create more legacy rows.
+   persisted records it reports. The dry run performs no writes.
+2. Keep traffic disabled and run with `Apply: true`.
+3. After apply succeeds, restore traffic through the normal rollout of code
+   that uses the new MongoDB client.
+
+Preflight rejects every event whose persisted `session_id` is absent, null, or
+not a BSON string before migration writes begin. Session and sessionless stream
+scans then select only string-valued `session_id` fields.
 
 The new client refuses to start when the sentinel is absent or has another
 version, or when the strict validator and required indexes are absent. The
-brief append outage for old writers is intentional: there is no ObjectID
-fallback, dual-read mode, or successful mixed-version write path. If apply
-fails after the admission barrier, fix the reported cause and rerun the
-idempotent migration. Restoring legacy writes instead requires restoring the
-pre-migration database state or explicitly removing the validator before
-restarting old code.
+state change has no online or mixed-version write protocol. Services may remain
+running, but callers must ensure that no appends occur until apply completes.
+If apply fails, fix the reported cause and rerun the idempotent migration before
+the normal rollout.
 
 The run log is also the canonical hydration source for planner resumes:
 `ToolCallScheduledEvent` stores the authoritative tool payload, and
@@ -2581,6 +2579,8 @@ The run log is also the canonical hydration source for planner resumes:
 planner-visible outcome metadata and server-only sidecars once. Planner
 activity inputs now carry tool-call references only and reload canonical state
 on demand instead of accumulating duplicated summaries in workflow history.
+Hydration accepts the pair only when call ID, tool name, parent call, session,
+agent, and scheduling run identity match exactly.
 
 ### Run Phases
 

@@ -1,3 +1,6 @@
+// These tests verify that durable hook records round-trip typed event payloads
+// and envelope metadata, and that malformed stored payloads fail decoding
+// before replay consumers can observe invalid hook events.
 package hooks
 
 import (

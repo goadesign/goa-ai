@@ -116,7 +116,7 @@ type (
 	}
 
 	storageContractReader interface {
-		requireEventValidation(ctx context.Context, level string) error
+		requireEventValidation(ctx context.Context) error
 		requireEventIndexes(ctx context.Context) error
 	}
 
@@ -298,9 +298,6 @@ func (c *client) ListSession(ctx context.Context, sessionID string, cursor strin
 
 // withTimeout applies the configured per-operation deadline.
 func (c *client) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if c.timeout <= 0 {
-		return ctx, func() {}
-	}
 	return context.WithTimeout(ctx, c.timeout)
 }
 
@@ -593,7 +590,7 @@ func requireReadyStorage(ctx context.Context, schemas collection, storage storag
 	if err := requireSchema(ctx, schemas); err != nil {
 		return err
 	}
-	if err := storage.requireEventValidation(ctx, validationStrict); err != nil {
+	if err := storage.requireEventValidation(ctx); err != nil {
 		return fmt.Errorf("verify runlog Mongo event validator: %w", err)
 	}
 	if err := storage.requireEventIndexes(ctx); err != nil {

@@ -36,6 +36,35 @@ func TestMigrateDryRunApplyAndRerun(t *testing.T) {
 		assert.Empty(t, event.Stream)
 		assert.Zero(t, event.Sequence)
 	}
+	require.Equal(t, []migrationEventScan{
+		{
+			filter: nil,
+			sort: bson.D{
+				{Key: "run_id", Value: 1},
+				{Key: "event_key", Value: 1},
+				{Key: "_id", Value: 1},
+			},
+		},
+		{
+			filter: nil,
+			sort:   bson.D{{Key: "run_id", Value: 1}, {Key: "_id", Value: 1}},
+		},
+		{
+			filter: bson.D{{Key: "session_id", Value: bson.D{
+				{Key: "$type", Value: "string"},
+				{Key: "$ne", Value: ""},
+			}}},
+			sort: bson.D{{Key: "session_id", Value: 1}, {Key: "_id", Value: 1}},
+		},
+		{
+			filter: bson.D{{Key: "session_id", Value: bson.D{
+				{Key: "$type", Value: "string"},
+				{Key: "$eq", Value: ""},
+			}}},
+			sort: bson.D{{Key: "run_id", Value: 1}, {Key: "_id", Value: 1}},
+		},
+	}, store.eventScans)
+	store.eventScans = nil
 
 	applied, err := migrate(context.Background(), store, true)
 	require.NoError(t, err)
@@ -67,9 +96,39 @@ func TestMigrateDryRunApplyAndRerun(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, rerun.AlreadyCurrent)
 	assert.Zero(t, rerun.BackfillEvents)
-	assert.True(t, rerun.Applied)
-	assert.Equal(t, 2, store.indexCalls)
-	assert.Equal(t, 2, store.removeIndexCalls)
+	assert.False(t, rerun.Applied)
+	assert.Equal(t, 1, store.indexCalls)
+	assert.Equal(t, 1, store.removeIndexCalls)
+}
+
+func TestMigrateRejectsMalformedSessionIDsBeforeWrites(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		wantErr string
+	}{
+		{name: "absent", wantErr: "session_id is absent"},
+		{name: "null", wantErr: "session_id is null"},
+		{name: "wrong type", wantErr: "session_id has BSON type int"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := newFakeMigrationStore([]eventDocument{
+				legacyMigrationEvent("000000000000000000000001", "run-1", "", "evt-1"),
+			})
+			store.sessionIDValidationErr = errors.New(test.wantErr)
+
+			_, err := migrate(context.Background(), store, true)
+
+			require.ErrorContains(t, err, test.wantErr)
+			require.Empty(t, store.operations)
+			require.Empty(t, store.eventScans)
+			require.False(t, store.schemaFound)
+		})
+	}
 }
 
 func TestMigrateAppliesCurrentSchemaToEmptyDatabase(t *testing.T) {
@@ -89,112 +148,25 @@ func TestMigrateAppliesCurrentSchemaToEmptyDatabase(t *testing.T) {
 	require.Equal(t, 1, store.removeIndexCalls)
 }
 
-func TestMigratePrepareLegacyRunsBehindAdmissionBarrier(t *testing.T) {
+func TestMigrateCurrentSchemaRequiresExactStorageWithoutWrites(t *testing.T) {
 	t.Parallel()
 
-	store := newFakeMigrationStore([]eventDocument{
-		legacyMigrationEvent("000000000000000000000001", "run-1", "", "evt-1"),
-	})
-	callbackCalls := make([]bool, 0, 2)
-	prepare := func(_ context.Context, apply bool) error {
-		callbackCalls = append(callbackCalls, apply)
-		store.operations = append(store.operations, fmt.Sprintf("callback:%t", apply))
-		if !apply {
-			require.Empty(t, store.validationLevel)
-			return nil
-		}
-		require.Equal(t, validationModerate, store.validationLevel)
-		require.ErrorContains(t, store.insertLegacyEvent(), "rejected by event validator")
-		return nil
+	for _, apply := range []bool{false, true} {
+		t.Run(fmt.Sprintf("apply_%t", apply), func(t *testing.T) {
+			t.Parallel()
+
+			store := newFakeMigrationStore(nil)
+			markFakeMigrationCurrent(store)
+			store.validationLevel = "moderate"
+
+			_, err := migrate(context.Background(), store, apply)
+
+			require.ErrorContains(t, err, `validation level is "moderate", want "strict"`)
+			require.Equal(t, "moderate", store.validationLevel)
+			require.Empty(t, store.operations)
+			require.Empty(t, store.eventScans)
+		})
 	}
-
-	dryRun, err := migrateWithPrepare(context.Background(), store, false, prepare)
-	require.NoError(t, err)
-	require.False(t, dryRun.Applied)
-	require.Equal(t, []bool{false}, callbackCalls)
-	require.Empty(t, store.validationLevel)
-	require.Equal(t, []string{"callback:false"}, store.operations)
-	require.Empty(t, store.event("evt-1").Stream)
-
-	applied, err := migrateWithPrepare(context.Background(), store, true, prepare)
-	require.NoError(t, err)
-	require.True(t, applied.Applied)
-	require.Equal(t, []bool{false, true}, callbackCalls)
-	require.Equal(t, validationStrict, store.validationLevel)
-	require.Less(
-		t,
-		operationIndex(store.operations, "validation:moderate"),
-		operationIndex(store.operations, "callback:true"),
-	)
-	require.Less(
-		t,
-		operationIndex(store.operations, "callback:true"),
-		operationIndex(store.operations, "event"),
-	)
-	require.Less(
-		t,
-		operationIndex(store.operations, "validation:strict"),
-		operationIndex(store.operations, "schema"),
-	)
-}
-
-func TestMigratePrepareLegacyFailureLeavesBarrierForRerun(t *testing.T) {
-	t.Parallel()
-
-	store := newFakeMigrationStore([]eventDocument{
-		legacyMigrationEvent("000000000000000000000001", "run-1", "", "evt-1"),
-	})
-	prepareErr := errors.New("legacy validation failed")
-
-	_, err := migrateWithPrepare(
-		context.Background(),
-		store,
-		true,
-		func(context.Context, bool) error {
-			return prepareErr
-		},
-	)
-
-	require.ErrorIs(t, err, prepareErr)
-	require.ErrorContains(t, err, "prepare legacy runlog records after admission barrier")
-	require.Equal(t, validationModerate, store.validationLevel)
-	require.False(t, store.schemaFound)
-	require.Empty(t, store.event("evt-1").Stream)
-	require.ErrorContains(t, store.insertLegacyEvent(), "rejected by event validator")
-
-	report, err := migrateWithPrepare(
-		context.Background(),
-		store,
-		true,
-		func(context.Context, bool) error {
-			return nil
-		},
-	)
-	require.NoError(t, err)
-	require.True(t, report.Applied)
-	require.Equal(t, validationStrict, store.validationLevel)
-}
-
-func TestMigrateDoesNotPrepareLegacyBeforeBarrierSucceeds(t *testing.T) {
-	t.Parallel()
-
-	store := newFakeMigrationStore(nil)
-	store.failPhase = "barrier"
-	called := false
-
-	_, err := migrateWithPrepare(
-		context.Background(),
-		store,
-		true,
-		func(context.Context, bool) error {
-			called = true
-			return nil
-		},
-	)
-
-	require.ErrorContains(t, err, "install runlog Mongo admission barrier")
-	require.False(t, called)
-	require.False(t, store.schemaFound)
 }
 
 func TestMigrateRejectsMalformedAndConflictingLegacyData(t *testing.T) {
@@ -255,50 +227,32 @@ func TestMigrateRejectsMalformedAndConflictingLegacyData(t *testing.T) {
 	}
 }
 
-func TestMigrateRejectsCurrentSequenceAndCounterConflicts(t *testing.T) {
+func TestMigrateCurrentSchemaDoesNotReconstructObjectIDOrder(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name      string
-		sequences map[string]int64
-		mutate    func([]eventDocument)
-		wantErr   string
-	}{
-		{
-			name:      "missing_sequence",
-			sequences: map[string]int64{testRunStream: 2},
-			mutate: func(events []eventDocument) {
-				events[1].Sequence = 3
-			},
-			wantErr: `has ordering fields ("run:run-1", 3), want ("run:run-1", 2)`,
-		},
-		{
-			name:      "counter_behind",
-			sequences: map[string]int64{testRunStream: 1},
-			mutate:    func([]eventDocument) {},
-			wantErr:   `counter is 1, want 2`,
-		},
+	events := []eventDocument{
+		legacyMigrationEvent("000000000000000000000002", "run-1", "", "evt-2"),
+		legacyMigrationEvent("000000000000000000000001", "run-1", "", "evt-1"),
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+	events[0].Stream, events[0].Sequence = testRunStream, 1
+	events[1].Stream, events[1].Sequence = testRunStream, 2
+	for _, apply := range []bool{false, true} {
+		t.Run(fmt.Sprintf("apply_%t", apply), func(t *testing.T) {
 			t.Parallel()
-			events := []eventDocument{
-				legacyMigrationEvent("000000000000000000000001", "run-1", "", "evt-1"),
-				legacyMigrationEvent("000000000000000000000002", "run-1", "", "evt-2"),
-			}
-			for index := range events {
-				events[index].Stream = testRunStream
-				events[index].Sequence = int64(index + 1)
-			}
-			test.mutate(events)
+
 			store := newFakeMigrationStore(events)
 			markFakeMigrationCurrent(store)
-			store.sequences = test.sequences
-			store.bindings["run-1"] = testRunStream
 
-			_, err := migrate(context.Background(), store, false)
+			report, err := migrate(context.Background(), store, apply)
 
-			require.ErrorContains(t, err, test.wantErr)
+			require.NoError(t, err)
+			require.True(t, report.AlreadyCurrent)
+			require.Zero(t, report.ExaminedEvents)
+			require.Zero(t, report.Streams)
+			require.Zero(t, report.BackfillEvents)
+			require.False(t, report.Applied)
+			require.Empty(t, store.eventScans)
+			require.Empty(t, store.operations)
 		})
 	}
 }
@@ -328,46 +282,35 @@ func TestMigrateBackfillsBindingsFromPreviousSchema(t *testing.T) {
 	require.Equal(t, schemaVersion, store.schema.Version)
 }
 
-func TestMigrateRejectsMissingOrConflictingCurrentBinding(t *testing.T) {
+func TestMigrateRejectsConflictingLegacyBinding(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name      string
-		binding   string
-		wantError string
-	}{
-		{
-			name:      "missing",
-			wantError: `runlog run "run-1" is missing its stream binding`,
-		},
-		{
-			name:      "conflicting",
-			binding:   "session:other",
-			wantError: `runlog run "run-1" binding is "session:other", want "session:session-1"`,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
+	event := legacyMigrationEvent("000000000000000000000001", "run-1", "session-1", "evt-1")
+	store := newFakeMigrationStore([]eventDocument{event})
+	store.bindings["run-1"] = "session:other"
 
-			event := legacyMigrationEvent("000000000000000000000001", "run-1", "session-1", "evt-1")
-			event.Stream = "session:session-1"
-			event.Sequence = 1
-			store := newFakeMigrationStore([]eventDocument{event})
-			markFakeMigrationCurrent(store)
-			store.sequences["session:session-1"] = 1
-			if test.binding != "" {
-				store.bindings["run-1"] = test.binding
-			}
+	_, err := migrate(context.Background(), store, false)
 
-			_, err := migrate(context.Background(), store, false)
-
-			require.ErrorContains(t, err, test.wantError)
-		})
-	}
+	require.ErrorContains(
+		t,
+		err,
+		`runlog run "run-1" binding is "session:other", want "session:session-1"`,
+	)
 }
 
-func TestMigrateRejectsMissingAndOrphanPrivateState(t *testing.T) {
+func TestMigrateRejectsConflictingLegacyCounter(t *testing.T) {
+	t.Parallel()
+
+	event := legacyMigrationEvent("000000000000000000000001", "run-1", "", "evt-1")
+	store := newFakeMigrationStore([]eventDocument{event})
+	store.sequences[testRunStream] = 2
+
+	_, err := migrate(context.Background(), store, false)
+
+	require.ErrorContains(t, err, `runlog stream "run:run-1" counter is 2, want 1`)
+}
+
+func TestMigrateRejectsOrphanPrivateState(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -376,26 +319,14 @@ func TestMigrateRejectsMissingAndOrphanPrivateState(t *testing.T) {
 		wantError string
 	}{
 		{
-			name: "missing_current_counter",
-			configure: func(store *fakeMigrationStore) {
-				event := legacyMigrationEvent("000000000000000000000001", "run-1", "", "evt-1")
-				event.Stream = testRunStream
-				event.Sequence = 1
-				store.events = []eventDocument{event}
-				store.bindings["run-1"] = testRunStream
-				markFakeMigrationCurrent(store)
-			},
-			wantError: `runlog stream "run:run-1" is missing its sequence counter`,
-		},
-		{
-			name: "orphan_binding",
+			name: "binding",
 			configure: func(store *fakeMigrationStore) {
 				store.bindings["run-1"] = testRunStream
 			},
 			wantError: `runlog binding for run "run-1" has no event`,
 		},
 		{
-			name: "orphan_counter",
+			name: "counter",
 			configure: func(store *fakeMigrationStore) {
 				store.sequences[testRunStream] = 1
 			},
@@ -424,7 +355,6 @@ func TestMigrateRerunsAfterPartialPhaseFailure(t *testing.T) {
 		phase     string
 		failAfter int
 	}{
-		{name: "admission_barrier", phase: "barrier"},
 		{name: "event_backfill", phase: "events", failAfter: 1},
 		{name: "binding_backfill", phase: "bindings", failAfter: 1},
 		{name: "counter_initialization", phase: "counters", failAfter: 1},
@@ -463,6 +393,110 @@ func TestMigrateRerunsAfterPartialPhaseFailure(t *testing.T) {
 	}
 }
 
+func TestVerifyEventIndexesRejectsBehaviorChangingRequiredIndexOptions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		mutate    func([]eventIndexDocument)
+		wantError bool
+	}{
+		{
+			name:   "ordinary required indexes",
+			mutate: func([]eventIndexDocument) {},
+		},
+		{
+			name: "partial filter",
+			mutate: func(indexes []eventIndexDocument) {
+				indexes[0].PartialFilterExpression = bson.Raw{1}
+			},
+			wantError: true,
+		},
+		{
+			name: "sparse",
+			mutate: func(indexes []eventIndexDocument) {
+				indexes[0].Sparse = true
+			},
+			wantError: true,
+		},
+		{
+			name: "hidden",
+			mutate: func(indexes []eventIndexDocument) {
+				indexes[0].Hidden = true
+			},
+			wantError: true,
+		},
+		{
+			name: "collation",
+			mutate: func(indexes []eventIndexDocument) {
+				indexes[0].Collation = bson.Raw{1}
+			},
+			wantError: true,
+		},
+		{
+			name: "TTL",
+			mutate: func(indexes []eventIndexDocument) {
+				indexes[0].ExpireAfterSeconds = bson.RawValue{Type: bson.TypeInt32}
+			},
+			wantError: true,
+		},
+		{
+			name: "clustered",
+			mutate: func(indexes []eventIndexDocument) {
+				indexes[0].Clustered = true
+			},
+			wantError: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			indexes := requiredEventIndexDocuments()
+			test.mutate(indexes)
+
+			err := verifyEventIndexes(indexes)
+			if test.wantError {
+				require.ErrorContains(t, err, "has behavior-changing options")
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestVerifyEventIndexesIgnoresOptionsOnUnrelatedIndex(t *testing.T) {
+	t.Parallel()
+
+	indexes := append(requiredEventIndexDocuments(), eventIndexDocument{
+		Name:                    "unrelated",
+		Keys:                    bson.D{{Key: "other", Value: int32(1)}},
+		PartialFilterExpression: bson.Raw{1},
+		Sparse:                  true,
+		Hidden:                  true,
+		Collation:               bson.Raw{1},
+		ExpireAfterSeconds:      bson.RawValue{Type: bson.TypeInt32},
+		Clustered:               true,
+	})
+
+	require.NoError(t, verifyEventIndexes(indexes))
+}
+
+// requiredEventIndexDocuments creates the ordinary full indexes that satisfy
+// every migration requirement before one test changes a focused option.
+func requiredEventIndexDocuments() []eventIndexDocument {
+	requirements := requiredEventIndexes()
+	indexes := make([]eventIndexDocument, len(requirements))
+	for index, requirement := range requirements {
+		indexes[index] = eventIndexDocument{
+			Name:   fmt.Sprintf("required-%d", index),
+			Keys:   requirement.keys,
+			Unique: requirement.unique,
+		}
+	}
+	return indexes
+}
+
 func legacyMigrationEvent(id, runID, sessionID, eventKey string) eventDocument {
 	objectID, err := bson.ObjectIDFromHex(id)
 	if err != nil {
@@ -477,20 +511,27 @@ func legacyMigrationEvent(id, runID, sessionID, eventKey string) eventDocument {
 }
 
 type fakeMigrationStore struct {
-	events           []eventDocument
-	sequences        map[string]int64
-	bindings         map[string]string
-	validationLevel  string
-	indexesReady     bool
-	legacyIndexes    bool
-	schema           schemaDocument
-	schemaFound      bool
-	indexCalls       int
-	removeIndexCalls int
-	operations       []string
-	failPhase        string
-	failAfter        int
-	phaseCalls       map[string]int
+	events                 []eventDocument
+	eventScans             []migrationEventScan
+	sequences              map[string]int64
+	bindings               map[string]string
+	validationLevel        string
+	indexesReady           bool
+	legacyIndexes          bool
+	schema                 schemaDocument
+	schemaFound            bool
+	indexCalls             int
+	removeIndexCalls       int
+	operations             []string
+	failPhase              string
+	failAfter              int
+	phaseCalls             map[string]int
+	sessionIDValidationErr error
+}
+
+type migrationEventScan struct {
+	filter bson.D
+	sort   bson.D
 }
 
 func newFakeMigrationStore(events []eventDocument) *fakeMigrationStore {
@@ -513,12 +554,23 @@ func markFakeMigrationCurrent(store *fakeMigrationStore) {
 	store.legacyIndexes = false
 }
 
-func (s *fakeMigrationStore) scanEvents(_ context.Context, sortOrder bson.D, visit func(eventDocument) error) error {
+func (s *fakeMigrationStore) validateSessionIDs(context.Context) error {
+	return s.sessionIDValidationErr
+}
+
+func (s *fakeMigrationStore) scanEvents(_ context.Context, filter, sortOrder bson.D, visit func(eventDocument) error) error {
+	s.eventScans = append(s.eventScans, migrationEventScan{
+		filter: append(bson.D(nil), filter...),
+		sort:   append(bson.D(nil), sortOrder...),
+	})
 	events := append([]eventDocument(nil), s.events...)
 	sort.Slice(events, func(i, j int) bool {
 		return migrationEventLess(events[i], events[j], sortOrder)
 	})
 	for _, event := range events {
+		if !migrationEventMatches(event, filter) {
+			continue
+		}
 		if err := visit(event); err != nil {
 			return err
 		}
@@ -586,6 +638,15 @@ func (s *fakeMigrationStore) loadSequence(_ context.Context, stream string) (seq
 	return sequenceDocument{Stream: stream, Sequence: sequence}, ok, nil
 }
 
+func (s *fakeMigrationStore) hasEventStream(_ context.Context, stream string) (bool, error) {
+	for _, event := range s.events {
+		if streamKey(event.RunID, event.SessionID) == stream {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *fakeMigrationStore) updateEvent(_ context.Context, event eventDocument, stream string, sequence int64) error {
 	s.operations = append(s.operations, "event")
 	if err := s.fail("events"); err != nil {
@@ -639,22 +700,18 @@ func (s *fakeMigrationStore) removeLegacyIndexes(context.Context) error {
 	return nil
 }
 
-func (s *fakeMigrationStore) setEventValidation(_ context.Context, level string) error {
-	s.operations = append(s.operations, "validation:"+level)
-	phase := "strict_validation"
-	if level == validationModerate {
-		phase = "barrier"
-	}
-	if err := s.fail(phase); err != nil {
+func (s *fakeMigrationStore) setEventValidation(context.Context) error {
+	s.operations = append(s.operations, "validation:"+validationStrict)
+	if err := s.fail("strict_validation"); err != nil {
 		return err
 	}
-	s.validationLevel = level
+	s.validationLevel = validationStrict
 	return nil
 }
 
-func (s *fakeMigrationStore) requireEventValidation(_ context.Context, level string) error {
-	if s.validationLevel != level {
-		return fmt.Errorf("validation level is %q, want %q", s.validationLevel, level)
+func (s *fakeMigrationStore) requireEventValidation(context.Context) error {
+	if s.validationLevel != validationStrict {
+		return fmt.Errorf("validation level is %q, want %q", s.validationLevel, validationStrict)
 	}
 	return nil
 }
@@ -688,20 +745,6 @@ func (s *fakeMigrationStore) event(eventKey string) eventDocument {
 	panic("event not found: " + eventKey)
 }
 
-// insertLegacyEvent simulates an old writer that omits both ordering fields.
-func (s *fakeMigrationStore) insertLegacyEvent() error {
-	if s.validationLevel == validationModerate || s.validationLevel == validationStrict {
-		return fmt.Errorf("legacy insert rejected by event validator")
-	}
-	s.events = append(s.events, legacyMigrationEvent(
-		"000000000000000000000099",
-		"legacy-run",
-		"",
-		"legacy-event",
-	))
-	return nil
-}
-
 // fail returns an injected error after the configured number of successful
 // writes in one migration phase.
 func (s *fakeMigrationStore) fail(phase string) error {
@@ -726,6 +769,10 @@ func operationIndex(operations []string, want string) int {
 // projected event rows.
 func migrationEventLess(left, right eventDocument, sortOrder bson.D) bool {
 	for _, field := range sortOrder {
+		direction, ok := field.Value.(int)
+		if !ok || direction != 1 {
+			panic(fmt.Sprintf("unsupported event sort direction for %q: %v", field.Key, field.Value))
+		}
 		var leftValue, rightValue string
 		switch field.Key {
 		case "_id":
@@ -734,6 +781,8 @@ func migrationEventLess(left, right eventDocument, sortOrder bson.D) bool {
 			leftValue, rightValue = left.RunID, right.RunID
 		case "event_key":
 			leftValue, rightValue = left.EventKey, right.EventKey
+		case "session_id":
+			leftValue, rightValue = left.SessionID, right.SessionID
 		default:
 			panic("unsupported event sort field: " + field.Key)
 		}
@@ -742,4 +791,32 @@ func migrationEventLess(left, right eventDocument, sortOrder bson.D) bool {
 		}
 	}
 	return false
+}
+
+// migrationEventMatches applies the two session filters emitted by the
+// production migration store.
+func migrationEventMatches(event eventDocument, filter bson.D) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	if len(filter) != 1 || filter[0].Key != "session_id" {
+		panic(fmt.Sprintf("unsupported event filter: %v", filter))
+	}
+	value, ok := filter[0].Value.(bson.D)
+	if !ok || len(value) != 2 ||
+		value[0].Key != "$type" || value[0].Value != "string" {
+		panic(fmt.Sprintf("unsupported session event filter value: %v", filter[0].Value))
+	}
+	sessionID, ok := value[1].Value.(string)
+	if !ok {
+		panic(fmt.Sprintf("unsupported session event filter value: %v", value[1].Value))
+	}
+	switch value[1].Key {
+	case "$eq":
+		return event.SessionID == sessionID
+	case "$ne":
+		return event.SessionID != sessionID
+	default:
+		panic(fmt.Sprintf("unsupported session event filter value: %v", value))
+	}
 }
