@@ -83,17 +83,15 @@ func buildCompleteGeneratedFiles(t *testing.T, design func()) []*goacodegen.File
 }
 
 // writeCompleteGeneratedModule renders files into a temporary module that uses
-// the local goa-ai and Goa checkouts under test.
+// the local goa-ai checkout and the Goa version selected by its module file.
 func writeCompleteGeneratedModule(t *testing.T, files []*goacodegen.File) string {
 	t.Helper()
 	root := t.TempDir()
 	goaAI, err := filepath.Abs("../../..")
 	require.NoError(t, err)
-	goa := filepath.Clean(filepath.Join(goaAI, "..", "goa"))
 	goMod := "module generated.local\n\ngo 1.24\n\n" +
-		"require (\n\tgoa.design/goa-ai v0.0.0\n\tgoa.design/goa/v3 v3.0.0\n)\n\n" +
-		"replace goa.design/goa-ai => " + filepath.ToSlash(goaAI) + "\n" +
-		"replace goa.design/goa/v3 => " + filepath.ToSlash(goa) + "\n"
+		"require goa.design/goa-ai v0.0.0\n\n" +
+		"replace goa.design/goa-ai => " + filepath.ToSlash(goaAI) + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o600))
 	for _, file := range files {
 		_, err := file.Render(root)
