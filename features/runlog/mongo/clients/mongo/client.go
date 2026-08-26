@@ -1,6 +1,7 @@
 // Package mongo implements the low-level MongoDB client used by the run log
-// store. Append-only event documents stay in one collection and retain stable
-// identities for workflow retries.
+// store. Each append transaction reserves the next position in a private
+// session-or-run sequence and inserts the event at that position. Event
+// ObjectIDs remain MongoDB document identities and never control replay order.
 package mongo
 
 //go:generate cmg gen .
@@ -10,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -21,7 +23,6 @@ import (
 	"goa.design/clue/health"
 
 	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/runlog"
 )
 
@@ -37,20 +38,30 @@ type (
 
 	// Options configures the Mongo client implementation.
 	Options struct {
-		Client     *mongodriver.Client
-		Database   string
+		// Client is the connected MongoDB client.
+		Client *mongodriver.Client
+		// Database is the database that owns the run-log collections.
+		Database string
+		// Collection is the event collection name. Empty uses
+		// "agent_run_events".
 		Collection string
-		Timeout    time.Duration
+		// Timeout bounds each client operation. Non-positive values use five
+		// seconds.
+		Timeout time.Duration
 	}
 
 	client struct {
-		mongo   *mongodriver.Client
-		coll    collection
-		timeout time.Duration
+		mongo        *mongodriver.Client
+		coll         collection
+		sequences    collection
+		transactions transactionRunner
+		timeout      time.Duration
 	}
 
 	eventDocument struct {
 		ID        bson.ObjectID `bson:"_id,omitempty"`
+		Stream    string        `bson:"stream"`
+		Sequence  int64         `bson:"sequence"`
 		EventKey  string        `bson:"event_key"`
 		RunID     string        `bson:"run_id"`
 		AgentID   string        `bson:"agent_id"`
@@ -60,12 +71,69 @@ type (
 		Payload   []byte        `bson:"payload"`
 		Timestamp time.Time     `bson:"timestamp"`
 	}
+
+	sequenceDocument struct {
+		Stream   string `bson:"_id"`
+		Sequence int64  `bson:"sequence"`
+	}
+
+	schemaDocument struct {
+		Name    string `bson:"_id"`
+		Version int    `bson:"version"`
+	}
+
+	collection interface {
+		InsertOne(ctx context.Context, document any, opts ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error)
+		FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult
+		FindOneAndUpdate(ctx context.Context, filter, update any, opts ...options.Lister[options.FindOneAndUpdateOptions]) singleResult
+		Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error)
+		Indexes() indexView
+	}
+
+	transactionRunner interface {
+		WithTransaction(ctx context.Context, fn func(context.Context) error) error
+	}
+
+	indexView interface {
+		CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) (string, error)
+	}
+
+	cursor interface {
+		Next(ctx context.Context) bool
+		Decode(val any) error
+		Err() error
+		Close(ctx context.Context) error
+	}
+
+	singleResult interface {
+		Decode(val any) error
+	}
+
+	mongoCollection struct {
+		coll *mongodriver.Collection
+	}
+
+	mongoTransactionRunner struct {
+		client *mongodriver.Client
+	}
+
+	mongoCursor struct {
+		cur *mongodriver.Cursor
+	}
+
+	mongoIndexView struct {
+		view mongodriver.IndexView
+	}
 )
 
 const (
-	defaultCollection = "agent_run_events"
-	defaultTimeout    = 5 * time.Second
-	clientName        = "runlog-mongo"
+	defaultCollection        = "agent_run_events"
+	defaultTimeout           = 5 * time.Second
+	clientName               = "runlog-mongo"
+	sequenceCollectionSuffix = "_sequences"
+	schemaCollectionSuffix   = "_schema"
+	schemaSentinelID         = "runlog"
+	schemaVersion            = 1
 )
 
 // New returns a Client backed by the provided MongoDB client.
@@ -87,24 +155,39 @@ func New(opts Options) (Client, error) {
 
 	database := opts.Client.Database(opts.Database)
 	mcoll := database.Collection(collection)
+	sequenceColl := database.Collection(collection + sequenceCollectionSuffix)
+	schemaColl := database.Collection(collection + schemaCollectionSuffix)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	wrapper := mongoCollection{coll: mcoll}
+	if err := requireSchema(ctx, mongoCollection{coll: schemaColl}); err != nil {
+		return nil, err
+	}
 	if err := ensureIndexes(ctx, wrapper); err != nil {
 		return nil, err
 	}
-	return newClientWithCollection(opts.Client, wrapper, timeout)
+	return newClientWithCollections(
+		opts.Client,
+		wrapper,
+		mongoCollection{coll: sequenceColl},
+		mongoTransactionRunner{client: opts.Client},
+		timeout,
+	)
 }
 
+// Name returns the identifier used by health reporting.
 func (c *client) Name() string {
 	return clientName
 }
 
+// Ping verifies that the MongoDB primary is reachable.
 func (c *client) Ping(ctx context.Context) error {
 	return c.mongo.Ping(ctx, readpref.Primary())
 }
 
+// Append reserves one stream position and inserts the immutable event in the
+// same transaction. Exact activity retries return the existing position.
 func (c *client) Append(ctx context.Context, e *runlog.Event) (runlog.AppendResult, error) {
 	if e == nil {
 		return runlog.AppendResult{}, errors.New("event is required")
@@ -126,6 +209,7 @@ func (c *client) Append(ctx context.Context, e *runlog.Event) (runlog.AppendResu
 	defer cancel()
 
 	doc := eventDocument{
+		Stream:    streamKey(e.RunID, e.SessionID),
 		EventKey:  e.EventKey,
 		RunID:     e.RunID,
 		AgentID:   string(e.AgentID),
@@ -135,29 +219,43 @@ func (c *client) Append(ctx context.Context, e *runlog.Event) (runlog.AppendResu
 		Payload:   append([]byte(nil), e.Payload...),
 		Timestamp: e.Timestamp.UTC(),
 	}
-	res, err := c.coll.InsertOne(ctx, doc)
+	err := c.transactions.WithTransaction(ctx, func(txCtx context.Context) error {
+		sequence, err := c.nextSequence(txCtx, doc.Stream)
+		if err != nil {
+			return err
+		}
+		doc.Sequence = sequence
+		res, err := c.coll.InsertOne(txCtx, doc)
+		if err != nil {
+			return err
+		}
+		if _, ok := res.InsertedID.(bson.ObjectID); !ok {
+			return fmt.Errorf("unexpected inserted id type %T", res.InsertedID)
+		}
+		return nil
+	})
 	if err != nil {
 		if mongodriver.IsDuplicateKeyError(err) {
 			existing, lookupErr := c.lookupEventByKey(ctx, e.RunID, e.EventKey)
 			if lookupErr != nil {
+				if errors.Is(lookupErr, mongodriver.ErrNoDocuments) {
+					return runlog.AppendResult{}, err
+				}
 				return runlog.AppendResult{}, lookupErr
 			}
 			if !sameEventDocument(existing, doc) {
 				return runlog.AppendResult{}, fmt.Errorf("event key %q conflicts with existing event body", e.EventKey)
 			}
-			e.ID = existing.ID.Hex()
+			e.ID = strconv.FormatInt(existing.Sequence, 10)
 			return runlog.AppendResult{ID: e.ID, Inserted: false}, nil
 		}
 		return runlog.AppendResult{}, err
 	}
-	oid, ok := res.InsertedID.(bson.ObjectID)
-	if !ok {
-		return runlog.AppendResult{}, fmt.Errorf("unexpected inserted id type %T", res.InsertedID)
-	}
-	e.ID = oid.Hex()
+	e.ID = strconv.FormatInt(doc.Sequence, 10)
 	return runlog.AppendResult{ID: e.ID, Inserted: true}, nil
 }
 
+// List returns one oldest-first page for a run using a sequence cursor.
 func (c *client) List(ctx context.Context, runID string, cursor string, limit int) (page runlog.Page, err error) {
 	if runID == "" {
 		return runlog.Page{}, errors.New("run id is required")
@@ -168,6 +266,7 @@ func (c *client) List(ctx context.Context, runID string, cursor string, limit in
 	return c.listWithFilter(ctx, bson.M{"run_id": runID}, cursor, limit)
 }
 
+// ListSession returns one oldest-first page across all runs in a session.
 func (c *client) ListSession(ctx context.Context, sessionID string, cursor string, limit int) (page runlog.Page, err error) {
 	if sessionID == "" {
 		return runlog.Page{}, errors.New("session id is required")
@@ -178,6 +277,7 @@ func (c *client) ListSession(ctx context.Context, sessionID string, cursor strin
 	return c.listWithFilter(ctx, bson.M{"session_id": sessionID}, cursor, limit)
 }
 
+// withTimeout applies the configured per-operation deadline.
 func (c *client) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	if c.timeout <= 0 {
 		return ctx, func() {}
@@ -188,18 +288,21 @@ func (c *client) withTimeout(ctx context.Context) (context.Context, context.Canc
 // listWithFilter applies one cursor-scoped forward scan over the event collection.
 func (c *client) listWithFilter(ctx context.Context, filter bson.M, cursor string, limit int) (page runlog.Page, err error) {
 	if cursor != "" {
-		oid, err := bson.ObjectIDFromHex(cursor)
+		sequence, err := strconv.ParseInt(cursor, 10, 64)
 		if err != nil {
 			return runlog.Page{}, fmt.Errorf("invalid cursor %q: %w", cursor, err)
 		}
-		filter["_id"] = bson.M{"$gt": oid}
+		if sequence <= 0 {
+			return runlog.Page{}, fmt.Errorf("invalid cursor %q: must identify a stored event", cursor)
+		}
+		filter["sequence"] = bson.M{"$gt": sequence}
 	}
 
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
 
 	cur, err := c.coll.Find(ctx, filter, options.Find().
-		SetSort(bson.D{{Key: "_id", Value: 1}}).
+		SetSort(bson.D{{Key: "sequence", Value: 1}}).
 		SetLimit(int64(limit+1)),
 	)
 	if err != nil {
@@ -218,13 +321,13 @@ func (c *client) listWithFilter(ctx context.Context, filter bson.M, cursor strin
 			return runlog.Page{}, err
 		}
 		events = append(events, &runlog.Event{
-			ID:        doc.ID.Hex(),
+			ID:        strconv.FormatInt(doc.Sequence, 10),
 			EventKey:  doc.EventKey,
 			RunID:     doc.RunID,
 			AgentID:   agent.Ident(doc.AgentID),
 			SessionID: doc.SessionID,
 			TurnID:    doc.TurnID,
-			Type:      hooks.EventType(doc.Type),
+			Type:      runlog.Type(doc.Type),
 			Payload:   append([]byte(nil), doc.Payload...),
 			Timestamp: doc.Timestamp,
 		})
@@ -244,11 +347,13 @@ func (c *client) listWithFilter(ctx context.Context, filter bson.M, cursor strin
 	}, nil
 }
 
+// ensureIndexes creates the query and uniqueness indexes required by
+// sequence-only replay.
 func ensureIndexes(ctx context.Context, coll collection) error {
 	cursorIndex := mongodriver.IndexModel{
 		Keys: bson.D{
 			{Key: "run_id", Value: 1},
-			{Key: "_id", Value: 1},
+			{Key: "sequence", Value: 1},
 		},
 	}
 	if _, err := coll.Indexes().CreateOne(ctx, cursorIndex); err != nil {
@@ -257,10 +362,20 @@ func ensureIndexes(ctx context.Context, coll collection) error {
 	sessionCursorIndex := mongodriver.IndexModel{
 		Keys: bson.D{
 			{Key: "session_id", Value: 1},
-			{Key: "_id", Value: 1},
+			{Key: "sequence", Value: 1},
 		},
 	}
 	if _, err := coll.Indexes().CreateOne(ctx, sessionCursorIndex); err != nil {
+		return err
+	}
+	streamSequenceIndex := mongodriver.IndexModel{
+		Keys: bson.D{
+			{Key: "stream", Value: 1},
+			{Key: "sequence", Value: 1},
+		},
+		Options: options.Index().SetUnique(true),
+	}
+	if _, err := coll.Indexes().CreateOne(ctx, streamSequenceIndex); err != nil {
 		return err
 	}
 	identityIndex := mongodriver.IndexModel{
@@ -274,44 +389,34 @@ func ensureIndexes(ctx context.Context, coll collection) error {
 	return err
 }
 
-func newClientWithCollection(mongoClient *mongodriver.Client, coll collection, timeout time.Duration) (*client, error) {
+// newClientWithCollections assembles the client from storage operations. Tests
+// supply in-memory implementations that preserve the same transaction contract.
+func newClientWithCollections(
+	mongoClient *mongodriver.Client,
+	coll collection,
+	sequences collection,
+	transactions transactionRunner,
+	timeout time.Duration,
+) (*client, error) {
 	if coll == nil {
 		return nil, errors.New("collection is required")
+	}
+	if sequences == nil {
+		return nil, errors.New("sequence collection is required")
+	}
+	if transactions == nil {
+		return nil, errors.New("transaction runner is required")
 	}
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
 	return &client{
-		mongo:   mongoClient,
-		coll:    coll,
-		timeout: timeout,
+		mongo:        mongoClient,
+		coll:         coll,
+		sequences:    sequences,
+		transactions: transactions,
+		timeout:      timeout,
 	}, nil
-}
-
-type collection interface {
-	InsertOne(ctx context.Context, document any, opts ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error)
-	FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult
-	Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error)
-	Indexes() indexView
-}
-
-type indexView interface {
-	CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) (string, error)
-}
-
-type cursor interface {
-	Next(ctx context.Context) bool
-	Decode(val any) error
-	Err() error
-	Close(ctx context.Context) error
-}
-
-type singleResult interface {
-	Decode(val any) error
-}
-
-type mongoCollection struct {
-	coll *mongodriver.Collection
 }
 
 func (c mongoCollection) InsertOne(ctx context.Context, document any, opts ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error) {
@@ -330,12 +435,26 @@ func (c mongoCollection) FindOne(ctx context.Context, filter any, opts ...option
 	return c.coll.FindOne(ctx, filter, opts...)
 }
 
+func (c mongoCollection) FindOneAndUpdate(ctx context.Context, filter, update any, opts ...options.Lister[options.FindOneAndUpdateOptions]) singleResult {
+	return c.coll.FindOneAndUpdate(ctx, filter, update, opts...)
+}
+
 func (c mongoCollection) Indexes() indexView {
 	return mongoIndexView{view: c.coll.Indexes()}
 }
 
-type mongoCursor struct {
-	cur *mongodriver.Cursor
+// WithTransaction runs sequence allocation and event insertion in one Mongo
+// transaction so a visible event always owns exactly one stream position.
+func (r mongoTransactionRunner) WithTransaction(ctx context.Context, fn func(context.Context) error) error {
+	session, err := r.client.StartSession()
+	if err != nil {
+		return err
+	}
+	defer session.EndSession(ctx)
+	_, err = session.WithTransaction(ctx, func(txCtx context.Context) (any, error) {
+		return nil, fn(txCtx)
+	})
+	return err
 }
 
 func (c mongoCursor) Next(ctx context.Context) bool {
@@ -354,14 +473,12 @@ func (c mongoCursor) Close(ctx context.Context) error {
 	return c.cur.Close(ctx)
 }
 
-type mongoIndexView struct {
-	view mongodriver.IndexView
-}
-
 func (v mongoIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
 	return v.view.CreateOne(ctx, model, opts...)
 }
 
+// lookupEventByKey loads the first successful append after a unique-key error
+// so Append can distinguish an exact retry from a conflicting event body.
 func (c *client) lookupEventByKey(ctx context.Context, runID string, eventKey string) (eventDocument, error) {
 	var doc eventDocument
 	err := c.coll.FindOne(ctx, bson.M{
@@ -374,6 +491,61 @@ func (c *client) lookupEventByKey(ctx context.Context, runID string, eventKey st
 	return doc, nil
 }
 
+// nextSequence advances the counter for one session or one sessionless run.
+// The caller's transaction also inserts the event that receives this position.
+func (c *client) nextSequence(ctx context.Context, stream string) (int64, error) {
+	var counter sequenceDocument
+	err := c.sequences.FindOneAndUpdate(
+		ctx,
+		bson.M{"_id": stream},
+		bson.M{"$inc": bson.M{"sequence": int64(1)}},
+		options.FindOneAndUpdate().
+			SetUpsert(true).
+			SetReturnDocument(options.After),
+	).Decode(&counter)
+	if err != nil {
+		return 0, err
+	}
+	if counter.Sequence <= 0 {
+		return 0, fmt.Errorf("stream %q returned invalid sequence %d", stream, counter.Sequence)
+	}
+	return counter.Sequence, nil
+}
+
+// requireSchema rejects databases that have not completed the sequence
+// migration. The migration writes this sentinel only after all event documents,
+// counters, and indexes are ready for sequence-only reads.
+func requireSchema(ctx context.Context, schemas collection) error {
+	var sentinel schemaDocument
+	err := schemas.FindOne(ctx, bson.M{"_id": schemaSentinelID}).Decode(&sentinel)
+	if errors.Is(err, mongodriver.ErrNoDocuments) {
+		return fmt.Errorf("runlog Mongo schema migration %d is required", schemaVersion)
+	}
+	if err != nil {
+		return fmt.Errorf("load runlog Mongo schema sentinel: %w", err)
+	}
+	if sentinel.Name != schemaSentinelID || sentinel.Version != schemaVersion {
+		return fmt.Errorf(
+			"runlog Mongo schema version %d is required, found %d",
+			schemaVersion,
+			sentinel.Version,
+		)
+	}
+	return nil
+}
+
+// streamKey selects the only ordering stream that may assign an event's
+// sequence. Session-backed runs share one stream; one-shot runs use their run.
+func streamKey(runID, sessionID string) string {
+	if sessionID != "" {
+		return "session:" + sessionID
+	}
+	return "run:" + runID
+}
+
+// sameEventDocument compares the immutable caller-owned event body. Sequence,
+// ObjectID, and retry-attempt timestamp are assigned by the first successful
+// append and therefore do not participate in retry equality.
 func sameEventDocument(existing eventDocument, candidate eventDocument) bool {
 	return existing.EventKey == candidate.EventKey &&
 		existing.RunID == candidate.RunID &&
@@ -381,6 +553,5 @@ func sameEventDocument(existing eventDocument, candidate eventDocument) bool {
 		existing.SessionID == candidate.SessionID &&
 		existing.TurnID == candidate.TurnID &&
 		existing.Type == candidate.Type &&
-		existing.Timestamp.Equal(candidate.Timestamp) &&
 		bytes.Equal(existing.Payload, candidate.Payload)
 }
