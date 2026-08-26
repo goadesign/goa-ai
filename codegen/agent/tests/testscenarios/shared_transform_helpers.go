@@ -5,15 +5,21 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-// SharedTransformHelpers defines two required nested values and one optional
-// nested value across separate service-backed tools.
+// SharedTransformHelpers defines deep required and optional values across
+// separate service-backed tools.
 func SharedTransformHelpers() func() {
 	return func() {
 		API("alpha", func() {})
 
+		var Grandchild = Type("SharedGrandchild", func() {
+			Attribute("label", String, "Label")
+			Required("label")
+			Meta("struct:pkg:path", "shared/grandchild")
+		})
 		var Child = Type("SharedChild", func() {
 			Attribute("value", String, "Value")
-			Required("value")
+			Attribute("grandchild", Grandchild, "Nested value")
+			Required("value", "grandchild")
 		})
 		var RequiredPayload = Type("RequiredPayload", func() {
 			Attribute("child", Child, "Child value")

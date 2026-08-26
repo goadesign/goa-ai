@@ -34,11 +34,17 @@ func (p *toolSpecsPlan) planMethodBindings(design *ir.Design, servicePlan *servi
 		if err != nil {
 			return err
 		}
-		if err := planProviderImports(specs, servicePlan, serviceImport, tools); err != nil {
+		if err := planProviderImports(specs, serviceImport, tools); err != nil {
 			return fmt.Errorf("plan method toolset %q provider imports: %w", reference.QualifiedName, err)
 		}
+		if err := specs.setMethodTransformLayouts(servicePlan, tools); err != nil {
+			return fmt.Errorf("plan method toolset %q conversion layouts: %w", reference.QualifiedName, err)
+		}
+		if err := specs.planAdapterTransformImports(); err != nil {
+			return fmt.Errorf("plan method toolset %q conversion imports: %w", reference.QualifiedName, err)
+		}
 	}
-	return nil
+	return p.finalizeTransformHelpers()
 }
 
 // methodToolsetServiceImport returns the Goa service package used by a
@@ -58,7 +64,6 @@ func methodToolsetServiceImport(servicePlan *service.Plan, reference *ir.Toolset
 // generated service conversion functions.
 func planProviderImports(
 	planned *toolSpecsPackagePlan,
-	servicePlan *service.Plan,
 	serviceImport *goacodegen.ImportSpec,
 	tools []*agent.ToolExpr,
 ) error {
@@ -82,65 +87,9 @@ func planProviderImports(
 	if err := pkg.ReserveGeneratedImport(serviceImport); err != nil {
 		return err
 	}
-	_, err := reserveMethodLayoutImports(pkg, servicePlan, serviceImport.Path, tools)
-	if err != nil {
-		return err
-	}
 	planned.serviceImportPath = serviceImport.Path
 	planned.providerImportPaths = append(importSpecPaths(fixed), serviceImport.Path)
-	planned.transformImportPaths, err = methodTransformImportPaths(planned, servicePlan, tools)
-	if err != nil {
-		return err
-	}
 	return nil
-}
-
-// methodTransformImportPaths returns only packages referenced by conversions
-// that will be written to transforms.go.
-func methodTransformImportPaths(planned *toolSpecsPackagePlan, servicePlan *service.Plan, tools []*agent.ToolExpr) ([]string, error) {
-	seen := make(map[string]struct{})
-	var paths []string
-	addLayout := func(layout *goacodegen.GoTypePlan) {
-		if layoutUsesOwner(layout) {
-			appendImportPath(&paths, seen, layout.Owner())
-		}
-		for _, preference := range layout.ImportPreferences() {
-			appendImportPath(&paths, seen, preference.Path)
-		}
-	}
-	for _, tool := range tools {
-		if tool.Method == nil {
-			continue
-		}
-		names := planned.tools[tool.Name]
-		if names.methodPayloadTransformPlan != nil {
-			layout, err := servicePlan.MethodPayloadLayout(tool.Method)
-			if err != nil {
-				return nil, err
-			}
-			addLayout(layout)
-		}
-		if names.toolResultTransformPlan != nil || len(names.serverDataTransformPlans) > 0 {
-			layout, err := servicePlan.MethodResultLayout(tool.Method)
-			if err != nil {
-				return nil, err
-			}
-			addLayout(layout)
-		}
-	}
-	return paths, nil
-}
-
-// appendImportPath appends a non-empty package path once.
-func appendImportPath(paths *[]string, seen map[string]struct{}, importPath string) {
-	if importPath == "" {
-		return
-	}
-	if _, ok := seen[importPath]; ok {
-		return
-	}
-	seen[importPath] = struct{}{}
-	*paths = append(*paths, importPath)
 }
 
 // reserveMethodLayoutImports submits the packages retained by Goa's payload
@@ -172,7 +121,7 @@ func reserveMethodLayoutImports(
 					paths = append(paths, owner)
 				}
 			}
-			for _, preference := range layout.ImportPreferences() {
+			for _, preference := range layout.CompleteImportPreferences() {
 				if _, ok := seen[preference.Path]; ok {
 					continue
 				}

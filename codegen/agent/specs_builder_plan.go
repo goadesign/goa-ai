@@ -33,6 +33,7 @@ type (
 	// toolSpecsPackagePlan stores the public specs package and the HTTP helper
 	// package written for one toolset.
 	toolSpecsPackagePlan struct {
+		generation              *goacodegen.Generation
 		definition              *ir.Toolset
 		genpkg                  string
 		public                  *goacodegen.GeneratedPackage
@@ -51,7 +52,8 @@ type (
 		jsonPrimitiveValidators map[jsonPrimitiveValidatorKey]*plannedJSONValidator
 		tools                   map[string]*plannedToolNames
 		completionNames         map[string]*plannedCompletionNames
-		transformHelpers        []*plannedTransformHelper
+		transformPlans          []*plannedPackageTransform
+		adapterTransformPlans   []*plannedPackageTransform
 		specs                   *toolSpecsData
 		completion              *completionSpecsData
 		fileImports             *toolSpecsFileImports
@@ -294,7 +296,7 @@ func planToolSpecs(
 			if err != nil {
 				return nil, fmt.Errorf("plan service %q completion HTTP package: %w", completion.Service.Name, err)
 			}
-			packagePlan = newToolSpecsPackagePlan(planned.genpkg, public, transport)
+			packagePlan = newToolSpecsPackagePlan(generation, planned.genpkg, public, transport)
 			planned.completions[completion.Service.Name] = packagePlan
 		}
 		owner := &contractTypeOwner{
@@ -346,7 +348,7 @@ func (p *toolSpecsPlan) addRegistryPackage(generation *goacodegen.Generation, de
 	if err != nil {
 		return fmt.Errorf("plan toolset %q registry specs package: %w", definition.Name, err)
 	}
-	packagePlan := newToolSpecsPackagePlan(p.genpkg, public, nil)
+	packagePlan := newToolSpecsPackagePlan(generation, p.genpkg, public, nil)
 	packagePlan.definition = definition
 	packagePlan.registry = true
 	names := map[goacodegen.PackageNameKind][]string{
@@ -394,7 +396,7 @@ func (p *toolSpecsPlan) addToolPackage(
 	if err != nil {
 		return fmt.Errorf("plan toolset %q HTTP package: %w", label, err)
 	}
-	packagePlan := newToolSpecsPackagePlan(p.genpkg, public, transport)
+	packagePlan := newToolSpecsPackagePlan(generation, p.genpkg, public, transport)
 	packagePlan.definition = definition
 	for _, tool := range tools {
 		if err := packagePlan.declareToolTypeImports(qualified, tool); err != nil {
@@ -475,8 +477,9 @@ func expandToolExpressions(mcpRoot *mcpexpr.RootExpr, name string, expr *agent.T
 
 // newToolSpecsPackagePlan creates empty name and type maps for one public tool
 // package and its HTTP decoding package.
-func newToolSpecsPackagePlan(genpkg string, public, transport *goacodegen.GeneratedPackage) *toolSpecsPackagePlan {
+func newToolSpecsPackagePlan(generation *goacodegen.Generation, genpkg string, public, transport *goacodegen.GeneratedPackage) *toolSpecsPackagePlan {
 	return &toolSpecsPackagePlan{
+		generation:              generation,
 		genpkg:                  genpkg,
 		public:                  public,
 		transport:               transport,
@@ -1185,7 +1188,7 @@ func (p *toolSpecsPackagePlan) declareToolTransforms(toolset string, tool *agent
 	payload := p.types[stableTypeKey(owner, usagePayload, "")]
 	if payload != nil && tool.Method.Payload != nil && tool.Method.Payload.Type != goaexpr.Empty {
 		if err := goacodegen.IsCompatible(payload.public.Type, tool.Method.Payload.Type, "in", "out"); err == nil {
-			planned, err := p.declareTransform(qualified+":method-payload", payload.public, tool.Method.Payload, "", adapterPayloadTransformLayout)
+			planned, err := p.declareAdapterTransform(qualified+":method-payload", payload.public, tool.Method.Payload)
 			if err != nil {
 				return err
 			}
@@ -1195,7 +1198,7 @@ func (p *toolSpecsPackagePlan) declareToolTransforms(toolset string, tool *agent
 	result := p.types[stableTypeKey(owner, usageResult, "")]
 	if result != nil && tool.Method.Result != nil && tool.Method.Result.Type != goaexpr.Empty {
 		if err := goacodegen.IsCompatible(tool.Method.Result.Type, result.public.Type, "in", "out"); err == nil {
-			planned, err := p.declareTransform(qualified+":tool-result", tool.Method.Result, result.public, "", adapterResultTransformLayout)
+			planned, err := p.declareAdapterTransform(qualified+":tool-result", tool.Method.Result, result.public)
 			if err != nil {
 				return err
 			}
@@ -1214,7 +1217,7 @@ func (p *toolSpecsPackagePlan) declareToolTransforms(toolset string, tool *agent
 		if err := goacodegen.IsCompatible(source.Type, target.public.Type, "in", "out"); err != nil {
 			return fmt.Errorf("server data kind %q: %w", serverData.Kind, err)
 		}
-		planned, err := p.declareTransform(qualified+":server-data:"+serverData.Kind, source, target.public, "", adapterResultTransformLayout)
+		planned, err := p.declareAdapterTransform(qualified+":server-data:"+serverData.Kind, source, target.public)
 		if err != nil {
 			return err
 		}
@@ -1293,19 +1296,17 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		return err
 	}
 
-	publicLayout, err := planDeclaredTypeLayout(
+	publicLayout, err := p.planDeclaredTypeLayout(
 		publicAttribute,
-		p.public.ImportPath(),
-		publicTypeDeclaration,
+		p.public,
 		goacodegen.GoLayoutPolicy{UseDefault: true, SumType: true},
 	)
 	if err != nil {
 		return err
 	}
-	transportLayout, err := planDeclaredTypeLayout(
+	transportLayout, err := p.planDeclaredTypeLayout(
 		transportAttribute,
-		p.transport.ImportPath(),
-		transportTypeDeclaration,
+		p.transport,
 		goacodegen.GoLayoutPolicy{
 			Pointer:             true,
 			UnionPointer:        true,
@@ -1317,11 +1318,11 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		return err
 	}
 
-	decode, err := p.declareTransform(key+":decode", transportAttribute, publicAttribute, "decode", codecDecodeTransformLayout)
+	decode, err := p.declareTransform(key+":decode", transportAttribute, publicAttribute, "decode")
 	if err != nil {
 		return err
 	}
-	encode, err := p.declareTransform(key+":encode", publicAttribute, transportAttribute, "encode", codecEncodeTransformLayout)
+	encode, err := p.declareTransform(key+":encode", publicAttribute, transportAttribute, "encode")
 	if err != nil {
 		return err
 	}
@@ -1363,6 +1364,8 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		invalidFieldType:     names.invalidFieldType,
 		jsonValidator:        jsonValidator,
 	}
+	p.setTransformLayouts(decode, transportLayout, publicLayout)
+	p.setTransformLayouts(encode, publicLayout, transportLayout)
 	return nil
 }
 
@@ -1425,20 +1428,43 @@ func localizedSpecShapes(owner *contractTypeOwner, attribute *goaexpr.AttributeE
 // planDeclaredTypeLayout asks Goa how a generated named type is referenced.
 // Later generator steps use the saved answer instead of inspecting rendered Go
 // source for pointer characters.
-func planDeclaredTypeLayout(
+func (p *toolSpecsPackagePlan) planDeclaredTypeLayout(
 	attribute *goaexpr.AttributeExpr,
-	owner string,
-	declaration *goacodegen.TypeDeclaration,
+	pkg *goacodegen.GeneratedPackage,
 	policy goacodegen.GoLayoutPolicy,
 ) (*goacodegen.GoTypePlan, error) {
 	return goacodegen.PlanGoType(attribute, goacodegen.GoTypePlanOptions{
-		Owner:  owner,
-		Policy: policy,
+		Owner:            pkg.ImportPath(),
+		Policy:           policy,
+		RetainNamedValue: true,
 		Bind: func(request goacodegen.GoTypeBindingRequest) (goacodegen.GoTypeBinding, error) {
-			if request.Kind != goacodegen.GoNamed || request.Attribute.Type != attribute.Type {
-				return goacodegen.GoTypeBinding{}, fmt.Errorf("generated type layout requested an undeclared type")
+			owner := request.InheritedOwner
+			if location := goacodegen.UserTypeLocation(request.Attribute.Type); location != nil {
+				owner = path.Join(p.genpkg, location.RelImportPath)
 			}
-			return goacodegen.GoTypeBinding{Owner: owner, Type: declaration}, nil
+			generated := p.generation.Package(owner)
+			switch request.Kind {
+			case goacodegen.GoNamed:
+				declaration, err := generated.Type(request.Attribute.Type.(goaexpr.UserType))
+				if err != nil {
+					return goacodegen.GoTypeBinding{}, err
+				}
+				return goacodegen.GoTypeBinding{Owner: owner, Type: declaration}, nil
+			case goacodegen.GoUnion:
+				declaration, err := generated.Union(request.Attribute)
+				if err != nil {
+					return goacodegen.GoTypeBinding{}, err
+				}
+				return goacodegen.GoTypeBinding{Owner: owner, Union: declaration}, nil
+			case goacodegen.GoPrimitive,
+				goacodegen.GoArray,
+				goacodegen.GoMap,
+				goacodegen.GoStruct,
+				goacodegen.GoEmpty,
+				goacodegen.GoServiceError:
+				return goacodegen.GoTypeBinding{}, fmt.Errorf("generated type layout requested unsupported %s", request.Kind)
+			}
+			panic(fmt.Sprintf("unknown generated type layout kind %d", request.Kind))
 		},
 	})
 }
@@ -1574,49 +1600,37 @@ func (p *toolSpecsPackagePlan) declareLocalTypes(pkg *goacodegen.GeneratedPackag
 
 // declareTransform records the helper functions needed to copy one generated
 // type into another and saves each chosen name with its function.
-func (p *toolSpecsPackagePlan) declareTransform(key string, source, target *goaexpr.AttributeExpr, prefix string, layout plannedTransformLayout) (*goacodegen.TransformPlan, error) {
+func (p *toolSpecsPackagePlan) declareTransform(key string, source, target *goaexpr.AttributeExpr, prefix string) (*goacodegen.TransformPlan, error) {
+	planned, err := p.recordTransform(key, source, target, prefix)
+	if err != nil {
+		return nil, err
+	}
+	return planned.plan, nil
+}
+
+// declareAdapterTransform records one conversion written to transforms.go.
+func (p *toolSpecsPackagePlan) declareAdapterTransform(key string, source, target *goaexpr.AttributeExpr) (*goacodegen.TransformPlan, error) {
+	planned, err := p.recordTransform(key, source, target, "")
+	if err != nil {
+		return nil, err
+	}
+	p.adapterTransformPlans = append(p.adapterTransformPlans, planned)
+	return planned.plan, nil
+}
+
+// recordTransform saves one conversion for package-wide helper planning.
+func (p *toolSpecsPackagePlan) recordTransform(key string, source, target *goaexpr.AttributeExpr, prefix string) (*plannedPackageTransform, error) {
 	planned, err := goacodegen.NewTransformPlan(source, target, prefix, nil)
 	if err != nil {
 		return nil, err
 	}
-	for _, definition := range planned.HelperDefinitions() {
-		identity, err := p.transformHelperIdentity(definition, layout)
-		if err != nil {
-			return nil, err
-		}
-		if existing := p.findTransformHelper(identity); existing != nil {
-			if err := planned.BindHelperDefinition(definition.ID, existing.declaration); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		namePrefix := prefix
-		if namePrefix == "" {
-			namePrefix = "transform"
-		}
-		preferred := lowerCamel(namePrefix + goacodegen.Goify(definition.Source.Type.Name(), true) + "To" + goacodegen.Goify(definition.Target.Type.Name(), true))
-		declaration := goacodegen.NewPreferredName(
-			goacodegen.NameFunction,
-			preferred,
-			goacodegen.UnexportedName,
-			transformHelperNameOrder{
-				packagePath: p.public.ImportPath(),
-				key:         key,
-				location:    definition.Location,
-			},
-		)
-		if err := p.public.DeclareName(declaration); err != nil {
-			return nil, err
-		}
-		p.transformHelpers = append(p.transformHelpers, &plannedTransformHelper{
-			identity:    identity,
-			declaration: declaration,
-		})
-		if err := planned.BindHelperDefinition(definition.ID, declaration); err != nil {
-			return nil, err
-		}
+	transform := &plannedPackageTransform{
+		key:    key,
+		prefix: prefix,
+		plan:   planned,
 	}
-	return planned, nil
+	p.transformPlans = append(p.transformPlans, transform)
+	return transform, nil
 }
 
 // declareAttributeUnions records every union reachable from attribute once.

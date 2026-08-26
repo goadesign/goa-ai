@@ -6,7 +6,10 @@
 
 package helpers
 
-import alpha "generated.local/gen/alpha"
+import (
+	alpha "generated.local/gen/alpha"
+	grandchild "generated.local/gen/shared/grandchild"
+)
 
 // InitFirstMethodPayload converts *FirstPayload to *alpha.RequiredPayload.
 func InitFirstMethodPayload(in *FirstPayload) *alpha.RequiredPayload {
@@ -73,12 +76,25 @@ func transformSharedChildToSharedChild(v *SharedChild) *alpha.SharedChild {
 	res := &alpha.SharedChild{
 		Value: v.Value,
 	}
+	if v.Grandchild != nil {
+		res.Grandchild = transformSharedGrandchildToSharedGrandchild(v.Grandchild)
+	}
+
+	return res
+}
+func transformSharedGrandchildToSharedGrandchild(v *grandchild.SharedGrandchild) *grandchild.SharedGrandchild {
+	res := &grandchild.SharedGrandchild{
+		Label: v.Label,
+	}
 
 	return res
 }
 func transformSharedChildToSharedChild2(v *alpha.SharedChild) *SharedChild {
 	res := &SharedChild{
 		Value: v.Value,
+	}
+	if v.Grandchild != nil {
+		res.Grandchild = transformSharedGrandchildToSharedGrandchild(v.Grandchild)
 	}
 
 	return res

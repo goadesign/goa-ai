@@ -28,11 +28,22 @@ func TestGeneratedTransformHelpersShareMatchingDeclarations(t *testing.T) {
 	codecs := fileContent(t, files, "gen/alpha/toolsets/helpers/codecs.go")
 
 	require.Len(t, regexp.MustCompile(`func transformSharedChildToSharedChild\d*\(`).FindAllString(transforms, -1), 2)
+	require.Len(t, regexp.MustCompile(`func transformSharedGrandchildToSharedGrandchild\d*\(`).FindAllString(transforms, -1), 1)
 	require.Len(t, regexp.MustCompile(`func decodeSharedChildTransportToSharedChild\d*\(`).FindAllString(codecs, -1), 1)
+	require.Len(t, regexp.MustCompile(`func decodeSharedGrandchildTransportToSharedGrandchild\d*\(`).FindAllString(codecs, -1), 1)
 	require.Len(t, regexp.MustCompile(`func encodeSharedChildToSharedChildTransport\d*\(`).FindAllString(codecs, -1), 1)
+	require.Len(t, regexp.MustCompile(`func encodeSharedGrandchildToSharedGrandchildTransport\d*\(`).FindAllString(codecs, -1), 1)
 	assertGoldenGo(t, "shared_transform_helpers", "transforms.go.golden", transforms)
 
 	runCompleteGeneratedPackageTest(t, files, "./gen/alpha/toolsets/helpers/...")
+}
+
+func TestGeneratedTransformHelpersImportBothLayouts(t *testing.T) {
+	files := buildCompleteGeneratedFiles(t, testscenarios.AsymmetricTransformImports())
+	transforms := fileContent(t, files, "gen/alpha/toolsets/values/transforms.go")
+
+	runCompleteGeneratedPackageTest(t, files, "./gen/alpha/toolsets/values/...")
+	assertGoldenGo(t, "asymmetric_transform_imports", "transforms.go.golden", transforms)
 }
 
 // TestGeneratedLocalizedTypesKeepSourceIdentity checks definitions, references,
@@ -101,7 +112,7 @@ func writeCompleteGeneratedModule(t *testing.T, files []*goacodegen.File) string
 }
 
 // runCompleteGeneratedPackageTest compiles one generated package tree against
-// the local Goa and goa-ai checkouts.
+// the local goa-ai checkout and the Goa version selected by its module file.
 func runCompleteGeneratedPackageTest(t *testing.T, files []*goacodegen.File, packagePath string) {
 	t.Helper()
 	root := writeCompleteGeneratedModule(t, files)
