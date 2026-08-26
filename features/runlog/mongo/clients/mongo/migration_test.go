@@ -588,7 +588,7 @@ func newFakeMigrationStore(events []eventDocument) *fakeMigrationStore {
 }
 
 // markFakeMigrationCurrent installs the storage state required by schema
-// version 2 before tests introduce one focused corruption.
+// version 3 before tests introduce one focused corruption.
 func markFakeMigrationCurrent(store *fakeMigrationStore) {
 	store.schema = schemaDocument{Name: schemaSentinelID, Version: schemaVersion}
 	store.schemaFound = true

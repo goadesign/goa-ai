@@ -1239,13 +1239,16 @@ The `goa example` phase generates application-owned scaffold under `internal/age
 
 ## Security considerations
 
-- Resource policy: use deny/allow lists to constrain which URIs can be read
 - Registry authentication: use Goa security schemes (`APIKeySecurity`, `OAuth2Security`, etc.)
 - Logging: avoid logging sensitive payloads and results in production
 
 ## Error code mapping
 
-The adapter maps Goa `ServiceError` with name `invalid_params` to JSON-RPC `-32602`, `method_not_found` to `-32601`, and otherwise defaults to `-32603` (internal).
+When a tool runs and fails, the adapter returns a successful MCP `tools/call`
+result with `isError` set to `true`. Failures that prevent the adapter from
+running a valid request use JSON-RPC errors instead. The adapter maps Goa
+`ServiceError` values named `invalid_params` to `-32602`, values named
+`method_not_found` to `-32601`, and other protocol failures to `-32603`.
 
 ## Contributing
 
