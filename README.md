@@ -171,7 +171,7 @@ var _ = Service("orchestrator", func() {
 			})
 		})
 		RunPolicy(func() {
-			DefaultCaps(MaxToolCalls(2), MaxConsecutiveFailedToolCalls(1))
+			DefaultCaps(MaxToolCalls(2), MaxRecoveryTurns(1))
 			TimeBudget("15s")
 		})
 	})
@@ -389,7 +389,7 @@ var Docs = Toolset("docs", func() {
   provider-native `input_examples` under the required tool-examples contract,
   including exact Anthropic token counting.
 - Explicit control-plane contracts: `Bookkeeping()` keeps calls durable and
-  model-visible while exempting them from retrieval/failure budgets and omitting
+  model-visible while exempting them from tool-call and recovery-turn budgets and omitting
   successful results from typed future `ToolOutputs`
 
 ### Bind Tools to Goa Services
@@ -521,7 +521,7 @@ Policies are runtime-enforced, not planner suggestions.
 ```go
 Agent("operator", "Production operations agent", func() {
 	RunPolicy(func() {
-		DefaultCaps(MaxToolCalls(20), MaxConsecutiveFailedToolCalls(3))
+		DefaultCaps(MaxToolCalls(20), MaxRecoveryTurns(3))
 		Timing(func() {
 			Budget("5m")
 			Plan("45s")
@@ -574,9 +574,9 @@ out, err := client.Run(ctx, "session-1", messages,
 			Name: "jobs.complete",
 			Payload: rawjson.Message(`{"outcome":"tool_limit"}`),
 		},
-		FailedToolCallCap: runtime.LimitTerminalCall{
+		RecoveryCap: runtime.LimitTerminalCall{
 			Name: "jobs.complete",
-			Payload: rawjson.Message(`{"outcome":"failed_tool_limit"}`),
+			Payload: rawjson.Message(`{"outcome":"recovery_limit"}`),
 		},
 	}),
 )
@@ -661,11 +661,11 @@ therefore pair the result with the exact `tool_start` without searching prior
 runs.
 
 Generated agents, completion packages, runtime workers, and their callers form
-one release unit and use one generated contract. `goa-ai.run-suspension.v4` is
-the only supported suspension schema. Its model-authored await items preserve
+one release unit and use one generated contract. New saved runs use
+`goa-ai.run-suspension.v5`; version 4 checkpoints remain readable and preserve
+their earlier failed-tool counting behavior. Model-authored await items preserve
 the runtime `ToolCallID` separately from the provider `ModelToolCallID`.
-Suspensions with another shape fail at the typed checkpoint boundary; the
-runtime does not dual-read, fall back to, or rewrite them.
+Suspensions with another shape fail at the typed checkpoint boundary.
 
 Sensitive tools can require approval before execution:
 
@@ -808,12 +808,13 @@ Tool("commit_report", "Commit final report", func() {
 })
 ```
 
-Bookkeeping tools consume neither the normal `MaxToolCalls` budget nor the
-consecutive-failure allowance. Their events are still durable and streamed, and
-their provider transcript blocks remain intact. Successful results stay out of
-compact future `ToolOutputs`. Every failure resumes through its typed recovery
-transition: `correct_call` and `replan` may use tools, while `finish` resumes
-without tools so the planner can synthesize the terminal outcome.
+Bookkeeping tools do not consume the normal `MaxToolCalls` budget, and their
+successful results do not reset the recovery-turn counter. Their events are
+still durable and streamed, and their provider transcript blocks remain
+intact. Successful results stay out of compact future `ToolOutputs`. Every
+failure resumes through its typed recovery transition: `correct_call` and
+`replan` may use tools, while `finish` resumes without tools so the planner can
+synthesize the terminal outcome.
 
 On a `correct_call` recovery turn, the runtime advertises the normal
 caller-authorized catalog and attaches correction guidance for every selected

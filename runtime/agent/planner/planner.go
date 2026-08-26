@@ -584,8 +584,9 @@ const (
 	// TerminationReasonToolCap indicates the run exceeded its allowed tool call count.
 	TerminationReasonToolCap TerminationReason = "tool_cap"
 
-	// TerminationReasonFailureCap indicates the run exceeded its allowed consecutive failure count.
-	TerminationReasonFailureCap TerminationReason = "failure_cap"
+	// TerminationReasonRecoveryCap indicates that the run exhausted its allowed
+	// consecutive replacement planner activities.
+	TerminationReasonRecoveryCap TerminationReason = "recovery_cap"
 
 	// TerminationReasonToolFailure indicates a tool required the run to stop
 	// domain work and finalize from the evidence already collected.

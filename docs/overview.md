@@ -263,7 +263,7 @@ var _ = Service("orchestrator", func() {
             })
         })
 		RunPolicy(func() {
-			DefaultCaps(MaxToolCalls(2), MaxConsecutiveFailedToolCalls(1))
+			DefaultCaps(MaxToolCalls(2), MaxRecoveryTurns(1))
 			TimeBudget("15s")
 			History(func() {
 				// For long sessions, summarize older turns and keep a bounded
@@ -393,7 +393,7 @@ Then use `Start/Wait` for asynchronous runs with task queues, memos, and search 
 Per‑turn enforcement of:
 
 - Maximum tool calls
-- Consecutive failure limits
+- Recovery-turn limits
 - Time budgets
 - Tool allowlists via policy engines
 
@@ -507,7 +507,7 @@ policies, and MCP servers within Goa service designs.
 | `BoundedResult()` | Mark result as bounded view over larger data |
 | `ResultReminder(text)` | Static system reminder injected after tool result |
 | `TerminalRun()` | Tool becomes bookkeeping and completes the run after successful execution |
-| `Bookkeeping()` | Durable control record: no retrieval or consecutive-failure budget; no automatic resume after success |
+| `Bookkeeping()` | Durable control record: no tool-call budget; no automatic resume after success |
 
 ### Toolset Definition
 
@@ -532,7 +532,7 @@ the toolsets with the runtime.
 | `RunPolicy(func())` | Define execution constraints for an agent |
 | `DefaultCaps(opts...)` | Configure resource limits |
 | `MaxToolCalls(n)` | Cap budgeted (non-bookkeeping) tool invocations per run |
-| `MaxConsecutiveFailedToolCalls(n)` | Cap sequential failures before aborting |
+| `MaxRecoveryTurns(n)` | Cap consecutive replacement planner activities after rejected tool or model output |
 | `TimeBudget(duration)` | Set the active planner/tool work budget; time between workflows does not consume it |
 | `OnMissingFields(action)` | Configure validation behavior |
 
@@ -771,7 +771,7 @@ another advertised tool, await input, or answer. Otherwise the runtime carries
 the batch intent as `SynthesisOnly`, which rejects additional tool calls.
 `Finalize` marks saved-message finalization after a runtime limit or a tool's
 `finish` recovery directive. Runs configured with `WithLimitTerminalPlans`
-execute the matching fixed terminal call at a time, tool-call, or failed-call
+execute the matching fixed terminal call at a time, tool-call, or recovery-turn
 limit without calling `PlanResume`.
 
 ### PlannerContext

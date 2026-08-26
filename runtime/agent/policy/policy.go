@@ -1,8 +1,7 @@
 // Package policy codifies policy evaluation and enforcement for agent runs.
 // Policy engines decide which tools are available to planners on each turn,
-// and enforce resource caps (max tool calls and failure limits).
-// Tool-failure recovery is an execution transition owned by the runtime, not a
-// policy suggestion.
+// and enforce tool-call and recovery-turn limits. Recovery is an execution
+// transition owned by the runtime, not a policy suggestion.
 package policy
 
 import (
@@ -47,8 +46,8 @@ type (
 		// for the current turn.
 		Tools []ToolMetadata
 
-		// RemainingCaps reflects the current execution budgets (remaining tool calls,
-		// consecutive failures allowed, time budget). Policies use this to decide
+		// RemainingCaps reflects the current execution budgets (tool calls,
+		// recovery turns, and time). Policies use this to decide
 		// whether to allow more tool invocations or terminate the run.
 		RemainingCaps CapsState
 
@@ -124,9 +123,9 @@ type (
 		BudgetClass ToolBudgetClass
 	}
 
-	// CapsState tracks remaining execution budgets for a run. The runtime decrements
-	// these counters as tool calls execute and failures occur. When caps are exhausted,
-	// the runtime terminates the workflow or forces a final response.
+	// CapsState tracks remaining execution budgets for a run. The runtime
+	// decrements these counters as tool calls execute or replacement planner
+	// activities run. When caps are exhausted, the runtime finishes the run.
 	CapsState struct {
 		// MaxToolCalls is the total allowed budgeted tool invocations for the run.
 		// Bookkeeping tools are exempt. Zero means the cap is not configured.
@@ -139,18 +138,15 @@ type (
 		// are permitted.
 		RemainingToolCalls int
 
-		// MaxConsecutiveFailedToolCalls caps consecutive failing planner decision
-		// points per run. Zero means the cap is not configured. Used for circuit
-		// breaking: if N successive tool batches fail outright, terminate.
-		MaxConsecutiveFailedToolCalls int
+		// MaxRecoveryTurns caps consecutive additional planner activities
+		// scheduled after rejected tool or model output. Zero selects the
+		// runtime default.
+		MaxRecoveryTurns int `json:"MaxConsecutiveFailedToolCalls,omitempty"` //nolint:tagliatelle // Historical Temporal state field.
 
-		// RemainingConsecutiveFailedToolCalls tracks how many failing decision
-		// points are allowed before circuit breaking. A tool batch whose budgeted
-		// (non-bookkeeping) calls all fail consumes one unit regardless of its
-		// parallel width; any budgeted success resets the counter to
-		// MaxConsecutiveFailedToolCalls; bookkeeping results never move it. When
-		// this reaches zero, the run is terminated.
-		RemainingConsecutiveFailedToolCalls int
+		// RemainingRecoveryTurns tracks how many replacement planner activities
+		// may still be scheduled in the current recovery episode. Successful
+		// budgeted tool work resets it to MaxRecoveryTurns.
+		RemainingRecoveryTurns int `json:"RemainingConsecutiveFailedToolCalls,omitempty"` //nolint:tagliatelle // Historical Temporal state field.
 	}
 )
 

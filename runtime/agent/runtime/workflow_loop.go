@@ -88,7 +88,18 @@ func (d runDeadlines) shouldFinalize(now time.Time) bool {
 func (l *workflowLoop) run() (*RunOutput, error) {
 	ctx := l.wfCtx.Context()
 	for {
-		if err := l.r.rewriteRecoveryCatalogToolCalls(l.st.PendingRecoveryCatalog, l.st.Result); err != nil {
+		if correction := modelOutputCorrection(l.st.PendingRecovery); correction != "" {
+			out, err := l.resumePlanner(nil, false, correction)
+			if err != nil {
+				return nil, err
+			}
+			if out != nil {
+				return out, nil
+			}
+			continue
+		}
+		_, recoveryCatalog := toolRecovery(l.st.PendingRecovery)
+		if err := l.r.rewriteRecoveryCatalogToolCalls(recoveryCatalog, l.st.Result); err != nil {
 			return nil, err
 		}
 		if err := l.r.validateCompletionToolPlanResult(l.st.Result, completionTool(l.input)); err != nil {

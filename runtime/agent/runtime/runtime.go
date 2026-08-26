@@ -400,9 +400,10 @@ type (
 		// invocations per run. Zero means the cap is not configured.
 		MaxToolCalls int
 
-		// MaxConsecutiveFailedToolCalls caps sequential failures before aborting.
-		// Zero means the cap is not configured.
-		MaxConsecutiveFailedToolCalls int
+		// MaxRecoveryTurns caps consecutive additional planner activities
+		// scheduled to recover rejected tool or model output. Successful budgeted
+		// tool work resets the count. Zero uses the runtime default of three.
+		MaxRecoveryTurns int
 
 		// TimeBudget is the active-time budget for planner and tool work within
 		// the run (0 = unlimited). The workflow runtime enforces this deadline;
@@ -597,7 +598,7 @@ func WithTiming(t Timing) RunOption {
 }
 
 // WithLimitTerminalPlans sets the complete terminal tool-call set used when
-// this run reaches a configured time, tool-call, or failed-call limit.
+// this run reaches a configured time, tool-call, or recovery-turn limit.
 func WithLimitTerminalPlans(plans LimitTerminalPlans) RunOption {
 	return func(in *RunInput) {
 		if in.Policy == nil {
@@ -622,18 +623,18 @@ func WithRunMaxToolCalls(n int) RunOption {
 	}
 }
 
-// WithRunMaxConsecutiveFailedToolCalls caps consecutive failures before aborting
-// the run. The caller must supply a positive override value; omit the option to
-// use the agent's design default.
-func WithRunMaxConsecutiveFailedToolCalls(n int) RunOption {
+// WithRunMaxRecoveryTurns caps consecutive replacement planner activities for
+// one run. The caller must supply a positive override value; omit the option
+// to use the agent's design default.
+func WithRunMaxRecoveryTurns(n int) RunOption {
 	if n <= 0 {
-		panic("runtime: WithRunMaxConsecutiveFailedToolCalls requires n > 0")
+		panic("runtime: WithRunMaxRecoveryTurns requires n > 0")
 	}
 	return func(in *RunInput) {
 		if in.Policy == nil {
 			in.Policy = &PolicyOverrides{}
 		}
-		in.Policy.MaxConsecutiveFailedToolCalls = n
+		in.Policy.MaxRecoveryTurns = n
 	}
 }
 
@@ -2041,8 +2042,8 @@ func (r *Runtime) OverridePolicy(agentID agent.Ident, delta RunPolicy) error {
 	if delta.MaxToolCalls > 0 {
 		reg.Policy.MaxToolCalls = delta.MaxToolCalls
 	}
-	if delta.MaxConsecutiveFailedToolCalls > 0 {
-		reg.Policy.MaxConsecutiveFailedToolCalls = delta.MaxConsecutiveFailedToolCalls
+	if delta.MaxRecoveryTurns > 0 {
+		reg.Policy.MaxRecoveryTurns = delta.MaxRecoveryTurns
 	}
 	if delta.TimeBudget > 0 {
 		reg.Policy.TimeBudget = delta.TimeBudget

@@ -143,6 +143,13 @@ func (c *RequestContract) RejectResponse(response *Response, cause error) *Outpu
 	return newOutputValidationError(cause, evidence, owned, usage)
 }
 
+// EvidenceForResponse returns a bounded fingerprint for one complete response.
+// Planners use the response itself to identify rejected output; the runtime
+// stores this evidence instead of carrying the response through the workflow.
+func EvidenceForResponse(response *Response) ResponseEvidence {
+	return responseEvidencePreflighted(response)
+}
+
 // Error describes why provider output failed its request contract.
 func (e *OutputValidationError) Error() string {
 	return "model output does not meet its request contract: " + e.cause.Error()

@@ -309,6 +309,7 @@ func (r *Runtime) buildNextResumeRequest(
 	toolOutputs []*planner.ToolOutput,
 	recovery []*planner.ToolOutput,
 	synthesisOnly bool,
+	outputCorrection string,
 	nextAttempt *int,
 ) (PlanActivityInput, error) {
 	attempt := *nextAttempt
@@ -334,6 +335,9 @@ func (r *Runtime) buildNextResumeRequest(
 		ToolOutputs:         encodedToolOutputs,
 		RecoveryToolCallIDs: recoveryToolCallIDs(recovery),
 		SynthesisOnly:       synthesisOnly,
+	}
+	if outputCorrection != "" {
+		out.ModelOutputRecovery = &ModelOutputRecovery{Correction: outputCorrection}
 	}
 	if err := enforcePlanActivityInputBudget(out); err != nil {
 		return PlanActivityInput{}, err

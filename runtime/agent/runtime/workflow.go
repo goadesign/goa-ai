@@ -301,6 +301,12 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		finalStatus = terminalRunStatusForError(err)
 		return nil, err
 	}
+	recoveryVersion := wfCtx.WorkflowVersion(
+		recoveryTurnsWorkflowChange,
+		engine.DefaultWorkflowVersion,
+		recoveryTurnsWorkflowVersion,
+	)
+	legacyFailureStreak := recoveryVersion == engine.DefaultWorkflowVersion
 	firstOutput, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, planOpts, startReq, budgetDeadline)
 	if err != nil {
 		if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) &&
@@ -332,34 +338,34 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		finalStatus = terminalRunStatusForError(err)
 		return nil, err
 	}
-	if firstOutput == nil || firstOutput.Result == nil {
-		r.logger.Error(wfCtx.Context(), "Plan activity returned nil result")
-		finalErr = fmt.Errorf("plan activity returned nil result")
+	if firstOutput == nil {
+		r.logger.Error(wfCtx.Context(), "Plan activity returned nil output")
+		finalErr = fmt.Errorf("plan activity returned nil output")
 		finalStatus = runStatusFailed
 		return nil, finalErr
 	}
 	result := firstOutput.Result
-	r.logger.Info(wfCtx.Context(), "Plan activity completed", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil)
-	// Validate the non-empty planner-result boundary before constructing run state.
-	if len(result.ToolCalls) == 0 && result.FinalResponse == nil && result.FinalToolResult == nil && result.Await == nil {
-		finalErr = fmt.Errorf("plan result has no tool calls, final response, final tool result, or await")
+	if result == nil && firstOutput.OutputContractFailure == nil {
+		finalErr = fmt.Errorf("plan activity returned neither result nor output rejection")
 		finalStatus = runStatusFailed
 		return nil, finalErr
 	}
-	// If ToolCalls is empty but planner returned them, serialization may have failed.
-	if len(result.ToolCalls) == 0 && result.FinalResponse != nil {
-		r.logger.Info(wfCtx.Context(), "PlanResult has FinalResponse but no ToolCalls - workflow will return early")
+	if result != nil {
+		r.logger.Info(wfCtx.Context(), "Plan activity completed", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil)
 	}
 	caps := initialCaps(reg.Policy)
+	if legacyFailureStreak {
+		caps = initialLegacyCaps(reg.Policy)
+	}
 	// Apply per-run cap overrides (run-level)
 	if input.Policy != nil {
 		if input.Policy.MaxToolCalls > 0 {
 			caps.MaxToolCalls = input.Policy.MaxToolCalls
 			caps.RemainingToolCalls = input.Policy.MaxToolCalls
 		}
-		if input.Policy.MaxConsecutiveFailedToolCalls > 0 {
-			caps.MaxConsecutiveFailedToolCalls = input.Policy.MaxConsecutiveFailedToolCalls
-			caps.RemainingConsecutiveFailedToolCalls = input.Policy.MaxConsecutiveFailedToolCalls
+		if input.Policy.MaxRecoveryTurns > 0 {
+			caps.MaxRecoveryTurns = input.Policy.MaxRecoveryTurns
+			caps.RemainingRecoveryTurns = input.Policy.MaxRecoveryTurns
 		}
 	}
 	// Deadlines (budgetDeadline, hardDeadline, grace) already computed above.
@@ -369,7 +375,12 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	st.AggUsage = firstOutput.Usage
 	st.Result = firstOutput.Result
 	st.Transcript = firstOutput.Transcript
-	r.logger.Info(wfCtx.Context(), "Starting runLoop", "tool_calls", len(result.ToolCalls))
+	st.LegacyFailureStreak = legacyFailureStreak
+	if firstOutput.OutputContractFailure != nil {
+		st.PendingRecovery = pendingModelOutputRecovery{
+			correction: firstOutput.OutputContractFailure.Correction,
+		}
+	}
 	// Create parentTracker if this is a nested agent run (has ParentToolCallID)
 	var parentTracker *childTracker
 	if planInput.RunContext.ParentToolCallID != "" {
@@ -429,26 +440,29 @@ func (r *Runtime) runLoopWithState(
 	if st == nil {
 		return nil, errors.New("runLoop state is required")
 	}
-	if st.Result == nil {
+	if st.Result == nil && st.PendingRecovery == nil {
 		return nil, fmt.Errorf("runLoop initial PlanResult is nil")
 	}
-	if len(st.Result.ToolCalls) == 0 &&
+	if st.Result != nil &&
+		len(st.Result.ToolCalls) == 0 &&
 		st.Result.FinalResponse == nil &&
 		st.Result.FinalToolResult == nil &&
 		st.Result.Await == nil {
 		return nil, fmt.Errorf("runLoop initial PlanResult has no ToolCalls, FinalResponse, FinalToolResult, or Await")
 	}
-	r.logger.Info(ctx,
-		"runLoop starting iteration",
-		"tool_calls",
-		len(st.Result.ToolCalls),
-		"final_response",
-		st.Result.FinalResponse != nil,
-		"final_tool_result",
-		st.Result.FinalToolResult != nil,
-		"await",
-		st.Result.Await != nil,
-	)
+	if st.Result != nil {
+		r.logger.Info(ctx,
+			"runLoop starting iteration",
+			"tool_calls",
+			len(st.Result.ToolCalls),
+			"final_response",
+			st.Result.FinalResponse != nil,
+			"final_tool_result",
+			st.Result.FinalToolResult != nil,
+			"await",
+			st.Result.Await != nil,
+		)
+	}
 	// Derive per-run overrides for Resume and Tools.
 	resumeOpts := reg.ResumeActivityOptions
 	if input.Policy != nil && input.Policy.PlanTimeout > 0 {

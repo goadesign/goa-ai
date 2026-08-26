@@ -43,9 +43,9 @@ type (
 		// MaxToolCalls is the maximum number of tool invocations
 		// allowed in a single run.
 		MaxToolCalls int
-		// MaxConsecutiveFailedToolCall is the maximum number of
-		// consecutive tool failures before the run is terminated.
-		MaxConsecutiveFailedToolCall int
+		// MaxRecoveryTurns is the maximum number of consecutive additional
+		// planner activities scheduled after rejected tool or model output.
+		MaxRecoveryTurns int
 	}
 
 	// HistoryMode identifies which history policy is configured on an agent.
@@ -111,8 +111,13 @@ func (r *RunPolicyExpr) EvalName() string {
 // Validate enforces semantic constraints on the run policy.
 func (r *RunPolicyExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
-	if r.DefaultCaps != nil && r.DefaultCaps.MaxToolCalls <= 0 {
-		verr.Add(r.DefaultCaps, "DefaultCaps requires MaxToolCalls > 0")
+	if r.DefaultCaps != nil {
+		if r.DefaultCaps.MaxToolCalls < 0 {
+			verr.Add(r.DefaultCaps, "DefaultCaps requires MaxToolCalls >= 0")
+		}
+		if r.DefaultCaps.MaxRecoveryTurns < 0 {
+			verr.Add(r.DefaultCaps, "DefaultCaps requires MaxRecoveryTurns >= 0")
+		}
 	}
 	if r.OnMissingFields != "" {
 		switch r.OnMissingFields {

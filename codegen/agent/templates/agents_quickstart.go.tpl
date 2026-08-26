@@ -36,7 +36,7 @@ Here’s a map of what Goa-AI just built for you based on your `design/*.go` fil
             {{- end }}
         * **Run Policy:**
             * Max Tool Calls: `{{ .RunPolicy.Caps.MaxToolCalls }}`
-            * Max Consecutive Failures: `{{ .RunPolicy.Caps.MaxConsecutiveFailedToolCalls }}`
+            * Max Recovery Turns: `{{ .RunPolicy.Caps.MaxRecoveryTurns }}`
             * Time Budget: `{{ .RunPolicy.TimeBudget }}`
 {{- end }}
     * **Direct Completions:**

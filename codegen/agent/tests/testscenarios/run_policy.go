@@ -12,7 +12,7 @@ func RunPolicyBasic() func() {
 		Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
 				RunPolicy(func() {
-					DefaultCaps(MaxToolCalls(5), MaxConsecutiveFailedToolCalls(2))
+					DefaultCaps(MaxToolCalls(5), MaxRecoveryTurns(2))
 					TimeBudget("30s")
 				})
 				Use("helpers", func() {

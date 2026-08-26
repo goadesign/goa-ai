@@ -358,7 +358,7 @@ type (
 		// auditing and debugging tool restrictions.
 		AllowedTools []tools.Ident
 		// Caps reflects the updated execution budgets after policy evaluation for this turn.
-		// This includes remaining tool call limits, consecutive failure thresholds, and time
+		// This includes remaining tool calls, recovery turns, and time
 		// budgets. Policies may adjust these dynamically based on observed behavior (e.g.,
 		// reducing limits after repeated failures). Subscribers can monitor cap consumption
 		// to predict run termination or trigger alerts.

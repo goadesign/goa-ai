@@ -71,9 +71,9 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 		ToolMetadataLookup: specs.MetadataByName,
 		RequiredLabels:     specs.RequiredLabels(),
 		Policy: agentsruntime.RunPolicy{
-			MaxToolCalls:                  2,
-			MaxConsecutiveFailedToolCalls: 1,
-			TimeBudget:                    time.Duration(15000000000),
+			MaxToolCalls:     2,
+			MaxRecoveryTurns: 1,
+			TimeBudget:       time.Duration(15000000000),
 		},
 	}); err != nil {
 		return err

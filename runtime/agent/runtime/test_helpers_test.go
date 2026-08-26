@@ -310,6 +310,10 @@ func (t *testWorkflowContext) NextSequence() uint64 {
 	return root.nextSequence
 }
 
+func (t *testWorkflowContext) WorkflowVersion(_ string, _, maxSupported int) int {
+	return maxSupported
+}
+
 func (t *testWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (engine.Future[time.Time], error) {
 	now := time.Now()
 	if d <= 0 {

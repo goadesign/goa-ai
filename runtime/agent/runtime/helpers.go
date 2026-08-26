@@ -674,81 +674,19 @@ func (r *Runtime) onPromptRendered(ctx context.Context, event prompt.RenderEvent
 	}
 }
 
-// initialCaps constructs the initial caps state from the agent's run policy.
-// Remaining counts mirror the configured maximums. Zero means the cap is not
-// configured for this run.
-func initialCaps(cfg RunPolicy) policy.CapsState {
-	return policy.CapsState{
-		MaxToolCalls:                        cfg.MaxToolCalls,
-		RemainingToolCalls:                  cfg.MaxToolCalls,
-		MaxConsecutiveFailedToolCalls:       cfg.MaxConsecutiveFailedToolCalls,
-		RemainingConsecutiveFailedToolCalls: cfg.MaxConsecutiveFailedToolCalls,
-	}
-}
-
-// decrementCap decrements a cap value by delta. If current is 0 (cap not
-// configured), it remains 0. If the result would be negative, the cap is
-// exhausted and therefore clamped to 0.
-func decrementCap(current int, delta int) int {
-	if current == 0 || delta == 0 {
-		return current
-	}
-	result := current - delta
-	if result < 0 {
-		return 0
-	}
-	return result
-}
-
-// budgetedBatchOutcome classifies a step batch's budgeted (non-bookkeeping)
-// results for failure-streak accounting: progress reports at least one
-// budgeted success and failed reports at least one budgeted failure.
-func (r *Runtime) budgetedBatchOutcome(records []stepToolRecord) (progress, failed bool) {
-	for _, record := range records {
-		if record.result == nil || r.isBookkeeping(record.call.Name) {
-			continue
-		}
-		if record.result.Failure != nil {
-			failed = true
-		} else {
-			progress = true
-		}
-	}
-	return progress, failed
-}
-
-// applyFailureStreak advances the consecutive-failure cap for one step batch
-// and reports whether the cap tripped. Progress resets the streak, an
-// all-failure batch consumes one unit, and batches without budgeted results
-// leave the counter unchanged.
-func applyFailureStreak(caps *policy.CapsState, progress, failed bool) bool {
-	switch {
-	case progress:
-		if caps.MaxConsecutiveFailedToolCalls > 0 {
-			caps.RemainingConsecutiveFailedToolCalls = caps.MaxConsecutiveFailedToolCalls
-		}
-	case failed:
-		caps.RemainingConsecutiveFailedToolCalls = decrementCap(caps.RemainingConsecutiveFailedToolCalls, 1)
-		if caps.MaxConsecutiveFailedToolCalls > 0 && caps.RemainingConsecutiveFailedToolCalls <= 0 {
-			return true
-		}
-	}
-	return false
-}
-
 // mergeCaps merges policy decision caps into the current caps state. Policy
 // decisions may only tighten configured caps; they never create new caps or
 // raise the remaining budget.
 func mergeCaps(current policy.CapsState, decision policy.CapsState) policy.CapsState {
 	current.MaxToolCalls = mergeCapDown(current.MaxToolCalls, decision.MaxToolCalls)
 	current.RemainingToolCalls = mergeCapDown(current.RemainingToolCalls, decision.RemainingToolCalls)
-	current.MaxConsecutiveFailedToolCalls = mergeCapDown(
-		current.MaxConsecutiveFailedToolCalls,
-		decision.MaxConsecutiveFailedToolCalls,
+	current.MaxRecoveryTurns = mergeCapDown(
+		current.MaxRecoveryTurns,
+		decision.MaxRecoveryTurns,
 	)
-	current.RemainingConsecutiveFailedToolCalls = mergeCapDown(
-		current.RemainingConsecutiveFailedToolCalls,
-		decision.RemainingConsecutiveFailedToolCalls,
+	current.RemainingRecoveryTurns = mergeCapDown(
+		current.RemainingRecoveryTurns,
+		decision.RemainingRecoveryTurns,
 	)
 	return current
 }
