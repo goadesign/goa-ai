@@ -12,6 +12,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
@@ -110,6 +111,8 @@ func TestPlannerToolOutputFromCanonicalEventsRequiresMatchingIdentity(t *testing
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+			runtime := &Runtime{}
+			seedTestToolSpecs(runtime, newAnyJSONSpec(toolName))
 
 			scheduledCallID := test.scheduledCallID
 			if scheduledCallID == "" {
@@ -147,8 +150,7 @@ func TestPlannerToolOutputFromCanonicalEventsRequiresMatchingIdentity(t *testing
 				nil,
 			)}
 
-			output, err := plannerToolOutputFromCanonicalEvents(
-				tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
+			output, err := runtime.plannerToolOutputFromCanonicalEvents(
 				callRunID,
 				resultRunID,
 				toolCallID,
@@ -387,6 +389,79 @@ func TestLoadPlannerToolOutputsAcceptsCrossRunContinuationResult(t *testing.T) {
 	require.JSONEq(t, `{"value":"found"}`, string(outputs[0].Result))
 }
 
+func TestLoadPlannerToolOutputsRequiresRegisteredSpecOnlyForSuccess(t *testing.T) {
+	t.Parallel()
+
+	toolName := tools.Ident("svc.tools.removed")
+	for _, test := range []struct {
+		name    string
+		result  rawjson.Message
+		failure *planner.ToolFailure
+		wantErr string
+	}{
+		{
+			name:    "successful result",
+			result:  rawjson.Message(`{"value":"found"}`),
+			wantErr: `canonical tool history references unregistered tool "svc.tools.removed"`,
+		},
+		{
+			name:    "failed result",
+			failure: testToolFailure(planner.FailureUnavailable, planner.RecoveryReplan, "service unavailable"),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := runloginmem.New()
+			appendHistoricalHookEvent(t, store, hooks.NewToolCallScheduledEvent(
+				"run-1",
+				"svc.agent",
+				"session-1",
+				toolName,
+				"call-1",
+				rawjson.Message(`{}`),
+				"",
+				"",
+				0,
+			), "schedule", 1)
+			appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
+				"run-1",
+				"svc.agent",
+				"session-1",
+				"run-1",
+				toolName,
+				"call-1",
+				"",
+				test.result,
+				nil,
+				"",
+				nil,
+				time.Second,
+				nil,
+				test.failure,
+			), "result", 2)
+
+			runtime := &Runtime{RunEventStore: store}
+			outputs, err := runtime.loadPlannerToolOutputs(context.Background(), []*api.ToolOutputRef{{
+				CallRunID:   "run-1",
+				ResultRunID: "run-1",
+				ToolCallID:  "call-1",
+			}})
+			if test.wantErr != "" {
+				require.Nil(t, outputs)
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, outputs, 1)
+			require.Equal(t, test.failure.Kind, outputs[0].Failure.Kind)
+			require.Equal(t, test.failure.Error.Message, outputs[0].Failure.Error.Message)
+			require.Equal(t, test.failure.Recovery.Action, outputs[0].Failure.Recovery.Action)
+			require.Empty(t, outputs[0].Result)
+		})
+	}
+}
+
 func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.T) {
 	t.Parallel()
 
@@ -453,6 +528,10 @@ func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+			runtime := &Runtime{}
+			spec := test.spec
+			spec.Name = toolName
+			seedTestToolSpecs(runtime, spec)
 
 			resultEvent := hooks.NewToolResultReceivedEvent(
 				"run-1",
@@ -471,8 +550,7 @@ func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.
 				nil,
 			)
 			resultEvent.ResultBytes = test.result.ResultBytes
-			output, err := plannerToolOutputFromCanonicalEvents(
-				test.spec,
+			output, err := runtime.plannerToolOutputFromCanonicalEvents(
 				"run-1",
 				"run-1",
 				"call-1",

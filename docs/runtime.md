@@ -923,8 +923,11 @@ successful tools without a result type and failed tools store no result bytes.
 workflow, hook, and stream result types. `ResultBytes` has also been removed
 from planner-authored and workflow result types because the runtime calculates
 it from the JSON stored in the durable tool-result event.
-Upgrade only when no runs from the previous runtime are active or suspended,
-then deploy the runtime, generated workers, and callers together.
+Before upgrading, ensure no run or session can read a successful result that the
+previous runtime omitted. Let active and suspended runs finish, then start new
+sessions that do not refer to those older histories or migrate or remove the
+omitted-result events. Deploy the runtime, generated workers, and callers
+together.
 Each model-authored await item stores its runtime `ToolCallID` separately from
 the provider `ModelToolCallID`. Other checkpoint versions cannot resume.
 

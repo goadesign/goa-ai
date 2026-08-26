@@ -115,16 +115,7 @@ func (r *Runtime) loadHistoricalContinuationOutputs(
 		if entry == nil {
 			continue
 		}
-		var spec tools.ToolSpec
-		if entry.events.scheduled != nil {
-			var ok bool
-			spec, ok = r.toolSpec(entry.events.scheduled.ToolName)
-			if !ok {
-				return nil, fmt.Errorf("runtime: historical continuation references unregistered tool %q", entry.events.scheduled.ToolName)
-			}
-		}
-		output, err := plannerToolOutputFromCanonicalEvents(
-			spec,
+		output, err := r.plannerToolOutputFromCanonicalEvents(
 			entry.callRunID,
 			entry.resultRunID,
 			toolCallID,

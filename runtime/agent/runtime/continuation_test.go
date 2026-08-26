@@ -443,8 +443,9 @@ func TestPlannerToolOutputHydrationPreservesContinuationRoot(t *testing.T) {
 		scheduled: scheduled,
 		result:    result,
 	}
-	output, err := plannerToolOutputFromCanonicalEvents(
-		tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
+	runtime := &Runtime{}
+	seedTestToolSpecs(runtime, newAnyJSONSpec(scheduled.ToolName))
+	output, err := runtime.plannerToolOutputFromCanonicalEvents(
 		"run-1",
 		"run-1",
 		"continue-1",

@@ -22,7 +22,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type canonicalToolEvents struct {
@@ -79,16 +78,7 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOu
 	outputs := make([]*planner.ToolOutput, 0, len(refs))
 	for _, ref := range refs {
 		callEvents := eventsByRun[ref.CallRunID][ref.ToolCallID]
-		var spec tools.ToolSpec
-		if callEvents != nil && callEvents.scheduled != nil {
-			var ok bool
-			spec, ok = r.toolSpec(callEvents.scheduled.ToolName)
-			if !ok {
-				return nil, fmt.Errorf("runtime: canonical tool history references unregistered tool %q", callEvents.scheduled.ToolName)
-			}
-		}
-		output, err := plannerToolOutputFromCanonicalEvents(
-			spec,
+		output, err := r.plannerToolOutputFromCanonicalEvents(
 			ref.CallRunID,
 			ref.ResultRunID,
 			ref.ToolCallID,
@@ -105,7 +95,7 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOu
 
 // plannerToolOutputFromCanonicalEvents constructs one planner ToolOutput from
 // canonical scheduled/result events in the run log.
-func plannerToolOutputFromCanonicalEvents(spec tools.ToolSpec, callRunID, resultRunID, toolCallID string, callEvents, resultEvents *canonicalToolEvents) (*planner.ToolOutput, error) {
+func (r *Runtime) plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID string, callEvents, resultEvents *canonicalToolEvents) (*planner.ToolOutput, error) {
 	if callEvents == nil {
 		return nil, fmt.Errorf("runtime: missing canonical tool history in run log (run_id=%s tool_call_id=%s)", callRunID, toolCallID)
 	}
@@ -167,6 +157,10 @@ func plannerToolOutputFromCanonicalEvents(spec tools.ToolSpec, callRunID, result
 			)
 		}
 		return output, nil
+	}
+	spec, ok := r.toolSpec(output.Name)
+	if !ok {
+		return nil, fmt.Errorf("runtime: canonical tool history references unregistered tool %q", output.Name)
 	}
 	if _, err := decodeSuccessfulToolResult(spec, resultJSON); err != nil {
 		return nil, fmt.Errorf(
