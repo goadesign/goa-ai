@@ -2591,16 +2591,17 @@ trigger budget from the exact-retention budget:
   generated summary that still leaves the history-policy request over the
   threshold.
 - Bedrock uses Runtime `CountTokens` when the resolved model supports it.
-  Claude Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, and Mythos 5 use the optional
-  `bedrock.Options.MantleTokenCounter` instead. Before delegating, the Bedrock
-  adapter resolves the foundation model ID and preserves the effective tools.
-  Without that configured Mantle counter, these models return
-  `model.ErrTokenCountingUnsupported`. Mantle counts the same private
-  non-strict tool that Converse receives for these models. Native
-  `OutputConfig` remains unsupported in Mantle. Claude 4.6 structured output
-  uses the same strict tool in Runtime counting and Converse instead. Provider
-  validation errors remain errors; the adapter never parses an error message
-  into a fabricated count.
+  Claude Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, and Mythos 5 require
+  `bedrock.Options.MantleTokenCounter` instead. `bedrock.New` and
+  `bedrock.NewProvider` reject a configuration that assigns one of these
+  models to the default, high-reasoning, or small class without that counter.
+  Before delegating, the Bedrock adapter resolves the foundation model ID and
+  preserves the effective tools. Mantle counts the same private non-strict
+  tool that Converse receives for these models. Native `OutputConfig` remains
+  unsupported in Mantle. Claude 4.6 structured output uses the same strict
+  tool in Runtime counting and Converse instead. Provider validation errors
+  remain errors; the adapter never parses an error message into a fabricated
+  count.
 - `bedrock.NewAnthropic` also resolves structured output before counting.
   Sonnet 5 and Opus 5 send one private non-strict tool to both `InvokeModel`
   and Mantle, then expose the tool payload as a canonical completion. Models
