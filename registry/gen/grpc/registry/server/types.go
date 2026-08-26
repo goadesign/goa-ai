@@ -457,7 +457,7 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 	}
 	for _, e := range message.Tools {
 		if e != nil {
-			if err2 := ValidateToolSchema(e); err2 != nil {
+			if err2 := validateregistry_registry_ToolSchema_At_elem(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -485,8 +485,9 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 	return
 }
 
-// ValidateToolSchema runs the validations defined on ToolSchema.
-func ValidateToolSchema(elem *registrypb.ToolSchema) (err error) {
+// validateregistry_registry_ToolSchema_At_elem runs the validations defined on
+// ToolSchema.
+func validateregistry_registry_ToolSchema_At_elem(elem *registrypb.ToolSchema) (err error) {
 	if elem.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "elem"))
 	}
@@ -742,7 +743,7 @@ func ValidateCallToolRequest(message *registrypb.CallToolRequest) (err error) {
 		}
 	}
 	if message.Meta != nil {
-		if err2 := ValidateToolCallMeta(message.Meta); err2 != nil {
+		if err2 := validateregistry_registry_ToolCallMeta_At_meta(message.Meta); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -754,8 +755,9 @@ func ValidateCallToolRequest(message *registrypb.CallToolRequest) (err error) {
 	return
 }
 
-// ValidateToolCallMeta runs the validations defined on ToolCallMeta.
-func ValidateToolCallMeta(meta *registrypb.ToolCallMeta) (err error) {
+// validateregistry_registry_ToolCallMeta_At_meta runs the validations defined
+// on ToolCallMeta.
+func validateregistry_registry_ToolCallMeta_At_meta(meta *registrypb.ToolCallMeta) (err error) {
 	if meta.RunId == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("run_id", "meta"))
 	}
@@ -858,7 +860,7 @@ func ValidateRetryToolRequest(message *registrypb.RetryToolRequest) (err error) 
 		}
 	}
 	if message.Meta != nil {
-		if err2 := ValidateToolCallMeta(message.Meta); err2 != nil {
+		if err2 := validateregistry_registry_ToolCallMeta_At_meta(message.Meta); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}

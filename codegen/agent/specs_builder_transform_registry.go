@@ -23,7 +23,23 @@ type (
 		sourceLayout *goacodegen.GoTypePlan
 		targetLayout *goacodegen.GoTypePlan
 	}
+
+	// transformHelperOrderFactory combines one generated package and conversion
+	// key with each exact helper location supplied by Goa.
+	transformHelperOrderFactory struct {
+		packagePath string
+		key         string
+	}
 )
+
+// order returns the package name order for one helper occurrence.
+func (f transformHelperOrderFactory) order(location goacodegen.TransformHelperDefinitionLocation) goacodegen.PackageNameOrder {
+	return transformHelperNameOrder{
+		packagePath: f.packagePath,
+		key:         f.key,
+		location:    location,
+	}
+}
 
 // setTransformLayouts attaches the complete generated source and target forms
 // to the conversion recorded by declareTransform.
@@ -51,19 +67,21 @@ func (p *toolSpecsPackagePlan) finalizeTransformHelpers() error {
 		return cmp.Compare(left.key, right.key)
 	})
 	registry := goacodegen.NewTransformHelperRegistry()
-	keys := make(map[goacodegen.TransformHelperDefinitionID]string)
-	prefixes := make(map[string]string, len(transforms))
+	prefixes := make(map[goacodegen.TransformHelperDefinitionID]string)
 	for _, transform := range transforms {
 		if transform.sourceLayout == nil || transform.targetLayout == nil {
 			return fmt.Errorf("tool conversion %q has no generated type layouts", transform.key)
 		}
-		if err := registry.Collect(transform.plan, transform.sourceLayout, transform.targetLayout); err != nil {
+		order := transformHelperOrderFactory{
+			packagePath: p.public.ImportPath(),
+			key:         transform.key,
+		}
+		if err := registry.Collect(transform.plan, transform.sourceLayout, transform.targetLayout, order.order); err != nil {
 			return fmt.Errorf("collect tool conversion %q helpers: %w", transform.key, err)
 		}
 		for _, definition := range transform.plan.HelperDefinitions() {
-			keys[definition.ID] = transform.key
+			prefixes[definition.ID] = transform.prefix
 		}
-		prefixes[transform.key] = transform.prefix
 	}
 	groups, err := registry.Finalize()
 	if err != nil {
@@ -71,21 +89,16 @@ func (p *toolSpecsPackagePlan) finalizeTransformHelpers() error {
 	}
 	for _, group := range groups {
 		definition := group.Definition()
-		key := keys[definition.ID]
 		namePrefix := "transform"
-		if prefixes[key] != "" {
-			namePrefix = prefixes[key]
+		if prefixes[definition.ID] != "" {
+			namePrefix = prefixes[definition.ID]
 		}
 		preferred := lowerCamel(namePrefix + goacodegen.Goify(definition.Source.Type.Name(), true) + "To" + goacodegen.Goify(definition.Target.Type.Name(), true))
 		declaration := goacodegen.NewPreferredName(
 			goacodegen.NameFunction,
 			preferred,
 			goacodegen.UnexportedName,
-			transformHelperNameOrder{
-				packagePath: p.public.ImportPath(),
-				key:         key,
-				location:    definition.Location,
-			},
+			group.Order(),
 		)
 		if err := p.public.DeclareName(declaration); err != nil {
 			return err
