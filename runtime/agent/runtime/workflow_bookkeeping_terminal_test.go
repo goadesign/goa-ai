@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -63,7 +62,8 @@ func TestRunLoopBookkeepingTerminalExecutesWithExhaustedBudget(t *testing.T) {
 			Payload:    rawjson.Message(`{}`),
 		}},
 	}
-	caps := policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 0}
+	caps := initialCaps(RunPolicy{MaxToolCalls: 10})
+	caps.RemainingToolCalls = 0
 
 	out, err := rt.runLoop(
 		wfCtx,

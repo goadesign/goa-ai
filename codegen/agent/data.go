@@ -181,9 +181,10 @@ type (
 	// template access. Generated code uses these values to configure the
 	// runtime's policy enforcement (see agents/runtime/policy package).
 	//
-	// Zero-valued fields indicate no limit: TimeBudget = 0 means unlimited
-	// execution time, and zero caps mean no resource restrictions. Templates
-	// use these values to generate registration and validation logic.
+	// Zero TimeBudget and MaxToolCalls values mean no configured limit. A zero
+	// MaxRecoveryTurns value keeps the runtime-owned positive default instead of
+	// disabling recovery control. Templates use the authored values to generate
+	// registration and validation logic.
 	//
 	// The policy is enforced by the agent runtime during workflow execution,
 	// not at code generation time.
@@ -194,7 +195,7 @@ type (
 		PlanTimeout time.Duration
 		// ToolTimeout sets the default ExecuteTool StartToClose timeout when set.
 		ToolTimeout time.Duration
-		// Caps enumerates max tool-call limits.
+		// Caps contains the authored tool-call and recovery-turn limits.
 		Caps CapsData
 		// OnMissingFields controls behavior when validation indicates missing
 		// fields. Allowed: "finalize" | "await_clarification" | "resume".
@@ -249,17 +250,20 @@ type (
 	// by capping the number of tool invocations and replacement planner
 	// activities allowed within a single agent run.
 	//
-	// Zero values indicate no cap is enforced. These limits are transformed
-	// from CapsExpr during policy data construction and are enforced by the
-	// runtime policy engine, not at generation time.
+	// Authored values remain zero when the design does not configure them.
+	// EffectiveMaxRecoveryTurns lets generated documentation show the runtime
+	// default without writing that implementation default into generated agent
+	// registration code.
 	//
-	// The runtime increments tool-call counters and charges recovery turns when
-	// it schedules replacement planner activities.
+	// The runtime decrements the remaining tool-call and recovery-turn budgets
+	// as it admits tool calls and replacement planner activities.
 	CapsData struct {
 		// MaxToolCalls caps the number of tool invocations per run (0 = not configured).
 		MaxToolCalls int
-		// MaxRecoveryTurns caps consecutive replacement planner activities (0 = not configured).
+		// MaxRecoveryTurns is the authored replacement-activity cap (0 = use runtime default).
 		MaxRecoveryTurns int
+		// EffectiveMaxRecoveryTurns is the configured limit or the runtime default.
+		EffectiveMaxRecoveryTurns int
 	}
 
 	// ToolsetData captures metadata about a toolset and its relationship to agents

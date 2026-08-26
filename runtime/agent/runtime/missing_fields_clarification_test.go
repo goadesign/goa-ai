@@ -107,6 +107,7 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 		results,
 		nil,
 		model.TokenUsage{},
+		initialCaps(RunPolicy{}),
 		&nextAttempt,
 		"turn-1",
 		&runDeadlines{Budget: deadline, Hard: deadline},

@@ -728,10 +728,27 @@ applies to replacement answers. Replace
 replace `WithRunMaxConsecutiveFailedToolCalls(n)` with
 `WithRunMaxRecoveryTurns(n)` in runtime callers, then regenerate agent code.
 
-New suspensions use `goa-ai.run-suspension.v5`. Workers also accept version 4
-checkpoints and preserve their earlier failed-tool counting behavior while the
-saved run finishes. Deploy any future checkpoint-shape change across the
-runtime, generated workers, and callers as one coordinated release.
+The same source-level rename applies to code that builds policy values
+directly:
+
+- `runtime.RunPolicy.MaxConsecutiveFailedToolCalls` and
+  `runtime.PolicyOverrides.MaxConsecutiveFailedToolCalls` become
+  `MaxRecoveryTurns`.
+- `api.LimitTerminalPlans.FailedToolCallCap` and
+  `runtime.LimitTerminalPlans.FailedToolCallCap` become `RecoveryCap`.
+- `policy.CapsState.MaxConsecutiveFailedToolCalls` and
+  `RemainingConsecutiveFailedToolCalls` become `MaxRecoveryTurns` and
+  `RemainingRecoveryTurns`.
+- `planner.TerminationReasonFailureCap` becomes
+  `TerminationReasonRecoveryCap`.
+- Generator integrations that inspect evaluated or rendered policy data must
+  use `expr.CapsExpr.MaxRecoveryTurns` and
+  `codegen.CapsData.MaxRecoveryTurns`.
+
+These names and their serialized field names are intentionally breaking.
+Suspensions now use `goa-ai.run-suspension.v5`; version-four suspensions are not
+accepted. Upgrade only when no runs from the previous runtime are active or
+suspended, then deploy the runtime, generated workers, and callers together.
 Each model-authored await item stores its runtime `ToolCallID` separately from
 the provider `ModelToolCallID`. Other checkpoint versions cannot resume.
 
@@ -2025,13 +2042,11 @@ Ongoing workflows and saved suspensions must satisfy the exact current
 contract. Historical completed-session records remain stored unchanged because
 this release policy does not alter their persistence schema.
 
-`goa-ai.run-suspension.v5` is the current suspension schema. Version 4
-checkpoints remain readable so saved runs can finish with their original
-failed-tool counting behavior. Every
-model-authored await item preserves its runtime `ToolCallID` separately from
-the provider `ModelToolCallID`: runtime records and continuation responses use
-the former, while provider transcript reconstruction uses the latter.
-Other suspension schemas are incompatible.
+`goa-ai.run-suspension.v5` is the current suspension schema. Version 4 and
+other suspension schemas are incompatible. Every model-authored await item
+preserves its runtime `ToolCallID` separately from the provider
+`ModelToolCallID`: runtime records and continuation responses use the former,
+while provider transcript reconstruction uses the latter.
 
 Ending a session stops future work but retains its run metadata for inspection.
 When the owning application permanently deletes the session's customer data, it
@@ -2462,6 +2477,12 @@ type CapsState struct {
     RemainingRecoveryTurns int
 }
 ```
+
+The runtime passes each policy engine a positive `MaxRecoveryTurns`, using the
+agent setting or the framework default. A policy decision may leave both
+recovery fields at zero to keep the current state unchanged. Otherwise,
+`MaxRecoveryTurns` must be positive and `RemainingRecoveryTurns` must be
+between zero and that maximum; the runtime rejects an invalid decision.
 
 ### Per-Run Policy Overrides
 

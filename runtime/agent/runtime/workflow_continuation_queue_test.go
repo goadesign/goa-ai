@@ -14,7 +14,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
@@ -42,7 +41,7 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 				ID: "unit", Question: "Which unit?",
 			}),
 		)},
-		policy.CapsState{},
+		initialCaps(RunPolicy{}),
 		time.Time{},
 		time.Time{},
 		"turn-1",

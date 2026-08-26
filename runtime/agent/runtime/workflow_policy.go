@@ -78,6 +78,9 @@ func (r *Runtime) applyRuntimePolicy(
 	if err != nil {
 		return nil, caps, err
 	}
+	if err := validatePolicyDecisionRecoveryCaps(decision.Caps); err != nil {
+		return nil, caps, err
+	}
 	if len(decision.Labels) > 0 {
 		base.RunContext.Labels = mergeLabels(base.RunContext.Labels, decision.Labels)
 		input.Labels = mergeLabels(input.Labels, decision.Labels)
@@ -109,6 +112,25 @@ func (r *Runtime) applyRuntimePolicy(
 		return nil, caps, err
 	}
 	return allowed, caps, nil
+}
+
+// validatePolicyDecisionRecoveryCaps accepts an omitted recovery-cap update or
+// one internally consistent tighter state. The active workflow state already
+// contains the configured or default positive maximum.
+func validatePolicyDecisionRecoveryCaps(caps policy.CapsState) error {
+	if caps.MaxRecoveryTurns == 0 && caps.RemainingRecoveryTurns == 0 {
+		return nil
+	}
+	if caps.MaxRecoveryTurns <= 0 {
+		return errors.New("runtime policy decision requires a positive recovery turn maximum")
+	}
+	if caps.RemainingRecoveryTurns < 0 {
+		return errors.New("runtime policy decision has negative remaining recovery turns")
+	}
+	if caps.RemainingRecoveryTurns > caps.MaxRecoveryTurns {
+		return errors.New("runtime policy decision remaining recovery turns exceed its maximum")
+	}
+	return nil
 }
 
 // rewritePolicyDeniedToolCalls preserves one provider response atomically by

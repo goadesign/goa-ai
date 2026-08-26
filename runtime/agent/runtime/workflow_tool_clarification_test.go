@@ -14,7 +14,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -60,7 +59,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
 		"turn-1",
@@ -170,7 +169,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
 		"turn-1",
@@ -278,7 +277,7 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
 		"turn-1",
@@ -401,7 +400,7 @@ func TestRunLoopSessionlessRunRejectsExternalInput(t *testing.T) {
 		input,
 		base,
 		result,
-		policy.CapsState{},
+		initialCaps(RunPolicy{}),
 		time.Time{},
 		time.Time{},
 		"turn-1",

@@ -15,7 +15,6 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -39,7 +38,7 @@ func TestCompletionToolSuccessEndsRunWithoutPlannerResume(t *testing.T) {
 
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
 		Name: completion.Name, Payload: rawjson.Message(`{"title":"Recap"}`), ToolCallID: "persist-success",
-	}}}, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3})
+	}}}, initialCaps(RunPolicy{MaxToolCalls: 3}))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -74,12 +73,7 @@ func TestCompletionToolFailureCanBeCorrected(t *testing.T) {
 
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
 		Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-invalid",
-	}}}, policy.CapsState{
-		MaxToolCalls:           3,
-		RemainingToolCalls:     3,
-		MaxRecoveryTurns:       2,
-		RemainingRecoveryTurns: 2,
-	})
+	}}}, initialCaps(RunPolicy{MaxToolCalls: 3, MaxRecoveryTurns: 2}))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -133,9 +127,7 @@ func TestCompletionToolRejectsPlannerTerminalResponse(t *testing.T) {
 
 	out, err := h.run(&PlanResult{
 		FinalResponse: finalPlannerResult("looks successful").FinalResponse,
-	}, policy.CapsState{
-		MaxToolCalls: 3, RemainingToolCalls: 3,
-	})
+	}, initialCaps(RunPolicy{MaxToolCalls: 3}))
 
 	assert.Nil(t, out)
 	require.Error(t, err)
@@ -159,9 +151,11 @@ func TestCompletionToolCapExhaustionFailsWithoutFinalization(t *testing.T) {
 	)
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
+	caps := initialCaps(RunPolicy{MaxToolCalls: 1})
+	caps.RemainingToolCalls = 0
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
 		Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-cap",
-	}}}, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 0})
+	}}}, caps)
 
 	assert.Nil(t, out)
 	require.Error(t, err)
@@ -188,12 +182,7 @@ func TestCompletionToolRecoveryCapFailsWithoutFinalization(t *testing.T) {
 
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
 		Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-failure-cap",
-	}}}, policy.CapsState{
-		MaxToolCalls:           2,
-		RemainingToolCalls:     2,
-		MaxRecoveryTurns:       1,
-		RemainingRecoveryTurns: 1,
-	})
+	}}}, initialCaps(RunPolicy{MaxToolCalls: 2, MaxRecoveryTurns: 1}))
 
 	assert.Nil(t, out)
 	require.ErrorContains(t, err, `completion tool "briefs.persist" did not succeed`)
@@ -219,7 +208,7 @@ func TestCompletionToolMustBeOnlyActionInPlannerResponse(t *testing.T) {
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{
 		{Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-mixed"},
 		{Name: other.Name, Payload: rawjson.Message(`{}`), ToolCallID: "lookup-mixed"},
-	}}, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3})
+	}}, initialCaps(RunPolicy{MaxToolCalls: 3}))
 
 	assert.Nil(t, out)
 	require.Error(t, err)
@@ -250,7 +239,7 @@ func TestCompletionToolCannotAccompanyPlannerAwait(t *testing.T) {
 		Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{
 			ID: "clarify-brief", Question: "Which details should the Brief include?",
 		})),
-	}, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3})
+	}, initialCaps(RunPolicy{MaxToolCalls: 3}))
 
 	assert.Nil(t, out)
 	require.ErrorContains(t, err, `completion tool "briefs.persist" must be the only action`)
@@ -280,7 +269,7 @@ func TestCompletionToolCannotRequestPostToolSynthesis(t *testing.T) {
 			Name: lookup.Name, Payload: rawjson.Message(`{}`), ToolCallID: "lookup-synthesis",
 		}},
 		SynthesizeAfterTools: true,
-	}, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3})
+	}, initialCaps(RunPolicy{MaxToolCalls: 3}))
 
 	assert.Nil(t, out)
 	require.ErrorContains(t, err, `completion tool "briefs.persist" did not succeed`)
@@ -312,7 +301,7 @@ func TestCompletionToolCannotBeDelegatedToAwaitWork(t *testing.T) {
 				Payload:         rawjson.Message(`{}`),
 			}},
 		})),
-	}, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3})
+	}, initialCaps(RunPolicy{MaxToolCalls: 3}))
 
 	assert.Nil(t, out)
 	require.ErrorContains(t, err, `completion tool "briefs.persist" did not succeed`)
@@ -341,7 +330,7 @@ func TestCompletionToolRejectsAnotherTerminalTool(t *testing.T) {
 
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
 		Name: terminal.Name, Payload: rawjson.Message(`{}`), ToolCallID: "terminal-other",
-	}}}, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3})
+	}}}, initialCaps(RunPolicy{MaxToolCalls: 3}))
 
 	assert.Nil(t, out)
 	require.ErrorContains(t, err, `completion tool "briefs.persist" did not succeed`)

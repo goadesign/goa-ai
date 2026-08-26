@@ -21,7 +21,7 @@ Here’s a map of what Goa-AI just built for you based on your `design/*.go` fil
         * **Exports Toolsets:***none*
         * **Run Policy:**
             * Max Tool Calls: `0`
-            * Max Recovery Turns: `0`
+            * Max Recovery Turns: `3`
             * Time Budget: `0s`
     * **Direct Completions:***none*
 

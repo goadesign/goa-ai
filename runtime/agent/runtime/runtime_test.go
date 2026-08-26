@@ -202,6 +202,7 @@ func TestRunLoopWithStateAcceptsInitialFinalToolResult(t *testing.T) {
 		},
 	}
 	st := &runLoopState{
+		Caps: initialCaps(RunPolicy{}),
 		Result: &PlanResult{
 			FinalToolResult: &planner.FinalToolResult{
 				Result: rawjson.Message([]byte(`{"status":"ok"}`)),
@@ -520,7 +521,7 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 				Question:        "Which facility?",
 			}),
 		)},
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
 		"turn-1",
@@ -833,6 +834,28 @@ func TestRegisterAgentAppliesWorkerQueueOverride(t *testing.T) {
 	require.Equal(t, 3, recordOpts.RetryPolicy.MaxAttempts)
 	require.Equal(t, time.Second, recordOpts.RetryPolicy.InitialInterval)
 	require.InDelta(t, 2.0, recordOpts.RetryPolicy.BackoffCoefficient, 0.000001)
+}
+
+func TestRegisterAgentRejectsNegativeRecoveryTurns(t *testing.T) {
+	rt := New()
+
+	err := rt.RegisterAgent(context.Background(), AgentRegistration{
+		ID:      "service.agent",
+		Planner: &stubPlanner{},
+		Workflow: engine.WorkflowDefinition{
+			Name:      "service.workflow",
+			TaskQueue: "service.queue",
+			Handler:   rt.ExecuteWorkflow,
+		},
+		PlanActivityName:    "service.agent.plan",
+		ResumeActivityName:  "service.agent.resume",
+		ExecuteToolActivity: "service.agent.executetool",
+		Policy: RunPolicy{
+			MaxRecoveryTurns: -1,
+		},
+	})
+
+	require.ErrorIs(t, err, ErrInvalidConfig)
 }
 
 func TestRegisterAgentRejectsTerminalSpecWithoutBookkeeping(t *testing.T) {
@@ -1226,7 +1249,7 @@ func TestTimeBudgetExceeded(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, wfCtx.Now().Add(-time.Second), wfCtx.Now().Add(-time.Second), "", nil)
+	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 1}), wfCtx.Now().Add(-time.Second), wfCtx.Now().Add(-time.Second), "", nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "time budget exceeded")
 }
@@ -1252,6 +1275,20 @@ func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
 	caps := initialCaps(reg.Policy)
 	require.Equal(t, 1, caps.MaxToolCalls)
 	require.Equal(t, 1, caps.RemainingToolCalls)
+}
+
+func TestOverridePolicyRejectsNegativeRecoveryTurns(t *testing.T) {
+	agentID := agent.Ident("svc.agent")
+	rt := &Runtime{
+		agents: map[agent.Ident]AgentRegistration{
+			agentID: {ID: agentID},
+		},
+	}
+
+	err := rt.OverridePolicy(agentID, RunPolicy{MaxRecoveryTurns: -1})
+
+	require.ErrorIs(t, err, ErrInvalidConfig)
+	require.Zero(t, rt.agents[agentID].Policy.MaxRecoveryTurns)
 }
 
 func TestConvertRunOutputToToolResult(t *testing.T) {
@@ -1440,7 +1477,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, parentInput, base, initial, policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3}, time.Time{}, time.Time{}, parentInput.TurnID, nil)
+	}, parentInput, base, initial, initialCaps(RunPolicy{MaxToolCalls: 3}), time.Time{}, time.Time{}, parentInput.TurnID, nil)
 	require.NoError(t, err)
 
 	// Assert ToolCallUpdatedEvent emitted twice with counts 2 then 3 referencing parent tool call id
@@ -1553,8 +1590,10 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	decision := policy.Decision{
 		AllowedTools: []tools.Ident{tools.Ident("search")},
 		Caps: policy.CapsState{
-			MaxToolCalls:       5,
-			RemainingToolCalls: 5,
+			MaxToolCalls:           5,
+			RemainingToolCalls:     5,
+			MaxRecoveryTurns:       policy.DefaultMaxRecoveryTurns,
+			RemainingRecoveryTurns: policy.DefaultMaxRecoveryTurns,
 		},
 		Labels: map[string]string{
 			"policy_engine": "basic",
@@ -1651,7 +1690,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 			},
 		},
 	}
-	caps := policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}
+	caps := initialCaps(RunPolicy{MaxToolCalls: 5})
 
 	_, err = rt.runLoop(
 		wfCtx,

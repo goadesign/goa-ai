@@ -16,7 +16,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
@@ -553,7 +552,7 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, "", nil)
+	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 1}), time.Time{}, time.Time{}, "", nil)
 	require.NoError(t, err)
 	require.Equal(t, "q1", wfCtx.lastToolCall.Options.Queue)
 	require.NotNil(t, wfCtx.lastToolCall.Input)
@@ -582,7 +581,7 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1}, time.Time{}, time.Time{}, "", nil)
+	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 1}), time.Time{}, time.Time{}, "", nil)
 	require.NoError(t, err)
 	// Activity input should carry the same ID
 	require.NotNil(t, wfCtx.lastToolCall.Input)
@@ -1107,7 +1106,7 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 2, RemainingToolCalls: 2},
+		initialCaps(RunPolicy{MaxToolCalls: 2}),
 		time.Time{},
 		time.Time{},
 		input.TurnID,

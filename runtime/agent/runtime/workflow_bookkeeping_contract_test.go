@@ -16,7 +16,6 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -191,7 +190,7 @@ func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) 
 		input,
 		base,
 		initial,
-		policy.CapsState{},
+		initialCaps(RunPolicy{}),
 		time.Time{},
 		time.Time{},
 		"turn-1",
@@ -252,7 +251,7 @@ func TestRunLoopBookkeepingOnlyWithoutTerminalPayloadFailsFast(t *testing.T) {
 		input,
 		base,
 		initial,
-		policy.CapsState{},
+		initialCaps(RunPolicy{}),
 		time.Time{},
 		time.Time{},
 		"turn-1",
@@ -327,7 +326,7 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 		input,
 		base,
 		initial,
-		policy.CapsState{},
+		initialCaps(RunPolicy{}),
 		time.Time{},
 		time.Time{},
 		"turn-1",
@@ -381,7 +380,7 @@ func TestRunLoopRejectsProviderToolCallWithoutID(t *testing.T) {
 		input,
 		base,
 		initial,
-		policy.CapsState{},
+		initialCaps(RunPolicy{}),
 		time.Time{},
 		time.Time{},
 		"turn-1",
@@ -409,7 +408,7 @@ func TestRunLoopRejectsMultipleProviderToolCallsWithoutIDs(t *testing.T) {
 			RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
 		}},
 		initial,
-		policy.CapsState{},
+		initialCaps(RunPolicy{}),
 		time.Time{},
 		time.Time{},
 		"turn-1",
@@ -483,7 +482,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
 		"turn-1",
@@ -564,7 +563,7 @@ func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOu
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
 		"turn-1",
@@ -642,7 +641,7 @@ func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testin
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
 		"turn-1",
@@ -725,7 +724,7 @@ func TestRunLoopBookkeepingToolTerminalRejectsClarification(t *testing.T) {
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
 		"turn-1",

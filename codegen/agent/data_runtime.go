@@ -15,20 +15,25 @@ import (
 	"goa.design/goa-ai/codegen/naming"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/policy"
 )
 
 // newRunPolicyData copies the evaluated DSL run policy into immutable template
-// data, preserving only the fields that affect generated runtime wiring.
+// data. It also resolves the recovery limit shown in generated documentation
+// without changing the authored value emitted into agent registration code.
 func newRunPolicyData(expr *agentsExpr.RunPolicyExpr) RunPolicyData {
-	if expr == nil {
-		return RunPolicyData{}
-	}
 	rp := RunPolicyData{
-		TimeBudget:      expr.TimeBudget,
-		PlanTimeout:     expr.PlanTimeout,
-		ToolTimeout:     expr.ToolTimeout,
-		OnMissingFields: expr.OnMissingFields,
+		Caps: CapsData{
+			EffectiveMaxRecoveryTurns: policy.DefaultMaxRecoveryTurns,
+		},
 	}
+	if expr == nil {
+		return rp
+	}
+	rp.TimeBudget = expr.TimeBudget
+	rp.PlanTimeout = expr.PlanTimeout
+	rp.ToolTimeout = expr.ToolTimeout
+	rp.OnMissingFields = expr.OnMissingFields
 	if expr.History != nil {
 		h := &HistoryData{
 			Mode:                     string(expr.History.Mode),
@@ -47,9 +52,10 @@ func newRunPolicyData(expr *agentsExpr.RunPolicyExpr) RunPolicyData {
 		}
 	}
 	if expr.DefaultCaps != nil {
-		rp.Caps = CapsData{
-			MaxToolCalls:     expr.DefaultCaps.MaxToolCalls,
-			MaxRecoveryTurns: expr.DefaultCaps.MaxRecoveryTurns,
+		rp.Caps.MaxToolCalls = expr.DefaultCaps.MaxToolCalls
+		rp.Caps.MaxRecoveryTurns = expr.DefaultCaps.MaxRecoveryTurns
+		if expr.DefaultCaps.MaxRecoveryTurns > 0 {
+			rp.Caps.EffectiveMaxRecoveryTurns = expr.DefaultCaps.MaxRecoveryTurns
 		}
 	}
 	return rp

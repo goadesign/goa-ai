@@ -13,7 +13,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -106,7 +105,7 @@ func TestRunLoopRecordsPartialInlineResultsBeforeExecutionError(t *testing.T) {
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
 		input.TurnID,
@@ -171,7 +170,7 @@ func TestRunLoopPreservesConcreteResultAndContinuesBookkeepingAfterHookError(t *
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
 		input.TurnID,
@@ -220,6 +219,8 @@ func TestRunLoopRecordsCompleteCapDenialBeforePublicationError(t *testing.T) {
 		{ToolCallID: "first-call", Name: first.Name, Payload: rawjson.Message(`{}`)},
 		{ToolCallID: "second-call", Name: second.Name, Payload: rawjson.Message(`{}`)},
 	}}
+	caps := initialCaps(RunPolicy{MaxToolCalls: 4})
+	caps.RemainingToolCalls = 0
 
 	out, err := rt.runLoop(
 		wfCtx,
@@ -227,7 +228,7 @@ func TestRunLoopRecordsCompleteCapDenialBeforePublicationError(t *testing.T) {
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 0},
+		caps,
 		time.Time{},
 		time.Time{},
 		input.TurnID,

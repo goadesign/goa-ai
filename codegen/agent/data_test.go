@@ -1,6 +1,7 @@
 package codegen_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/runtime/agent/policy"
 	. "goa.design/goa/v3/dsl"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
@@ -18,7 +20,7 @@ import (
 const alphaServiceName = "alpha"
 
 func TestBuildGeneratorData(t *testing.T) {
-	roots := runAgentDesign(t)
+	roots := runAgentDesign(t, 2)
 	data, err := codegen.BuildDataForTest("goa.design/goa-ai", roots)
 	require.NoError(t, err)
 	require.NotNil(t, data)
@@ -76,6 +78,7 @@ func TestBuildGeneratorData(t *testing.T) {
 
 	require.Equal(t, 5, agent.RunPolicy.Caps.MaxToolCalls)
 	require.Equal(t, 2, agent.RunPolicy.Caps.MaxRecoveryTurns)
+	require.Equal(t, 2, agent.RunPolicy.Caps.EffectiveMaxRecoveryTurns)
 	require.Equal(t, 45*time.Second, agent.RunPolicy.TimeBudget)
 
 	require.Len(t, agent.UsedToolsets, 1)
@@ -100,7 +103,7 @@ func TestBuildGeneratorData(t *testing.T) {
 }
 
 func TestGenerateProducesFiles(t *testing.T) {
-	roots := runAgentDesign(t)
+	roots := runAgentDesign(t, 2)
 	files, err := codegen.Generate("goa.design/goa-ai", roots, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
@@ -115,6 +118,40 @@ func TestGenerateProducesFiles(t *testing.T) {
 	require.Contains(t, paths, "gen/calc/agents/scribe/registry.go")
 	require.Contains(t, paths, "gen/calc/agents/scribe/specs/specs.go")
 	require.Contains(t, paths, "gen/calc/agents/scribe/agenttools/docs_export/helpers.go")
+}
+
+func TestUnconfiguredRecoveryTurnsRemainAuthoredZero(t *testing.T) {
+	roots := runAgentDesign(t, 0)
+	data, err := codegen.BuildDataForTest("goa.design/goa-ai", roots)
+	require.NoError(t, err)
+	require.Len(t, data.Services, 1)
+	require.Len(t, data.Services[0].Agents, 1)
+	caps := data.Services[0].Agents[0].RunPolicy.Caps
+	require.Zero(t, caps.MaxRecoveryTurns)
+	require.Equal(t, policy.DefaultMaxRecoveryTurns, caps.EffectiveMaxRecoveryTurns)
+
+	files, err := codegen.Generate("goa.design/goa-ai", roots, nil)
+	require.NoError(t, err)
+	outputDir := t.TempDir()
+	renderedRegistry := false
+	for _, file := range files {
+		if filepath.ToSlash(file.Path) != "gen/calc/agents/scribe/registry.go" {
+			continue
+		}
+		_, err = file.Render(outputDir)
+		require.NoError(t, err)
+		renderedRegistry = true
+		break
+	}
+	require.True(t, renderedRegistry)
+	root, err := os.OpenRoot(outputDir)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, root.Close())
+	})
+	registry, err := root.ReadFile("gen/calc/agents/scribe/registry.go")
+	require.NoError(t, err)
+	require.NotContains(t, string(registry), "MaxRecoveryTurns:")
 }
 
 func TestBuildGeneratorData_AliasedMCPToolsetUsesDefinitionNameForArtifacts(t *testing.T) {
@@ -202,7 +239,7 @@ func TestBuildGeneratorData_MCPToolsetConstNamesStayDistinctAcrossProviderPartit
 	require.NotEqual(t, consumerAgent.MCPToolsets[0].ConstName, consumerAgent.MCPToolsets[1].ConstName)
 }
 
-func runAgentDesign(t *testing.T) []eval.Root {
+func runAgentDesign(t *testing.T, maxRecoveryTurns int) []eval.Root {
 	t.Helper()
 
 	eval.Reset()
@@ -237,10 +274,11 @@ func runAgentDesign(t *testing.T) []eval.Root {
 					Tool("draft_reply", "Draft a reply", func() {})
 				})
 				RunPolicy(func() {
-					DefaultCaps(
-						MaxToolCalls(5),
-						MaxRecoveryTurns(2),
-					)
+					caps := []CapsOption{MaxToolCalls(5)}
+					if maxRecoveryTurns > 0 {
+						caps = append(caps, MaxRecoveryTurns(maxRecoveryTurns))
+					}
+					DefaultCaps(caps...)
 					TimeBudget("45s")
 				})
 			})

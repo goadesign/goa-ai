@@ -4,7 +4,9 @@
 package runtime
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -62,7 +64,14 @@ func (j *modelInvocationJournal) recoverableModelResponseEvidence(message *model
 	var matched *modelInvocationCandidate
 	for _, id := range j.order {
 		candidate := j.invocations[id]
-		if candidate == nil || !responseContainsMessage(candidate.response, message) {
+		if candidate == nil {
+			continue
+		}
+		contains, err := responseContainsMessage(candidate.response, message)
+		if err != nil {
+			return model.ResponseEvidence{}, err
+		}
+		if !contains {
 			continue
 		}
 		if matched != nil {
@@ -82,16 +91,27 @@ func (j *modelInvocationJournal) recoverableModelResponseEvidence(message *model
 	return matched.responseEvidence, nil
 }
 
-// responseContainsMessage reports whether one exact framework-owned message is
-// part of a completed response.
-func responseContainsMessage(response *model.Response, message *model.Message) bool {
+// responseContainsMessage reports whether one unchanged framework-owned message
+// is part of a completed response. Origin proves where the message came from;
+// canonical JSON proves the planner did not alter its content afterward.
+func responseContainsMessage(response *model.Response, message *model.Message) (bool, error) {
 	if response == nil || message == nil {
-		return false
+		return false, nil
+	}
+	messageJSON, err := message.MarshalJSON()
+	if err != nil {
+		return false, fmt.Errorf("encode recoverable model answer: %w", err)
 	}
 	for i := range response.Content {
-		if model.SameMessageOrigin(&response.Content[i], message) {
-			return true
+		candidate := &response.Content[i]
+		if !model.SameMessageOrigin(candidate, message) {
+			continue
 		}
+		candidateJSON, err := candidate.MarshalJSON()
+		if err != nil {
+			return false, fmt.Errorf("encode recorded model answer: %w", err)
+		}
+		return bytes.Equal(candidateJSON, messageJSON), nil
 	}
-	return false
+	return false, nil
 }

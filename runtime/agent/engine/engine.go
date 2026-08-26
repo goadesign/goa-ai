@@ -72,10 +72,6 @@ import (
 type RunStatus string
 
 const (
-	// DefaultWorkflowVersion identifies histories recorded before a named
-	// workflow implementation change.
-	DefaultWorkflowVersion = -1
-
 	// RunStatusPending indicates the workflow has been accepted but not started yet.
 	RunStatusPending RunStatus = "pending"
 	// RunStatusRunning indicates the workflow is actively executing.
@@ -215,11 +211,6 @@ type (
 		// RunID returns the engine-assigned run identifier, used for observability
 		// and run-level correlation.
 		RunID() string
-
-		// WorkflowVersion records one replay-safe implementation choice. Existing
-		// histories return minSupported; new histories record and return
-		// maxSupported.
-		WorkflowVersion(changeID string, minSupported, maxSupported int) int
 
 		// PublishRecords schedules one activity for a non-empty ordered record
 		// batch and waits for completion. Implementations must run persistence

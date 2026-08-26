@@ -171,30 +171,21 @@ func TestValidateContinuationRejectsNoncurrentSuspensionVersion(t *testing.T) {
 		`unsupported run suspension version "goa-ai.run-suspension.v2"`)
 }
 
-func TestDecodeVersionFourSuspensionPreservesLegacyFailureStreak(t *testing.T) {
+func TestValidateContinuationRejectsMissingRecoveryTurnMaximum(t *testing.T) {
+	runtime := New()
 	spec := newAnyJSONSpec("svc.lookup", "svc")
+	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
-		checkpoint.Version = api.RunSuspensionVersionV4
-		checkpoint.Policy = &PolicyOverrides{
-			LimitTerminalPlans: testLimitTerminalPlans(spec.Name),
-		}
-		checkpoint.State.Caps = policy.CapsState{
-			MaxRecoveryTurns:       2,
-			RemainingRecoveryTurns: 1,
-		}
+		checkpoint.State.Caps.MaxRecoveryTurns = 0
+		checkpoint.State.Caps.RemainingRecoveryTurns = 0
 	})
-	suspension.Version = api.RunSuspensionVersionV4
-	require.Contains(t, string(suspension.Checkpoint), `"FailedToolCallCap"`)
-	require.NotContains(t, string(suspension.Checkpoint), `"RecoveryCap"`)
 
-	checkpoint, err := decodeWorkflowCheckpointState(suspension)
-
-	require.NoError(t, err)
-	require.True(t, checkpoint.State.LegacyFailureStreak)
-	require.Equal(t, 2, checkpoint.State.Caps.MaxRecoveryTurns)
-	require.Equal(t, 1, checkpoint.State.Caps.RemainingRecoveryTurns)
-	require.Equal(t, spec.Name, checkpoint.Policy.LimitTerminalPlans.RecoveryCap.Name)
+	require.ErrorContains(
+		t,
+		runtime.ValidateContinuation(suspension),
+		"requires a positive recovery turn maximum",
+	)
 }
 
 func TestValidateContinuationChecksSavedCompletionPlan(t *testing.T) {
@@ -428,7 +419,13 @@ func suspensionContractFixtureWithContext(t *testing.T, tool tools.Ident, agentI
 			Labels:   cloneLabels(labels),
 			Metadata: cloneMetadata(metadata),
 		},
-		State:   checkpointRunState{NextAttempt: 2},
+		State: checkpointRunState{
+			NextAttempt: 2,
+			Caps: policy.CapsState{
+				MaxRecoveryTurns:       policy.DefaultMaxRecoveryTurns,
+				RemainingRecoveryTurns: policy.DefaultMaxRecoveryTurns,
+			},
+		},
 		Batch:   checkpointStepBatch{Result: result, Calls: calls, Kind: stepKindTools},
 		Pending: []checkpointPendingInput{{Await: &await, CallRunID: runID}},
 	}

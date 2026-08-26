@@ -74,7 +74,7 @@ func TestRunLoopCombinesFailedCallsIntoFewerCorrections(t *testing.T) {
 		{ToolCallID: "bad-call-2", Name: search.Name, Payload: rawjson.Message(`{"query":"bad-2"}`)},
 		{ToolCallID: "bad-call-3", Name: search.Name, Payload: rawjson.Message(`{"query":"bad-3"}`)},
 		{ToolCallID: "bad-call-4", Name: search.Name, Payload: rawjson.Message(`{"query":"bad-4"}`)},
-	}}, policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 10})
+	}}, initialCaps(RunPolicy{MaxToolCalls: 10}))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -157,7 +157,7 @@ func TestRunLoopCorrectionMayChooseAnotherToolOrAnswer(t *testing.T) {
 				ToolCallID: "bad-call",
 				Name:       search.Name,
 				Payload:    rawjson.Message(`{"query":"bad"}`),
-			}}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4})
+			}}}, initialCaps(RunPolicy{MaxToolCalls: 4}))
 
 			require.NoError(t, err)
 			require.NotNil(t, out)
@@ -217,7 +217,7 @@ func TestRunLoopPreservesCorrectionEvidenceAcrossClarification(t *testing.T) {
 		ToolCallID: "bad-call",
 		Name:       search.Name,
 		Payload:    rawjson.Message(`{"query":"bad"}`),
-	}}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4})
+	}}}, initialCaps(RunPolicy{MaxToolCalls: 4}))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -328,7 +328,7 @@ func TestRunLoopRecoveryCatalogRejectsExcludedCallBeforeExecution(t *testing.T) 
 
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
 		Name: list.Name, ToolCallID: "list-initial", Payload: rawjson.Message(`{"page":1}`),
-	}}}, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5})
+	}}}, initialCaps(RunPolicy{MaxToolCalls: 5}))
 
 	require.Error(t, err)
 	assert.Nil(t, out)
@@ -459,7 +459,7 @@ func TestFinishFailureFinalizesWithExactCause(t *testing.T) {
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{
 		{Name: search.Name, ToolCallID: "search-call", Payload: rawjson.Message(`{"query":"bad"}`)},
 		{Name: load.Name, ToolCallID: "load-call", Payload: rawjson.Message(`{"id":"one"}`)},
-	}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4})
+	}}, initialCaps(RunPolicy{MaxToolCalls: 4}))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -516,7 +516,7 @@ func TestFinishFailureFinalizationRetainsOnlyTerminalTools(t *testing.T) {
 
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
 		Name: load.Name, ToolCallID: "load-call", Payload: rawjson.Message(`{"id":"one"}`),
-	}}}, policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4})
+	}}}, initialCaps(RunPolicy{MaxToolCalls: 4}))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -595,7 +595,7 @@ func TestFinishFailurePreservesLiveContinuation(t *testing.T) {
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{
 		{Name: search.Name, ToolCallID: "search-call", Payload: rawjson.Message(`{"query":"alarms"}`)},
 		{Name: load.Name, ToolCallID: "load-call", Payload: rawjson.Message(`{"id":"one"}`)},
-	}}, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5})
+	}}, initialCaps(RunPolicy{MaxToolCalls: 5}))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -655,6 +655,65 @@ func TestRunLoopRecoversRejectedModelAnswer(t *testing.T) {
 	assert.Equal(t, "corrected answer", agentMessageText(out.Final))
 	assert.Equal(t, 2, resumes)
 	assert.Len(t, out.ToolEvents, 1)
+}
+
+func TestRunLoopSharesRecoveryBudgetBetweenToolAndModelRejections(t *testing.T) {
+	search := newAnyJSONSpec("catalog.search", "catalog")
+	resumes := 0
+	h := newRecoveryHarness(
+		t,
+		"shared-budget",
+		[]tools.ToolSpec{search},
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			return invalidCallResult(call), nil
+		},
+		func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			resumes++
+			switch resumes {
+			case 1:
+				require.Nil(t, input.Finalize)
+				require.False(t, input.SynthesisOnly)
+				require.Len(t, input.ToolOutputs, 1)
+				require.Equal(t, "search-call", input.ToolOutputs[0].ToolCallID)
+				require.NotNil(t, input.ToolOutputs[0].Failure)
+				client, ok := input.Agent.ModelClient("test")
+				require.True(t, ok)
+				response, err := client.Complete(ctx, &model.Request{Model: "test"})
+				require.NoError(t, err)
+				return nil, planner.NewRecoverableModelOutputError(
+					errors.New("replacement answer is invalid"),
+					&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
+					"Replace the invalid final answer.",
+				)
+			case 2:
+				require.NotNil(t, input.Finalize)
+				require.Equal(t, planner.TerminationReasonRecoveryCap, input.Finalize.Reason)
+				return finalPlannerResult("shared recovery budget exhausted"), nil
+			default:
+				require.FailNow(t, "unexpected planner resume")
+				return nil, nil
+			}
+		},
+	)
+	h.runtime.models["test"] = newRecoveryTestModel(t)
+
+	out, err := h.run(&PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "search-call",
+			Name:       search.Name,
+			Payload:    rawjson.Message(`{"query":"invalid"}`),
+		}},
+	}, policy.CapsState{
+		MaxToolCalls:           2,
+		RemainingToolCalls:     2,
+		MaxRecoveryTurns:       1,
+		RemainingRecoveryTurns: 1,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "shared recovery budget exhausted", agentMessageText(out.Final))
+	assert.Equal(t, 2, resumes)
 }
 
 func TestWorkflowRecoversInitialRejectedModelAnswer(t *testing.T) {
@@ -777,73 +836,6 @@ func TestRunLoopStopsAfterConfiguredModelOutputRecoveryTurns(t *testing.T) {
 	assert.Equal(t, 3, recoveryAttempts)
 }
 
-func TestRunLoopPreservesLegacyFailedBatchExhaustion(t *testing.T) {
-	search := newAnyJSONSpec("catalog.search", "catalog")
-	list := newAnyJSONSpec("catalog.list", "catalog")
-	correctionTurns := 0
-	h := newRecoveryHarness(
-		t,
-		"legacy-failure-streak",
-		[]tools.ToolSpec{search, list},
-		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
-			return &planner.ToolResult{
-				Name:       call.Name,
-				ToolCallID: call.ToolCallID,
-				Failure: testToolFailure(
-					planner.FailureDomainRejection,
-					planner.RecoveryReplan,
-					"choose another action",
-				),
-			}, nil
-		},
-		func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
-			if input.Finalize != nil {
-				require.FailNow(t, "finalization should use the prevalidated workflow route")
-			}
-			correctionTurns++
-			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-				Name:    list.Name,
-				Payload: rawjson.Message(`{"query":"still-invalid"}`),
-			}}}, nil
-		},
-	)
-	resumeActivity := h.workflow.plannerRoutes["resume"]
-	finalizationTurns := 0
-	h.workflow.plannerRoutes["resume"] = func(
-		ctx context.Context,
-		input *PlanActivityInput,
-	) (*PlanActivityOutput, error) {
-		if input.Finalize == nil {
-			return resumeActivity(ctx, input)
-		}
-		finalizationTurns++
-		require.Equal(t, planner.TerminationReasonRecoveryCap, input.Finalize.Reason)
-		return &PlanActivityOutput{
-			PublicationBatchID: "00000000-0000-4000-8000-000000000001",
-			Result: &PlanResult{
-				FinalResponse: finalPlannerResult("legacy failure cap exhausted").FinalResponse,
-			},
-		}, nil
-	}
-
-	out, err := h.runLegacy(&PlanResult{ToolCalls: []ToolCall{{
-		ToolCallID: "initial-invalid",
-		Name:       search.Name,
-		Payload:    rawjson.Message(`{"query":"invalid"}`),
-	}}}, policy.CapsState{
-		MaxToolCalls:           4,
-		RemainingToolCalls:     4,
-		MaxRecoveryTurns:       2,
-		RemainingRecoveryTurns: 2,
-	})
-
-	assert.Equal(t, 1, correctionTurns)
-	assert.Equal(t, 1, finalizationTurns)
-	require.NoError(t, err)
-	require.NotNil(t, out)
-	assert.Equal(t, "legacy failure cap exhausted", agentMessageText(out.Final))
-}
-
 // newRecoveryHarness assembles one in-memory workflow whose planner and tool
 // behavior are supplied by the test. It uses the real resume activity so tests
 // cover canonical run-log loading, recovery reminders, and advertised tools.
@@ -925,32 +917,6 @@ func (h *recoveryHarness) run(
 		h.base,
 		initial,
 		caps,
-		time.Time{},
-		time.Time{},
-		h.input.TurnID,
-		nil,
-	)
-}
-
-// runLegacy executes the focused workflow with the failed-batch accounting
-// restored from an older Temporal history or version-four suspension.
-func (h *recoveryHarness) runLegacy(
-	initial *PlanResult,
-	caps policy.CapsState,
-) (*RunOutput, error) {
-	for i := range initial.ToolCalls {
-		if initial.ToolCalls[i].ModelToolCallID == "" {
-			initial.ToolCalls[i].ModelToolCallID = initial.ToolCalls[i].ToolCallID
-		}
-	}
-	state := newRunLoopState(initial, nil, model.TokenUsage{}, caps, 2)
-	state.LegacyFailureStreak = true
-	return h.runtime.runLoopWithState(
-		h.workflow,
-		h.registration,
-		h.input,
-		h.base,
-		state,
 		time.Time{},
 		time.Time{},
 		h.input.TurnID,

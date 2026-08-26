@@ -68,7 +68,9 @@ func wrapExecute(fn func(context.Context, *ToolCall) (*planner.ToolResult, error
 	}
 }
 
-// runLoop seeds workflow state directly for focused runtime tests.
+// runLoop seeds workflow state directly for focused runtime tests. Callers
+// provide the complete active cap state that the production workflow already
+// materializes before entering the loop.
 func (r *Runtime) runLoop(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
@@ -308,10 +310,6 @@ func (t *testWorkflowContext) NextSequence() uint64 {
 	defer root.sequenceMu.Unlock()
 	root.nextSequence++
 	return root.nextSequence
-}
-
-func (t *testWorkflowContext) WorkflowVersion(_ string, _, maxSupported int) int {
-	return maxSupported
 }
 
 func (t *testWorkflowContext) NewTimer(ctx context.Context, d time.Duration) (engine.Future[time.Time], error) {

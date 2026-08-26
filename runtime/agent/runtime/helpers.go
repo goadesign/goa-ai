@@ -680,14 +680,14 @@ func (r *Runtime) onPromptRendered(ctx context.Context, event prompt.RenderEvent
 func mergeCaps(current policy.CapsState, decision policy.CapsState) policy.CapsState {
 	current.MaxToolCalls = mergeCapDown(current.MaxToolCalls, decision.MaxToolCalls)
 	current.RemainingToolCalls = mergeCapDown(current.RemainingToolCalls, decision.RemainingToolCalls)
-	current.MaxRecoveryTurns = mergeCapDown(
-		current.MaxRecoveryTurns,
-		decision.MaxRecoveryTurns,
-	)
-	current.RemainingRecoveryTurns = mergeCapDown(
-		current.RemainingRecoveryTurns,
-		decision.RemainingRecoveryTurns,
-	)
+	if decision.MaxRecoveryTurns > 0 {
+		current.MaxRecoveryTurns = min(current.MaxRecoveryTurns, decision.MaxRecoveryTurns)
+		current.RemainingRecoveryTurns = min(
+			current.RemainingRecoveryTurns,
+			decision.RemainingRecoveryTurns,
+			current.MaxRecoveryTurns,
+		)
+	}
 	return current
 }
 

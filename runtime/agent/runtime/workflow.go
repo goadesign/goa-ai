@@ -240,7 +240,20 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			return nil, err
 		}
 	}
-	st := &runLoopState{}
+	// Materialize one active cap state before planning so ordinary tools,
+	// recovery turns, and terminal finalization all observe the same run budget.
+	caps := initialCaps(reg.Policy)
+	if input.Policy != nil {
+		if input.Policy.MaxToolCalls > 0 {
+			caps.MaxToolCalls = input.Policy.MaxToolCalls
+			caps.RemainingToolCalls = input.Policy.MaxToolCalls
+		}
+		if input.Policy.MaxRecoveryTurns > 0 {
+			caps.MaxRecoveryTurns = input.Policy.MaxRecoveryTurns
+			caps.RemainingRecoveryTurns = input.Policy.MaxRecoveryTurns
+		}
+	}
+	st := &runLoopState{Caps: caps}
 	// Compute deadlines before the initial Plan so it cannot outlive the run window.
 	timing := resolveRunTiming(reg, input)
 	timeBudget := timing.TimeBudget
@@ -301,12 +314,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		finalStatus = terminalRunStatusForError(err)
 		return nil, err
 	}
-	recoveryVersion := wfCtx.WorkflowVersion(
-		recoveryTurnsWorkflowChange,
-		engine.DefaultWorkflowVersion,
-		recoveryTurnsWorkflowVersion,
-	)
-	legacyFailureStreak := recoveryVersion == engine.DefaultWorkflowVersion
 	firstOutput, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, planOpts, startReq, budgetDeadline)
 	if err != nil {
 		if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) &&
@@ -319,6 +326,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 				nil,
 				nil,
 				model.TokenUsage{},
+				caps,
 				planInput.RunContext.Attempt+1,
 				turnID,
 				nil,
@@ -353,29 +361,12 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	if result != nil {
 		r.logger.Info(wfCtx.Context(), "Plan activity completed", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil)
 	}
-	caps := initialCaps(reg.Policy)
-	if legacyFailureStreak {
-		caps = initialLegacyCaps(reg.Policy)
-	}
-	// Apply per-run cap overrides (run-level)
-	if input.Policy != nil {
-		if input.Policy.MaxToolCalls > 0 {
-			caps.MaxToolCalls = input.Policy.MaxToolCalls
-			caps.RemainingToolCalls = input.Policy.MaxToolCalls
-		}
-		if input.Policy.MaxRecoveryTurns > 0 {
-			caps.MaxRecoveryTurns = input.Policy.MaxRecoveryTurns
-			caps.RemainingRecoveryTurns = input.Policy.MaxRecoveryTurns
-		}
-	}
 	// Deadlines (budgetDeadline, hardDeadline, grace) already computed above.
 	nextAttempt := planInput.RunContext.Attempt + 1
-	st.Caps = caps
 	st.NextAttempt = nextAttempt
 	st.AggUsage = firstOutput.Usage
 	st.Result = firstOutput.Result
 	st.Transcript = firstOutput.Transcript
-	st.LegacyFailureStreak = legacyFailureStreak
 	if firstOutput.OutputContractFailure != nil {
 		st.PendingRecovery = pendingModelOutputRecovery{
 			correction: firstOutput.OutputContractFailure.Correction,

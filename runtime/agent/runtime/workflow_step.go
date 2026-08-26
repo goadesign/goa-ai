@@ -83,9 +83,6 @@ type (
 )
 
 const (
-	recoveryTurnsWorkflowChange  = "goa-ai.recovery-turns.v1"
-	recoveryTurnsWorkflowVersion = 1
-
 	stepKindTerminal stepKind = iota + 1
 	stepKindAwait
 	stepKindTools
@@ -772,12 +769,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 
 	results := batch.results()
-	progress, failedWork := l.r.budgetedBatchOutcome(batch.records)
-	if l.st.LegacyFailureStreak {
-		if applyLegacyFailureStreak(&l.st.Caps, progress, failedWork) {
-			return l.finalizeStep(planner.TerminationReasonRecoveryCap)
-		}
-	} else if progress {
+	if l.r.hasSuccessfulBudgetedResult(batch.records) {
 		// Successful budgeted work ends the current recovery episode. Failed
 		// work consumes a turn only when the workflow schedules another planner
 		// activity below.
@@ -793,6 +785,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		l.st.ToolEvents,
 		l.st.ToolOutputs,
 		l.st.AggUsage,
+		l.st.Caps,
 		&l.st.NextAttempt,
 		l.turnID,
 		&l.deadlines,
@@ -847,8 +840,7 @@ func (l *workflowLoop) resumePlanner(
 	synthesisOnly bool,
 	outputCorrection string,
 ) (*RunOutput, error) {
-	if !l.st.LegacyFailureStreak &&
-		(len(pendingRecovery) > 0 || outputCorrection != "") &&
+	if (len(pendingRecovery) > 0 || outputCorrection != "") &&
 		!consumeRecoveryTurn(&l.st.Caps) {
 		return l.finalizeStep(planner.TerminationReasonRecoveryCap)
 	}
@@ -1092,6 +1084,7 @@ func (l *workflowLoop) finalizeStep(reason planner.TerminationReason) (*RunOutpu
 		l.st.ToolEvents,
 		l.st.ToolOutputs,
 		l.st.AggUsage,
+		l.st.Caps,
 		l.st.NextAttempt,
 		l.turnID,
 		nil,
@@ -1111,6 +1104,7 @@ func (l *workflowLoop) finalizeRecoveryStep(recovery []*planner.ToolOutput) (*Ru
 		l.st.ToolEvents,
 		l.st.ToolOutputs,
 		l.st.AggUsage,
+		l.st.Caps,
 		l.st.NextAttempt,
 		l.turnID,
 		recovery,

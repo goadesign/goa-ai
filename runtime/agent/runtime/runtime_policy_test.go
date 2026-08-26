@@ -87,7 +87,7 @@ func TestPolicyAllowlistRewritesDeniedCalls(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-	}, input, base, initial, policy.CapsState{MaxToolCalls: 5, RemainingToolCalls: 5}, time.Time{}, time.Time{}, "turn-1", nil)
+	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 5}), time.Time{}, time.Time{}, "turn-1", nil)
 	require.NoError(t, err)
 	require.Len(t, out.ToolEvents, 2)
 	require.Equal(t, tools.Ident("allowed"), out.ToolEvents[0].Name)
@@ -162,8 +162,10 @@ func TestRestrictedRunToolCapFinalizes(t *testing.T) {
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, policy.CapsState{
-		MaxToolCalls:       1,
-		RemainingToolCalls: 0,
+		MaxToolCalls:           1,
+		RemainingToolCalls:     0,
+		MaxRecoveryTurns:       policy.DefaultMaxRecoveryTurns,
+		RemainingRecoveryTurns: policy.DefaultMaxRecoveryTurns,
 	}, time.Time{}, time.Time{}, "turn-1", nil)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -212,8 +214,10 @@ func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, policy.CapsState{
-		MaxToolCalls:       1,
-		RemainingToolCalls: 0,
+		MaxToolCalls:           1,
+		RemainingToolCalls:     0,
+		MaxRecoveryTurns:       policy.DefaultMaxRecoveryTurns,
+		RemainingRecoveryTurns: policy.DefaultMaxRecoveryTurns,
 	}, time.Time{}, time.Time{}, "turn-1", nil)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -414,6 +418,69 @@ func TestValidateRunPolicyRejectsUnknownMissingFieldsAction(t *testing.T) {
 	err := validateRunPolicy(RunPolicy{OnMissingFields: "retry"})
 	require.ErrorIs(t, err, ErrInvalidConfig)
 	assert.Contains(t, err.Error(), `unknown missing-fields action "retry"`)
+}
+
+func TestValidateRunPolicyRejectsNegativeRecoveryTurns(t *testing.T) {
+	t.Parallel()
+
+	err := validateRunPolicy(RunPolicy{MaxRecoveryTurns: -1})
+
+	require.ErrorIs(t, err, ErrInvalidConfig)
+	assert.Contains(t, err.Error(), "max recovery turns cannot be negative")
+}
+
+func TestApplyRuntimePolicyRejectsInvalidRecoveryCaps(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		caps policy.CapsState
+		want string
+	}{
+		{
+			name: "remaining without maximum",
+			caps: policy.CapsState{RemainingRecoveryTurns: 1},
+			want: "requires a positive recovery turn maximum",
+		},
+		{
+			name: "negative maximum",
+			caps: policy.CapsState{MaxRecoveryTurns: -1},
+			want: "requires a positive recovery turn maximum",
+		},
+		{
+			name: "negative remaining",
+			caps: policy.CapsState{MaxRecoveryTurns: 2, RemainingRecoveryTurns: -1},
+			want: "negative remaining recovery turns",
+		},
+		{
+			name: "remaining exceeds maximum",
+			caps: policy.CapsState{MaxRecoveryTurns: 1, RemainingRecoveryTurns: 2},
+			want: "remaining recovery turns exceed its maximum",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rt := New()
+			rt.Policy = &stubPolicyEngine{decision: policy.Decision{Caps: test.caps}}
+			current := policy.CapsState{
+				MaxRecoveryTurns:       3,
+				RemainingRecoveryTurns: 3,
+			}
+
+			_, got, err := rt.applyRuntimePolicy(
+				context.Background(),
+				&planner.PlanInput{RunContext: run.Context{RunID: "run-1"}},
+				&RunInput{AgentID: "svc.agent"},
+				nil,
+				current,
+				"turn-1",
+			)
+
+			require.ErrorContains(t, err, test.want)
+			assert.Equal(t, current, got)
+		})
+	}
 }
 
 func TestFilterToolCallsKeepsToolUnavailable(t *testing.T) {

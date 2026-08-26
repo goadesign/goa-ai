@@ -139,15 +139,23 @@ type (
 		RemainingToolCalls int
 
 		// MaxRecoveryTurns caps consecutive additional planner activities
-		// scheduled after rejected tool or model output. Zero selects the
-		// runtime default.
-		MaxRecoveryTurns int `json:"MaxConsecutiveFailedToolCalls,omitempty"` //nolint:tagliatelle // Historical Temporal state field.
+		// scheduled after rejected tool or model output. The runtime materializes
+		// the configured or default positive maximum before policy evaluation. A
+		// policy Decision may leave both recovery fields zero to keep that state
+		// unchanged; otherwise this value must be positive.
+		MaxRecoveryTurns int
 
 		// RemainingRecoveryTurns tracks how many replacement planner activities
 		// may still be scheduled in the current recovery episode. Successful
 		// budgeted tool work resets it to MaxRecoveryTurns.
-		RemainingRecoveryTurns int `json:"RemainingConsecutiveFailedToolCalls,omitempty"` //nolint:tagliatelle // Historical Temporal state field.
+		RemainingRecoveryTurns int
 	}
+)
+
+const (
+	// DefaultMaxRecoveryTurns is the number of consecutive replacement planner
+	// activities allowed when an agent does not configure its own limit.
+	DefaultMaxRecoveryTurns = 3
 )
 
 const (

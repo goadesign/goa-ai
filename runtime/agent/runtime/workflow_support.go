@@ -47,6 +47,7 @@ func (r *Runtime) finalizeRun(
 	allToolResults []*planner.ToolResult,
 	allToolOutputs []*planner.ToolOutput,
 	aggUsage model.TokenUsage,
+	caps policy.CapsState,
 	nextAttempt int,
 	turnID string,
 	recovery []*planner.ToolOutput,
@@ -76,6 +77,7 @@ func (r *Runtime) finalizeRun(
 			allToolResults,
 			allToolOutputs,
 			aggUsage,
+			caps,
 			nextAttempt,
 			turnID,
 			limitCall,
@@ -91,6 +93,7 @@ func (r *Runtime) finalizeRun(
 		allToolResults,
 		allToolOutputs,
 		aggUsage,
+		caps,
 		nextAttempt,
 		turnID,
 		recovery,
@@ -109,6 +112,7 @@ func (r *Runtime) finalizeFromHistory(
 	allToolResults []*planner.ToolResult,
 	allToolOutputs []*planner.ToolOutput,
 	aggUsage model.TokenUsage,
+	caps policy.CapsState,
 	nextAttempt int,
 	turnID string,
 	recovery []*planner.ToolOutput,
@@ -223,6 +227,7 @@ func (r *Runtime) finalizeFromHistory(
 			allToolResults,
 			allToolOutputs,
 			aggUsage,
+			caps,
 			nextAttempt,
 			turnID,
 			reason,
@@ -315,6 +320,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	allToolResults []*planner.ToolResult,
 	allToolOutputs []*planner.ToolOutput,
 	aggUsage model.TokenUsage,
+	caps policy.CapsState,
 	nextAttempt int,
 	turnID string,
 	reason planner.TerminationReason,
@@ -341,7 +347,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	if toolOpts.StartToCloseTimeout == 0 {
 		toolOpts.StartToCloseTimeout = defaultExecuteToolActivityTimeout
 	}
-	st := newRunLoopState(result, transcript, aggUsage, policy.CapsState{}, nextAttempt)
+	st := newRunLoopState(result, transcript, aggUsage, caps, nextAttempt)
 	st.ToolEvents = cloneToolResults(allToolResults)
 	st.ToolOutputs = append([]*planner.ToolOutput(nil), allToolOutputs...)
 	loop := newWorkflowLoop(
@@ -487,6 +493,7 @@ func (r *Runtime) applyMissingFieldsPolicy(
 	allResults []*planner.ToolResult,
 	allToolOutputs []*planner.ToolOutput,
 	aggUsage model.TokenUsage,
+	caps policy.CapsState,
 	nextAttempt *int,
 	turnID string,
 	deadlines *runDeadlines,
@@ -532,6 +539,7 @@ func (r *Runtime) applyMissingFieldsPolicy(
 			allResults,
 			allToolOutputs,
 			aggUsage,
+			caps,
 			*nextAttempt,
 			turnID,
 			nil,
@@ -791,6 +799,8 @@ func validateOutputContractFailure(failure *OutputContractFailure) error {
 	validCorrection := failure.Correction == "" ||
 		(failure.Origin == planner.OutputContractOriginModel &&
 			failure.ModelResponsePresent &&
+			failure.ModelResponseSHA256 != "" &&
+			failure.ModelResponseFingerprintVersion == api.ModelResponseFingerprintVersionV1 &&
 			strings.TrimSpace(failure.Correction) != "" &&
 			len(failure.Correction) <= outputcontract.MaxCorrectionBytes)
 	if !validReasonFingerprint(failure.ReasonSHA256, failure.ReasonSize) ||

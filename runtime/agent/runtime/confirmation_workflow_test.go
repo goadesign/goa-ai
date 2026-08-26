@@ -19,7 +19,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -164,7 +163,7 @@ func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
 		input,
 		base,
 		initial,
-		policy.CapsState{},
+		initialCaps(RunPolicy{}),
 		current,
 		current.Add(time.Minute),
 		input.TurnID,
@@ -230,7 +229,7 @@ func TestTerminalPayloadConfirmationIsRejectedBeforeTranscriptCommit(t *testing.
 		input,
 		base,
 		initial,
-		policy.CapsState{},
+		initialCaps(RunPolicy{}),
 		time.Time{},
 		time.Time{},
 		input.TurnID,
@@ -334,7 +333,7 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		current,
 		current.Add(time.Minute),
 		input.TurnID,
@@ -393,7 +392,7 @@ func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
 		input.TurnID,
@@ -447,7 +446,7 @@ func TestImmediateErrorCompletesUnenteredConfirmation(t *testing.T) {
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
 		input.TurnID,
@@ -540,7 +539,7 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 		input,
 		base,
 		initial,
-		policy.CapsState{MaxToolCalls: 4, RemainingToolCalls: 4},
+		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
 		"turn-1",
