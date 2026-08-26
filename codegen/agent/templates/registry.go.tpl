@@ -71,8 +71,8 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
 {{- if gt .RunPolicy.Caps.MaxToolCalls 0 }}
             MaxToolCalls: {{ .RunPolicy.Caps.MaxToolCalls }},
 {{- end }}
-{{- if gt .RunPolicy.Caps.MaxConsecutiveFailedToolCalls 0 }}
-            MaxConsecutiveFailedToolCalls: {{ .RunPolicy.Caps.MaxConsecutiveFailedToolCalls }},
+{{- if gt .RunPolicy.Caps.MaxRecoveryTurns 0 }}
+            MaxRecoveryTurns: {{ .RunPolicy.Caps.MaxRecoveryTurns }},
 {{- end }}
 {{- if gt .RunPolicy.TimeBudget 0 }}
             TimeBudget: time.Duration({{ printf "%d" .RunPolicy.TimeBudget }}),

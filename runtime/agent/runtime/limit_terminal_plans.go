@@ -21,9 +21,9 @@ func cloneLimitTerminalPlans(plans *LimitTerminalPlans) *LimitTerminalPlans {
 		return nil
 	}
 	return &LimitTerminalPlans{
-		TimeBudget:        cloneLimitTerminalCall(plans.TimeBudget),
-		ToolCallCap:       cloneLimitTerminalCall(plans.ToolCallCap),
-		FailedToolCallCap: cloneLimitTerminalCall(plans.FailedToolCallCap),
+		TimeBudget:  cloneLimitTerminalCall(plans.TimeBudget),
+		ToolCallCap: cloneLimitTerminalCall(plans.ToolCallCap),
+		RecoveryCap: cloneLimitTerminalCall(plans.RecoveryCap),
 	}
 }
 
@@ -39,7 +39,7 @@ func (r *Runtime) validateLimitTerminalPlans(reg AgentRegistration, plans *Limit
 	}{
 		{reason: planner.TerminationReasonTimeBudget, call: plans.TimeBudget},
 		{reason: planner.TerminationReasonToolCap, call: plans.ToolCallCap},
-		{reason: planner.TerminationReasonFailureCap, call: plans.FailedToolCallCap},
+		{reason: planner.TerminationReasonRecoveryCap, call: plans.RecoveryCap},
 	} {
 		if err := r.validateLimitTerminalCall(reg, entry.call); err != nil {
 			return fmt.Errorf("runtime: invalid %s terminal call: %w", entry.reason, err)
@@ -93,11 +93,11 @@ func limitTerminalCall(
 			return LimitTerminalCall{}, false, nil
 		}
 		return cloneLimitTerminalCall(plans.ToolCallCap), true, nil
-	case planner.TerminationReasonFailureCap:
+	case planner.TerminationReasonRecoveryCap:
 		if plans == nil {
 			return LimitTerminalCall{}, false, nil
 		}
-		return cloneLimitTerminalCall(plans.FailedToolCallCap), true, nil
+		return cloneLimitTerminalCall(plans.RecoveryCap), true, nil
 	case planner.TerminationReasonToolFailure:
 		return LimitTerminalCall{}, false, nil
 	default:

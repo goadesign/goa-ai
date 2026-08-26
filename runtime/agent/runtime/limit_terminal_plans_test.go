@@ -50,8 +50,8 @@ func TestValidateLimitTerminalPlans(t *testing.T) {
 		{
 			name: "missing time call",
 			plans: &LimitTerminalPlans{
-				ToolCallCap:       valid.ToolCallCap,
-				FailedToolCallCap: valid.FailedToolCallCap,
+				ToolCallCap: valid.ToolCallCap,
+				RecoveryCap: valid.RecoveryCap,
 			},
 			want: "invalid time_budget terminal call",
 		},
@@ -62,8 +62,8 @@ func TestValidateLimitTerminalPlans(t *testing.T) {
 					Name:    terminal.Name,
 					Payload: rawjson.Message(`{"result":"time","extra":true}`),
 				},
-				ToolCallCap:       valid.ToolCallCap,
-				FailedToolCallCap: valid.FailedToolCallCap,
+				ToolCallCap: valid.ToolCallCap,
+				RecoveryCap: valid.RecoveryCap,
 			},
 			want: "unknown field",
 		},
@@ -74,8 +74,8 @@ func TestValidateLimitTerminalPlans(t *testing.T) {
 					Name:    terminal.Name,
 					Payload: rawjson.Message(`"time"`),
 				},
-				ToolCallCap:       valid.ToolCallCap,
-				FailedToolCallCap: valid.FailedToolCallCap,
+				ToolCallCap: valid.ToolCallCap,
+				RecoveryCap: valid.RecoveryCap,
 			},
 			want: "payload must be a JSON object",
 		},
@@ -182,7 +182,7 @@ func TestLimitTerminalCallSelectsOnlyConfiguredLimits(t *testing.T) {
 	}{
 		{reason: planner.TerminationReasonTimeBudget, want: "time", found: true},
 		{reason: planner.TerminationReasonToolCap, want: "tools", found: true},
-		{reason: planner.TerminationReasonFailureCap, want: "failures", found: true},
+		{reason: planner.TerminationReasonRecoveryCap, want: "failures", found: true},
 		{reason: planner.TerminationReasonToolFailure},
 	}
 	for _, test := range tests {
@@ -375,8 +375,8 @@ func TestWorkflowLimitsExecuteTerminalPlansWithoutPlannerResume(t *testing.T) {
 			withLabels: true,
 		},
 		{
-			name:       "failure cap with conflicting labels",
-			reason:     planner.TerminationReasonFailureCap,
+			name:       "recovery cap with conflicting labels",
+			reason:     planner.TerminationReasonRecoveryCap,
 			result:     "failures",
 			withLabels: true,
 		},
@@ -426,7 +426,7 @@ func executeWorkflowLimitTerminalPlan(
 					ToolCallID: call.ToolCallID,
 					Result:     map[string]any{"worked": true},
 				}
-				if reason == planner.TerminationReasonFailureCap {
+				if reason == planner.TerminationReasonRecoveryCap {
 					result.Result = nil
 					result.Failure = testToolFailure(
 						planner.FailureInvalidCall,
@@ -474,9 +474,9 @@ func executeWorkflowLimitTerminalPlan(
 		reg.Policy.TimeBudget = time.Second
 	case planner.TerminationReasonToolCap:
 		reg.Policy.MaxToolCalls = 1
-	case planner.TerminationReasonFailureCap:
+	case planner.TerminationReasonRecoveryCap:
 		reg.Policy.MaxToolCalls = 2
-		reg.Policy.MaxConsecutiveFailedToolCalls = 1
+		reg.Policy.MaxRecoveryTurns = 1
 	case planner.TerminationReasonToolFailure:
 		t.Fatal("tool failure is not a runtime limit")
 	default:
@@ -531,9 +531,10 @@ func executeWorkflowLimitTerminalPlan(
 			},
 			"resume": func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error) {
 				plannerCalls++
-				if reason == planner.TerminationReasonToolCap {
+				if reason == planner.TerminationReasonToolCap ||
+					reason == planner.TerminationReasonRecoveryCap {
 					callID := fmt.Sprintf("work-call-%d", plannerCalls)
-					return &PlanActivityOutput{
+					output := &PlanActivityOutput{
 						PublicationBatchID: testPublicationBatchID,
 						Result: &PlanResult{
 							ToolCalls: []ToolCall{{
@@ -543,7 +544,11 @@ func executeWorkflowLimitTerminalPlan(
 								Payload:         rawjson.Message(`{}`),
 							}},
 						},
-					}, nil
+					}
+					if reason == planner.TerminationReasonRecoveryCap {
+						output.RecoveryCatalog = &RecoveryCatalog{Tools: []tools.Ident{work.Name}}
+					}
+					return output, nil
 				}
 				return nil, errors.New("fixed limit call must not resume the planner")
 			},
@@ -558,7 +563,8 @@ func executeWorkflowLimitTerminalPlan(
 	require.NotNil(t, out)
 	require.NotNil(t, executed)
 	expectedPlannerCalls := 1
-	if reason == planner.TerminationReasonToolCap {
+	if reason == planner.TerminationReasonToolCap ||
+		reason == planner.TerminationReasonRecoveryCap {
 		expectedPlannerCalls = 2
 	}
 	assert.Equal(t, expectedPlannerCalls, plannerCalls)
@@ -631,7 +637,7 @@ func testLimitTerminalPlans(name tools.Ident) *LimitTerminalPlans {
 			Name:    name,
 			Payload: rawjson.Message(`{"result":"tools"}`),
 		},
-		FailedToolCallCap: LimitTerminalCall{
+		RecoveryCap: LimitTerminalCall{
 			Name:    name,
 			Payload: rawjson.Message(`{"result":"failures"}`),
 		},

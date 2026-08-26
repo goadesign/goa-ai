@@ -17,7 +17,7 @@ import (
 // RunPolicy takes a single argument which is the defining DSL function.
 //
 // The DSL function may use:
-//   - DefaultCaps to set capability limits (tool calls, consecutive failures)
+//   - DefaultCaps to set capability limits (tool calls, recovery turns)
 //   - TimeBudget to set maximum execution duration
 //   - OnMissingFields to configure validation behavior
 //   - History to configure how conversation history is truncated or compressed
@@ -27,7 +27,7 @@ import (
 //
 //	Agent("assistant", "Helper agent", func() {
 //	    RunPolicy(func() {
-//	        DefaultCaps(MaxToolCalls(10), MaxConsecutiveFailedToolCalls(3))
+//	        DefaultCaps(MaxToolCalls(10), MaxRecoveryTurns(3))
 //	        TimeBudget("5m")
 //	        OnMissingFields("await_clarification")
 //	        History(func() {
@@ -53,21 +53,21 @@ func RunPolicy(fn func()) {
 	}
 }
 
-// DefaultCaps configures resource limits for agent execution. Use DefaultCaps
-// to control how many tools the agent can invoke and how many consecutive
-// failures are tolerated before stopping execution.
+// DefaultCaps configures independent resource limits for agent execution. Use
+// it to control how many tools the agent can invoke and how many replacement
+// planner activities may follow rejected tool or model output.
 //
 // DefaultCaps must appear in a RunPolicy expression.
 //
 // DefaultCaps takes zero or more CapsOption arguments (created via MaxToolCalls
-// and MaxConsecutiveFailedToolCalls).
+// and MaxRecoveryTurns).
 //
 // Example:
 //
 //	RunPolicy(func() {
 //	    DefaultCaps(
 //	        MaxToolCalls(20),
-//	        MaxConsecutiveFailedToolCalls(3),
+//	        MaxRecoveryTurns(3),
 //	    )
 //	})
 func DefaultCaps(opts ...CapsOption) {
@@ -170,22 +170,23 @@ func MaxToolCalls(n int) CapsOption {
 	}
 }
 
-// MaxConsecutiveFailedToolCalls configures the maximum number of consecutive
-// tool failures before the agent stops execution. Use this with DefaultCaps to
-// prevent runaway failure loops.
+// MaxRecoveryTurns configures the maximum number of consecutive additional
+// planner activities the runtime may schedule after rejected tool or model
+// output. Successful budgeted tool work starts a fresh recovery episode. The
+// runtime allows three turns when this option is omitted.
 //
-// MaxConsecutiveFailedToolCalls takes a single positive integer argument specifying
-// the maximum consecutive failure count.
+// MaxRecoveryTurns takes a single positive integer argument specifying
+// the number of replacement planner activities.
 //
 // Example:
 //
-//	DefaultCaps(MaxConsecutiveFailedToolCalls(3))
-func MaxConsecutiveFailedToolCalls(n int) CapsOption {
+//	DefaultCaps(MaxRecoveryTurns(3))
+func MaxRecoveryTurns(n int) CapsOption {
 	return func(c *expragents.CapsExpr) {
 		if n <= 0 {
-			eval.ReportError("MaxConsecutiveFailedToolCalls requires n > 0")
+			eval.ReportError("MaxRecoveryTurns requires n > 0")
 			return
 		}
-		c.MaxConsecutiveFailedToolCall = n
+		c.MaxRecoveryTurns = n
 	}
 }

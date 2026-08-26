@@ -1004,7 +1004,7 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 	require.Equal(t, meta, inPtr.Metadata)
 }
 
-func TestConsecutiveFailureBreaker(t *testing.T) {
+func TestRecoveryFinishFinalizesWithoutConsumingTurn(t *testing.T) {
 	failSpec := newAnyJSONSpec("fail", "svc.tools")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
@@ -1037,10 +1037,10 @@ func TestConsecutiveFailureBreaker(t *testing.T) {
 		Planner:             &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
-		Policy:              RunPolicy{MaxConsecutiveFailedToolCalls: 1},
-	}, input, base, initial, initialCaps(RunPolicy{MaxConsecutiveFailedToolCalls: 1}), time.Time{}, time.Time{}, "", nil)
+		Policy:              RunPolicy{MaxRecoveryTurns: 1},
+	}, input, base, initial, initialCaps(RunPolicy{MaxRecoveryTurns: 1}), time.Time{}, time.Time{}, "", nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "consecutive failed tool call cap exceeded")
+	require.Contains(t, err.Error(), "tool required finalization")
 }
 
 func TestStartRunForwardsWorkflowOptions(t *testing.T) {

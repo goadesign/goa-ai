@@ -17,7 +17,7 @@ import (
 
 type (
 	runLoopState struct {
-		// Caps is the current runtime policy cap state (remaining tool budget, failure budget, etc.).
+		// Caps is the current tool-call and recovery-turn budget.
 		Caps policy.CapsState
 
 		// NextAttempt is the attempt number to stamp on the next planner activity request.
@@ -43,15 +43,13 @@ type (
 		// the lifetime of this run.
 		ToolOutputs []*planner.ToolOutput
 
-		// PendingRecovery contains the failed calls whose recovery directives
-		// constrain the current planner result. It is replaced after each
-		// planner resume, so recovery applies to exactly the next decision.
-		PendingRecovery []*planner.ToolOutput
+		// PendingRecovery is either failed tool work or one rejected model
+		// answer. The concrete type determines the next planner input.
+		PendingRecovery pendingPlannerRecovery
 
-		// PendingRecoveryCatalog is the exact tool catalog advertised by the
-		// activity that produced Result. It is required exactly when
-		// PendingRecovery contains failures for the current planner decision.
-		PendingRecoveryCatalog *RecoveryCatalog
+		// LegacyFailureStreak keeps version-4 suspension records on the workflow
+		// behavior that created them.
+		LegacyFailureStreak bool
 	}
 )
 

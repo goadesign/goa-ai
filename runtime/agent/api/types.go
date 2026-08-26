@@ -158,10 +158,12 @@ type (
 		// calls a run may execute.
 		MaxToolCalls int
 
-		// MaxConsecutiveFailedToolCalls caps the number of consecutive failing
-		// tool batches before finalizing: a batch whose budgeted calls all fail
-		// consumes one unit, and any budgeted success resets the streak.
-		MaxConsecutiveFailedToolCalls int
+		// MaxRecoveryTurns caps consecutive additional planner activities
+		// scheduled after rejected tool or model output. Successful budgeted
+		// tool work resets the count.
+		// The JSON name remains unchanged so active Temporal histories can
+		// decode the policy value after this source-level rename.
+		MaxRecoveryTurns int `json:"MaxConsecutiveFailedToolCalls,omitempty"` //nolint:tagliatelle // Historical Temporal input field.
 
 		// TimeBudget caps active planner and tool work. External-input waits do
 		// not consume this budget.
@@ -195,9 +197,12 @@ type (
 		// ToolCallCap runs when budgeted tool calls exhaust MaxToolCalls.
 		ToolCallCap LimitTerminalCall
 
-		// FailedToolCallCap runs when consecutive failed tool batches exhaust
-		// MaxConsecutiveFailedToolCalls.
-		FailedToolCallCap LimitTerminalCall
+		// RecoveryCap runs when replacement planner activities exhaust
+		// MaxRecoveryTurns.
+		// The JSON name remains unchanged so active Temporal histories and saved
+		// version-four suspensions decode the terminal call after this
+		// source-level rename.
+		RecoveryCap LimitTerminalCall `json:"FailedToolCallCap"` //nolint:tagliatelle // Historical Temporal input field.
 	}
 
 	// LimitTerminalCall contains only the application-selected terminal tool
@@ -462,14 +467,26 @@ type (
 		// empty field because they have no failed output to recover.
 		RecoveryToolCallIDs []string `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
+		// ModelOutputRecovery requests replacement of one rejected final answer.
+		// Its presence makes this a synthesis-only turn, so callers cannot supply
+		// correction guidance while leaving domain tools available.
+		ModelOutputRecovery *ModelOutputRecovery `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+
 		// SynthesisOnly requires the planner to produce a final response without
-		// new tool calls. The workflow sets it only when a selected
-		// synthesis-after-tools batch has no recoverable failure.
+		// new tool calls after completed tool work.
 		SynthesisOnly bool
 
 		// Finalize requests a terminal turn with no further domain tool work.
 		// The planner may return a final response or terminal bookkeeping calls.
 		Finalize *planner.Termination
+	}
+
+	// ModelOutputRecovery contains bounded guidance for replacing one rejected
+	// final answer. PlanResume derives synthesis-only behavior from this value.
+	ModelOutputRecovery struct {
+		// Correction tells the planner which output contract the replacement
+		// answer must satisfy.
+		Correction string
 	}
 
 	// PlannerEventRecord is one accepted planner event awaiting workflow-owned
@@ -609,11 +626,11 @@ type (
 
 		// OutputContractFailure is present when model or planner output was
 		// rejected. The workflow publishes Usage and PlannerEvents from this
-		// successful activity result before terminating the run.
+		// successful activity result before recovering or terminating the run.
 		OutputContractFailure *OutputContractFailure `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 	}
 
-	// OutputContractFailure preserves terminal model or planner evidence across
+	// OutputContractFailure preserves rejected model or planner evidence across
 	// the activity boundary without returning a result beside an activity error.
 	OutputContractFailure struct {
 		// Origin identifies whether model output or the planner result failed its
@@ -644,6 +661,10 @@ type (
 		// ModelResponseSize is the number of bytes covered by
 		// ModelResponseSHA256.
 		ModelResponseSize int64
+
+		// Correction contains bounded guidance for replacing rejected model
+		// output. Empty means the rejection is terminal.
+		Correction string `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 	}
 
 	// RecordActivityInput is the canonical workflow-to-activity envelope for
@@ -853,10 +874,13 @@ const (
 	// PendingInputKindToolResults requires a ToolResults response.
 	PendingInputKindToolResults PendingInputKind = "tool_results"
 
+	// RunSuspensionVersionV4 identifies checkpoints created before recovery
+	// turns replaced the failed-tool-call streak.
+	RunSuspensionVersionV4 = "goa-ai.run-suspension.v4"
+
 	// RunSuspensionVersion is the checkpoint schema emitted by this runtime.
-	// Version 4 stores separate runtime and provider identities for every
-	// model-authored await call.
-	RunSuspensionVersion = "goa-ai.run-suspension.v4"
+	// Version 5 records the recovery-turn workflow behavior.
+	RunSuspensionVersion = "goa-ai.run-suspension.v5"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.

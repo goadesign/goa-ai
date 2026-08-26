@@ -176,8 +176,8 @@ func (r *Runtime) finalizeFromHistory(
 			return "time budget exceeded"
 		case planner.TerminationReasonToolCap:
 			return "tool call cap exceeded"
-		case planner.TerminationReasonFailureCap:
-			return "consecutive failed tool call cap exceeded"
+		case planner.TerminationReasonRecoveryCap:
+			return "recovery turn cap exceeded"
 		case planner.TerminationReasonToolFailure:
 			return "tool required finalization"
 		default:
@@ -196,6 +196,13 @@ func (r *Runtime) finalizeFromHistory(
 		return nil, fmt.Errorf("%s: %w", reasonText, err)
 	}
 	if output == nil || output.Result == nil {
+		if output != nil && output.OutputContractFailure != nil {
+			return nil, fmt.Errorf(
+				"%s: %w",
+				reasonText,
+				boundedOutputContractError(output.OutputContractFailure),
+			)
+		}
 		return nil, errors.New(reasonText)
 	}
 	if err := validateFinalizationPlanResult(output.Result); err != nil {
@@ -255,8 +262,8 @@ func finalizationPrompt(reason planner.TerminationReason) (string, error) {
 		return "FINALIZE NOW: time budget reached.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools or that you will \"try\" another approach.\n- If additional tool calls would be needed, explain what you would have retrieved and how it would change the answer, then provide the best provisional answer.", nil
 	case planner.TerminationReasonToolCap:
 		return "FINALIZE NOW: tool budget exhausted.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If further tool calls would be needed, describe them briefly and provide the best provisional answer.", nil
-	case planner.TerminationReasonFailureCap:
-		return "FINALIZE NOW: too many tool failures.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools.\n- If tools failed due to invalid arguments, summarize the failure and provide a corrected plan/payload shape (without actually calling tools), then provide the best provisional answer.", nil
+	case planner.TerminationReasonRecoveryCap:
+		return "FINALIZE NOW: repeated recovery attempts did not produce acceptable output.\n\n- Provide the best possible final answer using ONLY the information already available in the conversation and tool results.\n- Do NOT call any tools.\n- Do NOT say you will call tools or try another answer.\n- Briefly state any result that could not be completed, then provide the best supported answer.", nil
 	case planner.TerminationReasonToolFailure:
 		return "FINALIZE NOW: a tool could not complete the requested work.\n\n- Do not retry the failed operation or gather more information.\n- Use only the information already available in the conversation and tool results.\n- Provide the best final result possible, clearly stating what could not be completed.\n- If this workflow requires one final submission action, use only that action.", nil
 	default:
@@ -654,6 +661,9 @@ func (r *Runtime) runPlanActivity(
 		return nil, err
 	}
 	if out.OutputContractFailure != nil {
+		if out.OutputContractFailure.Correction != "" {
+			return out, nil
+		}
 		return out, boundedOutputContractError(out.OutputContractFailure)
 	}
 	r.logger.Info(wfCtx.Context(),
@@ -778,12 +788,18 @@ func validateOutputContractFailure(failure *OutputContractFailure) error {
 		(!failure.ModelResponsePresent &&
 			failure.ModelResponseSHA256 == "" &&
 			failure.ModelResponseSize == 0)
+	validCorrection := failure.Correction == "" ||
+		(failure.Origin == planner.OutputContractOriginModel &&
+			failure.ModelResponsePresent &&
+			strings.TrimSpace(failure.Correction) != "" &&
+			len(failure.Correction) <= outputcontract.MaxCorrectionBytes)
 	if !validReasonFingerprint(failure.ReasonSHA256, failure.ReasonSize) ||
 		!validFingerprint(failure.ModelResponseSHA256, failure.ModelResponseSize, true) ||
 		(!failure.ModelResponsePresent && failure.ModelResponseSHA256 != "") ||
 		!validOrigin ||
 		!validVersion ||
-		!plannerHasNoModelEvidence {
+		!plannerHasNoModelEvidence ||
+		!validCorrection {
 		return errors.New("completed output was rejected with invalid failure metadata")
 	}
 	return nil

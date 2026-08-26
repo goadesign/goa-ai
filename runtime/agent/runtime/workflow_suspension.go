@@ -70,6 +70,7 @@ type (
 		ToolOutputs            []*planner.ToolOutput
 		PendingRecovery        []*planner.ToolOutput
 		PendingRecoveryCatalog *RecoveryCatalog
+		LegacyFailureStreak     bool
 	}
 
 	checkpointStepBatch struct {
@@ -295,6 +296,7 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 		finalize = &reason
 	}
 	baseContext := retargetRunContext(l.base.RunContext, l.input)
+	pendingRecovery, pendingRecoveryCatalog := toolRecovery(l.st.PendingRecovery)
 	checkpoint := &workflowCheckpoint{
 		Version:        api.RunSuspensionVersion,
 		AgentID:        string(l.input.AgentID),
@@ -312,8 +314,9 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 			ResponseCommitted:      l.st.ResponseCommitted,
 			ToolEvents:             stateEvents,
 			ToolOutputs:            l.st.ToolOutputs,
-			PendingRecovery:        l.st.PendingRecovery,
-			PendingRecoveryCatalog: l.st.PendingRecoveryCatalog,
+			PendingRecovery:        pendingRecovery,
+			PendingRecoveryCatalog: pendingRecoveryCatalog,
+			LegacyFailureStreak:     l.st.LegacyFailureStreak,
 		},
 		Batch: checkpointStepBatch{
 			Result:                    batch.program.result,
@@ -389,7 +392,7 @@ func requiredCheckpointToolNames(checkpoint *workflowCheckpoint) []tools.Ident {
 			plans := checkpoint.Policy.LimitTerminalPlans
 			set[plans.TimeBudget.Name] = struct{}{}
 			set[plans.ToolCallCap.Name] = struct{}{}
-			set[plans.FailedToolCallCap.Name] = struct{}{}
+			set[plans.RecoveryCap.Name] = struct{}{}
 		}
 	}
 	for _, output := range checkpoint.State.ToolOutputs {
@@ -518,7 +521,8 @@ func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg Agen
 		return loop.suspendPendingRun(batch, pending)
 	}
 	if batch.resumePlannerAfterPending {
-		out, err := loop.resumePlanner(state.PendingRecovery, false)
+		recovery, _ := toolRecovery(state.PendingRecovery)
+		out, err := loop.resumePlanner(recovery, false, "")
 		if err != nil || out != nil {
 			return out, err
 		}
@@ -623,17 +627,23 @@ func (r *Runtime) restoreCheckpointState(ctx context.Context, checkpoint checkpo
 		}
 		toolEvents = append(toolEvents, decoded)
 	}
-	return &runLoopState{
-		Caps:                   checkpoint.Caps,
-		NextAttempt:            checkpoint.NextAttempt,
-		AggUsage:               checkpoint.Usage,
-		Transcript:             checkpoint.Transcript,
-		ResponseCommitted:      checkpoint.ResponseCommitted,
-		ToolEvents:             toolEvents,
-		ToolOutputs:            checkpoint.ToolOutputs,
-		PendingRecovery:        checkpoint.PendingRecovery,
-		PendingRecoveryCatalog: checkpoint.PendingRecoveryCatalog,
-	}, nil
+	state := &runLoopState{
+		Caps:                checkpoint.Caps,
+		NextAttempt:         checkpoint.NextAttempt,
+		AggUsage:            checkpoint.Usage,
+		Transcript:          checkpoint.Transcript,
+		ResponseCommitted:   checkpoint.ResponseCommitted,
+		ToolEvents:          toolEvents,
+		ToolOutputs:         checkpoint.ToolOutputs,
+		LegacyFailureStreak: checkpoint.LegacyFailureStreak,
+	}
+	if len(checkpoint.PendingRecovery) > 0 {
+		state.PendingRecovery = pendingToolRecovery{
+			outputs: checkpoint.PendingRecovery,
+			catalog: checkpoint.PendingRecoveryCatalog,
+		}
+	}
+	return state, nil
 }
 
 func (r *Runtime) restoreCheckpointBatch(ctx context.Context, checkpoint checkpointStepBatch, input *RunInput, runContext *run.Context) (stepBatch, error) {

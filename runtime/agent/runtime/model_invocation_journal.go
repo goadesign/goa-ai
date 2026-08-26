@@ -26,6 +26,7 @@ type (
 	// returns the result that selected it.
 	modelInvocationCandidate struct {
 		response                 *model.Response
+		responseEvidence         model.ResponseEvidence
 		usageSeen                bool
 		finished                 bool
 		requestModelClass        model.ModelClass
@@ -289,6 +290,7 @@ func (j *modelInvocationJournal) saveModelResponse(
 		return err
 	}
 	candidate.response = captured
+	candidate.responseEvidence = model.EvidenceForResponse(response)
 	if !candidate.usageSeen && hasTokenCounts(response.Usage) {
 		responseUsage := candidate.attributeUsage(response.Usage)
 		usage, err := addTokenUsage(j.usage, responseUsage)
@@ -562,47 +564,6 @@ func (j *modelInvocationJournal) selectedCompiledModelCalls(result *planner.Plan
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return compiledModelCalls(j.invocations[j.selected], result)
-}
-
-// outputContractError returns the earliest-started invocation that rejected
-// model output. Completion order may latch the activity sooner, but it cannot
-// change the terminal reason after concurrent calls finish.
-func (j *modelInvocationJournal) outputContractError() error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	return j.outputContractErrorLocked()
-}
-
-// outputContractErrorLocked returns the earliest-started rejected invocation.
-// The caller must hold j.mu.
-func (j *modelInvocationJournal) outputContractErrorLocked() error {
-	for _, id := range j.order {
-		candidate := j.invocations[id]
-		var outputErr *planner.OutputContractError
-		if candidate != nil && errors.As(candidate.err, &outputErr) {
-			return candidate.err
-		}
-	}
-	return j.outputErr
-}
-
-// rejectedModelResponseEvidence returns complete-response evidence from the
-// same earliest-started rejected invocation used by outputContractError.
-func (j *modelInvocationJournal) rejectedModelResponseEvidence() model.ResponseEvidence {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	for _, id := range j.order {
-		candidate := j.invocations[id]
-		var outputErr *planner.OutputContractError
-		if candidate == nil || !errors.As(candidate.err, &outputErr) {
-			continue
-		}
-		if candidate.rejectedResponseEvidence == nil {
-			return model.ResponseEvidence{}
-		}
-		return *candidate.rejectedResponseEvidence
-	}
-	return model.ResponseEvidence{}
 }
 
 // rejectModelInvocation saves the first malformed response and prevents every

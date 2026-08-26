@@ -1,7 +1,13 @@
-// Package outputcontract reports completed model, planner, or tool output that the
-// agent runtime cannot accept. These failures end the run without asking a
-// model for replacement output.
+// Package outputcontract reports completed model, planner, or tool output that
+// the agent runtime cannot accept. A planner may mark a completed model answer
+// as recoverable; every other output rejection ends the run.
 package outputcontract
+
+import (
+	"strings"
+
+	"goa.design/goa-ai/runtime/agent/model"
+)
 
 type (
 	// Origin identifies the component whose completed output failed validation.
@@ -9,12 +15,18 @@ type (
 
 	// Error reports completed output that broke its contract.
 	Error struct {
-		cause  error
-		origin Origin
+		cause      error
+		origin     Origin
+		correction string
+		message    *model.Message
 	}
 )
 
 const (
+	// MaxCorrectionBytes bounds planner-authored correction guidance carried
+	// between workflow activities.
+	MaxCorrectionBytes = 4096
+
 	// OriginModel identifies rejected model output.
 	OriginModel Origin = "model"
 
@@ -37,6 +49,29 @@ func NewWithOrigin(cause error, origin Origin) *Error {
 	return &Error{cause: cause, origin: origin}
 }
 
+// NewRecoverableModelOutput records a completed model answer that the planner
+// rejected and the model can replace using the supplied guidance.
+func NewRecoverableModelOutput(cause error, message *model.Message, correction string) *Error {
+	if cause == nil {
+		panic("outputcontract: error requires a cause")
+	}
+	if message == nil {
+		panic("outputcontract: recoverable model output requires the rejected message")
+	}
+	if strings.TrimSpace(correction) == "" {
+		panic("outputcontract: recoverable model output requires correction guidance")
+	}
+	if len(correction) > MaxCorrectionBytes {
+		panic("outputcontract: correction guidance exceeds workflow boundary limit")
+	}
+	return &Error{
+		cause:      cause,
+		origin:     OriginModel,
+		correction: correction,
+		message:    message,
+	}
+}
+
 // Error describes why the runtime rejected the completed output.
 func (e *Error) Error() string {
 	return "completed output does not meet its contract: " + e.cause.Error()
@@ -50,4 +85,16 @@ func (e *Error) Unwrap() error {
 // Origin identifies the component whose output failed validation.
 func (e *Error) Origin() Origin {
 	return e.origin
+}
+
+// Correction returns bounded guidance for replacing a rejected model answer.
+// Empty means the rejection is terminal.
+func (e *Error) Correction() string {
+	return e.correction
+}
+
+// ModelMessage returns the exact completed answer rejected by the planner.
+// It is nil for terminal output errors.
+func (e *Error) ModelMessage() *model.Message {
+	return e.message
 }

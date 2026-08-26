@@ -9,23 +9,23 @@ import (
 
 func TestMergeCaps_DoesNotRaiseRunCaps(t *testing.T) {
 	current := policy.CapsState{
-		MaxToolCalls:                        10,
-		RemainingToolCalls:                  2,
-		MaxConsecutiveFailedToolCalls:       3,
-		RemainingConsecutiveFailedToolCalls: 1,
+		MaxToolCalls:           10,
+		RemainingToolCalls:     2,
+		MaxRecoveryTurns:       3,
+		RemainingRecoveryTurns: 1,
 	}
 	decision := policy.CapsState{
-		MaxToolCalls:                        20,
-		RemainingToolCalls:                  5,
-		MaxConsecutiveFailedToolCalls:       6,
-		RemainingConsecutiveFailedToolCalls: 4,
+		MaxToolCalls:           20,
+		RemainingToolCalls:     5,
+		MaxRecoveryTurns:       6,
+		RemainingRecoveryTurns: 4,
 	}
 
 	merged := mergeCaps(current, decision)
 	require.Equal(t, 10, merged.MaxToolCalls)
 	require.Equal(t, 2, merged.RemainingToolCalls)
-	require.Equal(t, 3, merged.MaxConsecutiveFailedToolCalls)
-	require.Equal(t, 1, merged.RemainingConsecutiveFailedToolCalls)
+	require.Equal(t, 3, merged.MaxRecoveryTurns)
+	require.Equal(t, 1, merged.RemainingRecoveryTurns)
 }
 
 func TestWithRunMaxToolCallsRejectsNonPositive(t *testing.T) {
@@ -37,11 +37,11 @@ func TestWithRunMaxToolCallsRejectsNonPositive(t *testing.T) {
 	})
 }
 
-func TestWithRunMaxConsecutiveFailedToolCallsRejectsNonPositive(t *testing.T) {
+func TestWithRunMaxRecoveryTurnsRejectsNonPositive(t *testing.T) {
 	require.Panics(t, func() {
-		WithRunMaxConsecutiveFailedToolCalls(0)(&RunInput{})
+		WithRunMaxRecoveryTurns(0)(&RunInput{})
 	})
 	require.Panics(t, func() {
-		WithRunMaxConsecutiveFailedToolCalls(-1)(&RunInput{})
+		WithRunMaxRecoveryTurns(-1)(&RunInput{})
 	})
 }

@@ -16,6 +16,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/completion"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -260,6 +261,232 @@ func TestPlanStartActivityCannotHideMalformedModelOutput(t *testing.T) {
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, 1, providerCalls)
+}
+
+func TestPlanStartActivityCorrelatesRecoverableModelOutput(t *testing.T) {
+	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		client, ok := input.Agent.ModelClient("test")
+		require.True(t, ok)
+		_, err := client.Complete(ctx, &model.Request{Model: "test"})
+		require.NoError(t, err)
+		response, err := client.Complete(ctx, &model.Request{Model: "test"})
+		require.NoError(t, err)
+		return nil, planner.NewRecoverableModelOutputError(
+			errors.New("too many references"),
+			&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
+			"Use at most eight references.",
+		)
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	rt.models["test"] = newRecoveryTestModel(t)
+
+	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123"},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.OutputContractFailure)
+	require.True(t, out.OutputContractFailure.ModelResponsePresent)
+	require.NotEmpty(t, out.OutputContractFailure.ModelResponseSHA256)
+	require.Equal(t, "Use at most eight references.", out.OutputContractFailure.Correction)
+}
+
+func TestPlanStartActivityCorrelatesRecoverableStreamedAnswer(t *testing.T) {
+	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		client, ok := input.Agent.PlannerModelClient("test")
+		require.True(t, ok)
+		summary, err := client.Stream(ctx, &model.Request{Model: "test"})
+		require.NoError(t, err)
+		return nil, planner.NewRecoverableModelOutputError(
+			errors.New("too many references"),
+			summary.FinalResponse(),
+			"Use at most eight references.",
+		)
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	rt.models["test"] = mustTestModelClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			message := model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "answer"}},
+			}
+			return &chunkStreamer{
+				chunks: []model.Chunk{
+					model.TextChunk{Message: message},
+					model.StopChunk{Reason: "end_turn"},
+				},
+				response: &model.Response{
+					Content:    []model.Message{message},
+					StopReason: "end_turn",
+				},
+			}, nil
+		},
+	})
+
+	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123"},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out.OutputContractFailure)
+	require.True(t, out.OutputContractFailure.ModelResponsePresent)
+	require.Equal(t, "Use at most eight references.", out.OutputContractFailure.Correction)
+}
+
+func TestPlanStartActivityRejectsRecoverableOutputForForeignResponse(t *testing.T) {
+	modelCalls := 0
+	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		client, ok := input.Agent.ModelClient("test")
+		require.True(t, ok)
+		_, err := client.Complete(ctx, &model.Request{Model: "test"})
+		require.NoError(t, err)
+		return nil, planner.NewRecoverableModelOutputError(
+			errors.New("too many references"),
+			&planner.FinalResponse{Message: &model.Message{}},
+			"Use at most eight references.",
+		)
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	rt.models["test"] = mustTestModelClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			modelCalls++
+			return &model.Response{
+				Content: []model.Message{{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "answer"}},
+				}},
+				StopReason: "end_turn",
+				Usage:      model.TokenUsage{InputTokens: 11, OutputTokens: 5, TotalTokens: 16},
+			}, nil
+		},
+	})
+
+	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123"},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.OutputContractFailure)
+	require.Equal(t, planner.OutputContractOriginPlanner, out.OutputContractFailure.Origin)
+	require.Empty(t, out.OutputContractFailure.Correction)
+	require.False(t, out.OutputContractFailure.ModelResponsePresent)
+	require.Equal(t, 11, out.Usage.InputTokens)
+	require.Equal(t, 1, modelCalls)
+}
+
+func TestPlanStartActivityRetriesFailedRejectedPresentationCleanup(t *testing.T) {
+	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		client, ok := input.Agent.ModelClient("test")
+		require.True(t, ok)
+		response, err := client.Complete(ctx, &model.Request{Model: "test"})
+		require.NoError(t, err)
+		return nil, planner.NewRecoverableModelOutputError(
+			errors.New("too many references"),
+			&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
+			"Use at most eight references.",
+		)
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	rt.models["test"] = newRecoveryTestModel(t)
+	sink := &failOnceDiscardSink{err: errors.New("stream unavailable")}
+	rt.streamSubscriber = runtimeWithPresentationSink(t, sink).streamSubscriber
+	_, err := rt.CreateSession(t.Context(), "session-123")
+	require.NoError(t, err)
+
+	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123", SessionID: "session-123"},
+	})
+
+	require.Nil(t, out)
+	require.ErrorContains(t, err, "discard rejected model presentation")
+	require.ErrorContains(t, err, "stream unavailable")
+}
+
+func TestValidatePlanResumeRecoveryInput(t *testing.T) {
+	termination := &planner.Termination{Reason: planner.TerminationReasonToolFailure}
+	for _, test := range []struct {
+		name    string
+		input   *PlanActivityInput
+		wantErr string
+	}{
+		{name: "ordinary", input: &PlanActivityInput{}},
+		{name: "tool recovery", input: &PlanActivityInput{RecoveryToolCallIDs: []string{"call-1"}}},
+		{name: "synthesis", input: &PlanActivityInput{SynthesisOnly: true}},
+		{
+			name:  "finalization with failed tool evidence",
+			input: &PlanActivityInput{RecoveryToolCallIDs: []string{"call-1"}, Finalize: termination},
+		},
+		{
+			name:  "model output recovery",
+			input: &PlanActivityInput{ModelOutputRecovery: &ModelOutputRecovery{Correction: "Use fewer references."}},
+		},
+		{name: "missing input", wantErr: "input is required"},
+		{
+			name:    "blank model guidance",
+			input:   &PlanActivityInput{ModelOutputRecovery: &ModelOutputRecovery{Correction: " "}},
+			wantErr: "non-blank guidance",
+		},
+		{
+			name: "oversized model guidance",
+			input: &PlanActivityInput{ModelOutputRecovery: &ModelOutputRecovery{
+				Correction: strings.Repeat("x", outputcontract.MaxCorrectionBytes+1),
+			}},
+			wantErr: "exceeds workflow boundary limit",
+		},
+		{
+			name: "model recovery with explicit synthesis",
+			input: &PlanActivityInput{
+				ModelOutputRecovery: &ModelOutputRecovery{Correction: "Replace the answer."},
+				SynthesisOnly:       true,
+			},
+			wantErr: "implies synthesis-only",
+		},
+		{
+			name: "model recovery with tool recovery",
+			input: &PlanActivityInput{
+				ModelOutputRecovery: &ModelOutputRecovery{Correction: "Replace the answer."},
+				RecoveryToolCallIDs: []string{"call-1"},
+			},
+			wantErr: "cannot combine with tool recovery",
+		},
+		{
+			name: "model recovery with finalization",
+			input: &PlanActivityInput{
+				ModelOutputRecovery: &ModelOutputRecovery{Correction: "Replace the answer."},
+				Finalize:            termination,
+			},
+			wantErr: "cannot combine with finalization",
+		},
+		{
+			name:    "synthesis with tool recovery",
+			input:   &PlanActivityInput{SynthesisOnly: true, RecoveryToolCallIDs: []string{"call-1"}},
+			wantErr: "cannot combine with tool recovery",
+		},
+		{
+			name:    "synthesis with finalization",
+			input:   &PlanActivityInput{SynthesisOnly: true, Finalize: termination},
+			wantErr: "cannot combine with synthesis-only",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validatePlanResumeRecoveryInput(test.input)
+			if test.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
 }
 
 func TestPlanStartActivityRejectsModelToolPayloadBeforeRecovery(t *testing.T) {
@@ -2612,6 +2839,7 @@ func TestBuildNextResumeRequestCarriesTurnScopedRecoveryIdentity(t *testing.T) {
 		nil,
 		recovery,
 		false,
+		"",
 		&nextAttempt,
 	)
 	require.NoError(t, err)
@@ -2641,6 +2869,7 @@ func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
 		[]*planner.ToolOutput{nil},
 		nil,
 		false,
+		"",
 		&nextAttempt,
 	)
 	require.Error(t, err)
@@ -2672,6 +2901,7 @@ func TestBuildNextResumeRequestUsesProviderNeutralTranscriptValidation(t *testin
 		nil,
 		nil,
 		false,
+		"",
 		&nextAttempt,
 	)
 	require.Error(t, err)

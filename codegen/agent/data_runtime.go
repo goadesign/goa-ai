@@ -48,8 +48,8 @@ func newRunPolicyData(expr *agentsExpr.RunPolicyExpr) RunPolicyData {
 	}
 	if expr.DefaultCaps != nil {
 		rp.Caps = CapsData{
-			MaxToolCalls:                  expr.DefaultCaps.MaxToolCalls,
-			MaxConsecutiveFailedToolCalls: expr.DefaultCaps.MaxConsecutiveFailedToolCall,
+			MaxToolCalls:     expr.DefaultCaps.MaxToolCalls,
+			MaxRecoveryTurns: expr.DefaultCaps.MaxRecoveryTurns,
 		}
 	}
 	return rp
