@@ -68,8 +68,8 @@ type Options struct {
 	// excludes CountTokens from the Bedrock Runtime endpoint. The Bedrock
 	// adapter resolves the model and applies its effective tool contract before
 	// delegating, so this counter must call Anthropic's count_tokens operation
-	// on the Bedrock Mantle endpoint. When nil, those models return
-	// model.ErrTokenCountingUnsupported.
+	// on the Bedrock Mantle endpoint. New and NewProvider reject a nil counter
+	// when any configured model requires that endpoint.
 	MantleTokenCounter model.TokenCounter
 
 	// DefaultModel is the default model identifier (e.g., Sonnet).
@@ -161,6 +161,24 @@ func NewProvider(aws *bedrockruntime.Client, opts Options) (model.Provider, erro
 	// DefaultModel should be provided; High/Small are optional but recommended.
 	if opts.DefaultModel == "" {
 		return nil, errors.New("default model identifier is required")
+	}
+	for _, configured := range []struct {
+		class string
+		id    string
+	}{
+		{class: "default", id: opts.DefaultModel},
+		{class: "high-reasoning", id: opts.HighModel},
+		{class: "small", id: opts.SmallModel},
+	} {
+		if configured.id != "" &&
+			!claudecaps.BedrockRuntimeTokenCountSupported(configured.id) &&
+			opts.MantleTokenCounter == nil {
+			return nil, fmt.Errorf(
+				"bedrock: %s model %q requires Options.MantleTokenCounter",
+				configured.class,
+				configured.id,
+			)
+		}
 	}
 	if _, err := bedrockInt32("default max tokens", opts.MaxTokens); err != nil {
 		return nil, err

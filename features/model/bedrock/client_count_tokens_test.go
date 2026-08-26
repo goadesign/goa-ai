@@ -24,6 +24,70 @@ type countTokensRuntimeClient struct {
 	err   error
 }
 
+func TestNewProviderValidatesMantleTokenCounter(t *testing.T) {
+	tests := []struct {
+		name         string
+		defaultModel string
+		highModel    string
+		smallModel   string
+		withCounter  bool
+		wantErr      string
+	}{
+		{
+			name:         "Runtime counting needs no Mantle counter",
+			defaultModel: "global.anthropic.claude-sonnet-4-6",
+			highModel:    "us.anthropic.claude-opus-4-6",
+			smallModel:   "global.anthropic.claude-haiku-4-5",
+		},
+		{
+			name:         "default model requires Mantle",
+			defaultModel: "global.anthropic.claude-sonnet-5",
+			wantErr:      `bedrock: default model "global.anthropic.claude-sonnet-5" requires Options.MantleTokenCounter`,
+		},
+		{
+			name:         "high-reasoning model requires Mantle",
+			defaultModel: "global.anthropic.claude-sonnet-4-6",
+			highModel:    "us.anthropic.claude-opus-5",
+			wantErr:      `bedrock: high-reasoning model "us.anthropic.claude-opus-5" requires Options.MantleTokenCounter`,
+		},
+		{
+			name:         "small model requires Mantle",
+			defaultModel: "global.anthropic.claude-sonnet-4-6",
+			smallModel:   "global.anthropic.claude-sonnet-5",
+			wantErr:      `bedrock: small model "global.anthropic.claude-sonnet-5" requires Options.MantleTokenCounter`,
+		},
+		{
+			name:         "configured Mantle counter supports every model",
+			defaultModel: "global.anthropic.claude-sonnet-5",
+			highModel:    "us.anthropic.claude-opus-5",
+			smallModel:   "global.anthropic.claude-sonnet-5",
+			withCounter:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var counter model.TokenCounter
+			if tt.withCounter {
+				counter = &recordingAnthropicCounter{}
+			}
+			provider, err := NewProvider(&bedrockruntime.Client{}, Options{
+				MantleTokenCounter: counter,
+				DefaultModel:       tt.defaultModel,
+				HighModel:          tt.highModel,
+				SmallModel:         tt.smallModel,
+			})
+			if tt.wantErr != "" {
+				assert.Nil(t, provider)
+				assert.EqualError(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, provider)
+		})
+	}
+}
+
 func (c *countTokensRuntimeClient) Converse(
 	_ context.Context,
 	_ *bedrockruntime.ConverseInput,
