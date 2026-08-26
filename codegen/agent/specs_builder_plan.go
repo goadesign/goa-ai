@@ -639,14 +639,24 @@ func (p *toolSpecsPackagePlan) planSharedFileImports() error {
 			continue
 		}
 		hasTransport = true
-		for _, preference := range goacodegen.ValidationRuntimeImports(planned.transportShape, transportValidationLayoutPolicy()) {
-			if err := p.fileImports.transportValidate.Require(
-				goacodegen.NewImport(preference.Name, preference.Path),
-			); err != nil {
-				return err
-			}
-			if preference.Path == goacodegen.GoaImport("").Path {
-				hasValidation = true
+		validationShapes := make([]*goaexpr.AttributeExpr, 0, len(planned.transportTypes)+1)
+		validationShapes = append(validationShapes, planned.transportShape)
+		for _, localized := range planned.transportTypes {
+			validationShapes = append(validationShapes, localized.generated.AttributeExpr)
+		}
+		for _, shape := range validationShapes {
+			for _, preference := range goacodegen.ValidationRuntimeImports(
+				shape,
+				transportValidationLayoutPolicy(shape),
+			) {
+				if err := p.fileImports.transportValidate.Require(
+					goacodegen.NewImport(preference.Name, preference.Path),
+				); err != nil {
+					return err
+				}
+				if preference.Path == goacodegen.GoaImport("").Path {
+					hasValidation = true
+				}
 			}
 		}
 	}
@@ -706,11 +716,12 @@ func (p *toolSpecsPackagePlan) hasIndexedJSONValidator() bool {
 	return false
 }
 
-// transportValidationLayoutPolicy matches the pointer rules used by the HTTP
-// decoding types that generated validators receive.
-func transportValidationLayoutPolicy() goacodegen.GoLayoutPolicy {
+// transportValidationLayoutPolicy matches the pointer rules used when the HTTP
+// validator for attribute is written. Primitive values stay values while
+// objects, unions, and collection entries preserve null until validation.
+func transportValidationLayoutPolicy(attribute *goaexpr.AttributeExpr) goacodegen.GoLayoutPolicy {
 	return goacodegen.GoLayoutPolicy{
-		Pointer:             true,
+		Pointer:             !goaexpr.IsPrimitive(attribute.Type),
 		UnionPointer:        true,
 		ArrayElementPointer: true,
 		SumType:             true,
