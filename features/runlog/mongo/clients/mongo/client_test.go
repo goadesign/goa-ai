@@ -1,3 +1,5 @@
+// These tests exercise Mongo run-log ordering, retry, and pagination contracts
+// with transaction-aware in-memory collections.
 package mongo
 
 import (
@@ -300,6 +302,79 @@ func TestClientAppendSerializesConcurrentSessionEvents(t *testing.T) {
 	}
 }
 
+func TestClientAppendRejectsConcurrentFirstEventsForDifferentStreams(t *testing.T) {
+	t.Parallel()
+
+	client := newTestClient(&fakeCollection{})
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var group sync.WaitGroup
+	for _, sessionID := range []string{"session-a", "session-b"} {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			_, err := client.Append(context.Background(), &runlog.Event{
+				EventKey:  "evt-" + sessionID,
+				RunID:     "run-1",
+				SessionID: sessionID,
+				Type:      hooks.RunStarted,
+				Payload:   []byte(`{}`),
+				Timestamp: time.Unix(1, 0).UTC(),
+			})
+			results <- err
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(results)
+
+	var success, conflicts int
+	for err := range results {
+		if err == nil {
+			success++
+			continue
+		}
+		require.ErrorContains(t, err, `run "run-1" is bound to ordering stream`)
+		conflicts++
+	}
+	require.Equal(t, 1, success)
+	require.Equal(t, 1, conflicts)
+
+	page, err := client.List(context.Background(), "run-1", "", 10)
+	require.NoError(t, err)
+	require.Len(t, page.Events, 1)
+}
+
+func TestClientAppendTransactionCallbackRetryRollsBackFirstAttempt(t *testing.T) {
+	t.Parallel()
+
+	events := &fakeCollection{}
+	sequences := &fakeCollection{sequences: make(map[string]int64)}
+	bindings := &fakeCollection{bindings: make(map[string]string)}
+	client := &client{
+		coll:      events,
+		sequences: sequences,
+		bindings:  bindings,
+		transactions: &fakeTransactionRunner{
+			events:           events,
+			sequences:        sequences,
+			bindings:         bindings,
+			callbackAttempts: 2,
+		},
+	}
+
+	event := testRunlogEvent("evt-1", []byte(`{}`))
+	result, err := client.Append(context.Background(), event)
+
+	require.NoError(t, err)
+	require.True(t, result.Inserted)
+	require.Equal(t, "1", result.ID)
+	require.Len(t, events.findDocs, 1)
+	require.EqualValues(t, 1, sequences.sequences["session:session-1"])
+	require.Equal(t, "session:session-1", bindings.bindings["run-1"])
+}
+
 func TestClientAppendExactRetryIgnoresAttemptTimestamp(t *testing.T) {
 	t.Parallel()
 
@@ -345,12 +420,16 @@ func TestRequireSchemaRejectsAbsentAndWrongSentinel(t *testing.T) {
 		{
 			name:    "absent",
 			result:  fakeSingleResult{err: mongodriver.ErrNoDocuments},
-			wantErr: "runlog Mongo schema migration 1 is required",
+			wantErr: fmt.Sprintf("runlog Mongo schema migration %d is required", schemaVersion),
 		},
 		{
-			name:    "wrong_version",
-			result:  fakeSingleResult{schema: schemaDocument{Name: schemaSentinelID, Version: 2}},
-			wantErr: "runlog Mongo schema version 1 is required, found 2",
+			name:   "wrong_version",
+			result: fakeSingleResult{schema: schemaDocument{Name: schemaSentinelID, Version: schemaVersion + 1}},
+			wantErr: fmt.Sprintf(
+				"runlog Mongo schema version %d is required, found %d",
+				schemaVersion,
+				schemaVersion+1,
+			),
 		},
 	}
 	for _, test := range tests {
@@ -360,6 +439,27 @@ func TestRequireSchemaRejectsAbsentAndWrongSentinel(t *testing.T) {
 			require.EqualError(t, err, test.wantErr)
 		})
 	}
+}
+
+func TestRequireReadyStorageRejectsWrongValidatorWithCurrentSentinel(t *testing.T) {
+	t.Parallel()
+
+	schemas := &fakeCollection{
+		findOneResult: fakeSingleResult{
+			schema: schemaDocument{Name: schemaSentinelID, Version: schemaVersion},
+		},
+	}
+	storage := newFakeMigrationStore(nil)
+	markFakeMigrationCurrent(storage)
+	storage.validationLevel = validationModerate
+
+	err := requireReadyStorage(context.Background(), schemas, storage)
+
+	require.EqualError(
+		t,
+		err,
+		`verify runlog Mongo event validator: validation level is "moderate", want "strict"`,
+	)
 }
 
 func fakeEventDocument(runID, eventKey string, sequence int64, id bson.ObjectID) eventDocument {
@@ -448,6 +548,7 @@ type fakeCollection struct {
 	findOneResult singleResult
 	insertErr     error
 	sequences     map[string]int64
+	bindings      map[string]string
 }
 
 func (c *fakeCollection) InsertOne(_ context.Context, value any, _ ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error) {
@@ -489,16 +590,30 @@ func (c *fakeCollection) FindOne(_ context.Context, filter any, _ ...options.Lis
 	return fakeSingleResult{err: mongodriver.ErrNoDocuments}
 }
 
-func (c *fakeCollection) FindOneAndUpdate(_ context.Context, filter, _ any, _ ...options.Lister[options.FindOneAndUpdateOptions]) singleResult {
+func (c *fakeCollection) FindOneAndUpdate(_ context.Context, filter, update any, _ ...options.Lister[options.FindOneAndUpdateOptions]) singleResult {
 	f, _ := filter.(bson.M)
-	stream, _ := f["_id"].(string)
+	id, _ := f["_id"].(string)
+	updateDoc, _ := update.(bson.M)
+	if setOnInsert, ok := updateDoc["$setOnInsert"].(bson.M); ok {
+		stream, _ := setOnInsert["stream"].(string)
+		if c.bindings == nil {
+			c.bindings = make(map[string]string)
+		}
+		if _, found := c.bindings[id]; !found {
+			c.bindings[id] = stream
+		}
+		return fakeSingleResult{binding: runBindingDocument{
+			RunID:  id,
+			Stream: c.bindings[id],
+		}}
+	}
 	if c.sequences == nil {
 		c.sequences = make(map[string]int64)
 	}
-	c.sequences[stream]++
+	c.sequences[id]++
 	return fakeSingleResult{sequence: sequenceDocument{
-		Stream:   stream,
-		Sequence: c.sequences[stream],
+		Stream:   id,
+		Sequence: c.sequences[id],
 	}}
 }
 
@@ -606,6 +721,7 @@ func (c *fakeCursor) Close(context.Context) error {
 type fakeSingleResult struct {
 	doc      eventDocument
 	sequence sequenceDocument
+	binding  runBindingDocument
 	schema   schemaDocument
 	err      error
 }
@@ -624,6 +740,11 @@ func (r fakeSingleResult) Decode(val any) error {
 		*counter = r.sequence
 		return nil
 	}
+	binding, ok := val.(*runBindingDocument)
+	if ok {
+		*binding = r.binding
+		return nil
+	}
 	sentinel, ok := val.(*schemaDocument)
 	if ok {
 		*sentinel = r.schema
@@ -635,31 +756,60 @@ type fakeTransactionRunner struct {
 	mu        sync.Mutex
 	events    *fakeCollection
 	sequences *fakeCollection
+	bindings  *fakeCollection
+	// callbackAttempts simulates the driver rerunning a callback after an
+	// earlier transaction attempt was rolled back.
+	callbackAttempts int
 }
 
 func (r *fakeTransactionRunner) WithTransaction(ctx context.Context, fn func(context.Context) error) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	eventCount := len(r.events.findDocs)
-	sequenceSnapshot := make(map[string]int64, len(r.sequences.sequences))
-	for stream, sequence := range r.sequences.sequences {
-		sequenceSnapshot[stream] = sequence
+	attempts := max(r.callbackAttempts, 1)
+	for attempt := range attempts {
+		eventCount := len(r.events.findDocs)
+		sequenceSnapshot := cloneInt64Map(r.sequences.sequences)
+		bindingSnapshot := cloneStringMap(r.bindings.bindings)
+		err := fn(ctx)
+		if err != nil || attempt < attempts-1 {
+			r.events.findDocs = r.events.findDocs[:eventCount]
+			r.sequences.sequences = sequenceSnapshot
+			r.bindings.bindings = bindingSnapshot
+		}
+		if err != nil {
+			return err
+		}
 	}
-	err := fn(ctx)
-	if err != nil {
-		r.events.findDocs = r.events.findDocs[:eventCount]
-		r.sequences.sequences = sequenceSnapshot
-	}
-	return err
+	return nil
 }
 
 func newTestClient(events *fakeCollection) *client {
 	sequences := &fakeCollection{sequences: make(map[string]int64)}
+	bindings := &fakeCollection{bindings: make(map[string]string)}
 	return &client{
 		coll:         events,
 		sequences:    sequences,
-		transactions: &fakeTransactionRunner{events: events, sequences: sequences},
+		bindings:     bindings,
+		transactions: &fakeTransactionRunner{events: events, sequences: sequences, bindings: bindings},
 	}
+}
+
+// cloneInt64Map snapshots fake sequence state before a transaction attempt.
+func cloneInt64Map(source map[string]int64) map[string]int64 {
+	clone := make(map[string]int64, len(source))
+	for key, value := range source {
+		clone[key] = value
+	}
+	return clone
+}
+
+// cloneStringMap snapshots fake binding state before a transaction attempt.
+func cloneStringMap(source map[string]string) map[string]string {
+	clone := make(map[string]string, len(source))
+	for key, value := range source {
+		clone[key] = value
+	}
+	return clone
 }
 
 func (c *fakeCollection) nextObjectID() bson.ObjectID {

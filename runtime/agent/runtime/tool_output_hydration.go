@@ -1,18 +1,17 @@
-package runtime
-
-// tool_output_hydration.go loads planner-facing tool outputs from the canonical
-// run log after compact planner activity inputs cross the workflow boundary.
+// Package runtime loads planner-facing tool outputs from the canonical run log
+// after compact planner activity inputs cross the workflow boundary.
 //
 // Contract:
-// - `api.ToolOutputRef` carries the exact recording run and tool-call identity
-//   across the plan activity boundary.
-// - Canonical tool payload lives in the durable run log via
-//   `ToolCallScheduledEvent`.
-// - Canonical planner-visible tool outcome state lives in the durable run log
-//   via `ToolResultReceivedEvent`.
-// - Planner code receives fully hydrated `planner.ToolOutput` values. Missing or
-//   inconsistent canonical run-log entries are invariant violations and fail
-//   fast.
+//   - `api.ToolOutputRef` carries the exact recording run and tool-call identity
+//     across the plan activity boundary.
+//   - Canonical tool payload lives in the durable run log via
+//     `ToolCallScheduledEvent`.
+//   - Canonical planner-visible tool outcome state lives in the durable run log
+//     via `ToolResultReceivedEvent`.
+//   - Planner code receives fully hydrated `planner.ToolOutput` values. Missing or
+//     inconsistent canonical run-log entries are invariant violations and fail
+//     fast.
+package runtime
 
 import (
 	"context"
@@ -164,9 +163,14 @@ func (r *Runtime) loadCanonicalToolEvents(ctx context.Context, runID string, wan
 		if len(page.Events) == 0 {
 			break
 		}
-		for _, event := range page.Events {
+		for index, event := range page.Events {
 			if event == nil {
-				continue
+				return nil, fmt.Errorf(
+					"runtime: nil event from run log during tool hydration (run_id=%s page_cursor=%q index=%d)",
+					runID,
+					cursor,
+					index,
+				)
 			}
 			if event.Type == hooks.ToolCallScheduled {
 				decoded, err := decodeToolCallScheduledRunlogEvent(event)

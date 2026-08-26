@@ -2513,10 +2513,15 @@ introspection, audit/debug UIs, and deriving compact `run.Snapshot` values.
 
 ```go
 type Store interface {
-    Append(ctx context.Context, e *runlog.Event) error
+    Append(ctx context.Context, e *runlog.Event) (runlog.AppendResult, error)
     List(ctx context.Context, runID string, cursor string, limit int) (runlog.Page, error)
 }
 ```
+
+Pages are always returned oldest-first. `Event.ID` and page cursors are
+store-owned opaque strings: callers may retain and return them to the same
+listing method, but must not parse them or derive time from them. A store must
+keep that order stable independently of event timestamps.
 
 The runtime exposes:
 
@@ -2525,6 +2530,50 @@ The runtime exposes:
 
 Configure the store via `runtime.WithRunEventStore(...)`. If not set, the runtime
 defaults to an in-memory implementation (`runtime/agent/runlog/inmem`).
+
+The MongoDB implementation assigns one increasing sequence to each logical
+stream. Runs with a session share `session:<session ID>` ordering; one-shot runs
+use `run:<run ID>`. The first event for a run permanently binds that run ID to
+its derived stream. The binding, sequence allocation, and event insert commit
+in one MongoDB transaction, so later events cannot move a run between sessions.
+MongoDB ObjectIDs remain document identities only and never define replay order.
+
+Before constructing a MongoDB run-log client, run `clients/mongo.Migrate` with
+`Apply: true` for every run-log database, including a newly created empty
+database. Migration is a dry run unless `Apply` is true. It validates all
+existing event identities and partial migration fields before generic backfill,
+backfills sequences in the database's current ObjectID order, creates immutable
+run-to-stream bindings, initializes stream counters, creates the sequence
+indexes, removes the old ObjectID cursor indexes, tightens Mongo validation,
+and writes the schema sentinel last. Applying the same migration again
+validates the completed schema without changing event order.
+
+Applications that own additional meaning in legacy records can set
+`MigrationOptions.PrepareLegacy`. Dry-run calls it with `apply=false` before
+generic validation; the callback must not write. Apply installs the Mongo
+admission barrier first, then calls it again with `apply=true` before sequence
+backfill. Repairs in apply mode must be safe to repeat because rerunning a
+partially completed migration repeats the callback.
+
+This cutover supports a normal rolling release:
+
+1. Run the migration without `Apply` and resolve any malformed or conflicting
+   persisted records it reports.
+2. Run with `Apply: true`. Mongo first installs a moderate validator that
+   rejects every new event without a string `stream` and positive 64-bit
+   integer `sequence`, while allowing existing legacy rows to be repaired.
+3. Roll out code that uses the new MongoDB client. Old writers may remain
+   running during the rollout, but their sequence-less appends fail until those
+   processes are replaced. They cannot create more legacy rows.
+
+The new client refuses to start when the sentinel is absent or has another
+version, or when the strict validator and required indexes are absent. The
+brief append outage for old writers is intentional: there is no ObjectID
+fallback, dual-read mode, or successful mixed-version write path. If apply
+fails after the admission barrier, fix the reported cause and rerun the
+idempotent migration. Restoring legacy writes instead requires restoring the
+pre-migration database state or explicitly removing the validator before
+restarting old code.
 
 The run log is also the canonical hydration source for planner resumes:
 `ToolCallScheduledEvent` stores the authoritative tool payload, and

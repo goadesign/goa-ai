@@ -1,3 +1,5 @@
+// These tests verify that canonical run-log replay produces compact run
+// snapshots and rejects malformed store results.
 package runtime
 
 import (
@@ -106,6 +108,14 @@ func TestGetRunSnapshotReadsThroughStore(t *testing.T) {
 
 	_, err = rt.GetRunSnapshot(context.Background(), "run-1")
 	require.NoError(t, err)
+}
+
+func TestNewRunSnapshotRejectsNilStoredEvent(t *testing.T) {
+	t.Parallel()
+
+	_, err := newRunSnapshot([]*runlog.Event{nil})
+
+	require.EqualError(t, err, "snapshot run log contains nil event at index 0")
 }
 
 func TestNewRunSnapshotRetainsPendingRequestWhenSuspended(t *testing.T) {

@@ -1,3 +1,5 @@
+// Package runtime rebuilds the compact run state returned by Runtime from
+// canonical run-log events supplied in oldest-first order.
 package runtime
 
 import (
@@ -17,6 +19,11 @@ import (
 func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 	if len(events) == 0 {
 		return nil, run.ErrNotFound
+	}
+	for index, event := range events {
+		if event == nil {
+			return nil, fmt.Errorf("snapshot run log contains nil event at index %d", index)
+		}
 	}
 
 	s := &run.Snapshot{

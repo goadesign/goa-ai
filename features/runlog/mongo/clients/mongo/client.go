@@ -1,6 +1,6 @@
 // Package mongo implements the low-level MongoDB client used by the run log
-// store. Each append transaction reserves the next position in a private
-// session-or-run sequence and inserts the event at that position. Event
+// store. Each append transaction confirms one run's immutable stream binding,
+// reserves the next position in that stream, and inserts the event. Event
 // ObjectIDs remain MongoDB document identities and never control replay order.
 package mongo
 
@@ -54,6 +54,7 @@ type (
 		mongo        *mongodriver.Client
 		coll         collection
 		sequences    collection
+		bindings     collection
 		transactions transactionRunner
 		timeout      time.Duration
 	}
@@ -75,6 +76,11 @@ type (
 	sequenceDocument struct {
 		Stream   string `bson:"_id"`
 		Sequence int64  `bson:"sequence"`
+	}
+
+	runBindingDocument struct {
+		RunID  string `bson:"_id"`
+		Stream string `bson:"stream"`
 	}
 
 	schemaDocument struct {
@@ -109,6 +115,11 @@ type (
 		Decode(val any) error
 	}
 
+	storageContractReader interface {
+		requireEventValidation(ctx context.Context, level string) error
+		requireEventIndexes(ctx context.Context) error
+	}
+
 	mongoCollection struct {
 		coll *mongodriver.Collection
 	}
@@ -131,9 +142,10 @@ const (
 	defaultTimeout           = 5 * time.Second
 	clientName               = "runlog-mongo"
 	sequenceCollectionSuffix = "_sequences"
+	bindingCollectionSuffix  = "_run_bindings"
 	schemaCollectionSuffix   = "_schema"
 	schemaSentinelID         = "runlog"
-	schemaVersion            = 1
+	schemaVersion            = 2
 )
 
 // New returns a Client backed by the provided MongoDB client.
@@ -156,21 +168,24 @@ func New(opts Options) (Client, error) {
 	database := opts.Client.Database(opts.Database)
 	mcoll := database.Collection(collection)
 	sequenceColl := database.Collection(collection + sequenceCollectionSuffix)
+	bindingColl := database.Collection(collection + bindingCollectionSuffix)
 	schemaColl := database.Collection(collection + schemaCollectionSuffix)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	wrapper := mongoCollection{coll: mcoll}
-	if err := requireSchema(ctx, mongoCollection{coll: schemaColl}); err != nil {
-		return nil, err
-	}
-	if err := ensureIndexes(ctx, wrapper); err != nil {
+	if err := requireReadyStorage(ctx, mongoCollection{coll: schemaColl}, mongoMigrationStore{
+		database:   database,
+		events:     mcoll,
+		collection: collection,
+	}); err != nil {
 		return nil, err
 	}
 	return newClientWithCollections(
 		opts.Client,
 		wrapper,
 		mongoCollection{coll: sequenceColl},
+		mongoCollection{coll: bindingColl},
 		mongoTransactionRunner{client: opts.Client},
 		timeout,
 	)
@@ -186,8 +201,9 @@ func (c *client) Ping(ctx context.Context) error {
 	return c.mongo.Ping(ctx, readpref.Primary())
 }
 
-// Append reserves one stream position and inserts the immutable event in the
-// same transaction. Exact activity retries return the existing position.
+// Append confirms the run's stream, reserves one position, and inserts the
+// immutable event in the same transaction. Exact activity retries return the
+// existing position.
 func (c *client) Append(ctx context.Context, e *runlog.Event) (runlog.AppendResult, error) {
 	if e == nil {
 		return runlog.AppendResult{}, errors.New("event is required")
@@ -220,6 +236,9 @@ func (c *client) Append(ctx context.Context, e *runlog.Event) (runlog.AppendResu
 		Timestamp: e.Timestamp.UTC(),
 	}
 	err := c.transactions.WithTransaction(ctx, func(txCtx context.Context) error {
+		if err := c.bindRunStream(txCtx, e.RunID, doc.Stream); err != nil {
+			return err
+		}
 		sequence, err := c.nextSequence(txCtx, doc.Stream)
 		if err != nil {
 			return err
@@ -395,6 +414,7 @@ func newClientWithCollections(
 	mongoClient *mongodriver.Client,
 	coll collection,
 	sequences collection,
+	bindings collection,
 	transactions transactionRunner,
 	timeout time.Duration,
 ) (*client, error) {
@@ -403,6 +423,9 @@ func newClientWithCollections(
 	}
 	if sequences == nil {
 		return nil, errors.New("sequence collection is required")
+	}
+	if bindings == nil {
+		return nil, errors.New("run binding collection is required")
 	}
 	if transactions == nil {
 		return nil, errors.New("transaction runner is required")
@@ -414,6 +437,7 @@ func newClientWithCollections(
 		mongo:        mongoClient,
 		coll:         coll,
 		sequences:    sequences,
+		bindings:     bindings,
 		transactions: transactions,
 		timeout:      timeout,
 	}, nil
@@ -443,8 +467,9 @@ func (c mongoCollection) Indexes() indexView {
 	return mongoIndexView{view: c.coll.Indexes()}
 }
 
-// WithTransaction runs sequence allocation and event insertion in one Mongo
-// transaction so a visible event always owns exactly one stream position.
+// WithTransaction runs binding confirmation, sequence allocation, and event
+// insertion in one Mongo transaction so a visible event always owns exactly
+// one stream position.
 func (r mongoTransactionRunner) WithTransaction(ctx context.Context, fn func(context.Context) error) error {
 	session, err := r.client.StartSession()
 	if err != nil {
@@ -512,9 +537,36 @@ func (c *client) nextSequence(ctx context.Context, stream string) (int64, error)
 	return counter.Sequence, nil
 }
 
-// requireSchema rejects databases that have not completed the sequence
+// bindRunStream creates the first run-to-stream binding or confirms the
+// existing binding. The caller's transaction also allocates the sequence and
+// inserts the event, so a rolled-back first append leaves no binding behind.
+func (c *client) bindRunStream(ctx context.Context, runID, stream string) error {
+	var binding runBindingDocument
+	err := c.bindings.FindOneAndUpdate(
+		ctx,
+		bson.M{"_id": runID},
+		bson.M{"$setOnInsert": bson.M{"stream": stream}},
+		options.FindOneAndUpdate().
+			SetUpsert(true).
+			SetReturnDocument(options.After),
+	).Decode(&binding)
+	if err != nil {
+		return fmt.Errorf("bind run %q to ordering stream %q: %w", runID, stream, err)
+	}
+	if binding.RunID != runID || binding.Stream != stream {
+		return fmt.Errorf(
+			"run %q is bound to ordering stream %q, cannot append to %q",
+			runID,
+			binding.Stream,
+			stream,
+		)
+	}
+	return nil
+}
+
+// requireSchema rejects databases that have not completed the ordering
 // migration. The migration writes this sentinel only after all event documents,
-// counters, and indexes are ready for sequence-only reads.
+// run bindings, counters, and indexes are ready for sequence-only reads.
 func requireSchema(ctx context.Context, schemas collection) error {
 	var sentinel schemaDocument
 	err := schemas.FindOne(ctx, bson.M{"_id": schemaSentinelID}).Decode(&sentinel)
@@ -530,6 +582,22 @@ func requireSchema(ctx context.Context, schemas collection) error {
 			schemaVersion,
 			sentinel.Version,
 		)
+	}
+	return nil
+}
+
+// requireReadyStorage accepts startup only after migration has installed the
+// strict event validator and every required replay index, then written the
+// current schema sentinel.
+func requireReadyStorage(ctx context.Context, schemas collection, storage storageContractReader) error {
+	if err := requireSchema(ctx, schemas); err != nil {
+		return err
+	}
+	if err := storage.requireEventValidation(ctx, validationStrict); err != nil {
+		return fmt.Errorf("verify runlog Mongo event validator: %w", err)
+	}
+	if err := storage.requireEventIndexes(ctx); err != nil {
+		return fmt.Errorf("verify runlog Mongo event indexes: %w", err)
 	}
 	return nil
 }
