@@ -275,7 +275,7 @@ func BuildCallToolPayload(registryCallToolMessage *string) (*registry.CallToolPa
 		WireProtocolVersion: int(*message.WireProtocolVersion),
 	}
 	if message.Meta != nil {
-		v.Meta = transformProtoCallToolRequestToolCallMetaToCallToolPayloadToolCallMeta(message.Meta)
+		v.Meta = transformProtoToolCallMetaToToolCallMeta(message.Meta)
 	}
 
 	return v, nil
@@ -306,7 +306,7 @@ func BuildRetryToolPayload(registryRetryToolMessage *string) (*registry.RetryToo
 		WireProtocolVersion:       int(*message.WireProtocolVersion),
 	}
 	if message.Meta != nil {
-		v.Meta = transformProtoRetryToolRequestToolCallMetaToRetryToolPayloadToolCallMeta(message.Meta)
+		v.Meta = transformProtoToolCallMetaToToolCallMeta(message.Meta)
 	}
 
 	return v, nil

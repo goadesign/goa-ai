@@ -253,7 +253,7 @@ func NewProtoCallToolRequest(payload *registry.CallToolPayload) *registrypb.Call
 	wireProtocolVersion := int32(payload.WireProtocolVersion)
 	message.WireProtocolVersion = &wireProtocolVersion
 	if payload.Meta != nil {
-		message.Meta = transformCallToolPayloadToolCallMetaToProtoCallToolRequestToolCallMeta(payload.Meta)
+		message.Meta = transformToolCallMetaToProtoToolCallMeta(payload.Meta)
 	}
 	return message
 }
@@ -282,7 +282,7 @@ func NewProtoRetryToolRequest(payload *registry.RetryToolPayload) *registrypb.Re
 	wireProtocolVersion := int32(payload.WireProtocolVersion)
 	message.WireProtocolVersion = &wireProtocolVersion
 	if payload.Meta != nil {
-		message.Meta = transformRetryToolPayloadToolCallMetaToProtoRetryToolRequestToolCallMeta(payload.Meta)
+		message.Meta = transformToolCallMetaToProtoToolCallMeta(payload.Meta)
 	}
 	return message
 }
@@ -1298,10 +1298,9 @@ func ValidateClaimToolCallResponse(message *registrypb.ClaimToolCallResponse) (e
 	return
 }
 
-// transformCallToolPayloadToolCallMetaToProtoCallToolRequestToolCallMeta
-// builds a value of type *registrypb.ToolCallMeta from a value of type
-// *registry.ToolCallMeta.
-func transformCallToolPayloadToolCallMetaToProtoCallToolRequestToolCallMeta(v *registry.ToolCallMeta) *registrypb.ToolCallMeta {
+// transformToolCallMetaToProtoToolCallMeta builds a value of type
+// *registrypb.ToolCallMeta from a value of type *registry.ToolCallMeta.
+func transformToolCallMetaToProtoToolCallMeta(v *registry.ToolCallMeta) *registrypb.ToolCallMeta {
 	res := &registrypb.ToolCallMeta{
 		RunId:            &v.RunID,
 		SessionId:        &v.SessionID,
@@ -1313,40 +1312,9 @@ func transformCallToolPayloadToolCallMetaToProtoCallToolRequestToolCallMeta(v *r
 	return res
 }
 
-// transformProtoCallToolRequestToolCallMetaToCallToolPayloadToolCallMeta
-// builds a value of type *registry.ToolCallMeta from a value of type
-// *registrypb.ToolCallMeta.
-func transformProtoCallToolRequestToolCallMetaToCallToolPayloadToolCallMeta(v *registrypb.ToolCallMeta) *registry.ToolCallMeta {
-	res := &registry.ToolCallMeta{
-		RunID:            *v.RunId,
-		SessionID:        *v.SessionId,
-		TurnID:           v.TurnId,
-		ToolCallID:       *v.ToolCallId,
-		ParentToolCallID: v.ParentToolCallId,
-	}
-
-	return res
-}
-
-// transformRetryToolPayloadToolCallMetaToProtoRetryToolRequestToolCallMeta
-// builds a value of type *registrypb.ToolCallMeta from a value of type
-// *registry.ToolCallMeta.
-func transformRetryToolPayloadToolCallMetaToProtoRetryToolRequestToolCallMeta(v *registry.ToolCallMeta) *registrypb.ToolCallMeta {
-	res := &registrypb.ToolCallMeta{
-		RunId:            &v.RunID,
-		SessionId:        &v.SessionID,
-		TurnId:           v.TurnID,
-		ToolCallId:       &v.ToolCallID,
-		ParentToolCallId: v.ParentToolCallID,
-	}
-
-	return res
-}
-
-// transformProtoRetryToolRequestToolCallMetaToRetryToolPayloadToolCallMeta
-// builds a value of type *registry.ToolCallMeta from a value of type
-// *registrypb.ToolCallMeta.
-func transformProtoRetryToolRequestToolCallMetaToRetryToolPayloadToolCallMeta(v *registrypb.ToolCallMeta) *registry.ToolCallMeta {
+// transformProtoToolCallMetaToToolCallMeta builds a value of type
+// *registry.ToolCallMeta from a value of type *registrypb.ToolCallMeta.
+func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *registry.ToolCallMeta {
 	res := &registry.ToolCallMeta{
 		RunID:            *v.RunId,
 		SessionID:        *v.SessionId,

@@ -279,7 +279,7 @@ func NewCallToolPayload(message *registrypb.CallToolRequest) *registry.CallToolP
 		WireProtocolVersion: int(*message.WireProtocolVersion),
 	}
 	if message.Meta != nil {
-		v.Meta = transformProtoCallToolRequestToolCallMetaToCallToolPayloadToolCallMeta(message.Meta)
+		v.Meta = transformProtoToolCallMetaToToolCallMeta(message.Meta)
 	}
 	return v
 }
@@ -307,7 +307,7 @@ func NewRetryToolPayload(message *registrypb.RetryToolRequest) *registry.RetryTo
 		WireProtocolVersion:       int(*message.WireProtocolVersion),
 	}
 	if message.Meta != nil {
-		v.Meta = transformProtoRetryToolRequestToolCallMetaToRetryToolPayloadToolCallMeta(message.Meta)
+		v.Meta = transformProtoToolCallMetaToToolCallMeta(message.Meta)
 	}
 	return v
 }
@@ -1139,25 +1139,9 @@ func ValidateClaimToolCallRequest(message *registrypb.ClaimToolCallRequest) (err
 	return
 }
 
-// transformProtoCallToolRequestToolCallMetaToCallToolPayloadToolCallMeta
-// builds a value of type *registry.ToolCallMeta from a value of type
-// *registrypb.ToolCallMeta.
-func transformProtoCallToolRequestToolCallMetaToCallToolPayloadToolCallMeta(v *registrypb.ToolCallMeta) *registry.ToolCallMeta {
-	res := &registry.ToolCallMeta{
-		RunID:            *v.RunId,
-		SessionID:        *v.SessionId,
-		TurnID:           v.TurnId,
-		ToolCallID:       *v.ToolCallId,
-		ParentToolCallID: v.ParentToolCallId,
-	}
-
-	return res
-}
-
-// transformProtoRetryToolRequestToolCallMetaToRetryToolPayloadToolCallMeta
-// builds a value of type *registry.ToolCallMeta from a value of type
-// *registrypb.ToolCallMeta.
-func transformProtoRetryToolRequestToolCallMetaToRetryToolPayloadToolCallMeta(v *registrypb.ToolCallMeta) *registry.ToolCallMeta {
+// transformProtoToolCallMetaToToolCallMeta builds a value of type
+// *registry.ToolCallMeta from a value of type *registrypb.ToolCallMeta.
+func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *registry.ToolCallMeta {
 	res := &registry.ToolCallMeta{
 		RunID:            *v.RunId,
 		SessionID:        *v.SessionId,
