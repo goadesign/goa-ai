@@ -167,14 +167,7 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 			tc.ExpectedChildrenTotal = p.ExpectedChildrenTotal
 
 		case hooks.ToolResultReceived:
-			decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
-				Type:      hooks.ToolResultReceived,
-				RunID:     e.RunID,
-				AgentID:   e.AgentID,
-				SessionID: e.SessionID,
-				TurnID:    e.TurnID,
-				Payload:   e.Payload,
-			})
+			decoded, err := hooks.DecodeRunlogEvent(e)
 			if err != nil {
 				return nil, fmt.Errorf("decode %s payload: %w", hooks.ToolResultReceived, err)
 			}

@@ -234,7 +234,7 @@ func canonicalEntry(events map[string]*canonicalToolEvents, toolCallID string) *
 // decodeToolCallScheduledRunlogEvent reconstructs a ToolCallScheduledEvent from
 // a canonical run-log event payload.
 func decodeToolCallScheduledRunlogEvent(event *runlog.Event) (*hooks.ToolCallScheduledEvent, error) {
-	decoded, err := decodeRunlogHookEvent(event)
+	decoded, err := hooks.DecodeRunlogEvent(event)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +248,7 @@ func decodeToolCallScheduledRunlogEvent(event *runlog.Event) (*hooks.ToolCallSch
 // decodeToolResultRunlogEvent reconstructs a ToolResultReceivedEvent from a
 // canonical run-log event payload.
 func decodeToolResultRunlogEvent(event *runlog.Event) (*hooks.ToolResultReceivedEvent, error) {
-	decoded, err := decodeRunlogHookEvent(event)
+	decoded, err := hooks.DecodeRunlogEvent(event)
 	if err != nil {
 		return nil, err
 	}
@@ -257,26 +257,4 @@ func decodeToolResultRunlogEvent(event *runlog.Event) (*hooks.ToolResultReceived
 		return nil, fmt.Errorf("runtime: run log event %s decoded as %T, want *hooks.ToolResultReceivedEvent", event.ID, decoded)
 	}
 	return toolEvent, nil
-}
-
-// decodeRunlogHookEvent reconstructs a hook event from a canonical run-log
-// entry.
-func decodeRunlogHookEvent(event *runlog.Event) (hooks.Event, error) {
-	if event == nil {
-		return nil, fmt.Errorf("runtime: nil run log event")
-	}
-	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
-		Type:        event.Type,
-		EventKey:    event.EventKey,
-		RunID:       event.RunID,
-		AgentID:     event.AgentID,
-		SessionID:   event.SessionID,
-		TurnID:      event.TurnID,
-		TimestampMS: event.Timestamp.UnixMilli(),
-		Payload:     event.Payload,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("runtime: decode run log event %s: %w", event.ID, err)
-	}
-	return decoded, nil
 }
