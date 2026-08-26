@@ -14,7 +14,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -61,7 +60,7 @@ func TestChildSuspensionPropagatesThroughParentContinuation(t *testing.T) {
 			&PlanResult{ToolCalls: []ToolCall{{
 				Name: tool.Name, ToolCallID: "call-child", Payload: rawjson.Message(`{}`),
 			}}},
-			policy.CapsState{MaxToolCalls: 1, RemainingToolCalls: 1},
+			initialCaps(RunPolicy{MaxToolCalls: 1}),
 			time.Time{}, time.Time{}, firstInput.TurnID, nil,
 		)
 		firstDone <- struct {

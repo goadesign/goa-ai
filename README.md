@@ -662,10 +662,9 @@ runs.
 
 Generated agents, completion packages, runtime workers, and their callers form
 one release unit and use one generated contract. New saved runs use
-`goa-ai.run-suspension.v5`; version 4 checkpoints remain readable and preserve
-their earlier failed-tool counting behavior. Model-authored await items preserve
-the runtime `ToolCallID` separately from the provider `ModelToolCallID`.
-Suspensions with another shape fail at the typed checkpoint boundary.
+`goa-ai.run-suspension.v5`. Model-authored await items preserve the runtime
+`ToolCallID` separately from the provider `ModelToolCallID`. Suspensions with
+another shape fail at the typed checkpoint boundary.
 
 Sensitive tools can require approval before execution:
 
@@ -843,6 +842,11 @@ The runtime enforces the advertised catalog, generated payload contracts, and ex
 caps; it does not infer how many semantic operations the planner must repeat.
 When one tool has both correction and replan failures in the same batch, the
 correctable failure keeps that tool available.
+
+`MaxRecoveryTurns` counts replacement planner activities scheduled after
+rejected tool or model output. Bookkeeping calls do not consume or reset this
+budget. If a rejected bookkeeping result schedules another planner activity,
+that replacement activity consumes one recovery turn.
 
 Agent-as-tool results use this same typed transition contract. The number of
 child tools observed during the nested run is telemetry for linked progress;

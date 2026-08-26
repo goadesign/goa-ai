@@ -2035,6 +2035,9 @@ func (r *Runtime) ToolSchema(name tools.Ident) (map[string]any, bool) {
 func (r *Runtime) OverridePolicy(agentID agent.Ident, delta RunPolicy) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if err := validateMaxRecoveryTurns(delta.MaxRecoveryTurns); err != nil {
+		return err
+	}
 	reg, ok := r.agents[agentID]
 	if !ok {
 		return ErrAgentNotFound
@@ -2058,12 +2061,25 @@ func (r *Runtime) OverridePolicy(agentID agent.Ident, delta RunPolicy) error {
 // validateRunPolicy rejects configuration values outside the runtime-owned
 // transition vocabulary before an agent registration becomes executable.
 func validateRunPolicy(policy RunPolicy) error {
+	if err := validateMaxRecoveryTurns(policy.MaxRecoveryTurns); err != nil {
+		return err
+	}
 	switch policy.OnMissingFields {
 	case "", MissingFieldsFinalize, MissingFieldsAwaitClarification, MissingFieldsResume:
 		return nil
 	default:
 		return fmt.Errorf("%w: unknown missing-fields action %q", ErrInvalidConfig, policy.OnMissingFields)
 	}
+}
+
+// validateMaxRecoveryTurns accepts zero as an omitted public setting and
+// rejects negative values. Registration resolves omission to the runtime
+// default; per-run and in-process overrides leave the current setting unchanged.
+func validateMaxRecoveryTurns(value int) error {
+	if value < 0 {
+		return fmt.Errorf("%w: max recovery turns cannot be negative", ErrInvalidConfig)
+	}
+	return nil
 }
 
 func (r *Runtime) storeWorkflowHandle(runID string, handle engine.WorkflowHandle) {

@@ -39,12 +39,6 @@ func TestConsumeRecoveryTurn(t *testing.T) {
 			caps:          policy.CapsState{MaxRecoveryTurns: 3},
 			wantRemaining: 0,
 		},
-		{
-			name:          "uncapped restored state permits recovery",
-			caps:          policy.CapsState{},
-			wantRemaining: 0,
-			wantAllowed:   true,
-		},
 	}
 
 	for _, tc := range cases {
@@ -62,8 +56,8 @@ func TestInitialCapsUseDefaultRecoveryTurns(t *testing.T) {
 
 	caps := initialCaps(RunPolicy{})
 
-	require.Equal(t, defaultMaxRecoveryTurns, caps.MaxRecoveryTurns)
-	require.Equal(t, defaultMaxRecoveryTurns, caps.RemainingRecoveryTurns)
+	require.Equal(t, policy.DefaultMaxRecoveryTurns, caps.MaxRecoveryTurns)
+	require.Equal(t, policy.DefaultMaxRecoveryTurns, caps.RemainingRecoveryTurns)
 }
 
 func TestResetRecoveryTurns(t *testing.T) {
@@ -72,62 +66,14 @@ func TestResetRecoveryTurns(t *testing.T) {
 	caps := policy.CapsState{MaxRecoveryTurns: 3, RemainingRecoveryTurns: 1}
 	resetRecoveryTurns(&caps)
 	require.Equal(t, 3, caps.RemainingRecoveryTurns)
-
-	unconfigured := policy.CapsState{}
-	resetRecoveryTurns(&unconfigured)
-	require.Zero(t, unconfigured.RemainingRecoveryTurns)
 }
 
-func TestApplyLegacyFailureStreak(t *testing.T) {
+func TestSuccessfulBudgetedResult(t *testing.T) {
 	t.Parallel()
 
-	for _, test := range []struct {
-		name          string
-		progress      bool
-		failed        bool
-		caps          policy.CapsState
-		wantRemaining int
-		wantExhausted bool
-	}{
-		{
-			name:          "failed batch decrements",
-			failed:        true,
-			caps:          policy.CapsState{MaxRecoveryTurns: 3, RemainingRecoveryTurns: 3},
-			wantRemaining: 2,
-		},
-		{
-			name:          "mixed batch resets",
-			progress:      true,
-			failed:        true,
-			caps:          policy.CapsState{MaxRecoveryTurns: 3, RemainingRecoveryTurns: 1},
-			wantRemaining: 3,
-		},
-		{
-			name:          "final failed batch exhausts",
-			failed:        true,
-			caps:          policy.CapsState{MaxRecoveryTurns: 3, RemainingRecoveryTurns: 1},
-			wantExhausted: true,
-		},
-		{
-			name:   "historically uncapped state remains uncapped",
-			failed: true,
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			caps := test.caps
-			exhausted := applyLegacyFailureStreak(&caps, test.progress, test.failed)
-			require.Equal(t, test.wantRemaining, caps.RemainingRecoveryTurns)
-			require.Equal(t, test.wantExhausted, exhausted)
-		})
-	}
-}
-
-func TestBudgetedBatchOutcome(t *testing.T) {
-	t.Parallel()
-
-	budgeted := newAnyJSONSpec("ada.get_energy_rates", "ada")
-	budgetedOK := newAnyJSONSpec("ada.get_weather_forecast", "ada")
-	progressSpec := newBookkeepingSpec("tasks.progress.update")
+	budgeted := newAnyJSONSpec("catalog.search", "catalog")
+	budgetedOK := newAnyJSONSpec("catalog.lookup", "catalog")
+	progressSpec := newBookkeepingSpec("runs.progress.update")
 
 	rt := New()
 	seedTestToolSpecs(rt, budgeted, budgetedOK, progressSpec)
@@ -147,24 +93,21 @@ func TestBudgetedBatchOutcome(t *testing.T) {
 		name         string
 		records      []stepToolRecord
 		wantProgress bool
-		wantFailed   bool
 	}{
 		{
-			name: "mixed parallel batch reports progress and failure",
+			name: "mixed parallel batch reports progress",
 			records: []stepToolRecord{
 				record(budgeted.Name, true),
 				record(budgetedOK.Name, false),
 			},
 			wantProgress: true,
-			wantFailed:   true,
 		},
 		{
-			name: "all budgeted failures report failure only",
+			name: "all budgeted failures do not report progress",
 			records: []stepToolRecord{
 				record(budgeted.Name, true),
 				record(budgetedOK.Name, true),
 			},
-			wantFailed: true,
 		},
 		{
 			name: "bookkeeping success is not progress",
@@ -172,10 +115,9 @@ func TestBudgetedBatchOutcome(t *testing.T) {
 				record(progressSpec.Name, false),
 				record(budgeted.Name, true),
 			},
-			wantFailed: true,
 		},
 		{
-			name: "bookkeeping-only batch reports neither",
+			name: "bookkeeping-only batch does not report progress",
 			records: []stepToolRecord{
 				record(progressSpec.Name, false),
 			},
@@ -184,9 +126,7 @@ func TestBudgetedBatchOutcome(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			progress, failed := rt.budgetedBatchOutcome(tc.records)
-			require.Equal(t, tc.wantProgress, progress)
-			require.Equal(t, tc.wantFailed, failed)
+			require.Equal(t, tc.wantProgress, rt.hasSuccessfulBudgetedResult(tc.records))
 		})
 	}
 }

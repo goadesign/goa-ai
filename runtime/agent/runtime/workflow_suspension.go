@@ -70,7 +70,6 @@ type (
 		ToolOutputs            []*planner.ToolOutput
 		PendingRecovery        []*planner.ToolOutput
 		PendingRecoveryCatalog *RecoveryCatalog
-		LegacyFailureStreak     bool
 	}
 
 	checkpointStepBatch struct {
@@ -316,7 +315,6 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 			ToolOutputs:            l.st.ToolOutputs,
 			PendingRecovery:        pendingRecovery,
 			PendingRecoveryCatalog: pendingRecoveryCatalog,
-			LegacyFailureStreak:     l.st.LegacyFailureStreak,
 		},
 		Batch: checkpointStepBatch{
 			Result:                    batch.program.result,
@@ -628,14 +626,13 @@ func (r *Runtime) restoreCheckpointState(ctx context.Context, checkpoint checkpo
 		toolEvents = append(toolEvents, decoded)
 	}
 	state := &runLoopState{
-		Caps:                checkpoint.Caps,
-		NextAttempt:         checkpoint.NextAttempt,
-		AggUsage:            checkpoint.Usage,
-		Transcript:          checkpoint.Transcript,
-		ResponseCommitted:   checkpoint.ResponseCommitted,
-		ToolEvents:          toolEvents,
-		ToolOutputs:         checkpoint.ToolOutputs,
-		LegacyFailureStreak: checkpoint.LegacyFailureStreak,
+		Caps:              checkpoint.Caps,
+		NextAttempt:       checkpoint.NextAttempt,
+		AggUsage:          checkpoint.Usage,
+		Transcript:        checkpoint.Transcript,
+		ResponseCommitted: checkpoint.ResponseCommitted,
+		ToolEvents:        toolEvents,
+		ToolOutputs:       checkpoint.ToolOutputs,
 	}
 	if len(checkpoint.PendingRecovery) > 0 {
 		state.PendingRecovery = pendingToolRecovery{

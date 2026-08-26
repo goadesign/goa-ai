@@ -176,8 +176,7 @@ func decodeWorkflowCheckpointState(suspension *api.RunSuspension) (*workflowChec
 	if err := validatePublicRunSuspension(suspension); err != nil {
 		return nil, err
 	}
-	if suspension.Version != api.RunSuspensionVersion &&
-		suspension.Version != api.RunSuspensionVersionV4 {
+	if suspension.Version != api.RunSuspensionVersion {
 		return nil, fmt.Errorf("unsupported run suspension version %q", suspension.Version)
 	}
 	var checkpoint workflowCheckpoint
@@ -189,9 +188,6 @@ func decodeWorkflowCheckpointState(suspension *api.RunSuspension) (*workflowChec
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, errors.New("run suspension checkpoint has trailing data")
-	}
-	if suspension.Version == api.RunSuspensionVersionV4 {
-		checkpoint.State.LegacyFailureStreak = true
 	}
 	if err := validateWorkflowCheckpoint(&checkpoint); err != nil {
 		return nil, err
@@ -285,6 +281,9 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 		caps.MaxRecoveryTurns < 0 || caps.RemainingRecoveryTurns < 0 {
 		return errors.New("run suspension checkpoint has negative policy caps")
 	}
+	if caps.MaxRecoveryTurns == 0 {
+		return errors.New("run suspension checkpoint requires a positive recovery turn maximum")
+	}
 	if caps.RemainingToolCalls > caps.MaxToolCalls ||
 		caps.RemainingRecoveryTurns > caps.MaxRecoveryTurns {
 		return errors.New("run suspension checkpoint remaining policy cap exceeds its maximum")
@@ -376,6 +375,9 @@ func validateWorkflowRunInput(input *RunInput) error {
 		return errors.New("run input is required")
 	}
 	if input.Continuation == nil {
+		if input.Policy != nil {
+			return validateMaxRecoveryTurns(input.Policy.MaxRecoveryTurns)
+		}
 		return nil
 	}
 	if err := validatePendingInputResponse(input.Continuation.Response); err != nil {

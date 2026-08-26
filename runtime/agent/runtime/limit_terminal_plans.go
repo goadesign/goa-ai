@@ -10,6 +10,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -115,6 +116,7 @@ func (r *Runtime) finishLimitTerminalCall(
 	allToolResults []*planner.ToolResult,
 	allToolOutputs []*planner.ToolOutput,
 	aggUsage model.TokenUsage,
+	caps policy.CapsState,
 	nextAttempt int,
 	turnID string,
 	call LimitTerminalCall,
@@ -136,6 +138,7 @@ func (r *Runtime) finishLimitTerminalCall(
 		allToolResults,
 		allToolOutputs,
 		aggUsage,
+		caps,
 		nextAttempt,
 		turnID,
 		reason,

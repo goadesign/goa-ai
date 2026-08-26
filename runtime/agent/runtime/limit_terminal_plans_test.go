@@ -342,6 +342,7 @@ func TestToolFailureUsesPlannerWhenLimitPlansExist(t *testing.T) {
 		nil,
 		nil,
 		model.TokenUsage{},
+		initialCaps(RunPolicy{}),
 		2,
 		input.TurnID,
 		nil,
@@ -581,9 +582,13 @@ func executeWorkflowLimitTerminalPlan(
 // limitTerminalLabelPolicy adds one label while the terminal call is prepared.
 type limitTerminalLabelPolicy struct{}
 
-// Decide returns the configured caps unchanged and adds a label used by the
-// execution assertion.
+// Decide requires the same valid active recovery state used during ordinary
+// tool execution, then returns it unchanged with labels for the execution
+// assertion.
 func (limitTerminalLabelPolicy) Decide(_ context.Context, input policy.Input) (policy.Decision, error) {
+	if input.RemainingCaps.MaxRecoveryTurns <= 0 {
+		return policy.Decision{}, errors.New("finalization policy received no recovery maximum")
+	}
 	return policy.Decision{
 		Caps: input.RemainingCaps,
 		Labels: map[string]string{

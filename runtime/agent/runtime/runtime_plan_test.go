@@ -294,6 +294,37 @@ func TestPlanStartActivityCorrelatesRecoverableModelOutput(t *testing.T) {
 	require.Equal(t, "Use at most eight references.", out.OutputContractFailure.Correction)
 }
 
+func TestPlanStartActivityRejectsAlteredRecoverableModelOutput(t *testing.T) {
+	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		client, ok := input.Agent.ModelClient("test")
+		require.True(t, ok)
+		response, err := client.Complete(ctx, &model.Request{Model: "test"})
+		require.NoError(t, err)
+		message := &response.Content[len(response.Content)-1]
+		message.Parts[0] = model.TextPart{Text: "altered answer"}
+		return nil, planner.NewRecoverableModelOutputError(
+			errors.New("too many references"),
+			&planner.FinalResponse{Message: message},
+			"Use at most eight references.",
+		)
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	rt.models["test"] = newRecoveryTestModel(t)
+
+	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123"},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.OutputContractFailure)
+	require.Equal(t, planner.OutputContractOriginPlanner, out.OutputContractFailure.Origin)
+	require.Empty(t, out.OutputContractFailure.Correction)
+	require.False(t, out.OutputContractFailure.ModelResponsePresent)
+}
+
 func TestPlanStartActivityCorrelatesRecoverableStreamedAnswer(t *testing.T) {
 	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		client, ok := input.Agent.PlannerModelClient("test")

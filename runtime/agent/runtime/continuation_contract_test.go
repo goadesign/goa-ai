@@ -57,6 +57,14 @@ func TestValidateWorkflowRunInputRejectsMixedContinuationState(t *testing.T) {
 	require.ErrorContains(t, err, "caller-supplied checkpoint state")
 }
 
+func TestValidateWorkflowRunInputRejectsNegativeRecoveryOverride(t *testing.T) {
+	err := validateWorkflowRunInput(&RunInput{
+		Policy: &PolicyOverrides{MaxRecoveryTurns: -1},
+	})
+
+	require.ErrorIs(t, err, ErrInvalidConfig)
+}
+
 func TestValidateWorkflowOutputEnforcesIdentityAndTerminalShape(t *testing.T) {
 	valid := func() *RunOutput {
 		await := planner.AwaitClarificationItem(&planner.AwaitClarification{

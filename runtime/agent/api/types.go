@@ -161,9 +161,7 @@ type (
 		// MaxRecoveryTurns caps consecutive additional planner activities
 		// scheduled after rejected tool or model output. Successful budgeted
 		// tool work resets the count.
-		// The JSON name remains unchanged so active Temporal histories can
-		// decode the policy value after this source-level rename.
-		MaxRecoveryTurns int `json:"MaxConsecutiveFailedToolCalls,omitempty"` //nolint:tagliatelle // Historical Temporal input field.
+		MaxRecoveryTurns int
 
 		// TimeBudget caps active planner and tool work. External-input waits do
 		// not consume this budget.
@@ -199,10 +197,7 @@ type (
 
 		// RecoveryCap runs when replacement planner activities exhaust
 		// MaxRecoveryTurns.
-		// The JSON name remains unchanged so active Temporal histories and saved
-		// version-four suspensions decode the terminal call after this
-		// source-level rename.
-		RecoveryCap LimitTerminalCall `json:"FailedToolCallCap"` //nolint:tagliatelle // Historical Temporal input field.
+		RecoveryCap LimitTerminalCall
 	}
 
 	// LimitTerminalCall contains only the application-selected terminal tool
@@ -873,10 +868,6 @@ const (
 
 	// PendingInputKindToolResults requires a ToolResults response.
 	PendingInputKindToolResults PendingInputKind = "tool_results"
-
-	// RunSuspensionVersionV4 identifies checkpoints created before recovery
-	// turns replaced the failed-tool-call streak.
-	RunSuspensionVersionV4 = "goa-ai.run-suspension.v4"
 
 	// RunSuspensionVersion is the checkpoint schema emitted by this runtime.
 	// Version 5 records the recovery-turn workflow behavior.

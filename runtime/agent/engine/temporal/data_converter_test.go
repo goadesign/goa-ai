@@ -361,33 +361,6 @@ func TestNewAgentDataConverterRejectsObsoletePolicyFields(t *testing.T) {
 	require.ErrorContains(t, dc.FromPayload(payload, &decoded), `unknown field "AllowedTags"`)
 }
 
-func TestNewAgentDataConverterDecodesHistoricalFailureCapField(t *testing.T) {
-	dc := NewAgentDataConverter()
-	terminalCall := map[string]any{
-		"Name":    "service.complete",
-		"Payload": map[string]any{"status": "stopped"},
-	}
-	payload, err := dc.ToPayload(map[string]any{
-		"AgentID": "test.agent",
-		"RunID":   "run-123",
-		"Policy": map[string]any{
-			"MaxConsecutiveFailedToolCalls": 2,
-			"LimitTerminalPlans": map[string]any{
-				"TimeBudget":        terminalCall,
-				"ToolCallCap":       terminalCall,
-				"FailedToolCallCap": terminalCall,
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	var decoded *api.RunInput
-	require.NoError(t, dc.FromPayload(payload, &decoded))
-	require.Equal(t, 2, decoded.Policy.MaxRecoveryTurns)
-	require.Equal(t, tools.Ident("service.complete"), decoded.Policy.LimitTerminalPlans.RecoveryCap.Name)
-	require.JSONEq(t, `{"status":"stopped"}`, string(decoded.Policy.LimitTerminalPlans.RecoveryCap.Payload))
-}
-
 // MarshalJSON hides every field to prove preflight rejects the custom encoder
 // before it can conceal its typed value.
 func (m hidingJSONMarshaler) MarshalJSON() ([]byte, error) {

@@ -81,6 +81,15 @@ func TestValidateOutputContractFailureStateMatrix(t *testing.T) {
 			valid: true,
 		},
 		{
+			name: "recoverable model rejection without response fingerprint",
+			failure: func() *OutputContractFailure {
+				failure := validModel()
+				failure.ModelResponsePresent = true
+				failure.Correction = "Use at most eight references."
+				return failure
+			},
+		},
+		{
 			name: "planner rejection with correction",
 			failure: func() *OutputContractFailure {
 				failure := validModel()

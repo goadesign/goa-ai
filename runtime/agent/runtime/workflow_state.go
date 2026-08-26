@@ -46,10 +46,6 @@ type (
 		// PendingRecovery is either failed tool work or one rejected model
 		// answer. The concrete type determines the next planner input.
 		PendingRecovery pendingPlannerRecovery
-
-		// LegacyFailureStreak keeps version-4 suspension records on the workflow
-		// behavior that created them.
-		LegacyFailureStreak bool
 	}
 )
 

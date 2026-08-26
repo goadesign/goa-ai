@@ -251,9 +251,9 @@ before publishing any selected model text or tool call. Ordinary output
 contract errors are terminal and Temporal does not retry them. When the planner
 can give exact replacement guidance for one completed model answer, it may
 instead return `NewRecoverableModelOutputError`. The workflow records the
-rejected answer and usage, then spends one recovery turn on a synthesis-only
-replacement. Infrastructure failures remain activity errors and follow the
-activity retry policy.
+answer fingerprint and usage while keeping the rejected body private, then
+spends one recovery turn on a synthesis-only replacement. Infrastructure
+failures remain activity errors and follow the activity retry policy.
 
 The runtime keeps execution policy and planner intent separate:
 
@@ -394,13 +394,12 @@ the same Goa-AI revision and deploy the complete generated system together.
 Historical completed-session records remain owned by the session store and are
 not rewritten for a runtime contract release.
 
-`ValidateContinuation` accepts current suspension schema
-`goa-ai.run-suspension.v5` and version 4 checkpoints created before recovery
-turns shared one limit. Every model-authored
+`ValidateContinuation` accepts only the current suspension schema,
+`goa-ai.run-suspension.v5`. Every model-authored
 await item preserves the runtime `ToolCallID` separately from the provider
 `ModelToolCallID`, so execution records and provider transcript reconstruction
-never substitute one identity for the other. Version 4 runs keep their original
-failed-tool counting behavior. Any other checkpoint shape fails validation.
+never substitute one identity for the other. Any other checkpoint shape fails
+validation.
 
 Coordinated generated-code deployment does not own ordinary service
 availability. Services called by activities must keep a ready endpoint
@@ -830,10 +829,9 @@ redeploys.
   error instead of fabricating success after the required side effect did not
   occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
   because they assign different outcomes to the same exhausted limits.
-  New completion-aware suspensions use `goa-ai.run-suspension.v5`; version 4
-  checkpoints preserve their earlier failed-tool counting behavior. The saved
-  policy is required, and a checkpoint with another version fails at that
-  typed boundary.
+  Completion-aware suspensions use `goa-ai.run-suspension.v5`. The saved policy
+  is required, and a checkpoint with another version fails at that typed
+  boundary.
 - **Visible reasoning contract**: when a caller enables thinking for a Bedrock
   adaptive Claude model, the adapter asks for summarized reasoning display
   explicitly so streamed `thinking` events contain text. This includes Claude
