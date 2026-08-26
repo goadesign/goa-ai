@@ -38,9 +38,10 @@ type (
 	}
 
 	eventValidationProperties struct {
-		Stream   eventValidationField `bson:"stream"`
-		Sequence eventValidationField `bson:"sequence"`
-		Extra    bson.M               `bson:",inline"`
+		SessionID eventValidationField `bson:"session_id"`
+		Stream    eventValidationField `bson:"stream"`
+		Sequence  eventValidationField `bson:"sequence"`
+		Extra     bson.M               `bson:",inline"`
 	}
 
 	eventValidationField struct {
@@ -376,7 +377,7 @@ func (s mongoMigrationStore) requireEventValidation(ctx context.Context) error {
 		)
 	}
 	if !reflect.DeepEqual(actual.Validator, expectedEventValidation()) {
-		return errors.New("event validator does not require string stream and positive int64 sequence")
+		return errors.New("event validator does not require string session_id and stream with positive int64 sequence")
 	}
 	return nil
 }
@@ -476,8 +477,11 @@ func expectedEventValidation() eventValidationDocument {
 	return eventValidationDocument{
 		JSONSchema: eventJSONSchema{
 			BSONType: "object",
-			Required: []string{"stream", "sequence"},
+			Required: []string{"session_id", "stream", "sequence"},
 			Properties: eventValidationProperties{
+				SessionID: eventValidationField{
+					BSONType: "string",
+				},
 				Stream: eventValidationField{
 					BSONType: "string",
 				},

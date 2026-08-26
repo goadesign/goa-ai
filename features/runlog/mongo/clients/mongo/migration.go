@@ -123,9 +123,6 @@ func Migrate(ctx context.Context, opts MigrationOptions) (MigrationReport, error
 // migrate validates every persisted field before applying deterministic,
 // rerunnable write phases.
 func migrate(ctx context.Context, store migrationStore, apply bool) (MigrationReport, error) {
-	if err := store.validateSessionIDs(ctx); err != nil {
-		return MigrationReport{}, fmt.Errorf("validate runlog event session identities: %w", err)
-	}
 	current, err := loadCurrentSchema(ctx, store)
 	if err != nil {
 		return MigrationReport{}, err
@@ -135,6 +132,9 @@ func migrate(ctx context.Context, store migrationStore, apply bool) (MigrationRe
 			return MigrationReport{}, err
 		}
 		return MigrationReport{AlreadyCurrent: true}, nil
+	}
+	if err := store.validateSessionIDs(ctx); err != nil {
+		return MigrationReport{}, fmt.Errorf("validate runlog event session identities: %w", err)
 	}
 	plan, err := buildMigrationPlan(ctx, store)
 	if err != nil {

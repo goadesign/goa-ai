@@ -145,7 +145,7 @@ const (
 	bindingCollectionSuffix  = "_run_bindings"
 	schemaCollectionSuffix   = "_schema"
 	schemaSentinelID         = "runlog"
-	schemaVersion            = 2
+	schemaVersion            = 3
 )
 
 // New returns a Client backed by the provided MongoDB client.

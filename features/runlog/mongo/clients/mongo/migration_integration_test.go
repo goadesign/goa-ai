@@ -176,6 +176,32 @@ func TestDirectMigrationMongoContract(t *testing.T) {
 		assert.Equal(t, index+3, sequence)
 	}
 
+	t.Run("strict validation requires string session identity", func(t *testing.T) {
+		tests := []struct {
+			name  string
+			value any
+			omit  bool
+		}{
+			{name: "absent", omit: true},
+			{name: "null", value: nil},
+			{name: "wrong type", value: int32(7)},
+		}
+		for index, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				event := legacyMongoEvent("invalid-session", fmt.Sprintf("invalid-session-%d", index), time.Now().UTC())
+				event["stream"] = "run:invalid-session"
+				event["sequence"] = int64(index + 1)
+				if !test.omit {
+					event["session_id"] = test.value
+				}
+
+				_, insertErr := events.InsertOne(ctx, event)
+
+				require.Error(t, insertErr)
+			})
+		}
+	})
+
 	_, err = events.InsertOne(ctx, eventDocument{
 		Stream:    "session:session-1",
 		Sequence:  0,

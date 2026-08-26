@@ -148,6 +148,22 @@ func TestMigrateAppliesCurrentSchemaToEmptyDatabase(t *testing.T) {
 	require.Equal(t, 1, store.removeIndexCalls)
 }
 
+func TestExpectedEventValidationRequiresSessionIdentity(t *testing.T) {
+	t.Parallel()
+
+	encoded, err := bson.Marshal(expectedEventValidation())
+	require.NoError(t, err)
+	schema := bson.Raw(encoded).Lookup("$jsonSchema").Document()
+	required, err := schema.Lookup("required").Array().Values()
+	require.NoError(t, err)
+	require.Len(t, required, 3)
+	assert.Equal(t, "session_id", required[0].StringValue())
+	assert.Equal(t, "stream", required[1].StringValue())
+	assert.Equal(t, "sequence", required[2].StringValue())
+	sessionID := schema.Lookup("properties").Document().Lookup("session_id").Document()
+	assert.Equal(t, "string", sessionID.Lookup("bsonType").StringValue())
+}
+
 func TestMigrateCurrentSchemaRequiresExactStorageWithoutWrites(t *testing.T) {
 	t.Parallel()
 
@@ -165,6 +181,7 @@ func TestMigrateCurrentSchemaRequiresExactStorageWithoutWrites(t *testing.T) {
 			require.Equal(t, "moderate", store.validationLevel)
 			require.Empty(t, store.operations)
 			require.Empty(t, store.eventScans)
+			require.Zero(t, store.sessionIDValidationCalls)
 		})
 	}
 }
@@ -280,6 +297,31 @@ func TestMigrateBackfillsBindingsFromPreviousSchema(t *testing.T) {
 	require.Zero(t, report.BackfillEvents)
 	require.Equal(t, "session:session-1", store.bindings["run-1"])
 	require.Equal(t, schemaVersion, store.schema.Version)
+}
+
+func TestMigrateUpgradesVersionTwoValidatorContract(t *testing.T) {
+	t.Parallel()
+
+	event := legacyMigrationEvent("000000000000000000000001", "run-1", "", "evt-1")
+	event.Stream = testRunStream
+	event.Sequence = 1
+	store := newFakeMigrationStore([]eventDocument{event})
+	store.schema = schemaDocument{Name: schemaSentinelID, Version: 2}
+	store.schemaFound = true
+	store.bindings["run-1"] = testRunStream
+	store.sequences[testRunStream] = 1
+	store.validationLevel = validationStrict
+	store.indexesReady = true
+	store.legacyIndexes = false
+
+	report, err := migrate(context.Background(), store, true)
+
+	require.NoError(t, err)
+	assert.True(t, report.Applied)
+	assert.False(t, report.AlreadyCurrent)
+	assert.Equal(t, 3, store.schema.Version)
+	assert.Equal(t, 1, store.sessionIDValidationCalls)
+	assert.Contains(t, store.operations, "validation:strict")
 }
 
 func TestMigrateRejectsConflictingLegacyBinding(t *testing.T) {
@@ -511,22 +553,23 @@ func legacyMigrationEvent(id, runID, sessionID, eventKey string) eventDocument {
 }
 
 type fakeMigrationStore struct {
-	events                 []eventDocument
-	eventScans             []migrationEventScan
-	sequences              map[string]int64
-	bindings               map[string]string
-	validationLevel        string
-	indexesReady           bool
-	legacyIndexes          bool
-	schema                 schemaDocument
-	schemaFound            bool
-	indexCalls             int
-	removeIndexCalls       int
-	operations             []string
-	failPhase              string
-	failAfter              int
-	phaseCalls             map[string]int
-	sessionIDValidationErr error
+	events                   []eventDocument
+	eventScans               []migrationEventScan
+	sequences                map[string]int64
+	bindings                 map[string]string
+	validationLevel          string
+	indexesReady             bool
+	legacyIndexes            bool
+	schema                   schemaDocument
+	schemaFound              bool
+	indexCalls               int
+	removeIndexCalls         int
+	operations               []string
+	failPhase                string
+	failAfter                int
+	phaseCalls               map[string]int
+	sessionIDValidationErr   error
+	sessionIDValidationCalls int
 }
 
 type migrationEventScan struct {
@@ -555,6 +598,7 @@ func markFakeMigrationCurrent(store *fakeMigrationStore) {
 }
 
 func (s *fakeMigrationStore) validateSessionIDs(context.Context) error {
+	s.sessionIDValidationCalls++
 	return s.sessionIDValidationErr
 }
 
