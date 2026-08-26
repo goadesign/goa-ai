@@ -322,33 +322,6 @@ func validateObjectJSONValue(path string, value any, description string) error {
 	return nil
 }
 
-// validateSetStepStatusResultJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateSetStepStatusResultJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		default:
-			return unknownJSONFieldError(path, key, []string{})
-		}
-	}
-	return nil
-}
-
 // generatedJSONChildPath keeps fixed object fields dotted. After an array index
 // or caller-defined map key, it uses slash-separated paths so later keys stay clear.
 func generatedJSONChildPath(path, key string, useSlashPath bool) string {

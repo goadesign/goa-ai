@@ -27,9 +27,10 @@ type (
 	}
 
 	toolCodecsFileData struct {
-		Types          []*typeData
-		Tools          []*toolEntry
-		JSONValidators []*jsonValidatorData
+		Types                  []*typeData
+		Tools                  []*toolEntry
+		JSONDocumentValidators []*jsonDocumentValidatorData
+		JSONValidators         []*jsonValidatorData
 		// EmitToolLookups controls whether the tool-specific codec lookup helpers
 		// are rendered in this package.
 		EmitToolLookups bool

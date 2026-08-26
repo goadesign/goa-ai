@@ -333,7 +333,7 @@ func validateUpsertResultJSON(data []byte) error {
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return fmt.Errorf("multiple JSON documents")
 	}
-	return validateUpsertResultJSONValue("", root, "")
+	return validateUpsertPayloadProfileTransportJSONValue("", root, "")
 }
 
 // validateUpsertPayloadJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
@@ -482,102 +482,6 @@ func validateStringJSONValue(path string, value any, description string) error {
 		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	_ = typed
-	return nil
-}
-
-// validateUpsertResultJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUpsertResultJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "address":
-			if err := validateUpsertResultAddressTransportJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Address",
-			); err != nil {
-				return err
-			}
-		case "id":
-			if err := validateStringJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Identifier",
-			); err != nil {
-				return err
-			}
-		case "name":
-			if err := validateStringJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Name",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"address",
-				"id",
-				"name",
-			})
-		}
-	}
-	return nil
-}
-
-// validateUpsertResultAddressTransportJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUpsertResultAddressTransportJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "city":
-			if err := validateStringJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "City",
-			); err != nil {
-				return err
-			}
-		case "street":
-			if err := validateStringJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Street",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"city",
-				"street",
-			})
-		}
-	}
 	return nil
 }
 

@@ -37,10 +37,6 @@ type (
 // it calls. Bounded results add their generated bookkeeping fields to the root
 // object without adding those fields to the public Go result.
 func (p *toolSpecsPackagePlan) declareJSONValidator(key, preferred string, attribute *goaexpr.AttributeExpr, owner *contractTypeOwner, usage typeUsage) (*plannedJSONValidatorGraph, error) {
-	document, err := p.declareJSONValidatorName(key, "validate"+preferred+"JSON", "document")
-	if err != nil {
-		return nil, err
-	}
 	planner := &jsonValidatorPlanner{
 		plan:      p,
 		key:       key,
@@ -52,23 +48,25 @@ func (p *toolSpecsPackagePlan) declareJSONValidator(key, preferred string, attri
 		return nil, err
 	}
 	if usage == usageResult && owner.Bounds != nil && root.kind == jsonValidatorObject {
-		if err := planner.addBoundedResultValidatorFields(root, owner.Bounds); err != nil {
-			return nil, err
-		}
+		planner.addBoundedResultValidatorFields(root, owner.Bounds)
 	}
-	return &plannedJSONValidatorGraph{
-		document: document,
-		root:     root,
-	}, nil
+	graph := &plannedJSONValidatorGraph{
+		key:       key,
+		preferred: "validate" + preferred + "JSON",
+		role:      "document",
+		root:      root,
+	}
+	p.jsonValidatorGraphs = append(p.jsonValidatorGraphs, graph)
+	return graph, nil
 }
 
 // build plans one value validator and then its statically known children.
 func (p *jsonValidatorPlanner) build(attribute *goaexpr.AttributeExpr, suffix string, root bool) (*plannedJSONValidator, error) {
 	if primitive, ok := jsonValidatorPrimitiveType(attribute); ok {
-		return p.primitiveValidator(primitive)
+		return p.primitiveValidator(primitive), nil
 	}
 	if goaexpr.IsUnion(attribute.Type) {
-		return p.categoryValidator(jsonSchemaTypeObject)
+		return p.categoryValidator(jsonSchemaTypeObject), nil
 	}
 	if userType, ok := attribute.Type.(goaexpr.UserType); ok {
 		identity := userType.Origin()
@@ -78,112 +76,72 @@ func (p *jsonValidatorPlanner) build(attribute *goaexpr.AttributeExpr, suffix st
 		if !root {
 			suffix = jsonValidatorUserTypeName(userType)
 		}
-		validator, err := p.newValidator(suffix, userType.Attribute(), root)
-		if err != nil {
-			return nil, err
-		}
+		validator := p.newValidator(suffix, userType.Attribute(), root)
 		p.named[identity] = validator
 		if err := p.populate(validator, userType.Attribute(), suffix); err != nil {
 			return nil, err
 		}
 		return validator, nil
 	}
-	validator, err := p.newValidator(suffix, attribute, root)
-	if err != nil {
-		return nil, err
-	}
+	validator := p.newValidator(suffix, attribute, root)
 	if err := p.populate(validator, attribute, suffix); err != nil {
 		return nil, err
 	}
 	return validator, nil
 }
 
-// newValidator reserves one private function name and records it before child
-// planning. This order lets recursive children call the saved function.
-func (p *jsonValidatorPlanner) newValidator(suffix string, attribute *goaexpr.AttributeExpr, root bool) (*plannedJSONValidator, error) {
+// newValidator records a value check before planning its children. This order
+// lets recursive children call the saved function.
+func (p *jsonValidatorPlanner) newValidator(suffix string, attribute *goaexpr.AttributeExpr, root bool) *plannedJSONValidator {
 	preferred := "validate" + p.preferred + goacodegen.Goify(suffix, true) + "JSONValue"
 	if root {
 		preferred = "validate" + p.preferred + "JSONValue"
 	}
-	declaration, err := p.plan.declareJSONValidatorName(
-		p.key,
-		preferred,
-		fmt.Sprintf("value:%04d", len(p.plan.jsonValidators)),
-	)
-	if err != nil {
-		return nil, err
-	}
 	validator := &plannedJSONValidator{
-		declaration: declaration,
-		expected:    generatedJSONType(attribute.Type),
+		key:       p.key,
+		preferred: preferred,
+		role:      fmt.Sprintf("value:%04d", len(p.plan.jsonValidators)),
+		expected:  generatedJSONType(attribute.Type),
 	}
 	p.plan.jsonValidators = append(p.plan.jsonValidators, validator)
-	return validator, nil
+	return validator
 }
 
-// primitiveValidator returns the one package helper for an exact primitive Go
-// representation. Callers still pass the actual field path and description.
-func (p *jsonValidatorPlanner) primitiveValidator(primitive goaexpr.Primitive) (*plannedJSONValidator, error) {
+// primitiveValidator plans the exact JSON check for one primitive Go value.
+// The package pass later shares it with every matching check.
+func (p *jsonValidatorPlanner) primitiveValidator(primitive goaexpr.Primitive) *plannedJSONValidator {
 	signed, unsigned, bits := jsonIntegerShape(primitive.Kind())
-	key := jsonPrimitiveValidatorKey{
-		expected:        generatedJSONType(primitive),
-		signedInteger:   signed,
-		unsignedInteger: unsigned,
-		integerBits:     bits,
-	}
-	if existing := p.plan.jsonPrimitiveValidators[key]; existing != nil {
-		return existing, nil
-	}
-	validator, err := p.newSharedValidator(jsonPrimitiveValidatorName(key), key.expected)
-	if err != nil {
-		return nil, err
-	}
+	expected := generatedJSONType(primitive)
+	validator := p.newPrimitiveValidator(jsonPrimitiveValidatorName(expected, signed, unsigned, bits), expected)
 	if primitive.Kind() == goaexpr.AnyKind {
 		validator.kind = jsonValidatorAny
 	} else {
 		validator.kind = jsonValidatorPrimitive
 	}
-	validator.expected = key.expected
 	validator.signedInteger = signed
 	validator.unsignedInteger = unsigned
 	validator.integerBits = bits
-	p.plan.jsonPrimitiveValidators[key] = validator
-	return validator, nil
+	return validator
 }
 
-// categoryValidator returns one package helper that checks only a JSON value
-// category. It is used where typed decoding owns all checks inside the value.
-func (p *jsonValidatorPlanner) categoryValidator(expected string) (*plannedJSONValidator, error) {
-	key := jsonPrimitiveValidatorKey{expected: expected}
-	if existing := p.plan.jsonPrimitiveValidators[key]; existing != nil {
-		return existing, nil
-	}
-	validator, err := p.newSharedValidator("validate"+goacodegen.Goify(expected, true)+"JSONValue", expected)
-	if err != nil {
-		return nil, err
-	}
+// categoryValidator plans a JSON category check where typed decoding checks
+// the contents of the value.
+func (p *jsonValidatorPlanner) categoryValidator(expected string) *plannedJSONValidator {
+	validator := p.newPrimitiveValidator("validate"+goacodegen.Goify(expected, true)+"JSONValue", expected)
 	validator.kind = jsonValidatorPrimitive
-	validator.expected = expected
-	p.plan.jsonPrimitiveValidators[key] = validator
-	return validator, nil
+	return validator
 }
 
-// newSharedValidator reserves one package helper for a primitive check.
-func (p *jsonValidatorPlanner) newSharedValidator(preferred, expected string) (*plannedJSONValidator, error) {
-	declaration, err := p.plan.declareJSONValidatorName(
-		p.key,
-		preferred,
-		fmt.Sprintf("value:%04d", len(p.plan.jsonValidators)),
-	)
-	if err != nil {
-		return nil, err
-	}
+// newPrimitiveValidator records a primitive check before package sharing.
+func (p *jsonValidatorPlanner) newPrimitiveValidator(preferred, expected string) *plannedJSONValidator {
 	validator := &plannedJSONValidator{
-		declaration: declaration,
-		expected:    expected,
+		key:       p.key,
+		preferred: preferred,
+		role:      fmt.Sprintf("value:%04d", len(p.plan.jsonValidators)),
+		expected:  expected,
 	}
 	p.plan.jsonValidators = append(p.plan.jsonValidators, validator)
-	return validator, nil
+	return validator
 }
 
 // jsonValidatorPrimitiveType follows aliases and returns their concrete Goa
@@ -204,21 +162,21 @@ func jsonValidatorPrimitiveType(attribute *goaexpr.AttributeExpr) (goaexpr.Primi
 
 // jsonPrimitiveValidatorName returns the readable helper name for one exact
 // primitive check.
-func jsonPrimitiveValidatorName(key jsonPrimitiveValidatorKey) string {
-	if key.expected == "" {
+func jsonPrimitiveValidatorName(expected string, signed, unsigned bool, bits int) string {
+	if expected == "" {
 		return "validateAnyJSONValue"
 	}
-	if key.signedInteger || key.unsignedInteger {
+	if signed || unsigned {
 		prefix := "Int"
-		if key.unsignedInteger {
+		if unsigned {
 			prefix = "Uint"
 		}
-		if key.integerBits > 0 {
-			prefix += fmt.Sprintf("%d", key.integerBits)
+		if bits > 0 {
+			prefix += fmt.Sprintf("%d", bits)
 		}
 		return "validate" + prefix + "JSONValue"
 	}
-	return "validate" + goacodegen.Goify(key.expected, true) + "JSONValue"
+	return "validate" + goacodegen.Goify(expected, true) + "JSONValue"
 }
 
 // populate records the direct calls needed for one known Goa value shape.
@@ -317,7 +275,7 @@ func (p *toolSpecsPackagePlan) declareJSONValidatorName(key, preferred, role str
 // they are present. The runtime adds required returned and truncated values
 // from Bounds after encoding, so this decoder also accepts the semantic result
 // before that projection happens.
-func (p *jsonValidatorPlanner) addBoundedResultValidatorFields(root *plannedJSONValidator, bounds *ToolBoundsData) error {
+func (p *jsonValidatorPlanner) addBoundedResultValidatorFields(root *plannedJSONValidator, bounds *ToolBoundsData) {
 	fields := []struct {
 		name        string
 		expected    string
@@ -357,14 +315,10 @@ func (p *jsonValidatorPlanner) addBoundedResultValidatorFields(root *plannedJSON
 	}
 	for _, field := range fields {
 		var validator *plannedJSONValidator
-		var err error
 		if field.expected == jsonSchemaTypeInteger {
-			validator, err = p.primitiveValidator(goaexpr.Int)
+			validator = p.primitiveValidator(goaexpr.Int)
 		} else {
-			validator, err = p.categoryValidator(field.expected)
-		}
-		if err != nil {
-			return err
+			validator = p.categoryValidator(field.expected)
 		}
 		planned := &plannedJSONValidatorField{
 			name: field.name,
@@ -382,7 +336,6 @@ func (p *jsonValidatorPlanner) addBoundedResultValidatorFields(root *plannedJSON
 		}
 	}
 	sort.Slice(root.fields, func(i, j int) bool { return root.fields[i].name < root.fields[j].name })
-	return nil
 }
 
 // jsonValidatorUserTypeName returns a stable readable suffix for a named Goa type.
@@ -397,9 +350,202 @@ func jsonValidatorUserTypeName(userType goaexpr.UserType) string {
 	}
 }
 
+// finalizeJSONValidators keeps only checks called by generated codecs and
+// shares equal checks after every codec in the package has finished planning.
+// It then reserves names only for the functions that the generated file writes.
+func (p *toolSpecsPackagePlan) finalizeJSONValidators() error {
+	graphs := renderedJSONValidatorGraphs(p.jsonValidatorGraphs)
+	reachable := reachableJSONValidators(graphs)
+	validators := make([]*plannedJSONValidator, 0, len(reachable))
+	for _, validator := range p.jsonValidators {
+		if reachable[validator] {
+			validators = append(validators, validator)
+		}
+	}
+	groups := jsonValidatorGroups(validators)
+	canonicalByGroup := make([]*plannedJSONValidator, len(validators))
+	canonical := make(map[*plannedJSONValidator]*plannedJSONValidator, len(validators))
+	kept := make([]*plannedJSONValidator, 0, len(validators))
+	for _, validator := range validators {
+		group := groups[validator]
+		shared := canonicalByGroup[group]
+		if shared == nil {
+			var err error
+			validator.declaration, err = p.declareJSONValidatorName(
+				validator.key,
+				validator.preferred,
+				validator.role,
+			)
+			if err != nil {
+				return err
+			}
+			shared = validator
+			canonicalByGroup[group] = validator
+			kept = append(kept, validator)
+		}
+		canonical[validator] = shared
+	}
+	for _, validator := range kept {
+		for _, field := range validator.fields {
+			if field.call != nil {
+				field.call.validator = canonical[field.call.validator]
+			}
+		}
+		if validator.element != nil {
+			validator.element.validator = canonical[validator.element.validator]
+		}
+	}
+	for _, graph := range graphs {
+		graph.root = canonical[graph.root]
+	}
+	documents := make(map[*plannedJSONValidator]*goacodegen.NameDeclaration, len(graphs))
+	documentValidators := make([]*plannedJSONValidatorGraph, 0, len(graphs))
+	for _, graph := range graphs {
+		if document := documents[graph.root]; document != nil {
+			graph.document = document
+			continue
+		}
+		document, err := p.declareJSONValidatorName(graph.key, graph.preferred, graph.role)
+		if err != nil {
+			return err
+		}
+		graph.document = document
+		documents[graph.root] = document
+		documentValidators = append(documentValidators, graph)
+	}
+	p.jsonDocumentValidators = documentValidators
+	p.jsonValidators = kept
+	return nil
+}
+
+// renderedJSONValidatorGraphs returns document checks called by generated
+// codecs in the same order that their contracts were planned.
+func renderedJSONValidatorGraphs(graphs []*plannedJSONValidatorGraph) []*plannedJSONValidatorGraph {
+	rendered := make([]*plannedJSONValidatorGraph, 0, len(graphs))
+	for _, graph := range graphs {
+		if graph.render {
+			rendered = append(rendered, graph)
+		}
+	}
+	return rendered
+}
+
+// reachableJSONValidators finds every value check called by a rendered
+// document reader, including calls that lead back to a recursive parent.
+func reachableJSONValidators(graphs []*plannedJSONValidatorGraph) map[*plannedJSONValidator]bool {
+	reachable := make(map[*plannedJSONValidator]bool)
+	remaining := make([]*plannedJSONValidator, 0, len(graphs))
+	for _, graph := range graphs {
+		remaining = append(remaining, graph.root)
+	}
+	for len(remaining) > 0 {
+		last := len(remaining) - 1
+		validator := remaining[last]
+		remaining = remaining[:last]
+		if reachable[validator] {
+			continue
+		}
+		reachable[validator] = true
+		for _, field := range validator.fields {
+			if field.call != nil {
+				remaining = append(remaining, field.call.validator)
+			}
+		}
+		if validator.element != nil {
+			remaining = append(remaining, validator.element.validator)
+		}
+	}
+	return reachable
+}
+
+// jsonValidatorGroups gives equal recursive checks the same number. Each pass
+// compares child group numbers from the previous pass. The numbers stop
+// changing when the complete recursive structures have been compared.
+func jsonValidatorGroups(validators []*plannedJSONValidator) map[*plannedJSONValidator]int {
+	groups := make(map[*plannedJSONValidator]int, len(validators))
+	for {
+		next := make(map[*plannedJSONValidator]int, len(validators))
+		representatives := make([]*plannedJSONValidator, 0, len(validators))
+		for _, validator := range validators {
+			group := -1
+			for index, representative := range representatives {
+				if sameJSONValidator(validator, representative, groups) {
+					group = index
+					break
+				}
+			}
+			if group == -1 {
+				group = len(representatives)
+				representatives = append(representatives, validator)
+			}
+			next[validator] = group
+		}
+		if sameJSONValidatorGroups(validators, groups, next) {
+			return next
+		}
+		groups = next
+	}
+}
+
+// sameJSONValidator compares everything one generated value-checking function
+// does. Recursive calls are compared through their current group numbers.
+func sameJSONValidator(left, right *plannedJSONValidator, groups map[*plannedJSONValidator]int) bool {
+	if left.kind != right.kind ||
+		left.expected != right.expected ||
+		left.signedInteger != right.signedInteger ||
+		left.unsignedInteger != right.unsignedInteger ||
+		left.integerBits != right.integerBits ||
+		len(left.fields) != len(right.fields) ||
+		!sameJSONValidatorCall(left.element, right.element, groups) {
+		return false
+	}
+	for index, leftField := range left.fields {
+		rightField := right.fields[index]
+		if leftField.name != rightField.name || !sameJSONValidatorCall(leftField.call, rightField.call, groups) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameJSONValidatorCall compares the child function and the description sent
+// to it in generated code.
+func sameJSONValidatorCall(left, right *plannedJSONValidatorCall, groups map[*plannedJSONValidator]int) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return left.description == right.description &&
+		left.inheritDescription == right.inheritDescription &&
+		groups[left.validator] == groups[right.validator]
+}
+
+// sameJSONValidatorGroups reports whether another comparison pass would keep
+// every function in the same group.
+func sameJSONValidatorGroups(validators []*plannedJSONValidator, left, right map[*plannedJSONValidator]int) bool {
+	for _, validator := range validators {
+		if left[validator] != right[validator] {
+			return false
+		}
+	}
+	return true
+}
+
 // materializeJSONValidatorGraph resolves the two names owned by one codec.
 func materializeJSONValidatorGraph(graph *plannedJSONValidatorGraph) (string, string) {
 	return graph.document.Name(), graph.root.declaration.Name()
+}
+
+// materializeJSONDocumentValidators resolves each package document reader and
+// the value check it calls after Goa has selected all declaration names.
+func materializeJSONDocumentValidators(graphs []*plannedJSONValidatorGraph) []*jsonDocumentValidatorData {
+	validators := make([]*jsonDocumentValidatorData, 0, len(graphs))
+	for _, graph := range graphs {
+		validators = append(validators, &jsonDocumentValidatorData{
+			Name: graph.document.Name(),
+			Root: graph.root.declaration.Name(),
+		})
+	}
+	return validators
 }
 
 // materializeJSONValidators resolves every package value helper after Goa has

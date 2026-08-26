@@ -37,6 +37,8 @@ type (
 		CodecTransformHelpers []*codegen.TransformFunctionData
 		// JSONValidators contains each generated raw JSON value check once.
 		JSONValidators []*jsonValidatorData
+		// JSONDocumentValidators contains each generated JSON document reader once.
+		JSONDocumentValidators []*jsonDocumentValidatorData
 		// Scope contains the final names used in the public tool package.
 		Scope *codegen.NameScope
 		// adapterTransforms contains functions that copy tool values to and from service values.
@@ -158,6 +160,13 @@ type (
 		IntegerBits     int
 		Fields          []*jsonValidatorFieldData
 		Element         *jsonValidatorCallData
+	}
+
+	// jsonDocumentValidatorData names one JSON document reader and the value
+	// check called for its decoded root.
+	jsonDocumentValidatorData struct {
+		Name string
+		Root string
 	}
 
 	// jsonValidatorFieldData describes one accepted field in a generated object

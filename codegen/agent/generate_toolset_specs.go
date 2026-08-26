@@ -140,9 +140,16 @@ func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 			codecsSections := []*codegen.SectionTemplate{
 				codegen.Header(ts.Name+" tool codecs", ts.SpecsPackageName, codecImports),
 				{
-					Name:    "tool-spec-codecs",
-					Source:  agentsTemplates.Read(toolCodecsFileT),
-					Data:    toolCodecsFileData{Types: types, Tools: specsData.tools, JSONValidators: specsData.JSONValidators, EmitToolLookups: true, Helpers: specsData.CodecTransformHelpers},
+					Name:   "tool-spec-codecs",
+					Source: agentsTemplates.Read(toolCodecsFileT),
+					Data: toolCodecsFileData{
+						Types:                  types,
+						Tools:                  specsData.tools,
+						JSONDocumentValidators: specsData.JSONDocumentValidators,
+						JSONValidators:         specsData.JSONValidators,
+						EmitToolLookups:        true,
+						Helpers:                specsData.CodecTransformHelpers,
+					},
 					FuncMap: templateFuncMap(),
 				},
 			}

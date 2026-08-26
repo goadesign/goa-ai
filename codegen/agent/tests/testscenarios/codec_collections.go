@@ -23,11 +23,24 @@ func CodecCollections() func() {
 		payload := Type("CollectionPayload", func() {
 			Attribute("aliases", ArrayOfRequired(alias), "Required aliases.")
 			Attribute("numbers", ArrayOfRequired(Int32), "Required integers.")
+			Attribute("unsigned_numbers", ArrayOf(UInt32), "Unsigned integers.")
+			Attribute("large_numbers", ArrayOfRequired(Int64), "Required large integers.")
 			Attribute("counts", MapOf(String, Int32), "Integer counts by name.")
 			Attribute("groups", ArrayOf(MapOf(String, Int32)), "Integer counts grouped by position.")
 			Attribute("node", "Node", "Recursive node.")
 			Attribute("dynamic", Any, "Unrestricted JSON value.")
-			Required("aliases", "numbers")
+			Required("aliases", "numbers", "large_numbers")
+		})
+		archivePayload := Type("ArchivePayload", func() {
+			Attribute("aliases", ArrayOfRequired(alias), "Archived aliases.")
+			Attribute("numbers", ArrayOfRequired(Int32), "Archived integers.")
+			Attribute("unsigned_numbers", ArrayOf(UInt32), "Archived unsigned integers.")
+			Attribute("large_numbers", ArrayOfRequired(Int64), "Archived large integers.")
+			Attribute("counts", MapOf(String, Int32), "Archived counts by name.")
+			Attribute("groups", ArrayOf(MapOf(String, Int32)), "Archived counts grouped by position.")
+			Attribute("node", "Node", "Archived recursive node.")
+			Attribute("dynamic", Any, "Archived unrestricted JSON value.")
+			Required("aliases", "numbers", "large_numbers")
 		})
 
 		Service("alpha", func() {
@@ -36,6 +49,9 @@ func CodecCollections() func() {
 					aidsl.Tool("store", "Store typed collections", func() {
 						aidsl.Args(payload)
 						aidsl.Return(payload)
+					})
+					aidsl.Tool("archive", "Archive typed collections", func() {
+						aidsl.Args(archivePayload)
 					})
 				})
 			})

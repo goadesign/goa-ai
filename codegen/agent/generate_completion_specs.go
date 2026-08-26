@@ -152,10 +152,11 @@ func completionSpecsFiles(data *GeneratorData, planned *toolSpecsPlan) ([]*codeg
 				Name:   "completion-spec-codecs",
 				Source: agentsTemplates.Read(toolCodecsFileT),
 				Data: toolCodecsFileData{
-					Types:           specsData.typesList(),
-					JSONValidators:  specsData.JSONValidators,
-					Helpers:         specsData.CodecTransformHelpers,
-					EmitToolLookups: false,
+					Types:                  specsData.typesList(),
+					JSONDocumentValidators: specsData.JSONDocumentValidators,
+					JSONValidators:         specsData.JSONValidators,
+					Helpers:                specsData.CodecTransformHelpers,
+					EmitToolLookups:        false,
 				},
 				FuncMap: templateFuncMap(),
 			},
@@ -228,6 +229,7 @@ func buildCompletionSpecsDataForPackage(genpkg string, svc *service.Data, comple
 	data.TransportUnions = builder.transportUnionTypes()
 	data.CodecTransformHelpers = builder.codecTransformHelpers
 	data.JSONValidators = materializeJSONValidators(planned.jsonValidators)
+	data.JSONDocumentValidators = materializeJSONDocumentValidators(planned.jsonDocumentValidators)
 	if len(builder.types) > 0 {
 		infos := make([]*typeData, 0, len(builder.types))
 		for _, info := range builder.types {

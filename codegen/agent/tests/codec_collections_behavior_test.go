@@ -32,7 +32,7 @@ import (
 )
 
 func TestCollectionCodecAcceptsValidRecursiveValuesAndAnyNull(t *testing.T) {
-	payload, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[1],"counts":{"site":2},"node":{"name":"one","next":{"name":"two"}},"dynamic":null}`+"`"+`))
+	payload, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[1],"large_numbers":[2147483648],"counts":{"site":2},"node":{"name":"one","next":{"name":"two"}},"dynamic":null}`+"`"+`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestCollectionCodecRejectsAliasElementsWithTheirPrimitiveType(t *testing.T)
 		{name: "number", value: "7", actual: "number"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":[`+"`"+` + test.value + `+"`"+`],"numbers":[1]}`+"`"+`))
+			_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":[`+"`"+` + test.value + `+"`"+`],"numbers":[1],"large_numbers":[2147483648]}`+"`"+`))
 			assertCollectionIssue(t, err, "/aliases/0", "string", test.actual, "Required aliases.")
 		})
 	}
@@ -75,15 +75,40 @@ func TestCollectionCodecRejectsInvalidIntegerArrayElements(t *testing.T) {
 		{name: "overflow", value: "1e100", actual: "number"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[`+"`"+` + test.value + `+"`"+`]}`+"`"+`))
+			_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[`+"`"+` + test.value + `+"`"+`],"large_numbers":[2147483648]}`+"`"+`))
 			assertCollectionIssue(t, err, "/numbers/0", "integer", test.actual, "Required integers.")
 		})
 	}
 }
 
+func TestCollectionCodecKeepsIntegerWidthsSeparate(t *testing.T) {
+	_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[2147483648],"unsigned_numbers":[2147483648],"large_numbers":[2147483648]}`+"`"+`))
+	assertCollectionIssue(t, err, "/numbers/0", "integer", "number", "Required integers.")
+}
+
+func TestCollectionCodecAcceptsUnsignedIntegerAboveSignedRange(t *testing.T) {
+	payload, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[1],"unsigned_numbers":[2147483648],"large_numbers":[2147483648]}`+"`"+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.UnsignedNumbers) != 1 || payload.UnsignedNumbers[0] != 2147483648 {
+		t.Fatalf("unexpected unsigned numbers: %#v", payload.UnsignedNumbers)
+	}
+}
+
+func TestCollectionCodecRejectsNegativeUnsignedInteger(t *testing.T) {
+	_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[1],"unsigned_numbers":[-1],"large_numbers":[2147483648]}`+"`"+`))
+	assertCollectionIssue(t, err, "/unsigned_numbers/0", "integer", "number", "Unsigned integers.")
+}
+
+func TestCollectionCodecKeepsFieldDescriptionsSeparate(t *testing.T) {
+	_, err := UnmarshalArchivePayload([]byte(`+"`"+`{"aliases":[7],"numbers":[1],"large_numbers":[2147483648]}`+"`"+`))
+	assertCollectionIssue(t, err, "/aliases/0", "string", "number", "Archived aliases.")
+}
+
 func TestCollectionCodecRejectsInvalidIntegerMapValuesAtEscapedKeys(t *testing.T) {
 	for _, value := range []string{"null", `+"`"+`"one"`+"`"+`, "1.5", "1e100"} {
-		_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[1],"counts":{"a/b~c":`+"`"+` + value + `+"`"+`}}`+"`"+`))
+		_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[1],"large_numbers":[2147483648],"counts":{"a/b~c":`+"`"+` + value + `+"`"+`}}`+"`"+`))
 		actual := "number"
 		if value == "null" {
 			actual = "null"
@@ -95,7 +120,7 @@ func TestCollectionCodecRejectsInvalidIntegerMapValuesAtEscapedKeys(t *testing.T
 }
 
 func TestCollectionCodecKeepsArrayIndexesWhenMapsRequireJSONPointer(t *testing.T) {
-	_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[1],"groups":[{"a/b":null}]}`+"`"+`))
+	_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[1],"large_numbers":[2147483648],"groups":[{"a/b":null}]}`+"`"+`))
 	assertCollectionIssue(t, err, "/groups/0/a~1b", "integer", "null", "Integer counts grouped by position.")
 }
 
@@ -111,7 +136,7 @@ func TestCollectionMetadataMatchesIndexedArrayMapValues(t *testing.T) {
 }
 
 func TestCollectionCodecRejectsUnknownFieldInsideRecursiveType(t *testing.T) {
-	_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[1],"node":{"name":"one","next":{"name":"two","extra":true}}}`+"`"+`))
+	_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[1],"large_numbers":[2147483648],"node":{"name":"one","next":{"name":"two","extra":true}}}`+"`"+`))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -129,7 +154,7 @@ func TestCollectionCodecRejectsUnknownFieldInsideRecursiveType(t *testing.T) {
 }
 
 func TestCollectionCodecRejectsMoreThanOneJSONDocument(t *testing.T) {
-	_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[1]} {}`+"`"+`))
+	_, err := UnmarshalStorePayload([]byte(`+"`"+`{"aliases":["alpha"],"numbers":[1],"large_numbers":[2147483648]} {}`+"`"+`))
 	if err == nil || !strings.Contains(err.Error(), "multiple JSON documents") {
 		t.Fatalf("expected one-document error, got %v", err)
 	}

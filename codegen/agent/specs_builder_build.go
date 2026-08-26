@@ -128,6 +128,7 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 	data.TransportUnions = builder.transportUnionTypes()
 	data.CodecTransformHelpers = builder.codecTransformHelpers
 	data.JSONValidators = materializeJSONValidators(planned.jsonValidators)
+	data.JSONDocumentValidators = materializeJSONDocumentValidators(planned.jsonDocumentValidators)
 	// Add any additional nested/local types in a deterministic order.
 	if len(builder.types) > 0 {
 		infos := make([]*typeData, 0, len(builder.types))

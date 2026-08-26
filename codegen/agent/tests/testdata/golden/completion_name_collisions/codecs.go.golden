@@ -420,7 +420,7 @@ func unmarshalDraftResult(data []byte) (*DraftResult, error) {
 		return nil, fmt.Errorf("draftResult JSON is empty")
 	}
 	var tv toolhttp.DraftResultTransport
-	if err := validateDraftResultJSON(data); err != nil {
+	if err := validateCompleteDraftResultJSON(data); err != nil {
 		return nil, invalidDraftResultFieldTypeError(err)
 	}
 	if err := json.Unmarshal(data, &tv); err != nil {
@@ -460,7 +460,7 @@ func unmarshalDraftExampleResult(data []byte) (*DraftExampleResult, error) {
 		return nil, fmt.Errorf("draftExampleResult JSON is empty")
 	}
 	var tv toolhttp.DraftExampleResultTransport
-	if err := validateDraftExampleResultJSON(data); err != nil {
+	if err := validateCompleteDraftResultJSON(data); err != nil {
 		return nil, invalidDraftExampleResultFieldTypeError(err)
 	}
 	if err := json.Unmarshal(data, &tv); err != nil {
@@ -500,7 +500,7 @@ func unmarshalStreamCompleteDraftResult(data []byte) (*StreamCompleteDraftResult
 		return nil, fmt.Errorf("streamCompleteDraftResult JSON is empty")
 	}
 	var tv toolhttp.StreamCompleteDraftResultTransport
-	if err := validateStreamCompleteDraftResultJSON(data); err != nil {
+	if err := validateCompleteDraftResultJSON(data); err != nil {
 		return nil, invalidStreamCompleteDraftResultFieldTypeError(err)
 	}
 	if err := json.Unmarshal(data, &tv); err != nil {
@@ -533,51 +533,6 @@ func validateCompleteDraftResultJSON(data []byte) error {
 		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateCompleteDraftResultJSONValue("", root, "")
-}
-
-// validateDraftResultJSON parses one JSON document and checks the exact value
-// shapes known from this generated Goa type.
-func validateDraftResultJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
-	}
-	return validateDraftResultJSONValue("", root, "")
-}
-
-// validateDraftExampleResultJSON parses one JSON document and checks the exact value
-// shapes known from this generated Goa type.
-func validateDraftExampleResultJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
-	}
-	return validateDraftExampleResultJSONValue("", root, "")
-}
-
-// validateStreamCompleteDraftResultJSON parses one JSON document and checks the exact value
-// shapes known from this generated Goa type.
-func validateStreamCompleteDraftResultJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
-	}
-	return validateStreamCompleteDraftResultJSONValue("", root, "")
 }
 
 // validateCompleteDraftResultJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
@@ -630,114 +585,6 @@ func validateStringJSONValue(path string, value any, description string) error {
 		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	_ = typed
-	return nil
-}
-
-// validateDraftResultJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateDraftResultJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "text":
-			if err := validateStringJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated completion text.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"text",
-			})
-		}
-	}
-	return nil
-}
-
-// validateDraftExampleResultJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateDraftExampleResultJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "text":
-			if err := validateStringJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated completion text.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"text",
-			})
-		}
-	}
-	return nil
-}
-
-// validateStreamCompleteDraftResultJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateStreamCompleteDraftResultJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "text":
-			if err := validateStringJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated completion text.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"text",
-			})
-		}
-	}
 	return nil
 }
 

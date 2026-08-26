@@ -7,12 +7,35 @@
 package collections
 
 type (
+	// ArchivePayload defines the JSON payload for the collections.archive tool.
+	ArchivePayload = struct {
+		// Archived aliases.
+		Aliases []Alias
+		// Archived integers.
+		Numbers []int32
+		// Archived unsigned integers.
+		UnsignedNumbers []uint32
+		// Archived large integers.
+		LargeNumbers []int64
+		// Archived counts by name.
+		Counts map[string]int32
+		// Archived counts grouped by position.
+		Groups []map[string]int32
+		// Archived recursive node.
+		Node *Node
+		// Archived unrestricted JSON value.
+		Dynamic any
+	}
 	// StorePayload defines the JSON payload for the collections.store tool.
 	StorePayload = struct {
 		// Required aliases.
 		Aliases []Alias
 		// Required integers.
 		Numbers []int32
+		// Unsigned integers.
+		UnsignedNumbers []uint32
+		// Required large integers.
+		LargeNumbers []int64
 		// Integer counts by name.
 		Counts map[string]int32
 		// Integer counts grouped by position.
@@ -28,6 +51,10 @@ type (
 		Aliases []Alias
 		// Required integers.
 		Numbers []int32
+		// Unsigned integers.
+		UnsignedNumbers []uint32
+		// Required large integers.
+		LargeNumbers []int64
 		// Integer counts by name.
 		Counts map[string]int32
 		// Integer counts grouped by position.

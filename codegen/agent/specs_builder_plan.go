@@ -33,35 +33,36 @@ type (
 	// toolSpecsPackagePlan stores the public specs package and the HTTP helper
 	// package written for one toolset.
 	toolSpecsPackagePlan struct {
-		generation              *goacodegen.Generation
-		definition              *ir.Toolset
-		genpkg                  string
-		public                  *goacodegen.GeneratedPackage
-		transport               *goacodegen.GeneratedPackage
-		types                   map[specTypeKey]*plannedSpecType
-		publicTypes             map[goaexpr.UserType]*goacodegen.TypeDeclaration
-		transportTypes          map[goaexpr.UserType]*goacodegen.TypeDeclaration
-		publicTypeUses          map[goaexpr.UserType]*goacodegen.NameDeclaration
-		transportTypeUses       map[goaexpr.UserType]*goacodegen.NameDeclaration
-		transportValidators     map[goaexpr.UserType]*goacodegen.NameDeclaration
-		publicFixed             map[string]*goacodegen.NameDeclaration
-		transportFixed          map[string]*goacodegen.NameDeclaration
-		publicUnionErrors       map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration
-		transportUnionErrors    map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration
-		jsonValidators          []*plannedJSONValidator
-		jsonPrimitiveValidators map[jsonPrimitiveValidatorKey]*plannedJSONValidator
-		tools                   map[string]*plannedToolNames
-		completionNames         map[string]*plannedCompletionNames
-		transformPlans          []*plannedPackageTransform
-		adapterTransformPlans   []*plannedPackageTransform
-		specs                   *toolSpecsData
-		completion              *completionSpecsData
-		fileImports             *toolSpecsFileImports
-		providerImportPaths     []string
-		transformImportPaths    []string
-		serviceImportPath       string
-		render                  *ToolsetData
-		registry                bool
+		generation             *goacodegen.Generation
+		definition             *ir.Toolset
+		genpkg                 string
+		public                 *goacodegen.GeneratedPackage
+		transport              *goacodegen.GeneratedPackage
+		types                  map[specTypeKey]*plannedSpecType
+		publicTypes            map[goaexpr.UserType]*goacodegen.TypeDeclaration
+		transportTypes         map[goaexpr.UserType]*goacodegen.TypeDeclaration
+		publicTypeUses         map[goaexpr.UserType]*goacodegen.NameDeclaration
+		transportTypeUses      map[goaexpr.UserType]*goacodegen.NameDeclaration
+		transportValidators    map[goaexpr.UserType]*goacodegen.NameDeclaration
+		publicFixed            map[string]*goacodegen.NameDeclaration
+		transportFixed         map[string]*goacodegen.NameDeclaration
+		publicUnionErrors      map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration
+		transportUnionErrors   map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration
+		jsonValidatorGraphs    []*plannedJSONValidatorGraph
+		jsonDocumentValidators []*plannedJSONValidatorGraph
+		jsonValidators         []*plannedJSONValidator
+		tools                  map[string]*plannedToolNames
+		completionNames        map[string]*plannedCompletionNames
+		transformPlans         []*plannedPackageTransform
+		adapterTransformPlans  []*plannedPackageTransform
+		specs                  *toolSpecsData
+		completion             *completionSpecsData
+		fileImports            *toolSpecsFileImports
+		providerImportPaths    []string
+		transformImportPaths   []string
+		serviceImportPath      string
+		render                 *ToolsetData
+		registry               bool
 	}
 
 	// toolSpecsFileImports keeps the imports used by each generated file. Goa
@@ -108,23 +109,21 @@ type (
 	// plannedJSONValidatorGraph stores the private functions that validate one
 	// raw JSON document and every known value shape reachable from it.
 	plannedJSONValidatorGraph struct {
-		document *goacodegen.NameDeclaration
-		root     *plannedJSONValidator
-	}
-
-	// jsonPrimitiveValidatorKey identifies one exact primitive check shared by
-	// every generated codec in a package.
-	jsonPrimitiveValidatorKey struct {
-		expected        string
-		signedInteger   bool
-		unsignedInteger bool
-		integerBits     int
+		document  *goacodegen.NameDeclaration
+		key       string
+		preferred string
+		role      string
+		root      *plannedJSONValidator
+		render    bool
 	}
 
 	// plannedJSONValidator stores one raw JSON value shape and its generated
 	// function name. Recursive named types point back to an existing value.
 	plannedJSONValidator struct {
 		declaration     *goacodegen.NameDeclaration
+		key             string
+		preferred       string
+		role            string
 		kind            string
 		expected        string
 		signedInteger   bool
@@ -333,8 +332,12 @@ func planToolSpecs(
 			return nil, fmt.Errorf("plan completion %q: %w", completion.Name, err)
 		}
 		packagePlan.completionNames[completion.Name].resultType = packagePlan.types[stableTypeKey(owner, usageResult, "")]
+		packagePlan.completionNames[completion.Name].resultType.jsonValidator.render = true
 	}
 	for serviceName, packagePlan := range planned.completions {
+		if err := packagePlan.finalizeJSONValidators(); err != nil {
+			return nil, fmt.Errorf("plan service %q completion JSON validators: %w", serviceName, err)
+		}
 		if err := packagePlan.planCompletionFileImports(); err != nil {
 			return nil, fmt.Errorf("plan service %q completion file imports: %w", serviceName, err)
 		}
@@ -418,6 +421,9 @@ func (p *toolSpecsPlan) addToolPackage(
 			return fmt.Errorf("plan toolset %q tool %q conversions: %w", label, tool.Name, err)
 		}
 	}
+	if err := packagePlan.finalizeJSONValidators(); err != nil {
+		return fmt.Errorf("plan toolset %q JSON validators: %w", label, err)
+	}
 	if err := packagePlan.planToolFileImports(tools); err != nil {
 		return fmt.Errorf("plan toolset %q file imports: %w", label, err)
 	}
@@ -480,24 +486,23 @@ func expandToolExpressions(mcpRoot *mcpexpr.RootExpr, name string, expr *agent.T
 // package and its HTTP decoding package.
 func newToolSpecsPackagePlan(generation *goacodegen.Generation, genpkg string, public, transport *goacodegen.GeneratedPackage) *toolSpecsPackagePlan {
 	return &toolSpecsPackagePlan{
-		generation:              generation,
-		genpkg:                  genpkg,
-		public:                  public,
-		transport:               transport,
-		types:                   make(map[specTypeKey]*plannedSpecType),
-		publicTypes:             make(map[goaexpr.UserType]*goacodegen.TypeDeclaration),
-		transportTypes:          make(map[goaexpr.UserType]*goacodegen.TypeDeclaration),
-		publicTypeUses:          make(map[goaexpr.UserType]*goacodegen.NameDeclaration),
-		transportTypeUses:       make(map[goaexpr.UserType]*goacodegen.NameDeclaration),
-		transportValidators:     make(map[goaexpr.UserType]*goacodegen.NameDeclaration),
-		publicFixed:             make(map[string]*goacodegen.NameDeclaration),
-		transportFixed:          make(map[string]*goacodegen.NameDeclaration),
-		publicUnionErrors:       make(map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration),
-		transportUnionErrors:    make(map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration),
-		jsonPrimitiveValidators: make(map[jsonPrimitiveValidatorKey]*plannedJSONValidator),
-		tools:                   make(map[string]*plannedToolNames),
-		completionNames:         make(map[string]*plannedCompletionNames),
-		fileImports:             newToolSpecsFileImports(public, transport),
+		generation:           generation,
+		genpkg:               genpkg,
+		public:               public,
+		transport:            transport,
+		types:                make(map[specTypeKey]*plannedSpecType),
+		publicTypes:          make(map[goaexpr.UserType]*goacodegen.TypeDeclaration),
+		transportTypes:       make(map[goaexpr.UserType]*goacodegen.TypeDeclaration),
+		publicTypeUses:       make(map[goaexpr.UserType]*goacodegen.NameDeclaration),
+		transportTypeUses:    make(map[goaexpr.UserType]*goacodegen.NameDeclaration),
+		transportValidators:  make(map[goaexpr.UserType]*goacodegen.NameDeclaration),
+		publicFixed:          make(map[string]*goacodegen.NameDeclaration),
+		transportFixed:       make(map[string]*goacodegen.NameDeclaration),
+		publicUnionErrors:    make(map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration),
+		transportUnionErrors: make(map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration),
+		tools:                make(map[string]*plannedToolNames),
+		completionNames:      make(map[string]*plannedCompletionNames),
+		fileImports:          newToolSpecsFileImports(public, transport),
 	}
 }
 
@@ -1131,6 +1136,7 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 	}
 	names := p.tools[tool.Name]
 	names.payloadType = p.types[stableTypeKey(owner, usagePayload, "")]
+	names.payloadType.jsonValidator.render = true
 	publicPayload := effectiveObject(names.payloadType.publicShape)
 	for _, name := range tool.InjectedFields {
 		field := publicPayload.Attribute(name)
@@ -1161,6 +1167,9 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 		return err
 	}
 	names.resultType = p.types[stableTypeKey(owner, usageResult, "")]
+	if result.Type != goaexpr.Empty {
+		names.resultType.jsonValidator.render = true
+	}
 	for _, serverData := range tool.ServerData {
 		if serverData == nil || serverData.Schema == nil {
 			continue
@@ -1169,6 +1178,7 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 			return err
 		}
 		names.serverDataTypes[serverData.Kind] = p.types[stableTypeKey(owner, usageServerData, serverData.Kind)]
+		names.serverDataTypes[serverData.Kind].jsonValidator.render = true
 	}
 	return nil
 }

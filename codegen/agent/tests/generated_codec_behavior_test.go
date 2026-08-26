@@ -300,6 +300,22 @@ func ValidateSearchPayloadTransport(v *SearchPayloadTransport) error {
 func ValidateSearchResultTransport(v *SearchResultTransport) error {
 	return nil
 }
+
+func ValidateSearchCopyPayloadTransport(v *SearchCopyPayloadTransport) error {
+	return nil
+}
+
+func ValidateSearchCopyResultTransport(v *SearchCopyResultTransport) error {
+	return nil
+}
+
+func ValidateSearchAllPayloadTransport(v *SearchAllPayloadTransport) error {
+	return nil
+}
+
+func ValidateSearchAllResultTransport(v *SearchAllResultTransport) error {
+	return nil
+}
 `)
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/codecs_behavior_test.go", `package lookup
 
@@ -317,6 +333,38 @@ func TestUnmarshalSearchResultAcceptsBoundedProjectionFields(t *testing.T) {
 	}
 	if len(result.Results) != 1 || result.Results[0] != "record_2" {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestUnmarshalSearchCopyResultAcceptsBoundedProjectionFields(t *testing.T) {
+	result, err := UnmarshalSearchCopyResult([]byte(`+"`"+`{"results":["compressor_2"],"returned":1,"truncated":false,"next_cursor":"cursor_2"}`+"`"+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Results) != 1 || result.Results[0] != "compressor_2" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestUnmarshalSearchAllResultRejectsBoundedProjectionFields(t *testing.T) {
+	for _, field := range []string{"returned", "truncated", "next_cursor"} {
+		t.Run(field, func(t *testing.T) {
+			_, err := UnmarshalSearchAllResult([]byte(`+"`"+`{"results":["compressor_2"],"`+"`"+` + field + `+"`"+`":1}`+"`"+`))
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			var validation *tools.ValidationError
+			if !errors.As(err, &validation) {
+				t.Fatalf("expected ValidationError, got %T: %v", err, err)
+			}
+			issues := validation.Issues()
+			if len(issues) != 1 || issues[0].Field != field || issues[0].Constraint != "unknown_field" {
+				t.Fatalf("unexpected issues: %#v", issues)
+			}
+			if !sameStrings(issues[0].Allowed, []string{"results"}) {
+				t.Fatalf("unexpected allowed keys: %#v", issues[0].Allowed)
+			}
+		})
 	}
 }
 

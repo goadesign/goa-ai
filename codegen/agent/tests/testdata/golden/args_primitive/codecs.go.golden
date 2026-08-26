@@ -176,7 +176,7 @@ func UnmarshalEchoResult(data []byte) (EchoResult, error) {
 		return zero, fmt.Errorf("echoResult JSON is empty")
 	}
 	var tv toolhttp.EchoResultTransport
-	if err := validateEchoResultJSON(data); err != nil {
+	if err := validateEchoPayloadJSON(data); err != nil {
 		return zero, invalidEchoResultFieldTypeError(err)
 	}
 	if err := json.Unmarshal(data, &tv); err != nil {
@@ -192,21 +192,6 @@ func UnmarshalEchoResult(data []byte) (EchoResult, error) {
 // validateEchoPayloadJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateEchoPayloadJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
-	}
-	return validateStringJSONValue("", root, "")
-}
-
-// validateEchoResultJSON parses one JSON document and checks the exact value
-// shapes known from this generated Goa type.
-func validateEchoResultJSON(data []byte) error {
 	var root any
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()

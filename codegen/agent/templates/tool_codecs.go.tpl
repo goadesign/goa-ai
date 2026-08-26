@@ -289,11 +289,10 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     {{- end }}
 {{- end }}
 
-{{- range .Types }}
-{{- if .GenerateCodec }}
-// {{ .JSONValidatorFunc }} parses one JSON document and checks the exact value
+{{- range .JSONDocumentValidators }}
+// {{ .Name }} parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
-func {{ .JSONValidatorFunc }}(data []byte) error {
+func {{ .Name }}(data []byte) error {
     var root any
     dec := json.NewDecoder(bytes.NewReader(data))
     dec.UseNumber()
@@ -303,9 +302,8 @@ func {{ .JSONValidatorFunc }}(data []byte) error {
     if err := dec.Decode(&struct{}{}); err != io.EOF {
         return fmt.Errorf("multiple JSON documents")
     }
-    return {{ .JSONValueValidatorFunc }}("", root, "")
+    return {{ .Root }}("", root, "")
 }
-{{- end }}
 {{- end }}
 
 {{- range .JSONValidators }}

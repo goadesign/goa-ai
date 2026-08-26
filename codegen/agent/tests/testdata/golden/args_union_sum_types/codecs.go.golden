@@ -407,7 +407,7 @@ func UnmarshalEchoResult(data []byte) (*EchoResult, error) {
 		return nil, fmt.Errorf("echoResult JSON is empty")
 	}
 	var tv toolhttp.EchoResultTransport
-	if err := validateEchoResultJSON(data); err != nil {
+	if err := validateEchoPayloadJSON(data); err != nil {
 		return nil, invalidEchoResultFieldTypeError(err)
 	}
 	if err := json.Unmarshal(data, &tv); err != nil {
@@ -483,21 +483,6 @@ func validateEchoPayloadJSON(data []byte) error {
 		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateEchoPayloadJSONValue("", root, "")
-}
-
-// validateEchoResultJSON parses one JSON document and checks the exact value
-// shapes known from this generated Goa type.
-func validateEchoResultJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
-	}
-	return validateEchoResultJSONValue("", root, "")
 }
 
 // validateEchoPayloadJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
@@ -583,58 +568,6 @@ func validateObjectJSONValue(path string, value any, description string) error {
 		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
 	}
 	_ = typed
-	return nil
-}
-
-// validateEchoResultJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateEchoResultJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "id":
-			if err := validateStringJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Request identifier",
-			); err != nil {
-				return err
-			}
-		case "optional_value":
-			if err := validateObjectJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "",
-			); err != nil {
-				return err
-			}
-		case "value":
-			if err := validateObjectJSONValue(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"id",
-				"optional_value",
-				"value",
-			})
-		}
-	}
 	return nil
 }
 
