@@ -1,3 +1,5 @@
+// These tests verify ordering, pagination, fixed run sessions, and repeated
+// appends in the in-memory run log.
 package inmem
 
 import (
@@ -135,4 +137,35 @@ func TestStoreAppendDeduplicatesEventKey(t *testing.T) {
 	sessionPage, err := s.ListSession(ctx, "sess-1", "", 10)
 	require.NoError(t, err)
 	require.Len(t, sessionPage.Events, 1)
+}
+
+func TestStoreAppendRejectsRunChangingSession(t *testing.T) {
+	t.Parallel()
+
+	store := New()
+	first := &runlog.Event{
+		EventKey:  "evt-1",
+		RunID:     "run-1",
+		SessionID: "session-1",
+		Type:      "event",
+		Payload:   []byte(`{}`),
+		Timestamp: time.Unix(1, 0).UTC(),
+	}
+	_, err := store.Append(context.Background(), first)
+	require.NoError(t, err)
+
+	_, err = store.Append(context.Background(), &runlog.Event{
+		EventKey:  "evt-2",
+		RunID:     "run-1",
+		SessionID: "session-2",
+		Type:      "event",
+		Payload:   []byte(`{}`),
+		Timestamp: time.Unix(2, 0).UTC(),
+	})
+
+	require.EqualError(
+		t,
+		err,
+		`run_id "run-1" belongs to session "session-1", cannot append an event for session "session-2"`,
+	)
 }

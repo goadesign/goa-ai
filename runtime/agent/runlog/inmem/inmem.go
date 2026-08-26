@@ -24,6 +24,8 @@ type (
 		events map[string][]*runlog.Event
 		// per-run stable event identities.
 		eventsByKey map[string]map[string]*runlog.Event
+		// session IDs fixed by the first event for each run.
+		runSessions map[string]string
 		// per-session append order across runs.
 		sessionEvents map[string][]*runlog.Event
 	}
@@ -35,6 +37,7 @@ func New() *Store {
 		nextSeq:       make(map[string]int64),
 		events:        make(map[string][]*runlog.Event),
 		eventsByKey:   make(map[string]map[string]*runlog.Event),
+		runSessions:   make(map[string]string),
 		sessionEvents: make(map[string][]*runlog.Event),
 	}
 }
@@ -53,6 +56,16 @@ func (s *Store) Append(_ context.Context, e *runlog.Event) (runlog.AppendResult,
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if existing, ok := s.runSessions[e.RunID]; ok && existing != e.SessionID {
+		return runlog.AppendResult{}, fmt.Errorf(
+			"run_id %q belongs to session %q, cannot append an event for session %q",
+			e.RunID,
+			existing,
+			e.SessionID,
+		)
+	}
+	s.runSessions[e.RunID] = e.SessionID
 
 	byKey := s.eventsByKey[e.RunID]
 	if byKey == nil {

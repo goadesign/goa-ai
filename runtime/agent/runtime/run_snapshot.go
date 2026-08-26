@@ -1,7 +1,8 @@
+// Package runtime rebuilds the compact run state returned by Runtime from
+// canonical run-log events supplied in oldest-first order.
 package runtime
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -18,6 +19,11 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 	if len(events) == 0 {
 		return nil, run.ErrNotFound
 	}
+	for index, event := range events {
+		if event == nil {
+			return nil, fmt.Errorf("snapshot run log contains nil event at index %d", index)
+		}
+	}
 
 	s := &run.Snapshot{
 		RunID:     events[0].RunID,
@@ -30,6 +36,9 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 		UpdatedAt: events[0].Timestamp,
 	}
 	toolCalls := make(map[string]*run.ToolCallSnapshot)
+	activeToolCalls := make(map[string]*run.ToolCallSnapshot)
+	scheduledToolEvents := make(map[string]*hooks.ToolCallScheduledEvent)
+	completedToolCallIDs := make(map[string]struct{})
 
 	for _, e := range events {
 		if e.RunID != s.RunID {
@@ -52,18 +61,33 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 		}
 
 		switch e.Type {
-		case hooks.RunStarted:
-			var p hooks.RunStartedEvent
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("decode %s payload: %w", hooks.RunStarted, err)
-			}
+		case hooks.RunStarted,
+			hooks.ChildRunLinked,
+			hooks.AwaitClarification,
+			hooks.AwaitConfirmation,
+			hooks.AwaitExternalTools,
+			hooks.RunPhaseChanged,
+			hooks.AssistantMessage,
+			hooks.ToolCallScheduled,
+			hooks.ToolCallUpdated,
+			hooks.ToolResultReceived,
+			hooks.RunCompleted,
+			hooks.RunSuspended:
+		default:
+			// Most event types do not affect the snapshot; transcript events are
+			// replayed by transcript.ReplayRunLogEvents below.
+			continue
+		}
+
+		decoded, err := hooks.DecodeRunlogEvent(e)
+		if err != nil {
+			return nil, err
+		}
+		switch p := decoded.(type) {
+		case *hooks.RunStartedEvent:
 			s.Labels = p.RunContext.Labels
 
-		case hooks.ChildRunLinked:
-			var p hooks.ChildRunLinkedEvent
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("decode %s payload: %w", hooks.ChildRunLinked, err)
-			}
+		case *hooks.ChildRunLinkedEvent:
 			s.ChildRuns = append(s.ChildRuns, &run.ChildRunLink{
 				ToolName:     p.ToolName,
 				ToolCallID:   p.ToolCallID,
@@ -71,11 +95,7 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 				ChildAgentID: p.ChildAgentID,
 			})
 
-		case hooks.AwaitClarification:
-			var p hooks.AwaitClarificationEvent
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("decode %s payload: %w", hooks.AwaitClarification, err)
-			}
+		case *hooks.AwaitClarificationEvent:
 			s.Await = &run.AwaitSnapshot{
 				Kind:     string(hooks.AwaitClarification),
 				ID:       p.ID,
@@ -83,11 +103,7 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 				Question: p.Question,
 			}
 
-		case hooks.AwaitConfirmation:
-			var p hooks.AwaitConfirmationEvent
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("decode %s payload: %w", hooks.AwaitConfirmation, err)
-			}
+		case *hooks.AwaitConfirmationEvent:
 			s.Await = &run.AwaitSnapshot{
 				Kind:       string(hooks.AwaitConfirmation),
 				ID:         p.ID,
@@ -97,93 +113,77 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 				Prompt:     p.Prompt,
 			}
 
-		case hooks.AwaitExternalTools:
-			var p hooks.AwaitExternalToolsEvent
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("decode %s payload: %w", hooks.AwaitExternalTools, err)
-			}
+		case *hooks.AwaitExternalToolsEvent:
 			s.Await = &run.AwaitSnapshot{
 				Kind:      string(hooks.AwaitExternalTools),
 				ID:        p.ID,
 				ItemCount: len(p.Items),
 			}
 
-		case hooks.RunPhaseChanged:
-			var p hooks.RunPhaseChangedEvent
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("decode %s payload: %w", hooks.RunPhaseChanged, err)
-			}
+		case *hooks.RunPhaseChangedEvent:
 			s.Phase = p.Phase
 
-		case hooks.AssistantMessage:
-			var p hooks.AssistantMessageEvent
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("decode %s payload: %w", hooks.AssistantMessage, err)
-			}
+		case *hooks.AssistantMessageEvent:
 			s.LastAssistantMessage = p.Message
 
-		case hooks.ToolCallScheduled:
-			var p hooks.ToolCallScheduledEvent
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("decode %s payload: %w", hooks.ToolCallScheduled, err)
+		case *hooks.ToolCallScheduledEvent:
+			if _, ok := toolCalls[p.ToolCallID]; ok {
+				return nil, fmt.Errorf("duplicate tool schedule for call %q", p.ToolCallID)
 			}
-			tc, ok := toolCalls[p.ToolCallID]
-			if !ok {
-				tc = &run.ToolCallSnapshot{
-					ToolCallID: p.ToolCallID,
-				}
-				toolCalls[p.ToolCallID] = tc
+			tc := &run.ToolCallSnapshot{
+				ToolCallID:            p.ToolCallID,
+				ToolName:              p.ToolName,
+				ParentToolCallID:      p.ParentToolCallID,
+				ScheduledAt:           e.Timestamp,
+				ExpectedChildrenTotal: p.ExpectedChildrenTotal,
 			}
-			tc.ToolName = p.ToolName
-			tc.ParentToolCallID = p.ParentToolCallID
-			if tc.ScheduledAt.IsZero() {
-				tc.ScheduledAt = e.Timestamp
-			}
-			tc.ExpectedChildrenTotal = p.ExpectedChildrenTotal
+			toolCalls[p.ToolCallID] = tc
+			activeToolCalls[p.ToolCallID] = tc
+			scheduledToolEvents[p.ToolCallID] = p
 
 			if p.ParentToolCallID != "" {
-				parent, ok := toolCalls[p.ParentToolCallID]
+				parent, ok := activeToolCalls[p.ParentToolCallID]
 				if !ok {
-					parent = &run.ToolCallSnapshot{
-						ToolCallID: p.ParentToolCallID,
-					}
-					toolCalls[p.ParentToolCallID] = parent
+					return nil, fmt.Errorf(
+						"tool schedule for call %q requires active parent schedule %q",
+						p.ToolCallID,
+						p.ParentToolCallID,
+					)
 				}
 				parent.ObservedChildrenTotal++
 			}
 
-		case hooks.ToolCallUpdated:
-			var p hooks.ToolCallUpdatedEvent
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("decode %s payload: %w", hooks.ToolCallUpdated, err)
+		case *hooks.ToolCallUpdatedEvent:
+			if _, ok := completedToolCallIDs[p.ToolCallID]; ok {
+				return nil, fmt.Errorf("tool update follows completion for call %q", p.ToolCallID)
 			}
-			tc, ok := toolCalls[p.ToolCallID]
+			tc, ok := activeToolCalls[p.ToolCallID]
 			if !ok {
-				tc = &run.ToolCallSnapshot{
-					ToolCallID: p.ToolCallID,
-				}
-				toolCalls[p.ToolCallID] = tc
+				return nil, fmt.Errorf("tool update requires active schedule for call %q", p.ToolCallID)
 			}
 			tc.ExpectedChildrenTotal = p.ExpectedChildrenTotal
 
-		case hooks.ToolResultReceived:
-			decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
-				Type:      hooks.ToolResultReceived,
-				RunID:     e.RunID,
-				AgentID:   e.AgentID,
-				SessionID: e.SessionID,
-				TurnID:    e.TurnID,
-				Payload:   e.Payload,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("decode %s payload: %w", hooks.ToolResultReceived, err)
+		case *hooks.ToolResultReceivedEvent:
+			if _, ok := completedToolCallIDs[p.ToolCallID]; ok {
+				return nil, fmt.Errorf("tool result follows completion for call %q", p.ToolCallID)
 			}
-			p, ok := decoded.(*hooks.ToolResultReceivedEvent)
-			if !ok {
-				return nil, fmt.Errorf("decode %s payload: unexpected event type %T", hooks.ToolResultReceived, decoded)
+			tc := activeToolCalls[p.ToolCallID]
+			if err := hooks.ValidateToolResultPlacement(
+				s.RunID,
+				scheduledToolEvents[p.ToolCallID],
+				p,
+			); err != nil {
+				return nil, fmt.Errorf(
+					"tool result placement is invalid for call %q: %w",
+					p.ToolCallID,
+					err,
+				)
 			}
-			tc, ok := toolCalls[p.ToolCallID]
-			if !ok {
+			if p.CallRunID == s.RunID {
+				delete(activeToolCalls, p.ToolCallID)
+			} else {
+				// The matching schedule belongs to CallRunID. This run records
+				// only the supplied result and must not count a child locally.
 				tc = &run.ToolCallSnapshot{
 					ToolCallID: p.ToolCallID,
 				}
@@ -196,15 +196,9 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 			if p.Failure != nil {
 				tc.ErrorSummary = p.Failure.Error.Message
 			}
-		case hooks.RunCompleted:
-			var p struct {
-				Status string    `json:"status"`
-				Phase  run.Phase `json:"phase"`
-				Error  string    `json:"error,omitempty"`
-			}
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("decode %s payload: %w", hooks.RunCompleted, err)
-			}
+			completedToolCallIDs[p.ToolCallID] = struct{}{}
+
+		case *hooks.RunCompletedEvent:
 			s.Phase = p.Phase
 			s.Await = nil
 			switch p.Status {
@@ -217,11 +211,13 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 			default:
 				return nil, fmt.Errorf("unsupported run completion status %q", p.Status)
 			}
-		case hooks.RunSuspended:
+
+		case *hooks.RunSuspendedEvent:
 			s.Status = run.StatusSuspended
 			s.Phase = run.PhaseSuspended
+
 		default:
-			// Most event types do not affect the snapshot; they remain available via ListRunEvents.
+			return nil, fmt.Errorf("snapshot hook event %q decoded as unexpected type %T", e.Type, decoded)
 		}
 	}
 

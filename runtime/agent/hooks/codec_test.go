@@ -1,3 +1,6 @@
+// These tests verify that durable hook records round-trip typed event payloads
+// and envelope metadata, and that malformed stored payloads fail decoding
+// before replay consumers can observe invalid hook events.
 package hooks
 
 import (
@@ -49,6 +52,58 @@ func TestToolCallScheduledCodecPreservesContinuationRoot(t *testing.T) {
 	scheduled, ok := decoded.(*ToolCallScheduledEvent)
 	require.True(t, ok)
 	assert.Equal(t, "source-1", scheduled.ContinuationRootToolCallID)
+}
+
+func TestDecodeRunlogEventPreservesDurableEnvelope(t *testing.T) {
+	t.Parallel()
+
+	event := NewToolCallScheduledEvent(
+		"run-1",
+		"agent-1",
+		"session-1",
+		tools.Ident("tools.lookup"),
+		"call-1",
+		rawjson.Message(`{"query":"status"}`),
+		"tools",
+		"",
+		0,
+	)
+	record, err := EncodeToRecordInput(event, EncodeOptions{
+		TurnID:      "turn-1",
+		EventKey:    "event-1",
+		TimestampMS: 1234,
+	})
+	require.NoError(t, err)
+
+	decoded, err := DecodeRunlogEvent(&runlog.Event{
+		ID:        "opaque-cursor",
+		EventKey:  record.EventKey,
+		RunID:     record.RunID,
+		AgentID:   record.AgentID,
+		SessionID: record.SessionID,
+		TurnID:    record.TurnID,
+		Type:      record.Type,
+		Payload:   record.Payload,
+		Timestamp: time.UnixMilli(record.TimestampMS).UTC(),
+	})
+
+	require.NoError(t, err)
+	scheduled, ok := decoded.(*ToolCallScheduledEvent)
+	require.True(t, ok)
+	assert.Equal(t, record.EventKey, scheduled.EventKey())
+	assert.Equal(t, record.RunID, scheduled.RunID())
+	assert.Equal(t, record.SessionID, scheduled.SessionID())
+	assert.Equal(t, record.TurnID, scheduled.TurnID())
+	assert.Equal(t, record.TimestampMS, scheduled.Timestamp())
+	assert.Equal(t, tools.Ident("tools.lookup"), scheduled.ToolName)
+}
+
+func TestDecodeRunlogEventRejectsNil(t *testing.T) {
+	t.Parallel()
+
+	_, err := DecodeRunlogEvent(nil)
+
+	require.EqualError(t, err, "decode runlog hook event: event is nil")
 }
 
 func TestModelOutputRejectedCodecPreservesBoundedResponseFingerprint(t *testing.T) {

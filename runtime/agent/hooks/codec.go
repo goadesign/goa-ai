@@ -1,3 +1,7 @@
+// Package hooks encodes runtime hook events into durable run-log records and
+// decodes those records back into typed events for replay consumers. The codec
+// preserves record identity, turn, and timestamp metadata while validating
+// event-specific payload invariants at the storage boundary.
 package hooks
 
 import (
@@ -416,6 +420,29 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 	stampTimestamp(evt, input.TimestampMS)
 	stampEventKey(evt, input.EventKey)
 	return evt, nil
+}
+
+// DecodeRunlogEvent reconstructs a hook event from one durable run-log event.
+// It preserves the event key, run and session identity, turn, and original
+// timestamp that downstream replay consumers observe.
+func DecodeRunlogEvent(event *runlog.Event) (Event, error) {
+	if event == nil {
+		return nil, errors.New("decode runlog hook event: event is nil")
+	}
+	decoded, err := DecodeFromRecordInput(&runlog.ActivityInput{
+		Type:        event.Type,
+		EventKey:    event.EventKey,
+		RunID:       event.RunID,
+		AgentID:     event.AgentID,
+		SessionID:   event.SessionID,
+		TurnID:      event.TurnID,
+		TimestampMS: event.Timestamp.UnixMilli(),
+		Payload:     event.Payload,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("decode runlog hook event %q: %w", event.ID, err)
+	}
+	return decoded, nil
 }
 
 func stampTurnID(evt Event, turnID string) {

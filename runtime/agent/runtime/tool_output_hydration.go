@@ -1,18 +1,17 @@
-package runtime
-
-// tool_output_hydration.go loads planner-facing tool outputs from the canonical
-// run log after compact planner activity inputs cross the workflow boundary.
+// Package runtime loads planner-facing tool outputs from the canonical run log
+// after compact planner activity inputs cross the workflow boundary.
 //
 // Contract:
-// - `api.ToolOutputRef` carries the exact recording run and tool-call identity
-//   across the plan activity boundary.
-// - Canonical tool payload lives in the durable run log via
-//   `ToolCallScheduledEvent`.
-// - Canonical planner-visible tool outcome state lives in the durable run log
-//   via `ToolResultReceivedEvent`.
-// - Planner code receives fully hydrated `planner.ToolOutput` values. Missing or
-//   inconsistent canonical run-log entries are invariant violations and fail
-//   fast.
+//   - `api.ToolOutputRef` carries the exact recording run and tool-call identity
+//     across the plan activity boundary.
+//   - Canonical tool payload lives in the durable run log via
+//     `ToolCallScheduledEvent`.
+//   - Canonical planner-visible tool outcome state lives in the durable run log
+//     via `ToolResultReceivedEvent`.
+//   - Planner code receives fully hydrated `planner.ToolOutput` values. Missing or
+//     inconsistent canonical run-log entries are invariant violations and fail
+//     fast.
+package runtime
 
 import (
 	"context"
@@ -102,17 +101,24 @@ func plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID str
 	if callEvents.scheduled == nil {
 		return nil, fmt.Errorf("runtime: missing canonical tool payload in run log (run_id=%s tool_call_id=%s)", callRunID, toolCallID)
 	}
+	if callEvents.scheduled.ToolCallID != toolCallID {
+		return nil, fmt.Errorf(
+			"runtime: canonical tool schedule call mismatch (run_id=%s tool_call_id=%s event_tool_call_id=%s)",
+			callRunID,
+			toolCallID,
+			callEvents.scheduled.ToolCallID,
+		)
+	}
 	if resultEvents == nil || resultEvents.result == nil {
 		return nil, fmt.Errorf("runtime: missing canonical tool result in run log (run_id=%s tool_call_id=%s tool=%s)", resultRunID, toolCallID, callEvents.scheduled.ToolName)
 	}
-	if resultEvents.result.ToolName != callEvents.scheduled.ToolName {
+	if err := hooks.ValidateToolResultCorrelation(callEvents.scheduled, resultEvents.result); err != nil {
 		return nil, fmt.Errorf(
-			"runtime: canonical tool result mismatch (call_run_id=%s result_run_id=%s tool_call_id=%s tool=%s event_tool=%s)",
+			"runtime: canonical tool result identity mismatch (call_run_id=%s result_run_id=%s tool_call_id=%s): %w",
 			callRunID,
 			resultRunID,
 			toolCallID,
-			callEvents.scheduled.ToolName,
-			resultEvents.result.ToolName,
+			err,
 		)
 	}
 
@@ -132,7 +138,23 @@ func plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID str
 		Failure:                    resultEvents.result.Failure,
 		Telemetry:                  resultEvents.result.Telemetry,
 	}
-	if resultEvents.result.Failure == nil && !output.ResultOmitted {
+	if resultEvents.result.Failure == nil {
+		if output.ResultOmitted {
+			return nil, fmt.Errorf(
+				"runtime: canonical successful tool result is omitted (run_id=%s tool_call_id=%s tool=%s)",
+				resultRunID,
+				toolCallID,
+				output.Name,
+			)
+		}
+		if len(resultEvents.result.ResultJSON) == 0 {
+			return nil, fmt.Errorf(
+				"runtime: canonical successful tool result is empty (run_id=%s tool_call_id=%s tool=%s)",
+				resultRunID,
+				toolCallID,
+				output.Name,
+			)
+		}
 		if len(resultEvents.result.ResultJSON) != output.ResultBytes {
 			return nil, fmt.Errorf(
 				"runtime: canonical tool result size mismatch (run_id=%s tool_call_id=%s tool=%s got=%d want=%d)",
@@ -148,15 +170,16 @@ func plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID str
 	return output, nil
 }
 
-// loadCanonicalToolEvents scans the canonical run log until it finds the
-// scheduled and completed events for all requested tool calls.
+// loadCanonicalToolEvents scans one run's canonical events oldest-first. A
+// result recorded in its scheduling run must follow the matching schedule. A
+// continuation result may appear without a local schedule because CallRunID
+// identifies the earlier run that owns it.
 func (r *Runtime) loadCanonicalToolEvents(ctx context.Context, runID string, wanted map[string]struct{}) (map[string]*canonicalToolEvents, error) {
 	pageSize := min(max(len(wanted), 64), 256)
 	cursor := ""
 	events := make(map[string]*canonicalToolEvents, len(wanted))
-	complete := 0
 
-	for complete < len(wanted) {
+	for {
 		page, err := r.RunEventStore.List(ctx, runID, cursor, pageSize)
 		if err != nil {
 			return nil, fmt.Errorf("runtime: list run log for tool hydration (run_id=%s): %w", runID, err)
@@ -164,9 +187,14 @@ func (r *Runtime) loadCanonicalToolEvents(ctx context.Context, runID string, wan
 		if len(page.Events) == 0 {
 			break
 		}
-		for _, event := range page.Events {
+		for index, event := range page.Events {
 			if event == nil {
-				continue
+				return nil, fmt.Errorf(
+					"runtime: nil event from run log during tool hydration (run_id=%s page_cursor=%q index=%d)",
+					runID,
+					cursor,
+					index,
+				)
 			}
 			if event.Type == hooks.ToolCallScheduled {
 				decoded, err := decodeToolCallScheduledRunlogEvent(event)
@@ -184,10 +212,19 @@ func (r *Runtime) loadCanonicalToolEvents(ctx context.Context, runID string, wan
 						decoded.ToolCallID,
 					)
 				}
-				entry.scheduled = decoded
 				if entry.result != nil {
-					complete++
+					if err := hooks.ValidateToolResultPlacement(runID, decoded, entry.result); err != nil {
+						return nil, fmt.Errorf(
+							"runtime: canonical tool result placement is invalid "+
+								"(run_id=%s tool_call_id=%s tool=%s): %w",
+							runID,
+							decoded.ToolCallID,
+							decoded.ToolName,
+							err,
+						)
+					}
 				}
+				entry.scheduled = decoded
 				continue
 			}
 			if event.Type == hooks.ToolResultReceived {
@@ -199,6 +236,16 @@ func (r *Runtime) loadCanonicalToolEvents(ctx context.Context, runID string, wan
 					continue
 				}
 				entry := canonicalEntry(events, decoded.ToolCallID)
+				if err := hooks.ValidateToolResultPlacement(runID, entry.scheduled, decoded); err != nil {
+					return nil, fmt.Errorf(
+						"runtime: canonical tool result placement is invalid "+
+							"(run_id=%s tool_call_id=%s tool=%s): %w",
+						runID,
+						decoded.ToolCallID,
+						decoded.ToolName,
+						err,
+					)
+				}
 				if entry.result != nil {
 					return nil, fmt.Errorf(
 						"runtime: duplicate canonical tool result in run log (run_id=%s tool_call_id=%s)",
@@ -207,9 +254,6 @@ func (r *Runtime) loadCanonicalToolEvents(ctx context.Context, runID string, wan
 					)
 				}
 				entry.result = decoded
-				if entry.scheduled != nil {
-					complete++
-				}
 			}
 		}
 		if page.NextCursor == "" {
@@ -234,7 +278,7 @@ func canonicalEntry(events map[string]*canonicalToolEvents, toolCallID string) *
 // decodeToolCallScheduledRunlogEvent reconstructs a ToolCallScheduledEvent from
 // a canonical run-log event payload.
 func decodeToolCallScheduledRunlogEvent(event *runlog.Event) (*hooks.ToolCallScheduledEvent, error) {
-	decoded, err := decodeRunlogHookEvent(event)
+	decoded, err := hooks.DecodeRunlogEvent(event)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +292,7 @@ func decodeToolCallScheduledRunlogEvent(event *runlog.Event) (*hooks.ToolCallSch
 // decodeToolResultRunlogEvent reconstructs a ToolResultReceivedEvent from a
 // canonical run-log event payload.
 func decodeToolResultRunlogEvent(event *runlog.Event) (*hooks.ToolResultReceivedEvent, error) {
-	decoded, err := decodeRunlogHookEvent(event)
+	decoded, err := hooks.DecodeRunlogEvent(event)
 	if err != nil {
 		return nil, err
 	}
@@ -257,26 +301,4 @@ func decodeToolResultRunlogEvent(event *runlog.Event) (*hooks.ToolResultReceived
 		return nil, fmt.Errorf("runtime: run log event %s decoded as %T, want *hooks.ToolResultReceivedEvent", event.ID, decoded)
 	}
 	return toolEvent, nil
-}
-
-// decodeRunlogHookEvent reconstructs a hook event from a canonical run-log
-// entry.
-func decodeRunlogHookEvent(event *runlog.Event) (hooks.Event, error) {
-	if event == nil {
-		return nil, fmt.Errorf("runtime: nil run log event")
-	}
-	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
-		Type:        event.Type,
-		EventKey:    event.EventKey,
-		RunID:       event.RunID,
-		AgentID:     event.AgentID,
-		SessionID:   event.SessionID,
-		TurnID:      event.TurnID,
-		TimestampMS: event.Timestamp.UnixMilli(),
-		Payload:     event.Payload,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("runtime: decode run log event %s: %w", event.ID, err)
-	}
-	return decoded, nil
 }

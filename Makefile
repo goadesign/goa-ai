@@ -31,11 +31,13 @@ test: tools
 
 # Run integration tests: end-to-end scenarios under integration_tests/ and
 # Docker-backed tests guarded by the `integration` build tag (registry health
-# tracking against real Redis). `make test` excludes both so the default suite
-# stays fast and deterministic.
+# tracking against real Redis and run-log migration against a Mongo replica
+# set). `make test` excludes both so the default suite stays fast and
+# deterministic.
 itest: tools
 	$(GO) test -race -vet=off -parallel 1 ./integration_tests/...
 	$(GO) test -race -tags integration ./registry/...
+	$(GO) test -race -tags integration ./features/runlog/mongo/clients/mongo/...
 
 ci: build lint test
 

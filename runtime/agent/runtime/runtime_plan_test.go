@@ -2645,16 +2645,17 @@ func TestPlanResumeActivityFailsWhenCanonicalToolResultIsMissing(t *testing.T) {
 	require.Contains(t, err.Error(), "missing canonical tool result in run log")
 }
 
-func TestPlanResumeActivityHydratesOmittedResultMetadataFromCanonicalRunlog(t *testing.T) {
+func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testing.T) {
+	resultJSON := rawjson.Message(`{"ok":true}`)
 	called := false
 	pl := &stubPlanner{resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 		called = true
 		require.Len(t, input.ToolOutputs, 1)
 		require.Equal(t, "call-1", input.ToolOutputs[0].ToolCallID)
-		require.True(t, input.ToolOutputs[0].ResultOmitted)
-		require.Equal(t, "workflow_budget", input.ToolOutputs[0].ResultOmittedReason)
-		require.Equal(t, 12345, input.ToolOutputs[0].ResultBytes)
-		require.Nil(t, input.ToolOutputs[0].Result)
+		require.False(t, input.ToolOutputs[0].ResultOmitted)
+		require.Empty(t, input.ToolOutputs[0].ResultOmittedReason)
+		require.Equal(t, len(resultJSON), input.ToolOutputs[0].ResultBytes)
+		require.JSONEq(t, string(resultJSON), string(input.ToolOutputs[0].Result))
 		require.JSONEq(t, `[{"kind":"evidence"}]`, string(input.ToolOutputs[0].ServerData))
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
 			Name:            "svc.other.tool",
@@ -2692,10 +2693,10 @@ func TestPlanResumeActivityHydratesOmittedResultMetadataFromCanonicalRunlog(t *t
 			"svc.ts.tool",
 			"call-1",
 			"",
-			nil,
-			12345,
-			true,
-			"workflow_budget",
+			resultJSON,
+			len(resultJSON),
+			false,
+			"",
 			rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
 			"preview",
 			nil,
