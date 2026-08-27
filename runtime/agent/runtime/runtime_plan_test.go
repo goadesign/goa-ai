@@ -1481,7 +1481,7 @@ func TestRunPlanActivityPublishesUsageAndRejectedResponseBeforeOutputContractFai
 	require.Equal(t, out.OutputContractFailure.ReasonSize, rejected.ReasonSize)
 	require.Equal(
 		t,
-		api.ModelResponseFingerprintVersionV1,
+		api.ModelResponseFingerprintVersionV2,
 		rejected.ModelResponseFingerprintVersion,
 	)
 	require.True(t, rejected.ModelResponsePresent)
@@ -3100,7 +3100,7 @@ func requirePlannerOutputContractFailure(
 	} else {
 		require.Equal(
 			t,
-			api.ModelResponseFingerprintVersionV1,
+			api.ModelResponseFingerprintVersionV2,
 			out.OutputContractFailure.ModelResponseFingerprintVersion,
 		)
 	}

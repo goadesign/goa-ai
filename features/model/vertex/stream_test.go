@@ -36,7 +36,7 @@ func TestStreamTextToolCallUsageStop(t *testing.T) {
 			{FunctionCall: &genai.FunctionCall{ID: "call-1", Name: "feed_find_duplicates", Args: map[string]any{"title": "x"}}},
 		}}}}},
 		{
-			Candidates:    []*genai.Candidate{{FinishReason: genai.FinishReasonStop}},
+			Candidates:    []*genai.Candidate{{FinishReason: genai.FinishReasonMaxTokens}},
 			UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 7, CandidatesTokenCount: 2, TotalTokenCount: 9},
 		},
 	}}
@@ -64,10 +64,13 @@ func TestStreamTextToolCallUsageStop(t *testing.T) {
 	}, types)
 	assert.Equal(t, "feed/find_duplicates", string(chunks[1].(model.ToolCallChunk).ToolCall.Name))
 	assert.Equal(t, 7, chunks[2].(model.UsageChunk).Usage.InputTokens)
-	assert.Equal(t, string(genai.FinishReasonStop), chunks[3].(model.StopChunk).Reason)
+	stop := chunks[3].(model.StopChunk)
+	assert.Equal(t, string(genai.FinishReasonMaxTokens), stop.Reason)
+	assert.True(t, stop.OutputLimited)
 	response := s.Response()
 	require.NotNil(t, response)
 	assert.Equal(t, 7, response.Usage.InputTokens)
+	assert.True(t, response.OutputLimited)
 }
 
 func TestStreamRejectsProviderEndBeforeFinishReason(t *testing.T) {

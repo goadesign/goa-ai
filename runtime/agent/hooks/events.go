@@ -984,7 +984,8 @@ func NewModelOutputRejectedEvent(
 	}
 	validVersion := (modelResponseSHA256 == "" && modelResponseFingerprintVersion == "") ||
 		(modelResponseSHA256 != "" &&
-			modelResponseFingerprintVersion == api.ModelResponseFingerprintVersionV1)
+			(modelResponseFingerprintVersion == api.ModelResponseFingerprintVersionV1 ||
+				modelResponseFingerprintVersion == api.ModelResponseFingerprintVersionV2))
 	if !validVersion {
 		return nil, fmt.Errorf(
 			"model output rejected event response fingerprint version %q is unsupported",

@@ -399,7 +399,7 @@ func TestAnthropicStreamerValidatesNativeStructuredOutput(t *testing.T) {
 		},
 		{
 			eventType: "message_delta",
-			data:      `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":0,"output_tokens":0}}`,
+			data:      `{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"input_tokens":0,"output_tokens":0}}`,
 		},
 		{
 			eventType: "message_stop",
@@ -460,8 +460,12 @@ func TestAnthropicStreamerValidatesNativeStructuredOutput(t *testing.T) {
 	assert.Equal(t, `{"answer":`, chunks[0].(model.CompletionDeltaChunk).Delta.Delta)
 	assert.Equal(t, `"yes"}`, chunks[1].(model.CompletionDeltaChunk).Delta.Delta)
 	assert.JSONEq(t, `{"answer":"yes"}`, string(chunks[2].(model.CompletionChunk).Completion.Payload))
-	assert.Equal(t, "end_turn", chunks[3].(model.StopChunk).Reason)
-	require.NotNil(t, stream.Response())
+	stop := chunks[3].(model.StopChunk)
+	assert.Equal(t, "max_tokens", stop.Reason)
+	assert.True(t, stop.OutputLimited)
+	response := stream.Response()
+	require.NotNil(t, response)
+	assert.True(t, response.OutputLimited)
 }
 
 // TestAnthropicStreamerRejectsOversizedSDKSnapshotBeforeAccumulation verifies

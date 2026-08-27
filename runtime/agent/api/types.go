@@ -876,6 +876,10 @@ const (
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.
 	ModelResponseFingerprintVersionV1 = responseevidence.VersionV1
+
+	// ModelResponseFingerprintVersionV2 adds the provider-neutral output-limit
+	// classification to the rejected model-response fingerprint.
+	ModelResponseFingerprintVersionV2 = responseevidence.VersionV2
 )
 
 // TranscriptName returns the tool name recorded in the provider transcript.

@@ -47,13 +47,25 @@ func TestValidateOutputContractFailureStateMatrix(t *testing.T) {
 			valid: true,
 		},
 		{
-			name: "model rejection with response fingerprint",
+			name: "model rejection with previous response fingerprint",
 			failure: func() *OutputContractFailure {
 				failure := validModel()
 				failure.ModelResponsePresent = true
 				failure.ModelResponseSHA256 = responseDigest
 				failure.ModelResponseSize = responseSize
 				failure.ModelResponseFingerprintVersion = api.ModelResponseFingerprintVersionV1
+				return failure
+			},
+			valid: true,
+		},
+		{
+			name: "model rejection with current response fingerprint",
+			failure: func() *OutputContractFailure {
+				failure := validModel()
+				failure.ModelResponsePresent = true
+				failure.ModelResponseSHA256 = responseDigest
+				failure.ModelResponseSize = responseSize
+				failure.ModelResponseFingerprintVersion = api.ModelResponseFingerprintVersionV2
 				return failure
 			},
 			valid: true,

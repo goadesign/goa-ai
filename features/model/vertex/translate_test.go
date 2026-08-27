@@ -16,9 +16,37 @@ import (
 )
 
 func TestVertexOutputLimited(t *testing.T) {
-	require.True(t, vertexOutputLimited(string(genai.FinishReasonMaxTokens)))
-	require.False(t, vertexOutputLimited(string(genai.FinishReasonStop)))
-	require.False(t, vertexOutputLimited(string(genai.FinishReasonSafety)))
+	tests := []struct {
+		name   string
+		reason genai.FinishReason
+		want   bool
+	}{
+		{name: "maximum output tokens", reason: genai.FinishReasonMaxTokens, want: true},
+		{name: "natural end", reason: genai.FinishReasonStop},
+		{name: "safety", reason: genai.FinishReasonSafety},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response, err := translateResponse(
+				&genai.GenerateContentResponse{
+					Candidates: []*genai.Candidate{{
+						FinishReason: test.reason,
+						Content: &genai.Content{
+							Role:  "model",
+							Parts: []*genai.Part{{Text: "answer"}},
+						},
+					}},
+				},
+				"gemini-test",
+				model.ModelClassDefault,
+				nil,
+				nil,
+			)
+
+			require.NoError(t, err)
+			require.Equal(t, test.want, response.OutputLimited)
+		})
+	}
 }
 
 func TestTranslateResponseTextAndToolCall(t *testing.T) {
