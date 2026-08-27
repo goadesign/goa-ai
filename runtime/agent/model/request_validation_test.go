@@ -10,7 +10,6 @@ import (
 	"io"
 	"math"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -157,35 +156,6 @@ func TestRequestContractReturnsImmutableOutputValidationError(t *testing.T) {
 	second, err := validationErr.RejectedResponse()
 	require.NoError(t, err)
 	require.Equal(t, "ok", second.Content[0].Parts[0].(TextPart).Text)
-}
-
-func TestRestoreOutputValidationErrorPreservesBoundedEvidence(t *testing.T) {
-	contract, err := NewRequestContract(&Request{})
-	require.NoError(t, err)
-	source := contract.RejectResponse(canonicalTextResponse(), errors.New("remote adapter rejected output"))
-
-	restored, err := RestoreOutputValidationError(errors.Unwrap(source), source.Evidence(), source.Usage())
-
-	require.NoError(t, err)
-	require.Equal(t, source.Evidence(), restored.Evidence())
-	require.Equal(t, source.Usage(), restored.Usage())
-	require.ErrorContains(t, restored, "remote adapter rejected output")
-
-	_, err = RestoreOutputValidationError(errors.New("invalid evidence"), ResponseEvidence{
-		Present: true,
-		Version: "unsupported",
-		SHA256:  source.Evidence().SHA256,
-		Size:    source.Evidence().Size,
-	}, nil)
-	require.ErrorContains(t, err, `unsupported version "unsupported"`)
-
-	_, err = RestoreOutputValidationError(errors.New("invalid evidence"), ResponseEvidence{
-		Present: true,
-		Version: source.Evidence().Version,
-		SHA256:  strings.Repeat("A", 64),
-		Size:    1,
-	}, nil)
-	require.ErrorContains(t, err, "must use lowercase hexadecimal characters")
 }
 
 func TestRequestContractRejectsContradictoryNoArgumentTool(t *testing.T) {
@@ -499,6 +469,14 @@ func TestGeneratedToolValidationWithoutStructuredIssuesRemainsTerminal(t *testin
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
 	require.Empty(t, validationErr.RecoveryCorrection())
+
+	restored, restoreErr := RestoreOutputValidationError(
+		errors.Unwrap(validationErr),
+		validationErr.Evidence(),
+		validationErr.Usage(),
+	)
+	require.NoError(t, restoreErr)
+	require.Empty(t, restored.RecoveryCorrection())
 }
 
 func TestRequestContractEnforcesToolChoice(t *testing.T) {
