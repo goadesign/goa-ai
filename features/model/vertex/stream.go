@@ -159,6 +159,7 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 	var usageSeen bool
 	var latestUsage model.TokenUsage
 	var grounding *genai.GroundingMetadata
+	var rejected error
 	for resp, err := range seq {
 		if err != nil {
 			s.setErr(wrapGeminiError("generate_content_stream", err))
@@ -180,7 +181,14 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 		}
 		sawCandidate = true
 		cand := resp.Candidates[0]
-		if cand.Content != nil {
+		if cand.FinishReason != "" {
+			stopReason = string(cand.FinishReason)
+		}
+		if cand.GroundingMetadata != nil {
+			grounding = cand.GroundingMetadata
+		}
+		if rejected == nil && cand.Content != nil {
+		contentParts:
 			for _, part := range cand.Content.Parts {
 				if part == nil {
 					s.setErr(errors.New("vertex: stream contains a nil part"))
@@ -189,6 +197,11 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 				switch {
 				case part.FunctionCall != nil:
 					if err := s.handleFunctionCallPart(part, prep); err != nil {
+						if _, ok := model.UnadvertisedToolName(err); ok {
+							rejected = err
+							s.discardSemanticOutput()
+							break contentParts
+						}
 						s.setErr(err)
 						return
 					}
@@ -208,12 +221,6 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 				}
 			}
 		}
-		if cand.FinishReason != "" {
-			stopReason = string(cand.FinishReason)
-		}
-		if cand.GroundingMetadata != nil {
-			grounding = cand.GroundingMetadata
-		}
 	}
 	if !sawCandidate {
 		s.setErr(errors.New("vertex: stream returned no candidates"))
@@ -221,6 +228,10 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 	}
 	if stopReason == "" {
 		s.setErr(errors.New("vertex: stream ended before candidate finish reason"))
+		return
+	}
+	if rejected != nil {
+		s.setErr(rejected)
 		return
 	}
 	if s.thoughtText.Len() > 0 {
@@ -278,12 +289,30 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 	s.mu.Unlock()
 }
 
+// discardSemanticOutput drops accumulated response content after an
+// unadvertised tool name. The provider loop continues only to capture later
+// usage and verify a normal finish reason.
+func (s *geminiStreamer) discardSemanticOutput() {
+	s.thoughtText.Reset()
+	s.completionText.Reset()
+	s.assistant.Parts = nil
+	s.pendingCalls = nil
+}
+
 // handleFunctionCallPart validates and retains one functionCall part. Emission
 // waits until stream end so later provider IDs are reserved before any missing
 // ID receives a deterministic local value.
 func (s *geminiStreamer) handleFunctionCallPart(part *genai.Part, prep *preparedRequest) error {
 	if part.FunctionCall.Name == "" {
 		return errors.New("vertex: streamed function call is missing its name")
+	}
+	name, ok := toolIdent(part.FunctionCall.Name, prep.provToCanon)
+	if !ok {
+		return fmt.Errorf(
+			"vertex: streamed function call %q returned unadvertised name: %w",
+			part.FunctionCall.Name,
+			model.NewUnadvertisedToolNameError(part.FunctionCall.Name),
+		)
 	}
 	callID := part.FunctionCall.ID
 	if err := s.retain(callID); err != nil {
@@ -300,13 +329,6 @@ func (s *geminiStreamer) handleFunctionCallPart(part *genai.Part, prep *prepared
 	}
 	if err := s.retainBytes(len(payload)); err != nil {
 		return err
-	}
-	name, ok := toolIdent(part.FunctionCall.Name, prep.provToCanon)
-	if !ok {
-		return fmt.Errorf(
-			"vertex: streamed function call %q returned unadvertised name",
-			part.FunctionCall.Name,
-		)
 	}
 	signature, err := s.retainThoughtSignature(part.ThoughtSignature)
 	if err != nil {

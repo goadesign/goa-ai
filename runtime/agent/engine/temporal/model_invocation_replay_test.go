@@ -7,6 +7,7 @@ package temporal
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"sync/atomic"
@@ -28,6 +29,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
+	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -128,6 +130,71 @@ func TestProductionWorkflowReplaysModelInvocationRecovery(t *testing.T) {
 	assert.Zero(t, plannerStub.calls.Load())
 }
 
+func TestProductionWorkflowReplaysUnadvertisedToolNameRecovery(t *testing.T) {
+	plannerStub, handler := productionReplayWorkflow(t)
+	name := "$FUNCTIONS.catalog_list_nearby"
+	usage := model.TokenUsage{
+		Model:        "test-model",
+		InputTokens:  4,
+		OutputTokens: 3,
+		TotalTokens:  7,
+	}
+	usagePayload, err := hooks.EncodeRecordPayload(hooks.NewUsageEvent(
+		productionReplayRunID,
+		productionReplayAgentID,
+		productionReplaySessionID,
+		usage,
+	))
+	require.NoError(t, err)
+	history := deserializeReplayHistory(t, syntheticProductionReplayHistory(t, &api.PlanActivityOutput{
+		PublicationBatchID: "00000000-0000-4000-8000-000000000001",
+		Usage:              usage,
+		PlannerEvents: []*api.PlannerEventRecord{{
+			Type:    hooks.Usage,
+			Payload: usagePayload,
+		}},
+		ModelInvocationRecovery: &api.ModelInvocationRecovery{
+			UnadvertisedToolName: name,
+		},
+	}, true))
+
+	resumeScheduled := scheduledActivity(t, history, productionReplayResume).
+		GetActivityTaskScheduledEventAttributes()
+	require.Equal(t, productionReplayResume, resumeScheduled.ActivityType.Name)
+	var resumeInput api.PlanActivityInput
+	require.NoError(t, NewAgentDataConverter().FromPayloads(resumeScheduled.Input, &resumeInput))
+	require.NotNil(t, resumeInput.ModelInvocationRecovery)
+	assert.Equal(t, name, resumeInput.ModelInvocationRecovery.UnadvertisedToolName)
+	assert.Empty(t, resumeInput.ModelInvocationRecovery.Correction)
+	assert.Equal(t, []string{
+		productionReplayRecord,
+		productionReplayRecord,
+		productionReplayRecord,
+		productionReplayPlanActivity,
+		productionReplayRecord,
+		productionReplayRecord,
+		productionReplayResume,
+		productionReplayRecord,
+		productionReplayRecord,
+	}, scheduledActivityNames(history))
+	recordedOutput := recordedPlanActivityOutput(t, history, productionReplayPlanActivity)
+	assert.Equal(t, usage, recordedOutput.Usage)
+	require.Len(t, recordedOutput.PlannerEvents, 1)
+	assert.Equal(t, hooks.Usage, recordedOutput.PlannerEvents[0].Type)
+	assert.Equal(t, []model.TokenUsage{usage}, recordedUsageEvents(t, history))
+
+	replayedOutput := replayProductionWorkflow(t, handler, history)
+
+	assert.Zero(t, plannerStub.calls.Load())
+	require.NotNil(t, replayedOutput)
+	require.NotNil(t, replayedOutput.Usage)
+	assert.Equal(t, model.TokenUsage{
+		InputTokens:  4,
+		OutputTokens: 3,
+		TotalTokens:  7,
+	}, *replayedOutput.Usage)
+}
+
 // productionReplayWorkflow registers the same runtime handler and activity
 // names that generated worker code registers, then returns the Temporal adapter
 // wrapper used by Engine.RegisterWorkflow.
@@ -184,24 +251,31 @@ func replayProductionWorkflow(
 	t *testing.T,
 	handler func(workflow.Context, *api.RunInput) (*api.RunOutput, error),
 	history *historypb.History,
-) {
+) *api.RunOutput {
 	t.Helper()
+	var replayed atomic.Pointer[api.RunOutput]
+	capturingHandler := func(ctx workflow.Context, input *api.RunInput) (*api.RunOutput, error) {
+		output, err := handler(ctx, input)
+		replayed.Store(output)
+		return output, err
+	}
 	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
 		DataConverter: NewAgentDataConverter(),
 	})
 	require.NoError(t, err)
 	replayer.RegisterWorkflowWithOptions(
-		handler,
+		capturingHandler,
 		workflow.RegisterOptions{Name: productionReplayWorkflowName},
 	)
 	require.NoError(t, replayer.ReplayWorkflowHistory(nil, history))
+	return replayed.Load()
 }
 
 // syntheticProductionReplayHistory records the complete command sequence from
 // one production workflow run. The old form contains the PlanActivityOutput
 // shape used before model-invocation recovery existed. The recovery form records
-// one correction turn. These histories are synthetic fixtures, not histories
-// captured from a deployed Temporal service.
+// one replacement planner turn. These histories are synthetic fixtures, not
+// histories captured from a deployed Temporal service.
 func syntheticProductionReplayHistory(
 	t *testing.T,
 	first *api.PlanActivityOutput,
@@ -249,14 +323,29 @@ func syntheticProductionReplayHistory(
 		workflowTaskScheduledEvent(26),
 		workflowTaskStartedEvent(27),
 		workflowTaskCompletedEvent(28, 26, 27),
-		activityTaskScheduledEvent(29, productionReplayRecord, nil),
-		activityTaskStartedEvent(30, 29),
-		activityTaskCompletedEvent(31, 29, 30, nil),
-		workflowTaskScheduledEvent(32),
-		workflowTaskStartedEvent(33),
-		workflowTaskCompletedEvent(34, 32, 33),
 	}
 	if recovery {
+		nextID := int64(29)
+		if len(first.PlannerEvents) > 0 {
+			publicationInput := plannerPublicationInput(t, first.PlannerEvents)
+			events = append(events,
+				activityTaskScheduledEvent(nextID, productionReplayRecord, publicationInput),
+				activityTaskStartedEvent(nextID+1, nextID),
+				activityTaskCompletedEvent(nextID+2, nextID, nextID+1, nil),
+				workflowTaskScheduledEvent(nextID+3),
+				workflowTaskStartedEvent(nextID+4),
+				workflowTaskCompletedEvent(nextID+5, nextID+3, nextID+4),
+			)
+			nextID += 6
+		}
+		events = append(events,
+			activityTaskScheduledEvent(nextID, productionReplayRecord, nil),
+			activityTaskStartedEvent(nextID+1, nextID),
+			activityTaskCompletedEvent(nextID+2, nextID, nextID+1, nil),
+			workflowTaskScheduledEvent(nextID+3),
+			workflowTaskStartedEvent(nextID+4),
+			workflowTaskCompletedEvent(nextID+5, nextID+3, nextID+4),
+		)
 		resumeInput, err := dataConverter.ToPayloads(&api.PlanActivityInput{
 			AgentID: productionReplayAgentID,
 			RunID:   productionReplayRunID,
@@ -281,30 +370,37 @@ func syntheticProductionReplayHistory(
 			},
 		})
 		require.NoError(t, err)
+		resumeID := nextID + 6
 		events = append(events,
-			activityTaskScheduledEvent(35, productionReplayResume, resumeInput),
-			activityTaskStartedEvent(36, 35),
-			activityTaskCompletedEvent(37, 35, 36, resumeResult),
-			workflowTaskScheduledEvent(38),
-			workflowTaskStartedEvent(39),
-			workflowTaskCompletedEvent(40, 38, 39),
-			activityTaskScheduledEvent(41, productionReplayRecord, nil),
-			activityTaskStartedEvent(42, 41),
-			activityTaskCompletedEvent(43, 41, 42, nil),
-			workflowTaskScheduledEvent(44),
-			workflowTaskStartedEvent(45),
-			workflowTaskCompletedEvent(46, 44, 45),
-			activityTaskScheduledEvent(47, productionReplayRecord, nil),
-			activityTaskStartedEvent(48, 47),
-			activityTaskCompletedEvent(49, 47, 48, nil),
-			workflowTaskScheduledEvent(50),
-			workflowTaskStartedEvent(51),
-			workflowTaskCompletedEvent(52, 50, 51),
-			workflowExecutionCompletedEvent(53, 52),
+			activityTaskScheduledEvent(resumeID, productionReplayResume, resumeInput),
+			activityTaskStartedEvent(resumeID+1, resumeID),
+			activityTaskCompletedEvent(resumeID+2, resumeID, resumeID+1, resumeResult),
+			workflowTaskScheduledEvent(resumeID+3),
+			workflowTaskStartedEvent(resumeID+4),
+			workflowTaskCompletedEvent(resumeID+5, resumeID+3, resumeID+4),
+			activityTaskScheduledEvent(resumeID+6, productionReplayRecord, nil),
+			activityTaskStartedEvent(resumeID+7, resumeID+6),
+			activityTaskCompletedEvent(resumeID+8, resumeID+6, resumeID+7, nil),
+			workflowTaskScheduledEvent(resumeID+9),
+			workflowTaskStartedEvent(resumeID+10),
+			workflowTaskCompletedEvent(resumeID+11, resumeID+9, resumeID+10),
+			activityTaskScheduledEvent(resumeID+12, productionReplayRecord, nil),
+			activityTaskStartedEvent(resumeID+13, resumeID+12),
+			activityTaskCompletedEvent(resumeID+14, resumeID+12, resumeID+13, nil),
+			workflowTaskScheduledEvent(resumeID+15),
+			workflowTaskStartedEvent(resumeID+16),
+			workflowTaskCompletedEvent(resumeID+17, resumeID+15, resumeID+16),
+			workflowExecutionCompletedEvent(resumeID+18, resumeID+17),
 		)
 		return &historypb.History{Events: events}
 	}
 	events = append(events,
+		activityTaskScheduledEvent(29, productionReplayRecord, nil),
+		activityTaskStartedEvent(30, 29),
+		activityTaskCompletedEvent(31, 29, 30, nil),
+		workflowTaskScheduledEvent(32),
+		workflowTaskStartedEvent(33),
+		workflowTaskCompletedEvent(34, 32, 33),
 		activityTaskScheduledEvent(35, productionReplayRecord, nil),
 		activityTaskStartedEvent(36, 35),
 		activityTaskCompletedEvent(37, 35, 36, nil),
@@ -334,6 +430,98 @@ func scheduledActivityNames(history *historypb.History) []string {
 		}
 	}
 	return names
+}
+
+// scheduledActivity returns the one stored scheduling event for activityName.
+// The replay tests use it to inspect the exact payload consumed by the workflow.
+func scheduledActivity(
+	t *testing.T,
+	history *historypb.History,
+	activityName string,
+) *historypb.HistoryEvent {
+	t.Helper()
+	var found *historypb.HistoryEvent
+	for _, event := range history.Events {
+		attrs := event.GetActivityTaskScheduledEventAttributes()
+		if attrs == nil || attrs.ActivityType.Name != activityName {
+			continue
+		}
+		require.Nil(t, found, "activity %q must be scheduled once", activityName)
+		found = event
+	}
+	require.NotNil(t, found, "activity %q was not scheduled", activityName)
+	return found
+}
+
+// recordedPlanActivityOutput decodes the activity result stored in Temporal
+// history so the test can compare replayed state with the exact recorded usage.
+func recordedPlanActivityOutput(
+	t *testing.T,
+	history *historypb.History,
+	activityName string,
+) api.PlanActivityOutput {
+	t.Helper()
+	scheduledID := scheduledActivity(t, history, activityName).EventId
+	for _, event := range history.Events {
+		attrs := event.GetActivityTaskCompletedEventAttributes()
+		if attrs == nil || attrs.ScheduledEventId != scheduledID {
+			continue
+		}
+		var output api.PlanActivityOutput
+		require.NoError(t, NewAgentDataConverter().FromPayloads(attrs.Result, &output))
+		return output
+	}
+	require.FailNow(t, "activity result was not recorded", activityName)
+	return api.PlanActivityOutput{}
+}
+
+// recordedUsageEvents decodes every usage record stored in replay history.
+// The caller receives one entry per durable usage event in scheduling order.
+func recordedUsageEvents(t *testing.T, history *historypb.History) []model.TokenUsage {
+	t.Helper()
+	var usage []model.TokenUsage
+	for _, event := range history.Events {
+		attrs := event.GetActivityTaskScheduledEventAttributes()
+		if attrs == nil || attrs.ActivityType.Name != productionReplayRecord || attrs.Input == nil {
+			continue
+		}
+		var batch api.RecordActivityBatchInput
+		require.NoError(t, NewAgentDataConverter().FromPayloads(attrs.Input, &batch))
+		for _, record := range batch.Records {
+			if record.Type != hooks.Usage {
+				continue
+			}
+			var usageEvent hooks.UsageEvent
+			require.NoError(t, json.Unmarshal(record.Payload, &usageEvent))
+			usage = append(usage, usageEvent.TokenUsage)
+		}
+	}
+	return usage
+}
+
+// plannerPublicationInput serializes planner events into the same Temporal
+// batch shape used by the runtime's durable record activity.
+func plannerPublicationInput(
+	t *testing.T,
+	events []*api.PlannerEventRecord,
+) *commonpb.Payloads {
+	t.Helper()
+	records := make([]*api.RecordActivityInput, 0, len(events))
+	for index, event := range events {
+		records = append(records, &api.RecordActivityInput{
+			Type: event.Type,
+			EventKey: productionReplayRunID + "/planner-publication/00000000-0000-4000-8000-000000000001/" +
+				strconv.Itoa(index) + "/" + string(event.Type),
+			RunID:     productionReplayRunID,
+			AgentID:   productionReplayAgentID,
+			SessionID: productionReplaySessionID,
+			TurnID:    productionReplayTurnID,
+			Payload:   event.Payload,
+		})
+	}
+	payloads, err := NewAgentDataConverter().ToPayloads(&api.RecordActivityBatchInput{Records: records})
+	require.NoError(t, err)
+	return payloads
 }
 
 // deserializeReplayHistory passes each synthetic history through Temporal's

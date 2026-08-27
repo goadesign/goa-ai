@@ -142,6 +142,7 @@ func (s *bedrockStreamer) run() {
 	processor.noArgumentTools = s.noArgumentTools
 	processor.emptyObjectTools = s.emptyObjectTools
 	events := s.stream.Events()
+	var rejected error
 
 	for {
 		select {
@@ -162,6 +163,8 @@ func (s *bedrockStreamer) run() {
 					))
 				} else if err := processor.finishStream(); err != nil {
 					s.setErr(s.outputError(processor.rejectedUsage(), err))
+				} else if rejected != nil {
+					s.setErr(s.outputError(processor.rejectedUsage(), rejected))
 				} else {
 					response := processor.response()
 					s.responseMu.Lock()
@@ -170,7 +173,15 @@ func (s *bedrockStreamer) run() {
 				}
 				return
 			}
+			if rejected != nil && !bedrockTerminalEvidence(event) {
+				continue
+			}
 			if err := processor.Handle(event); err != nil {
+				if _, ok := model.UnadvertisedToolName(err); ok && rejected == nil {
+					rejected = err
+					processor.discardSemanticOutput()
+					continue
+				}
 				s.setErr(s.outputError(processor.rejectedUsage(), err))
 				return
 			}
@@ -342,9 +353,10 @@ func (p *chunkProcessor) Handle(event any) error {
 			name, ok := p.toolNameMap[providerName]
 			if !ok {
 				return fmt.Errorf(
-					"bedrock stream: tool use block %q returned unadvertised name %q",
+					"bedrock stream: tool use block %q returned unadvertised name %q: %w",
 					id,
 					raw,
+					model.NewUnadvertisedToolNameError(raw),
 				)
 			}
 			if p.output != nil {
@@ -663,6 +675,36 @@ func (p *chunkProcessor) Handle(event any) error {
 		return p.finishStream()
 	default:
 		return fmt.Errorf("bedrock stream: unsupported event %T", event)
+	}
+}
+
+// discardSemanticOutput stops chunks after an unadvertised tool name while
+// retaining only the state needed to validate normal stream termination and
+// capture metadata usage.
+func (p *chunkProcessor) discardSemanticOutput() {
+	clear(p.toolBlocks)
+	clear(p.reasoningBlocks)
+	clear(p.reasoningIndexes)
+	clear(p.textBlocks)
+	clear(p.citationBlocks)
+	clear(p.canonicalParts)
+	clear(p.openBlocks)
+	p.completion = nil
+	p.output = nil
+	p.emit = func(model.Chunk) error {
+		return nil
+	}
+}
+
+// bedrockTerminalEvidence reports which events can prove normal message
+// completion or supply the rejected invocation's cumulative usage.
+func bedrockTerminalEvidence(event any) bool {
+	switch event.(type) {
+	case *brtypes.ConverseStreamOutputMemberMessageStop,
+		*brtypes.ConverseStreamOutputMemberMetadata:
+		return true
+	default:
+		return false
 	}
 }
 

@@ -186,6 +186,44 @@ func TestValidatedStreamRetainsImmutableToolCallEvidence(t *testing.T) {
 	require.JSONEq(t, `{"query":"original"}`, string(response.Content[0].Parts[0].(ToolUsePart).Input))
 }
 
+func TestValidatedStreamDiscardsCompletedToolCallAfterLaterProviderRejection(t *testing.T) {
+	contract, err := NewRequestContract(requestWithTool("search"))
+	require.NoError(t, err)
+	rejection := contract.RejectProviderOutput(
+		&TokenUsage{InputTokens: 4, OutputTokens: 3, TotalTokens: 7},
+		NewUnadvertisedToolNameError("near_search"),
+	)
+	raw := &validatedStreamFixture{
+		chunks: []Chunk{
+			TextChunk{Message: Message{
+				Role:  ConversationRoleAssistant,
+				Parts: []Part{TextPart{Text: "preview"}},
+			}},
+			ToolCallChunk{ToolCall: ToolCall{
+				Name:    "search",
+				Payload: []byte(`{"query":"discarded"}`),
+				ID:      "call-1",
+			}},
+			UsageChunk{Usage: TokenUsage{InputTokens: 4, OutputTokens: 3, TotalTokens: 7}},
+		},
+		recvErr: rejection,
+	}
+	stream, err := contract.ValidateStream(raw)
+	require.NoError(t, err)
+
+	chunk, err := stream.Recv()
+	require.NoError(t, err)
+	require.IsType(t, TextChunk{}, chunk)
+	chunk, err = stream.Recv()
+
+	require.Nil(t, chunk)
+	require.ErrorIs(t, err, rejection)
+	require.Nil(t, stream.Response())
+	name, ok := UnadvertisedToolName(err)
+	require.True(t, ok)
+	require.Equal(t, "near_search", name)
+}
+
 func TestValidatedStreamSharesBudgetAcrossChunks(t *testing.T) {
 	text := strings.Repeat("x", maxDynamicValueBytes/2)
 	raw := &validatedStreamFixture{chunks: []Chunk{

@@ -269,17 +269,18 @@ func translateToolCall(
 	if call.Name == "" {
 		return model.ToolCall{}, fmt.Errorf("openai: tool call %q missing function name", call.CallID)
 	}
-	payload, err := decodeToolPayload(call.Arguments)
-	if err != nil {
-		return model.ToolCall{}, fmt.Errorf("openai: tool call %q payload: %w", call.CallID, err)
-	}
 	name, ok := codec.canonicalName(call.Name)
 	if !ok {
 		return model.ToolCall{}, fmt.Errorf(
-			"openai: tool call %q returned unadvertised function %q",
+			"openai: tool call %q returned unadvertised function %q: %w",
 			call.CallID,
 			call.Name,
+			model.NewUnadvertisedToolNameError(call.Name),
 		)
+	}
+	payload, err := decodeToolPayload(call.Arguments)
+	if err != nil {
+		return model.ToolCall{}, fmt.Errorf("openai: tool call %q payload: %w", call.CallID, err)
 	}
 	payload, err = codec.canonicalPayload(call.Name, payload)
 	if err != nil {

@@ -12,8 +12,10 @@ import (
 )
 
 type (
-	// ValidatedStream owns one provider stream and exposes output only after it
-	// passes the immutable contract copied from its request.
+	// ValidatedStream owns one provider stream. It exposes discardable preview
+	// chunks after per-chunk validation, but withholds completed tool calls and
+	// structured output until the complete response passes the immutable
+	// contract copied from its request.
 	//
 	// Concurrency contract:
 	//   - Recv, Response, and Close may be called from different goroutines.
@@ -344,8 +346,7 @@ func (s *validatedStreamer) Recv() (Chunk, error) {
 			usage := s.validator.usage
 			s.rejectedDelta = &usage
 		}
-		_, completion := owned.(CompletionChunk)
-		if completion || len(s.pending) > 0 {
+		if streamChunkRequiresTerminalValidation(owned) || len(s.pending) > 0 {
 			s.pending = append(s.pending, owned)
 			continue
 		}
@@ -354,20 +355,14 @@ func (s *validatedStreamer) Recv() (Chunk, error) {
 }
 
 // finishReceive reconciles a provider's terminal result before any retained
-// structured completion or later chunk can leave the validated stream.
+// completed tool call, structured completion, or later chunk can leave the
+// validated stream.
 func (s *validatedStreamer) finishReceive(err error) (Chunk, error) {
 	if !errors.Is(err, io.EOF) {
 		err = s.captureProviderRejection(err)
 		s.finished = true
 		s.terminalErr = err
-		if len(s.pending) > 0 {
-			s.pending = s.pending[1:]
-		}
-		if len(s.pending) > 0 {
-			chunk := s.pending[0]
-			s.pending = s.pending[1:]
-			return chunk, nil
-		}
+		s.pending = nil
 		return nil, err
 	}
 	rawResponse := s.inner.Response()
@@ -414,6 +409,19 @@ func (s *validatedStreamer) Response() *Response {
 // Close closes the provider stream.
 func (s *validatedStreamer) Close() error {
 	return s.inner.Close()
+}
+
+// streamChunkRequiresTerminalValidation reports whether a completed semantic
+// value must wait for the provider's complete response. Preview-only text,
+// thinking, and argument deltas can remain visible while callers discard them
+// if the later terminal validation fails.
+func streamChunkRequiresTerminalValidation(chunk Chunk) bool {
+	switch chunk.(type) {
+	case ToolCallChunk, CompletionChunk:
+		return true
+	default:
+		return false
+	}
 }
 
 // observeStreamResult copies the completed provider operation into the

@@ -117,16 +117,17 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 				if part.FunctionCall.Name == "" {
 					return nil, errors.New("vertex: response function call is missing its name")
 				}
-				payload, err := marshalArgs(part.FunctionCall.Args)
-				if err != nil {
-					return nil, err
-				}
 				name, ok := toolIdent(part.FunctionCall.Name, provToCanon)
 				if !ok {
 					return nil, fmt.Errorf(
-						"vertex: response function call returned unadvertised name %q",
+						"vertex: response function call returned unadvertised name %q: %w",
 						part.FunctionCall.Name,
+						model.NewUnadvertisedToolNameError(part.FunctionCall.Name),
 					)
+				}
+				payload, err := marshalArgs(part.FunctionCall.Args)
+				if err != nil {
+					return nil, err
 				}
 				callID := part.FunctionCall.ID
 				if callID == "" {

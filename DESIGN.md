@@ -261,7 +261,12 @@ and constraints only. The workflow records usage, keeps the malformed call out
 of transcript history, and spends one recovery turn on a normal planner resume
 with executable tools available. It selects the rejected invocation by
 invocation start order, never by a model-supplied value or completion order.
-Unstructured validation failures remain terminal.
+When a supported provider instead returns a valid tool name absent from the
+request's advertised catalog, the adapter rejects the complete response. The
+same invocation-recovery value carries only that untouched name, mutually
+exclusive with generated correction guidance. The replacement starts from the
+last accepted conversation with its current executable catalog. Unstructured
+validation failures remain terminal.
 
 When a completed model reply or planner result breaks its required shape, the
 planner returns `OutputContractError`. The runtime validates the full result

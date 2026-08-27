@@ -191,9 +191,10 @@ func TestModelInvocationJournalSelectsEarliestStartedStreamChunkRejection(t *tes
 	)
 
 	assert.Equal(t, firstErr, invocations.outputContractError())
-	correction := invocations.recoverableModelInvocationCorrection()
-	assert.Contains(t, correction, `"first"`)
-	assert.NotContains(t, correction, `"second"`)
+	recovery := invocations.recoverableModelInvocationRecovery()
+	require.NotNil(t, recovery)
+	assert.Contains(t, recovery.Correction, `"first"`)
+	assert.NotContains(t, recovery.Correction, `"second"`)
 	_, present := rejectedResponseEvidence(invocations)
 	assert.False(t, present)
 }

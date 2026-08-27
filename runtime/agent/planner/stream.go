@@ -61,7 +61,8 @@ type PlannerModelClient interface {
 
 // ConsumeStream drains one model-validated stream and returns its aggregate so
 // planners can produce a final response or schedule tool calls. The runtime
-// journal owns presentation and usage events.
+// journal owns presentation and usage events. A terminal stream failure returns
+// an empty summary so preview text or calls cannot become a planner decision.
 //
 // Usage deltas emitted as chunks are the canonical streaming signal. When a
 // stream emits none, the terminal canonical response supplies final usage.
@@ -82,9 +83,6 @@ func ConsumeStream(ctx context.Context, streamer *model.ValidatedStream) (summar
 		sawUsageDelta bool
 		text          strings.Builder
 	)
-	defer func() {
-		summary.Text = text.String()
-	}()
 
 	for {
 		chunk, recvErr := streamer.Recv()
@@ -101,7 +99,7 @@ func ConsumeStream(ctx context.Context, streamer *model.ValidatedStream) (summar
 					)
 				}
 			}
-			return summary, recvErr
+			return StreamSummary{}, recvErr
 		}
 		switch actual := chunk.(type) {
 		case model.TextChunk:
@@ -159,6 +157,7 @@ func ConsumeStream(ctx context.Context, streamer *model.ValidatedStream) (summar
 		)
 	}
 	summary.source = &response.Content[len(response.Content)-1]
+	summary.Text = text.String()
 
 	return summary, nil
 }

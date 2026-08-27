@@ -89,7 +89,7 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 	ctx := l.wfCtx.Context()
 	for {
 		if correction := modelOutputCorrection(l.st.PendingRecovery); correction != "" {
-			out, err := l.resumePlanner(nil, false, correction, "")
+			out, err := l.resumePlanner(nil, false, correction, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -98,8 +98,8 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 			}
 			continue
 		}
-		if correction := modelInvocationCorrection(l.st.PendingRecovery); correction != "" {
-			out, err := l.resumePlanner(nil, false, "", correction)
+		if recovery := modelInvocationRecovery(l.st.PendingRecovery); recovery != nil {
+			out, err := l.resumePlanner(nil, false, "", recovery)
 			if err != nil {
 				return nil, err
 			}

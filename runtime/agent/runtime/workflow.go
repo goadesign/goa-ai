@@ -376,7 +376,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	if firstOutput.ModelInvocationRecovery != nil {
 		st.PendingRecovery = pendingModelInvocationRecovery{
-			correction: firstOutput.ModelInvocationRecovery.Correction,
+			recovery: *firstOutput.ModelInvocationRecovery,
 		}
 	}
 	// Create parentTracker if this is a nested agent run (has ParentToolCallID)

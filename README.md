@@ -868,9 +868,11 @@ workers, generated packages, and callers must use the same generated input
 contract; mixed shapes are unsupported.
 
 A model invocation rejected before a canonical response exists carries a
-separate `ModelInvocationRecovery` value instead of failed call IDs. Its
-bounded correction names generated schema facts only, and the normal
-caller-authorized executable catalog remains available for the replacement.
+separate `ModelInvocationRecovery` value instead of failed call IDs. It carries
+exactly one bounded fact: generated schema correction text or the untouched
+provider-returned name of a tool absent from that request's catalog. The
+rejected response stays out of history, and the normal caller-authorized
+executable catalog remains available for the replacement.
 Existing Temporal histories replay unchanged. Histories that contain this new
 activity result require workers running the matching runtime; mixed older and
 newer workers, and rollback to an older worker, are unsupported for those
