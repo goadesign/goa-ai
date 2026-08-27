@@ -1747,10 +1747,6 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 			}
 			assistant.Parts = append(assistant.Parts, part)
 		case *brtypes.ContentBlockMemberToolUse:
-			payload, err := decodeDocument(v.Value.Input)
-			if err != nil {
-				return nil, fmt.Errorf("bedrock: decode tool use input: %w", err)
-			}
 			if v.Value.Name == nil || *v.Value.Name == "" {
 				return nil, errors.New("bedrock: response tool use block missing name")
 			}
@@ -1759,12 +1755,17 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 			name, ok := nameMap[key]
 			if !ok {
 				return nil, fmt.Errorf(
-					"bedrock: response tool use block returned unadvertised name %q",
+					"bedrock: response tool use block returned unadvertised name %q: %w",
 					raw,
+					model.NewUnadvertisedToolNameError(raw),
 				)
 			}
 			if v.Value.ToolUseId == nil || *v.Value.ToolUseId == "" {
 				return nil, errors.New("bedrock: response tool use block missing ID")
+			}
+			payload, err := decodeDocument(v.Value.Input)
+			if err != nil {
+				return nil, fmt.Errorf("bedrock: decode tool use input: %w", err)
 			}
 			assistant.Parts = append(assistant.Parts, model.ToolUsePart{
 				Name:  string(tools.Ident(name)),

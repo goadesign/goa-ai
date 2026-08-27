@@ -281,7 +281,9 @@ func TestModelInvocationJournalSelectsEarliestStartedRejection(t *testing.T) {
 	invocations.invocations[firstID].recoveryCorrection = "replace first invocation"
 
 	require.Equal(t, firstErr, invocations.outputContractError())
-	require.Equal(t, "replace first invocation", invocations.recoverableModelInvocationCorrection())
+	recovery := invocations.recoverableModelInvocationRecovery()
+	require.NotNil(t, recovery)
+	require.Equal(t, "replace first invocation", recovery.Correction)
 	evidence, present := rejectedResponseEvidence(invocations)
 	require.True(t, present)
 	require.Equal(t, firstFingerprint, evidence)

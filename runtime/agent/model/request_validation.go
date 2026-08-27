@@ -601,7 +601,11 @@ func validateConfiguredToolCalls(
 	for _, call := range response.ToolCalls() {
 		validate, exists := validators[call.Name]
 		if !exists {
-			return fmt.Errorf("model returned tool %q that was not present in its request", call.Name)
+			return fmt.Errorf(
+				"model returned tool %q that was not present in its request: %w",
+				call.Name,
+				NewUnadvertisedToolNameError(string(call.Name)),
+			)
 		}
 		if validate != nil {
 			if err := validate(call); err != nil {

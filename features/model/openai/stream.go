@@ -157,6 +157,7 @@ func (s *openAIStreamer) run(processor *openAIChunkProcessor) {
 		}
 	}()
 
+	var rejected error
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -177,7 +178,29 @@ func (s *openAIStreamer) run(processor *openAIChunkProcessor) {
 			}
 			return
 		}
-		if err := processor.Handle(s.stream.Current()); err != nil {
+		event := s.stream.Current()
+		if rejected != nil {
+			complete, err := processor.handleRejectedEvent(event)
+			if err != nil {
+				s.setErr(err)
+				return
+			}
+			if complete {
+				s.setErr(s.outputError(rejected))
+				return
+			}
+			continue
+		}
+		if err := processor.Handle(event); err != nil {
+			if _, ok := model.UnadvertisedToolName(err); ok {
+				if processor.completed {
+					s.setErr(s.outputError(err))
+					return
+				}
+				rejected = err
+				processor.discardSemanticOutput()
+				continue
+			}
 			s.setErr(s.outputError(err))
 			return
 		}
@@ -304,6 +327,75 @@ func (p *openAIChunkProcessor) Handle(event responses.ResponseStreamEventUnion) 
 	}
 }
 
+// discardSemanticOutput stops chunks after an unadvertised tool name and drops
+// provider content that cannot enter the accepted response.
+func (p *openAIChunkProcessor) discardSemanticOutput() {
+	clear(p.toolCalls)
+	clear(p.streamedCallIDs)
+	clear(p.thinkingIndexes)
+	p.emit = func(model.Chunk) error {
+		return nil
+	}
+}
+
+// handleRejectedEvent ignores later content from a rejected response while
+// preserving provider failures and recording usage from its terminal event.
+// The boolean result reports that a clean completed or incomplete response was
+// received.
+func (p *openAIChunkProcessor) handleRejectedEvent(event responses.ResponseStreamEventUnion) (bool, error) {
+	switch actual := event.AsAny().(type) {
+	case responses.ResponseCompletedEvent:
+		p.recordRejectedCompletion(actual.Response)
+		return true, nil
+	case responses.ResponseIncompleteEvent:
+		p.recordRejectedCompletion(actual.Response)
+		return true, nil
+	case responses.ResponseFailedEvent:
+		return false, providerErrorFromResponseFailure(
+			"responses.stream",
+			string(actual.Response.Error.Code),
+			actual.Response.Error.Message,
+			errors.New(actual.Response.Error.Message),
+		)
+	case responses.ResponseErrorEvent:
+		return false, providerErrorFromResponseFailure(
+			"responses.stream",
+			actual.Code,
+			actual.Message,
+			errors.New(actual.Message),
+		)
+	case responses.ResponseOutputItemAddedEvent,
+		responses.ResponseOutputItemDoneEvent,
+		responses.ResponseFunctionCallArgumentsDeltaEvent,
+		responses.ResponseTextDeltaEvent,
+		responses.ResponseRefusalDeltaEvent,
+		responses.ResponseReasoningSummaryTextDeltaEvent,
+		responses.ResponseContentPartAddedEvent,
+		responses.ResponseContentPartDoneEvent,
+		responses.ResponseCreatedEvent,
+		responses.ResponseFunctionCallArgumentsDoneEvent,
+		responses.ResponseInProgressEvent,
+		responses.ResponseOutputTextAnnotationAddedEvent,
+		responses.ResponseTextDoneEvent,
+		responses.ResponseQueuedEvent,
+		responses.ResponseReasoningSummaryPartAddedEvent,
+		responses.ResponseReasoningSummaryPartDoneEvent,
+		responses.ResponseReasoningSummaryTextDoneEvent,
+		responses.ResponseRefusalDoneEvent:
+		return false, nil
+	default:
+		return false, fmt.Errorf("openai: unsupported stream event %q (%T)", event.Type, actual)
+	}
+}
+
+// recordRejectedCompletion retains only model identity and cumulative usage
+// from the terminal provider response.
+func (p *openAIChunkProcessor) recordRejectedCompletion(resp responses.Response) {
+	p.completed = true
+	p.modelID = chooseModelID(resp.Model, p.modelID)
+	p.recordUsage(translateUsage(resp.Usage, p.modelID, p.modelClass))
+}
+
 func (p *openAIChunkProcessor) registerOutputItem(item responses.ResponseOutputItemUnion) error {
 	switch actual := item.AsAny().(type) {
 	case responses.ResponseFunctionToolCall:
@@ -325,8 +417,9 @@ func (p *openAIChunkProcessor) registerOutputItem(item responses.ResponseOutputI
 			name, ok := p.codec.canonicalName(actual.Name)
 			if !ok {
 				return fmt.Errorf(
-					"openai: streamed tool call returned unadvertised function %q",
+					"openai: streamed tool call returned unadvertised function %q: %w",
 					actual.Name,
+					model.NewUnadvertisedToolNameError(actual.Name),
 				)
 			}
 			if err := p.retain(name); err != nil {

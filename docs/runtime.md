@@ -294,6 +294,41 @@ Typed completion helpers are intentionally strict:
 - Providers that do not implement structured output surface `model.ErrStructuredOutputUnsupported`.
 - Generated schemas are canonical and provider-neutral; provider adapters may normalize them to a supported subset, but must fail explicitly when they cannot preserve the declared contract.
 
+### Unadvertised tool name recovery
+
+Anthropic, Bedrock, OpenAI, and Gemini/Vertex compare every returned tool name
+with the exact tools advertised for that model request. If a response names a
+different tool, the adapter rejects the complete response. Text, arguments,
+call identifiers, and earlier valid tool blocks from that response do not enter
+the accepted conversation and no tool from the response runs. Streaming
+previews already shown to an observer are discarded rather than committed.
+After detecting the name, a streaming adapter stops semantic output and drains
+to normal provider completion so later cumulative token usage is still counted.
+Cancellation, deadline, transport, or incomplete-stream failures remain those
+failures instead of becoming recoverable name errors.
+
+The runtime retains only the untouched returned name and the provider's token
+usage. Bedrock may remove its `$FUNCTIONS.` prefix from a separate copy used for
+lookup, but recovery keeps the prefixed name. The next planner activity starts
+from the last accepted conversation, receives the tools available for that new
+request, and gets a fixed reminder to choose one of those exact names. The
+runtime does not guess a replacement, apply aliases or fuzzy matching, copy the
+catalog into recovery state, or change the available tools.
+
+Each retry consumes one existing `MaxRecoveryTurns` entry. Repeated misses end
+through the normal recovery-cap path. Cancellation, deadlines, transport
+failures, malformed output that has no non-empty name, and complete-answer
+corrections remain on their existing paths. Provider usage from each rejected
+invocation is counted once.
+
+Temporal records the optional name in `ModelInvocationRecovery` on the planner
+activity result and its next input. Histories recorded before this field existed
+remain readable because the field is absent. Deploy the runtime and Temporal
+workers together. After a history records an unadvertised-name recovery,
+rolling that history back to an older worker is unsafe because the older worker
+does not understand the new field. This change requires no Goa regeneration,
+client regeneration, or public wire-client update.
+
 ### Model request and output bounds
 
 Every model request is checked before the client copies it or calls observers

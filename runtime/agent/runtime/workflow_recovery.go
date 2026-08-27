@@ -2,10 +2,17 @@ package runtime
 
 // This file represents the one pending recovery action owned by a workflow.
 // Tool recovery carries failed calls and their advertised catalog. Completed
-// answer recovery and pre-canonical invocation recovery carry different
-// guidance because only the latter retains the normal executable tool catalog.
+// answer recovery carries replacement guidance. Pre-canonical invocation
+// recovery carries exactly one generated correction or rejected tool name and
+// retains the normal executable tool catalog.
 
-import "goa.design/goa-ai/runtime/agent/planner"
+import (
+	"errors"
+	"strings"
+
+	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
+	"goa.design/goa-ai/runtime/agent/planner"
+)
 
 type (
 	pendingPlannerRecovery interface {
@@ -22,7 +29,7 @@ type (
 	}
 
 	pendingModelInvocationRecovery struct {
-		correction string
+		recovery ModelInvocationRecovery
 	}
 )
 
@@ -56,15 +63,40 @@ func modelOutputCorrection(recovery pendingPlannerRecovery) string {
 	return pending.correction
 }
 
-// modelInvocationCorrection returns replacement guidance when the workflow is
-// waiting for a new tool call under the normal executable catalog.
-func modelInvocationCorrection(recovery pendingPlannerRecovery) string {
+// modelInvocationRecovery returns the one recorded fact when the workflow is
+// waiting for a new tool call under the normal executable catalog. It returns
+// a copy so callers cannot change workflow state after reading it.
+func modelInvocationRecovery(recovery pendingPlannerRecovery) *ModelInvocationRecovery {
 	if recovery == nil {
-		return ""
+		return nil
 	}
 	pending, ok := recovery.(pendingModelInvocationRecovery)
 	if !ok {
-		return ""
+		return nil
 	}
-	return pending.correction
+	return &pending.recovery
+}
+
+// validateModelInvocationRecovery checks the activity value before a workflow
+// records or reuses it. Exactly one variant must be present; generated
+// correction guidance also retains its existing non-blank and size limits.
+func validateModelInvocationRecovery(recovery *ModelInvocationRecovery) error {
+	if recovery == nil {
+		return errors.New("model-invocation recovery is required")
+	}
+	correctionPresent := recovery.Correction != ""
+	namePresent := recovery.UnadvertisedToolName != ""
+	if correctionPresent == namePresent {
+		return errors.New("model-invocation recovery requires exactly one recovery variant")
+	}
+	if !correctionPresent {
+		return nil
+	}
+	if strings.TrimSpace(recovery.Correction) == "" {
+		return errors.New("model-invocation correction requires non-blank guidance")
+	}
+	if len(recovery.Correction) > outputcontract.MaxCorrectionBytes {
+		return errors.New("model-invocation correction exceeds workflow boundary limit")
+	}
+	return nil
 }

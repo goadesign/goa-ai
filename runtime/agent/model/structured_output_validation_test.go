@@ -404,9 +404,6 @@ func TestValidatedStreamWithholdsCompletionOnProviderError(t *testing.T) {
 		response: structuredOutputResponse(`"ok"`),
 	}, structuredOutputRequest(`{"type":"string"}`))
 
-	usage, err := stream.Recv()
-	require.NoError(t, err)
-	require.Equal(t, "provider-model", usage.(UsageChunk).Usage.Model)
 	final, err := stream.Recv()
 
 	require.Nil(t, final)

@@ -26,11 +26,15 @@ type (
 		response *model.Response
 		index    int
 		closed   bool
+		err      error
 	}
 )
 
 func (s *testStreamer) Recv() (model.Chunk, error) {
 	if s.index >= len(s.chunks) {
+		if s.err != nil {
+			return nil, s.err
+		}
 		return nil, io.EOF
 	}
 	chunk := s.chunks[s.index]
@@ -144,6 +148,38 @@ func TestConsumeStreamToolCallOmitsThoughtSignature(t *testing.T) {
 	require.Equal(t, "call-1", summary.ToolCalls[0].ModelToolCallID)
 }
 
+func TestConsumeStreamReturnsNoSummaryAfterLaterProviderRejection(t *testing.T) {
+	request := modelRequestWithTool("svc.lookup")
+	contract, err := model.NewRequestContract(request)
+	require.NoError(t, err)
+	streamer := &testStreamer{
+		chunks: []model.Chunk{
+			model.TextChunk{Message: model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "preview"}},
+			}},
+			model.ToolCallChunk{ToolCall: model.ToolCall{
+				Name:    "svc.lookup",
+				ID:      "call-1",
+				Payload: []byte(`{}`),
+			}},
+		},
+		err: contract.RejectProviderOutput(
+			&model.TokenUsage{InputTokens: 4, OutputTokens: 3, TotalTokens: 7},
+			model.NewUnadvertisedToolNameError("svc.look_up"),
+		),
+	}
+
+	summary, err := ConsumeStream(
+		context.Background(),
+		mustValidatedStream(t, streamer, request),
+	)
+
+	require.Error(t, err)
+	require.Equal(t, StreamSummary{}, summary)
+	require.True(t, streamer.closed)
+}
+
 func TestConsumeStreamRejectsRepeatedFinalizedToolCall(t *testing.T) {
 	call := model.ToolCall{
 		Name:    tools.Ident("svc.lookup"),
@@ -188,7 +224,7 @@ func TestConsumeStreamTextUsesValidatedAggregateBudget(t *testing.T) {
 	)
 
 	require.ErrorContains(t, err, "exceeds maximum byte size")
-	require.Len(t, summary.Text, len(text))
+	require.Equal(t, StreamSummary{}, summary)
 	require.True(t, streamer.closed)
 }
 

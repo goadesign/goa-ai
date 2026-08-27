@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 )
@@ -54,10 +55,11 @@ func (j *modelInvocationJournal) rejectedModelResponseEvidence() model.ResponseE
 	return model.ResponseEvidence{}
 }
 
-// recoverableModelInvocationCorrection returns guidance from the exact
-// earliest-started invocation selected as this activity's rejection. A later
-// completion cannot supply guidance for an earlier failure.
-func (j *modelInvocationJournal) recoverableModelInvocationCorrection() string {
+// recoverableModelInvocationRecovery returns the one bounded recovery fact
+// from the exact earliest-started invocation selected as this activity's
+// rejection. A later completion cannot supply a name or correction for an
+// earlier failure. Missing or contradictory facts remain terminal.
+func (j *modelInvocationJournal) recoverableModelInvocationRecovery() *api.ModelInvocationRecovery {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	for _, id := range j.order {
@@ -66,9 +68,17 @@ func (j *modelInvocationJournal) recoverableModelInvocationCorrection() string {
 		if candidate == nil || !errors.As(candidate.err, &outputErr) {
 			continue
 		}
-		return candidate.recoveryCorrection
+		correctionPresent := candidate.recoveryCorrection != ""
+		namePresent := candidate.unadvertisedToolName != ""
+		if correctionPresent == namePresent {
+			return nil
+		}
+		return &api.ModelInvocationRecovery{
+			Correction:           candidate.recoveryCorrection,
+			UnadvertisedToolName: candidate.unadvertisedToolName,
+		}
 	}
-	return ""
+	return nil
 }
 
 // recoverableModelResponseEvidence verifies that the planner rejected one exact

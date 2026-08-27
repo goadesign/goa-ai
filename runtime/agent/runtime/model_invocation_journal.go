@@ -36,6 +36,7 @@ type (
 		err                      error
 		rejectedResponseEvidence *model.ResponseEvidence
 		recoveryCorrection       string
+		unadvertisedToolName     string
 	}
 
 	// modelFacingToolCall is the provider transcript identity of a planner
@@ -599,6 +600,7 @@ func (j *modelInvocationJournal) rejectModelInvocation(invocationID modelInvocat
 	var validationErr *model.OutputValidationError
 	if errors.As(err, &validationErr) {
 		candidate.recoveryCorrection = validationErr.RecoveryCorrection()
+		candidate.unadvertisedToolName, _ = model.UnadvertisedToolName(validationErr)
 	}
 	if j.outputErr == nil {
 		j.outputErr = err

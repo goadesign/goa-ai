@@ -126,6 +126,7 @@ func (s *anthropicStreamer) run() {
 		s.output,
 	)
 	var response sdk.Message
+	var rejected error
 
 	for {
 		select {
@@ -135,17 +136,22 @@ func (s *anthropicStreamer) run() {
 		default:
 		}
 		if !s.stream.Next() {
-			if err := s.stream.Err(); err != nil && !errors.Is(err, io.EOF) {
-				s.setErr(wrapAnthropicError("stream_recv", err))
-			} else if err := s.ctx.Err(); err != nil {
-				s.setErr(err)
-			} else if !processor.complete {
+			providerErr := s.stream.Err()
+			contextErr := s.ctx.Err()
+			switch {
+			case providerErr != nil && !errors.Is(providerErr, io.EOF):
+				s.setErr(wrapAnthropicError("stream_recv", providerErr))
+			case contextErr != nil:
+				s.setErr(contextErr)
+			case !processor.complete:
 				s.setErr(model.NewStreamEndedEarlyError(
 					anthropicProviderName,
 					"stream_recv",
 					processor.started,
 				))
-			} else {
+			case rejected != nil:
+				s.setErr(s.outputError(processor, rejected))
+			default:
 				translated, err := translateResponse(&response, s.toolNameMap)
 				if err != nil {
 					s.setErr(s.outputError(processor, err))
@@ -167,7 +173,15 @@ func (s *anthropicStreamer) run() {
 			s.setErr(s.outputError(processor, fmt.Errorf("anthropic: accumulate streamed response: %w", err)))
 			return
 		}
+		if rejected != nil && !anthropicTerminalEvidence(event) {
+			continue
+		}
 		if err := processor.Handle(event); err != nil {
+			if _, ok := model.UnadvertisedToolName(err); ok && rejected == nil {
+				rejected = err
+				processor.discardSemanticOutput()
+				continue
+			}
 			s.setErr(s.outputError(processor, err))
 			return
 		}
@@ -354,9 +368,10 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			canonical, ok := p.toolNameMap[raw]
 			if !ok {
 				return fmt.Errorf(
-					"anthropic stream: tool use block %q returned unadvertised name %q",
+					"anthropic stream: tool use block %q returned unadvertised name %q: %w",
 					toolUse.ID,
 					raw,
+					model.NewUnadvertisedToolNameError(raw),
 				)
 			}
 			tb.name = canonical
@@ -648,6 +663,32 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		return p.emit(chunk)
 	default:
 		return fmt.Errorf("anthropic stream: unsupported event %T", ev)
+	}
+}
+
+// discardSemanticOutput stops chunks after an unadvertised tool name while
+// retaining only the state needed to validate normal stream termination and
+// capture cumulative usage.
+func (p *anthropicChunkProcessor) discardSemanticOutput() {
+	clear(p.toolBlocks)
+	clear(p.thinkingBlocks)
+	clear(p.thinkingIndexes)
+	clear(p.openBlocks)
+	p.completion = nil
+	p.output = nil
+	p.emit = func(model.Chunk) error {
+		return nil
+	}
+}
+
+// anthropicTerminalEvidence reports which events can update cumulative usage
+// or prove that the provider completed the rejected message normally.
+func anthropicTerminalEvidence(event sdk.MessageStreamEventUnion) bool {
+	switch event.AsAny().(type) {
+	case sdk.MessageDeltaEvent, sdk.MessageStopEvent:
+		return true
+	default:
+		return false
 	}
 }
 

@@ -917,16 +917,17 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 			if block.Name == "" {
 				return nil, fmt.Errorf("anthropic: response tool use block %q missing name", block.ID)
 			}
-			payload := rawjson.Message(block.Input)
 			raw := block.Name
 			name, ok := nameMap[raw]
 			if !ok {
 				return nil, fmt.Errorf(
-					"anthropic: response tool use block %q returned unadvertised name %q",
+					"anthropic: response tool use block %q returned unadvertised name %q: %w",
 					block.ID,
 					raw,
+					model.NewUnadvertisedToolNameError(raw),
 				)
 			}
+			payload := rawjson.Message(block.Input)
 			assistant.Parts = append(assistant.Parts, model.ToolUsePart{
 				Name:  string(tools.Ident(name)),
 				Input: payload,

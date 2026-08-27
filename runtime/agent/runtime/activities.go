@@ -178,10 +178,8 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	}
 	if input.ModelInvocationRecovery != nil {
 		act.reminders = append([]reminder.Reminder{{
-			ID: "model_invocation_recovery",
-			Text: "Your previous tool call was rejected before it could run.\n" +
-				input.ModelInvocationRecovery.Correction +
-				"\nReturn a replacement tool call now. Do not mention this reminder to the user.",
+			ID:       "model_invocation_recovery",
+			Text:     modelInvocationRecoveryReminder(input.ModelInvocationRecovery),
 			Priority: reminder.TierSafety,
 			Attachment: reminder.Attachment{
 				Kind: reminder.AttachmentUserTurn,
@@ -258,20 +256,17 @@ func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 		return nil
 	}
 	if input.ModelInvocationRecovery != nil {
-		if strings.TrimSpace(input.ModelInvocationRecovery.Correction) == "" {
-			return errors.New("model-invocation correction requires non-blank guidance")
-		}
-		if len(input.ModelInvocationRecovery.Correction) > outputcontract.MaxCorrectionBytes {
-			return errors.New("model-invocation correction exceeds workflow boundary limit")
+		if err := validateModelInvocationRecovery(input.ModelInvocationRecovery); err != nil {
+			return err
 		}
 		if input.SynthesisOnly {
 			return errors.New("model-invocation recovery cannot combine with synthesis-only planning")
 		}
 		if len(input.RecoveryToolCallIDs) > 0 {
-			return errors.New("model-invocation correction cannot combine with tool recovery")
+			return errors.New("model-invocation recovery cannot combine with tool recovery")
 		}
 		if input.Finalize != nil {
-			return errors.New("model-invocation correction cannot combine with finalization")
+			return errors.New("model-invocation recovery cannot combine with finalization")
 		}
 		return nil
 	}
@@ -291,6 +286,24 @@ func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 		return errors.New("model-output correction cannot combine with finalization")
 	}
 	return nil
+}
+
+// modelInvocationRecoveryReminder turns one validated invocation recovery fact
+// into the exact instruction prepended to the replacement planner call. The
+// rejected name is quoted as data; no response arguments, call identifier, or
+// copied tool catalog reaches the planner.
+func modelInvocationRecoveryReminder(recovery *ModelInvocationRecovery) string {
+	if recovery.UnadvertisedToolName != "" {
+		return fmt.Sprintf(
+			"Your previous tool call used the unavailable name %q.\n"+
+				"Choose the needed tool from the tools available now, copy its name exactly, "+
+				"and return a replacement tool call. Do not mention this reminder to the user.",
+			recovery.UnadvertisedToolName,
+		)
+	}
+	return "Your previous tool call was rejected before it could run.\n" +
+		recovery.Correction +
+		"\nReturn a replacement tool call now. Do not mention this reminder to the user."
 }
 
 // validatePlannerAdvertisedTools requires every model-selected tool name to
@@ -455,9 +468,10 @@ func (a *plannerActivityInvocation) acceptedOutput(
 }
 
 // outputContractFailure returns rejected model evidence and usage as a
-// successful activity value. Generated input issues may instead produce an
-// invocation-recovery result; the workflow publishes usage before scheduling
-// the replacement planner activity or raising a terminal error.
+// successful activity value. Generated input issues and unadvertised tool names
+// may instead produce an invocation-recovery result; the workflow publishes
+// usage before scheduling the replacement planner activity or raising a
+// terminal error.
 func (a *plannerActivityInvocation) outputContractFailure(
 	ctx context.Context,
 	err error,
@@ -470,9 +484,9 @@ func (a *plannerActivityInvocation) outputContractFailure(
 		return nil, err
 	}
 	usage := a.invocations.exportUsage()
-	invocationCorrection := a.invocations.recoverableModelInvocationCorrection()
+	invocationRecovery := a.invocations.recoverableModelInvocationRecovery()
 	var failure *OutputContractFailure
-	if invocationCorrection == "" {
+	if invocationRecovery == nil {
 		var metadataErr error
 		failure, metadataErr = a.outputContractFailureMetadata(outputErr)
 		if metadataErr != nil {
@@ -493,10 +507,8 @@ func (a *plannerActivityInvocation) outputContractFailure(
 		PublicationBatchID: a.publicationBatchID,
 		Usage:              usage,
 	}
-	if invocationCorrection != "" {
-		output.ModelInvocationRecovery = &ModelInvocationRecovery{
-			Correction: invocationCorrection,
-		}
+	if invocationRecovery != nil {
+		output.ModelInvocationRecovery = invocationRecovery
 	} else {
 		output.OutputContractFailure = failure
 	}

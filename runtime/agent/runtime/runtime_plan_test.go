@@ -1387,11 +1387,12 @@ func TestPlanStartActivityDoesNotPublishRejectedModelOutput(t *testing.T) {
 		RunContext: run.Context{RunID: "run-123", TurnID: "turn-1"},
 	})
 
-	requirePlannerOutputContractFailure(
-		t,
-		out,
-		err,
-	)
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.NotNil(t, out.ModelInvocationRecovery)
+	require.Equal(t, "hidden", out.ModelInvocationRecovery.UnadvertisedToolName)
+	require.Empty(t, out.ModelInvocationRecovery.Correction)
+	require.Nil(t, out.OutputContractFailure)
 	require.Empty(t, recorder.events)
 }
 
@@ -2944,7 +2945,7 @@ func TestBuildNextResumeRequestCarriesTurnScopedRecoveryIdentity(t *testing.T) {
 		recovery,
 		false,
 		"",
-		"",
+		nil,
 		&nextAttempt,
 	)
 	require.NoError(t, err)
@@ -2975,7 +2976,7 @@ func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
 		nil,
 		false,
 		"",
-		"",
+		nil,
 		&nextAttempt,
 	)
 	require.Error(t, err)
@@ -3008,7 +3009,7 @@ func TestBuildNextResumeRequestUsesProviderNeutralTranscriptValidation(t *testin
 		nil,
 		false,
 		"",
-		"",
+		nil,
 		&nextAttempt,
 	)
 	require.Error(t, err)

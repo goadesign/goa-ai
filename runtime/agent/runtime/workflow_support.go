@@ -652,11 +652,8 @@ func (r *Runtime) runPlanActivity(
 		if out.Result != nil {
 			return nil, errors.New("runPlanActivity received both PlanResult and ModelInvocationRecovery")
 		}
-		if strings.TrimSpace(out.ModelInvocationRecovery.Correction) == "" {
-			return nil, errors.New("runPlanActivity received blank model-invocation correction")
-		}
-		if len(out.ModelInvocationRecovery.Correction) > outputcontract.MaxCorrectionBytes {
-			return nil, errors.New("runPlanActivity received oversized model-invocation correction")
+		if err := validateModelInvocationRecovery(out.ModelInvocationRecovery); err != nil {
+			return nil, fmt.Errorf("runPlanActivity received invalid model-invocation recovery: %w", err)
 		}
 	case out.Result == nil:
 		return nil, fmt.Errorf("runPlanActivity received nil PlanResult")
