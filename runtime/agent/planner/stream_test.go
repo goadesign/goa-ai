@@ -78,6 +78,32 @@ func TestConsumeStreamPreservesMissingProviderUsageModel(t *testing.T) {
 	require.Equal(t, 5, summary.Usage.TotalTokens)
 }
 
+func TestConsumeStreamReportsOutputLimitedStop(t *testing.T) {
+	streamer := &testStreamer{
+		chunks: []model.Chunk{model.StopChunk{
+			Reason:        "max_tokens",
+			OutputLimited: true,
+		}},
+		response: &model.Response{
+			Content: []model.Message{{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "partial"}},
+			}},
+			StopReason:    "max_tokens",
+			OutputLimited: true,
+		},
+	}
+
+	summary, err := ConsumeStream(
+		context.Background(),
+		mustValidatedStream(t, streamer, &model.Request{}),
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, "max_tokens", summary.StopReason)
+	require.True(t, summary.OutputLimited)
+}
+
 // TestConsumeStreamToolCallOmitsThoughtSignature documents that ConsumeStream
 // deliberately does not surface model.ToolCall.ThoughtSignature on the
 // resulting planner.ToolRequest: opaque provider state is captured earlier, at

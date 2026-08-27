@@ -620,6 +620,7 @@ func (p *chunkProcessor) Handle(event any) error {
 			return errors.New("bedrock stream: message stopped without a stop reason")
 		}
 		p.canonical.StopReason = string(ev.Value.StopReason)
+		p.canonical.OutputLimited = bedrockOutputLimited(ev.Value.StopReason)
 		p.complete = true
 		return nil
 	case *brtypes.ConverseStreamOutputMemberMetadata:
@@ -710,7 +711,10 @@ func (p *chunkProcessor) finishStream() error {
 		return errors.New("bedrock stream: cannot finish before message stop")
 	}
 	p.terminalEmitted = true
-	return p.emit(model.StopChunk{Reason: p.canonical.StopReason})
+	return p.emit(model.StopChunk{
+		Reason:        p.canonical.StopReason,
+		OutputLimited: p.canonical.OutputLimited,
+	})
 }
 
 type toolBuffer struct {

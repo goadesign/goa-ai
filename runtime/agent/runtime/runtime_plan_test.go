@@ -294,6 +294,53 @@ func TestPlanStartActivityCorrelatesRecoverableModelOutput(t *testing.T) {
 	require.Equal(t, "Use at most eight references.", out.OutputContractFailure.Correction)
 }
 
+func TestPlanStartActivityRejectsOutputLimitedFinalResponse(t *testing.T) {
+	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		client, ok := input.Agent.PlannerModelClient("test")
+		require.True(t, ok)
+		summary, err := client.Stream(ctx, &model.Request{Model: "test"})
+		require.NoError(t, err)
+		return &planner.PlanResult{FinalResponse: summary.FinalResponse()}, nil
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	rt.models["test"] = mustTestModelClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			message := model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "partial"}},
+			}
+			return &chunkStreamer{
+				chunks: []model.Chunk{
+					model.TextChunk{Message: message},
+					model.StopChunk{
+						Reason:        "max_tokens",
+						OutputLimited: true,
+					},
+				},
+				response: &model.Response{
+					Content:       []model.Message{message},
+					StopReason:    "max_tokens",
+					OutputLimited: true,
+				},
+			}, nil
+		},
+	})
+
+	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123"},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Nil(t, out.Result)
+	require.NotNil(t, out.OutputContractFailure)
+	require.Equal(t, planner.OutputContractOriginModel, out.OutputContractFailure.Origin)
+	require.Equal(t, outputLimitCorrection, out.OutputContractFailure.Correction)
+	require.True(t, out.OutputContractFailure.ModelResponsePresent)
+}
+
 func TestPlanStartActivityRejectsAlteredRecoverableModelOutput(t *testing.T) {
 	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		client, ok := input.Agent.ModelClient("test")

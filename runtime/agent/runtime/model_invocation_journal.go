@@ -74,6 +74,8 @@ type (
 	}
 )
 
+const outputLimitCorrection = "Replace the incomplete answer with a complete, concise answer using the existing evidence. Include the most important conclusions and omit repetitive detail."
+
 // beginModelInvocation creates a place to save one model response and the
 // runtime-owned controls that stop and join it when planning ends.
 func (j *modelInvocationJournal) beginModelInvocation(
@@ -519,6 +521,17 @@ func (j *modelInvocationJournal) exportModelInvocation(
 	}
 	if !j.designated.IsZero() && selectedID != j.designated {
 		return nil, errors.New("planner result selected a probe after using PlannerModelClient")
+	}
+	if selected.response.OutputLimited {
+		cause := errors.New("model response reached its generated-output limit")
+		if result != nil && result.FinalResponse != nil {
+			return nil, planner.NewRecoverableModelOutputError(
+				cause,
+				result.FinalResponse,
+				outputLimitCorrection,
+			)
+		}
+		return nil, outputcontract.NewWithOrigin(cause, planner.OutputContractOriginModel)
 	}
 	j.selected = selectedID
 	owner = selectedOwner

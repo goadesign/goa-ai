@@ -1780,7 +1780,15 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 	if resp.StopReason == "" {
 		return nil, errors.New("bedrock: response is missing its stop reason")
 	}
+	resp.OutputLimited = bedrockOutputLimited(output.StopReason)
 	return resp, nil
+}
+
+// bedrockOutputLimited identifies Bedrock stop reasons that mean generated
+// output ended because the request or model context had no remaining tokens.
+func bedrockOutputLimited(reason brtypes.StopReason) bool {
+	return reason == brtypes.StopReasonMaxTokens ||
+		reason == brtypes.StopReasonModelContextWindowExceeded
 }
 
 // translateBedrockUsage extracts provider usage and resolved model identity

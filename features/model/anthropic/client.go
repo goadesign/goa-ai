@@ -949,7 +949,14 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 	if resp.StopReason == "" {
 		return nil, errors.New("anthropic: response is missing its stop reason")
 	}
+	resp.OutputLimited = anthropicOutputLimited(resp.StopReason)
 	return resp, nil
+}
+
+// anthropicOutputLimited identifies the Anthropic stop reason emitted when a
+// message consumes its configured generated-token budget.
+func anthropicOutputLimited(reason string) bool {
+	return reason == string(sdk.StopReasonMaxTokens)
 }
 
 // translateAnthropicUsage extracts provider usage and resolved model identity

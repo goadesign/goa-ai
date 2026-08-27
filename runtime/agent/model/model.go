@@ -598,7 +598,9 @@ type (
 	//
 	// Content carries the complete ordered provider response, including tool-use
 	// parts. Successful responses contain at least one assistant message and a
-	// non-empty provider stop reason. Usage mirrors provider metadata.
+	// non-empty provider stop reason. OutputLimited reports the one provider stop
+	// condition that runtimes must not accept as completed work. Usage mirrors
+	// provider metadata.
 	Response struct {
 		// Content is the ordered list of assistant messages produced.
 		Content []Message
@@ -608,6 +610,10 @@ type (
 
 		// StopReason records why generation stopped (provider-specific).
 		StopReason string
+
+		// OutputLimited reports that the provider stopped because generated
+		// output reached its configured token or context limit.
+		OutputLimited bool
 	}
 
 	// Chunk is a closed progressive presentation event from the model. Concrete
@@ -663,6 +669,10 @@ type (
 	StopChunk struct {
 		// Reason is the provider-specific stop reason.
 		Reason string
+
+		// OutputLimited reports that the provider stopped because generated
+		// output reached its configured token or context limit.
+		OutputLimited bool
 	}
 
 	// ThinkingOptions configures provider thinking behavior.

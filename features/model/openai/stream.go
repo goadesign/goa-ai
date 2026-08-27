@@ -524,7 +524,8 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 		}
 	}
 	if err := p.emit(model.StopChunk{
-		Reason: translated.StopReason,
+		Reason:        translated.StopReason,
+		OutputLimited: translated.OutputLimited,
 	}); err != nil {
 		return err
 	}

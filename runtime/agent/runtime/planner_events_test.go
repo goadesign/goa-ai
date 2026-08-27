@@ -106,6 +106,59 @@ func TestRuntimePlannerEventsMatchesCompleteFinalResponse(t *testing.T) {
 	require.Equal(t, model.ThinkingPart{Text: "reasoning", Signature: "sig", Final: true}, transcript[0].Parts[0])
 }
 
+func TestRuntimePlannerEventsRequestsReplacementForOutputLimitedFinalResponse(t *testing.T) {
+	e := &modelInvocationJournal{}
+	invocation := mustBeginModelInvocation(t, e)
+	response := &model.Response{
+		Content: []model.Message{{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "partial"}},
+		}},
+		StopReason:    "max_tokens",
+		OutputLimited: true,
+	}
+	mustRecordModelResponse(t, e, invocation, response)
+	result := &planner.PlanResult{
+		FinalResponse: &planner.FinalResponse{Message: &response.Content[0]},
+	}
+
+	transcript, err := e.exportModelInvocation(result)
+
+	require.Nil(t, transcript)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.Equal(t, outputLimitCorrection, outputErr.Correction())
+	require.Same(t, result.FinalResponse.Message, outputErr.ModelMessage())
+	require.Equal(t, planner.OutputContractOriginModel, outputErr.Origin())
+}
+
+func TestRuntimePlannerEventsRejectsOutputLimitedToolBatch(t *testing.T) {
+	e := &modelInvocationJournal{}
+	invocation := mustBeginModelInvocation(t, e)
+	response := testModelResponse(nil, model.ToolCall{
+		ID:      "call-1",
+		Name:    "svc.lookup",
+		Payload: []byte(`{}`),
+	})
+	response.StopReason = "max_tokens"
+	response.OutputLimited = true
+	mustRecordModelResponse(t, e, invocation, response)
+
+	transcript, err := e.exportModelInvocation(&planner.PlanResult{
+		ToolCalls: []planner.ToolRequest{{
+			ModelToolCallID: "call-1",
+			Name:            "svc.lookup",
+			Payload:         []byte(`{}`),
+		}},
+	})
+
+	require.Nil(t, transcript)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.Empty(t, outputErr.Correction())
+	require.Equal(t, planner.OutputContractOriginModel, outputErr.Origin())
+}
+
 func TestRuntimePlannerEventsRejectsFinalResponseThatDiscardsToolCalls(t *testing.T) {
 	e := &modelInvocationJournal{}
 	invocation := mustBeginModelInvocation(t, e)

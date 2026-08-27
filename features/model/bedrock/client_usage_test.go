@@ -12,6 +12,24 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
+func TestBedrockOutputLimited(t *testing.T) {
+	tests := []struct {
+		name   string
+		reason brtypes.StopReason
+		want   bool
+	}{
+		{name: "maximum output tokens", reason: brtypes.StopReasonMaxTokens, want: true},
+		{name: "model context exhausted", reason: brtypes.StopReasonModelContextWindowExceeded, want: true},
+		{name: "natural end", reason: brtypes.StopReasonEndTurn},
+		{name: "tool use", reason: brtypes.StopReasonToolUse},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, bedrockOutputLimited(test.reason))
+		})
+	}
+}
+
 func TestTranslateResponse_UsageIncludesCacheTokens(t *testing.T) {
 	var (
 		inTokens   int32 = 100

@@ -1062,6 +1062,13 @@ copied, incomplete, or ambiguous provider outputs fail the planner activity.
 Selecting a provider message as `FinalResponse` also requires the result to
 preserve that response's complete tool-call set; a terminal result cannot
 silently discard a provider-requested action.
+Provider adapters set `OutputLimited` on the complete `model.Response` and its
+terminal `StopChunk` when the provider reports that generated output reached a
+token or context limit. The runtime discards an output-limited final response
+and schedules a concise replacement through the existing bounded model-output
+recovery path. An output-limited tool batch is rejected before any tool runs.
+If replacement turns exhaust the configured recovery limit, the run fails
+instead of publishing partial text.
 Call order has no commit semantics: planners may probe with `ModelClient`, then
 make exactly one selected call through `PlannerModelClient`. Terminal helpers
 return the selected provider message without exposing transcript identity or

@@ -25,6 +25,9 @@ type (
 		Usage model.TokenUsage
 		// StopReason records the provider stop reason when emitted.
 		StopReason string
+		// OutputLimited reports that the provider stopped because generated
+		// output reached its configured token or context limit.
+		OutputLimited bool
 
 		source *model.Message
 	}
@@ -133,6 +136,7 @@ func ConsumeStream(ctx context.Context, streamer *model.ValidatedStream) (summar
 			summary.Usage = addUsage(summary.Usage, actual.Usage)
 		case model.StopChunk:
 			summary.StopReason = actual.Reason
+			summary.OutputLimited = actual.OutputLimited
 		case model.CompletionChunk, model.CompletionDeltaChunk:
 			return summary, NewOutputContractError(
 				errors.New("planner: ConsumeStream received a completion chunk instead of a planner chunk"),
