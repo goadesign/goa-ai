@@ -20,10 +20,10 @@ import (
 
 type (
 	// AdaptiveRateLimiter applies an AIMD-style adaptive token-capacity bucket
-	// on top of a model.Client. Middleware charges exact input tokens, while
-	// MiddlewareWithOutputReservation also charges the provider's configured
-	// output reservation. Both adjust effective capacity from provider rate
-	// limits.
+	// on top of a model.Client. NewAdaptiveRateLimiter charges exact input
+	// tokens. NewOutputReservationAdaptiveRateLimiter charges input tokens plus
+	// the provider's configured output reservation. Both adjust effective
+	// capacity from provider rate limits.
 	//
 	// The limiter is process-local and designed to sit at the provider client
 	// boundary. Callers construct a single instance per process and wrap the
@@ -38,17 +38,17 @@ type (
 		minTPM     float64
 		maxTPM     float64
 
-		recoveryRate float64
+		recoveryRate  float64
+		reserveOutput bool
 
 		onBackoff func(newTPM float64)
 		onProbe   func(newTPM float64)
 	}
 
 	limitedProvider struct {
-		next          model.Provider
-		counter       model.TokenCounter
-		limiter       *AdaptiveRateLimiter
-		reserveOutput bool
+		next    model.Provider
+		counter model.TokenCounter
+		limiter *AdaptiveRateLimiter
 	}
 
 	// limitedStreamer reports the exact terminal stream outcome to the limiter.
@@ -73,16 +73,55 @@ type (
 	}
 )
 
+const outputReservationClusterKeySuffix = ".input-plus-max-output.v1"
+
 // NewAdaptiveRateLimiter constructs an AdaptiveRateLimiter with a token-capacity
 // budget per minute. When m and key are set, it coordinates capacity across
 // processes using a Pulse replicated map; otherwise it operates as a
 // process-local limiter.
 func NewAdaptiveRateLimiter(ctx context.Context, m *rmap.Map, key string, initialTPM, maxTPM float64) *AdaptiveRateLimiter {
+	return newPublicAdaptiveRateLimiter(ctx, m, key, initialTPM, maxTPM, false)
+}
+
+// NewOutputReservationAdaptiveRateLimiter constructs an AdaptiveRateLimiter
+// that charges exact input tokens plus each request's positive MaxTokens value.
+// Its versioned cluster key keeps this combined cost separate from input-only
+// limiters during rolling upgrades.
+func NewOutputReservationAdaptiveRateLimiter(
+	ctx context.Context,
+	m *rmap.Map,
+	key string,
+	initialTPM, maxTPM float64,
+) *AdaptiveRateLimiter {
+	key = outputReservationClusterKey(key)
+	return newPublicAdaptiveRateLimiter(ctx, m, key, initialTPM, maxTPM, true)
+}
+
+// outputReservationClusterKey isolates combined input-and-output accounting
+// from input-only capacity stored under the caller's base key.
+func outputReservationClusterKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	return key + outputReservationClusterKeySuffix
+}
+
+// newPublicAdaptiveRateLimiter adapts the public Pulse map and fixes the
+// request-cost contract for the lifetime of the returned limiter.
+func newPublicAdaptiveRateLimiter(
+	ctx context.Context,
+	m *rmap.Map,
+	key string,
+	initialTPM, maxTPM float64,
+	reserveOutput bool,
+) *AdaptiveRateLimiter {
 	var cm clusterMap
 	if m != nil {
 		cm = &rmapClusterMap{m: m}
 	}
-	return newClusterAdaptiveRateLimiter(ctx, cm, key, initialTPM, maxTPM)
+	limiter := newClusterAdaptiveRateLimiter(ctx, cm, key, initialTPM, maxTPM)
+	limiter.reserveOutput = reserveOutput
+	return limiter
 }
 
 // newAdaptiveRateLimiter constructs an AdaptiveRateLimiter configured with an
@@ -120,33 +159,16 @@ func newAdaptiveRateLimiter(initialTPM, maxTPM float64) *AdaptiveRateLimiter {
 }
 
 // Middleware returns a model.Client middleware that enforces the adaptive
-// input-tokens-per-minute limit for both Complete and Stream calls. The
-// returned client retains the input client's optional token-counting
-// capability.
+// token-capacity limit selected when the limiter was constructed for both
+// Complete and Stream calls. The returned client retains the input client's
+// optional token-counting capability.
 func (l *AdaptiveRateLimiter) Middleware() func(model.Client) (model.Client, error) {
-	return l.middleware(false)
-}
-
-// MiddlewareWithOutputReservation returns middleware that reserves the exact
-// input-token count plus MaxTokens. Use it when a provider deducts requested
-// output capacity from the same per-minute quota before generation starts.
-// Requests must set a positive MaxTokens value so the reservation cannot
-// silently omit the provider's default output allowance.
-func (l *AdaptiveRateLimiter) MiddlewareWithOutputReservation() func(model.Client) (model.Client, error) {
-	return l.middleware(true)
-}
-
-// middleware builds one wrapper with the selected per-request token cost.
-func (l *AdaptiveRateLimiter) middleware(
-	reserveOutput bool,
-) func(model.Client) (model.Client, error) {
 	return func(next model.Client) (model.Client, error) {
 		return model.WrapClient(next, func(raw model.Provider) model.Provider {
 			return &limitedProvider{
-				next:          raw,
-				counter:       next,
-				limiter:       l,
-				reserveOutput: reserveOutput,
+				next:    raw,
+				counter: next,
+				limiter: l,
 			}
 		})
 	}
@@ -154,7 +176,7 @@ func (l *AdaptiveRateLimiter) middleware(
 
 // Complete enforces the limiter before delegating to the underlying client.
 func (c *limitedProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	if err := c.limiter.wait(ctx, c.counter, req, c.reserveOutput); err != nil {
+	if err := c.limiter.wait(ctx, c.counter, req); err != nil {
 		return nil, err
 	}
 	resp, err := c.next.Complete(ctx, req)
@@ -167,7 +189,7 @@ func (c *limitedProvider) Complete(ctx context.Context, req *model.Request) (*mo
 
 // Stream enforces the limiter before delegating to the underlying client.
 func (c *limitedProvider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
-	if err := c.limiter.wait(ctx, c.counter, req, c.reserveOutput); err != nil {
+	if err := c.limiter.wait(ctx, c.counter, req); err != nil {
 		return nil, err
 	}
 	stream, err := c.next.Stream(ctx, req)
@@ -219,8 +241,10 @@ func (l *AdaptiveRateLimiter) wait(
 	ctx context.Context,
 	counter model.TokenCounter,
 	req *model.Request,
-	reserveOutput bool,
 ) error {
+	if l.reserveOutput && req.MaxTokens <= 0 {
+		return errors.New("adaptive rate limiting with output reservation requires positive max tokens")
+	}
 	count, err := counter.CountTokens(ctx, req)
 	if err != nil {
 		return err
@@ -228,11 +252,8 @@ func (l *AdaptiveRateLimiter) wait(
 	if !count.Exact {
 		return errors.New("adaptive rate limiting requires an exact provider token count")
 	}
-	if !reserveOutput {
+	if !l.reserveOutput {
 		return l.limiter.WaitN(ctx, count.InputTokens)
-	}
-	if req.MaxTokens <= 0 {
-		return errors.New("adaptive rate limiting with output reservation requires positive max tokens")
 	}
 	if req.MaxTokens > math.MaxInt-count.InputTokens {
 		return errors.New("adaptive rate limiting token cost exceeds integer range")

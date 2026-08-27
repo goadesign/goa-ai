@@ -2875,7 +2875,7 @@ Apply adaptive rate limiting:
 ```go
 import mdlmw "goa.design/goa-ai/features/model/middleware"
 
-rl := mdlmw.NewAdaptiveRateLimiter(
+rl := mdlmw.NewOutputReservationAdaptiveRateLimiter(
     ctx,
     throughputMap,     // *rmap.Map for cluster-wide state (nil for local)
     "bedrock:sonnet",  // Model family key
@@ -2883,7 +2883,7 @@ rl := mdlmw.NewAdaptiveRateLimiter(
     1_000_000,         // Maximum quota-token capacity per minute
 )
 
-limitedClient, err := rl.MiddlewareWithOutputReservation()(modelClient)
+limitedClient, err := rl.Middleware()(modelClient)
 if err != nil {
     return err
 }
@@ -2892,13 +2892,14 @@ if err := rt.RegisterModel("bedrock", limitedClient); err != nil {
 }
 ```
 
-`Middleware` charges only the provider's exact input-token count.
-`MiddlewareWithOutputReservation` additionally charges `Request.MaxTokens`
-and rejects requests that omit a positive `MaxTokens`. Use the reservation
-form when the provider deducts requested output capacity from the same
-per-minute quota before generation. For streams, the limiter increases capacity
-only after clean end-of-stream and reduces capacity when a terminal stream
-error is rate limited.
+`NewAdaptiveRateLimiter` charges only the provider's exact input-token count.
+`NewOutputReservationAdaptiveRateLimiter` adds `Request.MaxTokens` and rejects
+requests that omit a positive `MaxTokens`. Use the reservation constructor when
+the provider deducts requested output capacity from the same per-minute quota
+before generation. Its versioned cluster key keeps the two accounting modes
+separate during rolling upgrades. For streams, the limiter increases capacity
+only after clean end-of-stream and reduces capacity when a terminal stream error
+is rate limited.
 
 ---
 
@@ -3340,7 +3341,7 @@ Apply adaptive rate limiting to handle provider throttling:
 ```go
 import mdlmw "goa.design/goa-ai/features/model/middleware"
 
-rl := mdlmw.NewAdaptiveRateLimiter(
+rl := mdlmw.NewOutputReservationAdaptiveRateLimiter(
     ctx,
     throughputMap,     // *rmap.Map for cluster-wide state (nil for local)
     "bedrock:sonnet",  // Model family key
@@ -3348,7 +3349,7 @@ rl := mdlmw.NewAdaptiveRateLimiter(
     1_000_000,         // Maximum quota-token capacity per minute
 )
 
-limitedClient, err := rl.MiddlewareWithOutputReservation()(modelClient)
+limitedClient, err := rl.Middleware()(modelClient)
 if err != nil {
     return err
 }
@@ -3357,11 +3358,12 @@ if err := rt.RegisterModel("bedrock", limitedClient); err != nil {
 }
 ```
 
-The input-only middleware reserves the provider's exact input-token count. The
-output-reservation form adds `Request.MaxTokens`, so the bucket uses the same
-units a provider deducts when the request starts. Both forms probe upward after
-a unary response or stream ends successfully and back off after a unary or
-streaming rate-limit error.
+The input-only constructor reserves the provider's exact input-token count. The
+output-reservation constructor adds `Request.MaxTokens`, so the bucket uses the
+same units a provider deducts when the request starts. The constructors use
+different cluster keys because their stored capacity values have different
+units. Both forms probe upward after a unary response or successful stream end,
+and back off after a unary or streaming rate-limit error.
 
 ---
 

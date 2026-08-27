@@ -40,7 +40,7 @@ func TestTranslateResponse_UsageIncludesCacheTokens(t *testing.T) {
 	)
 
 	output := &bedrockruntime.ConverseOutput{
-		StopReason: brtypes.StopReasonEndTurn,
+		StopReason: brtypes.StopReasonMaxTokens,
 		Output: &brtypes.ConverseOutputMemberMessage{Value: brtypes.Message{
 			Role:    brtypes.ConversationRoleAssistant,
 			Content: []brtypes.ContentBlock{&brtypes.ContentBlockMemberText{Value: "done"}},
@@ -64,6 +64,7 @@ func TestTranslateResponse_UsageIncludesCacheTokens(t *testing.T) {
 	require.Equal(t, int(cacheWrite), resp.Usage.CacheWriteTokens)
 	require.Equal(t, "test-model", resp.Usage.Model)
 	require.Equal(t, model.ModelClassDefault, resp.Usage.ModelClass)
+	require.True(t, resp.OutputLimited)
 }
 
 func TestCompleteRejectsMissingToolCallIDWithUsage(t *testing.T) {

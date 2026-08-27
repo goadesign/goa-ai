@@ -554,7 +554,8 @@ func validateResponseEvidence(evidence ResponseEvidence) error {
 		}
 		return nil
 	}
-	if evidence.Version != responseevidence.VersionV1 {
+	if evidence.Version != responseevidence.VersionV1 &&
+		evidence.Version != responseevidence.VersionV2 {
 		return fmt.Errorf("response evidence has unsupported version %q", evidence.Version)
 	}
 	if len(evidence.SHA256) != 64 {
@@ -581,7 +582,7 @@ func responseEvidencePreflighted(response *Response) ResponseEvidence {
 	}
 	fingerprint, err := fingerprintPreflightedResponse(response)
 	if err == nil {
-		evidence.Version = responseevidence.VersionV1
+		evidence.Version = responseevidence.VersionV2
 		evidence.SHA256 = fingerprint.sha256
 		evidence.Size = fingerprint.size
 	}

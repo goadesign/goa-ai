@@ -64,7 +64,7 @@ func TestChunkProcessorUsageIncludesCacheTokens(t *testing.T) {
 	err := cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{})
 	require.NoError(t, err)
 	err = cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStop{
-		Value: brtypes.MessageStopEvent{StopReason: brtypes.StopReasonEndTurn},
+		Value: brtypes.MessageStopEvent{StopReason: brtypes.StopReasonMaxTokens},
 	})
 	require.NoError(t, err)
 	event := &brtypes.ConverseStreamOutputMemberMetadata{
@@ -92,8 +92,13 @@ func TestChunkProcessorUsageIncludesCacheTokens(t *testing.T) {
 	require.Equal(t, int(cacheWrite), usageChunk.Usage.CacheWriteTokens)
 	require.Equal(t, "test-model-id", usageChunk.Usage.Model)
 	require.Equal(t, model.ModelClassDefault, usageChunk.Usage.ModelClass)
-	require.IsType(t, model.StopChunk{}, chunks[1])
-	require.Equal(t, usageChunk.Usage, cp.response().Usage)
+	stopChunk, ok := chunks[1].(model.StopChunk)
+	require.True(t, ok)
+	require.Equal(t, string(brtypes.StopReasonMaxTokens), stopChunk.Reason)
+	require.True(t, stopChunk.OutputLimited)
+	response := cp.response()
+	require.Equal(t, usageChunk.Usage, response.Usage)
+	require.True(t, response.OutputLimited)
 }
 
 func TestBedrockStreamRejectsMissingToolCallIDWithUsage(t *testing.T) {

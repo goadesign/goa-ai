@@ -58,7 +58,7 @@ func fingerprintResponse(response *Response) (responseFingerprint, error) {
 // response-wide preflight has bounded all traversal and byte work.
 func fingerprintPreflightedResponse(response *Response) (responseFingerprint, error) {
 	writer := &responseFingerprintWriter{hash: sha256.New()}
-	writer.writeString(responseevidence.VersionV1)
+	writer.writeString(responseevidence.VersionV2)
 	if err := writer.writeResponse(response); err != nil {
 		return responseFingerprint{}, err
 	}
@@ -68,7 +68,7 @@ func fingerprintPreflightedResponse(response *Response) (responseFingerprint, er
 	}, nil
 }
 
-// writeResponse records fields in the stable v1 order.
+// writeResponse records fields in the stable v2 order.
 func (w *responseFingerprintWriter) writeResponse(response *Response) error {
 	if response == nil {
 		w.writeByte(0)
@@ -80,6 +80,7 @@ func (w *responseFingerprintWriter) writeResponse(response *Response) error {
 	}
 	w.writeTokenUsage(response.Usage)
 	w.writeString(response.StopReason)
+	w.writeBool(response.OutputLimited)
 	return nil
 }
 

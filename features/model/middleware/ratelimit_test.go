@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,8 +49,9 @@ func (*closeTrackingStreamer) Response() *model.Response {
 type fakeCountingClient struct {
 	fakeClient
 
-	count model.TokenCount
-	err   error
+	count      model.TokenCount
+	err        error
+	countCalls int
 }
 
 type fakeNoCounterClient struct{}
@@ -85,6 +87,7 @@ func (f *fakeClient) CountTokens(_ context.Context, req *model.Request) (model.T
 }
 
 func (f *fakeCountingClient) CountTokens(context.Context, *model.Request) (model.TokenCount, error) {
+	f.countCalls++
 	if f.err != nil {
 		return model.TokenCount{}, f.err
 	}
@@ -95,30 +98,162 @@ func TestAdaptiveRateLimiterRequiresExactTokenCount(t *testing.T) {
 	limiter := newAdaptiveRateLimiter(60_000, 60_000)
 	err := limiter.wait(t.Context(), &fakeCountingClient{
 		count: model.TokenCount{InputTokens: 10, Exact: false},
-	}, &model.Request{}, false)
+	}, &model.Request{})
 	require.ErrorContains(t, err, "requires an exact provider token count")
 }
 
-func TestAdaptiveRateLimiterReservesRequestedOutputCapacity(t *testing.T) {
-	limiter := newAdaptiveRateLimiter(1_000, 1_000)
-	limiter.limiter = rate.NewLimiter(0, 1_000)
+func TestAdaptiveRateLimiterPublicConstructorsSelectRequestCost(t *testing.T) {
+	tests := []struct {
+		name            string
+		newLimiter      func() *AdaptiveRateLimiter
+		maxTokens       int
+		expectedBalance float64
+	}{
+		{
+			name: "input only",
+			newLimiter: func() *AdaptiveRateLimiter {
+				return NewAdaptiveRateLimiter(t.Context(), nil, "", 1_000, 1_000)
+			},
+			expectedBalance: 900,
+		},
+		{
+			name: "input and requested output",
+			newLimiter: func() *AdaptiveRateLimiter {
+				return NewOutputReservationAdaptiveRateLimiter(
+					t.Context(),
+					nil,
+					"",
+					1_000,
+					1_000,
+				)
+			},
+			maxTokens:       50,
+			expectedBalance: 850,
+		},
+	}
 
-	err := limiter.wait(t.Context(), &fakeCountingClient{
-		count: model.TokenCount{InputTokens: 100, Exact: true},
-	}, &model.Request{MaxTokens: 50}, true)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := &fakeCountingClient{
+				fakeClient: fakeClient{
+					response: &model.Response{
+						Content: []model.Message{{
+							Role:  model.ConversationRoleAssistant,
+							Parts: []model.Part{model.TextPart{Text: "ok"}},
+						}},
+						StopReason: "end_turn",
+					},
+				},
+				count: model.TokenCount{
+					Model:       "provider-model",
+					InputTokens: 100,
+					Exact:       true,
+				},
+			}
+			client, err := model.NewClient(raw)
+			require.NoError(t, err)
+			limiter := test.newLimiter()
+			limiter.limiter = rate.NewLimiter(0, 1_000)
+			wrapped, err := limiter.Middleware()(client)
+			require.NoError(t, err)
 
-	require.NoError(t, err)
-	require.InDelta(t, 850, limiter.limiter.Tokens(), 0.001)
+			_, err = wrapped.Complete(t.Context(), &model.Request{
+				Messages: []*model.Message{{
+					Role:  model.ConversationRoleUser,
+					Parts: []model.Part{model.TextPart{Text: "hello"}},
+				}},
+				MaxTokens: test.maxTokens,
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, 1, raw.countCalls)
+			require.Equal(t, 1, raw.completeCalls)
+			require.InDelta(t, test.expectedBalance, limiter.limiter.Tokens(), 0.001)
+		})
+	}
 }
 
-func TestAdaptiveRateLimiterOutputReservationRequiresPositiveMaxTokens(t *testing.T) {
-	limiter := newAdaptiveRateLimiter(1_000, 1_000)
+func TestAdaptiveRateLimiterOutputReservationRejectsBeforeCounting(t *testing.T) {
+	raw := &fakeCountingClient{
+		fakeClient: fakeClient{
+			stream: &closeTrackingStreamer{},
+		},
+		count: model.TokenCount{
+			Model:       "provider-model",
+			InputTokens: 100,
+			Exact:       true,
+		},
+	}
+	client, err := model.NewClient(raw)
+	require.NoError(t, err)
+	limiter := NewOutputReservationAdaptiveRateLimiter(
+		t.Context(),
+		nil,
+		"",
+		1_000,
+		1_000,
+	)
+	wrapped, err := limiter.Middleware()(client)
+	require.NoError(t, err)
 
-	err := limiter.wait(t.Context(), &fakeCountingClient{
-		count: model.TokenCount{InputTokens: 100, Exact: true},
-	}, &model.Request{}, true)
+	stream, err := wrapped.Stream(t.Context(), &model.Request{})
 
+	require.Nil(t, stream)
 	require.ErrorContains(t, err, "requires positive max tokens")
+	require.Zero(t, raw.countCalls)
+	require.Zero(t, raw.streamCalls)
+}
+
+func TestAdaptiveRateLimiterOutputReservationRejectsOverflow(t *testing.T) {
+	raw := &fakeCountingClient{
+		fakeClient: fakeClient{
+			response: &model.Response{
+				Content: []model.Message{{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{model.TextPart{Text: "ok"}},
+				}},
+				StopReason: "end_turn",
+			},
+		},
+		count: model.TokenCount{
+			Model:       "provider-model",
+			InputTokens: math.MaxInt,
+			Exact:       true,
+		},
+	}
+	client, err := model.NewClient(raw)
+	require.NoError(t, err)
+	limiter := NewOutputReservationAdaptiveRateLimiter(
+		t.Context(),
+		nil,
+		"",
+		1_000,
+		1_000,
+	)
+	wrapped, err := limiter.Middleware()(client)
+	require.NoError(t, err)
+
+	response, err := wrapped.Complete(t.Context(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "hello"}},
+		}},
+		MaxTokens: 1,
+	})
+
+	require.Nil(t, response)
+	require.ErrorContains(t, err, "exceeds integer range")
+	require.Equal(t, 1, raw.countCalls)
+	require.Zero(t, raw.completeCalls)
+}
+
+func TestOutputReservationClusterKeySeparatesAccountingModes(t *testing.T) {
+	require.Empty(t, outputReservationClusterKey(""))
+	require.Equal(
+		t,
+		"model"+outputReservationClusterKeySuffix,
+		outputReservationClusterKey("model"),
+	)
 }
 
 func TestAdaptiveRateLimiter_BackoffOnRateLimited(t *testing.T) {

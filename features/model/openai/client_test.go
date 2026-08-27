@@ -26,14 +26,41 @@ import (
 func TestOpenAIOutputLimited(t *testing.T) {
 	response := &responses.Response{Status: responses.ResponseStatusIncomplete}
 	response.IncompleteDetails.Reason = "max_output_tokens"
-	require.True(t, openAIOutputLimited(response))
+	translated, err := translateResponse(
+		response,
+		nil,
+		"openai-test",
+		model.ModelClassDefault,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.True(t, translated.OutputLimited)
 
 	response.IncompleteDetails.Reason = "content_filter"
-	require.False(t, openAIOutputLimited(response))
+	translated, err = translateResponse(
+		response,
+		nil,
+		"openai-test",
+		model.ModelClassDefault,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.False(t, translated.OutputLimited)
 
 	response.Status = responses.ResponseStatusCompleted
 	response.IncompleteDetails.Reason = ""
-	require.False(t, openAIOutputLimited(response))
+	translated, err = translateResponse(
+		response,
+		nil,
+		"openai-test",
+		model.ModelClassDefault,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	require.False(t, translated.OutputLimited)
 }
 
 // mustOpenAIToolInput compiles a static test schema.
@@ -1504,8 +1531,12 @@ func TestOpenAIStreamerHandlesIncompleteResponse(t *testing.T) {
 	require.Len(t, chunks, 3)
 	assert.Equal(t, "Hello", chunks[0].(model.TextChunk).Message.Parts[0].(model.TextPart).Text)
 	assert.Equal(t, 15, chunks[1].(model.UsageChunk).Usage.TotalTokens)
-	assert.Equal(t, "max_output_tokens", chunks[2].(model.StopChunk).Reason)
-	require.NotNil(t, streamer.Response())
+	stop := chunks[2].(model.StopChunk)
+	assert.Equal(t, "max_output_tokens", stop.Reason)
+	assert.True(t, stop.OutputLimited)
+	response := streamer.Response()
+	require.NotNil(t, response)
+	assert.True(t, response.OutputLimited)
 }
 
 func TestOpenAIStreamerStructuredOutput(t *testing.T) {

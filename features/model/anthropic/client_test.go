@@ -34,7 +34,16 @@ func TestAnthropicOutputLimited(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			require.Equal(t, test.want, anthropicOutputLimited(string(test.reason)))
+			response, err := translateResponse(&sdk.Message{
+				StopReason: test.reason,
+				Content: []sdk.ContentBlockUnion{{
+					Type: "text",
+					Text: "answer",
+				}},
+			}, nil)
+
+			require.NoError(t, err)
+			require.Equal(t, test.want, response.OutputLimited)
 		})
 	}
 }
