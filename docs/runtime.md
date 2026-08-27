@@ -2879,11 +2879,11 @@ rl := mdlmw.NewAdaptiveRateLimiter(
     ctx,
     throughputMap,     // *rmap.Map for cluster-wide state (nil for local)
     "bedrock:sonnet",  // Model family key
-    80_000,            // Initial input tokens per minute
-    1_000_000,         // Maximum input tokens per minute
+    80_000,            // Initial quota-token capacity per minute
+    1_000_000,         // Maximum quota-token capacity per minute
 )
 
-limitedClient, err := rl.Middleware()(modelClient)
+limitedClient, err := rl.MiddlewareWithOutputReservation()(modelClient)
 if err != nil {
     return err
 }
@@ -2892,10 +2892,13 @@ if err := rt.RegisterModel("bedrock", limitedClient); err != nil {
 }
 ```
 
-The limiter reserves the provider's exact input-token count before each
-request. It does not meter output-token quotas. For streams, it increases
-capacity only after clean end-of-stream and reduces capacity when a terminal
-stream error is rate limited.
+`Middleware` charges only the provider's exact input-token count.
+`MiddlewareWithOutputReservation` additionally charges `Request.MaxTokens`
+and rejects requests that omit a positive `MaxTokens`. Use the reservation
+form when the provider deducts requested output capacity from the same
+per-minute quota before generation. For streams, the limiter increases capacity
+only after clean end-of-stream and reduces capacity when a terminal stream
+error is rate limited.
 
 ---
 
@@ -3341,11 +3344,11 @@ rl := mdlmw.NewAdaptiveRateLimiter(
     ctx,
     throughputMap,     // *rmap.Map for cluster-wide state (nil for local)
     "bedrock:sonnet",  // Model family key
-    80_000,            // Initial input tokens per minute
-    1_000_000,         // Maximum input tokens per minute
+    80_000,            // Initial quota-token capacity per minute
+    1_000_000,         // Maximum quota-token capacity per minute
 )
 
-limitedClient, err := rl.Middleware()(modelClient)
+limitedClient, err := rl.MiddlewareWithOutputReservation()(modelClient)
 if err != nil {
     return err
 }
@@ -3354,10 +3357,11 @@ if err := rt.RegisterModel("bedrock", limitedClient); err != nil {
 }
 ```
 
-The rate limiter reserves the provider's exact input-token count and adjusts
-that input-token budget from terminal provider outcomes. It probes upward after
-a unary response or stream ends successfully and backs off after a unary or
-streaming rate-limit error. It does not meter output-token quotas.
+The input-only middleware reserves the provider's exact input-token count. The
+output-reservation form adds `Request.MaxTokens`, so the bucket uses the same
+units a provider deducts when the request starts. Both forms probe upward after
+a unary response or stream ends successfully and back off after a unary or
+streaming rate-limit error.
 
 ---
 

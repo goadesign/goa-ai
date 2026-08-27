@@ -95,8 +95,30 @@ func TestAdaptiveRateLimiterRequiresExactTokenCount(t *testing.T) {
 	limiter := newAdaptiveRateLimiter(60_000, 60_000)
 	err := limiter.wait(t.Context(), &fakeCountingClient{
 		count: model.TokenCount{InputTokens: 10, Exact: false},
-	}, &model.Request{})
+	}, &model.Request{}, false)
 	require.ErrorContains(t, err, "requires an exact provider token count")
+}
+
+func TestAdaptiveRateLimiterReservesRequestedOutputCapacity(t *testing.T) {
+	limiter := newAdaptiveRateLimiter(1_000, 1_000)
+	limiter.limiter = rate.NewLimiter(0, 1_000)
+
+	err := limiter.wait(t.Context(), &fakeCountingClient{
+		count: model.TokenCount{InputTokens: 100, Exact: true},
+	}, &model.Request{MaxTokens: 50}, true)
+
+	require.NoError(t, err)
+	require.InDelta(t, 850, limiter.limiter.Tokens(), 0.001)
+}
+
+func TestAdaptiveRateLimiterOutputReservationRequiresPositiveMaxTokens(t *testing.T) {
+	limiter := newAdaptiveRateLimiter(1_000, 1_000)
+
+	err := limiter.wait(t.Context(), &fakeCountingClient{
+		count: model.TokenCount{InputTokens: 100, Exact: true},
+	}, &model.Request{}, true)
+
+	require.ErrorContains(t, err, "requires positive max tokens")
 }
 
 func TestAdaptiveRateLimiter_BackoffOnRateLimited(t *testing.T) {
