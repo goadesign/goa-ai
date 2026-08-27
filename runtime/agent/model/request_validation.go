@@ -15,6 +15,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/internal/correction"
 	"goa.design/goa-ai/runtime/agent/internal/responseevidence"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -24,6 +25,7 @@ type (
 	RequestContract struct {
 		stream             streamValidationContract
 		completionValidate func(*Response, *Completion) error
+		structuredValidate func(rawjson.Message) error
 		toolValidators     map[tools.Ident]toolCallValidator
 		toolChoiceMode     ToolChoiceMode
 		toolChoiceName     tools.Ident
@@ -51,6 +53,13 @@ type (
 
 	toolCallValidator func(ToolCall) error
 
+	// preparedRequestContract binds a compiled contract to the exact private
+	// request copy that model.Client passes to its raw provider.
+	preparedRequestContract struct {
+		request  *Request
+		contract *RequestContract
+	}
+
 	// toolCallValidationError carries framework-authored correction guidance
 	// without retaining the generated codec message, which may quote rejected
 	// provider values.
@@ -75,6 +84,17 @@ func newRequestContract(request *Request) (*RequestContract, error) {
 	if err := validateRequest(request); err != nil {
 		return nil, err
 	}
+	if prepared := request.preparedContract; prepared != nil && prepared.request == request {
+		return prepared.contract, nil
+	}
+	var structuredValidate func(rawjson.Message) error
+	if request.StructuredOutput != nil {
+		var err error
+		structuredValidate, err = compileJSONSchemaValidator(request.StructuredOutput.Schema)
+		if err != nil {
+			return nil, fmt.Errorf("model request structured output schema: %w", err)
+		}
+	}
 	validators, err := configuredToolCallValidators(request)
 	if err != nil {
 		return nil, err
@@ -89,10 +109,24 @@ func newRequestContract(request *Request) (*RequestContract, error) {
 	return &RequestContract{
 		stream:             newStreamValidationContract(request),
 		completionValidate: request.completionValidate,
+		structuredValidate: structuredValidate,
 		toolValidators:     validators,
 		toolChoiceMode:     choiceMode,
 		toolChoiceName:     choiceName,
 	}, nil
+}
+
+// preparedRequest binds the compiled contract while constructing the exact
+// request value passed to a raw provider. The returned request is not mutated
+// after construction. Other copies and direct provider calls compile their own
+// contracts because their request identity does not match this value.
+func preparedRequest(request *Request, contract *RequestContract) *Request {
+	prepared := *request
+	prepared.preparedContract = &preparedRequestContract{
+		request:  &prepared,
+		contract: contract,
+	}
+	return &prepared
 }
 
 // ValidateResponse owns one provider response, applies this immutable request
@@ -322,8 +356,12 @@ func (c *RequestContract) validateOwnedResponse(response *Response) error {
 		return fmt.Errorf("invalid model response: %w", err)
 	}
 	if c.stream.structuredOutputPresent {
-		if err := validateStructuredOutputResponse(response); err != nil {
+		payload, err := structuredOutputResponsePayload(response)
+		if err != nil {
 			return err
+		}
+		if err := c.structuredValidate(payload); err != nil {
+			return fmt.Errorf("structured output response does not match its schema: %w", err)
 		}
 	}
 	if c.completionValidate != nil {
@@ -411,7 +449,10 @@ func validateRequest(request *Request) error {
 		if output.Name == "" {
 			return errors.New("model request structured output name is required")
 		}
-		if len(output.Schema) > 0 && !json.Valid(output.Schema) {
+		if len(output.Schema) == 0 {
+			return errors.New("model request structured output schema is required")
+		}
+		if !json.Valid(output.Schema) {
 			return errors.New("model request structured output schema is not valid JSON")
 		}
 		if len(output.SchemaWithoutRootExample) > 0 && !json.Valid(output.SchemaWithoutRootExample) {
@@ -619,22 +660,22 @@ func validateToolChoiceResponse(
 	}
 }
 
-// validateStructuredOutputResponse requires the unary equivalent of the
-// streaming completion envelope: one assistant message containing JSON and no
-// tool calls. Generated completion decoding, when attached, runs afterward.
-func validateStructuredOutputResponse(response *Response) error {
+// structuredOutputResponsePayload extracts the unary equivalent of a final
+// streaming completion. The request-owned schema validator parses and checks
+// the returned bytes before callers can receive the response.
+func structuredOutputResponsePayload(response *Response) (rawjson.Message, error) {
 	if len(response.ToolCalls()) != 0 {
-		return errors.New("structured output response returned tool calls")
+		return nil, errors.New("structured output response returned tool calls")
 	}
 	if len(response.Content) != 1 {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"structured output response requires exactly one assistant message, got %d",
 			len(response.Content),
 		)
 	}
 	message := response.Content[0]
 	if message.Role != ConversationRoleAssistant {
-		return fmt.Errorf("structured output response contains %q message", message.Role)
+		return nil, fmt.Errorf("structured output response contains %q message", message.Role)
 	}
 	var payload strings.Builder
 	for _, part := range message.Parts {
@@ -643,17 +684,13 @@ func validateStructuredOutputResponse(response *Response) error {
 			payload.WriteString(actual.Text)
 		case ThinkingPart, CacheCheckpointPart:
 		default:
-			return fmt.Errorf("structured output response contains unsupported part %T", part)
+			return nil, fmt.Errorf("structured output response contains unsupported part %T", part)
 		}
 	}
-	data := []byte(payload.String())
-	if len(strings.TrimSpace(payload.String())) == 0 {
-		return errors.New("structured output response did not contain assistant JSON")
+	if payload.Len() == 0 {
+		return nil, errors.New("structured output response did not contain assistant JSON")
 	}
-	if !json.Valid(data) {
-		return errors.New("structured output response assistant payload is not valid JSON")
-	}
-	return nil
+	return rawjson.Message(payload.String()), nil
 }
 
 // newStreamValidationContract copies every request value that changes stream

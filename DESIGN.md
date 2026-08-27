@@ -121,6 +121,15 @@ Providers that do not implement structured output fail explicitly with
 Generated schemas stay provider-neutral. Provider adapters may normalize that
 canonical schema to a provider-specific subset for constrained decoding, but
 they must fail explicitly instead of redefining the service contract.
+Before provider work, the validated client compiles the canonical schema into a
+request-owned validator. Raw schema bytes pass directly to the JSON Schema
+compiler's in-memory loader; the runtime does not publish or pass a generic map
+as the schema contract. It applies that validator to unary output. For
+streaming output, it retains the final completion until the provider ends,
+validates both final representations, and requires their JSON bytes to match
+before returning the completion. Generated validation adds checks without
+replacing these framework checks. Provider-native or strict enforcement is an
+earlier optimization rather than the authoritative acceptance check.
 The Bedrock Converse adapter uses a private strict tool for Claude 4.6 so
 Runtime `CountTokens` and Converse receive the same schema. Claude 4.5 retains
 native `OutputConfig` because its manual thinking mode cannot use forced tools.

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -37,6 +38,7 @@ type (
 		usageSeen          bool
 		completion         *completionSnapshot
 		completionValidate func(*Response, *Completion) error
+		structuredValidate func(rawjson.Message) error
 		toolValidators     map[tools.Ident]toolCallValidator
 		toolChoiceMode     ToolChoiceMode
 		toolChoiceName     tools.Ident
@@ -101,6 +103,7 @@ func newStreamValidator(contract *RequestContract) *streamValidator {
 		contract:           contract.stream,
 		modelClass:         contract.stream.modelClass,
 		completionValidate: contract.completionValidate,
+		structuredValidate: contract.structuredValidate,
 		toolChoiceMode:     contract.toolChoiceMode,
 		toolChoiceName:     contract.toolChoiceName,
 	}
@@ -274,8 +277,8 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 		if v.completion != nil {
 			return errors.New("model stream emitted multiple final completions")
 		}
-		if !json.Valid(actual.Completion.Payload) {
-			return errors.New("model stream emitted invalid completion JSON")
+		if err := v.structuredValidate(actual.Completion.Payload); err != nil {
+			return fmt.Errorf("stream completion does not match its schema: %w", err)
 		}
 		if v.completionValidate != nil {
 			completion := actual.Completion
@@ -376,19 +379,28 @@ func (v *streamValidator) finish(response *Response) error {
 		return errors.New("streamed thinking does not match canonical response")
 	}
 	if v.completion != nil {
-		if !json.Valid([]byte(v.completion.payload)) {
+		completionPayload := rawjson.Message(v.completion.payload)
+		if !json.Valid(completionPayload) {
 			return errors.New("model stream emitted invalid completion JSON")
+		}
+		responsePayload, err := structuredOutputResponsePayload(response)
+		if err != nil {
+			return err
+		}
+		if err := v.structuredValidate(responsePayload); err != nil {
+			return fmt.Errorf("structured output response does not match its schema: %w", err)
+		}
+		if !bytes.Equal(completionPayload, responsePayload) {
+			return errors.New("stream completion does not match canonical response")
 		}
 		if v.completionValidate != nil {
 			completion := &Completion{
 				Name:    v.completion.name,
-				Payload: []byte(v.completion.payload),
+				Payload: completionPayload,
 			}
 			if err := v.completionValidate(response, completion); err != nil {
 				return err
 			}
-		} else if !bytes.Equal([]byte(v.completion.payload), []byte(responseText(response))) {
-			return errors.New("stream completion does not match canonical response")
 		}
 	}
 	return nil

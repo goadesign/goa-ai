@@ -10,7 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"reflect"
+	"math/big"
 
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -433,8 +433,8 @@ type (
 		Name string
 	}
 
-	// StructuredOutput configures provider-enforced structured assistant output
-	// for a request.
+	// StructuredOutput requires one canonical JSON assistant value that conforms
+	// to Schema.
 	//
 	// Provider adapters fail fast when structured output is requested but not
 	// supported instead of silently degrading to free-form text. An adapter may
@@ -444,7 +444,9 @@ type (
 	// caller's point of view: a single canonical JSON payload conforming to
 	// Schema.
 	StructuredOutput struct {
-		// Schema constrains the assistant response as JSON Schema.
+		// Schema is the required canonical JSON Schema for the assistant response.
+		// The validated client compiles it before provider work and applies it to
+		// the final response even when the provider also enforces the schema.
 		Schema []byte
 
 		// SchemaWithoutRootExample is Schema without its root example annotation.
@@ -585,7 +587,7 @@ type (
 		// Thinking configures provider-specific reasoning behavior.
 		Thinking *ThinkingOptions
 
-		// StructuredOutput constrains assistant output when supported.
+		// StructuredOutput constrains the final assistant JSON when supported.
 		StructuredOutput *StructuredOutput
 
 		// Cache configures prompt caching behavior. Nil means no caching.
@@ -594,6 +596,10 @@ type (
 		// completionValidate applies the generated typed completion contract.
 		// Provider adapters ignore this in-process validation hook.
 		completionValidate func(*Response, *Completion) error
+
+		// preparedContract lets the exact request copy owned by model.Client
+		// carry its compiled contract through the raw provider call.
+		preparedContract *preparedRequestContract
 	}
 
 	// Response is the result of a non-streaming invocation.
@@ -1183,44 +1189,119 @@ func ToolInputFromContract(toolName string, contract ToolInputContract) (ToolInp
 // schemaDeclaresNoArguments reports whether an external schema declares an
 // object with no named model-authored fields.
 func schemaDeclaresNoArguments(schema rawjson.Message) bool {
-	document, err := decodeSingleJSONDocument(schema)
-	if err != nil {
+	var root toolSchemaArguments
+	if err := decodeToolSchemaRoot(schema, &root); err != nil {
 		return false
 	}
-	object, ok := document.(map[string]any)
-	if !ok || object["type"] != jsonObjectType {
+	var declared string
+	if err := json.Unmarshal(root.Type, &declared); err != nil || declared != jsonObjectType {
 		return false
 	}
-	properties, ok := object["properties"]
-	if !ok {
+	if len(root.Properties) == 0 {
 		return true
 	}
-	fields, ok := properties.(map[string]any)
-	return ok && len(fields) == 0
+	var fields map[string]json.RawMessage
+	return json.Unmarshal(root.Properties, &fields) == nil && fields != nil && len(fields) == 0
 }
 
 // validateSchemaWithoutRootExample proves that the alternate provider schema
-// differs only by removing root example annotations.
+// differs only by removing root example annotations. It compares raw top-level
+// members and never turns nested schema documents into generic Go values.
 func validateSchemaWithoutRootExample(schema, alternate rawjson.Message) error {
-	canonicalDocument, err := decodeSingleJSONDocument(schema)
+	canonicalObject, err := decodeSchemaRootMembers(schema)
 	if err != nil {
 		return err
 	}
-	alternateDocument, err := decodeSingleJSONDocument(alternate)
+	alternateObject, err := decodeSchemaRootMembers(alternate)
 	if err != nil {
 		return err
-	}
-	canonicalObject, canonicalOK := canonicalDocument.(map[string]any)
-	alternateObject, alternateOK := alternateDocument.(map[string]any)
-	if !canonicalOK || !alternateOK {
-		return errors.New("both schema projections must be objects")
 	}
 	delete(canonicalObject, "example")
 	delete(canonicalObject, "examples")
-	if !reflect.DeepEqual(canonicalObject, alternateObject) {
+	if !maps.EqualFunc(canonicalObject, alternateObject, equalRawJSON) {
 		return errors.New("alternate schema changes fields other than root examples")
 	}
 	return nil
+}
+
+// decodeSchemaRootMembers retains each top-level schema member as raw JSON so
+// root-only contract checks do not decode or rewrite nested schema values.
+func decodeSchemaRootMembers(schema rawjson.Message) (map[string]json.RawMessage, error) {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(schema, &members); err != nil {
+		return nil, err
+	}
+	if members == nil {
+		return nil, errors.New("schema projection must be an object")
+	}
+	return members, nil
+}
+
+// equalRawJSON compares two retained JSON values without exposing a generic
+// decoded schema. Objects ignore member order, arrays preserve element order,
+// scalar values compare by meaning, and malformed input returns false.
+func equalRawJSON(left, right json.RawMessage) bool {
+	left = bytes.TrimSpace(left)
+	right = bytes.TrimSpace(right)
+	if !json.Valid(left) || !json.Valid(right) || len(left) == 0 || len(right) == 0 {
+		return false
+	}
+	kind := rawJSONKind(left[0])
+	if kind != rawJSONKind(right[0]) {
+		return false
+	}
+	switch kind {
+	case '{':
+		var leftObject, rightObject map[string]json.RawMessage
+		if json.Unmarshal(left, &leftObject) != nil || json.Unmarshal(right, &rightObject) != nil {
+			return false
+		}
+		return maps.EqualFunc(leftObject, rightObject, equalRawJSON)
+	case '[':
+		var leftArray, rightArray []json.RawMessage
+		if json.Unmarshal(left, &leftArray) != nil || json.Unmarshal(right, &rightArray) != nil {
+			return false
+		}
+		if len(leftArray) != len(rightArray) {
+			return false
+		}
+		for index := range leftArray {
+			if !equalRawJSON(leftArray[index], rightArray[index]) {
+				return false
+			}
+		}
+		return true
+	case '"':
+		var leftString, rightString string
+		if json.Unmarshal(left, &leftString) != nil || json.Unmarshal(right, &rightString) != nil {
+			return false
+		}
+		return leftString == rightString
+	case 'b', 'n':
+		return bytes.Equal(left, right)
+	default:
+		var leftNumber, rightNumber big.Rat
+		if _, ok := leftNumber.SetString(string(left)); !ok {
+			return false
+		}
+		if _, ok := rightNumber.SetString(string(right)); !ok {
+			return false
+		}
+		return leftNumber.Cmp(&rightNumber) == 0
+	}
+}
+
+// rawJSONKind groups every legal number spelling and both boolean values into
+// their JSON value kinds so semantic comparison does not depend on first bytes.
+func rawJSONKind(first byte) byte {
+	switch first {
+	case '{', '[', '"', 'n':
+		return first
+	case 't', 'f':
+		return 'b'
+	default:
+		return '#'
+	}
 }
 
 // AcceptsEmptyObject reports whether the tool's exact payload validator accepts

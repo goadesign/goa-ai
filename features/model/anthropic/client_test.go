@@ -317,26 +317,51 @@ func TestComplete_TextOnly(t *testing.T) {
 }
 
 func TestCountTokensRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
+	request := func(schema rawjson.Message) *model.Request {
+		return &model.Request{
+			Messages: []*model.Message{{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "count this"}},
+			}},
+			StructuredOutput: &model.StructuredOutput{Name: "result", Schema: schema},
+		}
+	}
 	tests := []struct {
 		name    string
 		request *model.Request
+		wantErr bool
 	}{
-		{name: "nil request"},
-		{name: "unsupported model class", request: &model.Request{ModelClass: "unsupported"}},
+		{name: "nil request", wantErr: true},
+		{name: "unsupported model class", request: &model.Request{ModelClass: "unsupported"}, wantErr: true},
+		{name: "missing structured schema", request: request(nil), wantErr: true},
+		{name: "malformed structured schema", request: request(rawjson.Message(`{"type":`)), wantErr: true},
+		{
+			name:    "semantically invalid structured schema",
+			request: request(rawjson.Message(`{"type":"not-a-json-type"}`)),
+			wantErr: true,
+		},
+		{name: "valid structured schema", request: request(rawjson.Message(`{"type":"object"}`))},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			stub := &stubMessagesClient{}
-			client, err := New(stub, Options{
-				DefaultModel: "claude-3.5-sonnet",
+			stub := &stubMessagesClient{countResp: &sdk.MessageTokensCount{InputTokens: 3}}
+			raw, err := NewProvider(stub, Options{
+				DefaultModel: "anthropic.claude-sonnet-5",
 				MaxTokens:    128,
 			})
 			require.NoError(t, err)
+			counter, ok := raw.(model.TokenCounter)
+			require.True(t, ok)
 
-			_, err = client.CountTokens(context.Background(), tt.request)
+			_, err = counter.CountTokens(context.Background(), tt.request)
 
-			require.Error(t, err)
-			assert.Zero(t, stub.countCalls)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Zero(t, stub.countCalls)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, 1, stub.countCalls)
 		})
 	}
 }

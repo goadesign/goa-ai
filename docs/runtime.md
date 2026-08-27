@@ -192,9 +192,20 @@ if err != nil {
 fmt.Println(resp.Value.Name)
 ```
 
-Every low-level `model.StructuredOutput` must also provide a nonempty `Name`.
-The shared request boundary rejects a missing name before any provider call;
-generated completion helpers derive the name from the validated completion DSL.
+Every low-level `model.StructuredOutput` must provide a nonempty `Name` and a
+nonempty, compilable JSON Schema. The shared request boundary compiles that
+schema once for the private request copy passed through a normal `model.Client`
+call. The schema remains raw JSON bytes until the JSON Schema compiler reads it
+through its in-memory resource loader; core runtime APIs never expose a
+map-shaped schema contract. A raw provider called directly, including through
+`CountTokens`, compiles its own request contract before translation. The
+validated client checks unary JSON immediately. For streaming, it retains the
+final `completion` chunk, drains the provider, validates the complete response,
+and requires the exact completion bytes to match before returning the retained
+chunk. A generated or caller-supplied completion validator adds checks but
+cannot replace schema validation or byte reconciliation. Provider enforcement
+remains an earlier optimization. Generated completion helpers derive the name
+and schema from the validated completion DSL.
 
 Unary completion makes exactly one model call. The response is decoded with the
 generated codec. If its JSON violates the completion contract, the helper
@@ -269,9 +280,11 @@ Typed completion helpers are intentionally strict:
 - Unary helpers make one provider request. A generated-codec rejection returns a
   non-retryable `planner.OutputContractError` without another model request.
 - Streaming providers may emit `completion_delta*` preview fragments and emit exactly one final `completion` chunk, or reject the request explicitly.
-- Streaming helpers hold the final value until the stream ends normally and
-  the provider's complete response contains the same value. They never restart
-  after exposing previews; an invalid stream returns the same non-retryable
+- The low-level validated stream holds the final completion and every later
+  chunk until the provider ends normally, both final representations satisfy
+  the request schema, and their JSON bytes match exactly. Typed helpers then
+  decode that accepted value. They never restart after exposing previews; an
+  invalid stream returns the same non-retryable
   output-contract error without exposing the final value.
 - `Value` becomes available only after `Recv` reaches and validates the final
   completion; there is no separate decoder that can accept an unchecked chunk.
@@ -409,9 +422,10 @@ because its manual thinking mode cannot use forced tools. Newer Claude models
 for which Bedrock exposes forced tools but not `OutputConfig` or `strict` tools
 use one private non-strict tool. This fallback keeps those models available for
 typed completions, but Bedrock does not enforce the schema: the adapter unwraps
-the private tool value, the validated `model.Client` rejects malformed JSON,
-and generated typed-completion decoders reject schema-invalid output as
-`model.OutputValidationError` before the caller can observe a response.
+the private tool value, and the validated `model.Client` rejects malformed or
+schema-invalid JSON as `model.OutputValidationError` before the caller can
+observe a response. Generated typed-completion decoders then apply the exact Goa
+result contract at the same boundary.
 `bedrock.NewAnthropic` makes the same selection before Anthropic Messages
 encoding. Sonnet 5 and Opus 5 use the private non-strict tool because Bedrock
 Messages rejects `output_config.format` and every `strict` property. Unary and

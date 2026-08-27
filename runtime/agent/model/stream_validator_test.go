@@ -13,7 +13,10 @@ import (
 )
 
 func TestRequestContractSupportsConcurrentResponseValidation(t *testing.T) {
-	request := &Request{StructuredOutput: &StructuredOutput{Name: "answer"}}
+	request := &Request{StructuredOutput: &StructuredOutput{
+		Name:   "answer",
+		Schema: []byte(`{"type":"object"}`),
+	}}
 	require.NoError(t, SetCompletionValidator(request, func(*Response, *Completion) error {
 		return nil
 	}))
@@ -295,7 +298,10 @@ func TestStreamValidatorOwnsRetainedToolPayload(t *testing.T) {
 func TestStreamValidatorOwnsRetainedCompletionPayload(t *testing.T) {
 	payload := []byte(`{"result":"original"}`)
 	validator := mustNewStreamValidator(t, &Request{
-		StructuredOutput: &StructuredOutput{Name: "answer"},
+		StructuredOutput: &StructuredOutput{
+			Name:   "answer",
+			Schema: []byte(`{"type":"object"}`),
+		},
 	})
 	require.NoError(t, validator.accept(CompletionChunk{Completion: Completion{
 		Name:    "answer",

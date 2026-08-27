@@ -77,7 +77,7 @@ func TestJudgeRejectsSchemaInvalidResponseWithoutAnotherRequest(t *testing.T) {
 		Claim:   "The answer is complete.",
 	}})
 
-	require.ErrorContains(t, err, "cannot unmarshal string")
+	require.ErrorContains(t, err, "does not match its schema")
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
 	assert.Nil(t, judgments)
@@ -111,12 +111,12 @@ func TestJudgeRejectsInvalidResponses(t *testing.T) {
 		{
 			name:    "unknown field",
 			body:    `{"judgments":[],"extra":true}`,
-			wantErr: "unknown field",
+			wantErr: "additional properties",
 		},
 		{
 			name:    "trailing value",
 			body:    `{"judgments":[]} {"judgments":[]}`,
-			wantErr: "assistant payload is not valid JSON",
+			wantErr: "multiple JSON values",
 		},
 		{
 			name:    "missing judgment",

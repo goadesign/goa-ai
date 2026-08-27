@@ -80,6 +80,7 @@ type (
 		rejectedDelta    *TokenUsage
 		rejectedTotal    *TokenUsage
 		responseEvidence ResponseEvidence
+		pending          []Chunk
 		finished         bool
 		terminalErr      error
 	}
@@ -304,70 +305,105 @@ func streamResponseEvidence(streamer Streamer) ResponseEvidence {
 // Recv owns and validates each provider chunk before returning it. At EOF it
 // owns and validates the complete response before exposing a clean end.
 func (s *validatedStreamer) Recv() (Chunk, error) {
+	if len(s.pending) > 0 {
+		chunk := s.pending[0]
+		s.pending = s.pending[1:]
+		return chunk, nil
+	}
 	if s.finished {
 		if s.terminalErr != nil {
 			return nil, s.terminalErr
 		}
 		return nil, io.EOF
 	}
-	chunk, err := s.inner.Recv()
-	if err != nil {
-		if !errors.Is(err, io.EOF) {
-			err = s.captureProviderRejection(err)
-			s.finished = true
-			s.terminalErr = err
-			return nil, err
+	for {
+		chunk, err := s.inner.Recv()
+		if err != nil {
+			return s.finishReceive(err)
 		}
-		rawResponse := s.inner.Response()
-		s.responseEvidence.Present = rawResponse != nil
-		s.rejectedTotal = s.contract.validatedUsageEvidence(rawResponse)
-		var responseBudget dynamicValueWalk
-		if preflightErr := preflightResponse(
-			rawResponse,
-			&responseBudget,
-			dynamicCloneEvidence,
-		); preflightErr != nil {
+		if preflightErr := s.validator.preflightStreamChunk(chunk); preflightErr != nil {
 			return nil, s.failValidation(preflightErr)
 		}
-		if preflightErr := s.validator.preflightTerminalResponse(rawResponse); preflightErr != nil {
-			return nil, s.failValidation(preflightErr)
-		}
-		s.responseEvidence = responseEvidencePreflighted(rawResponse)
-		response, cloneErr := ownPreflightedResponse(rawResponse)
+		owned, cloneErr := cloneChunk(chunk)
 		if cloneErr != nil {
 			return nil, s.failValidation(cloneErr)
 		}
-		if response != nil {
-			s.validator.stampUsageIdentity(&response.Usage)
+		if usage, ok := owned.(UsageChunk); ok {
+			s.validator.stampUsageIdentity(&usage.Usage)
+			owned = usage
 		}
-		if finishErr := s.validator.finish(response); finishErr != nil {
-			s.rejected = response
-			return nil, s.failValidation(finishErr)
+		if validateErr := validateCanonicalChunk(owned); validateErr != nil {
+			s.rejectedDelta = rejectedUsageEvidence(owned)
+			return nil, s.failValidation(validateErr)
 		}
-		s.response = response
-		s.finished = true
-		return nil, io.EOF
+		if validateErr := s.validator.acceptOwned(owned); validateErr != nil {
+			s.rejectedDelta = rejectedUsageEvidence(owned)
+			return nil, s.failValidation(validateErr)
+		}
+		if _, ok := owned.(UsageChunk); ok {
+			usage := s.validator.usage
+			s.rejectedDelta = &usage
+		}
+		_, completion := owned.(CompletionChunk)
+		if completion || len(s.pending) > 0 {
+			s.pending = append(s.pending, owned)
+			continue
+		}
+		return owned, nil
 	}
-	if preflightErr := s.validator.preflightStreamChunk(chunk); preflightErr != nil {
+}
+
+// finishReceive reconciles a provider's terminal result before any retained
+// structured completion or later chunk can leave the validated stream.
+func (s *validatedStreamer) finishReceive(err error) (Chunk, error) {
+	if !errors.Is(err, io.EOF) {
+		err = s.captureProviderRejection(err)
+		s.finished = true
+		s.terminalErr = err
+		if len(s.pending) > 0 {
+			s.pending = s.pending[1:]
+		}
+		if len(s.pending) > 0 {
+			chunk := s.pending[0]
+			s.pending = s.pending[1:]
+			return chunk, nil
+		}
+		return nil, err
+	}
+	rawResponse := s.inner.Response()
+	s.responseEvidence.Present = rawResponse != nil
+	s.rejectedTotal = s.contract.validatedUsageEvidence(rawResponse)
+	var responseBudget dynamicValueWalk
+	if preflightErr := preflightResponse(
+		rawResponse,
+		&responseBudget,
+		dynamicCloneEvidence,
+	); preflightErr != nil {
 		return nil, s.failValidation(preflightErr)
 	}
-	owned, err := cloneChunk(chunk)
-	if err != nil {
-		return nil, s.failValidation(err)
+	if preflightErr := s.validator.preflightTerminalResponse(rawResponse); preflightErr != nil {
+		return nil, s.failValidation(preflightErr)
 	}
-	if usage, ok := owned.(UsageChunk); ok {
-		s.validator.stampUsageIdentity(&usage.Usage)
-		owned = usage
+	s.responseEvidence = responseEvidencePreflighted(rawResponse)
+	response, cloneErr := ownPreflightedResponse(rawResponse)
+	if cloneErr != nil {
+		return nil, s.failValidation(cloneErr)
 	}
-	if err := validateCanonicalChunk(owned); err != nil {
-		s.rejectedDelta = rejectedUsageEvidence(owned)
-		return nil, s.failValidation(err)
+	if response != nil {
+		s.validator.stampUsageIdentity(&response.Usage)
 	}
-	if err := s.validator.acceptOwned(owned); err != nil {
-		s.rejectedDelta = rejectedUsageEvidence(owned)
-		return nil, s.failValidation(err)
+	if finishErr := s.validator.finish(response); finishErr != nil {
+		s.rejected = response
+		return nil, s.failValidation(finishErr)
 	}
-	return owned, nil
+	s.response = response
+	s.finished = true
+	if len(s.pending) == 0 {
+		return nil, io.EOF
+	}
+	chunk := s.pending[0]
+	s.pending = s.pending[1:]
+	return chunk, nil
 }
 
 // Response returns the owned complete response after a clean EOF.
@@ -491,6 +527,7 @@ func (s *observedValidatedStreamer) observeClose(providerErr error) error {
 
 // failValidation latches the first stream contract failure.
 func (s *validatedStreamer) failValidation(err error) error {
+	s.pending = nil
 	s.finished = true
 	s.terminalErr = newOutputValidationError(
 		err,

@@ -132,8 +132,11 @@ func TestTracedClientRecordsConfiguredCompletionFailure(t *testing.T) {
 		false,
 	)
 	request := &model.Request{
-		ModelClass:       model.ModelClassDefault,
-		StructuredOutput: &model.StructuredOutput{Name: "answer"},
+		ModelClass: model.ModelClassDefault,
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "answer",
+			Schema: []byte(`{"type":"string"}`),
+		},
 	}
 	require.NoError(t, model.SetCompletionValidator(
 		request,
@@ -172,8 +175,11 @@ func TestTracedStreamRecordsConfiguredCompletionFailure(t *testing.T) {
 		false,
 	)
 	request := &model.Request{
-		ModelClass:       model.ModelClassDefault,
-		StructuredOutput: &model.StructuredOutput{Name: "answer"},
+		ModelClass: model.ModelClassDefault,
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "answer",
+			Schema: []byte(`{"type":"object"}`),
+		},
 	}
 	require.NoError(t, model.SetCompletionValidator(
 		request,

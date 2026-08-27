@@ -344,7 +344,10 @@ func TestValidatedStreamRejectsPrematureCompletionStop(t *testing.T) {
 		chunks: []Chunk{StopChunk{Reason: "stop"}},
 	}
 	stream := mustValidateStream(t, raw, &Request{
-		StructuredOutput: &StructuredOutput{Name: "answer"},
+		StructuredOutput: &StructuredOutput{
+			Name:   "answer",
+			Schema: []byte(`{"type":"object"}`),
+		},
 	})
 
 	_, firstErr := stream.Recv()
@@ -728,12 +731,6 @@ func (*siblingStreamFixture) Close() error {
 
 func mustValidateStream(t *testing.T, raw Streamer, request *Request) *ValidatedStream {
 	t.Helper()
-	if request.StructuredOutput != nil {
-		require.NoError(t, SetCompletionValidator(
-			request,
-			func(*Response, *Completion) error { return nil },
-		))
-	}
 	contract, err := NewRequestContract(request)
 	require.NoError(t, err)
 	stream, err := contract.ValidateStream(raw)

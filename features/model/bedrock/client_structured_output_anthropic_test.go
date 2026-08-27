@@ -318,9 +318,11 @@ func TestCompleteAnthropicStructuredOutputFallbackRejectsInvalidCompletion(t *te
 			Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
 		},
 	}
+	decoded := false
 	require.NoError(t, model.SetCompletionValidator(
 		req,
 		func(response *model.Response, _ *model.Completion) error {
+			decoded = true
 			require.Len(t, response.Content, 1)
 			require.Len(t, response.Content[0].Parts, 1)
 			text, ok := response.Content[0].Parts[0].(model.TextPart)
@@ -335,7 +337,8 @@ func TestCompleteAnthropicStructuredOutputFallbackRejectsInvalidCompletion(t *te
 	require.Nil(t, response)
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "title must be a string")
+	require.ErrorContains(t, err, "does not match its schema")
+	require.False(t, decoded)
 }
 
 // TestChunkProcessorStructuredOutputToolEmitsCompletion proves the
@@ -400,4 +403,70 @@ func TestChunkProcessorStructuredOutputToolEmitsCompletion(t *testing.T) {
 	require.NoError(t, model.ValidateResponse(response))
 	require.Equal(t, model.TextPart{Text: `{"title":"Inspect evaporator"}`}, response.Content[0].Parts[0])
 	require.Empty(t, response.ToolCalls())
+}
+
+func TestBedrockStreamerRejectsSchemaInvalidStructuredOutput(t *testing.T) {
+	index := int32(0)
+	events := make(chan brtypes.ConverseStreamOutput, 5)
+	events <- &brtypes.ConverseStreamOutputMemberMessageStart{}
+	events <- &brtypes.ConverseStreamOutputMemberContentBlockDelta{
+		Value: brtypes.ContentBlockDeltaEvent{
+			ContentBlockIndex: &index,
+			Delta: &brtypes.ContentBlockDeltaMemberText{
+				Value: `{"answer":42}`,
+			},
+		},
+	}
+	events <- &brtypes.ConverseStreamOutputMemberContentBlockStop{
+		Value: brtypes.ContentBlockStopEvent{ContentBlockIndex: &index},
+	}
+	events <- &brtypes.ConverseStreamOutputMemberMessageStop{
+		Value: brtypes.MessageStopEvent{StopReason: brtypes.StopReasonEndTurn},
+	}
+	events <- &brtypes.ConverseStreamOutputMemberMetadata{
+		Value: brtypes.ConverseStreamMetadataEvent{},
+	}
+	close(events)
+	reader := &nonIdempotentBedrockReader{events: events}
+	providerStream := bedrockruntime.NewConverseStreamEventStream(
+		func(stream *bedrockruntime.ConverseStreamEventStream) {
+			stream.Reader = reader
+		},
+	)
+	request := &model.Request{StructuredOutput: &model.StructuredOutput{
+		Name: "answer",
+		Schema: []byte(
+			`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`,
+		),
+	}}
+	contract, err := model.NewRequestContract(request)
+	require.NoError(t, err)
+	raw := newBedrockStreamer(
+		t.Context(),
+		providerStream,
+		nil,
+		"test-model",
+		model.ModelClassDefault,
+		request.StructuredOutput,
+		"",
+		nil,
+		nil,
+		contract,
+	)
+	stream, err := contract.ValidateStream(raw)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, stream.Close())
+	}()
+
+	preview, err := stream.Recv()
+	require.NoError(t, err)
+	require.Equal(t, `{"answer":42}`, preview.(model.CompletionDeltaChunk).Delta.Delta)
+	final, err := stream.Recv()
+
+	require.Nil(t, final)
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.ErrorContains(t, err, "does not match its schema")
+	require.Nil(t, stream.Response())
 }

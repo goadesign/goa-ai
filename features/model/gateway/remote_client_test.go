@@ -85,6 +85,56 @@ func TestCountingRemoteClientPreservesTokenCounter(t *testing.T) {
 	}, count)
 }
 
+func TestDirectCountingRemoteProviderValidatesStructuredOutputSchema(t *testing.T) {
+	tests := []struct {
+		name    string
+		schema  rawjson.Message
+		wantErr bool
+	}{
+		{name: "missing", wantErr: true},
+		{name: "malformed", schema: rawjson.Message(`{"type":`), wantErr: true},
+		{
+			name:    "semantically invalid",
+			schema:  rawjson.Message(`{"type":"not-a-json-type"}`),
+			wantErr: true,
+		},
+		{name: "valid", schema: rawjson.Message(`{"type":"object"}`)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			countCalls := 0
+			raw, err := NewCountingRemoteProvider(
+				func(context.Context, *model.Request) (*model.Response, error) {
+					return nil, errors.New("unexpected complete call")
+				},
+				func(context.Context, *model.Request) (model.Streamer, error) {
+					return nil, errors.New("unexpected stream call")
+				},
+				func(context.Context, *model.Request) (model.TokenCount, error) {
+					countCalls++
+					return model.TokenCount{}, nil
+				},
+			)
+			require.NoError(t, err)
+			counter, ok := raw.(model.TokenCounter)
+			require.True(t, ok)
+			request := &model.Request{
+				StructuredOutput: &model.StructuredOutput{Name: "result", Schema: test.schema},
+			}
+
+			_, err = counter.CountTokens(t.Context(), request)
+
+			if test.wantErr {
+				require.Error(t, err)
+				require.Zero(t, countCalls)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, 1, countCalls)
+		})
+	}
+}
+
 func TestRemoteClientWithoutCounterReportsUnsupported(t *testing.T) {
 	client := requireRemoteClient(t, nil, nil)
 

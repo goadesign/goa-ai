@@ -22,6 +22,7 @@ type stubGenerativeClient struct {
 	streamErr       error
 	countResp       *genai.CountTokensResponse
 	lastCountConfig *genai.CountTokensConfig
+	countCalls      int
 }
 
 func (s *stubGenerativeClient) GenerateContent(_ context.Context, m string, c []*genai.Content, cfg *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
@@ -44,6 +45,7 @@ func (s *stubGenerativeClient) GenerateContentStream(_ context.Context, m string
 }
 
 func (s *stubGenerativeClient) CountTokens(_ context.Context, m string, c []*genai.Content, cfg *genai.CountTokensConfig) (*genai.CountTokensResponse, error) {
+	s.countCalls++
 	s.lastModel, s.lastContents, s.lastCountConfig = m, c, cfg
 	return s.countResp, s.err
 }
@@ -223,6 +225,47 @@ func TestCompleteStructuredOutputWithToolsRejected(t *testing.T) {
 	))
 	_, err = cl.Complete(context.Background(), request)
 	assert.ErrorContains(t, err, "structured output cannot include tools")
+}
+
+func TestDirectCountTokensValidatesStructuredOutputSchema(t *testing.T) {
+	request := func(schema []byte) *model.Request {
+		return &model.Request{
+			Messages: []*model.Message{{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "count this"}},
+			}},
+			StructuredOutput: &model.StructuredOutput{Name: "result", Schema: schema},
+		}
+	}
+	tests := []struct {
+		name    string
+		schema  []byte
+		wantErr bool
+	}{
+		{name: "missing", wantErr: true},
+		{name: "malformed", schema: []byte(`{"type":`), wantErr: true},
+		{name: "semantically invalid", schema: []byte(`{"type":"not-a-json-type"}`), wantErr: true},
+		{name: "valid", schema: []byte(`{"type":"object"}`)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stub := &stubGenerativeClient{countResp: &genai.CountTokensResponse{TotalTokens: 3}}
+			client := &provider{
+				models: stub,
+				opts:   Options{DefaultModel: "gemini-2.5-pro"},
+			}
+
+			_, err := client.CountTokens(t.Context(), request(test.schema))
+
+			if test.wantErr {
+				require.Error(t, err)
+				require.Zero(t, stub.countCalls)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, 1, stub.countCalls)
+		})
+	}
 }
 
 func TestCompleteThinkingConfig(t *testing.T) {

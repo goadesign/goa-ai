@@ -3,7 +3,9 @@ package model
 
 import (
 	"context"
+	"io"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -24,6 +26,15 @@ type clientTestProviderMiddleware struct {
 	Provider
 }
 
+type clientTestContractProvider struct {
+	completeContract *RequestContract
+	completePrepared *RequestContract
+	streamContract   *RequestContract
+	streamPrepared   *RequestContract
+	countContract    *RequestContract
+	countPrepared    *RequestContract
+}
+
 func (p *clientTestProvider) Complete(context.Context, *Request) (*Response, error) {
 	p.calls++
 	return &Response{
@@ -40,6 +51,53 @@ func (p *clientTestProvider) Stream(context.Context, *Request) (Streamer, error)
 func (p *clientTestCountingProvider) CountTokens(context.Context, *Request) (TokenCount, error) {
 	p.countCalls++
 	return p.count, p.countErr
+}
+
+func (p *clientTestContractProvider) Complete(_ context.Context, request *Request) (*Response, error) {
+	contract, err := NewRequestContract(request)
+	if err != nil {
+		return nil, err
+	}
+	p.completeContract = contract
+	if request.preparedContract != nil {
+		p.completePrepared = request.preparedContract.contract
+	}
+	return structuredOutputResponse(`{}`), nil
+}
+
+func (p *clientTestContractProvider) Stream(_ context.Context, request *Request) (Streamer, error) {
+	contract, err := NewRequestContract(request)
+	if err != nil {
+		return nil, err
+	}
+	p.streamContract = contract
+	if request.preparedContract != nil {
+		p.streamPrepared = request.preparedContract.contract
+	}
+	return &validatedStreamFixture{
+		chunks: []Chunk{
+			CompletionChunk{Completion: Completion{Name: "answer", Payload: []byte(`{}`)}},
+			StopChunk{Reason: "stop"},
+		},
+		response: structuredOutputResponse(`{}`),
+	}, nil
+}
+
+func (p *clientTestContractProvider) CountTokens(_ context.Context, request *Request) (TokenCount, error) {
+	contract, err := NewRequestContract(request)
+	if err != nil {
+		return TokenCount{}, err
+	}
+	p.countContract = contract
+	if request.preparedContract != nil {
+		p.countPrepared = request.preparedContract.contract
+	}
+	return TokenCount{
+		Model:       "test-model",
+		ModelClass:  request.ModelClass,
+		InputTokens: 7,
+		Exact:       true,
+	}, nil
 }
 
 type forgedClient struct {
@@ -109,6 +167,139 @@ func TestClientRejectsEmptyConfiguredToolNameBeforeProviderCall(t *testing.T) {
 	require.Nil(t, stream)
 	require.EqualError(t, err, "model request contains a tool definition with an empty name")
 	require.Zero(t, provider.calls)
+}
+
+func TestClientRejectsStructuredOutputSchemaBeforeProviderCall(t *testing.T) {
+	schemas := []string{
+		`{"type":"not-a-json-type"}`,
+		`{"$ref":"https://example.com/external.json"}`,
+	}
+	for _, schema := range schemas {
+		provider := &clientTestCountingProvider{}
+		client, err := NewClient(provider)
+		require.NoError(t, err)
+		request := structuredOutputRequest(schema)
+
+		response, completeErr := client.Complete(t.Context(), request)
+		stream, streamErr := client.Stream(t.Context(), request)
+		count, countErr := client.CountTokens(t.Context(), request)
+
+		require.Nil(t, response)
+		require.Nil(t, stream)
+		require.Equal(t, TokenCount{}, count)
+		require.ErrorContains(t, completeErr, "structured output schema")
+		require.ErrorContains(t, streamErr, "structured output schema")
+		require.ErrorContains(t, countErr, "structured output schema")
+		require.Zero(t, provider.calls)
+		require.Zero(t, provider.countCalls)
+	}
+}
+
+func TestClientReturnsOutputValidationErrorForSchemaInvalidResponse(t *testing.T) {
+	provider := &clientTestProvider{}
+	client, err := NewClient(provider)
+	require.NoError(t, err)
+
+	response, err := client.Complete(
+		t.Context(),
+		structuredOutputRequest(`{"type":"object"}`),
+	)
+
+	require.Nil(t, response)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, 1, provider.calls)
+}
+
+func TestClientPassesPreparedContractThroughEveryProviderOperation(t *testing.T) {
+	provider := &clientTestContractProvider{}
+	client, err := NewClient(provider)
+	require.NoError(t, err)
+	request := structuredOutputRequest(`{"type":"object"}`)
+	request.ModelClass = ModelClassDefault
+
+	response, err := client.Complete(t.Context(), request)
+
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	require.Same(t, provider.completePrepared, provider.completeContract)
+	require.Nil(t, request.preparedContract)
+
+	stream, err := client.Stream(t.Context(), request)
+	require.NoError(t, err)
+	for {
+		_, recvErr := stream.Recv()
+		if recvErr != nil {
+			require.ErrorIs(t, recvErr, io.EOF)
+			break
+		}
+	}
+	require.Same(t, provider.streamPrepared, provider.streamContract)
+	require.Nil(t, request.preparedContract)
+
+	count, err := client.CountTokens(t.Context(), request)
+	require.NoError(t, err)
+	require.Equal(t, 7, count.InputTokens)
+	require.Same(t, provider.countPrepared, provider.countContract)
+	require.Nil(t, request.preparedContract)
+}
+
+func TestRequestContractHandoffDoesNotSurviveCopies(t *testing.T) {
+	request := structuredOutputRequest(`{"type":"object"}`)
+	contract, err := NewRequestContract(request)
+	require.NoError(t, err)
+	prepared := preparedRequest(request, contract)
+
+	cloned, err := cloneRequest(prepared)
+	require.NoError(t, err)
+	require.Nil(t, cloned.preparedContract)
+	clonedContract, err := NewRequestContract(cloned)
+	require.NoError(t, err)
+	require.NotSame(t, contract, clonedContract)
+
+	copied := *prepared
+	copiedContract, err := NewRequestContract(&copied)
+	require.NoError(t, err)
+	require.NotSame(t, contract, copiedContract)
+}
+
+func TestPreparedRequestContractIsRaceSafe(t *testing.T) {
+	request := structuredOutputRequest(`{"type":"object"}`)
+	contract, err := NewRequestContract(request)
+	require.NoError(t, err)
+	prepared := preparedRequest(request, contract)
+
+	type contractResult struct {
+		contract *RequestContract
+		err      error
+	}
+	results := make(chan contractResult, 32)
+	var wait sync.WaitGroup
+	for range 32 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			actual, contractErr := NewRequestContract(prepared)
+			results <- contractResult{contract: actual, err: contractErr}
+		}()
+	}
+	wait.Wait()
+	close(results)
+	for result := range results {
+		require.NoError(t, result.err)
+		require.Same(t, contract, result.contract)
+	}
+}
+
+func TestDirectProviderCompilesItsOwnRequestContract(t *testing.T) {
+	provider := &clientTestContractProvider{}
+	request := structuredOutputRequest(`{"type":"object"}`)
+	response, err := provider.Complete(t.Context(), request)
+
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	require.NotNil(t, provider.completeContract)
+	require.Nil(t, provider.completePrepared)
 }
 
 func TestClientRejectsInvalidProviderTokenCounts(t *testing.T) {

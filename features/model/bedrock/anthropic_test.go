@@ -67,6 +67,49 @@ func TestAnthropicBedrockCountTokensUsesFoundationModel(t *testing.T) {
 	assert.Equal(t, model.ModelClassHighReasoning, counter.request.ModelClass)
 }
 
+func TestDirectAnthropicBedrockCountTokensValidatesStructuredOutputSchema(t *testing.T) {
+	tests := []struct {
+		name    string
+		schema  rawjson.Message
+		wantErr bool
+	}{
+		{name: "missing", wantErr: true},
+		{name: "malformed", schema: rawjson.Message(`{"type":`), wantErr: true},
+		{
+			name:    "semantically invalid",
+			schema:  rawjson.Message(`{"type":"not-a-json-type"}`),
+			wantErr: true,
+		},
+		{name: "valid", schema: rawjson.Message(`{"type":"object"}`)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			counter := &recordingAnthropicCounter{}
+			provider := &anthropicBedrockProvider{
+				counter:      counter,
+				defaultModel: "us.anthropic.claude-opus-5",
+			}
+			request := &model.Request{
+				Messages: []*model.Message{{
+					Role:  model.ConversationRoleUser,
+					Parts: []model.Part{model.TextPart{Text: "count this"}},
+				}},
+				StructuredOutput: &model.StructuredOutput{Name: "result", Schema: test.schema},
+			}
+
+			_, err := provider.CountTokens(t.Context(), request)
+
+			if test.wantErr {
+				require.Error(t, err)
+				require.Nil(t, counter.request)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, counter.request)
+		})
+	}
+}
+
 func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 	var requestBody []byte
 	handlerErr := make(chan error, 1)
