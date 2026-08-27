@@ -70,9 +70,6 @@ func encodeToolConfig(choice *model.ToolChoice, canonToProv map[string]string) (
 // raw bytes and drops metadata keywords Gemini rejects ($schema, $id) plus
 // root-level examples, which goa-ai conveys separately.
 func normalizeSchema(raw []byte) (any, error) {
-	if len(raw) == 0 {
-		return map[string]any{"type": "object"}, nil
-	}
 	if !json.Valid(raw) {
 		return nil, errors.New("invalid JSON schema")
 	}

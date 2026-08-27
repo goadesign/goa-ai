@@ -150,6 +150,9 @@ func (c *anthropicBedrockProvider) Stream(ctx context.Context, req *model.Reques
 // counter after replacing a Bedrock cross-region inference profile with the
 // foundation model ID accepted by the counting endpoint.
 func (c *anthropicBedrockProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	if _, err := model.NewRequestContract(req); err != nil {
+		return model.TokenCount{}, err
+	}
 	effective, _, err := c.prepareRequest(req)
 	if err != nil {
 		return model.TokenCount{}, err

@@ -226,6 +226,9 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 // CountTokens asks Anthropic to count the exact request fields that inference
 // would receive, including saved reasoning, output format, and thinking mode.
 func (c *provider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	if _, err := model.NewRequestContract(req); err != nil {
+		return model.TokenCount{}, err
+	}
 	enc, err := c.encodeRequest(ctx, req)
 	if err != nil {
 		return model.TokenCount{}, err

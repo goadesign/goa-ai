@@ -673,7 +673,7 @@ func TestStreamRequiresExactCompletionBytes(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = stream.Recv()
-	require.ErrorContains(t, err, "stream does not match its complete response")
+	require.ErrorContains(t, err, "stream completion does not match canonical response")
 }
 
 func TestStreamRejectsMultipleResponseMessages(t *testing.T) {
@@ -710,7 +710,7 @@ func TestStreamRejectsMultipleResponseMessages(t *testing.T) {
 
 	_, err = stream.Recv()
 
-	require.ErrorContains(t, err, "expected exactly 1 assistant message, got 2")
+	require.ErrorContains(t, err, "structured output response requires exactly one assistant message, got 2")
 	_, ok := stream.Value()
 	require.False(t, ok)
 }

@@ -178,6 +178,7 @@ func cloneRequest(request *Request) (*Request, error) {
 		return nil, fmt.Errorf("clone model request messages: %w", err)
 	}
 	owned := *request
+	owned.preparedContract = nil
 	owned.PromptRefs = slices.Clone(request.PromptRefs)
 	owned.Messages = messages
 	owned.Tools = make([]*ToolDefinition, len(request.Tools))

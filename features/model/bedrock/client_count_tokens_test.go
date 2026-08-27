@@ -118,29 +118,54 @@ func (c *countTokensRuntimeClient) CountTokens(
 }
 
 func TestCountTokensRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
+	request := func(schema rawjson.Message) *model.Request {
+		return &model.Request{
+			Messages: []*model.Message{{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "count this"}},
+			}},
+			StructuredOutput: &model.StructuredOutput{
+				Name:        "result",
+				Description: "Return the counted result.",
+				Schema:      schema,
+			},
+		}
+	}
 	tests := []struct {
 		name    string
 		request *model.Request
+		wantErr bool
 	}{
-		{name: "nil request"},
-		{name: "unsupported model class", request: &model.Request{ModelClass: "unsupported"}},
+		{name: "nil request", wantErr: true},
+		{name: "unsupported model class", request: &model.Request{ModelClass: "unsupported"}, wantErr: true},
+		{name: "missing structured schema", request: request(nil), wantErr: true},
+		{name: "malformed structured schema", request: request(rawjson.Message(`{"type":`)), wantErr: true},
+		{
+			name:    "semantically invalid structured schema",
+			request: request(rawjson.Message(`{"type":"not-a-json-type"}`)),
+			wantErr: true,
+		},
+		{name: "valid structured schema", request: request(rawjson.Message(`{"type":"object"}`))},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			runtime := &countTokensRuntimeClient{}
 			raw := &provider{
 				runtime:      runtime,
-				defaultModel: "anthropic.claude-opus-4-8",
+				defaultModel: "anthropic.claude-opus-4-6",
 				maxTok:       10,
 				temp:         0.5,
 			}
-			client, newErr := model.NewClient(raw)
-			require.NoError(t, newErr)
 
-			_, err := client.CountTokens(context.Background(), tt.request)
+			_, err := raw.CountTokens(context.Background(), tt.request)
 
-			require.Error(t, err)
-			require.Nil(t, runtime.input)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Nil(t, runtime.input)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, runtime.input)
 		})
 	}
 }

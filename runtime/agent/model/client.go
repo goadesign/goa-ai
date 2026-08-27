@@ -159,6 +159,7 @@ func (c *validatedClient) Complete(ctx context.Context, req *Request) (*Response
 	if err != nil {
 		return nil, err
 	}
+	request = preparedRequest(request, contract)
 	response, err := c.provider.Complete(ctx, request)
 	if err == nil {
 		response, err = contract.ValidateResponse(response)
@@ -192,6 +193,7 @@ func (c *validatedClient) Stream(ctx context.Context, req *Request) (*ValidatedS
 	if err != nil {
 		return nil, err
 	}
+	request = preparedRequest(request, contract)
 	stream, err := c.provider.Stream(ctx, request)
 	if err != nil {
 		if !isNilStreamer(stream) {
@@ -223,6 +225,7 @@ func (c *validatedClient) CountTokens(ctx context.Context, req *Request) (TokenC
 	if isNilInterface(c.counter) {
 		return TokenCount{}, ErrTokenCountingUnsupported
 	}
+	request = preparedRequest(request, contract)
 	count, err := c.counter.CountTokens(ctx, request)
 	if err != nil {
 		return TokenCount{}, err

@@ -598,11 +598,23 @@ func TestNewRequestContractRejectsUnadvertisedToolChoice(t *testing.T) {
 
 func TestNewRequestContractAcceptsStructuredOutputWithoutLocalValidator(t *testing.T) {
 	contract, err := NewRequestContract(&Request{
-		StructuredOutput: &StructuredOutput{Name: "answer"},
+		StructuredOutput: &StructuredOutput{
+			Name:   "answer",
+			Schema: rawjson.Message(`{"type":"object"}`),
+		},
 	})
 
 	require.NoError(t, err)
 	require.NotNil(t, contract)
+}
+
+func TestNewRequestContractRejectsStructuredOutputWithoutSchema(t *testing.T) {
+	contract, err := NewRequestContract(&Request{
+		StructuredOutput: &StructuredOutput{Name: "answer"},
+	})
+
+	require.Nil(t, contract)
+	require.EqualError(t, err, "model request structured output schema is required")
 }
 
 func TestNewRequestContractRejectsStructuredOutputWithoutName(t *testing.T) {
@@ -664,6 +676,7 @@ func TestNewRequestContractRejectsMalformedRequestValues(t *testing.T) {
 			name: "malformed structured output example",
 			request: &Request{StructuredOutput: &StructuredOutput{
 				Name:        "answer",
+				Schema:      rawjson.Message(`{"type":"object"}`),
 				ExampleJSON: rawjson.Message(`{"broken"`),
 			}},
 			wantErr: "example is not valid JSON",
@@ -690,8 +703,11 @@ func TestNewRequestContractRejectsToolChoiceForStructuredOutput(t *testing.T) {
 				choice.Name = "lookup"
 			}
 			request := &Request{
-				StructuredOutput: &StructuredOutput{Name: "answer"},
-				ToolChoice:       choice,
+				StructuredOutput: &StructuredOutput{
+					Name:   "answer",
+					Schema: rawjson.Message(`{"type":"object"}`),
+				},
+				ToolChoice: choice,
 			}
 			if mode == ToolChoiceModeAny || mode == ToolChoiceModeTool {
 				request.Tools = []*ToolDefinition{advertisedTool("lookup")}
@@ -725,7 +741,7 @@ func TestRequestContractValidatesUnaryStructuredOutputEnvelope(t *testing.T) {
 	_, err = contract.ValidateResponse(invalid)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "not valid JSON")
+	require.ErrorContains(t, err, "decode candidate JSON")
 }
 
 func TestRequestContractRunsGeneratedStructuredOutputDecoder(t *testing.T) {

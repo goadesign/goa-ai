@@ -68,9 +68,11 @@ func TestEncodeToolsRejectsMissingProviderName(t *testing.T) {
 }
 
 func TestNormalizeSchemaMalformedJSON(t *testing.T) {
-	schema, err := normalizeSchema([]byte(`{"type":`))
-	require.Error(t, err)
-	assert.Nil(t, schema)
+	for _, raw := range [][]byte{nil, []byte(`{"type":`)} {
+		schema, err := normalizeSchema(raw)
+		require.Error(t, err)
+		assert.Nil(t, schema)
+	}
 }
 
 func TestNormalizeSchemaPreservesLargeIntegers(t *testing.T) {

@@ -458,24 +458,29 @@ characters, letters/digits/`_`/`-`, starting with a letter or digit.
 Unary helpers install their generated decoder before provider work, request
 provider-enforced structured output, and decode with generated codecs. A
 low-level `model.Request` may use `StructuredOutput` without a local decoder;
-it must set a nonempty `StructuredOutput.Name`, and shared request validation
-rejects a missing name before provider work. Before copying or exposing a
-request, the validated client applies one 16 MiB and 100,000-value budget across
+it must set a nonempty `StructuredOutput.Name` and a nonempty, compilable
+`StructuredOutput.Schema`. Shared request validation rejects either omission or
+an invalid schema before provider work. Before copying or exposing a request,
+the validated client applies one 16 MiB and 100,000-value budget across
 messages, media, tool contracts, and structured-output schemas. The validated
-client then enforces
-one canonical completion envelope while the provider owns JSON-Schema
-enforcement. Typed completion helpers additionally
-guarantee exact generated decoding. When the return type has an authored root
-`Example(...)`, adapters forward its canonical JSON through provider-native
-example fields where available. Each helper makes one provider request. If the
-provider returns JSON that the generated codec rejects, the helper returns a
-non-retryable `planner.OutputContractError` and does not ask the model again.
+client then enforces one canonical completion envelope and validates its final
+JSON against the request schema. Provider-native enforcement remains an earlier
+optimization, not the authoritative acceptance check. Typed completion helpers
+additionally guarantee exact generated decoding. When the return type has an
+authored root `Example(...)`, adapters forward its canonical JSON through
+provider-native example fields where available. Each helper makes one provider
+request. If the provider returns JSON that the generated codec rejects, the
+helper returns a non-retryable `planner.OutputContractError` and does not ask the
+model again.
 `completion.Response.ModelResponse` contains that exact model response.
 Streaming providers may expose preview `completion_delta` chunks and never
-restart after emitting them. The final typed value is exposed only after the
-stream ends normally and the complete provider response contains exactly the
-same JSON bytes, including surrounding whitespace. Providers that cannot
-preserve the structured-output contract fail explicitly with
+restart after emitting them. Even the low-level validated stream retains the
+final `completion` chunk and every later chunk until the provider ends normally,
+both final JSON representations satisfy the request schema, and their bytes
+match exactly, including surrounding whitespace. A caller-supplied completion
+validator adds checks and cannot replace those framework checks. The typed
+helper then decodes and exposes the value. Providers that cannot preserve the
+structured-output contract fail explicitly with
 `model.ErrStructuredOutputUnsupported`.
 The Bedrock Converse adapter uses one private strict tool for Claude 4.6 and a
 private non-strict tool for models that expose forced tools before native

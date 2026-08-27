@@ -90,6 +90,9 @@ func (c *remoteProvider) Stream(ctx context.Context, req *model.Request) (model.
 
 // CountTokens forwards one exact token-count request to the remote endpoint.
 func (c *countingRemoteProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	if _, err := model.NewRequestContract(req); err != nil {
+		return model.TokenCount{}, err
+	}
 	return c.doCount(ctx, req)
 }
 

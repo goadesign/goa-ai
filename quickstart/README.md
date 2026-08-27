@@ -163,13 +163,15 @@ generated helpers such as `CompleteDraftTask(...)` and
 package.
 
 The unary helper issues a unary model request with provider-enforced structured
-output and decodes the assistant response through the generated codec. The
-streaming helper returns a typed stream: `completion_delta` chunks are
-preview-only, and `Value()` remains unavailable until the provider stream ends
-and its final `completion` chunk matches the complete response. Generated
-completion helpers reject tool-enabled requests and caller-supplied
-`StructuredOutput`. Providers that do not implement structured output return
-`model.ErrStructuredOutputUnsupported`.
+output. The validated client compiles the generated schema before provider work,
+checks the returned JSON itself, and then the helper decodes it through the
+generated codec. The streaming helper returns a typed stream:
+`completion_delta` chunks are preview-only. The low-level client retains the
+final `completion` chunk until the provider stream ends, both final
+representations satisfy the schema, and their JSON bytes match. `Value()` then
+becomes available after generated decoding. Generated completion helpers reject
+tool-enabled requests and caller-supplied `StructuredOutput`. Providers that do
+not implement structured output return `model.ErrStructuredOutputUnsupported`.
 
 ## 4) Run the generated example
 

@@ -223,6 +223,66 @@ func TestToolInputContractRejectsDivergentAlternateSchema(t *testing.T) {
 	require.ErrorContains(t, err, "alternate schema changes fields other than root examples")
 }
 
+func TestSchemaWithoutRootExampleUsesSemanticJSONEquality(t *testing.T) {
+	tests := []struct {
+		name      string
+		schema    string
+		alternate string
+		wantEqual bool
+	}{
+		{
+			name:      "nested object member order",
+			schema:    `{"type":"object","example":{},"properties":{"value":{"type":"string","minLength":1}}}`,
+			alternate: `{"properties":{"value":{"minLength":1,"type":"string"}},"type":"object"}`,
+			wantEqual: true,
+		},
+		{
+			name:      "array order",
+			schema:    `{"type":"object","example":{},"required":["first","second"]}`,
+			alternate: `{"type":"object","required":["second","first"]}`,
+		},
+		{
+			name:      "nested value",
+			schema:    `{"type":"object","example":{},"properties":{"value":{"type":"string"}}}`,
+			alternate: `{"type":"object","properties":{"value":{"type":"integer"}}}`,
+		},
+		{
+			name:      "equivalent exact numbers",
+			schema:    `{"type":"object","example":{},"properties":{"value":{"const":9007199254740993000}}}`,
+			alternate: `{"type":"object","properties":{"value":{"const":9007199254740993e3}}}`,
+			wantEqual: true,
+		},
+		{
+			name:      "equivalent strings",
+			schema:    `{"type":"object","example":{},"properties":{"value":{"const":"\u0061"}}}`,
+			alternate: `{"type":"object","properties":{"value":{"const":"a"}}}`,
+			wantEqual: true,
+		},
+		{
+			name:      "number and string differ",
+			schema:    `{"type":"object","example":{},"properties":{"value":{"const":1}}}`,
+			alternate: `{"type":"object","properties":{"value":{"const":"1"}}}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateSchemaWithoutRootExample(
+				rawjson.Message(test.schema),
+				rawjson.Message(test.alternate),
+			)
+			if test.wantEqual {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, "alternate schema changes fields other than root examples")
+		})
+	}
+}
+
+func TestEqualRawJSONRejectsMalformedValues(t *testing.T) {
+	require.False(t, equalRawJSON(json.RawMessage(`{"value":`), json.RawMessage(`{"value":`)))
+}
+
 func TestThinkingPartRoundTripPreservesSignature(t *testing.T) {
 	orig := ThinkingPart{
 		Text:      "let me think",

@@ -240,6 +240,9 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 // CountTokens asks Bedrock to count the exact input that Converse would
 // receive, including prior reasoning blocks and their provider signatures.
 func (c *provider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	if _, err := model.NewRequestContract(req); err != nil {
+		return model.TokenCount{}, err
+	}
 	parts, err := c.prepareRequest(req)
 	if err != nil {
 		return model.TokenCount{}, err

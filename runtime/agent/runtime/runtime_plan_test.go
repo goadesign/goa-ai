@@ -1598,8 +1598,11 @@ func TestRunPlanActivityPublishesTypedModelRejectionReason(t *testing.T) {
 		client, ok := input.Agent.ModelClient("test")
 		require.True(t, ok)
 		request := &model.Request{
-			Model:            "test",
-			StructuredOutput: &model.StructuredOutput{Name: "answer"},
+			Model: "test",
+			StructuredOutput: &model.StructuredOutput{
+				Name:   "answer",
+				Schema: []byte(`{"type":"object"}`),
+			},
 		}
 		require.NoError(t, model.SetCompletionValidator(
 			request,
@@ -1617,7 +1620,7 @@ func TestRunPlanActivityPublishesTypedModelRejectionReason(t *testing.T) {
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
 			return testModelResponse([]model.Message{{
 				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "answer"}},
+				Parts: []model.Part{model.TextPart{Text: "{}"}},
 			}}), nil
 		},
 	})

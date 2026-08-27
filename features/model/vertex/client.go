@@ -104,6 +104,9 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 // CountTokens implements model.TokenCounter using the exact transcript and
 // generation settings that Vertex inference would receive.
 func (c *provider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	if _, err := model.NewRequestContract(req); err != nil {
+		return model.TokenCount{}, err
+	}
 	prep, err := c.prepareRequest(req)
 	if err != nil {
 		return model.TokenCount{}, err

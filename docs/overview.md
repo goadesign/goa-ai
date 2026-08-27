@@ -119,15 +119,22 @@ provider-native structured-output example fields when available.
 
 Unary helpers request provider-enforced structured output and decode the final
 assistant response through the generated codec instead of hand-parsing JSON.
-When the codec rejects model-authored JSON, the helper returns a non-retryable
+Before provider work, the validated model client compiles the canonical schema
+for that request. The compiler reads the raw schema bytes directly from an
+in-memory resource; no map-shaped schema becomes part of the runtime contract.
+It validates the returned JSON even when the provider also enforces the schema.
+When validation or the generated codec rejects
+model-authored JSON, the helper returns a non-retryable
 `planner.OutputContractError` and does not ask the model again.
 `completion.Response.ModelResponse` preserves that exact response and its token
 usage.
 
 Streaming helpers return a typed `completion.Streamer[T]`. Providers may emit
-preview `completion_delta` chunks, but `Value` remains unavailable until exactly
-one final `completion` chunk, the stream ending, and the complete response all
-agree. Streaming never restarts after exposing output.
+preview `completion_delta` chunks. The low-level validated stream retains its
+final `completion` chunk until the provider ends normally, both the chunk and
+complete response satisfy the request schema, and their JSON bytes match.
+`Value` remains unavailable until the typed helper decodes that accepted
+completion. Streaming never restarts after exposing previews.
 Providers that do not implement structured output fail explicitly with
 `model.ErrStructuredOutputUnsupported`.
 The generated schema remains the canonical service contract; model adapters may

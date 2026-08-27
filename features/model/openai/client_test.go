@@ -903,8 +903,13 @@ func TestClientCompleteSupportsStructuredOutput(t *testing.T) {
 			Parts: []model.Part{model.TextPart{Text: "Ping"}},
 		}},
 		StructuredOutput: &model.StructuredOutput{
-			Name:   "draft_from_transcript",
-			Schema: tools.RawJSON(`{"type":"object","additionalProperties":false}`),
+			Name: "draft_from_transcript",
+			Schema: tools.RawJSON(`{
+				"type":"object",
+				"properties":{"answer":{"type":"string"}},
+				"required":["answer"],
+				"additionalProperties":false
+			}`),
 		},
 	}
 	require.NoError(t, model.SetCompletionValidator(
@@ -920,7 +925,12 @@ func TestClientCompleteSupportsStructuredOutput(t *testing.T) {
 	assert.Equal(t, "draft_from_transcript", request.Text.Format.OfJSONSchema.Name)
 	schema, err := json.Marshal(request.Text.Format.OfJSONSchema.Schema)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"type":"object","additionalProperties":false}`, string(schema))
+	assert.JSONEq(t, `{
+		"type":"object",
+		"properties":{"answer":{"type":"string"}},
+		"required":["answer"],
+		"additionalProperties":false
+	}`, string(schema))
 	require.Len(t, resp.Content, 1)
 	assert.Equal(t, "stop", resp.StopReason)
 }
@@ -1613,6 +1623,57 @@ func TestOpenAIStreamerStructuredOutput(t *testing.T) {
 	assert.Equal(t, "gpt-4o", chunks[1].(model.UsageChunk).Usage.Model)
 	assert.Equal(t, "stop", chunks[2].(model.StopChunk).Reason)
 	require.NotNil(t, streamer.Response())
+}
+
+func TestOpenAIStreamerRejectsSchemaInvalidStructuredOutput(t *testing.T) {
+	stream := &mockStream{
+		events: []responses.ResponseStreamEventUnion{
+			mustStreamEvent(t, `{
+				"type":"response.completed",
+				"sequence_number":1,
+				"response":{
+					"model":"gpt-4o",
+					"status":"completed",
+					"output":[{
+						"id":"msg_1",
+						"type":"message",
+						"role":"assistant",
+						"status":"completed",
+						"content":[{"type":"output_text","text":"{\"answer\":42}","annotations":[],"logprobs":[]}]
+					}]
+				}
+			}`),
+		},
+	}
+	client, err := New(Options{
+		DefaultModel: "gpt-4o",
+		transport:    &mockTransport{stream: stream},
+	})
+	require.NoError(t, err)
+	streamer, err := client.Stream(t.Context(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "Ping"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Name: "answer",
+			Schema: tools.RawJSON(
+				`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`,
+			),
+		},
+	})
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, streamer.Close())
+	}()
+
+	chunk, err := streamer.Recv()
+
+	require.Nil(t, chunk)
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.ErrorContains(t, err, "does not match its schema")
+	require.Nil(t, streamer.Response())
 }
 
 func TestOpenAIStreamerClosesProviderStreamOnce(t *testing.T) {
