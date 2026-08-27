@@ -478,7 +478,7 @@ func TestRuntimePlannerEventsRejectsCallsAfterMalformedResponse(t *testing.T) {
 	)
 	validationErr := model.ValidateResponse(response)
 	require.Error(t, validationErr)
-	err := e.recordRejectedModelResponse(
+	err := e.recordRejectedModelOutput(
 		invalid,
 		model.ResponseEvidence{Present: true},
 		outputcontract.NewWithOrigin(

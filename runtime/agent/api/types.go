@@ -467,6 +467,11 @@ type (
 		// correction guidance while leaving domain tools available.
 		ModelOutputRecovery *ModelOutputRecovery `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
+		// ModelInvocationRecovery requests replacement of one pre-canonical tool
+		// call rejected by generated input validation. The ordinary executable
+		// catalog remains available on this planner turn.
+		ModelInvocationRecovery *ModelInvocationRecovery `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+
 		// SynthesisOnly requires the planner to produce a final response without
 		// new tool calls after completed tool work.
 		SynthesisOnly bool
@@ -481,6 +486,14 @@ type (
 	ModelOutputRecovery struct {
 		// Correction tells the planner which output contract the replacement
 		// answer must satisfy.
+		Correction string
+	}
+
+	// ModelInvocationRecovery contains bounded framework-authored guidance for
+	// replacing one tool call rejected before a canonical response existed.
+	ModelInvocationRecovery struct {
+		// Correction names only generated input constraints. It contains no
+		// rejected payload or submitted values.
 		Correction string
 	}
 
@@ -623,6 +636,11 @@ type (
 		// rejected. The workflow publishes Usage and PlannerEvents from this
 		// successful activity result before recovering or terminating the run.
 		OutputContractFailure *OutputContractFailure `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+
+		// ModelInvocationRecovery is present instead of OutputContractFailure
+		// when generated validation produced safe replacement guidance for the
+		// exact rejected invocation.
+		ModelInvocationRecovery *ModelInvocationRecovery `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 	}
 
 	// OutputContractFailure preserves rejected model or planner evidence across

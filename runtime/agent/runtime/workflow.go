@@ -353,7 +353,9 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		return nil, finalErr
 	}
 	result := firstOutput.Result
-	if result == nil && firstOutput.OutputContractFailure == nil {
+	if result == nil &&
+		firstOutput.OutputContractFailure == nil &&
+		firstOutput.ModelInvocationRecovery == nil {
 		finalErr = fmt.Errorf("plan activity returned neither result nor output rejection")
 		finalStatus = runStatusFailed
 		return nil, finalErr
@@ -370,6 +372,11 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	if firstOutput.OutputContractFailure != nil {
 		st.PendingRecovery = pendingModelOutputRecovery{
 			correction: firstOutput.OutputContractFailure.Correction,
+		}
+	}
+	if firstOutput.ModelInvocationRecovery != nil {
+		st.PendingRecovery = pendingModelInvocationRecovery{
+			correction: firstOutput.ModelInvocationRecovery.Correction,
 		}
 	}
 	// Create parentTracker if this is a nested agent run (has ParentToolCallID)

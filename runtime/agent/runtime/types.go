@@ -15,18 +15,19 @@ import (
 )
 
 type (
-	RunInput              = api.RunInput
-	PlanActivityInput     = api.PlanActivityInput
-	PlanActivityOutput    = api.PlanActivityOutput
-	ModelOutputRecovery   = api.ModelOutputRecovery
-	PlanResult            = api.PlanResult
-	ToolCall              = api.ToolCall
-	OutputContractFailure = api.OutputContractFailure
-	RecoveryCatalog       = api.RecoveryCatalog
-	RecordActivityInput   = api.RecordActivityInput
-	ToolInput             = api.ToolInput
-	ToolOutput            = api.ToolOutput
-	ToolClarification     = api.ToolClarification
+	RunInput                = api.RunInput
+	PlanActivityInput       = api.PlanActivityInput
+	PlanActivityOutput      = api.PlanActivityOutput
+	ModelOutputRecovery     = api.ModelOutputRecovery
+	ModelInvocationRecovery = api.ModelInvocationRecovery
+	PlanResult              = api.PlanResult
+	ToolCall                = api.ToolCall
+	OutputContractFailure   = api.OutputContractFailure
+	RecoveryCatalog         = api.RecoveryCatalog
+	RecordActivityInput     = api.RecordActivityInput
+	ToolInput               = api.ToolInput
+	ToolOutput              = api.ToolOutput
+	ToolClarification       = api.ToolClarification
 
 	// WorkflowOptions mirrors the subset of engine start options we expose through
 	// the runtime. Memo and SearchAttributes remain generic visibility metadata so

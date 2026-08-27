@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 
 	"goa.design/goa-ai/runtime/agent/prompt"
@@ -296,6 +297,7 @@ type (
 		schemaWithoutRootExample rawjson.Message
 		exampleJSON              rawjson.Message
 		validate                 func(rawjson.Message) error
+		fieldJSONTypes           map[string]string
 		acceptsNoArguments       bool
 	}
 
@@ -1089,6 +1091,7 @@ func ToolDefinitionFromSpec(spec tools.ToolSpec) *ToolDefinition {
 		_, err := spec.Payload.Codec.FromJSON(payload)
 		return err
 	}
+	input.fieldJSONTypes = maps.Clone(spec.Payload.FieldJSONTypes)
 	input.acceptsNoArguments = typeSpecDeclaresNoArguments(spec.Payload)
 	return &ToolDefinition{
 		Name:        spec.Name.String(),

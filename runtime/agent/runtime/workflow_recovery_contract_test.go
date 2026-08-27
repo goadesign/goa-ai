@@ -1,11 +1,13 @@
 package runtime
 
-// workflow_recovery_contract_test.go verifies that failed tool calls provide
-// correction evidence without dictating the planner's semantic next action.
+// workflow_recovery_contract_test.go verifies that failed tool calls and
+// rejected model invocations provide bounded correction evidence without
+// dictating the planner's semantic next action.
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -836,6 +838,344 @@ func TestRunLoopStopsAfterConfiguredModelOutputRecoveryTurns(t *testing.T) {
 	assert.Equal(t, 3, recoveryAttempts)
 }
 
+func TestExecuteWorkflowRecoversInitialGeneratedModelToolCall(t *testing.T) {
+	lookup := newStrictRecoverySpec()
+	var providerCalls, lookupCalls, resumes int
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	sessionID := "session-initial-recovery"
+	_, err := rt.CreateSession(context.Background(), sessionID)
+	require.NoError(t, err)
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name:  "catalog",
+		Specs: []tools.ToolSpec{lookup},
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			lookupCalls++
+			return successfulToolResult(call), nil
+		}),
+	}))
+	rt.models["test"] = newPreResponseRecoveryModel(t, &providerCalls, false)
+
+	agentID := agent.Ident("catalog.initial-recovery")
+	pl := &stubPlanner{
+		start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+			client, ok := input.Agent.PlannerModelClient("test")
+			require.True(t, ok)
+			_, err := client.Complete(ctx, &model.Request{
+				Model: "test",
+				Tools: input.Agent.AdvertisedToolDefinitions(),
+			})
+			return nil, err
+		},
+		resume: func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			resumes++
+			if len(input.ToolOutputs) > 0 {
+				return finalPlannerResult("initial replacement completed"), nil
+			}
+			assert.False(t, input.SynthesisOnly)
+			assertAdvertisedTools(t, input, lookup.Name)
+			client, ok := input.Agent.PlannerModelClient("test")
+			require.True(t, ok)
+			response, err := client.Complete(ctx, &model.Request{
+				Model: "test",
+				Tools: input.Agent.AdvertisedToolDefinitions(),
+			})
+			require.NoError(t, err)
+			calls := response.ToolCalls()
+			require.Len(t, calls, 1)
+			request, err := planner.ToolRequestFromModelCall(calls[0])
+			require.NoError(t, err)
+			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{request}}, nil
+		},
+	}
+	rt.agents[agentID] = AgentRegistration{
+		ID:                  agentID,
+		Planner:             pl,
+		PlanActivityName:    "start",
+		ResumeActivityName:  "resume",
+		ExecuteToolActivity: "execute",
+	}
+	rt.agentToolSpecs[agentID] = []tools.ToolSpec{lookup}
+	input := &RunInput{
+		AgentID:   agentID,
+		RunID:     "run-initial-recovery",
+		SessionID: sessionID,
+	}
+	seedRunMeta(t, rt, input)
+	wfCtx := &routeWorkflowContext{
+		ctx:         context.Background(),
+		runID:       input.RunID,
+		hookRuntime: rt,
+		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+			"start":  rt.PlanStartActivity,
+			"resume": rt.PlanResumeActivity,
+		},
+		toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
+			"execute": rt.ExecuteToolActivity,
+		},
+	}
+
+	out, err := rt.ExecuteWorkflow(wfCtx, input)
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "initial replacement completed", agentMessageText(out.Final))
+	assert.Equal(t, 2, providerCalls)
+	assert.Equal(t, 1, lookupCalls)
+	assert.Equal(t, 2, resumes)
+}
+
+func TestRunLoopRecoversGeneratedModelToolCallBeforeExecution(t *testing.T) {
+	kickoff := newAnyJSONSpec("catalog.kickoff", "catalog")
+	lookup := newStrictRecoverySpec()
+	var providerCalls, lookupCalls, resumes int
+	h := newRecoveryHarness(
+		t,
+		"model-invocation",
+		[]tools.ToolSpec{kickoff, lookup},
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			if call.Name == lookup.Name {
+				lookupCalls++
+				assert.JSONEq(t, `{"query":"accepted"}`, string(call.Payload))
+			}
+			return successfulToolResult(call), nil
+		},
+		func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			resumes++
+			assert.False(t, input.SynthesisOnly)
+			assertAdvertisedTools(t, input, kickoff.Name, lookup.Name)
+			if len(input.ToolOutputs) == 2 {
+				return finalPlannerResult("replacement completed"), nil
+			}
+			client, ok := input.Agent.PlannerModelClient("test")
+			require.True(t, ok)
+			response, err := client.Complete(ctx, &model.Request{
+				Model: "test",
+				Tools: input.Agent.AdvertisedToolDefinitions(),
+			})
+			if err != nil {
+				var validationErr *model.OutputValidationError
+				require.ErrorAs(t, err, &validationErr)
+				require.NotEmpty(t, validationErr.RecoveryCorrection())
+				return nil, err
+			}
+			calls := response.ToolCalls()
+			require.Len(t, calls, 1)
+			request, err := planner.ToolRequestFromModelCall(calls[0])
+			require.NoError(t, err)
+			require.Len(t, input.Reminders, 1)
+			assert.Equal(t, "model_invocation_recovery", input.Reminders[0].ID)
+			assert.Contains(t, input.Reminders[0].Text, `Field "query" must contain a JSON string.`)
+			assert.NotContains(t, input.Reminders[0].Text, "privateSecret")
+			assert.NotContains(t, input.Reminders[0].Text, "submitted-secret")
+			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{request}}, nil
+		},
+	)
+	h.runtime.models["test"] = newPreResponseRecoveryModel(t, &providerCalls, false)
+
+	out, err := h.run(&PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "kickoff-call",
+			Name:       kickoff.Name,
+			Payload:    rawjson.Message(`{}`),
+		}},
+	}, policy.CapsState{
+		MaxToolCalls:           3,
+		RemainingToolCalls:     3,
+		MaxRecoveryTurns:       2,
+		RemainingRecoveryTurns: 2,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "replacement completed", agentMessageText(out.Final))
+	assert.Equal(t, 2, providerCalls)
+	assert.Equal(t, 1, lookupCalls)
+	assert.Equal(t, 3, resumes)
+	require.NotNil(t, out.Usage)
+	assert.Equal(t, 22, out.Usage.TotalTokens)
+}
+
+func TestRunLoopModelInvocationRecoveryUsesSharedTurnCap(t *testing.T) {
+	kickoff := newAnyJSONSpec("catalog.kickoff", "catalog")
+	lookup := newStrictRecoverySpec()
+	var providerCalls, lookupCalls, recoveryAttempts int
+	h := newRecoveryHarness(
+		t,
+		"model-invocation-cap",
+		[]tools.ToolSpec{kickoff, lookup},
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			if call.Name == lookup.Name {
+				lookupCalls++
+			}
+			return successfulToolResult(call), nil
+		},
+		func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			if input.Finalize != nil {
+				require.Equal(t, planner.TerminationReasonRecoveryCap, input.Finalize.Reason)
+				return finalPlannerResult("stopped after invocation recovery cap"), nil
+			}
+			recoveryAttempts++
+			client, ok := input.Agent.PlannerModelClient("test")
+			require.True(t, ok)
+			_, err := client.Complete(ctx, &model.Request{
+				Model: "test",
+				Tools: input.Agent.AdvertisedToolDefinitions(),
+			})
+			return nil, err
+		},
+	)
+	h.runtime.models["test"] = newPreResponseRecoveryModel(t, &providerCalls, true)
+
+	out, err := h.run(&PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "kickoff-call",
+			Name:       kickoff.Name,
+			Payload:    rawjson.Message(`{}`),
+		}},
+	}, policy.CapsState{
+		MaxToolCalls:           2,
+		RemainingToolCalls:     2,
+		MaxRecoveryTurns:       2,
+		RemainingRecoveryTurns: 2,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "stopped after invocation recovery cap", agentMessageText(out.Final))
+	assert.Equal(t, 3, recoveryAttempts)
+	assert.Equal(t, 3, providerCalls)
+	assert.Zero(t, lookupCalls)
+	require.NotNil(t, out.Usage)
+	assert.Equal(t, 30, out.Usage.TotalTokens)
+}
+
+func TestRunLoopCancellationPreventsModelInvocationReplacement(t *testing.T) {
+	kickoff := newAnyJSONSpec("catalog.kickoff", "catalog")
+	lookup := newStrictRecoverySpec()
+	var providerCalls, plannerCalls int
+	h := newRecoveryHarness(
+		t,
+		"model-invocation-cancel",
+		[]tools.ToolSpec{kickoff, lookup},
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			return successfulToolResult(call), nil
+		},
+		func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			client, ok := input.Agent.PlannerModelClient("test")
+			require.True(t, ok)
+			_, err := client.Complete(ctx, &model.Request{
+				Model: "test",
+				Tools: input.Agent.AdvertisedToolDefinitions(),
+			})
+			return nil, err
+		},
+	)
+	h.runtime.models["test"] = newPreResponseRecoveryModel(t, &providerCalls, true)
+	workflowCtx, cancel := context.WithCancel(context.Background())
+	h.workflow.ctx = workflowCtx
+	resume := h.workflow.plannerRoutes["resume"]
+	h.workflow.plannerRoutes["resume"] = func(
+		ctx context.Context,
+		input *PlanActivityInput,
+	) (*PlanActivityOutput, error) {
+		plannerCalls++
+		output, err := resume(ctx, input)
+		if output != nil && output.ModelInvocationRecovery != nil {
+			cancel()
+		}
+		return output, err
+	}
+
+	out, err := h.run(&PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "kickoff-call",
+			Name:       kickoff.Name,
+			Payload:    rawjson.Message(`{}`),
+		}},
+	}, policy.CapsState{
+		MaxToolCalls:           2,
+		RemainingToolCalls:     2,
+		MaxRecoveryTurns:       2,
+		RemainingRecoveryTurns: 2,
+	})
+
+	require.Nil(t, out)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, plannerCalls)
+	assert.Equal(t, 1, providerCalls)
+}
+
+func TestRunLoopConsumesRecordedModelInvocationRecoveryWithoutProviderCall(t *testing.T) {
+	kickoff := newAnyJSONSpec("catalog.kickoff", "catalog")
+	var providerCalls, plannerCalls int
+	h := newRecoveryHarness(
+		t,
+		"model-invocation-replay",
+		[]tools.ToolSpec{kickoff},
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			return successfulToolResult(call), nil
+		},
+		func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			require.FailNow(t, "recorded activity output should bypass planner code")
+			return nil, nil
+		},
+	)
+	h.runtime.models["test"] = mustTestModelClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			providerCalls++
+			return nil, errors.New("provider must not run during replay")
+		},
+	})
+	h.workflow.plannerRoutes["resume"] = func(
+		_ context.Context,
+		input *PlanActivityInput,
+	) (*PlanActivityOutput, error) {
+		if input == nil {
+			return nil, errors.New("replayed planner input is required")
+		}
+		plannerCalls++
+		if plannerCalls == 1 {
+			return &PlanActivityOutput{
+				PublicationBatchID: "00000000-0000-4000-8000-000000000001",
+				ModelInvocationRecovery: &ModelInvocationRecovery{
+					Correction: "Field \"query\" must contain a JSON string.",
+				},
+			}, nil
+		}
+		require.NotNil(t, input.ModelInvocationRecovery)
+		return &PlanActivityOutput{
+			PublicationBatchID: "00000000-0000-4000-8000-000000000002",
+			Result: &PlanResult{
+				FinalResponse: &planner.FinalResponse{
+					Message: &model.Message{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{model.TextPart{Text: "replayed replacement"}},
+					},
+				},
+			},
+		}, nil
+	}
+
+	out, err := h.run(&PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "kickoff-call",
+			Name:       kickoff.Name,
+			Payload:    rawjson.Message(`{}`),
+		}},
+	}, policy.CapsState{
+		MaxToolCalls:           2,
+		RemainingToolCalls:     2,
+		MaxRecoveryTurns:       1,
+		RemainingRecoveryTurns: 1,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "replayed replacement", agentMessageText(out.Final))
+	assert.Equal(t, 2, plannerCalls)
+	assert.Zero(t, providerCalls)
+}
+
 // newRecoveryHarness assembles one in-memory workflow whose planner and tool
 // behavior are supplied by the test. It uses the real resume activity so tests
 // cover canonical run-log loading, recovery reminders, and advertised tools.
@@ -942,6 +1282,93 @@ func newRecoveryTestModel(t *testing.T) model.Client {
 					TotalTokens:  16,
 				},
 			}, nil
+		},
+	})
+}
+
+// newStrictRecoverySpec simulates one generated codec that rejects malformed
+// provider arguments with structured field issues and accepts only the
+// replacement payload used by these workflow tests.
+func newStrictRecoverySpec() tools.ToolSpec {
+	return tools.ToolSpec{
+		Name:        "catalog.lookup",
+		Description: "Looks up one synthetic record.",
+		Toolset:     "catalog",
+		Payload: tools.TypeSpec{
+			Name:   "LookupPayload",
+			Schema: rawjson.Message(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`),
+			FieldJSONTypes: map[string]string{
+				"$payload": "object",
+				"query":    "string",
+			},
+			Codec: tools.JSONCodec[any]{
+				FromJSON: func(data []byte) (any, error) {
+					if string(data) == `{"query":"accepted"}` {
+						return map[string]any{"query": "accepted"}, nil
+					}
+					return nil, tools.NewValidationError(
+						"provider submitted an invalid lookup payload",
+						[]*tools.FieldIssue{
+							{
+								Field:            "query",
+								Constraint:       "invalid_field_type",
+								ExpectedJSONType: "string",
+								ActualJSONType:   "number",
+							},
+							{
+								Field:      "privateSecret",
+								Constraint: "unknown_field",
+								Allowed:    []string{"query"},
+							},
+						},
+						nil,
+					)
+				},
+			},
+		},
+		Result: tools.TypeSpec{
+			Name:   "LookupResult",
+			Schema: rawjson.Message(`{"type":"object"}`),
+			Codec:  tools.AnyJSONCodec,
+		},
+	}
+}
+
+// newPreResponseRecoveryModel returns malformed generated tool arguments on
+// the first invocation, then either repeats the failure or returns one valid
+// replacement. Each response reports a distinct invocation total.
+func newPreResponseRecoveryModel(
+	t *testing.T,
+	providerCalls *int,
+	alwaysInvalid bool,
+) model.Client {
+	t.Helper()
+	return mustTestModelClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			(*providerCalls)++
+			payload := rawjson.Message(`{"query":42,"privateSecret":"submitted-secret"}`)
+			usage := model.TokenUsage{
+				InputTokens:  6,
+				OutputTokens: 4,
+				TotalTokens:  10,
+			}
+			if *providerCalls > 1 && !alwaysInvalid {
+				payload = rawjson.Message(`{"query":"accepted"}`)
+				usage = model.TokenUsage{
+					InputTokens:  7,
+					OutputTokens: 5,
+					TotalTokens:  12,
+				}
+			}
+			return testModelResponseWithUsage(
+				nil,
+				usage,
+				model.ToolCall{
+					ID:      fmt.Sprintf("lookup-call-%d", *providerCalls),
+					Name:    "catalog.lookup",
+					Payload: payload,
+				},
+			), nil
 		},
 	})
 }

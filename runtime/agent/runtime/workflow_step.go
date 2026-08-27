@@ -826,21 +826,25 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	existingRecovery, _ := toolRecovery(l.st.PendingRecovery)
 	pendingRecovery := slices.Concat(recovery, existingRecovery)
 	synthesisOnly := !failed && batch.program.result.SynthesizeAfterTools
-	if out, err := l.resumePlanner(pendingRecovery, synthesisOnly, ""); err != nil || out != nil {
+	if out, err := l.resumePlanner(pendingRecovery, synthesisOnly, "", ""); err != nil || out != nil {
 		return out, err
 	}
 	return nil, nil
 }
 
 // resumePlanner executes the next planner turn after one fully-accounted step
-// or one rejected model answer. Calls caused by a rejection consume one shared
-// recovery turn before the activity is scheduled.
+// or one rejected model invocation or answer. Calls caused by a rejection
+// consume one shared recovery turn before the activity is scheduled.
 func (l *workflowLoop) resumePlanner(
 	pendingRecovery []*planner.ToolOutput,
 	synthesisOnly bool,
 	outputCorrection string,
+	invocationCorrection string,
 ) (*RunOutput, error) {
-	if (len(pendingRecovery) > 0 || outputCorrection != "") &&
+	if err := l.wfCtx.Context().Err(); err != nil {
+		return nil, err
+	}
+	if (len(pendingRecovery) > 0 || outputCorrection != "" || invocationCorrection != "") &&
 		!consumeRecoveryTurn(&l.st.Caps) {
 		return l.finalizeStep(planner.TerminationReasonRecoveryCap)
 	}
@@ -852,6 +856,7 @@ func (l *workflowLoop) resumePlanner(
 		pendingRecovery,
 		synthesisOnly,
 		outputCorrection,
+		invocationCorrection,
 		&l.st.NextAttempt,
 	)
 	if err != nil {
@@ -878,6 +883,15 @@ func (l *workflowLoop) resumePlanner(
 		l.st.ResponseCommitted = false
 		l.st.PendingRecovery = pendingModelOutputRecovery{
 			correction: resOutput.OutputContractFailure.Correction,
+		}
+		return nil, nil
+	}
+	if resOutput.ModelInvocationRecovery != nil {
+		l.st.Result = nil
+		l.st.Transcript = nil
+		l.st.ResponseCommitted = false
+		l.st.PendingRecovery = pendingModelInvocationRecovery{
+			correction: resOutput.ModelInvocationRecovery.Correction,
 		}
 		return nil, nil
 	}

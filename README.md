@@ -375,7 +375,10 @@ var Docs = Toolset("docs", func() {
 **What you get:**
 - JSON Schema for LLM function calling (auto-generated)
 - Validation at boundaries: invalid calls get structured correction directives, including
-  generated JSON type mismatch guidance, not crashes or schema-string parsing
+  generated JSON type mismatch guidance, not crashes or schema-string parsing.
+  When a model tool call fails before a complete response exists, the runtime
+  may schedule one replacement planning activity from generated field facts
+  without retaining or executing the rejected arguments.
 - Timeout and parent-budget failures are terminal for the current run and use
   `finish` recovery. Planners may repair invalid arguments, but elapsed
   execution time is not an instruction to repeat a call.
@@ -844,9 +847,10 @@ When one tool has both correction and replan failures in the same batch, the
 correctable failure keeps that tool available.
 
 `MaxRecoveryTurns` counts replacement planner activities scheduled after
-rejected tool or model output. Bookkeeping calls do not consume or reset this
-budget. If a rejected bookkeeping result schedules another planner activity,
-that replacement activity consumes one recovery turn.
+rejected tool output, a rejected model invocation, or a rejected completed
+answer. Bookkeeping calls do not consume or reset this budget. If a rejected
+bookkeeping result schedules another planner activity, that replacement
+activity consumes one recovery turn.
 
 Agent-as-tool results use this same typed transition contract. The number of
 child tools observed during the nested run is telemetry for linked progress;
@@ -857,6 +861,16 @@ Recovery turns carry the selected failed call IDs in `PlanActivityInput`.
 Empty IDs are omitted from start and ordinary resume activities. Runtime
 workers, generated packages, and callers must use the same generated input
 contract; mixed shapes are unsupported.
+
+A model invocation rejected before a canonical response exists carries a
+separate `ModelInvocationRecovery` value instead of failed call IDs. Its
+bounded correction names generated schema facts only, and the normal
+caller-authorized executable catalog remains available for the replacement.
+Existing Temporal histories replay unchanged. Histories that contain this new
+activity result require workers running the matching runtime; mixed older and
+newer workers, and rollback to an older worker, are unsupported for those
+histories. See [`docs/runtime.md`](docs/runtime.md) for the full recovery
+contract.
 
 The flag is valid only on a tool-only result, keeping execution and answer
 synthesis as separate turns without relying on process-local state. The batch

@@ -167,8 +167,8 @@ func CloneMessages(messages []*Message) ([]*Message, error) {
 }
 
 // cloneRequest owns every mutable value that providers or observers can read
-// during one call. Function-backed generated validators are immutable and are
-// copied by reference.
+// during one call. Function-backed validators and private generated field
+// metadata are immutable after construction and are copied by reference.
 func cloneRequest(request *Request) (*Request, error) {
 	if err := preflightRequest(request); err != nil {
 		return nil, err
@@ -191,6 +191,7 @@ func cloneRequest(request *Request) (*Request, error) {
 			schemaWithoutRootExample: slices.Clone(definition.Input.schemaWithoutRootExample),
 			exampleJSON:              slices.Clone(definition.Input.exampleJSON),
 			validate:                 definition.Input.validate,
+			fieldJSONTypes:           definition.Input.fieldJSONTypes,
 			acceptsNoArguments:       definition.Input.acceptsNoArguments,
 		}
 		owned.Tools[i] = &cloned

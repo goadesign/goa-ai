@@ -245,15 +245,25 @@ model response. When planner code compiles model output into different
 executable intent, the runtime retains the original model name and payload
 separately for the transcript.
 
+The runtime validates model tool calls with the generated input codec before a
+response becomes canonical. When that codec returns safe structured field
+issues, validation derives bounded replacement guidance from generated names
+and constraints only. The workflow records usage, keeps the malformed call out
+of transcript history, and spends one recovery turn on a normal planner resume
+with executable tools available. It selects the rejected invocation by
+invocation start order, never by a model-supplied value or completion order.
+Unstructured validation failures remain terminal.
+
 When a completed model reply or planner result breaks its required shape, the
 planner returns `OutputContractError`. The runtime validates the full result
 before publishing any selected model text or tool call. Ordinary output
 contract errors are terminal and Temporal does not retry them. When the planner
 can give exact replacement guidance for one completed model answer, it may
-instead return `NewRecoverableModelOutputError`. The workflow records the
-answer fingerprint and usage while keeping the rejected body private, then
-spends one recovery turn on a synthesis-only replacement. Infrastructure
-failures remain activity errors and follow the activity retry policy.
+instead return `NewRecoverableModelOutputError`. This separate, response-
+fingerprint-bound path records the answer fingerprint and usage while keeping
+the rejected body private, then spends one recovery turn on a synthesis-only
+replacement. Infrastructure failures remain activity errors and follow the
+activity retry policy.
 
 The runtime keeps execution policy and planner intent separate:
 

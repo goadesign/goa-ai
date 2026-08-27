@@ -1,11 +1,12 @@
-// Package outputcontract reports completed model, planner, or tool output that
-// the agent runtime cannot accept. A planner may mark a completed model answer
-// as recoverable; every other output rejection ends the run.
+// Package outputcontract reports model, planner, or tool output that the agent
+// runtime cannot accept. Generated tool-call validation and planners may supply
+// bounded replacement guidance; rejections without safe guidance end the run.
 package outputcontract
 
 import (
 	"strings"
 
+	"goa.design/goa-ai/runtime/agent/internal/correction"
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
@@ -23,9 +24,9 @@ type (
 )
 
 const (
-	// MaxCorrectionBytes bounds planner-authored correction guidance carried
-	// between workflow activities.
-	MaxCorrectionBytes = 4096
+	// MaxCorrectionBytes bounds framework- or planner-authored correction
+	// guidance carried between workflow activities.
+	MaxCorrectionBytes = correction.MaxBytes
 
 	// OriginModel identifies rejected model output.
 	OriginModel Origin = "model"
