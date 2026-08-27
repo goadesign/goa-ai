@@ -23,6 +23,7 @@ type (
 		expectsCompletion  bool
 		stopped            bool
 		stopReason         string
+		outputLimited      bool
 		text               strings.Builder
 		textSeen           bool
 		citations          []citationsPartSnapshot
@@ -295,6 +296,7 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 		}
 		v.stopped = true
 		v.stopReason = actual.Reason
+		v.outputLimited = actual.OutputLimited
 	}
 	return nil
 }
@@ -330,6 +332,9 @@ func (v *streamValidator) finish(response *Response) error {
 			v.stopReason,
 			response.StopReason,
 		)
+	}
+	if v.outputLimited != response.OutputLimited {
+		return errors.New("stream output-limit state does not match canonical response")
 	}
 	responseCalls := response.ToolCalls()
 	if err := validateToolChoiceResponse(v.toolChoiceMode, v.toolChoiceName, response); err != nil {

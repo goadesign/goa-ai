@@ -640,7 +640,10 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 				p.output.Name,
 			)
 		}
-		chunk := model.StopChunk{Reason: p.stopReason}
+		chunk := model.StopChunk{
+			Reason:        p.stopReason,
+			OutputLimited: anthropicOutputLimited(p.stopReason),
+		}
 		p.complete = true
 		return p.emit(chunk)
 	default:

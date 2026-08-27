@@ -23,6 +23,19 @@ import (
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
+func TestOpenAIOutputLimited(t *testing.T) {
+	response := &responses.Response{Status: responses.ResponseStatusIncomplete}
+	response.IncompleteDetails.Reason = "max_output_tokens"
+	require.True(t, openAIOutputLimited(response))
+
+	response.IncompleteDetails.Reason = "content_filter"
+	require.False(t, openAIOutputLimited(response))
+
+	response.Status = responses.ResponseStatusCompleted
+	response.IncompleteDetails.Reason = ""
+	require.False(t, openAIOutputLimited(response))
+}
+
 // mustOpenAIToolInput compiles a static test schema.
 func mustOpenAIToolInput(schema rawjson.Message) model.ToolInput {
 	input, err := model.AdvertisedToolInputFromSchema(schema)

@@ -21,6 +21,24 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+func TestAnthropicOutputLimited(t *testing.T) {
+	tests := []struct {
+		name   string
+		reason sdk.StopReason
+		want   bool
+	}{
+		{name: "maximum output tokens", reason: sdk.StopReasonMaxTokens, want: true},
+		{name: "natural end", reason: sdk.StopReasonEndTurn},
+		{name: "tool use", reason: sdk.StopReasonToolUse},
+		{name: "refusal", reason: sdk.StopReasonRefusal},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, anthropicOutputLimited(string(test.reason)))
+		})
+	}
+}
+
 // mustAnthropicToolInput compiles a static test schema.
 func mustAnthropicToolInput(t *testing.T, schema rawjson.Message) model.ToolInput {
 	t.Helper()

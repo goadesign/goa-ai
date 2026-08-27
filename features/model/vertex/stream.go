@@ -256,9 +256,13 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 			s.setErr(err)
 			return
 		}
-		s.emit(model.StopChunk{Reason: stopReason})
+		s.emit(model.StopChunk{
+			Reason:        stopReason,
+			OutputLimited: vertexOutputLimited(stopReason),
+		})
 	}
 	s.response.StopReason = stopReason
+	s.response.OutputLimited = vertexOutputLimited(stopReason)
 	s.response.Usage = latestUsage
 	grounded, err := applyGroundingMetadata(s.assistant.Parts, grounding)
 	if err != nil {

@@ -87,7 +87,10 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 		return nil, fmt.Errorf("vertex: response has %d candidates, want exactly one", len(resp.Candidates))
 	}
 	cand := resp.Candidates[0]
-	out := &model.Response{StopReason: string(cand.FinishReason)}
+	out := &model.Response{
+		StopReason:    string(cand.FinishReason),
+		OutputLimited: vertexOutputLimited(string(cand.FinishReason)),
+	}
 	if out.StopReason == "" {
 		return nil, errors.New("vertex: response candidate is missing its finish reason")
 	}
@@ -163,6 +166,12 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 	}
 	out.Usage = translateUsage(resp.UsageMetadata, modelID, class)
 	return out, nil
+}
+
+// vertexOutputLimited identifies the Gemini finish reason emitted when a
+// response consumes its configured generated-token budget.
+func vertexOutputLimited(reason string) bool {
+	return reason == string(genai.FinishReasonMaxTokens)
 }
 
 // applyGroundingMetadata converts Gemini source attribution into canonical

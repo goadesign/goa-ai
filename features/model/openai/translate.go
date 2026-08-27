@@ -16,6 +16,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+const openAIMaxOutputTokensReason = "max_output_tokens"
+
 func translateResponse(
 	resp *responses.Response,
 	codec *toolCodec,
@@ -110,6 +112,7 @@ func translateResponse(
 	}
 	flushThinking()
 	translated.StopReason = translateStopReason(resp, len(translated.ToolCalls()) > 0)
+	translated.OutputLimited = openAIOutputLimited(resp)
 	if output != nil {
 		payload, err := structuredOutputPayload(translated.Content, output, outputProjection)
 		if err != nil {
@@ -145,6 +148,13 @@ func preflightResponseSnapshot(resp *responses.Response) error {
 		}
 	}
 	return nil
+}
+
+// openAIOutputLimited identifies an incomplete Responses API result whose
+// generated output consumed the request's maximum output tokens.
+func openAIOutputLimited(response *responses.Response) bool {
+	return response.Status == responses.ResponseStatusIncomplete &&
+		response.IncompleteDetails.Reason == openAIMaxOutputTokensReason
 }
 
 func translateAssistantMessage(

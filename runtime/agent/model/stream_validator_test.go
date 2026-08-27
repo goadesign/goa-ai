@@ -47,6 +47,28 @@ func TestRequestContractSupportsConcurrentResponseValidation(t *testing.T) {
 	require.Equal(t, TokenUsage{}, response.Usage)
 }
 
+func TestStreamValidatorRejectsMismatchedOutputLimitState(t *testing.T) {
+	validator := mustNewStreamValidator(t, &Request{})
+	require.NoError(t, validator.accept(TextChunk{Message: Message{
+		Role:  ConversationRoleAssistant,
+		Parts: []Part{TextPart{Text: "partial"}},
+	}}))
+	require.NoError(t, validator.accept(StopChunk{
+		Reason:        "max_tokens",
+		OutputLimited: true,
+	}))
+
+	err := validator.finish(&Response{
+		Content: []Message{{
+			Role:  ConversationRoleAssistant,
+			Parts: []Part{TextPart{Text: "partial"}},
+		}},
+		StopReason: "max_tokens",
+	})
+
+	require.ErrorContains(t, err, "stream output-limit state does not match canonical response")
+}
+
 func TestRequestContractAppliesGeneratedToolPayloadCodec(t *testing.T) {
 	request := &Request{Tools: []*ToolDefinition{strictToolDefinition()}}
 	response := responseWithToolCall(ToolCall{

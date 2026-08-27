@@ -15,6 +15,12 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
+func TestVertexOutputLimited(t *testing.T) {
+	require.True(t, vertexOutputLimited(string(genai.FinishReasonMaxTokens)))
+	require.False(t, vertexOutputLimited(string(genai.FinishReasonStop)))
+	require.False(t, vertexOutputLimited(string(genai.FinishReasonSafety)))
+}
+
 func TestTranslateResponseTextAndToolCall(t *testing.T) {
 	resp := &genai.GenerateContentResponse{
 		Candidates: []*genai.Candidate{{
