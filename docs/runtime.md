@@ -933,10 +933,34 @@ adapter chooses a projection.
 
 Remote model transports must preserve model-output rejection as
 `model.OutputValidationError`, separately from provider and internal failures.
-Transmit only the rejection cause, `ResponseEvidence`, and validated
-`TokenUsage`; never transmit the rejected response body.
-`model.RestoreOutputValidationError` validates and reconstructs that bounded
-error after decoding the trusted transport.
+The transport must first decode a wire-level output-rejection variant rather
+than infer that classification from an arbitrary error. The `cause` passed to
+restoration is the error decoded from that output-validation variant; it is not
+an independent provider or internal error transmitted alongside the variant.
+The variant's restoration metadata is limited to `ResponseEvidence`, validated
+`TokenUsage`, and, when generated validation already produced it, a separate
+safe `RecoveryCorrection`; it never carries the rejected response body. Do not
+derive correction guidance from rejected output, cause text, or a schema after
+transport.
+
+After decoding that variant, call
+`model.RestoreOutputValidationError(cause, evidence, usage)`. It validates the
+cause, evidence, and usage and returns a terminal error with an empty
+correction. Provider failures, unsupported-capability and token-counting
+sentinels, cancellation, deadlines, and nested `OutputValidationError` values
+contradict the decoded variant and are rejected.
+If the wire variant also carried correction guidance, pass the returned
+terminal error to
+`model.RestoreCorrectableOutputValidationError(restored, correction)`. The
+second function accepts only an error produced by the first function, requires
+a nonblank, valid UTF-8 correction of at most 4,096 bytes, and preserves
+accepted bytes exactly.
+
+Neither function reconstructs or exposes the rejected response. The correction
+applies only to that rejected invocation and its immediate replacement planner
+turn. The workflow remains responsible for scheduling the replacement and
+enforcing `MaxRecoveryTurns`; provider failures, stream failures, and output
+failures without safe structured guidance remain terminal.
 
 ### PlannerEvents
 

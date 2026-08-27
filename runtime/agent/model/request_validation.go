@@ -4,6 +4,7 @@
 package model
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"goa.design/goa-ai/runtime/agent/internal/correction"
 	"goa.design/goa-ai/runtime/agent/internal/responseevidence"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -36,6 +38,7 @@ type (
 		rejected   *Response
 		usage      *TokenUsage
 		correction string
+		restored   bool
 	}
 
 	streamValidationContract struct {
@@ -203,10 +206,12 @@ func (e *OutputValidationError) RecoveryCorrection() string {
 
 // RestoreOutputValidationError reconstructs a model-output rejection after a
 // trusted transport decodes its bounded evidence. It rejects inconsistent
-// evidence or usage instead of accepting a forged validation result.
+// evidence, usage, or a cause already classified as another model failure.
+// The restored error is terminal; callers may attach separately transported
+// correction guidance with RestoreCorrectableOutputValidationError.
 func RestoreOutputValidationError(cause error, evidence ResponseEvidence, usage *TokenUsage) (*OutputValidationError, error) {
-	if cause == nil {
-		return nil, errors.New("model: output validation error requires a cause")
+	if err := validateRestoredOutputValidationCause(cause); err != nil {
+		return nil, err
 	}
 	if err := validateResponseEvidence(evidence); err != nil {
 		return nil, fmt.Errorf("model: restore output validation error: %w", err)
@@ -218,7 +223,96 @@ func RestoreOutputValidationError(cause error, evidence ResponseEvidence, usage 
 		cloned := *usage
 		usage = &cloned
 	}
-	return newOutputValidationError(cause, evidence, nil, usage), nil
+	return &OutputValidationError{
+		cause:    cause,
+		evidence: evidence,
+		usage:    usage,
+		restored: true,
+	}, nil
+}
+
+// RestoreCorrectableOutputValidationError attaches separately transported
+// correction guidance to a terminal error returned by
+// RestoreOutputValidationError. This two-step contract prevents provider,
+// cancellation, and other arbitrary errors from being classified as
+// correctable in one call. It preserves the restored cause, evidence, and usage
+// without retaining rejected model output.
+func RestoreCorrectableOutputValidationError(
+	restored *OutputValidationError,
+	recoveryCorrection string,
+) (*OutputValidationError, error) {
+	if restored == nil {
+		return nil, errors.New("model: correctable output validation error requires a restored terminal error")
+	}
+	if !restored.restored {
+		return nil, errors.New(
+			"model: correctable output validation error requires an error returned by RestoreOutputValidationError",
+		)
+	}
+	if restored.correction != "" {
+		return nil, errors.New("model: correctable output validation error requires a terminal restored error")
+	}
+	if recoveryCorrection == "" {
+		return nil, errors.New("model: correctable output validation error requires correction guidance")
+	}
+	if !utf8.ValidString(recoveryCorrection) {
+		return nil, errors.New("model: correctable output validation error correction must be valid UTF-8")
+	}
+	if strings.TrimSpace(recoveryCorrection) == "" {
+		return nil, errors.New("model: correctable output validation error correction must not be blank")
+	}
+	if len(recoveryCorrection) > correction.MaxBytes {
+		return nil, fmt.Errorf(
+			"model: correctable output validation error correction exceeds %d bytes",
+			correction.MaxBytes,
+		)
+	}
+	return &OutputValidationError{
+		cause:      restored.cause,
+		evidence:   restored.evidence,
+		usage:      restored.Usage(),
+		correction: recoveryCorrection,
+		restored:   true,
+	}, nil
+}
+
+// validateRestoredOutputValidationCause rejects error types whose existing
+// classification contradicts a transported model-output rejection. Other
+// causes retain their exact identity so errors.Is and errors.As keep working.
+func validateRestoredOutputValidationCause(cause error) error {
+	if isNilInterface(cause) {
+		if cause == nil {
+			return errors.New("model: output validation error requires a cause")
+		}
+		return errors.New("model: output validation error cause must not be typed nil")
+	}
+	switch {
+	case errors.Is(cause, ErrStreamingUnsupported):
+		return errors.New("model: output validation error cause must not contain ErrStreamingUnsupported")
+	case errors.Is(cause, ErrStructuredOutputUnsupported):
+		return errors.New("model: output validation error cause must not contain ErrStructuredOutputUnsupported")
+	case errors.Is(cause, ErrRateLimited):
+		return errors.New("model: output validation error cause must not contain ErrRateLimited")
+	case errors.Is(cause, ErrEmptyStream):
+		return errors.New("model: output validation error cause must not contain ErrEmptyStream")
+	case errors.Is(cause, ErrTokenCountingUnsupported):
+		return errors.New("model: output validation error cause must not contain ErrTokenCountingUnsupported")
+	}
+	var outputValidationErr *OutputValidationError
+	if errors.As(cause, &outputValidationErr) {
+		return errors.New("model: output validation error cause must not contain OutputValidationError")
+	}
+	var providerErr *ProviderError
+	if errors.As(cause, &providerErr) {
+		return errors.New("model: output validation error cause must not contain ProviderError")
+	}
+	if errors.Is(cause, context.Canceled) {
+		return errors.New("model: output validation error cause must not contain context cancellation")
+	}
+	if errors.Is(cause, context.DeadlineExceeded) {
+		return errors.New("model: output validation error cause must not contain context deadline")
+	}
+	return nil
 }
 
 // validateOwnedResponse applies the request rules after the model boundary has
