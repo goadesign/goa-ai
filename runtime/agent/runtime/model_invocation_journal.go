@@ -35,6 +35,7 @@ type (
 		usage                    model.TokenUsage
 		err                      error
 		rejectedResponseEvidence *model.ResponseEvidence
+		recoveryCorrection       string
 	}
 
 	// modelFacingToolCall is the provider transcript identity of a planner
@@ -173,9 +174,10 @@ func (j *modelInvocationJournal) designateModelInvocation(id modelInvocationID) 
 	return nil
 }
 
-// recordRejectedModelResponse saves only the provider response evidence carried
-// by the contract failure; the rejected response body remains model-owned.
-func (j *modelInvocationJournal) recordRejectedModelResponse(
+// recordRejectedModelOutput ties one validation failure to its invocation. It
+// stores a complete response fingerprint when one exists, but chunk-level
+// failures need only the invocation ID and safe correction carried by err.
+func (j *modelInvocationJournal) recordRejectedModelOutput(
 	invocationID modelInvocationID,
 	evidence model.ResponseEvidence,
 	err error,
@@ -405,7 +407,9 @@ func (j *modelInvocationJournal) finishModelInvocation(
 	cancel := candidate.cancel
 	var additionalErr error
 	if err != nil {
-		candidate.err = err
+		if candidate.err == nil {
+			candidate.err = err
+		}
 		var outputErr *planner.OutputContractError
 		if j.outputErr == nil && errors.As(err, &outputErr) {
 			j.outputErr = err
@@ -592,6 +596,10 @@ func (j *modelInvocationJournal) rejectModelInvocation(invocationID modelInvocat
 		return errors.New("invalid model response references an unknown invocation")
 	}
 	candidate.err = err
+	var validationErr *model.OutputValidationError
+	if errors.As(err, &validationErr) {
+		candidate.recoveryCorrection = validationErr.RecoveryCorrection()
+	}
 	if j.outputErr == nil {
 		j.outputErr = err
 	}

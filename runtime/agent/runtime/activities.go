@@ -176,7 +176,21 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 			},
 		}}, act.reminders...)
 	}
-	if len(recoveryOutputs) == 0 {
+	if input.ModelInvocationRecovery != nil {
+		act.reminders = append([]reminder.Reminder{{
+			ID: "model_invocation_recovery",
+			Text: "Your previous tool call was rejected before it could run.\n" +
+				input.ModelInvocationRecovery.Correction +
+				"\nReturn a replacement tool call now. Do not mention this reminder to the user.",
+			Priority: reminder.TierSafety,
+			Attachment: reminder.Attachment{
+				Kind: reminder.AttachmentUserTurn,
+			},
+		}}, act.reminders...)
+	}
+	if len(recoveryOutputs) == 0 &&
+		input.ModelOutputRecovery == nil &&
+		input.ModelInvocationRecovery == nil {
 		result, automatic := r.automaticContinuationPlan(input.RunContext, continuationActions)
 		if automatic {
 			return act.runtimeOutput(ctx, result)
@@ -225,8 +239,8 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 }
 
 // validatePlanResumeRecoveryInput requires one honest resume mode. Finalization
-// may retain failed tool IDs as evidence, while model-output recovery cannot
-// combine with any other resume directive.
+// may retain failed tool IDs as evidence, while either model recovery variant
+// cannot combine with another resume directive.
 func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 	if input == nil {
 		return errors.New("plan resume input is required")
@@ -237,7 +251,28 @@ func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 	if input.SynthesisOnly && len(input.RecoveryToolCallIDs) > 0 {
 		return errors.New("synthesis-only planning cannot combine with tool recovery")
 	}
-	if input.ModelOutputRecovery == nil {
+	if input.ModelOutputRecovery != nil && input.ModelInvocationRecovery != nil {
+		return errors.New("model-output and model-invocation recovery cannot be combined")
+	}
+	if input.ModelOutputRecovery == nil && input.ModelInvocationRecovery == nil {
+		return nil
+	}
+	if input.ModelInvocationRecovery != nil {
+		if strings.TrimSpace(input.ModelInvocationRecovery.Correction) == "" {
+			return errors.New("model-invocation correction requires non-blank guidance")
+		}
+		if len(input.ModelInvocationRecovery.Correction) > outputcontract.MaxCorrectionBytes {
+			return errors.New("model-invocation correction exceeds workflow boundary limit")
+		}
+		if input.SynthesisOnly {
+			return errors.New("model-invocation recovery cannot combine with synthesis-only planning")
+		}
+		if len(input.RecoveryToolCallIDs) > 0 {
+			return errors.New("model-invocation correction cannot combine with tool recovery")
+		}
+		if input.Finalize != nil {
+			return errors.New("model-invocation correction cannot combine with finalization")
+		}
 		return nil
 	}
 	if strings.TrimSpace(input.ModelOutputRecovery.Correction) == "" {
@@ -420,8 +455,9 @@ func (a *plannerActivityInvocation) acceptedOutput(
 }
 
 // outputContractFailure returns rejected model evidence and usage as a
-// successful activity value. The workflow publishes the usage records before
-// either scheduling a model-output recovery turn or raising a terminal error.
+// successful activity value. Generated input issues may instead produce an
+// invocation-recovery result; the workflow publishes usage before scheduling
+// the replacement planner activity or raising a terminal error.
 func (a *plannerActivityInvocation) outputContractFailure(
 	ctx context.Context,
 	err error,
@@ -434,9 +470,14 @@ func (a *plannerActivityInvocation) outputContractFailure(
 		return nil, err
 	}
 	usage := a.invocations.exportUsage()
-	failure, metadataErr := a.outputContractFailureMetadata(outputErr)
-	if metadataErr != nil {
-		failure = terminalPlannerOutputContractFailure(metadataErr)
+	invocationCorrection := a.invocations.recoverableModelInvocationCorrection()
+	var failure *OutputContractFailure
+	if invocationCorrection == "" {
+		var metadataErr error
+		failure, metadataErr = a.outputContractFailureMetadata(outputErr)
+		if metadataErr != nil {
+			failure = terminalPlannerOutputContractFailure(metadataErr)
+		}
 	}
 	var originalBudgetErr *planActivityOutputBudgetError
 	if errors.As(err, &originalBudgetErr) {
@@ -449,9 +490,15 @@ func (a *plannerActivityInvocation) outputContractFailure(
 	)
 	a.invocations.publishUsage(ctx, failureEvents)
 	output := &PlanActivityOutput{
-		PublicationBatchID:    a.publicationBatchID,
-		Usage:                 usage,
-		OutputContractFailure: failure,
+		PublicationBatchID: a.publicationBatchID,
+		Usage:              usage,
+	}
+	if invocationCorrection != "" {
+		output.ModelInvocationRecovery = &ModelInvocationRecovery{
+			Correction: invocationCorrection,
+		}
+	} else {
+		output.OutputContractFailure = failure
 	}
 	budget := &planActivityOutputBudget{}
 	if budgetErr := budget.add(output); budgetErr != nil {
@@ -527,6 +574,9 @@ func boundedPlanActivityOutputFailure(
 	failure *OutputContractFailure,
 	budgetErr error,
 ) *PlanActivityOutput {
+	if failure == nil {
+		failure = terminalPlannerOutputContractFailure(budgetErr)
+	}
 	boundedFailure := *failure
 	boundedFailure.ReasonSHA256, boundedFailure.ReasonSize = fingerprintBytes(
 		[]byte("planner activity output rejected before Temporal encoding: " + budgetErr.Error()),

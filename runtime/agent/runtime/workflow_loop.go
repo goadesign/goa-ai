@@ -89,7 +89,17 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 	ctx := l.wfCtx.Context()
 	for {
 		if correction := modelOutputCorrection(l.st.PendingRecovery); correction != "" {
-			out, err := l.resumePlanner(nil, false, correction)
+			out, err := l.resumePlanner(nil, false, correction, "")
+			if err != nil {
+				return nil, err
+			}
+			if out != nil {
+				return out, nil
+			}
+			continue
+		}
+		if correction := modelInvocationCorrection(l.st.PendingRecovery); correction != "" {
+			out, err := l.resumePlanner(nil, false, "", correction)
 			if err != nil {
 				return nil, err
 			}

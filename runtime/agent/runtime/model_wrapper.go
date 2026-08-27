@@ -130,7 +130,7 @@ func (c *cacheConfiguredProvider) Stream(ctx context.Context, req *model.Request
 type modelInvocationSink interface {
 	beginModelInvocation(model.ModelClass, context.CancelFunc) (modelInvocationID, error)
 	designateModelInvocation(invocationID modelInvocationID) error
-	recordRejectedModelResponse(
+	recordRejectedModelOutput(
 		invocationID modelInvocationID,
 		evidence model.ResponseEvidence,
 		err error,
@@ -258,7 +258,7 @@ func (c *modelInvocationProvider) observeRejectedModelOutput(
 		cause,
 		planner.OutputContractOriginModel,
 	)
-	outputErr = c.sink.recordRejectedModelResponse(
+	outputErr = c.sink.recordRejectedModelOutput(
 		invocationID,
 		validationErr.Evidence(),
 		outputErr,
@@ -359,13 +359,11 @@ func (s *modelInvocationStreamer) ObserveStreamRecv(observation model.StreamObse
 					s.sink.recordRejectedModelUsageTotal(s.invocationID, *observation.RejectedUsageTotal),
 				)
 			}
-			if observation.ResponseEvidence.Present {
-				err = s.sink.recordRejectedModelResponse(
-					s.invocationID,
-					observation.ResponseEvidence,
-					err,
-				)
-			}
+			err = s.sink.recordRejectedModelOutput(
+				s.invocationID,
+				observation.ResponseEvidence,
+				err,
+			)
 		}
 		if errors.Is(err, io.EOF) {
 			if observation.Response == nil {

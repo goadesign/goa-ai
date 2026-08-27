@@ -642,11 +642,21 @@ func (r *Runtime) runPlanActivity(
 	}
 	switch {
 	case out.OutputContractFailure != nil:
-		if out.Result != nil {
-			return nil, errors.New("runPlanActivity received both PlanResult and OutputContractFailure")
+		if out.Result != nil || out.ModelInvocationRecovery != nil {
+			return nil, errors.New("runPlanActivity received OutputContractFailure with another result variant")
 		}
 		if err := validateOutputContractFailure(out.OutputContractFailure); err != nil {
 			return out, planner.NewOutputContractError(err)
+		}
+	case out.ModelInvocationRecovery != nil:
+		if out.Result != nil {
+			return nil, errors.New("runPlanActivity received both PlanResult and ModelInvocationRecovery")
+		}
+		if strings.TrimSpace(out.ModelInvocationRecovery.Correction) == "" {
+			return nil, errors.New("runPlanActivity received blank model-invocation correction")
+		}
+		if len(out.ModelInvocationRecovery.Correction) > outputcontract.MaxCorrectionBytes {
+			return nil, errors.New("runPlanActivity received oversized model-invocation correction")
 		}
 	case out.Result == nil:
 		return nil, fmt.Errorf("runPlanActivity received nil PlanResult")
@@ -673,6 +683,9 @@ func (r *Runtime) runPlanActivity(
 			return out, nil
 		}
 		return out, boundedOutputContractError(out.OutputContractFailure)
+	}
+	if out.ModelInvocationRecovery != nil {
+		return out, nil
 	}
 	r.logger.Info(wfCtx.Context(),
 		"runPlanActivity received PlanResult",

@@ -687,15 +687,31 @@ Workflow step boundary:
 - when one of those limits is reached, the workflow selects the matching call
   without loading saved messages, adds current run identifiers and labels,
   and executes the call through the existing terminal-tool path,
+- when a model returns a tool call that fails its generated input codec, the
+  model boundary may produce bounded replacement guidance from the generated
+  tool name, field path, expected JSON type, required-field rule, legal enum,
+  or union discriminator; it never copies submitted values, raw provider
+  output, or unknown property names into that guidance,
+- the workflow ties that guidance to the exact rejected invocation selected in
+  invocation start order, records its token usage, keeps the malformed call out
+  of transcript history, and schedules one normal resume activity with the
+  executable tool catalog still available; a generated validation failure
+  without safe structured issues remains terminal,
+- Temporal histories written before this behavior replay unchanged. Once a
+  history contains a `ModelInvocationRecovery` planner activity result, every
+  worker that may process that history must run a runtime version that
+  understands this result. Do not mix older and newer workers on those
+  histories, and do not roll them back to an older worker,
 - a planner may return `NewRecoverableModelOutputError` when it rejects a
   completed model answer and can state how the model should replace it; the
   workflow records the rejection and token usage, then schedules the normal
   synthesis-only resume activity with that guidance,
 - `MaxRecoveryTurns` counts replacement planner activities scheduled after
-  rejected tool or model output; successful budgeted tool work resets this
-  consecutive count; agents that omit the setting receive three turns; the
-  terminal finalization activity that explains or records exhaustion is not a
-  replacement attempt and does not consume this budget,
+  rejected tool output, a rejected model invocation, or a rejected completed
+  answer; successful budgeted tool work resets this consecutive count; agents
+  that omit the setting receive three turns; the terminal finalization activity
+  that explains or records exhaustion is not a replacement attempt and does
+  not consume this budget,
 - when the run omitted `LimitTerminalPlans`, or a tool failure requires
   finalization, `PlanResumeInput.Finalize` is non-nil and the planner may close
   through terminal bookkeeping tools instead of prose; the runtime admits only

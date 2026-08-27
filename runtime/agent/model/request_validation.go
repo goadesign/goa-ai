@@ -31,10 +31,11 @@ type (
 	// contract captured before inference began. It retains only bounded response
 	// identity plus an optional framework-owned rejected response.
 	OutputValidationError struct {
-		cause    error
-		evidence ResponseEvidence
-		rejected *Response
-		usage    *TokenUsage
+		cause      error
+		evidence   ResponseEvidence
+		rejected   *Response
+		usage      *TokenUsage
+		correction string
 	}
 
 	streamValidationContract struct {
@@ -46,6 +47,14 @@ type (
 	}
 
 	toolCallValidator func(ToolCall) error
+
+	// toolCallValidationError carries framework-authored correction guidance
+	// without retaining the generated codec message, which may quote rejected
+	// provider values.
+	toolCallValidationError struct {
+		toolName   tools.Ident
+		correction string
+	}
 )
 
 // NewRequestContract validates request and copies every value used to accept
@@ -165,7 +174,8 @@ func (e *OutputValidationError) Evidence() ResponseEvidence {
 	return e.evidence
 }
 
-// RejectedResponse returns an isolated copy of the optional rejected response.
+// RejectedResponse returns an isolated copy of an optional terminal rejection.
+// Recoverable tool-call errors never retain their rejected response.
 func (e *OutputValidationError) RejectedResponse() (*Response, error) {
 	return cloneResponseForValidation(e.rejected)
 }
@@ -178,6 +188,17 @@ func (e *OutputValidationError) Usage() *TokenUsage {
 	}
 	usage := *e.usage
 	return &usage
+}
+
+// RecoveryCorrection returns framework-authored guidance when generated tool
+// validation identified a safe way to replace the rejected invocation. The
+// guidance contains no provider payload or submitted values. An empty string
+// means the rejection remains terminal.
+func (e *OutputValidationError) RecoveryCorrection() string {
+	if e == nil {
+		return ""
+	}
+	return e.correction
 }
 
 // RestoreOutputValidationError reconstructs a model-output rejection after a
@@ -403,6 +424,7 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 			return nil, fmt.Errorf("model request contains duplicate tool definition %q", name)
 		}
 		validate := definition.Input.validate
+		fieldJSONTypes := definition.Input.fieldJSONTypes
 		if validate == nil {
 			return nil, fmt.Errorf("model request tool %q has no payload validator", name)
 		}
@@ -420,7 +442,14 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 		}
 		validators[name] = func(call ToolCall) error {
 			if err := validate(call.Payload); err != nil {
-				return fmt.Errorf("model tool %q payload failed its request contract: %w", call.Name, err)
+				correction := generatedToolCallCorrection(call.Name, fieldJSONTypes, err)
+				if correction == "" {
+					return fmt.Errorf("model tool %q payload failed its request contract: %w", call.Name, err)
+				}
+				return &toolCallValidationError{
+					toolName:   call.Name,
+					correction: correction,
+				}
 			}
 			return nil
 		}
@@ -446,6 +475,18 @@ func validateConfiguredToolCalls(
 		}
 	}
 	return nil
+}
+
+// Error reports which generated tool contract rejected the call without
+// retaining the codec message or provider arguments.
+func (e *toolCallValidationError) Error() string {
+	return fmt.Sprintf("model tool %q payload failed its generated request contract", e.toolName)
+}
+
+// modelRecoveryCorrection gives OutputValidationError the bounded safe
+// guidance derived before the rejected payload leaves validation.
+func (e *toolCallValidationError) modelRecoveryCorrection() string {
+	return e.correction
 }
 
 // validateToolChoiceResponse enforces the exact tool-use constraint copied
@@ -596,10 +637,31 @@ func newOutputValidationError(
 	rejected *Response,
 	usage *TokenUsage,
 ) *OutputValidationError {
-	return &OutputValidationError{
-		cause:    cause,
-		evidence: evidence,
-		rejected: rejected,
-		usage:    usage,
+	correction := recoveryCorrectionFromError(cause)
+	if correction != "" {
+		rejected = nil
 	}
+	return &OutputValidationError{
+		cause:      cause,
+		evidence:   evidence,
+		rejected:   rejected,
+		usage:      usage,
+		correction: correction,
+	}
+}
+
+// recoveryCorrectionFromError preserves generated correction guidance while
+// validation wraps the rejection with response and usage evidence.
+func recoveryCorrectionFromError(err error) string {
+	var source interface {
+		modelRecoveryCorrection() string
+	}
+	if errors.As(err, &source) {
+		return source.modelRecoveryCorrection()
+	}
+	var validationErr *OutputValidationError
+	if errors.As(err, &validationErr) {
+		return validationErr.RecoveryCorrection()
+	}
+	return ""
 }

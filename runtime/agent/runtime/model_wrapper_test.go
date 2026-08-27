@@ -270,6 +270,7 @@ func TestModelInvocationJournalSelectsEarliestStartedRejection(t *testing.T) {
 		planner.OutputContractOriginModel,
 	)
 	require.Equal(t, secondErr, invocations.rejectModelInvocation(secondID, secondErr))
+	invocations.invocations[secondID].recoveryCorrection = "replace second invocation"
 
 	require.NoError(t, invocations.recordRejectedResponseEvidence(firstID, firstFingerprint))
 	firstErr := outputcontract.NewWithOrigin(
@@ -277,8 +278,10 @@ func TestModelInvocationJournalSelectsEarliestStartedRejection(t *testing.T) {
 		planner.OutputContractOriginModel,
 	)
 	require.Equal(t, firstErr, invocations.rejectModelInvocation(firstID, firstErr))
+	invocations.invocations[firstID].recoveryCorrection = "replace first invocation"
 
 	require.Equal(t, firstErr, invocations.outputContractError())
+	require.Equal(t, "replace first invocation", invocations.recoverableModelInvocationCorrection())
 	evidence, present := rejectedResponseEvidence(invocations)
 	require.True(t, present)
 	require.Equal(t, firstFingerprint, evidence)
@@ -813,7 +816,7 @@ func (s *fakeModelInvocationSink) recordModelResponse(invocationID modelInvocati
 	return nil
 }
 
-func (s *fakeModelInvocationSink) recordRejectedModelResponse(
+func (s *fakeModelInvocationSink) recordRejectedModelOutput(
 	_ modelInvocationID,
 	_ model.ResponseEvidence,
 	err error,

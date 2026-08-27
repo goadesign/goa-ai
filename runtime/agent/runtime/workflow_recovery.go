@@ -1,9 +1,9 @@
 package runtime
 
 // This file represents the one pending recovery action owned by a workflow.
-// Tool recovery carries failed calls and their advertised catalog. Model
-// recovery carries guidance for replacing one rejected answer. Separate types
-// prevent one planner activity from receiving both modes.
+// Tool recovery carries failed calls and their advertised catalog. Completed
+// answer recovery and pre-canonical invocation recovery carry different
+// guidance because only the latter retains the normal executable tool catalog.
 
 import "goa.design/goa-ai/runtime/agent/planner"
 
@@ -20,10 +20,15 @@ type (
 	pendingModelOutputRecovery struct {
 		correction string
 	}
+
+	pendingModelInvocationRecovery struct {
+		correction string
+	}
 )
 
-func (pendingToolRecovery) pendingPlannerRecovery()        {}
-func (pendingModelOutputRecovery) pendingPlannerRecovery() {}
+func (pendingToolRecovery) pendingPlannerRecovery()            {}
+func (pendingModelOutputRecovery) pendingPlannerRecovery()     {}
+func (pendingModelInvocationRecovery) pendingPlannerRecovery() {}
 
 // toolRecovery returns the failed calls and catalog when the workflow is
 // waiting for the planner to repair tool work.
@@ -45,6 +50,19 @@ func modelOutputCorrection(recovery pendingPlannerRecovery) string {
 		return ""
 	}
 	pending, ok := recovery.(pendingModelOutputRecovery)
+	if !ok {
+		return ""
+	}
+	return pending.correction
+}
+
+// modelInvocationCorrection returns replacement guidance when the workflow is
+// waiting for a new tool call under the normal executable catalog.
+func modelInvocationCorrection(recovery pendingPlannerRecovery) string {
+	if recovery == nil {
+		return ""
+	}
+	pending, ok := recovery.(pendingModelInvocationRecovery)
 	if !ok {
 		return ""
 	}

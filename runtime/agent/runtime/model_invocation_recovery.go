@@ -1,6 +1,7 @@
-// Package runtime ties rejected model answers to the exact model call completed
-// in one planner activity. The activity records only bounded response evidence
-// after this check succeeds.
+// Package runtime ties rejected model output to the exact model call started in
+// one planner activity. Completed-answer recovery verifies a response
+// fingerprint; pre-canonical tool-call recovery selects the invocation by start
+// order and carries only bounded generated guidance.
 package runtime
 
 import (
@@ -51,6 +52,23 @@ func (j *modelInvocationJournal) rejectedModelResponseEvidence() model.ResponseE
 		return *candidate.rejectedResponseEvidence
 	}
 	return model.ResponseEvidence{}
+}
+
+// recoverableModelInvocationCorrection returns guidance from the exact
+// earliest-started invocation selected as this activity's rejection. A later
+// completion cannot supply guidance for an earlier failure.
+func (j *modelInvocationJournal) recoverableModelInvocationCorrection() string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, id := range j.order {
+		candidate := j.invocations[id]
+		var outputErr *planner.OutputContractError
+		if candidate == nil || !errors.As(candidate.err, &outputErr) {
+			continue
+		}
+		return candidate.recoveryCorrection
+	}
+	return ""
 }
 
 // recoverableModelResponseEvidence verifies that the planner rejected one exact

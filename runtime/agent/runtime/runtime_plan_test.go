@@ -508,6 +508,12 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 			name:  "model output recovery",
 			input: &PlanActivityInput{ModelOutputRecovery: &ModelOutputRecovery{Correction: "Use fewer references."}},
 		},
+		{
+			name: "model invocation recovery",
+			input: &PlanActivityInput{
+				ModelInvocationRecovery: &ModelInvocationRecovery{Correction: "Use a string query."},
+			},
+		},
 		{name: "missing input", wantErr: "input is required"},
 		{
 			name:    "blank model guidance",
@@ -544,6 +550,22 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 				Finalize:            termination,
 			},
 			wantErr: "cannot combine with finalization",
+		},
+		{
+			name: "combined model recovery variants",
+			input: &PlanActivityInput{
+				ModelOutputRecovery:     &ModelOutputRecovery{Correction: "Replace the answer."},
+				ModelInvocationRecovery: &ModelInvocationRecovery{Correction: "Replace the tool call."},
+			},
+			wantErr: "cannot be combined",
+		},
+		{
+			name: "model invocation recovery with synthesis",
+			input: &PlanActivityInput{
+				ModelInvocationRecovery: &ModelInvocationRecovery{Correction: "Replace the tool call."},
+				SynthesisOnly:           true,
+			},
+			wantErr: "cannot combine with synthesis-only",
 		},
 		{
 			name:    "synthesis with tool recovery",
@@ -2919,6 +2941,7 @@ func TestBuildNextResumeRequestCarriesTurnScopedRecoveryIdentity(t *testing.T) {
 		recovery,
 		false,
 		"",
+		"",
 		&nextAttempt,
 	)
 	require.NoError(t, err)
@@ -2948,6 +2971,7 @@ func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
 		[]*planner.ToolOutput{nil},
 		nil,
 		false,
+		"",
 		"",
 		&nextAttempt,
 	)
@@ -2980,6 +3004,7 @@ func TestBuildNextResumeRequestUsesProviderNeutralTranscriptValidation(t *testin
 		nil,
 		nil,
 		false,
+		"",
 		"",
 		&nextAttempt,
 	)
