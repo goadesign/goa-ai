@@ -371,9 +371,7 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			canonical, ok := p.toolNameMap[raw]
 			if !ok {
 				return fmt.Errorf(
-					"anthropic stream: tool use block %q returned unadvertised name %q: %w",
-					toolUse.ID,
-					raw,
+					"anthropic stream: translate tool use: %w",
 					model.NewUnadvertisedToolNameError(raw),
 				)
 			}

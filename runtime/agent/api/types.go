@@ -656,8 +656,8 @@ type (
 		// contract.
 		Origin planner.OutputContractOrigin
 
-		// ReasonSHA256 identifies the exact local validation error without
-		// carrying provider-controlled text through Temporal.
+		// ReasonSHA256 identifies the private validation-cause text without
+		// carrying that text through Temporal.
 		ReasonSHA256 string
 
 		// ReasonSize is the number of bytes covered by ReasonSHA256.

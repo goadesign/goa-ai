@@ -1755,8 +1755,7 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 			name, ok := nameMap[key]
 			if !ok {
 				return nil, fmt.Errorf(
-					"bedrock: response tool use block returned unadvertised name %q: %w",
-					raw,
+					"bedrock: translate response tool use: %w",
 					model.NewUnadvertisedToolNameError(raw),
 				)
 			}

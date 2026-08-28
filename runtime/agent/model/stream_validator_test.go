@@ -84,7 +84,7 @@ func TestRequestContractAppliesGeneratedToolPayloadCodec(t *testing.T) {
 	require.NoError(t, err)
 	_, err = contract.ValidateResponse(response)
 
-	require.ErrorContains(t, err, `model tool "svc.lookup" payload failed its request contract`)
+	require.ErrorContains(t, outputValidationCause(t, err), `model tool "svc.lookup" payload failed its request contract`)
 }
 
 func TestStreamValidatorAppliesGeneratedToolPayloadCodecAfterReconciliation(t *testing.T) {

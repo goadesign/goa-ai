@@ -113,7 +113,7 @@ func TestNormalizeStepRejectsContradictoryTerminalShapes(t *testing.T) {
 			_, err := rt.normalizeStep(tt.result)
 			var outputErr *planner.OutputContractError
 			require.ErrorAs(t, err, &outputErr)
-			require.ErrorContains(t, err, tt.want)
+			require.ErrorContains(t, outputContractCause(t, err), tt.want)
 		})
 	}
 }
@@ -417,7 +417,7 @@ func TestRunLoopRejectsMultipleProviderToolCallsWithoutIDs(t *testing.T) {
 	require.Nil(t, out)
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
-	require.ErrorContains(t, err, `tool "runtime.tool_unavailable" is missing tool_call_id`)
+	require.ErrorContains(t, outputContractCause(t, err), `tool "runtime.tool_unavailable" is missing tool_call_id`)
 }
 
 func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {

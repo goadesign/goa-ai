@@ -110,9 +110,11 @@ func (j *modelInvocationJournal) beginModelInvocation(
 	return id, nil
 }
 
-// seal prevents new model calls, cancels every unfinished call, and waits for
-// each provider operation to return. Planner activity completion therefore
-// means no model inference or usage accounting remains in flight.
+// seal prevents new model calls, cancels every call context, and waits for each
+// provider operation to return. Completed calls retain their context through
+// finalization so runtime-owned cleanup cannot look like an operation failure.
+// Planner activity completion therefore means no model inference or usage
+// accounting remains in flight.
 func (j *modelInvocationJournal) seal() error {
 	j.mu.Lock()
 	if j.sealed {
@@ -129,32 +131,38 @@ func (j *modelInvocationJournal) seal() error {
 		cancel context.CancelFunc
 		done   <-chan struct{}
 	}
-	var pending []pendingInvocation
+	var invocations []pendingInvocation
 	for _, id := range j.order {
 		candidate := j.invocations[id]
-		if candidate == nil || candidate.finished {
+		if candidate == nil {
 			continue
 		}
-		pending = append(pending, pendingInvocation{
+		invocations = append(invocations, pendingInvocation{
 			cancel: candidate.cancel,
 			done:   candidate.done,
 		})
 	}
 	if outputErr != nil {
 		j.sealedErr = outputErr
-	} else if len(pending) > 0 {
-		j.sealedErr = outputcontract.NewWithOrigin(
-			errors.New("planner returned while a model invocation was still running"),
-			planner.OutputContractOriginPlanner,
-		)
+	} else {
+		for _, id := range j.order {
+			candidate := j.invocations[id]
+			if candidate != nil && !candidate.finished {
+				j.sealedErr = outputcontract.NewWithOrigin(
+					errors.New("planner returned while a model invocation was still running"),
+					planner.OutputContractOriginPlanner,
+				)
+				break
+			}
+		}
 	}
 	err := j.sealedErr
 	j.mu.Unlock()
 
-	for _, invocation := range pending {
+	for _, invocation := range invocations {
 		invocation.cancel()
 	}
-	for _, invocation := range pending {
+	for _, invocation := range invocations {
 		<-invocation.done
 	}
 	close(j.sealDone)
@@ -405,8 +413,13 @@ func (j *modelInvocationJournal) finalizeModelInvocation(
 	candidate.finished = true
 	frozen := outcome.Clone()
 	candidate.outcome = &frozen
-	cancel := candidate.cancel
 	candidate.err = frozen.Error()
+	if recoverableModelCall(candidate) {
+		// The frozen outcome still retains the close failure for tracing and
+		// diagnostics. The operation result remains the exact staged rejection
+		// so the activity can make its one typed recovery decision.
+		candidate.err = candidate.rejectedOutputErr
+	}
 	if candidate.err == nil && candidate.response == nil {
 		missingResponseErr := outputcontract.NewWithOrigin(
 			errors.New("model stream ended without a complete response"),
@@ -422,7 +435,6 @@ func (j *modelInvocationJournal) finalizeModelInvocation(
 	sealedErr := j.sealedError()
 	close(candidate.done)
 	j.mu.Unlock()
-	cancel()
 	if sealedErr != nil {
 		return sealedErr
 	}

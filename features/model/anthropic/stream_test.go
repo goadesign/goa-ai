@@ -499,7 +499,7 @@ func TestAnthropicStreamerRejectsOversizedSDKSnapshotBeforeAccumulation(t *testi
 
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "retained output exceeds 16777216 bytes")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "retained output exceeds 16777216 bytes")
 	require.True(t, validationErr.Evidence().Present)
 }
 
@@ -554,7 +554,7 @@ func TestAnthropicStreamerRejectsMissingToolCallIDWithUsage(t *testing.T) {
 
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "tool use block missing id")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "tool use block missing id")
 	require.Equal(t, 7, validationErr.Usage().InputTokens)
 	require.Equal(t, 2, validationErr.Usage().OutputTokens)
 }
@@ -728,7 +728,7 @@ func TestAnthropicStreamerRejectsMessageStopWithOpenContentBlock(t *testing.T) {
 
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "anthropic stream: message stopped with 1 open content blocks")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "anthropic stream: message stopped with 1 open content blocks")
 	require.Equal(t, 1, validationErr.Usage().InputTokens)
 }
 

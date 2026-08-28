@@ -116,6 +116,8 @@ func TestCompleteMarksUnadvertisedToolName(t *testing.T) {
 	name, ok := model.UnadvertisedToolName(validationErr)
 	assert.True(t, ok)
 	assert.Equal(t, "look_up", name)
+	assert.NotContains(t, err.Error(), name)
+	assert.NotContains(t, errors.Unwrap(validationErr).Error(), name)
 	assert.Equal(t, &model.TokenUsage{
 		Model:        "gpt-4o",
 		InputTokens:  4,
@@ -264,6 +266,8 @@ func TestStreamMarksUnadvertisedToolName(t *testing.T) {
 	name, ok := model.UnadvertisedToolName(validationErr)
 	assert.True(t, ok)
 	assert.Equal(t, "look_up", name)
+	assert.NotContains(t, err.Error(), name)
+	assert.NotContains(t, errors.Unwrap(validationErr).Error(), name)
 	assert.Equal(t, &model.TokenUsage{
 		Model:        "gpt-4o",
 		InputTokens:  4,

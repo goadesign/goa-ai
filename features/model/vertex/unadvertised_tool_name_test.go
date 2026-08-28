@@ -67,6 +67,7 @@ func TestTranslateResponseMarksUnadvertisedToolName(t *testing.T) {
 	name, ok := model.UnadvertisedToolName(err)
 	assert.True(t, ok)
 	assert.Equal(t, "catalog_list_nearby", name)
+	assert.NotContains(t, err.Error(), name)
 }
 
 func TestTranslateResponseAcceptsExactAdvertisedToolName(t *testing.T) {
@@ -161,6 +162,8 @@ func TestStreamMarksUnadvertisedToolName(t *testing.T) {
 	name, ok := model.UnadvertisedToolName(validationErr)
 	assert.True(t, ok)
 	assert.Equal(t, "catalog_list_nearby", name)
+	assert.NotContains(t, err.Error(), name)
+	assert.NotContains(t, errors.Unwrap(validationErr).Error(), name)
 	assert.Equal(t, &model.TokenUsage{
 		Model:        "gemini-2.5-flash",
 		InputTokens:  4,

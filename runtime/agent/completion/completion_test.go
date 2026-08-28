@@ -71,6 +71,22 @@ func requireCompletionResponseEqual(t *testing.T, expected, actual *model.Respon
 	}
 }
 
+// completionOutputContractCause returns the diagnostic cause kept behind the
+// privacy-safe error text so tests can verify why completion rejected output.
+func completionOutputContractCause(t *testing.T, err error) error {
+	t.Helper()
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	cause := errors.Unwrap(outputErr)
+	require.Error(t, cause)
+	var validationErr *model.OutputValidationError
+	if errors.As(cause, &validationErr) {
+		cause = errors.Unwrap(validationErr)
+		require.Error(t, cause)
+	}
+	return cause
+}
+
 type recordingCompletionClient struct {
 	request   *model.Request
 	requests  []*model.Request
@@ -201,6 +217,12 @@ type scriptedStreamer struct {
 	closeErr error
 }
 
+type blockingCompletionCloseStreamer struct {
+	*scriptedStreamer
+	closeStarted chan struct{}
+	closeRelease chan struct{}
+}
+
 func (s *scriptedStreamer) Recv() (model.Chunk, error) {
 	if s.index >= len(s.results) {
 		return nil, io.EOF
@@ -217,6 +239,12 @@ func (s *scriptedStreamer) Close() error {
 
 func (s *scriptedStreamer) Response() *model.Response {
 	return s.response
+}
+
+func (s *blockingCompletionCloseStreamer) Close() error {
+	close(s.closeStarted)
+	<-s.closeRelease
+	return s.scriptedStreamer.Close()
 }
 
 type reusingCompletionStreamer struct {
@@ -351,7 +379,7 @@ func TestCompletePreservesMalformedOutputPrecedenceWhenOutputLimited(t *testing.
 	)
 
 	require.Nil(t, response)
-	require.ErrorContains(t, err, "structured output response does not match its schema")
+	require.ErrorContains(t, completionOutputContractCause(t, err), "structured output response does not match its schema")
 	require.NotErrorIs(t, err, errOutputLimited)
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
@@ -423,7 +451,7 @@ func TestCompleteRejectsCodecFailureWithoutAnotherRequest(t *testing.T) {
 	require.Error(t, err)
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
-	require.ErrorContains(t, err, "assistant_text must be a string")
+	require.ErrorContains(t, completionOutputContractCause(t, err), "assistant_text must be a string")
 	assert.Nil(t, response)
 	assert.Len(t, client.requests, 1)
 	require.Len(t, req.Messages, 1)
@@ -444,7 +472,7 @@ func TestCompleteValidatesDifferentResponseReturnedByInnerClient(t *testing.T) {
 	)
 
 	require.Nil(t, response)
-	require.ErrorContains(t, err, "cannot unmarshal number")
+	require.ErrorContains(t, completionOutputContractCause(t, err), "cannot unmarshal number")
 }
 
 func TestCompleteRevalidatesSameResponseAfterInnerClientMutation(t *testing.T) {
@@ -465,7 +493,7 @@ func TestCompleteRevalidatesSameResponseAfterInnerClientMutation(t *testing.T) {
 	)
 
 	require.Nil(t, result)
-	require.ErrorContains(t, err, "cannot unmarshal number")
+	require.ErrorContains(t, completionOutputContractCause(t, err), "cannot unmarshal number")
 }
 
 func TestCompleteReturnsProviderAndResponseShapeFailuresAfterOneCall(t *testing.T) {
@@ -511,7 +539,7 @@ func TestCompleteReturnsProviderAndResponseShapeFailuresAfterOneCall(t *testing.
 			}},
 		}, testCompletionSpec())
 		require.Error(t, err)
-		require.ErrorContains(t, err, "requires exactly one assistant message")
+		require.ErrorContains(t, completionOutputContractCause(t, err), "requires exactly one assistant message")
 		assert.Nil(t, response)
 		assert.Len(t, client.requests, 1)
 	})
@@ -607,7 +635,7 @@ func TestStreamRejectsTypedNilModelStreamer(t *testing.T) {
 	)
 
 	require.Nil(t, stream)
-	require.ErrorContains(t, err, "typed nil")
+	require.ErrorContains(t, completionOutputContractCause(t, err), "typed nil")
 }
 
 func TestStreamClosesValidatedModelStreamReturnedWithError(t *testing.T) {
@@ -797,11 +825,13 @@ func TestStreamEnforcesCanonicalCompletionContract(t *testing.T) {
 	value, ok := stream.Value()
 	require.True(t, ok)
 	require.Equal(t, "created a draft", value.AssistantText)
+	require.True(t, upstream.closed)
 
 	_, err = stream.Recv()
 	require.ErrorIs(t, err, io.EOF)
 }
 func TestStreamRejectsOutputLimitedResponseWithoutFinalCompletion(t *testing.T) {
+	closeErr := errors.New("provider close failed")
 	rejectedResponse := completionResponse(`{"assistant_text":"truncated but schema valid"}`)
 	rejectedResponse.StopReason = outputLimitStopReason
 	rejectedResponse.OutputLimited = true
@@ -814,6 +844,7 @@ func TestStreamRejectsOutputLimitedResponseWithoutFinalCompletion(t *testing.T) 
 	expectedEvidence := model.EvidenceForResponse(rejectedResponse)
 	upstream := &scriptedStreamer{
 		response: rejectedResponse,
+		closeErr: closeErr,
 		results: []recvResult{
 			{chunk: model.CompletionDeltaChunk{Delta: model.CompletionDelta{
 				Name:  "draft_from_transcript",
@@ -845,6 +876,7 @@ func TestStreamRejectsOutputLimitedResponseWithoutFinalCompletion(t *testing.T) 
 	final, err := stream.Recv()
 	require.Nil(t, final)
 	require.ErrorIs(t, err, errOutputLimited)
+	require.NotErrorIs(t, err, closeErr)
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
 	require.Equal(t, planner.OutputContractOriginModel, outputErr.Origin())
@@ -865,6 +897,83 @@ func TestStreamRejectsOutputLimitedResponseWithoutFinalCompletion(t *testing.T) 
 	require.Nil(t, replayed)
 	require.Equal(t, err, replayErr)
 	_, ok = stream.Value()
+	require.False(t, ok)
+}
+
+func TestStreamWithholdsTypedValueWhenFinalizationFails(t *testing.T) {
+	closeErr := errors.New("provider close failed")
+	upstream := &scriptedStreamer{
+		response: completionResponse(`{"assistant_text":"created a draft"}`),
+		results: []recvResult{
+			{chunk: model.CompletionChunk{Completion: model.Completion{
+				Name:    "draft_from_transcript",
+				Payload: []byte(`{"assistant_text":"created a draft"}`),
+			}}},
+			{chunk: model.StopChunk{Reason: "stop"}},
+			{err: io.EOF},
+		},
+		closeErr: closeErr,
+	}
+	stream, err := Stream(
+		t.Context(),
+		mustCompletionClient(t, &recordingCompletionClient{streamer: upstream}),
+		&model.Request{},
+		testCompletionSpec(),
+	)
+	require.NoError(t, err)
+
+	chunk, recvErr := stream.Recv()
+
+	require.Nil(t, chunk)
+	require.ErrorIs(t, recvErr, closeErr)
+	_, ok := stream.Value()
+	require.False(t, ok)
+	require.True(t, upstream.closed)
+	require.ErrorIs(t, stream.Close(), closeErr)
+}
+
+func TestStreamRetainsCancellationDuringValidationFinalization(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	closeErr := errors.New("provider close failed")
+	raw := &blockingCompletionCloseStreamer{
+		scriptedStreamer: &scriptedStreamer{
+			response: completionResponse(`{"assistant_text":42}`),
+			results: []recvResult{
+				{chunk: model.CompletionChunk{Completion: model.Completion{
+					Name:    "draft_from_transcript",
+					Payload: []byte(`{"assistant_text":42}`),
+				}}},
+				{chunk: model.StopChunk{Reason: "stop"}},
+				{err: io.EOF},
+			},
+			closeErr: closeErr,
+		},
+		closeStarted: make(chan struct{}),
+		closeRelease: make(chan struct{}),
+	}
+	stream, err := Stream(
+		ctx,
+		mustCompletionClient(t, &recordingCompletionClient{streamer: raw}),
+		&model.Request{},
+		testCompletionSpec(),
+	)
+	require.NoError(t, err)
+	result := make(chan error, 1)
+	go func() {
+		_, recvErr := stream.Recv()
+		result <- recvErr
+	}()
+	<-raw.closeStarted
+
+	cancel()
+	close(raw.closeRelease)
+	recvErr := <-result
+
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, recvErr, &validationErr)
+	require.ErrorIs(t, recvErr, context.Canceled)
+	require.ErrorIs(t, recvErr, closeErr)
+	_, ok := stream.Value()
 	require.False(t, ok)
 }
 
@@ -944,7 +1053,7 @@ func TestStreamRequiresExactCompletionBytes(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = stream.Recv()
-	require.ErrorContains(t, err, "stream completion does not match canonical response")
+	require.ErrorContains(t, completionOutputContractCause(t, err), "stream completion does not match canonical response")
 }
 
 func TestStreamRejectsMultipleResponseMessages(t *testing.T) {
@@ -981,7 +1090,11 @@ func TestStreamRejectsMultipleResponseMessages(t *testing.T) {
 
 	_, err = stream.Recv()
 
-	require.ErrorContains(t, err, "structured output response requires exactly one assistant message, got 2")
+	require.ErrorContains(
+		t,
+		completionOutputContractCause(t, err),
+		"structured output response requires exactly one assistant message, got 2",
+	)
 	_, ok := stream.Value()
 	require.False(t, ok)
 }
@@ -1130,7 +1243,7 @@ func TestStreamReconcilesCompleteProviderOutput(t *testing.T) {
 			_, err = stream.Recv()
 			require.NoError(t, err)
 			_, err = stream.Recv()
-			require.ErrorContains(t, err, test.want)
+			require.ErrorContains(t, completionOutputContractCause(t, err), test.want)
 			_, ok := stream.Value()
 			require.False(t, ok)
 		})
@@ -1154,7 +1267,7 @@ func TestStreamRejectsChunkAfterStop(t *testing.T) {
 	require.NoError(t, err)
 	chunk, err := stream.Recv()
 	require.Nil(t, chunk)
-	require.ErrorContains(t, err, `emitted "usage" after stop`)
+	require.ErrorContains(t, completionOutputContractCause(t, err), `emitted "usage" after stop`)
 }
 
 func TestStreamRejectsEOFBeforeFinalCompletion(t *testing.T) {
@@ -1170,7 +1283,7 @@ func TestStreamRejectsEOFBeforeFinalCompletion(t *testing.T) {
 
 	_, err = stream.Recv()
 	require.Error(t, err)
-	require.ErrorContains(t, err, "ended without a completion")
+	require.ErrorContains(t, completionOutputContractCause(t, err), "ended without a completion")
 }
 
 func TestStreamRejectsFinalCompletionWithoutMatchingCanonicalResponse(t *testing.T) {
@@ -1192,7 +1305,7 @@ func TestStreamRejectsFinalCompletionWithoutMatchingCanonicalResponse(t *testing
 	require.NoError(t, err)
 	chunk, err := stream.Recv()
 	require.Nil(t, chunk)
-	require.ErrorContains(t, err, "invalid canonical response")
+	require.ErrorContains(t, completionOutputContractCause(t, err), "invalid canonical response")
 }
 
 func TestStreamRejectsStopBeforeFinalCompletion(t *testing.T) {
@@ -1210,7 +1323,7 @@ func TestStreamRejectsStopBeforeFinalCompletion(t *testing.T) {
 
 	_, err = stream.Recv()
 	require.Error(t, err)
-	require.ErrorContains(t, err, "stopped before a completion")
+	require.ErrorContains(t, completionOutputContractCause(t, err), "stopped before a completion")
 }
 
 func TestStreamRejectsUnexpectedTextChunk(t *testing.T) {
@@ -1235,7 +1348,7 @@ func TestStreamRejectsUnexpectedTextChunk(t *testing.T) {
 
 	_, err = stream.Recv()
 	require.Error(t, err)
-	require.ErrorContains(t, err, "structured output stream emitted text")
+	require.ErrorContains(t, completionOutputContractCause(t, err), "structured output stream emitted text")
 }
 
 func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
@@ -1341,7 +1454,7 @@ func TestStreamRejectsInvalidStructuredOutputChunks(t *testing.T) {
 			require.NoError(t, err)
 			_, err = stream.Recv()
 			require.Error(t, err)
-			require.ErrorContains(t, err, tc.want)
+			require.ErrorContains(t, completionOutputContractCause(t, err), tc.want)
 		})
 	}
 }
@@ -1359,7 +1472,7 @@ func TestCompleteRejectsToolCalls(t *testing.T) {
 		StopReason: "tool_use",
 	}}), &model.Request{}, testCompletionSpec())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "returned tool calls")
+	assert.ErrorContains(t, completionOutputContractCause(t, err), "returned tool calls")
 }
 
 func TestCompleteRejectsMultipleAssistantMessages(t *testing.T) {
@@ -1377,7 +1490,7 @@ func TestCompleteRejectsMultipleAssistantMessages(t *testing.T) {
 		StopReason: "stop",
 	}}), &model.Request{}, testCompletionSpec())
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires exactly one assistant message")
+	assert.ErrorContains(t, completionOutputContractCause(t, err), "requires exactly one assistant message")
 }
 
 func TestCompleteConcatenatesChunkedTextParts(t *testing.T) {

@@ -73,9 +73,10 @@ func NewRecoverableModelOutput(cause error, message *model.Message, correction s
 	}
 }
 
-// Error describes why the runtime rejected the completed output.
+// Error returns a stable summary without rendering the rejected output or its
+// validation cause. Typed accessors retain the origin and bounded correction.
 func (e *Error) Error() string {
-	return "completed output does not meet its contract: " + e.cause.Error()
+	return "completed output does not meet its contract"
 }
 
 // Unwrap returns the original rejection error.

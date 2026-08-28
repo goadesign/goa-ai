@@ -20,11 +20,13 @@ type (
 	// contract copied from its request.
 	//
 	// Concurrency contract:
-	//   - Recv, Response, and Close may be called from different goroutines.
+	//   - Recv, Response, Close, and Finalize may be called from different
+	//     goroutines.
 	//   - At most one of those calls operates on the wrapped Streamer at a time.
-	//   - Close waits for an active Recv to return; it does not interrupt Recv.
-	//     A caller shutting down a blocked receive must first cancel the context
-	//     used to create the provider stream, then call Close.
+	//   - Close and Finalize wait for an active Recv to return; neither
+	//     interrupts Recv. A caller shutting down a blocked receive must first
+	//     cancel the context used to create the provider stream, then call Close
+	//     or Finalize.
 	//   - One receive sequence covers the provider Recv and every observer
 	//     callback for that chunk across all sibling views. The next provider
 	//     chunk is not consumed until that sequence accepts or rejects the
@@ -35,8 +37,8 @@ type (
 	//     One observer callback is serialized across all derived views that
 	//     inherit it.
 	//     A callback may call Response to see the state produced by that
-	//     operation. Callbacks must not call Recv or Close on the same stream;
-	//     those lifecycle operations wait for the callback to finish.
+	//     operation. Callbacks must not call Recv, Close, or Finalize on the same
+	//     stream; those lifecycle operations wait for the callback to finish.
 	ValidatedStream struct {
 		core      *validatedStreamCore
 		observers *validatedStreamObservers
@@ -57,8 +59,20 @@ type (
 		outcome          modelcall.Outcome
 		lifecycle        *clientCallLifecycle
 
-		closeObserved bool
-		closeErr      error
+		closeObserved   bool
+		closeResult     validatedStreamCloseResult
+		incompleteErr   error
+		finalized       bool
+		finalizePrimary error
+		finalizeErr     error
+	}
+
+	// validatedStreamCloseResult retains each private close phase after Close
+	// has reduced them to its backward-compatible error result.
+	validatedStreamCloseResult struct {
+		outcome      modelcall.Outcome
+		finalizerErr error
+		err          error
 	}
 
 	// validatedStreamObservers owns the observer wrappers shared by every view
@@ -143,8 +157,8 @@ func (s *ValidatedStream) Observe(observer StreamObserver) (*ValidatedStream, er
 	}, nil
 }
 
-// IsStreamValidationError reports whether err came from chunk or complete
-// response validation rather than from the provider transport.
+// IsStreamValidationError reports whether err contains an output validation
+// failure produced while checking a chunk or complete response.
 func IsStreamValidationError(err error) bool {
 	var validationErr *OutputValidationError
 	return errors.As(err, &validationErr)
@@ -160,6 +174,14 @@ func (s *ValidatedStream) Recv() (Chunk, error) {
 	s.core.started = true
 	observers := s.streamObservers()
 	s.core.mu.Lock()
+	if s.core.finalized {
+		err := s.core.terminalErr
+		if err == nil {
+			err = s.core.incompleteErr
+		}
+		s.core.mu.Unlock()
+		return nil, err
+	}
 	if s.core.terminal {
 		err := s.core.terminalErr
 		s.core.mu.Unlock()
@@ -230,11 +252,68 @@ func (s *ValidatedStream) Close() error {
 	s.core.recv.Lock()
 	defer s.core.recv.Unlock()
 	s.core.started = true
+	return s.close().err
+}
+
+// Finalize completes one receive-through-close operation and returns its
+// combined result. Callers pass nil after Recv returns a clean EOF, the exact
+// error returned by a terminal Recv, or their own processing error when they
+// stop before EOF. Finalize(nil) before clean EOF returns an incomplete-stream
+// failure. When the supplied and retained terminal errors contain only the
+// same exact OutputValidationError, provider cleanup remains recorded but does
+// not replace that validation. A retained receive error that differs from a
+// caller processing error remains in the result. Close-observer, lifecycle
+// finisher or finalizer, context, incomplete-stream, framework, and caller
+// processing failures always remain in the returned result.
+//
+// Finalize is serialized with Recv and Close. It waits for an active Recv and
+// shares Close's exactly-once provider, observer, finisher, and finalizer work.
+// Observer callbacks must not call Finalize because Finalize waits for the
+// callback's receive or close operation to finish. Repeating Finalize with the
+// same primary error returns the cached operation result. Concurrent or later
+// calls with a different primary error report contract misuse; the first call
+// wins and its result is neither recomputed nor replaced. Close called before
+// or after Finalize returns only the cached Close result.
+func (s *ValidatedStream) Finalize(primaryErr error) error {
+	if s == nil || s.core == nil || s.core.inner == nil {
+		return errors.New("model stream is not an intact validated stream")
+	}
+	s.core.recv.Lock()
+	defer s.core.recv.Unlock()
+	s.core.started = true
 	s.core.mu.Lock()
-	if s.core.closeObserved {
-		err := s.core.closeErr
+	if s.core.finalized {
+		if !modelcall.Exact(primaryErr, s.core.finalizePrimary) {
+			s.core.mu.Unlock()
+			return errors.New("model stream was finalized with a different primary error")
+		}
+		err := s.core.finalizeErr
 		s.core.mu.Unlock()
 		return err
+	}
+	s.core.mu.Unlock()
+
+	s.core.mu.Lock()
+	terminalErr := s.core.terminalErr
+	s.core.mu.Unlock()
+	closeResult := s.close()
+	s.core.mu.Lock()
+	operationErr := s.finalizeOperation(primaryErr, terminalErr, closeResult)
+	s.core.finalized = true
+	s.core.finalizePrimary = primaryErr
+	s.core.finalizeErr = operationErr
+	s.core.mu.Unlock()
+	return operationErr
+}
+
+// close runs provider, observer, and lifecycle close work once. The caller
+// holds core.recv so Recv, Close, and Finalize cannot overlap these callbacks.
+func (s *ValidatedStream) close() validatedStreamCloseResult {
+	s.core.mu.Lock()
+	if s.core.closeObserved {
+		result := s.core.closeResult
+		s.core.mu.Unlock()
+		return result
 	}
 	if !s.core.closed {
 		s.core.providerCloseErr = s.core.inner.Close()
@@ -243,6 +322,9 @@ func (s *ValidatedStream) Close() error {
 	providerErr := s.core.providerCloseErr
 	s.core.outcome.ProviderClose = modelcall.Result{Called: true, Err: providerErr}
 	s.core.outcome.Incomplete = !s.core.outcome.Completed
+	if s.core.outcome.Incomplete && s.core.incompleteErr == nil {
+		s.core.incompleteErr = errors.New("model stream was not completely consumed")
+	}
 	s.core.mu.Unlock()
 	observers := s.streamObservers()
 	results := make([]modelcall.Result, len(observers))
@@ -260,17 +342,54 @@ func (s *ValidatedStream) Close() error {
 		lifecycle.outcome.Context = contextResult(lifecycle.ctx)
 	}
 	s.core.mu.Unlock()
-	var err error
+	var result validatedStreamCloseResult
 	if lifecycle == nil {
-		err = joinResultErrors(providerErr, "stream close observer", results)
+		result = validatedStreamCloseResult{
+			outcome: s.core.outcome.Clone(),
+			err:     joinResultErrors(providerErr, "stream close observer", results),
+		}
 	} else {
-		err = lifecycle.finalizeClose()
+		result = lifecycle.finalizeClose()
 	}
 	s.core.mu.Lock()
 	s.core.closeObserved = true
-	s.core.closeErr = err
+	s.core.closeResult = result
+	s.core.outcome = result.outcome.Clone()
 	s.core.mu.Unlock()
-	return err
+	return result
+}
+
+// finalizeOperation combines the caller's primary error with close phases. It
+// omits provider cleanup only when retained receive records prove that every
+// primary branch resolves to the same exact validation object.
+func (s *ValidatedStream) finalizeOperation(
+	primaryErr error,
+	terminalErr error,
+	closeResult validatedStreamCloseResult,
+) error {
+	operationErr := primaryErr
+	if retainedTerminalError(primaryErr, terminalErr) {
+		operationErr = joinOperationErrors(operationErr, terminalErr)
+	}
+	finalizationErr := joinClientErrors(
+		s.core.incompleteErr,
+		modelcallResultsError(closeResult.outcome.CloseObservers),
+		modelcallResultsError(closeResult.outcome.Finishers),
+		modelcallResultsError(closeResult.outcome.Usage),
+		modelcallResultsError(closeResult.outcome.Staging),
+		closeResult.outcome.Context.Err,
+		closeResult.outcome.Framework.Err,
+		closeResult.finalizerErr,
+	)
+	if exactRetainedStreamValidation(
+		primaryErr,
+		terminalErr,
+		closeResult.outcome,
+		closeResult.finalizerErr,
+	) {
+		return joinOperationErrors(operationErr, finalizationErr)
+	}
+	return joinOperationErrors(operationErr, closeResult.outcome.ProviderClose.Err, finalizationErr)
 }
 
 // registerClientCallLifecycle stores the prepared calls and setup results that
@@ -533,13 +652,147 @@ func classifyReceive(err error) (modelcall.Result, modelcall.Result) {
 	if err == nil || modelcall.Exact(err, io.EOF) {
 		return provider, validation
 	}
-	var outputErr *OutputValidationError
-	if errors.As(err, &outputErr) {
+	if _, ok := exactOutputValidation(err); ok {
 		validation.Err = err
 		return provider, validation
 	}
 	provider.Err = err
 	return provider, validation
+}
+
+// exactRetainedStreamValidation verifies that the caller supplied the retained
+// terminal result and that the receive records contain no error other than one
+// exact OutputValidationError through wrappers or duplicate joins.
+func exactRetainedStreamValidation(
+	primaryErr error,
+	terminalErr error,
+	outcome modelcall.Outcome,
+	finalizerErr error,
+) bool {
+	expected, ok := exactOutputValidation(primaryErr)
+	if !ok || !sameExactOutputValidation(terminalErr, expected) ||
+		outcome.ProviderCall.Err != nil ||
+		outcome.Context.Err != nil ||
+		outcome.Framework.Err != nil ||
+		outcome.Incomplete ||
+		finalizerErr != nil ||
+		!cleanModelCallResults(outcome.CompletionObservers) ||
+		!cleanModelCallResults(outcome.StreamSetupObservers) ||
+		!cleanModelCallResults(outcome.CloseObservers) ||
+		!cleanModelCallResults(outcome.Finishers) ||
+		!cleanModelCallResults(outcome.Aborts) ||
+		!cleanModelCallResults(outcome.Usage) ||
+		!cleanModelCallResults(outcome.Staging) {
+		return false
+	}
+	for _, result := range outcome.ProviderReceives {
+		if !result.Called || result.Err != nil {
+			return false
+		}
+	}
+	matched := false
+	for _, result := range outcome.Validations {
+		if !result.Called || result.Err == nil {
+			continue
+		}
+		actual, valid := exactOutputValidation(result.Err)
+		if !valid || !modelcall.Exact(actual, expected) || matched {
+			return false
+		}
+		matched = true
+	}
+	for _, results := range outcome.ReceiveObservers {
+		for _, result := range results {
+			if !result.Called {
+				return false
+			}
+			if result.Err == nil {
+				continue
+			}
+			actual, valid := exactOutputValidation(result.Err)
+			if !valid || !modelcall.Exact(actual, expected) {
+				return false
+			}
+		}
+	}
+	return matched
+}
+
+// cleanModelCallResults reports whether every recorded callback in one phase
+// completed without adding an independent failure.
+func cleanModelCallResults(results []modelcall.Result) bool {
+	for _, result := range results {
+		if !result.Called || result.Err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// exactOutputValidation accepts only an error tree whose every leaf is the
+// same OutputValidationError. Wrappers and duplicate joins preserve that exact
+// identity; any unrelated leaf rejects the classification.
+func exactOutputValidation(err error) (*OutputValidationError, bool) {
+	if err == nil {
+		return nil, false
+	}
+	//nolint:errorlint // Exact root identity is required before following wrappers.
+	if validationErr, ok := err.(*OutputValidationError); ok {
+		return validationErr, validationErr != nil
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var expected *OutputValidationError
+		for _, child := range joined.Unwrap() {
+			actual, valid := exactOutputValidation(child)
+			if !valid {
+				return nil, false
+			}
+			if expected == nil {
+				expected = actual
+				continue
+			}
+			if !modelcall.Exact(expected, actual) {
+				return nil, false
+			}
+		}
+		return expected, expected != nil
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return exactOutputValidation(wrapped.Unwrap())
+	}
+	return nil, false
+}
+
+// retainedTerminalError reports whether Finalize must add the receive result
+// that completed while it waited. The same exact error, or another tree made
+// solely from the same validation object, is already represented by primary.
+func retainedTerminalError(primaryErr, terminalErr error) bool {
+	if terminalErr == nil || modelcall.Exact(terminalErr, io.EOF) ||
+		modelcall.Exact(primaryErr, terminalErr) {
+		return false
+	}
+	expected, ok := exactOutputValidation(primaryErr)
+	return !ok || !sameExactOutputValidation(terminalErr, expected)
+}
+
+// sameExactOutputValidation reports whether err contains only the expected
+// validation object through wrappers or duplicate joins.
+func sameExactOutputValidation(err error, expected *OutputValidationError) bool {
+	actual, ok := exactOutputValidation(err)
+	return ok && modelcall.Exact(actual, expected)
+}
+
+// joinOperationErrors preserves each operation cause once when a retained
+// receive result already contains a recorded framework or callback failure.
+func joinOperationErrors(errs ...error) error {
+	var joined error
+	for _, err := range errs {
+		if err == nil || (joined != nil && errors.Is(joined, err)) {
+			continue
+		}
+		joined = joinClientErrors(joined, err)
+	}
+	return joined
 }
 
 // cloneStreamObservation gives one observer private model values while

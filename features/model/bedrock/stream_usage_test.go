@@ -136,7 +136,7 @@ func TestBedrockStreamRejectsMissingToolCallIDWithUsage(t *testing.T) {
 
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, classified, &validationErr)
-	require.ErrorContains(t, classified, "tool use block missing tool_use_id")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "tool use block missing tool_use_id")
 	require.Equal(t, &usage, validationErr.Usage())
 }
 

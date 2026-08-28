@@ -67,6 +67,7 @@ func TestTranslateResponsePreservesPrefixedUnadvertisedToolName(t *testing.T) {
 	name, ok := model.UnadvertisedToolName(err)
 	assert.True(t, ok)
 	assert.Equal(t, "$FUNCTIONS.catalog_list_nearby", name)
+	assert.NotContains(t, err.Error(), name)
 }
 
 func TestCompleteRejectsPrefixedHistoryOnlyToolName(t *testing.T) {
@@ -116,6 +117,7 @@ func TestCompleteRejectsPrefixedHistoryOnlyToolName(t *testing.T) {
 	name, ok := model.UnadvertisedToolName(validationErr)
 	require.True(t, ok)
 	assert.Equal(t, "$FUNCTIONS.catalog_history", name)
+	assert.NotContains(t, err.Error(), name)
 	assert.Equal(t, &model.TokenUsage{
 		Model:        "test-model",
 		InputTokens:  4,
@@ -274,6 +276,8 @@ func TestStreamPreservesPrefixedUnadvertisedToolName(t *testing.T) {
 	name, ok := model.UnadvertisedToolName(validationErr)
 	assert.True(t, ok)
 	assert.Equal(t, "$FUNCTIONS.catalog_list_nearby", name)
+	assert.NotContains(t, err.Error(), name)
+	assert.NotContains(t, errors.Unwrap(validationErr).Error(), name)
 	assert.Equal(t, &model.TokenUsage{
 		Model:        "test-model",
 		ModelClass:   model.ModelClassDefault,

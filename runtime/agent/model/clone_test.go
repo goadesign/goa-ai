@@ -79,7 +79,7 @@ func TestRejectedResponseEvidenceRetainsBoundedStructMetadata(t *testing.T) {
 
 	owned, err := contract.ValidateResponse(response)
 
-	require.ErrorContains(t, err, "not JSON-compatible metadata")
+	require.ErrorContains(t, outputValidationCause(t, err), "not JSON-compatible metadata")
 	require.Nil(t, owned)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)

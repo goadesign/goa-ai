@@ -261,7 +261,7 @@ func TestPolicyExcludedToolRejectsTerminalPayloadBeforeTranscriptCommit(t *testi
 	)
 
 	require.Nil(t, out)
-	require.ErrorContains(t, err, `planner called tool "svc.record" excluded from this run`)
+	require.ErrorContains(t, outputContractCause(t, err), `planner called tool "svc.record" excluded from this run`)
 	require.Empty(t, base.Messages)
 }
 
@@ -868,7 +868,7 @@ func TestFinalizeWithPlannerTerminalToolHonorsCallerRestriction(t *testing.T) {
 
 	require.Nil(t, out)
 	require.Error(t, err)
-	require.ErrorContains(t, err, `planner called tool "workflow.progress.complete" excluded from this run`)
+	require.ErrorContains(t, outputContractCause(t, err), `planner called tool "workflow.progress.complete" excluded from this run`)
 	require.Empty(t, base.Messages)
 }
 
@@ -912,7 +912,7 @@ func TestFinalizeWithPlannerRejectsTerminalPayloadWithToolCalls(t *testing.T) {
 	)
 
 	require.Nil(t, out)
-	require.ErrorContains(t, err, "terminal payload cannot accompany terminal tool")
+	require.ErrorContains(t, outputContractCause(t, err), "terminal payload cannot accompany terminal tool")
 	require.Empty(t, wfCtx.lastToolCall.Name)
 	require.Empty(t, base.Messages)
 }

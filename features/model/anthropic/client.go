@@ -921,9 +921,7 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 			name, ok := nameMap[raw]
 			if !ok {
 				return nil, fmt.Errorf(
-					"anthropic: response tool use block %q returned unadvertised name %q: %w",
-					block.ID,
-					raw,
+					"anthropic: translate response tool use: %w",
 					model.NewUnadvertisedToolNameError(raw),
 				)
 			}

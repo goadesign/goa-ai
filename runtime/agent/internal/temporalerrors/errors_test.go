@@ -153,6 +153,22 @@ func TestWrapReclassifiesNestedOutputContractError(t *testing.T) {
 	}
 }
 
+func TestWrapKeepsModelOutputDetailsOutOfFailureText(t *testing.T) {
+	contract, err := model.NewRequestContract(&model.Request{})
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(
+		nil,
+		model.NewUnadvertisedToolNameError("unlisted_tool"),
+	)
+	wrapped := Wrap(outputcontract.NewWithOrigin(validationErr, outputcontract.OriginModel))
+
+	var appErr *temporal.ApplicationError
+	require.ErrorAs(t, wrapped, &appErr)
+	require.Equal(t, "completed output does not meet its contract", appErr.Message())
+	require.NotContains(t, appErr.Message(), "unlisted_tool")
+	require.Equal(t, planner.OutputContractOriginModel, OutputContractOrigin(wrapped))
+}
+
 func TestWrapPreservesToolOutputContractOrigin(t *testing.T) {
 	wrapped := Wrap(outputcontract.NewWithOrigin(errors.New("tool result is too large"), outputcontract.OriginTool))
 
@@ -385,7 +401,8 @@ func TestOutputAndInvalidTemporalEnvelopesBoundMessagesWithoutCause(t *testing.T
 	require.ErrorAs(t, output, &outputApp)
 	require.NoError(t, outputApp.Unwrap())
 	require.LessOrEqual(t, len(outputApp.Message()), maxTemporalErrorMessageBytes)
-	require.Contains(t, outputApp.Message(), "sha256=")
+	require.Equal(t, "completed output does not meet its contract", outputApp.Message())
+	require.NotContains(t, outputApp.Message(), "sha256=")
 	require.NotContains(t, outputApp.Message(), "raw-output-secret-")
 	outputFailure := temporal.GetDefaultFailureConverter().ErrorToFailure(output)
 	require.Nil(t, outputFailure.Cause)

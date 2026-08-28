@@ -1,6 +1,7 @@
 package bedrock
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -105,7 +106,7 @@ func TestCompleteRejectsMissingToolCallIDWithUsage(t *testing.T) {
 	require.Nil(t, response)
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "response tool use block missing ID")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "response tool use block missing ID")
 	require.Equal(t, &model.TokenUsage{
 		Model:        "amazon.nova-pro-v1:0",
 		InputTokens:  7,

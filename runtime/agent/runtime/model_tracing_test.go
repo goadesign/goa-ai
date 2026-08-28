@@ -51,6 +51,10 @@ type (
 		observer model.ClientCallObserver
 		calls    int
 	}
+
+	recordingTelemetryLogger struct {
+		errors [][]any
+	}
 )
 
 func testGenAIContext() telemetry.GenAIContext {
@@ -115,6 +119,7 @@ func TestPreparedRuntimeObserversAbortWhenInnerPreparationFails(t *testing.T) {
 
 func TestTracedClientRecordsConfiguredCompletionFailure(t *testing.T) {
 	tracer := &recordingTelemetryTracer{}
+	logger := &recordingTelemetryLogger{}
 	invocations := &modelInvocationJournal{}
 	checked := newModelInvocationClient(mustTestModelClient(stubModelClient{
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
@@ -127,7 +132,7 @@ func TestTracedClientRecordsConfiguredCompletionFailure(t *testing.T) {
 	client := newTracedClient(
 		checked,
 		tracer,
-		telemetry.NewNoopLogger(),
+		logger,
 		"bedrock",
 		testGenAIContext(),
 		false,
@@ -149,14 +154,20 @@ func TestTracedClientRecordsConfiguredCompletionFailure(t *testing.T) {
 	response, err := client.Complete(t.Context(), request)
 
 	require.Nil(t, response)
-	require.ErrorContains(t, err, "typed completion is invalid")
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.NotContains(t, err.Error(), "typed completion is invalid")
 	require.Len(t, tracer.spans, 1)
 	require.Len(t, tracer.spans[0].errs, 1)
+	require.NotContains(t, tracer.spans[0].errs[0].Error(), "typed completion is invalid")
 	require.Equal(t, codes.Error, tracer.spans[0].statusCode)
+	require.Len(t, logger.errors, 1)
+	require.NotContains(t, fmt.Sprint(logger.errors), "typed completion is invalid")
 }
 
 func TestTracedStreamRecordsConfiguredCompletionFailure(t *testing.T) {
 	tracer := &recordingTelemetryTracer{}
+	closeErr := errors.New("provider cleanup failed")
 	checked := newModelInvocationClient(mustTestModelClient(stubModelClient{
 		stream: func(context.Context, *model.Request) (model.Streamer, error) {
 			return &stubStreamer{
@@ -164,6 +175,7 @@ func TestTracedStreamRecordsConfiguredCompletionFailure(t *testing.T) {
 					Role:  model.ConversationRoleAssistant,
 					Parts: []model.Part{model.TextPart{Text: "not structured"}},
 				}}},
+				closeErr: closeErr,
 			}, nil
 		},
 	}), &modelInvocationJournal{})
@@ -193,9 +205,14 @@ func TestTracedStreamRecordsConfiguredCompletionFailure(t *testing.T) {
 
 	_, err = stream.Recv()
 
-	require.ErrorContains(t, err, "text instead of a completion")
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.NotContains(t, err.Error(), "text instead of a completion")
+	require.ErrorIs(t, stream.Close(), closeErr)
 	require.Len(t, tracer.spans, 1)
-	require.Len(t, tracer.spans[0].errs, 1)
+	require.Len(t, tracer.spans[0].errs, 2)
+	require.NotContains(t, tracer.spans[0].errs[0].Error(), "text instead of a completion")
+	require.ErrorIs(t, tracer.spans[0].errs[1], closeErr)
 	require.Equal(t, codes.Error, tracer.spans[0].statusCode)
 }
 
@@ -643,6 +660,16 @@ func (s *recordingTelemetrySpan) RecordError(err error, _ ...trace.EventOption) 
 	if err != nil {
 		s.errs = append(s.errs, err)
 	}
+}
+
+func (*recordingTelemetryLogger) Debug(context.Context, string, ...any) {}
+
+func (*recordingTelemetryLogger) Info(context.Context, string, ...any) {}
+
+func (*recordingTelemetryLogger) Warn(context.Context, string, ...any) {}
+
+func (l *recordingTelemetryLogger) Error(_ context.Context, message string, keyvals ...any) {
+	l.errors = append(l.errors, append([]any{message}, keyvals...))
 }
 
 func attrsByKey(attrs []attribute.KeyValue) map[attribute.Key]attribute.Value {

@@ -8,18 +8,45 @@ import (
 	"strings"
 	"testing"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/stretchr/testify/require"
+
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
-type stubStreamer struct {
-	response             *model.Response
-	chunks               []model.Chunk
-	recvErr              error
-	closeErr             error
-	index                int
-	closed               bool
-	responseClearedClose bool
-}
+type (
+	stubStreamer struct {
+		response             *model.Response
+		chunks               []model.Chunk
+		recvErr              error
+		closeErr             error
+		index                int
+		closed               bool
+		responseClearedClose bool
+	}
+
+	stubProvider struct {
+		response *model.Response
+		streamer model.Streamer
+	}
+
+	countingProvider struct {
+		calls    int
+		countErr error
+	}
+
+	recordedSpanEvent struct {
+		name  string
+		attrs []attribute.KeyValue
+	}
+
+	recordingSpan struct {
+		trace.Span
+		events []recordedSpanEvent
+	}
+)
 
 func (s *stubStreamer) Recv() (model.Chunk, error) {
 	if s.index < len(s.chunks) {
@@ -32,10 +59,12 @@ func (s *stubStreamer) Recv() (model.Chunk, error) {
 	}
 	return nil, errors.New("eof")
 }
+
 func (s *stubStreamer) Close() error {
 	s.closed = true
 	return s.closeErr
 }
+
 func (s *stubStreamer) Response() *model.Response {
 	if s.responseClearedClose && s.closed {
 		return nil
@@ -43,14 +72,12 @@ func (s *stubStreamer) Response() *model.Response {
 	return s.response
 }
 
-type stubProvider struct {
-	response *model.Response
-	streamer model.Streamer
-}
-
-type countingProvider struct {
-	calls    int
-	countErr error
+func (s *recordingSpan) AddEvent(name string, options ...trace.EventOption) {
+	config := trace.NewEventConfig(options...)
+	s.events = append(s.events, recordedSpanEvent{
+		name:  name,
+		attrs: config.Attributes(),
+	})
 }
 
 func (p stubProvider) Complete(_ context.Context, req *model.Request) (*model.Response, error) {
@@ -364,6 +391,125 @@ func TestServerStreamLetsMiddlewareDropProviderChunk(t *testing.T) {
 	if !errors.Is(err, closeErr) {
 		t.Fatalf("stream error = %v, want provider close failure", err)
 	}
+}
+
+func TestServerStreamPreservesValidationAndRecordsCloseFailure(t *testing.T) {
+	closeErr := errors.New("provider close failed")
+	contract, err := model.NewRequestContract(&model.Request{})
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(
+		&model.TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
+		model.NewUnadvertisedToolNameError("unlisted_tool"),
+	)
+	upstream := &stubStreamer{
+		recvErr:  validationErr,
+		closeErr: closeErr,
+	}
+	server, err := NewServer(WithProvider(stubProvider{streamer: upstream}))
+	require.NoError(t, err)
+	span := &recordingSpan{Span: trace.SpanFromContext(context.Background())}
+	ctx := trace.ContextWithSpan(context.Background(), span)
+
+	response, err := server.Stream(ctx, &model.Request{}, func(model.Chunk) error {
+		return nil
+	})
+
+	require.Nil(t, response)
+	require.Same(t, validationErr, err)
+	require.NotErrorIs(t, err, closeErr)
+	require.True(t, upstream.closed)
+	require.Equal(t, []recordedSpanEvent{{
+		name: "model.stream_cleanup_failed",
+		attrs: []attribute.KeyValue{
+			attribute.String("exception.message", closeErr.Error()),
+		},
+	}}, span.events)
+	require.NotContains(t, fmt.Sprint(span.events), validationErr.Error())
+	require.NotContains(t, fmt.Sprint(span.events), "unlisted_tool")
+}
+
+func TestServerStreamRetainsCleanupForMixedValidationFailure(t *testing.T) {
+	closeErr := errors.New("provider close failed")
+	unrelatedErr := errors.New("provider receive failed")
+	contract, err := model.NewRequestContract(&model.Request{})
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(
+		nil,
+		model.NewUnadvertisedToolNameError("unlisted_tool"),
+	)
+	upstream := &stubStreamer{
+		recvErr:  errors.Join(validationErr, unrelatedErr),
+		closeErr: closeErr,
+	}
+	server, err := NewServer(WithProvider(stubProvider{streamer: upstream}))
+	require.NoError(t, err)
+	span := &recordingSpan{Span: trace.SpanFromContext(context.Background())}
+	ctx := trace.ContextWithSpan(context.Background(), span)
+
+	response, err := server.Stream(ctx, &model.Request{}, func(model.Chunk) error {
+		return nil
+	})
+
+	require.Nil(t, response)
+	require.ErrorIs(t, err, validationErr)
+	require.ErrorIs(t, err, unrelatedErr)
+	require.ErrorIs(t, err, closeErr)
+	require.Empty(t, span.events)
+}
+
+func TestServerStreamRetainsCancellationDuringValidationFinalization(t *testing.T) {
+	contract, err := model.NewRequestContract(&model.Request{})
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	closeErr := errors.New("provider close failed")
+	for _, test := range []struct {
+		name     string
+		closeErr error
+	}{
+		{name: "validation only"},
+		{name: "validation and provider cleanup", closeErr: closeErr},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			upstream := &stubStreamer{recvErr: validationErr, closeErr: test.closeErr}
+			server, serverErr := NewServer(WithProvider(stubProvider{streamer: upstream}))
+			require.NoError(t, serverErr)
+			span := &recordingSpan{Span: trace.SpanFromContext(context.Background())}
+			ctx = trace.ContextWithSpan(ctx, span)
+
+			response, streamErr := server.Stream(ctx, &model.Request{}, func(model.Chunk) error {
+				return nil
+			})
+
+			require.Nil(t, response)
+			require.ErrorIs(t, streamErr, validationErr)
+			require.ErrorIs(t, streamErr, context.Canceled)
+			if test.closeErr != nil {
+				require.ErrorIs(t, streamErr, test.closeErr)
+			}
+			require.Empty(t, span.events)
+		})
+	}
+}
+
+func TestServerStreamSuppressesCleanupForWrappedDuplicateValidation(t *testing.T) {
+	closeErr := errors.New("provider close failed")
+	contract, err := model.NewRequestContract(&model.Request{})
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	primaryErr := fmt.Errorf("translated: %w", errors.Join(validationErr, validationErr))
+	upstream := &stubStreamer{recvErr: primaryErr, closeErr: closeErr}
+	server, err := NewServer(WithProvider(stubProvider{streamer: upstream}))
+	require.NoError(t, err)
+
+	response, err := server.Stream(t.Context(), &model.Request{}, func(model.Chunk) error {
+		return nil
+	})
+
+	require.Nil(t, response)
+	require.Same(t, primaryErr, err)
+	require.NotErrorIs(t, err, closeErr)
 }
 
 func TestServerStreamJoinsCallerSendAndProviderCloseFailures(t *testing.T) {

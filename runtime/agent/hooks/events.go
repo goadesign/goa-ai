@@ -507,8 +507,8 @@ type (
 	// planner output could be executed or shown.
 	ModelOutputRejectedEvent struct {
 		baseEvent
-		// ReasonSHA256 identifies the exact local validation error without
-		// retaining provider-controlled text in the run event.
+		// ReasonSHA256 identifies the private validation-cause text without
+		// retaining that text in the run event.
 		ReasonSHA256 string
 		// ReasonSize is the number of bytes covered by ReasonSHA256.
 		ReasonSize int64
@@ -532,7 +532,8 @@ type (
 	// refused to execute or show.
 	PlannerOutputRejectedEvent struct {
 		baseEvent
-		// ReasonSHA256 identifies the exact local validation error.
+		// ReasonSHA256 identifies the private planner-rejection cause text
+		// without retaining that text in the run event.
 		ReasonSHA256 string
 		// ReasonSize is the number of bytes covered by ReasonSHA256.
 		ReasonSize int64

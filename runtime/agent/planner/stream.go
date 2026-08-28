@@ -67,19 +67,31 @@ type PlannerModelClient interface {
 //
 // Usage deltas emitted as chunks are the canonical streaming signal. When a
 // stream emits none, the terminal canonical response supplies final usage.
-func ConsumeStream(ctx context.Context, streamer *model.ValidatedStream) (summary StreamSummary, err error) {
-	if err := ctx.Err(); err != nil {
-		return summary, err
-	}
+func ConsumeStream(ctx context.Context, streamer *model.ValidatedStream) (StreamSummary, error) {
 	if streamer == nil {
-		return summary, newOutputContractErrorWithOrigin(
+		return StreamSummary{}, newOutputContractErrorWithOrigin(
 			errors.New("model client returned a nil validated stream"),
 			OutputContractOriginModel,
 		)
 	}
-	defer func() {
-		err = errors.Join(err, streamer.Close())
-	}()
+	summary, primaryErr := consumeValidatedStream(ctx, streamer)
+	operationErr := streamer.Finalize(primaryErr)
+	if operationErr != nil {
+		return StreamSummary{}, plannerStreamOperationError(primaryErr, operationErr)
+	}
+	return summary, nil
+}
+
+// consumeValidatedStream returns the exact receive or planner-processing error
+// so ValidatedStream can apply close precedence before planner wrapping.
+func consumeValidatedStream(
+	ctx context.Context,
+	streamer *model.ValidatedStream,
+) (StreamSummary, error) {
+	var summary StreamSummary
+	if err := ctx.Err(); err != nil {
+		return summary, err
+	}
 	var (
 		sawUsageDelta bool
 		text          strings.Builder
@@ -91,16 +103,7 @@ func ConsumeStream(ctx context.Context, streamer *model.ValidatedStream) (summar
 			if modelcall.Exact(recvErr, io.EOF) {
 				break
 			}
-			if model.IsStreamValidationError(recvErr) {
-				var outputErr *OutputContractError
-				if !errors.As(recvErr, &outputErr) {
-					recvErr = newOutputContractErrorWithOrigin(
-						recvErr,
-						OutputContractOriginModel,
-					)
-				}
-			}
-			return StreamSummary{}, recvErr
+			return summary, recvErr
 		}
 		switch actual := chunk.(type) {
 		case model.TextChunk:
@@ -161,6 +164,19 @@ func ConsumeStream(ctx context.Context, streamer *model.ValidatedStream) (summar
 	summary.Text = text.String()
 
 	return summary, nil
+}
+
+// plannerStreamOperationError adds the planner output category only after the
+// model stream has finalized the exact raw receive result.
+func plannerStreamOperationError(primaryErr, operationErr error) error {
+	if !model.IsStreamValidationError(primaryErr) {
+		return operationErr
+	}
+	var outputErr *OutputContractError
+	if errors.As(primaryErr, &outputErr) {
+		return operationErr
+	}
+	return newOutputContractErrorWithOrigin(operationErr, OutputContractOriginModel)
 }
 
 // addUsage combines usage deltas after the model stream boundary has verified

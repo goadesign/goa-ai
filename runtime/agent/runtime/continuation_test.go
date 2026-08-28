@@ -473,7 +473,7 @@ func TestBindContinuationRejectsDuplicateActionCalls(t *testing.T) {
 	_, err = rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
-	assert.ErrorContains(t, err, "cannot be called more than once")
+	assert.ErrorContains(t, outputContractCause(t, err), "cannot be called more than once")
 }
 
 func TestContinuationActionsAreAdvertisedInsteadOfCanonicalTool(t *testing.T) {
@@ -508,7 +508,7 @@ func TestBindContinuationRejectsCanonicalToolAndModelArguments(t *testing.T) {
 	_, err = rt.compilePlannerToolCalls(canonical.ToolCalls, actions, nil)
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
-	require.ErrorContains(t, err, "is not model-callable")
+	require.ErrorContains(t, outputContractCause(t, err), "is not model-callable")
 
 	withArguments := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
 		Name:    actions[0].modelName,
@@ -516,7 +516,7 @@ func TestBindContinuationRejectsCanonicalToolAndModelArguments(t *testing.T) {
 	}}}
 	_, err = rt.compilePlannerToolCalls(withArguments.ToolCalls, actions, nil)
 	require.ErrorAs(t, err, &outputErr)
-	assert.ErrorContains(t, err, `unknown field "cursor"`)
+	assert.ErrorContains(t, outputContractCause(t, err), `unknown field "cursor"`)
 }
 
 func continuationTestSpecs() (tools.ToolSpec, tools.ToolSpec) {

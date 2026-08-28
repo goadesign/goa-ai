@@ -687,12 +687,13 @@ func terminalPlannerOutputContractFailure(err error) *OutputContractFailure {
 	}
 }
 
-// outputContractFailureMetadata keeps only fixed-size reason identity,
-// rejected-response evidence, and optional replacement guidance.
+// outputContractFailureMetadata keeps only a private-cause fingerprint,
+// rejected-response evidence, and optional replacement guidance. It never
+// copies validation-cause text into the activity result.
 func (a *plannerActivityInvocation) outputContractFailureMetadata(
 	outputErr *planner.OutputContractError,
 ) (*OutputContractFailure, error) {
-	reasonSHA256, reasonSize := errorevidence.Fingerprint(outputErr.Unwrap())
+	reasonSHA256, reasonSize := errorevidence.Fingerprint(outputContractFailureReason(outputErr))
 	responseEvidence := a.invocations.rejectedModelResponseEvidence()
 	if outputErr.Correction() != "" {
 		var err error
@@ -718,6 +719,17 @@ func (a *plannerActivityInvocation) outputContractFailureMetadata(
 		ModelResponseSize:               responseEvidence.Size,
 		Correction:                      outputErr.Correction(),
 	}, nil
+}
+
+// outputContractFailureReason selects the private validation cause only when
+// every leaf is the same exact OutputValidationError. Planner and mixed
+// failures keep their complete existing cause as the fingerprint input.
+func outputContractFailureReason(outputErr *planner.OutputContractError) error {
+	cause := outputErr.Unwrap()
+	if validationErr, ok := exactModelOutputValidation(cause); ok {
+		return errors.Unwrap(validationErr)
+	}
+	return cause
 }
 
 // boundedPlanActivityOutputFailure replaces oversized auxiliary output with

@@ -5,6 +5,7 @@ package model
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -25,12 +26,14 @@ type validatedStreamFixture struct {
 	recvErr     error
 	closeErr    error
 	closeCalled chan struct{}
+	closeCalls  int
 }
 
 type recordingStreamObserver struct {
 	chunks       []Chunk
 	observations []StreamObservation
 	closeErr     error
+	closeCalls   int
 }
 
 type mutatingStreamObserver struct{}
@@ -45,6 +48,14 @@ type cancellationBlockedStreamFixture struct {
 	closeCalled    chan struct{}
 	closeCalls     int
 	closeErr       error
+}
+
+type blockingCloseStreamFixture struct {
+	recvErr      error
+	closeErr     error
+	closeStarted chan struct{}
+	closeRelease chan struct{}
+	closeCalls   int
 }
 
 type siblingStreamFixture struct {
@@ -146,6 +157,21 @@ func (s *cancellationBlockedStreamFixture) Close() error {
 	return s.closeErr
 }
 
+func (s *blockingCloseStreamFixture) Recv() (Chunk, error) {
+	return nil, s.recvErr
+}
+
+func (*blockingCloseStreamFixture) Response() *Response {
+	return nil
+}
+
+func (s *blockingCloseStreamFixture) Close() error {
+	s.closeCalls++
+	close(s.closeStarted)
+	<-s.closeRelease
+	return s.closeErr
+}
+
 func TestStreamBoundariesRejectTypedNilWithoutMethodCalls(t *testing.T) {
 	contract, err := NewRequestContract(&Request{})
 	require.NoError(t, err)
@@ -159,7 +185,7 @@ func TestStreamBoundariesRejectTypedNilWithoutMethodCalls(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			got, err := contract.ValidateStream(stream)
 			require.Nil(t, got)
-			require.ErrorContains(t, err, "typed nil")
+			require.ErrorContains(t, outputValidationCause(t, err), "typed nil")
 		})
 	}
 }
@@ -172,6 +198,7 @@ func TestZeroValidatedStreamReturnsContractErrors(t *testing.T) {
 	require.ErrorContains(t, err, "not an intact validated stream")
 	require.Nil(t, stream.Response())
 	require.ErrorContains(t, stream.Close(), "not an intact validated stream")
+	require.ErrorContains(t, stream.Finalize(nil), "not an intact validated stream")
 	observed, err := stream.Observe(&recordingStreamObserver{})
 	require.Nil(t, observed)
 	require.ErrorContains(t, err, "not an intact validated stream")
@@ -374,7 +401,7 @@ func TestValidatedStreamSharesBudgetAcrossChunks(t *testing.T) {
 	require.NoError(t, err)
 	_, err = stream.Recv()
 
-	require.ErrorContains(t, err, "exceeds maximum byte size")
+	require.ErrorContains(t, outputValidationCause(t, err), "exceeds maximum byte size")
 }
 
 func TestValidatedStreamBoundsToolDeltaAccumulator(t *testing.T) {
@@ -388,7 +415,7 @@ func TestValidatedStreamBoundsToolDeltaAccumulator(t *testing.T) {
 
 	_, err := stream.Recv()
 
-	require.ErrorContains(t, err, "exceeds maximum byte size")
+	require.ErrorContains(t, outputValidationCause(t, err), "exceeds maximum byte size")
 	require.Equal(t, len(delta), inner.validator.toolDeltaPayloads["call-1"].Len())
 }
 
@@ -445,7 +472,7 @@ func TestValidatedStreamSharesVisitBudgetAcrossChunks(t *testing.T) {
 	}
 	_, err := stream.Recv()
 
-	require.ErrorContains(t, err, "exceeds maximum visited values")
+	require.ErrorContains(t, outputValidationCause(t, err), "exceeds maximum visited values")
 }
 
 func TestValidatedStreamDoesNotDoubleChargeTerminalResponse(t *testing.T) {
@@ -503,7 +530,7 @@ func TestValidatedStreamChargesMismatchedTerminalDataBeforeCopy(t *testing.T) {
 	require.NoError(t, err)
 	_, err = stream.Recv()
 
-	require.ErrorContains(t, err, "exceeds maximum byte size")
+	require.ErrorContains(t, outputValidationCause(t, err), "exceeds maximum byte size")
 	require.Nil(t, stream.Response())
 }
 
@@ -523,9 +550,20 @@ func TestValidatedStreamRejectsPrematureCompletionStop(t *testing.T) {
 
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, firstErr, &validationErr)
-	require.ErrorContains(t, firstErr, "structured output stream stopped before a completion")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "structured output stream stopped before a completion")
 	require.Same(t, firstErr, secondErr)
 	require.True(t, IsStreamValidationError(firstErr))
+}
+
+func TestIsStreamValidationErrorReportsValidationInMixedTree(t *testing.T) {
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+
+	require.True(t, IsStreamValidationError(errors.Join(
+		fmt.Errorf("wrapped validation: %w", validationErr),
+		errors.New("independent failure"),
+	)))
 }
 
 func TestValidatedStreamObserveUsesExactSource(t *testing.T) {
@@ -616,7 +654,7 @@ func TestValidatedStreamObserveBoundsRejectedUsageEvidence(t *testing.T) {
 	chunk, err := observed.Recv()
 
 	require.Nil(t, chunk)
-	require.ErrorContains(t, err, "token usage model exceeds")
+	require.ErrorContains(t, outputValidationCause(t, err), "token usage model exceeds")
 	require.Len(t, observer.observations, 1)
 	require.Nil(t, observer.observations[0].Chunk)
 	require.Equal(t, &TokenUsage{
@@ -670,6 +708,197 @@ func TestObservedStreamCloseJoinsProviderAndObserverFailures(t *testing.T) {
 	require.ErrorIs(t, err, observerErr)
 	require.Equal(t, err, observed.Close())
 	require.True(t, raw.closed)
+}
+
+func TestValidatedStreamFinalizeOperationResults(t *testing.T) {
+	providerReceiveErr := errors.New("provider receive failed")
+	providerCloseErr := errors.New("provider close failed")
+	unrelatedErr := errors.New("unrelated receive failure")
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	wrappedDuplicateValidation := fmt.Errorf(
+		"validation wrapper: %w",
+		errors.Join(validationErr, validationErr),
+	)
+
+	tests := []struct {
+		name        string
+		recvErr     error
+		closeErr    error
+		primary     func(error) error
+		wantExact   error
+		wantErrors  []error
+		absentError error
+	}{
+		{
+			name:      "validation only",
+			recvErr:   validationErr,
+			primary:   func(recvErr error) error { return recvErr },
+			wantExact: validationErr,
+		},
+		{
+			name:        "validation and provider cleanup",
+			recvErr:     validationErr,
+			closeErr:    providerCloseErr,
+			primary:     func(recvErr error) error { return recvErr },
+			wantExact:   validationErr,
+			absentError: providerCloseErr,
+		},
+		{
+			name:        "wrapped duplicate validation and provider cleanup",
+			recvErr:     wrappedDuplicateValidation,
+			closeErr:    providerCloseErr,
+			primary:     func(recvErr error) error { return recvErr },
+			wantExact:   wrappedDuplicateValidation,
+			absentError: providerCloseErr,
+		},
+		{
+			name:       "ordinary receive and provider cleanup",
+			recvErr:    providerReceiveErr,
+			closeErr:   providerCloseErr,
+			primary:    func(recvErr error) error { return recvErr },
+			wantErrors: []error{providerReceiveErr, providerCloseErr},
+		},
+		{
+			name:       "validation mixed with unrelated receive failure",
+			recvErr:    errors.Join(validationErr, unrelatedErr),
+			closeErr:   providerCloseErr,
+			primary:    func(recvErr error) error { return recvErr },
+			wantErrors: []error{validationErr, unrelatedErr, providerCloseErr},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := &validatedStreamFixture{recvErr: test.recvErr, closeErr: test.closeErr}
+			stream := mustValidateStream(t, raw, &Request{})
+			_, recvErr := stream.Recv()
+			require.Error(t, recvErr)
+
+			got := stream.Finalize(test.primary(recvErr))
+
+			if test.wantExact != nil {
+				require.Same(t, test.wantExact, got)
+			}
+			for _, wantErr := range test.wantErrors {
+				require.ErrorIs(t, got, wantErr)
+			}
+			if test.absentError != nil {
+				require.NotErrorIs(t, got, test.absentError)
+			}
+			require.Equal(t, 1, raw.closeCalls)
+		})
+	}
+}
+
+func TestValidatedStreamFinalizeRetainsObserverAndIncompleteFailures(t *testing.T) {
+	observerErr := errors.New("observer close failed")
+	raw := &validatedStreamFixture{}
+	stream := mustValidateStream(t, raw, &Request{})
+	stream, err := stream.Observe(&recordingStreamObserver{closeErr: observerErr})
+	require.NoError(t, err)
+
+	operationErr := stream.Finalize(nil)
+
+	require.ErrorIs(t, operationErr, observerErr)
+	require.ErrorContains(t, operationErr, "model stream was not completely consumed")
+	require.Equal(t, 1, raw.closeCalls)
+	require.ErrorIs(t, stream.Close(), observerErr)
+	_, recvErr := stream.Recv()
+	require.ErrorContains(t, recvErr, "model stream was not completely consumed")
+}
+
+func TestValidatedStreamFinalizeAfterEOF(t *testing.T) {
+	providerCloseErr := errors.New("provider close failed")
+	observerErr := errors.New("observer close failed")
+	tests := []struct {
+		name       string
+		closeErr   error
+		observer   error
+		wantErrors []error
+	}{
+		{name: "success"},
+		{
+			name:       "provider cleanup only",
+			closeErr:   providerCloseErr,
+			wantErrors: []error{providerCloseErr},
+		},
+		{
+			name:       "observer cleanup only",
+			observer:   observerErr,
+			wantErrors: []error{observerErr},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := canonicalTextResponse()
+			raw := &validatedStreamFixture{
+				chunks: []Chunk{
+					TextChunk{Message: response.Content[0]},
+					StopChunk{Reason: response.StopReason},
+				},
+				response: response,
+				closeErr: test.closeErr,
+			}
+			stream := mustValidateStream(t, raw, &Request{})
+			stream, err := stream.Observe(&recordingStreamObserver{closeErr: test.observer})
+			require.NoError(t, err)
+			_, err = stream.Recv()
+			require.NoError(t, err)
+			_, err = stream.Recv()
+			require.NoError(t, err)
+			_, err = stream.Recv()
+			require.ErrorIs(t, err, io.EOF)
+
+			operationErr := stream.Finalize(nil)
+
+			if len(test.wantErrors) == 0 {
+				require.NoError(t, operationErr)
+			}
+			for _, wantErr := range test.wantErrors {
+				require.ErrorIs(t, operationErr, wantErr)
+			}
+			require.Equal(t, 1, raw.closeCalls)
+		})
+	}
+}
+
+func TestValidatedStreamFinalizeCachesOnePrimary(t *testing.T) {
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	providerCloseErr := errors.New("provider close failed")
+	raw := &validatedStreamFixture{recvErr: validationErr, closeErr: providerCloseErr}
+	stream := mustValidateStream(t, raw, &Request{})
+	_, primaryErr := stream.Recv()
+	require.Same(t, validationErr, primaryErr)
+
+	first := stream.Finalize(primaryErr)
+	second := stream.Finalize(primaryErr)
+	mismatch := stream.Finalize(errors.New("different primary"))
+
+	require.Same(t, validationErr, first)
+	require.Same(t, first, second)
+	require.ErrorContains(t, mismatch, "different primary error")
+	require.ErrorIs(t, stream.Close(), providerCloseErr)
+	require.Equal(t, 1, raw.closeCalls)
+}
+
+func TestValidatedStreamFinalizeUsesPriorCloseResult(t *testing.T) {
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	providerCloseErr := errors.New("provider close failed")
+	raw := &validatedStreamFixture{recvErr: validationErr, closeErr: providerCloseErr}
+	stream := mustValidateStream(t, raw, &Request{})
+	_, primaryErr := stream.Recv()
+	require.Same(t, validationErr, primaryErr)
+
+	require.ErrorIs(t, stream.Close(), providerCloseErr)
+	operationErr := stream.Finalize(primaryErr)
+
+	require.Same(t, validationErr, operationErr)
+	require.Equal(t, 1, raw.closeCalls)
 }
 
 func TestObservedStreamCloseDiscardsBufferedToolChunks(t *testing.T) {
@@ -762,6 +991,7 @@ func TestValidatedStreamObserverConcurrentOperations(t *testing.T) {
 	require.NoError(t, <-closeResult)
 	require.Len(t, observer.observations, chunkCount)
 	require.True(t, raw.closed)
+	require.Equal(t, 1, raw.closeCalls)
 }
 
 func TestValidatedStreamDoesNotReceiveSiblingChunkBeforeObserverDecision(t *testing.T) {
@@ -892,6 +1122,95 @@ func TestValidatedStreamSerializesCancellationAndIdempotentClose(t *testing.T) {
 	require.Equal(t, 1, raw.closeCalls)
 }
 
+func TestValidatedStreamSerializesConcurrentReceiveCloseAndFinalize(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	providerCloseErr := errors.New("provider close failed")
+	processingErr := errors.New("caller processing failed")
+	raw := &cancellationBlockedStreamFixture{
+		ctx:            ctx,
+		recvStarted:    make(chan struct{}),
+		cleanupStarted: make(chan struct{}),
+		cleanupRelease: make(chan struct{}),
+		closeCalled:    make(chan struct{}),
+		closeErr:       providerCloseErr,
+	}
+	stream := mustValidateStream(t, raw, &Request{})
+	observer := &recordingStreamObserver{}
+	stream, err := stream.Observe(observer)
+	require.NoError(t, err)
+	recvResult := make(chan error, 1)
+	go func() {
+		_, recvErr := stream.Recv()
+		recvResult <- recvErr
+	}()
+	<-raw.recvStarted
+	finalizeResult := make(chan error, 1)
+	closeResult := make(chan error, 1)
+	go func() {
+		finalizeResult <- stream.Finalize(processingErr)
+	}()
+	go func() {
+		closeResult <- stream.Close()
+	}()
+
+	cancel()
+	<-raw.cleanupStarted
+	close(raw.cleanupRelease)
+
+	require.ErrorIs(t, <-recvResult, context.Canceled)
+	operationErr := <-finalizeResult
+	require.ErrorIs(t, operationErr, processingErr)
+	require.ErrorIs(t, operationErr, context.Canceled)
+	require.ErrorIs(t, operationErr, providerCloseErr)
+	require.ErrorIs(t, <-closeResult, providerCloseErr)
+	require.Equal(t, 1, raw.closeCalls)
+	require.Equal(t, 1, observer.closeCalls)
+}
+
+func TestValidatedStreamConcurrentFinalizationIsFirstCallWinsAcrossViews(t *testing.T) {
+	receiveErr := errors.New("provider receive failed")
+	closeErr := errors.New("provider close failed")
+	firstPrimary := errors.New("caller processing failed")
+	differentPrimary := errors.New("different caller failure")
+	raw := &blockingCloseStreamFixture{
+		recvErr:      receiveErr,
+		closeErr:     closeErr,
+		closeStarted: make(chan struct{}),
+		closeRelease: make(chan struct{}),
+	}
+	base := mustValidateStream(t, raw, &Request{})
+	observed, err := base.Observe(&recordingStreamObserver{})
+	require.NoError(t, err)
+	_, err = observed.Recv()
+	require.ErrorIs(t, err, receiveErr)
+	firstResult := make(chan error, 1)
+	sameResult := make(chan error, 1)
+	differentResult := make(chan error, 1)
+	go func() {
+		firstResult <- base.Finalize(firstPrimary)
+	}()
+	<-raw.closeStarted
+	go func() {
+		sameResult <- observed.Finalize(firstPrimary)
+	}()
+	go func() {
+		differentResult <- observed.Finalize(differentPrimary)
+	}()
+
+	close(raw.closeRelease)
+	firstErr := <-firstResult
+	sameErr := <-sameResult
+	mismatchErr := <-differentResult
+
+	require.ErrorIs(t, firstErr, firstPrimary)
+	require.ErrorIs(t, firstErr, receiveErr)
+	require.ErrorIs(t, firstErr, closeErr)
+	require.Same(t, firstErr, sameErr)
+	require.ErrorContains(t, mismatchErr, "different primary error")
+	require.ErrorIs(t, observed.Close(), closeErr)
+	require.Equal(t, 1, raw.closeCalls)
+}
+
 func (s *validatedStreamFixture) Recv() (Chunk, error) {
 	if s.next == len(s.chunks) {
 		if s.recvErr != nil {
@@ -910,6 +1229,7 @@ func (s *validatedStreamFixture) Response() *Response {
 
 func (s *validatedStreamFixture) Close() error {
 	s.closed = true
+	s.closeCalls++
 	if s.closeCalled != nil {
 		close(s.closeCalled)
 	}
@@ -953,6 +1273,7 @@ func (o *recordingStreamObserver) ObserveStreamRecv(observation StreamObservatio
 }
 
 func (o *recordingStreamObserver) ObserveStreamClose(error) error {
+	o.closeCalls++
 	return o.closeErr
 }
 

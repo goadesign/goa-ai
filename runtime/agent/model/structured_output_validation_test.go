@@ -4,6 +4,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"testing"
@@ -270,7 +271,7 @@ func TestValidatedStreamStillReconcilesCompletionWithTerminalResponse(t *testing
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
 	require.NotErrorIs(t, err, io.EOF)
-	require.ErrorContains(t, err, "stream completion does not match canonical response")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "stream completion does not match canonical response")
 	require.Nil(t, stream.Response())
 }
 
@@ -291,7 +292,7 @@ func TestValidatedStreamRejectsSchemaValidRootMismatchBeforeFinalExposure(t *tes
 	require.Nil(t, final)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "stream completion does not match canonical response")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "stream completion does not match canonical response")
 	require.Nil(t, stream.Response())
 }
 
@@ -321,7 +322,7 @@ func TestValidatedStreamAlwaysReconcilesWithCustomValidator(t *testing.T) {
 	require.Nil(t, final)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "stream completion does not match canonical response")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "stream completion does not match canonical response")
 	require.Equal(t, 1, customCalls)
 }
 

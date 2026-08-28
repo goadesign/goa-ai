@@ -121,7 +121,9 @@ func (j *modelInvocationJournal) outcomeErrors() error {
 }
 
 // recoverableModelCall verifies the complete structured result for one staged
-// validation. Only the runtime observer may return that exact rejection.
+// validation. Only the runtime observer may return that exact rejection. A
+// provider close failure is cleanup evidence already reported to stream
+// observers; it does not replace a completed validation result.
 func recoverableModelCall(candidate *modelInvocationCandidate) bool {
 	if !candidate.finished || candidate.outcome == nil || candidate.rejectedOutputErr == nil {
 		return false
@@ -145,12 +147,13 @@ func recoverableModelCall(candidate *modelInvocationCandidate) bool {
 	if !validationMatches(outcome.Validations, candidate.rejectedValidationErr) {
 		return false
 	}
+	if !cleanResults(outcome.CloseObservers) {
+		return false
+	}
 	if len(outcome.StreamSetupObservers) > 0 {
 		if !outcome.ProviderClose.Called ||
-			outcome.ProviderClose.Err != nil ||
 			!outcome.Completed ||
-			outcome.Incomplete ||
-			!cleanResults(outcome.CloseObservers) {
+			outcome.Incomplete {
 			return false
 		}
 	}
@@ -203,8 +206,8 @@ func validationMatches(results []modelcall.Result, expected *model.OutputValidat
 		if !result.Called || result.Err == nil {
 			continue
 		}
-		var actual *model.OutputValidationError
-		if !errors.As(result.Err, &actual) || !modelcall.Exact(actual, expected) || matched {
+		actual, ok := exactModelOutputValidation(result.Err)
+		if !ok || !modelcall.Exact(actual, expected) || matched {
 			return false
 		}
 		matched = true
@@ -252,20 +255,61 @@ func onlyExpectedValidation(err error, candidates ...*modelInvocationCandidate) 
 			return true
 		}
 	}
-	joined, ok := err.(interface{ Unwrap() []error })
-	if !ok {
-		return false
-	}
-	causes := joined.Unwrap()
-	if len(causes) == 0 {
-		return false
-	}
-	for _, cause := range causes {
-		if !onlyExpectedValidation(cause, candidates...) {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
 			return false
 		}
+		for _, cause := range causes {
+			if !onlyExpectedValidation(cause, candidates...) {
+				return false
+			}
+		}
+		return true
 	}
-	return true
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return onlyExpectedValidation(wrapped.Unwrap(), candidates...)
+	}
+	return false
+}
+
+// exactModelOutputValidation returns the one OutputValidationError shared by
+// every error leaf. Runtime staging and recovery use it so wrappers and
+// duplicate joins preserve identity while any unrelated leaf rejects the
+// classification.
+func exactModelOutputValidation(err error) (*model.OutputValidationError, bool) {
+	if err == nil {
+		return nil, false
+	}
+	//nolint:errorlint // Exact root identity is required before following wrappers.
+	if validationErr, ok := err.(*model.OutputValidationError); ok {
+		return validationErr, validationErr != nil
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
+			return nil, false
+		}
+		var expected *model.OutputValidationError
+		for _, cause := range causes {
+			actual, valid := exactModelOutputValidation(cause)
+			if !valid {
+				return nil, false
+			}
+			if expected == nil {
+				expected = actual
+				continue
+			}
+			if !modelcall.Exact(actual, expected) {
+				return nil, false
+			}
+		}
+		return expected, true
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return exactModelOutputValidation(wrapped.Unwrap())
+	}
+	return nil, false
 }
 
 // outputContractError returns the earliest-started invocation that rejected

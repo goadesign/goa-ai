@@ -121,7 +121,10 @@ func TestTranslateToolCallRejectsEmptyAndUnknownArguments(t *testing.T) {
 		Name:      "invented",
 		Arguments: `{}`,
 	}, codec)
-	require.ErrorContains(t, err, `unadvertised function "invented"`)
+	name, ok := model.UnadvertisedToolName(err)
+	require.True(t, ok)
+	require.Equal(t, "invented", name)
+	require.NotContains(t, err.Error(), name)
 }
 
 func TestStructuredOutputPayloadPreservesExactJSON(t *testing.T) {
@@ -735,7 +738,9 @@ func TestClientCompleteRoutesModelsAndToolChoice(t *testing.T) {
 		}},
 		ToolChoice: &model.ToolChoice{Mode: model.ToolChoiceModeAny},
 	})
-	require.ErrorContains(t, err, "tool choice any")
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.ErrorContains(t, errors.Unwrap(validationErr), "tool choice any")
 
 	require.Len(t, transport.completeRequests, 1)
 	request := transport.completeRequests[0]
@@ -1186,7 +1191,7 @@ func TestClientCompleteRejectsMissingToolCallIDWithUsage(t *testing.T) {
 	require.Nil(t, response)
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "tool call missing call_id")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "tool call missing call_id")
 	require.Equal(t, &model.TokenUsage{
 		Model:        "gpt-4o",
 		InputTokens:  7,
@@ -1230,7 +1235,7 @@ func TestClientStreamRejectsMissingToolCallIDWithUsage(t *testing.T) {
 
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "tool call missing call_id")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "tool call missing call_id")
 	require.Equal(t, &model.TokenUsage{
 		Model:        "gpt-4o",
 		InputTokens:  7,
@@ -1672,7 +1677,7 @@ func TestOpenAIStreamerRejectsSchemaInvalidStructuredOutput(t *testing.T) {
 	require.Nil(t, chunk)
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "does not match its schema")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "does not match its schema")
 	require.Nil(t, streamer.Response())
 }
 

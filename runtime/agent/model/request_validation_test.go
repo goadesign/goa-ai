@@ -90,7 +90,7 @@ func TestRequestContractRejectsMalformedProviderUsageModel(t *testing.T) {
 
 	_, err = contract.ValidateResponse(response)
 
-	require.ErrorContains(t, err, "not valid UTF-8")
+	require.ErrorContains(t, outputValidationCause(t, err), "not valid UTF-8")
 	rejected := contract.RejectProviderOutput(&response.Usage, errors.New("translation failed"))
 	require.Empty(t, rejected.Usage().Model)
 	require.Equal(t, 3, rejected.Usage().TotalTokens)
@@ -147,6 +147,7 @@ func TestRequestContractReturnsImmutableOutputValidationError(t *testing.T) {
 	require.ErrorAs(t, err, &validationErr)
 	require.True(t, validationErr.Evidence().Present)
 	require.NotEmpty(t, validationErr.Evidence().SHA256)
+	require.EqualError(t, validationErr, "model output does not meet its request contract")
 	require.ErrorContains(t, errors.Unwrap(validationErr), "stop reason")
 	rejected.Content[0].Parts[0] = TextPart{Text: "provider-mutated"}
 
@@ -187,7 +188,16 @@ func TestRequestContractRejectsContradictoryNoArgumentTool(t *testing.T) {
 		ID:    "call-1",
 	}
 	_, err = contract.ValidateResponse(response)
-	require.ErrorContains(t, err, `payload is not the canonical empty object`)
+	require.ErrorContains(t, outputValidationCause(t, err), `payload is not the canonical empty object`)
+}
+
+// outputValidationCause requires the public model-output category before a
+// test inspects the private validation rule that produced it.
+func outputValidationCause(t *testing.T, err error) error {
+	t.Helper()
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	return errors.Unwrap(validationErr)
 }
 
 func TestToolDefinitionAcceptsEmptyObject(t *testing.T) {
@@ -538,7 +548,7 @@ func TestRequestContractEnforcesToolChoice(t *testing.T) {
 			}
 			var validationErr *OutputValidationError
 			require.ErrorAs(t, err, &validationErr)
-			require.ErrorContains(t, err, test.wantErr)
+			require.ErrorContains(t, outputValidationCause(t, err), test.wantErr)
 		})
 	}
 }
@@ -553,7 +563,7 @@ func TestRequestContractSnapshotsToolChoice(t *testing.T) {
 	request.ToolChoice.Mode = ToolChoiceModeAny
 
 	_, err = contract.ValidateResponse(toolResponse("first"))
-	require.ErrorContains(t, err, "tool choice none")
+	require.ErrorContains(t, outputValidationCause(t, err), "tool choice none")
 }
 
 func TestRequestContractEnforcesToolChoiceAtStreamEOF(t *testing.T) {
@@ -587,7 +597,7 @@ func TestRequestContractEnforcesToolChoiceAtStreamEOF(t *testing.T) {
 	_, err = stream.Recv()
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "tool choice any")
+	require.ErrorContains(t, outputValidationCause(t, err), "tool choice any")
 }
 
 func TestNewRequestContractRejectsUnadvertisedToolChoice(t *testing.T) {
@@ -746,7 +756,7 @@ func TestRequestContractValidatesUnaryStructuredOutputEnvelope(t *testing.T) {
 	_, err = contract.ValidateResponse(invalid)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "decode candidate JSON")
+	require.ErrorContains(t, outputValidationCause(t, err), "decode candidate JSON")
 }
 
 func TestRequestContractRunsGeneratedStructuredOutputDecoder(t *testing.T) {
@@ -765,7 +775,7 @@ func TestRequestContractRunsGeneratedStructuredOutputDecoder(t *testing.T) {
 	response.Content[0].Parts[0] = TextPart{Text: `{}`}
 
 	_, err = contract.ValidateResponse(response)
-	require.ErrorContains(t, err, "generated decoder rejected payload")
+	require.ErrorContains(t, outputValidationCause(t, err), "generated decoder rejected payload")
 }
 
 func TestCallerAuthoredToolSchemaRejectsInvalidPayload(t *testing.T) {
@@ -787,8 +797,8 @@ func TestCallerAuthoredToolSchemaRejectsInvalidPayload(t *testing.T) {
 	validated, err := contract.ValidateResponse(response)
 
 	require.Nil(t, validated)
-	require.ErrorContains(t, err, `model tool "lookup" payload failed its request contract`)
-	require.ErrorContains(t, err, "validate JSON Schema")
+	require.ErrorContains(t, outputValidationCause(t, err), `model tool "lookup" payload failed its request contract`)
+	require.ErrorContains(t, outputValidationCause(t, err), "validate JSON Schema")
 }
 
 func TestRequestContractValidatesTransportedToolPayload(t *testing.T) {
@@ -811,7 +821,7 @@ func TestRequestContractValidatesTransportedToolPayload(t *testing.T) {
 	}
 	validated, err := contract.ValidateResponse(response)
 	require.Nil(t, validated)
-	require.ErrorContains(t, err, `model tool "lookup" payload failed its request contract`)
+	require.ErrorContains(t, outputValidationCause(t, err), `model tool "lookup" payload failed its request contract`)
 }
 
 func TestNewRequestContractPreflightsToolCount(t *testing.T) {

@@ -417,8 +417,7 @@ func (p *openAIChunkProcessor) registerOutputItem(item responses.ResponseOutputI
 			name, ok := p.codec.canonicalName(actual.Name)
 			if !ok {
 				return fmt.Errorf(
-					"openai: streamed tool call returned unadvertised function %q: %w",
-					actual.Name,
+					"openai: translate streamed tool call: %w",
 					model.NewUnadvertisedToolNameError(actual.Name),
 				)
 			}

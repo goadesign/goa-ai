@@ -174,9 +174,9 @@ func TestRemoteClientKeepsPreTransportRequestContract(t *testing.T) {
 
 	response, err := client.Complete(t.Context(), request)
 	require.Nil(t, response)
-	require.ErrorContains(t, err, `model returned tool "late_tool" that was not present in its request`)
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
+	require.NotContains(t, err.Error(), "late_tool")
 }
 
 func TestRemoteClientPreservesTypedTransportOutputFailure(t *testing.T) {
@@ -221,7 +221,9 @@ func TestRemoteClientStreamKeepsPreTransportRequestContract(t *testing.T) {
 	require.NoError(t, err)
 	chunk, err := stream.Recv()
 	require.Nil(t, chunk)
-	require.ErrorContains(t, err, `model stream returned tool "late_tool" that was not present in its request`)
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.NotContains(t, err.Error(), "late_tool")
 }
 
 func TestRemoteClientRejectsTypedNilStream(t *testing.T) {
@@ -236,7 +238,8 @@ func TestRemoteClientRejectsTypedNilStream(t *testing.T) {
 	stream, err := client.Stream(t.Context(), &model.Request{})
 
 	require.Nil(t, stream)
-	require.ErrorContains(t, err, "typed nil")
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
 }
 
 func requireRemoteClient(

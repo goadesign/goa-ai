@@ -189,7 +189,10 @@ func TestTranslateResponseRejectsUnknownTool(t *testing.T) {
 		}},
 	}
 	_, err := translateResponse(resp, "m", model.ModelClassDefault, map[string]string{}, nil)
-	require.ErrorContains(t, err, `unadvertised name "never_advertised"`)
+	name, ok := model.UnadvertisedToolName(err)
+	require.True(t, ok)
+	require.Equal(t, "never_advertised", name)
+	require.NotContains(t, err.Error(), name)
 }
 
 func TestTranslateResponseProviderToolCallIDWins(t *testing.T) {

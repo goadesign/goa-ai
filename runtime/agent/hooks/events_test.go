@@ -62,7 +62,8 @@ func TestNewRunCompletedEventPreservesPlannerOutputRetryability(t *testing.T) {
 	require.Empty(t, evt.Failure.Operation)
 	require.Empty(t, evt.Failure.Code)
 	require.Zero(t, evt.Failure.HTTPStatus)
-	require.Contains(t, evt.Failure.DebugMessage, "missing required citation")
+	require.Contains(t, evt.Failure.DebugMessage, "completed output does not meet its contract")
+	require.NotContains(t, evt.Failure.DebugMessage, "missing required citation")
 }
 
 func TestNewRunCompletedEventPreservesModelOutputOrigin(t *testing.T) {
@@ -78,6 +79,8 @@ func TestNewRunCompletedEventPreservesModelOutputOrigin(t *testing.T) {
 	require.Equal(t, PublicErrorOutputContract, evt.Failure.Message)
 	require.Equal(t, ErrorKindModelOutput, evt.Failure.Kind)
 	require.False(t, evt.Failure.Retryable)
+	require.Contains(t, evt.Failure.DebugMessage, "completed output does not meet its contract")
+	require.NotContains(t, evt.Failure.DebugMessage, "invalid tool payload")
 }
 
 func TestNewRunCompletedEventCanceledOmitsFailureMetadata(t *testing.T) {

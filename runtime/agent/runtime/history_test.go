@@ -172,7 +172,9 @@ func TestCompressRejectsEmptySummary(t *testing.T) {
 	}
 
 	out, err := policy(context.Background(), msgs, nil)
-	require.ErrorContains(t, err, "text is empty")
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.ErrorContains(t, errors.Unwrap(validationErr), "text is empty")
 	assert.Same(t, msgs[0], out[0])
 }
 

@@ -321,12 +321,17 @@ historical names, produce the same Bedrock identifier, the request fails before
 Bedrock is called.
 
 The runtime retains only the untouched returned name and the provider's token
-usage. Bedrock may remove its `$FUNCTIONS.` prefix from a separate copy used for
-lookup, but recovery keeps the prefixed name. The next planner activity starts
-from the last accepted conversation, receives the tools available for that new
-request, and gets a fixed reminder to choose one of those exact names. The
-runtime does not guess a replacement, apply aliases or fuzzy matching, copy the
-catalog into recovery state, or change the available tools.
+usage. Generic error text is fixed and does not render the name, rejected
+payload, schema, validator message, response, or correction guidance. Framework
+code that needs the rejected identity uses `model.UnadvertisedToolName`; code
+that needs evidence, usage, or correction uses the corresponding typed
+`OutputValidationError` accessors. Bedrock may remove its `$FUNCTIONS.` prefix
+from a separate copy used for lookup, but recovery keeps the prefixed name. The
+next planner activity starts from the last accepted conversation, receives the
+tools available for that new request, and gets a fixed reminder to choose one
+of those exact names. The runtime does not guess a replacement, apply aliases
+or fuzzy matching, copy the catalog into recovery state, or change the
+available tools.
 
 For streams, validation can report the rejected name and valid token usage as
 soon as `Recv` detects the bad output. The runtime does not commit recovery at
@@ -339,6 +344,23 @@ Every prepared `Finish` callback likewise receives the same result collected
 before any finisher ran. The runtime sees the frozen record only after all
 finishers return.
 
+`ValidatedStream.Close` keeps its cleanup-only contract for callers that handle
+receive and close results separately. Code that owns the complete operation
+passes its exact receive or processing result to `ValidatedStream.Finalize`.
+Finalization returns that exact validation when provider cleanup is the only
+additional failure, while preserving observer, lifecycle, context, incomplete
+stream, and other independent failures. Both methods share the same
+exactly-once close work, and `Close` always returns its cleanup result even when
+`Finalize` has already determined the complete operation result. `Recv`,
+`Close`, and `Finalize` are serialized. An observer callback must not call any
+of those methods because each waits for the callback to finish.
+
+The first `Finalize` call owns the operation result. Repeating it with the same
+error returns that cached result; a concurrent or later call with a different
+error reports misuse without replacing the first result. Passing nil is valid
+only after clean EOF. Passing nil before EOF closes the stream and returns the
+incomplete-stream failure.
+
 Only the literal `io.EOF` value from the provider marks normal stream
 completion. A wrapped EOF is a provider failure, and EOF returned by an
 observer is an observer failure. Recovery never searches a joined error for
@@ -347,11 +369,14 @@ EOF.
 After the planner returns, the activity closes unfinished calls, waits for
 their frozen records, discards provisional presentation, and makes one
 decision. It commits recovery only when an exact staged validation belongs to
-the same model call and every other private slot is clean. A provider close,
-observer, finisher, usage-recording, staging, cancellation, or deadline failure
+the same model call and every operation that can change that validation
+decision is clean. If provider cleanup also fails after validation completed,
+the validation remains the operation result and stream tracing records the
+cleanup failure separately. An observer, finisher, usage-recording, staging,
+cancellation, deadline, ordinary provider-read, or premature-close failure
 keeps its own cause in the activity error instead of producing
-`ModelInvocationRecovery`. Planner code cannot hide such a failure by ignoring,
-joining, or replacing the error returned by `Close`.
+`ModelInvocationRecovery`. Planner code cannot broaden recovery by ignoring,
+joining, or replacing the validation error returned by `Recv`.
 
 Each retry consumes one existing `MaxRecoveryTurns` entry. Repeated misses end
 through the normal recovery-cap path. Cancellation, deadlines, transport
@@ -366,6 +391,20 @@ workers together. After a history records an unadvertised-name recovery,
 rolling that history back to an older worker is unsafe because the older worker
 does not understand the new field. This change requires no Goa regeneration,
 client regeneration, or public wire-client update.
+
+The v0.78.5 error-privacy and stream-finalization correction does not change an
+activity-result, checkpoint, schema, generated-type, or wire shape. Existing
+v0.78.4 records therefore remain readable by v0.78.5, and rollback to v0.78.4
+is structurally safe. The reason-fingerprint input does change: v0.78.5 hashes
+only the private validation-cause text, while v0.78.4 hashed the complete
+diagnostic error text. Mixed v0.78.4 and v0.78.5 workers can therefore emit
+different reason fingerprint values for the same failure, depending on which
+worker executes the activity. The value is opaque evidence, so either version
+can load and publish either fingerprint. Rolling back makes new failures use
+the v0.78.4 value again and also restores model-authored values in generic
+error text and the lost-recovery behavior when validation and provider cleanup
+fail together. The older-worker restriction in the preceding paragraph applies
+only to runtime versions from before `ModelInvocationRecovery` existed.
 
 ### Generated tool validation across model gateways
 
@@ -2536,9 +2575,11 @@ this event. A planner result rejected after model calls finish does not publish
 a model-output event. A durable publication failure is fingerprinted and joined
 to the terminal `planner.OutputContractError`; it does not make inference
 retryable.
-`ModelOutputRejectedEvent.ReasonSHA256` and `ReasonSize` identify the exact local
-validation error without copying provider-controlled text into Temporal or the
-run log. `ModelResponsePresent` distinguishes a complete response from a
+`ModelOutputRejectedEvent.ReasonSHA256` and `ReasonSize` identify the private
+validation-cause text without copying that text into Temporal or the run log.
+Public error text remains fixed and generic; the fingerprint preserves durable
+distinction between different causes without storing either cause.
+`ModelResponsePresent` distinguishes a complete response from a
 chunk-level failure. `ModelResponseFingerprintVersion` identifies the stable
 encoding when `ModelResponseSHA256` is present; both are empty when no digest
 could be computed. `ModelResponseSHA256` identifies the complete response from
