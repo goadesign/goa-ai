@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/testhelpers"
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 	"goa.design/goa/v3/eval"
 )
@@ -63,29 +63,29 @@ func TestPlainUseLinksUniqueAgentExporter(t *testing.T) {
 func multiExporterAgentToolsetDesign(explicit bool) func() {
 	return func() {
 		API("multi_exporter", func() {})
-		shared := aidsl.Toolset("shared", func() {
-			aidsl.Tool("lookup", "Look up a value.", func() {
-				aidsl.Args(String)
-				aidsl.Return(String)
+		shared := Toolset("shared", func() {
+			Tool("lookup", "Look up a value.", func() {
+				Args(String)
+				Return(String)
 			})
 		})
 		Service("alpha", func() {
-			aidsl.Agent("first", "First provider.", func() {
-				aidsl.Export(shared)
+			Agent("first", "First provider.", func() {
+				Export(shared)
 			})
 		})
 		Service("beta", func() {
-			aidsl.Agent("second", "Second provider.", func() {
-				aidsl.Export(shared)
+			Agent("second", "Second provider.", func() {
+				Export(shared)
 			})
 		})
 		Service("consumer", func() {
-			aidsl.Agent("worker", "Consumer.", func() {
+			Agent("worker", "Consumer.", func() {
 				if explicit {
-					aidsl.Use(aidsl.AgentToolset("beta", "second", "shared"))
+					Use(AgentToolset("beta", "second", "shared"))
 					return
 				}
-				aidsl.Use(shared)
+				Use(shared)
 			})
 		})
 	}
@@ -96,20 +96,20 @@ func multiExporterAgentToolsetDesign(explicit bool) func() {
 func uniqueExporterAgentToolsetDesign() func() {
 	return func() {
 		API("unique_exporter", func() {})
-		shared := aidsl.Toolset("shared", func() {
-			aidsl.Tool("lookup", "Look up a value.", func() {
-				aidsl.Args(String)
-				aidsl.Return(String)
+		shared := Toolset("shared", func() {
+			Tool("lookup", "Look up a value.", func() {
+				Args(String)
+				Return(String)
 			})
 		})
 		Service("alpha", func() {
-			aidsl.Agent("first", "Provider.", func() {
-				aidsl.Export(shared)
+			Agent("first", "Provider.", func() {
+				Export(shared)
 			})
 		})
 		Service("consumer", func() {
-			aidsl.Agent("worker", "Consumer.", func() {
-				aidsl.Use(shared)
+			Agent("worker", "Consumer.", func() {
+				Use(shared)
 			})
 		})
 	}

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	ir "goa.design/goa-ai/codegen/ir"
 	"goa.design/goa-ai/codegen/testhelpers"
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	goacodegen "goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
@@ -39,12 +39,12 @@ func TestBuild_Deterministic(t *testing.T) {
 					Attribute("ok", Boolean, "OK")
 				})
 			})
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("lookup", func() {
-					aidsl.Tool("by_id", "Lookup by ID", func() {
-						aidsl.Args(QPayload)
-						aidsl.Return(OkResult)
-						aidsl.BindTo("Do")
+			Agent("scribe", "Doc helper", func() {
+				Use("lookup", func() {
+					Tool("by_id", "Lookup by ID", func() {
+						Args(QPayload)
+						Return(OkResult)
+						BindTo("Do")
 					})
 				})
 			})
@@ -68,13 +68,13 @@ func TestBuild_ToolsetOwnership_ServiceLexicographic(t *testing.T) {
 	design := func() {
 		API("multi", func() {})
 
-		var Shared = aidsl.Toolset("shared", func() {
-			aidsl.Tool("ping", "Ping", func() {
-				aidsl.Args(func() {
+		var Shared = Toolset("shared", func() {
+			Tool("ping", "Ping", func() {
+				Args(func() {
 					Attribute("msg", String, "Message")
 					Required("msg")
 				})
-				aidsl.Return(func() {
+				Return(func() {
 					Attribute("ok", Boolean, "OK")
 					Required("ok")
 				})
@@ -82,16 +82,16 @@ func TestBuild_ToolsetOwnership_ServiceLexicographic(t *testing.T) {
 		})
 
 		Service("bravo", func() {
-			aidsl.Agent("b", "B", func() {
-				aidsl.Use(Shared, func() {
-					aidsl.Tool("ping")
+			Agent("b", "B", func() {
+				Use(Shared, func() {
+					Tool("ping")
 				})
 			})
 		})
 		Service("alpha", func() {
-			aidsl.Agent("a", "A", func() {
-				aidsl.Use(Shared, func() {
-					aidsl.Tool("ping")
+			Agent("a", "A", func() {
+				Use(Shared, func() {
+					Tool("ping")
 				})
 			})
 		})
@@ -113,13 +113,13 @@ func TestBuild_ToolsetOwnership_ExportWins(t *testing.T) {
 	design := func() {
 		API("multi", func() {})
 
-		var Shared = aidsl.Toolset("shared", func() {
-			aidsl.Tool("ping", "Ping", func() {
-				aidsl.Args(func() {
+		var Shared = Toolset("shared", func() {
+			Tool("ping", "Ping", func() {
+				Args(func() {
 					Attribute("msg", String, "Message")
 					Required("msg")
 				})
-				aidsl.Return(func() {
+				Return(func() {
 					Attribute("ok", Boolean, "OK")
 					Required("ok")
 				})
@@ -127,16 +127,16 @@ func TestBuild_ToolsetOwnership_ExportWins(t *testing.T) {
 		})
 
 		Service("bravo", func() {
-			aidsl.Agent("provider", "Provider", func() {
-				aidsl.Export(Shared, func() {
-					aidsl.Tool("ping")
+			Agent("provider", "Provider", func() {
+				Export(Shared, func() {
+					Tool("ping")
 				})
 			})
 		})
 		Service("alpha", func() {
-			aidsl.Agent("consumer", "Consumer", func() {
-				aidsl.Use(Shared, func() {
-					aidsl.Tool("ping")
+			Agent("consumer", "Consumer", func() {
+				Use(Shared, func() {
+					Tool("ping")
 				})
 			})
 		})
@@ -182,13 +182,13 @@ func TestBuild_ToolsetOwnership_ServiceExportWins(t *testing.T) {
 	design := func() {
 		API("multi", func() {})
 
-		var Shared = aidsl.Toolset("shared", func() {
-			aidsl.Tool("ping", "Ping", func() {
-				aidsl.Args(func() {
+		var Shared = Toolset("shared", func() {
+			Tool("ping", "Ping", func() {
+				Args(func() {
 					Attribute("msg", String, "Message")
 					Required("msg")
 				})
-				aidsl.Return(func() {
+				Return(func() {
 					Attribute("ok", Boolean, "OK")
 					Required("ok")
 				})
@@ -196,14 +196,14 @@ func TestBuild_ToolsetOwnership_ServiceExportWins(t *testing.T) {
 		})
 
 		Service("bravo", func() {
-			aidsl.Export(Shared, func() {
-				aidsl.Tool("ping")
+			Export(Shared, func() {
+				Tool("ping")
 			})
 		})
 		Service("alpha", func() {
-			aidsl.Agent("consumer", "Consumer", func() {
-				aidsl.Use(Shared, func() {
-					aidsl.Tool("ping")
+			Agent("consumer", "Consumer", func() {
+				Use(Shared, func() {
+					Tool("ping")
 				})
 			})
 		})
@@ -225,18 +225,18 @@ func TestBuild_PreservesEveryServiceExport(t *testing.T) {
 	design := func() {
 		API("multi", func() {})
 
-		var Shared = aidsl.Toolset("atlas.read", func() {
-			aidsl.Tool("ping", "Ping", func() {})
+		var Shared = Toolset("atlas.read", func() {
+			Tool("ping", "Ping", func() {})
 		})
 
 		Service("atlas_data", func() {
-			aidsl.Export(Shared, func() {
-				aidsl.Tool("ping")
+			Export(Shared, func() {
+				Tool("ping")
 			})
 		})
 		Service("beta", func() {
-			aidsl.Export(Shared, func() {
-				aidsl.Tool("ping")
+			Export(Shared, func() {
+				Tool("ping")
 			})
 		})
 	}
@@ -313,19 +313,19 @@ func TestBuild_ServiceAgentAndCompletionLayout(t *testing.T) {
 	design := func() {
 		API("svc", func() {})
 
-		var Shared = aidsl.Toolset("shared_tools", func() {
-			aidsl.Tool("ping", "Ping", func() {})
+		var Shared = Toolset("shared_tools", func() {
+			Tool("ping", "Ping", func() {})
 		})
 
 		Service("svc", func() {
-			aidsl.Completion("draft", "Draft completion", func() {
-				aidsl.Return(func() {
+			Completion("draft", "Draft completion", func() {
+				Return(func() {
 					Attribute("text", String, "Draft text")
 				})
 			})
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use(Shared, func() {
-					aidsl.Tool("ping")
+			Agent("scribe", "Doc helper", func() {
+				Use(Shared, func() {
+					Tool("ping")
 				})
 			})
 		})

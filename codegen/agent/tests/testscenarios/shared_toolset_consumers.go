@@ -5,7 +5,7 @@ package testscenarios
 // executes the tool.
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -15,24 +15,24 @@ func SharedToolsetConsumers() func() {
 	return func() {
 		API("shared_toolset_consumers", func() {})
 
-		shared := aidsl.Toolset("shared", func() {
-			aidsl.Tool("ping", "Return the supplied message.", func() {
-				aidsl.Args(func() {
+		shared := Toolset("shared", func() {
+			Tool("ping", "Return the supplied message.", func() {
+				Args(func() {
 					Attribute("message", String, "Message to return.")
 					Required("message")
 				})
-				aidsl.Return(String, "Returned message.")
+				Return(String, "Returned message.")
 			})
 		})
 
 		Service("alpha", func() {
-			aidsl.Agent("alpha_worker", "Runs shared tools for alpha.", func() {
-				aidsl.Use(shared)
+			Agent("alpha_worker", "Runs shared tools for alpha.", func() {
+				Use(shared)
 			})
 		})
 		Service("beta", func() {
-			aidsl.Agent("beta_worker", "Runs shared tools for beta.", func() {
-				aidsl.Use(shared)
+			Agent("beta_worker", "Runs shared tools for beta.", func() {
+				Use(shared)
 			})
 		})
 	}

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/codegen/testhelpers"
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -81,11 +81,11 @@ func requiredAliasArrayDesign() func() {
 			Required("values")
 		})
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Stores alias values", func() {
-				aidsl.Use("aliases", func() {
-					aidsl.Tool("store", "Store alias values", func() {
-						aidsl.Args(payload)
-						aidsl.Return(String, "Stored value")
+			Agent("scribe", "Stores alias values", func() {
+				Use("aliases", func() {
+					Tool("store", "Store alias values", func() {
+						Args(payload)
+						Return(String, "Stored value")
 					})
 				})
 			})

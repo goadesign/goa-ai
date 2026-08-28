@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -11,19 +11,19 @@ func ExportedToolNameCollisions() func() {
 	return func() {
 		API("agent_tool_names", func() {})
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Writes documents", func() {
-				aidsl.Export("helpers", func() {
-					aidsl.Tool("agent-id", "Find an agent by ID", func() {
-						aidsl.Args(String)
-						aidsl.Return(String)
+			Agent("scribe", "Writes documents", func() {
+				Export("helpers", func() {
+					Tool("agent-id", "Find an agent by ID", func() {
+						Args(String)
+						Return(String)
 					})
-					aidsl.Tool("agent_id", "Load an agent by ID", func() {
-						aidsl.Args(String)
-						aidsl.Return(String)
+					Tool("agent_id", "Load an agent by ID", func() {
+						Args(String)
+						Return(String)
 					})
-					aidsl.Tool("service", "Describe a service", func() {
-						aidsl.Args(String)
-						aidsl.Return(String)
+					Tool("service", "Describe a service", func() {
+						Args(String)
+						Return(String)
 					})
 				})
 			})

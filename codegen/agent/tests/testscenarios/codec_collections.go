@@ -2,7 +2,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -44,14 +44,14 @@ func CodecCollections() func() {
 		})
 
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Collection codec test", func() {
-				aidsl.Use("collections", func() {
-					aidsl.Tool("store", "Store typed collections", func() {
-						aidsl.Args(payload)
-						aidsl.Return(payload)
+			Agent("scribe", "Collection codec test", func() {
+				Use("collections", func() {
+					Tool("store", "Store typed collections", func() {
+						Args(payload)
+						Return(payload)
 					})
-					aidsl.Tool("archive", "Archive typed collections", func() {
-						aidsl.Args(archivePayload)
+					Tool("archive", "Archive typed collections", func() {
+						Args(archivePayload)
 					})
 				})
 			})

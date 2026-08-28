@@ -2,7 +2,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -12,17 +12,17 @@ func AggregateSpecsNameCollisions() func() {
 	return func() {
 		API("aggregate_specs_names", func() {})
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Writes documents", func() {
-				aidsl.Use("policy", func() {
-					aidsl.Tool("review", "Review a document", func() {
-						aidsl.Args(String)
-						aidsl.Return(String)
+			Agent("scribe", "Writes documents", func() {
+				Use("policy", func() {
+					Tool("review", "Review a document", func() {
+						Args(String)
+						Return(String)
 					})
 				})
-				aidsl.Use("tools", func() {
-					aidsl.Tool("write", "Write a document", func() {
-						aidsl.Args(String)
-						aidsl.Return(String)
+				Use("tools", func() {
+					Tool("write", "Write a document", func() {
+						Args(String)
+						Return(String)
 					})
 				})
 			})

@@ -3,7 +3,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -25,12 +25,12 @@ func AliasBoth() func() {
 				Payload(PairPayload)
 				Result(PairResult)
 			})
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("lookup", func() {
-					aidsl.Tool("pair", "Pair", func() {
-						aidsl.Args(PairPayload)
-						aidsl.Return(PairResult)
-						aidsl.BindTo("alpha", "Pair")
+			Agent("scribe", "Doc helper", func() {
+				Use("lookup", func() {
+					Tool("pair", "Pair", func() {
+						Args(PairPayload)
+						Return(PairResult)
+						BindTo("alpha", "Pair")
 					})
 				})
 			})
@@ -50,12 +50,12 @@ func AliasPayloadOnly() func() {
 				Payload(P)
 				Result(PR)
 			})
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("echo", func() {
-					aidsl.Tool("echo", "Echo", func() {
-						aidsl.Args(P)
-						aidsl.Return(PR)
-						aidsl.BindTo("alpha", "Echo")
+			Agent("scribe", "Doc helper", func() {
+				Use("echo", func() {
+					Tool("echo", "Echo", func() {
+						Args(P)
+						Return(PR)
+						BindTo("alpha", "Echo")
 					})
 				})
 			})
@@ -75,12 +75,12 @@ func AliasResultOnly() func() {
 				Payload(P)
 				Result(R)
 			})
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("reply", func() {
-					aidsl.Tool("reply", "Reply", func() {
-						aidsl.Args(P)
-						aidsl.Return(R)
-						aidsl.BindTo("alpha", "Reply")
+			Agent("scribe", "Doc helper", func() {
+				Use("reply", func() {
+					Tool("reply", "Reply", func() {
+						Args(P)
+						Return(R)
+						BindTo("alpha", "Reply")
 					})
 				})
 			})

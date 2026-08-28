@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -29,18 +29,18 @@ func exportedToolsetConsumerDesign() func() {
 	return func() {
 		API("exported_toolset_consumer", func() {})
 		Service("provider", func() {
-			aidsl.Agent("source", "Provides shared tools.", func() {
-				aidsl.Export("ada", func() {
-					aidsl.Tool("fetch", "Fetch data.", func() {
-						aidsl.Args(String)
-						aidsl.Return(String)
+			Agent("source", "Provides shared tools.", func() {
+				Export("ada", func() {
+					Tool("fetch", "Fetch data.", func() {
+						Args(String)
+						Return(String)
 					})
 				})
 			})
 		})
 		Service("consumer", func() {
-			aidsl.Agent("worker", "Uses shared tools.", func() {
-				aidsl.Use(aidsl.AgentToolset("provider", "source", "ada"))
+			Agent("worker", "Uses shared tools.", func() {
+				Use(AgentToolset("provider", "source", "ada"))
 			})
 		})
 	}

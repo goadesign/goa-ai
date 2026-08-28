@@ -3,7 +3,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -13,10 +13,10 @@ func ExportsNoResult() func() {
 	return func() {
 		API("alpha", func() {})
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Maintains documents", func() {
-				aidsl.Export("maintenance", func() {
-					aidsl.Tool("purge", "Remove expired documents", func() {
-						aidsl.Args(String, "Remove documents that expired before this date.")
+			Agent("scribe", "Maintains documents", func() {
+				Export("maintenance", func() {
+					Tool("purge", "Remove expired documents", func() {
+						Args(String, "Remove documents that expired before this date.")
 					})
 				})
 			})

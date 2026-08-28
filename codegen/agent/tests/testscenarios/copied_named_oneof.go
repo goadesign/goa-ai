@@ -3,7 +3,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -57,10 +57,10 @@ func CopiedNamedOneOf() func() {
 			Method("Evaluate", func() {
 				Result(result)
 			})
-			aidsl.Agent("reader", "Reads records with a selected filter.", func() {
-				aidsl.Use("records", func() {
-					aidsl.Tool("evaluate", "Returns both filtered results.", func() {
-						aidsl.BindTo("Evaluate")
+			Agent("reader", "Reads records with a selected filter.", func() {
+				Use("records", func() {
+					Tool("evaluate", "Returns both filtered results.", func() {
+						BindTo("Evaluate")
 					})
 				})
 			})

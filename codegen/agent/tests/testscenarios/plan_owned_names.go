@@ -3,7 +3,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -53,20 +53,20 @@ func PlanOwnedNames() func() {
 					Required("items", "returned", "truncated", "evidence")
 				})
 			})
-			aidsl.Agent("scribe", "Search helper", func() {
-				aidsl.Use("lookup", func() {
+			Agent("scribe", "Search helper", func() {
+				Use("lookup", func() {
 					for _, name := range []string{"lookup1", "lookup_1"} {
-						aidsl.Tool(name, "Look up items", func() {
-							aidsl.Args(LookupPayload)
-							aidsl.Return(LookupResult)
-							aidsl.Inject("session_id")
-							aidsl.BindTo("runtime", "Find")
-							aidsl.BoundedResult(func() {
-								aidsl.Cursor("cursor")
-								aidsl.NextCursor("next_cursor")
+						Tool(name, "Look up items", func() {
+							Args(LookupPayload)
+							Return(LookupResult)
+							Inject("session_id")
+							BindTo("runtime", "Find")
+							BoundedResult(func() {
+								Cursor("cursor")
+								NextCursor("next_cursor")
 							})
-							aidsl.ServerData("aura.evidence", ArrayOf(Evidence), func() {
-								aidsl.FromMethodResultField("evidence")
+							ServerData("aura.evidence", ArrayOf(Evidence), func() {
+								FromMethodResultField("evidence")
 							})
 						})
 					}

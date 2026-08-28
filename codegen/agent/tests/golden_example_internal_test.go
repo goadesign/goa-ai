@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -110,13 +110,13 @@ func exampleToolNameCollisionDesign() func() {
 				})
 				Result(String)
 			})
-			aidsl.Agent("worker", "Worker", func() {
-				aidsl.Use("ops", func() {
-					aidsl.Tool("by-id", "Find by ID", func() {
-						aidsl.BindTo("by_dash")
+			Agent("worker", "Worker", func() {
+				Use("ops", func() {
+					Tool("by-id", "Find by ID", func() {
+						BindTo("by_dash")
 					})
-					aidsl.Tool("by_id", "Find by ID", func() {
-						aidsl.BindTo("by_underscore")
+					Tool("by_id", "Find by ID", func() {
+						BindTo("by_underscore")
 					})
 				})
 			})
@@ -129,10 +129,10 @@ func multiServiceExampleDesign() func() {
 	return func() {
 		API("multi_service", func() {})
 		Service("alpha", func() {
-			aidsl.Agent("alpha_worker", "Handles alpha work", func() {})
+			Agent("alpha_worker", "Handles alpha work", func() {})
 		})
 		Service("beta", func() {
-			aidsl.Agent("beta_worker", "Handles beta work", func() {})
+			Agent("beta_worker", "Handles beta work", func() {})
 		})
 	}
 }

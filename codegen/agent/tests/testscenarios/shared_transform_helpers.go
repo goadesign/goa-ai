@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -42,16 +42,16 @@ func SharedTransformHelpers() func() {
 				Payload(OptionalPayload)
 				Result(OptionalPayload)
 			})
-			aidsl.Agent("worker", "Worker", func() {
-				aidsl.Use("helpers", func() {
-					aidsl.Tool("first", "Use the first required value.", func() {
-						aidsl.BindTo("First")
+			Agent("worker", "Worker", func() {
+				Use("helpers", func() {
+					Tool("first", "Use the first required value.", func() {
+						BindTo("First")
 					})
-					aidsl.Tool("second", "Use the second required value.", func() {
-						aidsl.BindTo("Second")
+					Tool("second", "Use the second required value.", func() {
+						BindTo("Second")
 					})
-					aidsl.Tool("optional", "Use the optional value.", func() {
-						aidsl.BindTo("Optional")
+					Tool("optional", "Use the optional value.", func() {
+						BindTo("Optional")
 					})
 				})
 			})

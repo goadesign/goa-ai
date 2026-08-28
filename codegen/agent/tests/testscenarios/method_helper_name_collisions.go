@@ -2,7 +2,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -26,8 +26,8 @@ func MethodHelperNameCollisions() func() {
 					Result(Output)
 				})
 			}
-			aidsl.Agent("scribe", "Runs collision tests.", func() {
-				aidsl.Use("helpers", func() {
+			Agent("scribe", "Runs collision tests.", func() {
+				Use("helpers", func() {
 					for _, tool := range []struct {
 						name   string
 						method string
@@ -37,10 +37,10 @@ func MethodHelperNameCollisions() func() {
 						{name: "agent-id", method: "AgentDash"},
 						{name: "agent_id", method: "AgentUnderscore"},
 					} {
-						aidsl.Tool(tool.name, "Exercises generated helper names.", func() {
-							aidsl.Args(Input)
-							aidsl.Return(Output)
-							aidsl.BindTo("alpha", tool.method)
+						Tool(tool.name, "Exercises generated helper names.", func() {
+							Args(Input)
+							Return(Output)
+							BindTo("alpha", tool.method)
 						})
 					}
 				})

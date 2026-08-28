@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -63,11 +63,11 @@ func ArgsLocatedNestedUserType() func() {
 		})
 
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("progress", func() {
-					aidsl.Tool("set_step_status", "Set step status", func() {
-						aidsl.Args(SetStepStatusToolPayload)
-						aidsl.Return(Empty)
+			Agent("scribe", "Doc helper", func() {
+				Use("progress", func() {
+					Tool("set_step_status", "Set step status", func() {
+						Args(SetStepStatusToolPayload)
+						Return(Empty)
 					})
 				})
 			})

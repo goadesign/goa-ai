@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -23,11 +23,11 @@ func NestedValidationImports() func() {
 		})
 
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Validates nested text", func() {
-				aidsl.Use("nested", func() {
-					aidsl.Tool("validate", "Validate nested text", func() {
-						aidsl.Args(payload)
-						aidsl.Return(String, "Validated text")
+			Agent("scribe", "Validates nested text", func() {
+				Use("nested", func() {
+					Tool("validate", "Validate nested text", func() {
+						Args(payload)
+						Return(String, "Validated text")
 					})
 				})
 			})

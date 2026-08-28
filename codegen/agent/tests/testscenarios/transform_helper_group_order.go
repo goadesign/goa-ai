@@ -3,7 +3,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -45,16 +45,16 @@ func TransformHelperGroupOrder() func() {
 			Method("WatchRuntimeChanges", func() {
 				Result(RuntimeChangesResult)
 			})
-			aidsl.Agent("reader", "Reads generated record values.", func() {
-				aidsl.Use("records", func() {
-					aidsl.Tool("get_key_events", "Returns key events with optional runtime changes.", func() {
-						aidsl.BindTo("GetKeyEvents")
+			Agent("reader", "Reads generated record values.", func() {
+				Use("records", func() {
+					Tool("get_key_events", "Returns key events with optional runtime changes.", func() {
+						BindTo("GetKeyEvents")
 					})
-					aidsl.Tool("list_runtime_changes", "Returns runtime changes directly.", func() {
-						aidsl.BindTo("ListRuntimeChanges")
+					Tool("list_runtime_changes", "Returns runtime changes directly.", func() {
+						BindTo("ListRuntimeChanges")
 					})
-					aidsl.Tool("watch_runtime_changes", "Returns another set of runtime changes directly.", func() {
-						aidsl.BindTo("WatchRuntimeChanges")
+					Tool("watch_runtime_changes", "Returns another set of runtime changes directly.", func() {
+						BindTo("WatchRuntimeChanges")
 					})
 				})
 			})

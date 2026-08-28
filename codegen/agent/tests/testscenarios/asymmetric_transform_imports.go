@@ -2,7 +2,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -44,12 +44,12 @@ func AsymmetricTransformImports() func() {
 				Payload(serviceValue)
 				Result(serviceValue)
 			})
-			aidsl.Agent("worker", "Worker", func() {
-				aidsl.Use("values", func() {
-					aidsl.Tool("convert", "Converts one nested value.", func() {
-						aidsl.Args(toolValue)
-						aidsl.Return(toolValue)
-						aidsl.BindTo("Convert")
+			Agent("worker", "Worker", func() {
+				Use("values", func() {
+					Tool("convert", "Converts one nested value.", func() {
+						Args(toolValue)
+						Return(toolValue)
+						BindTo("Convert")
 					})
 				})
 			})

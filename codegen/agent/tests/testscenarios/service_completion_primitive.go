@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -12,8 +12,8 @@ func ServiceCompletionPrimitive() func() {
 		API("tasks", func() {})
 
 		Service("tasks", func() {
-			aidsl.Completion("headline", "Write a short task headline", func() {
-				aidsl.Return(String)
+			Completion("headline", "Write a short task headline", func() {
+				Return(String)
 			})
 		})
 	}
@@ -32,8 +32,8 @@ func ServiceCompletionLocatedCollection() func() {
 		})
 
 		Service("tasks", func() {
-			aidsl.Completion("items", "Return task items", func() {
-				aidsl.Return(ArrayOf(CompletionItem))
+			Completion("items", "Return task items", func() {
+				Return(ArrayOf(CompletionItem))
 			})
 		})
 	}
@@ -60,8 +60,8 @@ func ServiceCompletionLocatedResultBranch() func() {
 		})
 
 		Service("tasks", func() {
-			aidsl.Completion("choice", "Return one task choice", func() {
-				aidsl.Return(CompletionChoice)
+			Completion("choice", "Return one task choice", func() {
+				Return(CompletionChoice)
 			})
 		})
 	}

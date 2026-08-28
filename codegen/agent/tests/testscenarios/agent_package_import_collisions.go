@@ -2,7 +2,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -12,19 +12,19 @@ func AgentPackageImportCollisions() func() {
 	return func() {
 		API("agent package import collisions", func() {})
 		Service("calc", func() {
-			aidsl.MCP("core", "1.0.0")
+			MCP("core", "1.0.0")
 			JSONRPC(func() {
 				POST("/calc")
 			})
 			Method("run", func() {
 				Result(String)
-				aidsl.Tool("run", "Returns one value.")
+				Tool("run", "Returns one value.")
 			})
 		})
-		var AgentTools = aidsl.Toolset("agent", aidsl.FromMCP("calc", "core"))
+		var AgentTools = Toolset("agent", FromMCP("calc", "core"))
 		Service("alpha", func() {
-			aidsl.Agent("scribe", "Exercises import name planning.", func() {
-				aidsl.Use(AgentTools)
+			Agent("scribe", "Exercises import name planning.", func() {
+				Use(AgentTools)
 			})
 		})
 	}

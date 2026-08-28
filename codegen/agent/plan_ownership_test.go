@@ -9,7 +9,7 @@ import (
 	codegen "goa.design/goa-ai/codegen/agent"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 	"goa.design/goa-ai/codegen/testhelpers"
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	agentexpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	goadsl "goa.design/goa/v3/dsl"
@@ -76,14 +76,14 @@ func TestRegistryClientResolvesGeneratedNameCollision(t *testing.T) {
 	design := func() {
 		goadsl.API("registry_collision", func() {})
 		scheme := goadsl.APIKeySecurity("auth", func() {})
-		registry := aidsl.Registry("exact", func() {
+		registry := Registry("exact", func() {
 			goadsl.URL("https://exact.example")
 			goadsl.Security(scheme)
 		})
-		tools := aidsl.Toolset(aidsl.FromRegistry(registry, "tools"))
+		tools := Toolset(FromRegistry(registry, "tools"))
 		goadsl.Service("alpha", func() {
-			aidsl.Agent("worker", "Worker", func() {
-				aidsl.Use(tools)
+			Agent("worker", "Worker", func() {
+				Use(tools)
 			})
 		})
 	}
@@ -97,20 +97,20 @@ func TestRegistryClientResolvesGeneratedNameCollision(t *testing.T) {
 func TestSharedToolSpecsKeepExportIdentityOnReferences(t *testing.T) {
 	design := func() {
 		goadsl.API("tool_owner", func() {})
-		shared := aidsl.Toolset("shared", func() {
-			aidsl.Tool("ping", "Ping", func() {
-				aidsl.Args(goadsl.String)
-				aidsl.Return(goadsl.String)
+		shared := Toolset("shared", func() {
+			Tool("ping", "Ping", func() {
+				Args(goadsl.String)
+				Return(goadsl.String)
 			})
 		})
 		goadsl.Service("alpha", func() {
-			aidsl.Agent("consumer", "Consumer", func() {
-				aidsl.Use(shared)
+			Agent("consumer", "Consumer", func() {
+				Use(shared)
 			})
 		})
 		goadsl.Service("bravo", func() {
-			aidsl.Agent("provider", "Provider", func() {
-				aidsl.Export(shared)
+			Agent("provider", "Provider", func() {
+				Export(shared)
 			})
 		})
 	}
@@ -136,22 +136,22 @@ func TestCollidingServiceNamesUseGoaPlannedPaths(t *testing.T) {
 	design := func() {
 		goadsl.API("path_collision", func() {})
 		goadsl.Service("read_value", func() {
-			aidsl.Agent("underscore", "Underscore service agent", func() {
-				aidsl.Use("underscore_tools", func() {
-					aidsl.Tool("read", "Read a value", func() {})
+			Agent("underscore", "Underscore service agent", func() {
+				Use("underscore_tools", func() {
+					Tool("read", "Read a value", func() {})
 				})
-				aidsl.Export("underscore_export", func() {
-					aidsl.Tool("write", "Write a value", func() {})
+				Export("underscore_export", func() {
+					Tool("write", "Write a value", func() {})
 				})
 			})
 		})
 		goadsl.Service("read-value", func() {
-			aidsl.Agent("dash", "Dash service agent", func() {
-				aidsl.Use("dash_tools", func() {
-					aidsl.Tool("read", "Read a value", func() {})
+			Agent("dash", "Dash service agent", func() {
+				Use("dash_tools", func() {
+					Tool("read", "Read a value", func() {})
 				})
-				aidsl.Export("dash_export", func() {
-					aidsl.Tool("write", "Write a value", func() {})
+				Export("dash_export", func() {
+					Tool("write", "Write a value", func() {})
 				})
 			})
 		})
@@ -201,13 +201,13 @@ func assertAgentPaths(t *testing.T, agent *codegen.AgentData, servicePath, tools
 func registryClientIsolationDesign() func() {
 	return func() {
 		goadsl.API("registry_isolation", func() {})
-		registry := aidsl.Registry("exact", func() {
+		registry := Registry("exact", func() {
 			goadsl.URL("https://exact.example")
 		})
-		tools := aidsl.Toolset(aidsl.FromRegistry(registry, "tools"))
+		tools := Toolset(FromRegistry(registry, "tools"))
 		goadsl.Service("alpha", func() {
-			aidsl.Agent("worker", "Worker", func() {
-				aidsl.Use(tools)
+			Agent("worker", "Worker", func() {
+				Use(tools)
 			})
 		})
 	}

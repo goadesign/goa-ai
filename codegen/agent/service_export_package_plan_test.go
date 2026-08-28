@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	codegen "goa.design/goa-ai/codegen/agent"
 	"goa.design/goa-ai/codegen/testhelpers"
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -35,14 +35,14 @@ func TestServiceExportSpecsDoNotDependOnUnrelatedConsumers(t *testing.T) {
 func TestServiceExportFilesKeepEachServiceRoute(t *testing.T) {
 	genpkg, roots := testhelpers.RunDesign(t, func() {
 		API("exports", func() {})
-		shared := aidsl.Toolset("atlas.read", func() {
-			aidsl.Tool("ping", "Ping", func() {})
+		shared := Toolset("atlas.read", func() {
+			Tool("ping", "Ping", func() {})
 		})
 		Service("alpha", func() {
-			aidsl.Export(shared)
+			Export(shared)
 		})
 		Service("beta", func() {
-			aidsl.Export(shared)
+			Export(shared)
 		})
 	})
 
@@ -64,14 +64,14 @@ func TestServiceExportFilesMoveDerivedNamesAroundServiceDeclarations(t *testing.
 	genpkg, roots := testhelpers.RunDesign(t, func() {
 		API("exports", func() {})
 		collision := Type("SharedToolsetName", String)
-		shared := aidsl.Toolset("shared", func() {
-			aidsl.Tool("ping", "Ping", func() {})
+		shared := Toolset("shared", func() {
+			Tool("ping", "Ping", func() {})
 		})
 		Service("alpha", func() {
 			Method("Read", func() {
 				Result(collision)
 			})
-			aidsl.Export(shared)
+			Export(shared)
 		})
 	})
 
@@ -84,15 +84,15 @@ func TestServiceExportFilesMoveDerivedNamesAroundServiceDeclarations(t *testing.
 func TestServiceExportRegistrySpecsWithoutAgent(t *testing.T) {
 	genpkg, roots := testhelpers.RunDesign(t, func() {
 		API("exports", func() {})
-		registry := aidsl.Registry("catalog", func() {
+		registry := Registry("catalog", func() {
 			URL("https://catalog.example")
 		})
-		shared := aidsl.Toolset(aidsl.FromRegistry(registry, "shared"))
+		shared := Toolset(FromRegistry(registry, "shared"))
 		Service("alpha", func() {
-			aidsl.Export(shared)
+			Export(shared)
 		})
 		Service("beta", func() {
-			aidsl.Export(shared)
+			Export(shared)
 		})
 	})
 
@@ -112,12 +112,12 @@ func serviceExportSpecs(t *testing.T, withConsumer bool) map[string]string {
 	t.Helper()
 	genpkg, roots := testhelpers.RunDesign(t, func() {
 		API("exports", func() {})
-		shared := aidsl.Toolset("shared", func() {
-			aidsl.Tool("ping", "Ping", func() {
-				aidsl.BindTo("alpha", "Ping")
+		shared := Toolset("shared", func() {
+			Tool("ping", "Ping", func() {
+				BindTo("alpha", "Ping")
 			})
-			aidsl.Tool("pong", "Pong", func() {
-				aidsl.BindTo("alpha", "Pong")
+			Tool("pong", "Pong", func() {
+				BindTo("alpha", "Pong")
 			})
 		})
 		Service("alpha", func() {
@@ -129,12 +129,12 @@ func serviceExportSpecs(t *testing.T, withConsumer bool) map[string]string {
 				Payload(String)
 				Result(String)
 			})
-			aidsl.Export(shared)
+			Export(shared)
 		})
 		Service("beta", func() {
 			if withConsumer {
-				aidsl.Agent("worker", "Worker", func() {
-					aidsl.Use(shared)
+				Agent("worker", "Worker", func() {
+					Use(shared)
 				})
 			}
 		})

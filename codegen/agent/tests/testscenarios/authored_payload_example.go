@@ -1,7 +1,7 @@
 package testscenarios
 
 import (
-	aidsl "goa.design/goa-ai/dsl"
+	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
 
@@ -27,11 +27,11 @@ func AuthoredPayloadExample() func() {
 		})
 
 		Service("calc", func() {
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("helpers", func() {
-					aidsl.Tool("summarize_doc", "Summarize a document", func() {
-						aidsl.Args(SummarizePayload)
-						aidsl.Return(SummarizeResult)
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("summarize_doc", "Summarize a document", func() {
+						Args(SummarizePayload)
+						Return(SummarizeResult)
 					})
 				})
 			})
@@ -79,16 +79,16 @@ func AuthoredPayloadExampleThroughPrepare() func() {
 		})
 
 		configureLookupTool := func(args any) {
-			aidsl.Args(args, "Lookup parameters.")
-			aidsl.Return(LookupResult)
+			Args(args, "Lookup parameters.")
+			Return(LookupResult)
 		}
 
 		Service("calc", func() {
-			aidsl.Agent("scribe", "Doc helper", func() {
-				aidsl.Use("helpers", func() {
-					aidsl.Tool("lookup", "Lookup an entity", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("lookup", "Lookup an entity", func() {
 						configureLookupTool(LookupPayload)
-						aidsl.Inject("session_id")
+						Inject("session_id")
 					})
 				})
 			})
