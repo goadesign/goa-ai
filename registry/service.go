@@ -71,21 +71,13 @@ type (
 		) (callClaimDisposition, error)
 	}
 
-	// serviceHealthTracker is the health behavior the registry service uses.
-	// The private snapshot method keeps deployment diagnostics coherent without
-	// widening the public HealthTracker implementation contract.
-	serviceHealthTracker interface {
-		HealthTracker
-		currentAdmissionHealth(context.Context, string) (admissionHealthSnapshot, error)
-	}
-
 	// Service implements the registry service interface.
 	// It provides toolset registration, discovery, and tool invocation capabilities.
 	Service struct {
 		catalog        *toolsetCatalog
 		validator      *schemaValidator
 		streamManager  StreamManager
-		healthTracker  serviceHealthTracker
+		healthTracker  HealthTracker
 		callAdmissions callAdmissionRepository
 
 		pulseClient           clientspulse.Client
@@ -101,7 +93,7 @@ type (
 		// StreamManager manages Pulse streams for toolset communication.
 		StreamManager StreamManager
 		// HealthTracker tracks provider health status.
-		HealthTracker serviceHealthTracker
+		HealthTracker HealthTracker
 		// CallAdmissions atomically coordinates call publication across replicas.
 		CallAdmissions callAdmissionRepository
 		// PulseClient creates/opens Pulse streams. Required for CallTool.
@@ -237,19 +229,23 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 	if err := s.validator.ValidateToolSchemas(p.Tools); err != nil {
 		return nil, genregistry.MakeValidationError(fmt.Errorf("invalid tool schema: %w", err))
 	}
-
-	// Ensure the Pulse request stream for this toolset exists.
-	_, _, err := s.streamManager.GetOrCreateStream(ctx, p.Name)
-	if err != nil {
-		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("create stream for toolset: %w", err))
-	}
-
 	toolset := &genregistry.Toolset{
 		Name:        p.Name,
 		Description: p.Description,
 		Version:     p.Version,
 		Tags:        p.Tags,
 		Tools:       p.Tools,
+	}
+	if fingerprint := toolsetSchemaFingerprint(toolset); fingerprint != p.SchemaFingerprint {
+		return nil, genregistry.MakeValidationError(errors.New(
+			"schema fingerprint does not match registered tool schemas",
+		))
+	}
+
+	// Ensure the Pulse request stream for this toolset exists.
+	_, _, err := s.streamManager.GetOrCreateStream(ctx, p.Name)
+	if err != nil {
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("create stream for toolset: %w", err))
 	}
 
 	admission, err := s.catalog.Register(
@@ -400,12 +396,12 @@ func (s *Service) CheckAdmission(
 	ctx context.Context,
 	p *genregistry.CheckAdmissionPayload,
 ) (*genregistry.AdmissionStatus, error) {
-	snapshot, err := s.healthTracker.currentAdmissionHealth(ctx, p.Name)
+	health, err := s.healthTracker.Health(ctx, p.Name, p.ExpectedRegistrationToken)
 	if errors.Is(err, errToolsetNotFound) {
-		return &genregistry.AdmissionStatus{
-			Ready:                 false,
-			RoutableProviderCount: 0,
-		}, nil
+		return &genregistry.AdmissionStatus{Ready: false}, nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, err
 	}
 	if err != nil {
 		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
@@ -414,16 +410,9 @@ func (s *Service) CheckAdmission(
 			err,
 		))
 	}
-	status := &genregistry.AdmissionStatus{
-		Ready:                     snapshot.AdmissionRevision == p.ExpectedAdmissionRevision && snapshot.Healthy,
-		ObservedAdmissionRevision: &snapshot.AdmissionRevision,
-		RoutableProviderCount:     snapshot.ProviderCount,
-	}
-	if !snapshot.LastPong.IsZero() {
-		lastPong := snapshot.LastPong.UTC().Format(time.RFC3339Nano)
-		status.LastPongAt = &lastPong
-	}
-	return status, nil
+	return &genregistry.AdmissionStatus{
+		Ready: health.Healthy,
+	}, nil
 }
 
 // Search searches toolsets by keyword matching name, description, or tags.

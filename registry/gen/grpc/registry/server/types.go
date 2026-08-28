@@ -25,6 +25,7 @@ func NewRegisterPayload(message *registrypb.RegisterRequest) *registry.RegisterP
 		AdmissionRevision:     message.AdmissionRevision,
 		ProviderIncarnationID: message.ProviderIncarnationId,
 		WireProtocolVersion:   int(message.WireProtocolVersion),
+		SchemaFingerprint:     message.SchemaFingerprint,
 	}
 	if message.Version != nil {
 		version := registry.SemVer(*message.Version)
@@ -237,7 +238,7 @@ func NewProtoGetToolsetResponse(result *registry.Toolset) *registrypb.GetToolset
 func NewCheckAdmissionPayload(message *registrypb.CheckAdmissionRequest) *registry.CheckAdmissionPayload {
 	v := &registry.CheckAdmissionPayload{
 		Name:                      message.Name,
-		ExpectedAdmissionRevision: message.ExpectedAdmissionRevision,
+		ExpectedRegistrationToken: message.ExpectedRegistrationToken,
 	}
 	return v
 }
@@ -246,10 +247,7 @@ func NewCheckAdmissionPayload(message *registrypb.CheckAdmissionRequest) *regist
 // of the "CheckAdmission" endpoint of the "registry" service.
 func NewProtoCheckAdmissionResponse(result *registry.AdmissionStatus) *registrypb.CheckAdmissionResponse {
 	message := &registrypb.CheckAdmissionResponse{
-		Ready:                     result.Ready,
-		ObservedAdmissionRevision: result.ObservedAdmissionRevision,
-		RoutableProviderCount:     int32(result.RoutableProviderCount),
-		LastPongAt:                result.LastPongAt,
+		Ready: result.Ready,
 	}
 	return message
 }
@@ -481,6 +479,7 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 	if !(message.WireProtocolVersion == 8) {
 		err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", message.WireProtocolVersion, []any{8}))
 	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("message.schema_fingerprint", message.SchemaFingerprint, "^[0-9a-f]{64}$"))
 	return
 }
 
@@ -600,7 +599,7 @@ func ValidateCheckAdmissionRequest(message *registrypb.CheckAdmissionRequest) (e
 	if utf8.RuneCountInString(message.Name) > 256 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", message.Name, utf8.RuneCountInString(message.Name), 256, false))
 	}
-	err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_admission_revision", message.ExpectedAdmissionRevision, "^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,255}$"))
+	err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
 	return
 }
 

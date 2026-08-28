@@ -10,11 +10,15 @@ package helpers
 import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 // Tool IDs for this toolset.
 const (
-	Answer tools.Ident = "helpers.answer"
+	// SchemaFingerprint identifies the exact generated schemas registered by
+	// this toolset.
+	SchemaFingerprint             = "d3c6f2b32f52db4d7afc0304653abe44bd9005f0dd8465a31ef9078ec827b9c6"
+	Answer            tools.Ident = "helpers.answer"
 )
 
 // Specs returns fresh copies of every generated tool specification.
@@ -22,6 +26,12 @@ func Specs() []tools.ToolSpec {
 	return []tools.ToolSpec{
 		newSpecAnswer(),
 	}
+}
+
+// RegistrationToken returns the exact registry admission token for these
+// generated schemas and admissionRevision.
+func RegistrationToken(admissionRevision string) (string, error) {
+	return toolregistry.RegistrationToken(SchemaFingerprint, admissionRevision)
 }
 
 // newSpecAnswer builds the immutable generated contract for

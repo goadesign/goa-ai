@@ -9,11 +9,15 @@ package progress
 import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 // Tool IDs for this toolset.
 const (
-	SetStepStatus tools.Ident = "progress.set_step_status"
+	// SchemaFingerprint identifies the exact generated schemas registered by
+	// this toolset.
+	SchemaFingerprint             = "7280ca55922d6558f47b7a80bf1b8b16fa1db66ee5b3d30a696e03329caf750c"
+	SetStepStatus     tools.Ident = "progress.set_step_status"
 )
 
 // Specs returns fresh copies of every generated tool specification.
@@ -21,6 +25,12 @@ func Specs() []tools.ToolSpec {
 	return []tools.ToolSpec{
 		newSpecSetStepStatus(),
 	}
+}
+
+// RegistrationToken returns the exact registry admission token for these
+// generated schemas and admissionRevision.
+func RegistrationToken(admissionRevision string) (string, error) {
+	return toolregistry.RegistrationToken(SchemaFingerprint, admissionRevision)
 }
 
 // newSpecSetStepStatus builds the immutable generated contract for

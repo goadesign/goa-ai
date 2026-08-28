@@ -551,13 +551,19 @@ Aggregate health and new-call routing require one unexpired, non-draining lease
 plus a fresh current-epoch pong.
 
 `CheckAdmission` applies that same routing test to one deployment-supplied
-expected admission revision. It returns `ready=false` when the toolset is
-absent, a different revision is active, no routable lease remains, or the
-current epoch lacks a fresh pong. It returns the observed revision, routable
-provider count, and last pong for diagnostics. Infrastructure failures remain
-errors. This read contract lets a deployment verify the exact admission after
-workload readiness succeeds without making workload readiness depend on
-admission and deadlocking a changed-revision rolling update.
+registration token. Generated toolset specs expose
+`RegistrationToken(admissionRevision)`, which combines their precomputed schema
+fingerprint with the runtime wire version and deployment revision through the
+same pure implementation the registry uses. Providers include that generated
+fingerprint in `Register`; the registry derives it again from the submitted
+toolset and rejects any mismatch before creating routing state. The check
+returns `ready=false`
+when the toolset is absent, a different token is active, no routable lease
+remains, or the current epoch lacks a fresh pong. Infrastructure failures remain
+errors, while caller cancellation remains cancellation. This read contract lets
+a deployment verify the exact routable tool contract after Kubernetes confirms
+that the intended workload rollout completed. Workload readiness remains
+independent of admission, so a changed-token rolling update cannot deadlock.
 
 Registry construction enumerates every authoritative catalog key and applies
 the same strict current-format parser used by registration and routing before

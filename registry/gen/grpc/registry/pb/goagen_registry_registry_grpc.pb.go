@@ -88,12 +88,13 @@ type RegistryClient interface {
 	ListToolsets(ctx context.Context, in *ListToolsetsRequest, opts ...grpc.CallOption) (*ListToolsetsResponse, error)
 	// Get a specific toolset by name including all tool schemas
 	GetToolset(ctx context.Context, in *GetToolsetRequest, opts ...grpc.CallOption) (*GetToolsetResponse, error)
-	// Report whether the requested deployment admission is the active toolset
-	// generation and currently has an unexpired, non-draining provider lease plus
-	// a fresh authenticated pong. Release verification calls this after workload
-	// readiness because provider readiness must remain independent of registry
-	// admission. A missing or different active admission returns ready=false
-	// rather than an error.
+	// Report whether the exact registration token derived from a deployed
+	// provider's generated tool schemas is active and currently has an unexpired,
+	// non-draining provider lease plus a fresh authenticated pong. Release
+	// verification calls this after workload rollout because Kubernetes proves the
+	// intended pods are running while the registry proves their exact tool
+	// contract is routable. A missing or different active admission returns
+	// ready=false rather than an error.
 	CheckAdmission(ctx context.Context, in *CheckAdmissionRequest, opts ...grpc.CallOption) (*CheckAdmissionResponse, error)
 	// Search toolsets by keyword matching name, description, or tags
 	Search(ctx context.Context, in *SearchRequest, opts ...grpc.CallOption) (*SearchResponse, error)
@@ -351,12 +352,13 @@ type RegistryServer interface {
 	ListToolsets(context.Context, *ListToolsetsRequest) (*ListToolsetsResponse, error)
 	// Get a specific toolset by name including all tool schemas
 	GetToolset(context.Context, *GetToolsetRequest) (*GetToolsetResponse, error)
-	// Report whether the requested deployment admission is the active toolset
-	// generation and currently has an unexpired, non-draining provider lease plus
-	// a fresh authenticated pong. Release verification calls this after workload
-	// readiness because provider readiness must remain independent of registry
-	// admission. A missing or different active admission returns ready=false
-	// rather than an error.
+	// Report whether the exact registration token derived from a deployed
+	// provider's generated tool schemas is active and currently has an unexpired,
+	// non-draining provider lease plus a fresh authenticated pong. Release
+	// verification calls this after workload rollout because Kubernetes proves the
+	// intended pods are running while the registry proves their exact tool
+	// contract is routable. A missing or different active admission returns
+	// ready=false rather than an error.
 	CheckAdmission(context.Context, *CheckAdmissionRequest) (*CheckAdmissionResponse, error)
 	// Search toolsets by keyword matching name, description, or tags
 	Search(context.Context, *SearchRequest) (*SearchResponse, error)

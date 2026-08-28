@@ -9,11 +9,15 @@ package math
 import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 // Tool IDs for this toolset.
 const (
-	Add tools.Ident = "math.add"
+	// SchemaFingerprint identifies the exact generated schemas registered by
+	// this toolset.
+	SchemaFingerprint             = "30b246ee68e630b8f8b51bdd127131ea6a2c8889602ae16a78887b4db761611f"
+	Add               tools.Ident = "math.add"
 )
 
 // Specs returns fresh copies of every generated tool specification.
@@ -21,6 +25,12 @@ func Specs() []tools.ToolSpec {
 	return []tools.ToolSpec{
 		newSpecAdd(),
 	}
+}
+
+// RegistrationToken returns the exact registry admission token for these
+// generated schemas and admissionRevision.
+func RegistrationToken(admissionRevision string) (string, error) {
+	return toolregistry.RegistrationToken(SchemaFingerprint, admissionRevision)
 }
 
 // newSpecAdd builds the immutable generated contract for

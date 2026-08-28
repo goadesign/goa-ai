@@ -1,5 +1,8 @@
 // Tool IDs for this toolset.
 const (
+    // SchemaFingerprint identifies the exact generated schemas registered by
+    // this toolset.
+    SchemaFingerprint = {{ printf "%q" .SchemaFingerprint }}
 {{- range .Tools }}
     {{ .ConstName }} tools.Ident = {{ printf "%q" .Name }}
 {{- end }}
@@ -12,6 +15,12 @@ func Specs() []tools.ToolSpec {
         newSpec{{ .ConstName }}(),
 {{- end }}
     }
+}
+
+// RegistrationToken returns the exact registry admission token for these
+// generated schemas and admissionRevision.
+func RegistrationToken(admissionRevision string) (string, error) {
+    return toolregistry.RegistrationToken(SchemaFingerprint, admissionRevision)
 }
 
 {{- range .Tools }}

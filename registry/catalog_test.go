@@ -172,8 +172,7 @@ func TestCatalogReleasePrunesExpiredRoutableEpochOnce(t *testing.T) {
 func TestAdmissionTokenBindsWireProtocolVersion(t *testing.T) {
 	t.Parallel()
 
-	fingerprint, err := toolsetSchemaFingerprint(testCatalogToolset("test.toolset", "test", nil))
-	require.NoError(t, err)
+	fingerprint := toolsetSchemaFingerprint(testCatalogToolset("test.toolset", "test", nil))
 	current, err := admissionRegistrationToken(
 		fingerprint,
 		testAdmissionRevisionA,

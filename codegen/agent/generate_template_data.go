@@ -6,9 +6,10 @@ import (
 
 type (
 	toolSpecFileData struct {
-		PackageName string
-		Tools       []*toolEntry
-		Types       []*typeData
+		PackageName       string
+		SchemaFingerprint string
+		Tools             []*toolEntry
+		Types             []*typeData
 		// RequiredLabels lists, sorted and deduplicated, the run label keys
 		// this toolset's label-backed Inject() fields require.
 		RequiredLabels []string

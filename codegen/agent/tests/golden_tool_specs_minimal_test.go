@@ -19,6 +19,8 @@ func TestGolden_ToolSpecs_Minimal(t *testing.T) {
 	require.Contains(t, specs, "func SpecSummarizeDoc() tools.ToolSpec")
 	require.NotContains(t, specs, "var SpecSummarizeDoc")
 	require.Contains(t, specs, "func SummarizeDocTool() tools.TypedTool")
+	require.Contains(t, specs, "SchemaFingerprint = ")
+	require.Contains(t, specs, "func RegistrationToken(admissionRevision string) (string, error)")
 	require.NotContains(t, specs, "func NewSummarizeDocCall(")
 	require.NotContains(t, specs, "func PayloadSchema(")
 	require.NotContains(t, specs, "func ResultSchema(")

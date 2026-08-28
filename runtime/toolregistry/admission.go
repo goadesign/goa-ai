@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"time"
+
+	internaladmission "goa.design/goa-ai/internal/toolregistry/admission"
 )
 
 const (
@@ -74,4 +76,18 @@ func ValidateRegistrationToken(token string) error {
 		return fmt.Errorf("registration token must match %s", RegistrationTokenPattern)
 	}
 	return nil
+}
+
+// RegistrationToken derives the exact routing identity for one generated
+// schema fingerprint and deployment admission revision using this runtime's
+// fixed wire protocol version.
+func RegistrationToken(schemaFingerprint, admissionRevision string) (string, error) {
+	if err := ValidateAdmissionRevision(admissionRevision); err != nil {
+		return "", err
+	}
+	return internaladmission.RegistrationToken(
+		schemaFingerprint,
+		admissionRevision,
+		WireProtocolVersion,
+	)
 }

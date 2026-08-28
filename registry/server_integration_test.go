@@ -34,8 +34,9 @@ const (
 
 type callCountingService struct {
 	genregistry.Service
-	calls         atomic.Int64
-	callToolError error
+	calls               atomic.Int64
+	callToolError       error
+	checkAdmissionError error
 }
 
 // TestServerIntegration tests the full gRPC server stack using Goa's generated
@@ -61,7 +62,7 @@ func TestServerIntegration(t *testing.T) {
 		}
 	}()
 
-	client := startServerAndClient(t, reg)
+	client, rawClient := startServiceAndClients(t, reg.Service())
 	var testRegistrationToken string
 
 	t.Run("empty discovery succeeds", func(t *testing.T) {
@@ -90,7 +91,7 @@ func TestServerIntegration(t *testing.T) {
 		version := genregistry.SemVer(rawVersion)
 
 		// Register a toolset.
-		regResult, err := client.Register(ctx, &genregistry.RegisterPayload{
+		regResult, err := client.Register(ctx, registerPayloadWithSchemaFingerprint(&genregistry.RegisterPayload{
 			Name:                  testToolsetName,
 			Description:           &desc,
 			Version:               &version,
@@ -107,7 +108,7 @@ func TestServerIntegration(t *testing.T) {
 					ResultSchema:  []byte(`{"type":"object"}`),
 				},
 			},
-		})
+		}))
 		if err != nil {
 			t.Fatalf("register: %v", err)
 		}
@@ -127,6 +128,47 @@ func TestServerIntegration(t *testing.T) {
 		if listResult.Toolsets[0].Name != testToolsetName {
 			t.Errorf("expected name %q, got %q", testToolsetName, listResult.Toolsets[0].Name)
 		}
+	})
+
+	t.Run("check exact admission through gRPC", func(t *testing.T) {
+		pending, err := client.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
+			Name:                      testToolsetName,
+			ExpectedRegistrationToken: testRegistrationToken,
+		})
+		require.NoError(t, err)
+		assert.False(t, pending.Ready)
+
+		entry, err := reg.service.catalog.ActiveRegistration(ctx, testToolsetName)
+		require.NoError(t, err)
+		err = reg.service.catalog.RecordPong(
+			ctx,
+			testToolsetName,
+			"data-tools/provider-a",
+			testIncarnationA,
+			entry.RegistrationToken,
+			entry.HealthEpoch,
+		)
+		require.NoError(t, err)
+
+		ready, err := client.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
+			Name:                      testToolsetName,
+			ExpectedRegistrationToken: testRegistrationToken,
+		})
+		require.NoError(t, err)
+		assert.True(t, ready.Ready)
+
+		different, err := client.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
+			Name:                      testToolsetName,
+			ExpectedRegistrationToken: testStaleToken,
+		})
+		require.NoError(t, err)
+		assert.False(t, different.Ready)
+
+		_, err = rawClient.CheckAdmission(ctx, &registrypb.CheckAdmissionRequest{
+			Name:                      testToolsetName,
+			ExpectedRegistrationToken: "invalid",
+		})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	})
 
 	t.Run("get toolset", func(t *testing.T) {
@@ -178,7 +220,7 @@ func TestServerIntegration(t *testing.T) {
 	t.Run("filter by tags", func(t *testing.T) {
 		// Register another toolset with different tags.
 		desc := "Analytics tools"
-		_, err := client.Register(ctx, &genregistry.RegisterPayload{
+		_, err := client.Register(ctx, registerPayloadWithSchemaFingerprint(&genregistry.RegisterPayload{
 			Name:                  "analytics-tools",
 			Description:           &desc,
 			Tags:                  []string{"analytics", "reporting"},
@@ -193,7 +235,7 @@ func TestServerIntegration(t *testing.T) {
 					ResultSchema:  []byte(`{"type":"object"}`),
 				},
 			},
-		})
+		}))
 		if err != nil {
 			t.Fatalf("register analytics: %v", err)
 		}
@@ -303,7 +345,7 @@ func TestServerMultiNodeSync(t *testing.T) {
 
 	// Register on node 1.
 	desc := "Shared toolset"
-	registration, err := client1.Register(ctx, &genregistry.RegisterPayload{
+	registration, err := client1.Register(ctx, registerPayloadWithSchemaFingerprint(&genregistry.RegisterPayload{
 		Name:                  "shared-tools",
 		Description:           &desc,
 		Tags:                  []string{"shared"},
@@ -318,7 +360,7 @@ func TestServerMultiNodeSync(t *testing.T) {
 				ResultSchema:  []byte(`{"type":"object"}`),
 			},
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("register on node 1: %v", err)
 	}
@@ -377,6 +419,7 @@ func TestServerValidationErrors(t *testing.T) {
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     testAdmissionRevisionA,
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
+			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{
 				{
 					Name:          "bad-tool",
@@ -404,6 +447,7 @@ func TestServerValidationErrors(t *testing.T) {
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     testAdmissionRevisionA,
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
+			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{
 				{
 					Name:          "empty-tool",
@@ -430,6 +474,7 @@ func TestServerValidationErrors(t *testing.T) {
 			ProviderID:            "missing-admission-revision/provider-a",
 			ProviderIncarnationID: testIncarnationA,
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
+			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{{
 				Name:          "lookup",
 				PayloadSchema: []byte(`{"type":"object"}`),
@@ -446,6 +491,7 @@ func TestServerValidationErrors(t *testing.T) {
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     "contains whitespace",
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
+			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{{
 				Name:          "lookup",
 				PayloadSchema: []byte(`{"type":"object"}`),
@@ -461,6 +507,7 @@ func TestServerValidationErrors(t *testing.T) {
 			ProviderID:            "missing-wire-protocol-version/provider-a",
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     testAdmissionRevisionA,
+			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{{
 				Name:          "lookup",
 				PayloadSchema: []byte(`{"type":"object"}`),
@@ -556,6 +603,13 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	assert.Zero(t, counting.calls.Load(), "invalid tool_call_id must be rejected before publication")
 
+	counting.checkAdmissionError = context.Canceled
+	_, err = rawClient.CheckAdmission(ctx, &registrypb.CheckAdmissionRequest{
+		Name:                      "status-tools",
+		ExpectedRegistrationToken: first.GetRegistrationToken(),
+	})
+	assert.Equal(t, codes.Canceled, status.Code(err))
+
 	rejected := &callCountingService{
 		Service:       reg.Service(),
 		callToolError: genregistry.MakeCallNotAdmitted(errors.New("no healthy providers")),
@@ -587,6 +641,16 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 		},
 	})
 	assert.Equal(t, codes.Unavailable, status.Code(err))
+}
+
+func (s *callCountingService) CheckAdmission(
+	ctx context.Context,
+	payload *genregistry.CheckAdmissionPayload,
+) (*genregistry.AdmissionStatus, error) {
+	if s.checkAdmissionError != nil {
+		return nil, s.checkAdmissionError
+	}
+	return s.Service.CheckAdmission(ctx, payload)
 }
 
 func (s *callCountingService) CallTool(
@@ -662,7 +726,7 @@ func startServiceAndClients(
 func grpcRegisterRequest(
 	name, description, revision, providerID string,
 ) *registrypb.RegisterRequest {
-	return &registrypb.RegisterRequest{
+	request := &registrypb.RegisterRequest{
 		Name:                  name,
 		Description:           &description,
 		ProviderId:            providerID,
@@ -675,6 +739,16 @@ func grpcRegisterRequest(
 			ResultSchema:  []byte(`{"type":"object"}`),
 		}},
 	}
+	request.SchemaFingerprint = toolsetSchemaFingerprint(&genregistry.Toolset{
+		Name:        name,
+		Description: &description,
+		Tools: []*genregistry.ToolSchema{{
+			Name:          "status.lookup",
+			PayloadSchema: []byte(`{"type":"object"}`),
+			ResultSchema:  []byte(`{"type":"object"}`),
+		}},
+	})
+	return request
 }
 
 func strPtr(s string) *string {

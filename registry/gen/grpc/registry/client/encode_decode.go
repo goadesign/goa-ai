@@ -255,9 +255,6 @@ func DecodeCheckAdmissionResponse(ctx context.Context, v any, hdr, trlr metadata
 	if !ok {
 		return nil, goagrpc.ErrInvalidType("registry", "CheckAdmission", "*registrypb.CheckAdmissionResponse", v)
 	}
-	if err := ValidateCheckAdmissionResponse(message); err != nil {
-		return nil, err
-	}
 	res := NewCheckAdmissionResult(message)
 	return res, nil
 }

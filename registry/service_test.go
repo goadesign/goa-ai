@@ -117,7 +117,7 @@ func TestRegistrationIdempotence(t *testing.T) {
 	properties.TestingRun(t)
 }
 
-func newTestServiceForServiceTests(pulseClient clientspulse.Client, streamManager StreamManager, healthTracker serviceHealthTracker, seed ...*genregistry.Toolset) (*Service, error) {
+func newTestServiceForServiceTests(pulseClient clientspulse.Client, streamManager StreamManager, healthTracker HealthTracker, seed ...*genregistry.Toolset) (*Service, error) {
 	clock := newTestTimeSource(time.Unix(1_700_000_000, 0))
 	catalog := newToolsetCatalog(newTestCatalogMap(), clock)
 	ctx := context.Background()
@@ -199,7 +199,7 @@ func genRegisterPayload(name string) gopter.Gen {
 			v := genregistry.SemVer(*raw)
 			version = &v
 		}
-		return &genregistry.RegisterPayload{
+		return registerPayloadWithSchemaFingerprint(&genregistry.RegisterPayload{
 			Name:                  name,
 			Description:           desc,
 			Version:               version,
@@ -209,7 +209,7 @@ func genRegisterPayload(name string) gopter.Gen {
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     testAdmissionRevisionA,
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
-		}
+		})
 	})
 }
 
@@ -1018,14 +1018,6 @@ func (m *mockHealthTracker) Health(ctx context.Context, toolset, registrationTok
 	return ToolsetHealth{Healthy: healthy}, nil
 }
 
-// currentAdmissionHealth returns the active revision and configured test health.
-func (m *mockHealthTracker) currentAdmissionHealth(context.Context, string) (admissionHealthSnapshot, error) {
-	return admissionHealthSnapshot{
-		AdmissionRevision: testAdmissionRevisionA,
-		ToolsetHealth:     ToolsetHealth{Healthy: m.healthy},
-	}, m.healthErr
-}
-
 func (m *mockHealthTracker) RemoveGeneration(ctx context.Context, toolset, registrationToken string) error {
 	return nil
 }
@@ -1317,29 +1309,6 @@ type invalidSchemaTestCase struct {
 	payload *genregistry.RegisterPayload
 }
 
-func validRegisterPayloadForSchemaAdmission(name string) *genregistry.RegisterPayload {
-	description := "schema admission test toolset"
-	version := genregistry.SemVer("1.0.0")
-
-	return &genregistry.RegisterPayload{
-		Name:                  name,
-		Description:           &description,
-		Version:               &version,
-		Tags:                  []string{"schema"},
-		ProviderID:            name + "/provider-a",
-		ProviderIncarnationID: testIncarnationA,
-		AdmissionRevision:     testAdmissionRevisionA,
-		WireProtocolVersion:   toolregistry.WireProtocolVersion,
-		Tools: []*genregistry.ToolSchema{
-			{
-				Name:          "lookup",
-				PayloadSchema: []byte(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
-				ResultSchema:  []byte(`{"type":"object","properties":{"value":{"type":"string"}},"required":["value"]}`),
-			},
-		},
-	}
-}
-
 // genInvalidSchemaTestCase generates test cases with invalid tool schemas.
 func genInvalidSchemaTestCase() gopter.Gen {
 	return gopter.CombineGens(
@@ -1365,6 +1334,7 @@ func genInvalidSchemaTestCase() gopter.Gen {
 					ProviderIncarnationID: testIncarnationA,
 					AdmissionRevision:     testAdmissionRevisionA,
 					WireProtocolVersion:   toolregistry.WireProtocolVersion,
+					SchemaFingerprint:     testActiveRegistrationToken,
 				},
 			}
 		})

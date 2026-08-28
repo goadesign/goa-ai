@@ -52,12 +52,13 @@ service Registry {
 	rpc ListToolsets (ListToolsetsRequest) returns (ListToolsetsResponse);
 	// Get a specific toolset by name including all tool schemas
 	rpc GetToolset (GetToolsetRequest) returns (GetToolsetResponse);
-	// Report whether the requested deployment admission is the active toolset
-// generation and currently has an unexpired, non-draining provider lease plus
-// a fresh authenticated pong. Release verification calls this after workload
-// readiness because provider readiness must remain independent of registry
-// admission. A missing or different active admission returns ready=false
-// rather than an error.
+	// Report whether the exact registration token derived from a deployed
+// provider's generated tool schemas is active and currently has an unexpired,
+// non-draining provider lease plus a fresh authenticated pong. Release
+// verification calls this after workload rollout because Kubernetes proves the
+// intended pods are running while the registry proves their exact tool
+// contract is routable. A missing or different active admission returns
+// ready=false rather than an error.
 	rpc CheckAdmission (CheckAdmissionRequest) returns (CheckAdmissionResponse);
 	// Search toolsets by keyword matching name, description, or tags
 	rpc Search (SearchRequest) returns (SearchResponse);
@@ -135,6 +136,10 @@ message RegisterRequest {
 	// Required runtime-owned version of the provider message envelope. The
 // registry admits only its exact canonical version.
 	sint32 wire_protocol_version = 9;
+	// Generated lowercase SHA-256 identity of the exact tool schemas sent by this
+// provider. The registry independently derives the identity and rejects
+// mismatches before admission.
+	string schema_fingerprint = 10;
 }
 // Tool schema declaration for registration with the tool registry gateway.
 message ToolSchema {
@@ -267,21 +272,15 @@ message GetToolsetResponse {
 message CheckAdmissionRequest {
 	// Name of the toolset whose admission must be checked.
 	string name = 1;
-	// Deployment-issued admission revision that must be active and healthy.
-	string expected_admission_revision = 2;
+	// Deterministic token derived from the deployed provider's generated schema,
+// admission revision, and wire protocol.
+	string expected_registration_token = 2;
 }
 
 message CheckAdmissionResponse {
-	// True only when the expected admission revision is active and has a routable
+	// True only when the expected registration token is active and has a routable
 // provider plus a fresh authenticated pong.
 	bool ready = 1;
-	// Active admission revision, omitted when the toolset has no active admission.
-	optional string observed_admission_revision = 2;
-	// Number of unexpired, non-draining provider leases in the active admission.
-	sint32 routable_provider_count = 3;
-	// Time of the latest authenticated pong for the active admission, omitted
-// until one is received.
-	optional string last_pong_at = 4;
 }
 
 message SearchRequest {

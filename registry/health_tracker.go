@@ -53,13 +53,6 @@ type (
 		StalenessThreshold time.Duration
 	}
 
-	// admissionHealthSnapshot binds health to the admission revision read from
-	// the same authoritative catalog record.
-	admissionHealthSnapshot struct {
-		AdmissionRevision string
-		ToolsetHealth
-	}
-
 	// HealthTrackerOption configures health tracking.
 	HealthTrackerOption func(*healthTrackerOptions)
 
@@ -231,22 +224,6 @@ func (h *healthTracker) Health(
 		return ToolsetHealth{}, errToolsetNotFound
 	}
 	return h.healthFromEntry(entry, now), nil
-}
-
-// currentAdmissionHealth returns the active revision and routing health from
-// one catalog record.
-func (h *healthTracker) currentAdmissionHealth(
-	ctx context.Context,
-	toolset string,
-) (admissionHealthSnapshot, error) {
-	entry, now, err := h.catalog.healthEntry(ctx, toolset)
-	if err != nil {
-		return admissionHealthSnapshot{}, err
-	}
-	return admissionHealthSnapshot{
-		AdmissionRevision: entry.AdmissionRevision,
-		ToolsetHealth:     h.healthFromEntry(entry, now),
-	}, nil
 }
 
 // EnsurePingLoop implements HealthTracker.

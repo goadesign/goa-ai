@@ -54,12 +54,13 @@ type Service interface {
 	ListToolsets(context.Context, *ListToolsetsPayload) (res *ListToolsetsResult, err error)
 	// Get a specific toolset by name including all tool schemas
 	GetToolset(context.Context, *GetToolsetPayload) (res *Toolset, err error)
-	// Report whether the requested deployment admission is the active toolset
-	// generation and currently has an unexpired, non-draining provider lease plus
-	// a fresh authenticated pong. Release verification calls this after workload
-	// readiness because provider readiness must remain independent of registry
-	// admission. A missing or different active admission returns ready=false
-	// rather than an error.
+	// Report whether the exact registration token derived from a deployed
+	// provider's generated tool schemas is active and currently has an unexpired,
+	// non-draining provider lease plus a fresh authenticated pong. Release
+	// verification calls this after workload rollout because Kubernetes proves the
+	// intended pods are running while the registry proves their exact tool
+	// contract is routable. A missing or different active admission returns
+	// ready=false rather than an error.
 	CheckAdmission(context.Context, *CheckAdmissionPayload) (res *AdmissionStatus, err error)
 	// Search toolsets by keyword matching name, description, or tags
 	Search(context.Context, *SearchPayload) (res *SearchResult, err error)
@@ -133,16 +134,9 @@ var MethodNames = [15]string{"Register", "ReleaseProvider", "DrainProvider", "Un
 // AdmissionStatus is the result type of the registry service CheckAdmission
 // method.
 type AdmissionStatus struct {
-	// True only when the expected admission revision is active and has a routable
+	// True only when the expected registration token is active and has a routable
 	// provider plus a fresh authenticated pong.
 	Ready bool
-	// Active admission revision, omitted when the toolset has no active admission.
-	ObservedAdmissionRevision *string
-	// Number of unexpired, non-draining provider leases in the active admission.
-	RoutableProviderCount int
-	// Time of the latest authenticated pong for the active admission, omitted
-	// until one is received.
-	LastPongAt *string
 }
 
 // CallToolPayload is the payload type of the registry service CallTool method.
@@ -182,8 +176,9 @@ type CallToolResult struct {
 type CheckAdmissionPayload struct {
 	// Name of the toolset whose admission must be checked.
 	Name string
-	// Deployment-issued admission revision that must be active and healthy.
-	ExpectedAdmissionRevision string
+	// Deterministic token derived from the deployed provider's generated schema,
+	// admission revision, and wire protocol.
+	ExpectedRegistrationToken string
 }
 
 // ClaimToolCallResult is the result type of the registry service ClaimToolCall
@@ -332,6 +327,10 @@ type RegisterPayload struct {
 	// Required runtime-owned version of the provider message envelope. The
 	// registry admits only its exact canonical version.
 	WireProtocolVersion int
+	// Generated lowercase SHA-256 identity of the exact tool schemas sent by this
+	// provider. The registry independently derives the identity and rejects
+	// mismatches before admission.
+	SchemaFingerprint string
 }
 
 // RegisterResult is the result type of the registry service Register method.

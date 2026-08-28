@@ -21,26 +21,6 @@ type mockGRPCRegistryClient struct {
 	searchErr        error
 }
 
-func (m *mockGRPCRegistryClient) Register(_ context.Context, _ *registrypb.RegisterRequest, _ ...grpc.CallOption) (*registrypb.RegisterResponse, error) {
-	return nil, nil
-}
-
-func (m *mockGRPCRegistryClient) ReleaseProvider(_ context.Context, _ *registrypb.ReleaseProviderRequest, _ ...grpc.CallOption) (*registrypb.ReleaseProviderResponse, error) {
-	return nil, nil
-}
-
-func (m *mockGRPCRegistryClient) DrainProvider(_ context.Context, _ *registrypb.DrainProviderRequest, _ ...grpc.CallOption) (*registrypb.DrainProviderResponse, error) {
-	return nil, nil
-}
-
-func (m *mockGRPCRegistryClient) Unregister(_ context.Context, _ *registrypb.UnregisterRequest, _ ...grpc.CallOption) (*registrypb.UnregisterResponse, error) {
-	return nil, nil
-}
-
-func (m *mockGRPCRegistryClient) Pong(_ context.Context, _ *registrypb.PongRequest, _ ...grpc.CallOption) (*registrypb.PongResponse, error) {
-	return nil, nil
-}
-
 func (m *mockGRPCRegistryClient) ListToolsets(_ context.Context, _ *registrypb.ListToolsetsRequest, _ ...grpc.CallOption) (*registrypb.ListToolsetsResponse, error) {
 	return m.listToolsetsResp, m.listToolsetsErr
 }
@@ -49,36 +29,8 @@ func (m *mockGRPCRegistryClient) GetToolset(_ context.Context, _ *registrypb.Get
 	return m.getToolsetResp, m.getToolsetErr
 }
 
-func (m *mockGRPCRegistryClient) CheckAdmission(_ context.Context, _ *registrypb.CheckAdmissionRequest, _ ...grpc.CallOption) (*registrypb.CheckAdmissionResponse, error) {
-	return nil, nil
-}
-
 func (m *mockGRPCRegistryClient) Search(_ context.Context, _ *registrypb.SearchRequest, _ ...grpc.CallOption) (*registrypb.SearchResponse, error) {
 	return m.searchResp, m.searchErr
-}
-
-func (m *mockGRPCRegistryClient) CallTool(_ context.Context, _ *registrypb.CallToolRequest, _ ...grpc.CallOption) (*registrypb.CallToolResponse, error) {
-	return nil, nil
-}
-
-func (m *mockGRPCRegistryClient) RetryTool(_ context.Context, _ *registrypb.RetryToolRequest, _ ...grpc.CallOption) (*registrypb.RetryToolResponse, error) {
-	return nil, nil
-}
-
-func (m *mockGRPCRegistryClient) CompleteToolCall(_ context.Context, _ *registrypb.CompleteToolCallRequest, _ ...grpc.CallOption) (*registrypb.CompleteToolCallResponse, error) {
-	return nil, nil
-}
-
-func (m *mockGRPCRegistryClient) PublishToolOutputDelta(_ context.Context, _ *registrypb.PublishToolOutputDeltaRequest, _ ...grpc.CallOption) (*registrypb.PublishToolOutputDeltaResponse, error) {
-	return nil, nil
-}
-
-func (m *mockGRPCRegistryClient) ReportToolCallOverload(_ context.Context, _ *registrypb.ReportToolCallOverloadRequest, _ ...grpc.CallOption) (*registrypb.ReportToolCallOverloadResponse, error) {
-	return nil, nil
-}
-
-func (m *mockGRPCRegistryClient) ClaimToolCall(_ context.Context, _ *registrypb.ClaimToolCallRequest, _ ...grpc.CallOption) (*registrypb.ClaimToolCallResponse, error) {
-	return nil, nil
 }
 
 // TestGRPCClientAdapter_ListToolsets tests the ListToolsets method.

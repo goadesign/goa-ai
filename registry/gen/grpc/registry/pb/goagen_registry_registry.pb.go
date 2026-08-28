@@ -52,8 +52,12 @@ type RegisterRequest struct {
 	// Required runtime-owned version of the provider message envelope. The
 	// registry admits only its exact canonical version.
 	WireProtocolVersion int32 `protobuf:"zigzag32,9,opt,name=wire_protocol_version,json=wireProtocolVersion,proto3" json:"wire_protocol_version,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Generated lowercase SHA-256 identity of the exact tool schemas sent by this
+	// provider. The registry independently derives the identity and rejects
+	// mismatches before admission.
+	SchemaFingerprint string `protobuf:"bytes,10,opt,name=schema_fingerprint,json=schemaFingerprint,proto3" json:"schema_fingerprint,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *RegisterRequest) Reset() {
@@ -147,6 +151,13 @@ func (x *RegisterRequest) GetWireProtocolVersion() int32 {
 		return x.WireProtocolVersion
 	}
 	return 0
+}
+
+func (x *RegisterRequest) GetSchemaFingerprint() string {
+	if x != nil {
+		return x.SchemaFingerprint
+	}
+	return ""
 }
 
 // Tool schema declaration for registration with the tool registry gateway.
@@ -1050,8 +1061,9 @@ type CheckAdmissionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Name of the toolset whose admission must be checked.
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// Deployment-issued admission revision that must be active and healthy.
-	ExpectedAdmissionRevision string `protobuf:"bytes,2,opt,name=expected_admission_revision,json=expectedAdmissionRevision,proto3" json:"expected_admission_revision,omitempty"`
+	// Deterministic token derived from the deployed provider's generated schema,
+	// admission revision, and wire protocol.
+	ExpectedRegistrationToken string `protobuf:"bytes,2,opt,name=expected_registration_token,json=expectedRegistrationToken,proto3" json:"expected_registration_token,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -1093,25 +1105,18 @@ func (x *CheckAdmissionRequest) GetName() string {
 	return ""
 }
 
-func (x *CheckAdmissionRequest) GetExpectedAdmissionRevision() string {
+func (x *CheckAdmissionRequest) GetExpectedRegistrationToken() string {
 	if x != nil {
-		return x.ExpectedAdmissionRevision
+		return x.ExpectedRegistrationToken
 	}
 	return ""
 }
 
 type CheckAdmissionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// True only when the expected admission revision is active and has a routable
+	// True only when the expected registration token is active and has a routable
 	// provider plus a fresh authenticated pong.
-	Ready bool `protobuf:"varint,1,opt,name=ready,proto3" json:"ready,omitempty"`
-	// Active admission revision, omitted when the toolset has no active admission.
-	ObservedAdmissionRevision *string `protobuf:"bytes,2,opt,name=observed_admission_revision,json=observedAdmissionRevision,proto3,oneof" json:"observed_admission_revision,omitempty"`
-	// Number of unexpired, non-draining provider leases in the active admission.
-	RoutableProviderCount int32 `protobuf:"zigzag32,3,opt,name=routable_provider_count,json=routableProviderCount,proto3" json:"routable_provider_count,omitempty"`
-	// Time of the latest authenticated pong for the active admission, omitted
-	// until one is received.
-	LastPongAt    *string `protobuf:"bytes,4,opt,name=last_pong_at,json=lastPongAt,proto3,oneof" json:"last_pong_at,omitempty"`
+	Ready         bool `protobuf:"varint,1,opt,name=ready,proto3" json:"ready,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1151,27 +1156,6 @@ func (x *CheckAdmissionResponse) GetReady() bool {
 		return x.Ready
 	}
 	return false
-}
-
-func (x *CheckAdmissionResponse) GetObservedAdmissionRevision() string {
-	if x != nil && x.ObservedAdmissionRevision != nil {
-		return *x.ObservedAdmissionRevision
-	}
-	return ""
-}
-
-func (x *CheckAdmissionResponse) GetRoutableProviderCount() int32 {
-	if x != nil {
-		return x.RoutableProviderCount
-	}
-	return 0
-}
-
-func (x *CheckAdmissionResponse) GetLastPongAt() string {
-	if x != nil && x.LastPongAt != nil {
-		return *x.LastPongAt
-	}
-	return ""
 }
 
 type SearchRequest struct {
@@ -2257,7 +2241,7 @@ var File_goagen_registry_registry_proto protoreflect.FileDescriptor
 
 const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\n" +
-	"\x1egoagen_registry_registry.proto\x12\x0fgoa_ai_registry\"\x8a\x03\n" +
+	"\x1egoagen_registry_registry.proto\x12\x0fgoa_ai_registry\"\xb9\x03\n" +
 	"\x0fRegisterRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12%\n" +
 	"\vdescription\x18\x02 \x01(\tH\x00R\vdescription\x88\x01\x01\x12\x1d\n" +
@@ -2268,7 +2252,9 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"providerId\x12-\n" +
 	"\x12admission_revision\x18\a \x01(\tR\x11admissionRevision\x126\n" +
 	"\x17provider_incarnation_id\x18\b \x01(\tR\x15providerIncarnationId\x122\n" +
-	"\x15wire_protocol_version\x18\t \x01(\x11R\x13wireProtocolVersionB\x0e\n" +
+	"\x15wire_protocol_version\x18\t \x01(\x11R\x13wireProtocolVersion\x12-\n" +
+	"\x12schema_fingerprint\x18\n" +
+	" \x01(\tR\x11schemaFingerprintB\x0e\n" +
 	"\f_descriptionB\n" +
 	"\n" +
 	"\b_version\"\xf6\x01\n" +
@@ -2341,15 +2327,9 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\b_version\"k\n" +
 	"\x15CheckAdmissionRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12>\n" +
-	"\x1bexpected_admission_revision\x18\x02 \x01(\tR\x19expectedAdmissionRevision\"\x83\x02\n" +
+	"\x1bexpected_registration_token\x18\x02 \x01(\tR\x19expectedRegistrationToken\".\n" +
 	"\x16CheckAdmissionResponse\x12\x14\n" +
-	"\x05ready\x18\x01 \x01(\bR\x05ready\x12C\n" +
-	"\x1bobserved_admission_revision\x18\x02 \x01(\tH\x00R\x19observedAdmissionRevision\x88\x01\x01\x126\n" +
-	"\x17routable_provider_count\x18\x03 \x01(\x11R\x15routableProviderCount\x12%\n" +
-	"\flast_pong_at\x18\x04 \x01(\tH\x01R\n" +
-	"lastPongAt\x88\x01\x01B\x1e\n" +
-	"\x1c_observed_admission_revisionB\x0f\n" +
-	"\r_last_pong_at\"%\n" +
+	"\x05ready\x18\x01 \x01(\bR\x05ready\"%\n" +
 	"\rSearchRequest\x12\x14\n" +
 	"\x05query\x18\x01 \x01(\tR\x05query\"J\n" +
 	"\x0eSearchResponse\x128\n" +
@@ -2553,7 +2533,6 @@ func file_goagen_registry_registry_proto_init() {
 	file_goagen_registry_registry_proto_msgTypes[1].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[13].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[15].OneofWrappers = []any{}
-	file_goagen_registry_registry_proto_msgTypes[17].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[21].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
