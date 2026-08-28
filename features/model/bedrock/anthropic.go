@@ -120,7 +120,7 @@ func (c *anthropicBedrockProvider) Complete(ctx context.Context, req *model.Requ
 		return nil, err
 	}
 	if err := reifyStructuredOutputTool(resp, outputToolName); err != nil {
-		return nil, contract.RejectResponse(resp, err)
+		return nil, contract.RejectResponse(model.OutputValidationStructuredOutput, resp, err)
 	}
 	return resp, nil
 }

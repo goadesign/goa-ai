@@ -521,6 +521,7 @@ func TestPlanStartActivityCorrelatesRecoverableModelOutput(t *testing.T) {
 	require.NotNil(t, out.OutputContractFailure)
 	require.True(t, out.OutputContractFailure.ModelResponsePresent)
 	require.NotEmpty(t, out.OutputContractFailure.ModelResponseSHA256)
+	require.Empty(t, out.OutputContractFailure.ModelOutputValidationKind)
 	require.Equal(t, "Use at most eight references.", out.OutputContractFailure.Correction)
 }
 
@@ -1933,7 +1934,11 @@ func TestOutputContractFailureMetadataFingerprintsPrivateValidationCause(t *test
 	activity := &plannerActivityInvocation{invocations: &modelInvocationJournal{}}
 	failures := make([]*OutputContractFailure, 0, len(causes))
 	for _, cause := range causes {
-		validationErr := contract.RejectProviderOutput(nil, cause)
+		validationErr := contract.RejectProviderOutput(
+			model.OutputValidationResponseShape,
+			nil,
+			cause,
+		)
 		outputErr := outputcontract.NewWithOrigin(validationErr, outputcontract.OriginModel)
 
 		failure, metadataErr := activity.outputContractFailureMetadata(outputErr)
@@ -1941,6 +1946,7 @@ func TestOutputContractFailureMetadataFingerprintsPrivateValidationCause(t *test
 		require.NoError(t, metadataErr)
 		require.EqualError(t, validationErr, "model output does not meet its request contract")
 		require.EqualError(t, outputErr, "completed output does not meet its contract")
+		require.Equal(t, model.OutputValidationResponseShape, failure.ModelOutputValidationKind)
 		require.Equal(t, int64(len(cause.Error())), failure.ReasonSize)
 		encoded, marshalErr := json.Marshal(failure)
 		require.NoError(t, marshalErr)

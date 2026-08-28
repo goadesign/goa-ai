@@ -4,6 +4,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -11,13 +12,11 @@ import (
 	"unicode/utf8"
 )
 
-const (
-	maxDynamicValueDepth  = 64
-	maxDynamicValueVisits = 100_000
-	maxDynamicValueBytes  = 16 << 20
-)
-
 type (
+	// dynamicValueFailureKind distinguishes values that cannot be represented
+	// from values that exceed the work allowed for one request or response.
+	dynamicValueFailureKind uint8
+
 	dynamicContainer struct {
 		kind      reflect.Kind
 		valueType reflect.Type
@@ -31,15 +30,34 @@ type (
 		bytes  int
 		active map[dynamicContainer]struct{}
 	}
+
+	// dynamicValueFailure carries the exact private reason from the shared
+	// request/response walker without assigning model-output semantics.
+	dynamicValueFailure struct {
+		kind  dynamicValueFailureKind
+		cause error
+	}
+)
+
+const (
+	dynamicValueFailureShape dynamicValueFailureKind = iota + 1
+	dynamicValueFailureBounds
+
+	maxDynamicValueDepth  = 64
+	maxDynamicValueVisits = 100_000
+	maxDynamicValueBytes  = 16 << 20
 )
 
 // visit charges one top-level response value or stream chunk.
 func (w *dynamicValueWalk) visit() error {
 	w.visits++
 	if w.visits > maxDynamicValueVisits {
-		return fmt.Errorf(
-			"dynamic value exceeds maximum visited values %d",
-			maxDynamicValueVisits,
+		return newDynamicValueFailure(
+			dynamicValueFailureBounds,
+			fmt.Errorf(
+				"dynamic value exceeds maximum visited values %d",
+				maxDynamicValueVisits,
+			),
 		)
 	}
 	return nil
@@ -49,9 +67,12 @@ func (w *dynamicValueWalk) visit() error {
 // the current path so cycles fail before another recursive call.
 func (w *dynamicValueWalk) enter(value reflect.Value, depth int) (dynamicContainer, bool, error) {
 	if depth > maxDynamicValueDepth {
-		return dynamicContainer{}, false, fmt.Errorf(
-			"dynamic value exceeds maximum depth %d",
-			maxDynamicValueDepth,
+		return dynamicContainer{}, false, newDynamicValueFailure(
+			dynamicValueFailureBounds,
+			fmt.Errorf(
+				"dynamic value exceeds maximum depth %d",
+				maxDynamicValueDepth,
+			),
 		)
 	}
 	if err := w.visit(); err != nil {
@@ -74,7 +95,10 @@ func (w *dynamicValueWalk) enter(value reflect.Value, depth int) (dynamicContain
 		w.active = make(map[dynamicContainer]struct{})
 	}
 	if _, exists := w.active[container]; exists {
-		return dynamicContainer{}, false, dynamicCycleError(value)
+		return dynamicContainer{}, false, newDynamicValueFailure(
+			dynamicValueFailureShape,
+			dynamicCycleError(value),
+		)
 	}
 	w.active[container] = struct{}{}
 	return container, true, nil
@@ -109,12 +133,18 @@ func preflightDynamicValueAt(
 	defer walk.leave(container, tracked)
 	if value.Kind() == reflect.String && contract == dynamicCloneCanonical &&
 		!utf8.ValidString(value.String()) {
-		return fmt.Errorf("string is not valid UTF-8")
+		return newDynamicValueFailure(
+			dynamicValueFailureShape,
+			errors.New("string is not valid UTF-8"),
+		)
 	}
 	switch value.Kind() {
 	case reflect.Map:
 		if value.Type().Key().Kind() != reflect.String {
-			return fmt.Errorf("map key type %s is not a string", value.Type().Key())
+			return newDynamicValueFailure(
+				dynamicValueFailureShape,
+				fmt.Errorf("map key type %s is not a string", value.Type().Key()),
+			)
 		}
 		if value.IsNil() {
 			return nil
@@ -128,7 +158,10 @@ func preflightDynamicValueAt(
 				return err
 			}
 			if contract == dynamicCloneCanonical && !utf8.ValidString(key.String()) {
-				return fmt.Errorf("map key is not valid UTF-8")
+				return newDynamicValueFailure(
+					dynamicValueFailureShape,
+					errors.New("map key is not valid UTF-8"),
+				)
 			}
 			if err := preflightDynamicValueAt(value.MapIndex(key), depth+1, walk, contract); err != nil {
 				return err
@@ -150,7 +183,10 @@ func preflightDynamicValueAt(
 		return nil
 	case reflect.Struct:
 		if contract == dynamicCloneCanonical {
-			return fmt.Errorf("value type %s is not JSON-compatible metadata", value.Type())
+			return newDynamicValueFailure(
+				dynamicValueFailureShape,
+				fmt.Errorf("value type %s is not JSON-compatible metadata", value.Type()),
+			)
 		}
 		valueType := value.Type()
 		descriptorBytes := len(valueType.PkgPath()) + len(valueType.Name())
@@ -173,7 +209,9 @@ func preflightDynamicValueAt(
 		return nil
 	case reflect.Float32, reflect.Float64:
 		if contract == dynamicCloneCanonical {
-			return validateCanonicalFloat(value)
+			if err := validateCanonicalFloat(value); err != nil {
+				return newDynamicValueFailure(dynamicValueFailureShape, err)
+			}
 		}
 		return nil
 	case reflect.Bool,
@@ -199,9 +237,15 @@ func preflightDynamicValueAt(
 		reflect.Pointer,
 		reflect.UnsafePointer:
 		if contract == dynamicCloneCanonical {
-			return fmt.Errorf("value type %s is not JSON-compatible metadata", value.Type())
+			return newDynamicValueFailure(
+				dynamicValueFailureShape,
+				fmt.Errorf("value type %s is not JSON-compatible metadata", value.Type()),
+			)
 		}
-		return fmt.Errorf("value type %s cannot be copied safely", value.Type())
+		return newDynamicValueFailure(
+			dynamicValueFailureShape,
+			fmt.Errorf("value type %s cannot be copied safely", value.Type()),
+		)
 	}
 	panic("unreachable dynamic value kind")
 }
@@ -241,7 +285,10 @@ func validateCanonicalFloat(value reflect.Value) error {
 // one unary response or complete stream.
 func (w *dynamicValueWalk) addBytes(count int) error {
 	if count < 0 || count > maxDynamicValueBytes-w.bytes {
-		return fmt.Errorf("dynamic value exceeds maximum byte size %d", maxDynamicValueBytes)
+		return newDynamicValueFailure(
+			dynamicValueFailureBounds,
+			fmt.Errorf("dynamic value exceeds maximum byte size %d", maxDynamicValueBytes),
+		)
 	}
 	w.bytes += count
 	return nil
@@ -251,12 +298,31 @@ func (w *dynamicValueWalk) addBytes(count int) error {
 // children cannot fit within the remaining visit budget.
 func (w *dynamicValueWalk) checkChildren(count int) error {
 	if count < 0 || count > maxDynamicValueVisits-w.visits {
-		return fmt.Errorf(
-			"dynamic value exceeds maximum visited values %d",
-			maxDynamicValueVisits,
+		return newDynamicValueFailure(
+			dynamicValueFailureBounds,
+			fmt.Errorf(
+				"dynamic value exceeds maximum visited values %d",
+				maxDynamicValueVisits,
+			),
 		)
 	}
 	return nil
+}
+
+// Error reports the concrete copy or representation failure to the caller.
+func (e *dynamicValueFailure) Error() string {
+	return e.cause.Error()
+}
+
+// Unwrap preserves the concrete failure for errors.Is and errors.As.
+func (e *dynamicValueFailure) Unwrap() error {
+	return e.cause
+}
+
+// newDynamicValueFailure marks whether a value failed representation or a
+// bounded-work limit without assigning request- or response-specific meaning.
+func newDynamicValueFailure(kind dynamicValueFailureKind, cause error) error {
+	return &dynamicValueFailure{kind: kind, cause: cause}
 }
 
 // leave removes a container after all of its children have been visited.

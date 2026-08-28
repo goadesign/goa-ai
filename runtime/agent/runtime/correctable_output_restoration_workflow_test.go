@@ -146,6 +146,7 @@ func restoredRecoveryModel(t *testing.T, providerCalls *int, alwaysReject bool) 
 					TotalTokens:  10,
 				}
 				terminal, err := model.RestoreOutputValidationError(
+					model.OutputValidationToolArguments,
 					errors.New("decoded model output failed its generated contract"),
 					model.ResponseEvidence{Present: true},
 					usage,

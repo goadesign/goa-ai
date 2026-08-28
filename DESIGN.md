@@ -753,9 +753,16 @@ redeploys.
   concurrent calls reject output, the envelope uses the earliest-started
   rejected invocation's reason and complete-response evidence. The
   event fingerprints the private validation-cause text instead of retaining
-  that text. Model content remains observability data rather than workflow
+  that text. A mechanical rejection also carries the closed
+  `OutputValidationKind` from the first check that rejected the response. The
+  kind identifies only the failed contract area; it contains no response text,
+  provider text, tool identity, arguments, or schema path and cannot authorize
+  recovery. Model content remains observability data rather than workflow
   state, so diagnostic storage cannot retry inference and Temporal and hook
-  payloads remain bounded. A planner result rejected after model output was
+  payloads remain bounded. Planner-authored policy rejection is semantic: the
+  same response can be accepted by one planner and rejected by another. It
+  therefore carries no mechanical kind and keeps its exact planner correction
+  as the only recovery fact. A planner result rejected after model output was
   accepted emits `PlannerOutputRejected` instead, with only the bounded private
   cause identity.
 - **Generated tool validation**: A model definition created from a generated
@@ -961,16 +968,15 @@ This keeps consumers simple: render `error`, gate “Retry” on `retryable`, an
 
 Provider adapters (Bedrock, Anthropic) validate the streaming event protocol
 with a strict state machine: a message must start before content blocks flow
-and must stop exactly once before metadata. Violations never produce a
-fabricated response; they fail the stream with a precise error. Two terminal
-shapes are classified instead of surfaced as opaque protocol errors:
+and must stop exactly once before metadata. A provider terminal event that
+violates this order is rejected as `OutputValidationStreamProtocol`. Transport
+failures and caller cancellation remain outside `OutputValidationError`.
+Two event-source termination shapes retain provider-failure classifications:
 
-- **Empty stream** — the stream terminates before any message starts (a
-  `messageStop` with no prior `messageStart`, or a stream that closes with no
-  events at all). Providers intermittently do this when a model emits an
-  empty completion. Adapters build the error with `model.NewEmptyStreamError`,
-  which carries the `model.ErrEmptyStream` sentinel plus a retryable
-  `unavailable` ProviderError (code `empty_stream`). Callers detect it with
+- **Empty event source** — the event source closes before any message starts.
+  Adapters build the error with `model.NewEmptyStreamError`, which carries the
+  `model.ErrEmptyStream` sentinel plus a retryable `unavailable` ProviderError
+  (code `empty_stream`). Callers detect it with
   `errors.Is(err, model.ErrEmptyStream)` and may retry the request a bounded
   number of times before surfacing the failure.
 - **Truncated stream** — the stream closes cleanly after a message started but

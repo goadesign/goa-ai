@@ -116,6 +116,7 @@ func (c *tracedProvider) Stream(ctx context.Context, req *model.Request) (model.
 // ObserveClientComplete records one final validated unary result.
 func (c *tracedCall) ObserveClientComplete(resp *model.Response, err error) error {
 	if err != nil {
+		c.span.SetAttributes(outputValidationAttrs(err)...)
 		if !telemetry.ShouldRecordSpanError(c.ctx, err) {
 			c.span.SetStatus(codes.Unset, "")
 			return nil
@@ -145,6 +146,7 @@ func (c *tracedCall) ObserveClientComplete(resp *model.Response, err error) erro
 // stream. The model client attaches it to the exact stream.
 func (c *tracedCall) ObserveClientStream(err error) (model.StreamObserver, error) {
 	if err != nil {
+		c.span.SetAttributes(outputValidationAttrs(err)...)
 		if !telemetry.ShouldRecordSpanError(c.ctx, err) {
 			c.span.SetStatus(codes.Unset, "")
 			return nil, nil
@@ -211,6 +213,7 @@ func (s *tracedStream) ObserveStreamRecv(observation model.StreamObservation) er
 			s.end(codes.Unset, "")
 			return nil
 		}
+		s.span.SetAttributes(outputValidationAttrs(err)...)
 		s.span.RecordError(err)
 		s.end(codes.Error, "stream recv failed")
 		return nil
@@ -299,6 +302,19 @@ func modelUsageAttrs(usage model.TokenUsage) []attribute.KeyValue {
 		)...)
 	}
 	return attrs
+}
+
+// outputValidationAttrs exposes only the closed response category. The error
+// summary, rejected output, provider cause, tool details, and schema paths are
+// deliberately absent.
+func outputValidationAttrs(err error) []attribute.KeyValue {
+	outputErr, ok := exactModelOutputValidation(err)
+	if !ok {
+		return nil
+	}
+	return []attribute.KeyValue{
+		attribute.String("gen_ai.response.validation.kind", string(outputErr.Kind())),
+	}
 }
 
 func requestedModelName(req *model.Request) string {

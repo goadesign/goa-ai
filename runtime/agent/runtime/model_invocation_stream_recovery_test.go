@@ -24,7 +24,11 @@ import (
 func TestModelInvocationRecoveryRequiresExactValidationLeaves(t *testing.T) {
 	contract, err := model.NewRequestContract(&model.Request{})
 	require.NoError(t, err)
-	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	validationErr := contract.RejectProviderOutput(
+		model.OutputValidationResponseShape,
+		nil,
+		errors.New("rejected output"),
+	)
 	candidate := &modelInvocationCandidate{
 		rejectedValidationErr: validationErr,
 		rejectedOutputErr:     validationErr,

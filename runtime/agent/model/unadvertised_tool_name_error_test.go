@@ -26,6 +26,7 @@ func TestUnadvertisedToolNameFollowsWrappedAndRestoredErrors(t *testing.T) {
 	assert.NotContains(t, marker.Error(), "catalog_list_nearby")
 	wrapped := fmt.Errorf("adapter rejected response: %w", marker)
 	rejected, err := RestoreOutputValidationError(
+		OutputValidationToolIdentity,
 		wrapped,
 		ResponseEvidence{Present: false},
 		&TokenUsage{InputTokens: 3, OutputTokens: 2, TotalTokens: 5},
@@ -71,6 +72,9 @@ func TestRequestContractRejectsWholeResponseAtFirstUnadvertisedToolName(t *testi
 	})
 
 	assert.Nil(t, response)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	assert.Equal(t, OutputValidationToolIdentity, validationErr.Kind())
 	name, ok := UnadvertisedToolName(err)
 	assert.True(t, ok)
 	assert.Equal(t, "catalog-list-items", name)

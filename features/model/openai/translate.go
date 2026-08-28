@@ -11,6 +11,7 @@ import (
 
 	"github.com/openai/openai-go/responses"
 
+	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -27,7 +28,10 @@ func translateResponse(
 	outputProjection *strictSchemaProjection,
 ) (*model.Response, error) {
 	if resp == nil {
-		return nil, errors.New("openai: response is nil")
+		return nil, outputvalidation.New(
+			model.OutputValidationResponseShape,
+			errors.New("openai: response is nil"),
+		)
 	}
 	if resp.Status == responses.ResponseStatusFailed || resp.Error.Message != "" {
 		return nil, providerErrorFromResponseFailure(
@@ -38,7 +42,7 @@ func translateResponse(
 		)
 	}
 	if err := preflightResponseSnapshot(resp); err != nil {
-		return nil, err
+		return nil, outputvalidation.New(model.OutputValidationOutputBounds, err)
 	}
 	translated := &model.Response{
 		Usage: translateUsage(resp.Usage, chooseModelID(resp.Model, resolvedModelID), resolvedModelClass),
@@ -70,7 +74,10 @@ func translateResponse(
 		case responses.ResponseReasoningItem:
 			part, ok := translateReasoningItem(actual)
 			if !ok {
-				return nil, errors.New("openai: reasoning item has no summary or encrypted content")
+				return nil, outputvalidation.New(
+					model.OutputValidationResponseShape,
+					errors.New("openai: reasoning item has no summary or encrypted content"),
+				)
 			}
 			part.Index = thinkingIndex
 			thinkingIndex++
@@ -87,7 +94,10 @@ func translateResponse(
 		case responses.ResponseFunctionToolCall:
 			flushThinking()
 			if output != nil {
-				return nil, fmt.Errorf("openai: structured output %q emitted tool calls", output.Name)
+				return nil, outputvalidation.New(
+					model.OutputValidationStructuredOutput,
+					fmt.Errorf("openai: structured output %q emitted tool calls", output.Name),
+				)
 			}
 			toolCall, err := translateToolCall(actual, codec)
 			if err != nil {
@@ -107,7 +117,10 @@ func translateResponse(
 				},
 			})
 		default:
-			return nil, fmt.Errorf("openai: unsupported response output item %T", actual)
+			return nil, outputvalidation.New(
+				model.OutputValidationResponseShape,
+				fmt.Errorf("openai: unsupported response output item %T", actual),
+			)
 		}
 	}
 	flushThinking()
@@ -175,11 +188,17 @@ func translateAssistantMessage(
 		case responses.ResponseOutputRefusal:
 			parts = append(parts, model.TextPart{Text: actual.Refusal})
 		default:
-			return model.Message{}, fmt.Errorf("openai: unsupported assistant content item %T", actual)
+			return model.Message{}, outputvalidation.New(
+				model.OutputValidationResponseShape,
+				fmt.Errorf("openai: unsupported assistant content item %T", actual),
+			)
 		}
 	}
 	if len(parts) == 0 {
-		return model.Message{}, errors.New("openai: assistant output message has no content")
+		return model.Message{}, outputvalidation.New(
+			model.OutputValidationResponseShape,
+			errors.New("openai: assistant output message has no content"),
+		)
 	}
 	meta := map[string]any{
 		openAIOutputItemMetaKey: message.RawJSON(),
@@ -253,7 +272,10 @@ func translateCitations(annotations []responses.ResponseOutputTextAnnotationUnio
 				Source: actual.FileID,
 			})
 		default:
-			return nil, fmt.Errorf("openai: unsupported output text annotation %T", actual)
+			return nil, outputvalidation.New(
+				model.OutputValidationResponseShape,
+				fmt.Errorf("openai: unsupported output text annotation %T", actual),
+			)
 		}
 	}
 	return citations, nil
@@ -264,25 +286,40 @@ func translateToolCall(
 	codec *toolCodec,
 ) (model.ToolCall, error) {
 	if call.CallID == "" {
-		return model.ToolCall{}, errors.New("openai: tool call missing call_id")
+		return model.ToolCall{}, outputvalidation.New(
+			model.OutputValidationToolIdentity,
+			errors.New("openai: tool call missing call_id"),
+		)
 	}
 	if call.Name == "" {
-		return model.ToolCall{}, fmt.Errorf("openai: tool call %q missing function name", call.CallID)
+		return model.ToolCall{}, outputvalidation.New(
+			model.OutputValidationToolIdentity,
+			fmt.Errorf("openai: tool call %q missing function name", call.CallID),
+		)
 	}
 	name, ok := codec.canonicalName(call.Name)
 	if !ok {
-		return model.ToolCall{}, fmt.Errorf(
-			"openai: translate response tool call: %w",
-			model.NewUnadvertisedToolNameError(call.Name),
+		return model.ToolCall{}, outputvalidation.New(
+			model.OutputValidationToolIdentity,
+			fmt.Errorf(
+				"openai: translate response tool call: %w",
+				model.NewUnadvertisedToolNameError(call.Name),
+			),
 		)
 	}
 	payload, err := decodeToolPayload(call.Arguments)
 	if err != nil {
-		return model.ToolCall{}, fmt.Errorf("openai: tool call %q payload: %w", call.CallID, err)
+		return model.ToolCall{}, outputvalidation.New(
+			model.OutputValidationToolArguments,
+			fmt.Errorf("openai: tool call %q payload: %w", call.CallID, err),
+		)
 	}
 	payload, err = codec.canonicalPayload(call.Name, payload)
 	if err != nil {
-		return model.ToolCall{}, fmt.Errorf("openai: tool call %q canonical payload: %w", call.CallID, err)
+		return model.ToolCall{}, outputvalidation.New(
+			model.OutputValidationToolArguments,
+			fmt.Errorf("openai: tool call %q canonical payload: %w", call.CallID, err),
+		)
 	}
 	return model.ToolCall{
 		Name:    tools.Ident(name),
@@ -329,12 +366,22 @@ func structuredOutputPayload(
 	}
 	text := extractAssistantText(content)
 	if strings.TrimSpace(text) == "" {
-		return nil, fmt.Errorf("openai: structured output %q completed without content", output.Name)
+		return nil, outputvalidation.New(
+			model.OutputValidationStructuredOutput,
+			fmt.Errorf("openai: structured output %q completed without content", output.Name),
+		)
 	}
 	if !json.Valid([]byte(text)) {
-		return nil, fmt.Errorf("openai: structured output %q payload is not valid JSON", structuredOutputName(output))
+		return nil, outputvalidation.New(
+			model.OutputValidationStructuredOutput,
+			fmt.Errorf("openai: structured output %q payload is not valid JSON", structuredOutputName(output)),
+		)
 	}
-	return projection.canonicalize([]byte(text))
+	payload, err := projection.canonicalize([]byte(text))
+	if err != nil {
+		return nil, outputvalidation.New(model.OutputValidationStructuredOutput, err)
+	}
+	return payload, nil
 }
 
 // replaceStructuredOutputText keeps thinking and metadata but replaces all

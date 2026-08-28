@@ -50,12 +50,13 @@ func (s *anthropicStructuredOutputStreamer) Recv() (model.Chunk, error) {
 			resp := s.stream.Response()
 			if resp == nil {
 				return nil, s.contract.RejectProviderOutput(
+					model.OutputValidationStructuredOutput,
 					nil,
 					errors.New("bedrock: structured output stream completed without a response"),
 				)
 			}
 			if err := reifyStructuredOutputTool(resp, s.toolName); err != nil {
-				return nil, s.contract.RejectResponse(resp, err)
+				return nil, s.contract.RejectResponse(model.OutputValidationStructuredOutput, resp, err)
 			}
 			s.response = resp
 			return nil, io.EOF
@@ -76,6 +77,7 @@ func (s *anthropicStructuredOutputStreamer) Recv() (model.Chunk, error) {
 			}
 			if s.completionSeen {
 				return nil, s.contract.RejectProviderOutput(
+					model.OutputValidationStructuredOutput,
 					nil,
 					errors.New("bedrock: structured output stream returned multiple tool calls"),
 				)
@@ -83,6 +85,7 @@ func (s *anthropicStructuredOutputStreamer) Recv() (model.Chunk, error) {
 			payload, err := unwrapStructuredOutputValue(value.ToolCall.Payload)
 			if err != nil {
 				return nil, s.contract.RejectProviderOutput(
+					model.OutputValidationStructuredOutput,
 					nil,
 					fmt.Errorf("bedrock: structured output tool %q: %w", s.toolName, err),
 				)
@@ -98,6 +101,7 @@ func (s *anthropicStructuredOutputStreamer) Recv() (model.Chunk, error) {
 			return chunk, nil
 		default:
 			return nil, s.contract.RejectProviderOutput(
+				model.OutputValidationStructuredOutput,
 				nil,
 				fmt.Errorf("bedrock: structured output stream returned unexpected chunk %T", chunk),
 			)
@@ -163,6 +167,7 @@ func (c *anthropicBedrockProvider) prepareRequest(req *model.Request) (*model.Re
 // private tool choice before a complete response was available.
 func (s *anthropicStructuredOutputStreamer) rejectUnexpectedTool(actual string) error {
 	return s.contract.RejectProviderOutput(
+		model.OutputValidationStructuredOutput,
 		nil,
 		fmt.Errorf(
 			"bedrock: structured output did not return the forced tool call %q; got %q",

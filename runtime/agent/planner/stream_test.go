@@ -199,6 +199,7 @@ func TestConsumeStreamReturnsNoSummaryAfterLaterProviderRejection(t *testing.T) 
 			}},
 		},
 		err: contract.RejectProviderOutput(
+			model.OutputValidationToolIdentity,
 			&model.TokenUsage{InputTokens: 4, OutputTokens: 3, TotalTokens: 7},
 			model.NewUnadvertisedToolNameError("svc.look_up"),
 		),
@@ -220,6 +221,7 @@ func TestConsumeStreamPreservesValidationOverCloseFailure(t *testing.T) {
 	contract, err := model.NewRequestContract(request)
 	require.NoError(t, err)
 	validationErr := contract.RejectProviderOutput(
+		model.OutputValidationToolIdentity,
 		&model.TokenUsage{InputTokens: 4, OutputTokens: 3, TotalTokens: 7},
 		model.NewUnadvertisedToolNameError("svc.look_up"),
 	)

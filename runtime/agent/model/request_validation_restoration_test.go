@@ -32,9 +32,18 @@ func (e *restorationTestCause) Unwrap() error {
 func TestRestoreOutputValidationErrorPreservesBoundedEvidence(t *testing.T) {
 	contract, err := NewRequestContract(&Request{})
 	require.NoError(t, err)
-	source := contract.RejectResponse(canonicalTextResponse(), errors.New("remote adapter rejected output"))
+	source := contract.RejectResponse(
+		OutputValidationResponseShape,
+		canonicalTextResponse(),
+		errors.New("remote adapter rejected output"),
+	)
 
-	restored, err := RestoreOutputValidationError(errors.Unwrap(source), source.Evidence(), source.Usage())
+	restored, err := RestoreOutputValidationError(
+		source.Kind(),
+		errors.Unwrap(source),
+		source.Evidence(),
+		source.Usage(),
+	)
 
 	require.NoError(t, err)
 	require.Equal(t, source.Evidence(), restored.Evidence())
@@ -45,7 +54,7 @@ func TestRestoreOutputValidationErrorPreservesBoundedEvidence(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, rejected)
 
-	_, err = RestoreOutputValidationError(errors.New("invalid evidence"), ResponseEvidence{
+	_, err = RestoreOutputValidationError(OutputValidationResponseShape, errors.New("invalid evidence"), ResponseEvidence{
 		Present: true,
 		Version: "unsupported",
 		SHA256:  source.Evidence().SHA256,
@@ -53,7 +62,7 @@ func TestRestoreOutputValidationErrorPreservesBoundedEvidence(t *testing.T) {
 	}, nil)
 	require.ErrorContains(t, err, `unsupported version "unsupported"`)
 
-	_, err = RestoreOutputValidationError(errors.New("invalid evidence"), ResponseEvidence{
+	_, err = RestoreOutputValidationError(OutputValidationResponseShape, errors.New("invalid evidence"), ResponseEvidence{
 		Present: true,
 		Version: source.Evidence().Version,
 		SHA256:  strings.Repeat("A", 64),
@@ -66,7 +75,12 @@ func TestRestoreOutputValidationErrorPreservesCauseIdentity(t *testing.T) {
 	sentinel := errors.New("decoded rejection sentinel")
 	cause := &restorationTestCause{cause: sentinel}
 
-	terminal, err := RestoreOutputValidationError(cause, ResponseEvidence{Present: true}, nil)
+	terminal, err := RestoreOutputValidationError(
+		OutputValidationToolArguments,
+		cause,
+		ResponseEvidence{Present: true},
+		nil,
+	)
 	require.NoError(t, err)
 	correctable, err := RestoreCorrectableOutputValidationError(
 		terminal,
@@ -85,6 +99,7 @@ func TestRestoreOutputValidationErrorPreservesCauseIdentity(t *testing.T) {
 func TestRestoreOutputValidationErrorRejectsContradictoryCauses(t *testing.T) {
 	var typedNil *restorationTestCause
 	nested := newOutputValidationError(
+		OutputValidationResponseShape,
 		errors.New("locally classified output rejection"),
 		ResponseEvidence{Present: true},
 		nil,
@@ -140,6 +155,7 @@ func TestRestoreOutputValidationErrorRejectsContradictoryCauses(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			restored, err := RestoreOutputValidationError(
+				OutputValidationResponseShape,
 				test.cause,
 				ResponseEvidence{Present: true},
 				nil,
@@ -183,6 +199,7 @@ func TestRestoreOutputValidationErrorRejectsTerminalSentinels(t *testing.T) {
 		for _, form := range forms {
 			t.Run(sentinel.name+"/"+form.name, func(t *testing.T) {
 				terminal, err := RestoreOutputValidationError(
+					OutputValidationResponseShape,
 					form.cause(sentinel.err),
 					ResponseEvidence{Present: true},
 					nil,
@@ -202,6 +219,7 @@ func TestRestoreOutputValidationErrorRejectsTerminalSentinels(t *testing.T) {
 
 	t.Run("ordinary decoded validation cause", func(t *testing.T) {
 		terminal, err := RestoreOutputValidationError(
+			OutputValidationToolArguments,
 			errors.New("decoded field validation failed"),
 			ResponseEvidence{Present: true},
 			nil,
@@ -218,6 +236,7 @@ func TestRestoreOutputValidationErrorRejectsTerminalSentinels(t *testing.T) {
 	t.Run("generated field validation cause", func(t *testing.T) {
 		correction := `Field "query" must contain a JSON string.`
 		terminal, err := RestoreOutputValidationError(
+			OutputValidationToolArguments,
 			&toolCallValidationError{
 				toolName:   "catalog.lookup",
 				correction: correction,
@@ -236,10 +255,15 @@ func TestRestoreOutputValidationErrorRejectsTerminalSentinels(t *testing.T) {
 func TestRestoreCorrectableOutputValidationErrorPreservesSafeFields(t *testing.T) {
 	contract, err := NewRequestContract(&Request{})
 	require.NoError(t, err)
-	source := contract.RejectResponse(canonicalTextResponse(), errors.New("decoded rejection contained a submitted value"))
+	source := contract.RejectResponse(
+		OutputValidationToolArguments,
+		canonicalTextResponse(),
+		errors.New("decoded rejection contained a submitted value"),
+	)
 	correction := "\nField \"query\" must contain a JSON string.\n"
 
 	terminal, err := RestoreOutputValidationError(
+		source.Kind(),
 		errors.Unwrap(source),
 		source.Evidence(),
 		source.Usage(),
@@ -268,6 +292,7 @@ func TestRestoreCorrectableOutputValidationErrorRequiresRestoredTerminal(t *test
 	require.ErrorContains(t, err, "requires a restored terminal error")
 
 	local := newOutputValidationError(
+		OutputValidationResponseShape,
 		errors.New("locally classified output rejection"),
 		ResponseEvidence{Present: true},
 		nil,
@@ -278,6 +303,7 @@ func TestRestoreCorrectableOutputValidationErrorRequiresRestoredTerminal(t *test
 	require.ErrorContains(t, err, "requires an error returned by RestoreOutputValidationError")
 
 	terminal, err := RestoreOutputValidationError(
+		OutputValidationToolArguments,
 		errors.New("decoded validation failure"),
 		ResponseEvidence{Present: true},
 		nil,
@@ -320,6 +346,7 @@ func TestRestoreCorrectableOutputValidationErrorValidatesCorrection(t *testing.T
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			terminal, err := RestoreOutputValidationError(
+				OutputValidationToolArguments,
 				errors.New("decoded validation failure"),
 				ResponseEvidence{Present: true},
 				nil,
@@ -335,6 +362,7 @@ func TestRestoreCorrectableOutputValidationErrorValidatesCorrection(t *testing.T
 
 	accepted := strings.Repeat("x", correction.MaxBytes)
 	terminal, err := RestoreOutputValidationError(
+		OutputValidationToolArguments,
 		errors.New("decoded validation failure"),
 		ResponseEvidence{Present: true},
 		nil,

@@ -299,7 +299,11 @@ func TestClientAttachesObserverToExactValidatedStreamAndFinishesOnClose(t *testi
 func TestClientCompleteClassifiesOnlyExactOutputValidation(t *testing.T) {
 	contract, err := NewRequestContract(&Request{})
 	require.NoError(t, err)
-	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	validationErr := contract.RejectProviderOutput(
+		OutputValidationResponseShape,
+		nil,
+		errors.New("rejected output"),
+	)
 	providerErr := errors.New("provider failed")
 	tests := []struct {
 		name               string
@@ -369,7 +373,11 @@ func TestClientFinalizeRetainsIndependentLifecycleFailures(t *testing.T) {
 	providerCloseErr := errors.New("provider close failed")
 	contract, err := NewRequestContract(&Request{})
 	require.NoError(t, err)
-	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	validationErr := contract.RejectProviderOutput(
+		OutputValidationResponseShape,
+		nil,
+		errors.New("rejected output"),
+	)
 	raw := &validatedStreamFixture{recvErr: validationErr, closeErr: providerCloseErr}
 	streamObserver := &observerTestStreamObserver{closeErr: closeObserverErr}
 	events := []string{}
@@ -412,7 +420,11 @@ func TestClientFinalizeRetainsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	contract, err := NewRequestContract(&Request{})
 	require.NoError(t, err)
-	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	validationErr := contract.RejectProviderOutput(
+		OutputValidationResponseShape,
+		nil,
+		errors.New("rejected output"),
+	)
 	providerCloseErr := errors.New("provider close failed")
 	raw := &validatedStreamFixture{recvErr: validationErr, closeErr: providerCloseErr}
 	client, err := NewClient(&observerTestProvider{stream: raw})
@@ -458,7 +470,11 @@ func TestClientFinalizeResamplesCancellationDuringLifecycle(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			contract, err := NewRequestContract(&Request{})
 			require.NoError(t, err)
-			validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+			validationErr := contract.RejectProviderOutput(
+				OutputValidationResponseShape,
+				nil,
+				errors.New("rejected output"),
+			)
 			providerCloseErr := errors.New("provider close failed")
 			raw := &validatedStreamFixture{recvErr: validationErr, closeErr: providerCloseErr}
 			events := []string{}

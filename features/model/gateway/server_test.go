@@ -398,6 +398,7 @@ func TestServerStreamPreservesValidationAndRecordsCloseFailure(t *testing.T) {
 	contract, err := model.NewRequestContract(&model.Request{})
 	require.NoError(t, err)
 	validationErr := contract.RejectProviderOutput(
+		model.OutputValidationToolIdentity,
 		&model.TokenUsage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2},
 		model.NewUnadvertisedToolNameError("unlisted_tool"),
 	)
@@ -434,6 +435,7 @@ func TestServerStreamRetainsCleanupForMixedValidationFailure(t *testing.T) {
 	contract, err := model.NewRequestContract(&model.Request{})
 	require.NoError(t, err)
 	validationErr := contract.RejectProviderOutput(
+		model.OutputValidationToolIdentity,
 		nil,
 		model.NewUnadvertisedToolNameError("unlisted_tool"),
 	)
@@ -460,7 +462,11 @@ func TestServerStreamRetainsCleanupForMixedValidationFailure(t *testing.T) {
 func TestServerStreamRetainsCancellationDuringValidationFinalization(t *testing.T) {
 	contract, err := model.NewRequestContract(&model.Request{})
 	require.NoError(t, err)
-	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	validationErr := contract.RejectProviderOutput(
+		model.OutputValidationStreamProtocol,
+		nil,
+		errors.New("rejected output"),
+	)
 	closeErr := errors.New("provider close failed")
 	for _, test := range []struct {
 		name     string
@@ -497,7 +503,11 @@ func TestServerStreamSuppressesCleanupForWrappedDuplicateValidation(t *testing.T
 	closeErr := errors.New("provider close failed")
 	contract, err := model.NewRequestContract(&model.Request{})
 	require.NoError(t, err)
-	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	validationErr := contract.RejectProviderOutput(
+		model.OutputValidationStreamProtocol,
+		nil,
+		errors.New("rejected output"),
+	)
 	primaryErr := fmt.Errorf("translated: %w", errors.Join(validationErr, validationErr))
 	upstream := &stubStreamer{recvErr: primaryErr, closeErr: closeErr}
 	server, err := NewServer(WithProvider(stubProvider{streamer: upstream}))
