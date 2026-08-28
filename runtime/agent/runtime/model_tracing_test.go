@@ -65,6 +65,28 @@ func testGenAIContext() telemetry.GenAIContext {
 	}
 }
 
+func TestOutputValidationAttrsExposeOnlyExactClosedCategory(t *testing.T) {
+	contract, err := model.NewRequestContract(&model.Request{})
+	require.NoError(t, err)
+	const privateCause = "private-provider-cause-sentinel"
+	validationErr := contract.RejectProviderOutput(
+		model.OutputValidationToolArguments,
+		nil,
+		errors.New(privateCause),
+	)
+
+	attrs := outputValidationAttrs(validationErr)
+
+	require.Equal(t, []attribute.KeyValue{
+		attribute.String(
+			"gen_ai.response.validation.kind",
+			string(model.OutputValidationToolArguments),
+		),
+	}, attrs)
+	require.NotContains(t, fmt.Sprint(attrs), privateCause)
+	require.Empty(t, outputValidationAttrs(errors.Join(validationErr, errors.New("unrelated failure"))))
+}
+
 func TestTracedClientClosesStreamReturnedWithError(t *testing.T) {
 	callErr := errors.New("stream call failed")
 	closeErr := errors.New("stream close failed")

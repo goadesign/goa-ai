@@ -656,6 +656,12 @@ type (
 		// contract.
 		Origin planner.OutputContractOrigin
 
+		// ModelOutputValidationKind identifies the first mechanical response
+		// rule that rejected output. It is present only when the rejection came
+		// from model.OutputValidationError. Planner-authored policy rejections
+		// and histories written before categories existed leave it empty.
+		ModelOutputValidationKind model.OutputValidationKind `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+
 		// ReasonSHA256 identifies the private validation-cause text without
 		// carrying that text through Temporal.
 		ReasonSHA256 string

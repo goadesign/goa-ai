@@ -289,6 +289,13 @@ requires canonical model output. External packages cannot implement a valid
 `model.Client`; APIs that accept one verify the package-owned opaque client
 before inference.
 
+Mechanical response rejections return `*model.OutputValidationError`.
+`Kind()` reports one closed, privacy-safe category such as `tool_arguments` or
+`stream_protocol`; it never contains response text, provider text, tool names,
+arguments, or schema paths. The category is diagnostic only. Recovery still
+requires exact correction guidance produced by generated validation or planner
+policy, and remains bounded by the runtime's configured recovery-turn limit.
+
 Use `bedrock.NewAnthropic` for Claude deployments on Amazon Bedrock. It sends
 Anthropic Messages requests through Bedrock `InvokeModel`, so authored tool
 examples, forced tool choice, thinking, and prompt caching keep one

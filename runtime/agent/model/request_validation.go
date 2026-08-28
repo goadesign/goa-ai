@@ -32,9 +32,11 @@ type (
 	}
 
 	// OutputValidationError reports provider output that failed the immutable
-	// contract captured before inference began. It retains only bounded response
-	// identity plus an optional framework-owned rejected response.
+	// contract captured before inference began. Kind names the first rejecting
+	// check. The error retains only bounded response identity plus an optional
+	// framework-owned rejected response.
 	OutputValidationError struct {
+		kind       OutputValidationKind
 		cause      error
 		evidence   ResponseEvidence
 		rejected   *Response
@@ -134,19 +136,24 @@ func preparedRequest(request *Request, contract *RequestContract) *Request {
 func (c *RequestContract) ValidateResponse(response *Response) (*Response, error) {
 	evidence := ResponseEvidence{Present: response != nil}
 	usage := c.validatedUsageEvidence(response)
+	if response != nil {
+		if err := validateTokenUsage(response.Usage); err != nil {
+			return nil, newOutputValidationError(OutputValidationUsage, err, evidence, nil, usage)
+		}
+	}
 	if err := preflightResponse(response, &dynamicValueWalk{}, dynamicCloneEvidence); err != nil {
-		return nil, newOutputValidationError(err, evidence, nil, usage)
+		return nil, newOutputValidationError(OutputValidationOutputBounds, err, evidence, nil, usage)
 	}
 	evidence = responseEvidencePreflighted(response)
 	owned, err := ownPreflightedResponse(response)
 	if err != nil {
-		return nil, newOutputValidationError(err, evidence, nil, usage)
+		return nil, newOutputValidationError(OutputValidationResponseShape, err, evidence, nil, usage)
 	}
 	if owned != nil {
 		c.stampUsageIdentity(&owned.Usage)
 	}
-	if err := c.validateOwnedResponse(owned); err != nil {
-		return nil, newOutputValidationError(err, evidence, owned, usage)
+	if kind, err := c.validateOwnedResponse(owned); err != nil {
+		return nil, newOutputValidationError(kind, err, evidence, owned, usage)
 	}
 	return owned, nil
 }
@@ -156,11 +163,13 @@ func (c *RequestContract) ValidateResponse(response *Response) (*Response, error
 // usage is the provider metadata extracted before translating content. Valid
 // usage survives the rejection; response evidence records only that output was
 // present because no canonical Response exists to fingerprint.
-func (c *RequestContract) RejectProviderOutput(usage *TokenUsage, cause error) *OutputValidationError {
-	if cause == nil {
-		panic("model: output validation error requires a cause")
-	}
+func (c *RequestContract) RejectProviderOutput(
+	kind OutputValidationKind,
+	usage *TokenUsage,
+	cause error,
+) *OutputValidationError {
 	return newOutputValidationError(
+		kind,
 		cause,
 		ResponseEvidence{Present: true},
 		nil,
@@ -171,14 +180,18 @@ func (c *RequestContract) RejectProviderOutput(usage *TokenUsage, cause error) *
 // RejectResponse classifies a provider response translation failure as model
 // output validation. Providers call it only after transport succeeded and the
 // returned value could not be represented as a canonical Response.
-func (c *RequestContract) RejectResponse(response *Response, cause error) *OutputValidationError {
+func (c *RequestContract) RejectResponse(
+	kind OutputValidationKind,
+	response *Response,
+	cause error,
+) *OutputValidationError {
 	if cause == nil {
 		panic("model: output validation error requires a cause")
 	}
 	evidence := ResponseEvidence{Present: response != nil}
 	usage := c.validatedUsageEvidence(response)
 	if err := preflightResponse(response, &dynamicValueWalk{}, dynamicCloneEvidence); err != nil {
-		return newOutputValidationError(errors.Join(cause, err), evidence, nil, usage)
+		return newOutputValidationError(kind, errors.Join(cause, err), evidence, nil, usage)
 	}
 	evidence = responseEvidencePreflighted(response)
 	owned, err := ownPreflightedResponse(response)
@@ -186,7 +199,7 @@ func (c *RequestContract) RejectResponse(response *Response, cause error) *Outpu
 		cause = errors.Join(cause, err)
 		owned = nil
 	}
-	return newOutputValidationError(cause, evidence, owned, usage)
+	return newOutputValidationError(kind, cause, evidence, owned, usage)
 }
 
 // EvidenceForResponse returns a bounded fingerprint for one complete response.
@@ -201,6 +214,12 @@ func EvidenceForResponse(response *Response) ResponseEvidence {
 // need structured diagnostic evidence.
 func (e *OutputValidationError) Error() string {
 	return "model output does not meet its request contract"
+}
+
+// Kind returns the closed category of the first request-contract check that
+// rejected the provider output. The value contains no model or provider text.
+func (e *OutputValidationError) Kind() OutputValidationKind {
+	return e.kind
 }
 
 // Unwrap exposes the underlying output-validation cause.
@@ -245,7 +264,15 @@ func (e *OutputValidationError) RecoveryCorrection() string {
 // evidence, usage, or a cause already classified as another model failure.
 // The restored error is terminal; callers may attach separately transported
 // correction guidance with RestoreCorrectableOutputValidationError.
-func RestoreOutputValidationError(cause error, evidence ResponseEvidence, usage *TokenUsage) (*OutputValidationError, error) {
+func RestoreOutputValidationError(
+	kind OutputValidationKind,
+	cause error,
+	evidence ResponseEvidence,
+	usage *TokenUsage,
+) (*OutputValidationError, error) {
+	if !validOutputValidationKind(kind) {
+		return nil, fmt.Errorf("model: restore output validation error: invalid kind %q", kind)
+	}
 	if err := validateRestoredOutputValidationCause(cause); err != nil {
 		return nil, err
 	}
@@ -260,6 +287,7 @@ func RestoreOutputValidationError(cause error, evidence ResponseEvidence, usage 
 		usage = &cloned
 	}
 	return &OutputValidationError{
+		kind:     kind,
 		cause:    cause,
 		evidence: evidence,
 		usage:    usage,
@@ -304,6 +332,7 @@ func RestoreCorrectableOutputValidationError(
 		)
 	}
 	return &OutputValidationError{
+		kind:       restored.kind,
 		cause:      restored.cause,
 		evidence:   restored.evidence,
 		usage:      restored.Usage(),
@@ -353,28 +382,37 @@ func validateRestoredOutputValidationCause(cause error) error {
 
 // validateOwnedResponse applies the request rules after the model boundary has
 // copied the provider response and stamped caller-owned usage identity.
-func (c *RequestContract) validateOwnedResponse(response *Response) error {
-	if err := validateCanonicalResponse(response); err != nil {
-		return fmt.Errorf("invalid model response: %w", err)
+func (c *RequestContract) validateOwnedResponse(response *Response) (OutputValidationKind, error) {
+	if kind, err := validateCanonicalResponseOutput(response); err != nil {
+		return kind, fmt.Errorf("invalid model response: %w", err)
 	}
 	if c.stream.structuredOutputPresent {
 		payload, err := structuredOutputResponsePayload(response)
 		if err != nil {
-			return err
+			return OutputValidationStructuredOutput, err
 		}
 		if err := c.structuredValidate(payload); err != nil {
-			return fmt.Errorf("structured output response does not match its schema: %w", err)
+			return OutputValidationStructuredOutput, fmt.Errorf(
+				"structured output response does not match its schema: %w",
+				err,
+			)
 		}
 	}
 	if c.completionValidate != nil {
 		if err := c.completionValidate(response, nil); err != nil {
-			return err
+			return OutputValidationStructuredOutput, err
 		}
 	}
 	if err := validateConfiguredToolCalls(c.toolValidators, response); err != nil {
-		return err
+		if _, ok := UnadvertisedToolName(err); ok {
+			return OutputValidationToolIdentity, err
+		}
+		return OutputValidationToolArguments, err
 	}
-	return validateToolChoiceResponse(c.toolChoiceMode, c.toolChoiceName, response)
+	if err := validateToolChoiceResponse(c.toolChoiceMode, c.toolChoiceName, response); err != nil {
+		return OutputValidationToolChoice, err
+	}
+	return "", nil
 }
 
 // stampUsageIdentity applies the logical model class copied from the request.
@@ -769,16 +807,24 @@ func responseEvidencePreflighted(response *Response) ResponseEvidence {
 
 // newOutputValidationError stores only framework-owned rejected response data.
 func newOutputValidationError(
+	kind OutputValidationKind,
 	cause error,
 	evidence ResponseEvidence,
 	rejected *Response,
 	usage *TokenUsage,
 ) *OutputValidationError {
+	if !validOutputValidationKind(kind) {
+		panic(fmt.Sprintf("model: invalid output validation kind %q", kind))
+	}
+	if cause == nil {
+		panic("model: output validation error requires a cause")
+	}
 	correction := recoveryCorrectionFromError(cause)
 	if correction != "" {
 		rejected = nil
 	}
 	return &OutputValidationError{
+		kind:       kind,
 		cause:      cause,
 		evidence:   evidence,
 		rejected:   rejected,

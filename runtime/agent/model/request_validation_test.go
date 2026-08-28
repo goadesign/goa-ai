@@ -90,8 +90,15 @@ func TestRequestContractRejectsMalformedProviderUsageModel(t *testing.T) {
 
 	_, err = contract.ValidateResponse(response)
 
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, OutputValidationUsage, validationErr.Kind())
 	require.ErrorContains(t, outputValidationCause(t, err), "not valid UTF-8")
-	rejected := contract.RejectProviderOutput(&response.Usage, errors.New("translation failed"))
+	rejected := contract.RejectProviderOutput(
+		OutputValidationUsage,
+		&response.Usage,
+		errors.New("translation failed"),
+	)
 	require.Empty(t, rejected.Usage().Model)
 	require.Equal(t, 3, rejected.Usage().TotalTokens)
 	require.Equal(t, ModelClassSmall, rejected.Usage().ModelClass)
@@ -145,6 +152,7 @@ func TestRequestContractReturnsImmutableOutputValidationError(t *testing.T) {
 	require.Nil(t, owned)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, OutputValidationResponseShape, validationErr.Kind())
 	require.True(t, validationErr.Evidence().Present)
 	require.NotEmpty(t, validationErr.Evidence().SHA256)
 	require.EqualError(t, validationErr, "model output does not meet its request contract")
@@ -188,6 +196,9 @@ func TestRequestContractRejectsContradictoryNoArgumentTool(t *testing.T) {
 		ID:    "call-1",
 	}
 	_, err = contract.ValidateResponse(response)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, OutputValidationToolArguments, validationErr.Kind())
 	require.ErrorContains(t, outputValidationCause(t, err), `payload is not the canonical empty object`)
 }
 
@@ -198,6 +209,13 @@ func outputValidationCause(t *testing.T, err error) error {
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
 	return errors.Unwrap(validationErr)
+}
+
+func requireOutputValidationKind(t *testing.T, err error, want OutputValidationKind) {
+	t.Helper()
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, want, validationErr.Kind())
 }
 
 func TestToolDefinitionAcceptsEmptyObject(t *testing.T) {
@@ -486,6 +504,7 @@ func TestGeneratedToolValidationWithoutStructuredIssuesRemainsTerminal(t *testin
 	require.Empty(t, validationErr.RecoveryCorrection())
 
 	restored, restoreErr := RestoreOutputValidationError(
+		validationErr.Kind(),
 		errors.Unwrap(validationErr),
 		validationErr.Evidence(),
 		validationErr.Usage(),
@@ -548,6 +567,7 @@ func TestRequestContractEnforcesToolChoice(t *testing.T) {
 			}
 			var validationErr *OutputValidationError
 			require.ErrorAs(t, err, &validationErr)
+			require.Equal(t, OutputValidationToolChoice, validationErr.Kind())
 			require.ErrorContains(t, outputValidationCause(t, err), test.wantErr)
 		})
 	}
@@ -756,6 +776,7 @@ func TestRequestContractValidatesUnaryStructuredOutputEnvelope(t *testing.T) {
 	_, err = contract.ValidateResponse(invalid)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, OutputValidationStructuredOutput, validationErr.Kind())
 	require.ErrorContains(t, outputValidationCause(t, err), "decode candidate JSON")
 }
 

@@ -12,6 +12,7 @@ import (
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 
+	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -227,7 +228,11 @@ func (s *anthropicStreamer) outputError(processor *anthropicChunkProcessor, err 
 		return err
 	}
 	usage := processor.attributedUsage(s.modelID, s.modelClass)
-	return s.contract.RejectProviderOutput(&usage, err)
+	return s.contract.RejectProviderOutput(
+		outputvalidation.RequiredKind(err),
+		&usage,
+		err,
+	)
 }
 
 func (s *anthropicStreamer) emitChunk(chunk model.Chunk) error {
@@ -301,7 +306,10 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 	switch ev := event.AsAny().(type) {
 	case sdk.MessageStartEvent:
 		if p.started {
-			return errors.New("anthropic stream: duplicate message start")
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("anthropic stream: duplicate message start"),
+			)
 		}
 		p.toolBlocks = make(map[int]*toolBuffer)
 		p.thinkingBlocks = make(map[int]*thinkingBuffer)
@@ -320,11 +328,17 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		return p.emit(model.UsageChunk{Usage: p.usage})
 	case sdk.ContentBlockStartEvent:
 		if !p.started || p.complete {
-			return errors.New("anthropic stream: content block started outside an active message")
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("anthropic stream: content block started outside an active message"),
+			)
 		}
 		idx := int(ev.Index)
 		if _, ok := p.openBlocks[idx]; ok {
-			return fmt.Errorf("anthropic stream: duplicate content block start %d", idx)
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				fmt.Errorf("anthropic stream: duplicate content block start %d", idx),
+			)
 		}
 		if err := p.retain(""); err != nil {
 			return err
@@ -334,7 +348,10 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		if text, ok := start.(sdk.TextBlock); ok {
 			if p.output != nil {
 				if p.completion != nil || p.completionSeen {
-					return errors.New("anthropic stream: structured output contains multiple text blocks")
+					return outputvalidation.New(
+						model.OutputValidationStructuredOutput,
+						errors.New("anthropic stream: structured output contains multiple text blocks"),
+					)
 				}
 				p.completion = &completionBuffer{
 					name:  p.output.Name,
@@ -356,10 +373,16 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		if toolUse, ok := start.(sdk.ToolUseBlock); ok {
 			tb := &toolBuffer{}
 			if toolUse.ID == "" {
-				return fmt.Errorf("anthropic stream: tool use block missing id")
+				return outputvalidation.New(
+					model.OutputValidationToolIdentity,
+					errors.New("anthropic stream: tool use block missing id"),
+				)
 			}
 			if toolUse.Name == "" {
-				return fmt.Errorf("anthropic stream: tool use block %q missing name", toolUse.ID)
+				return outputvalidation.New(
+					model.OutputValidationToolIdentity,
+					fmt.Errorf("anthropic stream: tool use block %q missing name", toolUse.ID),
+				)
 			}
 			if err := p.retain(toolUse.ID); err != nil {
 				return err
@@ -370,9 +393,12 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			raw := toolUse.Name
 			canonical, ok := p.toolNameMap[raw]
 			if !ok {
-				return fmt.Errorf(
-					"anthropic stream: translate tool use: %w",
-					model.NewUnadvertisedToolNameError(raw),
+				return outputvalidation.New(
+					model.OutputValidationToolIdentity,
+					fmt.Errorf(
+						"anthropic stream: translate tool use: %w",
+						model.NewUnadvertisedToolNameError(raw),
+					),
 				)
 			}
 			tb.name = canonical
@@ -406,7 +432,10 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		}
 		if redacted, ok := start.(sdk.RedactedThinkingBlock); ok {
 			if redacted.Data == "" {
-				return errors.New("anthropic stream: redacted thinking block missing data")
+				return outputvalidation.New(
+					model.OutputValidationResponseShape,
+					errors.New("anthropic stream: redacted thinking block missing data"),
+				)
 			}
 			if err := p.retain(redacted.Data); err != nil {
 				return err
@@ -419,22 +448,34 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			p.thinkingBlocks[idx] = &thinkingBuffer{redacted: []byte(redacted.Data)}
 			return nil
 		}
-		return fmt.Errorf("anthropic stream: unsupported content block %T", start)
+		return outputvalidation.New(
+			model.OutputValidationResponseShape,
+			fmt.Errorf("anthropic stream: unsupported content block %T", start),
+		)
 	case sdk.ContentBlockDeltaEvent:
 		if !p.started || p.complete {
-			return errors.New("anthropic stream: content block delta received outside an active message")
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("anthropic stream: content block delta received outside an active message"),
+			)
 		}
 		idx := int(ev.Index)
 		if _, ok := p.openBlocks[idx]; !ok {
-			return fmt.Errorf("anthropic stream: content block delta %d has no matching start", idx)
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				fmt.Errorf("anthropic stream: content block delta %d has no matching start", idx),
+			)
 		}
 		switch delta := ev.Delta.AsAny().(type) {
 		case sdk.TextDelta:
 			if p.output != nil {
 				if p.completion == nil || p.completion.index != idx {
-					return fmt.Errorf(
-						"anthropic stream: structured output text delta %d has no matching text block",
-						idx,
+					return outputvalidation.New(
+						model.OutputValidationStructuredOutput,
+						fmt.Errorf(
+							"anthropic stream: structured output text delta %d has no matching text block",
+							idx,
+						),
 					)
 				}
 				return p.emitCompletionDelta(delta.Text)
@@ -464,10 +505,16 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 				}
 				tb.appendFragment(delta.PartialJSON)
 				if tb.id == "" {
-					return fmt.Errorf("anthropic stream: tool JSON delta missing tool call id")
+					return outputvalidation.New(
+						model.OutputValidationToolIdentity,
+						errors.New("anthropic stream: tool JSON delta missing tool call id"),
+					)
 				}
 				if tb.name == "" {
-					return fmt.Errorf("anthropic stream: tool JSON delta missing tool name for id %q", tb.id)
+					return outputvalidation.New(
+						model.OutputValidationToolIdentity,
+						fmt.Errorf("anthropic stream: tool JSON delta missing tool name for id %q", tb.id),
+					)
 				}
 				return p.emit(model.ToolCallDeltaChunk{
 					Delta: model.ToolCallDelta{
@@ -477,7 +524,10 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 					},
 				})
 			}
-			return fmt.Errorf("anthropic stream: input JSON delta %d has no tool-use block", idx)
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				fmt.Errorf("anthropic stream: input JSON delta %d has no tool-use block", idx),
+			)
 		case sdk.ThinkingDelta:
 			if delta.Thinking == "" {
 				return nil
@@ -533,24 +583,36 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			// into the canonical CitationsPart returned by Response.
 			return nil
 		default:
-			return fmt.Errorf("anthropic stream: unsupported content block delta %T", delta)
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				fmt.Errorf("anthropic stream: unsupported content block delta %T", delta),
+			)
 		}
 	case sdk.ContentBlockStopEvent:
 		if !p.started || p.complete {
-			return errors.New("anthropic stream: content block stopped outside an active message")
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("anthropic stream: content block stopped outside an active message"),
+			)
 		}
 		idx := int(ev.Index)
 		if _, ok := p.openBlocks[idx]; !ok {
-			return fmt.Errorf("anthropic stream: content block stop %d has no matching start", idx)
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				fmt.Errorf("anthropic stream: content block stop %d has no matching start", idx),
+			)
 		}
 		delete(p.openBlocks, idx)
 		if p.completion != nil && p.completion.index == idx {
 			payload, err := p.completion.finalPayload()
 			if err != nil {
-				return fmt.Errorf(
-					"anthropic stream: finalize structured output %q: %w",
-					p.completion.name,
-					err,
+				return outputvalidation.New(
+					model.OutputValidationStructuredOutput,
+					fmt.Errorf(
+						"anthropic stream: finalize structured output %q: %w",
+						p.completion.name,
+						err,
+					),
 				)
 			}
 			completion := p.completion
@@ -567,7 +629,10 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			delete(p.thinkingBlocks, idx)
 			part, err := tb.finalize(p.thinkingIndexes[idx])
 			if err != nil {
-				return fmt.Errorf("anthropic stream: finalize thinking block %d: %w", idx, err)
+				return outputvalidation.New(
+					model.OutputValidationResponseShape,
+					fmt.Errorf("anthropic stream: finalize thinking block %d: %w", idx, err),
+				)
 			}
 			if part != nil {
 				if err := p.emit(model.ThinkingChunk{
@@ -586,7 +651,10 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 				var err error
 				payload, err = decodeToolPayload(tb.finalInput())
 				if err != nil {
-					return fmt.Errorf("anthropic stream: finalize tool payload %q: %w", tb.id, err)
+					return outputvalidation.New(
+						model.OutputValidationToolArguments,
+						fmt.Errorf("anthropic stream: finalize tool payload %q: %w", tb.id, err),
+					)
 				}
 			}
 			delete(p.toolBlocks, idx)
@@ -601,7 +669,10 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		return nil
 	case sdk.MessageDeltaEvent:
 		if !p.started || p.complete {
-			return errors.New("anthropic stream: message delta received outside an active message")
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("anthropic stream: message delta received outside an active message"),
+			)
 		}
 		p.stopReason = string(ev.Delta.StopReason)
 		// Anthropic sends cumulative usage but may omit fields that have not
@@ -623,7 +694,7 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		cumulative.TotalTokens = cumulative.InputTokens + cumulative.OutputTokens
 		delta, err := subtractAnthropicUsage(cumulative, p.usage)
 		if err != nil {
-			return err
+			return outputvalidation.New(model.OutputValidationUsage, err)
 		}
 		p.usage = cumulative
 		if delta == (model.TokenUsage{}) {
@@ -642,18 +713,30 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			)
 		}
 		if p.complete {
-			return errors.New("anthropic stream: duplicate message stop")
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("anthropic stream: duplicate message stop"),
+			)
 		}
 		if len(p.openBlocks) > 0 {
-			return fmt.Errorf("anthropic stream: message stopped with %d open content blocks", len(p.openBlocks))
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				fmt.Errorf("anthropic stream: message stopped with %d open content blocks", len(p.openBlocks)),
+			)
 		}
 		if p.stopReason == "" {
-			return errors.New("anthropic stream: message stopped without a stop reason")
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("anthropic stream: message stopped without a stop reason"),
+			)
 		}
 		if p.output != nil && !p.completionSeen {
-			return fmt.Errorf(
-				"anthropic stream: structured output %q did not produce a text block",
-				p.output.Name,
+			return outputvalidation.New(
+				model.OutputValidationStructuredOutput,
+				fmt.Errorf(
+					"anthropic stream: structured output %q did not produce a text block",
+					p.output.Name,
+				),
 			)
 		}
 		chunk := model.StopChunk{
@@ -663,7 +746,10 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		p.complete = true
 		return p.emit(chunk)
 	default:
-		return fmt.Errorf("anthropic stream: unsupported event %T", ev)
+		return outputvalidation.New(
+			model.OutputValidationStreamProtocol,
+			fmt.Errorf("anthropic stream: unsupported event %T", ev),
+		)
 	}
 }
 
@@ -790,7 +876,10 @@ func (p *anthropicChunkProcessor) emitCompletionDelta(delta string) error {
 		return nil
 	}
 	if p.completion == nil {
-		return errors.New("anthropic stream: structured output fragment has no text block")
+		return outputvalidation.New(
+			model.OutputValidationStructuredOutput,
+			errors.New("anthropic stream: structured output fragment has no text block"),
+		)
 	}
 	if err := p.retain(delta); err != nil {
 		return err
@@ -843,10 +932,16 @@ func decodeToolPayload(raw string) (rawjson.Message, error) {
 // retain charges provider fragments before any private accumulator grows.
 func (p *anthropicChunkProcessor) retain(value string) error {
 	if p.retainedValues >= 100_000 {
-		return errors.New("anthropic stream: retained output exceeds 100000 values")
+		return outputvalidation.New(
+			model.OutputValidationOutputBounds,
+			errors.New("anthropic stream: retained output exceeds 100000 values"),
+		)
 	}
 	if len(value) > 16<<20-p.retainedBytes {
-		return errors.New("anthropic stream: retained output exceeds 16777216 bytes")
+		return outputvalidation.New(
+			model.OutputValidationOutputBounds,
+			errors.New("anthropic stream: retained output exceeds 16777216 bytes"),
+		)
 	}
 	p.retainedValues++
 	p.retainedBytes += len(value)
@@ -858,13 +953,22 @@ func (p *anthropicChunkProcessor) retain(value string) error {
 func (p *anthropicChunkProcessor) retainSDKSnapshot(event sdk.MessageStreamEventUnion) error {
 	data, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("anthropic stream: encode provider event for retention budget: %w", err)
+		return outputvalidation.New(
+			model.OutputValidationResponseShape,
+			fmt.Errorf("anthropic stream: encode provider event for retention budget: %w", err),
+		)
 	}
 	if p.retainedValues >= 100_000 {
-		return errors.New("anthropic stream: retained output exceeds 100000 values")
+		return outputvalidation.New(
+			model.OutputValidationOutputBounds,
+			errors.New("anthropic stream: retained output exceeds 100000 values"),
+		)
 	}
 	if len(data) > 16<<20-p.retainedBytes {
-		return errors.New("anthropic stream: retained output exceeds 16777216 bytes")
+		return outputvalidation.New(
+			model.OutputValidationOutputBounds,
+			errors.New("anthropic stream: retained output exceeds 16777216 bytes"),
+		)
 	}
 	p.retainedValues++
 	p.retainedBytes += len(data)

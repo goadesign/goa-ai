@@ -28,19 +28,26 @@ func ValidateResponse(response *Response) error {
 // validateCanonicalResponse checks a response that has already passed complete
 // allocation preflight.
 func validateCanonicalResponse(response *Response) error {
+	_, err := validateCanonicalResponseOutput(response)
+	return err
+}
+
+// validateCanonicalResponseOutput checks one completed response and reports
+// which closed output boundary rejected it.
+func validateCanonicalResponseOutput(response *Response) (OutputValidationKind, error) {
 	if response == nil {
-		return errors.New("model: response is nil")
+		return OutputValidationResponseShape, errors.New("model: response is nil")
 	}
 	if len(response.Content) == 0 {
-		return errors.New("model: response has no assistant content")
+		return OutputValidationResponseShape, errors.New("model: response has no assistant content")
 	}
 	for index := range response.Content {
 		if err := validateResponseMessage(&response.Content[index]); err != nil {
-			return fmt.Errorf("model: response content %d: %w", index, err)
+			return OutputValidationResponseShape, fmt.Errorf("model: response content %d: %w", index, err)
 		}
 	}
 	if err := validateTokenUsage(response.Usage); err != nil {
-		return err
+		return OutputValidationUsage, err
 	}
 	seen := make(map[string]struct{})
 	for messageIndex := range response.Content {
@@ -56,19 +63,24 @@ func validateCanonicalResponse(response *Response) error {
 				ID:               use.ID,
 				ThoughtSignature: use.ThoughtSignature,
 			}
-			if err := validateToolCall(&call); err != nil {
-				return fmt.Errorf("model: response content %d part %d: %w", messageIndex, partIndex, err)
+			if kind, err := validateToolCallOutput(&call); err != nil {
+				return kind, fmt.Errorf("model: response content %d part %d: %w", messageIndex, partIndex, err)
 			}
 			if _, ok := seen[call.ID]; ok {
-				return fmt.Errorf("model: response content %d part %d: duplicate tool call ID %q", messageIndex, partIndex, call.ID)
+				return OutputValidationToolIdentity, fmt.Errorf(
+					"model: response content %d part %d: duplicate tool call ID %q",
+					messageIndex,
+					partIndex,
+					call.ID,
+				)
 			}
 			seen[call.ID] = struct{}{}
 		}
 	}
 	if response.StopReason == "" {
-		return errors.New("model: response is missing its stop reason")
+		return OutputValidationResponseShape, errors.New("model: response is missing its stop reason")
 	}
-	return nil
+	return "", nil
 }
 
 // ValidateChunk verifies one model presentation event follows the canonical
@@ -83,49 +95,56 @@ func ValidateChunk(chunk Chunk) error {
 // validateCanonicalChunk checks one chunk already charged to a unary or
 // stream-wide preflight budget.
 func validateCanonicalChunk(chunk Chunk) error {
+	_, err := validateCanonicalChunkOutput(chunk)
+	return err
+}
+
+// validateCanonicalChunkOutput checks one stream event and reports the closed
+// output boundary that rejected it.
+func validateCanonicalChunkOutput(chunk Chunk) (OutputValidationKind, error) {
 	switch actual := chunk.(type) {
 	case TextChunk:
-		return validateChunkMessage(&actual.Message, false)
+		return OutputValidationResponseShape, validateChunkMessage(&actual.Message, false)
 	case ThinkingChunk:
-		return validateChunkMessage(&actual.Message, true)
+		return OutputValidationResponseShape, validateChunkMessage(&actual.Message, true)
 	case ToolCallChunk:
-		return validateToolCall(&actual.ToolCall)
+		return validateToolCallOutput(&actual.ToolCall)
 	case ToolCallDeltaChunk:
 		if actual.Delta.Name == "" {
-			return errors.New("model: tool-call delta is missing its name")
+			return OutputValidationToolIdentity, errors.New("model: tool-call delta is missing its name")
 		}
 		if actual.Delta.ID == "" {
-			return errors.New("model: tool-call delta is missing its ID")
+			return OutputValidationToolIdentity, errors.New("model: tool-call delta is missing its ID")
 		}
 		if actual.Delta.Delta == "" {
-			return errors.New("model: tool-call delta is empty")
+			return OutputValidationToolArguments, errors.New("model: tool-call delta is empty")
 		}
 	case CompletionChunk:
 		if actual.Completion.Name == "" {
-			return errors.New("model: completion is missing its name")
+			return OutputValidationStructuredOutput, errors.New("model: completion is missing its name")
 		}
 		if !json.Valid(actual.Completion.Payload) {
-			return errors.New("model: completion payload is not valid JSON")
+			return OutputValidationStructuredOutput, errors.New("model: completion payload is not valid JSON")
 		}
 	case CompletionDeltaChunk:
 		if actual.Delta.Name == "" {
-			return errors.New("model: completion delta is missing its name")
+			return OutputValidationStructuredOutput, errors.New("model: completion delta is missing its name")
 		}
 		if actual.Delta.Delta == "" {
-			return errors.New("model: completion delta is empty")
+			return OutputValidationStructuredOutput, errors.New("model: completion delta is empty")
 		}
 	case UsageChunk:
-		return validateTokenUsage(actual.Usage)
+		return OutputValidationUsage, validateTokenUsage(actual.Usage)
 	case StopChunk:
 		if actual.Reason == "" {
-			return errors.New("model: stop chunk is missing its reason")
+			return OutputValidationResponseShape, errors.New("model: stop chunk is missing its reason")
 		}
 	case nil:
-		return errors.New("model: stream chunk is nil")
+		return OutputValidationResponseShape, errors.New("model: stream chunk is nil")
 	default:
-		return fmt.Errorf("model: unsupported stream chunk %T", chunk)
+		return OutputValidationResponseShape, fmt.Errorf("model: unsupported stream chunk %T", chunk)
 	}
-	return nil
+	return "", nil
 }
 
 func validateResponseMessage(message *Message) error {
@@ -220,23 +239,25 @@ func validateThinkingPart(part ThinkingPart) error {
 	return nil
 }
 
-func validateToolCall(call *ToolCall) error {
+// validateToolCallOutput distinguishes call identity from argument failures
+// without inspecting an error string.
+func validateToolCallOutput(call *ToolCall) (OutputValidationKind, error) {
 	if call == nil {
-		return errors.New("model: tool-call chunk is missing its call")
+		return OutputValidationToolIdentity, errors.New("model: tool-call chunk is missing its call")
 	}
 	if call.ID == "" {
-		return errors.New("tool call is missing its ID")
+		return OutputValidationToolIdentity, errors.New("tool call is missing its ID")
 	}
 	if call.Name == "" {
-		return fmt.Errorf("tool call %q is missing its name", call.ID)
+		return OutputValidationToolIdentity, fmt.Errorf("tool call %q is missing its name", call.ID)
 	}
 	if !json.Valid(call.Payload) {
-		return fmt.Errorf("tool call %q payload is not valid JSON", call.ID)
+		return OutputValidationToolArguments, fmt.Errorf("tool call %q payload is not valid JSON", call.ID)
 	}
 	if data := bytes.TrimSpace(call.Payload); len(data) == 0 || data[0] != '{' {
-		return fmt.Errorf("tool call %q payload must be a JSON object", call.ID)
+		return OutputValidationToolArguments, fmt.Errorf("tool call %q payload must be a JSON object", call.ID)
 	}
-	return nil
+	return "", nil
 }
 
 // ValidateCitationsPart verifies that a canonical citation block has generated

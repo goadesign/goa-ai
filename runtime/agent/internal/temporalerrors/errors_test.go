@@ -157,6 +157,7 @@ func TestWrapKeepsModelOutputDetailsOutOfFailureText(t *testing.T) {
 	contract, err := model.NewRequestContract(&model.Request{})
 	require.NoError(t, err)
 	validationErr := contract.RejectProviderOutput(
+		model.OutputValidationResponseShape,
 		nil,
 		model.NewUnadvertisedToolNameError("unlisted_tool"),
 	)

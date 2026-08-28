@@ -27,6 +27,7 @@ import (
 	"goa.design/goa-ai/features/model/internal/claudebeta"
 	"goa.design/goa-ai/features/model/internal/claudecaps"
 	"goa.design/goa-ai/features/model/internal/modelid"
+	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/features/model/internal/tooluseid"
 	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -225,11 +226,15 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	resp, err := translateResponse(output, parts.toolNameProvToCanonical, parts.modelID, parts.modelClass)
 	if err != nil {
 		usage := translateBedrockUsage(output, parts.modelID, parts.modelClass)
-		return nil, contract.RejectProviderOutput(&usage, err)
+		return nil, contract.RejectProviderOutput(
+			outputvalidation.RequiredKind(err),
+			&usage,
+			err,
+		)
 	}
 	if parts.structuredOutputToolName != "" {
 		if err := reifyStructuredOutputTool(resp, parts.structuredOutputToolName); err != nil {
-			return nil, contract.RejectResponse(resp, err)
+			return nil, contract.RejectResponse(model.OutputValidationStructuredOutput, resp, err)
 		}
 	}
 	return resp, nil
@@ -1697,12 +1702,18 @@ func smithyDocumentValue(value any) (any, error) {
 // via nameMap and stamping the resolved model identifier and class.
 func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string]string, modelID string, modelClass model.ModelClass) (*model.Response, error) {
 	if output == nil {
-		return nil, errors.New("bedrock: response is nil")
+		return nil, outputvalidation.New(
+			model.OutputValidationResponseShape,
+			errors.New("bedrock: response is nil"),
+		)
 	}
 	resp := &model.Response{}
 	msg, ok := output.Output.(*brtypes.ConverseOutputMemberMessage)
 	if !ok {
-		return nil, fmt.Errorf("bedrock: unsupported response output %T", output.Output)
+		return nil, outputvalidation.New(
+			model.OutputValidationResponseShape,
+			fmt.Errorf("bedrock: unsupported response output %T", output.Output),
+		)
 	}
 	assistant := model.Message{Role: model.ConversationRole(msg.Value.Role)}
 	reasoningIndex := 0
@@ -1714,7 +1725,10 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 				text := aws.ToString(reasoning.Value.Text)
 				signature := aws.ToString(reasoning.Value.Signature)
 				if signature == "" {
-					return nil, errors.New("bedrock: response reasoning plaintext is missing provider signature")
+					return nil, outputvalidation.New(
+						model.OutputValidationResponseShape,
+						errors.New("bedrock: response reasoning plaintext is missing provider signature"),
+					)
 				}
 				// Signature-only reasoning blocks are canonical when thinking
 				// display is "omitted"; preserve them for verbatim replay.
@@ -1727,7 +1741,10 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 				reasoningIndex++
 			case *brtypes.ReasoningContentBlockMemberRedactedContent:
 				if len(reasoning.Value) == 0 {
-					return nil, errors.New("bedrock: response redacted reasoning block requires data")
+					return nil, outputvalidation.New(
+						model.OutputValidationResponseShape,
+						errors.New("bedrock: response redacted reasoning block requires data"),
+					)
 				}
 				assistant.Parts = append(assistant.Parts, model.ThinkingPart{
 					Redacted: append([]byte(nil), reasoning.Value...),
@@ -1736,35 +1753,50 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 				})
 				reasoningIndex++
 			default:
-				return nil, fmt.Errorf("bedrock: unsupported response reasoning block %T", v.Value)
+				return nil, outputvalidation.New(
+					model.OutputValidationResponseShape,
+					fmt.Errorf("bedrock: unsupported response reasoning block %T", v.Value),
+				)
 			}
 		case *brtypes.ContentBlockMemberText:
 			assistant.Parts = append(assistant.Parts, model.TextPart{Text: v.Value})
 		case *brtypes.ContentBlockMemberCitationsContent:
 			part, err := translateCitationsContent(v.Value)
 			if err != nil {
-				return nil, err
+				return nil, outputvalidation.New(model.OutputValidationResponseShape, err)
 			}
 			assistant.Parts = append(assistant.Parts, part)
 		case *brtypes.ContentBlockMemberToolUse:
 			if v.Value.Name == nil || *v.Value.Name == "" {
-				return nil, errors.New("bedrock: response tool use block missing name")
+				return nil, outputvalidation.New(
+					model.OutputValidationToolIdentity,
+					errors.New("bedrock: response tool use block missing name"),
+				)
 			}
 			raw := *v.Value.Name
 			key := normalizeToolName(raw)
 			name, ok := nameMap[key]
 			if !ok {
-				return nil, fmt.Errorf(
-					"bedrock: translate response tool use: %w",
-					model.NewUnadvertisedToolNameError(raw),
+				return nil, outputvalidation.New(
+					model.OutputValidationToolIdentity,
+					fmt.Errorf(
+						"bedrock: translate response tool use: %w",
+						model.NewUnadvertisedToolNameError(raw),
+					),
 				)
 			}
 			if v.Value.ToolUseId == nil || *v.Value.ToolUseId == "" {
-				return nil, errors.New("bedrock: response tool use block missing ID")
+				return nil, outputvalidation.New(
+					model.OutputValidationToolIdentity,
+					errors.New("bedrock: response tool use block missing ID"),
+				)
 			}
 			payload, err := decodeDocument(v.Value.Input)
 			if err != nil {
-				return nil, fmt.Errorf("bedrock: decode tool use input: %w", err)
+				return nil, outputvalidation.New(
+					model.OutputValidationToolArguments,
+					fmt.Errorf("bedrock: decode tool use input: %w", err),
+				)
 			}
 			assistant.Parts = append(assistant.Parts, model.ToolUsePart{
 				Name:  string(tools.Ident(name)),
@@ -1772,7 +1804,10 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 				ID:    *v.Value.ToolUseId,
 			})
 		default:
-			return nil, fmt.Errorf("bedrock: unsupported response content block %T", block)
+			return nil, outputvalidation.New(
+				model.OutputValidationResponseShape,
+				fmt.Errorf("bedrock: unsupported response content block %T", block),
+			)
 		}
 	}
 	if len(assistant.Parts) > 0 {
@@ -1781,7 +1816,10 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 	resp.Usage = translateBedrockUsage(output, modelID, modelClass)
 	resp.StopReason = string(output.StopReason)
 	if resp.StopReason == "" {
-		return nil, errors.New("bedrock: response is missing its stop reason")
+		return nil, outputvalidation.New(
+			model.OutputValidationResponseShape,
+			errors.New("bedrock: response is missing its stop reason"),
+		)
 	}
 	resp.OutputLimited = bedrockOutputLimited(output.StopReason)
 	return resp, nil

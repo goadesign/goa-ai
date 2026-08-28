@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
+	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -213,7 +214,11 @@ func (s *bedrockStreamer) outputError(usage model.TokenUsage, err error) error {
 	if errors.As(err, &validationErr) {
 		return err
 	}
-	return s.contract.RejectProviderOutput(&usage, err)
+	return s.contract.RejectProviderOutput(
+		outputvalidation.RequiredKind(err),
+		&usage,
+		err,
+	)
 }
 
 func (s *bedrockStreamer) emitChunk(chunk model.Chunk) error {
@@ -342,34 +347,49 @@ func (p *chunkProcessor) Handle(event any) error {
 				return fmt.Errorf("bedrock stream: unsupported content block start %T", start)
 			}
 			if toolUse.Value.ToolUseId == nil || *toolUse.Value.ToolUseId == "" {
-				return fmt.Errorf("bedrock stream: tool use block missing tool_use_id")
+				return outputvalidation.New(
+					model.OutputValidationToolIdentity,
+					errors.New("bedrock stream: tool use block missing tool_use_id"),
+				)
 			}
 			id := *toolUse.Value.ToolUseId
 			if toolUse.Value.Name == nil || *toolUse.Value.Name == "" {
-				return fmt.Errorf("bedrock stream: tool use block %q missing name", id)
+				return outputvalidation.New(
+					model.OutputValidationToolIdentity,
+					fmt.Errorf("bedrock stream: tool use block %q missing name", id),
+				)
 			}
 			raw := *toolUse.Value.Name
 			providerName := normalizeToolName(raw)
 			name, ok := p.toolNameMap[providerName]
 			if !ok {
-				return fmt.Errorf(
-					"bedrock stream: translate tool use: %w",
-					model.NewUnadvertisedToolNameError(raw),
+				return outputvalidation.New(
+					model.OutputValidationToolIdentity,
+					fmt.Errorf(
+						"bedrock stream: translate tool use: %w",
+						model.NewUnadvertisedToolNameError(raw),
+					),
 				)
 			}
 			if p.output != nil {
 				if p.structuredOutputToolName == "" || name != p.structuredOutputToolName {
-					return fmt.Errorf(
-						"bedrock stream: structured output %q emitted tool_use start",
-						p.output.Name,
+					return outputvalidation.New(
+						model.OutputValidationStructuredOutput,
+						fmt.Errorf(
+							"bedrock stream: structured output %q emitted tool_use start",
+							p.output.Name,
+						),
 					)
 				}
 				if p.completion != nil {
-					return fmt.Errorf(
-						"bedrock stream: structured output %q spanned multiple content blocks (%d, %d)",
-						p.output.Name,
-						p.completion.index,
-						idx,
+					return outputvalidation.New(
+						model.OutputValidationStructuredOutput,
+						fmt.Errorf(
+							"bedrock stream: structured output %q spanned multiple content blocks (%d, %d)",
+							p.output.Name,
+							p.completion.index,
+							idx,
+						),
 					)
 				}
 				p.completion = &completionBuffer{name: p.output.Name, index: idx}
@@ -495,9 +515,12 @@ func (p *chunkProcessor) Handle(event any) error {
 		case *brtypes.ContentBlockDeltaMemberToolUse:
 			if p.output != nil {
 				if p.completion == nil || p.completion.index != idx {
-					return fmt.Errorf(
-						"bedrock stream: structured output %q emitted tool_use delta",
-						p.output.Name,
+					return outputvalidation.New(
+						model.OutputValidationStructuredOutput,
+						fmt.Errorf(
+							"bedrock stream: structured output %q emitted tool_use delta",
+							p.output.Name,
+						),
 					)
 				}
 				if delta.Value.Input == nil || *delta.Value.Input == "" {
@@ -521,10 +544,16 @@ func (p *chunkProcessor) Handle(event any) error {
 				}
 				tb.fragments.WriteString(fragment)
 				if tb.id == "" {
-					return fmt.Errorf("bedrock stream: tool JSON delta missing tool call id")
+					return outputvalidation.New(
+						model.OutputValidationToolIdentity,
+						errors.New("bedrock stream: tool JSON delta missing tool call id"),
+					)
 				}
 				if tb.name == "" {
-					return fmt.Errorf("bedrock stream: tool JSON delta missing tool name for id %q", tb.id)
+					return outputvalidation.New(
+						model.OutputValidationToolIdentity,
+						fmt.Errorf("bedrock stream: tool JSON delta missing tool name for id %q", tb.id),
+					)
 				}
 				return p.emit(model.ToolCallDeltaChunk{
 					Delta: model.ToolCallDelta{
@@ -880,7 +909,10 @@ func (p *chunkProcessor) retainString(value string) error {
 // retainValue charges one provider-controlled retained element.
 func (p *chunkProcessor) retainValue() error {
 	if p.retainedValues >= 100_000 {
-		return errors.New("bedrock stream: retained output exceeds 100000 values")
+		return outputvalidation.New(
+			model.OutputValidationOutputBounds,
+			errors.New("bedrock stream: retained output exceeds 100000 values"),
+		)
 	}
 	p.retainedValues++
 	return nil
@@ -892,7 +924,10 @@ func (p *chunkProcessor) retainBytes(size int) error {
 		return err
 	}
 	if size > 16<<20-p.retainedBytes {
-		return errors.New("bedrock stream: retained output exceeds 16777216 bytes")
+		return outputvalidation.New(
+			model.OutputValidationOutputBounds,
+			errors.New("bedrock stream: retained output exceeds 16777216 bytes"),
+		)
 	}
 	p.retainedBytes += size
 	return nil

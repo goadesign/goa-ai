@@ -507,6 +507,10 @@ type (
 	// planner output could be executed or shown.
 	ModelOutputRejectedEvent struct {
 		baseEvent
+		// OutputValidationKind identifies the first mechanical response rule
+		// that rejected provider output. Planner-authored policy rejections and
+		// histories written before categories existed leave it empty.
+		OutputValidationKind model.OutputValidationKind `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
 		// ReasonSHA256 identifies the private validation-cause text without
 		// retaining that text in the run event.
 		ReasonSHA256 string
@@ -969,6 +973,40 @@ func NewModelOutputRejectedEvent(
 	agentID agent.Ident,
 	sessionID, reasonSHA256 string,
 	reasonSize int64,
+	outputValidationKind model.OutputValidationKind,
+	modelResponsePresent bool,
+	modelResponseFingerprintVersion string,
+	modelResponseSHA256 string,
+	modelResponseSize int64,
+) (*ModelOutputRejectedEvent, error) {
+	if outputValidationKind != "" && !validOutputValidationKind(outputValidationKind) {
+		return nil, fmt.Errorf(
+			"model output rejected event has invalid output validation kind %q",
+			outputValidationKind,
+		)
+	}
+	return newModelOutputRejectedEvent(
+		runID,
+		agentID,
+		sessionID,
+		reasonSHA256,
+		reasonSize,
+		outputValidationKind,
+		modelResponsePresent,
+		modelResponseFingerprintVersion,
+		modelResponseSHA256,
+		modelResponseSize,
+	)
+}
+
+// newModelOutputRejectedEvent validates the bounded evidence shared by
+// mechanical validation, planner policy rejection, and history replay.
+func newModelOutputRejectedEvent(
+	runID string,
+	agentID agent.Ident,
+	sessionID, reasonSHA256 string,
+	reasonSize int64,
+	outputValidationKind model.OutputValidationKind,
 	modelResponsePresent bool,
 	modelResponseFingerprintVersion string,
 	modelResponseSHA256 string,
@@ -997,6 +1035,7 @@ func NewModelOutputRejectedEvent(
 	be.sessionID = sessionID
 	return &ModelOutputRejectedEvent{
 		baseEvent:                       be,
+		OutputValidationKind:            outputValidationKind,
 		ReasonSHA256:                    reasonSHA256,
 		ReasonSize:                      reasonSize,
 		ModelResponsePresent:            modelResponsePresent,
@@ -1004,6 +1043,25 @@ func NewModelOutputRejectedEvent(
 		ModelResponseSHA256:             modelResponseSHA256,
 		ModelResponseSize:               modelResponseSize,
 	}, nil
+}
+
+// validOutputValidationKind mirrors the model package's closed values at the
+// durable event boundary without widening the model API with a validation
+// helper.
+func validOutputValidationKind(kind model.OutputValidationKind) bool {
+	switch kind {
+	case model.OutputValidationResponseShape,
+		model.OutputValidationOutputBounds,
+		model.OutputValidationToolIdentity,
+		model.OutputValidationToolArguments,
+		model.OutputValidationToolChoice,
+		model.OutputValidationStructuredOutput,
+		model.OutputValidationStreamProtocol,
+		model.OutputValidationUsage:
+		return true
+	default:
+		return false
+	}
 }
 
 // NewPlannerOutputRejectedEvent constructs durable evidence for one terminal

@@ -118,7 +118,11 @@ type (
 // ValidateStream binds one provider stream to this immutable request contract.
 func (c *RequestContract) ValidateStream(streamer Streamer) (*ValidatedStream, error) {
 	if isNilStreamer(streamer) {
-		return nil, c.RejectResponse(nil, nilStreamerError(streamer))
+		return nil, c.RejectResponse(
+			OutputValidationResponseShape,
+			nil,
+			nilStreamerError(streamer),
+		)
 	}
 	return &ValidatedStream{
 		core: &validatedStreamCore{inner: &validatedStreamer{
@@ -505,23 +509,27 @@ func (s *validatedStreamer) Recv() (Chunk, error) {
 			return s.finishReceive(err)
 		}
 		if preflightErr := s.validator.preflightStreamChunk(chunk); preflightErr != nil {
-			return nil, s.failValidation(preflightErr)
+			return nil, s.failValidation(OutputValidationOutputBounds, preflightErr)
 		}
 		owned, cloneErr := cloneChunk(chunk)
 		if cloneErr != nil {
-			return nil, s.failValidation(cloneErr)
+			return nil, s.failValidation(OutputValidationResponseShape, cloneErr)
 		}
 		if usage, ok := owned.(UsageChunk); ok {
 			s.validator.stampUsageIdentity(&usage.Usage)
 			owned = usage
 		}
-		if validateErr := validateCanonicalChunk(owned); validateErr != nil {
+		if kind, validateErr := validateCanonicalChunkOutput(owned); validateErr != nil {
 			s.rejectedDelta = rejectedUsageEvidence(owned)
-			return nil, s.failValidation(validateErr)
+			return nil, s.failValidation(kind, validateErr)
 		}
 		if validateErr := s.validator.acceptOwned(owned); validateErr != nil {
 			s.rejectedDelta = rejectedUsageEvidence(owned)
-			return nil, s.failValidation(validateErr)
+			kind, ok := classifiedOutputValidation(validateErr)
+			if !ok {
+				panic("model: stream validator returned an unclassified output rejection")
+			}
+			return nil, s.failValidation(kind, validateErr)
 		}
 		if _, ok := owned.(UsageChunk); ok {
 			usage := s.validator.usage
@@ -555,22 +563,26 @@ func (s *validatedStreamer) finishReceive(err error) (Chunk, error) {
 		&responseBudget,
 		dynamicCloneEvidence,
 	); preflightErr != nil {
-		return nil, s.failValidation(preflightErr)
+		return nil, s.failValidation(OutputValidationOutputBounds, preflightErr)
 	}
 	if preflightErr := s.validator.preflightTerminalResponse(rawResponse); preflightErr != nil {
-		return nil, s.failValidation(preflightErr)
+		return nil, s.failValidation(OutputValidationOutputBounds, preflightErr)
 	}
 	s.responseEvidence = responseEvidencePreflighted(rawResponse)
 	response, cloneErr := ownPreflightedResponse(rawResponse)
 	if cloneErr != nil {
-		return nil, s.failValidation(cloneErr)
+		return nil, s.failValidation(OutputValidationResponseShape, cloneErr)
 	}
 	if response != nil {
 		s.validator.stampUsageIdentity(&response.Usage)
 	}
 	if finishErr := s.validator.finish(response); finishErr != nil {
 		s.rejected = response
-		return nil, s.failValidation(finishErr)
+		kind, ok := classifiedOutputValidation(finishErr)
+		if !ok {
+			panic("model: stream finalizer returned an unclassified output rejection")
+		}
+		return nil, s.failValidation(kind, finishErr)
 	}
 	s.response = response
 	s.finished = true
@@ -627,7 +639,13 @@ func observeStreamResult(inner Streamer, chunk Chunk, err error) StreamObservati
 		observedResponse, copyErr = rejectedStreamResponse(inner)
 	}
 	if copyErr != nil {
+		kind := OutputValidationResponseShape
+		var outputErr *OutputValidationError
+		if errors.As(err, &outputErr) {
+			kind = outputErr.Kind()
+		}
 		err = newOutputValidationError(
+			kind,
 			errors.Join(err, copyErr),
 			evidence,
 			observedResponse,
@@ -870,10 +888,11 @@ func (s *observedValidatedStreamer) observeClose(providerErr error) error {
 }
 
 // failValidation latches the first stream contract failure.
-func (s *validatedStreamer) failValidation(err error) error {
+func (s *validatedStreamer) failValidation(kind OutputValidationKind, err error) error {
 	s.pending = nil
 	s.finished = true
 	validationErr := newOutputValidationError(
+		kind,
 		err,
 		s.responseEvidence,
 		s.rejected,

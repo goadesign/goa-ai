@@ -21,6 +21,7 @@ import (
 	"goa.design/goa-ai/features/model/internal/claudebeta"
 	"goa.design/goa-ai/features/model/internal/claudecaps"
 	"goa.design/goa-ai/features/model/internal/modelid"
+	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/features/model/internal/tooluseid"
 	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -217,7 +218,11 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	response, err := translateResponse(msg, enc.provToCanon)
 	if err != nil {
 		usage := translateAnthropicUsage(msg, enc.model, req.ModelClass)
-		return nil, contract.RejectProviderOutput(&usage, err)
+		return nil, contract.RejectProviderOutput(
+			outputvalidation.RequiredKind(err),
+			&usage,
+			err,
+		)
 	}
 	response.Usage = translateAnthropicUsage(msg, enc.model, req.ModelClass)
 	return response, nil
@@ -869,7 +874,10 @@ func anthropicErrorMessage(apiErr *sdk.Error) string {
 
 func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Response, error) {
 	if msg == nil {
-		return nil, errors.New("anthropic: response message is nil")
+		return nil, outputvalidation.New(
+			model.OutputValidationResponseShape,
+			errors.New("anthropic: response message is nil"),
+		)
 	}
 	resp := &model.Response{}
 	assistant := model.Message{Role: model.ConversationRoleAssistant}
@@ -883,7 +891,7 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 			}
 			citations, err := translateCitations(block.Citations)
 			if err != nil {
-				return nil, err
+				return nil, outputvalidation.New(model.OutputValidationResponseShape, err)
 			}
 			assistant.Parts = append(assistant.Parts, model.CitationsPart{
 				Text:      block.Text,
@@ -891,7 +899,10 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 			})
 		case "thinking":
 			if block.Signature == "" {
-				return nil, errors.New("anthropic: response thinking block requires signature")
+				return nil, outputvalidation.New(
+					model.OutputValidationResponseShape,
+					errors.New("anthropic: response thinking block requires signature"),
+				)
 			}
 			assistant.Parts = append(assistant.Parts, model.ThinkingPart{
 				Text:      block.Thinking,
@@ -902,7 +913,10 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 			thinkingIndex++
 		case "redacted_thinking":
 			if block.Data == "" {
-				return nil, errors.New("anthropic: response redacted thinking block requires data")
+				return nil, outputvalidation.New(
+					model.OutputValidationResponseShape,
+					errors.New("anthropic: response redacted thinking block requires data"),
+				)
 			}
 			assistant.Parts = append(assistant.Parts, model.ThinkingPart{
 				Redacted: []byte(block.Data),
@@ -912,17 +926,26 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 			thinkingIndex++
 		case "tool_use":
 			if block.ID == "" {
-				return nil, errors.New("anthropic: response tool use block missing ID")
+				return nil, outputvalidation.New(
+					model.OutputValidationToolIdentity,
+					errors.New("anthropic: response tool use block missing ID"),
+				)
 			}
 			if block.Name == "" {
-				return nil, fmt.Errorf("anthropic: response tool use block %q missing name", block.ID)
+				return nil, outputvalidation.New(
+					model.OutputValidationToolIdentity,
+					fmt.Errorf("anthropic: response tool use block %q missing name", block.ID),
+				)
 			}
 			raw := block.Name
 			name, ok := nameMap[raw]
 			if !ok {
-				return nil, fmt.Errorf(
-					"anthropic: translate response tool use: %w",
-					model.NewUnadvertisedToolNameError(raw),
+				return nil, outputvalidation.New(
+					model.OutputValidationToolIdentity,
+					fmt.Errorf(
+						"anthropic: translate response tool use: %w",
+						model.NewUnadvertisedToolNameError(raw),
+					),
 				)
 			}
 			payload := rawjson.Message(block.Input)
@@ -932,7 +955,10 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 				ID:    block.ID,
 			})
 		default:
-			return nil, fmt.Errorf("anthropic: unsupported response content block %q", block.Type)
+			return nil, outputvalidation.New(
+				model.OutputValidationResponseShape,
+				fmt.Errorf("anthropic: unsupported response content block %q", block.Type),
+			)
 		}
 	}
 	if len(assistant.Parts) > 0 {
@@ -949,7 +975,10 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 	}
 	resp.StopReason = string(msg.StopReason)
 	if resp.StopReason == "" {
-		return nil, errors.New("anthropic: response is missing its stop reason")
+		return nil, outputvalidation.New(
+			model.OutputValidationResponseShape,
+			errors.New("anthropic: response is missing its stop reason"),
+		)
 	}
 	resp.OutputLimited = anthropicOutputLimited(resp.StopReason)
 	return resp, nil

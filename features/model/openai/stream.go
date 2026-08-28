@@ -11,6 +11,7 @@ import (
 
 	"github.com/openai/openai-go/responses"
 
+	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -173,7 +174,10 @@ func (s *openAIStreamer) run(processor *openAIChunkProcessor) {
 				return
 			}
 			if !processor.completed {
-				s.setErr(s.outputError(errors.New("openai: stream ended before response.completed")))
+				s.setErr(s.outputError(outputvalidation.New(
+					model.OutputValidationStreamProtocol,
+					errors.New("openai: stream ended before response.completed"),
+				)))
 				return
 			}
 			return
@@ -182,7 +186,7 @@ func (s *openAIStreamer) run(processor *openAIChunkProcessor) {
 		if rejected != nil {
 			complete, err := processor.handleRejectedEvent(event)
 			if err != nil {
-				s.setErr(err)
+				s.setErr(s.outputError(err))
 				return
 			}
 			if complete {
@@ -232,7 +236,11 @@ func (s *openAIStreamer) outputError(err error) error {
 		return err
 	}
 	usage := s.rejectedUsage
-	return s.contract.RejectProviderOutput(&usage, err)
+	return s.contract.RejectProviderOutput(
+		outputvalidation.RequiredKind(err),
+		&usage,
+		err,
+	)
 }
 
 func (s *openAIStreamer) emitChunk(chunk model.Chunk) error {
@@ -276,7 +284,10 @@ func (s *openAIStreamer) err() error {
 
 func (p *openAIChunkProcessor) Handle(event responses.ResponseStreamEventUnion) error {
 	if p.completed {
-		return errors.New("openai: event received after response completion")
+		return outputvalidation.New(
+			model.OutputValidationStreamProtocol,
+			errors.New("openai: event received after response completion"),
+		)
 	}
 	switch actual := event.AsAny().(type) {
 	case responses.ResponseOutputItemAddedEvent:
@@ -323,7 +334,10 @@ func (p *openAIChunkProcessor) Handle(event responses.ResponseStreamEventUnion) 
 		responses.ResponseRefusalDoneEvent:
 		return nil
 	default:
-		return fmt.Errorf("openai: unsupported stream event %q (%T)", event.Type, actual)
+		return outputvalidation.New(
+			model.OutputValidationStreamProtocol,
+			fmt.Errorf("openai: unsupported stream event %q (%T)", event.Type, actual),
+		)
 	}
 }
 
@@ -384,7 +398,10 @@ func (p *openAIChunkProcessor) handleRejectedEvent(event responses.ResponseStrea
 		responses.ResponseRefusalDoneEvent:
 		return false, nil
 	default:
-		return false, fmt.Errorf("openai: unsupported stream event %q (%T)", event.Type, actual)
+		return false, outputvalidation.New(
+			model.OutputValidationStreamProtocol,
+			fmt.Errorf("openai: unsupported stream event %q (%T)", event.Type, actual),
+		)
 	}
 }
 
@@ -416,9 +433,12 @@ func (p *openAIChunkProcessor) registerOutputItem(item responses.ResponseOutputI
 		if actual.Name != "" {
 			name, ok := p.codec.canonicalName(actual.Name)
 			if !ok {
-				return fmt.Errorf(
-					"openai: translate streamed tool call: %w",
-					model.NewUnadvertisedToolNameError(actual.Name),
+				return outputvalidation.New(
+					model.OutputValidationToolIdentity,
+					fmt.Errorf(
+						"openai: translate streamed tool call: %w",
+						model.NewUnadvertisedToolNameError(actual.Name),
+					),
 				)
 			}
 			if err := p.retain(name); err != nil {
@@ -435,7 +455,10 @@ func (p *openAIChunkProcessor) registerOutputItem(item responses.ResponseOutputI
 
 func (p *openAIChunkProcessor) handleToolCallArgumentsDelta(event responses.ResponseFunctionCallArgumentsDeltaEvent) error {
 	if p.output != nil {
-		return errors.New("openai: structured output emitted tool calls")
+		return outputvalidation.New(
+			model.OutputValidationStructuredOutput,
+			errors.New("openai: structured output emitted tool calls"),
+		)
 	}
 	buffer := p.toolCalls[event.ItemID]
 	if buffer == nil {
@@ -452,7 +475,10 @@ func (p *openAIChunkProcessor) handleToolCallArgumentsDelta(event responses.Resp
 		return err
 	}
 	if buffer.callID == "" || buffer.name == "" || buffer.providerName == "" {
-		return errors.New("openai: tool argument delta arrived before tool call identity")
+		return outputvalidation.New(
+			model.OutputValidationToolIdentity,
+			errors.New("openai: tool argument delta arrived before tool call identity"),
+		)
 	}
 	if !p.codec.streamsCanonicalDeltas(buffer.providerName) {
 		return nil
@@ -535,10 +561,16 @@ func (p *openAIChunkProcessor) thinkingIndex(outputIndex int) (int, error) {
 // retain charges provider data before private stream maps or slices grow.
 func (p *openAIChunkProcessor) retain(value string) error {
 	if p.retainedValues >= 100_000 {
-		return errors.New("openai: retained stream output exceeds 100000 values")
+		return outputvalidation.New(
+			model.OutputValidationOutputBounds,
+			errors.New("openai: retained stream output exceeds 100000 values"),
+		)
 	}
 	if len(value) > 16<<20-p.retainedBytes {
-		return errors.New("openai: retained stream output exceeds 16777216 bytes")
+		return outputvalidation.New(
+			model.OutputValidationOutputBounds,
+			errors.New("openai: retained stream output exceeds 16777216 bytes"),
+		)
 	}
 	p.retainedValues++
 	p.retainedBytes += len(value)

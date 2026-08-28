@@ -1155,18 +1155,21 @@ The transport must first decode a wire-level output-rejection variant rather
 than infer that classification from an arbitrary error. The `cause` passed to
 restoration is the error decoded from that output-validation variant; it is not
 an independent provider or internal error transmitted alongside the variant.
-The variant's restoration metadata is limited to `ResponseEvidence`, validated
-`TokenUsage`, and, when generated validation already produced it, a separate
-safe `RecoveryCorrection`; it never carries the rejected response body. Do not
-derive correction guidance from rejected output, cause text, or a schema after
-transport.
+The variant's restoration metadata is limited to a closed
+`OutputValidationKind`, `ResponseEvidence`, validated `TokenUsage`, and, when
+generated validation already produced it, a separate safe
+`RecoveryCorrection`; it never carries the rejected response body. The kind
+contains no response text, provider text, tool names, arguments, identifiers,
+or schema paths. Do not derive correction guidance from the kind, rejected
+output, cause text, or a schema after transport.
 
 After decoding that variant, call
-`model.RestoreOutputValidationError(cause, evidence, usage)`. It validates the
-cause, evidence, and usage and returns a terminal error with an empty
-correction. Provider failures, unsupported-capability and token-counting
-sentinels, cancellation, deadlines, and nested `OutputValidationError` values
-contradict the decoded variant and are rejected.
+`model.RestoreOutputValidationError(kind, cause, evidence, usage)`. It validates
+the closed kind, cause, evidence, and usage and returns a terminal error with an
+empty correction. Empty or unrecognized kinds, provider failures,
+unsupported-capability and token-counting sentinels, cancellation, deadlines,
+and nested `OutputValidationError` values contradict the decoded variant and
+are rejected.
 If the wire variant also carried correction guidance, pass the returned
 terminal error to
 `model.RestoreCorrectableOutputValidationError(restored, correction)`. The
@@ -1179,6 +1182,18 @@ applies only to that rejected invocation and its immediate replacement planner
 turn. The workflow remains responsible for scheduling the replacement and
 enforcing `MaxRecoveryTurns`; provider failures, stream failures, and output
 failures without safe structured guidance remain terminal.
+
+This restoration signature is an API break for custom model transports. Upgrade
+the transport producer and consumer together, regenerate application code
+against the upgraded framework, and deploy the new binaries as one compatible
+set. Built-in gateway validation remains local to each process, so this change
+adds no gateway wire field. Runtime activity and hook records add the kind as
+an optional JSON field: histories written before the field existed replay with
+it absent, as do current planner-authored policy rejections. New mechanical
+rejections always write a valid kind. Do not roll a workflow back to a binary
+that predates the field after the new binary has written categorized activity
+results or hook records; remove legacy-history coverage only after every
+retained workflow created by the older binary has expired.
 
 ### PlannerEvents
 
@@ -2579,6 +2594,11 @@ retryable.
 validation-cause text without copying that text into Temporal or the run log.
 Public error text remains fixed and generic; the fingerprint preserves durable
 distinction between different causes without storing either cause.
+`OutputValidationKind` is present only when an exact
+`model.OutputValidationError` caused the rejection. Its eight closed values are
+`response_shape`, `output_bounds`, `tool_identity`, `tool_arguments`,
+`tool_choice`, `structured_output`, `stream_protocol`, and `usage`.
+Planner-authored policy rejections and older records leave it empty.
 `ModelResponsePresent` distinguishes a complete response from a
 chunk-level failure. `ModelResponseFingerprintVersion` identifies the stable
 encoding when `ModelResponseSHA256` is present; both are empty when no digest

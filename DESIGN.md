@@ -753,9 +753,16 @@ redeploys.
   concurrent calls reject output, the envelope uses the earliest-started
   rejected invocation's reason and complete-response evidence. The
   event fingerprints the private validation-cause text instead of retaining
-  that text. Model content remains observability data rather than workflow
+  that text. A mechanical rejection also carries the closed
+  `OutputValidationKind` from the first check that rejected the response. The
+  kind identifies only the failed contract area; it contains no response text,
+  provider text, tool identity, arguments, or schema path and cannot authorize
+  recovery. Model content remains observability data rather than workflow
   state, so diagnostic storage cannot retry inference and Temporal and hook
-  payloads remain bounded. A planner result rejected after model output was
+  payloads remain bounded. Planner-authored policy rejection is semantic: the
+  same response can be accepted by one planner and rejected by another. It
+  therefore carries no mechanical kind and keeps its exact planner correction
+  as the only recovery fact. A planner result rejected after model output was
   accepted emits `PlannerOutputRejected` instead, with only the bounded private
   cause identity.
 - **Generated tool validation**: A model definition created from a generated
