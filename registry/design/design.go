@@ -108,6 +108,14 @@ var _ = Service("registry", func() {
 		GRPC(func() {})
 	})
 
+	Method("CheckAdmission", func() {
+		Description("Report whether the exact registration token derived from a deployed provider's generated tool schemas is active and currently has an unexpired, non-draining provider lease plus a fresh authenticated pong. Release verification calls this after workload rollout because Kubernetes proves the intended pods are running while the registry proves their exact tool contract is routable. A missing or different active admission returns ready=false rather than an error.")
+		Payload(CheckAdmissionPayload)
+		Result(AdmissionStatus)
+		Error("service_unavailable")
+		GRPC(func() {})
+	})
+
 	Method("Search", func() {
 		Description("Search toolsets by keyword matching name, description, or tags")
 		Payload(SearchPayload)
@@ -250,7 +258,11 @@ var RegisterPayload = Type("RegisterPayload", func() {
 		Enum(toolregistry.WireProtocolVersion)
 		Example(toolregistry.WireProtocolVersion)
 	})
-	Required("name", "tools", "provider_id", "admission_revision", "provider_incarnation_id", "wire_protocol_version")
+	Field(10, "schema_fingerprint", String, "Generated lowercase SHA-256 identity of the exact tool schemas sent by this provider. The registry independently derives the identity and rejects mismatches before admission.", func() {
+		Pattern(toolregistry.RegistrationTokenPattern)
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
+	})
+	Required("name", "tools", "provider_id", "admission_revision", "provider_incarnation_id", "wire_protocol_version", "schema_fingerprint")
 })
 
 var RegisterResult = Type("RegisterResult", func() {
@@ -363,6 +375,26 @@ var GetToolsetPayload = Type("GetToolsetPayload", func() {
 		Example("data-tools")
 	})
 	Required("name")
+})
+
+var CheckAdmissionPayload = Type("CheckAdmissionPayload", func() {
+	Description("The exact toolset admission derived from one deployed provider's generated schemas, admission revision, and wire protocol.")
+	Field(1, "name", String, "Name of the toolset whose admission must be checked.", func() {
+		MinLength(1)
+		MaxLength(256)
+		Example("data-tools")
+	})
+	Field(2, "expected_registration_token", String, "Deterministic token derived from the deployed provider's generated schema, admission revision, and wire protocol.", func() {
+		Pattern(toolregistry.RegistrationTokenPattern)
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
+	})
+	Required("name", "expected_registration_token")
+})
+
+var AdmissionStatus = Type("AdmissionStatus", func() {
+	Description("Authoritative routing readiness for one exact expected admission.")
+	Field(1, "ready", Boolean, "True only when the expected registration token is active and has a routable provider plus a fresh authenticated pong.")
+	Required("ready")
 })
 
 var SearchPayload = Type("SearchPayload", func() {

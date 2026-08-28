@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +21,8 @@ import (
 	goa "goa.design/goa/v3/pkg"
 	streamopts "goa.design/pulse/streaming/options"
 )
+
+const testActiveRegistrationToken = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 type (
 	// recordingCallAdmissions captures the provider token selected by CallTool.
@@ -37,6 +41,13 @@ type (
 
 	// unitHealthTracker reports healthy provider routing without background work.
 	unitHealthTracker struct{}
+
+	// admissionHealthTracker returns one exact health result to CheckAdmission.
+	admissionHealthTracker struct {
+		token  string
+		health ToolsetHealth
+		err    error
+	}
 )
 
 func TestGeneratedCallToolRejectsMissingWireProtocolVersion(t *testing.T) {
@@ -78,6 +89,83 @@ func TestGeneratedRetryToolRequiresAdmissionFence(t *testing.T) {
 	require.NoError(t, genregistryserver.ValidateRetryToolRequest(request))
 }
 
+// registerPayloadWithSchemaFingerprint adds the generated identity that the
+// production provider sends with the exact schemas in payload.
+func registerPayloadWithSchemaFingerprint(payload *genregistry.RegisterPayload) *genregistry.RegisterPayload {
+	payload.SchemaFingerprint = toolsetSchemaFingerprint(&genregistry.Toolset{
+		Name:        payload.Name,
+		Description: payload.Description,
+		Version:     payload.Version,
+		Tags:        payload.Tags,
+		Tools:       payload.Tools,
+	})
+	return payload
+}
+
+// validRegisterPayloadForSchemaAdmission returns one fully bound registration
+// payload for service boundary tests.
+func validRegisterPayloadForSchemaAdmission(name string) *genregistry.RegisterPayload {
+	description := "schema admission test toolset"
+	version := genregistry.SemVer("1.0.0")
+	return registerPayloadWithSchemaFingerprint(&genregistry.RegisterPayload{
+		Name:                  name,
+		Description:           &description,
+		Version:               &version,
+		Tags:                  []string{"schema"},
+		ProviderID:            name + "/provider-a",
+		ProviderIncarnationID: testIncarnationA,
+		AdmissionRevision:     testAdmissionRevisionA,
+		WireProtocolVersion:   toolregistry.WireProtocolVersion,
+		Tools: []*genregistry.ToolSchema{{
+			Name:          "lookup",
+			PayloadSchema: []byte(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
+			ResultSchema:  []byte(`{"type":"object","properties":{"value":{"type":"string"}},"required":["value"]}`),
+		}},
+	})
+}
+
+func TestGeneratedCheckAdmissionRequiresExpectedToken(t *testing.T) {
+	t.Parallel()
+
+	request := &genregistrypb.CheckAdmissionRequest{
+		Name: "test.toolset",
+	}
+	require.Error(t, genregistryserver.ValidateCheckAdmissionRequest(request))
+
+	request.ExpectedRegistrationToken = testActiveRegistrationToken
+	require.NoError(t, genregistryserver.ValidateCheckAdmissionRequest(request))
+}
+
+func TestRegisterRejectsSchemaIdentityDriftBeforeCreatingStream(t *testing.T) {
+	t.Parallel()
+
+	payload := validRegisterPayloadForSchemaAdmission("test.toolset")
+	payload.SchemaFingerprint = testStaleToken
+	_, err := (&Service{validator: newSchemaValidator()}).Register(t.Context(), payload)
+
+	require.Error(t, err)
+	var serviceErr *goa.ServiceError
+	require.ErrorAs(t, err, &serviceErr)
+	assert.Equal(t, "validation_error", serviceErr.Name)
+	require.ErrorContains(t, err, "schema fingerprint does not match")
+}
+
+func TestRegisterRejectsDuplicateToolNamesBeforeCreatingStream(t *testing.T) {
+	t.Parallel()
+
+	payload := validRegisterPayloadForSchemaAdmission("test.toolset")
+	duplicate := *payload.Tools[0]
+	payload.Tools = append(payload.Tools, &duplicate)
+	payload.SchemaFingerprint = testActiveRegistrationToken
+	_, err := (&Service{validator: newSchemaValidator()}).Register(t.Context(), payload)
+
+	require.Error(t, err)
+	var serviceErr *goa.ServiceError
+	require.ErrorAs(t, err, &serviceErr)
+	assert.Equal(t, "validation_error", serviceErr.Name)
+	require.ErrorContains(t, err, "duplicate tool schema name")
+}
+
 func TestCallToolRejectsMismatchedWireProtocolBeforeDependencies(t *testing.T) {
 	t.Parallel()
 
@@ -105,6 +193,188 @@ func TestRetryToolRejectsMismatchedWireProtocolBeforeDependencies(t *testing.T) 
 		var serviceErr *goa.ServiceError
 		require.ErrorAs(t, err, &serviceErr)
 		assert.Equal(t, "validation_error", serviceErr.Name)
+	}
+}
+
+func TestCheckAdmissionReportsExpectedTokenHealth(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+
+	tests := []struct {
+		name          string
+		toolset       string
+		expectedToken string
+		activeToken   string
+		health        ToolsetHealth
+		healthErr     error
+		ready         bool
+	}{
+		{
+			name:          "expected token is healthy",
+			toolset:       "test.toolset",
+			expectedToken: testActiveRegistrationToken,
+			activeToken:   testActiveRegistrationToken,
+			health:        ToolsetHealth{Healthy: true},
+			ready:         true,
+		},
+		{
+			name:          "different token remains not ready",
+			toolset:       "test.toolset",
+			expectedToken: testStaleToken,
+			activeToken:   testActiveRegistrationToken,
+			health:        ToolsetHealth{Healthy: true},
+		},
+		{
+			name:          "expected token without healthy routing remains not ready",
+			toolset:       "test.toolset",
+			expectedToken: testActiveRegistrationToken,
+			activeToken:   testActiveRegistrationToken,
+		},
+		{
+			name:          "missing admission is an expected not-ready result",
+			toolset:       "missing.toolset",
+			expectedToken: testActiveRegistrationToken,
+			healthErr:     errToolsetNotFound,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			svc := &Service{
+				healthTracker: admissionHealthTracker{
+					token:  test.activeToken,
+					health: test.health,
+					err:    test.healthErr,
+				},
+			}
+			status, err := svc.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
+				Name:                      test.toolset,
+				ExpectedRegistrationToken: test.expectedToken,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, test.ready, status.Ready)
+		})
+	}
+}
+
+func TestCheckAdmissionReturnsOneCatalogSnapshotDuringReplacement(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	now := time.Date(2026, time.August, 28, 19, 0, 0, 0, time.UTC)
+	activeMap := newTestCatalogMap()
+	activeCatalog := newToolsetCatalog(activeMap, newTestTimeSource(now))
+	active, err := activeCatalog.Register(
+		ctx,
+		testCatalogToolset("test.toolset", "active", nil),
+		testAdmissionRevisionA,
+		"provider-a",
+		testIncarnationA,
+		time.Hour,
+	)
+	require.NoError(t, err)
+
+	replacementMap := newTestCatalogMap()
+	replacementCatalog := newToolsetCatalog(replacementMap, newTestTimeSource(now))
+	replacement, err := replacementCatalog.Register(
+		ctx,
+		testCatalogToolset("test.toolset", "replacement", nil),
+		testAdmissionRevisionB,
+		"provider-b",
+		testIncarnationB,
+		time.Hour,
+	)
+	require.NoError(t, err)
+	_, err = replacementCatalog.Register(
+		ctx,
+		testCatalogToolset("test.toolset", "replacement", nil),
+		testAdmissionRevisionB,
+		"provider-c",
+		testIncarnationA,
+		time.Hour,
+	)
+	require.NoError(t, err)
+	err = replacementCatalog.RecordPong(
+		ctx,
+		"test.toolset",
+		"provider-b",
+		testIncarnationB,
+		replacement.RegistrationToken,
+		replacement.HealthEpoch,
+	)
+	require.NoError(t, err)
+	key := toolsetCatalogKey("test.toolset")
+	replacementRaw, exists := replacementMap.Get(key)
+	require.True(t, exists)
+
+	var replaceOnce sync.Once
+	activeMap.afterExactRead = func(gotKey string) {
+		if gotKey != key {
+			return
+		}
+		replaceOnce.Do(func() {
+			activeMap.mu.Lock()
+			activeMap.content[key] = replacementRaw
+			activeMap.mu.Unlock()
+		})
+	}
+	tracker := &healthTracker{
+		catalog:            activeCatalog,
+		stalenessThreshold: time.Minute,
+	}
+	svc := &Service{healthTracker: tracker}
+
+	status, err := svc.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
+		Name:                      "test.toolset",
+		ExpectedRegistrationToken: active.RegistrationToken,
+	})
+	require.NoError(t, err)
+	assert.False(t, status.Ready)
+
+	current, err := tracker.Health(ctx, "test.toolset", replacement.RegistrationToken)
+	require.NoError(t, err)
+	assert.Equal(t, 2, current.ProviderCount)
+	assert.True(t, current.LastPong.Equal(now))
+	assert.True(t, current.Healthy)
+}
+
+func TestCheckAdmissionClassifiesHealthReadFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		healthErr        error
+		serviceErrorName string
+	}{
+		{name: "cancellation", healthErr: context.Canceled},
+		{name: "deadline", healthErr: context.DeadlineExceeded},
+		{
+			name:             "storage failure",
+			healthErr:        errors.New("health store unavailable"),
+			serviceErrorName: "service_unavailable",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			svc := &Service{
+				healthTracker: admissionHealthTracker{err: test.healthErr},
+			}
+			_, err := svc.CheckAdmission(t.Context(), &genregistry.CheckAdmissionPayload{
+				Name:                      "test.toolset",
+				ExpectedRegistrationToken: testActiveRegistrationToken,
+			})
+			if test.serviceErrorName == "" {
+				require.ErrorIs(t, err, test.healthErr)
+				return
+			}
+			var serviceErr *goa.ServiceError
+			require.ErrorAs(t, err, &serviceErr)
+			assert.Equal(t, test.serviceErrorName, serviceErr.Name)
+		})
 	}
 }
 
@@ -538,5 +808,31 @@ func (unitHealthTracker) EnsurePingLoop(context.Context, string) error {
 }
 
 func (unitHealthTracker) Close() error {
+	return nil
+}
+
+// Health returns the admission state supplied by the test.
+func (h admissionHealthTracker) Health(_ context.Context, _, registrationToken string) (ToolsetHealth, error) {
+	if h.err != nil {
+		return ToolsetHealth{}, h.err
+	}
+	if h.token != registrationToken {
+		return ToolsetHealth{}, errToolsetNotFound
+	}
+	return h.health, nil
+}
+
+// RecordPong is unused because CheckAdmission only reads health.
+func (admissionHealthTracker) RecordPong(context.Context, string, string, string, string) error {
+	return nil
+}
+
+// EnsurePingLoop is unused because CheckAdmission does not change scheduling.
+func (admissionHealthTracker) EnsurePingLoop(context.Context, string) error {
+	return nil
+}
+
+// Close is unused because the test tracker owns no goroutine.
+func (admissionHealthTracker) Close() error {
 	return nil
 }

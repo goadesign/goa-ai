@@ -9,11 +9,15 @@ package helpers
 import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 // Tool IDs for this toolset.
 const (
-	SummarizeDoc tools.Ident = "helpers.summarize_doc"
+	// SchemaFingerprint identifies the exact generated schemas registered by
+	// this toolset.
+	SchemaFingerprint             = "d04a4d327ec4332eea7bc2829e7041e0f17823df300c53e9577c8e69d88f3042"
+	SummarizeDoc      tools.Ident = "helpers.summarize_doc"
 )
 
 // Specs returns fresh copies of every generated tool specification.
@@ -21,6 +25,12 @@ func Specs() []tools.ToolSpec {
 	return []tools.ToolSpec{
 		newSpecSummarizeDoc(),
 	}
+}
+
+// RegistrationToken returns the exact registry admission token for these
+// generated schemas and admissionRevision.
+func RegistrationToken(admissionRevision string) (string, error) {
+	return toolregistry.RegistrationToken(SchemaFingerprint, admissionRevision)
 }
 
 // newSpecSummarizeDoc builds the immutable generated contract for

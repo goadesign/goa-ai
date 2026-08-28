@@ -7,9 +7,6 @@ package registry
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	internaladmission "goa.design/goa-ai/internal/toolregistry/admission"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/toolregistry"
 	"goa.design/pulse/rmap"
@@ -85,9 +83,6 @@ const (
 
 	catalogEntryActive  catalogEntryState = "active"
 	catalogEntryRetired catalogEntryState = "retired"
-
-	// #nosec G101 -- this public protocol domain separator is not a credential.
-	registrationTokenDomain = "goa-ai/tool-registry-admission/v2\x00"
 )
 
 var (
@@ -151,10 +146,7 @@ func (c *toolsetCatalog) Register(
 			toolregistry.MaxProviderLeaseDuration,
 		)
 	}
-	fingerprint, err := toolsetSchemaFingerprint(toolset)
-	if err != nil {
-		return catalogEntry{}, fmt.Errorf("fingerprint toolset %q schema: %w", toolset.Name, err)
-	}
+	fingerprint := toolsetSchemaFingerprint(toolset)
 	token, err := admissionRegistrationToken(
 		fingerprint,
 		admissionRevision,
@@ -844,10 +836,7 @@ func parseCatalogEntry(name, body string) (catalogEntry, error) {
 	if err := toolregistry.ValidateWireProtocolVersion(entry.WireProtocolVersion); err != nil {
 		return catalogEntry{}, fmt.Errorf("toolset %q invalid wire protocol version: %w", name, err)
 	}
-	fingerprint, err := toolsetSchemaFingerprint(entry.Toolset)
-	if err != nil {
-		return catalogEntry{}, fmt.Errorf("fingerprint toolset %q schema: %w", name, err)
-	}
+	fingerprint := toolsetSchemaFingerprint(entry.Toolset)
 	if entry.SchemaFingerprint != fingerprint {
 		return catalogEntry{}, fmt.Errorf("toolset %q schema fingerprint does not match canonical schema", name)
 	}
@@ -914,47 +903,30 @@ func cloneTokenSet(tokens map[string]struct{}) map[string]struct{} {
 }
 
 // toolsetSchemaFingerprint returns the canonical schema identity.
-func toolsetSchemaFingerprint(toolset *genregistry.Toolset) (string, error) {
-	type fingerprintTool struct {
-		Name          string   `json:"name"`
-		Description   *string  `json:"description,omitempty"`
-		Tags          []string `json:"tags,omitempty"`
-		PayloadSchema string   `json:"payload_schema"`
-		ResultSchema  string   `json:"result_schema"`
-		SidecarSchema string   `json:"sidecar_schema,omitempty"`
-	}
-	tools := make([]fingerprintTool, len(toolset.Tools))
+func toolsetSchemaFingerprint(toolset *genregistry.Toolset) string {
+	tools := make([]internaladmission.ToolSchema, len(toolset.Tools))
 	for i, tool := range toolset.Tools {
-		tools[i] = fingerprintTool{
+		tools[i] = internaladmission.ToolSchema{
 			Name:          tool.Name,
 			Description:   tool.Description,
-			Tags:          sortedStrings(tool.Tags),
-			PayloadSchema: string(tool.PayloadSchema),
-			ResultSchema:  string(tool.ResultSchema),
-			SidecarSchema: string(tool.SidecarSchema),
+			Tags:          tool.Tags,
+			PayloadSchema: tool.PayloadSchema,
+			ResultSchema:  tool.ResultSchema,
+			SidecarSchema: tool.SidecarSchema,
 		}
 	}
-	sort.SliceStable(tools, func(i, j int) bool {
-		return tools[i].Name < tools[j].Name
-	})
-	body, err := json.Marshal(struct {
-		Name        string              `json:"name"`
-		Description *string             `json:"description,omitempty"`
-		Version     *genregistry.SemVer `json:"version,omitempty"`
-		Tags        []string            `json:"tags,omitempty"`
-		Tools       []fingerprintTool   `json:"tools"`
-	}{
+	var version *string
+	if toolset.Version != nil {
+		value := string(*toolset.Version)
+		version = &value
+	}
+	return internaladmission.SchemaFingerprint(internaladmission.Schema{
 		Name:        toolset.Name,
 		Description: toolset.Description,
-		Version:     toolset.Version,
-		Tags:        sortedStrings(toolset.Tags),
+		Version:     version,
+		Tags:        toolset.Tags,
 		Tools:       tools,
 	})
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(body)
-	return hex.EncodeToString(sum[:]), nil
 }
 
 // admissionRegistrationToken derives the wire-visible execution fence from the
@@ -963,47 +935,14 @@ func admissionRegistrationToken(
 	schemaFingerprint, admissionRevision string,
 	wireProtocolVersion int,
 ) (string, error) {
-	schemaDigest, err := hex.DecodeString(schemaFingerprint)
-	if err != nil {
-		return "", fmt.Errorf("decode schema fingerprint: %w", err)
-	}
-	if len(schemaDigest) != sha256.Size {
-		return "", fmt.Errorf("schema fingerprint must contain %d bytes", sha256.Size)
-	}
 	if err := toolregistry.ValidateAdmissionRevision(admissionRevision); err != nil {
 		return "", err
 	}
-	if wireProtocolVersion < 0 || uint64(wireProtocolVersion) > math.MaxUint32 {
-		return "", fmt.Errorf("wire protocol version must fit uint32")
-	}
-	var protocolVersion [4]byte
-	// #nosec G115 -- the range check above proves this conversion is exact.
-	binary.BigEndian.PutUint32(protocolVersion[:], uint32(wireProtocolVersion))
-	var revisionLength [4]byte
-	// #nosec G115 -- canonical validation bounds the revision to 256 bytes.
-	binary.BigEndian.PutUint32(revisionLength[:], uint32(len(admissionRevision)))
-	body := make(
-		[]byte,
-		0,
-		len(registrationTokenDomain)+len(protocolVersion)+sha256.Size+len(revisionLength)+len(admissionRevision),
+	return internaladmission.RegistrationToken(
+		schemaFingerprint,
+		admissionRevision,
+		wireProtocolVersion,
 	)
-	body = append(body, registrationTokenDomain...)
-	body = append(body, protocolVersion[:]...)
-	body = append(body, schemaDigest...)
-	body = append(body, revisionLength[:]...)
-	body = append(body, admissionRevision...)
-	sum := sha256.Sum256(body)
-	return hex.EncodeToString(sum[:]), nil
-}
-
-// sortedStrings returns a sorted copy for order-free identity fields.
-func sortedStrings(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	sorted := append([]string(nil), values...)
-	sort.Strings(sorted)
-	return sorted
 }
 
 func toolsetCatalogKey(name string) string {

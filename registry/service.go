@@ -229,19 +229,23 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 	if err := s.validator.ValidateToolSchemas(p.Tools); err != nil {
 		return nil, genregistry.MakeValidationError(fmt.Errorf("invalid tool schema: %w", err))
 	}
-
-	// Ensure the Pulse request stream for this toolset exists.
-	_, _, err := s.streamManager.GetOrCreateStream(ctx, p.Name)
-	if err != nil {
-		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("create stream for toolset: %w", err))
-	}
-
 	toolset := &genregistry.Toolset{
 		Name:        p.Name,
 		Description: p.Description,
 		Version:     p.Version,
 		Tags:        p.Tags,
 		Tools:       p.Tools,
+	}
+	if fingerprint := toolsetSchemaFingerprint(toolset); fingerprint != p.SchemaFingerprint {
+		return nil, genregistry.MakeValidationError(errors.New(
+			"schema fingerprint does not match registered tool schemas",
+		))
+	}
+
+	// Ensure the Pulse request stream for this toolset exists.
+	_, _, err := s.streamManager.GetOrCreateStream(ctx, p.Name)
+	if err != nil {
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("create stream for toolset: %w", err))
 	}
 
 	admission, err := s.catalog.Register(
@@ -382,6 +386,33 @@ func (s *Service) GetToolset(ctx context.Context, p *genregistry.GetToolsetPaylo
 		return nil, fmt.Errorf("get toolset: %w", err)
 	}
 	return toolset, nil
+}
+
+// CheckAdmission reports whether one deployment-issued revision is the active
+// toolset admission and has the same lease and pong health required for routing
+// a new tool call. Missing admissions are expected during rollout and return a
+// not-ready value; storage and health-check failures return service_unavailable.
+func (s *Service) CheckAdmission(
+	ctx context.Context,
+	p *genregistry.CheckAdmissionPayload,
+) (*genregistry.AdmissionStatus, error) {
+	health, err := s.healthTracker.Health(ctx, p.Name, p.ExpectedRegistrationToken)
+	if errors.Is(err, errToolsetNotFound) {
+		return &genregistry.AdmissionStatus{Ready: false}, nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, err
+	}
+	if err != nil {
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"read toolset %q admission health: %w",
+			p.Name,
+			err,
+		))
+	}
+	return &genregistry.AdmissionStatus{
+		Ready: health.Healthy,
+	}, nil
 }
 
 // Search searches toolsets by keyword matching name, description, or tags.

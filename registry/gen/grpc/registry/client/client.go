@@ -182,6 +182,28 @@ func (c *Client) GetToolset() goa.Endpoint {
 	}
 }
 
+// CheckAdmission calls the "CheckAdmission" function in
+// registrypb.RegistryClient interface.
+func (c *Client) CheckAdmission() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildCheckAdmissionFunc(c.grpccli, c.opts...),
+			EncodeCheckAdmissionRequest,
+			DecodeCheckAdmissionResponse)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
 // Search calls the "Search" function in registrypb.RegistryClient interface.
 func (c *Client) Search() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {

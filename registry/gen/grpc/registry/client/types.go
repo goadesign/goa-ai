@@ -25,6 +25,7 @@ func NewProtoRegisterRequest(payload *registry.RegisterPayload) *registrypb.Regi
 		AdmissionRevision:     payload.AdmissionRevision,
 		ProviderIncarnationId: payload.ProviderIncarnationID,
 		WireProtocolVersion:   int32(payload.WireProtocolVersion),
+		SchemaFingerprint:     payload.SchemaFingerprint,
 	}
 	if payload.Version != nil {
 		version := string(*payload.Version)
@@ -200,6 +201,25 @@ func NewGetToolsetResult(message *registrypb.GetToolsetResponse) *registry.Tools
 				}
 			}
 		}
+	}
+	return result
+}
+
+// NewProtoCheckAdmissionRequest builds the gRPC request type from the payload
+// of the "CheckAdmission" endpoint of the "registry" service.
+func NewProtoCheckAdmissionRequest(payload *registry.CheckAdmissionPayload) *registrypb.CheckAdmissionRequest {
+	message := &registrypb.CheckAdmissionRequest{
+		Name:                      payload.Name,
+		ExpectedRegistrationToken: payload.ExpectedRegistrationToken,
+	}
+	return message
+}
+
+// NewCheckAdmissionResult builds the result type of the "CheckAdmission"
+// endpoint of the "registry" service from the gRPC response type.
+func NewCheckAdmissionResult(message *registrypb.CheckAdmissionResponse) *registry.AdmissionStatus {
+	result := &registry.AdmissionStatus{
+		Ready: message.Ready,
 	}
 	return result
 }

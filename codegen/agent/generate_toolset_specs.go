@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"goa.design/goa-ai/codegen/shared"
+	internaladmission "goa.design/goa-ai/internal/toolregistry/admission"
 	"goa.design/goa/v3/codegen"
 )
 
@@ -257,13 +258,25 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 			specImports = append(specImports,
 				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/policy"},
 				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/tools"},
+				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/toolregistry"},
 			)
 			if hasServerData {
 				specImports = append(specImports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/toolserverdata"})
 			}
 			specSections := []*codegen.SectionTemplate{
 				codegen.Header(ts.Name+" tool specs", ts.SpecsPackageName, specImports),
-				{Name: "tool-specs", Source: agentsTemplates.Read(toolSpecFileT), Data: toolSpecFileData{PackageName: ts.SpecsPackageName, Tools: specsData.tools, Types: specsData.typesList(), RequiredLabels: ts.RequiredLabels}, FuncMap: templateFuncMap()},
+				{
+					Name:   "tool-specs",
+					Source: agentsTemplates.Read(toolSpecFileT),
+					Data: toolSpecFileData{
+						PackageName:       ts.SpecsPackageName,
+						SchemaFingerprint: generatedToolsetSchemaFingerprint(ts, specsData.tools),
+						Tools:             specsData.tools,
+						Types:             specsData.typesList(),
+						RequiredLabels:    ts.RequiredLabels,
+					},
+					FuncMap: templateFuncMap(),
+				},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "specs.go"), SectionTemplates: specSections})
 			// inject.go: compiled Inject() population, shared by every topology
@@ -291,6 +304,34 @@ func toolsetSpecsFiles(data *GeneratorData) []*codegen.File {
 	}
 
 	return out
+}
+
+// generatedToolsetSchemaFingerprint computes the registration schema identity
+// once during generation so deployment code only supplies its admission
+// revision at runtime.
+func generatedToolsetSchemaFingerprint(toolset *ToolsetData, entries []*toolEntry) string {
+	tools := make([]internaladmission.ToolSchema, len(entries))
+	for i, entry := range entries {
+		description := entry.Description
+		var payloadSchema, resultSchema []byte
+		if entry.Payload != nil {
+			payloadSchema = entry.Payload.SchemaJSON
+		}
+		if entry.Result != nil {
+			resultSchema = entry.Result.SchemaJSON
+		}
+		tools[i] = internaladmission.ToolSchema{
+			Name:          entry.Name,
+			Description:   &description,
+			Tags:          entry.Tags,
+			PayloadSchema: payloadSchema,
+			ResultSchema:  resultSchema,
+		}
+	}
+	return internaladmission.SchemaFingerprint(internaladmission.Schema{
+		Name:  toolset.QualifiedName,
+		Tools: tools,
+	})
 }
 
 // toolEntriesHaveServerData reports whether specs.go must emit generated

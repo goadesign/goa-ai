@@ -22,6 +22,7 @@ type Client struct {
 	PongEndpoint                   goa.Endpoint
 	ListToolsetsEndpoint           goa.Endpoint
 	GetToolsetEndpoint             goa.Endpoint
+	CheckAdmissionEndpoint         goa.Endpoint
 	SearchEndpoint                 goa.Endpoint
 	CallToolEndpoint               goa.Endpoint
 	RetryToolEndpoint              goa.Endpoint
@@ -32,7 +33,7 @@ type Client struct {
 }
 
 // NewClient initializes a "registry" service client given the endpoints.
-func NewClient(register, releaseProvider, drainProvider, unregister, pong, listToolsets, getToolset, search, callTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
+func NewClient(register, releaseProvider, drainProvider, unregister, pong, listToolsets, getToolset, checkAdmission, search, callTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
 	return &Client{
 		RegisterEndpoint:               register,
 		ReleaseProviderEndpoint:        releaseProvider,
@@ -41,6 +42,7 @@ func NewClient(register, releaseProvider, drainProvider, unregister, pong, listT
 		PongEndpoint:                   pong,
 		ListToolsetsEndpoint:           listToolsets,
 		GetToolsetEndpoint:             getToolset,
+		CheckAdmissionEndpoint:         checkAdmission,
 		SearchEndpoint:                 search,
 		CallToolEndpoint:               callTool,
 		RetryToolEndpoint:              retryTool,
@@ -123,6 +125,19 @@ func (c *Client) GetToolset(ctx context.Context, p *GetToolsetPayload) (res *Too
 		return
 	}
 	return ires.(*Toolset), nil
+}
+
+// CheckAdmission calls the "CheckAdmission" endpoint of the "registry" service.
+// CheckAdmission may return the following errors:
+//   - "service_unavailable" (type *goa.ServiceError)
+//   - error: internal error
+func (c *Client) CheckAdmission(ctx context.Context, p *CheckAdmissionPayload) (res *AdmissionStatus, err error) {
+	var ires any
+	ires, err = c.CheckAdmissionEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*AdmissionStatus), nil
 }
 
 // Search calls the "Search" endpoint of the "registry" service.

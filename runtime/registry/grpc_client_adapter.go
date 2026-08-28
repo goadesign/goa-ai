@@ -15,17 +15,28 @@ import (
 	"context"
 
 	registrypb "goa.design/goa-ai/registry/gen/grpc/registry/pb"
+	"google.golang.org/grpc"
 )
 
-// GRPCClientAdapter wraps a generated gRPC registry client and implements
-// the RegistryClient interface for use with the runtime Manager.
-type GRPCClientAdapter struct {
-	client registrypb.RegistryClient
-}
+type (
+	// grpcRegistryDiscoveryClient is the generated transport behavior used by
+	// the runtime discovery adapter.
+	grpcRegistryDiscoveryClient interface {
+		ListToolsets(context.Context, *registrypb.ListToolsetsRequest, ...grpc.CallOption) (*registrypb.ListToolsetsResponse, error)
+		GetToolset(context.Context, *registrypb.GetToolsetRequest, ...grpc.CallOption) (*registrypb.GetToolsetResponse, error)
+		Search(context.Context, *registrypb.SearchRequest, ...grpc.CallOption) (*registrypb.SearchResponse, error)
+	}
+
+	// GRPCClientAdapter wraps a generated gRPC registry client and implements
+	// the RegistryClient interface for use with the runtime Manager.
+	GRPCClientAdapter struct {
+		client grpcRegistryDiscoveryClient
+	}
+)
 
 // NewGRPCClientAdapter creates a new adapter that wraps the generated gRPC
 // client and implements the RegistryClient interface.
-func NewGRPCClientAdapter(client registrypb.RegistryClient) *GRPCClientAdapter {
+func NewGRPCClientAdapter(client grpcRegistryDiscoveryClient) *GRPCClientAdapter {
 	return &GRPCClientAdapter{client: client}
 }
 

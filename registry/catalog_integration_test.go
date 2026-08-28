@@ -1163,14 +1163,14 @@ func TestLiveRegistryRecoversOwnedStateLossSameName(t *testing.T) {
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reg.Close(ctx)) })
-	payload := &genregistry.RegisterPayload{
+	payload := registerPayloadWithSchemaFingerprint(&genregistry.RegisterPayload{
 		Name:                  "live.toolset",
 		ProviderID:            "provider-a",
 		ProviderIncarnationID: testIncarnationA,
 		AdmissionRevision:     testAdmissionRevisionA,
 		WireProtocolVersion:   toolregistry.WireProtocolVersion,
 		Tools:                 []*genregistry.ToolSchema{},
-	}
+	})
 	first, err := reg.Service().Register(ctx, payload)
 	require.NoError(t, err)
 	stream, err := reg.pulseClient.Stream(toolregistry.ToolsetStreamID(payload.Name))

@@ -54,6 +54,14 @@ type Service interface {
 	ListToolsets(context.Context, *ListToolsetsPayload) (res *ListToolsetsResult, err error)
 	// Get a specific toolset by name including all tool schemas
 	GetToolset(context.Context, *GetToolsetPayload) (res *Toolset, err error)
+	// Report whether the exact registration token derived from a deployed
+	// provider's generated tool schemas is active and currently has an unexpired,
+	// non-draining provider lease plus a fresh authenticated pong. Release
+	// verification calls this after workload rollout because Kubernetes proves the
+	// intended pods are running while the registry proves their exact tool
+	// contract is routable. A missing or different active admission returns
+	// ready=false rather than an error.
+	CheckAdmission(context.Context, *CheckAdmissionPayload) (res *AdmissionStatus, err error)
 	// Search toolsets by keyword matching name, description, or tags
 	Search(context.Context, *SearchPayload) (res *SearchResult, err error)
 	// Reject consumers whose required runtime-owned wire protocol version differs
@@ -121,7 +129,15 @@ const ServiceName = "registry"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [14]string{"Register", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "ListToolsets", "GetToolset", "Search", "CallTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
+var MethodNames = [15]string{"Register", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "ListToolsets", "GetToolset", "CheckAdmission", "Search", "CallTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
+
+// AdmissionStatus is the result type of the registry service CheckAdmission
+// method.
+type AdmissionStatus struct {
+	// True only when the expected registration token is active and has a routable
+	// provider plus a fresh authenticated pong.
+	Ready bool
+}
 
 // CallToolPayload is the payload type of the registry service CallTool method.
 type CallToolPayload struct {
@@ -153,6 +169,16 @@ type CallToolResult struct {
 	// Later absolute Redis-owned expiration shared by the call record and result
 	// stream.
 	ResultStreamExpiresAt string
+}
+
+// CheckAdmissionPayload is the payload type of the registry service
+// CheckAdmission method.
+type CheckAdmissionPayload struct {
+	// Name of the toolset whose admission must be checked.
+	Name string
+	// Deterministic token derived from the deployed provider's generated schema,
+	// admission revision, and wire protocol.
+	ExpectedRegistrationToken string
 }
 
 // ClaimToolCallResult is the result type of the registry service ClaimToolCall
@@ -301,6 +327,10 @@ type RegisterPayload struct {
 	// Required runtime-owned version of the provider message envelope. The
 	// registry admits only its exact canonical version.
 	WireProtocolVersion int
+	// Generated lowercase SHA-256 identity of the exact tool schemas sent by this
+	// provider. The registry independently derives the identity and rejects
+	// mismatches before admission.
+	SchemaFingerprint string
 }
 
 // RegisterResult is the result type of the registry service Register method.

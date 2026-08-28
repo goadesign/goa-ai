@@ -224,6 +224,41 @@ func DecodeGetToolsetResponse(ctx context.Context, v any, hdr, trlr metadata.MD)
 	return res, nil
 }
 
+// BuildCheckAdmissionFunc builds the remote method to invoke for "registry"
+// service "CheckAdmission" endpoint.
+func BuildCheckAdmissionFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.CheckAdmission(ctx, reqpb.(*registrypb.CheckAdmissionRequest), opts...)
+		}
+		return grpccli.CheckAdmission(ctx, &registrypb.CheckAdmissionRequest{}, opts...)
+	}
+}
+
+// EncodeCheckAdmissionRequest encodes requests sent to registry CheckAdmission
+// endpoint.
+func EncodeCheckAdmissionRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.CheckAdmissionPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "CheckAdmission", "*registry.CheckAdmissionPayload", v)
+	}
+	return NewProtoCheckAdmissionRequest(payload), nil
+}
+
+// DecodeCheckAdmissionResponse decodes responses from the registry
+// CheckAdmission endpoint.
+func DecodeCheckAdmissionResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.CheckAdmissionResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "CheckAdmission", "*registrypb.CheckAdmissionResponse", v)
+	}
+	res := NewCheckAdmissionResult(message)
+	return res, nil
+}
+
 // BuildSearchFunc builds the remote method to invoke for "registry" service
 // "Search" endpoint.
 func BuildSearchFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {

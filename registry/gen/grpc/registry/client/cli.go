@@ -24,7 +24,7 @@ func BuildRegisterPayload(registryRegisterMessage string) (*registry.RegisterPay
 		if registryRegisterMessage != "" {
 			err = json.Unmarshal([]byte(registryRegisterMessage), &message)
 			if err != nil {
-				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"admission_revision\": \"example-release+schema-v1\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 8\n   }'")
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"admission_revision\": \"example-release+schema-v1\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"schema_fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 8\n   }'")
 			}
 		}
 	}
@@ -35,6 +35,7 @@ func BuildRegisterPayload(registryRegisterMessage string) (*registry.RegisterPay
 		AdmissionRevision:     message.AdmissionRevision,
 		ProviderIncarnationID: message.ProviderIncarnationId,
 		WireProtocolVersion:   int(message.WireProtocolVersion),
+		SchemaFingerprint:     message.SchemaFingerprint,
 	}
 	if message.Version != nil {
 		version := registry.SemVer(*message.Version)
@@ -198,6 +199,27 @@ func BuildGetToolsetPayload(registryGetToolsetMessage string) (*registry.GetTool
 	}
 	v := &registry.GetToolsetPayload{
 		Name: message.Name,
+	}
+
+	return v, nil
+}
+
+// BuildCheckAdmissionPayload builds the payload for the registry
+// CheckAdmission endpoint from CLI flags.
+func BuildCheckAdmissionPayload(registryCheckAdmissionMessage string) (*registry.CheckAdmissionPayload, error) {
+	var err error
+	var message registrypb.CheckAdmissionRequest
+	{
+		if registryCheckAdmissionMessage != "" {
+			err = json.Unmarshal([]byte(registryCheckAdmissionMessage), &message)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"name\": \"data-tools\"\n   }'")
+			}
+		}
+	}
+	v := &registry.CheckAdmissionPayload{
+		Name:                      message.Name,
+		ExpectedRegistrationToken: message.ExpectedRegistrationToken,
 	}
 
 	return v, nil
