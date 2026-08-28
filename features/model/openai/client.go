@@ -211,7 +211,14 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 		if _, providerFailure := model.AsProviderError(err); providerFailure {
 			return nil, err
 		}
-		usage := translateUsage(resp.Usage, chooseModelID(resp.Model, prepared.resolvedModelID), prepared.resolvedModelClass)
+		var usage model.TokenUsage
+		if resp != nil {
+			usage = translateUsage(
+				resp.Usage,
+				chooseModelID(resp.Model, prepared.resolvedModelID),
+				prepared.resolvedModelClass,
+			)
+		}
 		return nil, contract.RejectProviderOutput(
 			outputvalidation.RequiredKind(err),
 			&usage,

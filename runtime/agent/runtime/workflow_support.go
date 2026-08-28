@@ -839,7 +839,8 @@ func validModelResponseFingerprintVersion(version string) bool {
 }
 
 // validOutputValidationKind checks the closed model-response categories at the
-// activity result boundary. Empty is handled separately as legacy replay data.
+// activity result boundary. Empty is handled separately for both histories
+// written before categories existed and current planner-policy rejections.
 func validOutputValidationKind(kind model.OutputValidationKind) bool {
 	switch kind {
 	case model.OutputValidationResponseShape,

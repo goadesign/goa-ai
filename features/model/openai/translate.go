@@ -28,7 +28,10 @@ func translateResponse(
 	outputProjection *strictSchemaProjection,
 ) (*model.Response, error) {
 	if resp == nil {
-		return nil, errors.New("openai: response is nil")
+		return nil, outputvalidation.New(
+			model.OutputValidationResponseShape,
+			errors.New("openai: response is nil"),
+		)
 	}
 	if resp.Status == responses.ResponseStatusFailed || resp.Error.Message != "" {
 		return nil, providerErrorFromResponseFailure(
@@ -71,7 +74,10 @@ func translateResponse(
 		case responses.ResponseReasoningItem:
 			part, ok := translateReasoningItem(actual)
 			if !ok {
-				return nil, errors.New("openai: reasoning item has no summary or encrypted content")
+				return nil, outputvalidation.New(
+					model.OutputValidationResponseShape,
+					errors.New("openai: reasoning item has no summary or encrypted content"),
+				)
 			}
 			part.Index = thinkingIndex
 			thinkingIndex++
@@ -111,7 +117,10 @@ func translateResponse(
 				},
 			})
 		default:
-			return nil, fmt.Errorf("openai: unsupported response output item %T", actual)
+			return nil, outputvalidation.New(
+				model.OutputValidationResponseShape,
+				fmt.Errorf("openai: unsupported response output item %T", actual),
+			)
 		}
 	}
 	flushThinking()
@@ -179,11 +188,17 @@ func translateAssistantMessage(
 		case responses.ResponseOutputRefusal:
 			parts = append(parts, model.TextPart{Text: actual.Refusal})
 		default:
-			return model.Message{}, fmt.Errorf("openai: unsupported assistant content item %T", actual)
+			return model.Message{}, outputvalidation.New(
+				model.OutputValidationResponseShape,
+				fmt.Errorf("openai: unsupported assistant content item %T", actual),
+			)
 		}
 	}
 	if len(parts) == 0 {
-		return model.Message{}, errors.New("openai: assistant output message has no content")
+		return model.Message{}, outputvalidation.New(
+			model.OutputValidationResponseShape,
+			errors.New("openai: assistant output message has no content"),
+		)
 	}
 	meta := map[string]any{
 		openAIOutputItemMetaKey: message.RawJSON(),
@@ -257,7 +272,10 @@ func translateCitations(annotations []responses.ResponseOutputTextAnnotationUnio
 				Source: actual.FileID,
 			})
 		default:
-			return nil, fmt.Errorf("openai: unsupported output text annotation %T", actual)
+			return nil, outputvalidation.New(
+				model.OutputValidationResponseShape,
+				fmt.Errorf("openai: unsupported output text annotation %T", actual),
+			)
 		}
 	}
 	return citations, nil

@@ -313,7 +313,10 @@ func (p *chunkProcessor) Handle(event any) error {
 	switch ev := event.(type) {
 	case *brtypes.ConverseStreamOutputMemberMessageStart:
 		if p.started {
-			return errors.New("bedrock stream: duplicate message start")
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("bedrock stream: duplicate message start"),
+			)
 		}
 		p.toolBlocks = make(map[int]*toolBuffer)
 		p.reasoningBlocks = make(map[int]*reasoningBuffer)
@@ -331,20 +334,29 @@ func (p *chunkProcessor) Handle(event any) error {
 		return nil
 	case *brtypes.ConverseStreamOutputMemberContentBlockStart:
 		if !p.started || p.complete {
-			return errors.New("bedrock stream: content block started outside an active message")
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("bedrock stream: content block started outside an active message"),
+			)
 		}
 		idx, err := contentIndex(ev.Value.ContentBlockIndex)
 		if err != nil {
 			return err
 		}
 		if _, ok := p.openBlocks[idx]; ok {
-			return fmt.Errorf("bedrock stream: duplicate content block start %d", idx)
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				fmt.Errorf("bedrock stream: duplicate content block start %d", idx),
+			)
 		}
 		p.openBlocks[idx] = struct{}{}
 		if start := ev.Value.Start; start != nil {
 			toolUse, ok := start.(*brtypes.ContentBlockStartMemberToolUse)
 			if !ok {
-				return fmt.Errorf("bedrock stream: unsupported content block start %T", start)
+				return outputvalidation.New(
+					model.OutputValidationResponseShape,
+					fmt.Errorf("bedrock stream: unsupported content block start %T", start),
+				)
 			}
 			if toolUse.Value.ToolUseId == nil || *toolUse.Value.ToolUseId == "" {
 				return outputvalidation.New(
@@ -408,7 +420,10 @@ func (p *chunkProcessor) Handle(event any) error {
 		return nil
 	case *brtypes.ConverseStreamOutputMemberContentBlockDelta:
 		if !p.started || p.complete {
-			return errors.New("bedrock stream: content block delta received outside an active message")
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("bedrock stream: content block delta received outside an active message"),
+			)
 		}
 		idx, err := contentIndex(ev.Value.ContentBlockIndex)
 		if err != nil {
@@ -425,7 +440,10 @@ func (p *chunkProcessor) Handle(event any) error {
 				// delta and are still closed by ContentBlockStop.
 				p.openBlocks[idx] = struct{}{}
 			case *brtypes.ContentBlockDeltaMemberToolUse:
-				return fmt.Errorf("bedrock stream: tool-use delta %d has no matching start", idx)
+				return outputvalidation.New(
+					model.OutputValidationStreamProtocol,
+					fmt.Errorf("bedrock stream: tool-use delta %d has no matching start", idx),
+				)
 			}
 		}
 		switch delta := delta.(type) {
@@ -455,7 +473,7 @@ func (p *chunkProcessor) Handle(event any) error {
 		case *brtypes.ContentBlockDeltaMemberCitation:
 			citation, err := translateCitationDelta(delta.Value)
 			if err != nil {
-				return err
+				return outputvalidation.New(model.OutputValidationResponseShape, err)
 			}
 			if err := p.retainCitation(citation); err != nil {
 				return err
@@ -510,7 +528,10 @@ func (p *chunkProcessor) Handle(event any) error {
 				}
 				return nil
 			default:
-				return fmt.Errorf("bedrock stream: unsupported reasoning content delta %T", delta.Value)
+				return outputvalidation.New(
+					model.OutputValidationResponseShape,
+					fmt.Errorf("bedrock stream: unsupported reasoning content delta %T", delta.Value),
+				)
 			}
 		case *brtypes.ContentBlockDeltaMemberToolUse:
 			if p.output != nil {
@@ -563,20 +584,32 @@ func (p *chunkProcessor) Handle(event any) error {
 					},
 				})
 			}
-			return fmt.Errorf("bedrock stream: tool-use delta %d has no matching tool-use start", idx)
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				fmt.Errorf("bedrock stream: tool-use delta %d has no matching tool-use start", idx),
+			)
 		default:
-			return fmt.Errorf("bedrock stream: unsupported content block delta %T", delta)
+			return outputvalidation.New(
+				model.OutputValidationResponseShape,
+				fmt.Errorf("bedrock stream: unsupported content block delta %T", delta),
+			)
 		}
 	case *brtypes.ConverseStreamOutputMemberContentBlockStop:
 		if !p.started || p.complete {
-			return errors.New("bedrock stream: content block stopped outside an active message")
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("bedrock stream: content block stopped outside an active message"),
+			)
 		}
 		idx, err := contentIndex(ev.Value.ContentBlockIndex)
 		if err != nil {
 			return err
 		}
 		if _, ok := p.openBlocks[idx]; !ok {
-			return fmt.Errorf("bedrock stream: content block stop %d has no matching start", idx)
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				fmt.Errorf("bedrock stream: content block stop %d has no matching start", idx),
+			)
 		}
 		delete(p.openBlocks, idx)
 		if err := p.finalizeCompletion(idx); err != nil {
@@ -587,7 +620,10 @@ func (p *chunkProcessor) Handle(event any) error {
 			delete(p.reasoningBlocks, idx)
 			part, err := rb.finalize()
 			if err != nil {
-				return fmt.Errorf("bedrock stream: finalize reasoning block %d: %w", idx, err)
+				return outputvalidation.New(
+					model.OutputValidationResponseShape,
+					fmt.Errorf("bedrock stream: finalize reasoning block %d: %w", idx, err),
+				)
 			}
 			if part != nil {
 				part.Index = p.reasoningIndexes[idx]
@@ -609,7 +645,10 @@ func (p *chunkProcessor) Handle(event any) error {
 				var err error
 				payload, err = decodeToolPayload(tb.finalInput())
 				if err != nil {
-					return fmt.Errorf("bedrock stream: finalize tool payload %q: %w", tb.id, err)
+					return outputvalidation.New(
+						model.OutputValidationToolArguments,
+						fmt.Errorf("bedrock stream: finalize tool payload %q: %w", tb.id, err),
+					)
 				}
 			}
 			delete(p.toolBlocks, idx)
@@ -650,13 +689,22 @@ func (p *chunkProcessor) Handle(event any) error {
 			)
 		}
 		if p.complete {
-			return errors.New("bedrock stream: duplicate message stop")
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("bedrock stream: duplicate message stop"),
+			)
 		}
 		if len(p.openBlocks) > 0 {
-			return fmt.Errorf("bedrock stream: message stopped with %d open content blocks", len(p.openBlocks))
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				fmt.Errorf("bedrock stream: message stopped with %d open content blocks", len(p.openBlocks)),
+			)
 		}
 		if ev.Value.StopReason == "" {
-			return errors.New("bedrock stream: message stopped without a stop reason")
+			return outputvalidation.New(
+				model.OutputValidationResponseShape,
+				errors.New("bedrock stream: message stopped without a stop reason"),
+			)
 		}
 		p.canonical.StopReason = string(ev.Value.StopReason)
 		p.canonical.OutputLimited = bedrockOutputLimited(ev.Value.StopReason)
@@ -664,7 +712,10 @@ func (p *chunkProcessor) Handle(event any) error {
 		return nil
 	case *brtypes.ConverseStreamOutputMemberMetadata:
 		if !p.started || !p.complete || p.terminalEmitted {
-			return errors.New("bedrock stream: metadata received outside a completed message")
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("bedrock stream: metadata received outside a completed message"),
+			)
 		}
 		if ev.Value.Usage == nil {
 			return p.finishStream()
@@ -701,7 +752,10 @@ func (p *chunkProcessor) Handle(event any) error {
 		}
 		return p.finishStream()
 	default:
-		return fmt.Errorf("bedrock stream: unsupported event %T", event)
+		return outputvalidation.New(
+			model.OutputValidationResponseShape,
+			fmt.Errorf("bedrock stream: unsupported event %T", event),
+		)
 	}
 }
 
@@ -777,7 +831,10 @@ func (p *chunkProcessor) finishStream() error {
 		return nil
 	}
 	if !p.complete || p.canonical.StopReason == "" {
-		return errors.New("bedrock stream: cannot finish before message stop")
+		return outputvalidation.New(
+			model.OutputValidationStreamProtocol,
+			errors.New("bedrock stream: cannot finish before message stop"),
+		)
 	}
 	p.terminalEmitted = true
 	return p.emit(model.StopChunk{
@@ -821,7 +878,10 @@ func (cb *completionBuffer) finalPayload() (rawjson.Message, error) {
 // fragment for the currently open Bedrock content block.
 func (p *chunkProcessor) handleCompletionDelta(idx int, delta string) error {
 	if p.output == nil {
-		return errors.New("bedrock stream: completion delta requested without structured output")
+		return outputvalidation.New(
+			model.OutputValidationStructuredOutput,
+			errors.New("bedrock stream: completion delta requested without structured output"),
+		)
 	}
 	if p.completion == nil {
 		p.completion = &completionBuffer{
@@ -830,11 +890,14 @@ func (p *chunkProcessor) handleCompletionDelta(idx int, delta string) error {
 		}
 	}
 	if p.completion.index != idx {
-		return fmt.Errorf(
-			"bedrock stream: structured output %q spanned multiple content blocks (%d, %d)",
-			p.output.Name,
-			p.completion.index,
-			idx,
+		return outputvalidation.New(
+			model.OutputValidationStructuredOutput,
+			fmt.Errorf(
+				"bedrock stream: structured output %q spanned multiple content blocks (%d, %d)",
+				p.output.Name,
+				p.completion.index,
+				idx,
+			),
 		)
 	}
 	if err := p.retainString(delta); err != nil {
@@ -863,15 +926,21 @@ func (p *chunkProcessor) finalizeCompletion(idx int) error {
 	}
 	payload, err := p.completion.finalPayload()
 	if err != nil {
-		return fmt.Errorf("bedrock stream: structured output %q: %w", p.output.Name, err)
+		return outputvalidation.New(
+			model.OutputValidationStructuredOutput,
+			fmt.Errorf("bedrock stream: structured output %q: %w", p.output.Name, err),
+		)
 	}
 	if p.structuredOutputToolName != "" {
 		payload, err = unwrapStructuredOutputValue(payload)
 		if err != nil {
-			return fmt.Errorf(
-				"bedrock stream: structured output tool %q: %w",
-				p.structuredOutputToolName,
-				err,
+			return outputvalidation.New(
+				model.OutputValidationStructuredOutput,
+				fmt.Errorf(
+					"bedrock stream: structured output tool %q: %w",
+					p.structuredOutputToolName,
+					err,
+				),
 			)
 		}
 	}
@@ -888,7 +957,10 @@ func (p *chunkProcessor) finalizeCompletion(idx int) error {
 
 func contentIndex(idx *int32) (int, error) {
 	if idx == nil {
-		return 0, fmt.Errorf("bedrock: content block index missing")
+		return 0, outputvalidation.New(
+			model.OutputValidationResponseShape,
+			errors.New("bedrock: content block index missing"),
+		)
 	}
 	return int(*idx), nil
 }
