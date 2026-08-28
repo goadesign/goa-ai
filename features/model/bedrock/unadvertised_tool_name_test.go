@@ -69,6 +69,61 @@ func TestTranslateResponsePreservesPrefixedUnadvertisedToolName(t *testing.T) {
 	assert.Equal(t, "$FUNCTIONS.catalog_list_nearby", name)
 }
 
+func TestCompleteRejectsPrefixedHistoryOnlyToolName(t *testing.T) {
+	inputTokens := int32(4)
+	outputTokens := int32(3)
+	totalTokens := int32(7)
+	runtime := &recordingConverseRuntime{output: &bedrockruntime.ConverseOutput{
+		StopReason: brtypes.StopReasonToolUse,
+		Output: &brtypes.ConverseOutputMemberMessage{Value: brtypes.Message{
+			Role: brtypes.ConversationRoleAssistant,
+			Content: []brtypes.ContentBlock{&brtypes.ContentBlockMemberToolUse{Value: brtypes.ToolUseBlock{
+				ToolUseId: strPtr("call-2"),
+				Name:      strPtr("$FUNCTIONS.catalog_history"),
+				Input:     smithyDocumentFromJSON(t, `{}`),
+			}}},
+		}},
+		Usage: &brtypes.TokenUsage{
+			InputTokens:  &inputTokens,
+			OutputTokens: &outputTokens,
+			TotalTokens:  &totalTokens,
+		},
+	}}
+	client := &provider{
+		runtime:      runtime,
+		defaultModel: "test-model",
+		maxTok:       32,
+	}
+	response, err := client.Complete(t.Context(), &model.Request{
+		Messages: []*model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{model.ToolUsePart{
+				ID:    "call-1",
+				Name:  "catalog.history",
+				Input: rawjson.Message(`{}`),
+			}},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "catalog.current",
+			Description: "Read the current catalog.",
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
+		}},
+	})
+
+	require.Nil(t, response)
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	name, ok := model.UnadvertisedToolName(validationErr)
+	require.True(t, ok)
+	assert.Equal(t, "$FUNCTIONS.catalog_history", name)
+	assert.Equal(t, &model.TokenUsage{
+		Model:        "test-model",
+		InputTokens:  4,
+		OutputTokens: 3,
+		TotalTokens:  7,
+	}, validationErr.Usage())
+}
+
 func TestTranslateResponseAcceptsPrefixedAdvertisedToolName(t *testing.T) {
 	output := &bedrockruntime.ConverseOutput{
 		StopReason: brtypes.StopReasonToolUse,
@@ -100,11 +155,35 @@ func TestStreamPreservesPrefixedUnadvertisedToolName(t *testing.T) {
 	request := &model.Request{
 		Model:      "test-model",
 		ModelClass: model.ModelClassDefault,
+		Messages: []*model.Message{
+			{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{model.ToolUsePart{
+					ID:    "history-call",
+					Name:  "catalog.list_nearby",
+					Input: rawjson.Message(`{}`),
+				}},
+			},
+			{
+				Role: model.ConversationRoleUser,
+				Parts: []model.Part{model.ToolResultPart{
+					ToolUseID: "history-call",
+					Content:   map[string]any{"status": "complete"},
+				}},
+			},
+		},
 		Tools: []*model.ToolDefinition{{
-			Name:  "catalog.list_items",
-			Input: mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
+			Name:        "catalog.list_items",
+			Description: "List current catalog items.",
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 	}
+	parts, err := (&provider{
+		defaultModel: "test-model",
+		maxTok:       32,
+	}).prepareRequest(request)
+	require.NoError(t, err)
+	require.NotContains(t, parts.toolNameProvToCanonical, "catalog_list_nearby")
 	contract, err := model.NewRequestContract(request)
 	require.NoError(t, err)
 	textIndex := int32(0)
@@ -168,7 +247,7 @@ func TestStreamPreservesPrefixedUnadvertisedToolName(t *testing.T) {
 	raw := newBedrockStreamer(
 		context.Background(),
 		providerStream,
-		map[string]string{"catalog_list_items": "catalog.list_items"},
+		parts.toolNameProvToCanonical,
 		"test-model",
 		model.ModelClassDefault,
 		nil,
@@ -179,9 +258,6 @@ func TestStreamPreservesPrefixedUnadvertisedToolName(t *testing.T) {
 	)
 	streamer, err := contract.ValidateStream(raw)
 	require.NoError(t, err)
-	defer func() {
-		assert.NoError(t, streamer.Close())
-	}()
 	var chunks []model.Chunk
 	for {
 		chunk, recvErr := streamer.Recv()
@@ -208,6 +284,7 @@ func TestStreamPreservesPrefixedUnadvertisedToolName(t *testing.T) {
 	assert.Nil(t, streamer.Response())
 	require.Len(t, chunks, 1)
 	assert.Equal(t, "partial text", chunks[0].(model.TextChunk).Message.Parts[0].(model.TextPart).Text)
+	assert.NoError(t, streamer.Close())
 }
 
 func TestStreamTransportFailureSupersedesLatchedUnadvertisedName(t *testing.T) {

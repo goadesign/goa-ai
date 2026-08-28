@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 )
 
 type validatedStreamFixture struct {
@@ -56,6 +57,10 @@ type blockingRejectingStreamObserver struct {
 	calls        atomic.Int32
 }
 
+type failingReceiveObserver struct {
+	err error
+}
+
 func (*typedNilStreamFixture) Recv() (Chunk, error) {
 	panic("typed-nil stream Recv called")
 }
@@ -66,6 +71,59 @@ func (*typedNilStreamFixture) Response() *Response {
 
 func (*typedNilStreamFixture) Close() error {
 	panic("typed-nil stream Close called")
+}
+
+func (o *failingReceiveObserver) ObserveStreamRecv(StreamObservation) error {
+	return o.err
+}
+
+func (*failingReceiveObserver) ObserveStreamClose(error) error {
+	return nil
+}
+
+func TestValidatedStreamObserversReceiveFrozenSourceInEveryOrder(t *testing.T) {
+	tests := []struct {
+		name         string
+		observerErr  error
+		failingFirst bool
+	}{
+		{name: "ordinary error first", observerErr: errors.New("observer failed"), failingFirst: true},
+		{name: "ordinary error last", observerErr: errors.New("observer failed")},
+		{name: "EOF first", observerErr: io.EOF, failingFirst: true},
+		{name: "EOF last", observerErr: io.EOF},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := canonicalTextResponse()
+			contract, err := NewRequestContract(&Request{})
+			require.NoError(t, err)
+			stream, err := contract.ValidateStream(&validatedStreamFixture{
+				chunks:   []Chunk{TextChunk{Message: response.Content[0]}},
+				response: response,
+			})
+			require.NoError(t, err)
+			recording := &recordingStreamObserver{}
+			failing := &failingReceiveObserver{err: test.observerErr}
+			if test.failingFirst {
+				stream, err = stream.Observe(failing)
+				require.NoError(t, err)
+				stream, err = stream.Observe(recording)
+			} else {
+				stream, err = stream.Observe(recording)
+				require.NoError(t, err)
+				stream, err = stream.Observe(failing)
+			}
+			require.NoError(t, err)
+
+			_, err = stream.Recv()
+
+			require.ErrorIs(t, err, test.observerErr)
+			require.False(t, modelcall.Exact(err, io.EOF))
+			require.Len(t, recording.observations, 1)
+			require.NoError(t, recording.observations[0].Err)
+			require.NoError(t, stream.Close())
+		})
+	}
 }
 
 func (s *cancellationBlockedStreamFixture) Recv() (Chunk, error) {

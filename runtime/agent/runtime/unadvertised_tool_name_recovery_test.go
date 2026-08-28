@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -85,24 +84,6 @@ func TestValidatePlanResumeRecoveryInputRequiresOneInvocationVariant(t *testing.
 	}
 }
 
-func TestModelInvocationJournalPairsRecoveryWithEarliestFailedInvocation(t *testing.T) {
-	invocations := &modelInvocationJournal{}
-	firstID, err := invocations.beginModelInvocation("", func() {})
-	require.NoError(t, err)
-	secondID, err := invocations.beginModelInvocation("", func() {})
-	require.NoError(t, err)
-
-	secondErr := rejectedUnadvertisedNameError(t, "catalog_second")
-	assert.Equal(t, secondErr, invocations.rejectModelInvocation(secondID, secondErr))
-	firstErr := rejectedUnadvertisedNameError(t, "catalog_first")
-	assert.Equal(t, firstErr, invocations.rejectModelInvocation(firstID, firstErr))
-
-	recovery := invocations.recoverableModelInvocationRecovery()
-	require.NotNil(t, recovery)
-	assert.Equal(t, "catalog_first", recovery.UnadvertisedToolName)
-	assert.Empty(t, recovery.Correction)
-}
-
 func TestModelInvocationJournalExcludesNonOutputFailures(t *testing.T) {
 	tests := []struct {
 		name string
@@ -118,7 +99,7 @@ func TestModelInvocationJournalExcludesNonOutputFailures(t *testing.T) {
 			invocations := &modelInvocationJournal{}
 			id, err := invocations.beginModelInvocation("", func() {})
 			require.NoError(t, err)
-			assert.Equal(t, test.err, invocations.rejectModelInvocation(id, test.err))
+			require.NoError(t, invocations.stageRejectedModelOutput(id, model.ResponseEvidence{}, test.err))
 
 			assert.Nil(t, invocations.recoverableModelInvocationRecovery())
 		})
@@ -345,21 +326,6 @@ func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
 	require.NotNil(t, out.Usage)
 	assert.Equal(t, 14, out.Usage.TotalTokens)
 	assert.Empty(t, out.ToolEvents)
-}
-
-// rejectedUnadvertisedNameError builds the exact model-origin output rejection
-// recorded by a failed provider invocation.
-func rejectedUnadvertisedNameError(t *testing.T, name string) error {
-	t.Helper()
-	contract, err := model.NewRequestContract(&model.Request{})
-	require.NoError(t, err)
-	return outputcontract.NewWithOrigin(
-		contract.RejectProviderOutput(
-			nil,
-			model.NewUnadvertisedToolNameError(name),
-		),
-		planner.OutputContractOriginModel,
-	)
 }
 
 // repeatedUnadvertisedToolCall asks the configured model to choose from the

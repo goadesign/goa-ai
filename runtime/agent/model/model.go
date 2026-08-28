@@ -788,8 +788,9 @@ type (
 
 	// Streamer delivers incremental model output.
 	//
-	// Callers must drain the stream until Recv returns io.EOF or another
-	// terminal error, read Response after clean EOF, then call Close.
+	// Callers must drain the stream until Recv returns the literal io.EOF value
+	// or another terminal error, read Response after clean EOF, then call Close.
+	// Wrapping io.EOF changes it into a provider failure.
 	// Recv, Response, and Close must not be called concurrently.
 	// A provider transfers ownership of each returned Chunk before Recv returns
 	// and of the complete Response before returning io.EOF. It must not mutate

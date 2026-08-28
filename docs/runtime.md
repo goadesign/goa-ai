@@ -210,10 +210,12 @@ and schema from the validated completion DSL.
 Unary completion makes exactly one model call. The response is decoded with the
 generated codec. If its JSON violates the completion contract, the helper
 returns a non-retryable `planner.OutputContractError` and does not ask the model
-again. Provider errors and malformed response envelopes are also returned
-immediately. On success, `completion.Response.ModelResponse` contains the exact
-model response and its token usage. On failure, the response is nil, matching
-the `model.Client` contract.
+again. The same error is returned when the provider reports that generation
+stopped at its output limit, even if the partial JSON satisfies the schema.
+Provider errors and malformed response envelopes are also returned immediately.
+On success, `completion.Response.ModelResponse` contains the exact model
+response and its token usage. On failure, the response is nil, matching the
+`model.Client` contract.
 
 When upgrading existing completion callers:
 
@@ -286,6 +288,9 @@ Typed completion helpers are intentionally strict:
   decode that accepted value. They never restart after exposing previews; an
   invalid stream returns the same non-retryable
   output-contract error without exposing the final value.
+- If a streaming provider reports that generation stopped at its output limit,
+  previews already returned remain provisional. The final completion is not
+  returned, and `Value` remains unavailable.
 - `Value` becomes available only after `Recv` reaches and validates the final
   completion; there is no separate decoder that can accept an unchecked chunk.
 - Completion streams use their generated typed wrapper directly; do not route
@@ -307,6 +312,14 @@ to normal provider completion so later cumulative token usage is still counted.
 Cancellation, deadline, transport, or incomplete-stream failures remain those
 failures instead of becoming recoverable name errors.
 
+Bedrock keeps two name maps for different jobs. The map used to accept a
+response contains only tools advertised in the current request. A temporary
+copy also contains tool names from transcript history so Bedrock can receive
+earlier `tool_use` messages in its required name format. Historical names never
+enter response admission. If an advertised and historical name, or two
+historical names, produce the same Bedrock identifier, the request fails before
+Bedrock is called.
+
 The runtime retains only the untouched returned name and the provider's token
 usage. Bedrock may remove its `$FUNCTIONS.` prefix from a separate copy used for
 lookup, but recovery keeps the prefixed name. The next planner activity starts
@@ -314,6 +327,31 @@ from the last accepted conversation, receives the tools available for that new
 request, and gets a fixed reminder to choose one of those exact names. The
 runtime does not guess a replacement, apply aliases or fuzzy matching, copy the
 catalog into recovery state, or change the available tools.
+
+For streams, validation can report the rejected name and valid token usage as
+soon as `Recv` detects the bad output. The runtime does not commit recovery at
+that point. The validated client keeps provider receive and close results,
+validation, incomplete consumption, each observer result, every prepared
+`Finish` result, usage recording, staging, and cancellation in separate private
+slots. Every receive or close observer gets its own safe copy of the same
+provider result. One observer's error never becomes the next observer's input.
+Every prepared `Finish` callback likewise receives the same result collected
+before any finisher ran. The runtime sees the frozen record only after all
+finishers return.
+
+Only the literal `io.EOF` value from the provider marks normal stream
+completion. A wrapped EOF is a provider failure, and EOF returned by an
+observer is an observer failure. Recovery never searches a joined error for
+EOF.
+
+After the planner returns, the activity closes unfinished calls, waits for
+their frozen records, discards provisional presentation, and makes one
+decision. It commits recovery only when an exact staged validation belongs to
+the same model call and every other private slot is clean. A provider close,
+observer, finisher, usage-recording, staging, cancellation, or deadline failure
+keeps its own cause in the activity error instead of producing
+`ModelInvocationRecovery`. Planner code cannot hide such a failure by ignoring,
+joining, or replacing the error returned by `Close`.
 
 Each retry consumes one existing `MaxRecoveryTurns` entry. Repeated misses end
 through the normal recovery-cap path. Cancellation, deadlines, transport
@@ -811,9 +849,13 @@ directly:
   `codegen.CapsData.MaxRecoveryTurns`.
 
 These names and their serialized field names are intentionally breaking.
-Suspensions now use `goa-ai.run-suspension.v5`; version-four suspensions are not
-accepted. Upgrade only when no runs from the previous runtime are active or
-suspended, then deploy the runtime, generated workers, and callers together.
+Suspensions written by this runtime use `goa-ai.run-suspension.v6`; version-four
+suspensions are not accepted. Version-five suspensions remain readable with
+their original shape: a pending recovery must include its serialized
+`PendingRecoveryCatalog`. A version-five checkpoint that omits that catalog is
+invalid. Version six removes only the duplicate catalog for `correct_call`:
+the reader derives the exact ordered names from the saved typed failures and
+rejects a version-six correction checkpoint that also serializes a catalog.
 Each model-authored await item stores its runtime `ToolCallID` separately from
 the provider `ModelToolCallID`. Other checkpoint versions cannot resume.
 
@@ -906,9 +948,74 @@ independently of the current catalog. `replan` removes the failed tool while
 permitting another advertised action, input request, or answer;
 `finish` forbids more tools. When the same tool has both correction and replan
 failures in one batch, the correctable failure keeps that tool available. A
-recovery turn may end with an input suspension; continuing retains the selected failure
-evidence. A failed batch clears its earlier
-synthesis intent; a new retry batch may request `SynthesizeAfterTools` again.
+recovery turn may end with an input suspension; continuing retains the selected
+failure evidence. A failed batch clears its earlier synthesis intent; a new
+retry batch may request `SynthesizeAfterTools` again.
+
+A retired tool is a tool whose complete executable toolset registration remains
+loaded only so saved work can finish. That registration binds the generated
+input and result codecs to the function that executes the tool. A standalone
+tool specification is not enough to authorize recovery. The retired tool is
+absent from the agent's current `Specs`, so new runs, ordinary continuation
+turns, replanning, and turns after recovery do not advertise it.
+
+`RegisterToolset` validates agent tools before adding any part of the toolset to
+the runtime. A registration with agent-tool execution configuration requires
+every specification in that toolset to be marked as an agent tool; a marked
+specification requires agent-tool execution configuration. Mixed marked and
+unmarked specifications are invalid. Each generated agent-tool specification
+must name the same agent as the registration and its child-workflow route. The
+registration must use inline child-agent execution and provide the route's
+workflow name and task queue. Missing or conflicting values fail application
+setup; the runtime never infers the marker or falls back to ordinary tool
+activity execution. Generated registrations already satisfy this contract.
+Applications that construct `ToolsetRegistration` directly must update partial
+agent-tool registrations before upgrading.
+
+Every `correct_call` recovery uses the same exact-catalog contract, whether its
+tool is current or retired. The existing resume activity reloads each failed
+output by its saved call ID, reads the typed recovery action, and derives tool
+names in first-failure order while removing later copies of the same name. It
+then requires each name in the owning executable toolset registration and
+advertises only that registration's exact definitions for the correction turn.
+An unknown tool, a specification without its executable toolset, or a tool the
+registration no longer contains fails before a model call. The saved failure
+proves which earlier call needs correction; the retained executable registration
+is the narrow, current grant to attempt that correction.
+
+Run tag restrictions still filter the correction catalog before the planner
+runs. Runtime policy and authorization implemented by the tool's downstream
+executor still evaluate the corrected call. Retaining an executable registration
+does not bypass those checks. Removing the registration revokes recovery
+immediately.
+
+For planned retirement, keep the complete executable registration only while
+the owning application has pending corrections that may use it. Remove that
+registration after those corrections complete, are explicitly ended, or are
+otherwise accounted for under the application's recovery policy. Retaining only
+the tool specification is invalid.
+
+This recovery does not add an activity, change the resume activity name, or
+change workflow command ordering. A turn with no `correct_call` failure
+continues to advertise only the agent's current `Specs`, and the first normal
+turn after correction returns to those current tools.
+
+Suspensions written by version 6 omit `PendingRecoveryCatalog` only when typed
+pending failures contain `correct_call`. The version 6 reader derives the exact
+catalog from those failures and rejects a serialized duplicate. Other recovery
+actions still require their serialized catalog because the failed outputs do
+not determine every tool that the planner may use. Version 5 retains its
+original shape and remains resumable: every pending recovery requires its
+serialized `PendingRecoveryCatalog`.
+
+Applications should update workers for every workflow and activity queue
+together before accepting new work. This coordinated update keeps one runtime
+contract across the application; it does not require applications to discard or
+drain valid version 5 suspensions because new workers can resume them. Once new
+work has produced version 6 suspensions, rolling back to workers that understand
+only version 5 is unsafe. Pause intake and either keep version 6 workers
+available for those continuations or account for them through the application's
+owned suspension store before rollback.
 
 The workflow selects current recovery outputs by stable call ID in
 `PlanActivityInput`. Empty recovery IDs are omitted from canonical JSON.
@@ -2131,18 +2238,21 @@ callers use one exact contract and deploy as one release unit.
 For a release that changes generated or persisted runtime shapes:
 
 1. Regenerate every consumer from the same Goa-AI revision.
-2. Deploy the runtime workers, generated packages, and callers as one release.
-3. Verify every deployed component reports the same revision ready.
+2. Pause new work and deploy the runtime workers for every workflow and
+   activity queue, generated packages, and callers as one release.
+3. Verify every deployed component reports the same revision ready before
+   accepting new work.
 
 Ongoing workflows and saved suspensions must satisfy the exact current
 contract. Historical completed-session records remain stored unchanged because
 this release policy does not alter their persistence schema.
 
-`goa-ai.run-suspension.v5` is the current suspension schema. Version 4 and
-other suspension schemas are incompatible. Every model-authored await item
-preserves its runtime `ToolCallID` separately from the provider
-`ModelToolCallID`: runtime records and continuation responses use the former,
-while provider transcript reconstruction uses the latter.
+`goa-ai.run-suspension.v6` is the current suspension schema. Version 5 remains
+readable with its original required recovery catalog; version 4 and other
+suspension schemas are incompatible. Every model-authored await item preserves
+its runtime `ToolCallID` separately from the provider `ModelToolCallID`: runtime
+records and continuation responses use the former, while provider transcript
+reconstruction uses the latter.
 
 Ending a session stops future work but retains its run metadata for inspection.
 When the owning application permanently deletes the session's customer data, it

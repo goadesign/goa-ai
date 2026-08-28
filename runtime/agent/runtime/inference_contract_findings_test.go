@@ -7,7 +7,6 @@ package runtime
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -17,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/internal/provenance"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
@@ -224,21 +224,10 @@ func TestPlanStartActivityPreservesModelRejectionWhileJoiningPendingCall(t *test
 	}
 	close(pendingCleanupRelease)
 	result := <-returned
-	requirePlannerOutputContractFailure(t, result.output, result.err)
-	require.Equal(
-		t,
-		planner.OutputContractOriginModel,
-		result.output.OutputContractFailure.Origin,
-	)
-	require.True(t, result.output.OutputContractFailure.ModelResponsePresent)
-	require.Len(t, result.output.OutputContractFailure.ModelResponseSHA256, 64)
-	require.Positive(t, result.output.OutputContractFailure.ModelResponseSize)
-	require.Equal(t, 5, result.output.Usage.TotalTokens)
-	require.Len(t, result.output.PlannerEvents, 1)
-	var usageEvent hooks.UsageEvent
-	require.NoError(t, json.Unmarshal(result.output.PlannerEvents[0].Payload, &usageEvent))
-	require.Equal(t, "provider-resolved-model", usageEvent.Model)
-	require.Equal(t, model.ModelClassSmall, usageEvent.ModelClass)
+	require.Nil(t, result.output)
+	require.ErrorIs(t, result.err, context.Canceled)
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, result.err, &validationErr)
 	<-pendingReturned
 }
 
@@ -443,6 +432,8 @@ func TestModelFailureDropsOversizedUsageEventsButKeepsEvidence(t *testing.T) {
 	)
 	rejected := journal.invocations[journal.order[0]]
 	rejected.err = modelErr
+	rejected.outcome = &modelcall.Outcome{ProviderCall: modelcall.Result{Called: true, Err: modelErr}}
+	journal.recovery = journal.order[0]
 	rejected.rejectedResponseEvidence = &model.ResponseEvidence{
 		Present: true,
 		Version: "response-v1",

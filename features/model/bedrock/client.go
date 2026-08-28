@@ -116,7 +116,6 @@ type requestParts struct {
 	outputConfig            *brtypes.OutputConfig
 	toolConfig              *brtypes.ToolConfiguration
 	additionalModelFields   map[string]any
-	toolNameCanonicalToProv map[string]string
 	toolNameProvToCanonical map[string]string
 	noArgumentTools         map[string]struct{}
 	emptyObjectTools        map[string]struct{}
@@ -417,9 +416,9 @@ func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 			modelID,
 		)
 	}
-	// Build tool configuration and name maps before encoding messages so tool_use
-	// names can reuse the exact sanitized identifiers. encodeTools is the single
-	// source of truth for name sanitization.
+	// Build the current request's tool configuration and name maps before
+	// encoding messages. The reverse map admits only names advertised in this
+	// request when Bedrock returns a response.
 	//
 	// Build either Bedrock's native output format or the private tool used by
 	// Claude models that do not support that format. Complete and Stream read
@@ -463,10 +462,12 @@ func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 				"ensure the planner always passes tools when history has tool blocks",
 		)
 	}
-	if err := registerHistoricalToolNames(req.Messages, canonToSan, sanToCanon); err != nil {
+	outboundCanonToSan := maps.Clone(canonToSan)
+	outboundSanToCanon := maps.Clone(sanToCanon)
+	if err := registerOutboundHistoryToolNames(req.Messages, outboundCanonToSan, outboundSanToCanon); err != nil {
 		return nil, err
 	}
-	messages, system, err := encodeMessages(req.Messages, canonToSan, cacheAfterSystem)
+	messages, system, err := encodeMessages(req.Messages, outboundCanonToSan, cacheAfterSystem)
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +482,6 @@ func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 		outputConfig:             outputConfig,
 		toolConfig:               toolConfig,
 		additionalModelFields:    additionalModelFields,
-		toolNameCanonicalToProv:  canonToSan,
 		toolNameProvToCanonical:  sanToCanon,
 		noArgumentTools:          noArgumentTools,
 		emptyObjectTools:         emptyObjectTools,
@@ -1397,10 +1397,11 @@ func encodeTools(
 	return &cfg, anthropicToolExampleFields(anthropicTools, anthropicHasExamples, choice), canonToSan, sanToCanon, nil
 }
 
-// registerHistoricalToolNames extends the request-scoped provider mapping with
-// canonical tool identifiers already present in transcript history. Historical
-// tools remain representable even when they are not advertised in this turn.
-func registerHistoricalToolNames(
+// registerOutboundHistoryToolNames adds transcript tool names to the temporary
+// map used only to encode messages sent to Bedrock. It rejects any name that
+// would share a provider identifier with an advertised or earlier historical
+// tool, while leaving response admission limited to the current request.
+func registerOutboundHistoryToolNames(
 	messages []*model.Message,
 	canonToSan, sanToCanon map[string]string,
 ) error {
@@ -1410,7 +1411,7 @@ func registerHistoricalToolNames(
 			if !ok || use.Name == "" {
 				continue
 			}
-			if _, err := registerToolName(use.Name, canonToSan, sanToCanon); err != nil {
+			if _, err := registerOutboundToolName(use.Name, canonToSan, sanToCanon); err != nil {
 				return err
 			}
 		}
@@ -1418,9 +1419,9 @@ func registerHistoricalToolNames(
 	return nil
 }
 
-// registerToolName adds one canonical identifier to the request-scoped Bedrock
-// name mapping and rejects collisions before any provider request is sent.
-func registerToolName(
+// registerOutboundToolName adds one transcript name to the outbound encoding
+// maps and rejects collisions before Bedrock receives the request.
+func registerOutboundToolName(
 	canonical string,
 	canonToSan, sanToCanon map[string]string,
 ) (string, error) {

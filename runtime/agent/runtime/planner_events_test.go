@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -478,19 +479,24 @@ func TestRuntimePlannerEventsRejectsCallsAfterMalformedResponse(t *testing.T) {
 	)
 	validationErr := model.ValidateResponse(response)
 	require.Error(t, validationErr)
-	err := e.recordRejectedModelOutput(
-		invalid,
-		model.ResponseEvidence{Present: true},
-		outputcontract.NewWithOrigin(
-			validationErr,
-			planner.OutputContractOriginModel,
-		),
+	rejectedErr := outputcontract.NewWithOrigin(
+		validationErr,
+		planner.OutputContractOriginModel,
 	)
+	err := e.stageRejectedModelOutput(invalid, model.ResponseEvidence{Present: true}, rejectedErr)
+	require.NoError(t, err)
+	require.NoError(t, e.finalizeModelInvocation(invalid, modelcall.Outcome{
+		ProviderCall: modelcall.Result{Called: true},
+		Validations:  []modelcall.Result{{Called: true, Err: validationErr}},
+		CompletionObservers: []modelcall.Result{{
+			Called: true,
+			Err:    rejectedErr,
+		}},
+	}))
+	_, err = e.beginModelInvocation("", func() {})
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
 	require.ErrorContains(t, err, `duplicate tool call ID "duplicate"`)
-	_, err = e.beginModelInvocation("", func() {})
-	require.ErrorIs(t, err, outputErr)
 }
 
 func mustBeginModelInvocation(t *testing.T, events *modelInvocationJournal) modelInvocationID {

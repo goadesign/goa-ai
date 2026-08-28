@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -170,35 +169,6 @@ func TestRunLoopCancellationPreventsStreamedToolCallReplacement(t *testing.T) {
 	assert.Equal(t, 1, providerCalls)
 }
 
-func TestModelInvocationJournalSelectsEarliestStartedStreamChunkRejection(t *testing.T) {
-	invocations := &modelInvocationJournal{}
-	firstID, err := invocations.beginModelInvocation("", func() {})
-	require.NoError(t, err)
-	secondID, err := invocations.beginModelInvocation("", func() {})
-	require.NoError(t, err)
-	firstErr := streamedToolCallOutputError(t, "catalog.first", "first")
-	secondErr := streamedToolCallOutputError(t, "catalog.second", "second")
-
-	require.Equal(
-		t,
-		secondErr,
-		invocations.recordRejectedModelOutput(secondID, model.ResponseEvidence{}, secondErr),
-	)
-	require.Equal(
-		t,
-		firstErr,
-		invocations.recordRejectedModelOutput(firstID, model.ResponseEvidence{}, firstErr),
-	)
-
-	assert.Equal(t, firstErr, invocations.outputContractError())
-	recovery := invocations.recoverableModelInvocationRecovery()
-	require.NotNil(t, recovery)
-	assert.Contains(t, recovery.Correction, `"first"`)
-	assert.NotContains(t, recovery.Correction, `"second"`)
-	_, present := rejectedResponseEvidence(invocations)
-	assert.False(t, present)
-}
-
 // streamPreResponseModel makes the planner's selected streaming call with the
 // currently advertised tools and returns either safe validation failure or the
 // accepted replacement calls.
@@ -258,49 +228,6 @@ func newPreResponseRecoveryStreamModel(providerCalls *int, alwaysInvalid bool) m
 			}, nil
 		},
 	})
-}
-
-// streamedToolCallOutputError returns the model-origin error produced when one
-// generated field rejects a streamed tool-call chunk before a response exists.
-func streamedToolCallOutputError(t *testing.T, name tools.Ident, field string) error {
-	t.Helper()
-	spec := tools.ToolSpec{
-		Name: name,
-		Payload: tools.TypeSpec{
-			Name:           "StreamPayload",
-			Schema:         rawjson.Message(`{"type":"object"}`),
-			FieldJSONTypes: map[string]string{"$payload": "object", field: "string"},
-			Codec: tools.JSONCodec[any]{
-				FromJSON: func([]byte) (any, error) {
-					return nil, tools.NewValidationError(
-						"rejected streamed payload",
-						[]*tools.FieldIssue{{
-							Field:            field,
-							Constraint:       "invalid_field_type",
-							ExpectedJSONType: "string",
-							ActualJSONType:   "number",
-						}},
-						nil,
-					)
-				},
-			},
-		},
-	}
-	contract, err := model.NewRequestContract(&model.Request{
-		Tools: []*model.ToolDefinition{model.ToolDefinitionFromSpec(spec)},
-	})
-	require.NoError(t, err)
-	stream, err := contract.ValidateStream(&chunkStreamer{chunks: []model.Chunk{
-		model.ToolCallChunk{ToolCall: model.ToolCall{
-			ID:      "stream-call",
-			Name:    name,
-			Payload: rawjson.Message(`{"private":"submitted"}`),
-		}},
-	}})
-	require.NoError(t, err)
-	_, err = stream.Recv()
-	require.Error(t, err)
-	return outputcontract.NewWithOrigin(err, planner.OutputContractOriginModel)
 }
 
 // streamRecoveryKickoff returns one accepted call that enters the normal

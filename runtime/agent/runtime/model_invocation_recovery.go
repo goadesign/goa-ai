@@ -10,9 +10,263 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 )
+
+// commitModelInvocationRecovery selects the earliest finalized validation when
+// every provider and callback phase is clean and the planner added no error.
+func (j *modelInvocationJournal) commitModelInvocationRecovery(plannerErr error) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	var staged []*modelInvocationCandidate
+	var eligible []*modelInvocationCandidate
+	for _, id := range j.order {
+		candidate := j.invocations[id]
+		if candidate == nil || !candidate.finished || candidate.outcome == nil {
+			return false
+		}
+		if candidate.rejectedValidationErr == nil {
+			if candidate.outcome.ValidateFinalized() != nil || candidate.outcome.Error() != nil {
+				return false
+			}
+			continue
+		}
+		if !recoverableModelCall(candidate) {
+			return false
+		}
+		staged = append(staged, candidate)
+		if candidateRecoveryEligible(candidate) {
+			eligible = append(eligible, candidate)
+		}
+	}
+	if len(eligible) == 0 || !onlyPropagatesModelValidation(plannerErr, staged) {
+		return false
+	}
+	for _, id := range j.order {
+		candidate := j.invocations[id]
+		if candidate != nil && candidate == eligible[0] {
+			j.recovery = id
+			return true
+		}
+	}
+	return false
+}
+
+// stagedModelCallsClean reports whether provider and callback phases contain
+// no failure beyond each exact staged validation.
+func (j *modelInvocationJournal) stagedModelCallsClean() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, id := range j.order {
+		candidate := j.invocations[id]
+		if candidate == nil || !candidate.finished || candidate.outcome == nil {
+			return false
+		}
+		if candidate.rejectedValidationErr != nil {
+			if !recoverableModelCall(candidate) {
+				return false
+			}
+			continue
+		}
+		if candidate.outcome.ValidateFinalized() != nil || candidate.outcome.Error() != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// hasRecoverableModelOutput reports whether a staged validation has the exact
+// bounded guidance and terminal usage required by ModelInvocationRecovery.
+func (j *modelInvocationJournal) hasRecoverableModelOutput() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, id := range j.order {
+		candidate := j.invocations[id]
+		if candidate != nil && candidateRecoveryEligible(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasStagedModelOutput reports whether a model-boundary validation candidate
+// requires the activity's one terminal recovery decision.
+func (j *modelInvocationJournal) hasStagedModelOutput() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, id := range j.order {
+		candidate := j.invocations[id]
+		if candidate != nil && candidate.rejectedValidationErr != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// outcomeErrors joins frozen call failures for outward activity diagnostics.
+// Recovery decisions never inspect this derived error.
+func (j *modelInvocationJournal) outcomeErrors() error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	var err error
+	for _, id := range j.order {
+		candidate := j.invocations[id]
+		if candidate != nil && candidate.outcome != nil {
+			err = errors.Join(err, candidate.outcome.Error())
+		}
+	}
+	return err
+}
+
+// recoverableModelCall verifies the complete structured result for one staged
+// validation. Only the runtime observer may return that exact rejection.
+func recoverableModelCall(candidate *modelInvocationCandidate) bool {
+	if !candidate.finished || candidate.outcome == nil || candidate.rejectedOutputErr == nil {
+		return false
+	}
+	outcome := candidate.outcome
+	if outcome.ValidateFinalized() != nil ||
+		!outcome.ProviderCall.Called ||
+		outcome.ProviderCall.Err != nil ||
+		outcome.Context.Err != nil ||
+		outcome.Framework.Err != nil ||
+		!outcome.HasFinalizer {
+		return false
+	}
+	if !cleanResults(outcome.ProviderReceives) ||
+		!cleanResults(outcome.Finishers) ||
+		!cleanResults(outcome.Usage) ||
+		!cleanResults(outcome.Staging) ||
+		len(outcome.Staging) == 0 {
+		return false
+	}
+	if !validationMatches(outcome.Validations, candidate.rejectedValidationErr) {
+		return false
+	}
+	if len(outcome.StreamSetupObservers) > 0 {
+		if !outcome.ProviderClose.Called ||
+			outcome.ProviderClose.Err != nil ||
+			!outcome.Completed ||
+			outcome.Incomplete ||
+			!cleanResults(outcome.CloseObservers) {
+			return false
+		}
+	}
+	if !observerResultsMatch(
+		outcome.CompletionObservers,
+		outcome.FinalizerIndex,
+		candidate,
+	) || !observerResultsMatch(
+		outcome.StreamSetupObservers,
+		outcome.FinalizerIndex,
+		candidate,
+	) {
+		return false
+	}
+	for _, results := range outcome.ReceiveObservers {
+		if !observerResultsMatch(results, outcome.FinalizerIndex, candidate) {
+			return false
+		}
+	}
+	return true
+}
+
+// candidateRecoveryEligible requires one and only one bounded recovery value
+// plus usage attributed to the same rejected invocation.
+func candidateRecoveryEligible(candidate *modelInvocationCandidate) bool {
+	if candidate == nil || !candidate.usageSeen || candidate.outcome == nil ||
+		len(candidate.outcome.Usage) == 0 {
+		return false
+	}
+	correctionPresent := candidate.recoveryCorrection != ""
+	namePresent := candidate.unadvertisedToolName != ""
+	return correctionPresent != namePresent
+}
+
+// cleanResults reports whether every expected callback ran without an error.
+func cleanResults(results []modelcall.Result) bool {
+	for _, result := range results {
+		if !result.Called || result.Err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// validationMatches requires one model-boundary validation slot to hold the
+// exact staged validation object and rejects every other validation error.
+func validationMatches(results []modelcall.Result, expected *model.OutputValidationError) bool {
+	matched := false
+	for _, result := range results {
+		if !result.Called || result.Err == nil {
+			continue
+		}
+		var actual *model.OutputValidationError
+		if !errors.As(result.Err, &actual) || !modelcall.Exact(actual, expected) || matched {
+			return false
+		}
+		matched = true
+	}
+	return matched
+}
+
+// observerResultsMatch permits the runtime observer's exact validation return
+// and requires every other observer slot to be clean.
+func observerResultsMatch(
+	results []modelcall.Result,
+	runtimeIndex int,
+	candidate *modelInvocationCandidate,
+) bool {
+	for i, result := range results {
+		if !result.Called {
+			return false
+		}
+		if i == runtimeIndex {
+			if result.Err != nil && !onlyExpectedValidation(result.Err, candidate) {
+				return false
+			}
+			continue
+		}
+		if result.Err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// onlyPropagatesModelValidation accepts joins whose leaves are exact staged
+// validation errors. A wrapper or newly created leaf is a planner rewrite.
+func onlyPropagatesModelValidation(err error, candidates []*modelInvocationCandidate) bool {
+	if err == nil {
+		return true
+	}
+	return onlyExpectedValidation(err, candidates...)
+}
+
+func onlyExpectedValidation(err error, candidates ...*modelInvocationCandidate) bool {
+	for _, candidate := range candidates {
+		if modelcall.Exact(err, candidate.rejectedValidationErr) ||
+			modelcall.Exact(err, candidate.rejectedOutputErr) {
+			return true
+		}
+	}
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return false
+	}
+	causes := joined.Unwrap()
+	if len(causes) == 0 {
+		return false
+	}
+	for _, cause := range causes {
+		if !onlyExpectedValidation(cause, candidates...) {
+			return false
+		}
+	}
+	return true
+}
 
 // outputContractError returns the earliest-started invocation that rejected
 // model output. Completion order may latch the activity sooner, but it cannot
@@ -29,9 +283,11 @@ func (j *modelInvocationJournal) outputContractErrorLocked() error {
 	for _, id := range j.order {
 		candidate := j.invocations[id]
 		var outputErr *planner.OutputContractError
-		if candidate != nil && errors.As(candidate.err, &outputErr) {
-			return candidate.err
+		if candidate == nil || !candidate.finished || candidate.outcome == nil ||
+			!errors.As(candidate.err, &outputErr) {
+			continue
 		}
+		return candidate.err
 	}
 	return j.outputErr
 }
@@ -44,7 +300,11 @@ func (j *modelInvocationJournal) rejectedModelResponseEvidence() model.ResponseE
 	for _, id := range j.order {
 		candidate := j.invocations[id]
 		var outputErr *planner.OutputContractError
-		if candidate == nil || !errors.As(candidate.err, &outputErr) {
+		if candidate == nil ||
+			!candidate.finished ||
+			candidate.outcome == nil ||
+			(!j.recovery.IsZero() && j.recovery != id) ||
+			!errors.As(candidate.err, &outputErr) {
 			continue
 		}
 		if candidate.rejectedResponseEvidence == nil {
@@ -65,7 +325,9 @@ func (j *modelInvocationJournal) recoverableModelInvocationRecovery() *api.Model
 	for _, id := range j.order {
 		candidate := j.invocations[id]
 		var outputErr *planner.OutputContractError
-		if candidate == nil || !errors.As(candidate.err, &outputErr) {
+		if candidate == nil ||
+			j.recovery != id ||
+			!errors.As(candidate.err, &outputErr) {
 			continue
 		}
 		correctionPresent := candidate.recoveryCorrection != ""

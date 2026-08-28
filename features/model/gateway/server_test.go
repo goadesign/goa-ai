@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -274,6 +275,35 @@ func TestServerStreamTreatsEOFAsSuccessAndPropagatesCloseFailure(t *testing.T) {
 				t.Fatalf("sent chunks = %d, want 1", sent)
 			}
 		})
+	}
+}
+
+func TestServerStreamReportsWrappedEOFAsProviderFailure(t *testing.T) {
+	wrappedEOF := fmt.Errorf("provider stream failed: %w", io.EOF)
+	upstream := &stubStreamer{
+		recvErr: wrappedEOF,
+		response: &model.Response{
+			Content:    []model.Message{{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "invalid"}}}},
+			StopReason: "done",
+		},
+	}
+	server, err := NewServer(WithProvider(stubProvider{streamer: upstream}))
+	if err != nil {
+		t.Fatalf("NewServer error: %v", err)
+	}
+
+	response, err := server.Stream(t.Context(), &model.Request{Model: "m"}, func(model.Chunk) error {
+		return nil
+	})
+
+	if response != nil {
+		t.Fatalf("response = %#v, want nil", response)
+	}
+	if !errors.Is(err, wrappedEOF) {
+		t.Fatalf("stream error = %v, want wrapped EOF failure", err)
+	}
+	if !upstream.closed {
+		t.Fatal("provider stream was not closed")
 	}
 }
 

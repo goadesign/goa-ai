@@ -150,6 +150,7 @@ func TestCompleteAcceptsExactAdvertisedToolName(t *testing.T) {
 }
 
 func TestStreamMarksUnadvertisedToolName(t *testing.T) {
+	closeErr := errors.New("openai close failed")
 	stream := &mockStream{events: []responses.ResponseStreamEventUnion{
 		mustStreamEvent(t, `{
 			"type":"response.output_text.delta",
@@ -240,7 +241,7 @@ func TestStreamMarksUnadvertisedToolName(t *testing.T) {
 				]
 			}
 		}`),
-	}}
+	}, closeErr: closeErr}
 	client, err := New(Options{
 		DefaultModel: "gpt-4o",
 		transport:    &mockTransport{stream: stream},
@@ -248,9 +249,6 @@ func TestStreamMarksUnadvertisedToolName(t *testing.T) {
 	require.NoError(t, err)
 	streamer, err := client.Stream(context.Background(), openAIToolRequest())
 	require.NoError(t, err)
-	defer func() {
-		assert.NoError(t, streamer.Close())
-	}()
 	var chunks []model.Chunk
 	for {
 		chunk, recvErr := streamer.Recv()
@@ -278,6 +276,7 @@ func TestStreamMarksUnadvertisedToolName(t *testing.T) {
 	valid := chunks[1].(model.ToolCallDeltaChunk).Delta
 	assert.Equal(t, "call_1", valid.ID)
 	assert.Equal(t, "lookup", valid.Name.String())
+	assert.ErrorIs(t, streamer.Close(), closeErr)
 }
 
 func TestStreamTransportFailureSupersedesLatchedUnadvertisedName(t *testing.T) {
@@ -348,5 +347,5 @@ func TestStreamCancellationSupersedesLatchedUnadvertisedName(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	_, recoverable := model.UnadvertisedToolName(err)
 	assert.False(t, recoverable)
-	assert.NoError(t, streamer.Close())
+	assert.ErrorIs(t, streamer.Close(), context.Canceled)
 }

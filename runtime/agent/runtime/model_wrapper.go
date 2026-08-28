@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/internal/provenance"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -130,7 +131,7 @@ func (c *cacheConfiguredProvider) Stream(ctx context.Context, req *model.Request
 type modelInvocationSink interface {
 	beginModelInvocation(model.ModelClass, context.CancelFunc) (modelInvocationID, error)
 	designateModelInvocation(invocationID modelInvocationID) error
-	recordRejectedModelOutput(
+	stageRejectedModelOutput(
 		invocationID modelInvocationID,
 		evidence model.ResponseEvidence,
 		err error,
@@ -143,7 +144,7 @@ type modelInvocationSink interface {
 	) error
 	recordValidatedModelResponse(invocationID modelInvocationID, response *model.Response) error
 	recordModelChunk(ctx context.Context, invocationID modelInvocationID, chunk model.Chunk) error
-	finishModelInvocation(ctx context.Context, invocationID modelInvocationID, err error) error
+	finalizeModelInvocation(invocationID modelInvocationID, outcome modelcall.Outcome) error
 }
 
 // modelInvocationProvider saves each model call after the opaque client has
@@ -162,6 +163,9 @@ type modelInvocationCall struct {
 	provider     *modelInvocationProvider
 	invocationID modelInvocationID
 	ctx          context.Context
+	streamer     *modelInvocationStreamer
+	usage        []modelcall.Result
+	staging      []modelcall.Result
 }
 
 // newModelInvocationClient adds response checking and storage. It returns inner
@@ -214,7 +218,11 @@ func (c *modelInvocationProvider) PrepareClientCall(
 	}
 	if c.designated {
 		if err := c.sink.designateModelInvocation(invocationID); err != nil {
-			cleanupErr := c.sink.finishModelInvocation(invocationCtx, invocationID, err)
+			cleanupErr := c.sink.finalizeModelInvocation(invocationID, modelcall.Outcome{
+				ProviderCall: modelcall.Result{Called: true, Err: err},
+				Context:      modelcall.Result{Called: true, Err: invocationCtx.Err()},
+				Framework:    modelcall.Result{Called: true, Err: err},
+			})
 			return ctx, nil, errors.Join(err, cleanupErr)
 		}
 	}
@@ -231,7 +239,7 @@ func (c *modelInvocationCall) ObserveClientComplete(response *model.Response, er
 	if err != nil {
 		var validationErr *model.OutputValidationError
 		if errors.As(err, &validationErr) {
-			return c.provider.observeRejectedModelOutput(c.invocationID, validationErr)
+			return c.observeRejectedModelOutput(validationErr)
 		}
 		return nil
 	}
@@ -243,27 +251,24 @@ func (c *modelInvocationCall) ObserveClientComplete(response *model.Response, er
 
 // observeRejectedModelOutput journals one lower-boundary rejection and returns
 // the additive model-origin classification understood by workflow engines.
-func (c *modelInvocationProvider) observeRejectedModelOutput(
-	invocationID modelInvocationID,
-	validationErr *model.OutputValidationError,
-) error {
-	cause := error(validationErr)
+func (c *modelInvocationCall) observeRejectedModelOutput(validationErr *model.OutputValidationError) error {
+	var usageErr error
 	if usage := validationErr.Usage(); usage != nil {
-		cause = errors.Join(
-			cause,
-			c.sink.recordRejectedModelUsageTotal(invocationID, *usage),
-		)
+		usageErr = c.provider.sink.recordRejectedModelUsageTotal(c.invocationID, *usage)
+		c.usage = append(c.usage, modelcall.Result{Called: true, Err: usageErr})
 	}
 	var outputErr error = outputcontract.NewWithOrigin(
-		cause,
+		validationErr,
 		planner.OutputContractOriginModel,
 	)
-	outputErr = c.sink.recordRejectedModelOutput(
-		invocationID,
+	recordErr := c.provider.sink.stageRejectedModelOutput(
+		c.invocationID,
 		validationErr.Evidence(),
 		outputErr,
 	)
-	return outputErr
+	c.staging = append(c.staging, modelcall.Result{Called: true, Err: recordErr})
+	c.provider.latchTerminalError(outputErr)
+	return errors.Join(outputErr, usageErr, recordErr)
 }
 
 // ObserveClientStream returns journaling behavior for one validated stream or
@@ -273,32 +278,39 @@ func (c *modelInvocationCall) ObserveClientStream(err error) (model.StreamObserv
 	if err != nil {
 		var validationErr *model.OutputValidationError
 		if errors.As(err, &validationErr) {
-			return nil, c.provider.observeRejectedModelOutput(c.invocationID, validationErr)
+			return nil, c.observeRejectedModelOutput(validationErr)
 		}
 		return nil, nil
 	}
 	journaled := &modelInvocationStreamer{
-		sink:         c.provider.sink,
-		invocationID: c.invocationID,
-		ctx:          c.ctx,
-		reject:       c.provider.latchTerminalError,
+		call: c,
 	}
+	c.streamer = journaled
 	return journaled, nil
 }
 
-// Finish records the invocation's terminal result exactly once after unary
-// observation, failed stream setup, or stream close.
+// Finish observes the frozen pre-finisher error. The model client invokes
+// FinalizeModelCall only after every prepared Finish callback has returned.
 func (c *modelInvocationCall) Finish(err error) error {
 	var outputErr *planner.OutputContractError
 	if errors.As(err, &outputErr) {
 		c.provider.latchTerminalError(err)
 	}
-	return c.provider.sink.finishModelInvocation(c.ctx, c.invocationID, err)
+	return nil
+}
+
+// FinalizeModelCall freezes the complete model-client outcome in the activity
+// journal after every prepared Finish callback has run.
+func (c *modelInvocationCall) FinalizeModelCall(outcome modelcall.Outcome) error {
+	outcome.Usage = append(outcome.Usage, c.usage...)
+	outcome.Staging = append(outcome.Staging, c.staging...)
+	outcome.Context = modelcall.Result{Called: true, Err: c.ctx.Err()}
+	return c.provider.sink.finalizeModelInvocation(c.invocationID, outcome)
 }
 
 // Abort releases invocation state when a later observer cannot prepare.
-func (c *modelInvocationCall) Abort(err error) error {
-	return c.provider.sink.finishModelInvocation(c.ctx, c.invocationID, err)
+func (*modelInvocationCall) Abort(error) error {
+	return nil
 }
 
 // terminalError returns the first terminal output failure observed by this
@@ -321,17 +333,18 @@ func (c *modelInvocationProvider) latchTerminalError(err error) {
 	}
 }
 
-// modelInvocationStreamer records output from the exact model-validated stream
-// and saves its complete response when the stream ends.
-type modelInvocationStreamer struct {
-	sink         modelInvocationSink
-	invocationID modelInvocationID
-	ctx          context.Context
-	response     *model.Response
-	finished     bool
-	terminalErr  error
-	reject       func(error)
-}
+type (
+	// modelInvocationStreamer records output from the exact model-validated
+	// stream and saves its complete response when the stream ends. A rejected
+	// output stays staged until the planner activity inspects the frozen result
+	// from every provider, observer, finisher, usage, and context phase.
+	modelInvocationStreamer struct {
+		call        *modelInvocationCall
+		response    *model.Response
+		finished    bool
+		terminalErr error
+	}
+)
 
 // ObserveStreamRecv records one result from the exact validated stream. It may
 // stop the stream but cannot replace a chunk or response.
@@ -342,38 +355,59 @@ func (s *modelInvocationStreamer) ObserveStreamRecv(observation model.StreamObse
 	err := observation.Err
 	if err != nil {
 		if model.IsStreamValidationError(err) {
-			err = outputcontract.NewWithOrigin(
-				err,
+			var validationErr *model.OutputValidationError
+			if !errors.As(err, &validationErr) {
+				panic("stream validation error has no OutputValidationError")
+			}
+			outputErr := outputcontract.NewWithOrigin(
+				validationErr,
 				planner.OutputContractOriginModel,
 			)
-			s.reject(err)
+			s.call.provider.latchTerminalError(outputErr)
+			var recordingErr error
 			if observation.RejectedUsageDelta != nil {
-				err = errors.Join(
-					err,
-					s.sink.recordRejectedModelUsageDelta(s.ctx, s.invocationID, *observation.RejectedUsageDelta),
+				err := s.call.provider.sink.recordRejectedModelUsageDelta(
+					s.call.ctx,
+					s.call.invocationID,
+					*observation.RejectedUsageDelta,
 				)
+				s.call.usage = append(s.call.usage, modelcall.Result{Called: true, Err: err})
+				recordingErr = errors.Join(recordingErr, err)
 			}
 			if observation.RejectedUsageTotal != nil {
-				err = errors.Join(
-					err,
-					s.sink.recordRejectedModelUsageTotal(s.invocationID, *observation.RejectedUsageTotal),
+				err := s.call.provider.sink.recordRejectedModelUsageTotal(
+					s.call.invocationID,
+					*observation.RejectedUsageTotal,
 				)
+				s.call.usage = append(s.call.usage, modelcall.Result{Called: true, Err: err})
+				recordingErr = errors.Join(recordingErr, err)
 			}
-			err = s.sink.recordRejectedModelOutput(
-				s.invocationID,
+			stageErr := s.call.provider.sink.stageRejectedModelOutput(
+				s.call.invocationID,
 				observation.ResponseEvidence,
-				err,
+				outputErr,
 			)
+			s.call.staging = append(s.call.staging, modelcall.Result{Called: true, Err: stageErr})
+			err = errors.Join(outputErr, recordingErr, stageErr)
 		}
-		if errors.Is(err, io.EOF) {
+		if modelcall.Exact(observation.Err, io.EOF) {
 			if observation.Response == nil {
-				outputErr := outputcontract.NewWithOrigin(
+				var outputErr error = outputcontract.NewWithOrigin(
 					errors.New("model stream ended without a complete response"),
 					planner.OutputContractOriginModel,
 				)
-				return s.finish(outputErr)
+				stageErr := s.call.provider.sink.stageRejectedModelOutput(
+					s.call.invocationID,
+					model.ResponseEvidence{},
+					outputErr,
+				)
+				s.call.staging = append(s.call.staging, modelcall.Result{Called: true, Err: stageErr})
+				return s.finish(errors.Join(outputErr, stageErr))
 			}
-			if err := s.sink.recordValidatedModelResponse(s.invocationID, observation.Response); err != nil {
+			if err := s.call.provider.sink.recordValidatedModelResponse(
+				s.call.invocationID,
+				observation.Response,
+			); err != nil {
 				return s.finish(outputcontract.NewWithOrigin(
 					err,
 					planner.OutputContractOriginPlanner,
@@ -391,13 +425,25 @@ func (s *modelInvocationStreamer) ObserveStreamRecv(observation model.StreamObse
 		}
 		return nil
 	}
-	if err := s.sink.recordModelChunk(s.ctx, s.invocationID, observation.Chunk); err != nil {
+	if err := s.call.provider.sink.recordModelChunk(
+		s.call.ctx,
+		s.call.invocationID,
+		observation.Chunk,
+	); err != nil {
+		if _, ok := observation.Chunk.(model.UsageChunk); ok {
+			s.call.usage = append(s.call.usage, modelcall.Result{Called: true, Err: err})
+		}
 		return s.finish(err)
+	}
+	if _, ok := observation.Chunk.(model.UsageChunk); ok {
+		s.call.usage = append(s.call.usage, modelcall.Result{Called: true})
 	}
 	return nil
 }
 
-// ObserveStreamClose records closure before EOF as a failed model invocation.
+// ObserveStreamClose checks that Recv reached a terminal result. The model
+// client supplies the complete provider and observer result to Finish after
+// every close callback has returned.
 func (s *modelInvocationStreamer) ObserveStreamClose(error) error {
 	if !s.finished {
 		return s.finish(outputcontract.NewWithOrigin(
@@ -408,8 +454,8 @@ func (s *modelInvocationStreamer) ObserveStreamClose(error) error {
 	return nil
 }
 
-// finish records the additive stream-observer result exactly once. The prepared
-// call lifecycle records the full terminal error when the stream closes.
+// finish records this runtime observer's result exactly once. The model client
+// separately records every other observer and finisher result.
 func (s *modelInvocationStreamer) finish(err error) error {
 	if s.finished {
 		return s.terminalErr

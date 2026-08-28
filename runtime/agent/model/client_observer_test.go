@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 )
 
 type (
@@ -25,7 +26,7 @@ type (
 		name       string
 		events     *[]string
 		prepareErr error
-		call       *observerTestCall
+		call       ClientCallObserver
 		mutate     func(*Request)
 	}
 
@@ -41,6 +42,7 @@ type (
 		completeResponse  *Response
 		completeObserved  error
 		streamObservedErr error
+		finishObserved    error
 		finishCalls       int
 		abortCalls        int
 	}
@@ -48,6 +50,18 @@ type (
 	observerTestStreamObserver struct {
 		recvCalls  int
 		closeCalls int
+	}
+
+	orderedFailingObserver struct {
+		events   *[]string
+		closeErr error
+	}
+
+	observerTestFinalizingCall struct {
+		*observerTestCall
+		outcome       modelcall.Outcome
+		finalizeErr   error
+		finalizeCalls int
 	}
 )
 
@@ -91,7 +105,8 @@ func (c *observerTestCall) ObserveClientStream(err error) (StreamObserver, error
 	return c.streamObserver, c.streamSetupErr
 }
 
-func (c *observerTestCall) Finish(error) error {
+func (c *observerTestCall) Finish(err error) error {
+	c.finishObserved = err
 	c.finishCalls++
 	if c.events != nil {
 		*c.events = append(*c.events, "finish "+c.name)
@@ -115,6 +130,22 @@ func (o *observerTestStreamObserver) ObserveStreamRecv(StreamObservation) error 
 func (o *observerTestStreamObserver) ObserveStreamClose(error) error {
 	o.closeCalls++
 	return nil
+}
+
+func (*orderedFailingObserver) ObserveStreamRecv(StreamObservation) error {
+	return nil
+}
+
+func (o *orderedFailingObserver) ObserveStreamClose(error) error {
+	*o.events = append(*o.events, "later close")
+	return o.closeErr
+}
+
+func (c *observerTestFinalizingCall) FinalizeModelCall(outcome modelcall.Outcome) error {
+	c.outcome = outcome
+	c.finalizeCalls++
+	*c.events = append(*c.events, "finalize "+c.name)
+	return c.finalizeErr
 }
 
 func TestClientObserverCannotChangeProviderOrValidationRequest(t *testing.T) {
@@ -249,6 +280,106 @@ func TestClientAttachesObserverToExactValidatedStreamAndFinishesOnClose(t *testi
 	require.Equal(t, 1, streamObserver.closeCalls)
 	require.Equal(t, 1, call.finishCalls)
 	require.Zero(t, call.abortCalls)
+}
+
+func TestClientFinishesCallsAfterLaterStreamObserver(t *testing.T) {
+	laterErr := errors.New("later observer failed")
+	var events []string
+	provider := &observerTestProvider{stream: &validatedStreamFixture{
+		chunks: []Chunk{StopChunk{Reason: "end_turn"}},
+		response: &Response{
+			Content: []Message{{
+				Role:  ConversationRoleAssistant,
+				Parts: []Part{nil},
+			}},
+			StopReason: "end_turn",
+		},
+	}}
+	call := &observerTestCall{name: "client call", events: &events}
+	client, err := newValidatedClient(provider, nil, []ProviderCallObserver{
+		&observerTestPreparer{name: "client call", events: &events, call: call},
+	})
+	require.NoError(t, err)
+	stream, err := client.Stream(t.Context(), &Request{})
+	require.NoError(t, err)
+	stream, err = stream.Observe(&orderedFailingObserver{
+		events:   &events,
+		closeErr: laterErr,
+	})
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+
+	err = stream.Close()
+
+	require.ErrorIs(t, err, laterErr)
+	require.ErrorIs(t, call.finishObserved, laterErr)
+	require.ErrorAs(t, call.finishObserved, &validationErr)
+	require.Equal(t, []string{"prepare client call", "later close", "finish client call"}, events)
+	require.Equal(t, 1, call.finishCalls)
+}
+
+func TestClientStreamFinishersReceiveFrozenInputAndFinalizerRunsLast(t *testing.T) {
+	closeErr := errors.New("close observer failed")
+	beforeErr := errors.New("before finisher failed")
+	afterErr := errors.New("after finisher failed")
+	var events []string
+	before := &observerTestCall{name: "before", events: &events, finishErr: beforeErr}
+	runtimeCall := &observerTestFinalizingCall{observerTestCall: &observerTestCall{
+		name: "runtime", events: &events,
+	}}
+	after := &observerTestCall{name: "after", events: &events, finishErr: afterErr}
+	provider := &observerTestProvider{stream: &validatedStreamFixture{
+		chunks:   []Chunk{StopChunk{Reason: "end_turn"}},
+		response: canonicalTextResponse(),
+	}}
+	client, err := newValidatedClient(provider, nil, []ProviderCallObserver{
+		&observerTestPreparer{name: "before", events: &events, call: before},
+		&observerTestPreparer{name: "runtime", events: &events, call: runtimeCall},
+		&observerTestPreparer{name: "after", events: &events, call: after},
+	})
+	require.NoError(t, err)
+	stream, err := client.Stream(t.Context(), &Request{})
+	require.NoError(t, err)
+	stream, err = stream.Observe(&orderedFailingObserver{events: &events, closeErr: closeErr})
+	require.NoError(t, err)
+	for {
+		_, err = stream.Recv()
+		if modelcall.Exact(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+	}
+
+	err = stream.Close()
+	repeatedErr := stream.Close()
+
+	require.ErrorIs(t, err, closeErr)
+	require.Equal(t, err, repeatedErr)
+	require.ErrorIs(t, err, beforeErr)
+	require.ErrorIs(t, err, afterErr)
+	require.ErrorIs(t, before.finishObserved, closeErr)
+	require.True(t, modelcall.Exact(before.finishObserved, runtimeCall.finishObserved))
+	require.True(t, modelcall.Exact(runtimeCall.finishObserved, after.finishObserved))
+	require.NotErrorIs(t, after.finishObserved, beforeErr)
+	require.Equal(t, []string{
+		"prepare after",
+		"prepare runtime",
+		"prepare before",
+		"later close",
+		"finish before",
+		"finish runtime",
+		"finish after",
+		"finalize runtime",
+	}, events)
+	require.Len(t, runtimeCall.outcome.Finishers, 3)
+	require.ErrorIs(t, runtimeCall.outcome.Finishers[0].Err, beforeErr)
+	require.NoError(t, runtimeCall.outcome.Finishers[1].Err)
+	require.ErrorIs(t, runtimeCall.outcome.Finishers[2].Err, afterErr)
+	require.Equal(t, 1, runtimeCall.finalizeCalls)
 }
 
 func TestClientStreamObserverCannotCreateSuccessFromProviderError(t *testing.T) {
