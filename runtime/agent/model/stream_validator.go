@@ -140,7 +140,7 @@ func SetCompletionValidator(request *Request, validate func(*Response, *Completi
 // accept validates and records one provider chunk.
 func (v *streamValidator) accept(chunk Chunk) error {
 	if err := v.preflightStreamChunk(chunk); err != nil {
-		return classifyOutputValidation(OutputValidationOutputBounds, err)
+		return classifyOutputValidation(requiredOutputValidationKind(err), err)
 	}
 	owned, err := cloneChunk(chunk)
 	if err != nil {

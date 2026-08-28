@@ -74,6 +74,14 @@ type failingReceiveObserver struct {
 	err error
 }
 
+type unsupportedStreamChunk struct{}
+
+func (unsupportedStreamChunk) Kind() string {
+	return "unsupported"
+}
+
+func (unsupportedStreamChunk) isChunk() {}
+
 func (*typedNilStreamFixture) Recv() (Chunk, error) {
 	panic("typed-nil stream Recv called")
 }
@@ -92,6 +100,109 @@ func (o *failingReceiveObserver) ObserveStreamRecv(StreamObservation) error {
 
 func (*failingReceiveObserver) ObserveStreamClose(error) error {
 	return nil
+}
+
+func TestValidatedStreamDistinguishesResponseShapeFromOutputBounds(t *testing.T) {
+	tests := []struct {
+		name  string
+		chunk Chunk
+		kind  OutputValidationKind
+	}{
+		{
+			name:  "unsupported chunk",
+			chunk: unsupportedStreamChunk{},
+			kind:  OutputValidationResponseShape,
+		},
+		{
+			name: "invalid UTF-8",
+			chunk: TextChunk{Message: Message{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{TextPart{
+					Text: string([]byte{0xff}),
+				}},
+			}},
+			kind: OutputValidationResponseShape,
+		},
+		{
+			name: "byte limit",
+			chunk: TextChunk{Message: Message{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{TextPart{
+					Text: strings.Repeat("x", maxDynamicValueBytes+1),
+				}},
+			}},
+			kind: OutputValidationOutputBounds,
+		},
+	}
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stream, err := contract.ValidateStream(&validatedStreamFixture{
+				chunks: []Chunk{test.chunk},
+			})
+			require.NoError(t, err)
+
+			_, err = stream.Recv()
+
+			requireOutputValidationKind(t, err, test.kind)
+		})
+	}
+}
+
+func TestValidatedStreamPreservesTerminalPreflightCategory(t *testing.T) {
+	tests := []struct {
+		name     string
+		response *Response
+		kind     OutputValidationKind
+	}{
+		{
+			name: "unsupported assistant part",
+			response: &Response{Content: []Message{{
+				Role:  ConversationRoleAssistant,
+				Parts: []Part{ImagePart{}},
+			}}},
+			kind: OutputValidationResponseShape,
+		},
+		{
+			name: "invalid UTF-8",
+			response: &Response{Content: []Message{{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{TextPart{
+					Text: string([]byte{0xff}),
+				}},
+			}}},
+			kind: OutputValidationResponseShape,
+		},
+		{
+			name: "byte limit",
+			response: &Response{Content: []Message{{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{TextPart{
+					Text: strings.Repeat("x", maxDynamicValueBytes+1),
+				}},
+			}}},
+			kind: OutputValidationOutputBounds,
+		},
+	}
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.response.StopReason = "end_turn"
+			stream, err := contract.ValidateStream(&validatedStreamFixture{
+				chunks:   []Chunk{StopChunk{Reason: "end_turn"}},
+				response: test.response,
+			})
+			require.NoError(t, err)
+			_, err = stream.Recv()
+			require.NoError(t, err)
+
+			_, err = stream.Recv()
+
+			requireOutputValidationKind(t, err, test.kind)
+		})
+	}
 }
 
 func TestValidatedStreamObserversReceiveFrozenSourceInEveryOrder(t *testing.T) {

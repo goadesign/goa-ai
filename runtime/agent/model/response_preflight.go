@@ -14,7 +14,10 @@ import (
 // charges its original bytes to the invocation.
 func chargeString(walk *dynamicValueWalk, value string) error {
 	if !utf8.ValidString(value) {
-		return fmt.Errorf("string is not valid UTF-8")
+		return newDynamicValueFailure(
+			dynamicValueFailureShape,
+			fmt.Errorf("string is not valid UTF-8"),
+		)
 	}
 	return walk.addBytes(len(value))
 }
@@ -22,7 +25,10 @@ func chargeString(walk *dynamicValueWalk, value string) error {
 // chargeJSON rejects raw JSON bytes with invalid UTF-8 before ownership copying.
 func chargeJSON(walk *dynamicValueWalk, value []byte) error {
 	if !utf8.Valid(value) {
-		return fmt.Errorf("raw JSON is not valid UTF-8")
+		return newDynamicValueFailure(
+			dynamicValueFailureShape,
+			fmt.Errorf("raw JSON is not valid UTF-8"),
+		)
 	}
 	return walk.addBytes(len(value))
 }
@@ -138,7 +144,10 @@ func preflightResponsePart(part Part, walk *dynamicValueWalk) error {
 	case nil:
 		return nil
 	default:
-		return fmt.Errorf("unsupported assistant response part %T", part)
+		return classifyOutputValidation(
+			OutputValidationResponseShape,
+			fmt.Errorf("unsupported assistant response part %T", part),
+		)
 	}
 }
 
@@ -218,7 +227,10 @@ func preflightChunk(chunk Chunk, walk *dynamicValueWalk) error {
 	case nil:
 		return nil
 	default:
-		return fmt.Errorf("model: unsupported stream chunk %T", chunk)
+		return classifyOutputValidation(
+			OutputValidationResponseShape,
+			fmt.Errorf("model: unsupported stream chunk %T", chunk),
+		)
 	}
 }
 
@@ -266,14 +278,20 @@ func preflightChunkMessage(message *Message, walk *dynamicValueWalk, thinking bo
 		switch actual := part.(type) {
 		case TextPart:
 			if thinking {
-				return fmt.Errorf("model: thinking chunk part %d has type %T", index, part)
+				return classifyOutputValidation(
+					OutputValidationResponseShape,
+					fmt.Errorf("model: thinking chunk part %d has type %T", index, part),
+				)
 			}
 			if err := chargeString(walk, actual.Text); err != nil {
 				return err
 			}
 		case CitationsPart:
 			if thinking {
-				return fmt.Errorf("model: thinking chunk part %d has type %T", index, part)
+				return classifyOutputValidation(
+					OutputValidationResponseShape,
+					fmt.Errorf("model: thinking chunk part %d has type %T", index, part),
+				)
 			}
 			if err := chargeString(walk, actual.Text); err != nil {
 				return err
@@ -288,7 +306,10 @@ func preflightChunkMessage(message *Message, walk *dynamicValueWalk, thinking bo
 			}
 		case ThinkingPart:
 			if !thinking {
-				return fmt.Errorf("model: text chunk part %d has type %T", index, part)
+				return classifyOutputValidation(
+					OutputValidationResponseShape,
+					fmt.Errorf("model: text chunk part %d has type %T", index, part),
+				)
 			}
 			if err := chargeString(walk, actual.Text); err != nil {
 				return err
@@ -301,9 +322,15 @@ func preflightChunkMessage(message *Message, walk *dynamicValueWalk, thinking bo
 			}
 		default:
 			if thinking {
-				return fmt.Errorf("model: thinking chunk part %d has type %T", index, part)
+				return classifyOutputValidation(
+					OutputValidationResponseShape,
+					fmt.Errorf("model: thinking chunk part %d has type %T", index, part),
+				)
 			}
-			return fmt.Errorf("model: text chunk part %d has type %T", index, part)
+			return classifyOutputValidation(
+				OutputValidationResponseShape,
+				fmt.Errorf("model: text chunk part %d has type %T", index, part),
+			)
 		}
 	}
 	if message.Meta != nil {
@@ -420,11 +447,14 @@ func (v *streamValidator) preflightTerminalResponse(response *Response) error {
 				}
 			case nil:
 			default:
-				return fmt.Errorf(
-					"model: preflight response content %d part %d: unsupported assistant response part %T",
-					messageIndex,
-					partIndex,
-					part,
+				return classifyOutputValidation(
+					OutputValidationResponseShape,
+					fmt.Errorf(
+						"model: preflight response content %d part %d: unsupported assistant response part %T",
+						messageIndex,
+						partIndex,
+						part,
+					),
 				)
 			}
 		}

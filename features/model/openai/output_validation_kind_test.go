@@ -19,7 +19,6 @@ func TestCompleteClassifiesMalformedReasoningOutput(t *testing.T) {
 		name     string
 		response *responses.Response
 	}{
-		{name: "nil response"},
 		{name: "empty reasoning item", response: malformedReasoningResponse(t)},
 		{
 			name: "unsupported output item",
@@ -42,6 +41,18 @@ func TestCompleteClassifiesMalformedReasoningOutput(t *testing.T) {
 			requireOutputValidationKind(t, err, model.OutputValidationResponseShape)
 		})
 	}
+}
+
+func TestCompleteClassifiesNilResponseBeforeReadingUsage(t *testing.T) {
+	client, err := New(Options{
+		DefaultModel: "gpt-4o",
+		transport:    &mockTransport{},
+	})
+	require.NoError(t, err)
+
+	_, err = client.Complete(context.Background(), testOutputValidationRequest())
+
+	requireOutputValidationKind(t, err, model.OutputValidationResponseShape)
 }
 
 func TestStreamPumpClassifiesMalformedReasoningOutput(t *testing.T) {

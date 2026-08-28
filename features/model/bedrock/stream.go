@@ -679,13 +679,9 @@ func (p *chunkProcessor) Handle(event any) error {
 		return nil
 	case *brtypes.ConverseStreamOutputMemberMessageStop:
 		if !p.started {
-			// Bedrock intermittently stops a message it never started when the
-			// model produces an empty completion (observed on Haiku). Classify
-			// as a retryable empty stream instead of an opaque protocol error.
-			return model.NewEmptyStreamError(
-				bedrockProviderName,
-				"converse_stream",
-				"message stop received without an active message",
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("bedrock stream: message stop received without an active message"),
 			)
 		}
 		if p.complete {

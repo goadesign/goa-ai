@@ -174,7 +174,10 @@ func (s *anthropicStreamer) run() {
 			return
 		}
 		if err := response.Accumulate(event); err != nil {
-			s.setErr(s.outputError(processor, fmt.Errorf("anthropic: accumulate streamed response: %w", err)))
+			s.setErr(s.outputError(processor, outputvalidation.New(
+				anthropicAccumulatorFailureKind(&response, event),
+				fmt.Errorf("anthropic: accumulate streamed response: %w", err),
+			)))
 			return
 		}
 		if rejected != nil && !anthropicTerminalEvidence(event) {
@@ -189,6 +192,32 @@ func (s *anthropicStreamer) run() {
 			s.setErr(s.outputError(processor, err))
 			return
 		}
+	}
+}
+
+// anthropicAccumulatorFailureKind mirrors the Anthropic SDK branches that can
+// reject one decoded event. A delta or stop before any content block breaks
+// stream continuity; failures after a block exists mean the event cannot
+// populate the SDK response shape. A new SDK failure branch must be classified
+// explicitly.
+func anthropicAccumulatorFailureKind(response *sdk.Message, event sdk.MessageStreamEventUnion) model.OutputValidationKind {
+	switch event.AsAny().(type) {
+	case sdk.ContentBlockStartEvent:
+		return model.OutputValidationResponseShape
+	case sdk.ContentBlockDeltaEvent:
+		if len(response.Content) == 0 {
+			return model.OutputValidationStreamProtocol
+		}
+		return model.OutputValidationResponseShape
+	case sdk.ContentBlockStopEvent:
+		if len(response.Content) == 0 {
+			return model.OutputValidationStreamProtocol
+		}
+		return model.OutputValidationResponseShape
+	case sdk.MessageStopEvent:
+		return model.OutputValidationResponseShape
+	default:
+		panic(fmt.Sprintf("anthropic: unexpected accumulator failure for event %T", event.AsAny()))
 	}
 }
 
@@ -703,13 +732,9 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		return p.emit(model.UsageChunk{Usage: delta})
 	case sdk.MessageStopEvent:
 		if !p.started {
-			// Anthropic models intermittently emit an empty completion whose
-			// stream stops a message that never started. Classify as a
-			// retryable empty stream instead of an opaque protocol error.
-			return model.NewEmptyStreamError(
-				anthropicProviderName,
-				"stream_recv",
-				"message stop received without an active message",
+			return outputvalidation.New(
+				model.OutputValidationStreamProtocol,
+				errors.New("anthropic stream: message stop received without an active message"),
 			)
 		}
 		if p.complete {

@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -102,6 +103,52 @@ func TestRequestContractRejectsMalformedProviderUsageModel(t *testing.T) {
 	require.Empty(t, rejected.Usage().Model)
 	require.Equal(t, 3, rejected.Usage().TotalTokens)
 	require.Equal(t, ModelClassSmall, rejected.Usage().ModelClass)
+}
+
+func TestRequestContractDistinguishesResponseShapeFromOutputBounds(t *testing.T) {
+	tests := []struct {
+		name     string
+		response *Response
+		kind     OutputValidationKind
+	}{
+		{
+			name: "unsupported assistant part",
+			response: &Response{Content: []Message{{
+				Role:  ConversationRoleAssistant,
+				Parts: []Part{ImagePart{}},
+			}}},
+			kind: OutputValidationResponseShape,
+		},
+		{
+			name: "invalid UTF-8",
+			response: &Response{Content: []Message{{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{TextPart{
+					Text: string([]byte{0xff}),
+				}},
+			}}},
+			kind: OutputValidationResponseShape,
+		},
+		{
+			name: "byte limit",
+			response: &Response{Content: []Message{{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{TextPart{
+					Text: strings.Repeat("x", maxDynamicValueBytes+1),
+				}},
+			}}},
+			kind: OutputValidationOutputBounds,
+		},
+	}
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := contract.ValidateResponse(test.response)
+
+			requireOutputValidationKind(t, err, test.kind)
+		})
+	}
 }
 
 func TestRequestContractOwnsStreamUsageModelClass(t *testing.T) {

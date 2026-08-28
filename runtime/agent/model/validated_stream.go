@@ -509,7 +509,7 @@ func (s *validatedStreamer) Recv() (Chunk, error) {
 			return s.finishReceive(err)
 		}
 		if preflightErr := s.validator.preflightStreamChunk(chunk); preflightErr != nil {
-			return nil, s.failValidation(OutputValidationOutputBounds, preflightErr)
+			return nil, s.failValidation(requiredOutputValidationKind(preflightErr), preflightErr)
 		}
 		owned, cloneErr := cloneChunk(chunk)
 		if cloneErr != nil {
@@ -563,10 +563,10 @@ func (s *validatedStreamer) finishReceive(err error) (Chunk, error) {
 		&responseBudget,
 		dynamicCloneEvidence,
 	); preflightErr != nil {
-		return nil, s.failValidation(OutputValidationOutputBounds, preflightErr)
+		return nil, s.failValidation(requiredOutputValidationKind(preflightErr), preflightErr)
 	}
 	if preflightErr := s.validator.preflightTerminalResponse(rawResponse); preflightErr != nil {
-		return nil, s.failValidation(OutputValidationOutputBounds, preflightErr)
+		return nil, s.failValidation(requiredOutputValidationKind(preflightErr), preflightErr)
 	}
 	s.responseEvidence = responseEvidencePreflighted(rawResponse)
 	response, cloneErr := ownPreflightedResponse(rawResponse)

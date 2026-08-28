@@ -503,6 +503,71 @@ func TestAnthropicStreamerRejectsOversizedSDKSnapshotBeforeAccumulation(t *testi
 	require.True(t, validationErr.Evidence().Present)
 }
 
+func TestAnthropicStreamerClassifiesAccumulatorFailure(t *testing.T) {
+	var delta sdk.MessageStreamEventUnion
+	require.NoError(t, json.Unmarshal([]byte(
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"orphan"}}`,
+	), &delta))
+	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](
+		&testDecoder{events: []ssestream.Event{{
+			Type: "content_block_delta",
+			Data: mustJSON(delta),
+		}}},
+		nil,
+	)
+	translated := newAnthropicStreamer(
+		t.Context(),
+		stream,
+		nil,
+		nil,
+		"claude-test",
+		model.ModelClassDefault,
+		nil,
+		anthropicTestContract(t),
+	)
+	defer func() { require.NoError(t, translated.Close()) }()
+
+	_, err := translated.Recv()
+
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, model.OutputValidationStreamProtocol, validationErr.Kind())
+	require.ErrorContains(t, errors.Unwrap(validationErr), "accumulate streamed response")
+}
+
+func TestAnthropicAccumulatorFailureKind(t *testing.T) {
+	var start sdk.MessageStreamEventUnion
+	require.NoError(t, json.Unmarshal([]byte(
+		`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+	), &start))
+	var delta sdk.MessageStreamEventUnion
+	require.NoError(t, json.Unmarshal([]byte(
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"orphan"}}`,
+	), &delta))
+	tests := []struct {
+		name     string
+		response sdk.Message
+		event    sdk.MessageStreamEventUnion
+		kind     model.OutputValidationKind
+	}{
+		{
+			name:  "content block cannot populate SDK response",
+			event: start,
+			kind:  model.OutputValidationResponseShape,
+		},
+		{
+			name:  "delta before content block",
+			event: delta,
+			kind:  model.OutputValidationStreamProtocol,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.kind, anthropicAccumulatorFailureKind(&test.response, test.event))
+		})
+	}
+}
+
 func TestAnthropicStreamerRejectsMissingToolCallIDWithUsage(t *testing.T) {
 	rawEvents := []struct {
 		eventType string
@@ -617,8 +682,7 @@ func TestAnthropicStreamer_ContextCancelPassthrough(t *testing.T) {
 
 // TestAnthropicStreamerClassifiesEventlessStreamAsEmptyStream verifies that a
 // stream closing before any message starts is classified as a retryable empty
-// stream (model.ErrEmptyStream) instead of an opaque protocol error, so retry
-// middleware can safely reissue the request.
+// stream (model.ErrEmptyStream) instead of model output.
 func TestAnthropicStreamerClassifiesEventlessStreamAsEmptyStream(t *testing.T) {
 	dec := &testDecoder{events: nil}
 	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](dec, nil)
@@ -643,11 +707,9 @@ func TestAnthropicStreamerClassifiesEventlessStreamAsEmptyStream(t *testing.T) {
 	assert.True(t, pe.Retryable())
 }
 
-// TestAnthropicStreamerClassifiesMessageStopWithoutStartAsEmptyStream verifies
-// that a message_stop arriving before message_start carries the empty-stream
-// classification: this is the wire shape Anthropic-family models produce when
-// they emit an empty completion.
-func TestAnthropicStreamerClassifiesMessageStopWithoutStartAsEmptyStream(t *testing.T) {
+// TestAnthropicStreamerClassifiesMessageStopWithoutStart verifies that a clean
+// provider event with invalid message order is a stream protocol rejection.
+func TestAnthropicStreamerClassifiesMessageStopWithoutStart(t *testing.T) {
 	var stop sdk.MessageStreamEventUnion
 	require.NoError(t, json.Unmarshal([]byte(`{"type":"message_stop"}`), &stop))
 	events := []ssestream.Event{{Type: "message_stop", Data: mustJSON(stop)}}
@@ -666,11 +728,11 @@ func TestAnthropicStreamerClassifiesMessageStopWithoutStartAsEmptyStream(t *test
 	defer func() { _ = s.Close() }()
 
 	_, err := s.Recv()
-	require.ErrorIs(t, err, model.ErrEmptyStream)
-	pe, ok := model.AsProviderError(err)
-	require.True(t, ok)
-	assert.Equal(t, model.ProviderErrorKindUnavailable, pe.Kind())
-	assert.True(t, pe.Retryable())
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, model.OutputValidationStreamProtocol, validationErr.Kind())
+	_, providerFailure := model.AsProviderError(err)
+	require.False(t, providerFailure)
 }
 
 func TestAnthropicStreamerRejectsMessageStopWithOpenContentBlock(t *testing.T) {

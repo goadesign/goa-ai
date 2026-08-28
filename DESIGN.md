@@ -968,16 +968,15 @@ This keeps consumers simple: render `error`, gate “Retry” on `retryable`, an
 
 Provider adapters (Bedrock, Anthropic) validate the streaming event protocol
 with a strict state machine: a message must start before content blocks flow
-and must stop exactly once before metadata. Violations never produce a
-fabricated response; they fail the stream with a precise error. Two terminal
-shapes are classified instead of surfaced as opaque protocol errors:
+and must stop exactly once before metadata. A provider terminal event that
+violates this order is rejected as `OutputValidationStreamProtocol`. Transport
+failures and caller cancellation remain outside `OutputValidationError`.
+Two event-source termination shapes retain provider-failure classifications:
 
-- **Empty stream** — the stream terminates before any message starts (a
-  `messageStop` with no prior `messageStart`, or a stream that closes with no
-  events at all). Providers intermittently do this when a model emits an
-  empty completion. Adapters build the error with `model.NewEmptyStreamError`,
-  which carries the `model.ErrEmptyStream` sentinel plus a retryable
-  `unavailable` ProviderError (code `empty_stream`). Callers detect it with
+- **Empty event source** — the event source closes before any message starts.
+  Adapters build the error with `model.NewEmptyStreamError`, which carries the
+  `model.ErrEmptyStream` sentinel plus a retryable `unavailable` ProviderError
+  (code `empty_stream`). Callers detect it with
   `errors.Is(err, model.ErrEmptyStream)` and may retry the request a bounded
   number of times before surfacing the failure.
 - **Truncated stream** — the stream closes cleanly after a message started but

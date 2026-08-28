@@ -3739,10 +3739,14 @@ var ErrEmptyStream = errors.New("model: provider returned an empty stream")
 ```
 
 `ErrEmptyStream` is joined (via `model.NewEmptyStreamError`) with a retryable
-`unavailable` ProviderError when a provider terminates a stream before any
-assistant message starts — the wire shape produced by intermittent empty model
-completions. Detect it with `errors.Is(err, model.ErrEmptyStream)` and retry
-the request a bounded number of times before surfacing the failure.
+`unavailable` ProviderError when the provider event source closes before any
+assistant message starts. Detect it with
+`errors.Is(err, model.ErrEmptyStream)` and retry the request a bounded number
+of times before surfacing the failure. A terminal provider event that arrives
+without the required start event is malformed output instead; built-in
+adapters return `OutputValidationError` with
+`OutputValidationStreamProtocol`. Provider/network errors and caller
+cancellation remain outside `OutputValidationError`.
 
 ---
 

@@ -142,7 +142,13 @@ func (c *RequestContract) ValidateResponse(response *Response) (*Response, error
 		}
 	}
 	if err := preflightResponse(response, &dynamicValueWalk{}, dynamicCloneEvidence); err != nil {
-		return nil, newOutputValidationError(OutputValidationOutputBounds, err, evidence, nil, usage)
+		return nil, newOutputValidationError(
+			requiredOutputValidationKind(err),
+			err,
+			evidence,
+			nil,
+			usage,
+		)
 	}
 	evidence = responseEvidencePreflighted(response)
 	owned, err := ownPreflightedResponse(response)

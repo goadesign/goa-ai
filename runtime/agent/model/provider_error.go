@@ -139,13 +139,12 @@ func AsProviderError(err error) (*ProviderError, bool) {
 
 // NewEmptyStreamError classifies a streaming response that the provider
 // terminated without ever starting an assistant message. Adapters call it
-// from their stream event loops when the terminal event (or the end of the
-// event stream) arrives before any message started, which providers
-// intermittently produce for empty model completions. The result carries
-// ErrEmptyStream for errors.Is detection plus a retryable unavailable
-// ProviderError so retry middleware and observability see one consistent
-// classification. message describes the protocol shape observed (for
-// example, "message stop received without an active message").
+// when the event source closes before any message starts. A provider terminal
+// event that violates message ordering is model output instead and must not
+// use this transport-failure constructor. The result carries ErrEmptyStream
+// for errors.Is detection plus a retryable unavailable ProviderError so retry
+// middleware and observability see one consistent classification.
+// message describes how the event source terminated.
 func NewEmptyStreamError(provider, operation, message string) error {
 	pe := NewProviderError(
 		provider,

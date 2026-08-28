@@ -98,3 +98,23 @@ func classifiedOutputValidation(err error) (OutputValidationKind, bool) {
 	}
 	return failure.kind, true
 }
+
+// requiredOutputValidationKind returns the category attached by a preflight or
+// canonical validation check. Missing classification is an internal contract
+// violation because callers cannot safely infer why provider output failed.
+func requiredOutputValidationKind(err error) OutputValidationKind {
+	kind, ok := classifiedOutputValidation(err)
+	if ok {
+		return kind
+	}
+	var valueFailure *dynamicValueFailure
+	if errors.As(err, &valueFailure) {
+		switch valueFailure.kind {
+		case dynamicValueFailureShape:
+			return OutputValidationResponseShape
+		case dynamicValueFailureBounds:
+			return OutputValidationOutputBounds
+		}
+	}
+	panic("model: output rejection is missing its validation category")
+}
