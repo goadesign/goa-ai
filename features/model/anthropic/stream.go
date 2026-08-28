@@ -613,7 +613,7 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			return nil
 		default:
 			return outputvalidation.New(
-				model.OutputValidationStreamProtocol,
+				model.OutputValidationResponseShape,
 				fmt.Errorf("anthropic stream: unsupported content block delta %T", delta),
 			)
 		}

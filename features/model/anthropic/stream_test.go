@@ -568,6 +568,64 @@ func TestAnthropicAccumulatorFailureKind(t *testing.T) {
 	}
 }
 
+func TestAnthropicStreamerClassifiesUnsupportedDeltaAsResponseShape(t *testing.T) {
+	rawEvents := []struct {
+		eventType string
+		data      string
+	}{
+		{
+			eventType: "message_start",
+			data: `{
+				"type":"message_start",
+				"message":{
+					"id":"msg_1",
+					"type":"message",
+					"role":"assistant",
+					"content":[],
+					"model":"claude-test",
+					"stop_reason":null,
+					"stop_sequence":null,
+					"usage":{"input_tokens":0,"output_tokens":0}
+				}
+			}`,
+		},
+		{
+			eventType: "content_block_start",
+			data:      `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		},
+		{
+			eventType: "content_block_delta",
+			data:      `{"type":"content_block_delta","index":0,"delta":{"type":"unsupported_delta","detail":"private-marker"}}`,
+		},
+	}
+	events := make([]ssestream.Event, len(rawEvents))
+	for i, raw := range rawEvents {
+		var event sdk.MessageStreamEventUnion
+		require.NoError(t, json.Unmarshal([]byte(raw.data), &event))
+		events[i] = ssestream.Event{Type: raw.eventType, Data: mustJSON(event)}
+	}
+	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](&testDecoder{events: events}, nil)
+	translated := newAnthropicStreamer(
+		t.Context(),
+		stream,
+		nil,
+		nil,
+		"claude-test",
+		model.ModelClassDefault,
+		nil,
+		anthropicTestContract(t),
+	)
+	defer func() { require.NoError(t, translated.Close()) }()
+
+	_, err := translated.Recv()
+
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, model.OutputValidationResponseShape, validationErr.Kind())
+	require.EqualError(t, validationErr, "model output does not meet its request contract")
+	require.NotContains(t, validationErr.Error(), "private-marker")
+}
+
 func TestAnthropicStreamerRejectsMissingToolCallIDWithUsage(t *testing.T) {
 	rawEvents := []struct {
 		eventType string
