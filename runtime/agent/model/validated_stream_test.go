@@ -12,7 +12,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
 	"goa.design/goa-ai/runtime/agent/internal/modelcall"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type validatedStreamFixture struct {
@@ -244,6 +246,78 @@ func TestValidatedStreamRetainsImmutableToolCallEvidence(t *testing.T) {
 	require.JSONEq(t, `{"query":"original"}`, string(response.Content[0].Parts[0].(ToolUsePart).Input))
 }
 
+func TestNestedValidatedStreamGeneratedCorrectionRetainsUsageWithoutExposingResponse(t *testing.T) {
+	call := ToolCall{
+		Name:    "catalog.lookup",
+		Payload: []byte(`{"query":42,"private":"submitted-secret"}`),
+		ID:      "call-1",
+	}
+	usage := TokenUsage{
+		Model:        "provider-model",
+		InputTokens:  11,
+		OutputTokens: 7,
+		TotalTokens:  18,
+	}
+	raw := &validatedStreamFixture{
+		chunks: []Chunk{
+			ToolCallDeltaChunk{Delta: ToolCallDelta{
+				Name:  call.Name,
+				ID:    call.ID,
+				Delta: string(call.Payload),
+			}},
+			ToolCallChunk{ToolCall: call},
+			UsageChunk{Usage: usage},
+			StopChunk{Reason: "tool_use"},
+		},
+		response: &Response{
+			Content: []Message{{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{ToolUsePart{
+					ID:    call.ID,
+					Name:  call.Name.String(),
+					Input: call.Payload,
+				}},
+			}},
+			Usage:      usage,
+			StopReason: "tool_use",
+		},
+	}
+	validated := mustValidateStream(t, raw, &Request{
+		Tools: []*ToolDefinition{generatedRejectingTool(&tools.FieldIssue{
+			Field:            "query",
+			Constraint:       "invalid_field_type",
+			ExpectedJSONType: "string",
+			ActualJSONType:   "number",
+		})},
+	})
+	nested := mustValidateStream(t, validated, &Request{})
+	observer := &recordingStreamObserver{}
+	stream, err := nested.Observe(observer)
+	require.NoError(t, err)
+
+	chunk, err := stream.Recv()
+
+	require.Nil(t, chunk)
+	var outputErr *OutputValidationError
+	require.ErrorAs(t, err, &outputErr)
+	require.Contains(t, outputErr.RecoveryCorrection(), `Field "query" must contain a JSON string.`)
+	require.NotContains(t, outputErr.RecoveryCorrection(), "submitted-secret")
+	require.Equal(t, &usage, outputErr.Usage())
+	require.Nil(t, stream.Response())
+	require.Len(t, observer.observations, 1)
+	observation := observer.observations[0]
+	require.Nil(t, observation.Chunk)
+	require.Nil(t, observation.Response)
+	require.True(t, observation.ResponseEvidence.Present)
+	require.NotEmpty(t, observation.ResponseEvidence.SHA256)
+	require.Nil(t, observation.RejectedUsageDelta)
+	require.Equal(t, &usage, observation.RejectedUsageTotal)
+	require.NotContains(t, observation.Err.Error(), "submitted-secret")
+	secondChunk, secondErr := stream.Recv()
+	require.Nil(t, secondChunk)
+	require.ErrorIs(t, secondErr, outputErr)
+}
+
 func TestValidatedStreamDiscardsCompletedToolCallAfterLaterProviderRejection(t *testing.T) {
 	contract, err := NewRequestContract(requestWithTool("search"))
 	require.NoError(t, err)
@@ -313,9 +387,6 @@ func TestValidatedStreamBoundsToolDeltaAccumulator(t *testing.T) {
 	inner := stream.core.inner.(*validatedStreamer)
 
 	_, err := stream.Recv()
-	require.NoError(t, err)
-	require.Equal(t, len(delta), inner.validator.toolDeltaPayloads["call-1"].Len())
-	_, err = stream.Recv()
 
 	require.ErrorContains(t, err, "exceeds maximum byte size")
 	require.Equal(t, len(delta), inner.validator.toolDeltaPayloads["call-1"].Len())
@@ -351,9 +422,10 @@ func TestValidatedStreamDoesNotDoubleChargeFinalizedToolDeltas(t *testing.T) {
 	}
 	stream := mustValidateStream(t, raw, requestWithTool("search"))
 
-	for range 3 {
-		_, err := stream.Recv()
+	for _, expected := range raw.chunks {
+		chunk, err := stream.Recv()
 		require.NoError(t, err)
+		require.Equal(t, expected, chunk)
 	}
 	_, err := stream.Recv()
 
@@ -597,6 +669,44 @@ func TestObservedStreamCloseJoinsProviderAndObserverFailures(t *testing.T) {
 	require.ErrorIs(t, err, providerErr)
 	require.ErrorIs(t, err, observerErr)
 	require.Equal(t, err, observed.Close())
+	require.True(t, raw.closed)
+}
+
+func TestObservedStreamCloseDiscardsBufferedToolChunks(t *testing.T) {
+	call := ToolCall{
+		ID:      "call-1",
+		Name:    "search",
+		Payload: []byte(`{"query":"accepted"}`),
+	}
+	providerErr := errors.New("provider close failed")
+	observerErr := errors.New("observer rejected delivery")
+	raw := &validatedStreamFixture{
+		chunks: []Chunk{
+			ToolCallDeltaChunk{Delta: ToolCallDelta{
+				ID:    call.ID,
+				Name:  call.Name,
+				Delta: string(call.Payload),
+			}},
+			ToolCallChunk{ToolCall: call},
+			StopChunk{Reason: "tool_use"},
+		},
+		response: responseWithToolCall(call),
+		closeErr: providerErr,
+	}
+	base := mustValidateStream(t, raw, requestWithTool("search"))
+	inner := base.core.inner.(*validatedStreamer)
+	observed, err := base.Observe(&failingReceiveObserver{err: observerErr})
+	require.NoError(t, err)
+
+	chunk, err := observed.Recv()
+	require.IsType(t, ToolCallDeltaChunk{}, chunk)
+	require.ErrorIs(t, err, observerErr)
+	require.NotEmpty(t, inner.pending)
+
+	err = observed.Close()
+
+	require.ErrorIs(t, err, providerErr)
+	require.Empty(t, inner.pending)
 	require.True(t, raw.closed)
 }
 

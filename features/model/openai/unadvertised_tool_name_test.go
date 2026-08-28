@@ -271,11 +271,8 @@ func TestStreamMarksUnadvertisedToolName(t *testing.T) {
 		TotalTokens:  7,
 	}, validationErr.Usage())
 	assert.Nil(t, streamer.Response())
-	require.Len(t, chunks, 2)
+	require.Len(t, chunks, 1)
 	assert.Equal(t, "partial text", chunks[0].(model.TextChunk).Message.Parts[0].(model.TextPart).Text)
-	valid := chunks[1].(model.ToolCallDeltaChunk).Delta
-	assert.Equal(t, "call_1", valid.ID)
-	assert.Equal(t, "lookup", valid.Name.String())
 	assert.ErrorIs(t, streamer.Close(), closeErr)
 }
 

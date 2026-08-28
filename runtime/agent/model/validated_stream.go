@@ -292,9 +292,10 @@ func (s *ValidatedStream) streamObservers() []*observedValidatedStreamer {
 	return append([]*observedValidatedStreamer(nil), s.observers.list...)
 }
 
-// rejectedStreamResponse returns the owned complete provider response that
-// failed stream reconciliation. Chunk-level failures occur before a complete
-// response exists and return nil.
+// rejectedStreamResponse returns a complete provider response only for terminal
+// failures that may retain one. A generated payload correction suppresses the
+// response at this validation layer and every nested layer so observers cannot
+// receive rejected tool arguments.
 func rejectedStreamResponse(streamer Streamer) (*Response, error) {
 	var response *Response
 	switch actual := streamer.(type) {
@@ -306,6 +307,9 @@ func rejectedStreamResponse(streamer Streamer) (*Response, error) {
 		defer actual.core.mu.Unlock()
 		return rejectedStreamResponse(actual.core.inner)
 	case *validatedStreamer:
+		if recoveryCorrectionFromError(actual.terminalErr) != "" {
+			return nil, nil
+		}
 		if actual.rejected == nil {
 			return rejectedStreamResponse(actual.inner)
 		}
@@ -464,18 +468,21 @@ func (s *validatedStreamer) Response() *Response {
 	return s.response
 }
 
-// Close closes the provider stream.
+// Close discards any accepted chunks the caller did not consume, then closes
+// the provider stream.
 func (s *validatedStreamer) Close() error {
+	clear(s.pending)
+	s.pending = nil
 	return s.inner.Close()
 }
 
-// streamChunkRequiresTerminalValidation reports whether a completed semantic
-// value must wait for the provider's complete response. Preview-only text,
-// thinking, and argument deltas can remain visible while callers discard them
-// if the later terminal validation fails.
+// streamChunkRequiresTerminalValidation reports whether a model-authored value
+// must wait for the provider's complete response. Tool argument fragments stay
+// private until the completed call passes its generated decoder; completed
+// calls and structured output likewise wait for terminal reconciliation.
 func streamChunkRequiresTerminalValidation(chunk Chunk) bool {
 	switch chunk.(type) {
-	case ToolCallChunk, CompletionChunk:
+	case ToolCallDeltaChunk, ToolCallChunk, CompletionChunk:
 		return true
 	default:
 		return false
@@ -613,12 +620,16 @@ func (s *observedValidatedStreamer) observeClose(providerErr error) error {
 func (s *validatedStreamer) failValidation(err error) error {
 	s.pending = nil
 	s.finished = true
-	s.terminalErr = newOutputValidationError(
+	validationErr := newOutputValidationError(
 		err,
 		s.responseEvidence,
 		s.rejected,
 		firstTokenUsage(s.rejectedTotal, s.rejectedDelta),
 	)
+	if validationErr.RecoveryCorrection() != "" {
+		s.rejected = nil
+	}
+	s.terminalErr = validationErr
 	return s.terminalErr
 }
 

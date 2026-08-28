@@ -16,10 +16,13 @@ planner model call directly to clients as provisional output. One
 execution-scoped presentation ID associates its fragments with a discard marker
 and differs from every retry execution. The workflow's
 canonical assistant-turn event alone finalizes accepted output. Provisional
-fragments never enter the run log, hook bus, or memory. Partial tool arguments
-stay inside model validation until one complete tool call is available. After
-planner selection, the canonical response is persisted once, and its ordered
-runtime records are published through one idempotent activity batch.
+fragments never enter the run log, hook bus, or memory. Tool argument fragments
+and completed calls stay inside model validation until the provider's terminal
+response reconciles with the stream and the originating generated decoder
+accepts every payload. A raw remote gateway transports provider output without
+replacing that decoder with a schema-only validator. After planner selection,
+the canonical response is persisted once, and its ordered runtime records are
+published through one idempotent activity batch.
 
 ## How it works
 
@@ -757,11 +760,14 @@ redeploys.
   the bounded local reason identity.
 - **Generated tool validation**: A model definition created from a generated
   tool specification retains its generated payload decoder inside the process.
-  Unary tool calls and final streamed tool-call chunks must match a definition
-  in the exact model request. Generated payloads are decoded before planner code
-  can observe them, so an invalid first response cannot lead to another model
-  call. The activity validates the selected planner request again before
-  scheduling effects.
+  Unary tool calls and streamed tool calls must match a definition in the exact
+  model request. A completed streamed call remains withheld until terminal
+  usage arrives and the complete response matches every retained chunk. The
+  originating generated decoder then validates all calls before planner code
+  can observe them. Invalid generated payloads can therefore carry final usage
+  into bounded replacement planning without executing the rejected call.
+  Incomplete or inconsistent streams remain terminal. The activity validates
+  the selected planner request again before scheduling effects.
 - **Planner-transparent provenance**: Each model call produces an isolated
   canonical response and ordered presentation before planner code observes
   completion. One opaque validated-stream value owns validated chunks, the
