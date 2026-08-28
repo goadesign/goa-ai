@@ -20,7 +20,7 @@ import (
 )
 
 func TestCompletionToolSuccessEndsRunWithoutPlannerResume(t *testing.T) {
-	completion := newAnyJSONSpec("briefs.persist", "catalog")
+	completion := newAnyJSONSpec("reports.persist", "catalog")
 	resumes := 0
 	h := newRecoveryHarness(
 		t,
@@ -50,7 +50,7 @@ func TestCompletionToolSuccessEndsRunWithoutPlannerResume(t *testing.T) {
 }
 
 func TestCompletionToolFailureCanBeCorrected(t *testing.T) {
-	completion := newAnyJSONSpec("briefs.persist", "catalog")
+	completion := newAnyJSONSpec("reports.persist", "catalog")
 	resumes := 0
 	h := newRecoveryHarness(
 		t,
@@ -84,7 +84,7 @@ func TestCompletionToolFailureCanBeCorrected(t *testing.T) {
 }
 
 func TestCompletionToolRejectsClarificationBeforeSuspension(t *testing.T) {
-	completion := tools.Ident("briefs.persist")
+	completion := tools.Ident("reports.persist")
 
 	err := validateCompletionToolRecords([]stepToolRecord{{
 		call:          ToolCall{Name: completion, ToolCallID: "persist-1"},
@@ -92,11 +92,11 @@ func TestCompletionToolRejectsClarificationBeforeSuspension(t *testing.T) {
 		clarification: &ToolClarification{ID: "clarify-1", Question: "Which title?"},
 	}}, completion)
 
-	require.EqualError(t, err, `completion tool "briefs.persist" cannot request clarification`)
+	require.EqualError(t, err, `completion tool "reports.persist" cannot request clarification`)
 }
 
 func TestCompletionToolRejectsWholeWorkflowRetries(t *testing.T) {
-	policy := &PolicyOverrides{CompletionTool: "briefs.persist"}
+	policy := &PolicyOverrides{CompletionTool: "reports.persist"}
 
 	for _, retry := range []api.RetryPolicy{
 		{MaxAttempts: 2},
@@ -111,7 +111,7 @@ func TestCompletionToolRejectsWholeWorkflowRetries(t *testing.T) {
 }
 
 func TestCompletionToolRejectsPlannerTerminalResponse(t *testing.T) {
-	completion := newAnyJSONSpec("briefs.persist", "catalog")
+	completion := newAnyJSONSpec("reports.persist", "catalog")
 	h := newRecoveryHarness(
 		t,
 		"completion-terminal-response",
@@ -131,11 +131,11 @@ func TestCompletionToolRejectsPlannerTerminalResponse(t *testing.T) {
 
 	assert.Nil(t, out)
 	require.Error(t, err)
-	require.ErrorContains(t, err, `completion tool "briefs.persist" did not succeed`)
+	require.ErrorContains(t, err, `completion tool "reports.persist" did not succeed`)
 }
 
 func TestCompletionToolCapExhaustionFailsWithoutFinalization(t *testing.T) {
-	completion := newAnyJSONSpec("briefs.persist", "catalog")
+	completion := newAnyJSONSpec("reports.persist", "catalog")
 	resumes := 0
 	h := newRecoveryHarness(
 		t,
@@ -159,12 +159,12 @@ func TestCompletionToolCapExhaustionFailsWithoutFinalization(t *testing.T) {
 
 	assert.Nil(t, out)
 	require.Error(t, err)
-	require.ErrorContains(t, err, `completion tool "briefs.persist" did not succeed`)
+	require.ErrorContains(t, err, `completion tool "reports.persist" did not succeed`)
 	assert.Zero(t, resumes)
 }
 
 func TestCompletionToolRecoveryCapFailsWithoutFinalization(t *testing.T) {
-	completion := newAnyJSONSpec("briefs.persist", "catalog")
+	completion := newAnyJSONSpec("reports.persist", "catalog")
 	resumes := 0
 	h := newRecoveryHarness(
 		t,
@@ -185,13 +185,13 @@ func TestCompletionToolRecoveryCapFailsWithoutFinalization(t *testing.T) {
 	}}}, initialCaps(RunPolicy{MaxToolCalls: 2, MaxRecoveryTurns: 1}))
 
 	assert.Nil(t, out)
-	require.ErrorContains(t, err, `completion tool "briefs.persist" did not succeed`)
+	require.ErrorContains(t, err, `completion tool "reports.persist" did not succeed`)
 	assert.Equal(t, 1, resumes)
 }
 
 func TestCompletionToolMustBeOnlyActionInPlannerResponse(t *testing.T) {
-	completion := newAnyJSONSpec("briefs.persist", "catalog")
-	other := newAnyJSONSpec("briefs.lookup", "catalog")
+	completion := newAnyJSONSpec("reports.persist", "catalog")
+	other := newAnyJSONSpec("reports.lookup", "catalog")
 	h := newRecoveryHarness(
 		t,
 		"completion-mixed-batch",
@@ -212,11 +212,11 @@ func TestCompletionToolMustBeOnlyActionInPlannerResponse(t *testing.T) {
 
 	assert.Nil(t, out)
 	require.Error(t, err)
-	require.ErrorContains(t, err, `completion tool "briefs.persist" must be the only action`)
+	require.ErrorContains(t, err, `completion tool "reports.persist" must be the only action`)
 }
 
 func TestCompletionToolCannotAccompanyPlannerAwait(t *testing.T) {
-	completion := newAnyJSONSpec("briefs.persist", "catalog")
+	completion := newAnyJSONSpec("reports.persist", "catalog")
 	executions := 0
 	h := newRecoveryHarness(
 		t,
@@ -237,18 +237,18 @@ func TestCompletionToolCannotAccompanyPlannerAwait(t *testing.T) {
 			Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "persist-await",
 		}},
 		Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{
-			ID: "clarify-brief", Question: "Which details should the Brief include?",
+			ID: "clarify-report", Question: "Which details should the report include?",
 		})),
 	}, initialCaps(RunPolicy{MaxToolCalls: 3}))
 
 	assert.Nil(t, out)
-	require.ErrorContains(t, err, `completion tool "briefs.persist" must be the only action`)
+	require.ErrorContains(t, err, `completion tool "reports.persist" must be the only action`)
 	assert.Zero(t, executions)
 }
 
 func TestCompletionToolCannotRequestPostToolSynthesis(t *testing.T) {
-	completion := newAnyJSONSpec("briefs.persist", "catalog")
-	lookup := newAnyJSONSpec("briefs.lookup", "catalog")
+	completion := newAnyJSONSpec("reports.persist", "catalog")
+	lookup := newAnyJSONSpec("reports.lookup", "catalog")
 	executions := 0
 	h := newRecoveryHarness(
 		t,
@@ -272,13 +272,13 @@ func TestCompletionToolCannotRequestPostToolSynthesis(t *testing.T) {
 	}, initialCaps(RunPolicy{MaxToolCalls: 3}))
 
 	assert.Nil(t, out)
-	require.ErrorContains(t, err, `completion tool "briefs.persist" did not succeed`)
+	require.ErrorContains(t, err, `completion tool "reports.persist" did not succeed`)
 	require.ErrorContains(t, err, "planner requested post-tool synthesis")
 	assert.Zero(t, executions)
 }
 
 func TestCompletionToolCannotBeDelegatedToAwaitWork(t *testing.T) {
-	completion := newAnyJSONSpec("briefs.persist", "catalog")
+	completion := newAnyJSONSpec("reports.persist", "catalog")
 	h := newRecoveryHarness(
 		t,
 		"completion-external-await",
@@ -304,13 +304,13 @@ func TestCompletionToolCannotBeDelegatedToAwaitWork(t *testing.T) {
 	}, initialCaps(RunPolicy{MaxToolCalls: 3}))
 
 	assert.Nil(t, out)
-	require.ErrorContains(t, err, `completion tool "briefs.persist" did not succeed`)
+	require.ErrorContains(t, err, `completion tool "reports.persist" did not succeed`)
 	require.ErrorContains(t, err, "delegated its execution to await work")
 }
 
 func TestCompletionToolRejectsAnotherTerminalTool(t *testing.T) {
-	completion := newAnyJSONSpec("briefs.persist", "catalog")
-	terminal := newAnyJSONSpec("tasks.complete", "catalog")
+	completion := newAnyJSONSpec("reports.persist", "catalog")
+	terminal := newAnyJSONSpec("workflow.complete", "catalog")
 	terminal.Bookkeeping = true
 	terminal.TerminalRun = true
 	executions := 0
@@ -333,26 +333,26 @@ func TestCompletionToolRejectsAnotherTerminalTool(t *testing.T) {
 	}}}, initialCaps(RunPolicy{MaxToolCalls: 3}))
 
 	assert.Nil(t, out)
-	require.ErrorContains(t, err, `completion tool "briefs.persist" did not succeed`)
-	require.ErrorContains(t, err, `planner selected terminal tool "tasks.complete"`)
+	require.ErrorContains(t, err, `completion tool "reports.persist" did not succeed`)
+	require.ErrorContains(t, err, `planner selected terminal tool "workflow.complete"`)
 	assert.Zero(t, executions)
 }
 
 func TestCompletionToolPolicyRejectsUnexecutableTools(t *testing.T) {
-	persist := newAnyJSONSpec("briefs.persist", "briefs")
-	lookup := newAnyJSONSpec("briefs.lookup", "briefs")
-	audit := newAnyJSONSpec("briefs.audit", "briefs")
+	persist := newAnyJSONSpec("reports.persist", "reports")
+	lookup := newAnyJSONSpec("reports.lookup", "reports")
+	audit := newAnyJSONSpec("reports.audit", "reports")
 	audit.Bookkeeping = true
-	terminal := newAnyJSONSpec("briefs.publish", "briefs")
+	terminal := newAnyJSONSpec("reports.publish", "reports")
 	terminal.Bookkeeping = true
 	terminal.TerminalRun = true
-	confirmed := newAnyJSONSpec("briefs.confirmed", "briefs")
+	confirmed := newAnyJSONSpec("reports.confirmed", "reports")
 	confirmed.Confirmation = &tools.ConfirmationSpec{}
 	foreign := newAnyJSONSpec("foreign.persist", "foreign")
 
 	rt := New()
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "briefs",
+		Name: "reports",
 		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return successfulToolResult(call), nil
 		}),
@@ -366,7 +366,7 @@ func TestCompletionToolPolicyRejectsUnexecutableTools(t *testing.T) {
 		Specs: []tools.ToolSpec{foreign},
 	}))
 	reg := AgentRegistration{
-		ID:    "briefs.writer",
+		ID:    "reports.writer",
 		Specs: []tools.ToolSpec{persist, lookup, audit, terminal, confirmed},
 	}
 
@@ -377,28 +377,28 @@ func TestCompletionToolPolicyRejectsUnexecutableTools(t *testing.T) {
 	}{
 		{
 			name:   "unregistered",
-			policy: &PolicyOverrides{CompletionTool: "briefs.missing"},
-			want:   `completion tool "briefs.missing" is not registered for agent "briefs.writer"`,
+			policy: &PolicyOverrides{CompletionTool: "reports.missing"},
+			want:   `completion tool "reports.missing" is not registered for agent "reports.writer"`,
 		},
 		{
 			name:   "registered for another agent",
 			policy: &PolicyOverrides{CompletionTool: foreign.Name},
-			want:   `completion tool "foreign.persist" is not registered for agent "briefs.writer"`,
+			want:   `completion tool "foreign.persist" is not registered for agent "reports.writer"`,
 		},
 		{
 			name:   "bookkeeping",
 			policy: &PolicyOverrides{CompletionTool: audit.Name},
-			want:   `completion tool "briefs.audit" must be budgeted`,
+			want:   `completion tool "reports.audit" must be budgeted`,
 		},
 		{
 			name:   "terminal",
 			policy: &PolicyOverrides{CompletionTool: terminal.Name},
-			want:   `completion tool "briefs.publish" must not be a terminal tool`,
+			want:   `completion tool "reports.publish" must not be a terminal tool`,
 		},
 		{
 			name:   "confirmation required",
 			policy: &PolicyOverrides{CompletionTool: confirmed.Name},
-			want:   `completion tool "briefs.confirmed" cannot require confirmation`,
+			want:   `completion tool "reports.confirmed" cannot require confirmation`,
 		},
 		{
 			name: "excluded by restriction",
@@ -406,7 +406,7 @@ func TestCompletionToolPolicyRejectsUnexecutableTools(t *testing.T) {
 				CompletionTool: persist.Name,
 				RestrictToTool: lookup.Name,
 			},
-			want: `completion tool "briefs.persist" is excluded by the run tool policy`,
+			want: `completion tool "reports.persist" is excluded by the run tool policy`,
 		},
 		{
 			name: "conflicting terminal policies",
@@ -430,19 +430,19 @@ func TestCompletionToolPolicyRejectsUnexecutableTools(t *testing.T) {
 func TestWithRunCompletionToolSetsSerializedPolicy(t *testing.T) {
 	input := &RunInput{}
 
-	WithRunCompletionTool("briefs.persist")(input)
+	WithRunCompletionTool("reports.persist")(input)
 	payload, err := json.Marshal(input.Policy)
 	require.NoError(t, err)
 
 	var restored PolicyOverrides
 	require.NoError(t, json.Unmarshal(payload, &restored))
-	assert.Equal(t, tools.Ident("briefs.persist"), restored.CompletionTool)
+	assert.Equal(t, tools.Ident("reports.persist"), restored.CompletionTool)
 }
 
 func TestCompletionToolIsRequiredBySuspendedRun(t *testing.T) {
 	checkpoint := &workflowCheckpoint{
-		Policy: &PolicyOverrides{CompletionTool: "briefs.persist"},
+		Policy: &PolicyOverrides{CompletionTool: "reports.persist"},
 	}
 
-	assert.Equal(t, []tools.Ident{"briefs.persist"}, requiredCheckpointToolNames(checkpoint))
+	assert.Equal(t, []tools.Ident{"reports.persist"}, requiredCheckpointToolNames(checkpoint))
 }

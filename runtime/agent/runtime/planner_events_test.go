@@ -280,14 +280,14 @@ func TestRuntimePlannerEventsMatchesAwaitCallTransparently(t *testing.T) {
 	invocation := mustBeginModelInvocation(t, e)
 	mustRecordModelResponse(t, e, invocation, testModelResponse(nil, model.ToolCall{
 		ID:      "question-1",
-		Name:    "chat.ask_question",
+		Name:    "assistant.ask_question",
 		Payload: []byte(`{"title":"Choose"}`),
 	}))
 
 	_, err := e.exportModelInvocation(&planner.PlanResult{
 		Await: planner.NewAwait(planner.AwaitQuestionsItem(&planner.AwaitQuestions{
 			ModelToolCallID: "question-1",
-			ToolName:        "chat.ask_question",
+			ToolName:        "assistant.ask_question",
 			Payload:         []byte(`{"title":"Choose"}`),
 		})),
 	})
@@ -300,14 +300,14 @@ func TestRuntimePlannerEventsMatchesToolClarificationCallTransparently(t *testin
 	invocation := mustBeginModelInvocation(t, e)
 	mustRecordModelResponse(t, e, invocation, testModelResponse(nil, model.ToolCall{
 		ID:      "clarification-1",
-		Name:    "chat.ask_clarification",
+		Name:    "assistant.ask_clarification",
 		Payload: []byte(`{"question":"Which device?"}`),
 	}))
 
 	transcript, err := e.exportModelInvocation(&planner.PlanResult{
 		Await: planner.NewAwait(planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
 			ModelToolCallID: "clarification-1",
-			ToolName:        "chat.ask_clarification",
+			ToolName:        "assistant.ask_clarification",
 			Payload:         []byte(`{"question":"Which device?"}`),
 			Question:        "Which device?",
 		})),

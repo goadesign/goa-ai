@@ -25,7 +25,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 	events := &recordingHooks{}
 	rt.Bus = events
-	tool := newAnyJSONSpec(tools.Ident("chat.ask_clarification"), "chat")
+	tool := newAnyJSONSpec(tools.Ident("assistant.ask_clarification"), "assistant")
 	seedTestToolSpecs(rt, tool)
 
 	wfCtx := &testWorkflowContext{ctx: t.Context()}
@@ -48,8 +48,8 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 			ID:              "clarification-await-1",
 			ToolName:        tool.Name,
 			ModelToolCallID: "provider-clarification-call-1",
-			Payload:         rawjson.Message(`{"question":"Which equipment and time window?"}`),
-			Question:        "Which equipment and time window?",
+			Payload:         rawjson.Message(`{"question":"Which record group and time window?"}`),
+			Question:        "Which record group and time window?",
 		}),
 	)}
 
@@ -95,7 +95,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 			Suspension: out.Suspension,
 			Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
 				ID:     "clarification-await-1",
-				Answer: "Use compressor_1 over the past 24 hours.",
+				Answer: "Use record_group_1 over the past 24 hours.",
 			}},
 		},
 	}
@@ -137,7 +137,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, toolUse.ID, toolResult.ToolUseID)
 	require.Equal(t, map[string]any{
-		"answer": "Use compressor_1 over the past 24 hours.",
+		"answer": "Use record_group_1 over the past 24 hours.",
 	}, toolResult.Content)
 }
 
@@ -145,7 +145,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 	events := &recordingHooks{}
 	rt.Bus = events
-	tool := newAnyJSONSpec(tools.Ident("chat.ask_question"), "chat")
+	tool := newAnyJSONSpec(tools.Ident("assistant.ask_question"), "assistant")
 	seedTestToolSpecs(rt, tool)
 
 	base := &planner.PlanInput{RunContext: run.Context{
@@ -159,8 +159,8 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 		ID:              "questions-await-1",
 		ToolName:        tool.Name,
 		ModelToolCallID: "provider-question-call-1",
-		Payload:         rawjson.Message(`{"title":"Choose equipment"}`),
-		Questions:       []planner.AwaitQuestion{{ID: "equipment", Prompt: "Which equipment?"}},
+		Payload:         rawjson.Message(`{"title":"Choose a record group"}`),
+		Questions:       []planner.AwaitQuestion{{ID: "record_group", Prompt: "Which record group?"}},
 	}))}
 
 	out, err := rt.runLoop(
@@ -205,7 +205,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 				Results: []*api.ProvidedToolResult{{
 					Name:       tool.Name,
 					ToolCallID: runtimeToolCallID,
-					Success:    &api.ProvidedToolSuccess{Result: rawjson.Message(`{"answer":"compressor_1"}`)},
+					Success:    &api.ProvidedToolSuccess{Result: rawjson.Message(`{"answer":"record_group_1"}`)},
 				}},
 			}},
 		},
@@ -227,7 +227,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 	toolResult := continuedCtx.lastPlannerCall.Input.Messages[1].Parts[0].(model.ToolResultPart)
 	require.Equal(t, "provider-question-call-1", toolUse.ID)
 	require.Equal(t, tool.Name.String(), toolUse.Name)
-	require.JSONEq(t, `{"title":"Choose equipment"}`, string(toolUse.Input))
+	require.JSONEq(t, `{"title":"Choose a record group"}`, string(toolUse.Input))
 	require.Equal(t, "provider-question-call-1", toolResult.ToolUseID)
 
 	var resultEvent *hooks.ToolResultReceivedEvent

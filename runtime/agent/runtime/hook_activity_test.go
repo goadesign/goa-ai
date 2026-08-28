@@ -523,7 +523,7 @@ func TestHookActivity_EnrichesToolUnavailableDisplayHintInRunlog(t *testing.T) {
 		"sess-1",
 		tools.ToolUnavailable,
 		"call-1",
-		rawjson.Message([]byte(`{"requested_tool":"ada.resolve_time_series_sources"}`)),
+		rawjson.Message([]byte(`{"requested_tool":"catalog.resolve_sources"}`)),
 		"queue",
 		"",
 		0,
@@ -535,7 +535,7 @@ func TestHookActivity_EnrichesToolUnavailableDisplayHintInRunlog(t *testing.T) {
 	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
 	require.Len(t, rl.events, 1)
 	require.Equal(t, hooks.ToolCallScheduled, rl.events[0].Type)
-	require.Contains(t, string(rl.events[0].Payload), "Tool not available: ada.resolve_time_series_sources")
+	require.Contains(t, string(rl.events[0].Payload), "Tool not available: catalog.resolve_sources")
 }
 
 func TestHookActivityAccumulatesPromptRefsOnRunMeta(t *testing.T) {
@@ -566,7 +566,7 @@ func TestHookActivityAccumulatesPromptRefsOnRunMeta(t *testing.T) {
 		"run-1",
 		"svc.agent",
 		"sess-1",
-		prompt.Ident("aura.chat.system"),
+		prompt.Ident("assistant.system"),
 		"v1",
 		prompt.Scope{
 			SessionID: "sess-1",
@@ -583,7 +583,7 @@ func TestHookActivityAccumulatesPromptRefsOnRunMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []prompt.PromptRef{
 		{
-			ID:      prompt.Ident("aura.chat.system"),
+			ID:      prompt.Ident("assistant.system"),
 			Version: "v1",
 		},
 	}, run.PromptRefs)

@@ -269,10 +269,10 @@ message SearchResponse {
 
 message CallToolRequest {
 	// Toolset registration identifier used for routing (for example,
-// "atlas_data.atlas.read").
+// "catalog.lookup").
 	string toolset = 1;
 	// Globally unique tool identifier of the form "toolset.tool" (for example,
-// "atlas.read.get_time_series").
+// "catalog.lookup.find_records").
 	string tool = 2;
 	// Canonical JSON payload for the tool call. Must validate against the
 // registered payload schema.
@@ -288,7 +288,7 @@ message CallToolRequest {
 message ToolCallMeta {
 	// Run identifier for the agent execution that issued this tool call.
 	string run_id = 1;
-	// Chat session identifier used to scope tool behavior and persistence.
+	// Agent session identifier used to scope tool behavior and persistence.
 	string session_id = 2;
 	// Turn identifier within the session.
 	optional string turn_id = 3;
@@ -315,10 +315,10 @@ message RetryToolRequest {
 	// Exact admission-generation token returned by the original CallTool admission.
 	string expected_registration_token = 100;
 	// Toolset registration identifier used for routing (for example,
-// "atlas_data.atlas.read").
+// "catalog.lookup").
 	string toolset = 1;
 	// Globally unique tool identifier of the form "toolset.tool" (for example,
-// "atlas.read.get_time_series").
+// "catalog.lookup.find_records").
 	string tool = 2;
 	// Canonical JSON payload for the tool call. Must validate against the
 // registered payload schema.

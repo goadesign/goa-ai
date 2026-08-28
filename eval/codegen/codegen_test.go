@@ -24,19 +24,19 @@ import (
 
 func TestGenerateTypedSuiteAndExample(t *testing.T) {
 	roots := runDesign(t, func() {
-		input := goadsl.Type("ChatEvalInput", func() {
-			goadsl.Attribute("prompt", goadsl.String, "User message.", func() {
+		input := goadsl.Type("QueryEvalInput", func() {
+			goadsl.Attribute("query", goadsl.String, "Assistant request.", func() {
 				goadsl.MinLength(1)
 			})
-			goadsl.Required("prompt")
+			goadsl.Required("query")
 		})
-		evaldsl.Suite("chat_quality", func() {
-			goadsl.Description("Evaluates chat answers.")
+		evaldsl.Suite("assistant_quality", func() {
+			goadsl.Description("Evaluates assistant answers.")
 			goadsl.Timeout("90s")
-			evaldsl.Scenario("alarm_inventory", func() {
-				goadsl.Description("Lists every alarm.")
+			evaldsl.Scenario("record_inventory", func() {
+				goadsl.Description("Lists every record.")
 				evaldsl.Input(input)
-				aidls.Tags("alarm", "production")
+				aidls.Tags("records", "integration")
 			})
 			evaldsl.Scenario("health_check", func() {
 				goadsl.Description("Checks application health.")
@@ -47,28 +47,28 @@ func TestGenerateTypedSuiteAndExample(t *testing.T) {
 	files, err := evalcodegen.Generate("example.com/project/gen", roots, nil)
 	require.NoError(t, err)
 	require.Len(t, files, 1)
-	assert.Equal(t, filepath.Join("gen", "evals", "chat_quality", "suite.go"), files[0].Path)
+	assert.Equal(t, filepath.Join("gen", "evals", "assistant_quality", "suite.go"), files[0].Path)
 	content := render(t, files[0])
-	assert.Contains(t, content, "ChatEvalInput struct")
-	assert.Contains(t, content, "AlarmInventory(context.Context, *ChatEvalInput) (eval.Result, error)")
+	assert.Contains(t, content, "QueryEvalInput struct")
+	assert.Contains(t, content, "RecordInventory(context.Context, *QueryEvalInput) (eval.Result, error)")
 	assert.Contains(t, content, "HealthCheck(context.Context) (eval.Result, error)")
-	assert.Contains(t, content, "AlarmInventory *ChatEvalInput")
+	assert.Contains(t, content, "RecordInventory *QueryEvalInput")
 	assert.Contains(t, content, "func New(hooks Hooks, inputs Inputs) (eval.Suite, error)")
-	assert.Contains(t, content, "ValidateChatEvalInput(inputs.AlarmInventory)")
-	assert.Contains(t, content, "hooks.AlarmInventory(ctx, inputs.AlarmInventory)")
+	assert.Contains(t, content, "ValidateQueryEvalInput(inputs.RecordInventory)")
+	assert.Contains(t, content, "hooks.RecordInventory(ctx, inputs.RecordInventory)")
 	assert.Contains(t, content, "utf8.RuneCountInString")
 	assert.NotContains(t, content, "reflect")
 
 	examples, err := evalcodegen.GenerateExample("example.com/project/gen", roots, nil)
 	require.NoError(t, err)
 	require.Len(t, examples, 1)
-	assert.Equal(t, filepath.Join("cmd", "chat_quality-evals", "main.go"), examples[0].Path)
+	assert.Equal(t, filepath.Join("cmd", "assistant_quality-evals", "main.go"), examples[0].Path)
 	assert.True(t, examples[0].SkipExist)
 	example := render(t, examples[0])
 	assert.NotContains(t, example, "DO NOT EDIT")
 	assert.Contains(t, example, "This file was generated once by goa example")
-	assert.Contains(t, example, "genevalchatquality.New(&hooks{}, scenarioInputs())")
-	assert.Contains(t, example, "AlarmInventory: new(genevalchatquality.ChatEvalInput)")
+	assert.Contains(t, example, "genevalassistantquality.New(&hooks{}, scenarioInputs())")
+	assert.Contains(t, example, "RecordInventory: new(genevalassistantquality.QueryEvalInput)")
 	assert.Contains(t, example, "func (*hooks) HealthCheck(context.Context) (eval.Result, error)")
 	assert.Contains(t, example, `flag.Var(&opts.scenarios, "scenario"`)
 	assert.Contains(t, example, "runner.RunScenarios(ctx, suite, opts.scenarios...)")
@@ -134,33 +134,33 @@ func TestGenerateInputFormsAndDistinctCustomizations(t *testing.T) {
 
 func TestGenerateAgentAttachedReachableToolContracts(t *testing.T) {
 	roots := runDesign(t, func() {
-		goadsl.Service("atlas_data_agent", func() {
-			aidls.Agent("atlas_data", "Retrieves facility data.", func() {
-				aidls.Export("ada", func() {
-					aidls.Tool("fetch", "Fetch data.", func() {
+		goadsl.Service("catalog_service", func() {
+			aidls.Agent("catalog", "Retrieves catalog records.", func() {
+				aidls.Export("records", func() {
+					aidls.Tool("lookup", "Look up records.", func() {
 						aidls.Args(goadsl.String)
 						aidls.Return(goadsl.String)
 					})
 				})
 				aidls.Export("private", func() {
-					aidls.Tool("hidden", "Not reachable from Chat.", func() {
+					aidls.Tool("hidden", "Not reachable from the assistant.", func() {
 						aidls.Args(goadsl.String)
 						aidls.Return(goadsl.String)
 					})
 				})
 			})
 		})
-		goadsl.Service("chat_agent", func() {
-			aidls.Agent("chat", "Answers user questions.", func() {
-				aidls.Use("chat_tools", func() {
+		goadsl.Service("assistant_service", func() {
+			aidls.Agent("assistant", "Answers user questions.", func() {
+				aidls.Use("assistant_tools", func() {
 					aidls.Tool("answer", "Answer directly.", func() {
 						aidls.Args(goadsl.String)
 						aidls.Return(goadsl.String)
 					})
 				})
-				aidls.Use(aidls.AgentToolset("atlas_data_agent", "atlas_data", "ada"))
-				evaldsl.Suite("chat", func() {
-					goadsl.Description("Evaluates Chat.")
+				aidls.Use(aidls.AgentToolset("catalog_service", "catalog", "records"))
+				evaldsl.Suite("assistant", func() {
+					goadsl.Description("Evaluates the assistant.")
 					goadsl.Timeout("1m")
 					evaldsl.Scenario("answer", func() {
 						goadsl.Description("Answers a question.")
@@ -173,11 +173,11 @@ func TestGenerateAgentAttachedReachableToolContracts(t *testing.T) {
 	files, err := evalcodegen.Generate("example.com/project/gen", roots, nil)
 	require.NoError(t, err)
 	require.Len(t, files, 2)
-	assert.Equal(t, filepath.Join("gen", "evals", "chat", "contract.go"), files[1].Path)
+	assert.Equal(t, filepath.Join("gen", "evals", "assistant", "contract.go"), files[1].Path)
 	content := render(t, files[1])
 	assert.Contains(t, content, "func MustToolContract(name tools.Ident) *tools.ToolSpec")
-	assert.Contains(t, content, "genchattools.Spec(name)")
-	assert.Contains(t, content, "genada.Spec(name)")
+	assert.Contains(t, content, "genassistanttools.Spec(name)")
+	assert.Contains(t, content, "genrecords.Spec(name)")
 	assert.NotContains(t, content, "private")
 }
 

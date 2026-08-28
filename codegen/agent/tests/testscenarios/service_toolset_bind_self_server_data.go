@@ -40,7 +40,7 @@ func ServiceToolsetBindSelfServerData() func() {
 						Args(IDPayload)
 						Return(OKResult)
 						BindTo("alpha", "Find")
-						ServerData("aura.evidence", ArrayOf(Evidence), func() {
+						ServerData("records.evidence", ArrayOf(Evidence), func() {
 							FromMethodResultField("evidence")
 						})
 					})

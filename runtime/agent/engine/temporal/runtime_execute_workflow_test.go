@@ -182,7 +182,7 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 	)
 
 	agentID := agent.Ident("service.agent")
-	questionTool := tools.Ident("chat.ask_question.ask_question")
+	questionTool := tools.Ident("assistant.ask_question")
 	plannerStub := &awaitQuestionsPlanner{awaitID: awaitID, toolName: questionTool, toolCallID: modelToolCallID}
 	runtime := agentruntime.New()
 	_, err := runtime.CreateSession(context.Background(), sessionID)
@@ -200,7 +200,7 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 		PlanActivityName:    planActivityName,
 		ResumeActivityName:  resumeActivityName,
 		ExecuteToolActivity: executeActivityName,
-		Specs:               []tools.ToolSpec{anyJSONToolSpec(questionTool, "chat.await")},
+		Specs:               []tools.ToolSpec{anyJSONToolSpec(questionTool, "assistant.await")},
 	}))
 
 	recorder := &hookRecorder{}

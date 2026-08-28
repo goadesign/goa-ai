@@ -32,7 +32,7 @@ func TestBuildMessagesFromRunLogReplaysCanonicalTranscriptOrder(t *testing.T) {
 			model.TextPart{Text: "Need the sales data first."},
 			model.ToolUsePart{
 				ID:    "call_1",
-				Name:  "analytics.analyze",
+				Name:  "reports.summarize",
 				Input: rawjson.Message(`{"query":"sales"}`),
 			},
 		},

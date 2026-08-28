@@ -12,6 +12,6 @@ func TestGolden_SidecarNilEncodesNull(t *testing.T) {
 
 	codecs := generatedContentBySuffix(t, files, "toolsets/lookup/codecs.go")
 	require.Contains(t, codecs, `return []byte("null"), nil`)
-	require.Contains(t, codecs, "MarshalByIDAuraChartServerData")
-	require.NotContains(t, codecs, `return nil, fmt.Errorf("byIDAuraChartServerData is nil")`)
+	require.Contains(t, codecs, "MarshalByIDChartsPreviewServerData")
+	require.NotContains(t, codecs, `return nil, fmt.Errorf("byIDChartsPreviewServerData is nil")`)
 }

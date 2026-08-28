@@ -5,17 +5,17 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-var _ = Service("atlas_data_agent", func() {
-	Description("Provides one nested generated agent for eval contract lookup.")
-	Agent("atlas_data", "Retrieves facility data.", func() {
-		Export("ada", func() {
-			Tool("fetch", "Fetch facility data.", func() {
+var _ = Service("catalog_service", func() {
+	Description("Provides one nested generated agent for evaluation contract lookup.")
+	Agent("catalog", "Retrieves records from a catalog.", func() {
+		Export("records", func() {
+			Tool("lookup", "Look up catalog records.", func() {
 				Args(func() {
-					Attribute("query", String, "Facility data query.")
+					Attribute("query", String, "Catalog query.")
 					Required("query")
 				})
 				Return(func() {
-					Attribute("answer", String, "Fetched data.")
+					Attribute("answer", String, "Matching catalog records.")
 					Required("answer")
 				})
 			})
@@ -23,26 +23,26 @@ var _ = Service("atlas_data_agent", func() {
 	})
 })
 
-var _ = Service("chat_agent", func() {
+var _ = Service("assistant_service", func() {
 	Description("Owns the agent attached to the generated eval suite.")
 	Method("get", func() {
 		Description("Returns the fixture status for generated-consumer tests.")
 		Result(String)
 	})
-	Agent("chat", "Answers product questions.", func() {
-		Use("chat_tools", func() {
-			Tool("answer", "Answer a product question.", func() {
+	Agent("assistant", "Answers questions from catalog records.", func() {
+		Use("assistant_tools", func() {
+			Tool("answer", "Answer a catalog question.", func() {
 				Args(func() {
-					Attribute("question", String, "Product question.")
+					Attribute("question", String, "Catalog question.")
 					Required("question")
 				})
 				Return(func() {
-					Attribute("answer", String, "Product answer.")
+					Attribute("answer", String, "Catalog answer.")
 					Required("answer")
 				})
 			})
 		})
-		Use(AgentToolset("atlas_data_agent", "atlas_data", "ada"))
-		ChatEvalSuite()
+		Use(AgentToolset("catalog_service", "catalog", "records"))
+		AssistantEvalSuite()
 	})
 })

@@ -501,7 +501,7 @@ type AwaitQuestions struct {
 	// ID uniquely identifies this questions request.
 	ID string
 
-	// ToolName identifies the tool awaiting user answers (for example, "chat.ask_question.ask_question").
+	// ToolName identifies the tool awaiting user answers (for example, "assistant.ask_question").
 	ToolName tools.Ident
 
 	// ToolCallID is the runtime-owned execution identifier. Planners must leave

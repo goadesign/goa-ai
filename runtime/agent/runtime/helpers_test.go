@@ -49,11 +49,11 @@ func TestGenerateDeterministicToolCallIDSeparatorsAndDotsAreInjective(t *testing
 }
 
 func TestGenerateDeterministicToolCallIDBoundsNestedIDs(t *testing.T) {
-	runID := strings.Repeat("parent/agent/atlas-data-agent/call-0123456789abcdef/", 4)
-	id := generateDeterministicToolCallID(runID, runID, 3, "atlas.read.list_app_runtime_capability_change_events", 7)
-	replayed := generateDeterministicToolCallID(runID, runID, 3, "atlas.read.list_app_runtime_capability_change_events", 7)
-	nextAttempt := generateDeterministicToolCallID(runID, runID, 4, "atlas.read.list_app_runtime_capability_change_events", 7)
-	nextIndex := generateDeterministicToolCallID(runID, runID, 3, "atlas.read.list_app_runtime_capability_change_events", 8)
+	runID := strings.Repeat("parent/agent/catalog-agent/call-0123456789abcdef/", 4)
+	id := generateDeterministicToolCallID(runID, runID, 3, "catalog.lookup.list_workspace_change_events", 7)
+	replayed := generateDeterministicToolCallID(runID, runID, 3, "catalog.lookup.list_workspace_change_events", 7)
+	nextAttempt := generateDeterministicToolCallID(runID, runID, 4, "catalog.lookup.list_workspace_change_events", 7)
+	nextIndex := generateDeterministicToolCallID(runID, runID, 3, "catalog.lookup.list_workspace_change_events", 8)
 
 	assert.LessOrEqual(t, len(id), toolregistry.MaxToolCallMetaIDLength)
 	assert.Regexp(t, `^call-[0-9a-f]{64}$`, id)

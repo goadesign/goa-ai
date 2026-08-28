@@ -30,7 +30,7 @@ func buildWithPrepare(t *testing.T, design func()) []*gcodegen.File {
 func TestInjectBoundToolUsesGeneratedContext(t *testing.T) {
 	files := buildWithPrepare(t, testscenarios.InjectBoundMetaExample())
 
-	inject := fileContent(t, files, "gen/atlas/toolsets/helpers/inject.go")
+	inject := fileContent(t, files, "gen/catalog/toolsets/helpers/inject.go")
 	require.Contains(t, inject, "func InjectGetData(p *GetDataPayload, meta runtime.ToolCallMeta, labels map[string]string) error {")
 	require.Contains(t, inject, "v := meta.SessionID")
 	require.Contains(t, inject, `v, ok := labels["household_id"]`)
@@ -41,7 +41,7 @@ func TestInjectBoundToolUsesGeneratedContext(t *testing.T) {
 	require.Contains(t, inject, "p, err := GetDataPayloadCodec().FromJSON(payload)")
 	require.Contains(t, inject, "if err := InjectGetData(p, meta, labels); err != nil {")
 
-	provider := fileContent(t, files, "gen/atlas/toolsets/helpers/provider.go")
+	provider := fileContent(t, files, "gen/catalog/toolsets/helpers/provider.go")
 	require.NotContains(t, provider, "methodIn.SessionID = msg.Meta.SessionID",
 		"provider.go must retire its own inline meta assignment in favor of the shared Inject<Tool> function")
 	require.Contains(t, provider, "meta := runtime.ToolCallMeta{")
@@ -49,7 +49,7 @@ func TestInjectBoundToolUsesGeneratedContext(t *testing.T) {
 	require.Contains(t, provider, "if err := InjectGetData(args, meta, meta.Labels); err != nil {",
 		"registry-served bound tools receive the same immutable run labels as local executors")
 
-	specs := fileContent(t, files, "gen/atlas/toolsets/helpers/specs.go")
+	specs := fileContent(t, files, "gen/catalog/toolsets/helpers/specs.go")
 	require.NotContains(t, specs, `"session_id"`, "session_id must stay hidden from the model-facing schema")
 	require.NotContains(t, specs, `\"household_id\"`, "household_id must stay hidden from the model-facing schema")
 }
@@ -66,7 +66,7 @@ func TestInjectBoundToolUsesGeneratedContext(t *testing.T) {
 func TestInjectLocalServiceExecutorCallsGeneratedInject(t *testing.T) {
 	files := buildWithPrepare(t, testscenarios.InjectBoundMetaExample())
 
-	exec := fileContent(t, files, "gen/atlas/agents/scribe/helpers/service_executor.go")
+	exec := fileContent(t, files, "gen/catalog/agents/scribe/helpers/service_executor.go")
 	require.Contains(t, exec, "val, err := helpers.GetDataPayloadCodec().FromJSON(call.Payload)")
 	require.Contains(t, exec, "if err := helpers.InjectGetData(val, *meta, call.Labels); err != nil {",
 		"injection must run on the decoded tool payload, with call.Labels threaded to the shared Inject fn")
@@ -172,13 +172,13 @@ func TestInjectAgentRequiredLabelsAggregation(t *testing.T) {
 func TestInjectMixedBoundUnboundProviderScopesMeta(t *testing.T) {
 	files := buildWithPrepare(t, testscenarios.InjectMixedBoundUnboundExample())
 
-	provider := fileContent(t, files, "gen/atlas/toolsets/helpers/provider.go")
+	provider := fileContent(t, files, "gen/catalog/toolsets/helpers/provider.go")
 	require.NotContains(t, provider, "meta := runtime.ToolCallMeta{",
 		"no method-backed tool injects, so provider.go must not declare meta")
 	require.NotContains(t, provider, `"goa.design/goa-ai/runtime/agent/runtime"`,
 		"the runtime import must be gated together with the meta declaration")
 
 	// The unbound tool's compiled injection still exists for local executors.
-	inject := fileContent(t, files, "gen/atlas/toolsets/helpers/inject.go")
+	inject := fileContent(t, files, "gen/catalog/toolsets/helpers/inject.go")
 	require.Contains(t, inject, "func InjectLookupHousehold(p *LookupHouseholdPayload, meta runtime.ToolCallMeta, labels map[string]string) error {")
 }

@@ -47,7 +47,7 @@ func ServiceToolsetBindSelfServerDataPointerSidecar() func() {
 						Args(IDPayload)
 						Return(OKResult)
 						BindTo("alpha", "Find")
-						ServerData("aura.chart", Chart, func() {
+						ServerData("charts.preview", Chart, func() {
 							FromMethodResultField("chart")
 						})
 					})

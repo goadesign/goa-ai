@@ -787,7 +787,7 @@ func serviceExecutorFiles(agent *AgentData) []*codegen.File {
 			delete(extraImports, typesPath)
 		}
 		if svc != nil {
-			// Import the service client package (e.g. gen/atlas_data)
+			// Import the service client package (for example, gen/catalog)
 			clientPath := filepath.Join(agent.Genpkg, svc.PathName)
 			// Check for slash/backslash issues if Genpkg has slashes
 			clientPath = strings.ReplaceAll(clientPath, "\\", "/")

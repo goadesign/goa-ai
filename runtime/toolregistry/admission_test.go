@@ -23,7 +23,7 @@ func TestValidateAdmissionRevision(t *testing.T) {
 		revision string
 		valid    bool
 	}{
-		{name: "release revision", revision: "2026-07-23.4+441534ae50f6", valid: true},
+		{name: "release revision", revision: "example-release+schema-v1", valid: true},
 		{name: "image and release", revision: "release/42@sha256:abc", valid: true},
 		{name: "maximum length", revision: "r" + strings.Repeat("a", 255), valid: true},
 		{name: "empty", revision: "", valid: false},
@@ -53,20 +53,20 @@ func TestValidateRegistrationToken(t *testing.T) {
 	}{
 		{
 			name:  "canonical lowercase SHA-256",
-			token: "270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c",
+			token: "1111111111111111111111111111111111111111111111111111111111111111",
 			valid: true,
 		},
 		{
 			name:  "uppercase",
-			token: "270A659D38FF331401280AD7B0C8FDBA673FD02E7114B856A2F12E1C49EEC34C",
+			token: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		},
 		{
 			name:  "short",
-			token: "270a659d",
+			token: "11111111",
 		},
 		{
 			name:  "non-hex",
-			token: "z70a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c",
+			token: "z111111111111111111111111111111111111111111111111111111111111111",
 		},
 		{
 			name: "empty",

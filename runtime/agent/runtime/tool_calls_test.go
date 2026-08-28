@@ -60,8 +60,8 @@ func TestDispatchToolCallsPropagatesLabelsToActivityInput(t *testing.T) {
 			SessionID: "sess-1",
 			TurnID:    "turn-1",
 			Labels: map[string]string{
-				"aura.session.id": "sess-1",
-				"kind":            "brief",
+				"example.session.id": "sess-1",
+				"kind":               "report",
 			},
 		},
 	}
@@ -74,8 +74,8 @@ func TestDispatchToolCallsPropagatesLabelsToActivityInput(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, wfCtx.lastToolCall.Input)
 	require.Equal(t, map[string]string{
-		"aura.session.id": "sess-1",
-		"kind":            "brief",
+		"example.session.id": "sess-1",
+		"kind":               "report",
 	}, wfCtx.lastToolCall.Input.Labels)
 }
 

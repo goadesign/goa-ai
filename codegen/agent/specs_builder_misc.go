@@ -298,7 +298,7 @@ func servicePkgAlias(svc *service.Data) string {
 	// Deriving the alias from the filesystem path (path.Base(PathName))
 	// can diverge from the actual package identifier (e.g., underscores
 	// vs. sanitized names), leading to mismatched qualifiers like
-	// "atlasdataagent" vs "atlas_data_agent" in generated code.
+	// "catalogagent" vs "catalog_agent" in generated code.
 	return svc.PkgName
 }
 

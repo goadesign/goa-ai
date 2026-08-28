@@ -78,7 +78,7 @@ func TestModelPresentationStreamsTextAndThoughtsImmediately(t *testing.T) {
 	require.NoError(t, journal.recordModelChunk(ctx, invocation, model.ToolCallDeltaChunk{
 		Delta: model.ToolCallDelta{
 			ID:    "call-1",
-			Name:  "atlas.read",
+			Name:  "catalog.lookup",
 			Delta: `{"partial":`,
 		},
 	}))

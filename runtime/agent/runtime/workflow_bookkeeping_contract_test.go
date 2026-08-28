@@ -139,10 +139,10 @@ func TestBookkeepingFailureAlwaysRequiresResume(t *testing.T) {
 func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	bookkeeping := newAnyJSONSpec(tools.Ident("tasks.progress.set_step_status"), "tasks.progress")
+	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"), "workflow.progress")
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
@@ -206,10 +206,10 @@ func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) 
 func TestRunLoopBookkeepingOnlyWithoutTerminalPayloadFailsFast(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	bookkeeping := newAnyJSONSpec(tools.Ident("tasks.progress.set_step_status"), "tasks.progress")
+	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"), "workflow.progress")
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
@@ -266,16 +266,16 @@ func TestRunLoopBookkeepingOnlyWithoutTerminalPayloadFailsFast(t *testing.T) {
 func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	terminal := newAnyJSONSpec(tools.Ident("tasks.progress.complete"), "tasks.progress")
+	terminal := newAnyJSONSpec(tools.Ident("workflow.progress.complete"), "workflow.progress")
 	terminal.Bookkeeping = true
 	terminal.TerminalRun = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
 				ToolCallID: call.ToolCallID,
-				Failure:    testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "brief.summary length must be <= 600"),
+				Failure:    testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "report.summary length must be <= 600"),
 			}, nil
 		}),
 		Specs: []tools.ToolSpec{terminal},
@@ -285,7 +285,7 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 		ctx: context.Background(),
 		asyncResult: ToolOutput{
 			Payload: []byte("null"),
-			Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "brief.summary length must be <= 600"),
+			Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "report.summary length must be <= 600"),
 		},
 		planResult: &PlanResult{
 			FinalResponse: &planner.FinalResponse{
@@ -424,7 +424,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
 	budgeted := newAnyJSONSpec(tools.Ident("svc.tools.lookup"), "svc.tools")
-	bookkeeping := newAnyJSONSpec(tools.Ident("tasks.progress.set_step_status"), "tasks.progress")
+	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"), "workflow.progress")
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc.tools",
@@ -438,7 +438,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 		Specs: []tools.ToolSpec{budgeted},
 	}))
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
@@ -499,10 +499,10 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOutput(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	bookkeeping := newAnyJSONSpec(tools.Ident("tasks.progress.set_step_status"), "tasks.progress")
+	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"), "workflow.progress")
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 			return &ToolExecutionResult{
 				ToolResult: &planner.ToolResult{
@@ -512,7 +512,7 @@ func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOu
 				},
 				Clarification: &ToolClarification{
 					ID:       "task-input-1",
-					Question: "Which alarm should I investigate?",
+					Question: "Which record should I inspect?",
 				},
 			}, nil
 		},
@@ -527,7 +527,7 @@ func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOu
 			Payload: rawjson.Message(resultJSON),
 			Clarification: &ToolClarification{
 				ID:       "task-input-1",
-				Question: "Which alarm should I investigate?",
+				Question: "Which record should I inspect?",
 			},
 		},
 		planResult:    &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}},
@@ -578,9 +578,9 @@ func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOu
 func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	budgeted := newAnyJSONSpec(tools.Ident("tasks.progress.update"), "tasks.progress")
+	budgeted := newAnyJSONSpec(tools.Ident("workflow.progress.update"), "workflow.progress")
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 			return &ToolExecutionResult{
 				ToolResult: &planner.ToolResult{
@@ -590,7 +590,7 @@ func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testin
 				},
 				Clarification: &ToolClarification{
 					ID:       "task-input-1",
-					Question: "Which compressor should I investigate?",
+					Question: "Which record group should I inspect?",
 				},
 			}, nil
 		},
@@ -605,7 +605,7 @@ func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testin
 			Payload: rawjson.Message(resultJSON),
 			Clarification: &ToolClarification{
 				ID:       "task-input-1",
-				Question: "Which compressor should I investigate?",
+				Question: "Which record group should I inspect?",
 			},
 		},
 		planResult:    &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}},
@@ -656,10 +656,10 @@ func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testin
 func TestRunLoopBookkeepingToolTerminalRejectsClarification(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	bookkeeping := newAnyJSONSpec(tools.Ident("tasks.progress.set_step_status"), "tasks.progress")
+	bookkeeping := newAnyJSONSpec(tools.Ident("workflow.progress.set_step_status"), "workflow.progress")
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 			return &ToolExecutionResult{
 				ToolResult: &planner.ToolResult{
@@ -669,7 +669,7 @@ func TestRunLoopBookkeepingToolTerminalRejectsClarification(t *testing.T) {
 				},
 				Clarification: &ToolClarification{
 					ID:       "task-input-1",
-					Question: "Which alarm should I investigate?",
+					Question: "Which record should I inspect?",
 				},
 			}, nil
 		},
@@ -684,7 +684,7 @@ func TestRunLoopBookkeepingToolTerminalRejectsClarification(t *testing.T) {
 			Payload: rawjson.Message(resultJSON),
 			Clarification: &ToolClarification{
 				ID:       "task-input-1",
-				Question: "Which alarm should I investigate?",
+				Question: "Which record should I inspect?",
 			},
 		},
 	}

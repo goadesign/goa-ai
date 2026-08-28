@@ -12,7 +12,7 @@ import (
 func TestGolden_ServiceAlias_Consistency(t *testing.T) {
 	files := buildAndGenerate(t, func() {
 		// Service name contains underscore to exercise alias vs path base.
-		API("atlas_data_agent", func() {})
+		API("catalog_agent", func() {})
 
 		// Define a user type at API scope, referenced directly by tool payload/result.
 		var Doc = Type("Doc", func() {
@@ -20,7 +20,7 @@ func TestGolden_ServiceAlias_Consistency(t *testing.T) {
 			Required("id")
 		})
 
-		Service("atlas_data_agent", func() {
+		Service("catalog_agent", func() {
 			Agent("reader", "", func() {
 				Use("docs", func() {
 					Tool("read", "Read", func() {
@@ -33,6 +33,6 @@ func TestGolden_ServiceAlias_Consistency(t *testing.T) {
 	})
 
 	// Compare generated codecs.go under tools/docs against golden.
-	codecs := fileContent(t, files, "gen/atlas_data_agent/toolsets/docs/codecs.go")
+	codecs := fileContent(t, files, "gen/catalog_agent/toolsets/docs/codecs.go")
 	assertGoldenGo(t, "service_alias_consistency", "codecs.go.golden", codecs)
 }

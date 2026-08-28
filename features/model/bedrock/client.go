@@ -1,8 +1,7 @@
 // Package bedrock provides raw and validated adapters backed by the AWS Bedrock
-// Converse API. It mirrors the inference-engine request pipeline used
-// in production systems: split system vs. conversational messages, encode tool
-// schemas into Bedrock's ToolConfiguration, and translate Converse responses
-// (text + tool_use blocks) back into planner-friendly structures.
+// Converse API. It splits system and conversational messages, encodes tool
+// schemas into Bedrock's ToolConfiguration, and translates Converse responses
+// with text and tool-use blocks into model messages.
 package bedrock
 
 import (

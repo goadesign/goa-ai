@@ -32,7 +32,7 @@ func (b *toolSpecBuilder) scopeForTool() *codegen.NameScope {
 func (b *toolSpecBuilder) typeFor(owner *contractTypeOwner, att *goaexpr.AttributeExpr, usage typeUsage) (*typeData, error) {
 	// For method-backed tools, prefer the tool Return type for RESULTs when it
 	// is explicitly declared in the DSL so that model-facing schemas reflect
-	// the tool contract (e.g., AtlasListDevicesToolReturn). When no Return is
+	// the tool contract (e.g., CatalogSearchToolReturn). When no Return is
 	// provided, fall back to the bound service method result type so specs
 	// alias the concrete service result directly.
 	//

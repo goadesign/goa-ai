@@ -189,7 +189,7 @@ var ToolCallMeta = Type("ToolCallMeta", func() {
 		Pattern(`^[^\x00]+$`)
 		Example("run_01J3K9Q9T6E2G7N0G2ZQH2KX1A")
 	})
-	Field(2, "session_id", String, "Chat session identifier used to scope tool behavior and persistence.", func() {
+	Field(2, "session_id", String, "Agent session identifier used to scope tool behavior and persistence.", func() {
 		MinLength(1)
 		MaxLength(toolregistry.MaxToolCallMetaIDLength)
 		Pattern(`^[^\x00]+$`)
@@ -236,15 +236,15 @@ var RegisterPayload = Type("RegisterPayload", func() {
 		MinLength(1)
 		MaxLength(512)
 		Pattern(`^[^\x00]+$`)
-		Example("atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover")
+		Example("catalog-provider/catalog.lookup")
 	})
 	Field(7, "admission_revision", String, "Deployment-issued revision shared by every replica of one fenced admission. Reuse it for same-contract scaling and rolling updates; change it only to create a new fenced admission.", func() {
 		Pattern(toolregistry.AdmissionRevisionPattern)
-		Example("2026-07-23.4+441534ae50f6")
+		Example("example-release+schema-v1")
 	})
 	Field(8, "provider_incarnation_id", String, "Runtime-generated UUID identifying one Serve lifecycle. The provider runtime generates it once and reuses it for every renewal.", func() {
 		Format(FormatUUID)
-		Example("8af45fe9-5c32-4b46-8da5-d350e98b68f3")
+		Example("00000000-0000-4000-8000-000000000001")
 	})
 	Field(9, "wire_protocol_version", Int, "Required runtime-owned version of the provider message envelope. The registry admits only its exact canonical version.", func() {
 		Enum(toolregistry.WireProtocolVersion)
@@ -261,7 +261,7 @@ var RegisterResult = Type("RegisterResult", func() {
 	})
 	Field(2, "registration_token", String, "Deterministic admission-generation token derived from the wire protocol version, canonical schema fingerprint, and deployment-issued admission revision", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
-		Example("270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c")
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
 	})
 	Field(3, "lease_duration_ms", Int64, "Duration of the admitted provider lease in milliseconds", func() {
 		Minimum(1)
@@ -279,7 +279,7 @@ var UnregisterPayload = Type("UnregisterPayload", func() {
 	})
 	Field(2, "expected_registration_token", String, "Exact admission-generation token returned by Register for the stopped provider rollout", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
-		Example("270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c")
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
 	})
 	Required("name", "expected_registration_token")
 })
@@ -295,15 +295,15 @@ var ReleaseProviderPayload = Type("ReleaseProviderPayload", func() {
 		MinLength(1)
 		MaxLength(512)
 		Pattern(`^[^\x00]+$`)
-		Example("atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover")
+		Example("catalog-provider/catalog.lookup")
 	})
 	Field(3, "expected_registration_token", String, "Exact admission-generation token returned by Register", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
-		Example("270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c")
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
 	})
 	Field(4, "provider_incarnation_id", String, "Runtime-generated UUID of the exact Serve lifecycle releasing its lease.", func() {
 		Format(FormatUUID)
-		Example("8af45fe9-5c32-4b46-8da5-d350e98b68f3")
+		Example("00000000-0000-4000-8000-000000000001")
 	})
 	Required("name", "provider_id", "expected_registration_token", "provider_incarnation_id")
 })
@@ -335,11 +335,11 @@ var PongPayload = Type("PongPayload", func() {
 		MinLength(1)
 		MaxLength(512)
 		Pattern(`^[^\x00]+$`)
-		Example("atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.discover")
+		Example("catalog-provider/catalog.lookup")
 	})
 	Field(4, "provider_incarnation_id", String, "Runtime-generated UUID of the Serve lifecycle responding to the ping.", func() {
 		Format(FormatUUID)
-		Example("8af45fe9-5c32-4b46-8da5-d350e98b68f3")
+		Example("00000000-0000-4000-8000-000000000001")
 	})
 	Required("ping_id", "toolset", "provider_id", "provider_incarnation_id")
 })
@@ -382,19 +382,19 @@ var SearchResult = Type("SearchResult", func() {
 
 var CallToolPayload = Type("CallToolPayload", func() {
 	Description("Payload for initiating a tool call through the registry gateway.")
-	Field(1, "toolset", String, "Toolset registration identifier used for routing (for example, \"atlas_data.atlas.read\").", func() {
+	Field(1, "toolset", String, "Toolset registration identifier used for routing (for example, \"catalog.lookup\").", func() {
 		MinLength(1)
 		MaxLength(256)
-		Example("atlas_data.atlas.read")
+		Example("catalog.lookup")
 	})
-	Field(2, "tool", String, "Globally unique tool identifier of the form \"toolset.tool\" (for example, \"atlas.read.get_time_series\").", func() {
+	Field(2, "tool", String, "Globally unique tool identifier of the form \"toolset.tool\" (for example, \"catalog.lookup.find_records\").", func() {
 		MinLength(1)
 		MaxLength(256)
-		Example("atlas.read.get_time_series")
+		Example("catalog.lookup.find_records")
 	})
 	Field(3, "payload_json", Bytes, "Canonical JSON payload for the tool call. Must validate against the registered payload schema.", func() {
 		MinLength(1)
-		Example([]byte(`{"query":"compressor_1 key events"}`))
+		Example([]byte(`{"query":"recent orders"}`))
 	})
 	Field(4, "meta", ToolCallMeta, "Execution metadata propagated alongside the tool call.")
 	Field(5, "wire_protocol_version", Int, "Required runtime-owned version of the consumer message envelope. The registry accepts only its exact canonical version.", func() {
@@ -413,15 +413,15 @@ var CallToolResult = Type("CallToolResult", func() {
 	})
 	Field(2, "registration_token", String, "Exact admission-generation token stamped on the routed call", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
-		Example("270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c")
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
 	})
 	Field(3, "execution_deadline", String, "Absolute Redis-owned deadline that bounds provider execution and caller waiting.", func() {
 		Format(FormatDateTime)
-		Example("2026-08-05T10:10:00Z")
+		Example("2025-01-15T10:10:00Z")
 	})
 	Field(4, "result_stream_expires_at", String, "Later absolute Redis-owned expiration shared by the call record and result stream.", func() {
 		Format(FormatDateTime)
-		Example("2026-08-05T10:15:00Z")
+		Example("2025-01-15T10:15:00Z")
 	})
 	Required("tool_use_id", "registration_token", "execution_deadline", "result_stream_expires_at")
 })
@@ -431,7 +431,7 @@ var RetryToolPayload = Type("RetryToolPayload", func() {
 	Extend(CallToolPayload)
 	Field(100, "expected_registration_token", String, "Exact admission-generation token returned by the original CallTool admission.", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
-		Example("270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c")
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
 	})
 	Required("expected_registration_token")
 })
@@ -441,29 +441,29 @@ var CompleteToolCallPayload = Type("CompleteToolCallPayload", func() {
 	Field(1, "toolset", String, "Toolset whose provider completed the call.", func() {
 		MinLength(1)
 		MaxLength(256)
-		Example("atlas_data.atlas.read")
+		Example("catalog.lookup")
 	})
 	Field(2, "provider_id", String, "Stable provider process identity that executed the call.", func() {
 		MinLength(1)
 		MaxLength(512)
 		Pattern(`^[^\x00]+$`)
-		Example("atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read")
+		Example("catalog-provider/catalog.lookup")
 	})
 	Field(3, "provider_incarnation_id", String, "Runtime UUID of the exact Serve lifecycle that executed the call.", func() {
 		Format(FormatUUID)
-		Example("8af45fe9-5c32-4b46-8da5-d350e98b68f3")
+		Example("00000000-0000-4000-8000-000000000001")
 	})
 	Field(4, "registration_token", String, "Exact admission-generation token stamped on the call.", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
-		Example("270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c")
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
 	})
 	Field(5, "tool_use_id", String, "Global transport identity stamped on the call.", func() {
 		Pattern(toolregistry.ToolUseIDPattern)
-		Example("5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e")
+		Example("3333333333333333333333333333333333333333333333333333333333333333")
 	})
 	Field(6, "result_json", Bytes, "Canonical encoded terminal ToolResultMessage.", func() {
 		MinLength(1)
-		Example([]byte(`{"registration_token":"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c","tool_use_id":"5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e","result_json":{"ok":true}}`))
+		Example([]byte(`{"registration_token":"1111111111111111111111111111111111111111111111111111111111111111","tool_use_id":"3333333333333333333333333333333333333333333333333333333333333333","result_json":{"ok":true}}`))
 	})
 	Field(7, "request_event_id", String, "Pulse request-stream event claimed by this provider.", func() {
 		Pattern(`^\d+-\d+$`)
@@ -471,7 +471,7 @@ var CompleteToolCallPayload = Type("CompleteToolCallPayload", func() {
 	})
 	Field(8, "provider_registration_token", String, "Exact registration token of the provider lease settling the claim.", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
-		Example("7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82")
+		Example("2222222222222222222222222222222222222222222222222222222222222222")
 	})
 	Required("toolset", "provider_id", "provider_incarnation_id", "registration_token", "tool_use_id", "result_json", "request_event_id", "provider_registration_token")
 })
@@ -481,29 +481,29 @@ var ProviderToolCallClaimPayload = Type("ProviderToolCallClaimPayload", func() {
 	Field(1, "toolset", String, "Toolset whose provider claimed the call.", func() {
 		MinLength(1)
 		MaxLength(256)
-		Example("atlas_data.atlas.read")
+		Example("catalog.lookup")
 	})
 	Field(2, "provider_id", String, "Stable identity of the provider process.", func() {
 		MinLength(1)
 		MaxLength(512)
 		Pattern(`^[^\x00]+$`)
-		Example("atlas-data-7cd8949c8f-k2nrp/atlas_data.atlas.read")
+		Example("catalog-provider/catalog.lookup")
 	})
 	Field(3, "provider_incarnation_id", String, "Runtime UUID of the exact Serve lifecycle.", func() {
 		Format(FormatUUID)
-		Example("8af45fe9-5c32-4b46-8da5-d350e98b68f3")
+		Example("00000000-0000-4000-8000-000000000001")
 	})
 	Field(4, "provider_registration_token", String, "Exact registration token of the provider lease.", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
-		Example("7ddaeccbe5b9c901a2773fc77097f7970669988ea6dfca6cb3205ffcd552cc82")
+		Example("2222222222222222222222222222222222222222222222222222222222222222")
 	})
 	Field(5, "call_registration_token", String, "Admission token stamped on the claimed call.", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
-		Example("270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c")
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
 	})
 	Field(6, "tool_use_id", String, "Global transport identity stamped on the claimed call.", func() {
 		Pattern(toolregistry.ToolUseIDPattern)
-		Example("5c1d91e7ea6a1aa1bb3c395e0a7e09901a85df66fb064a679d6f0ff0d12a516e")
+		Example("3333333333333333333333333333333333333333333333333333333333333333")
 	})
 	Field(7, "request_event_id", String, "Pulse request-stream event claimed by this provider.", func() {
 		Pattern(`^\d+-\d+$`)
@@ -620,13 +620,13 @@ var ToolSchema = Type("ToolSchema", func() {
 	Field(1, "name", String, "Globally unique tool identifier of the form \"toolset.tool\".", func() {
 		MinLength(1)
 		MaxLength(256)
-		Example("atlas.read.get_time_series")
+		Example("catalog.lookup.find_records")
 	})
 	Field(2, "description", String, "Human-readable description of what the tool does.", func() {
-		Example("Fetch a time series for a point over a time window.")
+		Example("Find records that match a catalog query.")
 	})
 	Field(3, "tags", ArrayOf(String), "Optional tags used for policy, routing, or UI filtering.", func() {
-		Example([]string{"atlas", "data", "read"})
+		Example([]string{"catalog", "records", "read"})
 	})
 	Field(4, "payload_schema", Bytes, "Canonical JSON schema for the tool payload.", func() {
 		MinLength(1)

@@ -25,12 +25,12 @@ func serviceToolsetBindSelfBoundedResult(exactTotal bool) func() {
 			Attribute("query", String, "Query")
 			Attribute("cursor", String, "Cursor")
 			Required("query")
-			Example(map[string]any{"query": "compressors"})
+			Example(map[string]any{"query": "records"})
 		})
 		var SearchResult = Type("SearchResult", func() {
 			Attribute("results", ArrayOf(String), "Results")
 			Required("results")
-			Example(map[string]any{"results": []string{"compressor_2"}})
+			Example(map[string]any{"results": []string{"record_2"}})
 		})
 		Service("alpha", func() {
 			Method("Search", func() {

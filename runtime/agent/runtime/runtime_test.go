@@ -469,7 +469,7 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 	sessions := sessioninmem.New()
 	_, err := sessions.CreateSession(ctx, "sess-1", time.Now().UTC())
 	require.NoError(t, err)
-	tool := newAnyJSONSpec(tools.Ident("chat.ask_clarification"), "chat")
+	tool := newAnyJSONSpec(tools.Ident("assistant.ask_clarification"), "assistant")
 	rt := &Runtime{
 		logger:        telemetry.NoopLogger{},
 		metrics:       telemetry.NoopMetrics{},
@@ -882,11 +882,11 @@ func TestRegisterAgentRejectsTerminalSpecWithoutBookkeeping(t *testing.T) {
 		ExecuteToolActivityOptions: engine.ActivityOptions{
 			StartToCloseTimeout: time.Minute,
 		},
-		Specs: []tools.ToolSpec{newInvalidTerminalSpec("tasks.complete")},
+		Specs: []tools.ToolSpec{newInvalidTerminalSpec("workflow.complete")},
 	})
 
 	require.ErrorIs(t, err, ErrInvalidConfig)
-	require.ErrorContains(t, err, "terminal tool \"tasks.complete\" must also declare bookkeeping")
+	require.ErrorContains(t, err, "terminal tool \"workflow.complete\" must also declare bookkeeping")
 }
 
 func TestRegistrationRejectsGeneratedContinuationToolName(t *testing.T) {

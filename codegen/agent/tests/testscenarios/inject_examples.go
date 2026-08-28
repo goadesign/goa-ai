@@ -10,8 +10,8 @@ import (
 // complete generated registry provider path for both injection sources.
 func InjectBoundMetaExample() func() {
 	return func() {
-		API("atlas", func() {})
-		Service("atlas", func() {
+		API("catalog", func() {})
+		Service("catalog", func() {
 			Method("get_data", func() {
 				Payload(func() {
 					Attribute("household_id", String, "Server-injected household identifier.")
@@ -124,8 +124,8 @@ func InjectMultiToolsetLabelsExample() func() {
 // compile (the exact regression this scenario locks).
 func InjectMixedBoundUnboundExample() func() {
 	return func() {
-		API("atlas", func() {})
-		Service("atlas", func() {
+		API("catalog", func() {})
+		Service("catalog", func() {
 			Method("get_data", func() {
 				Payload(func() {
 					Attribute("query", String, "Search query.")

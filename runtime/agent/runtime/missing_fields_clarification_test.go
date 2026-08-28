@@ -123,7 +123,7 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 }
 
 func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
-	completion := newAnyJSONSpec("briefs.persist", "catalog")
+	completion := newAnyJSONSpec("reports.persist", "catalog")
 	completion.Payload.FieldDescriptions = map[string]string{
 		"title": "The title to save.",
 	}

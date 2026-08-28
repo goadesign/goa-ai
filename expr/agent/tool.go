@@ -107,7 +107,7 @@ type (
 		eval.DSLFunc
 
 		// Kind identifies the logical kind of this server data (for example,
-		// "atlas.time_series" for UI charts).
+		// "charts.time_series" for UI charts).
 		Kind string
 
 		// Audience declares who this server-data payload is intended for.

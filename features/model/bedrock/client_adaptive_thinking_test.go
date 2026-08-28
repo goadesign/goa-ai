@@ -242,13 +242,13 @@ func TestResolveThinkingOpus47KeepsAdaptiveThinkingWithForcedTool(t *testing.T) 
 			Parts: []model.Part{model.TextPart{Text: "finish the task"}},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "tasks.progress.complete",
+			Name:        "workflow.progress.complete",
 			Description: "complete the task",
 			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeTool,
-			Name: "tasks.progress.complete",
+			Name: "workflow.progress.complete",
 		},
 		Thinking: &model.ThinkingOptions{
 			Enable:       true,
@@ -277,8 +277,8 @@ func TestResolveThinkingOpus47KeepsAdaptiveThinkingWithAnyTool(t *testing.T) {
 			Parts: []model.Part{model.TextPart{Text: "continue through tools"}},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "tasks.progress.update",
-			Description: "update task progress",
+			Name:        "workflow.progress.update",
+			Description: "update workflow progress",
 			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
@@ -310,7 +310,7 @@ func TestFableAcceptsForcedToolChoice(t *testing.T) {
 			name: "specific tool",
 			toolChoice: &model.ToolChoice{
 				Mode: model.ToolChoiceModeTool,
-				Name: "tasks.progress.complete",
+				Name: "workflow.progress.complete",
 			},
 		},
 		{
@@ -337,7 +337,7 @@ func TestFableAcceptsForcedToolChoice(t *testing.T) {
 					Parts: []model.Part{model.TextPart{Text: "finish the task"}},
 				}},
 				Tools: []*model.ToolDefinition{{
-					Name:        "tasks.progress.complete",
+					Name:        "workflow.progress.complete",
 					Description: "complete the task",
 					Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 				}},
@@ -361,13 +361,13 @@ func TestResolveThinkingLegacyModelRejectsForcedToolChoice(t *testing.T) {
 			Parts: []model.Part{model.TextPart{Text: "finish the task"}},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "tasks.progress.complete",
+			Name:        "workflow.progress.complete",
 			Description: "complete the task",
 			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeTool,
-			Name: "tasks.progress.complete",
+			Name: "workflow.progress.complete",
 		},
 		Thinking: &model.ThinkingOptions{
 			Enable:       true,
@@ -395,13 +395,13 @@ func TestOpusAllowsForcedToolChoiceWithoutThinking(t *testing.T) {
 			Parts: []model.Part{model.TextPart{Text: "finish the task"}},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "tasks.progress.complete",
+			Name:        "workflow.progress.complete",
 			Description: "complete the task",
 			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeTool,
-			Name: "tasks.progress.complete",
+			Name: "workflow.progress.complete",
 		},
 	}
 

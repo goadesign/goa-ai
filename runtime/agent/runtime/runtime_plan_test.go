@@ -2878,7 +2878,7 @@ func TestBuildPlannerToolOutputRecordsSkipsBookkeepingResults(t *testing.T) {
 		rt,
 		newAnyJSONSpec("svc.ts.tool", "svc.tools"),
 		func() tools.ToolSpec {
-			spec := newAnyJSONSpec("tasks.progress.set_step_status", "tasks.progress")
+			spec := newAnyJSONSpec("workflow.progress.set_step_status", "workflow.progress")
 			spec.Bookkeeping = true
 			return spec
 		}(),
@@ -2893,7 +2893,7 @@ func TestBuildPlannerToolOutputRecordsSkipsBookkeepingResults(t *testing.T) {
 				Payload:    rawjson.Message([]byte(`{"from":"test"}`)),
 			},
 			{
-				Name:       "tasks.progress.set_step_status",
+				Name:       "workflow.progress.set_step_status",
 				ToolCallID: "call-2",
 				Payload:    rawjson.Message([]byte(`{"step":"verify"}`)),
 			},
@@ -2905,7 +2905,7 @@ func TestBuildPlannerToolOutputRecordsSkipsBookkeepingResults(t *testing.T) {
 				Result:     map[string]any{"status": "ok"},
 			},
 			{
-				Name:       "tasks.progress.set_step_status",
+				Name:       "workflow.progress.set_step_status",
 				ToolCallID: "call-2",
 				Result:     map[string]any{"ok": true},
 			},
@@ -3031,7 +3031,7 @@ func TestPlanResumeActivityRejectsEmptyRawJSONPayloads(t *testing.T) {
 				Await: planner.NewAwait(
 					planner.AwaitQuestionsItem(&planner.AwaitQuestions{
 						ID:              "await-q",
-						ToolName:        "chat.ask_question.ask_question",
+						ToolName:        "assistant.ask_question",
 						ModelToolCallID: "call-q",
 						Payload:         rawjson.Message([]byte{}),
 					}),

@@ -677,12 +677,12 @@ another shape fail at the typed checkpoint boundary.
 Sensitive tools can require approval before execution:
 
 ```go
-Tool("change_setpoint", "Change a device setpoint", func() {
-	Args(ChangeSetpointRequest)
-	Return(ChangeSetpointResult)
+Tool("delete_record", "Delete a stored record", func() {
+	Args(DeleteRecordRequest)
+	Return(DeleteRecordResult)
 	Confirmation(func() {
-		Title("Confirm setpoint change")
-		PromptTemplate("Set {{ .DeviceID }} to {{ .Value }}?")
+		Title("Confirm record deletion")
+		PromptTemplate("Delete record {{ .RecordID }}?")
 		DeniedResultTemplate(`{"status":"denied"}`)
 	})
 })
@@ -774,19 +774,19 @@ test case and the shape of its input; the application supplies real values and
 the code that calls the product:
 
 ```go
-var ChatEvalInput = Type("ChatEvalInput", func() {
-	Attribute("prompt", String, "User message.", func() { MinLength(1) })
-	Required("prompt")
+var QueryEvalInput = Type("QueryEvalInput", func() {
+	Attribute("query", String, "Assistant request.", func() { MinLength(1) })
+	Required("query")
 })
 
-Agent("chat", "Answers product questions.", func() {
-	Suite("chat", func() {
-		Description("Exercises complete Chat outcomes.")
+Agent("assistant", "Answers user questions.", func() {
+	Suite("assistant", func() {
+		Description("Exercises complete assistant outcomes.")
 		Timeout("2m")
-		Scenario("alarm_inventory", func() {
-			Description("Retrieves the complete alarm inventory.")
-			Input(ChatEvalInput)
-			Tags("production")
+		Scenario("record_inventory", func() {
+			Description("Retrieves the complete record inventory.")
+			Input(QueryEvalInput)
+			Tags("integration")
 		})
 	})
 })

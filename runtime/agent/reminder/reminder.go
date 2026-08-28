@@ -55,7 +55,7 @@ type Attachment struct {
 type Reminder struct {
 	// ID is the stable identifier for this reminder type within a run. It is
 	// used for de-duplication, rate limiting, and telemetry. IDs should be
-	// deterministic (e.g., "pending_todos", "partial_result.ad.search").
+	// deterministic (e.g., "pending_items", "partial_result.records.search").
 	ID string
 
 	// Text is the natural-language guidance to inject, typically wrapped in a

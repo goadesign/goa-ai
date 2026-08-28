@@ -24,14 +24,14 @@ JSON report.
 
 These terms appear throughout:
 
-- **Scenario**: one test case, such as "ask the chat agent to list every
-  alarm".
+- **Scenario**: one test case, such as "ask the assistant to list every
+  record".
 - **Hook**: the Go method you write for one scenario. It runs the product and
   returns what happened.
 - **Check**: a pass/fail fact your code can verify exactly, such as "the agent
-  called the `list_alarms` tool" or "every result page was fetched".
+  called the `list_records` tool" or "every result page was fetched".
 - **Claim**: a short English sentence that must be true of the model's answer,
-  such as "The answer reports every alarm in the window." Claims exist because
+  such as "The answer reports every record in the window." Claims exist because
   answer wording changes from run to run, so exact string comparison cannot
   work.
 - **Judge**: a model-backed grader owned by the framework. It reads the answer
@@ -42,8 +42,8 @@ These terms appear throughout:
 ## Describe scenarios in the design
 
 The design declares the *shape* of each scenario input: which fields exist and
-what makes them valid. It never contains real values. Concrete user IDs,
-facilities, and prompts stay in application code, so the same design works in
+what makes them valid. It never contains real values. Concrete requester IDs,
+workspace IDs, and queries stay in application code, so the same design works in
 every environment.
 
 ```go
@@ -55,26 +55,26 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-var ChatEvalInput = Type("ChatEvalInput", func() {
-	Attribute("user_id", String, "User running the evaluation.", func() {
+var RecordEvalInput = Type("RecordEvalInput", func() {
+	Attribute("requester_id", String, "Requester running the evaluation.", func() {
 		Format(FormatUUID)
 	})
-	Attribute("prompt", String, "User message.", func() {
+	Attribute("query", String, "Assistant request.", func() {
 		MinLength(1)
 	})
-	Required("user_id", "prompt")
+	Required("requester_id", "query")
 })
 
-var _ = Service("chat_agent", func() {
-	Agent("chat", "Answers product questions.", func() {
-		Suite("chat", func() {
-			Description("Exercises production Chat outcomes.")
+var _ = Service("assistant_service", func() {
+	Agent("assistant", "Answers user questions.", func() {
+		Suite("assistant", func() {
+			Description("Exercises assistant outcomes.")
 			Timeout("2m")
 
-			Scenario("alarm_inventory", func() {
-				Description("Retrieves every alarm in a fixed window.")
-				Input(ChatEvalInput)
-				Tags("production", "alarm")
+			Scenario("record_inventory", func() {
+				Description("Retrieves every record in a fixed window.")
+				Input(RecordEvalInput)
+				Tags("integration", "records")
 				Timeout("3m")
 			})
 
@@ -109,18 +109,18 @@ generator. Running the normal `goa gen` command then writes
 `gen/evals/<suite>/suite.go`:
 
 ```go
-type ChatEvalInput struct {
-	UserID string
-	Prompt string
+type RecordEvalInput struct {
+	RequesterID string
+	Query       string
 }
 
 type Hooks interface {
-	AlarmInventory(context.Context, *ChatEvalInput) (eval.Result, error)
+	RecordInventory(context.Context, *RecordEvalInput) (eval.Result, error)
 	HealthCheck(context.Context) (eval.Result, error)
 }
 
 type Inputs struct {
-	AlarmInventory *ChatEvalInput
+	RecordInventory *RecordEvalInput
 }
 
 func New(hooks Hooks, inputs Inputs) (eval.Suite, error)
@@ -187,11 +187,11 @@ type hooks struct {
 	client *Client
 }
 
-func (h *hooks) AlarmInventory(
+func (h *hooks) RecordInventory(
 	ctx context.Context,
-	input *genevals.ChatEvalInput,
+	input *genevals.RecordEvalInput,
 ) (eval.Result, error) {
-	answer, evidence, err := h.client.Run(ctx, input.UserID, input.Prompt)
+	answer, evidence, err := h.client.Run(ctx, input.RequesterID, input.Query)
 	if err != nil {
 		return eval.Result{}, err
 	}
@@ -202,7 +202,7 @@ func (h *hooks) AlarmInventory(
 		}},
 		Claims: []eval.Claim{{
 			ID:   "complete_answer",
-			Text: "The answer reports every alarm in the window.",
+			Text: "The answer reports every record in the window.",
 		}},
 		Output: answer,
 		Artifacts: []eval.Artifact{{
@@ -218,8 +218,8 @@ A hook returns three kinds of information:
 - **Checks** are facts the code can verify exactly: tool names, IDs, counts,
   states. A failed check must include a diagnostic explaining what went wrong.
 - **Claims** are sentences about the model's answer, judged later. Write one
-  claim per fact ("The answer names the alarm", "The answer gives the
-  activation time") rather than one long compound claim, so a failure points
+  claim per fact ("The answer names the record", "The answer gives the
+  creation time") rather than one long compound claim, so a failure points
   at the exact missing fact. Do not approximate answer meaning with regular
   expressions or keyword lists — that is what claims and the judge replace.
   Claims are judged against `Output`, the answer under evaluation. An empty
@@ -318,10 +318,10 @@ assert the returned count, total count, truncation state, refinement hint, or
 continuation cursor:
 
 ```go
-alarms := evidence.ExpectCall(ada.ListAlarmsTool, nil, nil)
-alarms.Bounds = func(bounds *agent.Bounds) error {
+recordCall := evidence.ExpectCall(records.ListRecordsTool, nil, nil)
+recordCall.Bounds = func(bounds *agent.Bounds) error {
 	if bounds == nil || bounds.Truncated {
-		return errors.New("expected a complete alarm inventory")
+		return errors.New("expected a complete record inventory")
 	}
 	return nil
 }
@@ -331,9 +331,9 @@ alarms.Bounds = func(bounds *agent.Bounds) error {
 
 ```go
 suite, err := genevals.New(&hooks{client: client}, genevals.Inputs{
-	AlarmInventory: &genevals.ChatEvalInput{
-		UserID: userID,
-		Prompt: "List every alarm in the requested window.",
+	RecordInventory: &genevals.RecordEvalInput{
+		RequesterID: requesterID,
+		Query:       "List every record in the requested window.",
 	},
 })
 if err != nil {
@@ -381,8 +381,8 @@ The runner validates every selection before calling the product or a model:
 
 ```go
 report, err := runner.Run(ctx, suite)
-report, err := runner.RunScenarios(ctx, suite, "alarm_inventory", "solar_analysis")
-report, err := runner.RunTags(ctx, suite, "smoke", "alarm")
+report, err := runner.RunScenarios(ctx, suite, "record_inventory", "summary_check")
+report, err := runner.RunTags(ctx, suite, "smoke", "records")
 ```
 
 `RunScenarios` runs exact scenario names. `RunTags` runs every scenario

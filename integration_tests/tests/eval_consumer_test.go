@@ -39,13 +39,13 @@ func TestEvalConsumer(t *testing.T) {
 		"example",
 		"example.com/evalconsumer/design",
 	)
-	scaffoldPath := filepath.Join(consumerRoot, "cmd", "chat_quality-evals", "main.go")
+	scaffoldPath := filepath.Join(consumerRoot, "cmd", "assistant_quality-evals", "main.go")
 	// #nosec G304 -- scaffoldPath is rooted in the test's temporary fixture.
 	scaffold, err := os.ReadFile(scaffoldPath)
 	require.NoError(t, err)
-	require.Equal(t, 21, strings.Count(string(scaffold), "TODO: implement "))
-	require.Contains(t, string(scaffold), "BroadRefrigerationTaskPreview")
-	require.Contains(t, string(scaffold), "AlarmActivationSnapshotSummary")
+	require.Equal(t, 2, strings.Count(string(scaffold), "TODO: implement "))
+	require.Contains(t, string(scaffold), "RecordSummary")
+	require.Contains(t, string(scaffold), "SavedQueryReplay")
 	scaffold = append(scaffold, []byte("\n// application-owned marker\n")...)
 	// #nosec G703 -- scaffoldPath is rooted in the test's temporary fixture.
 	require.NoError(t, os.WriteFile(scaffoldPath, scaffold, 0600))
@@ -74,7 +74,7 @@ func TestEvalConsumer(t *testing.T) {
 		"test",
 		"./evalconsumer",
 		"./gen/...",
-		"./cmd/chat_quality-evals",
+		"./cmd/assistant_quality-evals",
 	)
 }
 

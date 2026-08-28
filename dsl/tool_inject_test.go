@@ -262,7 +262,7 @@ func TestInjectAcceptsFieldOnBothDivergentShapes(t *testing.T) {
 func TestInjectAcceptsLabelBackedFieldOnBoundTool(t *testing.T) {
 	err := runDSLWithError(t, func() {
 		API("test", func() {})
-		Service("atlas", func() {
+		Service("catalog", func() {
 			Method("get_data", func() {
 				Payload(func() {
 					Attribute("household_id", String, "Household scope.")
@@ -295,7 +295,7 @@ func TestInjectAcceptsLabelBackedFieldOnBoundTool(t *testing.T) {
 func TestInjectRejectsMissingFieldOnBoundMethod(t *testing.T) {
 	err := runDSLWithError(t, func() {
 		API("test", func() {})
-		Service("atlas", func() {
+		Service("catalog", func() {
 			Method("get_data", func() {
 				Payload(func() {
 					Attribute("query", String, "Search query.")
