@@ -829,7 +829,7 @@ func TestAnthropicChunkProcessorPreservesInitialToolInput(t *testing.T) {
 		{
 			name:            "no-argument tool",
 			start:           toolStart,
-			noArgumentTools: map[string]struct{}{"ada.continue_alarms": {}},
+			noArgumentTools: map[string]struct{}{"catalog.continue_results": {}},
 			wantPayload:     `{}`,
 		},
 		{
@@ -853,7 +853,7 @@ func TestAnthropicChunkProcessorPreservesInitialToolInput(t *testing.T) {
 					}
 					return nil
 				},
-				map[string]string{"continue_abcd": "ada.continue_alarms"},
+				map[string]string{"continue_abcd": "catalog.continue_results"},
 				test.noArgumentTools,
 				nil,
 			)
@@ -868,7 +868,7 @@ func TestAnthropicChunkProcessorPreservesInitialToolInput(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Len(t, calls, 1)
-			require.Equal(t, "ada.continue_alarms", string(calls[0].Name))
+			require.Equal(t, "catalog.continue_results", string(calls[0].Name))
 			require.JSONEq(t, test.wantPayload, string(calls[0].Payload))
 		})
 	}

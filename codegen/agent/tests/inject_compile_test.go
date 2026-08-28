@@ -287,9 +287,9 @@ func TestGeneratedMixedInjectPackagesCompile(t *testing.T) {
 
 	// Stub the Goa-core service package (emitted by `goa gen`'s service
 	// codegen, not by the agent generator): the generated provider,
-	// transforms, and service executor import generated.local/gen/atlas for
+	// transforms, and service executor import generated.local/gen/catalog for
 	// the Service interface, Client, and method payload/result types.
-	writeGeneratedPackageTest(t, root, "gen/atlas/service_stub.go", `package atlas
+	writeGeneratedPackageTest(t, root, "gen/catalog/service_stub.go", `package catalog
 
 import "context"
 
@@ -320,7 +320,7 @@ func (c *Client) GetData(ctx context.Context, p *GetDataPayload) (*GetDataResult
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "build", "-mod=mod",
-		"./gen/atlas/toolsets/helpers", "./gen/atlas/agents/scribe/helpers"))
+		"./gen/catalog/toolsets/helpers", "./gen/catalog/agents/scribe/helpers"))
 }
 
 // TestGeneratedServerDataPackagesCompile compiles both generated call sites
@@ -355,7 +355,7 @@ type Service interface {
 type Client struct{}
 
 func (c *Client) Find(ctx context.Context, p *FindPayload) (*FindResult, error) {
-	return &FindResult{Okay: true, Evidence: []*Evidence{{Kind: "alarm"}}}, nil
+	return &FindResult{Okay: true, Evidence: []*Evidence{{Kind: "source"}}}, nil
 }
 `)
 
@@ -380,7 +380,7 @@ func TestGeneratedBoundMetaInjectPackagesCompile(t *testing.T) {
 	files := buildWithPrepareForGeneratedModule(t, testscenarios.InjectBoundMetaExample())
 	root := writeGeneratedModuleKeepingGen(t, files)
 
-	writeGeneratedPackageTest(t, root, "gen/atlas/service_stub.go", `package atlas
+	writeGeneratedPackageTest(t, root, "gen/catalog/service_stub.go", `package catalog
 
 import "context"
 
@@ -416,28 +416,28 @@ func (c *Client) GetData(ctx context.Context, p *GetDataPayload) (*GetDataResult
 	// the Inject -> pointer -> transform-deref chain onto the bound method
 	// payload. Text-level golden assertions cannot prove this chain RUNS;
 	// only executing the generated code can.
-	writeGeneratedPackageTest(t, root, "gen/atlas/toolsets/helpers/provider_exec_test.go", `package helpers
+	writeGeneratedPackageTest(t, root, "gen/catalog/toolsets/helpers/provider_exec_test.go", `package helpers
 
 import (
 	"context"
 	"encoding/json"
 	"testing"
 
-	atlas "generated.local/gen/atlas"
+	catalog "generated.local/gen/catalog"
 	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 // capturingService records the method payload the generated provider passes
 // to the bound service method.
 type capturingService struct {
-	got           *atlas.GetDataPayload
+	got           *catalog.GetDataPayload
 	gotToolUseID  string
 }
 
-func (s *capturingService) GetData(ctx context.Context, p *atlas.GetDataPayload) (*atlas.GetDataResult, error) {
+func (s *capturingService) GetData(ctx context.Context, p *catalog.GetDataPayload) (*catalog.GetDataResult, error) {
 	s.got = p
 	s.gotToolUseID, _ = toolregistry.ToolUseIDFromContext(ctx)
-	return &atlas.GetDataResult{OK: true}, nil
+	return &catalog.GetDataResult{OK: true}, nil
 }
 
 // TestHandleToolCallInjectsContext executes the full generated chain:
@@ -502,5 +502,5 @@ func TestHandleToolCallInjectsContext(t *testing.T) {
 	// provider-path test written above (the executor package has no test
 	// files and is compile-checked only).
 	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-count=1",
-		"./gen/atlas/toolsets/helpers", "./gen/atlas/agents/scribe/helpers"))
+		"./gen/catalog/toolsets/helpers", "./gen/catalog/agents/scribe/helpers"))
 }

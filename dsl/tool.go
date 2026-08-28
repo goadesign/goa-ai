@@ -281,7 +281,7 @@ func Return(val any, args ...any) {
 //	Tool("get_time_series", "Get Time Series", func() {
 //	    Args(GetTimeSeriesToolArgs)
 //	    Return(GetTimeSeriesToolReturn)
-//	    ServerData("atlas.time_series", GetTimeSeriesSidecar)
+//	    ServerData("charts.time_series", GetTimeSeriesSidecar)
 //	})
 //
 // Typed server-data sourced from a bound method result field:
@@ -289,7 +289,7 @@ func Return(val any, args ...any) {
 //	Tool("get_time_series", "Get Time Series", func() {
 //	    // ...
 //	    BindTo("GetTimeSeries")
-//	    ServerData("aura.evidence", Evidence, func() {
+//	    ServerData("records.evidence", Evidence, func() {
 //	        Description("Evidence references emitted for persistence and downstream UIs.")
 //	        FromMethodResultField("evidence")
 //	    })
@@ -299,7 +299,7 @@ func Return(val any, args ...any) {
 //
 //	Tool("get_time_series", "Get Time Series", func() {
 //	    // ...
-//	    ServerData("atlas.time_series", GetTimeSeriesSidecar, "Time-series chart rendered in the UI.")
+//	    ServerData("charts.time_series", GetTimeSeriesSidecar, "Time-series chart rendered in the UI.")
 //	})
 func ServerData(kind string, schema any, args ...any) {
 	if kind == "" {
@@ -449,9 +449,9 @@ func AudienceEvidence() {
 //
 // Example (evaluation scenario selection tags):
 //
-//	Scenario("alarm_inventory", func() {
-//	    Description("Retrieves every alarm in a fixed window.")
-//	    Tags("production", "alarm")
+//	Scenario("record_inventory", func() {
+//	    Description("Retrieves every record in a fixed window.")
+//	    Tags("integration", "records")
 //	})
 //
 // Tags are optional. Tools without tags are still fully functional but may be

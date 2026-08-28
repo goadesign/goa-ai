@@ -197,10 +197,10 @@ func TestValidateToolCallRefUsesStructuralDeadlinesOnly(t *testing.T) {
 func TestDecodeServerDataPreservesTypedPayload(t *testing.T) {
 	t.Parallel()
 
-	items, err := DecodeServerData([]byte(`[{"kind":"aura.citations","audience":"evidence","data":[{"index":1}]}]`))
+	items, err := DecodeServerData([]byte(`[{"kind":"records.citations","audience":"evidence","data":[{"index":1}]}]`))
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	assert.Equal(t, "aura.citations", items[0].Kind)
+	assert.Equal(t, "records.citations", items[0].Kind)
 	assert.Equal(t, "evidence", items[0].Audience)
 	assert.JSONEq(t, `[{"index":1}]`, string(items[0].Data))
 }
@@ -211,7 +211,7 @@ func TestNewToolResultServiceErrorMessagePreservesFailure(t *testing.T) {
 	result := NewToolResultServiceErrorMessage(
 		"registration",
 		"tool-use",
-		"atlas.read.get_time_series",
+		"catalog.lookup.find_records",
 		"invalid_input",
 		&serviceFailureError{error: errors.New("history unavailable")},
 	)
@@ -230,7 +230,7 @@ func TestNewToolResultServiceErrorMessagePreservesProviderIssues(t *testing.T) {
 	result := NewToolResultServiceErrorMessage(
 		"registration",
 		"tool-use",
-		"atlas.read.get_time_series",
+		"catalog.lookup.find_records",
 		"invalid_arguments",
 		&correctingServiceFailureError{
 			error:            errors.New("invalid call"),
@@ -253,7 +253,7 @@ func TestNewToolResultServiceErrorMessageEnrichesMissingCorrectionIssues(t *test
 	result := NewToolResultServiceErrorMessage(
 		"registration",
 		"tool-use",
-		"atlas.read.get_time_series",
+		"catalog.lookup.find_records",
 		"invalid_arguments",
 		&correctingServiceFailureError{
 			error:            errors.New("invalid call"),
@@ -272,7 +272,7 @@ func TestToolResultRetryMessageJSONContainsOnlyRetryControl(t *testing.T) {
 	t.Parallel()
 
 	message := NewToolResultRetryMessage(
-		"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c",
+		"1111111111111111111111111111111111111111111111111111111111111111",
 		"tool-use",
 		ToolRetryReasonProviderOverloaded,
 		250*time.Millisecond,
@@ -280,7 +280,7 @@ func TestToolResultRetryMessageJSONContainsOnlyRetryControl(t *testing.T) {
 	body, err := json.Marshal(message)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
-		"registration_token":"270a659d38ff331401280ad7b0c8fdba673fd02e7114b856a2f12e1c49eec34c",
+		"registration_token":"1111111111111111111111111111111111111111111111111111111111111111",
 		"tool_use_id":"tool-use",
 		"retry":{"reason":"provider_overloaded","retry_after_ms":250}
 	}`, string(body))

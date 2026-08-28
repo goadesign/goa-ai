@@ -16,12 +16,12 @@ import (
 
 func TestPublishAwaitToolUsesQuestionsDoesNotDuplicateCommittedResponse(t *testing.T) {
 	rt := New()
-	seedTestToolSpecs(rt, newAnyJSONSpec("chat.ask_question", "chat"))
+	seedTestToolSpecs(rt, newAnyJSONSpec("assistant.ask_question", "assistant"))
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1", SessionID: "sess-1"}}
 	input := &RunInput{AgentID: agent.Ident("agent-1"), RunID: "run-1", SessionID: "sess-1"}
 	item := planner.AwaitQuestionsItem(&planner.AwaitQuestions{
 		ID:              "await-1",
-		ToolName:        "chat.ask_question",
+		ToolName:        "assistant.ask_question",
 		ToolCallID:      "runtime-call-1",
 		ModelToolCallID: "provider-call-1",
 		Payload:         rawjson.Message(`{}`),
@@ -32,7 +32,7 @@ func TestPublishAwaitToolUsesQuestionsDoesNotDuplicateCommittedResponse(t *testi
 		Role: model.ConversationRoleAssistant,
 		Parts: []model.Part{model.ToolUsePart{
 			ID:               "provider-call-1",
-			Name:             "chat.ask_question",
+			Name:             "assistant.ask_question",
 			Input:            rawjson.Message(`{}`),
 			ThoughtSignature: "opaque-provider-signature",
 		}},
@@ -131,7 +131,7 @@ func TestCompilePlannerAwaitForRunAssignsStableDistinctIDsAndClonesPayloads(t *t
 	source := planner.NewAwait(
 		planner.AwaitQuestionsItem(&planner.AwaitQuestions{
 			ID:              "questions",
-			ToolName:        "chat.ask_question",
+			ToolName:        "assistant.ask_question",
 			ModelToolCallID: "provider-question",
 			Payload:         questionPayload,
 			Questions: []planner.AwaitQuestion{{

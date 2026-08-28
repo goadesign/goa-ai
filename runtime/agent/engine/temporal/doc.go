@@ -22,7 +22,7 @@
 //	        Namespace: "default",
 //	    },
 //	    WorkerOptions: temporal.WorkerOptions{
-//	        TaskQueue: "orchestrator.chat",
+//	        TaskQueue: "assistant",
 //	    },
 //	})
 //	if err != nil {

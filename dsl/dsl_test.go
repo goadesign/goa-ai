@@ -62,7 +62,7 @@ func TestGlobalToolsetRegisters(t *testing.T) {
 func TestRunPolicyDefaults(t *testing.T) {
 	runDSL(t, func() {
 		API("test", func() {})
-		Service("tasks", func() {
+		Service("workflow", func() {
 			Agent("planner", "Planner agent", func() {
 				RunPolicy(func() {
 					DefaultCaps(MaxToolCalls(3))
@@ -151,8 +151,8 @@ func TestTerminalRunImpliesBookkeeping(t *testing.T) {
 		API("test", func() {})
 		Service("tasks", func() {
 			Agent("planner", "Planner agent", func() {
-				Use("tasks.progress", func() {
-					Tool("complete", "Complete task", func() {
+				Use("workflow.progress", func() {
+					Tool("complete", "Complete workflow", func() {
 						TerminalRun()
 					})
 				})

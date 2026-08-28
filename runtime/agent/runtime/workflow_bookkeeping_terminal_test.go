@@ -22,11 +22,11 @@ import (
 func TestRunLoopBookkeepingTerminalExecutesWithExhaustedBudget(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	terminal := newAnyJSONSpec(tools.Ident("tasks.complete"), "tasks.progress")
+	terminal := newAnyJSONSpec(tools.Ident("workflow.complete"), "workflow.progress")
 	terminal.TerminalRun = true
 	terminal.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,

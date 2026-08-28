@@ -452,7 +452,7 @@ func TestStreamSubscriber_ChildRunLinked(t *testing.T) {
 		"parent-run",
 		agent.Ident("parent.agent"),
 		"session-1",
-		tools.Ident("svc.agent.ada"),
+		tools.Ident("svc.agent.records"),
 		"parent-call",
 		"child-run",
 		agent.Ident("child.agent"),
@@ -464,7 +464,7 @@ func TestStreamSubscriber_ChildRunLinked(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, EventChildRunLinked, ar.Type())
 	require.Equal(t, "parent-run", ar.RunID())
-	require.Equal(t, "svc.agent.ada", ar.Data.ToolName)
+	require.Equal(t, "svc.agent.records", ar.Data.ToolName)
 	require.Equal(t, "parent-call", ar.Data.ToolCallID)
 	require.Equal(t, "child-run", ar.Data.ChildRunID)
 	require.Equal(t, agent.Ident("child.agent"), ar.Data.ChildAgentID)

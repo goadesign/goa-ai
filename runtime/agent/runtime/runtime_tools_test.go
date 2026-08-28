@@ -99,8 +99,8 @@ func TestExecuteToolActivityReturnsFailure(t *testing.T) {
 func TestExecuteToolActivityPropagatesLabels(t *testing.T) {
 	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 		require.Equal(t, map[string]string{
-			"aura.session.id": "sess-1",
-			"kind":            "brief",
+			"example.session.id": "sess-1",
+			"kind":               "report",
 		}, call.Labels)
 		return &planner.ToolResult{
 			Name:   call.Name,
@@ -117,8 +117,8 @@ func TestExecuteToolActivityPropagatesLabels(t *testing.T) {
 		ToolCallID: "tool-1",
 		Payload:    []byte("{}"),
 		Labels: map[string]string{
-			"aura.session.id": "sess-1",
-			"kind":            "brief",
+			"example.session.id": "sess-1",
+			"kind":               "report",
 		},
 	}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)

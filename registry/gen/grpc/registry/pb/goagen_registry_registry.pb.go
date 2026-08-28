@@ -1139,10 +1139,10 @@ func (x *SearchResponse) GetToolsets() []*ToolsetInfo {
 type CallToolRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Toolset registration identifier used for routing (for example,
-	// "atlas_data.atlas.read").
+	// "catalog.lookup").
 	Toolset string `protobuf:"bytes,1,opt,name=toolset,proto3" json:"toolset,omitempty"`
 	// Globally unique tool identifier of the form "toolset.tool" (for example,
-	// "atlas.read.get_time_series").
+	// "catalog.lookup.find_records").
 	Tool string `protobuf:"bytes,2,opt,name=tool,proto3" json:"tool,omitempty"`
 	// Canonical JSON payload for the tool call. Must validate against the
 	// registered payload schema.
@@ -1227,7 +1227,7 @@ type ToolCallMeta struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Run identifier for the agent execution that issued this tool call.
 	RunId string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	// Chat session identifier used to scope tool behavior and persistence.
+	// Agent session identifier used to scope tool behavior and persistence.
 	SessionId string `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	// Turn identifier within the session.
 	TurnId *string `protobuf:"bytes,3,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
@@ -1383,10 +1383,10 @@ type RetryToolRequest struct {
 	// Exact admission-generation token returned by the original CallTool admission.
 	ExpectedRegistrationToken string `protobuf:"bytes,100,opt,name=expected_registration_token,json=expectedRegistrationToken,proto3" json:"expected_registration_token,omitempty"`
 	// Toolset registration identifier used for routing (for example,
-	// "atlas_data.atlas.read").
+	// "catalog.lookup").
 	Toolset string `protobuf:"bytes,1,opt,name=toolset,proto3" json:"toolset,omitempty"`
 	// Globally unique tool identifier of the form "toolset.tool" (for example,
-	// "atlas.read.get_time_series").
+	// "catalog.lookup.find_records").
 	Tool string `protobuf:"bytes,2,opt,name=tool,proto3" json:"tool,omitempty"`
 	// Canonical JSON payload for the tool call. Must validate against the
 	// registered payload schema.

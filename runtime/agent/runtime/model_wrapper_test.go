@@ -658,7 +658,7 @@ func TestModelInvocationExportPreservesAdditivePlannerMetadata(t *testing.T) {
 
 	response, err := client.Complete(t.Context(), &model.Request{})
 	require.NoError(t, err)
-	response.Content[0].Meta["aura.assistant_citations.v1"] =
+	response.Content[0].Meta["example.assistant_citations.v1"] =
 		`[{"index":1,"file_id":"document-1"}]`
 	result := &planner.PlanResult{
 		FinalResponse: &planner.FinalResponse{Message: &response.Content[0]},
@@ -670,8 +670,8 @@ func TestModelInvocationExportPreservesAdditivePlannerMetadata(t *testing.T) {
 	assert.Equal(t, originalParts, transcript[0].Parts)
 	assert.Equal(t, originalParts, result.FinalResponse.Message.Parts)
 	assert.Equal(t, map[string]any{
-		"provider":                    map[string]any{"request_id": "req-1"},
-		"aura.assistant_citations.v1": `[{"index":1,"file_id":"document-1"}]`,
+		"provider":                       map[string]any{"request_id": "req-1"},
+		"example.assistant_citations.v1": `[{"index":1,"file_id":"document-1"}]`,
 	}, transcript[0].Meta)
 }
 

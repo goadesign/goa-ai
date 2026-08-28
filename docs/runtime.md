@@ -103,7 +103,7 @@ func main() {
     // Temporal engine for durable execution
     temporalEng, err := temporal.NewWorker(temporal.Options{
         ClientOptions: &client.Options{HostPort: "temporal:7233"},
-        WorkerOptions: temporal.WorkerOptions{TaskQueue: "orchestrator.chat"},
+        WorkerOptions: temporal.WorkerOptions{TaskQueue: "assistant"},
     })
     if err != nil {
         log.Fatal(err)
@@ -531,7 +531,7 @@ mechanics on `temporal.Options.ActivityDefaults` when constructing the engine.
 The runtime always initializes `Runtime.PromptRegistry`. Prompt management has two layers:
 
 - **Baseline specs**: register immutable `prompt.PromptSpec` definitions in memory.
-- **Scoped overrides**: optionally resolve `org/facility/session` overrides through `prompt.Store`
+- **Scoped overrides**: optionally resolve workspace/session overrides through `prompt.Store`
   (`runtime.WithPromptStore(...)`).
 
 ```go
@@ -543,7 +543,7 @@ import (
 
 mongoClient, _ := clientmongo.New(clientmongo.Options{
     Client:     rawMongoClient,
-    Database:   "aura",
+    Database:   "assistant_runtime",
     Collection: "prompt_overrides",
 })
 promptStore, _ := promptmongo.NewStore(mongoClient)
@@ -553,8 +553,8 @@ rt := runtime.New(
 )
 
 _ = rt.PromptRegistry.Register(prompt.PromptSpec{
-    ID:       "aura.chat.system",
-    AgentID:  "orchestrator.chat",
+    ID:       "assistant.system",
+    AgentID:  "assistant",
     Role:     prompt.PromptRoleSystem,
     Template: "You are {{ .AssistantName }}.",
 })
@@ -2189,7 +2189,7 @@ return &planner.PlanResult{
 	Await: planner.NewAwait(
 		planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
 			ID:              "clarify-device",
-			ToolName:        tools.Ident("chat.ask_clarification"),
+			ToolName:        tools.Ident("assistant.ask_clarification"),
 			ModelToolCallID: call.ID,
 			Payload:         call.Payload,
 			Question:        "Which device should I configure?",
@@ -2297,7 +2297,7 @@ decision before executing a confirmed tool.
     "id": "...",
     "title": "...",
     "prompt": "...",
-    "tool_name": "atlas.commands.change_setpoint",
+    "tool_name": "inventory.update_stock",
     "tool_call_id": "toolcall-1",
     "payload": { "...": "canonical tool arguments (JSON)" }
   }
@@ -2853,8 +2853,8 @@ Deliver structured, rate-limited guidance to models:
 
 ```go
 input.Agent.AddReminder(reminder.Reminder{
-    ID:              "pending_todos",
-    Text:            "Review pending todo items before proceeding.",
+    ID:              "pending_items",
+    Text:            "Review pending items before proceeding.",
     Priority:        reminder.TierGuidance,
     Attachment:      reminder.Attachment{Kind: reminder.AttachmentUserTurn},
     MaxPerRun:       3,
@@ -2862,7 +2862,7 @@ input.Agent.AddReminder(reminder.Reminder{
 })
 
 // Remove when no longer relevant
-input.Agent.RemoveReminder("pending_todos")
+input.Agent.RemoveReminder("pending_items")
 ```
 
 **Tiers:**
@@ -2944,7 +2944,7 @@ runtime captures and reattaches them without exposing the field to planners.
 When planners render prompts through `RenderPrompt`, copy prompt provenance into model requests:
 
 ```go
-content, err := input.Agent.RenderPrompt(ctx, "aura.chat.system", map[string]any{
+content, err := input.Agent.RenderPrompt(ctx, "assistant.system", map[string]any{
     "AssistantName": "Ops Assistant",
 })
 if err != nil {
@@ -3127,7 +3127,7 @@ eng, err := temporal.NewWorker(temporal.Options{
         Namespace: "default",
     },
     WorkerOptions: temporal.WorkerOptions{
-        TaskQueue: "orchestrator.chat",
+        TaskQueue: "assistant",
     },
     ActivityDefaults: temporal.ActivityDefaults{
         Planner: temporal.ActivityTimeoutDefaults{

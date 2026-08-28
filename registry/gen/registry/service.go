@@ -126,10 +126,10 @@ var MethodNames = [14]string{"Register", "ReleaseProvider", "DrainProvider", "Un
 // CallToolPayload is the payload type of the registry service CallTool method.
 type CallToolPayload struct {
 	// Toolset registration identifier used for routing (for example,
-	// "atlas_data.atlas.read").
+	// "catalog.lookup").
 	Toolset string
 	// Globally unique tool identifier of the form "toolset.tool" (for example,
-	// "atlas.read.get_time_series").
+	// "catalog.lookup.find_records").
 	Tool string
 	// Canonical JSON payload for the tool call. Must validate against the
 	// registered payload schema.
@@ -334,10 +334,10 @@ type RetryToolPayload struct {
 	// Exact admission-generation token returned by the original CallTool admission.
 	ExpectedRegistrationToken string
 	// Toolset registration identifier used for routing (for example,
-	// "atlas_data.atlas.read").
+	// "catalog.lookup").
 	Toolset string
 	// Globally unique tool identifier of the form "toolset.tool" (for example,
-	// "atlas.read.get_time_series").
+	// "catalog.lookup.find_records").
 	Tool string
 	// Canonical JSON payload for the tool call. Must validate against the
 	// registered payload schema.
@@ -369,7 +369,7 @@ type SemVer string
 type ToolCallMeta struct {
 	// Run identifier for the agent execution that issued this tool call.
 	RunID string
-	// Chat session identifier used to scope tool behavior and persistence.
+	// Agent session identifier used to scope tool behavior and persistence.
 	SessionID string
 	// Turn identifier within the session.
 	TurnID *string

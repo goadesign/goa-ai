@@ -22,7 +22,7 @@ func ConfirmationDSL() func() {
 			Required("summary", "key")
 		})
 
-		var Commands = Toolset("atlas.commands", func() {
+		var Commands = Toolset("catalog.commands", func() {
 			Description("Write operations that require explicit operator confirmation.")
 
 			Tool("dangerous_write", "Write a stateful change", func() {

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	genevals "example.com/evalconsumer/gen/evals/chat_quality"
+	genevals "example.com/evalconsumer/gen/evals/assistant_quality"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	aieval "goa.design/goa-ai/eval"
@@ -35,8 +35,8 @@ func (judge) Judge(_ context.Context, assertions []aieval.Assertion) ([]aieval.J
 		case assertion.Output == "Two readings at the same time disagree about whether the pump is running." &&
 			assertion.Claim == "The pump is running.":
 			label = aieval.Indeterminate
-		case assertion.Output == "Alarm activation identified." &&
-			assertion.Claim == "The answer identifies the alarm activation.":
+		case assertion.Output == "Record summary complete." &&
+			assertion.Claim == "The response includes a record summary.":
 			label = aieval.Entailed
 		default:
 			return nil, fmt.Errorf("fixture judge received unknown semantic assertion %q", assertion.ClaimID)
@@ -50,131 +50,52 @@ func (judge) Judge(_ context.Context, assertions []aieval.Assertion) ([]aieval.J
 	return judgments, nil
 }
 
-func pass(name string) (aieval.Result, error) {
-	return aieval.Result{Checks: []aieval.Check{{Name: name, Passed: true}}}, nil
-}
-
-func (hooks) AlarmActivationSnapshotSummary(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
+func (hooks) RecordSummary(context.Context, *genevals.QueryEvalInput) (aieval.Result, error) {
 	return aieval.Result{
 		Checks: []aieval.Check{{
-			Name:   "alarm_activation_snapshot_summary",
+			Name:   "record_summary",
 			Passed: true,
 		}},
 		Claims: []aieval.Claim{{
-			ID:   "answer_identifies_alarm",
-			Text: "The answer identifies the alarm activation.",
+			ID:   "response_includes_summary",
+			Text: "The response includes a record summary.",
 		}},
-		Output: "Alarm activation identified.",
+		Output: "Record summary complete.",
 	}, nil
 }
-func (hooks) AllCompressorsSourceResolution(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("all_compressors_source_resolution")
-}
-func (hooks) AppRuntimeCapabilityAgentAttribution(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("app_runtime_capability_agent_attribution")
-}
-func (hooks) BroadRefrigerationTaskPreview(context.Context, *genevals.PublishedTaskEvalInput) (aieval.Result, error) {
-	return pass("broad_refrigeration_task_preview")
-}
-func (hooks) CompressorMeasuredStatus(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("compressor_measured_status")
-}
-func (hooks) CompressorModeChangeConfirmation(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("compressor_mode_change_confirmation")
-}
-func (hooks) CompressorRunningActivity(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("compressor_running_activity")
-}
-func (hooks) ConveyorBlackbeltRootCause(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("conveyor_blackbelt_root_cause")
-}
-func (hooks) DefrostActivityDuringPeakHours(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("defrost_activity_during_peak_hours")
-}
-func (hooks) DefrostModeDocumentationSettings(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("defrost_mode_documentation_settings")
-}
-func (hooks) DockDoorSemanticAbsence(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("dock_door_semantic_absence")
-}
-func (hooks) EquipmentStatusSynthesizedResult(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("equipment_status_synthesized_result")
-}
-func (hooks) Evaporator14cPidTuning(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("evaporator_14c_pid_tuning")
-}
-func (hooks) EvaporatorAlarmPagination(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("evaporator_alarm_pagination")
-}
-func (hooks) FacilityWideDefrostCycleReview(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("facility_wide_defrost_cycle_review")
-}
-func (hooks) JimFryeManualSettingChanges(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("jim_frye_manual_setting_changes")
-}
-func (hooks) LargeControlContext(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("large_control_context")
-}
-func (hooks) MultiDeviceKeyEvents(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("multi_device_key_events")
-}
-func (hooks) RoomConditionPatterns(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("room_condition_patterns")
-}
-func (hooks) SingleEquipmentDefrostCycleReview(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("single_equipment_defrost_cycle_review")
-}
-func (hooks) SolarLoadShiftingSavingsReview(context.Context, *genevals.ChatEvalInput) (aieval.Result, error) {
-	return pass("solar_load_shifting_savings_review")
+
+func (hooks) SavedQueryReplay(context.Context, *genevals.SavedQueryEvalInput) (aieval.Result, error) {
+	return aieval.Result{
+		Checks: []aieval.Check{{
+			Name:   "saved_query_replay",
+			Passed: true,
+		}},
+	}, nil
 }
 
 func TestGeneratedSuite(t *testing.T) {
 	runner, err := aieval.NewRunner(judge{}, aieval.RunnerConfig{MaxConcurrency: 2})
 	require.NoError(t, err)
 
-	target := &genevals.ChatEvalTarget{
-		OrgID:   "550e8400-e29b-41d4-a716-446655440000",
-		AgentID: "550e8400-e29b-41d4-a716-446655440001",
-		UserID:  "550e8400-e29b-41d4-a716-446655440002",
-	}
-	chatInput := &genevals.ChatEvalInput{Target: target, Prompt: "Run the scenario."}
 	suite, err := genevals.New(hooks{}, genevals.Inputs{
-		AlarmActivationSnapshotSummary:       chatInput,
-		AllCompressorsSourceResolution:       chatInput,
-		AppRuntimeCapabilityAgentAttribution: chatInput,
-		BroadRefrigerationTaskPreview: &genevals.PublishedTaskEvalInput{
-			Target: target,
-			TaskID: "550e8400-e29b-41d4-a716-446655440003",
+		RecordSummary: &genevals.QueryEvalInput{
+			Query: "Summarize the matching records.",
 		},
-		CompressorMeasuredStatus:          chatInput,
-		CompressorModeChangeConfirmation:  chatInput,
-		CompressorRunningActivity:         chatInput,
-		ConveyorBlackbeltRootCause:        chatInput,
-		DefrostActivityDuringPeakHours:    chatInput,
-		DefrostModeDocumentationSettings:  chatInput,
-		DockDoorSemanticAbsence:           chatInput,
-		EquipmentStatusSynthesizedResult:  chatInput,
-		Evaporator14cPidTuning:            chatInput,
-		EvaporatorAlarmPagination:         chatInput,
-		FacilityWideDefrostCycleReview:    chatInput,
-		JimFryeManualSettingChanges:       chatInput,
-		LargeControlContext:               chatInput,
-		MultiDeviceKeyEvents:              chatInput,
-		RoomConditionPatterns:             chatInput,
-		SingleEquipmentDefrostCycleReview: chatInput,
-		SolarLoadShiftingSavingsReview:    chatInput,
+		SavedQueryReplay: &genevals.SavedQueryEvalInput{
+			SavedQueryID: "00000000-0000-4000-8000-000000000004",
+		},
 	})
 	require.NoError(t, err)
 	report, err := runner.RunScenarios(
 		context.Background(),
 		suite,
-		"alarm_activation_snapshot_summary",
-		"broad_refrigeration_task_preview",
+		"record_summary",
+		"saved_query_replay",
 	)
 
 	require.NoError(t, err)
 	assert.True(t, report.Passed)
 	assert.Len(t, report.Scenarios, 2)
-	assert.NotNil(t, genevals.MustToolContract(tools.Ident("chat_tools.answer")))
-	assert.NotNil(t, genevals.MustToolContract(tools.Ident("ada.fetch")))
+	assert.NotNil(t, genevals.MustToolContract(tools.Ident("assistant_tools.answer")))
+	assert.NotNil(t, genevals.MustToolContract(tools.Ident("records.lookup")))
 }

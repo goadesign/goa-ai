@@ -49,22 +49,22 @@ func TestPrepareRequestClassifiesEmptyToolInputs(t *testing.T) {
 		}},
 		Tools: []*model.ToolDefinition{
 			{
-				Name:        "ada.continue_alarms",
-				Description: "Continue the alarm listing.",
+				Name:        "catalog.continue_results",
+				Description: "Continue the result listing.",
 				Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 				NoArguments: true,
 			},
 			{
-				Name:        "atlas.discover.list_apps",
-				Description: "List configured applications.",
+				Name:        "catalog.discover.list_sources",
+				Description: "List configured sources.",
 				Input: mustBedrockToolInput(
 					t,
 					rawjson.Message(`{"type":"object","properties":{"cursor":{"type":"string"}}}`),
 				),
 			},
 			{
-				Name:        "atlas.read.get_time_series",
-				Description: "Read one required source.",
+				Name:        "catalog.read.get_record",
+				Description: "Read one required record.",
 				Input: mustBedrockToolInput(
 					t,
 					rawjson.Message(`{"type":"object","properties":{"source":{"type":"string"}},"required":["source"]}`),
@@ -74,10 +74,10 @@ func TestPrepareRequestClassifiesEmptyToolInputs(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	require.Contains(t, parts.noArgumentTools, "ada.continue_alarms")
-	require.Contains(t, parts.emptyObjectTools, "ada.continue_alarms")
-	require.Contains(t, parts.emptyObjectTools, "atlas.discover.list_apps")
-	require.NotContains(t, parts.emptyObjectTools, "atlas.read.get_time_series")
+	require.Contains(t, parts.noArgumentTools, "catalog.continue_results")
+	require.Contains(t, parts.emptyObjectTools, "catalog.continue_results")
+	require.Contains(t, parts.emptyObjectTools, "catalog.discover.list_sources")
+	require.NotContains(t, parts.emptyObjectTools, "catalog.read.get_record")
 }
 
 func TestEncodeTools_ModeAny(t *testing.T) {

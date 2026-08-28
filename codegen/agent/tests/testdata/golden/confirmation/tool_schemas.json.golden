@@ -7,7 +7,7 @@
         "title": "Confirm change"
       },
       "description": "Write a stateful change",
-      "id": "atlas.commands.dangerous_write",
+      "id": "catalog.commands.dangerous_write",
       "payload": {
         "name": "DangerousWritePayload",
         "schema": {
@@ -52,7 +52,7 @@
       },
       "service": "alpha",
       "title": "Dangerous Write",
-      "toolset": "alpha.atlas.commands"
+      "toolset": "alpha.catalog.commands"
     }
   ]
 }

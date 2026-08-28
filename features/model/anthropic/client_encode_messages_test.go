@@ -20,7 +20,7 @@ func TestEncodeMessagesProjectsHistoryOnlyToolName(t *testing.T) {
 			Parts: []model.Part{
 				model.ToolUsePart{
 					ID:    "tu1",
-					Name:  "atlas.read.count_events",
+					Name:  "catalog.read.count_events",
 					Input: rawjson.Message(`{"from":"2026-02-06T00:00:00Z"}`),
 				},
 			},
@@ -41,7 +41,7 @@ func TestEncodeMessagesProjectsHistoryOnlyToolName(t *testing.T) {
 	require.Len(t, messages[0].Content, 1)
 	use := messages[0].Content[0].OfToolUse
 	require.NotNil(t, use)
-	require.Equal(t, toolname.Sanitize("atlas.read.count_events"), use.Name)
+	require.Equal(t, toolname.Sanitize("catalog.read.count_events"), use.Name)
 	input, err := json.Marshal(use.Input)
 	require.NoError(t, err)
 	require.JSONEq(t, `{"from":"2026-02-06T00:00:00Z"}`, string(input))

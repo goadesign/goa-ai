@@ -128,7 +128,7 @@ func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 			"content":[{
 				"type":"tool_use",
 				"id":"toolu_01ABCDEFGHIJKLMNOPQRSTUV",
-				"name":"tasks_progress_complete",
+				"name":"workflow_progress_complete",
 				"input":{"detail_blocks":[{"type":"markdown","text":"Done"}]}
 			}],
 			"model":"global.anthropic.claude-sonnet-5",
@@ -139,7 +139,7 @@ func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	input, err := model.ToolInputFromContract("tasks.progress.complete", model.ToolInputContract{
+	input, err := model.ToolInputFromContract("workflow.progress.complete", model.ToolInputContract{
 		Schema: rawjson.Message(`{
 			"type":"object",
 			"properties":{
@@ -207,7 +207,7 @@ func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 				Parts: []model.Part{
 					model.ToolUsePart{
 						ID:    "toolu_01PRIORABCDEFGHIJKLMNOP",
-						Name:  "tasks.progress.update",
+						Name:  "workflow.progress.update",
 						Input: rawjson.Message(`{"status":"completed"}`),
 					},
 				},
@@ -228,13 +228,13 @@ func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 			},
 		},
 		Tools: []*model.ToolDefinition{{
-			Name:        "tasks.progress.complete",
-			Description: "Finish the task with its final brief.",
+			Name:        "workflow.progress.complete",
+			Description: "Finish the workflow with its final report.",
 			Input:       input,
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeTool,
-			Name: "tasks.progress.complete",
+			Name: "workflow.progress.complete",
 		},
 		Thinking: &model.ThinkingOptions{Enable: true},
 	})
@@ -261,7 +261,7 @@ func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 	}, inputSchema["example"])
 	assert.Equal(t, map[string]any{
 		"type": "tool",
-		"name": "tasks_progress_complete",
+		"name": "workflow_progress_complete",
 	}, payload["tool_choice"])
 	messages, ok := payload["messages"].([]any)
 	require.True(t, ok)

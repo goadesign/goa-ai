@@ -173,7 +173,7 @@ func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 					model.TextPart{Text: "Need a tool."},
 					model.ToolUsePart{
 						ID:    "call_1",
-						Name:  "analytics.analyze",
+						Name:  "reports.summarize",
 						Input: rawjson.Message(`{"query":"sales"}`),
 					},
 				},
@@ -187,7 +187,7 @@ func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 			},
 		},
 		Tools: []*model.ToolDefinition{{
-			Name:        "analytics.analyze",
+			Name:        "reports.summarize",
 			Description: "Run an analysis.",
 			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
 		}},
@@ -202,7 +202,7 @@ func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 	assert.Equal(t, "Need a tool.", items[0].OfOutputMessage.Content[0].OfOutputText.Text)
 	require.NotNil(t, items[1].OfFunctionCall)
 	assert.Equal(t, "call_1", items[1].OfFunctionCall.CallID)
-	assert.Equal(t, toolname.Sanitize("analytics.analyze"), items[1].OfFunctionCall.Name)
+	assert.Equal(t, toolname.Sanitize("reports.summarize"), items[1].OfFunctionCall.Name)
 	assert.JSONEq(t, `{"query":"sales"}`, items[1].OfFunctionCall.Arguments)
 	require.NotNil(t, items[2].OfFunctionCallOutput)
 	assert.Equal(t, "call_1", items[2].OfFunctionCallOutput.CallID)
@@ -225,14 +225,14 @@ func TestClientCompleteRejectsUnrepresentableExplicitTranscript(t *testing.T) {
 			Parts: []model.Part{
 				model.ToolUsePart{
 					ID:    "call_1",
-					Name:  "analytics.analyze",
+					Name:  "reports.summarize",
 					Input: rawjson.Message(`{"query":"sales"}`),
 				},
 				model.TextPart{Text: "post tool text"},
 			},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "analytics.analyze",
+			Name:        "reports.summarize",
 			Description: "Run an analysis.",
 			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
 		}},
@@ -301,7 +301,7 @@ func TestClientCompleteLowersRunlogReplayedTranscript(t *testing.T) {
 	_, err = client.Complete(context.Background(), &model.Request{
 		Messages: messages,
 		Tools: []*model.ToolDefinition{{
-			Name:        "analytics.analyze",
+			Name:        "reports.summarize",
 			Description: "Run an analysis.",
 			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
 		}},
@@ -344,7 +344,7 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 					"id":"fc_1",
 					"type":"function_call",
 					"call_id":"call_2",
-					"name":"analytics_analyze",
+					"name":"reports_summarize",
 					"arguments":"{\"query\":\"docs\"}",
 					"status":"completed"
 				}
@@ -369,7 +369,7 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 					model.TextPart{Text: "Need a tool."},
 					model.ToolUsePart{
 						ID:    "call_1",
-						Name:  "analytics.analyze",
+						Name:  "reports.summarize",
 						Input: rawjson.Message(`{"query":"sales"}`),
 					},
 				},
@@ -383,7 +383,7 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 			},
 		},
 		Tools: []*model.ToolDefinition{{
-			Name:        "analytics.analyze",
+			Name:        "reports.summarize",
 			Description: "Run an analysis.",
 			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
 		}},
@@ -404,7 +404,7 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 	require.Len(t, items[1].OfOutputMessage.Content, 1)
 	assert.Equal(t, "Need a tool.", items[1].OfOutputMessage.Content[0].OfOutputText.Text)
 	require.NotNil(t, items[2].OfFunctionCall)
-	assert.Equal(t, toolname.Sanitize("analytics.analyze"), items[2].OfFunctionCall.Name)
+	assert.Equal(t, toolname.Sanitize("reports.summarize"), items[2].OfFunctionCall.Name)
 	assert.Equal(t, "call_1", items[2].OfFunctionCall.CallID)
 	assert.JSONEq(t, `{"query":"sales"}`, items[2].OfFunctionCall.Arguments)
 	require.NotNil(t, items[3].OfFunctionCallOutput)
@@ -420,7 +420,7 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 	require.True(t, ok)
 
 	require.Len(t, resp.ToolCalls(), 1)
-	assert.Equal(t, tools.Ident("analytics.analyze"), resp.ToolCalls()[0].Name)
+	assert.Equal(t, tools.Ident("reports.summarize"), resp.ToolCalls()[0].Name)
 	assert.Equal(t, "call_2", resp.ToolCalls()[0].ID)
 	assert.JSONEq(t, `{"query":"docs"}`, string(resp.ToolCalls()[0].Payload))
 	assert.Equal(t, "tool_calls", resp.StopReason)
@@ -444,7 +444,7 @@ func TestClientCompleteProjectsHistoryOnlyToolName(t *testing.T) {
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{model.ToolUsePart{
 				ID:    "call_1",
-				Name:  "atlas.read.unknown",
+				Name:  "catalog.read.unknown",
 				Input: rawjson.Message(`{"from":"2026-04-03T00:00:00Z"}`),
 			}},
 		}},
@@ -461,7 +461,7 @@ func TestClientCompleteProjectsHistoryOnlyToolName(t *testing.T) {
 	items := transport.completeRequests[0].Input.OfInputItemList
 	require.Len(t, items, 1)
 	require.NotNil(t, items[0].OfFunctionCall)
-	assert.Equal(t, toolname.Sanitize("atlas.read.unknown"), items[0].OfFunctionCall.Name)
+	assert.Equal(t, toolname.Sanitize("catalog.read.unknown"), items[0].OfFunctionCall.Name)
 	assert.JSONEq(t, `{"from":"2026-04-03T00:00:00Z"}`, items[0].OfFunctionCall.Arguments)
 }
 
@@ -653,7 +653,7 @@ func TestClientCompleteEncodesToolResultErrorsExplicitly(t *testing.T) {
 				Role: model.ConversationRoleAssistant,
 				Parts: []model.Part{model.ToolUsePart{
 					ID:    "call_1",
-					Name:  "analytics.analyze",
+					Name:  "reports.summarize",
 					Input: rawjson.Message(`{"query":"sales"}`),
 				}},
 			},
@@ -667,7 +667,7 @@ func TestClientCompleteEncodesToolResultErrorsExplicitly(t *testing.T) {
 			},
 		},
 		Tools: []*model.ToolDefinition{{
-			Name:        "analytics.analyze",
+			Name:        "reports.summarize",
 			Description: "Run an analysis.",
 			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
 		}},
@@ -695,14 +695,14 @@ func TestClientCompleteRejectsAssistantTextAfterToolUse(t *testing.T) {
 			Parts: []model.Part{
 				model.ToolUsePart{
 					ID:    "call_1",
-					Name:  "analytics.analyze",
+					Name:  "reports.summarize",
 					Input: rawjson.Message(`{"query":"sales"}`),
 				},
 				model.TextPart{Text: "post tool text"},
 			},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "analytics.analyze",
+			Name:        "reports.summarize",
 			Description: "Run an analysis.",
 			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
 		}},
@@ -729,7 +729,7 @@ func TestClientCompleteRoutesModelsAndToolChoice(t *testing.T) {
 			Parts: []model.Part{model.TextPart{Text: "Ping"}},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "analytics.analyze",
+			Name:        "reports.summarize",
 			Description: "Run an analysis.",
 			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
 		}},
@@ -1072,7 +1072,7 @@ func TestClientCompleteRejectsStructuredOutputWithTools(t *testing.T) {
 			Parts: []model.Part{model.TextPart{Text: "Ping"}},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "analytics.analyze",
+			Name:        "reports.summarize",
 			Description: "Run an analysis.",
 			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
 		}},
@@ -1268,7 +1268,7 @@ func TestOpenAIStreamerEmitsTextToolCallsUsageAndStop(t *testing.T) {
 					"id":"fc_1",
 					"type":"function_call",
 					"call_id":"call_1",
-					"name":"analytics_analyze",
+					"name":"reports_summarize",
 					"arguments":"",
 					"status":"in_progress"
 				}
@@ -1312,7 +1312,7 @@ func TestOpenAIStreamerEmitsTextToolCallsUsageAndStop(t *testing.T) {
 							"id":"fc_1",
 							"type":"function_call",
 							"call_id":"call_1",
-							"name":"analytics_analyze",
+							"name":"reports_summarize",
 							"arguments":"{\"query\":\"docs\"}",
 							"status":"completed"
 						}
@@ -1333,7 +1333,7 @@ func TestOpenAIStreamerEmitsTextToolCallsUsageAndStop(t *testing.T) {
 			Parts: []model.Part{model.TextPart{Text: "Ping"}},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "analytics.analyze",
+			Name:        "reports.summarize",
 			Description: "Run an analysis.",
 			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
 		}},
@@ -1358,7 +1358,7 @@ func TestOpenAIStreamerEmitsTextToolCallsUsageAndStop(t *testing.T) {
 	assert.Equal(t, "Hel", chunks[0].(model.TextChunk).Message.Parts[0].(model.TextPart).Text)
 	assert.Equal(t, "lo", chunks[1].(model.TextChunk).Message.Parts[0].(model.TextPart).Text)
 	assert.Equal(t, "call_1", chunks[2].(model.ToolCallDeltaChunk).Delta.ID)
-	assert.Equal(t, tools.Ident("analytics.analyze"), chunks[2].(model.ToolCallDeltaChunk).Delta.Name)
+	assert.Equal(t, tools.Ident("reports.summarize"), chunks[2].(model.ToolCallDeltaChunk).Delta.Name)
 	assert.Equal(t, `{"query"`, chunks[2].(model.ToolCallDeltaChunk).Delta.Delta)
 	assert.Equal(t, `:"docs"}`, chunks[3].(model.ToolCallDeltaChunk).Delta.Delta)
 	call := chunks[4].(model.ToolCallChunk).ToolCall
@@ -1820,7 +1820,7 @@ func replayedToolLoopMessages(t *testing.T) []*model.Message {
 			model.TextPart{Text: "Need the sales data first."},
 			model.ToolUsePart{
 				ID:    "call_1",
-				Name:  "analytics.analyze",
+				Name:  "reports.summarize",
 				Input: rawjson.Message(`{"query":"sales"}`),
 			},
 		},

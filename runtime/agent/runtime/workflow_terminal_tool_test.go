@@ -23,11 +23,11 @@ import (
 func TestRunLoopStopsAfterTerminalTool(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	terminalTool := newAnyJSONSpec(tools.Ident("tasks.progress.final_report"), "tasks.progress")
+	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.final_report"), "workflow.progress")
 	terminalTool.TerminalRun = true
 	terminalTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
@@ -389,11 +389,11 @@ func TestRunLoopRecordsConfirmedTerminalToolBeforeRejectingClarification(t *test
 func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	terminalTool := newAnyJSONSpec(tools.Ident("tasks.progress.complete"), "tasks.progress")
+	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"), "workflow.progress")
 	terminalTool.TerminalRun = true
 	terminalTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,
@@ -458,11 +458,11 @@ func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 
 func TestRunLoopTerminalResponseBookkeepingExecutesAtBudget(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
-	bookkeepingTool := newAnyJSONSpec(tools.Ident("tasks.progress.record"), "tasks.progress")
+	bookkeepingTool := newAnyJSONSpec(tools.Ident("workflow.progress.record"), "workflow.progress")
 	bookkeepingTool.Bookkeeping = true
 	executions := 0
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			executions++
 			return &planner.ToolResult{
@@ -619,12 +619,12 @@ func TestRunLoopMixedToolCallsUseOwnedDeadlinesAtBudget(t *testing.T) {
 func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	terminalTool := newAnyJSONSpec(tools.Ident("tasks.progress.complete"), "tasks.progress")
+	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"), "workflow.progress")
 	terminalTool.TerminalRun = true
 	terminalTool.Bookkeeping = true
 	var executed *ToolCall
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			executed = call
 			return &planner.ToolResult{
@@ -863,12 +863,12 @@ func TestFinalizeWithPlannerTerminalToolStopsAtHard(t *testing.T) {
 
 func TestFinalizeWithPlannerTerminalToolHonorsCallerRestriction(t *testing.T) {
 	out, _, _, base, err := runTerminalFinalization(t, &PolicyOverrides{
-		RestrictToTool: tools.Ident("ada.get_time_series"),
+		RestrictToTool: tools.Ident("catalog.lookup"),
 	})
 
 	require.Nil(t, out)
 	require.Error(t, err)
-	require.ErrorContains(t, err, `planner called tool "tasks.progress.complete" excluded from this run`)
+	require.ErrorContains(t, err, `planner called tool "workflow.progress.complete" excluded from this run`)
 	require.Empty(t, base.Messages)
 }
 
@@ -920,14 +920,14 @@ func TestFinalizeWithPlannerRejectsTerminalPayloadWithToolCalls(t *testing.T) {
 func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 
-	failTool := newAnyJSONSpec(tools.Ident("tasks.progress.fail"), "tasks.progress")
+	failTool := newAnyJSONSpec(tools.Ident("workflow.progress.fail"), "workflow.progress")
 	failTool.TerminalRun = true
 	failTool.Bookkeeping = true
-	completeTool := newAnyJSONSpec(tools.Ident("tasks.progress.complete"), "tasks.progress")
+	completeTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"), "workflow.progress")
 	completeTool.TerminalRun = true
 	completeTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			if call.Name == failTool.Name {
 				return &planner.ToolResult{
@@ -1051,17 +1051,17 @@ func runTerminalFinalization(t *testing.T, runPolicy *PolicyOverrides) (*RunOutp
 	return out, wfCtx, terminalTool, base, err
 }
 
-// newTerminalFinalizationRuntime registers the task terminal bookkeeping tool and
+// newTerminalFinalizationRuntime registers the workflow terminal bookkeeping tool and
 // routes the finalization planner turn to request that tool.
 func newTerminalFinalizationRuntime(t *testing.T) (*Runtime, tools.ToolSpec, *routeWorkflowContext) {
 	t.Helper()
 
 	rt := New(WithLogger(telemetry.NoopLogger{}))
-	terminalTool := newAnyJSONSpec(tools.Ident("tasks.progress.complete"), "tasks.progress")
+	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"), "workflow.progress")
 	terminalTool.TerminalRun = true
 	terminalTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
 				Name:       call.Name,

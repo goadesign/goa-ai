@@ -161,10 +161,10 @@ func TestBuildToolSpecsData_FieldJSONTypes(t *testing.T) {
 		})
 		goadsl.Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
-				Use("briefs", func() {
-					Tool("complete", "Complete a brief", func() {
+				Use("reports", func() {
+					Tool("complete", "Complete a report", func() {
 						Args(func() {
-							goadsl.Attribute("sections", goadsl.ArrayOf(Section), "Brief sections")
+							goadsl.Attribute("sections", goadsl.ArrayOf(Section), "Report sections")
 							goadsl.Attribute("lead", Section, "Lead section")
 							goadsl.Attribute("backup", Section, "Backup section")
 							goadsl.Attribute("publish", goadsl.Boolean, "Whether to publish")
@@ -345,8 +345,8 @@ func TestBuildToolSpecsData_UnionSchemasSpecializeDefinitions(t *testing.T) {
 		})
 		goadsl.Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
-				Use("brief", func() {
-					Tool("save", "Save brief", func() {
+				Use("report", func() {
+					Tool("save", "Save report", func() {
 						Args(Payload)
 					})
 				})

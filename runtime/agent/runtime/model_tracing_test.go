@@ -424,8 +424,8 @@ func TestTracedClientCompleteRecordsGenAIMessagesWhenEnabled(t *testing.T) {
 						model.TextPart{Text: "I will check."},
 						model.ToolUsePart{
 							ID:    "call-1",
-							Name:  "atlas.read",
-							Input: rawjson.Message(`{"asset":"pump"}`),
+							Name:  "catalog.lookup",
+							Input: rawjson.Message(`{"record":"record_1"}`),
 						},
 					},
 				}},
@@ -438,10 +438,10 @@ func TestTracedClientCompleteRecordsGenAIMessagesWhenEnabled(t *testing.T) {
 		ModelClass: model.ModelClassHighReasoning,
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "diagnose pump"}},
+			Parts: []model.Part{model.TextPart{Text: "review record"}},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:  "atlas.read",
+			Name:  "catalog.lookup",
 			Input: mustRuntimeToolInput(rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
@@ -455,7 +455,7 @@ func TestTracedClientCompleteRecordsGenAIMessagesWhenEnabled(t *testing.T) {
 			"parts": [
 				{
 					"type": "text",
-					"content": "diagnose pump"
+					"content": "review record"
 				}
 			]
 		}
@@ -471,9 +471,9 @@ func TestTracedClientCompleteRecordsGenAIMessagesWhenEnabled(t *testing.T) {
 				{
 					"type": "tool_call",
 					"id": "call-1",
-					"name": "atlas.read",
+					"name": "catalog.lookup",
 					"arguments": {
-						"asset": "pump"
+						"record": "record_1"
 					}
 				}
 			],

@@ -469,8 +469,8 @@ func TestChunkProcessorIgnoresEmptyToolUseDelta(t *testing.T) {
 // text cannot invalidate a tool whose selection is the complete model decision.
 func TestChunkProcessorDerivesEmptyInputToolPayload(t *testing.T) {
 	idx := int32(0)
-	providerName := "ada_continue_alarms"
-	canonicalName := "ada.continue_alarms"
+	providerName := "catalog_continue_results"
+	canonicalName := "catalog.continue_results"
 	id := "tooluse_1"
 	malformed := `{"cursor":`
 	var chunks []model.Chunk
@@ -523,8 +523,8 @@ func TestChunkProcessorDerivesEmptyInputToolPayload(t *testing.T) {
 // contract accepts that object.
 func TestChunkProcessorDerivesOmittedOptionalPayload(t *testing.T) {
 	idx := int32(0)
-	providerName := "atlas_discover_list_apps"
-	canonicalName := "atlas.discover.list_apps"
+	providerName := "catalog_discover_list_sources"
+	canonicalName := "catalog.discover.list_sources"
 	id := "tooluse_2"
 	var chunks []model.Chunk
 	cp := newChunkProcessor(

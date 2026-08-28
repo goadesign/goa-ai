@@ -24,15 +24,15 @@ import (
 //
 // Example:
 //
-//	var _ = Service("chat_agent", func() {
-//	    Agent("chat", "Answers product questions.", func() {
-//	        Suite("chat_quality", func() {
-//	            Description("Exercises production chat outcomes.")
+//	var _ = Service("assistant_service", func() {
+//	    Agent("assistant", "Answers user questions.", func() {
+//	        Suite("assistant_quality", func() {
+//	            Description("Exercises assistant outcomes.")
 //	            Timeout("2m")
-//	            Scenario("alarm_inventory", func() {
-//	                Description("Retrieves every alarm in a fixed window.")
-//	                Input(ChatEvalInput)
-//	                Tags("production", "alarm")
+//	            Scenario("record_inventory", func() {
+//	                Description("Retrieves every record in a fixed window.")
+//	                Input(RecordEvalInput)
+//	                Tags("integration", "records")
 //	            })
 //	        })
 //	    })
@@ -61,10 +61,10 @@ func Suite(name string, fn func()) *evalexpr.SuiteExpr {
 //
 // Example:
 //
-//	Scenario("alarm_inventory", func() {
-//	    Description("Retrieves every alarm in a fixed window.")
-//	    Input(ChatEvalInput)
-//	    Tags("production", "alarm")
+//	Scenario("record_inventory", func() {
+//	    Description("Retrieves every record in a fixed window.")
+//	    Input(RecordEvalInput)
+//	    Tags("integration", "records")
 //	    Timeout("3m")
 //	})
 func Scenario(name string, fn func()) *evalexpr.ScenarioExpr {
@@ -95,19 +95,19 @@ func Scenario(name string, fn func()) *evalexpr.ScenarioExpr {
 // Example:
 //
 //	// User type:
-//	Input(ChatEvalInput)
+//	Input(QueryEvalInput)
 //
 //	// Customized user type:
-//	Input(ChatEvalInput, func() {
-//	    Required("prompt")
+//	Input(QueryEvalInput, func() {
+//	    Required("query")
 //	})
 //
 //	// Inline object:
 //	Input(func() {
-//	    Attribute("prompt", String, "User message.", func() {
+//	    Attribute("query", String, "Assistant request.", func() {
 //	        MinLength(1)
 //	    })
-//	    Required("prompt")
+//	    Required("query")
 //	})
 func Input(value any, args ...any) {
 	scenario, ok := eval.Current().(*evalexpr.ScenarioExpr)

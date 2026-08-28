@@ -211,12 +211,12 @@ func TestAdmitToolBatchTerminalRunDoesNotConsumeBudget(t *testing.T) {
 func TestRegisterToolset_RejectsTerminalSpecWithoutBookkeeping(t *testing.T) {
 	rt := New(WithLogger(telemetry.NoopLogger{}))
 	err := rt.RegisterToolset(ToolsetRegistration{
-		Name: "tasks.progress",
+		Name: "workflow.progress",
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{Name: call.Name}, nil
 		}),
-		Specs: []tools.ToolSpec{newInvalidTerminalSpec("tasks.complete")},
+		Specs: []tools.ToolSpec{newInvalidTerminalSpec("workflow.complete")},
 	})
 	require.ErrorIs(t, err, ErrInvalidConfig)
-	require.ErrorContains(t, err, "terminal tool \"tasks.complete\" must also declare bookkeeping")
+	require.ErrorContains(t, err, "terminal tool \"workflow.complete\" must also declare bookkeeping")
 }

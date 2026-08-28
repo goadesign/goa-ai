@@ -111,7 +111,7 @@ import (
 )
 
 func TestUnmarshalValidatePayloadRejectsUnknownRootField(t *testing.T) {
-	_, err := UnmarshalValidatePayload([]byte(`+"`"+`{"root":"r","child":{"mid":"m","child":{"leaf":"l"}},"scope_context":"compressor_2"}`+"`"+`))
+	_, err := UnmarshalValidatePayload([]byte(`+"`"+`{"root":"r","child":{"mid":"m","child":{"leaf":"l"}},"scope_context":"record_group_2"}`+"`"+`))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -127,11 +127,11 @@ func TestUnmarshalValidatePayloadRejectsUnknownNestedField(t *testing.T) {
 }
 
 func TestUnmarshalValidatePayloadPreservesOpenMapKeys(t *testing.T) {
-	payload, err := UnmarshalValidatePayload([]byte(`+"`"+`{"root":"r","child":{"mid":"m","child":{"leaf":"l"}},"labels":{"scope_context":"compressor_2","custom":"value"}}`+"`"+`))
+	payload, err := UnmarshalValidatePayload([]byte(`+"`"+`{"root":"r","child":{"mid":"m","child":{"leaf":"l"}},"labels":{"scope_context":"record_group_2","custom":"value"}}`+"`"+`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if payload.Labels["scope_context"] != "compressor_2" || payload.Labels["custom"] != "value" {
+	if payload.Labels["scope_context"] != "record_group_2" || payload.Labels["custom"] != "value" {
 		t.Fatalf("unexpected labels: %#v", payload.Labels)
 	}
 }
@@ -251,17 +251,17 @@ import (
 )
 
 func TestUnmarshalSearchResultAcceptsBoundedProjectionFields(t *testing.T) {
-	result, err := UnmarshalSearchResult([]byte(`+"`"+`{"results":["compressor_2"],"returned":1,"truncated":false,"total":3,"next_cursor":"cursor_2","refinement_hint":"narrow the device kind"}`+"`"+`))
+	result, err := UnmarshalSearchResult([]byte(`+"`"+`{"results":["record_2"],"returned":1,"truncated":false,"total":3,"next_cursor":"cursor_2","refinement_hint":"narrow the record category"}`+"`"+`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Results) != 1 || result.Results[0] != "compressor_2" {
+	if len(result.Results) != 1 || result.Results[0] != "record_2" {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 }
 
 func TestUnmarshalSearchResultRejectsUnknownResultField(t *testing.T) {
-	_, err := UnmarshalSearchResult([]byte(`+"`"+`{"results":["compressor_2"],"unexpected":true}`+"`"+`))
+	_, err := UnmarshalSearchResult([]byte(`+"`"+`{"results":["record_2"],"unexpected":true}`+"`"+`))
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -313,7 +313,7 @@ func ValidateByIDResultTransport(v *ByIDResultTransport) error {
 	return nil
 }
 
-func ValidateByIDAuraEvidenceServerDataTransport(v ByIDAuraEvidenceServerDataTransport) error {
+func ValidateByIDRecordsEvidenceServerDataTransport(v ByIDRecordsEvidenceServerDataTransport) error {
 	return nil
 }
 `)
@@ -325,19 +325,19 @@ import (
 )
 
 func TestArrayServerDataRoundTrip(t *testing.T) {
-	want := ByIDAuraEvidenceServerData{&Evidence{Kind: "alarm"}}
-	data, err := MarshalByIDAuraEvidenceServerData(want)
+	want := ByIDRecordsEvidenceServerData{&Evidence{Kind: "summary"}}
+	data, err := MarshalByIDRecordsEvidenceServerData(want)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(data), "\"kind\"") || strings.Contains(string(data), "\"Kind\"") {
 		t.Fatalf("unexpected JSON field names: %s", data)
 	}
-	got, err := UnmarshalByIDAuraEvidenceServerData(data)
+	got, err := UnmarshalByIDRecordsEvidenceServerData(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0] == nil || got[0].Kind != "alarm" {
+	if len(got) != 1 || got[0] == nil || got[0].Kind != "summary" {
 		t.Fatalf("unexpected round trip: %#v", got)
 	}
 }
@@ -347,11 +347,11 @@ func TestGeneratedServerDataCanonicalizer(t *testing.T) {
 	if canonicalize == nil {
 		t.Fatal("expected generated canonicalizer")
 	}
-	got, err := canonicalize([]byte(`+"`"+`[{"kind":"aura.evidence","audience":"timeline","data":[ { "kind": "alarm" } ]}]`+"`"+`))
+	got, err := canonicalize([]byte(`+"`"+`[{"kind":"records.evidence","audience":"timeline","data":[ { "kind": "summary" } ]}]`+"`"+`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != `+"`"+`[{"kind":"aura.evidence","audience":"timeline","data":[{"kind":"alarm"}]}]`+"`"+` {
+	if string(got) != `+"`"+`[{"kind":"records.evidence","audience":"timeline","data":[{"kind":"summary"}]}]`+"`"+` {
 		t.Fatalf("unexpected canonical envelope: %s", got)
 	}
 
@@ -361,19 +361,19 @@ func TestGeneratedServerDataCanonicalizer(t *testing.T) {
 	}{
 		{
 			name: "unknown kind",
-			data: `+"`"+`[{"kind":"aura.unknown","audience":"timeline","data":[{"kind":"alarm"}]}]`+"`"+`,
+			data: `+"`"+`[{"kind":"records.unknown","audience":"timeline","data":[{"kind":"summary"}]}]`+"`"+`,
 		},
 		{
 			name: "wrong audience",
-			data: `+"`"+`[{"kind":"aura.evidence","audience":"internal","data":[{"kind":"alarm"}]}]`+"`"+`,
+			data: `+"`"+`[{"kind":"records.evidence","audience":"internal","data":[{"kind":"summary"}]}]`+"`"+`,
 		},
 		{
 			name: "invalid payload",
-			data: `+"`"+`[{"kind":"aura.evidence","audience":"timeline","data":[{"kind":"alarm","legacy":true}]}]`+"`"+`,
+			data: `+"`"+`[{"kind":"records.evidence","audience":"timeline","data":[{"kind":"summary","legacy":true}]}]`+"`"+`,
 		},
 		{
 			name: "duplicate kind",
-			data: `+"`"+`[{"kind":"aura.evidence","audience":"timeline","data":[{"kind":"alarm"}]},{"kind":"aura.evidence","audience":"timeline","data":[{"kind":"alarm"}]}]`+"`"+`,
+			data: `+"`"+`[{"kind":"records.evidence","audience":"timeline","data":[{"kind":"summary"}]},{"kind":"records.evidence","audience":"timeline","data":[{"kind":"summary"}]}]`+"`"+`,
 		},
 	}
 	for _, test := range tests {
@@ -715,29 +715,29 @@ func TestUnmarshalEchoPayloadRejectsUnknownUnionBranchFields(t *testing.T) {
 
 func TestGeneratedCodecModelJSONNamesBehavior(t *testing.T) {
 	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local", testscenarios.ModelJSONNames()))
-	writeGeneratedPackageTest(t, root, "alpha/toolsets/inspect/http/validate_stub.go", `package http
+	writeGeneratedPackageTest(t, root, "alpha/toolsets/review/http/validate_stub.go", `package http
 
-func ValidateInspectDevicePayloadTransport(v *InspectDevicePayloadTransport) error {
+func ValidateReviewRecordPayloadTransport(v *ReviewRecordPayloadTransport) error {
 	return nil
 }
 
-func ValidateInspectDeviceResultTransport(v *InspectDeviceResultTransport) error {
+func ValidateReviewRecordResultTransport(v *ReviewRecordResultTransport) error {
 	return nil
 }
 `)
-	writeGeneratedPackageTest(t, root, "alpha/toolsets/inspect/codecs_behavior_test.go", `package inspect
+	writeGeneratedPackageTest(t, root, "alpha/toolsets/review/codecs_behavior_test.go", `package review
 
 import (
 	"strings"
 	"testing"
 )
 
-func TestUnmarshalInspectDevicePayloadAcceptsSnakeCase(t *testing.T) {
-	payload, err := UnmarshalInspectDevicePayload([]byte(`+"`"+`{"device_alias":"ahu_1","render_ui":true,"source_ids":["temp"],"time_context":{"start_time":"2026-01-01T00:00:00Z","end_time":"2026-01-01T01:00:00Z"}}`+"`"+`))
+func TestUnmarshalReviewRecordPayloadAcceptsSnakeCase(t *testing.T) {
+	payload, err := UnmarshalReviewRecordPayload([]byte(`+"`"+`{"record_key":"record_1","include_details":true,"source_ids":["source_1"],"time_context":{"start_time":"2026-01-01T00:00:00Z","end_time":"2026-01-01T01:00:00Z"}}`+"`"+`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if payload.DeviceAlias != "ahu_1" || !payload.RenderUI || len(payload.SourceIds) != 1 || payload.SourceIds[0] != "temp" {
+	if payload.RecordKey != "record_1" || !payload.IncludeDetails || len(payload.SourceIds) != 1 || payload.SourceIds[0] != "source_1" {
 		t.Fatalf("unexpected payload: %#v", payload)
 	}
 	if payload.TimeContext.StartTime != "2026-01-01T00:00:00Z" || payload.TimeContext.EndTime != "2026-01-01T01:00:00Z" {
@@ -745,37 +745,37 @@ func TestUnmarshalInspectDevicePayloadAcceptsSnakeCase(t *testing.T) {
 	}
 }
 
-func TestUnmarshalInspectDevicePayloadRejectsLowerCamel(t *testing.T) {
-	_, err := UnmarshalInspectDevicePayload([]byte(`+"`"+`{"deviceAlias":"ahu_1","renderUi":true,"timeContext":{"startTime":"2026-01-01T00:00:00Z","endTime":"2026-01-01T01:00:00Z"}}`+"`"+`))
+func TestUnmarshalReviewRecordPayloadRejectsLowerCamel(t *testing.T) {
+	_, err := UnmarshalReviewRecordPayload([]byte(`+"`"+`{"recordKey":"record_1"}`+"`"+`))
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "unknown field") || !strings.Contains(err.Error(), "deviceAlias") {
-		t.Fatalf("expected unknown field error for deviceAlias, got %v", err)
+	if !strings.Contains(err.Error(), "unknown field") || !strings.Contains(err.Error(), "recordKey") {
+		t.Fatalf("expected unknown field error for recordKey, got %v", err)
 	}
 }
 
-func TestMarshalInspectDevicePayloadEmitsSnakeCase(t *testing.T) {
-	payload := &InspectDevicePayload{
-		DeviceAlias: "ahu_1",
-		RenderUI:    true,
-		SourceIds:   []string{"temp"},
+func TestMarshalReviewRecordPayloadEmitsSnakeCase(t *testing.T) {
+	payload := &ReviewRecordPayload{
+		RecordKey:      "record_1",
+		IncludeDetails: true,
+		SourceIds:      []string{"source_1"},
 		TimeContext: &TimeContext{
 			StartTime: "2026-01-01T00:00:00Z",
 			EndTime:   "2026-01-01T01:00:00Z",
 		},
 	}
-	data, err := MarshalInspectDevicePayload(payload)
+	data, err := MarshalReviewRecordPayload(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := string(data)
-	for _, want := range []string{"device_alias", "render_ui", "source_ids", "time_context", "start_time", "end_time"} {
+	for _, want := range []string{"record_key", "include_details", "source_ids", "time_context", "start_time", "end_time"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in %s", want, got)
 		}
 	}
-	for _, forbidden := range []string{"deviceAlias", "renderUi", "sourceIds", "timeContext", "startTime", "endTime"} {
+	for _, forbidden := range []string{"recordKey", "includeDetails", "sourceIds", "timeContext", "startTime", "endTime"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("did not expect %q in %s", forbidden, got)
 		}
@@ -783,7 +783,7 @@ func TestMarshalInspectDevicePayloadEmitsSnakeCase(t *testing.T) {
 }
 `)
 
-	runGeneratedInspectGoTest(t, root)
+	runGeneratedReviewGoTest(t, root)
 }
 
 func writeGeneratedModule(t *testing.T, files []*gcodegen.File) string {
@@ -849,11 +849,11 @@ func runGeneratedUnionGoTest(t *testing.T, root string) {
 	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "./alpha/toolsets/union"))
 }
 
-func runGeneratedInspectGoTest(t *testing.T, root string) {
+func runGeneratedReviewGoTest(t *testing.T, root string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "./alpha/toolsets/inspect"))
+	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "./alpha/toolsets/review"))
 }
 
 func runGeneratedGoTestCommand(t *testing.T, root string, cmd *exec.Cmd) {

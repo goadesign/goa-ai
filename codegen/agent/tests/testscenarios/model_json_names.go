@@ -17,16 +17,16 @@ func ModelJSONNames() func() {
 			Required("startTime", "endTime")
 		})
 
-		var InspectPayload = Type("InspectPayload", func() {
-			Field(1, "deviceAlias", String, "Device alias to inspect.")
-			Field(2, "renderUi", Boolean, "Whether the tool should render UI output.")
+		var ReviewPayload = Type("ReviewPayload", func() {
+			Field(1, "recordKey", String, "Record key to review.")
+			Field(2, "includeDetails", Boolean, "Whether the tool should include detailed output.")
 			Field(3, "sourceIds", ArrayOf(String), "Optional source identifiers.")
-			Field(4, "timeContext", TimeContext, "Time window for the inspection.")
-			Required("deviceAlias", "renderUi", "timeContext")
+			Field(4, "timeContext", TimeContext, "Time window for the review.")
+			Required("recordKey", "includeDetails", "timeContext")
 			Example(Val{
-				"deviceAlias": "ahu_1",
-				"renderUi":    true,
-				"sourceIds":   []string{"temp", "pressure"},
+				"recordKey":      "record_1",
+				"includeDetails": true,
+				"sourceIds":      []string{"source_1", "source_2"},
 				"timeContext": Val{
 					"startTime": "2026-01-01T00:00:00Z",
 					"endTime":   "2026-01-01T01:00:00Z",
@@ -34,33 +34,33 @@ func ModelJSONNames() func() {
 			})
 		})
 
-		var OperatorSummary = Type("OperatorSummary", func() {
-			Field(1, "userId", String, "Operator user identifier.")
-			Field(2, "firstName", String, "Operator first name.")
-			Field(3, "lastName", String, "Operator last name.")
+		var ReviewerSummary = Type("ReviewerSummary", func() {
+			Field(1, "userId", String, "Reviewer identifier.")
+			Field(2, "firstName", String, "Reviewer first name.")
+			Field(3, "lastName", String, "Reviewer last name.")
 			Required("userId", "firstName", "lastName")
 		})
 
-		var InspectResult = Type("InspectResult", func() {
-			Field(1, "resultSummary", String, "Inspection summary.")
-			Field(2, "operatorSummaries", ArrayOf(OperatorSummary), "Operators related to the inspection.", func() {
+		var ReviewResult = Type("ReviewResult", func() {
+			Field(1, "summaryText", String, "Review summary.")
+			Field(2, "reviewerSummaries", ArrayOf(ReviewerSummary), "Reviewers associated with the result.", func() {
 				Example([]Val{
 					{
-						"userId":    "operator_1",
-						"firstName": "Ada",
-						"lastName":  "Lovelace",
+						"userId":    "reviewer_1",
+						"firstName": "Example",
+						"lastName":  "Reviewer",
 					},
 				})
 			})
-			Required("resultSummary", "operatorSummaries")
+			Required("summaryText", "reviewerSummaries")
 		})
 
 		Service("alpha", func() {
-			Agent("scribe", "Inspection helper", func() {
-				Use("inspect", func() {
-					Tool("inspect_device", "Inspect a device.", func() {
-						Args(InspectPayload)
-						Return(InspectResult)
+			Agent("scribe", "Record review helper", func() {
+				Use("review", func() {
+					Tool("review_record", "Review a record.", func() {
+						Args(ReviewPayload)
+						Return(ReviewResult)
 					})
 				})
 			})

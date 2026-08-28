@@ -786,7 +786,7 @@ server-only metadata that must be persisted alongside tool executions.
 Tool("get_time_series", "Get time series data", func() {
     Args(GetTimeSeriesArgs)
     Return(GetTimeSeriesReturn)           // Model sees this (summary/bounded view)
-    ServerData("atlas.time_series", TimeSeriesData) // Full data for UI/downstream only
+    ServerData("charts.time_series", TimeSeriesData) // Full data for UI/downstream only
     ServerDataDefault("off")                        // Opt-in by default
 })
 ```
@@ -813,12 +813,12 @@ Use the DSL helpers inside the `ServerData` block:
 ```go
 Tool("get_time_series", "Get time series data", func() {
     // ...
-    ServerData("atlas.time_series.chart_points", TimeSeriesChartPoints, func() {
+    ServerData("charts.time_series.points", TimeSeriesChartPoints, func() {
         Description("Chart-oriented points for downstream tool composition.")
         AudienceInternal()
         FromMethodResultField("ChartSidecar")
     })
-    ServerData("aura.evidence", ArrayOf(Evidence), func() {
+    ServerData("records.evidence", ArrayOf(Evidence), func() {
         Description("Provenance references for server-side persistence.")
         AudienceEvidence()
         ModeAlways()
@@ -848,7 +848,7 @@ declare an always-on ServerData entry:
 ```go
 Tool("get_time_series", "Get time series data", func() {
     // ...
-    ServerData("aura.evidence", func() {
+    ServerData("records.evidence", func() {
         ModeAlways()
         FromMethodResultField("Evidence")
     })

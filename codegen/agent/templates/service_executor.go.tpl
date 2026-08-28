@@ -8,7 +8,7 @@
 //
 // Example:
 //
-//   client := atlasdata.NewClient(...)
+//   client := catalog.NewClient(...)
 //   exec := {{ .Toolset.PackageName }}.New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(client)
 //
 //   // Register:
@@ -28,7 +28,7 @@ type (
     // ToolInterceptor hooks into tool execution to inject context or modify payloads.
     ToolInterceptor interface {
         // Inject mutates the service method payload before the client call.
-        // It receives the fully mapped service payload (e.g. *GetAlarmsPayload)
+        // It receives the fully mapped service payload (e.g. *SearchRecordsPayload)
         // and the tool call metadata.
         Inject(ctx context.Context, payload any, meta *runtime.ToolCallMeta) error
     }

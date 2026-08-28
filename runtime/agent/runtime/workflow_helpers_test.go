@@ -129,10 +129,10 @@ func TestCommitSelectedModelResponseBuildsPlannerAuthoredModelIdentity(t *testin
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 	result := &PlanResult{ToolCalls: []ToolCall{{
-		Name:         "atlas.read.get_time_series",
-		Payload:      rawjson.Message(`{"mode":"chart"}`),
-		ModelName:    "fetch_chart_signal_series",
-		ModelPayload: rawjson.Message(`{"from":"2026-06-12T00:00:00Z"}`),
+		Name:         "catalog.lookup.find_records",
+		Payload:      rawjson.Message(`{"category":"recent"}`),
+		ModelName:    "summarize_recent_records",
+		ModelPayload: rawjson.Message(`{"period":"today"}`),
 		ToolCallID:   "tooluse_1",
 	}}}
 
@@ -141,8 +141,8 @@ func TestCommitSelectedModelResponseBuildsPlannerAuthoredModelIdentity(t *testin
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, []model.Part{model.ToolUsePart{
 		ID:    "tooluse_1",
-		Name:  "fetch_chart_signal_series",
-		Input: rawjson.Message(`{"from":"2026-06-12T00:00:00Z"}`),
+		Name:  "summarize_recent_records",
+		Input: rawjson.Message(`{"period":"today"}`),
 	}}, base.Messages[0].Parts)
 }
 
@@ -287,13 +287,13 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 	agentID := agent.Ident("agent-1")
 
 	call := ToolCall{
-		Name:       tools.Ident("svc.commands.adjust_setpoint"),
+		Name:       tools.Ident("svc.commands.update_record"),
 		ToolCallID: "tc-1",
 	}
 	tr := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Failure:    testToolFailure(planner.FailureDomainRejection, planner.RecoveryFinish, "access denied: missing controlleddevices.write privilege"),
+		Failure:    testToolFailure(planner.FailureDomainRejection, planner.RecoveryFinish, "access denied: missing records.write privilege"),
 	}
 
 	appendUserToolResultsForTest(t, rt, agentID, base, []ToolCall{call}, []*planner.ToolResult{tr})
@@ -306,13 +306,13 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 	require.True(t, ok)
 	require.True(t, part.IsError)
 	require.Equal(t, call.ToolCallID, part.ToolUseID)
-	require.Equal(t, "access denied: missing controlleddevices.write privilege", part.Content)
+	require.Equal(t, "access denied: missing records.write privilege", part.Content)
 }
 
 func TestAppendUserToolResults_DecodesSuccessfulResultContent(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(rt, tools.ToolSpec{
-		Name: tools.Ident("svc.commands.adjust_setpoint"),
+		Name: tools.Ident("svc.commands.update_record"),
 		Result: tools.TypeSpec{
 			Codec: tools.JSONCodec[any]{
 				ToJSON: json.Marshal,
@@ -323,7 +323,7 @@ func TestAppendUserToolResults_DecodesSuccessfulResultContent(t *testing.T) {
 	agentID := agent.Ident("agent-1")
 
 	call := ToolCall{
-		Name:       tools.Ident("svc.commands.adjust_setpoint"),
+		Name:       tools.Ident("svc.commands.update_record"),
 		ToolCallID: "tc-1",
 	}
 	tr := &planner.ToolResult{
@@ -348,7 +348,7 @@ func TestAppendUserToolResults_DecodesSuccessfulResultContent(t *testing.T) {
 func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 	rt := New()
 	seedTestToolSpecs(rt, tools.ToolSpec{
-		Name: tools.Ident("svc.commands.adjust_setpoint"),
+		Name: tools.Ident("svc.commands.update_record"),
 		Result: tools.TypeSpec{
 			Codec: tools.JSONCodec[any]{
 				ToJSON: json.Marshal,
@@ -357,7 +357,7 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 	})
 	agentID := agent.Ident("agent-1")
 	call := ToolCall{
-		Name:            tools.Ident("svc.commands.adjust_setpoint"),
+		Name:            tools.Ident("svc.commands.update_record"),
 		ToolCallID:      "runtime-call-1",
 		ModelToolCallID: "provider-call-1",
 	}
@@ -620,7 +620,7 @@ func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
 		rt,
 		newAnyJSONSpec("svc.tools.read", "svc.tools"),
 		func() tools.ToolSpec {
-			spec := newAnyJSONSpec("tasks.progress.set_step_status", "tasks.progress")
+			spec := newAnyJSONSpec("workflow.progress.set_step_status", "workflow.progress")
 			spec.Bookkeeping = true
 			return spec
 		}(),
@@ -630,7 +630,7 @@ func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
 
 	calls := []ToolCall{
 		{Name: "svc.tools.read", ToolCallID: "call-1"},
-		{Name: "tasks.progress.set_step_status", ToolCallID: "call-2"},
+		{Name: "workflow.progress.set_step_status", ToolCallID: "call-2"},
 	}
 	results := []*planner.ToolResult{
 		{
@@ -639,7 +639,7 @@ func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
 			Result:     map[string]any{"value": 1},
 		},
 		{
-			Name:       "tasks.progress.set_step_status",
+			Name:       "workflow.progress.set_step_status",
 			ToolCallID: "call-2",
 			Result:     map[string]any{"ok": true},
 		},
@@ -706,7 +706,7 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 	seedTestToolSpecs(
 		rt,
 		func() tools.ToolSpec {
-			spec := newAnyJSONSpec("tasks.progress.complete", "tasks.progress")
+			spec := newAnyJSONSpec("workflow.progress.complete", "workflow.progress")
 			spec.Bookkeeping = true
 			spec.TerminalRun = true
 			return spec
@@ -716,14 +716,14 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 	agentID := agent.Ident("agent-1")
 
 	call := ToolCall{
-		Name:       "tasks.progress.complete",
+		Name:       "workflow.progress.complete",
 		ToolCallID: "call-1",
-		Payload:    rawjson.Message(`{"title":"Final brief"}`),
+		Payload:    rawjson.Message(`{"title":"Final report"}`),
 	}
 	tr := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Failure:    testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "brief.summary length must be <= 600"),
+		Failure:    testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "report.summary length must be <= 600"),
 	}
 
 	require.NoError(t, rt.appendSelectedModelResponse(

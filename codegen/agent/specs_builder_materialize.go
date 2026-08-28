@@ -202,7 +202,7 @@ func newToolSpecBuilder(genpkg string, svc *service.Data) *toolSpecBuilder {
 //
 // Public tool-facing types are service-level shapes: they should keep any
 // design-owned type locations (`struct:pkg:path`) intact so nested types can be
-// referenced via imports (e.g. `types.FacilityFact`). Only service-local types
+// referenced via imports (e.g. `types.RecordFact`). Only service-local types
 // that would otherwise be unqualified and undefined in the specs package are
 // localized.
 func (b *toolSpecBuilder) ensureNestedLocalTypes(scope *codegen.NameScope, att *goaexpr.AttributeExpr, ptr bool, useDefault bool) *goaexpr.AttributeExpr {

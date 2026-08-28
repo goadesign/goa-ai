@@ -19,7 +19,7 @@ import (
 func TestSendPublishesEnvelope(t *testing.T) {
 	cli := mockpulse.NewClient(t)
 	str := mockpulse.NewStream(t)
-	server := rawjson.Message([]byte(`[{"kind":"aura.evidence","data":[{"uri":"atlas://points/123","kind":"time_series"}]}]`))
+	server := rawjson.Message([]byte(`[{"kind":"records.evidence","data":[{"uri":"records://items/123","kind":"summary"}]}]`))
 
 	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 		require.Equal(t, "session/session-123", name)

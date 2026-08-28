@@ -30,23 +30,23 @@ func TestSanitizePreservesNamespaces(t *testing.T) {
 		},
 		{
 			name: "toolset namespace preserved",
-			in:   "ada.get_application_status",
-			want: "ada_get_application_status",
+			in:   "records.get_status",
+			want: "records_get_status",
 		},
 		{
 			name: "multi segment canonical id preserved",
-			in:   "atlas.read.chat.chat_get_user_details",
-			want: "atlas_read_chat_chat_get_user_details",
+			in:   "catalog.read.assistant.assistant_get_request_details",
+			want: "catalog_read_assistant_assistant_get_request_details",
 		},
 		{
 			name: "repeated segment preserved",
-			in:   "todos.todos.update_todos",
-			want: "todos_todos_update_todos",
+			in:   "queue.queue.update_items",
+			want: "queue_queue_update_items",
 		},
 		{
 			name: "disallowed runes replaced",
-			in:   "analytics.analyze/v2",
-			want: "analytics_analyze_v2",
+			in:   "reports.analyze/v2",
+			want: "reports_analyze_v2",
 		},
 	}
 
@@ -67,15 +67,15 @@ func TestSanitizeDistinguishesSharedLeafNames(t *testing.T) {
 
 	assert.NotEqual(
 		t,
-		Sanitize("atlas.read.explain_control_logic"),
-		Sanitize("ada.explain_control_logic"),
+		Sanitize("catalog.read.explain_record"),
+		Sanitize("records.explain_record"),
 	)
 }
 
 func TestSanitizeTruncatesWithStableHashSuffix(t *testing.T) {
 	t.Parallel()
 
-	in := "atlas.read.chat." + strings.Repeat("very_long_segment_", 10) + "tool"
+	in := "catalog.read.assistant." + strings.Repeat("very_long_segment_", 10) + "tool"
 	got := Sanitize(in)
 
 	assert.LessOrEqual(t, len(got), 64)
@@ -86,7 +86,7 @@ func TestSanitizeTruncatesWithStableHashSuffix(t *testing.T) {
 func TestSanitizeTruncationDistinguishesLongNames(t *testing.T) {
 	t.Parallel()
 
-	prefix := "atlas.read.chat." + strings.Repeat("very_long_segment_", 10)
+	prefix := "catalog.read.assistant." + strings.Repeat("very_long_segment_", 10)
 	assert.NotEqual(t, Sanitize(prefix+"alpha"), Sanitize(prefix+"beta"))
 }
 
@@ -94,31 +94,31 @@ func TestBuildMapsIsBijective(t *testing.T) {
 	t.Parallel()
 
 	canonToProv, provToCanon, err := BuildMaps([]*model.ToolDefinition{
-		{Name: "ada.lookup"},
-		{Name: "atlas.read.lookup"},
+		{Name: "records.lookup"},
+		{Name: "catalog.read.lookup"},
 	})
 
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{
-		"ada.lookup":        "ada_lookup",
-		"atlas.read.lookup": "atlas_read_lookup",
+		"records.lookup":      "records_lookup",
+		"catalog.read.lookup": "catalog_read_lookup",
 	}, canonToProv)
 	assert.Equal(t, map[string]string{
-		"ada_lookup":        "ada.lookup",
-		"atlas_read_lookup": "atlas.read.lookup",
+		"records_lookup":      "records.lookup",
+		"catalog_read_lookup": "catalog.read.lookup",
 	}, provToCanon)
 }
 
 func TestProviderNameProjectsHistoryWithoutAdvertisingIt(t *testing.T) {
 	t.Parallel()
 
-	active := map[string]string{"atlas.read.lookup": "atlas_read_lookup"}
-	name, err := ProviderName("ada.lookup", active)
+	active := map[string]string{"catalog.read.lookup": "catalog_read_lookup"}
+	name, err := ProviderName("records.lookup", active)
 	require.NoError(t, err)
-	assert.Equal(t, "ada_lookup", name)
+	assert.Equal(t, "records_lookup", name)
 
-	_, err = ProviderName("atlas_read.lookup", active)
-	require.ErrorContains(t, err, `collides with active tool "atlas.read.lookup"`)
+	_, err = ProviderName("catalog_read.lookup", active)
+	require.ErrorContains(t, err, `collides with active tool "catalog.read.lookup"`)
 }
 
 func TestBuildMapsRejectsInvalidDefinitions(t *testing.T) {
@@ -131,12 +131,12 @@ func TestBuildMapsRejectsInvalidDefinitions(t *testing.T) {
 	}{
 		{
 			name:    "sanitization collision",
-			defs:    []*model.ToolDefinition{{Name: "ada.lookup"}, {Name: "ada_lookup"}},
-			wantErr: `tool name "ada_lookup" sanitizes to "ada_lookup" which collides with "ada.lookup"`,
+			defs:    []*model.ToolDefinition{{Name: "records.lookup"}, {Name: "records_lookup"}},
+			wantErr: `tool name "records_lookup" sanitizes to "records_lookup" which collides with "records.lookup"`,
 		},
 		{
 			name:    "nil definition",
-			defs:    []*model.ToolDefinition{{Name: "ada.lookup"}, nil},
+			defs:    []*model.ToolDefinition{{Name: "records.lookup"}, nil},
 			wantErr: "tool[1] is nil",
 		},
 		{

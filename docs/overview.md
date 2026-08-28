@@ -215,7 +215,7 @@ Tools can attach rich, non‑model data alongside their results using the `Serve
 Tool("get_time_series", "Get Time Series", func() {
     Args(GetTimeSeriesToolArgs)
     Return(GetTimeSeriesToolReturn)
-    ServerData("atlas.time_series", GetTimeSeriesSidecar) // Full-fidelity data for observers (e.g., UIs)
+    ServerData("charts.time_series", GetTimeSeriesSidecar) // Full-fidelity data for observers (e.g., UIs)
     ServerDataDefault("off")                             // Opt-in by default
 })
 ```

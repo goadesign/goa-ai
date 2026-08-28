@@ -18,17 +18,17 @@ import (
 func TestSuiteDSL(t *testing.T) {
 	setup(t)
 	design := func() {
-		input := goadsl.Type("ChatEvalInput", func() {
-			goadsl.Attribute("prompt", goadsl.String, "User message.")
-			goadsl.Required("prompt")
+		input := goadsl.Type("QueryEvalInput", func() {
+			goadsl.Attribute("query", goadsl.String, "Assistant request.")
+			goadsl.Required("query")
 		})
-		Suite("chat", func() {
-			goadsl.Description("Evaluates chat behavior.")
+		Suite("assistant", func() {
+			goadsl.Description("Evaluates assistant behavior.")
 			goadsl.Timeout("2m")
-			Scenario("alarm_inventory", func() {
-				goadsl.Description("Lists alarms without truncation.")
+			Scenario("record_inventory", func() {
+				goadsl.Description("Lists records without truncation.")
 				Input(input)
-				aidls.Tags("alarm", "smoke")
+				aidls.Tags("records", "smoke")
 				goadsl.Timeout("3m")
 			})
 		})
@@ -39,10 +39,10 @@ func TestSuiteDSL(t *testing.T) {
 	require.NoError(t, eval.RunDSL())
 	require.Len(t, evalexpr.Root.Suites, 1)
 	suite := evalexpr.Root.Suites[0]
-	assert.Equal(t, "chat", suite.Name)
+	assert.Equal(t, "assistant", suite.Name)
 	assert.Len(t, suite.Scenarios, 1)
 	assert.NotNil(t, suite.Scenarios[0].Input)
-	assert.Equal(t, []string{"alarm", "smoke"}, suite.Scenarios[0].Tags)
+	assert.Equal(t, []string{"records", "smoke"}, suite.Scenarios[0].Tags)
 	assert.Equal(t, 3*time.Minute, suite.Scenarios[0].Timeout)
 }
 
@@ -51,16 +51,16 @@ func TestInputCustomizationExecutesOnce(t *testing.T) {
 	customizations := 0
 	design := func() {
 		input := goadsl.Type("Input", func() {
-			goadsl.Attribute("prompt", goadsl.String, "User message.")
+			goadsl.Attribute("query", goadsl.String, "Assistant request.")
 		})
-		Suite("chat", func() {
-			goadsl.Description("Evaluates chat behavior.")
+		Suite("assistant", func() {
+			goadsl.Description("Evaluates assistant behavior.")
 			goadsl.Timeout("1m")
 			Scenario("answer", func() {
-				goadsl.Description("Answers one prompt.")
+				goadsl.Description("Answers one query.")
 				Input(input, func() {
 					customizations++
-					goadsl.Required("prompt")
+					goadsl.Required("query")
 				})
 			})
 		})
@@ -81,16 +81,16 @@ func TestInputCustomizationWithoutRequirednessChangeKeepsTypeIdentity(t *testing
 	setup(t)
 	design := func() {
 		input := goadsl.Type("SharedInput", func() {
-			goadsl.Attribute("prompt", goadsl.String, "User message.")
-			goadsl.Required("prompt")
+			goadsl.Attribute("query", goadsl.String, "Assistant request.")
+			goadsl.Required("query")
 		})
-		Suite("chat", func() {
-			goadsl.Description("Evaluates chat behavior.")
+		Suite("assistant", func() {
+			goadsl.Description("Evaluates assistant behavior.")
 			goadsl.Timeout("1m")
 			Scenario("answer", func() {
-				goadsl.Description("Answers one prompt.")
+				goadsl.Description("Answers one query.")
 				Input(input, func() {
-					goadsl.Description("Prompt for the answer scenario.")
+					goadsl.Description("Query for the answer scenario.")
 				})
 			})
 		})
@@ -112,15 +112,15 @@ func TestInputWithDescriptionDuplicatesType(t *testing.T) {
 	var original goaexpr.UserType
 	design := func() {
 		original = goadsl.Type("SharedInput", func() {
-			goadsl.Attribute("prompt", goadsl.String, "User message.")
-			goadsl.Required("prompt")
+			goadsl.Attribute("query", goadsl.String, "Assistant request.")
+			goadsl.Required("query")
 		})
-		Suite("chat", func() {
-			goadsl.Description("Evaluates chat behavior.")
+		Suite("assistant", func() {
+			goadsl.Description("Evaluates assistant behavior.")
 			goadsl.Timeout("1m")
 			Scenario("answer", func() {
-				goadsl.Description("Answers one prompt.")
-				Input(original, "Prompt for the answer scenario.")
+				goadsl.Description("Answers one query.")
+				Input(original, "Query for the answer scenario.")
 			})
 		})
 	}
@@ -171,11 +171,11 @@ func TestInputRejectsMalformedShapeArguments(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			setup(t)
 			design := func() {
-				Suite("chat", func() {
-					goadsl.Description("Evaluates chat behavior.")
+				Suite("assistant", func() {
+					goadsl.Description("Evaluates assistant behavior.")
 					goadsl.Timeout("1m")
 					Scenario("answer", func() {
-						goadsl.Description("Answers one prompt.")
+						goadsl.Description("Answers one query.")
 						test.input()
 					})
 				})
@@ -196,8 +196,8 @@ func TestSuiteDSLValidation(t *testing.T) {
 		{
 			name: "invalid suite identifier",
 			design: func() {
-				Suite("Chat-Evals", func() {
-					goadsl.Description("Chat.")
+				Suite("Assistant-Evals", func() {
+					goadsl.Description("Assistant.")
 					goadsl.Timeout("1m")
 					validScenario()
 				})
@@ -207,7 +207,7 @@ func TestSuiteDSLValidation(t *testing.T) {
 		{
 			name: "missing static fields",
 			design: func() {
-				Suite("chat", func() {
+				Suite("assistant", func() {
 					Scenario("case", func() {})
 				})
 			},
@@ -216,8 +216,8 @@ func TestSuiteDSLValidation(t *testing.T) {
 		{
 			name: "generated method collision",
 			design: func() {
-				Suite("chat", func() {
-					goadsl.Description("Chat.")
+				Suite("assistant", func() {
+					goadsl.Description("Assistant.")
 					goadsl.Timeout("1m")
 					Scenario("foo_id", func() {
 						goadsl.Description("First.")
@@ -232,8 +232,8 @@ func TestSuiteDSLValidation(t *testing.T) {
 		{
 			name: "zero scenario timeout",
 			design: func() {
-				Suite("chat", func() {
-					goadsl.Description("Chat.")
+				Suite("assistant", func() {
+					goadsl.Description("Assistant.")
 					goadsl.Timeout("1m")
 					Scenario("case", func() {
 						goadsl.Description("Case.")
@@ -246,8 +246,8 @@ func TestSuiteDSLValidation(t *testing.T) {
 		{
 			name: "duplicate tag",
 			design: func() {
-				Suite("chat", func() {
-					goadsl.Description("Chat.")
+				Suite("assistant", func() {
+					goadsl.Description("Assistant.")
 					goadsl.Timeout("1m")
 					Scenario("case", func() {
 						goadsl.Description("Case.")
@@ -260,8 +260,8 @@ func TestSuiteDSLValidation(t *testing.T) {
 		{
 			name: "union input",
 			design: func() {
-				Suite("chat", func() {
-					goadsl.Description("Chat.")
+				Suite("assistant", func() {
+					goadsl.Description("Assistant.")
 					goadsl.Timeout("1m")
 					Scenario("case", func() {
 						goadsl.Description("Case.")

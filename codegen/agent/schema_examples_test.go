@@ -28,12 +28,12 @@ func TestToolSchemasContainOnlyAuthoredRootExamples(t *testing.T) {
 	design := func() {
 		goadsl.API("alpha", func() {})
 		var option = goadsl.Type("Option", func() {
-			goadsl.Attribute("id", goadsl.String, "Stable equipment identifier")
-			goadsl.Attribute("label", goadsl.String, "Equipment label")
+			goadsl.Attribute("id", goadsl.String, "Stable record identifier")
+			goadsl.Attribute("label", goadsl.String, "Record label")
 			goadsl.Required("id", "label")
 			goadsl.Example(map[string]any{
-				"id":    "compressor_1",
-				"label": "Compressor 1",
+				"id":    "record_1",
+				"label": "Record 1",
 			})
 		})
 		var payload = goadsl.Type("Payload", func() {
@@ -41,17 +41,17 @@ func TestToolSchemasContainOnlyAuthoredRootExamples(t *testing.T) {
 			goadsl.Attribute("options", goadsl.ArrayOf(option), "Answer options")
 			goadsl.Required("query", "options")
 			goadsl.Example(map[string]any{
-				"query": "Which compressor needs attention?",
+				"query": "Which record needs attention?",
 				"options": []map[string]any{{
-					"id":    "compressor_1",
-					"label": "Compressor 1",
+					"id":    "record_1",
+					"label": "Record 1",
 				}},
 			})
 		})
 		goadsl.Service("alpha", func() {
-			Agent("assistant", "Facility assistant", func() {
+			Agent("assistant", "Catalog assistant", func() {
 				Use("answer", func() {
-					Tool("answer_question", "Answer one facility question", func() {
+					Tool("answer_question", "Answer one catalog question", func() {
 						Args(payload)
 					})
 				})
@@ -70,10 +70,10 @@ func TestToolSchemasContainOnlyAuthoredRootExamples(t *testing.T) {
 	var schema map[string]any
 	require.NoError(t, json.Unmarshal(schemas["AnswerQuestionPayload"], &schema))
 	require.Equal(t, map[string]any{
-		"query": "Which compressor needs attention?",
+		"query": "Which record needs attention?",
 		"options": []any{map[string]any{
-			"id":    "compressor_1",
-			"label": "Compressor 1",
+			"id":    "record_1",
+			"label": "Record 1",
 		}},
 	}, schema["example"])
 	delete(schema, "example")
@@ -81,8 +81,8 @@ func TestToolSchemasContainOnlyAuthoredRootExamples(t *testing.T) {
 	definitions := schema["$defs"].(map[string]any)
 	optionSchema := definitions["Option"].(map[string]any)
 	require.Equal(t, map[string]any{
-		"id":    "compressor_1",
-		"label": "Compressor 1",
+		"id":    "record_1",
+		"label": "Record 1",
 	}, optionSchema["example"])
 }
 

@@ -185,7 +185,7 @@ func TestHintingSinkRendersHintForToolUnavailable(t *testing.T) {
 	payload := stream.ToolStartPayload{
 		ToolCallID: "call-tool-unavailable-1",
 		ToolName:   tools.ToolUnavailable.String(),
-		Payload:    rawjson.Message([]byte(`{"requested_tool":"ada.resolve_time_series_sources"}`)),
+		Payload:    rawjson.Message([]byte(`{"requested_tool":"catalog.resolve_sources"}`)),
 	}
 	ev := stream.ToolStart{
 		Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),
@@ -197,7 +197,7 @@ func TestHintingSinkRendersHintForToolUnavailable(t *testing.T) {
 
 	out, ok := sink.events[0].(stream.ToolStart)
 	require.True(t, ok)
-	assert.Equal(t, "Tool not available: ada.resolve_time_series_sources", out.Data.DisplayHint)
+	assert.Equal(t, "Tool not available: catalog.resolve_sources", out.Data.DisplayHint)
 }
 
 func TestHintingSinkOverrideWins(t *testing.T) {

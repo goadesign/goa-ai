@@ -259,7 +259,7 @@ func TestClientPrepareRequestLowersRunlogReplayedTranscriptWithNarrowedTools(t *
 	parts, err := client.prepareRequest(&model.Request{
 		Messages: messages,
 		Tools: []*model.ToolDefinition{{
-			Name:        "analytics.correct",
+			Name:        "reports.correct",
 			Description: "Correct the failed analysis request.",
 			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
@@ -281,9 +281,9 @@ func TestClientPrepareRequestLowersRunlogReplayedTranscriptWithNarrowedTools(t *
 	require.NotNil(t, toolUse)
 	require.NotNil(t, toolUse.Value.ToolUseId)
 	require.Equal(t, "call_1", *toolUse.Value.ToolUseId)
-	require.Equal(t, "analytics_analyze", aws.ToString(toolUse.Value.Name))
-	require.Equal(t, "analytics_analyze", parts.toolNameCanonicalToProv["analytics.analyze"])
-	require.Equal(t, "analytics_correct", parts.toolNameCanonicalToProv["analytics.correct"])
+	require.Equal(t, "reports_summarize", aws.ToString(toolUse.Value.Name))
+	require.Equal(t, "reports_summarize", parts.toolNameCanonicalToProv["reports.summarize"])
+	require.Equal(t, "reports_correct", parts.toolNameCanonicalToProv["reports.correct"])
 
 	toolResult, ok := parts.messages[2].Content[0].(*brtypes.ContentBlockMemberToolResult)
 	require.True(t, ok)
@@ -295,12 +295,12 @@ func TestEncodeMessagesToolUseIDMappingIsBijective(t *testing.T) {
 	messages := []*model.Message{{
 		Role: model.ConversationRoleAssistant,
 		Parts: []model.Part{
-			model.ToolUsePart{ID: "bad/id", Name: "analytics.analyze", Input: rawjson.Message(`{}`)},
-			model.ToolUsePart{ID: "t1", Name: "analytics.analyze", Input: rawjson.Message(`{}`)},
+			model.ToolUsePart{ID: "bad/id", Name: "reports.summarize", Input: rawjson.Message(`{}`)},
+			model.ToolUsePart{ID: "t1", Name: "reports.summarize", Input: rawjson.Message(`{}`)},
 		},
 	}}
 
-	encoded, _, err := encodeMessages(messages, map[string]string{"analytics.analyze": "analytics_analyze"}, false)
+	encoded, _, err := encodeMessages(messages, map[string]string{"reports.summarize": "reports_summarize"}, false)
 	require.NoError(t, err)
 	require.Len(t, encoded, 1)
 	require.Len(t, encoded[0].Content, 2)
@@ -325,7 +325,7 @@ func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
 					model.TextPart{Text: "Need the sales data first."},
 					model.ToolUsePart{
 						ID:    "call_1",
-						Name:  "analytics.analyze",
+						Name:  "reports.summarize",
 						Input: rawjson.Message(`{"query":"sales"}`),
 					},
 				},
@@ -341,7 +341,7 @@ func TestClientPrepareRequestFailsOnMissingThinkingInToolLoop(t *testing.T) {
 			},
 		},
 		Tools: []*model.ToolDefinition{{
-			Name:        "analytics.analyze",
+			Name:        "reports.summarize",
 			Description: "Run an analysis.",
 			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
@@ -365,7 +365,7 @@ func TestClientPrepareRequestSanitizesHistoryOnlyToolName(t *testing.T) {
 			Parts: []model.Part{
 				model.ToolUsePart{
 					ID:    "tu1",
-					Name:  "ada.unknown_tool",
+					Name:  "records.unknown_tool",
 					Input: rawjson.Message(`{"arg":"value"}`),
 				},
 			},
@@ -375,7 +375,7 @@ func TestClientPrepareRequestSanitizesHistoryOnlyToolName(t *testing.T) {
 	parts, err := client.prepareRequest(&model.Request{
 		Messages: messages,
 		Tools: []*model.ToolDefinition{{
-			Name:        "atlas.read.some_other_tool",
+			Name:        "catalog.read.some_other_tool",
 			Description: "Read another resource.",
 			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
@@ -383,9 +383,9 @@ func TestClientPrepareRequestSanitizesHistoryOnlyToolName(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, parts.messages, 1)
 	use := parts.messages[0].Content[0].(*brtypes.ContentBlockMemberToolUse)
-	require.Equal(t, "ada_unknown_tool", aws.ToString(use.Value.Name))
-	require.Equal(t, "ada_unknown_tool", parts.toolNameCanonicalToProv["ada.unknown_tool"])
-	require.Equal(t, "ada.unknown_tool", parts.toolNameProvToCanonical["ada_unknown_tool"])
+	require.Equal(t, "records_unknown_tool", aws.ToString(use.Value.Name))
+	require.Equal(t, "records_unknown_tool", parts.toolNameCanonicalToProv["records.unknown_tool"])
+	require.Equal(t, "records.unknown_tool", parts.toolNameProvToCanonical["records_unknown_tool"])
 	raw, err := use.Value.Input.MarshalSmithyDocument()
 	require.NoError(t, err)
 	require.JSONEq(t, `{"arg":"value"}`, string(raw))
@@ -403,17 +403,17 @@ func TestClientPrepareRequestRejectsHistoricalToolNameCollision(t *testing.T) {
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{model.ToolUsePart{
 				ID:    "tu1",
-				Name:  "ada.unknown_tool",
+				Name:  "records.unknown_tool",
 				Input: rawjson.Message(`{}`),
 			}},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "ada_unknown_tool",
+			Name:        "records_unknown_tool",
 			Description: "Current tool with a colliding provider name.",
 			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 	})
-	require.ErrorContains(t, err, `tool name "ada.unknown_tool" sanitizes to "ada_unknown_tool"`)
+	require.ErrorContains(t, err, `tool name "records.unknown_tool" sanitizes to "records_unknown_tool"`)
 }
 
 func replayedBedrockToolLoopMessages(t *testing.T) []*model.Message {
@@ -432,7 +432,7 @@ func replayedBedrockToolLoopMessages(t *testing.T) []*model.Message {
 			model.TextPart{Text: "Need the sales data first."},
 			model.ToolUsePart{
 				ID:    "call_1",
-				Name:  "analytics.analyze",
+				Name:  "reports.summarize",
 				Input: rawjson.Message(`{"query":"sales"}`),
 			},
 		},
@@ -476,7 +476,7 @@ func TestEncodeMessagesDoesNotRewriteHistoricalToolUseToToolUnavailable(t *testi
 			Parts: []model.Part{
 				model.ToolUsePart{
 					ID:    "tu1",
-					Name:  "atlas.read.count_events",
+					Name:  "catalog.read.count_events",
 					Input: rawjson.Message(`{"from":"2026-02-06T00:00:00Z"}`),
 				},
 			},
@@ -493,7 +493,7 @@ func TestEncodeMessagesDoesNotRewriteHistoricalToolUseToToolUnavailable(t *testi
 		},
 	}
 	nameMap := map[string]string{
-		"atlas.read.count_events":      toolname.Sanitize("atlas.read.count_events"),
+		"catalog.read.count_events":    toolname.Sanitize("catalog.read.count_events"),
 		tools.ToolUnavailable.String(): toolname.Sanitize(tools.ToolUnavailable.String()),
 	}
 	conv, _, err := encodeMessages(msgs, nameMap, false)
@@ -517,7 +517,7 @@ func TestEncodeMessagesDoesNotRewriteHistoricalToolUseToToolUnavailable(t *testi
 	if toolUse == nil || toolUse.Value.Name == nil {
 		t.Fatalf("missing tool_use block name")
 	}
-	wantName := "atlas_read_count_events"
+	wantName := "catalog_read_count_events"
 	if got := *toolUse.Value.Name; got != wantName {
 		t.Fatalf("tool_use name = %q, want %q", got, wantName)
 	}

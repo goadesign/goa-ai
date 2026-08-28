@@ -766,13 +766,13 @@ func TestPrepareRequestForcedToolKeepsAdaptiveThinking(t *testing.T) {
 			},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "tasks.progress.complete",
+			Name:        "workflow.progress.complete",
 			Description: "complete the task",
 			Input:       mustAnthropicToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeTool,
-			Name: "tasks.progress.complete",
+			Name: "workflow.progress.complete",
 		},
 		Thinking: &model.ThinkingOptions{
 			Enable:       true,
@@ -800,8 +800,8 @@ func TestPrepareRequestAnyToolKeepsAdaptiveThinking(t *testing.T) {
 			},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "tasks.progress.update",
-			Description: "update task progress",
+			Name:        "workflow.progress.update",
+			Description: "update workflow progress",
 			Input:       mustAnthropicToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
@@ -829,13 +829,13 @@ func TestPrepareRequestLegacyThinkingRejectsForcedTool(t *testing.T) {
 			Parts: []model.Part{model.TextPart{Text: "finish the task"}},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "tasks.progress.complete",
+			Name:        "workflow.progress.complete",
 			Description: "complete the task",
 			Input:       mustAnthropicToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeTool,
-			Name: "tasks.progress.complete",
+			Name: "workflow.progress.complete",
 		},
 		Thinking: &model.ThinkingOptions{
 			Enable:       true,
@@ -860,13 +860,13 @@ func TestPrepareRequestMythosPreviewRejectsForcedTool(t *testing.T) {
 			Parts: []model.Part{model.TextPart{Text: "finish the task"}},
 		}},
 		Tools: []*model.ToolDefinition{{
-			Name:        "tasks.progress.complete",
+			Name:        "workflow.progress.complete",
 			Description: "complete the task",
 			Input:       mustAnthropicToolInput(t, rawjson.Message(`{"type":"object"}`)),
 		}},
 		ToolChoice: &model.ToolChoice{
 			Mode: model.ToolChoiceModeTool,
-			Name: "tasks.progress.complete",
+			Name: "workflow.progress.complete",
 		},
 	}
 

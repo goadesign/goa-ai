@@ -16,7 +16,7 @@ func AuthoredPayloadExample() func() {
 			Attribute("limit", Int, "Maximum number of rows.")
 			Required("query")
 			Example(Val{
-				"query": "battery alarms",
+				"query": "recent records",
 				"limit": 7,
 			})
 		})
@@ -61,7 +61,7 @@ func AuthoredPayloadExampleThroughPrepare() func() {
 				"query": Val{
 					"type": "by_name",
 					"value": Val{
-						"name": "compressor_1",
+						"name": "record_1",
 					},
 				},
 			})
