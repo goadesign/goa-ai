@@ -12,6 +12,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -48,6 +49,25 @@ func toolRecovery(recovery pendingPlannerRecovery) ([]*planner.ToolOutput, *Reco
 		return nil, nil
 	}
 	return pending.outputs, pending.catalog
+}
+
+// correctCallCatalog returns the exact tool names required to repair the
+// pending failed calls. Names follow first-failure order and repeated failures
+// for the same tool contribute one catalog entry.
+func correctCallCatalog(outputs []*planner.ToolOutput) []tools.Ident {
+	seen := make(map[tools.Ident]struct{})
+	var catalog []tools.Ident
+	for _, output := range outputs {
+		if output.Failure == nil || output.Failure.Recovery.Action != planner.RecoveryCorrectCall {
+			continue
+		}
+		if _, ok := seen[output.Name]; ok {
+			continue
+		}
+		seen[output.Name] = struct{}{}
+		catalog = append(catalog, output.Name)
+	}
+	return catalog
 }
 
 // modelOutputCorrection returns replacement guidance when the workflow is

@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
@@ -87,7 +88,7 @@ func ConsumeStream(ctx context.Context, streamer *model.ValidatedStream) (summar
 	for {
 		chunk, recvErr := streamer.Recv()
 		if recvErr != nil {
-			if errors.Is(recvErr, io.EOF) {
+			if modelcall.Exact(recvErr, io.EOF) {
 				break
 			}
 			if model.IsStreamValidationError(recvErr) {

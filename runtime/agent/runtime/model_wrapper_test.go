@@ -4,13 +4,15 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/features/model/gateway"
 	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/internal/provenance"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -40,7 +42,63 @@ type (
 		stream model.Streamer
 		err    error
 	}
+
+	rejectValidationObserver struct {
+		err error
+	}
+
+	closeFailureObserver struct {
+		err error
+	}
+
+	injectedCallObserverProvider struct {
+		model.Provider
+		observer   model.StreamObserver
+		prepareErr error
+		finishErr  error
+	}
+
+	injectedClientCallObserver struct {
+		observer  model.StreamObserver
+		finishErr error
+	}
+
+	// controlledDeadlineContext lets a test expire a context after validation
+	// without racing a wall-clock timer.
+	controlledDeadlineContext struct {
+		done chan struct{}
+	}
 )
+
+// Deadline reports that this test context has a deadline.
+func (c *controlledDeadlineContext) Deadline() (time.Time, bool) {
+	return time.Now().Add(time.Hour), true
+}
+
+// Done closes when the test explicitly expires the context.
+func (c *controlledDeadlineContext) Done() <-chan struct{} {
+	return c.done
+}
+
+// Err reports deadline expiration after Done closes.
+func (c *controlledDeadlineContext) Err() error {
+	select {
+	case <-c.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+// Value carries no request-scoped test values.
+func (*controlledDeadlineContext) Value(any) any {
+	return nil
+}
+
+// expire marks the test context as deadline-exceeded.
+func (c *controlledDeadlineContext) expire() {
+	close(c.done)
+}
 
 func (nilStreamClient) Complete(context.Context, *model.Request) (*model.Response, error) {
 	return nil, errors.New("unexpected Complete call")
@@ -56,6 +114,54 @@ func (streamResultClient) Complete(context.Context, *model.Request) (*model.Resp
 
 func (c streamResultClient) Stream(context.Context, *model.Request) (model.Streamer, error) {
 	return c.stream, c.err
+}
+
+func (o *rejectValidationObserver) ObserveStreamRecv(observation model.StreamObservation) error {
+	if model.IsStreamValidationError(observation.Err) {
+		return o.err
+	}
+	return nil
+}
+
+func (*rejectValidationObserver) ObserveStreamClose(error) error {
+	return nil
+}
+
+func (*closeFailureObserver) ObserveStreamRecv(model.StreamObservation) error {
+	return nil
+}
+
+func (o *closeFailureObserver) ObserveStreamClose(error) error {
+	return o.err
+}
+
+func (p *injectedCallObserverProvider) PrepareClientCall(
+	ctx context.Context,
+	_ *model.Request,
+) (context.Context, model.ClientCallObserver, error) {
+	if p.prepareErr != nil {
+		return ctx, nil, p.prepareErr
+	}
+	return ctx, &injectedClientCallObserver{
+		observer:  p.observer,
+		finishErr: p.finishErr,
+	}, nil
+}
+
+func (*injectedClientCallObserver) ObserveClientComplete(*model.Response, error) error {
+	return nil
+}
+
+func (c *injectedClientCallObserver) ObserveClientStream(error) (model.StreamObserver, error) {
+	return c.observer, nil
+}
+
+func (c *injectedClientCallObserver) Finish(error) error {
+	return c.finishErr
+}
+
+func (*injectedClientCallObserver) Abort(error) error {
+	return nil
 }
 
 func newTestModelInvocationClient(provider model.Provider, sink modelInvocationSink) model.Client {
@@ -159,6 +265,166 @@ func TestPlannerModelClientClosesStreamReturnedWithError(t *testing.T) {
 
 func TestModelInvocationStreamFingerprintsRejectedCompleteResponse(t *testing.T) {
 	invocations := &modelInvocationJournal{}
+	usage := model.TokenUsage{TotalTokens: 7}
+	request := testModelRequest("catalog.allowed")
+	contract, err := model.NewRequestContract(request)
+	require.NoError(t, err)
+	rejected := testModelResponseWithUsage(nil, usage, model.ToolCall{
+		ID:      "call-1",
+		Name:    "catalog.unknown",
+		Payload: rawjson.Message(`{}`),
+	})
+	rejection := contract.RejectResponse(
+		rejected,
+		model.NewUnadvertisedToolNameError("catalog.unknown"),
+	)
+	client := newTestModelInvocationClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			return &chunkStreamer{terminalErr: rejection}, nil
+		},
+	}, invocations)
+	stream, err := client.Stream(t.Context(), request)
+	require.NoError(t, err)
+	_, recvErr := stream.Recv()
+	require.Error(t, recvErr)
+	require.ErrorContains(t, recvErr, `catalog.unknown`)
+
+	require.NoError(t, invocations.outputContractError())
+	evidence, present := rejectedResponseEvidence(invocations)
+	require.True(t, present)
+	require.Len(t, evidence.SHA256, 64)
+	require.Positive(t, evidence.Size)
+	require.Nil(t, invocations.recoverableModelInvocationRecovery())
+	require.Equal(t, 7, invocations.exportUsage().TotalTokens)
+	closeErr := stream.Close()
+	require.NoError(t, closeErr)
+	require.Error(t, invocations.outputContractError())
+	evidence, present = rejectedResponseEvidence(invocations)
+	require.True(t, present)
+	require.Len(t, evidence.SHA256, 64)
+	require.Positive(t, evidence.Size)
+	require.Nil(t, invocations.recoverableModelInvocationRecovery())
+	require.True(t, invocations.commitModelInvocationRecovery(errors.Join(recvErr, closeErr)))
+	evidence, present = rejectedResponseEvidence(invocations)
+	require.True(t, present)
+	require.Len(t, evidence.SHA256, 64)
+	require.Positive(t, evidence.Size)
+	recovery := invocations.recoverableModelInvocationRecovery()
+	require.NotNil(t, recovery)
+	require.Equal(t, "catalog.unknown", recovery.UnadvertisedToolName)
+	require.NoError(t, stream.Close())
+	require.Equal(t, recovery, invocations.recoverableModelInvocationRecovery())
+	require.Equal(t, 7, invocations.exportUsage().TotalTokens)
+}
+
+func TestModelInvocationStreamDoesNotCommitRejectedOutputAfterCloseFailure(t *testing.T) {
+	closeErr := errors.New("provider close failed")
+	invocations := &modelInvocationJournal{}
+	client := newTestModelInvocationClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			return &chunkStreamer{
+				chunks: []model.Chunk{model.StopChunk{Reason: "end_turn"}},
+				response: &model.Response{
+					Content: []model.Message{{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{nil},
+					}},
+					StopReason: "end_turn",
+				},
+				closeErr: closeErr,
+			}, nil
+		},
+	}, invocations)
+	stream, err := client.Stream(t.Context(), &model.Request{})
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	_, validationErr := stream.Recv()
+	require.ErrorContains(t, validationErr, "invalid canonical response")
+
+	err = stream.Close()
+	require.ErrorIs(t, err, closeErr)
+	require.Nil(t, invocations.recoverableModelInvocationRecovery())
+	_, err = invocations.beginModelInvocation("", func() {})
+	require.ErrorIs(t, err, closeErr)
+	var outputValidationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &outputValidationErr)
+	require.ErrorContains(t, err, "invalid canonical response")
+}
+
+func TestModelInvocationStreamWaitsForLaterObserverFailure(t *testing.T) {
+	observerErr := errors.New("later observer failed")
+	invocations := &modelInvocationJournal{}
+	client := newTestModelInvocationClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			return &chunkStreamer{
+				chunks: []model.Chunk{model.StopChunk{Reason: "end_turn"}},
+				response: &model.Response{
+					Content: []model.Message{{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{nil},
+					}},
+					StopReason: "end_turn",
+					Usage:      model.TokenUsage{TotalTokens: 7},
+				},
+			}, nil
+		},
+	}, invocations)
+	stream, err := client.Stream(t.Context(), &model.Request{})
+	require.NoError(t, err)
+	stream, err = stream.Observe(&rejectValidationObserver{err: observerErr})
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	_, recvErr := stream.Recv()
+	require.ErrorIs(t, recvErr, observerErr)
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, recvErr, &validationErr)
+	require.Nil(t, invocations.recoverableModelInvocationRecovery())
+	require.Equal(t, 7, invocations.exportUsage().TotalTokens)
+
+	closeErr := stream.Close()
+
+	require.NoError(t, closeErr)
+	require.ErrorIs(t, invocations.outputContractError(), observerErr)
+	require.ErrorAs(t, invocations.outputContractError(), &validationErr)
+	require.Nil(t, invocations.recoverableModelInvocationRecovery())
+	require.Equal(t, 7, invocations.exportUsage().TotalTokens)
+}
+
+func TestModelInvocationStreamDoesNotCommitRejectedOutputAfterUsageRecordingFailure(t *testing.T) {
+	recordErr := errors.New("record rejected usage")
+	sink := &fakeModelInvocationSink{recordUsageTotalErr: recordErr}
+	client := newTestModelInvocationClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			return &chunkStreamer{
+				chunks: []model.Chunk{model.StopChunk{Reason: "end_turn"}},
+				response: &model.Response{
+					Content: []model.Message{{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{nil},
+					}},
+					StopReason: "end_turn",
+					Usage:      model.TokenUsage{TotalTokens: 7},
+				},
+			}, nil
+		},
+	}, sink)
+	stream, err := client.Stream(t.Context(), &model.Request{})
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	_, validationErr := stream.Recv()
+	require.ErrorContains(t, validationErr, "invalid canonical response")
+	require.ErrorIs(t, validationErr, recordErr)
+
+	err = stream.Close()
+	require.NoError(t, err)
+	require.Equal(t, 1, sink.rejectedResponses)
+}
+
+func TestModelInvocationStreamDoesNotCommitRejectedOutputAfterCancellation(t *testing.T) {
+	invocations := &modelInvocationJournal{}
 	client := newTestModelInvocationClient(stubModelClient{
 		stream: func(context.Context, *model.Request) (model.Streamer, error) {
 			return &chunkStreamer{
@@ -173,18 +439,52 @@ func TestModelInvocationStreamFingerprintsRejectedCompleteResponse(t *testing.T)
 			}, nil
 		},
 	}, invocations)
-	stream, err := client.Stream(t.Context(), &model.Request{})
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := client.Stream(ctx, &model.Request{})
 	require.NoError(t, err)
 	_, err = stream.Recv()
 	require.NoError(t, err)
-	_, err = stream.Recv()
-	require.Error(t, err)
-	require.ErrorContains(t, err, "invalid canonical response")
+	_, validationErr := stream.Recv()
+	require.ErrorContains(t, validationErr, "invalid canonical response")
+	cancel()
 
-	evidence, present := rejectedResponseEvidence(invocations)
-	require.True(t, present)
-	require.Len(t, evidence.SHA256, 64)
-	require.Positive(t, evidence.Size)
+	err = stream.Close()
+	require.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, invocations.outputContractError(), context.Canceled)
+	require.Nil(t, invocations.recoverableModelInvocationRecovery())
+}
+
+func TestModelInvocationStreamDoesNotCommitRejectedOutputAfterDeadline(t *testing.T) {
+	invocations := &modelInvocationJournal{}
+	var providerCtx context.Context
+	client := newTestModelInvocationClient(stubModelClient{
+		stream: func(ctx context.Context, _ *model.Request) (model.Streamer, error) {
+			providerCtx = ctx
+			return &chunkStreamer{
+				chunks: []model.Chunk{model.StopChunk{Reason: "end_turn"}},
+				response: &model.Response{
+					Content: []model.Message{{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{nil},
+					}},
+					StopReason: "end_turn",
+				},
+			}, nil
+		},
+	}, invocations)
+	ctx := &controlledDeadlineContext{done: make(chan struct{})}
+	stream, err := client.Stream(ctx, &model.Request{})
+	require.NoError(t, err)
+	_, err = stream.Recv()
+	require.NoError(t, err)
+	_, validationErr := stream.Recv()
+	require.ErrorContains(t, validationErr, "invalid canonical response")
+	ctx.expire()
+	<-providerCtx.Done()
+
+	require.ErrorIs(t, stream.Close(), context.DeadlineExceeded)
+	require.ErrorIs(t, invocations.outputContractError(), context.DeadlineExceeded)
+	require.Nil(t, invocations.recoverableModelInvocationRecovery())
 }
 
 func TestModelInvocationClientRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
@@ -236,6 +536,63 @@ func TestModelInvocationClientRejectsNilRequestBeforeProviderCall(t *testing.T) 
 	require.Zero(t, providerCalls)
 }
 
+func TestModelInvocationRecoverySelectsEarliestConcurrentProductionCall(t *testing.T) {
+	var providerCalls atomic.Int32
+	firstEntered := make(chan struct{})
+	secondEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	invocations := &modelInvocationJournal{}
+	client := newTestModelInvocationClient(stubModelClient{
+		complete: func(_ context.Context, request *model.Request) (*model.Response, error) {
+			call := providerCalls.Add(1)
+			name := "catalog.first"
+			switch call {
+			case 1:
+				close(firstEntered)
+				<-releaseFirst
+			case 2:
+				name = "catalog.second"
+				close(secondEntered)
+				<-releaseSecond
+			default:
+				return nil, errors.New("unexpected provider call")
+			}
+			contract, err := model.NewRequestContract(request)
+			require.NoError(t, err)
+			response := testModelResponseWithUsage(nil, model.TokenUsage{TotalTokens: int(call)}, model.ToolCall{
+				ID:      "call",
+				Name:    tools.Ident(name),
+				Payload: rawjson.Message(`{}`),
+			})
+			return nil, contract.RejectResponse(response, model.NewUnadvertisedToolNameError(name))
+		},
+	}, invocations)
+	request := testModelRequest("catalog.allowed")
+	results := make(chan error, 2)
+	go func() {
+		_, err := client.Complete(t.Context(), request)
+		results <- err
+	}()
+	<-firstEntered
+	go func() {
+		_, err := client.Complete(t.Context(), request)
+		results <- err
+	}()
+	<-secondEntered
+	close(releaseSecond)
+	secondErr := <-results
+	close(releaseFirst)
+	firstErr := <-results
+
+	require.True(t, invocations.commitModelInvocationRecovery(errors.Join(firstErr, secondErr)))
+	recovery := invocations.recoverableModelInvocationRecovery()
+	require.NotNil(t, recovery)
+	require.Equal(t, "catalog.first", recovery.UnadvertisedToolName)
+	require.Equal(t, int32(2), providerCalls.Load())
+	require.Equal(t, 3, invocations.exportUsage().TotalTokens)
+}
+
 func TestModelInvocationClientKeepsPreProviderRequestContract(t *testing.T) {
 	request := testModelRequest()
 	client := newTestModelInvocationClient(stubModelClient{
@@ -252,41 +609,6 @@ func TestModelInvocationClientKeepsPreProviderRequestContract(t *testing.T) {
 	response, err := client.Complete(t.Context(), request)
 	require.Nil(t, response)
 	require.ErrorContains(t, err, `model returned tool "late_tool" that was not present in its request`)
-}
-
-func TestModelInvocationJournalSelectsEarliestStartedRejection(t *testing.T) {
-	invocations := &modelInvocationJournal{}
-	firstID, err := invocations.beginModelInvocation("", func() {})
-	require.NoError(t, err)
-	secondID, err := invocations.beginModelInvocation("", func() {})
-	require.NoError(t, err)
-
-	firstFingerprint := model.ResponseEvidence{Present: true, SHA256: "first", Size: 5}
-	secondFingerprint := model.ResponseEvidence{Present: true, SHA256: "second", Size: 6}
-
-	require.NoError(t, invocations.recordRejectedResponseEvidence(secondID, secondFingerprint))
-	secondErr := outputcontract.NewWithOrigin(
-		errors.New("second rejection completed first"),
-		planner.OutputContractOriginModel,
-	)
-	require.Equal(t, secondErr, invocations.rejectModelInvocation(secondID, secondErr))
-	invocations.invocations[secondID].recoveryCorrection = "replace second invocation"
-
-	require.NoError(t, invocations.recordRejectedResponseEvidence(firstID, firstFingerprint))
-	firstErr := outputcontract.NewWithOrigin(
-		errors.New("first rejection completed second"),
-		planner.OutputContractOriginModel,
-	)
-	require.Equal(t, firstErr, invocations.rejectModelInvocation(firstID, firstErr))
-	invocations.invocations[firstID].recoveryCorrection = "replace first invocation"
-
-	require.Equal(t, firstErr, invocations.outputContractError())
-	recovery := invocations.recoverableModelInvocationRecovery()
-	require.NotNil(t, recovery)
-	require.Equal(t, "replace first invocation", recovery.Correction)
-	evidence, present := rejectedResponseEvidence(invocations)
-	require.True(t, present)
-	require.Equal(t, firstFingerprint, evidence)
 }
 
 func TestModelInvocationClientKeepsValidatedResponseBookkeepingFailurePlannerOwned(t *testing.T) {
@@ -306,6 +628,30 @@ func TestModelInvocationClientKeepsValidatedResponseBookkeepingFailurePlannerOwn
 	require.Nil(t, response)
 	require.ErrorIs(t, err, bookkeepingErr)
 	require.Zero(t, sink.rejectedResponses)
+}
+
+func TestModelInvocationClientDoesNotCommitRejectedOutputAfterUsageRecordingFailure(t *testing.T) {
+	recordErr := errors.New("record rejected usage")
+	sink := &fakeModelInvocationSink{recordUsageTotalErr: recordErr}
+	client := newTestModelInvocationClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			return &model.Response{
+				Content: []model.Message{{
+					Role:  model.ConversationRoleAssistant,
+					Parts: []model.Part{nil},
+				}},
+				StopReason: "end_turn",
+				Usage:      model.TokenUsage{TotalTokens: 7},
+			}, nil
+		},
+	}, sink)
+
+	response, err := client.Complete(t.Context(), &model.Request{})
+
+	require.Nil(t, response)
+	require.ErrorContains(t, err, "unsupported assistant response part")
+	require.ErrorIs(t, err, recordErr)
+	require.Equal(t, 1, sink.rejectedResponses)
 }
 
 func TestModelInvocationJournalBlocksCallsAfterSeal(t *testing.T) {
@@ -783,14 +1129,18 @@ func TestDesignatedModelInvocationWinsIdenticalProbeToolCalls(t *testing.T) {
 // fakeModelInvocationSink records complete responses and stream chunks by
 // runtime-owned invocation.
 type fakeModelInvocationSink struct {
-	begins             uint64
-	last               modelInvocationID
-	responses          map[modelInvocationID]*model.Response
-	chunks             map[modelInvocationID][]model.Chunk
-	finished           map[modelInvocationID]error
-	cancels            map[modelInvocationID]context.CancelFunc
-	recordValidatedErr error
-	rejectedResponses  int
+	begins              uint64
+	last                modelInvocationID
+	responses           map[modelInvocationID]*model.Response
+	chunks              map[modelInvocationID][]model.Chunk
+	finished            map[modelInvocationID]error
+	cancels             map[modelInvocationID]context.CancelFunc
+	recordValidatedErr  error
+	recordRejectedErr   error
+	recordUsageTotalErr error
+	recordUsageDeltaErr error
+	rejectedResponses   int
+	usageTotals         []model.TokenUsage
 }
 
 func (s *fakeModelInvocationSink) beginModelInvocation(
@@ -818,21 +1168,22 @@ func (s *fakeModelInvocationSink) recordModelResponse(invocationID modelInvocati
 	return nil
 }
 
-func (s *fakeModelInvocationSink) recordRejectedModelOutput(
+func (s *fakeModelInvocationSink) stageRejectedModelOutput(
 	_ modelInvocationID,
 	_ model.ResponseEvidence,
-	err error,
+	_ error,
 ) error {
 	s.rejectedResponses++
-	return err
+	return s.recordRejectedErr
 }
 
-func (*fakeModelInvocationSink) recordRejectedModelUsageTotal(_ modelInvocationID, _ model.TokenUsage) error {
-	return nil
+func (s *fakeModelInvocationSink) recordRejectedModelUsageTotal(_ modelInvocationID, usage model.TokenUsage) error {
+	s.usageTotals = append(s.usageTotals, usage)
+	return s.recordUsageTotalErr
 }
 
-func (*fakeModelInvocationSink) recordRejectedModelUsageDelta(context.Context, modelInvocationID, model.TokenUsage) error {
-	return nil
+func (s *fakeModelInvocationSink) recordRejectedModelUsageDelta(context.Context, modelInvocationID, model.TokenUsage) error {
+	return s.recordUsageDeltaErr
 }
 
 func (s *fakeModelInvocationSink) recordValidatedModelResponse(
@@ -857,15 +1208,14 @@ func (s *fakeModelInvocationSink) recordModelChunk(
 	return nil
 }
 
-func (s *fakeModelInvocationSink) finishModelInvocation(
-	_ context.Context,
+func (s *fakeModelInvocationSink) finalizeModelInvocation(
 	invocationID modelInvocationID,
-	err error,
+	outcome modelcall.Outcome,
 ) error {
 	if s.finished == nil {
 		s.finished = make(map[modelInvocationID]error)
 	}
-	s.finished[invocationID] = err
+	s.finished[invocationID] = outcome.Error()
 	s.cancels[invocationID]()
 	return nil
 }

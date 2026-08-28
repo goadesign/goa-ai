@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 
@@ -300,6 +301,29 @@ func TestTracedStreamObserverRecordsNonCancellationError(t *testing.T) {
 	assert.Equal(t, codes.Error, span.statusCode)
 	assert.Equal(t, "stream recv failed", span.statusDesc)
 	assert.False(t, span.ended)
+}
+
+func TestTracedClientRejectsWrappedProviderEOF(t *testing.T) {
+	wrappedEOF := fmt.Errorf("provider stream failed: %w", io.EOF)
+	tracer := &recordingTelemetryTracer{}
+	client := newTracedClient(mustTestModelClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			return &stubStreamer{recvErr: wrappedEOF}, nil
+		},
+	}), tracer, telemetry.NewNoopLogger(), "primary", testGenAIContext(), false)
+	stream, err := client.Stream(t.Context(), &model.Request{
+		ModelClass: model.ModelClassDefault,
+	})
+	require.NoError(t, err)
+
+	chunk, err := stream.Recv()
+
+	require.Nil(t, chunk)
+	require.Equal(t, wrappedEOF, err)
+	require.Len(t, tracer.spans, 1)
+	require.Len(t, tracer.spans[0].errs, 1)
+	require.Equal(t, wrappedEOF, tracer.spans[0].errs[0])
+	assert.Equal(t, codes.Error, tracer.spans[0].statusCode)
 }
 
 func TestTracedClientCompleteEmitsGenAIAttrs(t *testing.T) {

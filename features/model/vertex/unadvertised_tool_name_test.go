@@ -241,5 +241,5 @@ func TestStreamCancellationSupersedesLatchedUnadvertisedName(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	_, recoverable := model.UnadvertisedToolName(err)
 	assert.False(t, recoverable)
-	assert.NoError(t, streamer.Close())
+	assert.ErrorIs(t, streamer.Close(), context.Canceled)
 }

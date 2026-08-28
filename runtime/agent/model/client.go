@@ -8,10 +8,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"reflect"
 	"slices"
 	"sync"
+
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 )
 
 type (
@@ -42,9 +43,11 @@ type (
 	// Complete receives either a validated response or an error. Stream receives
 	// the prepared call result and may return recording behavior that Client
 	// attaches to the exact validated stream. Observers never receive the stream
-	// itself. Observation errors are additive:
-	// Client joins them with the provider or validation result. Every prepared
-	// observer receives exactly one Finish or Abort call.
+	// itself. Every observer receives the same provider or validation result;
+	// one observer's error is recorded without changing later observer input.
+	// Every prepared Finish receives the same result collected before any
+	// finisher ran. Every prepared observer receives exactly one Finish or
+	// Abort call.
 	ClientCallObserver interface {
 		ObserveClientComplete(*Response, error) error
 		ObserveClientStream(error) (StreamObserver, error)
@@ -57,9 +60,16 @@ type (
 	clientCallStreamObserver struct {
 		call     ClientCallObserver
 		observer StreamObserver
+	}
 
-		mu          sync.Mutex
-		terminalErr error
+	// clientCallLifecycle collects every callback result and invokes the one
+	// runtime finalizer after all prepared Finish callbacks have run.
+	clientCallLifecycle struct {
+		ctx            context.Context
+		calls          []ClientCallObserver
+		finalizer      modelcall.Finalizer
+		finalizerIndex int
+		outcome        modelcall.Outcome
 	}
 
 	// contextStreamObserver lets Client close the exact validated stream when
@@ -159,19 +169,50 @@ func (c *validatedClient) Complete(ctx context.Context, req *Request) (*Response
 	if err != nil {
 		return nil, err
 	}
+	lifecycle, err := newClientCallLifecycle(ctx, observers)
+	if err != nil {
+		return nil, abortClientCalls(ctx, observers, err)
+	}
 	request = preparedRequest(request, contract)
-	response, err := c.provider.Complete(ctx, request)
-	if err == nil {
-		response, err = contract.ValidateResponse(response)
-	} else {
+	response, providerErr := c.provider.Complete(ctx, request)
+	var validationErr error
+	var providerValidation *OutputValidationError
+	switch {
+	case errors.As(providerErr, &providerValidation):
+		validationErr = providerErr
+		providerErr = nil
+		response = nil
+	case providerErr == nil:
+		response, validationErr = contract.ValidateResponse(response)
+	default:
 		response = nil
 	}
-	for _, observer := range observers {
-		observed, cloneErr := CloneResponse(response)
-		observedErr := errors.Join(err, cloneErr)
-		err = errors.Join(err, cloneErr, observer.ObserveClientComplete(observed, observedErr))
+	lifecycle.outcome.ProviderCall = modelcall.Result{Called: true, Err: providerErr}
+	lifecycle.outcome.Validations = []modelcall.Result{{
+		Called: providerErr == nil,
+		Err:    validationErr,
+	}}
+	sourceErr := joinClientErrors(providerErr, validationErr)
+	lifecycle.outcome.CompletionObservers = make([]modelcall.Result, len(observers))
+	observedResponses := make([]*Response, len(observers))
+	var cloneErr error
+	for i := range observers {
+		observedResponses[i], err = CloneResponse(response)
+		cloneErr = errors.Join(cloneErr, err)
 	}
-	err = finishClientCalls(observers, err)
+	if cloneErr != nil {
+		lifecycle.outcome.Framework = modelcall.Result{Called: true, Err: cloneErr}
+		sourceErr = errors.Join(sourceErr, cloneErr)
+	}
+	for i, observer := range observers {
+		observerErr := observer.ObserveClientComplete(observedResponses[i], sourceErr)
+		lifecycle.outcome.CompletionObservers[i] = modelcall.Result{
+			Called: true,
+			Err:    observerErr,
+		}
+	}
+	lifecycle.outcome.Context = contextResult(ctx)
+	err = lifecycle.finalize()
 	if err != nil {
 		return nil, err
 	}
@@ -193,22 +234,32 @@ func (c *validatedClient) Stream(ctx context.Context, req *Request) (*ValidatedS
 	if err != nil {
 		return nil, err
 	}
+	lifecycle, err := newClientCallLifecycle(ctx, observers)
+	if err != nil {
+		return nil, abortClientCalls(ctx, observers, err)
+	}
 	request = preparedRequest(request, contract)
 	stream, err := c.provider.Stream(ctx, request)
+	lifecycle.outcome.ProviderCall = modelcall.Result{Called: true, Err: err}
 	if err != nil {
 		if !isNilStreamer(stream) {
-			err = errors.Join(err, stream.Close())
+			closeErr := stream.Close()
+			lifecycle.outcome.ProviderClose = modelcall.Result{Called: true, Err: closeErr}
+			err = joinClientErrors(err, closeErr)
 		}
-		return c.observeClientStream(ctx, nil, err, observers)
+		return c.observeClientStream(ctx, nil, err, lifecycle)
 	}
 	validated, err := contract.ValidateStream(stream)
 	if err != nil {
+		lifecycle.outcome.Validations = []modelcall.Result{{Called: true, Err: err}}
 		if !isNilStreamer(stream) {
-			err = errors.Join(err, stream.Close())
+			closeErr := stream.Close()
+			lifecycle.outcome.ProviderClose = modelcall.Result{Called: true, Err: closeErr}
+			err = joinClientErrors(err, closeErr)
 		}
-		return c.observeClientStream(ctx, nil, err, observers)
+		return c.observeClientStream(ctx, nil, err, lifecycle)
 	}
-	return c.observeClientStream(ctx, validated, nil, observers)
+	return c.observeClientStream(ctx, validated, nil, lifecycle)
 }
 
 // CountTokens validates the provider input contract before forwarding the
@@ -268,17 +319,11 @@ func (c *validatedClient) prepareClientCall(
 	for i := len(c.observers) - 1; i >= 0; i-- {
 		observedRequest, err := cloneRequest(req)
 		if err != nil {
-			for j := len(observers) - 1; j >= 0; j-- {
-				err = errors.Join(err, observers[j].Abort(err))
-			}
-			return ctx, nil, err
+			return ctx, nil, abortClientCalls(ctx, observers, err)
 		}
 		nextCtx, observer, err := c.observers[i].PrepareClientCall(ctx, observedRequest)
 		if err != nil {
-			for j := len(observers) - 1; j >= 0; j-- {
-				err = errors.Join(err, observers[j].Abort(err))
-			}
-			return ctx, nil, err
+			return ctx, nil, abortClientCalls(ctx, observers, err)
 		}
 		ctx = nextCtx
 		if observer != nil {
@@ -289,6 +334,32 @@ func (c *validatedClient) prepareClientCall(
 	return ctx, observers, nil
 }
 
+// abortClientCalls gives every prepared call the same setup failure, records
+// each abort independently, and invokes an internal finalizer last when one was
+// already prepared.
+func abortClientCalls(ctx context.Context, calls []ClientCallObserver, setupErr error) error {
+	results := make([]modelcall.Result, len(calls))
+	for i := len(calls) - 1; i >= 0; i-- {
+		results[i] = modelcall.Result{Called: true, Err: calls[i].Abort(setupErr)}
+	}
+	outcome := modelcall.Outcome{
+		ProviderCall: modelcall.Result{Called: true, Err: setupErr},
+		Aborts:       results,
+		Context:      contextResult(ctx),
+	}
+	var finalizerErr error
+	for i, call := range calls {
+		finalizer, ok := call.(modelcall.Finalizer)
+		if !ok {
+			continue
+		}
+		outcome.HasFinalizer = true
+		outcome.FinalizerIndex = i
+		finalizerErr = errors.Join(finalizerErr, finalizer.FinalizeModelCall(outcome.Clone()))
+	}
+	return joinClientErrors(outcome.Error(), finalizerErr)
+}
+
 // observeClientStream gathers additive observation results, then attaches every
 // returned stream observer itself. A failed setup finishes all prepared calls
 // and never exposes the stream.
@@ -296,45 +367,50 @@ func (c *validatedClient) observeClientStream(
 	ctx context.Context,
 	stream *ValidatedStream,
 	err error,
-	observers []ClientCallObserver,
+	lifecycle *clientCallLifecycle,
 ) (*ValidatedStream, error) {
-	streamObservers := make([]StreamObserver, len(observers))
-	for i, observer := range observers {
+	streamObservers := make([]StreamObserver, len(lifecycle.calls))
+	lifecycle.outcome.StreamSetupObservers = make([]modelcall.Result, len(lifecycle.calls))
+	for i, observer := range lifecycle.calls {
 		streamObserver, observerErr := observer.ObserveClientStream(err)
 		streamObservers[i] = streamObserver
-		err = errors.Join(err, observerErr)
+		lifecycle.outcome.StreamSetupObservers[i] = modelcall.Result{Called: true, Err: observerErr}
 	}
-	if stream == nil || err != nil {
+	setupErr := joinClientErrors(err, modelcallResultsError(lifecycle.outcome.StreamSetupObservers))
+	if stream == nil || setupErr != nil {
 		if stream != nil {
-			err = errors.Join(err, stream.Close())
+			closeErr := stream.Close()
+			lifecycle.outcome.ProviderClose = modelcall.Result{Called: true, Err: closeErr}
 		}
-		return nil, finishClientCalls(observers, err)
+		lifecycle.outcome.Context = contextResult(ctx)
+		return nil, lifecycle.finalize()
 	}
 
-	attached := 0
-	for i, observer := range observers {
-		observed, observeErr := stream.Observe(&clientCallStreamObserver{
+	for i, observer := range lifecycle.calls {
+		callObserver := &clientCallStreamObserver{
 			call:     observer,
 			observer: streamObservers[i],
-		})
+		}
+		observed, observeErr := stream.Observe(callObserver)
 		if observeErr != nil {
-			err = errors.Join(err, observeErr)
+			lifecycle.outcome.Framework = modelcall.Result{Called: true, Err: observeErr}
 			break
 		}
 		stream = observed
-		attached++
 	}
-	if err != nil {
-		err = errors.Join(err, stream.Close())
-		err = finishClientCalls(observers[attached:], err)
-		return nil, err
+	if lifecycle.outcome.Framework.Err != nil {
+		closeErr := stream.Close()
+		lifecycle.outcome.ProviderClose = modelcall.Result{Called: true, Err: closeErr}
+		lifecycle.outcome.Context = contextResult(ctx)
+		return nil, lifecycle.finalize()
 	}
+	stream.registerClientCallLifecycle(lifecycle)
 	if ctx.Done() != nil {
 		lifecycle := &contextStreamObserver{done: make(chan struct{})}
 		observed, observeErr := stream.Observe(lifecycle)
 		if observeErr != nil {
-			err = errors.Join(observeErr, stream.Close())
-			return nil, err
+			stream.core.lifecycle.outcome.Framework = modelcall.Result{Called: true, Err: observeErr}
+			return nil, errors.Join(observeErr, stream.Close())
 		}
 		stream = observed
 		go closeStreamOnContext(ctx, stream, lifecycle.done)
@@ -352,48 +428,120 @@ func closeStreamOnContext(ctx context.Context, stream *ValidatedStream, done <-c
 	}
 }
 
-// finishClientCalls closes prepared call lifecycles in inner-to-outer order.
-// Each returned cleanup failure is additive to the terminal call result.
-func finishClientCalls(observers []ClientCallObserver, err error) error {
-	for _, observer := range observers {
-		err = errors.Join(err, observer.Finish(err))
+// newClientCallLifecycle finds the one internal runtime finalizer among the
+// prepared calls. More than one finalizer would make call ownership ambiguous.
+func newClientCallLifecycle(ctx context.Context, calls []ClientCallObserver) (*clientCallLifecycle, error) {
+	lifecycle := &clientCallLifecycle{ctx: ctx, calls: calls}
+	for i, call := range calls {
+		finalizer, ok := call.(modelcall.Finalizer)
+		if !ok {
+			continue
+		}
+		if lifecycle.finalizer != nil {
+			return nil, errors.New("model call has multiple runtime finalizers")
+		}
+		lifecycle.finalizer = finalizer
+		lifecycle.finalizerIndex = i
+		lifecycle.outcome.HasFinalizer = true
+		lifecycle.outcome.FinalizerIndex = i
+	}
+	return lifecycle, nil
+}
+
+// finalize gives every prepared call the same frozen pre-finisher error,
+// records every returned result, and invokes the runtime finalizer last.
+func (l *clientCallLifecycle) finalize() error {
+	finalizerErr := l.runFinishers()
+	return joinClientErrors(l.outcome.Error(), finalizerErr)
+}
+
+// finalizeClose runs every finisher and returns only close-time failures. The
+// complete structured outcome still reaches the runtime finalizer.
+func (l *clientCallLifecycle) finalizeClose() error {
+	finalizerErr := l.runFinishers()
+	closeOutcome := modelcall.Outcome{
+		ProviderClose: l.outcome.ProviderClose,
+		CloseObservers: append(
+			[]modelcall.Result(nil),
+			l.outcome.CloseObservers...,
+		),
+		Finishers: append([]modelcall.Result(nil), l.outcome.Finishers...),
+		Context:   l.outcome.Context,
+		Framework: l.outcome.Framework,
+	}
+	return joinClientErrors(closeOutcome.Error(), finalizerErr)
+}
+
+// runFinishers records every prepared Finish result against one frozen input,
+// then invokes the internal finalizer with the complete outcome.
+func (l *clientCallLifecycle) runFinishers() error {
+	l.outcome.Finishers = make([]modelcall.Result, len(l.calls))
+	preFinishErr := l.outcome.Error()
+	for i, call := range l.calls {
+		l.outcome.Finishers[i] = modelcall.Result{
+			Called: true,
+			Err:    call.Finish(preFinishErr),
+		}
+	}
+	l.outcome.Context.Called = true
+	if err := l.outcome.ValidateFinalized(); err != nil {
+		l.outcome.Framework = modelcall.Result{Called: true, Err: err}
+	}
+	var finalizerErr error
+	if l.finalizer != nil {
+		finalizerErr = l.finalizer.FinalizeModelCall(l.outcome.Clone())
+	}
+	return finalizerErr
+}
+
+// contextResult records cancellation or deadline state without changing a
+// callback's frozen phase input.
+func contextResult(ctx context.Context) modelcall.Result {
+	return modelcall.Result{Called: true, Err: ctx.Err()}
+}
+
+// modelcallResultsError derives callback errors for outward setup handling.
+func modelcallResultsError(results []modelcall.Result) error {
+	var err error
+	for _, result := range results {
+		err = joinClientErrors(err, result.Err)
 	}
 	return err
 }
 
-// ObserveStreamRecv delegates safe stream facts and retains the terminal call
-// error so Finish receives it when the caller closes the stream.
-func (o *clientCallStreamObserver) ObserveStreamRecv(observation StreamObservation) error {
-	var observerErr error
-	if o.observer != nil {
-		observerErr = o.observer.ObserveStreamRecv(observation)
-	}
-	terminalErr := observerErr
-	if observation.Err != nil && !errors.Is(observation.Err, io.EOF) {
-		terminalErr = errors.Join(observation.Err, terminalErr)
-	}
-	if terminalErr != nil {
-		o.mu.Lock()
-		if o.terminalErr == nil {
-			o.terminalErr = terminalErr
+// joinClientErrors preserves an exact lone phase error and joins distinct
+// failures only when more than one operation failed.
+func joinClientErrors(errs ...error) error {
+	var joined error
+	for _, err := range errs {
+		if err == nil {
+			continue
 		}
-		o.mu.Unlock()
+		if joined == nil {
+			joined = err
+			continue
+		}
+		joined = errors.Join(joined, err)
 	}
-	return observerErr
+	return joined
 }
 
-// ObserveStreamClose finishes the prepared call after its optional stream
-// observer has seen the exact provider close result.
-func (o *clientCallStreamObserver) ObserveStreamClose(err error) error {
-	var observerErr error
-	if o.observer != nil {
-		observerErr = o.observer.ObserveStreamClose(err)
+// ObserveStreamRecv delegates safe stream facts without changing the validated
+// chunk or error passed to later observers.
+func (o *clientCallStreamObserver) ObserveStreamRecv(observation StreamObservation) error {
+	if o.observer == nil {
+		return nil
 	}
-	o.mu.Lock()
-	terminalErr := errors.Join(o.terminalErr, err, observerErr)
-	o.mu.Unlock()
-	finishErr := o.call.Finish(terminalErr)
-	return errors.Join(observerErr, finishErr)
+	return o.observer.ObserveStreamRecv(observation)
+}
+
+// ObserveStreamClose delegates the close result. ValidatedStream.Close finishes
+// the prepared call only after every observer has returned.
+func (o *clientCallStreamObserver) ObserveStreamClose(err error) error {
+	if o.observer == nil {
+		return nil
+	}
+	return o.observer.ObserveStreamClose(err)
 }
 
 // ObserveStreamRecv does not alter validated chunks.

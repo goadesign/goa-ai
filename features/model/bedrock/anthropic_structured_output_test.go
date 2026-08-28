@@ -6,6 +6,7 @@ package bedrock
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 
@@ -26,6 +27,7 @@ type (
 	scriptedAnthropicStreamer struct {
 		chunks   []model.Chunk
 		response *model.Response
+		recvErr  error
 		index    int
 		closed   bool
 	}
@@ -46,6 +48,9 @@ func (p *recordingAnthropicProvider) Stream(_ context.Context, req *model.Reques
 // Recv returns each scripted provider chunk followed by clean EOF.
 func (s *scriptedAnthropicStreamer) Recv() (model.Chunk, error) {
 	if s.index == len(s.chunks) {
+		if s.recvErr != nil {
+			return nil, s.recvErr
+		}
 		return nil, io.EOF
 	}
 	chunk := s.chunks[s.index]
@@ -155,4 +160,37 @@ func TestAnthropicBedrockStructuredOutputStreamReifiesForcedTool(t *testing.T) {
 	assert.Equal(t, "eval_judgments", inference.request.Tools[0].Name)
 	require.NoError(t, stream.Close())
 	assert.True(t, raw.closed)
+}
+
+func TestAnthropicBedrockStructuredOutputRejectsWrappedEOF(t *testing.T) {
+	wrappedEOF := fmt.Errorf("provider stream failed: %w", io.EOF)
+	raw := &scriptedAnthropicStreamer{
+		chunks: []model.Chunk{model.ToolCallChunk{ToolCall: model.ToolCall{
+			Name:    tools.Ident("eval_judgments"),
+			ID:      "toolu_01",
+			Payload: rawjson.Message(`{"value":{"passed":true}}`),
+		}}},
+		recvErr: wrappedEOF,
+	}
+	contract, err := model.NewRequestContract(&model.Request{
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "eval_judgments",
+			Schema: rawjson.Message(`{"type":"object"}`),
+		},
+	})
+	require.NoError(t, err)
+	stream := newAnthropicStructuredOutputStreamer(
+		raw,
+		"eval_judgments",
+		contract,
+	)
+
+	chunk, err := stream.Recv()
+	require.NoError(t, err)
+	require.IsType(t, model.CompletionChunk{}, chunk)
+	chunk, err = stream.Recv()
+
+	require.Nil(t, chunk)
+	require.Equal(t, wrappedEOF, err)
+	require.Nil(t, stream.Response())
 }

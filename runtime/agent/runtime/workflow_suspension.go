@@ -69,7 +69,7 @@ type (
 		ToolEvents             []*api.ToolEvent
 		ToolOutputs            []*planner.ToolOutput
 		PendingRecovery        []*planner.ToolOutput
-		PendingRecoveryCatalog *RecoveryCatalog
+		PendingRecoveryCatalog *RecoveryCatalog `json:",omitempty"` //nolint:tagliatelle // Checkpoints retain Go field names.
 	}
 
 	checkpointStepBatch struct {
@@ -128,6 +128,8 @@ type (
 		DeniedResult     rawjson.Message
 	}
 )
+
+const legacyRunSuspensionVersion = "goa-ai.run-suspension.v5"
 
 // suspendRun serializes the current workflow state after all visible await
 // events have been recorded. It returns a successful terminal output; no
@@ -296,6 +298,12 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 	}
 	baseContext := retargetRunContext(l.base.RunContext, l.input)
 	pendingRecovery, pendingRecoveryCatalog := toolRecovery(l.st.PendingRecovery)
+	if len(correctCallCatalog(pendingRecovery)) > 0 {
+		// A version 6 checkpoint stores the authenticated failed outputs and
+		// derives their exact correction tools when it is read. The checkpoint
+		// therefore omits the duplicate recovery catalog.
+		pendingRecoveryCatalog = nil
+	}
 	checkpoint := &workflowCheckpoint{
 		Version:        api.RunSuspensionVersion,
 		AgentID:        string(l.input.AgentID),
@@ -477,7 +485,7 @@ func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg Agen
 		Messages:   checkpoint.BaseMessages,
 		RunContext: restoreCheckpointRunContext(checkpoint.Context, input),
 	}
-	state, err := r.restoreCheckpointState(wfCtx.Context(), checkpoint.State)
+	state, err := r.restoreCheckpointState(wfCtx.Context(), checkpoint.Version, checkpoint.State)
 	if err != nil {
 		return nil, err
 	}
@@ -616,7 +624,13 @@ func restoreCheckpointRunContext(saved checkpointRunContext, input *RunInput) ru
 	}
 }
 
-func (r *Runtime) restoreCheckpointState(ctx context.Context, checkpoint checkpointRunState) (*runLoopState, error) {
+// restoreCheckpointState decodes saved tool results and reconstructs pending
+// recovery state according to the checkpoint's explicit version.
+func (r *Runtime) restoreCheckpointState(
+	ctx context.Context,
+	version string,
+	checkpoint checkpointRunState,
+) (*runLoopState, error) {
 	toolEvents := make([]*planner.ToolResult, 0, len(checkpoint.ToolEvents))
 	for _, event := range checkpoint.ToolEvents {
 		decoded, err := r.decodeCheckpointToolEvent(ctx, event)
@@ -635,9 +649,16 @@ func (r *Runtime) restoreCheckpointState(ctx context.Context, checkpoint checkpo
 		ToolOutputs:       checkpoint.ToolOutputs,
 	}
 	if len(checkpoint.PendingRecovery) > 0 {
+		recoveryCatalog := checkpoint.PendingRecoveryCatalog
+		if version == api.RunSuspensionVersion {
+			exactTools := correctCallCatalog(checkpoint.PendingRecovery)
+			if len(exactTools) > 0 {
+				recoveryCatalog = &RecoveryCatalog{Tools: exactTools}
+			}
+		}
 		state.PendingRecovery = pendingToolRecovery{
 			outputs: checkpoint.PendingRecovery,
-			catalog: checkpoint.PendingRecoveryCatalog,
+			catalog: recoveryCatalog,
 		}
 	}
 	return state, nil

@@ -20,9 +20,10 @@ import (
 )
 
 type lateErrorAnthropicDecoder struct {
-	events []ssestream.Event
-	index  int
-	err    error
+	events   []ssestream.Event
+	index    int
+	err      error
+	closeErr error
 }
 
 type blockingAnthropicDecoder struct {
@@ -44,8 +45,8 @@ func (d *lateErrorAnthropicDecoder) Next() bool {
 	return true
 }
 
-func (*lateErrorAnthropicDecoder) Close() error {
-	return nil
+func (d *lateErrorAnthropicDecoder) Close() error {
+	return d.closeErr
 }
 
 func (d *lateErrorAnthropicDecoder) Err() error {
@@ -107,6 +108,7 @@ func TestTranslateResponseAcceptsExactAdvertisedToolName(t *testing.T) {
 }
 
 func TestStreamMarksUnadvertisedToolName(t *testing.T) {
+	closeErr := errors.New("anthropic close failed")
 	request := &model.Request{
 		Model:      "test",
 		ModelClass: model.ModelClassDefault,
@@ -136,7 +138,7 @@ func TestStreamMarksUnadvertisedToolName(t *testing.T) {
 		events[index] = ssestream.Event{Type: raw.eventType, Data: []byte(raw.data)}
 	}
 	providerStream := ssestream.NewStream[sdk.MessageStreamEventUnion](
-		&testDecoder{events: events},
+		&lateErrorAnthropicDecoder{events: events, closeErr: closeErr},
 		nil,
 	)
 	raw := newAnthropicStreamer(
@@ -151,9 +153,6 @@ func TestStreamMarksUnadvertisedToolName(t *testing.T) {
 	)
 	streamer, err := contract.ValidateStream(raw)
 	require.NoError(t, err)
-	defer func() {
-		assert.NoError(t, streamer.Close())
-	}()
 	var chunks []model.Chunk
 	for {
 		chunk, recvErr := streamer.Recv()
@@ -181,6 +180,7 @@ func TestStreamMarksUnadvertisedToolName(t *testing.T) {
 	require.Len(t, chunks, 2)
 	assert.IsType(t, model.UsageChunk{}, chunks[0])
 	assert.Equal(t, "partial text", chunks[1].(model.TextChunk).Message.Parts[0].(model.TextPart).Text)
+	assert.ErrorIs(t, streamer.Close(), closeErr)
 }
 
 func TestStreamTransportFailureSupersedesLatchedUnadvertisedName(t *testing.T) {

@@ -2,6 +2,8 @@ package planner
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -27,6 +29,7 @@ type (
 		index    int
 		closed   bool
 		err      error
+		closeErr error
 	}
 )
 
@@ -44,11 +47,26 @@ func (s *testStreamer) Recv() (model.Chunk, error) {
 
 func (s *testStreamer) Close() error {
 	s.closed = true
-	return nil
+	return s.closeErr
 }
 
 func (s *testStreamer) Response() *model.Response {
 	return s.response
+}
+
+func TestConsumeStreamRejectsWrappedProviderEOF(t *testing.T) {
+	wrappedEOF := errors.New("provider wrapped EOF")
+	streamer := &testStreamer{err: fmt.Errorf("%w: %w", wrappedEOF, io.EOF)}
+
+	summary, err := ConsumeStream(
+		t.Context(),
+		mustValidatedStream(t, streamer, &model.Request{}),
+	)
+
+	require.Empty(t, summary)
+	require.ErrorIs(t, err, wrappedEOF)
+	require.ErrorIs(t, err, io.EOF)
+	require.True(t, streamer.closed)
 }
 
 func TestConsumeStreamPreservesMissingProviderUsageModel(t *testing.T) {
@@ -177,6 +195,31 @@ func TestConsumeStreamReturnsNoSummaryAfterLaterProviderRejection(t *testing.T) 
 
 	require.Error(t, err)
 	require.Equal(t, StreamSummary{}, summary)
+	require.True(t, streamer.closed)
+}
+
+func TestConsumeStreamJoinsValidationAndCloseFailure(t *testing.T) {
+	closeErr := errors.New("provider close failed")
+	request := modelRequestWithTool("svc.lookup")
+	contract, err := model.NewRequestContract(request)
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(
+		&model.TokenUsage{InputTokens: 4, OutputTokens: 3, TotalTokens: 7},
+		model.NewUnadvertisedToolNameError("svc.look_up"),
+	)
+	streamer := &testStreamer{
+		err:      validationErr,
+		closeErr: closeErr,
+	}
+
+	summary, err := ConsumeStream(
+		context.Background(),
+		mustValidatedStream(t, streamer, request),
+	)
+
+	require.Equal(t, StreamSummary{}, summary)
+	require.ErrorIs(t, err, validationErr)
+	require.ErrorIs(t, err, closeErr)
 	require.True(t, streamer.closed)
 }
 

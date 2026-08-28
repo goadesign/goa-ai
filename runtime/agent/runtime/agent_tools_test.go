@@ -114,6 +114,8 @@ func TestAgentToolPlannerOutputFailureSkipsParentResume(t *testing.T) {
 			parentID := agent.Ident("service.parent")
 			childTool := tools.Ident("child.tools.run")
 			childSpec := newAnyJSONSpec(childTool, "child.tools")
+			childSpec.IsAgentTool = true
+			childSpec.AgentID = string(childID)
 			rt := New(WithLogger(telemetry.NoopLogger{}))
 
 			require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{

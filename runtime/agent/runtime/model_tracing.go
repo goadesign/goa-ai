@@ -11,7 +11,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"io"
 	"sync"
 	"time"
@@ -195,7 +194,10 @@ func (c *tracedCall) Abort(err error) error {
 func (s *tracedStream) ObserveStreamRecv(observation model.StreamObservation) error {
 	err := observation.Err
 	if err != nil {
-		if errors.Is(err, io.EOF) {
+		// Only literal EOF completes a model stream. A wrapped EOF reports the
+		// provider failure that added the wrapper.
+		//nolint:errorlint // Exact equality is required by the model stream contract.
+		if err == io.EOF {
 			s.mu.Lock()
 			if !s.sawUsageDelta {
 				s.usage = observation.Response.Usage

@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"sync"
 
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/internal/provenance"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -37,6 +38,9 @@ type (
 		rejectedResponseEvidence *model.ResponseEvidence
 		recoveryCorrection       string
 		unadvertisedToolName     string
+		rejectedValidationErr    *model.OutputValidationError
+		rejectedOutputErr        error
+		outcome                  *modelcall.Outcome
 	}
 
 	// modelFacingToolCall is the provider transcript identity of a planner
@@ -66,6 +70,7 @@ type (
 		order                 []modelInvocationID
 		designated            modelInvocationID
 		selected              modelInvocationID
+		recovery              modelInvocationID
 		usage                 model.TokenUsage
 		outputErr             error
 		presentationStarted   bool
@@ -175,27 +180,13 @@ func (j *modelInvocationJournal) designateModelInvocation(id modelInvocationID) 
 	return nil
 }
 
-// recordRejectedModelOutput ties one validation failure to its invocation. It
-// stores a complete response fingerprint when one exists, but chunk-level
-// failures need only the invocation ID and safe correction carried by err.
-func (j *modelInvocationJournal) recordRejectedModelOutput(
+// stageRejectedModelOutput stores one validation failure without making it
+// available for recovery. The activity considers it only after the model client
+// freezes every provider and callback phase for this invocation.
+func (j *modelInvocationJournal) stageRejectedModelOutput(
 	invocationID modelInvocationID,
 	evidence model.ResponseEvidence,
 	err error,
-) error {
-	if evidence.Present {
-		if recordErr := j.recordRejectedResponseEvidence(invocationID, evidence); recordErr != nil {
-			err = errors.Join(err, recordErr)
-		}
-	}
-	return j.rejectModelInvocation(invocationID, err)
-}
-
-// recordRejectedResponseEvidence saves the bounded identity computed from the
-// raw complete response before ownership copying.
-func (j *modelInvocationJournal) recordRejectedResponseEvidence(
-	invocationID modelInvocationID,
-	evidence model.ResponseEvidence,
 ) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -204,10 +195,19 @@ func (j *modelInvocationJournal) recordRejectedResponseEvidence(
 	}
 	candidate := j.invocations[invocationID]
 	if candidate == nil {
-		return errors.New("rejected model response references an unknown invocation")
+		return errors.New("invalid model response references an unknown invocation")
 	}
-	copied := evidence
-	candidate.rejectedResponseEvidence = &copied
+	if evidence.Present {
+		copied := evidence
+		candidate.rejectedResponseEvidence = &copied
+	}
+	candidate.rejectedOutputErr = err
+	var validationErr *model.OutputValidationError
+	if errors.As(err, &validationErr) {
+		candidate.rejectedValidationErr = validationErr
+		candidate.recoveryCorrection = validationErr.RecoveryCorrection()
+		candidate.unadvertisedToolName, _ = model.UnadvertisedToolName(validationErr)
+	}
 	return nil
 }
 
@@ -386,13 +386,11 @@ func (j *modelInvocationJournal) recordModelChunk(
 	return nil
 }
 
-// finishModelInvocation records a failed call or verifies that a successful
-// stream supplied its complete response. It returns only bookkeeping errors
-// that are additive to the terminal error supplied by the caller.
-func (j *modelInvocationJournal) finishModelInvocation(
-	ctx context.Context,
+// finalizeModelInvocation freezes one complete provider and callback outcome.
+// No recovery fact is visible until the activity evaluates every frozen call.
+func (j *modelInvocationJournal) finalizeModelInvocation(
 	invocationID modelInvocationID,
-	err error,
+	outcome modelcall.Outcome,
 ) error {
 	j.mu.Lock()
 	candidate := j.invocations[invocationID]
@@ -405,41 +403,30 @@ func (j *modelInvocationJournal) finishModelInvocation(
 		return nil
 	}
 	candidate.finished = true
+	frozen := outcome.Clone()
+	candidate.outcome = &frozen
 	cancel := candidate.cancel
-	var additionalErr error
-	if err != nil {
-		if candidate.err == nil {
-			candidate.err = err
-		}
-		var outputErr *planner.OutputContractError
-		if j.outputErr == nil && errors.As(err, &outputErr) {
-			j.outputErr = err
-		}
-	} else if candidate.response == nil {
-		candidate.err = outputcontract.NewWithOrigin(
+	candidate.err = frozen.Error()
+	if candidate.err == nil && candidate.response == nil {
+		missingResponseErr := outputcontract.NewWithOrigin(
 			errors.New("model stream ended without a complete response"),
 			planner.OutputContractOriginModel,
 		)
-		if j.outputErr == nil {
-			j.outputErr = candidate.err
-		}
-		additionalErr = candidate.err
+		candidate.outcome.Framework = modelcall.Result{Called: true, Err: missingResponseErr}
+		candidate.err = missingResponseErr
+	}
+	var outputErr *planner.OutputContractError
+	if j.outputErr == nil && errors.As(candidate.err, &outputErr) {
+		j.outputErr = candidate.err
 	}
 	sealedErr := j.sealedError()
-	discard := invocationID == j.designated &&
-		j.presentationStarted &&
-		candidate.err != nil &&
-		!j.presentationFinalized
 	close(candidate.done)
 	j.mu.Unlock()
 	cancel()
-	if discard {
-		additionalErr = errors.Join(additionalErr, j.discardPresentations(ctx))
+	if sealedErr != nil {
+		return sealedErr
 	}
-	if sealedErr != nil && !errors.Is(err, sealedErr) {
-		additionalErr = errors.Join(additionalErr, sealedErr)
-	}
-	return additionalErr
+	return nil
 }
 
 // exportModelInvocation matches the planner result to the exact saved message
@@ -582,30 +569,6 @@ func (j *modelInvocationJournal) selectedCompiledModelCalls(result *planner.Plan
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return compiledModelCalls(j.invocations[j.selected], result)
-}
-
-// rejectModelInvocation saves the first malformed response and prevents every
-// later model call in this planner activity.
-func (j *modelInvocationJournal) rejectModelInvocation(invocationID modelInvocationID, err error) error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if sealedErr := j.sealedError(); sealedErr != nil {
-		return sealedErr
-	}
-	candidate := j.invocations[invocationID]
-	if candidate == nil {
-		return errors.New("invalid model response references an unknown invocation")
-	}
-	candidate.err = err
-	var validationErr *model.OutputValidationError
-	if errors.As(err, &validationErr) {
-		candidate.recoveryCorrection = validationErr.RecoveryCorrection()
-		candidate.unadvertisedToolName, _ = model.UnadvertisedToolName(validationErr)
-	}
-	if j.outputErr == nil {
-		j.outputErr = err
-	}
-	return err
 }
 
 // startPresentation replaces provisional output left by an earlier planner

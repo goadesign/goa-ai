@@ -282,8 +282,8 @@ func TestClientPrepareRequestLowersRunlogReplayedTranscriptWithNarrowedTools(t *
 	require.NotNil(t, toolUse.Value.ToolUseId)
 	require.Equal(t, "call_1", *toolUse.Value.ToolUseId)
 	require.Equal(t, "reports_summarize", aws.ToString(toolUse.Value.Name))
-	require.Equal(t, "reports_summarize", parts.toolNameCanonicalToProv["reports.summarize"])
-	require.Equal(t, "reports_correct", parts.toolNameCanonicalToProv["reports.correct"])
+	require.NotContains(t, parts.toolNameProvToCanonical, "reports_summarize")
+	require.Equal(t, "reports.correct", parts.toolNameProvToCanonical["reports_correct"])
 
 	toolResult, ok := parts.messages[2].Content[0].(*brtypes.ContentBlockMemberToolResult)
 	require.True(t, ok)
@@ -384,8 +384,7 @@ func TestClientPrepareRequestSanitizesHistoryOnlyToolName(t *testing.T) {
 	require.Len(t, parts.messages, 1)
 	use := parts.messages[0].Content[0].(*brtypes.ContentBlockMemberToolUse)
 	require.Equal(t, "records_unknown_tool", aws.ToString(use.Value.Name))
-	require.Equal(t, "records_unknown_tool", parts.toolNameCanonicalToProv["records.unknown_tool"])
-	require.Equal(t, "records.unknown_tool", parts.toolNameProvToCanonical["records_unknown_tool"])
+	require.NotContains(t, parts.toolNameProvToCanonical, "records_unknown_tool")
 	raw, err := use.Value.Input.MarshalSmithyDocument()
 	require.NoError(t, err)
 	require.JSONEq(t, `{"arg":"value"}`, string(raw))
@@ -414,6 +413,39 @@ func TestClientPrepareRequestRejectsHistoricalToolNameCollision(t *testing.T) {
 		}},
 	})
 	require.ErrorContains(t, err, `tool name "records.unknown_tool" sanitizes to "records_unknown_tool"`)
+}
+
+func TestClientPrepareRequestRejectsTwoHistoricalToolNameCollision(t *testing.T) {
+	client := &provider{
+		defaultModel: "test-model",
+		maxTok:       32,
+		temp:         0.0,
+	}
+
+	_, err := client.prepareRequest(&model.Request{
+		Messages: []*model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{
+				model.ToolUsePart{
+					ID:    "tu1",
+					Name:  "catalog.items",
+					Input: rawjson.Message(`{}`),
+				},
+				model.ToolUsePart{
+					ID:    "tu2",
+					Name:  "catalog_items",
+					Input: rawjson.Message(`{}`),
+				},
+			},
+		}},
+		Tools: []*model.ToolDefinition{{
+			Name:        "catalog.other",
+			Description: "Read another resource.",
+			Input:       mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
+		}},
+	})
+
+	require.ErrorContains(t, err, `tool name "catalog_items" sanitizes to "catalog_items"`)
 }
 
 func replayedBedrockToolLoopMessages(t *testing.T) []*model.Message {

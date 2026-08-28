@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/stream"
@@ -213,7 +214,10 @@ func TestModelPresentationDiscardsRejectedOutput(t *testing.T) {
 	}))
 
 	rejected := errors.New("model output rejected")
-	require.NoError(t, journal.finishModelInvocation(ctx, invocation, rejected))
+	require.NoError(t, journal.finalizeModelInvocation(invocation, modelcall.Outcome{
+		ProviderCall: modelcall.Result{Called: true, Err: rejected},
+	}))
+	require.NoError(t, journal.discardPresentations(ctx))
 
 	events := sink.snapshot()
 	require.Len(t, events, 3)
@@ -243,7 +247,10 @@ func TestModelPresentationRetriesFailedDiscard(t *testing.T) {
 		},
 	}))
 
-	err := journal.finishModelInvocation(ctx, invocation, errors.New("model output rejected"))
+	require.NoError(t, journal.finalizeModelInvocation(invocation, modelcall.Outcome{
+		ProviderCall: modelcall.Result{Called: true, Err: errors.New("model output rejected")},
+	}))
+	err := journal.discardPresentations(ctx)
 	require.ErrorIs(t, err, streamErr)
 	require.False(t, journal.presentationFinalized)
 

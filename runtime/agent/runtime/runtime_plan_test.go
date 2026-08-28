@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -263,6 +264,236 @@ func TestPlanStartActivityCannotHideMalformedModelOutput(t *testing.T) {
 	require.Equal(t, 1, providerCalls)
 }
 
+func TestPlanStartActivityKeepsRejectedStreamCloseFailureAsActivityError(t *testing.T) {
+	tests := []struct {
+		name       string
+		plannerErr func(error) error
+	}{
+		{name: "planner returns close error", plannerErr: func(err error) error { return err }},
+		{name: "planner ignores close error", plannerErr: func(error) error { return nil }},
+		{name: "planner replaces close error", plannerErr: func(error) error {
+			return errors.New("planner replaced stream error")
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			closeErr := errors.New("provider close failed")
+			pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+				client, ok := input.Agent.ModelClient("test")
+				require.True(t, ok)
+				stream, err := client.Stream(ctx, &model.Request{Model: "test"})
+				require.NoError(t, err)
+				_, err = planner.ConsumeStream(ctx, stream)
+				require.ErrorIs(t, err, closeErr)
+				require.ErrorContains(t, err, "invalid canonical response")
+				return nil, test.plannerErr(err)
+			}}
+			rt := newTestRuntimeWithPlanner("service.agent", pl)
+			rt.models["test"] = mustTestModelClient(stubModelClient{
+				stream: func(context.Context, *model.Request) (model.Streamer, error) {
+					return &chunkStreamer{
+						chunks: []model.Chunk{model.StopChunk{Reason: "end_turn"}},
+						response: &model.Response{
+							Content: []model.Message{{
+								Role:  model.ConversationRoleAssistant,
+								Parts: []model.Part{nil},
+							}},
+							StopReason: "end_turn",
+						},
+						closeErr: closeErr,
+					}, nil
+				},
+			})
+
+			out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+				AgentID:    "service.agent",
+				RunID:      "run-123",
+				RunContext: run.Context{RunID: "run-123"},
+			})
+
+			require.Nil(t, out)
+			require.ErrorIs(t, err, closeErr)
+			require.ErrorContains(t, err, "invalid canonical response")
+		})
+	}
+}
+
+func TestPlanStartActivityKeepsLaterStreamObserverFailureAsActivityError(t *testing.T) {
+	observerErr := errors.New("later observer failed")
+	providerCalls := 0
+	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		client, ok := input.Agent.ModelClient("test")
+		require.True(t, ok)
+		stream, err := client.Stream(ctx, &model.Request{Model: "test"})
+		require.NoError(t, err)
+		stream, err = stream.Observe(&rejectValidationObserver{err: observerErr})
+		require.NoError(t, err)
+		_, err = planner.ConsumeStream(ctx, stream)
+		require.ErrorIs(t, err, observerErr)
+		var validationErr *model.OutputValidationError
+		require.ErrorAs(t, err, &validationErr)
+		response, retryErr := client.Complete(ctx, &model.Request{Model: "test"})
+		require.Nil(t, response)
+		require.ErrorAs(t, retryErr, &validationErr)
+		return nil, err
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	rt.models["test"] = mustTestModelClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			providerCalls++
+			return &chunkStreamer{
+				chunks: []model.Chunk{model.StopChunk{Reason: "end_turn"}},
+				response: &model.Response{
+					Content: []model.Message{{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{nil},
+					}},
+					StopReason: "end_turn",
+					Usage:      model.TokenUsage{TotalTokens: 7},
+				},
+			}, nil
+		},
+	})
+
+	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123"},
+	})
+
+	require.Nil(t, out)
+	require.ErrorIs(t, err, observerErr)
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, 1, providerCalls)
+}
+
+func TestPlanStartActivityKeepsEarlierStreamObserverFailureAsActivityError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "ordinary observer error", err: errors.New("earlier observer failed")},
+		{name: "observer EOF", err: io.EOF},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			providerCalls := 0
+			pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+				client, ok := input.Agent.ModelClient("test")
+				require.True(t, ok)
+				stream, err := client.Stream(ctx, &model.Request{Model: "test"})
+				require.NoError(t, err)
+				_, consumeErr := planner.ConsumeStream(ctx, stream)
+				require.ErrorIs(t, consumeErr, test.err)
+				return finalPlannerResult("planner ignored stream error"), nil
+			}}
+			rt := newTestRuntimeWithPlanner("service.agent", pl)
+			base := mustTestModelClient(stubModelClient{
+				stream: func(context.Context, *model.Request) (model.Streamer, error) {
+					providerCalls++
+					return &chunkStreamer{
+						chunks: []model.Chunk{model.StopChunk{Reason: "end_turn"}},
+						response: &model.Response{
+							Content: []model.Message{{
+								Role:  model.ConversationRoleAssistant,
+								Parts: []model.Part{nil},
+							}},
+							StopReason: "end_turn",
+							Usage:      model.TokenUsage{TotalTokens: 7},
+						},
+					}, nil
+				},
+			})
+			observed, err := model.WrapClient(base, func(provider model.Provider) model.Provider {
+				return &injectedCallObserverProvider{
+					Provider: provider,
+					observer: &rejectValidationObserver{err: test.err},
+				}
+			})
+			require.NoError(t, err)
+			rt.models["test"] = observed
+
+			out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+				AgentID:    "service.agent",
+				RunID:      "run-123",
+				RunContext: run.Context{RunID: "run-123"},
+			})
+
+			require.Nil(t, out)
+			require.ErrorIs(t, err, test.err)
+			var validationErr *model.OutputValidationError
+			require.ErrorAs(t, err, &validationErr)
+			require.Equal(t, 1, providerCalls)
+		})
+	}
+}
+
+func TestPlanStartActivityKeepsCloseObserverFailureInEveryOrder(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		beforeRuntime bool
+	}{
+		{name: "before runtime observer", beforeRuntime: true},
+		{name: "after runtime observer"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			observerErr := errors.New("close observer failed")
+			pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+				client, ok := input.Agent.ModelClient("test")
+				require.True(t, ok)
+				stream, err := client.Stream(ctx, &model.Request{Model: "test"})
+				require.NoError(t, err)
+				if !test.beforeRuntime {
+					stream, err = stream.Observe(&closeFailureObserver{err: observerErr})
+					require.NoError(t, err)
+				}
+				_, consumeErr := planner.ConsumeStream(ctx, stream)
+				require.ErrorIs(t, consumeErr, observerErr)
+				return finalPlannerResult("planner ignored close observer"), nil
+			}}
+			rt := newTestRuntimeWithPlanner("service.agent", pl)
+			client := mustTestModelClient(stubModelClient{
+				stream: func(context.Context, *model.Request) (model.Streamer, error) {
+					return &chunkStreamer{
+						chunks: []model.Chunk{model.StopChunk{Reason: "end_turn"}},
+						response: &model.Response{
+							Content: []model.Message{{
+								Role:  model.ConversationRoleAssistant,
+								Parts: []model.Part{nil},
+							}},
+							StopReason: "end_turn",
+							Usage:      model.TokenUsage{TotalTokens: 7},
+						},
+					}, nil
+				},
+			})
+			if test.beforeRuntime {
+				var err error
+				client, err = model.WrapClient(client, func(provider model.Provider) model.Provider {
+					return &injectedCallObserverProvider{
+						Provider: provider,
+						observer: &closeFailureObserver{err: observerErr},
+					}
+				})
+				require.NoError(t, err)
+			}
+			rt.models["test"] = client
+
+			out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+				AgentID:    "service.agent",
+				RunID:      "run-123",
+				RunContext: run.Context{RunID: "run-123"},
+			})
+
+			require.Nil(t, out)
+			require.ErrorIs(t, err, observerErr)
+			var validationErr *model.OutputValidationError
+			require.ErrorAs(t, err, &validationErr)
+		})
+	}
+}
+
 func TestPlanStartActivityCorrelatesRecoverableModelOutput(t *testing.T) {
 	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		client, ok := input.Agent.ModelClient("test")
@@ -461,20 +692,23 @@ func TestPlanStartActivityRejectsRecoverableOutputForForeignResponse(t *testing.
 }
 
 func TestPlanStartActivityRetriesFailedRejectedPresentationCleanup(t *testing.T) {
+	var modelRejection *planner.OutputContractError
 	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		client, ok := input.Agent.ModelClient("test")
 		require.True(t, ok)
 		response, err := client.Complete(ctx, &model.Request{Model: "test"})
 		require.NoError(t, err)
-		return nil, planner.NewRecoverableModelOutputError(
+		modelRejection = planner.NewRecoverableModelOutputError(
 			errors.New("too many references"),
 			&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
 			"Use at most eight references.",
 		)
+		return nil, modelRejection
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	rt.models["test"] = newRecoveryTestModel(t)
-	sink := &failOnceDiscardSink{err: errors.New("stream unavailable")}
+	cleanupErr := errors.New("stream unavailable")
+	sink := &failOnceDiscardSink{err: cleanupErr}
 	rt.streamSubscriber = runtimeWithPresentationSink(t, sink).streamSubscriber
 	_, err := rt.CreateSession(t.Context(), "session-123")
 	require.NoError(t, err)
@@ -486,8 +720,36 @@ func TestPlanStartActivityRetriesFailedRejectedPresentationCleanup(t *testing.T)
 	})
 
 	require.Nil(t, out)
+	var typedRejection *planner.OutputContractError
+	require.ErrorAs(t, err, &typedRejection)
+	require.Same(t, modelRejection, typedRejection)
+	require.ErrorIs(t, err, cleanupErr)
 	require.ErrorContains(t, err, "discard rejected model presentation")
-	require.ErrorContains(t, err, "stream unavailable")
+	branches, ok := err.(interface{ Unwrap() []error })
+	require.True(t, ok)
+	require.Len(t, branches.Unwrap(), 2)
+	require.Same(t, modelRejection, branches.Unwrap()[0])
+	require.ErrorIs(t, branches.Unwrap()[1], cleanupErr)
+}
+
+func TestRejectedPresentationFailurePreservesSingleErrors(t *testing.T) {
+	primary := errors.New("model output rejected")
+	cleanup := errors.New("stream unavailable")
+	t.Run("primary only", func(t *testing.T) {
+		err := rejectedPresentationFailure(primary, nil)
+
+		require.Same(t, primary, err)
+		_, joined := err.(interface{ Unwrap() []error })
+		require.False(t, joined)
+	})
+	t.Run("cleanup only", func(t *testing.T) {
+		err := rejectedPresentationFailure(nil, cleanup)
+
+		require.ErrorIs(t, err, cleanup)
+		require.EqualError(t, err, "discard rejected model presentation: stream unavailable")
+		_, joined := err.(interface{ Unwrap() []error })
+		require.False(t, joined)
+	})
 }
 
 func TestValidatePlanResumeRecoveryInput(t *testing.T) {
@@ -671,6 +933,7 @@ func TestPlanStartActivityRejectsStreamedToolPayloadBeforePlannerExposure(t *tes
 		require.Nil(t, chunk)
 		var outputErr *planner.OutputContractError
 		require.ErrorAs(t, err, &outputErr)
+		require.NoError(t, stream.Close())
 		second, secondErr := client.Stream(ctx, request)
 		require.Nil(t, second)
 		require.ErrorIs(t, secondErr, outputErr)
@@ -1214,7 +1477,7 @@ func TestPlanStartActivityRejectsUnaryUsageOverflow(t *testing.T) {
 	require.Equal(t, 2, providerCalls)
 }
 
-func TestPlanStartActivityRejectsStreamUsageOverflow(t *testing.T) {
+func TestPlanStartActivityKeepsStreamUsageOverflowAsActivityError(t *testing.T) {
 	maxInt := int(^uint(0) >> 1)
 	providerCalls := 0
 	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
@@ -1245,10 +1508,9 @@ func TestPlanStartActivityRejectsStreamUsageOverflow(t *testing.T) {
 		RunContext: run.Context{RunID: "run-123"},
 	})
 
-	requirePlannerOutputContractFailure(t, out, err)
-	require.Equal(t, maxInt, out.Usage.TotalTokens)
-	require.Equal(t, planner.OutputContractOriginModel, out.OutputContractFailure.Origin)
-	require.False(t, out.OutputContractFailure.ModelResponsePresent)
+	require.Nil(t, out)
+	require.ErrorContains(t, err, "model stream total token usage exceeds the supported integer range")
+	require.ErrorContains(t, err, "aggregate model usage: total token usage exceeds the supported integer range")
 	require.Equal(t, 1, providerCalls)
 }
 

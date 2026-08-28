@@ -139,7 +139,10 @@ func (s *anthropicStreamer) run() {
 			providerErr := s.stream.Err()
 			contextErr := s.ctx.Err()
 			switch {
-			case providerErr != nil && !errors.Is(providerErr, io.EOF):
+			// Only literal EOF completes a model stream. A wrapped EOF reports
+			// the provider failure that added the wrapper.
+			//nolint:errorlint // Exact equality is required by the model stream contract.
+			case providerErr != nil && providerErr != io.EOF:
 				s.setErr(wrapAnthropicError("stream_recv", providerErr))
 			case contextErr != nil:
 				s.setErr(contextErr)
