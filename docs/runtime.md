@@ -329,6 +329,28 @@ rolling that history back to an older worker is unsafe because the older worker
 does not understand the new field. This change requires no Goa regeneration,
 client regeneration, or public wire-client update.
 
+### Generated tool validation across model gateways
+
+A raw model gateway transports provider chunks and the complete response; it
+does not replace the request owner's generated payload decoder with a validator
+compiled from transported JSON Schema. Provider adapters still reject malformed
+JSON, unknown tool names, invalid identifiers, illegal event order, incomplete
+streams, and provider errors before output crosses the transport.
+
+The consuming `model.Client` retains completed streamed tool calls, drains the
+provider through terminal usage and response, and first reconciles every chunk
+with that response. It then runs each generated payload decoder exactly once.
+If a decoder returns structured field issues, the client exposes no completed
+call from that response and returns bounded replacement guidance derived from
+generated field metadata. Submitted field values are not copied into that
+guidance. A stream mismatch or provider-protocol failure remains terminal and
+takes precedence over payload correction.
+
+Provider processes that need adaptive token admission can apply
+`AdaptiveRateLimiter.WrapProvider` while preserving this raw gateway contract.
+Planner and runtime processes use `AdaptiveRateLimiter.Middleware` when the
+limiter belongs beneath a validated client.
+
 ### Model request and output bounds
 
 Every model request is checked before the client copies it or calls observers

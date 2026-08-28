@@ -211,17 +211,12 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 		if v.expectsCompletion {
 			return errors.New("structured output stream emitted a tool call")
 		}
-		validate, exists := v.toolValidators[actual.ToolCall.Name]
+		_, exists := v.toolValidators[actual.ToolCall.Name]
 		if !exists {
 			return fmt.Errorf(
 				"model stream returned tool %q that was not present in its request",
 				actual.ToolCall.Name,
 			)
-		}
-		if validate != nil {
-			if err := validate(actual.ToolCall); err != nil {
-				return err
-			}
 		}
 		if _, exists := v.finalToolCallIDs[actual.ToolCall.ID]; exists {
 			return fmt.Errorf("model stream repeated finalized tool call %q", actual.ToolCall.ID)
@@ -403,7 +398,7 @@ func (v *streamValidator) finish(response *Response) error {
 			}
 		}
 	}
-	return nil
+	return validateConfiguredToolCalls(v.toolValidators, response)
 }
 
 // responseText returns assistant text in provider response order.

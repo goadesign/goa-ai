@@ -37,7 +37,7 @@ You describe the agent system in the same design-first style as Goa services. `g
 
 | If you care about... | Goa-AI gives you... |
 | --- | --- |
-| Strong tool contracts | Goa types, validations, examples, generated JSON Schema, generated codecs |
+| Strong tool contracts | Goa types, validations, examples, generated JSON Schema, and one generated-codec acceptance check even across raw model gateways |
 | Durable agent execution | Plan/execute workflows with retries, budgets, cancellation, typed input checkpoints, and Temporal support |
 | Existing service logic | `BindTo` and generated transforms that connect tools to Goa service methods |
 | Structured final answers | Service-owned `Completion(...)` contracts with unary and streaming helpers |
@@ -376,9 +376,11 @@ var Docs = Toolset("docs", func() {
 - JSON Schema for LLM function calling (auto-generated)
 - Validation at boundaries: invalid calls get structured correction directives, including
   generated JSON type mismatch guidance, not crashes or schema-string parsing.
-  When a model tool call fails before a complete response exists, the runtime
-  may schedule one replacement planning activity from generated field facts
-  without retaining or executing the rejected arguments.
+  Streaming calls remain withheld until the complete provider response matches
+  the stream; the originating generated decoder can then schedule one
+  replacement planning activity while retaining final usage and without
+  retaining or executing the rejected arguments. Incomplete provider streams
+  remain terminal.
 - Timeout and parent-budget failures are terminal for the current run and use
   `finish` recovery. Planners may repair invalid arguments, but elapsed
   execution time is not an instruction to repeat a call.
@@ -1125,6 +1127,9 @@ Production checklist:
   schema, schema without the root example, and parsed example input should move
   as one provider-neutral `model.ToolInputContract` until the provider adapter
   chooses the final projection.
+- Keep model gateways raw: compose provider-side behavior around
+  `model.Provider`, and construct the validated `model.Client` after the remote
+  transport so the request owner's generated decoder remains authoritative.
 - Register models, toolsets, agents, stores, streams, policy, and telemetry before the first run.
 - Call `rt.Seal(ctx)` for worker processes before serving traffic; Temporal workers start at the seal boundary.
 - Supply Temporal connection settings through `ClientOptions`; the engine always

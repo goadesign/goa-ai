@@ -20,15 +20,16 @@ import (
 
 type (
 	// AdaptiveRateLimiter applies an AIMD-style adaptive token-capacity bucket
-	// on top of a model.Client. NewAdaptiveRateLimiter charges exact input
-	// tokens. NewOutputReservationAdaptiveRateLimiter charges input tokens plus
-	// the provider's configured output reservation. Both adjust effective
-	// capacity from provider rate limits.
+	// around a raw model.Provider or beneath a validated model.Client.
+	// NewAdaptiveRateLimiter charges exact input tokens.
+	// NewOutputReservationAdaptiveRateLimiter charges input tokens plus the
+	// provider's configured output reservation. Both adjust effective capacity
+	// from provider rate limits.
 	//
 	// The limiter is process-local and designed to sit at the provider client
-	// boundary. Callers construct a single instance per process and wrap the
-	// underlying model.Client with Middleware before passing it to planners or
-	// runtimes.
+	// boundary. Callers construct a single instance per process, then use
+	// WrapProvider for a raw gateway or Middleware before passing a validated
+	// client to planners and runtimes.
 	AdaptiveRateLimiter struct {
 		mu sync.Mutex
 
@@ -172,6 +173,24 @@ func (l *AdaptiveRateLimiter) Middleware() func(model.Client) (model.Client, err
 			}
 		})
 	}
+}
+
+// WrapProvider returns a raw provider that enforces the adaptive token-capacity
+// limit before calling next. The provider must also implement model.TokenCounter
+// so each request is charged from its exact provider-visible input.
+func (l *AdaptiveRateLimiter) WrapProvider(next model.Provider) (model.Provider, error) {
+	if err := model.ValidateProvider(next); err != nil {
+		return nil, err
+	}
+	counter, ok := next.(model.TokenCounter)
+	if !ok {
+		return nil, errors.New("adaptive rate limiting requires provider token counting")
+	}
+	return &limitedProvider{
+		next:    next,
+		counter: counter,
+		limiter: l,
+	}, nil
 }
 
 // Complete enforces the limiter before delegating to the underlying client.

@@ -176,8 +176,9 @@ func (j *modelInvocationJournal) designateModelInvocation(id modelInvocationID) 
 }
 
 // recordRejectedModelOutput ties one validation failure to its invocation. It
-// stores a complete response fingerprint when one exists, but chunk-level
-// failures need only the invocation ID and safe correction carried by err.
+// stores the bounded fingerprint of a complete response when available.
+// Generated tool payload failures retain that identity and safe correction, but
+// rejected argument values never enter the journal.
 func (j *modelInvocationJournal) recordRejectedModelOutput(
 	invocationID modelInvocationID,
 	evidence model.ResponseEvidence,

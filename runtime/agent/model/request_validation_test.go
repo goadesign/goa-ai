@@ -428,12 +428,17 @@ func TestGeneratedToolStreamValidationProducesSafeRecoveryCorrection(t *testing.
 		ExpectedJSONType: "string",
 		ActualJSONType:   "number",
 	})
+	call := ToolCall{
+		ID:      "call-1",
+		Name:    "catalog.lookup",
+		Payload: rawjson.Message(`{"query":42}`),
+	}
 	stream := mustValidateStream(t, &validatedStreamFixture{
-		chunks: []Chunk{ToolCallChunk{ToolCall: ToolCall{
-			ID:      "call-1",
-			Name:    "catalog.lookup",
-			Payload: rawjson.Message(`{"query":42}`),
-		}}},
+		chunks: []Chunk{
+			ToolCallChunk{ToolCall: call},
+			StopChunk{Reason: "tool_use"},
+		},
+		response: responseWithToolCall(call),
 	}, &Request{Tools: []*ToolDefinition{definition}})
 
 	chunk, err := stream.Recv()

@@ -25,6 +25,9 @@ type fakeClient struct {
 }
 
 type closeTrackingStreamer struct {
+	chunk    model.Chunk
+	response *model.Response
+	sent     bool
 	closed   bool
 	closeErr error
 	recvErr  error
@@ -34,6 +37,10 @@ func (s *closeTrackingStreamer) Recv() (model.Chunk, error) {
 	if s.recvErr != nil {
 		return nil, s.recvErr
 	}
+	if !s.sent && s.chunk != nil {
+		s.sent = true
+		return s.chunk, nil
+	}
 	return nil, io.EOF
 }
 
@@ -42,8 +49,8 @@ func (s *closeTrackingStreamer) Close() error {
 	return s.closeErr
 }
 
-func (*closeTrackingStreamer) Response() *model.Response {
-	return nil
+func (s *closeTrackingStreamer) Response() *model.Response {
+	return s.response
 }
 
 type fakeCountingClient struct {
@@ -171,6 +178,84 @@ func TestAdaptiveRateLimiterPublicConstructorsSelectRequestCost(t *testing.T) {
 			require.InDelta(t, test.expectedBalance, limiter.limiter.Tokens(), 0.001)
 		})
 	}
+}
+
+func TestAdaptiveRateLimiterWrapProviderPreservesRawOutputAndTokenCounting(t *testing.T) {
+	rawResponse := &model.Response{}
+	raw := &fakeCountingClient{
+		fakeClient: fakeClient{response: rawResponse},
+		count: model.TokenCount{
+			Model:       "provider-model",
+			InputTokens: 100,
+			Exact:       true,
+		},
+	}
+	limiter := NewAdaptiveRateLimiter(t.Context(), nil, "", 1_000, 1_000)
+	limiter.limiter = rate.NewLimiter(0, 1_000)
+	provider, err := limiter.WrapProvider(raw)
+	require.NoError(t, err)
+	counter, ok := provider.(model.TokenCounter)
+	require.True(t, ok)
+	count, err := counter.CountTokens(t.Context(), &model.Request{})
+	require.NoError(t, err)
+
+	response, err := provider.Complete(t.Context(), &model.Request{})
+
+	require.NoError(t, err)
+	require.Same(t, rawResponse, response)
+	require.Equal(t, raw.count, count)
+	require.Equal(t, 2, raw.countCalls)
+	require.Equal(t, 1, raw.completeCalls)
+}
+
+func TestAdaptiveRateLimiterWrapProviderPreservesRawStream(t *testing.T) {
+	rawChunk := model.TextChunk{Message: model.Message{
+		Role:  model.ConversationRoleAssistant,
+		Parts: []model.Part{model.TextPart{Text: "raw"}},
+	}}
+	rawResponse := &model.Response{
+		Content: []model.Message{rawChunk.Message},
+	}
+	rawStream := &closeTrackingStreamer{
+		chunk:    rawChunk,
+		response: rawResponse,
+	}
+	raw := &fakeCountingClient{
+		fakeClient: fakeClient{stream: rawStream},
+		count: model.TokenCount{
+			Model:       "provider-model",
+			InputTokens: 100,
+			Exact:       true,
+		},
+	}
+	limiter := NewAdaptiveRateLimiter(t.Context(), nil, "", 1_000, 1_000)
+	limiter.limiter = rate.NewLimiter(0, 1_000)
+	provider, err := limiter.WrapProvider(raw)
+	require.NoError(t, err)
+
+	stream, err := provider.Stream(t.Context(), &model.Request{})
+	require.NoError(t, err)
+	chunk, err := stream.Recv()
+	require.NoError(t, err)
+	require.Equal(t, rawChunk, chunk)
+	chunk, err = stream.Recv()
+	require.ErrorIs(t, err, io.EOF)
+	require.Nil(t, chunk)
+	require.Same(t, rawResponse, stream.Response())
+	require.NoError(t, stream.Close())
+
+	require.Equal(t, 1, raw.countCalls)
+	require.Equal(t, 1, raw.streamCalls)
+	require.True(t, rawStream.closed)
+}
+
+func TestAdaptiveRateLimiterWrapProviderRequiresTokenCounter(t *testing.T) {
+	limiter := NewAdaptiveRateLimiter(t.Context(), nil, "", 1_000, 1_000)
+
+	provider, err := limiter.WrapProvider(&fakeNoCounterClient{})
+
+	require.Nil(t, provider)
+	require.ErrorContains(t, err, "requires provider token counting")
 }
 
 func TestAdaptiveRateLimiterOutputReservationRejectsBeforeCounting(t *testing.T) {

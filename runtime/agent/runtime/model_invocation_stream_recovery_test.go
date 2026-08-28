@@ -170,24 +170,27 @@ func TestRunLoopCancellationPreventsStreamedToolCallReplacement(t *testing.T) {
 	assert.Equal(t, 1, providerCalls)
 }
 
-func TestModelInvocationJournalSelectsEarliestStartedStreamChunkRejection(t *testing.T) {
+func TestModelInvocationJournalSelectsEarliestStartedStreamRejection(t *testing.T) {
 	invocations := &modelInvocationJournal{}
 	firstID, err := invocations.beginModelInvocation("", func() {})
 	require.NoError(t, err)
 	secondID, err := invocations.beginModelInvocation("", func() {})
 	require.NoError(t, err)
-	firstErr := streamedToolCallOutputError(t, "catalog.first", "first")
-	secondErr := streamedToolCallOutputError(t, "catalog.second", "second")
+	firstErr := completedStreamToolCallOutputError(t, "catalog.first", "first")
+	secondErr := completedStreamToolCallOutputError(t, "catalog.second", "second")
+	var firstOutputErr, secondOutputErr *model.OutputValidationError
+	require.ErrorAs(t, firstErr, &firstOutputErr)
+	require.ErrorAs(t, secondErr, &secondOutputErr)
 
 	require.Equal(
 		t,
 		secondErr,
-		invocations.recordRejectedModelOutput(secondID, model.ResponseEvidence{}, secondErr),
+		invocations.recordRejectedModelOutput(secondID, secondOutputErr.Evidence(), secondErr),
 	)
 	require.Equal(
 		t,
 		firstErr,
-		invocations.recordRejectedModelOutput(firstID, model.ResponseEvidence{}, firstErr),
+		invocations.recordRejectedModelOutput(firstID, firstOutputErr.Evidence(), firstErr),
 	)
 
 	assert.Equal(t, firstErr, invocations.outputContractError())
@@ -195,8 +198,9 @@ func TestModelInvocationJournalSelectsEarliestStartedStreamChunkRejection(t *tes
 	require.NotNil(t, recovery)
 	assert.Contains(t, recovery.Correction, `"first"`)
 	assert.NotContains(t, recovery.Correction, `"second"`)
-	_, present := rejectedResponseEvidence(invocations)
-	assert.False(t, present)
+	evidence, present := rejectedResponseEvidence(invocations)
+	require.True(t, present)
+	assert.Equal(t, firstOutputErr.Evidence(), evidence)
 }
 
 // streamPreResponseModel makes the planner's selected streaming call with the
@@ -260,9 +264,9 @@ func newPreResponseRecoveryStreamModel(providerCalls *int, alwaysInvalid bool) m
 	})
 }
 
-// streamedToolCallOutputError returns the model-origin error produced when one
-// generated field rejects a streamed tool-call chunk before a response exists.
-func streamedToolCallOutputError(t *testing.T, name tools.Ident, field string) error {
+// completedStreamToolCallOutputError returns the model-origin error produced
+// after one complete streamed response fails its generated field contract.
+func completedStreamToolCallOutputError(t *testing.T, name tools.Ident, field string) error {
 	t.Helper()
 	spec := tools.ToolSpec{
 		Name: name,
@@ -290,15 +294,29 @@ func streamedToolCallOutputError(t *testing.T, name tools.Ident, field string) e
 		Tools: []*model.ToolDefinition{model.ToolDefinitionFromSpec(spec)},
 	})
 	require.NoError(t, err)
+	call := model.ToolCall{
+		ID:      "stream-call",
+		Name:    name,
+		Payload: rawjson.Message(`{"private":"submitted"}`),
+	}
 	stream, err := contract.ValidateStream(&chunkStreamer{chunks: []model.Chunk{
-		model.ToolCallChunk{ToolCall: model.ToolCall{
-			ID:      "stream-call",
-			Name:    name,
-			Payload: rawjson.Message(`{"private":"submitted"}`),
+		model.ToolCallChunk{ToolCall: call},
+		model.StopChunk{Reason: "tool_use"},
+	}, response: &model.Response{
+		Content: []model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{model.ToolUsePart{
+				ID:    call.ID,
+				Name:  call.Name.String(),
+				Input: call.Payload,
+			}},
 		}},
+		StopReason: "tool_use",
 	}})
 	require.NoError(t, err)
-	_, err = stream.Recv()
+	for err == nil {
+		_, err = stream.Recv()
+	}
 	require.Error(t, err)
 	return outputcontract.NewWithOrigin(err, planner.OutputContractOriginModel)
 }

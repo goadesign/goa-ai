@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type validatedStreamFixture struct {
@@ -184,6 +186,73 @@ func TestValidatedStreamRetainsImmutableToolCallEvidence(t *testing.T) {
 	response := stream.Response()
 	require.NotNil(t, response)
 	require.JSONEq(t, `{"query":"original"}`, string(response.Content[0].Parts[0].(ToolUsePart).Input))
+}
+
+func TestNestedValidatedStreamGeneratedCorrectionRetainsUsageWithoutExposingResponse(t *testing.T) {
+	call := ToolCall{
+		Name:    "catalog.lookup",
+		Payload: []byte(`{"query":42,"private":"submitted-secret"}`),
+		ID:      "call-1",
+	}
+	usage := TokenUsage{
+		Model:        "provider-model",
+		InputTokens:  11,
+		OutputTokens: 7,
+		TotalTokens:  18,
+	}
+	raw := &validatedStreamFixture{
+		chunks: []Chunk{
+			ToolCallChunk{ToolCall: call},
+			UsageChunk{Usage: usage},
+			StopChunk{Reason: "tool_use"},
+		},
+		response: &Response{
+			Content: []Message{{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{ToolUsePart{
+					ID:    call.ID,
+					Name:  call.Name.String(),
+					Input: call.Payload,
+				}},
+			}},
+			Usage:      usage,
+			StopReason: "tool_use",
+		},
+	}
+	validated := mustValidateStream(t, raw, &Request{
+		Tools: []*ToolDefinition{generatedRejectingTool(&tools.FieldIssue{
+			Field:            "query",
+			Constraint:       "invalid_field_type",
+			ExpectedJSONType: "string",
+			ActualJSONType:   "number",
+		})},
+	})
+	nested := mustValidateStream(t, validated, &Request{})
+	observer := &recordingStreamObserver{}
+	stream, err := nested.Observe(observer)
+	require.NoError(t, err)
+
+	chunk, err := stream.Recv()
+
+	require.Nil(t, chunk)
+	var outputErr *OutputValidationError
+	require.ErrorAs(t, err, &outputErr)
+	require.Contains(t, outputErr.RecoveryCorrection(), `Field "query" must contain a JSON string.`)
+	require.NotContains(t, outputErr.RecoveryCorrection(), "submitted-secret")
+	require.Equal(t, &usage, outputErr.Usage())
+	require.Nil(t, stream.Response())
+	require.Len(t, observer.observations, 1)
+	observation := observer.observations[0]
+	require.Nil(t, observation.Chunk)
+	require.Nil(t, observation.Response)
+	require.True(t, observation.ResponseEvidence.Present)
+	require.NotEmpty(t, observation.ResponseEvidence.SHA256)
+	require.Nil(t, observation.RejectedUsageDelta)
+	require.Equal(t, &usage, observation.RejectedUsageTotal)
+	require.NotContains(t, observation.Err.Error(), "submitted-secret")
+	secondChunk, secondErr := stream.Recv()
+	require.Nil(t, secondChunk)
+	require.ErrorIs(t, secondErr, outputErr)
 }
 
 func TestValidatedStreamDiscardsCompletedToolCallAfterLaterProviderRejection(t *testing.T) {

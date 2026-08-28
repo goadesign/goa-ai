@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // --- Test helpers ---
@@ -229,4 +230,84 @@ func TestE2E_Stream_WithMiddleware(t *testing.T) {
 	if atomic.LoadInt32(&streamCount) != 1 {
 		t.Fatal("stream middleware did not run")
 	}
+}
+
+func TestE2EStreamGeneratedValidationRunsAfterRawGateway(t *testing.T) {
+	provider := &captureProvider{}
+	server, err := NewServer(WithProvider(provider))
+	require.NoError(t, err)
+	streamFn := func(ctx context.Context, req *model.Request) (model.Streamer, error) {
+		wrapper := &serverStreamWrapper{ch: make(chan model.Chunk, 8), done: make(chan struct{})}
+		go func() {
+			wrapper.response, wrapper.err = server.Stream(
+				ctx,
+				req,
+				func(chunk model.Chunk) error {
+					wrapper.ch <- chunk
+					return nil
+				},
+			)
+			close(wrapper.ch)
+			close(wrapper.done)
+		}()
+		return wrapper, nil
+	}
+	client, err := NewRemoteClient(
+		func(context.Context, *model.Request) (*model.Response, error) {
+			return nil, errors.New("unexpected complete call")
+		},
+		streamFn,
+	)
+	require.NoError(t, err)
+	stream, err := client.Stream(t.Context(), &model.Request{
+		Model:    "m",
+		Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+		Tools:    []*model.ToolDefinition{generatedRejectingGatewayTool()},
+	})
+	require.NoError(t, err)
+
+	chunk, err := stream.Recv()
+	require.NoError(t, err)
+	require.IsType(t, model.TextChunk{}, chunk)
+	chunk, err = stream.Recv()
+
+	require.Nil(t, chunk)
+	var outputErr *model.OutputValidationError
+	require.ErrorAs(t, err, &outputErr)
+	require.Contains(t, outputErr.RecoveryCorrection(), `Field "k" must contain a JSON number.`)
+	require.NotContains(t, outputErr.RecoveryCorrection(), `"v"`)
+	require.Equal(t, &model.TokenUsage{
+		InputTokens:  1,
+		OutputTokens: 2,
+		TotalTokens:  3,
+	}, outputErr.Usage())
+	require.Nil(t, stream.Response())
+	require.NoError(t, stream.Close())
+}
+
+// generatedRejectingGatewayTool models a generated decoder that can describe
+// one invalid field without copying the submitted value into correction text.
+func generatedRejectingGatewayTool() *model.ToolDefinition {
+	return model.ToolDefinitionFromSpec(tools.ToolSpec{
+		Name: "emit_tool",
+		Payload: tools.TypeSpec{
+			Name:           "EmitPayload",
+			Schema:         rawjson.Message(`{"type":"object"}`),
+			FieldJSONTypes: map[string]string{"$payload": "object", "k": "number"},
+			Codec: tools.JSONCodec[any]{
+				FromJSON: func([]byte) (any, error) {
+					return nil, tools.NewValidationError(
+						"submitted k was v",
+						[]*tools.FieldIssue{{
+							Field:            "k",
+							Constraint:       "invalid_field_type",
+							ExpectedJSONType: "number",
+							ActualJSONType:   "string",
+						}},
+						nil,
+					)
+				},
+			},
+		},
+	})
 }

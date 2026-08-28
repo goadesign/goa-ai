@@ -87,16 +87,80 @@ func TestRequestContractAppliesGeneratedToolPayloadCodec(t *testing.T) {
 	require.ErrorContains(t, err, `model tool "svc.lookup" payload failed its request contract`)
 }
 
-func TestStreamValidatorAppliesGeneratedToolPayloadCodecBeforeExposure(t *testing.T) {
+func TestStreamValidatorAppliesGeneratedToolPayloadCodecAfterReconciliation(t *testing.T) {
 	validator := mustNewStreamValidator(t, &Request{Tools: []*ToolDefinition{strictToolDefinition()}})
 
-	err := validator.accept(ToolCallChunk{ToolCall: ToolCall{
+	call := ToolCall{
 		ID:      "call-1",
 		Name:    "svc.lookup",
 		Payload: []byte(`{"query":42}`),
-	}})
+	}
+	require.NoError(t, validator.accept(ToolCallChunk{ToolCall: call}))
+	require.NoError(t, validator.accept(StopChunk{Reason: "tool_use"}))
+	err := validator.finish(responseWithToolCall(call))
 
 	require.ErrorContains(t, err, `model tool "svc.lookup" payload failed its request contract`)
+}
+
+func TestStreamValidatorRunsGeneratedDecoderOnceAfterReconciliation(t *testing.T) {
+	decodeCalls := 0
+	definition := ToolDefinitionFromSpec(tools.ToolSpec{
+		Name: "svc.lookup",
+		Payload: tools.TypeSpec{
+			Name:   "LookupPayload",
+			Schema: []byte(`{"type":"object"}`),
+			Codec: tools.JSONCodec[any]{
+				FromJSON: func([]byte) (any, error) {
+					decodeCalls++
+					return struct{}{}, nil
+				},
+			},
+		},
+	})
+	validator := mustNewStreamValidator(t, &Request{Tools: []*ToolDefinition{definition}})
+	call := ToolCall{
+		ID:      "call-1",
+		Name:    "svc.lookup",
+		Payload: []byte(`{"query":"accepted"}`),
+	}
+
+	require.NoError(t, validator.accept(ToolCallChunk{ToolCall: call}))
+	require.Zero(t, decodeCalls)
+	require.NoError(t, validator.accept(StopChunk{Reason: "tool_use"}))
+	require.Zero(t, decodeCalls)
+	require.NoError(t, validator.finish(responseWithToolCall(call)))
+	require.Equal(t, 1, decodeCalls)
+}
+
+func TestStreamValidatorRejectsIncompleteStreamBeforeGeneratedPayload(t *testing.T) {
+	validator := mustNewStreamValidator(t, &Request{Tools: []*ToolDefinition{strictToolDefinition()}})
+	call := ToolCall{
+		ID:      "call-1",
+		Name:    "svc.lookup",
+		Payload: []byte(`{"query":42}`),
+	}
+	require.NoError(t, validator.accept(ToolCallChunk{ToolCall: call}))
+
+	err := validator.finish(responseWithToolCall(call))
+
+	require.EqualError(t, err, "model stream ended without stop chunk")
+}
+
+func TestStreamValidatorReconcilesResponseBeforeGeneratedPayload(t *testing.T) {
+	validator := mustNewStreamValidator(t, &Request{Tools: []*ToolDefinition{strictToolDefinition()}})
+	call := ToolCall{
+		ID:      "call-1",
+		Name:    "svc.lookup",
+		Payload: []byte(`{"query":42}`),
+	}
+	require.NoError(t, validator.accept(ToolCallChunk{ToolCall: call}))
+	require.NoError(t, validator.accept(StopChunk{Reason: "tool_use"}))
+	responseCall := call
+	responseCall.ID = "different-call"
+
+	err := validator.finish(responseWithToolCall(responseCall))
+
+	require.EqualError(t, err, "stream tool call 0 does not match canonical response")
 }
 
 func TestStreamValidatorReconcilesToolPayloadDeltas(t *testing.T) {
