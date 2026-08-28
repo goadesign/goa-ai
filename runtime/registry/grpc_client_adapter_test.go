@@ -49,6 +49,10 @@ func (m *mockGRPCRegistryClient) GetToolset(_ context.Context, _ *registrypb.Get
 	return m.getToolsetResp, m.getToolsetErr
 }
 
+func (m *mockGRPCRegistryClient) CheckAdmission(_ context.Context, _ *registrypb.CheckAdmissionRequest, _ ...grpc.CallOption) (*registrypb.CheckAdmissionResponse, error) {
+	return nil, nil
+}
+
 func (m *mockGRPCRegistryClient) Search(_ context.Context, _ *registrypb.SearchRequest, _ ...grpc.CallOption) (*registrypb.SearchResponse, error) {
 	return m.searchResp, m.searchErr
 }

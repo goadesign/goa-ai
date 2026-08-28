@@ -384,6 +384,54 @@ func (s *Service) GetToolset(ctx context.Context, p *genregistry.GetToolsetPaylo
 	return toolset, nil
 }
 
+// CheckAdmission reports whether one deployment-issued revision is the active
+// toolset admission and has the same lease and pong health required for routing
+// a new tool call. Missing admissions are expected during rollout and return a
+// not-ready value; storage and health-check failures return service_unavailable.
+func (s *Service) CheckAdmission(
+	ctx context.Context,
+	p *genregistry.CheckAdmissionPayload,
+) (*genregistry.AdmissionStatus, error) {
+	entry, err := s.catalog.ActiveRegistration(ctx, p.Name)
+	if errors.Is(err, errToolsetNotFound) {
+		return &genregistry.AdmissionStatus{
+			Ready:                 false,
+			RoutableProviderCount: 0,
+		}, nil
+	}
+	if err != nil {
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"read toolset %q admission: %w",
+			p.Name,
+			err,
+		))
+	}
+	health, err := s.healthTracker.Health(ctx, p.Name, entry.RegistrationToken)
+	if errors.Is(err, errToolsetNotFound) {
+		return &genregistry.AdmissionStatus{
+			Ready:                 false,
+			RoutableProviderCount: 0,
+		}, nil
+	}
+	if err != nil {
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"check toolset %q admission health: %w",
+			p.Name,
+			err,
+		))
+	}
+	status := &genregistry.AdmissionStatus{
+		Ready:                     entry.AdmissionRevision == p.ExpectedAdmissionRevision && health.Healthy,
+		ObservedAdmissionRevision: &entry.AdmissionRevision,
+		RoutableProviderCount:     health.ProviderCount,
+	}
+	if !health.LastPong.IsZero() {
+		lastPong := health.LastPong.UTC().Format(time.RFC3339Nano)
+		status.LastPongAt = &lastPong
+	}
+	return status, nil
+}
+
 // Search searches toolsets by keyword matching name, description, or tags.
 // Returns matching toolsets or an empty list when no matches are found.
 // **Validates: Requirements 8.1, 8.2**

@@ -550,6 +550,15 @@ pongs authenticate that pair and the responding incarnation atomically.
 Aggregate health and new-call routing require one unexpired, non-draining lease
 plus a fresh current-epoch pong.
 
+`CheckAdmission` applies that same routing test to one deployment-supplied
+expected admission revision. It returns `ready=false` when the toolset is
+absent, a different revision is active, no routable lease remains, or the
+current epoch lacks a fresh pong. It returns the observed revision, routable
+provider count, and last pong for diagnostics. Infrastructure failures remain
+errors. This read contract lets a deployment verify the exact admission after
+workload readiness succeeds without making workload readiness depend on
+admission and deadlocking a changed-revision rolling update.
+
 Registry construction enumerates every authoritative catalog key and applies
 the same strict current-format parser used by registration and routing before
 health tracking starts. Unknown fields or any other non-current record keep the

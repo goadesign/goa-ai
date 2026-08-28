@@ -232,6 +232,28 @@ func NewProtoGetToolsetResponse(result *registry.Toolset) *registrypb.GetToolset
 	return message
 }
 
+// NewCheckAdmissionPayload builds the payload of the "CheckAdmission" endpoint
+// of the "registry" service from the gRPC request type.
+func NewCheckAdmissionPayload(message *registrypb.CheckAdmissionRequest) *registry.CheckAdmissionPayload {
+	v := &registry.CheckAdmissionPayload{
+		Name:                      message.Name,
+		ExpectedAdmissionRevision: message.ExpectedAdmissionRevision,
+	}
+	return v
+}
+
+// NewProtoCheckAdmissionResponse builds the gRPC response type from the result
+// of the "CheckAdmission" endpoint of the "registry" service.
+func NewProtoCheckAdmissionResponse(result *registry.AdmissionStatus) *registrypb.CheckAdmissionResponse {
+	message := &registrypb.CheckAdmissionResponse{
+		Ready:                     result.Ready,
+		ObservedAdmissionRevision: result.ObservedAdmissionRevision,
+		RoutableProviderCount:     int32(result.RoutableProviderCount),
+		LastPongAt:                result.LastPongAt,
+	}
+	return message
+}
+
 // NewSearchPayload builds the payload of the "Search" endpoint of the
 // "registry" service from the gRPC request type.
 func NewSearchPayload(message *registrypb.SearchRequest) *registry.SearchPayload {
@@ -566,6 +588,19 @@ func ValidateGetToolsetRequest(message *registrypb.GetToolsetRequest) (err error
 	if utf8.RuneCountInString(message.Name) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", message.Name, utf8.RuneCountInString(message.Name), 1, true))
 	}
+	return
+}
+
+// ValidateCheckAdmissionRequest runs the validations defined on
+// CheckAdmissionRequest.
+func ValidateCheckAdmissionRequest(message *registrypb.CheckAdmissionRequest) (err error) {
+	if utf8.RuneCountInString(message.Name) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", message.Name, utf8.RuneCountInString(message.Name), 1, true))
+	}
+	if utf8.RuneCountInString(message.Name) > 256 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", message.Name, utf8.RuneCountInString(message.Name), 256, false))
+	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_admission_revision", message.ExpectedAdmissionRevision, "^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,255}$"))
 	return
 }
 

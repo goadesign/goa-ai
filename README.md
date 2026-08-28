@@ -63,8 +63,12 @@ part of their existing execution deadline. `Serve` generates one UUID incarnatio
 a delayed release from an old process cannot delete its replacement. Lease
 membership, health epoch, and last pong live in one CAS catalog record. Every
 retirement and replacement permanently retains the prior token; this set grows
-with distinct admissions and cannot be truncated safely. The gateway derives a
-global transport `ToolUseID` from required run plus call identity. Its global
+with distinct admissions and cannot be truncated safely. The read-only
+`CheckAdmission` operation derives its result from that same record so
+deployment systems can verify that an exact expected revision has a routable
+lease and fresh pong without making workload readiness depend on admission.
+The gateway derives a global transport `ToolUseID` from required run plus call
+identity. Its global
 call record stores a token-independent request digest, the provider token that
 becomes immutable at publication, overload state, and the complete canonical terminal. Exact retained calls
 replay before current routing or health lookup after a generation changes.

@@ -27,6 +27,7 @@ type Server struct {
 	PongH                   goagrpc.UnaryHandler
 	ListToolsetsH           goagrpc.UnaryHandler
 	GetToolsetH             goagrpc.UnaryHandler
+	CheckAdmissionH         goagrpc.UnaryHandler
 	SearchH                 goagrpc.UnaryHandler
 	CallToolH               goagrpc.UnaryHandler
 	RetryToolH              goagrpc.UnaryHandler
@@ -47,6 +48,7 @@ func New(e *registry.Endpoints, uh goagrpc.UnaryHandler) *Server {
 		PongH:                   NewPongHandler(e.Pong, uh),
 		ListToolsetsH:           NewListToolsetsHandler(e.ListToolsets, uh),
 		GetToolsetH:             NewGetToolsetHandler(e.GetToolset, uh),
+		CheckAdmissionH:         NewCheckAdmissionHandler(e.CheckAdmission, uh),
 		SearchH:                 NewSearchHandler(e.Search, uh),
 		CallToolH:               NewCallToolHandler(e.CallTool, uh),
 		RetryToolH:              NewRetryToolHandler(e.RetryTool, uh),
@@ -244,6 +246,34 @@ func (s *Server) GetToolset(ctx context.Context, message *registrypb.GetToolsetR
 		return nil, goagrpc.EncodeError(err)
 	}
 	return resp.(*registrypb.GetToolsetResponse), nil
+}
+
+// NewCheckAdmissionHandler creates a gRPC handler which serves the "registry"
+// service "CheckAdmission" endpoint.
+func NewCheckAdmissionHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeCheckAdmissionRequest, EncodeCheckAdmissionResponse)
+	}
+	return h
+}
+
+// CheckAdmission implements the "CheckAdmission" method in
+// registrypb.RegistryServer interface.
+func (s *Server) CheckAdmission(ctx context.Context, message *registrypb.CheckAdmissionRequest) (*registrypb.CheckAdmissionResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "CheckAdmission")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.CheckAdmissionH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.CheckAdmissionResponse), nil
 }
 
 // NewSearchHandler creates a gRPC handler which serves the "registry" service

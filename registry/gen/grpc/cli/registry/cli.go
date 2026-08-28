@@ -22,7 +22,7 @@ import (
 //	command (subcommand1|subcommand2|...)
 func UsageCommands() []string {
 	return []string{
-		"registry (register|release-provider|drain-provider|unregister|pong|list-toolsets|get-toolset|search|call-tool|retry-tool|complete-tool-call|publish-tool-output-delta|report-tool-call-overload|claim-tool-call)",
+		"registry (register|release-provider|drain-provider|unregister|pong|list-toolsets|get-toolset|check-admission|search|call-tool|retry-tool|complete-tool-call|publish-tool-output-delta|report-tool-call-overload|claim-tool-call)",
 	}
 }
 
@@ -62,6 +62,9 @@ func ParseEndpoint(
 		registryGetToolsetFlags       = flag.NewFlagSet("get-toolset", flag.ExitOnError)
 		registryGetToolsetMessageFlag = registryGetToolsetFlags.String("message", "", "")
 
+		registryCheckAdmissionFlags       = flag.NewFlagSet("check-admission", flag.ExitOnError)
+		registryCheckAdmissionMessageFlag = registryCheckAdmissionFlags.String("message", "", "")
+
 		registrySearchFlags       = flag.NewFlagSet("search", flag.ExitOnError)
 		registrySearchMessageFlag = registrySearchFlags.String("message", "", "")
 
@@ -91,6 +94,7 @@ func ParseEndpoint(
 	registryPongFlags.Usage = registryPongUsage
 	registryListToolsetsFlags.Usage = registryListToolsetsUsage
 	registryGetToolsetFlags.Usage = registryGetToolsetUsage
+	registryCheckAdmissionFlags.Usage = registryCheckAdmissionUsage
 	registrySearchFlags.Usage = registrySearchUsage
 	registryCallToolFlags.Usage = registryCallToolUsage
 	registryRetryToolFlags.Usage = registryRetryToolUsage
@@ -153,6 +157,9 @@ func ParseEndpoint(
 
 			case "get-toolset":
 				epf = registryGetToolsetFlags
+
+			case "check-admission":
+				epf = registryCheckAdmissionFlags
 
 			case "search":
 				epf = registrySearchFlags
@@ -221,6 +228,9 @@ func ParseEndpoint(
 			case "get-toolset":
 				endpoint = c.GetToolset()
 				data, err = registryc.BuildGetToolsetPayload(*registryGetToolsetMessageFlag)
+			case "check-admission":
+				endpoint = c.CheckAdmission()
+				data, err = registryc.BuildCheckAdmissionPayload(*registryCheckAdmissionMessageFlag)
 			case "search":
 				endpoint = c.Search()
 				data, err = registryc.BuildSearchPayload(*registrySearchMessageFlag)
@@ -264,6 +274,7 @@ func registryUsage() {
 	fmt.Fprintln(os.Stderr, `    pong: Atomically record shared consumer-group liveness for a token-and-membership-epoch health ping. The responding provider incarnation must hold an unexpired lease in that same catalog record.`)
 	fmt.Fprintln(os.Stderr, `    list-toolsets: List all registered toolsets with optional tag filtering`)
 	fmt.Fprintln(os.Stderr, `    get-toolset: Get a specific toolset by name including all tool schemas`)
+	fmt.Fprintln(os.Stderr, `    check-admission: Report whether the requested deployment admission is the active toolset generation and currently has an unexpired, non-draining provider lease plus a fresh authenticated pong. Release verification calls this after workload readiness because provider readiness must remain independent of registry admission. A missing or different active admission returns ready=false rather than an error.`)
 	fmt.Fprintln(os.Stderr, `    search: Search toolsets by keyword matching name, description, or tags`)
 	fmt.Fprintln(os.Stderr, `    call-tool: Reject consumers whose required runtime-owned wire protocol version differs from the registry, then attach or create one run-scoped tool-call record. A valid unpublished call waits for a healthy provider within its original execution deadline. Request publication atomically verifies that the selected registration remains current and non-draining; if it changed, the unpublished call selects the replacement and tries again without extending its deadline. The provider assignment becomes immutable when publication commits. Certain pre-publication failures commit call_not_admitted so exact retries cannot execute, while published calls never transfer because an external effect may have begun. The record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed. Before returning a published admission, the registry establishes the result stream so the caller can create a reader immediately.`)
 	fmt.Fprintln(os.Stderr, `    retry-tool: Republish one previously admitted call after provider overload recorded in the authoritative call record. The runtime supplies the exact original registration token; the registry rejects a changed active admission before publishing and never rebinds claimed execution to a replacement provider. Before returning either a republished or terminal call, the registry establishes the result stream so the caller can create a reader immediately.`)
@@ -399,6 +410,24 @@ func registryGetToolsetUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry get-toolset --message '{\n      \"name\": \"data-tools\"\n   }'")
+}
+
+func registryCheckAdmissionUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] registry check-admission", os.Args[0])
+	fmt.Fprint(os.Stderr, " -message JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Report whether the requested deployment admission is the active toolset generation and currently has an unexpired, non-draining provider lease plus a fresh authenticated pong. Release verification calls this after workload readiness because provider readiness must remain independent of registry admission. A missing or different active admission returns ready=false rather than an error.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -message JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry check-admission --message '{\n      \"expected_admission_revision\": \"example-release+schema-v2\",\n      \"name\": \"data-tools\"\n   }'")
 }
 
 func registrySearchUsage() {

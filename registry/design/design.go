@@ -108,6 +108,14 @@ var _ = Service("registry", func() {
 		GRPC(func() {})
 	})
 
+	Method("CheckAdmission", func() {
+		Description("Report whether the requested deployment admission is the active toolset generation and currently has an unexpired, non-draining provider lease plus a fresh authenticated pong. Release verification calls this after workload readiness because provider readiness must remain independent of registry admission. A missing or different active admission returns ready=false rather than an error.")
+		Payload(CheckAdmissionPayload)
+		Result(AdmissionStatus)
+		Error("service_unavailable")
+		GRPC(func() {})
+	})
+
 	Method("Search", func() {
 		Description("Search toolsets by keyword matching name, description, or tags")
 		Payload(SearchPayload)
@@ -363,6 +371,38 @@ var GetToolsetPayload = Type("GetToolsetPayload", func() {
 		Example("data-tools")
 	})
 	Required("name")
+})
+
+var CheckAdmissionPayload = Type("CheckAdmissionPayload", func() {
+	Description("The exact toolset admission expected from one deployed provider revision.")
+	Field(1, "name", String, "Name of the toolset whose admission must be checked.", func() {
+		MinLength(1)
+		MaxLength(256)
+		Example("data-tools")
+	})
+	Field(2, "expected_admission_revision", String, "Deployment-issued admission revision that must be active and healthy.", func() {
+		Pattern(toolregistry.AdmissionRevisionPattern)
+		Example("example-release+schema-v2")
+	})
+	Required("name", "expected_admission_revision")
+})
+
+var AdmissionStatus = Type("AdmissionStatus", func() {
+	Description("Authoritative registry state for one expected deployment admission.")
+	Field(1, "ready", Boolean, "True only when the expected admission revision is active and has a routable provider plus a fresh authenticated pong.")
+	Field(2, "observed_admission_revision", String, "Active admission revision, omitted when the toolset has no active admission.", func() {
+		Pattern(toolregistry.AdmissionRevisionPattern)
+		Example("example-release+schema-v1")
+	})
+	Field(3, "routable_provider_count", Int, "Number of unexpired, non-draining provider leases in the active admission.", func() {
+		Minimum(0)
+		Example(2)
+	})
+	Field(4, "last_pong_at", String, "Time of the latest authenticated pong for the active admission, omitted until one is received.", func() {
+		Format(FormatDateTime)
+		Example("2026-08-28T19:00:00Z")
+	})
+	Required("ready", "routable_provider_count")
 })
 
 var SearchPayload = Type("SearchPayload", func() {

@@ -52,6 +52,13 @@ service Registry {
 	rpc ListToolsets (ListToolsetsRequest) returns (ListToolsetsResponse);
 	// Get a specific toolset by name including all tool schemas
 	rpc GetToolset (GetToolsetRequest) returns (GetToolsetResponse);
+	// Report whether the requested deployment admission is the active toolset
+// generation and currently has an unexpired, non-draining provider lease plus
+// a fresh authenticated pong. Release verification calls this after workload
+// readiness because provider readiness must remain independent of registry
+// admission. A missing or different active admission returns ready=false
+// rather than an error.
+	rpc CheckAdmission (CheckAdmissionRequest) returns (CheckAdmissionResponse);
 	// Search toolsets by keyword matching name, description, or tags
 	rpc Search (SearchRequest) returns (SearchResponse);
 	// Reject consumers whose required runtime-owned wire protocol version differs
@@ -255,6 +262,26 @@ message GetToolsetResponse {
 	repeated ToolSchema tools = 5;
 	// ISO 8601 registration timestamp
 	string registered_at = 6;
+}
+
+message CheckAdmissionRequest {
+	// Name of the toolset whose admission must be checked.
+	string name = 1;
+	// Deployment-issued admission revision that must be active and healthy.
+	string expected_admission_revision = 2;
+}
+
+message CheckAdmissionResponse {
+	// True only when the expected admission revision is active and has a routable
+// provider plus a fresh authenticated pong.
+	bool ready = 1;
+	// Active admission revision, omitted when the toolset has no active admission.
+	optional string observed_admission_revision = 2;
+	// Number of unexpired, non-draining provider leases in the active admission.
+	sint32 routable_provider_count = 3;
+	// Time of the latest authenticated pong for the active admission, omitted
+// until one is received.
+	optional string last_pong_at = 4;
 }
 
 message SearchRequest {

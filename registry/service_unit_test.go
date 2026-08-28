@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,12 @@ type (
 
 	// unitHealthTracker reports healthy provider routing without background work.
 	unitHealthTracker struct{}
+
+	// admissionHealthTracker returns one exact health result to CheckAdmission.
+	admissionHealthTracker struct {
+		health ToolsetHealth
+		err    error
+	}
 )
 
 func TestGeneratedCallToolRejectsMissingWireProtocolVersion(t *testing.T) {
@@ -78,6 +85,18 @@ func TestGeneratedRetryToolRequiresAdmissionFence(t *testing.T) {
 	require.NoError(t, genregistryserver.ValidateRetryToolRequest(request))
 }
 
+func TestGeneratedCheckAdmissionRequiresExpectedRevision(t *testing.T) {
+	t.Parallel()
+
+	request := &genregistrypb.CheckAdmissionRequest{
+		Name: "test.toolset",
+	}
+	require.Error(t, genregistryserver.ValidateCheckAdmissionRequest(request))
+
+	request.ExpectedAdmissionRevision = testAdmissionRevisionA
+	require.NoError(t, genregistryserver.ValidateCheckAdmissionRequest(request))
+}
+
 func TestCallToolRejectsMismatchedWireProtocolBeforeDependencies(t *testing.T) {
 	t.Parallel()
 
@@ -106,6 +125,160 @@ func TestRetryToolRejectsMismatchedWireProtocolBeforeDependencies(t *testing.T) 
 		require.ErrorAs(t, err, &serviceErr)
 		assert.Equal(t, "validation_error", serviceErr.Name)
 	}
+}
+
+func TestCheckAdmissionReportsExpectedRevisionHealth(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	now := time.Date(2026, time.August, 28, 19, 0, 0, 0, time.UTC)
+	catalog := newToolsetCatalog(newTestCatalogMap(), newTestTimeSource(now))
+	_, err := catalog.Register(
+		ctx,
+		&genregistry.Toolset{
+			Name: "test.toolset",
+			Tools: []*genregistry.ToolSchema{{
+				Name:          "lookup",
+				PayloadSchema: []byte(`{"type":"object"}`),
+				ResultSchema:  []byte(`{"type":"object"}`),
+			}},
+		},
+		testAdmissionRevisionA,
+		"provider-a",
+		testIncarnationA,
+		time.Hour,
+	)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name             string
+		toolset          string
+		expectedRevision string
+		health           ToolsetHealth
+		healthErr        error
+		ready            bool
+		observedRevision string
+		providerCount    int
+		lastPongAt       string
+	}{
+		{
+			name:             "expected revision is healthy",
+			toolset:          "test.toolset",
+			expectedRevision: testAdmissionRevisionA,
+			health: ToolsetHealth{
+				Healthy:       true,
+				LastPong:      now,
+				ProviderCount: 2,
+			},
+			ready:            true,
+			observedRevision: testAdmissionRevisionA,
+			providerCount:    2,
+			lastPongAt:       now.Format(time.RFC3339Nano),
+		},
+		{
+			name:             "different revision remains not ready",
+			toolset:          "test.toolset",
+			expectedRevision: testAdmissionRevisionB,
+			health: ToolsetHealth{
+				Healthy:       true,
+				LastPong:      now,
+				ProviderCount: 2,
+			},
+			observedRevision: testAdmissionRevisionA,
+			providerCount:    2,
+			lastPongAt:       now.Format(time.RFC3339Nano),
+		},
+		{
+			name:             "expected revision without fresh pong remains not ready",
+			toolset:          "test.toolset",
+			expectedRevision: testAdmissionRevisionA,
+			health: ToolsetHealth{
+				ProviderCount: 1,
+			},
+			observedRevision: testAdmissionRevisionA,
+			providerCount:    1,
+		},
+		{
+			name:             "missing admission is an expected not-ready result",
+			toolset:          "missing.toolset",
+			expectedRevision: testAdmissionRevisionA,
+		},
+		{
+			name:             "admission changed during the read",
+			toolset:          "test.toolset",
+			expectedRevision: testAdmissionRevisionA,
+			healthErr:        errToolsetNotFound,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			svc := &Service{
+				catalog:       catalog,
+				healthTracker: admissionHealthTracker{health: test.health, err: test.healthErr},
+			}
+			status, err := svc.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
+				Name:                      test.toolset,
+				ExpectedAdmissionRevision: test.expectedRevision,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, test.ready, status.Ready)
+			assert.Equal(t, test.providerCount, status.RoutableProviderCount)
+			if test.observedRevision == "" {
+				assert.Nil(t, status.ObservedAdmissionRevision)
+			} else {
+				require.NotNil(t, status.ObservedAdmissionRevision)
+				assert.Equal(t, test.observedRevision, *status.ObservedAdmissionRevision)
+			}
+			if test.lastPongAt == "" {
+				assert.Nil(t, status.LastPongAt)
+			} else {
+				require.NotNil(t, status.LastPongAt)
+				assert.Equal(t, test.lastPongAt, *status.LastPongAt)
+			}
+		})
+	}
+}
+
+func TestCheckAdmissionReturnsServiceUnavailableOnHealthFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	catalog := newToolsetCatalog(
+		newTestCatalogMap(),
+		newTestTimeSource(time.Date(2026, time.August, 28, 19, 0, 0, 0, time.UTC)),
+	)
+	_, err := catalog.Register(
+		ctx,
+		&genregistry.Toolset{
+			Name: "test.toolset",
+			Tools: []*genregistry.ToolSchema{{
+				Name:          "lookup",
+				PayloadSchema: []byte(`{"type":"object"}`),
+				ResultSchema:  []byte(`{"type":"object"}`),
+			}},
+		},
+		testAdmissionRevisionA,
+		"provider-a",
+		testIncarnationA,
+		time.Hour,
+	)
+	require.NoError(t, err)
+
+	svc := &Service{
+		catalog: catalog,
+		healthTracker: admissionHealthTracker{
+			err: errors.New("health store unavailable"),
+		},
+	}
+	_, err = svc.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
+		Name:                      "test.toolset",
+		ExpectedAdmissionRevision: testAdmissionRevisionA,
+	})
+	var serviceErr *goa.ServiceError
+	require.ErrorAs(t, err, &serviceErr)
+	assert.Equal(t, "service_unavailable", serviceErr.Name)
 }
 
 func TestCallToolEnsuresAdmissionWithActiveRegistrationToken(t *testing.T) {
@@ -538,5 +711,25 @@ func (unitHealthTracker) EnsurePingLoop(context.Context, string) error {
 }
 
 func (unitHealthTracker) Close() error {
+	return nil
+}
+
+// Health returns the admission state supplied by the test.
+func (h admissionHealthTracker) Health(context.Context, string, string) (ToolsetHealth, error) {
+	return h.health, h.err
+}
+
+// RecordPong is unused because CheckAdmission only reads health.
+func (admissionHealthTracker) RecordPong(context.Context, string, string, string, string) error {
+	return nil
+}
+
+// EnsurePingLoop is unused because CheckAdmission does not change scheduling.
+func (admissionHealthTracker) EnsurePingLoop(context.Context, string) error {
+	return nil
+}
+
+// Close is unused because the test tracker owns no goroutine.
+func (admissionHealthTracker) Close() error {
 	return nil
 }

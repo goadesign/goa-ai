@@ -204,6 +204,28 @@ func NewGetToolsetResult(message *registrypb.GetToolsetResponse) *registry.Tools
 	return result
 }
 
+// NewProtoCheckAdmissionRequest builds the gRPC request type from the payload
+// of the "CheckAdmission" endpoint of the "registry" service.
+func NewProtoCheckAdmissionRequest(payload *registry.CheckAdmissionPayload) *registrypb.CheckAdmissionRequest {
+	message := &registrypb.CheckAdmissionRequest{
+		Name:                      payload.Name,
+		ExpectedAdmissionRevision: payload.ExpectedAdmissionRevision,
+	}
+	return message
+}
+
+// NewCheckAdmissionResult builds the result type of the "CheckAdmission"
+// endpoint of the "registry" service from the gRPC response type.
+func NewCheckAdmissionResult(message *registrypb.CheckAdmissionResponse) *registry.AdmissionStatus {
+	result := &registry.AdmissionStatus{
+		Ready:                     message.Ready,
+		ObservedAdmissionRevision: message.ObservedAdmissionRevision,
+		RoutableProviderCount:     int(message.RoutableProviderCount),
+		LastPongAt:                message.LastPongAt,
+	}
+	return result
+}
+
 // NewProtoSearchRequest builds the gRPC request type from the payload of the
 // "Search" endpoint of the "registry" service.
 func NewProtoSearchRequest(payload *registry.SearchPayload) *registrypb.SearchRequest {
@@ -452,6 +474,21 @@ func ValidateGetToolsetResponse(message *registrypb.GetToolsetResponse) (err err
 		}
 	}
 	err = goa.MergeErrors(err, goa.ValidateFormat("message.registered_at", message.RegisteredAt, goa.FormatDateTime))
+	return
+}
+
+// ValidateCheckAdmissionResponse runs the validations defined on
+// CheckAdmissionResponse.
+func ValidateCheckAdmissionResponse(message *registrypb.CheckAdmissionResponse) (err error) {
+	if message.ObservedAdmissionRevision != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.observed_admission_revision", *message.ObservedAdmissionRevision, "^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,255}$"))
+	}
+	if message.RoutableProviderCount < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("message.routable_provider_count", message.RoutableProviderCount, 0, true))
+	}
+	if message.LastPongAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.last_pong_at", *message.LastPongAt, goa.FormatDateTime))
+	}
 	return
 }
 

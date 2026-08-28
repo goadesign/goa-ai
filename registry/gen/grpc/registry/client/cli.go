@@ -203,6 +203,27 @@ func BuildGetToolsetPayload(registryGetToolsetMessage string) (*registry.GetTool
 	return v, nil
 }
 
+// BuildCheckAdmissionPayload builds the payload for the registry
+// CheckAdmission endpoint from CLI flags.
+func BuildCheckAdmissionPayload(registryCheckAdmissionMessage string) (*registry.CheckAdmissionPayload, error) {
+	var err error
+	var message registrypb.CheckAdmissionRequest
+	{
+		if registryCheckAdmissionMessage != "" {
+			err = json.Unmarshal([]byte(registryCheckAdmissionMessage), &message)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_admission_revision\": \"example-release+schema-v2\",\n      \"name\": \"data-tools\"\n   }'")
+			}
+		}
+	}
+	v := &registry.CheckAdmissionPayload{
+		Name:                      message.Name,
+		ExpectedAdmissionRevision: message.ExpectedAdmissionRevision,
+	}
+
+	return v, nil
+}
+
 // BuildSearchPayload builds the payload for the registry Search endpoint from
 // CLI flags.
 func BuildSearchPayload(registrySearchMessage string) (*registry.SearchPayload, error) {
