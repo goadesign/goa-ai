@@ -30,11 +30,12 @@ const (
 )
 
 type testCatalogMap struct {
-	mu            sync.RWMutex
-	content       map[string]string
-	events        chan rmap.EventKind
-	testAndSetErr error
-	subscribe     func() <-chan rmap.EventKind
+	mu             sync.RWMutex
+	content        map[string]string
+	events         chan rmap.EventKind
+	testAndSetErr  error
+	subscribe      func() <-chan rmap.EventKind
+	afterExactRead func(string)
 }
 
 func TestCatalogSameTokenAddRenewReleaseRolling(t *testing.T) {
@@ -674,20 +675,31 @@ func (m *testCatalogMap) TestAndSetEx(
 	key, test, value string,
 ) (string, bool, bool, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.testAndSetErr != nil {
 		err := m.testAndSetErr
 		m.testAndSetErr = nil
+		m.mu.Unlock()
 		return "", false, false, err
 	}
 	current, exists := m.content[key]
 	if !exists {
+		m.mu.Unlock()
 		return "", false, false, nil
 	}
+	if test == "" && value == "" {
+		afterRead := m.afterExactRead
+		m.mu.Unlock()
+		if afterRead != nil {
+			afterRead(key)
+		}
+		return current, true, false, nil
+	}
 	if current != test {
+		m.mu.Unlock()
 		return current, true, false, nil
 	}
 	m.content[key] = value
+	m.mu.Unlock()
 	return current, true, true, nil
 }
 

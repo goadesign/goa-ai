@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,8 +42,9 @@ type (
 
 	// admissionHealthTracker returns one exact health result to CheckAdmission.
 	admissionHealthTracker struct {
-		health ToolsetHealth
-		err    error
+		revision string
+		health   ToolsetHealth
+		err      error
 	}
 )
 
@@ -132,23 +134,6 @@ func TestCheckAdmissionReportsExpectedRevisionHealth(t *testing.T) {
 
 	ctx := t.Context()
 	now := time.Date(2026, time.August, 28, 19, 0, 0, 0, time.UTC)
-	catalog := newToolsetCatalog(newTestCatalogMap(), newTestTimeSource(now))
-	_, err := catalog.Register(
-		ctx,
-		&genregistry.Toolset{
-			Name: "test.toolset",
-			Tools: []*genregistry.ToolSchema{{
-				Name:          "lookup",
-				PayloadSchema: []byte(`{"type":"object"}`),
-				ResultSchema:  []byte(`{"type":"object"}`),
-			}},
-		},
-		testAdmissionRevisionA,
-		"provider-a",
-		testIncarnationA,
-		time.Hour,
-	)
-	require.NoError(t, err)
 
 	tests := []struct {
 		name             string
@@ -202,11 +187,6 @@ func TestCheckAdmissionReportsExpectedRevisionHealth(t *testing.T) {
 			name:             "missing admission is an expected not-ready result",
 			toolset:          "missing.toolset",
 			expectedRevision: testAdmissionRevisionA,
-		},
-		{
-			name:             "admission changed during the read",
-			toolset:          "test.toolset",
-			expectedRevision: testAdmissionRevisionA,
 			healthErr:        errToolsetNotFound,
 		},
 	}
@@ -215,8 +195,11 @@ func TestCheckAdmissionReportsExpectedRevisionHealth(t *testing.T) {
 			t.Parallel()
 
 			svc := &Service{
-				catalog:       catalog,
-				healthTracker: admissionHealthTracker{health: test.health, err: test.healthErr},
+				healthTracker: admissionHealthTracker{
+					revision: test.observedRevision,
+					health:   test.health,
+					err:      test.healthErr,
+				},
 			}
 			status, err := svc.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
 				Name:                      test.toolset,
@@ -241,24 +224,16 @@ func TestCheckAdmissionReportsExpectedRevisionHealth(t *testing.T) {
 	}
 }
 
-func TestCheckAdmissionReturnsServiceUnavailableOnHealthFailure(t *testing.T) {
+func TestCheckAdmissionReturnsOneCatalogSnapshotDuringReplacement(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
-	catalog := newToolsetCatalog(
-		newTestCatalogMap(),
-		newTestTimeSource(time.Date(2026, time.August, 28, 19, 0, 0, 0, time.UTC)),
-	)
-	_, err := catalog.Register(
+	now := time.Date(2026, time.August, 28, 19, 0, 0, 0, time.UTC)
+	activeMap := newTestCatalogMap()
+	activeCatalog := newToolsetCatalog(activeMap, newTestTimeSource(now))
+	_, err := activeCatalog.Register(
 		ctx,
-		&genregistry.Toolset{
-			Name: "test.toolset",
-			Tools: []*genregistry.ToolSchema{{
-				Name:          "lookup",
-				PayloadSchema: []byte(`{"type":"object"}`),
-				ResultSchema:  []byte(`{"type":"object"}`),
-			}},
-		},
+		testCatalogToolset("test.toolset", "active", nil),
 		testAdmissionRevisionA,
 		"provider-a",
 		testIncarnationA,
@@ -266,13 +241,85 @@ func TestCheckAdmissionReturnsServiceUnavailableOnHealthFailure(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	replacementMap := newTestCatalogMap()
+	replacementCatalog := newToolsetCatalog(replacementMap, newTestTimeSource(now))
+	replacement, err := replacementCatalog.Register(
+		ctx,
+		testCatalogToolset("test.toolset", "replacement", nil),
+		testAdmissionRevisionB,
+		"provider-b",
+		testIncarnationB,
+		time.Hour,
+	)
+	require.NoError(t, err)
+	_, err = replacementCatalog.Register(
+		ctx,
+		testCatalogToolset("test.toolset", "replacement", nil),
+		testAdmissionRevisionB,
+		"provider-c",
+		testIncarnationA,
+		time.Hour,
+	)
+	require.NoError(t, err)
+	err = replacementCatalog.RecordPong(
+		ctx,
+		"test.toolset",
+		"provider-b",
+		testIncarnationB,
+		replacement.RegistrationToken,
+		replacement.HealthEpoch,
+	)
+	require.NoError(t, err)
+	key := toolsetCatalogKey("test.toolset")
+	replacementRaw, exists := replacementMap.Get(key)
+	require.True(t, exists)
+
+	var replaceOnce sync.Once
+	activeMap.afterExactRead = func(gotKey string) {
+		if gotKey != key {
+			return
+		}
+		replaceOnce.Do(func() {
+			activeMap.mu.Lock()
+			activeMap.content[key] = replacementRaw
+			activeMap.mu.Unlock()
+		})
+	}
+	tracker := &healthTracker{
+		catalog:            activeCatalog,
+		stalenessThreshold: time.Minute,
+	}
+	svc := &Service{healthTracker: tracker}
+
+	status, err := svc.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
+		Name:                      "test.toolset",
+		ExpectedAdmissionRevision: testAdmissionRevisionA,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, status.ObservedAdmissionRevision)
+	assert.Equal(t, testAdmissionRevisionA, *status.ObservedAdmissionRevision)
+	assert.Equal(t, 1, status.RoutableProviderCount)
+	assert.Nil(t, status.LastPongAt)
+	assert.False(t, status.Ready)
+
+	current, err := tracker.currentAdmissionHealth(ctx, "test.toolset")
+	require.NoError(t, err)
+	assert.Equal(t, testAdmissionRevisionB, current.AdmissionRevision)
+	assert.Equal(t, 2, current.ProviderCount)
+	assert.True(t, current.LastPong.Equal(now))
+	assert.True(t, current.Healthy)
+}
+
+func TestCheckAdmissionReturnsServiceUnavailableOnHealthFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
 	svc := &Service{
-		catalog: catalog,
 		healthTracker: admissionHealthTracker{
 			err: errors.New("health store unavailable"),
 		},
 	}
-	_, err = svc.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
+	_, err := svc.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
 		Name:                      "test.toolset",
 		ExpectedAdmissionRevision: testAdmissionRevisionA,
 	})
@@ -702,6 +749,14 @@ func (unitHealthTracker) Health(context.Context, string, string) (ToolsetHealth,
 	return ToolsetHealth{Healthy: true}, nil
 }
 
+// currentAdmissionHealth returns healthy test routing for the active revision.
+func (unitHealthTracker) currentAdmissionHealth(context.Context, string) (admissionHealthSnapshot, error) {
+	return admissionHealthSnapshot{
+		AdmissionRevision: testAdmissionRevisionA,
+		ToolsetHealth:     ToolsetHealth{Healthy: true},
+	}, nil
+}
+
 func (unitHealthTracker) RecordPong(context.Context, string, string, string, string) error {
 	return nil
 }
@@ -717,6 +772,15 @@ func (unitHealthTracker) Close() error {
 // Health returns the admission state supplied by the test.
 func (h admissionHealthTracker) Health(context.Context, string, string) (ToolsetHealth, error) {
 	return h.health, h.err
+}
+
+// currentAdmissionHealth returns the revision and health supplied by the test
+// as one snapshot.
+func (h admissionHealthTracker) currentAdmissionHealth(context.Context, string) (admissionHealthSnapshot, error) {
+	return admissionHealthSnapshot{
+		AdmissionRevision: h.revision,
+		ToolsetHealth:     h.health,
+	}, h.err
 }
 
 // RecordPong is unused because CheckAdmission only reads health.

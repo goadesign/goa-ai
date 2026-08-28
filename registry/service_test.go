@@ -117,7 +117,7 @@ func TestRegistrationIdempotence(t *testing.T) {
 	properties.TestingRun(t)
 }
 
-func newTestServiceForServiceTests(pulseClient clientspulse.Client, streamManager StreamManager, healthTracker HealthTracker, seed ...*genregistry.Toolset) (*Service, error) {
+func newTestServiceForServiceTests(pulseClient clientspulse.Client, streamManager StreamManager, healthTracker serviceHealthTracker, seed ...*genregistry.Toolset) (*Service, error) {
 	clock := newTestTimeSource(time.Unix(1_700_000_000, 0))
 	catalog := newToolsetCatalog(newTestCatalogMap(), clock)
 	ctx := context.Background()
@@ -1016,6 +1016,14 @@ func (m *mockHealthTracker) Health(ctx context.Context, toolset, registrationTok
 		healthy = true
 	}
 	return ToolsetHealth{Healthy: healthy}, nil
+}
+
+// currentAdmissionHealth returns the active revision and configured test health.
+func (m *mockHealthTracker) currentAdmissionHealth(context.Context, string) (admissionHealthSnapshot, error) {
+	return admissionHealthSnapshot{
+		AdmissionRevision: testAdmissionRevisionA,
+		ToolsetHealth:     ToolsetHealth{Healthy: m.healthy},
+	}, m.healthErr
 }
 
 func (m *mockHealthTracker) RemoveGeneration(ctx context.Context, toolset, registrationToken string) error {

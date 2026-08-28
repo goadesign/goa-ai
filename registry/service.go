@@ -71,13 +71,21 @@ type (
 		) (callClaimDisposition, error)
 	}
 
+	// serviceHealthTracker is the health behavior the registry service uses.
+	// The private snapshot method keeps deployment diagnostics coherent without
+	// widening the public HealthTracker implementation contract.
+	serviceHealthTracker interface {
+		HealthTracker
+		currentAdmissionHealth(context.Context, string) (admissionHealthSnapshot, error)
+	}
+
 	// Service implements the registry service interface.
 	// It provides toolset registration, discovery, and tool invocation capabilities.
 	Service struct {
 		catalog        *toolsetCatalog
 		validator      *schemaValidator
 		streamManager  StreamManager
-		healthTracker  HealthTracker
+		healthTracker  serviceHealthTracker
 		callAdmissions callAdmissionRepository
 
 		pulseClient           clientspulse.Client
@@ -93,7 +101,7 @@ type (
 		// StreamManager manages Pulse streams for toolset communication.
 		StreamManager StreamManager
 		// HealthTracker tracks provider health status.
-		HealthTracker HealthTracker
+		HealthTracker serviceHealthTracker
 		// CallAdmissions atomically coordinates call publication across replicas.
 		CallAdmissions callAdmissionRepository
 		// PulseClient creates/opens Pulse streams. Required for CallTool.
@@ -392,7 +400,7 @@ func (s *Service) CheckAdmission(
 	ctx context.Context,
 	p *genregistry.CheckAdmissionPayload,
 ) (*genregistry.AdmissionStatus, error) {
-	entry, err := s.catalog.ActiveRegistration(ctx, p.Name)
+	snapshot, err := s.healthTracker.currentAdmissionHealth(ctx, p.Name)
 	if errors.Is(err, errToolsetNotFound) {
 		return &genregistry.AdmissionStatus{
 			Ready:                 false,
@@ -401,32 +409,18 @@ func (s *Service) CheckAdmission(
 	}
 	if err != nil {
 		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
-			"read toolset %q admission: %w",
-			p.Name,
-			err,
-		))
-	}
-	health, err := s.healthTracker.Health(ctx, p.Name, entry.RegistrationToken)
-	if errors.Is(err, errToolsetNotFound) {
-		return &genregistry.AdmissionStatus{
-			Ready:                 false,
-			RoutableProviderCount: 0,
-		}, nil
-	}
-	if err != nil {
-		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
-			"check toolset %q admission health: %w",
+			"read toolset %q admission health: %w",
 			p.Name,
 			err,
 		))
 	}
 	status := &genregistry.AdmissionStatus{
-		Ready:                     entry.AdmissionRevision == p.ExpectedAdmissionRevision && health.Healthy,
-		ObservedAdmissionRevision: &entry.AdmissionRevision,
-		RoutableProviderCount:     health.ProviderCount,
+		Ready:                     snapshot.AdmissionRevision == p.ExpectedAdmissionRevision && snapshot.Healthy,
+		ObservedAdmissionRevision: &snapshot.AdmissionRevision,
+		RoutableProviderCount:     snapshot.ProviderCount,
 	}
-	if !health.LastPong.IsZero() {
-		lastPong := health.LastPong.UTC().Format(time.RFC3339Nano)
+	if !snapshot.LastPong.IsZero() {
+		lastPong := snapshot.LastPong.UTC().Format(time.RFC3339Nano)
 		status.LastPongAt = &lastPong
 	}
 	return status, nil
