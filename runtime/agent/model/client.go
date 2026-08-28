@@ -176,9 +176,8 @@ func (c *validatedClient) Complete(ctx context.Context, req *Request) (*Response
 	request = preparedRequest(request, contract)
 	response, providerErr := c.provider.Complete(ctx, request)
 	var validationErr error
-	var providerValidation *OutputValidationError
 	switch {
-	case errors.As(providerErr, &providerValidation):
+	case isExactOutputValidation(providerErr):
 		validationErr = providerErr
 		providerErr = nil
 		response = nil
@@ -455,9 +454,9 @@ func (l *clientCallLifecycle) finalize() error {
 	return joinClientErrors(l.outcome.Error(), finalizerErr)
 }
 
-// finalizeClose runs every finisher and returns only close-time failures. The
-// complete structured outcome still reaches the runtime finalizer.
-func (l *clientCallLifecycle) finalizeClose() error {
+// finalizeClose runs every finisher and returns the complete private phase
+// record alongside Close's existing combined error.
+func (l *clientCallLifecycle) finalizeClose() validatedStreamCloseResult {
 	finalizerErr := l.runFinishers()
 	closeOutcome := modelcall.Outcome{
 		ProviderClose: l.outcome.ProviderClose,
@@ -469,7 +468,11 @@ func (l *clientCallLifecycle) finalizeClose() error {
 		Context:   l.outcome.Context,
 		Framework: l.outcome.Framework,
 	}
-	return joinClientErrors(closeOutcome.Error(), finalizerErr)
+	return validatedStreamCloseResult{
+		outcome:      l.outcome.Clone(),
+		finalizerErr: finalizerErr,
+		err:          joinClientErrors(closeOutcome.Error(), finalizerErr),
+	}
 }
 
 // runFinishers records every prepared Finish result against one frozen input,
@@ -483,7 +486,7 @@ func (l *clientCallLifecycle) runFinishers() error {
 			Err:    call.Finish(preFinishErr),
 		}
 	}
-	l.outcome.Context.Called = true
+	l.outcome.Context = contextResult(l.ctx)
 	if err := l.outcome.ValidateFinalized(); err != nil {
 		l.outcome.Framework = modelcall.Result{Called: true, Err: err}
 	}
@@ -491,6 +494,7 @@ func (l *clientCallLifecycle) runFinishers() error {
 	if l.finalizer != nil {
 		finalizerErr = l.finalizer.FinalizeModelCall(l.outcome.Clone())
 	}
+	l.outcome.Context = contextResult(l.ctx)
 	return finalizerErr
 }
 
@@ -524,6 +528,14 @@ func joinClientErrors(errs ...error) error {
 		joined = errors.Join(joined, err)
 	}
 	return joined
+}
+
+// isExactOutputValidation reports whether every error leaf resolves to one
+// exact OutputValidationError. Unary provider failures use this classification
+// so an unrelated error can never be reclassified or discarded.
+func isExactOutputValidation(err error) bool {
+	_, ok := exactOutputValidation(err)
+	return ok
 }
 
 // ObserveStreamRecv delegates safe stream facts without changing the validated

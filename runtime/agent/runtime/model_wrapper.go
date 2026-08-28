@@ -71,7 +71,7 @@ func (c *plannerModelClient) Stream(ctx context.Context, req *model.Request) (pl
 	st, err := c.inner.Stream(ctx, req)
 	if err != nil {
 		if st != nil {
-			err = errors.Join(err, st.Close())
+			err = st.Finalize(err)
 		}
 		return planner.StreamSummary{}, err
 	}
@@ -354,11 +354,7 @@ func (s *modelInvocationStreamer) ObserveStreamRecv(observation model.StreamObse
 	}
 	err := observation.Err
 	if err != nil {
-		if model.IsStreamValidationError(err) {
-			var validationErr *model.OutputValidationError
-			if !errors.As(err, &validationErr) {
-				panic("stream validation error has no OutputValidationError")
-			}
+		if validationErr, ok := exactModelOutputValidation(err); ok {
 			outputErr := outputcontract.NewWithOrigin(
 				validationErr,
 				planner.OutputContractOriginModel,
@@ -418,7 +414,7 @@ func (s *modelInvocationStreamer) ObserveStreamRecv(observation model.StreamObse
 				return err
 			}
 		} else {
-			if !model.IsStreamValidationError(observation.Err) {
+			if _, ok := exactModelOutputValidation(observation.Err); !ok {
 				return s.finish(nil)
 			}
 			return s.finish(err)

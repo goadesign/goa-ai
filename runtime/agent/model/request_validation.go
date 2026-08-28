@@ -196,9 +196,11 @@ func EvidenceForResponse(response *Response) ResponseEvidence {
 	return responseEvidencePreflighted(response)
 }
 
-// Error describes why provider output failed its request contract.
+// Error returns a stable summary without rendering the rejected output or its
+// validation cause. Callers use the typed accessors and errors.Is/As when they
+// need structured diagnostic evidence.
 func (e *OutputValidationError) Error() string {
-	return "model output does not meet its request contract: " + e.cause.Error()
+	return "model output does not meet its request contract"
 }
 
 // Unwrap exposes the underlying output-validation cause.

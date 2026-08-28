@@ -264,7 +264,7 @@ func TestPlanStartActivityCannotHideMalformedModelOutput(t *testing.T) {
 	require.Equal(t, 1, providerCalls)
 }
 
-func TestPlanStartActivityKeepsRejectedStreamCloseFailureAsActivityError(t *testing.T) {
+func TestPlanStartActivityPreservesValidationOverProviderCloseFailure(t *testing.T) {
 	tests := []struct {
 		name       string
 		plannerErr func(error) error
@@ -284,8 +284,8 @@ func TestPlanStartActivityKeepsRejectedStreamCloseFailureAsActivityError(t *test
 				stream, err := client.Stream(ctx, &model.Request{Model: "test"})
 				require.NoError(t, err)
 				_, err = planner.ConsumeStream(ctx, stream)
-				require.ErrorIs(t, err, closeErr)
-				require.ErrorContains(t, err, "invalid canonical response")
+				require.NotErrorIs(t, err, closeErr)
+				require.ErrorContains(t, outputContractCause(t, err), "invalid canonical response")
 				return nil, test.plannerErr(err)
 			}}
 			rt := newTestRuntimeWithPlanner("service.agent", pl)
@@ -311,9 +311,8 @@ func TestPlanStartActivityKeepsRejectedStreamCloseFailureAsActivityError(t *test
 				RunContext: run.Context{RunID: "run-123"},
 			})
 
-			require.Nil(t, out)
-			require.ErrorIs(t, err, closeErr)
-			require.ErrorContains(t, err, "invalid canonical response")
+			requirePlannerOutputContractFailure(t, out, err)
+			require.Equal(t, planner.OutputContractOriginModel, out.OutputContractFailure.Origin)
 		})
 	}
 }
@@ -1046,7 +1045,7 @@ func TestPlanStartActivityCannotHideConflictingStreamOutput(t *testing.T) {
 		_, err = planner.ConsumeStream(ctx, stream)
 		var outputErr *planner.OutputContractError
 		require.ErrorAs(t, err, &outputErr)
-		require.ErrorContains(t, err, "streamed text does not match canonical response")
+		require.ErrorContains(t, outputContractCause(t, err), "streamed text does not match canonical response")
 		response, err := client.Complete(ctx, &model.Request{Model: "test"})
 		require.Nil(t, response)
 		require.ErrorIs(t, err, outputErr)
@@ -1160,7 +1159,7 @@ func TestPlanStartActivityCannotHideTypedStreamFailure(t *testing.T) {
 		_, err = stream.Recv()
 		var outputErr *planner.OutputContractError
 		require.ErrorAs(t, err, &outputErr)
-		require.ErrorContains(t, err, "typed stream value is invalid")
+		require.ErrorContains(t, outputContractCause(t, err), "typed stream value is invalid")
 		response, err := client.Complete(ctx, &model.Request{Model: "test"})
 		require.Nil(t, response)
 		require.ErrorIs(t, err, outputErr)
@@ -1213,7 +1212,7 @@ func TestPlanStartActivityBoundsOversizedUnaryUsageModel(t *testing.T) {
 		require.True(t, ok)
 		response, err := client.Complete(ctx, &model.Request{Model: "test"})
 		require.Nil(t, response)
-		require.ErrorContains(t, err, "token usage model exceeds 512 bytes")
+		require.ErrorContains(t, outputContractCause(t, err), "token usage model exceeds 512 bytes")
 		response, err = client.Complete(ctx, &model.Request{Model: "test"})
 		require.Nil(t, response)
 		require.Error(t, err)
@@ -1258,7 +1257,7 @@ func TestPlanStartActivityBoundsOversizedStreamUsageModel(t *testing.T) {
 		stream, err := client.Stream(ctx, &model.Request{Model: "test"})
 		require.NoError(t, err)
 		_, err = planner.ConsumeStream(ctx, stream)
-		require.ErrorContains(t, err, "token usage model exceeds 512 bytes")
+		require.ErrorContains(t, outputContractCause(t, err), "token usage model exceeds 512 bytes")
 		response, err := client.Complete(ctx, &model.Request{Model: "test"})
 		require.Nil(t, response)
 		require.Error(t, err)
@@ -1440,7 +1439,7 @@ func TestPlanStartActivityRejectsUnaryUsageOverflow(t *testing.T) {
 		require.NotNil(t, response)
 		response, err = client.Complete(ctx, &model.Request{Model: "test"})
 		require.Nil(t, response)
-		require.ErrorContains(t, err, "total token usage exceeds the supported integer range")
+		require.ErrorContains(t, outputContractCause(t, err), "total token usage exceeds the supported integer range")
 		return finalPlannerResult("planner tried to continue"), nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
@@ -1486,7 +1485,7 @@ func TestPlanStartActivityKeepsStreamUsageOverflowAsActivityError(t *testing.T) 
 		stream, err := client.Stream(ctx, &model.Request{Model: "test"})
 		require.NoError(t, err)
 		_, err = planner.ConsumeStream(ctx, stream)
-		require.ErrorContains(t, err, "total token usage exceeds the supported integer range")
+		require.ErrorContains(t, outputContractCause(t, err), "total token usage exceeds the supported integer range")
 		return finalPlannerResult("planner tried to continue"), nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
@@ -1509,8 +1508,8 @@ func TestPlanStartActivityKeepsStreamUsageOverflowAsActivityError(t *testing.T) 
 	})
 
 	require.Nil(t, out)
-	require.ErrorContains(t, err, "model stream total token usage exceeds the supported integer range")
-	require.ErrorContains(t, err, "aggregate model usage: total token usage exceeds the supported integer range")
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
 	require.Equal(t, 1, providerCalls)
 }
 
@@ -1911,13 +1910,45 @@ func TestRunPlanActivityPublishesTypedModelRejectionReason(t *testing.T) {
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
 	require.Equal(t, planner.OutputContractOriginModel, out.OutputContractFailure.Origin)
-	require.Positive(t, out.OutputContractFailure.ReasonSize)
-	require.Len(t, out.OutputContractFailure.ReasonSHA256, 64)
+	require.Zero(t, out.OutputContractFailure.ReasonSize)
+	require.Equal(
+		t,
+		"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		out.OutputContractFailure.ReasonSHA256,
+	)
 	require.Len(t, recorder.events, 1)
 	rejected, ok := recorder.events[0].(*hooks.ModelOutputRejectedEvent)
 	require.True(t, ok)
 	require.Equal(t, out.OutputContractFailure.ReasonSHA256, rejected.ReasonSHA256)
 	require.Equal(t, out.OutputContractFailure.ReasonSize, rejected.ReasonSize)
+}
+
+func TestOutputContractFailureMetadataFingerprintsPrivateValidationCause(t *testing.T) {
+	contract, err := model.NewRequestContract(&model.Request{})
+	require.NoError(t, err)
+	causes := []error{
+		errors.New("private validation cause alpha"),
+		errors.New("private validation cause beta with more detail"),
+	}
+	activity := &plannerActivityInvocation{invocations: &modelInvocationJournal{}}
+	failures := make([]*OutputContractFailure, 0, len(causes))
+	for _, cause := range causes {
+		validationErr := contract.RejectProviderOutput(nil, cause)
+		outputErr := outputcontract.NewWithOrigin(validationErr, outputcontract.OriginModel)
+
+		failure, metadataErr := activity.outputContractFailureMetadata(outputErr)
+
+		require.NoError(t, metadataErr)
+		require.EqualError(t, validationErr, "model output does not meet its request contract")
+		require.EqualError(t, outputErr, "completed output does not meet its contract")
+		require.Equal(t, int64(len(cause.Error())), failure.ReasonSize)
+		encoded, marshalErr := json.Marshal(failure)
+		require.NoError(t, marshalErr)
+		require.NotContains(t, string(encoded), cause.Error())
+		failures = append(failures, failure)
+	}
+	require.NotEqual(t, failures[0].ReasonSHA256, failures[1].ReasonSHA256)
+	require.NotEqual(t, failures[0].ReasonSize, failures[1].ReasonSize)
 }
 
 func TestRunPlanActivityRetriesPublicationBeforeOutputFailure(t *testing.T) {
@@ -2588,7 +2619,7 @@ func TestPlanStartActivityPersistsPlannerOriginForPrematureStreamClose(t *testin
 		require.True(t, ok)
 		stream, err := client.Stream(ctx, &model.Request{Model: "closed-stream"})
 		require.NoError(t, err)
-		require.ErrorContains(t, stream.Close(), "planner closed model stream before EOF")
+		require.ErrorContains(t, outputContractCause(t, stream.Close()), "planner closed model stream before EOF")
 		return finalPlannerResult("planner tried to continue"), nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)

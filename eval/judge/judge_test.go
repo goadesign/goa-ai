@@ -36,6 +36,22 @@ func newTestJudge(t *testing.T, provider model.Provider, opts ...Option) *Judge 
 	return New(client, opts...)
 }
 
+// judgeOutputContractCause returns the diagnostic cause kept behind the
+// privacy-safe error text so tests can verify why the judge rejected output.
+func judgeOutputContractCause(t *testing.T, err error) error {
+	t.Helper()
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	cause := errors.Unwrap(outputErr)
+	require.Error(t, cause)
+	var validationErr *model.OutputValidationError
+	if errors.As(cause, &validationErr) {
+		cause = errors.Unwrap(validationErr)
+		require.Error(t, cause)
+	}
+	return cause
+}
+
 func TestJudgeUsesStrictHighReasoningRequest(t *testing.T) {
 	client := &recordingClient{response: modelResponse(`{
 		"judgments": [
@@ -77,7 +93,7 @@ func TestJudgeRejectsSchemaInvalidResponseWithoutAnotherRequest(t *testing.T) {
 		Claim:   "The answer is complete.",
 	}})
 
-	require.ErrorContains(t, err, "does not match its schema")
+	require.ErrorContains(t, judgeOutputContractCause(t, err), "does not match its schema")
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
 	assert.Nil(t, judgments)
@@ -95,7 +111,7 @@ func TestJudgeRejectsClaimContractFailureWithoutAnotherRequest(t *testing.T) {
 		Claim:   "The answer is complete.",
 	}})
 
-	require.ErrorContains(t, err, `judgment references unknown claim "other"`)
+	require.ErrorContains(t, judgeOutputContractCause(t, err), `judgment references unknown claim "other"`)
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
 	assert.Nil(t, judgments)
@@ -146,7 +162,7 @@ func TestJudgeRejectsInvalidResponses(t *testing.T) {
 			_, err := newTestJudge(t, client).Judge(context.Background(), []aieval.Assertion{{
 				ClaimID: "complete", Output: "Done.", Claim: "Complete.",
 			}})
-			require.ErrorContains(t, err, test.wantErr)
+			require.ErrorContains(t, judgeOutputContractCause(t, err), test.wantErr)
 			var outputErr *planner.OutputContractError
 			require.ErrorAs(t, err, &outputErr)
 			assert.Len(t, client.requests, 1)

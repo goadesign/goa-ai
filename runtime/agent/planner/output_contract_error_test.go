@@ -13,9 +13,13 @@ import (
 )
 
 func TestNewOutputContractErrorUsesPlannerOrigin(t *testing.T) {
-	err := NewOutputContractError(errors.New("invalid planner result"))
+	cause := errors.New("invalid planner result with submitted details")
+	err := NewOutputContractError(cause)
 
 	require.Equal(t, OutputContractOriginPlanner, err.Origin())
+	require.EqualError(t, err, "completed output does not meet its contract")
+	require.ErrorIs(t, err, cause)
+	require.NotContains(t, err.Error(), "submitted details")
 }
 
 func TestPrivateOutputContractConstructorUsesExplicitOrigin(t *testing.T) {

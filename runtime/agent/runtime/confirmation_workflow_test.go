@@ -88,9 +88,9 @@ func TestConfirmationDecisionRejectsMissingToolCallID(t *testing.T) {
 				&runDeadlines{},
 			)
 
-			require.ErrorContains(t, err, `confirmed tool "tool.confirm" is missing tool_call_id`)
 			var outputErr *planner.OutputContractError
 			require.ErrorAs(t, err, &outputErr)
+			require.ErrorContains(t, outputContractCause(t, err), `confirmed tool "tool.confirm" is missing tool_call_id`)
 		})
 	}
 }

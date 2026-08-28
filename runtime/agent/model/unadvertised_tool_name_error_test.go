@@ -22,6 +22,8 @@ func TestNewUnadvertisedToolNameErrorRequiresName(t *testing.T) {
 
 func TestUnadvertisedToolNameFollowsWrappedAndRestoredErrors(t *testing.T) {
 	marker := NewUnadvertisedToolNameError("catalog_list_nearby")
+	require.EqualError(t, marker, "model returned an unadvertised tool name")
+	assert.NotContains(t, marker.Error(), "catalog_list_nearby")
 	wrapped := fmt.Errorf("adapter rejected response: %w", marker)
 	rejected, err := RestoreOutputValidationError(
 		wrapped,
@@ -33,6 +35,8 @@ func TestUnadvertisedToolNameFollowsWrappedAndRestoredErrors(t *testing.T) {
 	name, ok := UnadvertisedToolName(rejected)
 	assert.True(t, ok)
 	assert.Equal(t, "catalog_list_nearby", name)
+	require.EqualError(t, rejected, "model output does not meet its request contract")
+	assert.NotContains(t, rejected.Error(), "catalog_list_nearby")
 
 	_, ok = UnadvertisedToolName(errors.New(`tool name "catalog_list_nearby" was not advertised`))
 	assert.False(t, ok, "diagnostic text alone must not become typed recovery state")

@@ -752,12 +752,12 @@ redeploys.
   parts cannot be mistaken for no response. If
   concurrent calls reject output, the envelope uses the earliest-started
   rejected invocation's reason and complete-response evidence. The
-  event also fingerprints the local validation error instead of retaining
-  provider-controlled text. Model content remains observability data rather
-  than workflow state, so diagnostic storage cannot retry inference and
-  Temporal and hook payloads remain bounded. A planner result rejected after
-  model output was accepted emits `PlannerOutputRejected` instead, with only
-  the bounded local reason identity.
+  event fingerprints the private validation-cause text instead of retaining
+  that text. Model content remains observability data rather than workflow
+  state, so diagnostic storage cannot retry inference and Temporal and hook
+  payloads remain bounded. A planner result rejected after model output was
+  accepted emits `PlannerOutputRejected` instead, with only the bounded private
+  cause identity.
 - **Generated tool validation**: A model definition created from a generated
   tool specification retains its generated payload decoder inside the process.
   Unary tool calls and streamed tool calls must match a definition in the exact

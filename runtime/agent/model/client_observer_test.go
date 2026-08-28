@@ -5,6 +5,7 @@ package model
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 
@@ -43,6 +44,8 @@ type (
 		completeObserved  error
 		streamObservedErr error
 		finishObserved    error
+		finishStarted     chan struct{}
+		finishRelease     chan struct{}
 		finishCalls       int
 		abortCalls        int
 	}
@@ -50,6 +53,7 @@ type (
 	observerTestStreamObserver struct {
 		recvCalls  int
 		closeCalls int
+		closeErr   error
 	}
 
 	orderedFailingObserver struct {
@@ -59,9 +63,11 @@ type (
 
 	observerTestFinalizingCall struct {
 		*observerTestCall
-		outcome       modelcall.Outcome
-		finalizeErr   error
-		finalizeCalls int
+		outcome         modelcall.Outcome
+		finalizeErr     error
+		finalizeStarted chan struct{}
+		finalizeRelease chan struct{}
+		finalizeCalls   int
 	}
 )
 
@@ -108,6 +114,10 @@ func (c *observerTestCall) ObserveClientStream(err error) (StreamObserver, error
 func (c *observerTestCall) Finish(err error) error {
 	c.finishObserved = err
 	c.finishCalls++
+	if c.finishStarted != nil {
+		close(c.finishStarted)
+		<-c.finishRelease
+	}
 	if c.events != nil {
 		*c.events = append(*c.events, "finish "+c.name)
 	}
@@ -129,7 +139,7 @@ func (o *observerTestStreamObserver) ObserveStreamRecv(StreamObservation) error 
 
 func (o *observerTestStreamObserver) ObserveStreamClose(error) error {
 	o.closeCalls++
-	return nil
+	return o.closeErr
 }
 
 func (*orderedFailingObserver) ObserveStreamRecv(StreamObservation) error {
@@ -144,6 +154,10 @@ func (o *orderedFailingObserver) ObserveStreamClose(error) error {
 func (c *observerTestFinalizingCall) FinalizeModelCall(outcome modelcall.Outcome) error {
 	c.outcome = outcome
 	c.finalizeCalls++
+	if c.finalizeStarted != nil {
+		close(c.finalizeStarted)
+		<-c.finalizeRelease
+	}
 	*c.events = append(*c.events, "finalize "+c.name)
 	return c.finalizeErr
 }
@@ -280,6 +294,209 @@ func TestClientAttachesObserverToExactValidatedStreamAndFinishesOnClose(t *testi
 	require.Equal(t, 1, streamObserver.closeCalls)
 	require.Equal(t, 1, call.finishCalls)
 	require.Zero(t, call.abortCalls)
+}
+
+func TestClientCompleteClassifiesOnlyExactOutputValidation(t *testing.T) {
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	providerErr := errors.New("provider failed")
+	tests := []struct {
+		name               string
+		returned           error
+		wantProvider       bool
+		wantValidationSlot bool
+	}{
+		{name: "exact", returned: validationErr, wantValidationSlot: true},
+		{
+			name:               "wrapped",
+			returned:           fmt.Errorf("translated: %w", validationErr),
+			wantValidationSlot: true,
+		},
+		{
+			name:               "duplicate joined",
+			returned:           errors.Join(validationErr, validationErr),
+			wantValidationSlot: true,
+		},
+		{
+			name: "nested duplicate joined",
+			returned: fmt.Errorf(
+				"translated: %w",
+				errors.Join(validationErr, errors.Join(validationErr, validationErr)),
+			),
+			wantValidationSlot: true,
+		},
+		{
+			name:         "unrelated joined",
+			returned:     errors.Join(validationErr, providerErr),
+			wantProvider: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			events := []string{}
+			call := &observerTestFinalizingCall{observerTestCall: &observerTestCall{
+				name:   "runtime",
+				events: &events,
+			}}
+			client, clientErr := newValidatedClient(
+				&observerTestProvider{completeErr: test.returned},
+				nil,
+				[]ProviderCallObserver{
+					&observerTestPreparer{name: "runtime", events: &events, call: call},
+				},
+			)
+			require.NoError(t, clientErr)
+
+			response, completeErr := client.Complete(t.Context(), &Request{})
+
+			require.Nil(t, response)
+			require.ErrorIs(t, completeErr, validationErr)
+			require.Equal(t, test.wantProvider, call.outcome.ProviderCall.Err != nil)
+			require.Equal(t, test.wantValidationSlot, call.outcome.Validations[0].Err != nil)
+			if test.wantProvider {
+				require.ErrorIs(t, completeErr, providerErr)
+				require.ErrorIs(t, call.outcome.ProviderCall.Err, providerErr)
+			}
+		})
+	}
+}
+
+func TestClientFinalizeRetainsIndependentLifecycleFailures(t *testing.T) {
+	closeObserverErr := errors.New("close observer failed")
+	finisherErr := errors.New("finisher failed")
+	finalizerErr := errors.New("finalizer failed")
+	providerCloseErr := errors.New("provider close failed")
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	raw := &validatedStreamFixture{recvErr: validationErr, closeErr: providerCloseErr}
+	streamObserver := &observerTestStreamObserver{closeErr: closeObserverErr}
+	events := []string{}
+	call := &observerTestFinalizingCall{
+		observerTestCall: &observerTestCall{
+			name:           "runtime",
+			events:         &events,
+			streamObserver: streamObserver,
+			finishErr:      finisherErr,
+		},
+		finalizeErr: finalizerErr,
+	}
+	client, err := newValidatedClient(
+		&observerTestProvider{stream: raw},
+		nil,
+		[]ProviderCallObserver{
+			&observerTestPreparer{name: "runtime", events: &events, call: call},
+		},
+	)
+	require.NoError(t, err)
+	stream, err := client.Stream(t.Context(), &Request{})
+	require.NoError(t, err)
+	_, primaryErr := stream.Recv()
+	require.Same(t, validationErr, primaryErr)
+
+	operationErr := stream.Finalize(primaryErr)
+
+	require.ErrorIs(t, operationErr, validationErr)
+	require.ErrorIs(t, operationErr, closeObserverErr)
+	require.ErrorIs(t, operationErr, finisherErr)
+	require.ErrorIs(t, operationErr, finalizerErr)
+	require.ErrorIs(t, operationErr, providerCloseErr)
+	require.Equal(t, 1, streamObserver.closeCalls)
+	require.Equal(t, 1, call.finishCalls)
+	require.Equal(t, 1, call.finalizeCalls)
+	require.Equal(t, 1, raw.closeCalls)
+}
+
+func TestClientFinalizeRetainsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	providerCloseErr := errors.New("provider close failed")
+	raw := &validatedStreamFixture{recvErr: validationErr, closeErr: providerCloseErr}
+	client, err := NewClient(&observerTestProvider{stream: raw})
+	require.NoError(t, err)
+	stream, err := client.Stream(ctx, &Request{})
+	require.NoError(t, err)
+	_, primaryErr := stream.Recv()
+	require.Same(t, validationErr, primaryErr)
+	cancel()
+
+	operationErr := stream.Finalize(primaryErr)
+
+	require.ErrorIs(t, operationErr, validationErr)
+	require.ErrorIs(t, operationErr, context.Canceled)
+	require.ErrorIs(t, operationErr, providerCloseErr)
+	require.Equal(t, 1, raw.closeCalls)
+}
+
+func TestClientFinalizeResamplesCancellationDuringLifecycle(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*observerTestFinalizingCall) (started, release chan struct{})
+	}{
+		{
+			name: "finisher",
+			configure: func(call *observerTestFinalizingCall) (chan struct{}, chan struct{}) {
+				call.finishStarted = make(chan struct{})
+				call.finishRelease = make(chan struct{})
+				return call.finishStarted, call.finishRelease
+			},
+		},
+		{
+			name: "finalizer",
+			configure: func(call *observerTestFinalizingCall) (chan struct{}, chan struct{}) {
+				call.finalizeStarted = make(chan struct{})
+				call.finalizeRelease = make(chan struct{})
+				return call.finalizeStarted, call.finalizeRelease
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			contract, err := NewRequestContract(&Request{})
+			require.NoError(t, err)
+			validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+			providerCloseErr := errors.New("provider close failed")
+			raw := &validatedStreamFixture{recvErr: validationErr, closeErr: providerCloseErr}
+			events := []string{}
+			call := &observerTestFinalizingCall{observerTestCall: &observerTestCall{
+				name:   "runtime",
+				events: &events,
+			}}
+			started, release := test.configure(call)
+			client, err := newValidatedClient(
+				&observerTestProvider{stream: raw},
+				nil,
+				[]ProviderCallObserver{
+					&observerTestPreparer{name: "runtime", events: &events, call: call},
+				},
+			)
+			require.NoError(t, err)
+			stream, err := client.Stream(ctx, &Request{})
+			require.NoError(t, err)
+			_, primaryErr := stream.Recv()
+			require.Same(t, validationErr, primaryErr)
+			result := make(chan error, 1)
+			go func() {
+				result <- stream.Finalize(primaryErr)
+			}()
+			<-started
+
+			cancel()
+			close(release)
+			operationErr := <-result
+
+			require.ErrorIs(t, operationErr, validationErr)
+			require.ErrorIs(t, operationErr, context.Canceled)
+			require.ErrorIs(t, operationErr, providerCloseErr)
+			require.Equal(t, 1, raw.closeCalls)
+			require.Equal(t, 1, call.finishCalls)
+			require.Equal(t, 1, call.finalizeCalls)
+		})
+	}
 }
 
 func TestClientFinishesCallsAfterLaterStreamObserver(t *testing.T) {

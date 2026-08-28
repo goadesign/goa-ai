@@ -8,16 +8,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -28,6 +32,23 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+// outputContractCause requires the public output-contract category and returns
+// its private validation cause for assertions that must not parse Error text.
+func outputContractCause(t testing.TB, err error) error {
+	t.Helper()
+	var validationErr *model.OutputValidationError
+	if errors.As(err, &validationErr) {
+		return errors.Unwrap(validationErr)
+	}
+	var contractErr *outputcontract.Error
+	require.ErrorAs(t, err, &contractErr)
+	cause := errors.Unwrap(contractErr)
+	for errors.As(cause, &contractErr) {
+		cause = errors.Unwrap(contractErr)
+	}
+	return cause
+}
 
 // mustRuntimeToolInput compiles a static test schema.
 func mustRuntimeToolInput(schema []byte) model.ToolInput {

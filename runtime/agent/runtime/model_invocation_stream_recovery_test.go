@@ -7,17 +7,61 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+func TestModelInvocationRecoveryRequiresExactValidationLeaves(t *testing.T) {
+	contract, err := model.NewRequestContract(&model.Request{})
+	require.NoError(t, err)
+	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	candidate := &modelInvocationCandidate{
+		rejectedValidationErr: validationErr,
+		rejectedOutputErr:     validationErr,
+	}
+	unrelatedErr := errors.New("provider failed")
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "exact", err: validationErr, want: true},
+		{name: "wrapped", err: fmt.Errorf("translated: %w", validationErr), want: true},
+		{name: "duplicate join", err: errors.Join(validationErr, validationErr), want: true},
+		{
+			name: "nested duplicate join",
+			err: fmt.Errorf(
+				"translated: %w",
+				errors.Join(validationErr, errors.Join(validationErr, validationErr)),
+			),
+			want: true,
+		},
+		{name: "unrelated join", err: errors.Join(validationErr, unrelatedErr)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, onlyExpectedValidation(test.err, candidate))
+			require.Equal(
+				t,
+				test.want,
+				validationMatches(
+					[]modelcall.Result{{Called: true, Err: test.err}},
+					validationErr,
+				),
+			)
+		})
+	}
+}
 
 func TestRunLoopRecoversMalformedStreamedToolCallBeforeExecution(t *testing.T) {
 	kickoff := newAnyJSONSpec("catalog.stream_kickoff", "catalog")
@@ -62,7 +106,7 @@ func TestRunLoopRecoversMalformedStreamedToolCallBeforeExecution(t *testing.T) {
 			return &planner.PlanResult{ToolCalls: summary.ToolCalls}, nil
 		},
 	)
-	h.runtime.models["test"] = newPreResponseRecoveryStreamModel(&providerCalls, false)
+	h.runtime.models["test"] = newPreResponseRecoveryStreamModel(&providerCalls, false, nil)
 
 	out, err := h.run(streamRecoveryKickoff(kickoff), policy.CapsState{
 		MaxToolCalls:           3,
@@ -79,6 +123,48 @@ func TestRunLoopRecoversMalformedStreamedToolCallBeforeExecution(t *testing.T) {
 	assert.Equal(t, 3, resumes)
 	require.NotNil(t, out.Usage)
 	assert.Equal(t, 30, out.Usage.TotalTokens)
+}
+
+func TestRunLoopRecoversMalformedStreamedToolCallWhenCloseFails(t *testing.T) {
+	kickoff := newAnyJSONSpec("catalog.stream_close_kickoff", "catalog")
+	lookup := newStrictRecoverySpec()
+	closeErr := errors.New("provider close failed")
+	var providerCalls, lookupCalls int
+	h := newRecoveryHarness(
+		t,
+		"stream-model-invocation-close",
+		[]tools.ToolSpec{kickoff, lookup},
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			if call.Name == lookup.Name {
+				lookupCalls++
+			}
+			return successfulToolResult(call), nil
+		},
+		func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			if len(input.ToolOutputs) == 2 {
+				return finalPlannerResult("stream replacement completed"), nil
+			}
+			summary, err := streamPreResponseModel(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+			return &planner.PlanResult{ToolCalls: summary.ToolCalls}, nil
+		},
+	)
+	h.runtime.models["test"] = newPreResponseRecoveryStreamModel(&providerCalls, false, closeErr)
+
+	out, err := h.run(streamRecoveryKickoff(kickoff), policy.CapsState{
+		MaxToolCalls:           3,
+		RemainingToolCalls:     3,
+		MaxRecoveryTurns:       1,
+		RemainingRecoveryTurns: 1,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "stream replacement completed", agentMessageText(out.Final))
+	assert.Equal(t, 2, providerCalls)
+	assert.Equal(t, 1, lookupCalls)
 }
 
 func TestRunLoopMalformedStreamedToolCallUsesSharedRecoveryCap(t *testing.T) {
@@ -105,7 +191,7 @@ func TestRunLoopMalformedStreamedToolCallUsesSharedRecoveryCap(t *testing.T) {
 			return nil, err
 		},
 	)
-	h.runtime.models["test"] = newPreResponseRecoveryStreamModel(&providerCalls, true)
+	h.runtime.models["test"] = newPreResponseRecoveryStreamModel(&providerCalls, true, nil)
 
 	out, err := h.run(streamRecoveryKickoff(kickoff), policy.CapsState{
 		MaxToolCalls:           2,
@@ -140,7 +226,7 @@ func TestRunLoopCancellationPreventsStreamedToolCallReplacement(t *testing.T) {
 			return nil, err
 		},
 	)
-	h.runtime.models["test"] = newPreResponseRecoveryStreamModel(&providerCalls, true)
+	h.runtime.models["test"] = newPreResponseRecoveryStreamModel(&providerCalls, true, nil)
 	workflowCtx, cancel := context.WithCancel(context.Background())
 	h.workflow.ctx = workflowCtx
 	resume := h.workflow.plannerRoutes["resume"]
@@ -189,13 +275,15 @@ func streamPreResponseModel(
 // newPreResponseRecoveryStreamModel returns a usage chunk followed by a
 // malformed generated tool call. Later calls either repeat that rejection or
 // provide the one accepted replacement used by these tests.
-func newPreResponseRecoveryStreamModel(providerCalls *int, alwaysInvalid bool) model.Client {
+func newPreResponseRecoveryStreamModel(providerCalls *int, alwaysInvalid bool, closeErr error) model.Client {
 	return mustTestModelClient(stubModelClient{
 		stream: func(context.Context, *model.Request) (model.Streamer, error) {
 			(*providerCalls)++
 			payload := rawjson.Message(`{"query":42,"privateSecret":"submitted-secret"}`)
+			streamCloseErr := closeErr
 			if !alwaysInvalid && *providerCalls > 1 {
 				payload = rawjson.Message(`{"query":"accepted"}`)
+				streamCloseErr = nil
 			}
 			usage := model.TokenUsage{
 				InputTokens:  *providerCalls * 4,
@@ -225,6 +313,7 @@ func newPreResponseRecoveryStreamModel(providerCalls *int, alwaysInvalid bool) m
 					StopReason: "tool_use",
 					Usage:      usage,
 				},
+				closeErr: streamCloseErr,
 			}, nil
 		},
 	})

@@ -309,8 +309,7 @@ func (s *geminiStreamer) handleFunctionCallPart(part *genai.Part, prep *prepared
 	name, ok := toolIdent(part.FunctionCall.Name, prep.provToCanon)
 	if !ok {
 		return fmt.Errorf(
-			"vertex: streamed function call %q returned unadvertised name: %w",
-			part.FunctionCall.Name,
+			"vertex: translate streamed function call: %w",
 			model.NewUnadvertisedToolNameError(part.FunctionCall.Name),
 		)
 	}

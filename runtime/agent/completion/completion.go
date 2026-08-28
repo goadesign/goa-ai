@@ -48,8 +48,9 @@ type (
 
 	// Streamer exposes preview chunks and the final typed value from one
 	// completion stream. Value remains unavailable until Recv has validated the
-	// complete provider stream and returned its final completion chunk. One
-	// goroutine must call Recv, Value, and Close sequentially.
+	// complete provider stream, finalized its lifecycle, and returned its final
+	// completion chunk. One goroutine must call Recv, Value, and Close
+	// sequentially.
 	Streamer[T any] struct {
 		inner      *completionStream
 		validation *completionValidation[T]
@@ -72,9 +73,10 @@ type (
 	//   - Exactly one canonical ChunkTypeCompletion must arrive before EOF.
 	//   - Text and tool chunks are invalid on this typed completion surface.
 	completionStream struct {
-		inner       *model.ValidatedStream
-		validated   bool
-		terminalErr error
+		inner             *model.ValidatedStream
+		completionFailure func() error
+		validated         bool
+		terminalErr       error
 	}
 )
 
@@ -124,7 +126,7 @@ func Stream[T any](ctx context.Context, client model.Client, req *model.Request,
 	streamer, err := client.Stream(ctx, cloned)
 	if err != nil {
 		if streamer != nil {
-			err = errors.Join(err, streamer.Close())
+			err = streamer.Finalize(err)
 		}
 		return nil, completionOutputError(err)
 	}
@@ -145,13 +147,6 @@ func (s *Streamer[T]) Recv() (model.Chunk, error) {
 	if !ok {
 		return chunk, nil
 	}
-	if !s.validation.valueSet {
-		outputErr := outputcontract.NewWithOrigin(
-			errors.New("validated completion stream has no typed value"),
-			outputcontract.OriginModel,
-		)
-		return nil, s.inner.fail(outputErr)
-	}
 	s.value = s.validation.value
 	s.valueSet = true
 	return chunk, nil
@@ -163,7 +158,8 @@ func (s *Streamer[T]) Value() (T, bool) {
 	return s.value, s.valueSet
 }
 
-// Close closes the provider stream.
+// Close returns the cleanup result already completed by Recv, or closes an
+// unfinished stream when the caller stops before a final value.
 func (s *Streamer[T]) Close() error {
 	return s.inner.Close()
 }
@@ -352,7 +348,18 @@ func newCompletionStream[T any](
 	inner *model.ValidatedStream,
 	validation *completionValidation[T],
 ) *Streamer[T] {
-	validated := &completionStream{inner: inner}
+	validated := &completionStream{
+		inner: inner,
+		completionFailure: func() error {
+			if validation.valueSet {
+				return nil
+			}
+			return outputcontract.NewWithOrigin(
+				errors.New("validated completion stream has no typed value"),
+				outputcontract.OriginModel,
+			)
+		},
+	}
 	return &Streamer[T]{
 		inner:      validated,
 		validation: validation,
@@ -399,10 +406,12 @@ func (s *completionStream) Recv() (model.Chunk, error) {
 		// provider failure that added the wrapper.
 		//nolint:errorlint // Exact equality is required by the model stream contract.
 		if err == io.EOF {
-			s.validated = true
+			if finalizeErr := s.finalize(nil); finalizeErr != nil {
+				return nil, finalizeErr
+			}
 			return nil, io.EOF
 		}
-		return nil, s.fail(completionStreamError(err))
+		return nil, s.finalize(err)
 	}
 	if _, ok := chunk.(model.CompletionChunk); !ok {
 		return chunk, nil
@@ -413,8 +422,8 @@ func (s *completionStream) Recv() (model.Chunk, error) {
 	return chunk, nil
 }
 
-// drainAfterCompletion reads through EOF before exposing the final typed value.
-// This prevents callers from using a value from an incomplete provider stream.
+// drainAfterCompletion reads through EOF and completes all stream lifecycle
+// work before exposing the final typed value.
 func (s *completionStream) drainAfterCompletion() error {
 	for {
 		_, err := s.inner.Recv()
@@ -423,10 +432,9 @@ func (s *completionStream) drainAfterCompletion() error {
 			// the provider failure that added the wrapper.
 			//nolint:errorlint // Exact equality is required by the model stream contract.
 			if err == io.EOF {
-				s.validated = true
-				return nil
+				return s.finalize(s.completionFailure())
 			}
-			return s.fail(completionStreamError(err))
+			return s.finalize(err)
 		}
 	}
 }
@@ -437,6 +445,18 @@ func (s *completionStream) Close() error {
 
 func (s *completionStream) Response() *model.Response {
 	return s.inner.Response()
+}
+
+// finalize gives the model-owned stream the exact terminal or typed-completion
+// processing result before this wrapper converts validation into its public
+// output-contract category.
+func (s *completionStream) finalize(primaryErr error) error {
+	operationErr := s.inner.Finalize(primaryErr)
+	if operationErr != nil {
+		return s.fail(completionStreamError(operationErr))
+	}
+	s.validated = true
+	return nil
 }
 
 // fail records the first terminal error and returns it for every later Recv.

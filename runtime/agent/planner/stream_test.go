@@ -69,6 +69,22 @@ func TestConsumeStreamRejectsWrappedProviderEOF(t *testing.T) {
 	require.True(t, streamer.closed)
 }
 
+func TestConsumeStreamJoinsProviderAndCloseFailures(t *testing.T) {
+	receiveErr := errors.New("provider receive failed")
+	closeErr := errors.New("provider close failed")
+	streamer := &testStreamer{err: receiveErr, closeErr: closeErr}
+
+	summary, err := ConsumeStream(
+		t.Context(),
+		mustValidatedStream(t, streamer, &model.Request{}),
+	)
+
+	require.Empty(t, summary)
+	require.ErrorIs(t, err, receiveErr)
+	require.ErrorIs(t, err, closeErr)
+	require.True(t, streamer.closed)
+}
+
 func TestConsumeStreamPreservesMissingProviderUsageModel(t *testing.T) {
 	streamer := &testStreamer{
 		chunks: []model.Chunk{
@@ -198,7 +214,7 @@ func TestConsumeStreamReturnsNoSummaryAfterLaterProviderRejection(t *testing.T) 
 	require.True(t, streamer.closed)
 }
 
-func TestConsumeStreamJoinsValidationAndCloseFailure(t *testing.T) {
+func TestConsumeStreamPreservesValidationOverCloseFailure(t *testing.T) {
 	closeErr := errors.New("provider close failed")
 	request := modelRequestWithTool("svc.lookup")
 	contract, err := model.NewRequestContract(request)
@@ -218,8 +234,10 @@ func TestConsumeStreamJoinsValidationAndCloseFailure(t *testing.T) {
 	)
 
 	require.Equal(t, StreamSummary{}, summary)
-	require.ErrorIs(t, err, validationErr)
-	require.ErrorIs(t, err, closeErr)
+	var outputErr *OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.Same(t, validationErr, errors.Unwrap(outputErr))
+	require.NotErrorIs(t, err, closeErr)
 	require.True(t, streamer.closed)
 }
 
@@ -244,7 +262,9 @@ func TestConsumeStreamRejectsRepeatedFinalizedToolCall(t *testing.T) {
 
 	var outputErr *OutputContractError
 	require.ErrorAs(t, err, &outputErr)
-	require.ErrorContains(t, err, `model stream repeated finalized tool call "call-1"`)
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, errors.Unwrap(outputErr), &validationErr)
+	require.ErrorContains(t, errors.Unwrap(validationErr), `model stream repeated finalized tool call "call-1"`)
 	require.True(t, streamer.closed)
 }
 
@@ -266,7 +286,8 @@ func TestConsumeStreamTextUsesValidatedAggregateBudget(t *testing.T) {
 		mustValidatedStream(t, streamer, &model.Request{}),
 	)
 
-	require.ErrorContains(t, err, "exceeds maximum byte size")
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
 	require.Equal(t, StreamSummary{}, summary)
 	require.True(t, streamer.closed)
 }
@@ -288,7 +309,8 @@ func TestConsumeStreamRejectsTypedCompletionChunks(t *testing.T) {
 
 	var outputErr *OutputContractError
 	require.ErrorAs(t, err, &outputErr)
-	require.ErrorContains(t, err, "model stream emitted a completion without a structured output request")
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, errors.Unwrap(outputErr), &validationErr)
 	require.True(t, streamer.closed)
 }
 
@@ -328,7 +350,8 @@ func TestConsumeStreamRequiresCanonicalResponse(t *testing.T) {
 		mustValidatedStream(t, streamer, &model.Request{}),
 	)
 
-	require.ErrorContains(t, err, "invalid canonical response")
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
 	require.True(t, streamer.closed)
 }
 

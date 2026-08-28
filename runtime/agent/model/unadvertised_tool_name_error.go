@@ -7,7 +7,6 @@ package model
 
 import (
 	"errors"
-	"fmt"
 )
 
 type unadvertisedToolNameError struct {
@@ -36,8 +35,8 @@ func UnadvertisedToolName(err error) (string, bool) {
 	return marker.name, true
 }
 
-// Error identifies the rejected name for diagnostics. Callers use
-// UnadvertisedToolName instead of parsing this text.
+// Error returns a stable summary without rendering the model-authored name.
+// Callers use UnadvertisedToolName to read the exact rejected name.
 func (e *unadvertisedToolNameError) Error() string {
-	return fmt.Sprintf("tool name %q was not advertised", e.name)
+	return "model returned an unadvertised tool name"
 }

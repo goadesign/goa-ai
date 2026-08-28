@@ -337,7 +337,7 @@ func TestCompleteAnthropicStructuredOutputFallbackRejectsInvalidCompletion(t *te
 	require.Nil(t, response)
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "does not match its schema")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "does not match its schema")
 	require.False(t, decoded)
 }
 
@@ -467,6 +467,6 @@ func TestBedrockStreamerRejectsSchemaInvalidStructuredOutput(t *testing.T) {
 	require.Nil(t, final)
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "does not match its schema")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "does not match its schema")
 	require.Nil(t, stream.Response())
 }

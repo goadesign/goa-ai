@@ -39,7 +39,7 @@ func TestRestoreOutputValidationErrorPreservesBoundedEvidence(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, source.Evidence(), restored.Evidence())
 	require.Equal(t, source.Usage(), restored.Usage())
-	require.ErrorContains(t, restored, "remote adapter rejected output")
+	require.ErrorContains(t, errors.Unwrap(restored), "remote adapter rejected output")
 	require.Empty(t, restored.RecoveryCorrection())
 	rejected, err := restored.RejectedResponse()
 	require.NoError(t, err)

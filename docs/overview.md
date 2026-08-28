@@ -864,11 +864,14 @@ type Streamer interface {
 Every public client captures the request's immutable output contract before
 provider work and returns a `ValidatedStream`. Raw provider and transport
 adapters implement `Streamer` only so `RequestContract.ValidateStream` can own
-and validate them. Drain the validated stream until `Recv` returns `io.EOF`,
-then read `Response` for the canonical provider-authored content, usage, and
-stop reason before calling `Close`. `UsageChunk` carries progressive usage
-while the stream is active; terminal errors do not produce a canonical
-response.
+and validate them. Code that owns a complete receive-through-close operation
+passes the exact `Recv` or processing error to `Finalize`, or nil after clean
+EOF, before using `Response`. This preserves independent receive, lifecycle,
+context, and cleanup failures while keeping a validation error primary when
+provider cleanup alone also fails. Callers that intentionally handle receiving
+and cleanup as separate operations may continue to use `Close`. `UsageChunk`
+carries progressive usage while the stream is active; terminal errors do not
+produce a canonical response.
 
 ### Message Types
 

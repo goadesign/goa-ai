@@ -7,6 +7,9 @@ import (
 	"reflect"
 
 	"goa.design/goa-ai/runtime/agent/model"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type (
@@ -135,7 +138,7 @@ func NewServer(opts ...Option) (*Server, error) {
 		st, err := cfg.provider.Stream(ctx, req)
 		if err != nil {
 			if !isNilStreamer(st) {
-				err = errors.Join(err, st.Close())
+				err = finishProviderStream(ctx, err, st.Close())
 			}
 			return nil, err
 		}
@@ -149,12 +152,12 @@ func NewServer(opts ...Option) (*Server, error) {
 				// the provider failure that added the wrapper.
 				//nolint:errorlint // Exact equality is required by the model stream contract.
 				if err == io.EOF {
-					return st.Response(), st.Close()
+					return st.Response(), finishProviderStream(ctx, nil, st.Close())
 				}
-				return nil, errors.Join(err, st.Close())
+				return nil, finishProviderStream(ctx, err, st.Close())
 			}
 			if err := send(ch); err != nil {
-				return nil, errors.Join(err, st.Close())
+				return nil, finishProviderStream(ctx, err, st.Close())
 			}
 		}
 	}
@@ -168,6 +171,86 @@ func NewServer(opts ...Option) (*Server, error) {
 		stream = cfg.streamMW[i](stream)
 	}
 	return &Server{provider: cfg.provider, unary: unary, stream: stream}, nil
+}
+
+// finishProviderStream closes a failed raw provider stream. Model-output
+// validation remains the operation result, while a simultaneous cleanup
+// failure is recorded separately on the request span. Every other pair of
+// failures remains joined so callers can inspect both causes.
+func finishProviderStream(ctx context.Context, primaryErr, closeErr error) error {
+	contextErr := ctx.Err()
+	if contextErr != nil {
+		return joinGatewayErrors(primaryErr, closeErr, contextErr)
+	}
+	if closeErr == nil {
+		return primaryErr
+	}
+	if !isExactGatewayValidation(primaryErr) {
+		return joinGatewayErrors(primaryErr, closeErr)
+	}
+	trace.SpanFromContext(ctx).AddEvent(
+		"model.stream_cleanup_failed",
+		trace.WithAttributes(attribute.String("exception.message", closeErr.Error())),
+	)
+	return primaryErr
+}
+
+// isExactGatewayValidation reports whether every primary error leaf resolves
+// to one exact OutputValidationError. Mixed provider or callback failures keep
+// provider cleanup in the returned gateway error.
+func isExactGatewayValidation(err error) bool {
+	_, ok := exactGatewayValidation(err)
+	return ok
+}
+
+// exactGatewayValidation follows wrappers and joins without using the public
+// broad category query. Every leaf must be the same validation object.
+func exactGatewayValidation(err error) (*model.OutputValidationError, bool) {
+	if err == nil {
+		return nil, false
+	}
+	//nolint:errorlint // Exact root identity is required before following wrappers.
+	if validationErr, ok := err.(*model.OutputValidationError); ok {
+		return validationErr, validationErr != nil
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var expected *model.OutputValidationError
+		for _, child := range joined.Unwrap() {
+			actual, valid := exactGatewayValidation(child)
+			if !valid {
+				return nil, false
+			}
+			if expected == nil {
+				expected = actual
+				continue
+			}
+			if expected != actual {
+				return nil, false
+			}
+		}
+		return expected, expected != nil
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return exactGatewayValidation(wrapped.Unwrap())
+	}
+	return nil, false
+}
+
+// joinGatewayErrors preserves each distinct operation failure while avoiding a
+// second context leaf when a provider already returned that cancellation.
+func joinGatewayErrors(errs ...error) error {
+	var joined error
+	for _, err := range errs {
+		if err == nil || (joined != nil && errors.Is(joined, err)) {
+			continue
+		}
+		if joined == nil {
+			joined = err
+			continue
+		}
+		joined = errors.Join(joined, err)
+	}
+	return joined
 }
 
 // Complete processes a unary model completion request through the configured

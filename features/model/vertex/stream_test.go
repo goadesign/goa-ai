@@ -97,7 +97,7 @@ func TestStreamRejectsProviderEndBeforeFinishReason(t *testing.T) {
 
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, err, "vertex: stream ended before candidate finish reason")
+	require.ErrorContains(t, errors.Unwrap(validationErr), "vertex: stream ended before candidate finish reason")
 }
 
 func TestStreamToolCallThoughtSignature(t *testing.T) {
@@ -550,8 +550,9 @@ func TestStreamStructuredOutputRejectsInvalidFinalJSON(t *testing.T) {
 	defer func() { assert.NoError(t, s.Close()) }()
 
 	err = drainToError(t, s)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not valid JSON")
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	assert.Contains(t, errors.Unwrap(validationErr).Error(), "not valid JSON")
 }
 
 func TestStreamStructuredOutputRejectsEmptyAccumulation(t *testing.T) {
@@ -576,8 +577,9 @@ func TestStreamStructuredOutputRejectsEmptyAccumulation(t *testing.T) {
 	defer func() { assert.NoError(t, s.Close()) }()
 
 	err = drainToError(t, s)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not valid JSON")
+	var validationErr *model.OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	assert.Contains(t, errors.Unwrap(validationErr).Error(), "not valid JSON")
 }
 
 // drainToError drains a streamer until it returns a non-EOF error, failing

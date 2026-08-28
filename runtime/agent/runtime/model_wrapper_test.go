@@ -208,7 +208,7 @@ func TestModelInvocationClientRejectsNilStream(t *testing.T) {
 	require.Nil(t, stream)
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
-	require.ErrorContains(t, err, "model stream is nil")
+	require.ErrorContains(t, outputContractCause(t, err), "model stream is nil")
 }
 
 func TestRuntimeModelWrappersCloseStreamsReturnedWithErrors(t *testing.T) {
@@ -286,8 +286,10 @@ func TestModelInvocationStreamFingerprintsRejectedCompleteResponse(t *testing.T)
 	stream, err := client.Stream(t.Context(), request)
 	require.NoError(t, err)
 	_, recvErr := stream.Recv()
-	require.Error(t, recvErr)
-	require.ErrorContains(t, recvErr, `catalog.unknown`)
+	name, ok := model.UnadvertisedToolName(recvErr)
+	require.True(t, ok)
+	require.Equal(t, "catalog.unknown", name)
+	require.NotContains(t, recvErr.Error(), name)
 
 	require.NoError(t, invocations.outputContractError())
 	evidence, present := rejectedResponseEvidence(invocations)
@@ -317,7 +319,7 @@ func TestModelInvocationStreamFingerprintsRejectedCompleteResponse(t *testing.T)
 	require.Equal(t, 7, invocations.exportUsage().TotalTokens)
 }
 
-func TestModelInvocationStreamDoesNotCommitRejectedOutputAfterCloseFailure(t *testing.T) {
+func TestModelInvocationStreamPreservesValidationAfterCloseFailure(t *testing.T) {
 	closeErr := errors.New("provider close failed")
 	invocations := &modelInvocationJournal{}
 	client := newTestModelInvocationClient(stubModelClient{
@@ -340,16 +342,19 @@ func TestModelInvocationStreamDoesNotCommitRejectedOutputAfterCloseFailure(t *te
 	_, err = stream.Recv()
 	require.NoError(t, err)
 	_, validationErr := stream.Recv()
-	require.ErrorContains(t, validationErr, "invalid canonical response")
+	var outputValidationErr *model.OutputValidationError
+	require.ErrorAs(t, validationErr, &outputValidationErr)
+	require.ErrorContains(t, errors.Unwrap(outputValidationErr), "invalid canonical response")
 
-	err = stream.Close()
-	require.ErrorIs(t, err, closeErr)
+	err = stream.Finalize(validationErr)
+	require.Same(t, validationErr, err)
+	require.NotErrorIs(t, err, closeErr)
+	require.ErrorIs(t, stream.Close(), closeErr)
 	require.Nil(t, invocations.recoverableModelInvocationRecovery())
 	_, err = invocations.beginModelInvocation("", func() {})
-	require.ErrorIs(t, err, closeErr)
-	var outputValidationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &outputValidationErr)
-	require.ErrorContains(t, err, "invalid canonical response")
+	require.NotErrorIs(t, err, closeErr)
+	require.ErrorContains(t, errors.Unwrap(outputValidationErr), "invalid canonical response")
 }
 
 func TestModelInvocationStreamWaitsForLaterObserverFailure(t *testing.T) {
@@ -415,7 +420,9 @@ func TestModelInvocationStreamDoesNotCommitRejectedOutputAfterUsageRecordingFail
 	_, err = stream.Recv()
 	require.NoError(t, err)
 	_, validationErr := stream.Recv()
-	require.ErrorContains(t, validationErr, "invalid canonical response")
+	var outputValidationErr *model.OutputValidationError
+	require.ErrorAs(t, validationErr, &outputValidationErr)
+	require.ErrorContains(t, errors.Unwrap(outputValidationErr), "invalid canonical response")
 	require.ErrorIs(t, validationErr, recordErr)
 
 	err = stream.Close()
@@ -445,7 +452,9 @@ func TestModelInvocationStreamDoesNotCommitRejectedOutputAfterCancellation(t *te
 	_, err = stream.Recv()
 	require.NoError(t, err)
 	_, validationErr := stream.Recv()
-	require.ErrorContains(t, validationErr, "invalid canonical response")
+	var outputValidationErr *model.OutputValidationError
+	require.ErrorAs(t, validationErr, &outputValidationErr)
+	require.ErrorContains(t, errors.Unwrap(outputValidationErr), "invalid canonical response")
 	cancel()
 
 	err = stream.Close()
@@ -478,7 +487,9 @@ func TestModelInvocationStreamDoesNotCommitRejectedOutputAfterDeadline(t *testin
 	_, err = stream.Recv()
 	require.NoError(t, err)
 	_, validationErr := stream.Recv()
-	require.ErrorContains(t, validationErr, "invalid canonical response")
+	var outputValidationErr *model.OutputValidationError
+	require.ErrorAs(t, validationErr, &outputValidationErr)
+	require.ErrorContains(t, errors.Unwrap(outputValidationErr), "invalid canonical response")
 	ctx.expire()
 	<-providerCtx.Done()
 
@@ -608,7 +619,7 @@ func TestModelInvocationClientKeepsPreProviderRequestContract(t *testing.T) {
 
 	response, err := client.Complete(t.Context(), request)
 	require.Nil(t, response)
-	require.ErrorContains(t, err, `model returned tool "late_tool" that was not present in its request`)
+	require.ErrorContains(t, outputContractCause(t, err), `model returned tool "late_tool" that was not present in its request`)
 }
 
 func TestModelInvocationClientKeepsValidatedResponseBookkeepingFailurePlannerOwned(t *testing.T) {
@@ -649,7 +660,7 @@ func TestModelInvocationClientDoesNotCommitRejectedOutputAfterUsageRecordingFail
 	response, err := client.Complete(t.Context(), &model.Request{})
 
 	require.Nil(t, response)
-	require.ErrorContains(t, err, "unsupported assistant response part")
+	require.ErrorContains(t, outputContractCause(t, err), "unsupported assistant response part")
 	require.ErrorIs(t, err, recordErr)
 	require.Equal(t, 1, sink.rejectedResponses)
 }
@@ -684,7 +695,7 @@ func TestModelInvocationStreamLatchesTerminalError(t *testing.T) {
 	_, firstErr := stream.Recv()
 	_, secondErr := stream.Recv()
 
-	require.ErrorContains(t, firstErr, "after stop")
+	require.ErrorContains(t, outputContractCause(t, firstErr), "after stop")
 	require.Equal(t, firstErr, secondErr)
 	require.Equal(t, 2, upstream.index)
 }
@@ -709,9 +720,9 @@ func TestModelInvocationStreamCloseLatchesPlannerContractFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	closeErr := stream.Close()
-	require.ErrorContains(t, closeErr, "planner closed model stream before EOF")
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, closeErr, &outputErr)
+	require.ErrorContains(t, errors.Unwrap(outputErr), "planner closed model stream before EOF")
 	require.Equal(t, planner.OutputContractOriginPlanner, outputErr.Origin())
 
 	response, err := client.Complete(t.Context(), &model.Request{})
@@ -1216,7 +1227,6 @@ func (s *fakeModelInvocationSink) finalizeModelInvocation(
 		s.finished = make(map[modelInvocationID]error)
 	}
 	s.finished[invocationID] = outcome.Error()
-	s.cancels[invocationID]()
 	return nil
 }
 
@@ -1442,7 +1452,7 @@ func TestModelInvocationClientRejectsStreamWithoutCanonicalResponse(t *testing.T
 
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
-	require.ErrorContains(t, err, "invalid canonical response: model: response is nil")
+	require.ErrorContains(t, outputContractCause(t, err), "invalid canonical response: model: response is nil")
 }
 
 func TestModelInvocationClientRejectsMalformedUnaryResponse(t *testing.T) {
@@ -1489,9 +1499,9 @@ func TestModelInvocationClientRejectsMalformedStreamChunk(t *testing.T) {
 	require.NoError(t, err)
 	_, err = stream.Recv()
 
-	require.ErrorContains(t, err, "tool call is missing its ID")
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
+	require.ErrorContains(t, outputContractCause(t, err), "tool call is missing its ID")
 }
 
 // TestRawModelInvocationSelectionKeepsResponsesIsolated reproduces two probe

@@ -272,9 +272,7 @@ func translateToolCall(
 	name, ok := codec.canonicalName(call.Name)
 	if !ok {
 		return model.ToolCall{}, fmt.Errorf(
-			"openai: tool call %q returned unadvertised function %q: %w",
-			call.CallID,
-			call.Name,
+			"openai: translate response tool call: %w",
 			model.NewUnadvertisedToolNameError(call.Name),
 		)
 	}

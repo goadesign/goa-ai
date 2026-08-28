@@ -261,8 +261,5 @@ func main() {
 			value.Goal,
 			len(value.Steps),
 		)
-		if err := stream.Close(); err != nil {
-			log.Fatalf("completion stream close failed: %v", err)
-		}
 	}
 }

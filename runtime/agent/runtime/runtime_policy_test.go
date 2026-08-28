@@ -330,7 +330,7 @@ func TestRestrictedUnknownToolFailsBeforeExecution(t *testing.T) {
 	assert.Nil(t, out)
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
-	require.ErrorContains(t, err, `planner called unregistered tool "svc.tools.missing"`)
+	require.ErrorContains(t, outputContractCause(t, err), `planner called unregistered tool "svc.tools.missing"`)
 	assert.Empty(t, wfCtx.lastPlannerCall.Name)
 }
 

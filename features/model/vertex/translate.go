@@ -120,8 +120,7 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 				name, ok := toolIdent(part.FunctionCall.Name, provToCanon)
 				if !ok {
 					return nil, fmt.Errorf(
-						"vertex: response function call returned unadvertised name %q: %w",
-						part.FunctionCall.Name,
+						"vertex: translate response function call: %w",
 						model.NewUnadvertisedToolNameError(part.FunctionCall.Name),
 					)
 				}

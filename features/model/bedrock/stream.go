@@ -353,9 +353,7 @@ func (p *chunkProcessor) Handle(event any) error {
 			name, ok := p.toolNameMap[providerName]
 			if !ok {
 				return fmt.Errorf(
-					"bedrock stream: tool use block %q returned unadvertised name %q: %w",
-					id,
-					raw,
+					"bedrock stream: translate tool use: %w",
 					model.NewUnadvertisedToolNameError(raw),
 				)
 			}
