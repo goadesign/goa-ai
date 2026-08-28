@@ -1188,9 +1188,10 @@ func (r *Runtime) ensureRecordActivityRegistered(ctx context.Context) error {
 	return nil
 }
 
-// RegisterToolset registers a toolset outside of agent registration. Useful for
-// feature modules that expose shared toolsets. Returns an error if required fields
-// (Name, Execute) are missing.
+// RegisterToolset registers a toolset outside of agent registration. Feature
+// modules use it to expose shared tools. Agent-tool specs are accepted only
+// with inline child-agent execution, matching agent identities, and a complete
+// child-workflow route. Any invalid spec rejects the whole registration.
 func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	r.registrationMu.Lock()
 	defer r.registrationMu.Unlock()
@@ -1233,6 +1234,9 @@ func validateToolsetSpecs(ts ToolsetRegistration) error {
 	if err := validateSpecs(ts.Specs, ts.ToolMetadataLookup); err != nil {
 		return err
 	}
+	if err := validateAgentToolRegistration(ts); err != nil {
+		return err
+	}
 	if ts.AgentTool == nil {
 		return nil
 	}
@@ -1245,6 +1249,89 @@ func validateToolsetSpecs(ts ToolsetRegistration) error {
 			return fmt.Errorf("%w: agent toolset %q (agent=%s) requires tool specs/codecs", ErrInvalidConfig, ts.Name, agentID)
 		}
 		return fmt.Errorf("%w: agent toolset %q requires tool specs/codecs", ErrInvalidConfig, ts.Name)
+	}
+	return nil
+}
+
+// validateAgentToolRegistration requires every spec and its toolset execution
+// configuration to agree on whether the tool runs a child agent. It rejects the
+// whole registration when any agent tool lacks one complete child-workflow
+// route. Generated specs identify agent tools explicitly; names and toolset
+// labels do not determine this behavior.
+func validateAgentToolRegistration(ts ToolsetRegistration) error {
+	for _, spec := range ts.Specs {
+		if ts.AgentTool != nil && !spec.IsAgentTool {
+			return fmt.Errorf(
+				"%w: agent toolset %q requires tool %q to be marked as an agent tool",
+				ErrInvalidConfig,
+				ts.Name,
+				spec.Name,
+			)
+		}
+		if !spec.IsAgentTool {
+			continue
+		}
+		if ts.AgentTool == nil {
+			return fmt.Errorf(
+				"%w: agent tool %q requires agent-tool execution configuration",
+				ErrInvalidConfig,
+				spec.Name,
+			)
+		}
+		if !ts.Inline {
+			return fmt.Errorf(
+				"%w: agent tool %q requires inline child-agent execution",
+				ErrInvalidConfig,
+				spec.Name,
+			)
+		}
+		if spec.AgentID == "" {
+			return fmt.Errorf(
+				"%w: agent tool %q requires a generated agent id",
+				ErrInvalidConfig,
+				spec.Name,
+			)
+		}
+		cfg := ts.AgentTool
+		if cfg.AgentID == "" {
+			return fmt.Errorf(
+				"%w: agent tool %q requires a registered agent id",
+				ErrInvalidConfig,
+				spec.Name,
+			)
+		}
+		if cfg.Route.ID == "" {
+			return fmt.Errorf(
+				"%w: agent tool %q requires a route agent id",
+				ErrInvalidConfig,
+				spec.Name,
+			)
+		}
+		specAgentID := agent.Ident(spec.AgentID)
+		if specAgentID != cfg.AgentID || cfg.AgentID != cfg.Route.ID {
+			return fmt.Errorf(
+				"%w: agent tool %q agent ids must match: spec=%q registration=%q route=%q",
+				ErrInvalidConfig,
+				spec.Name,
+				specAgentID,
+				cfg.AgentID,
+				cfg.Route.ID,
+			)
+		}
+		if cfg.Route.WorkflowName == "" {
+			return fmt.Errorf(
+				"%w: agent tool %q requires a route workflow name",
+				ErrInvalidConfig,
+				spec.Name,
+			)
+		}
+		if cfg.Route.DefaultTaskQueue == "" {
+			return fmt.Errorf(
+				"%w: agent tool %q requires a route task queue",
+				ErrInvalidConfig,
+				spec.Name,
+			)
+		}
 	}
 	return nil
 }

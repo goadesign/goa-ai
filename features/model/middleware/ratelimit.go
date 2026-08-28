@@ -235,7 +235,10 @@ func (s *limitedStreamer) Recv() (model.Chunk, error) {
 	chunk, err := s.next.Recv()
 	if err != nil {
 		s.once.Do(func() {
-			if errors.Is(err, io.EOF) {
+			// Only literal EOF proves successful model capacity. A wrapped EOF
+			// reports the provider failure that added the wrapper.
+			//nolint:errorlint // Exact equality is required by the model stream contract.
+			if err == io.EOF {
 				s.limiter.observe(nil)
 				return
 			}

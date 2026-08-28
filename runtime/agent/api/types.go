@@ -894,8 +894,9 @@ const (
 	PendingInputKindToolResults PendingInputKind = "tool_results"
 
 	// RunSuspensionVersion is the checkpoint schema emitted by this runtime.
-	// Version 5 records the recovery-turn workflow behavior.
-	RunSuspensionVersion = "goa-ai.run-suspension.v5"
+	// Version 6 derives an exact correct-call catalog from saved typed failures
+	// instead of serializing a duplicate catalog in the checkpoint.
+	RunSuspensionVersion = "goa-ai.run-suspension.v6"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.

@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -58,6 +59,10 @@ type blockingRejectingStreamObserver struct {
 	calls        atomic.Int32
 }
 
+type failingReceiveObserver struct {
+	err error
+}
+
 func (*typedNilStreamFixture) Recv() (Chunk, error) {
 	panic("typed-nil stream Recv called")
 }
@@ -68,6 +73,59 @@ func (*typedNilStreamFixture) Response() *Response {
 
 func (*typedNilStreamFixture) Close() error {
 	panic("typed-nil stream Close called")
+}
+
+func (o *failingReceiveObserver) ObserveStreamRecv(StreamObservation) error {
+	return o.err
+}
+
+func (*failingReceiveObserver) ObserveStreamClose(error) error {
+	return nil
+}
+
+func TestValidatedStreamObserversReceiveFrozenSourceInEveryOrder(t *testing.T) {
+	tests := []struct {
+		name         string
+		observerErr  error
+		failingFirst bool
+	}{
+		{name: "ordinary error first", observerErr: errors.New("observer failed"), failingFirst: true},
+		{name: "ordinary error last", observerErr: errors.New("observer failed")},
+		{name: "EOF first", observerErr: io.EOF, failingFirst: true},
+		{name: "EOF last", observerErr: io.EOF},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response := canonicalTextResponse()
+			contract, err := NewRequestContract(&Request{})
+			require.NoError(t, err)
+			stream, err := contract.ValidateStream(&validatedStreamFixture{
+				chunks:   []Chunk{TextChunk{Message: response.Content[0]}},
+				response: response,
+			})
+			require.NoError(t, err)
+			recording := &recordingStreamObserver{}
+			failing := &failingReceiveObserver{err: test.observerErr}
+			if test.failingFirst {
+				stream, err = stream.Observe(failing)
+				require.NoError(t, err)
+				stream, err = stream.Observe(recording)
+			} else {
+				stream, err = stream.Observe(recording)
+				require.NoError(t, err)
+				stream, err = stream.Observe(failing)
+			}
+			require.NoError(t, err)
+
+			_, err = stream.Recv()
+
+			require.ErrorIs(t, err, test.observerErr)
+			require.False(t, modelcall.Exact(err, io.EOF))
+			require.Len(t, recording.observations, 1)
+			require.NoError(t, recording.observations[0].Err)
+			require.NoError(t, stream.Close())
+		})
+	}
 }
 
 func (s *cancellationBlockedStreamFixture) Recv() (Chunk, error) {
@@ -202,6 +260,11 @@ func TestNestedValidatedStreamGeneratedCorrectionRetainsUsageWithoutExposingResp
 	}
 	raw := &validatedStreamFixture{
 		chunks: []Chunk{
+			ToolCallDeltaChunk{Delta: ToolCallDelta{
+				Name:  call.Name,
+				ID:    call.ID,
+				Delta: string(call.Payload),
+			}},
 			ToolCallChunk{ToolCall: call},
 			UsageChunk{Usage: usage},
 			StopChunk{Reason: "tool_use"},
@@ -324,9 +387,6 @@ func TestValidatedStreamBoundsToolDeltaAccumulator(t *testing.T) {
 	inner := stream.core.inner.(*validatedStreamer)
 
 	_, err := stream.Recv()
-	require.NoError(t, err)
-	require.Equal(t, len(delta), inner.validator.toolDeltaPayloads["call-1"].Len())
-	_, err = stream.Recv()
 
 	require.ErrorContains(t, err, "exceeds maximum byte size")
 	require.Equal(t, len(delta), inner.validator.toolDeltaPayloads["call-1"].Len())
@@ -362,9 +422,10 @@ func TestValidatedStreamDoesNotDoubleChargeFinalizedToolDeltas(t *testing.T) {
 	}
 	stream := mustValidateStream(t, raw, requestWithTool("search"))
 
-	for range 3 {
-		_, err := stream.Recv()
+	for _, expected := range raw.chunks {
+		chunk, err := stream.Recv()
 		require.NoError(t, err)
+		require.Equal(t, expected, chunk)
 	}
 	_, err := stream.Recv()
 
@@ -608,6 +669,44 @@ func TestObservedStreamCloseJoinsProviderAndObserverFailures(t *testing.T) {
 	require.ErrorIs(t, err, providerErr)
 	require.ErrorIs(t, err, observerErr)
 	require.Equal(t, err, observed.Close())
+	require.True(t, raw.closed)
+}
+
+func TestObservedStreamCloseDiscardsBufferedToolChunks(t *testing.T) {
+	call := ToolCall{
+		ID:      "call-1",
+		Name:    "search",
+		Payload: []byte(`{"query":"accepted"}`),
+	}
+	providerErr := errors.New("provider close failed")
+	observerErr := errors.New("observer rejected delivery")
+	raw := &validatedStreamFixture{
+		chunks: []Chunk{
+			ToolCallDeltaChunk{Delta: ToolCallDelta{
+				ID:    call.ID,
+				Name:  call.Name,
+				Delta: string(call.Payload),
+			}},
+			ToolCallChunk{ToolCall: call},
+			StopChunk{Reason: "tool_use"},
+		},
+		response: responseWithToolCall(call),
+		closeErr: providerErr,
+	}
+	base := mustValidateStream(t, raw, requestWithTool("search"))
+	inner := base.core.inner.(*validatedStreamer)
+	observed, err := base.Observe(&failingReceiveObserver{err: observerErr})
+	require.NoError(t, err)
+
+	chunk, err := observed.Recv()
+	require.IsType(t, ToolCallDeltaChunk{}, chunk)
+	require.ErrorIs(t, err, observerErr)
+	require.NotEmpty(t, inner.pending)
+
+	err = observed.Close()
+
+	require.ErrorIs(t, err, providerErr)
+	require.Empty(t, inner.pending)
 	require.True(t, raw.closed)
 }
 

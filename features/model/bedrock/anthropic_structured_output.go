@@ -43,7 +43,10 @@ func newAnthropicStructuredOutputStreamer(
 func (s *anthropicStructuredOutputStreamer) Recv() (model.Chunk, error) {
 	for {
 		chunk, err := s.stream.Recv()
-		if errors.Is(err, io.EOF) {
+		// Only literal EOF completes a model stream. A wrapped EOF reports the
+		// provider failure that added the wrapper.
+		//nolint:errorlint // Exact equality is required by the model stream contract.
+		if err == io.EOF {
 			resp := s.stream.Response()
 			if resp == nil {
 				return nil, s.contract.RejectProviderOutput(

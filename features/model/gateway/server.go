@@ -145,7 +145,10 @@ func NewServer(opts ...Option) (*Server, error) {
 		for {
 			ch, err := st.Recv()
 			if err != nil {
-				if errors.Is(err, io.EOF) {
+				// Only literal EOF completes a model stream. A wrapped EOF reports
+				// the provider failure that added the wrapper.
+				//nolint:errorlint // Exact equality is required by the model stream contract.
+				if err == io.EOF {
 					return st.Response(), st.Close()
 				}
 				return nil, errors.Join(err, st.Close())

@@ -29,6 +29,7 @@ type agentContextOptions struct {
 	cache               CachePolicy
 	continuationActions []continuationAction
 	unavailableTools    []tools.Ident
+	advertisedSpecs     []tools.ToolSpec
 }
 
 // simplePlannerContext is a minimal implementation of planner.PlannerContext.
@@ -46,9 +47,14 @@ type simplePlannerContext struct {
 	cache               CachePolicy
 	continuationActions []continuationAction
 	unavailableTools    []tools.Ident
+	advertisedSpecs     []tools.ToolSpec
 }
 
 func newAgentContext(opts agentContextOptions) planner.PlannerContext {
+	var advertisedSpecs []tools.ToolSpec
+	if opts.advertisedSpecs != nil {
+		advertisedSpecs = cloneToolSpecs(opts.advertisedSpecs)
+	}
 	return &simplePlannerContext{
 		rt:                  opts.runtime,
 		agent:               opts.agentID,
@@ -63,6 +69,7 @@ func newAgentContext(opts agentContextOptions) planner.PlannerContext {
 		cache:               opts.cache,
 		continuationActions: opts.continuationActions,
 		unavailableTools:    opts.unavailableTools,
+		advertisedSpecs:     advertisedSpecs,
 	}
 }
 
@@ -84,7 +91,11 @@ func (c *simplePlannerContext) Metrics() telemetry.Metrics { return c.rt.metrics
 func (c *simplePlannerContext) Tracer() telemetry.Tracer   { return c.rt.tracer }
 func (c *simplePlannerContext) State() planner.AgentState  { return noopAgentState{} }
 func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefinition {
-	specs := c.rt.ToolSpecsForAgent(c.agent)
+	specs := c.advertisedSpecs
+	if specs == nil {
+		specs = c.rt.ToolSpecsForAgent(c.agent)
+	}
+	specs = cloneToolSpecs(specs)
 	visible := specs[:0]
 	for _, spec := range specs {
 		if slices.Contains(c.unavailableTools, spec.Name) {

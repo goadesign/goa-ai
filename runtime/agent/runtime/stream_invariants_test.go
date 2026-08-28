@@ -112,6 +112,8 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 	agentTools.Specs = []tools.ToolSpec{
 		newAnyJSONSpec(invokeToolID, toolsetName),
 	}
+	agentTools.Specs[0].IsAgentTool = true
+	agentTools.Specs[0].AgentID = "child.agent"
 	require.NoError(t, rt.RegisterToolset(agentTools))
 	rt.agentToolSpecs["parent.agent"] = agentTools.Specs
 

@@ -30,7 +30,7 @@ func (r *Runtime) ValidateContinuation(suspension *api.RunSuspension) error {
 }
 
 // decodeWorkflowCheckpoint validates the public envelope before decoding the
-// private state. Callers cannot select an older or alternate checkpoint format.
+// version 5 or version 6 private state.
 func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*workflowCheckpoint, error) {
 	checkpoint, err := decodeWorkflowCheckpointState(suspension)
 	if err != nil {
@@ -176,7 +176,8 @@ func decodeWorkflowCheckpointState(suspension *api.RunSuspension) (*workflowChec
 	if err := validatePublicRunSuspension(suspension); err != nil {
 		return nil, err
 	}
-	if suspension.Version != api.RunSuspensionVersion {
+	if suspension.Version != legacyRunSuspensionVersion &&
+		suspension.Version != api.RunSuspensionVersion {
 		return nil, fmt.Errorf("unsupported run suspension version %q", suspension.Version)
 	}
 	var checkpoint workflowCheckpoint
@@ -264,12 +265,18 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 		if checkpoint.State.PendingRecoveryCatalog != nil {
 			return errors.New("run suspension planner-resume phase cannot carry a recovery catalog")
 		}
-	} else if err := validateRecoveryCatalog(
-		checkpoint.State.PendingRecovery,
-		checkpoint.State.PendingRecoveryCatalog,
-		checkpoint.Batch.Result,
-	); err != nil {
-		return fmt.Errorf("run suspension checkpoint recovery state: %w", err)
+	} else {
+		recoveryCatalog, err := checkpointRecoveryCatalog(checkpoint)
+		if err != nil {
+			return err
+		}
+		if err := validateRecoveryCatalog(
+			checkpoint.State.PendingRecovery,
+			recoveryCatalog,
+			checkpoint.Batch.Result,
+		); err != nil {
+			return fmt.Errorf("run suspension checkpoint recovery state: %w", err)
+		}
 	}
 	for i, event := range checkpoint.State.ToolEvents {
 		if event == nil {
@@ -301,6 +308,30 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 		return errors.New("run suspension checkpoint hard deadline precedes budget deadline")
 	}
 	return nil
+}
+
+// checkpointRecoveryCatalog returns the one catalog representation permitted
+// by the checkpoint version and typed pending failures. Version 5 always reads
+// the serialized activity catalog. Version 6 derives an exact correct-call
+// catalog and rejects a duplicate serialized value; recovery actions whose
+// visible tools cannot be derived still require their serialized catalog.
+func checkpointRecoveryCatalog(checkpoint *workflowCheckpoint) (*RecoveryCatalog, error) {
+	catalog := checkpoint.State.PendingRecoveryCatalog
+	exactTools := correctCallCatalog(checkpoint.State.PendingRecovery)
+	switch checkpoint.Version {
+	case legacyRunSuspensionVersion:
+		return catalog, nil
+	case api.RunSuspensionVersion:
+		if len(exactTools) == 0 {
+			return catalog, nil
+		}
+		if catalog != nil {
+			return nil, errors.New("run suspension checkpoint version 6 correct-call recovery cannot carry a recovery catalog")
+		}
+		return &RecoveryCatalog{Tools: exactTools}, nil
+	default:
+		return nil, fmt.Errorf("unsupported run suspension checkpoint version %q", checkpoint.Version)
+	}
 }
 
 // validatePublicRunSuspension checks the portion of a child suspension that a

@@ -16,14 +16,13 @@ planner model call directly to clients as provisional output. One
 execution-scoped presentation ID associates its fragments with a discard marker
 and differs from every retry execution. The workflow's
 canonical assistant-turn event alone finalizes accepted output. Provisional
-fragments never enter the run log, hook bus, or memory. Partial tool arguments
-stay inside model validation until one complete tool call is available.
-Completed calls remain withheld until the provider's terminal response
-reconciles with the stream and the originating generated decoder accepts every
-payload. A raw remote gateway transports provider output without replacing that
-decoder with a schema-only validator. After planner selection, the canonical
-response is persisted once, and its ordered runtime records are published
-through one idempotent activity batch.
+fragments never enter the run log, hook bus, or memory. Tool argument fragments
+and completed calls stay inside model validation until the provider's terminal
+response reconciles with the stream and the originating generated decoder
+accepts every payload. A raw remote gateway transports provider output without
+replacing that decoder with a schema-only validator. After planner selection,
+the canonical response is persisted once, and its ordered runtime records are
+published through one idempotent activity batch.
 
 ## How it works
 

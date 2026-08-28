@@ -376,11 +376,11 @@ var Docs = Toolset("docs", func() {
 - JSON Schema for LLM function calling (auto-generated)
 - Validation at boundaries: invalid calls get structured correction directives, including
   generated JSON type mismatch guidance, not crashes or schema-string parsing.
-  Streaming calls remain withheld until the complete provider response matches
-  the stream; the originating generated decoder can then schedule one
-  replacement planning activity while retaining final usage and without
-  retaining or executing the rejected arguments. Incomplete provider streams
-  remain terminal.
+  Streaming tool argument fragments and completed calls remain withheld until
+  the complete provider response matches the stream; the originating generated
+  decoder can then schedule one replacement planning activity while retaining
+  final usage and without retaining or executing the rejected arguments.
+  Incomplete provider streams remain terminal.
 - Timeout and parent-budget failures are terminal for the current run and use
   `finish` recovery. Planners may repair invalid arguments, but elapsed
   execution time is not an instruction to repeat a call.

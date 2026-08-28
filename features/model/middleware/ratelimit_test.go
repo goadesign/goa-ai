@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"testing"
@@ -439,6 +440,26 @@ func TestAdaptiveRateLimiterObservesCleanStreamOnce(t *testing.T) {
 	limiter.mu.Lock()
 	defer limiter.mu.Unlock()
 	require.InDelta(t, initialTPM+limiter.recoveryRate, limiter.currentTPM, 0.001)
+}
+
+func TestAdaptiveRateLimiterDoesNotTreatWrappedEOFAsSuccess(t *testing.T) {
+	wrappedEOF := fmt.Errorf("provider stream failed: %w", io.EOF)
+	limiter := newAdaptiveRateLimiter(60_000, 120_000)
+	limiter.recoveryRate = 1_000
+	initialTPM := limiter.currentTPM
+	client := &fakeClient{
+		stream: &closeTrackingStreamer{recvErr: wrappedEOF},
+	}
+	provider := &limitedProvider{next: client, counter: client, limiter: limiter}
+	stream, err := provider.Stream(t.Context(), &model.Request{})
+	require.NoError(t, err)
+
+	_, err = stream.Recv()
+
+	require.Equal(t, wrappedEOF, err)
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	require.InDelta(t, initialTPM, limiter.currentTPM, 0.001)
 }
 
 func TestAdaptiveRateLimiterCloseDoesNotInventStreamOutcome(t *testing.T) {

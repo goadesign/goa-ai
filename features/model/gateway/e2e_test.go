@@ -48,6 +48,11 @@ func (p *captureProvider) Stream(_ context.Context, req *model.Request) (model.S
 	return &seqStreamer{
 		chunks: []model.Chunk{
 			model.TextChunk{Message: model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "hello"}}}},
+			model.ToolCallDeltaChunk{Delta: model.ToolCallDelta{
+				Name:  "emit_tool",
+				ID:    "call-1",
+				Delta: `{"k":"v"}`,
+			}},
 			model.ToolCallChunk{
 				ToolCall: model.ToolCall{
 					Name:    "emit_tool",
@@ -207,6 +212,7 @@ func TestE2E_Stream_WithMiddleware(t *testing.T) {
 	// Expect all presentation chunks in order.
 	expectTypes := []string{
 		model.ChunkTypeText,
+		model.ChunkTypeToolCallDelta,
 		model.ChunkTypeToolCall,
 		model.ChunkTypeUsage,
 		model.ChunkTypeStop,

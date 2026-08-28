@@ -368,6 +368,87 @@ func TestValidateContinuationRequiresRecoveryCatalog(t *testing.T) {
 	)
 }
 
+func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
+	runtime := New()
+	spec := newAnyJSONSpec("svc.lookup", "svc")
+	seedTestToolSpecs(runtime, spec)
+
+	newCorrectCallSuspension := func(t *testing.T, version string, catalog *RecoveryCatalog) *api.RunSuspension {
+		t.Helper()
+		suspension := suspensionContractFixture(t, spec.Name)
+		rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+			checkpoint.Version = version
+			checkpoint.State.PendingRecovery = []*planner.ToolOutput{
+				recoveryOutput(spec.Name, "call-1", planner.RecoveryCorrectCall),
+			}
+			checkpoint.State.PendingRecoveryCatalog = catalog
+		})
+		suspension.Version = version
+		return suspension
+	}
+
+	t.Run("valid version 5 serialized catalog", func(t *testing.T) {
+		suspension := newCorrectCallSuspension(
+			t,
+			legacyRunSuspensionVersion,
+			&RecoveryCatalog{Tools: []tools.Ident{spec.Name}},
+		)
+		require.NoError(t, runtime.ValidateContinuation(suspension))
+		checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
+		require.NoError(t, err)
+		state, err := runtime.restoreCheckpointState(t.Context(), checkpoint.Version, checkpoint.State)
+		require.NoError(t, err)
+		_, catalog := toolRecovery(state.PendingRecovery)
+		require.Equal(t, &RecoveryCatalog{Tools: []tools.Ident{spec.Name}}, catalog)
+	})
+
+	t.Run("invalid version 5 absent catalog", func(t *testing.T) {
+		suspension := newCorrectCallSuspension(t, legacyRunSuspensionVersion, nil)
+		require.ErrorContains(
+			t,
+			runtime.ValidateContinuation(suspension),
+			"pending recovery failures requires a recovery catalog",
+		)
+	})
+
+	t.Run("valid version 6 absent catalog", func(t *testing.T) {
+		suspension := newCorrectCallSuspension(t, api.RunSuspensionVersion, nil)
+		require.NoError(t, runtime.ValidateContinuation(suspension))
+		checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
+		require.NoError(t, err)
+		state, err := runtime.restoreCheckpointState(t.Context(), checkpoint.Version, checkpoint.State)
+		require.NoError(t, err)
+		_, catalog := toolRecovery(state.PendingRecovery)
+		require.Equal(t, &RecoveryCatalog{Tools: []tools.Ident{spec.Name}}, catalog)
+	})
+
+	t.Run("invalid version 6 contradictory catalog", func(t *testing.T) {
+		suspension := newCorrectCallSuspension(
+			t,
+			api.RunSuspensionVersion,
+			&RecoveryCatalog{Tools: []tools.Ident{spec.Name}},
+		)
+		require.ErrorContains(
+			t,
+			runtime.ValidateContinuation(suspension),
+			"version 6 correct-call recovery cannot carry a recovery catalog",
+		)
+	})
+
+	t.Run("valid version 6 replan serialized catalog", func(t *testing.T) {
+		suspension := suspensionContractFixture(t, spec.Name)
+		rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+			checkpoint.State.PendingRecovery = []*planner.ToolOutput{
+				recoveryOutput(spec.Name, "call-1", planner.RecoveryReplan),
+			}
+			checkpoint.State.PendingRecoveryCatalog = &RecoveryCatalog{
+				Tools: []tools.Ident{spec.Name},
+			}
+		})
+		require.NoError(t, runtime.ValidateContinuation(suspension))
+	})
+}
+
 func TestLoadPlannerToolOutputsCombinesDifferentRunLogs(t *testing.T) {
 	runtime := New()
 	spec := newAnyJSONSpec("svc.lookup", "svc")

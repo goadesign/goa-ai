@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -138,15 +139,23 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return nil, err
 	}
+	correctCallSpecs, err := r.correctCallSpecs(recoveryOutputs)
+	if err != nil {
+		return nil, err
+	}
+	exactCorrectCall := len(correctCallSpecs) > 0
 	recoveryReminders := r.recoveryReminders(recoveryOutputs)
 	var continuationActions []continuationAction
-	if input.Finalize == nil && !synthesisOnly {
+	if !exactCorrectCall && input.Finalize == nil && !synthesisOnly {
 		continuationActions, err = r.availableContinuationActions(input.AgentID, toolOutputs)
 		if err != nil {
 			return nil, err
 		}
 	}
-	unavailableTools := r.recoveryUnavailableTools(input.AgentID, recoveryOutputs, input.Finalize != nil)
+	var unavailableTools []tools.Ident
+	if !exactCorrectCall {
+		unavailableTools = r.recoveryUnavailableTools(input.AgentID, recoveryOutputs, input.Finalize != nil)
+	}
 	if synthesisOnly {
 		specs := r.ToolSpecsForAgent(input.AgentID)
 		unavailableTools = make([]tools.Ident, len(specs))
@@ -154,14 +163,36 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 			unavailableTools[index] = spec.Name
 		}
 	}
-	act, err := r.preparePlannerActivity(
-		ctx,
-		input,
-		continuationActions,
-		unavailableTools,
-	)
+	var act *plannerActivityInvocation
+	if exactCorrectCall {
+		act, err = r.preparePlannerActivityWithSpecs(
+			ctx,
+			input,
+			continuationActions,
+			unavailableTools,
+			correctCallSpecs,
+		)
+	} else {
+		act, err = r.preparePlannerActivity(
+			ctx,
+			input,
+			continuationActions,
+			unavailableTools,
+		)
+	}
 	if err != nil {
 		return nil, err
+	}
+	if exactCorrectCall {
+		definitions := act.agentCtx.AdvertisedToolDefinitions()
+		expected := correctCallCatalog(recoveryOutputs)
+		if advertised := toolDefinitionNames(definitions); !slices.Equal(advertised, expected) {
+			return nil, fmt.Errorf(
+				"correct-call catalog %v resolved to advertised tools %v",
+				expected,
+				advertised,
+			)
+		}
 	}
 	act.reminders = append(recoveryReminders, act.reminders...)
 	if input.ModelOutputRecovery != nil {
@@ -224,16 +255,84 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	}
 	if len(input.RecoveryToolCallIDs) > 0 {
 		definitions := act.agentCtx.AdvertisedToolDefinitions()
-		advertised := make([]tools.Ident, len(definitions))
-		for i, definition := range definitions {
-			advertised[i] = tools.Ident(definition.Name)
-		}
-		output.RecoveryCatalog = &RecoveryCatalog{Tools: advertised}
+		output.RecoveryCatalog = &RecoveryCatalog{Tools: toolDefinitionNames(definitions)}
 	}
 	if budgetErr := checkPlanActivityOutputBudget(output); budgetErr != nil {
 		return act.outputContractFailure(ctx, planner.NewOutputContractError(budgetErr))
 	}
 	return output, nil
+}
+
+// correctCallSpecs resolves each typed correct-call failure through the
+// toolset registration that owns both its generated contract and executable
+// path. It runs before planner setup, so removing that complete registration
+// revokes recovery without starting a model invocation.
+func (r *Runtime) correctCallSpecs(outputs []*planner.ToolOutput) ([]tools.ToolSpec, error) {
+	names := correctCallCatalog(outputs)
+	if len(names) == 0 {
+		return nil, nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	specs := make([]tools.ToolSpec, 0, len(names))
+	for _, name := range names {
+		globalSpec, registered := r.toolSpecs[name]
+		if !registered {
+			return nil, fmt.Errorf("correct-call recovery references unregistered tool %q", name)
+		}
+		registration, registered := r.toolsets[globalSpec.Toolset]
+		if !registered || registration.Execute == nil {
+			return nil, fmt.Errorf(
+				"correct-call recovery tool %q has no executable toolset registration",
+				name,
+			)
+		}
+		spec, registered := toolsetSpec(registration, name)
+		if !registered {
+			return nil, fmt.Errorf(
+				"correct-call recovery toolset %q no longer admits tool %q",
+				registration.Name,
+				name,
+			)
+		}
+		if registration.Name != spec.Toolset ||
+			!equivalentToolSpec(globalSpec, spec) {
+			return nil, fmt.Errorf(
+				"correct-call recovery tool %q has mismatched global and executable registrations",
+				name,
+			)
+		}
+		if err := validateAgentToolRegistration(registration); err != nil {
+			return nil, fmt.Errorf(
+				"correct-call recovery tool %q has invalid executable registration: %w",
+				name,
+				err,
+			)
+		}
+		specs = append(specs, cloneToolSpec(spec))
+	}
+	return specs, nil
+}
+
+// toolsetSpec returns the generated contract that one executable toolset
+// registration currently admits for the requested tool name.
+func toolsetSpec(registration ToolsetRegistration, name tools.Ident) (tools.ToolSpec, bool) {
+	for _, spec := range registration.Specs {
+		if spec.Name == name {
+			return spec, true
+		}
+	}
+	return tools.ToolSpec{}, false
+}
+
+// toolDefinitionNames returns model-facing tool names in advertised order.
+func toolDefinitionNames(definitions []*model.ToolDefinition) []tools.Ident {
+	names := make([]tools.Ident, len(definitions))
+	for i, definition := range definitions {
+		names[i] = tools.Ident(definition.Name)
+	}
+	return names
 }
 
 // validatePlanResumeRecoveryInput requires one honest resume mode. Finalization
@@ -339,6 +438,24 @@ func (r *Runtime) preparePlannerActivity(
 	continuationActions []continuationAction,
 	unavailableTools []tools.Ident,
 ) (*plannerActivityInvocation, error) {
+	return r.preparePlannerActivityWithSpecs(
+		ctx,
+		input,
+		continuationActions,
+		unavailableTools,
+		nil,
+	)
+}
+
+// preparePlannerActivityWithSpecs constructs planner activity state with an
+// explicit tool catalog for one correction turn.
+func (r *Runtime) preparePlannerActivityWithSpecs(
+	ctx context.Context,
+	input *PlanActivityInput,
+	continuationActions []continuationAction,
+	unavailableTools []tools.Ident,
+	advertisedSpecs []tools.ToolSpec,
+) (*plannerActivityInvocation, error) {
 	events := newPlannerEvents(input.AgentID, input.RunID, input.RunContext.SessionID)
 	publicationBatchID := uuid.NewString()
 	invocations := &modelInvocationJournal{
@@ -357,6 +474,7 @@ func (r *Runtime) preparePlannerActivity(
 		invocations,
 		continuationActions,
 		unavailableTools,
+		advertisedSpecs,
 	)
 	if err != nil {
 		return nil, err
@@ -477,11 +595,22 @@ func (a *plannerActivityInvocation) outputContractFailure(
 	err error,
 ) (*PlanActivityOutput, error) {
 	if discardErr := a.invocations.discardPresentations(ctx); discardErr != nil {
-		return nil, fmt.Errorf("discard rejected model presentation: %w", discardErr)
+		return nil, rejectedPresentationFailure(err, discardErr)
 	}
 	var outputErr *planner.OutputContractError
 	if !errors.As(err, &outputErr) {
 		return nil, err
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return nil, errors.Join(err, contextErr)
+	}
+	staged := a.invocations.hasStagedModelOutput()
+	if staged && !a.invocations.stagedModelCallsClean() {
+		return nil, errors.Join(err, a.invocations.outcomeErrors())
+	}
+	if a.invocations.hasRecoverableModelOutput() &&
+		!a.invocations.commitModelInvocationRecovery(err) {
+		return nil, errors.Join(err, a.invocations.outcomeErrors())
 	}
 	usage := a.invocations.exportUsage()
 	invocationRecovery := a.invocations.recoverableModelInvocationRecovery()
@@ -529,6 +658,20 @@ func (a *plannerActivityInvocation) outputContractFailure(
 		return boundedPlanActivityOutputFailure(a.publicationBatchID, usage, failure, budgetErr), nil
 	}
 	return output, nil
+}
+
+// rejectedPresentationFailure preserves the model rejection before any failure
+// raised while discarding its provisional output. A single failure remains the
+// original error chain; two failures are returned in execution order.
+func rejectedPresentationFailure(modelErr, discardErr error) error {
+	if discardErr == nil {
+		return modelErr
+	}
+	cleanupErr := fmt.Errorf("discard rejected model presentation: %w", discardErr)
+	if modelErr == nil {
+		return cleanupErr
+	}
+	return errors.Join(modelErr, cleanupErr)
 }
 
 // terminalPlannerOutputContractFailure records a deterministic planner
@@ -607,7 +750,7 @@ func (a *plannerActivityInvocation) planningError(err error) error {
 		return sealErr
 	}
 	if outputErr := a.invocations.outputContractError(); outputErr != nil {
-		return outputErr
+		return errors.Join(outputErr, err)
 	}
 	return err
 }
@@ -1243,6 +1386,7 @@ func (r *Runtime) plannerContext(
 	invocations modelInvocationSink,
 	continuationActions []continuationAction,
 	unavailableTools []tools.Ident,
+	advertisedSpecs []tools.ToolSpec,
 ) (*AgentRegistration, planner.PlannerContext, error) {
 	if input.AgentID == "" {
 		return nil, nil, errors.New("agent id is required")
@@ -1270,6 +1414,7 @@ func (r *Runtime) plannerContext(
 		cache:               reg.Policy.Cache,
 		continuationActions: continuationActions,
 		unavailableTools:    unavailableTools,
+		advertisedSpecs:     advertisedSpecs,
 	})
 	return &reg, agentCtx, nil
 }
