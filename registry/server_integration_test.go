@@ -34,9 +34,8 @@ const (
 
 type callCountingService struct {
 	genregistry.Service
-	calls               atomic.Int64
-	callToolError       error
-	checkAdmissionError error
+	calls         atomic.Int64
+	callToolError error
 }
 
 // TestServerIntegration tests the full gRPC server stack using Goa's generated
@@ -603,8 +602,9 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	assert.Zero(t, counting.calls.Load(), "invalid tool_call_id must be rejected before publication")
 
-	counting.checkAdmissionError = context.Canceled
-	_, err = rawClient.CheckAdmission(ctx, &registrypb.CheckAdmissionRequest{
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = rawClient.CheckAdmission(canceledCtx, &registrypb.CheckAdmissionRequest{
 		Name:                      "status-tools",
 		ExpectedRegistrationToken: first.GetRegistrationToken(),
 	})
@@ -641,16 +641,6 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 		},
 	})
 	assert.Equal(t, codes.Unavailable, status.Code(err))
-}
-
-func (s *callCountingService) CheckAdmission(
-	ctx context.Context,
-	payload *genregistry.CheckAdmissionPayload,
-) (*genregistry.AdmissionStatus, error) {
-	if s.checkAdmissionError != nil {
-		return nil, s.checkAdmissionError
-	}
-	return s.Service.CheckAdmission(ctx, payload)
 }
 
 func (s *callCountingService) CallTool(

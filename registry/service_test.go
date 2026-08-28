@@ -237,10 +237,14 @@ func genTagsForService() gopter.Gen {
 	))
 }
 
-// genToolSchemaSlice generates a slice of ToolSchema for registration.
+// genToolSchemaSlice generates a valid registration schema with distinct tool
+// names while varying every other tool field independently.
 func genToolSchemaSlice() gopter.Gen {
-	return gen.SliceOfN(3, genToolSchema()).SuchThat(func(tools []*genregistry.ToolSchema) bool {
-		return len(tools) > 0 // Ensure at least one tool
+	return gen.SliceOfN(3, genToolSchema()).Map(func(tools []*genregistry.ToolSchema) []*genregistry.ToolSchema {
+		for index, tool := range tools {
+			tool.Name = fmt.Sprintf("%s-%d", tool.Name, index)
+		}
+		return tools
 	})
 }
 
