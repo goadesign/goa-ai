@@ -647,6 +647,7 @@ func startServiceAndClients(
 		grpcCli.Pong(),
 		grpcCli.ListToolsets(),
 		grpcCli.GetToolset(),
+		grpcCli.CheckAdmission(),
 		grpcCli.Search(),
 		grpcCli.CallTool(),
 		grpcCli.RetryTool(),
