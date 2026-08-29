@@ -473,7 +473,7 @@ func DecodeClaimToolCallRequest(ctx context.Context, v any, md metadata.MD) (any
 			return nil, err
 		}
 	}
-	var payload *registry.ProviderToolCallClaimPayload
+	var payload *registry.ClaimToolCallPayload
 	{
 		payload = NewClaimToolCallPayload(message)
 	}

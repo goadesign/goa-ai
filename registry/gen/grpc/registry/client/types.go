@@ -366,8 +366,9 @@ func NewProtoReportToolCallOverloadRequest(payload *registry.ProviderToolCallCla
 
 // NewProtoClaimToolCallRequest builds the gRPC request type from the payload
 // of the "ClaimToolCall" endpoint of the "registry" service.
-func NewProtoClaimToolCallRequest(payload *registry.ProviderToolCallClaimPayload) *registrypb.ClaimToolCallRequest {
+func NewProtoClaimToolCallRequest(payload *registry.ClaimToolCallPayload) *registrypb.ClaimToolCallRequest {
 	message := &registrypb.ClaimToolCallRequest{
+		ClaimOperationId:          payload.ClaimOperationID,
 		Toolset:                   payload.Toolset,
 		ProviderId:                payload.ProviderID,
 		ProviderIncarnationId:     payload.ProviderIncarnationID,

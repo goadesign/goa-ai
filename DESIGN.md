@@ -507,21 +507,27 @@ sink only after admission. It renews with jitter while the last
 duration-derived monotonic deadline remains valid and closes consumption before
 expiration. The first renewal is derived from one third of the granted lease
 duration; bounded retries preserve cutoff slack. After every admitted exit,
-`Serve` stops renewal, atomically marks each exact token/incarnation lease
-draining, then closes the canonical shared sink before processing the remaining
-local queue. Draining leases are excluded from new publication but retain
-authority to claim and settle calls already delivered before intake closed. The
-drain transition carries the configured shutdown duration so Redis keeps that
-authority for the full settlement lifecycle. `Serve` waits workers and
-registry-owned terminal publication, drains every queued acknowledgement, and
-releases each exact lease. A sink-setup
+`Serve` stops renewal, atomically marks the original admitted
+token/incarnation lease draining, then closes the canonical shared sink and
+leaves unclaimed local work for redelivery. A changed token returned by renewal
+is drained concurrently under the same shutdown deadline. Draining leases are
+excluded from new publication and new claims, but retain authority to settle
+claims that committed before draining.
+An exact retry of one of those claim operations returns its original `execute`
+decision. The drain transition carries the configured shutdown duration so
+Redis keeps that authority for the full settlement lifecycle. `Serve` waits
+workers and registry-owned terminal publication, drains every queued
+acknowledgement, and releases each successfully settled exact lease. Failed
+settlement suppresses release and returns the cleanup error. A sink-setup
 failure has no consumption to settle and proceeds directly to bounded release.
 Close, worker, result, or acknowledgement failure is explicit and suppresses
 release; lease expiry is the durable fallback. Before a worker dispatches
 locally queued work, `ClaimToolCall` authenticates its exact lease and request
 event at the global call record. The atomic result is `execute`, `terminal`,
 `claimed`, or `expired`; only `execute` invokes the handler. Dispatch ownership
-never transfers, so acknowledgement redelivery cannot repeat side effects.
+never transfers. One claim-operation ID is reused by transport retries, while a
+later event redelivery creates a new ID and receives `claimed`, so redelivery
+cannot repeat side effects.
 Claims enter global and exact-lease settlement indexes. At the call's absolute
 execution deadline, or earlier if the lease is released, the registry
 atomically commits `internal` / `outcome_unknown`, states that the effect may

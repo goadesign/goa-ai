@@ -202,7 +202,7 @@ func NewReportToolCallOverloadEndpoint(s Service) goa.Endpoint {
 // "ClaimToolCall" of service "registry".
 func NewClaimToolCallEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*ProviderToolCallClaimPayload)
+		p := req.(*ClaimToolCallPayload)
 		return s.ClaimToolCall(ctx, p)
 	}
 }

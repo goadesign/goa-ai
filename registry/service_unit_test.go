@@ -766,7 +766,7 @@ func (r *recordingCallAdmissions) ReportOverload(
 
 func (r *recordingCallAdmissions) Claim(
 	context.Context,
-	string, string, string, string, string, string, string,
+	string, string, string, string, string, string, string, string,
 	[]byte,
 ) (callClaimDisposition, error) {
 	return callClaimExecute, nil

@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,7 +62,7 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 	)
 	retryJSON, err := json.Marshal(retry)
 	require.NoError(t, err)
-	claimedA, err := svc.ClaimToolCall(ctx, &genregistry.ProviderToolCallClaimPayload{
+	claimedA, err := svc.ClaimToolCall(ctx, &genregistry.ClaimToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                providerA.ProviderID,
 		ProviderIncarnationID:     providerA.ProviderIncarnationID,
@@ -69,6 +70,7 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 		CallRegistrationToken:     admissionA.RegistrationToken,
 		ToolUseID:                 admittedA.ToolUseID,
 		RequestEventID:            callAEventID,
+		ClaimOperationID:          uuid.NewString(),
 	})
 	require.NoError(t, err)
 	require.Equal(t, string(callClaimExecute), claimedA.Disposition)
@@ -135,7 +137,7 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 	)
 	overloadedResultJSON, err := json.Marshal(overloadedResult)
 	require.NoError(t, err)
-	claimedOverloaded, err := svc.ClaimToolCall(ctx, &genregistry.ProviderToolCallClaimPayload{
+	claimedOverloaded, err := svc.ClaimToolCall(ctx, &genregistry.ClaimToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                providerA.ProviderID,
 		ProviderIncarnationID:     providerA.ProviderIncarnationID,
@@ -143,6 +145,7 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 		CallRegistrationToken:     admissionA.RegistrationToken,
 		ToolUseID:                 admittedOverloaded.ToolUseID,
 		RequestEventID:            overloadedCallEventID,
+		ClaimOperationID:          uuid.NewString(),
 	})
 	require.NoError(t, err)
 	require.Equal(t, string(callClaimExecute), claimedOverloaded.Disposition)
@@ -202,7 +205,7 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 		ExpectedRegistrationToken: admissionB.RegistrationToken,
 	}))
 
-	_, err = svc.ClaimToolCall(ctx, &genregistry.ProviderToolCallClaimPayload{
+	_, err = svc.ClaimToolCall(ctx, &genregistry.ClaimToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                providerB.ProviderID,
 		ProviderIncarnationID:     providerB.ProviderIncarnationID,
@@ -210,11 +213,12 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 		CallRegistrationToken:     admissionA.RegistrationToken,
 		ToolUseID:                 admittedStale.ToolUseID,
 		RequestEventID:            staleCallEventID,
+		ClaimOperationID:          uuid.NewString(),
 	})
 	require.Error(t, err)
 
 	// B's preserved retired lease may atomically settle the A-owned request.
-	settled, err := svc.ClaimToolCall(ctx, &genregistry.ProviderToolCallClaimPayload{
+	settled, err := svc.ClaimToolCall(ctx, &genregistry.ClaimToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                providerB.ProviderID,
 		ProviderIncarnationID:     providerB.ProviderIncarnationID,
@@ -222,6 +226,7 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 		CallRegistrationToken:     admissionA.RegistrationToken,
 		ToolUseID:                 admittedStale.ToolUseID,
 		RequestEventID:            staleCallEventID,
+		ClaimOperationID:          uuid.NewString(),
 	})
 	require.NoError(t, err)
 	require.Equal(t, string(callClaimTerminal), settled.Disposition)
@@ -273,7 +278,7 @@ func TestConcurrentDispatchClaimsExecuteExactlyOnce(t *testing.T) {
 		svc.callAdmissions.(*callAdmissionStore),
 		call.ToolUseID,
 	)
-	claimPayload := &genregistry.ProviderToolCallClaimPayload{
+	claimPayload := &genregistry.ClaimToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                providerPayload.ProviderID,
 		ProviderIncarnationID:     providerPayload.ProviderIncarnationID,
@@ -281,6 +286,7 @@ func TestConcurrentDispatchClaimsExecuteExactlyOnce(t *testing.T) {
 		CallRegistrationToken:     admission.RegistrationToken,
 		ToolUseID:                 call.ToolUseID,
 		RequestEventID:            eventID,
+		ClaimOperationID:          uuid.NewString(),
 	}
 
 	const contenders = 16
@@ -291,7 +297,9 @@ func TestConcurrentDispatchClaimsExecuteExactlyOnce(t *testing.T) {
 	for range contenders {
 		go func() {
 			defer workers.Done()
-			result, claimErr := svc.ClaimToolCall(ctx, claimPayload)
+			attempt := *claimPayload
+			attempt.ClaimOperationID = uuid.NewString()
+			result, claimErr := svc.ClaimToolCall(ctx, &attempt)
 			if claimErr != nil {
 				errs <- claimErr
 				return

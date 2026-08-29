@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -68,7 +69,7 @@ func reportOverloadSuccess(context.Context, string, string, string, string, stri
 
 // claimExecute grants dispatch to lifecycle tests that do not exercise claim
 // settlement outcomes.
-func claimExecute(context.Context, string, string, string, string, string, string, string) (ClaimDisposition, error) {
+func claimExecute(context.Context, ClaimRequest) (ClaimDisposition, error) {
 	return ClaimExecute, nil
 }
 
@@ -332,6 +333,102 @@ func TestReleaseProviderRetriesExactLease(t *testing.T) {
 	assert.Equal(t, int64(3), attempts.Load())
 }
 
+func TestReleaseProviderTokensRunsUnderOneSharedDeadline(t *testing.T) {
+	t.Parallel()
+
+	type releaseStart struct {
+		token    string
+		deadline time.Time
+	}
+	started := make(chan releaseStart, 2)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	allowRelease := func() {
+		releaseOnce.Do(func() {
+			close(release)
+		})
+	}
+	t.Cleanup(allowRelease)
+
+	registration := registrationConfig{
+		release: func(ctx context.Context, _, _, _, token string) error {
+			deadline, ok := ctx.Deadline()
+			assert.True(t, ok)
+			started <- releaseStart{token: token, deadline: deadline}
+			<-release
+			return nil
+		},
+		attemptTimeout: time.Minute,
+		releaseTimeout: time.Second,
+	}
+	errc := make(chan error, 1)
+	go func() {
+		errc <- releaseProviderTokens(
+			context.Background(),
+			"test.toolset",
+			testProviderID,
+			testProviderIncarnationID,
+			[]string{testRegistrationTokenA, testRegistrationTokenB},
+			registration,
+			telemetry.NewNoopLogger(),
+			func(context.Context, time.Duration) error { return nil },
+		)
+	}()
+
+	require.Eventually(t, func() bool {
+		return len(started) == 2
+	}, time.Second, time.Millisecond)
+	first := <-started
+	second := <-started
+	assert.ElementsMatch(t, []string{testRegistrationTokenA, testRegistrationTokenB}, []string{first.token, second.token})
+	assert.Equal(t, first.deadline, second.deadline)
+
+	allowRelease()
+	require.NoError(t, <-errc)
+}
+
+func TestReleaseProviderTokensReturnsAtSharedDeadline(t *testing.T) {
+	t.Parallel()
+
+	releaseErr := errors.New("registry unavailable")
+	var succeeded, failed atomic.Int64
+	registration := registrationConfig{
+		release: func(_ context.Context, _, _, _, token string) error {
+			if token == testRegistrationTokenA {
+				succeeded.Add(1)
+				return nil
+			}
+			failed.Add(1)
+			return releaseErr
+		},
+		retryInitialInterval: time.Minute,
+		retryMaxInterval:     time.Minute,
+		attemptTimeout:       time.Second,
+		releaseTimeout:       50 * time.Millisecond,
+		jitter:               identityRegistrationJitter,
+	}
+	startedAt := time.Now()
+	err := releaseProviderTokens(
+		context.Background(),
+		"test.toolset",
+		testProviderID,
+		testProviderIncarnationID,
+		[]string{testRegistrationTokenA, testRegistrationTokenB},
+		registration,
+		telemetry.NewNoopLogger(),
+		func(ctx context.Context, _ time.Duration) error {
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	)
+
+	require.ErrorIs(t, err, releaseErr)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Equal(t, int64(1), succeeded.Load())
+	assert.Equal(t, int64(1), failed.Load())
+	assert.Less(t, time.Since(startedAt), time.Second)
+}
+
 func TestServeSetupFailurePrecedesRegistration(t *testing.T) {
 	t.Parallel()
 
@@ -551,6 +648,37 @@ func TestRegisterUntilSuccessReturnsPermanentAdmissionError(t *testing.T) {
 	}
 }
 
+func TestRegisterUntilSuccessPreservesFailureThatRacesCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	registrationFailure := errors.New("registration rejected")
+	registration := registrationConfig{
+		admissionRevision: testAdmissionRevision,
+		register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+			cancel()
+			return RegistrationLease{}, registrationFailure
+		},
+		attemptTimeout: time.Second,
+		now:            time.Now,
+	}
+
+	_, err := registerUntilSuccess(
+		ctx,
+		"test.toolset",
+		testProviderID,
+		testProviderIncarnationID,
+		registration,
+		telemetry.NewNoopLogger(),
+		func(context.Context, time.Duration) error {
+			t.Fatal("canceled registration must not retry")
+			return nil
+		},
+	)
+	require.ErrorIs(t, err, registrationFailure)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 func TestRegistrationCallbackReceivesAttemptDeadline(t *testing.T) {
 	t.Parallel()
 
@@ -733,8 +861,9 @@ func TestServeChangedRenewalTokenReleasesBothExactLeases(t *testing.T) {
 
 	var registrations atomic.Int64
 	var (
-		releaseMu sync.Mutex
-		released  []string
+		leaseMu  sync.Mutex
+		drained  []string
+		released []string
 	)
 	registration := Registration{
 		AdmissionRevision: testAdmissionRevision,
@@ -745,13 +874,16 @@ func TestServeChangedRenewalTokenReleasesBothExactLeases(t *testing.T) {
 			}
 			return RegistrationLease{RegistrationToken: token, Duration: 60 * time.Millisecond}, nil
 		},
-		Drain: func(context.Context, string, string, string, string, time.Duration) error {
+		Drain: func(_ context.Context, _, _, _ string, token string, _ time.Duration) error {
+			leaseMu.Lock()
+			drained = append(drained, token)
+			leaseMu.Unlock()
 			return nil
 		},
 		Release: func(_ context.Context, _, _, _ string, token string) error {
-			releaseMu.Lock()
+			leaseMu.Lock()
 			released = append(released, token)
-			releaseMu.Unlock()
+			leaseMu.Unlock()
 			return nil
 		},
 		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
@@ -780,9 +912,365 @@ func TestServeChangedRenewalTokenReleasesBothExactLeases(t *testing.T) {
 		},
 	)
 	require.ErrorIs(t, err, ErrRegistrationTokenChanged)
-	releaseMu.Lock()
+	leaseMu.Lock()
+	assert.ElementsMatch(t, []string{testRegistrationTokenA, testRegistrationTokenB}, drained)
 	assert.ElementsMatch(t, []string{testRegistrationTokenA, testRegistrationTokenB}, released)
-	releaseMu.Unlock()
+	leaseMu.Unlock()
+}
+
+func TestServePreservesChangedTokenWhenItsDrainReachesDeadline(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan *streaming.Event)
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
+	sink.SetClose(func(context.Context) error { return nil })
+	stream := mockpulse.NewStream(t)
+	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(string, ...streamopts.Stream) (pulse.Stream, error) {
+		return stream, nil
+	})
+
+	var registrations atomic.Int64
+	var released atomic.Int64
+	registration := Registration{
+		AdmissionRevision: testAdmissionRevision,
+		Register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+			token := testRegistrationTokenA
+			if registrations.Add(1) > 1 {
+				token = testRegistrationTokenB
+			}
+			return RegistrationLease{RegistrationToken: token, Duration: 60 * time.Millisecond}, nil
+		},
+		Drain: func(ctx context.Context, _, _, _ string, token string, _ time.Duration) error {
+			if token == testRegistrationTokenB {
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			return nil
+		},
+		Release: func(context.Context, string, string, string, string) error {
+			released.Add(1)
+			return nil
+		},
+		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
+			return nil
+		},
+		PublishOutputDelta:   publishOutputDeltaSuccess,
+		ReportOverload:       reportOverloadSuccess,
+		Claim:                claimExecute,
+		RetryInitialInterval: time.Millisecond,
+		RetryMaxInterval:     time.Millisecond,
+		AttemptTimeout:       20 * time.Millisecond,
+		ShutdownMargin:       time.Millisecond,
+		ReleaseTimeout:       time.Second,
+	}
+
+	err := Serve(
+		context.Background(),
+		client,
+		"test.toolset",
+		&recordingHandler{},
+		registration,
+		Options{
+			ProviderID:      testProviderID,
+			Pong:            func(context.Context, string, string, string) error { return nil },
+			ShutdownTimeout: 20 * time.Millisecond,
+		},
+	)
+	require.ErrorIs(t, err, ErrRegistrationTokenChanged)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Zero(t, released.Load())
+}
+
+func TestServeRetainsChangedRenewalTokenDuringCancellation(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan *streaming.Event)
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
+	sink.SetClose(func(context.Context) error { return nil })
+	stream := mockpulse.NewStream(t)
+	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(string, ...streamopts.Stream) (pulse.Stream, error) {
+		return stream, nil
+	})
+
+	renewalStarted := make(chan struct{})
+	releaseRenewal := make(chan struct{})
+	var releaseRenewalOnce sync.Once
+	allowRenewal := func() {
+		releaseRenewalOnce.Do(func() {
+			close(releaseRenewal)
+		})
+	}
+	t.Cleanup(allowRenewal)
+	var registrations atomic.Int64
+	var (
+		leaseMu  sync.Mutex
+		drained  []string
+		released []string
+	)
+	registration := Registration{
+		AdmissionRevision: testAdmissionRevision,
+		Register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+			if registrations.Add(1) == 1 {
+				return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: 60 * time.Millisecond}, nil
+			}
+			close(renewalStarted)
+			<-releaseRenewal
+			return RegistrationLease{RegistrationToken: testRegistrationTokenB, Duration: 60 * time.Millisecond}, nil
+		},
+		Drain: func(_ context.Context, _, _, _ string, token string, _ time.Duration) error {
+			leaseMu.Lock()
+			drained = append(drained, token)
+			leaseMu.Unlock()
+			return nil
+		},
+		Release: func(_ context.Context, _, _, _ string, token string) error {
+			leaseMu.Lock()
+			released = append(released, token)
+			leaseMu.Unlock()
+			return nil
+		},
+		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
+			return nil
+		},
+		PublishOutputDelta:   publishOutputDeltaSuccess,
+		ReportOverload:       reportOverloadSuccess,
+		Claim:                claimExecute,
+		RetryInitialInterval: time.Millisecond,
+		RetryMaxInterval:     time.Millisecond,
+		AttemptTimeout:       20 * time.Millisecond,
+		ShutdownMargin:       time.Millisecond,
+		ReleaseTimeout:       time.Second,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(
+			ctx,
+			client,
+			"test.toolset",
+			&recordingHandler{},
+			registration,
+			Options{
+				ProviderID:      testProviderID,
+				Pong:            func(context.Context, string, string, string) error { return nil },
+				ShutdownTimeout: time.Second,
+			},
+		)
+	}()
+
+	select {
+	case <-renewalStarted:
+	case <-time.After(time.Second):
+		t.Fatal("registration renewal did not start")
+	}
+	cancel()
+	allowRenewal()
+
+	err := <-errc
+	require.ErrorIs(t, err, ErrRegistrationTokenChanged)
+	leaseMu.Lock()
+	assert.ElementsMatch(t, []string{testRegistrationTokenA, testRegistrationTokenB}, drained)
+	assert.ElementsMatch(t, []string{testRegistrationTokenA, testRegistrationTokenB}, released)
+	leaseMu.Unlock()
+}
+
+func TestServePreservesRenewalFailureDuringCancellation(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan *streaming.Event)
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
+	sink.SetClose(func(context.Context) error { return nil })
+	stream := mockpulse.NewStream(t)
+	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(string, ...streamopts.Stream) (pulse.Stream, error) {
+		return stream, nil
+	})
+
+	renewalStarted := make(chan struct{})
+	releaseRenewal := make(chan struct{})
+	var registrations atomic.Int64
+	renewalErr := errors.New("renewal response failed")
+	registration := Registration{
+		AdmissionRevision: testAdmissionRevision,
+		Register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+			if registrations.Add(1) == 1 {
+				return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: 60 * time.Millisecond}, nil
+			}
+			close(renewalStarted)
+			<-releaseRenewal
+			return RegistrationLease{}, renewalErr
+		},
+		Drain:   func(context.Context, string, string, string, string, time.Duration) error { return nil },
+		Release: func(context.Context, string, string, string, string) error { return nil },
+		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
+			return nil
+		},
+		PublishOutputDelta:   publishOutputDeltaSuccess,
+		ReportOverload:       reportOverloadSuccess,
+		Claim:                claimExecute,
+		AttemptTimeout:       20 * time.Millisecond,
+		ShutdownMargin:       time.Millisecond,
+		ReleaseTimeout:       time.Second,
+		RetryInitialInterval: time.Millisecond,
+		RetryMaxInterval:     time.Millisecond,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(
+			ctx,
+			client,
+			"test.toolset",
+			&recordingHandler{},
+			registration,
+			Options{
+				ProviderID:      testProviderID,
+				Pong:            func(context.Context, string, string, string) error { return nil },
+				ShutdownTimeout: time.Second,
+			},
+		)
+	}()
+
+	select {
+	case <-renewalStarted:
+	case <-time.After(time.Second):
+		t.Fatal("registration renewal did not start")
+	}
+	cancel()
+	close(releaseRenewal)
+
+	err := <-errc
+	require.ErrorIs(t, err, renewalErr)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestJoinProviderStopErrorsClassifiesGeneratedClientCancellation(t *testing.T) {
+	t.Parallel()
+
+	renewalFailure := errors.New("renewal failed")
+	t.Run("generated transport cancellation is clean", func(t *testing.T) {
+		renewalErr := fmt.Errorf("rpc error: code = Canceled: %w", context.Canceled)
+		err := joinProviderStopErrors(context.Canceled, renewalErr)
+		require.Equal(t, context.Canceled, err)
+	})
+	t.Run("concurrent renewal failure remains terminal", func(t *testing.T) {
+		err := joinProviderStopErrors(
+			context.Canceled,
+			errors.Join(context.Canceled, renewalFailure),
+		)
+		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorIs(t, err, renewalFailure)
+	})
+}
+
+func TestServeReturnsAtSettlementDeadlineWhenRenewalIgnoresCancellation(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan *streaming.Event)
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
+	sink.SetClose(func(context.Context) error { return nil })
+	stream := mockpulse.NewStream(t)
+	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(string, ...streamopts.Stream) (pulse.Stream, error) {
+		return stream, nil
+	})
+
+	renewalStarted := make(chan struct{})
+	releaseRenewal := make(chan struct{})
+	var releaseRenewalOnce sync.Once
+	allowRenewal := func() {
+		releaseRenewalOnce.Do(func() {
+			close(releaseRenewal)
+		})
+	}
+	t.Cleanup(allowRenewal)
+	var registrations atomic.Int64
+	var releases atomic.Int64
+	registration := Registration{
+		AdmissionRevision: testAdmissionRevision,
+		Register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+			if registrations.Add(1) == 1 {
+				return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: 60 * time.Millisecond}, nil
+			}
+			close(renewalStarted)
+			<-releaseRenewal
+			return RegistrationLease{}, context.Canceled
+		},
+		Drain: func(context.Context, string, string, string, string, time.Duration) error { return nil },
+		Release: func(context.Context, string, string, string, string) error {
+			releases.Add(1)
+			return nil
+		},
+		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
+			return nil
+		},
+		PublishOutputDelta:   publishOutputDeltaSuccess,
+		ReportOverload:       reportOverloadSuccess,
+		Claim:                claimExecute,
+		AttemptTimeout:       20 * time.Millisecond,
+		ShutdownMargin:       time.Millisecond,
+		ReleaseTimeout:       20 * time.Millisecond,
+		RetryInitialInterval: time.Millisecond,
+		RetryMaxInterval:     time.Millisecond,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(
+			ctx,
+			client,
+			"test.toolset",
+			&recordingHandler{},
+			registration,
+			Options{
+				ProviderID:      testProviderID,
+				Pong:            func(context.Context, string, string, string) error { return nil },
+				ShutdownTimeout: 20 * time.Millisecond,
+			},
+		)
+	}()
+
+	select {
+	case <-renewalStarted:
+	case <-time.After(time.Second):
+		t.Fatal("registration renewal did not start")
+	}
+	startedAt := time.Now()
+	cancel()
+
+	select {
+	case err := <-errc:
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(time.Second):
+		t.Fatal("Serve exceeded its settlement and release deadlines")
+	}
+	assert.Equal(t, int64(0), releases.Load())
+	assert.Less(t, time.Since(startedAt), 500*time.Millisecond)
 }
 
 func TestRegistrationSupervisorRejectsRenewalCompletingAfterOldCutoff(t *testing.T) {
@@ -870,6 +1358,46 @@ func TestRegistrationSupervisorRetriesOnlyInsideLease(t *testing.T) {
 	assert.Equal(t, (9*time.Second-waits[0]-waits[1])/2, waits[2])
 	assert.Equal(t, int64(2), attempts.Load())
 	assert.True(t, now.Before(leaseExpiresAt.Add(-time.Second)))
+}
+
+func TestRegistrationSupervisorPreservesRenewalFailureDuringCancellation(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_700_000_000, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	renewalErr := errors.New("renewal response failed")
+	registration := registrationConfig{
+		admissionRevision: testAdmissionRevision,
+		register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+			cancel()
+			return RegistrationLease{}, renewalErr
+		},
+		retryInitialInterval: time.Second,
+		retryMaxInterval:     4 * time.Second,
+		attemptTimeout:       time.Second,
+		shutdownMargin:       time.Second,
+		now:                  func() time.Time { return now },
+		jitter:               identityRegistrationJitter,
+	}
+
+	err := superviseRegistration(
+		ctx,
+		"test.toolset",
+		testProviderID,
+		testProviderIncarnationID,
+		registrationState{
+			lease:    RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: time.Minute},
+			deadline: now.Add(time.Minute),
+		},
+		registration,
+		telemetry.NewNoopLogger(),
+		func(context.Context, time.Duration) error {
+			return nil
+		},
+	)
+
+	require.ErrorIs(t, err, renewalErr)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestRegistrationSupervisorRenewsAuthoritativeLease(t *testing.T) {

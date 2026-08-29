@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"sync"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -48,8 +49,8 @@ type (
 		// token and lease duration.
 		//
 		// Register must honor ctx and return promptly after its cancellation.
-		// Serve waits for in-flight registration during shutdown so callbacks
-		// that ignore ctx can prevent clean process termination.
+		// Serve reports callbacks that outlive the shared settlement deadline
+		// and continues process shutdown without waiting beyond that deadline.
 		Register func(
 			ctx context.Context,
 			toolset, providerID, incarnationID, admissionRevision string,
@@ -57,6 +58,9 @@ type (
 
 		// Drain atomically marks the exact lease non-routable while preserving
 		// its authority to complete already-claimed calls.
+		// Serve may call Drain concurrently for distinct tokens after a renewal
+		// returns a different token. Implementations must support concurrent
+		// calls and return promptly after ctx cancellation.
 		Drain func(
 			ctx context.Context,
 			toolset, providerID, incarnationID, expectedRegistrationToken string,
@@ -66,7 +70,10 @@ type (
 		// Release idempotently removes the exact provider-incarnation lease from
 		// the admitted token.
 		// Serve calls it after consumption and renewal have stopped and all
-		// workers/acks have settled. Implementations must honor ctx.
+		// workers/acks have settled. If renewal reports an unexpected token,
+		// Serve may call Release concurrently for distinct tokens so every lease
+		// remains inside one shutdown deadline. Implementations must support
+		// concurrent calls and honor ctx.
 		Release func(
 			ctx context.Context,
 			toolset, providerID, incarnationID, expectedRegistrationToken string,
@@ -98,12 +105,10 @@ type (
 		) error
 
 		// Claim asks the registry for the one authoritative pre-dispatch
-		// transition. Only ClaimExecute permits handler invocation.
-		Claim func(
-			ctx context.Context,
-			toolset, providerID, incarnationID, providerRegistrationToken,
-			callRegistrationToken, toolUseID, requestEventID string,
-		) (ClaimDisposition, error)
+		// transition. The same exact claim may be retried after an uncertain
+		// transport result and must return ClaimExecute again. Only ClaimExecute
+		// permits handler invocation.
+		Claim func(ctx context.Context, request ClaimRequest) (ClaimDisposition, error)
 
 		// RetryInitialInterval is the initial delay before retrying a failed
 		// registration. Consecutive failures back off exponentially. Zero uses
@@ -143,11 +148,7 @@ type (
 			toolset, providerID, incarnationID, providerRegistrationToken,
 			callRegistrationToken, toolUseID, requestEventID string,
 		) error
-		claim func(
-			ctx context.Context,
-			toolset, providerID, incarnationID, providerRegistrationToken,
-			callRegistrationToken, toolUseID, requestEventID string,
-		) (ClaimDisposition, error)
+		claim                func(ctx context.Context, request ClaimRequest) (ClaimDisposition, error)
 		retryInitialInterval time.Duration
 		retryMaxInterval     time.Duration
 		attemptTimeout       time.Duration
@@ -365,8 +366,8 @@ func registerUntilSuccess(
 				return state, nil
 			}
 		}
-		if ctx.Err() != nil {
-			return registrationState{}, ctx.Err()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return registrationState{}, errors.Join(err, ctxErr)
 		}
 		if isPermanentRegistrationError(err) {
 			return registrationState{}, err
@@ -447,8 +448,8 @@ func superviseRegistration(
 			)
 			continue
 		}
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return errors.Join(err, ctxErr)
 		}
 		if isAdmissionBlocked(err) {
 			return fmt.Errorf("%w: renewal blocked: %w", ErrRegistrationSuperseded, err)
@@ -523,6 +524,41 @@ func releaseProvider(
 		logger,
 		wait,
 	)
+}
+
+// releaseProviderTokens removes every exact lease that this provider
+// incarnation may own. All releases run at the same time under one shared
+// deadline, so an unexpected token change cannot multiply process shutdown
+// time.
+func releaseProviderTokens(
+	parent context.Context,
+	toolset, providerID, incarnationID string,
+	tokens []string,
+	registration registrationConfig,
+	logger telemetry.Logger,
+	wait registrationWait,
+) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), registration.releaseTimeout)
+	defer cancel()
+
+	errs := make([]error, len(tokens))
+	var releases sync.WaitGroup
+	for index, token := range tokens {
+		releases.Go(func() {
+			errs[index] = releaseProvider(
+				ctx,
+				toolset,
+				providerID,
+				incarnationID,
+				token,
+				registration,
+				logger,
+				wait,
+			)
+		})
+	}
+	releases.Wait()
+	return errors.Join(errs...)
 }
 
 // reconcileProviderState retries one exact lease transition within the

@@ -419,8 +419,9 @@ func NewProtoReportToolCallOverloadResponse() *registrypb.ReportToolCallOverload
 
 // NewClaimToolCallPayload builds the payload of the "ClaimToolCall" endpoint
 // of the "registry" service from the gRPC request type.
-func NewClaimToolCallPayload(message *registrypb.ClaimToolCallRequest) *registry.ProviderToolCallClaimPayload {
-	v := &registry.ProviderToolCallClaimPayload{
+func NewClaimToolCallPayload(message *registrypb.ClaimToolCallRequest) *registry.ClaimToolCallPayload {
+	v := &registry.ClaimToolCallPayload{
+		ClaimOperationID:          message.ClaimOperationId,
 		Toolset:                   message.Toolset,
 		ProviderID:                message.ProviderId,
 		ProviderIncarnationID:     message.ProviderIncarnationId,
@@ -820,6 +821,7 @@ func ValidateReportToolCallOverloadRequest(message *registrypb.ReportToolCallOve
 // ValidateClaimToolCallRequest runs the validations defined on
 // ClaimToolCallRequest.
 func ValidateClaimToolCallRequest(message *registrypb.ClaimToolCallRequest) (err error) {
+	err = goa.MergeErrors(err, goa.ValidateFormat("message.claim_operation_id", message.ClaimOperationId, goa.FormatUUID))
 	if utf8.RuneCountInString(message.Toolset) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", message.Toolset, utf8.RuneCountInString(message.Toolset), 1, true))
 	}
