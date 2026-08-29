@@ -1002,6 +1002,8 @@ goa.design/goa/v3 v3.30.1-0.20260826205939-36e92a56a054 h1:j+HyJr3A4zZ642ewmdO4l
 goa.design/goa/v3 v3.30.1-0.20260826205939-36e92a56a054/go.mod h1:XpqR5Ho75FrEGDZd6o/hIWnv7lN/TUHudl2QxfM1kFU=
 goa.design/goa/v3 v3.30.1-0.20260826213606-c30c5e1423e7 h1:z/GUg4DrWWQsH/UqH7QUmqdiUWSX8VWBr61dOs4UtOc=
 goa.design/goa/v3 v3.30.1-0.20260826213606-c30c5e1423e7/go.mod h1:XpqR5Ho75FrEGDZd6o/hIWnv7lN/TUHudl2QxfM1kFU=
+goa.design/goa/v3 v3.31.0-preview.1.0.20260829041946-9bb506a5a245 h1:rPtCxKe1RvhMSbD/EzTuRN4vYa/fh+T0/K/2pffndPw=
+goa.design/goa/v3 v3.31.0-preview.1.0.20260829041946-9bb506a5a245/go.mod h1:XpqR5Ho75FrEGDZd6o/hIWnv7lN/TUHudl2QxfM1kFU=
 goa.design/pulse v1.10.3-0.20260825143355-aea9ab01cba6 h1:pn0ugay32M3tqW+fRelQY/swvom8JsB0lbybKC3D6VM=
 goa.design/pulse v1.10.3-0.20260825143355-aea9ab01cba6/go.mod h1:TQaCzs74cf0eXqiw2pgPN0UJyIoZ2waNv9J87fCgC/I=
 golang.org/x/crypto v0.0.0-20180904163835-0709b304e793/go.mod h1:6SG95UA2DQfeDnfUPMdvaQW0Q7yPrPDi9nlGo2tz2b4=
