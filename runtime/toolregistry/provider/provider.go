@@ -25,6 +25,28 @@ import (
 )
 
 type (
+	// ClaimRequest identifies one registry ownership operation. The operation
+	// ID remains fixed across transport retries but changes when Pulse later
+	// redelivers the same request event.
+	ClaimRequest struct {
+		// Toolset is the qualified toolset receiving the call.
+		Toolset string
+		// ProviderID is the stable identity of the provider process.
+		ProviderID string
+		// ProviderIncarnationID identifies this Serve lifecycle.
+		ProviderIncarnationID string
+		// ProviderRegistrationToken is the exact token held by this provider.
+		ProviderRegistrationToken string
+		// CallRegistrationToken is the token stamped on the queued call.
+		CallRegistrationToken string
+		// ToolUseID is the global identity of the tool call.
+		ToolUseID string
+		// RequestEventID is the Pulse event being claimed.
+		RequestEventID string
+		// OperationID identifies this claim and all of its transport retries.
+		OperationID string
+	}
+
 	// Handler executes tool calls received from a toolset stream.
 	// Implementations are responsible for decoding/encoding tool payload/result
 	// using the compiled tool codecs for their toolset. Serve obtains one durable
@@ -52,7 +74,8 @@ type (
 		SinkAckGracePeriod time.Duration
 
 		// Pong acknowledges health pings emitted by the registry gateway.
-		// Providers must supply this to participate in health tracking.
+		// Providers must supply this to participate in health tracking and the
+		// callback must return promptly after ctx cancellation.
 		Pong func(ctx context.Context, providerID, incarnationID, pingID string) error
 
 		// PongTimeout bounds how long Serve will wait for the Pong callback to
@@ -346,24 +369,24 @@ func serve(
 		close(workerDone)
 	}()
 
-	signalStop := func(err error) {
+	signalSettleFailure := func(err error) bool {
+		if cancelCtx.Err() != nil && containsOnlyCancellation(err) {
+			return false
+		}
+		settleErrMu.Lock()
+		settlementErr = errors.Join(settlementErr, err)
+		settleErrMu.Unlock()
 		select {
 		case errc <- err:
 		default:
 		}
-	}
-	signalSettleFailure := func(err error) {
-		settleErrMu.Lock()
-		settlementErr = errors.Join(settlementErr, err)
-		settleErrMu.Unlock()
-		signalStop(err)
+		cancel()
+		return true
 	}
 
-	registrationDone := make(chan struct{})
-	var registrationResult error
+	registrationResult := make(chan error, 1)
 	go func() {
-		defer close(registrationDone)
-		registrationResult = superviseRegistration(
+		registrationErr := superviseRegistration(
 			cancelCtx,
 			toolset,
 			opts.ProviderID,
@@ -373,18 +396,33 @@ func serve(
 			logger,
 			wait,
 		)
-		if registrationResult != nil && cancelCtx.Err() == nil {
-			signalStop(registrationResult)
-		}
+		registrationResult <- registrationErr
+		cancel()
 	}()
 
 	go func() {
 		defer close(ackDone)
-		for ev := range acks {
+		for {
+			if ackLifecycleCtx.Err() != nil {
+				return
+			}
+			var ev *streaming.Event
+			select {
+			case <-ackLifecycleCtx.Done():
+				return
+			case next, ok := <-acks:
+				if !ok {
+					return
+				}
+				ev = next
+			}
 			ackCtx, ackCancel := context.WithTimeout(ackLifecycleCtx, shutdownTimeout)
 			err := sink.Ack(ackCtx, ev)
 			ackCancel()
 			if err != nil {
+				if ackLifecycleCtx.Err() != nil && containsOnlyCancellation(err) {
+					return
+				}
 				signalSettleFailure(fmt.Errorf("ack toolset event %s: %w", ev.ID, err))
 			}
 		}
@@ -393,7 +431,25 @@ func serve(
 	for i := 0; i < maxConcurrent; i++ {
 		go func() {
 			defer workers.Done()
-			for item := range work {
+			for {
+				if cancelCtx.Err() != nil || handlerCtx.Err() != nil {
+					return
+				}
+				var item workItem
+				select {
+				case <-cancelCtx.Done():
+					return
+				case <-handlerCtx.Done():
+					return
+				case next, ok := <-work:
+					if !ok {
+						return
+					}
+					item = next
+				}
+				if cancelCtx.Err() != nil || handlerCtx.Err() != nil {
+					return
+				}
 				callCtx := toolregistry.ExtractTraceContext(
 					handlerCtx,
 					item.msg.TraceParent,
@@ -450,7 +506,10 @@ func serve(
 						trace.WithAttributes(attribute.String("toolregistry.claim_disposition", string(disposition))),
 					)
 					span.End()
-					acks <- item.ev
+					select {
+					case acks <- item.ev:
+					case <-handlerCtx.Done():
+					}
 					cancelCall()
 					continue
 				}
@@ -547,14 +606,17 @@ func serve(
 				)
 				span.End()
 
-				acks <- item.ev
+				select {
+				case acks <- item.ev:
+				case <-handlerCtx.Done():
+				}
 				cancelCall()
 			}
 		}()
 	}
 
 	ackImmediate := func(ev *streaming.Event, description string) error {
-		ackCtx, ackCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
+		ackCtx, ackCancel := context.WithTimeout(cancelCtx, shutdownTimeout)
 		err := sink.Ack(ackCtx, ev)
 		ackCancel()
 		if err != nil {
@@ -593,7 +655,7 @@ func serve(
 		switch msg.Type {
 		case toolregistry.MessageTypePing:
 			if msg.RegistrationToken == admittedToken && msg.PingID != "" {
-				pongCtx, pongCancel := context.WithTimeout(context.WithoutCancel(ctx), pongTimeout)
+				pongCtx, pongCancel := context.WithTimeout(cancelCtx, pongTimeout)
 				err := opts.Pong(pongCtx, opts.ProviderID, incarnationID, msg.PingID)
 				pongCancel()
 				if err != nil {
@@ -636,7 +698,7 @@ func serve(
 				"max_queued", maxQueued,
 			)
 			if err := reportOverload(
-				ctx,
+				cancelCtx,
 				registrationConfig,
 				shutdownTimeout,
 				toolset,
@@ -652,59 +714,111 @@ func serve(
 		}
 	}
 
-	finish := func(runErr error) error {
-		// Wait for renewal before cleanup because a successful Register call may
-		// have created another exact lease while shutdown was starting.
+	finish := func(runErr, renewalErr error) error {
 		cancel()
-		registrationCtx, registrationCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
-		registrationErr := waitForDone(registrationCtx, registrationDone, "registration renewal")
-		registrationCancel()
-		if registrationErr != nil {
-			<-registrationDone
-		}
-		leaseTokens := registrationLeaseTokens(admittedToken, registrationResult)
-
 		settlementCtx, settlementCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 		defer settlementCancel()
 
-		var drainErr error
-		for _, token := range leaseTokens {
-			drainErr = errors.Join(drainErr, drainProvider(
-				settlementCtx,
-				toolset,
-				opts.ProviderID,
-				incarnationID,
-				token,
-				shutdownTimeout+SettlementAuthorityMargin,
-				registrationConfig,
-				logger,
-				wait,
-			))
+		type registrationStopResult struct {
+			err               error
+			changedToken      string
+			changedTokenDrain <-chan error
 		}
+		registrationStop := make(chan registrationStopResult, 1)
+		go func(stoppedErr error) {
+			if stoppedErr == nil {
+				stoppedErr = <-registrationResult
+			}
+			result := registrationStopResult{err: stoppedErr}
+			var changedTokenErr *registrationTokenChangedError
+			if errors.As(stoppedErr, &changedTokenErr) {
+				result.changedToken = changedTokenErr.receivedToken
+				changedTokenDrain := make(chan error, 1)
+				result.changedTokenDrain = changedTokenDrain
+				// Publish the known renewal error and token before draining it.
+				// The caller can then preserve both even if drain uses the rest
+				// of the shared settlement deadline.
+				registrationStop <- result
+				changedTokenDrain <- drainProvider(
+					settlementCtx,
+					toolset,
+					opts.ProviderID,
+					incarnationID,
+					result.changedToken,
+					shutdownTimeout+SettlementAuthorityMargin,
+					registrationConfig,
+					logger,
+					waitRegistrationDelay,
+				)
+				return
+			}
+			registrationStop <- result
+		}(renewalErr)
+
+		leaseTokens := []string{admittedToken}
+		drainErr := drainProvider(
+			settlementCtx,
+			toolset,
+			opts.ProviderID,
+			incarnationID,
+			admittedToken,
+			shutdownTimeout+SettlementAuthorityMargin,
+			registrationConfig,
+			logger,
+			waitRegistrationDelay,
+		)
 
 		// The draining lease is now non-routable. Close intake before workers
-		// claim any remaining local queue entries; the registry still authorizes
-		// this exact lease to finish those already-published calls.
+		// start claims for remaining queue entries; claims that committed before
+		// the drain may still finish under this exact lease.
 		closeErr := closeSinkBounded(settlementCtx, sink)
 		close(work)
 
 		ensureErr := waitForDone(settlementCtx, ensureDone, "consumer-group ensure")
-		if ensureErr != nil {
-			<-ensureDone
-		}
 		workerErr := waitForDone(settlementCtx, workerDone, "tool workers")
-		if workerErr != nil {
-			cancelHandlers()
-			<-workerDone
-		}
 		cancelHandlers()
-		close(acks)
-		ackDrainErr := waitForDone(settlementCtx, ackDone, "acknowledgements")
-		if ackDrainErr != nil {
-			cancelAcks()
-			<-ackDone
+
+		var ackDrainErr error
+		if workerErr == nil {
+			close(acks)
+			ackDrainErr = waitForDone(settlementCtx, ackDone, "acknowledgements")
 		}
 		cancelAcks()
+
+		var registrationWaitErr error
+		var registrationStopped registrationStopResult
+		registrationStoppedOK := false
+		select {
+		case registrationStopped = <-registrationStop:
+			registrationStoppedOK = true
+		default:
+		}
+		if !registrationStoppedOK {
+			select {
+			case registrationStopped = <-registrationStop:
+				registrationStoppedOK = true
+			case <-settlementCtx.Done():
+				registrationWaitErr = fmt.Errorf("wait for registration renewal: %w", settlementCtx.Err())
+			}
+		}
+		if registrationStoppedOK {
+			renewalErr = registrationStopped.err
+			if registrationStopped.changedToken != "" {
+				leaseTokens = append(leaseTokens, registrationStopped.changedToken)
+			}
+			if registrationStopped.changedTokenDrain != nil {
+				select {
+				case changedTokenDrainErr := <-registrationStopped.changedTokenDrain:
+					drainErr = errors.Join(drainErr, changedTokenDrainErr)
+				case <-settlementCtx.Done():
+					drainErr = errors.Join(
+						drainErr,
+						fmt.Errorf("drain changed registration token: %w", settlementCtx.Err()),
+					)
+				}
+			}
+		}
+		runErr = joinProviderStopErrors(runErr, renewalErr)
 
 		settleErrMu.Lock()
 		recordedSettlementErr := settlementErr
@@ -713,7 +827,7 @@ func serve(
 		stopErr := errors.Join(
 			drainErr,
 			closeErr,
-			registrationErr,
+			registrationWaitErr,
 			ensureErr,
 			workerErr,
 			ackDrainErr,
@@ -722,59 +836,108 @@ func serve(
 		if stopErr != nil {
 			return errors.Join(runErr, stopErr)
 		}
-
-		var releaseErr error
-		for _, token := range leaseTokens {
-			releaseErr = errors.Join(
-				releaseErr,
-				releaseProvider(
-					context.WithoutCancel(ctx),
-					toolset,
-					opts.ProviderID,
-					incarnationID,
-					token,
-					registrationConfig,
-					logger,
-					wait,
-				),
-			)
-		}
+		releaseErr := releaseProviderTokens(
+			ctx,
+			toolset,
+			opts.ProviderID,
+			incarnationID,
+			leaseTokens,
+			registrationConfig,
+			logger,
+			wait,
+		)
 		return errors.Join(runErr, releaseErr)
 	}
 
 	for {
+		if runErr, renewalErr, stopped := pollProviderStop(cancelCtx, registrationResult, errc); stopped {
+			return finish(runErr, renewalErr)
+		}
 		select {
 		case <-cancelCtx.Done():
-			select {
-			case err := <-errc:
-				return finish(err)
-			default:
-			}
-			return finish(cancelCtx.Err())
+			runErr, renewalErr, _ := pollProviderStop(cancelCtx, registrationResult, errc)
+			return finish(runErr, renewalErr)
+		case renewalErr := <-registrationResult:
+			return finish(nil, renewalErr)
 		case err := <-errc:
-			return finish(err)
+			return finish(err, nil)
 		case ev, ok := <-events:
+			if runErr, renewalErr, stopped := pollProviderStop(cancelCtx, registrationResult, errc); stopped {
+				return finish(runErr, renewalErr)
+			}
 			if !ok {
-				return finish(errors.New("toolset stream subscription closed"))
+				return finish(errors.New("toolset stream subscription closed"), nil)
 			}
 			if err := acceptEvent(ev); err != nil {
-				signalSettleFailure(err)
-				return finish(err)
+				if signalSettleFailure(err) {
+					return finish(err, nil)
+				}
+				runErr, renewalErr, _ := pollProviderStop(cancelCtx, registrationResult, errc)
+				return finish(runErr, renewalErr)
 			}
 		}
 	}
 }
 
-// registrationLeaseTokens returns every exact lease reported by the renewal
-// supervisor. A changed renewal token is rejected, but its successful Register
-// call still created a lease that shutdown must drain and release.
-func registrationLeaseTokens(admittedToken string, registrationErr error) []string {
-	leaseTokens := []string{admittedToken}
-	var changedTokenErr *registrationTokenChangedError
-	if errors.As(registrationErr, &changedTokenErr) {
-		leaseTokens = append(leaseTokens, changedTokenErr.receivedToken)
+// pollProviderStop checks lifecycle signals without competing with intake.
+// Callers run it before and after receiving an event so ready events cannot
+// starve cancellation, registration failure, or worker failure.
+func pollProviderStop(
+	ctx context.Context,
+	registrationResult, runResult <-chan error,
+) (runErr, renewalErr error, stopped bool) {
+	var renewalReady, runReady bool
+	select {
+	case renewalErr, renewalReady = <-registrationResult:
+	default:
 	}
-	return leaseTokens
+	select {
+	case runErr, runReady = <-runResult:
+	default:
+	}
+	if renewalReady || runReady {
+		return runErr, renewalErr, true
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr, nil, true
+	}
+	return nil, nil, false
+}
+
+// joinProviderStopErrors keeps a real renewal failure while preventing the
+// registration goroutine's internal cancellation from changing the
+// classification of an unrelated provider failure.
+func joinProviderStopErrors(runErr, renewalErr error) error {
+	if runErr != nil && containsOnlyCancellation(renewalErr) {
+		return runErr
+	}
+	return errors.Join(runErr, renewalErr)
+}
+
+// containsOnlyCancellation reports whether every leaf in an error chain is a
+// context cancellation or deadline. Unknown leaf errors are real failures and
+// must remain visible.
+func containsOnlyCancellation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var joined interface{ Unwrap() []error }
+	if errors.As(err, &joined) {
+		children := joined.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !containsOnlyCancellation(child) {
+				return false
+			}
+		}
+		return true
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return containsOnlyCancellation(cause)
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // claimToolCall asks the registry for the one pre-dispatch transition. The
@@ -787,18 +950,18 @@ func claimToolCall(
 	message toolregistry.ToolCallMessage,
 	requestEventID string,
 ) (ClaimDisposition, error) {
-	claimCtx, claimCancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	claimCtx, claimCancel := context.WithTimeout(ctx, timeout)
 	defer claimCancel()
-	disposition, err := registration.claim(
-		claimCtx,
-		toolset,
-		providerID,
-		incarnationID,
-		providerRegistrationToken,
-		message.RegistrationToken,
-		message.ToolUseID,
-		requestEventID,
-	)
+	disposition, err := registration.claim(claimCtx, ClaimRequest{
+		Toolset:                   toolset,
+		ProviderID:                providerID,
+		ProviderIncarnationID:     incarnationID,
+		ProviderRegistrationToken: providerRegistrationToken,
+		CallRegistrationToken:     message.RegistrationToken,
+		ToolUseID:                 message.ToolUseID,
+		RequestEventID:            requestEventID,
+		OperationID:               uuid.NewString(),
+	})
 	if err != nil {
 		return "", err
 	}
@@ -820,10 +983,7 @@ func reportOverload(
 	message toolregistry.ToolCallMessage,
 	requestEventID string,
 ) error {
-	publishCtx, publishCancel := context.WithTimeout(
-		context.WithoutCancel(ctx),
-		min(timeout, MaxOverloadPublishDuration),
-	)
+	publishCtx, publishCancel := context.WithTimeout(ctx, min(timeout, MaxOverloadPublishDuration))
 	defer publishCancel()
 	if err := registration.reportOverload(
 		publishCtx,

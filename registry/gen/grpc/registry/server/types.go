@@ -25,6 +25,7 @@ func NewRegisterPayload(message *registrypb.RegisterRequest) *registry.RegisterP
 		AdmissionRevision:     *message.AdmissionRevision,
 		ProviderIncarnationID: *message.ProviderIncarnationId,
 		WireProtocolVersion:   int(*message.WireProtocolVersion),
+		SchemaFingerprint:     *message.SchemaFingerprint,
 	}
 	if message.Version != nil {
 		version := registry.SemVer(*message.Version)
@@ -231,6 +232,25 @@ func NewProtoGetToolsetResponse(result *registry.Toolset) *registrypb.GetToolset
 	return message
 }
 
+// NewCheckAdmissionPayload builds *registry.CheckAdmissionPayload from
+// *registrypb.CheckAdmissionRequest.
+func NewCheckAdmissionPayload(message *registrypb.CheckAdmissionRequest) *registry.CheckAdmissionPayload {
+	v := &registry.CheckAdmissionPayload{
+		Name:                      *message.Name,
+		ExpectedRegistrationToken: *message.ExpectedRegistrationToken,
+	}
+	return v
+}
+
+// NewProtoCheckAdmissionResponse builds *registrypb.CheckAdmissionResponse
+// from *registry.AdmissionStatus.
+func NewProtoCheckAdmissionResponse(result *registry.AdmissionStatus) *registrypb.CheckAdmissionResponse {
+	message := &registrypb.CheckAdmissionResponse{
+		Ready: &result.Ready,
+	}
+	return message
+}
+
 // NewSearchPayload builds *registry.SearchPayload from
 // *registrypb.SearchRequest.
 func NewSearchPayload(message *registrypb.SearchRequest) *registry.SearchPayload {
@@ -395,10 +415,11 @@ func NewProtoReportToolCallOverloadResponse() *registrypb.ReportToolCallOverload
 	return message
 }
 
-// NewClaimToolCallPayload builds *registry.ProviderToolCallClaimPayload from
+// NewClaimToolCallPayload builds *registry.ClaimToolCallPayload from
 // *registrypb.ClaimToolCallRequest.
-func NewClaimToolCallPayload(message *registrypb.ClaimToolCallRequest) *registry.ProviderToolCallClaimPayload {
-	v := &registry.ProviderToolCallClaimPayload{
+func NewClaimToolCallPayload(message *registrypb.ClaimToolCallRequest) *registry.ClaimToolCallPayload {
+	v := &registry.ClaimToolCallPayload{
+		ClaimOperationID:          *message.ClaimOperationId,
 		Toolset:                   *message.Toolset,
 		ProviderID:                *message.ProviderId,
 		ProviderIncarnationID:     *message.ProviderIncarnationId,
@@ -438,6 +459,9 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 	}
 	if message.WireProtocolVersion == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("wire_protocol_version", "message"))
+	}
+	if message.SchemaFingerprint == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("schema_fingerprint", "message"))
 	}
 	if message.Name != nil {
 		if utf8.RuneCountInString(*message.Name) < 1 {
@@ -481,6 +505,9 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 		if !(*message.WireProtocolVersion == 8) {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{8}))
 		}
+	}
+	if message.SchemaFingerprint != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.schema_fingerprint", *message.SchemaFingerprint, "^[0-9a-f]{64}$"))
 	}
 	return
 }
@@ -684,6 +711,29 @@ func ValidateGetToolsetRequest(message *registrypb.GetToolsetRequest) (err error
 		if utf8.RuneCountInString(*message.Name) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
 		}
+	}
+	return
+}
+
+// ValidateCheckAdmissionRequest runs the validations defined on
+// CheckAdmissionRequest.
+func ValidateCheckAdmissionRequest(message *registrypb.CheckAdmissionRequest) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.ExpectedRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("expected_registration_token", "message"))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+		}
+	}
+	if message.ExpectedRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", *message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
 	}
 	return
 }
@@ -1083,6 +1133,9 @@ func ValidateReportToolCallOverloadRequest(message *registrypb.ReportToolCallOve
 // ValidateClaimToolCallRequest runs the validations defined on
 // ClaimToolCallRequest.
 func ValidateClaimToolCallRequest(message *registrypb.ClaimToolCallRequest) (err error) {
+	if message.ClaimOperationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("claim_operation_id", "message"))
+	}
 	if message.Toolset == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("toolset", "message"))
 	}
@@ -1103,6 +1156,9 @@ func ValidateClaimToolCallRequest(message *registrypb.ClaimToolCallRequest) (err
 	}
 	if message.RequestEventId == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("request_event_id", "message"))
+	}
+	if message.ClaimOperationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.claim_operation_id", *message.ClaimOperationId, goa.FormatUUID))
 	}
 	if message.Toolset != nil {
 		if utf8.RuneCountInString(*message.Toolset) < 1 {

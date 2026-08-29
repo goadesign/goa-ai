@@ -140,11 +140,14 @@ func SetCompletionValidator(request *Request, validate func(*Response, *Completi
 // accept validates and records one provider chunk.
 func (v *streamValidator) accept(chunk Chunk) error {
 	if err := v.preflightStreamChunk(chunk); err != nil {
-		return err
+		return classifyOutputValidation(requiredOutputValidationKind(err), err)
 	}
-	owned, err := validateAndCloneChunk(chunk)
+	owned, err := cloneChunk(chunk)
 	if err != nil {
-		return err
+		return classifyOutputValidation(OutputValidationResponseShape, err)
+	}
+	if kind, err := validateCanonicalChunkOutput(owned); err != nil {
+		return classifyOutputValidation(kind, fmt.Errorf("invalid model chunk: %w", err))
 	}
 	return v.acceptOwned(owned)
 }
@@ -153,12 +156,18 @@ func (v *streamValidator) accept(chunk Chunk) error {
 // stream boundary.
 func (v *streamValidator) acceptOwned(chunk Chunk) error {
 	if v.stopped {
-		return fmt.Errorf("model stream emitted %q after stop", chunk.Kind())
+		return classifyOutputValidation(
+			OutputValidationStreamProtocol,
+			fmt.Errorf("model stream emitted %q after stop", chunk.Kind()),
+		)
 	}
 	switch actual := chunk.(type) {
 	case TextChunk:
 		if v.expectsCompletion {
-			return errors.New("structured output stream emitted text instead of a completion")
+			return classifyOutputValidation(
+				OutputValidationStructuredOutput,
+				errors.New("structured output stream emitted text instead of a completion"),
+			)
 		}
 		for _, part := range actual.Message.Parts {
 			switch text := part.(type) {
@@ -175,7 +184,10 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 		for _, part := range actual.Message.Parts {
 			if thinking, ok := part.(ThinkingPart); ok {
 				if prior, exists := v.thinking[thinking.Index]; exists && prior.final {
-					return fmt.Errorf("model stream emitted thinking after final block %d", thinking.Index)
+					return classifyOutputValidation(
+						OutputValidationStreamProtocol,
+						fmt.Errorf("model stream emitted thinking after final block %d", thinking.Index),
+					)
 				}
 				if _, exists := v.thinking[thinking.Index]; !exists {
 					v.thinkingOrder = append(v.thinkingOrder, thinking.Index)
@@ -185,20 +197,32 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 		}
 	case ToolCallDeltaChunk:
 		if v.expectsCompletion {
-			return errors.New("structured output stream emitted a tool call delta")
+			return classifyOutputValidation(
+				OutputValidationStructuredOutput,
+				errors.New("structured output stream emitted a tool call delta"),
+			)
 		}
 		if _, exists := v.toolValidators[actual.Delta.Name]; !exists {
-			return fmt.Errorf(
-				"model stream returned tool delta %q that was not present in its request",
-				actual.Delta.Name,
+			return classifyOutputValidation(
+				OutputValidationToolIdentity,
+				fmt.Errorf(
+					"model stream returned tool delta %q that was not present in its request",
+					actual.Delta.Name,
+				),
 			)
 		}
 		if _, finalized := v.finalToolCallIDs[actual.Delta.ID]; finalized {
-			return fmt.Errorf("model stream emitted tool call delta after finalized call %q", actual.Delta.ID)
+			return classifyOutputValidation(
+				OutputValidationStreamProtocol,
+				fmt.Errorf("model stream emitted tool call delta after finalized call %q", actual.Delta.ID),
+			)
 		}
 		name := string(actual.Delta.Name)
 		if prior := v.toolDeltaNames[actual.Delta.ID]; prior != "" && prior != name {
-			return fmt.Errorf("model stream changed tool name for call %q", actual.Delta.ID)
+			return classifyOutputValidation(
+				OutputValidationStreamProtocol,
+				fmt.Errorf("model stream changed tool name for call %q", actual.Delta.ID),
+			)
 		}
 		v.toolDeltaNames[actual.Delta.ID] = name
 		payload := v.toolDeltaPayloads[actual.Delta.ID]
@@ -209,26 +233,41 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 		payload.WriteString(actual.Delta.Delta)
 	case ToolCallChunk:
 		if v.expectsCompletion {
-			return errors.New("structured output stream emitted a tool call")
+			return classifyOutputValidation(
+				OutputValidationStructuredOutput,
+				errors.New("structured output stream emitted a tool call"),
+			)
 		}
 		_, exists := v.toolValidators[actual.ToolCall.Name]
 		if !exists {
-			return fmt.Errorf(
-				"model stream returned tool %q that was not present in its request",
-				actual.ToolCall.Name,
+			return classifyOutputValidation(
+				OutputValidationToolIdentity,
+				fmt.Errorf(
+					"model stream returned tool %q that was not present in its request",
+					actual.ToolCall.Name,
+				),
 			)
 		}
 		if _, exists := v.finalToolCallIDs[actual.ToolCall.ID]; exists {
-			return fmt.Errorf("model stream repeated finalized tool call %q", actual.ToolCall.ID)
+			return classifyOutputValidation(
+				OutputValidationStreamProtocol,
+				fmt.Errorf("model stream repeated finalized tool call %q", actual.ToolCall.ID),
+			)
 		}
 		if name := v.toolDeltaNames[actual.ToolCall.ID]; name != "" && name != string(actual.ToolCall.Name) {
-			return fmt.Errorf("model stream finalized tool call %q with a different name", actual.ToolCall.ID)
+			return classifyOutputValidation(
+				OutputValidationStreamProtocol,
+				fmt.Errorf("model stream finalized tool call %q with a different name", actual.ToolCall.ID),
+			)
 		}
 		if payload, exists := v.toolDeltaPayloads[actual.ToolCall.ID]; exists &&
 			!bytesEqualString(actual.ToolCall.Payload, payload.String()) {
-			return fmt.Errorf(
-				"model stream finalized tool call %q with a payload that differs from its deltas",
-				actual.ToolCall.ID,
+			return classifyOutputValidation(
+				OutputValidationStreamProtocol,
+				fmt.Errorf(
+					"model stream finalized tool call %q with a payload that differs from its deltas",
+					actual.ToolCall.ID,
+				),
 			)
 		}
 		v.finalToolCallIDs[actual.ToolCall.ID] = struct{}{}
@@ -240,45 +279,66 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 		v.stampUsageIdentity(&usage)
 		accumulated, err := addStreamUsage(v.usage, usage)
 		if err != nil {
-			return err
+			return classifyOutputValidation(OutputValidationUsage, err)
 		}
 		v.usage = accumulated
 		v.usageSeen = true
 	case CompletionDeltaChunk:
 		if !v.expectsCompletion {
-			return errors.New("model stream emitted a completion delta without a structured output request")
+			return classifyOutputValidation(
+				OutputValidationStructuredOutput,
+				errors.New("model stream emitted a completion delta without a structured output request"),
+			)
 		}
 		if actual.Delta.Name != v.completionName {
-			return fmt.Errorf(
-				"stream completion delta %q does not match requested completion %q",
-				actual.Delta.Name,
-				v.completionName,
+			return classifyOutputValidation(
+				OutputValidationStructuredOutput,
+				fmt.Errorf(
+					"stream completion delta %q does not match requested completion %q",
+					actual.Delta.Name,
+					v.completionName,
+				),
 			)
 		}
 		if v.completion != nil {
-			return errors.New("model stream emitted completion delta after final completion")
+			return classifyOutputValidation(
+				OutputValidationStreamProtocol,
+				errors.New("model stream emitted completion delta after final completion"),
+			)
 		}
 	case CompletionChunk:
 		if !v.expectsCompletion {
-			return errors.New("model stream emitted a completion without a structured output request")
+			return classifyOutputValidation(
+				OutputValidationStructuredOutput,
+				errors.New("model stream emitted a completion without a structured output request"),
+			)
 		}
 		if actual.Completion.Name != v.completionName {
-			return fmt.Errorf(
-				"stream completion %q does not match requested completion %q",
-				actual.Completion.Name,
-				v.completionName,
+			return classifyOutputValidation(
+				OutputValidationStructuredOutput,
+				fmt.Errorf(
+					"stream completion %q does not match requested completion %q",
+					actual.Completion.Name,
+					v.completionName,
+				),
 			)
 		}
 		if v.completion != nil {
-			return errors.New("model stream emitted multiple final completions")
+			return classifyOutputValidation(
+				OutputValidationStreamProtocol,
+				errors.New("model stream emitted multiple final completions"),
+			)
 		}
 		if err := v.structuredValidate(actual.Completion.Payload); err != nil {
-			return fmt.Errorf("stream completion does not match its schema: %w", err)
+			return classifyOutputValidation(
+				OutputValidationStructuredOutput,
+				fmt.Errorf("stream completion does not match its schema: %w", err),
+			)
 		}
 		if v.completionValidate != nil {
 			completion := actual.Completion
 			if err := v.completionValidate(nil, &completion); err != nil {
-				return err
+				return classifyOutputValidation(OutputValidationStructuredOutput, err)
 			}
 		}
 		completion := snapshotCompletion(actual.Completion)
@@ -286,11 +346,17 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 	case StopChunk:
 		for id := range v.toolDeltaNames {
 			if _, finalized := v.finalToolCallIDs[id]; !finalized {
-				return fmt.Errorf("model stream stopped before tool call %q was finalized", id)
+				return classifyOutputValidation(
+					OutputValidationStreamProtocol,
+					fmt.Errorf("model stream stopped before tool call %q was finalized", id),
+				)
 			}
 		}
 		if v.expectsCompletion && v.completion == nil {
-			return errors.New("structured output stream stopped before a completion")
+			return classifyOutputValidation(
+				OutputValidationStructuredOutput,
+				errors.New("structured output stream stopped before a completion"),
+			)
 		}
 		v.stopped = true
 		v.stopReason = actual.Reason
@@ -299,94 +365,123 @@ func (v *streamValidator) acceptOwned(chunk Chunk) error {
 	return nil
 }
 
-// validateAndCloneChunk transfers a provider chunk into framework ownership,
-// then checks only the owned copy.
-func validateAndCloneChunk(chunk Chunk) (Chunk, error) {
-	owned, err := cloneChunk(chunk)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateCanonicalChunk(owned); err != nil {
-		return nil, fmt.Errorf("invalid model chunk: %w", err)
-	}
-	return owned, nil
-}
-
 // finish validates EOF and reconciles every recorded chunk with the complete
 // provider response.
 func (v *streamValidator) finish(response *Response) error {
 	if v.expectsCompletion && v.completion == nil {
-		return errors.New("structured output stream ended without a completion")
+		return classifyOutputValidation(
+			OutputValidationStructuredOutput,
+			errors.New("structured output stream ended without a completion"),
+		)
 	}
 	if !v.stopped {
-		return errors.New("model stream ended without stop chunk")
+		return classifyOutputValidation(
+			OutputValidationStreamProtocol,
+			errors.New("model stream ended without stop chunk"),
+		)
 	}
-	if err := validateCanonicalResponse(response); err != nil {
-		return fmt.Errorf("invalid canonical response: %w", err)
+	if kind, err := validateCanonicalResponseOutput(response); err != nil {
+		return classifyOutputValidation(kind, fmt.Errorf("invalid canonical response: %w", err))
 	}
 	if v.stopReason != response.StopReason {
-		return fmt.Errorf(
-			"stream stop reason %q does not match canonical response %q",
-			v.stopReason,
-			response.StopReason,
+		return classifyOutputValidation(
+			OutputValidationStreamProtocol,
+			fmt.Errorf(
+				"stream stop reason %q does not match canonical response %q",
+				v.stopReason,
+				response.StopReason,
+			),
 		)
 	}
 	if v.outputLimited != response.OutputLimited {
-		return errors.New("stream output-limit state does not match canonical response")
+		return classifyOutputValidation(
+			OutputValidationStreamProtocol,
+			errors.New("stream output-limit state does not match canonical response"),
+		)
 	}
 	responseCalls := response.ToolCalls()
 	if err := validateToolChoiceResponse(v.toolChoiceMode, v.toolChoiceName, response); err != nil {
-		return err
+		return classifyOutputValidation(OutputValidationToolChoice, err)
 	}
 	if len(responseCalls) != len(v.toolCalls) {
-		return fmt.Errorf(
-			"stream emitted %d tool calls but canonical response contains %d",
-			len(v.toolCalls),
-			len(responseCalls),
+		return classifyOutputValidation(
+			OutputValidationStreamProtocol,
+			fmt.Errorf(
+				"stream emitted %d tool calls but canonical response contains %d",
+				len(v.toolCalls),
+				len(responseCalls),
+			),
 		)
 	}
 	for index, responseCall := range responseCalls {
 		streamCall := v.toolCalls[index]
 		if snapshotToolCall(responseCall) != streamCall {
-			return fmt.Errorf("stream tool call %d does not match canonical response", index)
+			return classifyOutputValidation(
+				OutputValidationStreamProtocol,
+				fmt.Errorf("stream tool call %d does not match canonical response", index),
+			)
 		}
 	}
 	responseUsage := response.Usage
 	v.stampUsageIdentity(&responseUsage)
 	if v.usageSeen && v.usage != responseUsage {
-		return errors.New("stream usage deltas do not match canonical response usage")
+		return classifyOutputValidation(
+			OutputValidationUsage,
+			errors.New("stream usage deltas do not match canonical response usage"),
+		)
 	}
 	if v.textSeen && v.text.String() != responseText(response) {
-		return errors.New("streamed text does not match canonical response")
+		return classifyOutputValidation(
+			OutputValidationStreamProtocol,
+			errors.New("streamed text does not match canonical response"),
+		)
 	}
 	if len(v.citations) > 0 && !reflect.DeepEqual(v.citations, snapshotResponseCitations(response)) {
-		return errors.New("streamed citations do not match canonical response")
+		return classifyOutputValidation(
+			OutputValidationStreamProtocol,
+			errors.New("streamed citations do not match canonical response"),
+		)
 	}
 	thinking := make([]thinkingSnapshot, 0, len(v.thinkingOrder))
 	for _, index := range v.thinkingOrder {
 		block := v.thinking[index]
 		if !block.final {
-			return fmt.Errorf("model stream ended before thinking block %d was final", index)
+			return classifyOutputValidation(
+				OutputValidationStreamProtocol,
+				fmt.Errorf("model stream ended before thinking block %d was final", index),
+			)
 		}
 		thinking = append(thinking, block)
 	}
 	if !slices.Equal(thinking, snapshotResponseThinking(response)) {
-		return errors.New("streamed thinking does not match canonical response")
+		return classifyOutputValidation(
+			OutputValidationStreamProtocol,
+			errors.New("streamed thinking does not match canonical response"),
+		)
 	}
 	if v.completion != nil {
 		completionPayload := rawjson.Message(v.completion.payload)
 		if !json.Valid(completionPayload) {
-			return errors.New("model stream emitted invalid completion JSON")
+			return classifyOutputValidation(
+				OutputValidationStructuredOutput,
+				errors.New("model stream emitted invalid completion JSON"),
+			)
 		}
 		responsePayload, err := structuredOutputResponsePayload(response)
 		if err != nil {
-			return err
+			return classifyOutputValidation(OutputValidationStructuredOutput, err)
 		}
 		if err := v.structuredValidate(responsePayload); err != nil {
-			return fmt.Errorf("structured output response does not match its schema: %w", err)
+			return classifyOutputValidation(
+				OutputValidationStructuredOutput,
+				fmt.Errorf("structured output response does not match its schema: %w", err),
+			)
 		}
 		if !bytes.Equal(completionPayload, responsePayload) {
-			return errors.New("stream completion does not match canonical response")
+			return classifyOutputValidation(
+				OutputValidationStreamProtocol,
+				errors.New("stream completion does not match canonical response"),
+			)
 		}
 		if v.completionValidate != nil {
 			completion := &Completion{
@@ -394,11 +489,17 @@ func (v *streamValidator) finish(response *Response) error {
 				Payload: completionPayload,
 			}
 			if err := v.completionValidate(response, completion); err != nil {
-				return err
+				return classifyOutputValidation(OutputValidationStructuredOutput, err)
 			}
 		}
 	}
-	return validateConfiguredToolCalls(v.toolValidators, response)
+	if err := validateConfiguredToolCalls(v.toolValidators, response); err != nil {
+		if _, ok := UnadvertisedToolName(err); ok {
+			return classifyOutputValidation(OutputValidationToolIdentity, err)
+		}
+		return classifyOutputValidation(OutputValidationToolArguments, err)
+	}
+	return nil
 }
 
 // responseText returns assistant text in provider response order.

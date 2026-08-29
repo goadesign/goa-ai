@@ -36,6 +36,20 @@ func TestGeneratedRoutes(t *testing.T) {
 	if beta.SharedToolsetName != "beta.shared" {
 		t.Fatalf("beta route = %q", beta.SharedToolsetName)
 	}
+	alphaFingerprint, err := shared.SchemaFingerprint(alpha.SharedToolsetName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	betaFingerprint, err := shared.SchemaFingerprint(beta.SharedToolsetName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alphaFingerprint == betaFingerprint {
+		t.Fatal("different registration routes have the same schema fingerprint")
+	}
+	if _, err := shared.SchemaFingerprint("unknown.shared"); err == nil {
+		t.Fatal("unknown registration route was accepted")
+	}
 
 	executed := false
 	executor := agentsruntime.ToolCallExecutorFunc(func(_ context.Context, _ *agentsruntime.ToolCallMeta, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {

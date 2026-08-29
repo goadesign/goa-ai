@@ -22,6 +22,7 @@ type Endpoints struct {
 	Pong                   goa.Endpoint
 	ListToolsets           goa.Endpoint
 	GetToolset             goa.Endpoint
+	CheckAdmission         goa.Endpoint
 	Search                 goa.Endpoint
 	CallTool               goa.Endpoint
 	RetryTool              goa.Endpoint
@@ -41,6 +42,7 @@ func NewEndpoints(s Service) *Endpoints {
 		Pong:                   NewPongEndpoint(s),
 		ListToolsets:           NewListToolsetsEndpoint(s),
 		GetToolset:             NewGetToolsetEndpoint(s),
+		CheckAdmission:         NewCheckAdmissionEndpoint(s),
 		Search:                 NewSearchEndpoint(s),
 		CallTool:               NewCallToolEndpoint(s),
 		RetryTool:              NewRetryToolEndpoint(s),
@@ -60,6 +62,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.Pong = m(e.Pong)
 	e.ListToolsets = m(e.ListToolsets)
 	e.GetToolset = m(e.GetToolset)
+	e.CheckAdmission = m(e.CheckAdmission)
 	e.Search = m(e.Search)
 	e.CallTool = m(e.CallTool)
 	e.RetryTool = m(e.RetryTool)
@@ -132,6 +135,15 @@ func NewGetToolsetEndpoint(s Service) goa.Endpoint {
 	}
 }
 
+// NewCheckAdmissionEndpoint returns an endpoint function that calls the method
+// "CheckAdmission" of service "registry".
+func NewCheckAdmissionEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*CheckAdmissionPayload)
+		return s.CheckAdmission(ctx, p)
+	}
+}
+
 // NewSearchEndpoint returns an endpoint function that calls the method
 // "Search" of service "registry".
 func NewSearchEndpoint(s Service) goa.Endpoint {
@@ -190,7 +202,7 @@ func NewReportToolCallOverloadEndpoint(s Service) goa.Endpoint {
 // "ClaimToolCall" of service "registry".
 func NewClaimToolCallEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*ProviderToolCallClaimPayload)
+		p := req.(*ClaimToolCallPayload)
 		return s.ClaimToolCall(ctx, p)
 	}
 }

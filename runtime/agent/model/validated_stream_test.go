@@ -74,6 +74,14 @@ type failingReceiveObserver struct {
 	err error
 }
 
+type unsupportedStreamChunk struct{}
+
+func (unsupportedStreamChunk) Kind() string {
+	return "unsupported"
+}
+
+func (unsupportedStreamChunk) isChunk() {}
+
 func (*typedNilStreamFixture) Recv() (Chunk, error) {
 	panic("typed-nil stream Recv called")
 }
@@ -92,6 +100,109 @@ func (o *failingReceiveObserver) ObserveStreamRecv(StreamObservation) error {
 
 func (*failingReceiveObserver) ObserveStreamClose(error) error {
 	return nil
+}
+
+func TestValidatedStreamDistinguishesResponseShapeFromOutputBounds(t *testing.T) {
+	tests := []struct {
+		name  string
+		chunk Chunk
+		kind  OutputValidationKind
+	}{
+		{
+			name:  "unsupported chunk",
+			chunk: unsupportedStreamChunk{},
+			kind:  OutputValidationResponseShape,
+		},
+		{
+			name: "invalid UTF-8",
+			chunk: TextChunk{Message: Message{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{TextPart{
+					Text: string([]byte{0xff}),
+				}},
+			}},
+			kind: OutputValidationResponseShape,
+		},
+		{
+			name: "byte limit",
+			chunk: TextChunk{Message: Message{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{TextPart{
+					Text: strings.Repeat("x", maxDynamicValueBytes+1),
+				}},
+			}},
+			kind: OutputValidationOutputBounds,
+		},
+	}
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			stream, err := contract.ValidateStream(&validatedStreamFixture{
+				chunks: []Chunk{test.chunk},
+			})
+			require.NoError(t, err)
+
+			_, err = stream.Recv()
+
+			requireOutputValidationKind(t, err, test.kind)
+		})
+	}
+}
+
+func TestValidatedStreamPreservesTerminalPreflightCategory(t *testing.T) {
+	tests := []struct {
+		name     string
+		response *Response
+		kind     OutputValidationKind
+	}{
+		{
+			name: "unsupported assistant part",
+			response: &Response{Content: []Message{{
+				Role:  ConversationRoleAssistant,
+				Parts: []Part{ImagePart{}},
+			}}},
+			kind: OutputValidationResponseShape,
+		},
+		{
+			name: "invalid UTF-8",
+			response: &Response{Content: []Message{{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{TextPart{
+					Text: string([]byte{0xff}),
+				}},
+			}}},
+			kind: OutputValidationResponseShape,
+		},
+		{
+			name: "byte limit",
+			response: &Response{Content: []Message{{
+				Role: ConversationRoleAssistant,
+				Parts: []Part{TextPart{
+					Text: strings.Repeat("x", maxDynamicValueBytes+1),
+				}},
+			}}},
+			kind: OutputValidationOutputBounds,
+		},
+	}
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.response.StopReason = "end_turn"
+			stream, err := contract.ValidateStream(&validatedStreamFixture{
+				chunks:   []Chunk{StopChunk{Reason: "end_turn"}},
+				response: test.response,
+			})
+			require.NoError(t, err)
+			_, err = stream.Recv()
+			require.NoError(t, err)
+
+			_, err = stream.Recv()
+
+			requireOutputValidationKind(t, err, test.kind)
+		})
+	}
 }
 
 func TestValidatedStreamObserversReceiveFrozenSourceInEveryOrder(t *testing.T) {
@@ -349,6 +460,7 @@ func TestValidatedStreamDiscardsCompletedToolCallAfterLaterProviderRejection(t *
 	contract, err := NewRequestContract(requestWithTool("search"))
 	require.NoError(t, err)
 	rejection := contract.RejectProviderOutput(
+		OutputValidationToolIdentity,
 		&TokenUsage{InputTokens: 4, OutputTokens: 3, TotalTokens: 7},
 		NewUnadvertisedToolNameError("near_search"),
 	)
@@ -401,6 +513,7 @@ func TestValidatedStreamSharesBudgetAcrossChunks(t *testing.T) {
 	require.NoError(t, err)
 	_, err = stream.Recv()
 
+	requireOutputValidationKind(t, err, OutputValidationOutputBounds)
 	require.ErrorContains(t, outputValidationCause(t, err), "exceeds maximum byte size")
 }
 
@@ -415,6 +528,7 @@ func TestValidatedStreamBoundsToolDeltaAccumulator(t *testing.T) {
 
 	_, err := stream.Recv()
 
+	requireOutputValidationKind(t, err, OutputValidationOutputBounds)
 	require.ErrorContains(t, outputValidationCause(t, err), "exceeds maximum byte size")
 	require.Equal(t, len(delta), inner.validator.toolDeltaPayloads["call-1"].Len())
 }
@@ -550,6 +664,7 @@ func TestValidatedStreamRejectsPrematureCompletionStop(t *testing.T) {
 
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, firstErr, &validationErr)
+	require.Equal(t, OutputValidationStructuredOutput, validationErr.Kind())
 	require.ErrorContains(t, errors.Unwrap(validationErr), "structured output stream stopped before a completion")
 	require.Same(t, firstErr, secondErr)
 	require.True(t, IsStreamValidationError(firstErr))
@@ -558,7 +673,11 @@ func TestValidatedStreamRejectsPrematureCompletionStop(t *testing.T) {
 func TestIsStreamValidationErrorReportsValidationInMixedTree(t *testing.T) {
 	contract, err := NewRequestContract(&Request{})
 	require.NoError(t, err)
-	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	validationErr := contract.RejectProviderOutput(
+		OutputValidationResponseShape,
+		nil,
+		errors.New("rejected output"),
+	)
 
 	require.True(t, IsStreamValidationError(errors.Join(
 		fmt.Errorf("wrapped validation: %w", validationErr),
@@ -654,6 +773,7 @@ func TestValidatedStreamObserveBoundsRejectedUsageEvidence(t *testing.T) {
 	chunk, err := observed.Recv()
 
 	require.Nil(t, chunk)
+	requireOutputValidationKind(t, err, OutputValidationUsage)
 	require.ErrorContains(t, outputValidationCause(t, err), "token usage model exceeds")
 	require.Len(t, observer.observations, 1)
 	require.Nil(t, observer.observations[0].Chunk)
@@ -670,7 +790,7 @@ func TestValidatedStreamObserveBoundsRejectedUsageEvidence(t *testing.T) {
 func TestValidatedStreamObservePreservesProviderRejectionEvidence(t *testing.T) {
 	contract, err := NewRequestContract(&Request{ModelClass: ModelClassDefault})
 	require.NoError(t, err)
-	rejection := contract.RejectProviderOutput(&TokenUsage{
+	rejection := contract.RejectProviderOutput(OutputValidationStreamProtocol, &TokenUsage{
 		Model:        "provider-model",
 		InputTokens:  7,
 		OutputTokens: 3,
@@ -716,7 +836,11 @@ func TestValidatedStreamFinalizeOperationResults(t *testing.T) {
 	unrelatedErr := errors.New("unrelated receive failure")
 	contract, err := NewRequestContract(&Request{})
 	require.NoError(t, err)
-	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	validationErr := contract.RejectProviderOutput(
+		OutputValidationResponseShape,
+		nil,
+		errors.New("rejected output"),
+	)
 	wrappedDuplicateValidation := fmt.Errorf(
 		"validation wrapper: %w",
 		errors.Join(validationErr, validationErr),
@@ -866,7 +990,11 @@ func TestValidatedStreamFinalizeAfterEOF(t *testing.T) {
 func TestValidatedStreamFinalizeCachesOnePrimary(t *testing.T) {
 	contract, err := NewRequestContract(&Request{})
 	require.NoError(t, err)
-	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	validationErr := contract.RejectProviderOutput(
+		OutputValidationResponseShape,
+		nil,
+		errors.New("rejected output"),
+	)
 	providerCloseErr := errors.New("provider close failed")
 	raw := &validatedStreamFixture{recvErr: validationErr, closeErr: providerCloseErr}
 	stream := mustValidateStream(t, raw, &Request{})
@@ -887,7 +1015,11 @@ func TestValidatedStreamFinalizeCachesOnePrimary(t *testing.T) {
 func TestValidatedStreamFinalizeUsesPriorCloseResult(t *testing.T) {
 	contract, err := NewRequestContract(&Request{})
 	require.NoError(t, err)
-	validationErr := contract.RejectProviderOutput(nil, errors.New("rejected output"))
+	validationErr := contract.RejectProviderOutput(
+		OutputValidationResponseShape,
+		nil,
+		errors.New("rejected output"),
+	)
 	providerCloseErr := errors.New("provider close failed")
 	raw := &validatedStreamFixture{recvErr: validationErr, closeErr: providerCloseErr}
 	stream := mustValidateStream(t, raw, &Request{})

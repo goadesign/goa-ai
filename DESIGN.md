@@ -509,21 +509,27 @@ sink only after admission. It renews with jitter while the last
 duration-derived monotonic deadline remains valid and closes consumption before
 expiration. The first renewal is derived from one third of the granted lease
 duration; bounded retries preserve cutoff slack. After every admitted exit,
-`Serve` stops renewal, atomically marks each exact token/incarnation lease
-draining, then closes the canonical shared sink before processing the remaining
-local queue. Draining leases are excluded from new publication but retain
-authority to claim and settle calls already delivered before intake closed. The
-drain transition carries the configured shutdown duration so Redis keeps that
-authority for the full settlement lifecycle. `Serve` waits workers and
-registry-owned terminal publication, drains every queued acknowledgement, and
-releases each exact lease. A sink-setup
+`Serve` stops renewal, atomically marks the original admitted
+token/incarnation lease draining, then closes the canonical shared sink and
+leaves unclaimed local work for redelivery. A changed token returned by renewal
+is drained concurrently under the same shutdown deadline. Draining leases are
+excluded from new publication and new claims, but retain authority to settle
+claims that committed before draining.
+An exact retry of one of those claim operations returns its original `execute`
+decision. The drain transition carries the configured shutdown duration so
+Redis keeps that authority for the full settlement lifecycle. `Serve` waits
+workers and registry-owned terminal publication, drains every queued
+acknowledgement, and releases each successfully settled exact lease. Failed
+settlement suppresses release and returns the cleanup error. A sink-setup
 failure has no consumption to settle and proceeds directly to bounded release.
 Close, worker, result, or acknowledgement failure is explicit and suppresses
 release; lease expiry is the durable fallback. Before a worker dispatches
 locally queued work, `ClaimToolCall` authenticates its exact lease and request
 event at the global call record. The atomic result is `execute`, `terminal`,
 `claimed`, or `expired`; only `execute` invokes the handler. Dispatch ownership
-never transfers, so acknowledgement redelivery cannot repeat side effects.
+never transfers. One claim-operation ID is reused by transport retries, while a
+later event redelivery creates a new ID and receives `claimed`, so redelivery
+cannot repeat side effects.
 Claims enter global and exact-lease settlement indexes. At the call's absolute
 execution deadline, or earlier if the lease is released, the registry
 atomically commits `internal` / `outcome_unknown`, states that the effect may
@@ -551,6 +557,21 @@ advances the epoch and resets pong freshness. Ping IDs carry token plus epoch;
 pongs authenticate that pair and the responding incarnation atomically.
 Aggregate health and new-call routing require one unexpired, non-draining lease
 plus a fresh current-epoch pong.
+
+`CheckAdmission` applies that same routing test to one deployment-supplied
+registration token. Generated toolset specs expose
+`RegistrationToken(admissionRevision)`, which combines their precomputed schema
+fingerprint with the runtime wire version and deployment revision through the
+same pure implementation the registry uses. Providers include that generated
+fingerprint in `Register`; the registry derives it again from the submitted
+toolset and rejects any mismatch before creating routing state. The check
+returns `ready=false`
+when the toolset is absent, a different token is active, no routable lease
+remains, or the current epoch lacks a fresh pong. Infrastructure failures remain
+errors, while caller cancellation remains cancellation. This read contract lets
+a deployment verify the exact routable tool contract after Kubernetes confirms
+that the intended workload rollout completed. Workload readiness remains
+independent of admission, so a changed-token rolling update cannot deadlock.
 
 Registry construction enumerates every authoritative catalog key and applies
 the same strict current-format parser used by registration and routing before
@@ -755,9 +776,16 @@ redeploys.
   concurrent calls reject output, the envelope uses the earliest-started
   rejected invocation's reason and complete-response evidence. The
   event fingerprints the private validation-cause text instead of retaining
-  that text. Model content remains observability data rather than workflow
+  that text. A mechanical rejection also carries the closed
+  `OutputValidationKind` from the first check that rejected the response. The
+  kind identifies only the failed contract area; it contains no response text,
+  provider text, tool identity, arguments, or schema path and cannot authorize
+  recovery. Model content remains observability data rather than workflow
   state, so diagnostic storage cannot retry inference and Temporal and hook
-  payloads remain bounded. A planner result rejected after model output was
+  payloads remain bounded. Planner-authored policy rejection is semantic: the
+  same response can be accepted by one planner and rejected by another. It
+  therefore carries no mechanical kind and keeps its exact planner correction
+  as the only recovery fact. A planner result rejected after model output was
   accepted emits `PlannerOutputRejected` instead, with only the bounded private
   cause identity.
 - **Generated tool validation**: A model definition created from a generated
@@ -1045,16 +1073,15 @@ This keeps consumers simple: render `error`, gate “Retry” on `retryable`, an
 
 Provider adapters (Bedrock, Anthropic) validate the streaming event protocol
 with a strict state machine: a message must start before content blocks flow
-and must stop exactly once before metadata. Violations never produce a
-fabricated response; they fail the stream with a precise error. Two terminal
-shapes are classified instead of surfaced as opaque protocol errors:
+and must stop exactly once before metadata. A provider terminal event that
+violates this order is rejected as `OutputValidationStreamProtocol`. Transport
+failures and caller cancellation remain outside `OutputValidationError`.
+Two event-source termination shapes retain provider-failure classifications:
 
-- **Empty stream** — the stream terminates before any message starts (a
-  `messageStop` with no prior `messageStart`, or a stream that closes with no
-  events at all). Providers intermittently do this when a model emits an
-  empty completion. Adapters build the error with `model.NewEmptyStreamError`,
-  which carries the `model.ErrEmptyStream` sentinel plus a retryable
-  `unavailable` ProviderError (code `empty_stream`). Callers detect it with
+- **Empty event source** — the event source closes before any message starts.
+  Adapters build the error with `model.NewEmptyStreamError`, which carries the
+  `model.ErrEmptyStream` sentinel plus a retryable `unavailable` ProviderError
+  (code `empty_stream`). Callers detect it with
   `errors.Is(err, model.ErrEmptyStream)` and may retry the request a bounded
   number of times before surfacing the failure.
 - **Truncated stream** — the stream closes cleanly after a message started but

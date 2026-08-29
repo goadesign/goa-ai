@@ -15,6 +15,7 @@ import (
 
 	"google.golang.org/genai"
 
+	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
@@ -96,7 +97,11 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 		if resp != nil {
 			usage = translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
 		}
-		return nil, contract.RejectProviderOutput(&usage, err)
+		return nil, contract.RejectProviderOutput(
+			outputvalidation.RequiredKind(err),
+			&usage,
+			err,
+		)
 	}
 	return response, nil
 }

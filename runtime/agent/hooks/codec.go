@@ -383,6 +383,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			input.SessionID,
 			p.ReasonSHA256,
 			p.ReasonSize,
+			p.OutputValidationKind,
 			p.ModelResponsePresent,
 			p.ModelResponseFingerprintVersion,
 			p.ModelResponseSHA256,

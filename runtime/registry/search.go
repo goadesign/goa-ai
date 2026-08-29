@@ -308,6 +308,9 @@ func ParseSearchResults(results []*SearchResult) []*SearchResult {
 			SchemaRef:      r.SchemaRef,
 			RelevanceScore: r.RelevanceScore,
 			Tags:           r.Tags,
+			Version:        r.Version,
+			ToolCount:      r.ToolCount,
+			RegisteredAt:   r.RegisteredAt,
 			Origin:         r.Origin,
 		}
 

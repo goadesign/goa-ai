@@ -61,6 +61,7 @@ type (
 		providerImportPaths    []string
 		transformImportPaths   []string
 		serviceImportPath      string
+		registrationRoutes     []string
 		render                 *ToolsetData
 		registry               bool
 	}
@@ -277,7 +278,16 @@ func planToolSpecs(
 		if len(tools) == 0 {
 			continue
 		}
-		if err := planned.addToolPackage(generation, toolset, toolset.Name, toolset.Name, toolset.SpecsImportPath, toolset.SpecsDir, tools); err != nil {
+		if err := planned.addToolPackage(
+			generation,
+			toolset,
+			toolset.Name,
+			toolset.Name,
+			toolset.SpecsImportPath,
+			toolset.SpecsDir,
+			toolsetRegistrationRoutes(design, toolset),
+			tools,
+		); err != nil {
 			return nil, err
 		}
 	}
@@ -345,6 +355,37 @@ func planToolSpecs(
 	return planned, nil
 }
 
+// toolsetRegistrationRoutes returns every generated name that may register one
+// toolset definition. Several services can share the same generated schemas
+// while registering them under different names.
+func toolsetRegistrationRoutes(design *ir.Design, definition *ir.Toolset) []string {
+	seen := make(map[string]struct{})
+	add := func(reference *ir.ToolsetRef) {
+		if reference == nil || reference.Definition != definition {
+			return
+		}
+		seen[reference.QualifiedName] = struct{}{}
+	}
+	add(definition.Owner.Ref)
+	for _, reference := range design.ServiceExports {
+		add(reference)
+	}
+	for _, agent := range design.Agents {
+		for _, reference := range agent.UsedToolsets {
+			add(reference)
+		}
+		for _, reference := range agent.ExportedToolsets {
+			add(reference)
+		}
+	}
+	routes := make([]string, 0, len(seen))
+	for route := range seen {
+		routes = append(routes, route)
+	}
+	slices.Sort(routes)
+	return routes
+}
+
 // addRegistryPackage records the fixed declarations written for a registry
 // toolset whose tools are discovered after the program starts.
 func (p *toolSpecsPlan) addRegistryPackage(generation *goacodegen.Generation, definition *ir.Toolset) error {
@@ -390,6 +431,7 @@ func (p *toolSpecsPlan) addToolPackage(
 	generation *goacodegen.Generation,
 	definition *ir.Toolset,
 	label, qualified, importPath, outputDir string,
+	registrationRoutes []string,
 	tools []*agent.ToolExpr,
 ) error {
 	public, err := generation.ClaimPackage(importPath)
@@ -402,6 +444,7 @@ func (p *toolSpecsPlan) addToolPackage(
 	}
 	packagePlan := newToolSpecsPackagePlan(generation, p.genpkg, public, transport)
 	packagePlan.definition = definition
+	packagePlan.registrationRoutes = registrationRoutes
 	for _, tool := range tools {
 		if err := packagePlan.declareToolTypeImports(qualified, tool); err != nil {
 			return fmt.Errorf("plan toolset %q tool %q imports: %w", label, tool.Name, err)
@@ -562,8 +605,10 @@ func (p *toolSpecsPackagePlan) planToolFileImports(tools []*agent.ToolExpr) erro
 		}
 	}
 	specs := []*goacodegen.ImportSpec{
+		goacodegen.SimpleImport("fmt"),
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/policy"),
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
+		goacodegen.SimpleImport("goa.design/goa-ai/runtime/toolregistry"),
 	}
 	if hasServerData {
 		specs = append(
@@ -745,7 +790,7 @@ func (p *toolSpecsPackagePlan) declareToolPackageNames() error {
 			"Specs", "Names", "Spec", "PayloadSchema", "ResultSchema", "Metadata", "MetadataByName",
 			"RequiredLabels", "PayloadCodec", "ResultCodec", "cloneStringMap", "newValidationError",
 			"generatedJSONChildPath", "dottedJSONPathPointer", "escapeJSONPointerToken", "decodedJSONType",
-			"generatedUnmarshalJSONType",
+			"generatedUnmarshalJSONType", "SchemaFingerprint", "RegistrationToken",
 			"invalidGeneratedFieldTypeError", "unknownJSONFieldError",
 		},
 	})

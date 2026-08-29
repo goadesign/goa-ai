@@ -33,6 +33,7 @@ const (
 	Registry_Pong_FullMethodName                   = "/goa_ai_registry.Registry/Pong"
 	Registry_ListToolsets_FullMethodName           = "/goa_ai_registry.Registry/ListToolsets"
 	Registry_GetToolset_FullMethodName             = "/goa_ai_registry.Registry/GetToolset"
+	Registry_CheckAdmission_FullMethodName         = "/goa_ai_registry.Registry/CheckAdmission"
 	Registry_Search_FullMethodName                 = "/goa_ai_registry.Registry/Search"
 	Registry_CallTool_FullMethodName               = "/goa_ai_registry.Registry/CallTool"
 	Registry_RetryTool_FullMethodName              = "/goa_ai_registry.Registry/RetryTool"
@@ -87,6 +88,14 @@ type RegistryClient interface {
 	ListToolsets(ctx context.Context, in *ListToolsetsRequest, opts ...grpc.CallOption) (*ListToolsetsResponse, error)
 	// Get a specific toolset by name including all tool schemas
 	GetToolset(ctx context.Context, in *GetToolsetRequest, opts ...grpc.CallOption) (*GetToolsetResponse, error)
+	// Report whether the exact registration token derived from a deployed
+	// provider's generated tool schemas is active and currently has an unexpired,
+	// non-draining provider lease plus a fresh authenticated pong. Release
+	// verification calls this after workload rollout because Kubernetes proves the
+	// intended pods are running while the registry proves their exact tool
+	// contract is routable. A missing or different active admission returns
+	// ready=false rather than an error.
+	CheckAdmission(ctx context.Context, in *CheckAdmissionRequest, opts ...grpc.CallOption) (*CheckAdmissionResponse, error)
 	// Search toolsets by keyword matching name, description, or tags
 	Search(ctx context.Context, in *SearchRequest, opts ...grpc.CallOption) (*SearchResponse, error)
 	// Reject consumers whose required runtime-owned wire protocol version differs
@@ -129,14 +138,17 @@ type RegistryClient interface {
 	// then atomically appends retry control only while the authoritative call
 	// record remains nonterminal.
 	ReportToolCallOverload(ctx context.Context, in *ReportToolCallOverloadRequest, opts ...grpc.CallOption) (*ReportToolCallOverloadResponse, error)
-	// Atomically settle one queued request before handler dispatch. The registry
-	// authenticates the exact provider lease and request event; only an active
-	// non-draining lease may gain immutable execution ownership. Existing owners,
+	// Atomically decide whether one queued request may enter handler execution. An
+	// active provider gains immutable ownership, and an exact replay of the same
+	// claim operation returns the same execute decision so an uncertain transport
+	// result can be retried safely. A Pulse redelivery starts a different claim
+	// operation and therefore cannot repeat handler execution. A different owner,
 	// retained terminal history, and Redis-owned expiration settle without
-	// execution, while stale, draining, or retired unclaimed work receives the
-	// canonical stale-generation terminal. Only the exact granted provider
-	// incarnation and request event may publish deltas or complete the call;
-	// ownership never transfers after a crash.
+	// execution. A draining, expired, or retired lease is rejected without
+	// changing unclaimed work, while a request authored under a stale registration
+	// receives the canonical stale-generation terminal. Only the exact granted
+	// provider incarnation and request event may publish deltas or complete the
+	// call; ownership never transfers after a crash.
 	ClaimToolCall(ctx context.Context, in *ClaimToolCallRequest, opts ...grpc.CallOption) (*ClaimToolCallResponse, error)
 }
 
@@ -212,6 +224,16 @@ func (c *registryClient) GetToolset(ctx context.Context, in *GetToolsetRequest, 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetToolsetResponse)
 	err := c.cc.Invoke(ctx, Registry_GetToolset_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *registryClient) CheckAdmission(ctx context.Context, in *CheckAdmissionRequest, opts ...grpc.CallOption) (*CheckAdmissionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CheckAdmissionResponse)
+	err := c.cc.Invoke(ctx, Registry_CheckAdmission_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -333,6 +355,14 @@ type RegistryServer interface {
 	ListToolsets(context.Context, *ListToolsetsRequest) (*ListToolsetsResponse, error)
 	// Get a specific toolset by name including all tool schemas
 	GetToolset(context.Context, *GetToolsetRequest) (*GetToolsetResponse, error)
+	// Report whether the exact registration token derived from a deployed
+	// provider's generated tool schemas is active and currently has an unexpired,
+	// non-draining provider lease plus a fresh authenticated pong. Release
+	// verification calls this after workload rollout because Kubernetes proves the
+	// intended pods are running while the registry proves their exact tool
+	// contract is routable. A missing or different active admission returns
+	// ready=false rather than an error.
+	CheckAdmission(context.Context, *CheckAdmissionRequest) (*CheckAdmissionResponse, error)
 	// Search toolsets by keyword matching name, description, or tags
 	Search(context.Context, *SearchRequest) (*SearchResponse, error)
 	// Reject consumers whose required runtime-owned wire protocol version differs
@@ -375,14 +405,17 @@ type RegistryServer interface {
 	// then atomically appends retry control only while the authoritative call
 	// record remains nonterminal.
 	ReportToolCallOverload(context.Context, *ReportToolCallOverloadRequest) (*ReportToolCallOverloadResponse, error)
-	// Atomically settle one queued request before handler dispatch. The registry
-	// authenticates the exact provider lease and request event; only an active
-	// non-draining lease may gain immutable execution ownership. Existing owners,
+	// Atomically decide whether one queued request may enter handler execution. An
+	// active provider gains immutable ownership, and an exact replay of the same
+	// claim operation returns the same execute decision so an uncertain transport
+	// result can be retried safely. A Pulse redelivery starts a different claim
+	// operation and therefore cannot repeat handler execution. A different owner,
 	// retained terminal history, and Redis-owned expiration settle without
-	// execution, while stale, draining, or retired unclaimed work receives the
-	// canonical stale-generation terminal. Only the exact granted provider
-	// incarnation and request event may publish deltas or complete the call;
-	// ownership never transfers after a crash.
+	// execution. A draining, expired, or retired lease is rejected without
+	// changing unclaimed work, while a request authored under a stale registration
+	// receives the canonical stale-generation terminal. Only the exact granted
+	// provider incarnation and request event may publish deltas or complete the
+	// call; ownership never transfers after a crash.
 	ClaimToolCall(context.Context, *ClaimToolCallRequest) (*ClaimToolCallResponse, error)
 	mustEmbedUnimplementedRegistryServer()
 }
@@ -414,6 +447,9 @@ func (UnimplementedRegistryServer) ListToolsets(context.Context, *ListToolsetsRe
 }
 func (UnimplementedRegistryServer) GetToolset(context.Context, *GetToolsetRequest) (*GetToolsetResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetToolset not implemented")
+}
+func (UnimplementedRegistryServer) CheckAdmission(context.Context, *CheckAdmissionRequest) (*CheckAdmissionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckAdmission not implemented")
 }
 func (UnimplementedRegistryServer) Search(context.Context, *SearchRequest) (*SearchResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Search not implemented")
@@ -583,6 +619,24 @@ func _Registry_GetToolset_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Registry_CheckAdmission_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CheckAdmissionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistryServer).CheckAdmission(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Registry_CheckAdmission_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistryServer).CheckAdmission(ctx, req.(*CheckAdmissionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Registry_Search_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SearchRequest)
 	if err := dec(in); err != nil {
@@ -743,6 +797,10 @@ var Registry_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetToolset",
 			Handler:    _Registry_GetToolset_Handler,
+		},
+		{
+			MethodName: "CheckAdmission",
+			Handler:    _Registry_CheckAdmission_Handler,
 		},
 		{
 			MethodName: "Search",

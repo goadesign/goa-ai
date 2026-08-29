@@ -203,6 +203,31 @@ func (c *Client) GetToolset() goa.Endpoint {
 	}
 }
 
+// CheckAdmission calls the "CheckAdmission" function in
+// registrypb.RegistryClient interface.
+func (c *Client) CheckAdmission() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildCheckAdmissionFunc(c.grpccli, c.opts...),
+			EncodeCheckAdmissionRequest,
+			DecodeCheckAdmissionResponse)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+					return nil, ctxErr
+				}
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
 // Search calls the "Search" function in registrypb.RegistryClient interface.
 func (c *Client) Search() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
@@ -354,7 +379,7 @@ func (c *Client) ReportToolCallOverload() goa.Endpoint {
 // ClaimToolCall calls the "ClaimToolCall" function in
 // registrypb.RegistryClient interface.
 func (c *Client) ClaimToolCall() goa.Endpoint {
-	return func(ctx context.Context, v any) (any, error) {
+	endpoint := func(ctx context.Context, v any) (any, error) {
 		inv := goagrpc.NewInvoker(
 			BuildClaimToolCallFunc(c.grpccli, c.opts...),
 			EncodeClaimToolCallRequest,
@@ -369,9 +394,10 @@ func (c *Client) ClaimToolCall() goa.Endpoint {
 				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
 					return nil, ctxErr
 				}
-				return nil, goa.Fault("%s", err.Error())
+				return nil, goagrpc.NewTransportError(err)
 			}
 		}
 		return res, nil
 	}
+	return goa.RetryEndpoint(endpoint)
 }

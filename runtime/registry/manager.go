@@ -47,8 +47,9 @@ type (
 		Exclude []string
 	}
 
-	// RegistryClient defines the interface for registry operations.
-	// Generated registry clients implement this interface.
+	// RegistryClient defines the catalog operations Manager needs from any
+	// registry source. NewClient exposes Goa's generated registry service
+	// client through this contract.
 	RegistryClient interface {
 		// ListToolsets returns all available toolsets from the registry.
 		ListToolsets(ctx context.Context) ([]*ToolsetInfo, error)
@@ -70,6 +71,10 @@ type (
 		Version string
 		// Tags are metadata tags for discovery.
 		Tags []string
+		// ToolCount is the number of tools in the toolset.
+		ToolCount int
+		// RegisteredAt is the registry timestamp for this toolset version.
+		RegisteredAt string
 		// Origin indicates the source registry for federated items.
 		Origin string
 	}
@@ -84,8 +89,12 @@ type (
 		Description string
 		// Version is the toolset version.
 		Version string
+		// Tags are metadata tags for discovery.
+		Tags []string
 		// Tools contains the tool definitions.
 		Tools []*ToolSchema
+		// RegisteredAt is the registry timestamp for this toolset version.
+		RegisteredAt string
 		// Origin indicates the source registry for federated items.
 		Origin string
 	}
@@ -122,6 +131,12 @@ type (
 		RelevanceScore float64
 		// Tags are metadata tags.
 		Tags []string
+		// Version is the toolset version when the result describes a toolset.
+		Version string
+		// ToolCount is the number of tools when the result describes a toolset.
+		ToolCount int
+		// RegisteredAt is the registry timestamp when the result describes a toolset.
+		RegisteredAt string
 		// Origin indicates the federation source if applicable.
 		Origin string
 	}

@@ -199,7 +199,7 @@ func genRegisterPayload(name string) gopter.Gen {
 			v := genregistry.SemVer(*raw)
 			version = &v
 		}
-		return &genregistry.RegisterPayload{
+		return registerPayloadWithSchemaFingerprint(&genregistry.RegisterPayload{
 			Name:                  name,
 			Description:           desc,
 			Version:               version,
@@ -209,7 +209,7 @@ func genRegisterPayload(name string) gopter.Gen {
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     testAdmissionRevisionA,
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
-		}
+		})
 	})
 }
 
@@ -237,10 +237,14 @@ func genTagsForService() gopter.Gen {
 	))
 }
 
-// genToolSchemaSlice generates a slice of ToolSchema for registration.
+// genToolSchemaSlice generates a valid registration schema with distinct tool
+// names while varying every other tool field independently.
 func genToolSchemaSlice() gopter.Gen {
-	return gen.SliceOfN(3, genToolSchema()).SuchThat(func(tools []*genregistry.ToolSchema) bool {
-		return len(tools) > 0 // Ensure at least one tool
+	return gen.SliceOfN(3, genToolSchema()).Map(func(tools []*genregistry.ToolSchema) []*genregistry.ToolSchema {
+		for index, tool := range tools {
+			tool.Name = fmt.Sprintf("%s-%d", tool.Name, index)
+		}
+		return tools
 	})
 }
 
@@ -1309,29 +1313,6 @@ type invalidSchemaTestCase struct {
 	payload *genregistry.RegisterPayload
 }
 
-func validRegisterPayloadForSchemaAdmission(name string) *genregistry.RegisterPayload {
-	description := "schema admission test toolset"
-	version := genregistry.SemVer("1.0.0")
-
-	return &genregistry.RegisterPayload{
-		Name:                  name,
-		Description:           &description,
-		Version:               &version,
-		Tags:                  []string{"schema"},
-		ProviderID:            name + "/provider-a",
-		ProviderIncarnationID: testIncarnationA,
-		AdmissionRevision:     testAdmissionRevisionA,
-		WireProtocolVersion:   toolregistry.WireProtocolVersion,
-		Tools: []*genregistry.ToolSchema{
-			{
-				Name:          "lookup",
-				PayloadSchema: []byte(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
-				ResultSchema:  []byte(`{"type":"object","properties":{"value":{"type":"string"}},"required":["value"]}`),
-			},
-		},
-	}
-}
-
 // genInvalidSchemaTestCase generates test cases with invalid tool schemas.
 func genInvalidSchemaTestCase() gopter.Gen {
 	return gopter.CombineGens(
@@ -1357,6 +1338,7 @@ func genInvalidSchemaTestCase() gopter.Gen {
 					ProviderIncarnationID: testIncarnationA,
 					AdmissionRevision:     testAdmissionRevisionA,
 					WireProtocolVersion:   toolregistry.WireProtocolVersion,
+					SchemaFingerprint:     testActiveRegistrationToken,
 				},
 			}
 		})

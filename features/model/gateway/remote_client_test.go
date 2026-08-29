@@ -182,7 +182,11 @@ func TestRemoteClientKeepsPreTransportRequestContract(t *testing.T) {
 func TestRemoteClientPreservesTypedTransportOutputFailure(t *testing.T) {
 	contract, err := model.NewRequestContract(&model.Request{})
 	require.NoError(t, err)
-	transportErr := contract.RejectResponse(nil, errors.New("remote adapter rejected output"))
+	transportErr := contract.RejectResponse(
+		model.OutputValidationResponseShape,
+		nil,
+		errors.New("remote adapter rejected output"),
+	)
 	client := requireRemoteClient(t,
 		func(context.Context, *model.Request) (*model.Response, error) {
 			return nil, transportErr

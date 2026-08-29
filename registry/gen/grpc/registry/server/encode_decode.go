@@ -228,6 +228,39 @@ func DecodeGetToolsetRequest(ctx context.Context, v any, md metadata.MD) (any, e
 	return payload, nil
 }
 
+// EncodeCheckAdmissionResponse encodes responses from the "registry" service
+// "CheckAdmission" endpoint.
+func EncodeCheckAdmissionResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.AdmissionStatus)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "CheckAdmission", "*registry.AdmissionStatus", v)
+	}
+	resp := NewProtoCheckAdmissionResponse(result)
+	return resp, nil
+}
+
+// DecodeCheckAdmissionRequest decodes requests sent to "registry" service
+// "CheckAdmission" endpoint.
+func DecodeCheckAdmissionRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.CheckAdmissionRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.CheckAdmissionRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "CheckAdmission", "*registrypb.CheckAdmissionRequest", v)
+		}
+		if err := ValidateCheckAdmissionRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.CheckAdmissionPayload
+	{
+		payload = NewCheckAdmissionPayload(message)
+	}
+	return payload, nil
+}
+
 // EncodeSearchResponse encodes responses from the "registry" service "Search"
 // endpoint.
 func EncodeSearchResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
@@ -440,7 +473,7 @@ func DecodeClaimToolCallRequest(ctx context.Context, v any, md metadata.MD) (any
 			return nil, err
 		}
 	}
-	var payload *registry.ProviderToolCallClaimPayload
+	var payload *registry.ClaimToolCallPayload
 	{
 		payload = NewClaimToolCallPayload(message)
 	}

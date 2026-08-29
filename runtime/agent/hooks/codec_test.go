@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -120,6 +121,7 @@ func TestModelOutputRejectedCodecPreservesBoundedResponseFingerprint(t *testing.
 		testSessionID,
 		reasonDigest,
 		47,
+		model.OutputValidationToolArguments,
 		true,
 		api.ModelResponseFingerprintVersionV1,
 		modelDigest,
@@ -139,6 +141,7 @@ func TestModelOutputRejectedCodecPreservesBoundedResponseFingerprint(t *testing.
 	require.True(t, ok)
 	assert.Equal(t, reasonDigest, rejected.ReasonSHA256)
 	assert.EqualValues(t, 47, rejected.ReasonSize)
+	assert.Equal(t, model.OutputValidationToolArguments, rejected.OutputValidationKind)
 	assert.True(t, rejected.ModelResponsePresent)
 	assert.Equal(t, api.ModelResponseFingerprintVersionV1, rejected.ModelResponseFingerprintVersion)
 	assert.Equal(t, modelDigest, rejected.ModelResponseSHA256)
@@ -154,6 +157,7 @@ func TestNewModelOutputRejectedEventRepresentsAbsentCompleteResponse(t *testing.
 		testSessionID,
 		reasonDigest,
 		47,
+		"",
 		false,
 		"",
 		"",
@@ -165,6 +169,33 @@ func TestNewModelOutputRejectedEventRepresentsAbsentCompleteResponse(t *testing.
 	assert.Empty(t, event.ModelResponseFingerprintVersion)
 	assert.Empty(t, event.ModelResponseSHA256)
 	assert.Zero(t, event.ModelResponseSize)
+
+	record, err := EncodeToRecordInput(event, EncodeOptions{EventKey: "event-legacy"})
+	require.NoError(t, err)
+	require.NotContains(t, string(record.Payload), "OutputValidationKind")
+	decoded, err := DecodeFromRecordInput(record)
+	require.NoError(t, err)
+	rejected, ok := decoded.(*ModelOutputRejectedEvent)
+	require.True(t, ok)
+	assert.Empty(t, rejected.OutputValidationKind)
+}
+
+func TestNewModelOutputRejectedEventRejectsInvalidValidationKind(t *testing.T) {
+	event, err := NewModelOutputRejectedEvent(
+		testRunID,
+		"agent-1",
+		testSessionID,
+		"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		47,
+		model.OutputValidationKind("other"),
+		false,
+		"",
+		"",
+		0,
+	)
+
+	require.Nil(t, event)
+	require.EqualError(t, err, `model output rejected event has invalid output validation kind "other"`)
 }
 
 func TestNewModelOutputRejectedEventRequiresVersionExactlyWithDigest(t *testing.T) {
@@ -201,6 +232,7 @@ func TestNewModelOutputRejectedEventRequiresVersionExactlyWithDigest(t *testing.
 				testSessionID,
 				reasonDigest,
 				47,
+				"",
 				true,
 				test.version,
 				test.digest,

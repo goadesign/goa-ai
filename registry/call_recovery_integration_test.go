@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,7 +71,7 @@ func TestLostDispatchLeaseCommitsAndRestoresOutcomeUnknown(t *testing.T) {
 	require.NoError(t, err)
 	store := svc.callAdmissions.(*callAdmissionStore)
 	requestEventID := retainedPublicationEventID(t, ctx, rdb, store, call.ToolUseID)
-	claim, err := svc.ClaimToolCall(ctx, &genregistry.ProviderToolCallClaimPayload{
+	claim, err := svc.ClaimToolCall(ctx, &genregistry.ClaimToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                provider.ProviderID,
 		ProviderIncarnationID:     provider.ProviderIncarnationID,
@@ -78,6 +79,7 @@ func TestLostDispatchLeaseCommitsAndRestoresOutcomeUnknown(t *testing.T) {
 		CallRegistrationToken:     admission.RegistrationToken,
 		ToolUseID:                 call.ToolUseID,
 		RequestEventID:            requestEventID,
+		ClaimOperationID:          uuid.NewString(),
 	})
 	require.NoError(t, err)
 	require.Equal(t, string(callClaimExecute), claim.Disposition)
@@ -212,7 +214,7 @@ func TestOutputDeltasAreCountBoundedAndPostTerminalSuppressed(t *testing.T) {
 	require.NoError(t, err)
 	store := svc.callAdmissions.(*callAdmissionStore)
 	requestEventID := retainedPublicationEventID(t, ctx, rdb, store, call.ToolUseID)
-	claimPayload := &genregistry.ProviderToolCallClaimPayload{
+	claimPayload := &genregistry.ClaimToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                provider.ProviderID,
 		ProviderIncarnationID:     provider.ProviderIncarnationID,
@@ -220,6 +222,7 @@ func TestOutputDeltasAreCountBoundedAndPostTerminalSuppressed(t *testing.T) {
 		CallRegistrationToken:     admission.RegistrationToken,
 		ToolUseID:                 call.ToolUseID,
 		RequestEventID:            requestEventID,
+		ClaimOperationID:          uuid.NewString(),
 	}
 	claim, err := svc.ClaimToolCall(ctx, claimPayload)
 	require.NoError(t, err)
@@ -295,7 +298,7 @@ func TestExecutionDeadlineSettlesClaimBeforeRetention(t *testing.T) {
 
 	store := svc.callAdmissions.(*callAdmissionStore)
 	requestEventID := retainedPublicationEventID(t, ctx, rdb, store, call.ToolUseID)
-	claim, err := svc.ClaimToolCall(ctx, &genregistry.ProviderToolCallClaimPayload{
+	claim, err := svc.ClaimToolCall(ctx, &genregistry.ClaimToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                provider.ProviderID,
 		ProviderIncarnationID:     provider.ProviderIncarnationID,
@@ -303,6 +306,7 @@ func TestExecutionDeadlineSettlesClaimBeforeRetention(t *testing.T) {
 		CallRegistrationToken:     registration.RegistrationToken,
 		ToolUseID:                 call.ToolUseID,
 		RequestEventID:            requestEventID,
+		ClaimOperationID:          uuid.NewString(),
 	})
 	require.NoError(t, err)
 	require.Equal(t, string(callClaimExecute), claim.Disposition)
@@ -329,7 +333,7 @@ func TestExecutionDeadlineSettlesClaimBeforeRetention(t *testing.T) {
 	assert.False(t, rdb.HExists(ctx, store.membershipKey, callKey).Val())
 }
 
-func TestDrainingLeaseClaimsAlreadyPublishedCall(t *testing.T) {
+func TestDrainingLeaseRejectsUnclaimedPublishedCall(t *testing.T) {
 	rdb := getRedis(t)
 	ctx := context.Background()
 	name := fmt.Sprintf("draining-claim-%d", time.Now().UnixNano())
@@ -355,7 +359,7 @@ func TestDrainingLeaseClaimsAlreadyPublishedCall(t *testing.T) {
 		SettlementDurationMs:      toolregistry.MinProviderLeaseDuration.Milliseconds(),
 	}))
 
-	claim, err := svc.ClaimToolCall(ctx, &genregistry.ProviderToolCallClaimPayload{
+	_, err = svc.ClaimToolCall(ctx, &genregistry.ClaimToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                provider.ProviderID,
 		ProviderIncarnationID:     provider.ProviderIncarnationID,
@@ -363,9 +367,71 @@ func TestDrainingLeaseClaimsAlreadyPublishedCall(t *testing.T) {
 		CallRegistrationToken:     registration.RegistrationToken,
 		ToolUseID:                 call.ToolUseID,
 		RequestEventID:            requestEventID,
+		ClaimOperationID:          uuid.NewString(),
 	})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "claim tool call")
+}
+
+func TestDrainingLeaseCompletesCallClaimedBeforeDrain(t *testing.T) {
+	rdb := getRedis(t)
+	ctx := context.Background()
+	name := fmt.Sprintf("draining-completion-%d", time.Now().UnixNano())
+	reg, err := New(ctx, Config{Redis: rdb, Name: name})
 	require.NoError(t, err)
-	assert.Equal(t, string(callClaimExecute), claim.Disposition)
+	t.Cleanup(func() { require.NoError(t, reg.Close(context.Background())) })
+	svc := reg.Service()
+	svc.healthTracker = newMockHealthTracker()
+
+	const toolset = "draining-completion-toolset"
+	provider := validRegisterPayloadForSchemaAdmission(toolset)
+	registration, err := svc.Register(ctx, provider)
+	require.NoError(t, err)
+	call, err := svc.CallTool(ctx, transitionCallPayload(toolset, "draining-completion"))
+	require.NoError(t, err)
+	store := svc.callAdmissions.(*callAdmissionStore)
+	requestEventID := retainedPublicationEventID(t, ctx, rdb, store, call.ToolUseID)
+	claimPayload := &genregistry.ClaimToolCallPayload{
+		Toolset:                   toolset,
+		ProviderID:                provider.ProviderID,
+		ProviderIncarnationID:     provider.ProviderIncarnationID,
+		ProviderRegistrationToken: registration.RegistrationToken,
+		CallRegistrationToken:     registration.RegistrationToken,
+		ToolUseID:                 call.ToolUseID,
+		RequestEventID:            requestEventID,
+		ClaimOperationID:          uuid.NewString(),
+	}
+	claim, err := svc.ClaimToolCall(ctx, claimPayload)
+	require.NoError(t, err)
+	require.Equal(t, string(callClaimExecute), claim.Disposition)
+	require.NoError(t, svc.DrainProvider(ctx, &genregistry.DrainProviderPayload{
+		Name:                      toolset,
+		ProviderID:                provider.ProviderID,
+		ProviderIncarnationID:     provider.ProviderIncarnationID,
+		ExpectedRegistrationToken: registration.RegistrationToken,
+		SettlementDurationMs:      toolregistry.MinProviderLeaseDuration.Milliseconds(),
+	}))
+	replayedClaim, err := svc.ClaimToolCall(ctx, claimPayload)
+	require.NoError(t, err)
+	require.Equal(t, string(callClaimExecute), replayedClaim.Disposition)
+
+	result := toolregistry.NewToolResultMessage(
+		registration.RegistrationToken,
+		call.ToolUseID,
+		json.RawMessage(`{"ok":true}`),
+	)
+	resultJSON, err := json.Marshal(result)
+	require.NoError(t, err)
+	require.NoError(t, svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
+		Toolset:                   toolset,
+		ProviderID:                provider.ProviderID,
+		ProviderIncarnationID:     provider.ProviderIncarnationID,
+		RegistrationToken:         registration.RegistrationToken,
+		ToolUseID:                 call.ToolUseID,
+		ResultJSON:                resultJSON,
+		RequestEventID:            requestEventID,
+		ProviderRegistrationToken: registration.RegistrationToken,
+	}))
 }
 
 func TestMissingCallHashCleansGlobalAndLeaseSettlementIndexes(t *testing.T) {

@@ -202,6 +202,7 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 					model.UsageChunk{Usage: usage},
 				},
 				terminalErr: contract.RejectProviderOutput(
+					model.OutputValidationToolIdentity,
 					&usage,
 					model.NewUnadvertisedToolNameError("catalog_list_nearby"),
 				),

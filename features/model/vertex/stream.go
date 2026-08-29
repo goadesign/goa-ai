@@ -16,6 +16,7 @@ import (
 
 	"google.golang.org/genai"
 
+	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -176,7 +177,10 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 			continue
 		}
 		if len(resp.Candidates) != 1 {
-			s.setErr(fmt.Errorf("vertex: stream response has %d candidates, want exactly one", len(resp.Candidates)))
+			s.setErr(outputvalidation.New(
+				model.OutputValidationResponseShape,
+				fmt.Errorf("vertex: stream response has %d candidates, want exactly one", len(resp.Candidates)),
+			))
 			return
 		}
 		sawCandidate = true
@@ -191,7 +195,10 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 		contentParts:
 			for _, part := range cand.Content.Parts {
 				if part == nil {
-					s.setErr(errors.New("vertex: stream contains a nil part"))
+					s.setErr(outputvalidation.New(
+						model.OutputValidationResponseShape,
+						errors.New("vertex: stream contains a nil part"),
+					))
 					return
 				}
 				switch {
@@ -216,18 +223,27 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 						return
 					}
 				default:
-					s.setErr(errors.New("vertex: stream contains an unsupported response part"))
+					s.setErr(outputvalidation.New(
+						model.OutputValidationResponseShape,
+						errors.New("vertex: stream contains an unsupported response part"),
+					))
 					return
 				}
 			}
 		}
 	}
 	if !sawCandidate {
-		s.setErr(errors.New("vertex: stream returned no candidates"))
+		s.setErr(outputvalidation.New(
+			model.OutputValidationStreamProtocol,
+			errors.New("vertex: stream returned no candidates"),
+		))
 		return
 	}
 	if stopReason == "" {
-		s.setErr(errors.New("vertex: stream ended before candidate finish reason"))
+		s.setErr(outputvalidation.New(
+			model.OutputValidationStreamProtocol,
+			errors.New("vertex: stream ended before candidate finish reason"),
+		))
 		return
 	}
 	if rejected != nil {
@@ -235,7 +251,10 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 		return
 	}
 	if s.thoughtText.Len() > 0 {
-		s.setErr(errors.New("vertex: stream ended with unsigned thinking"))
+		s.setErr(outputvalidation.New(
+			model.OutputValidationResponseShape,
+			errors.New("vertex: stream ended with unsigned thinking"),
+		))
 		return
 	}
 	if err := s.flushFunctionCalls(); err != nil {
@@ -250,7 +269,10 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 		}
 		payload, perr := finalStructuredCompletionPayload(accumulated)
 		if perr != nil {
-			s.setErr(fmt.Errorf("vertex: structured output %q: %w", prep.structuredOutput.Name, perr))
+			s.setErr(outputvalidation.New(
+				model.OutputValidationStructuredOutput,
+				fmt.Errorf("vertex: structured output %q: %w", prep.structuredOutput.Name, perr),
+			))
 			return
 		}
 		s.emit(model.CompletionChunk{Completion: model.Completion{
@@ -277,7 +299,7 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 	s.response.Usage = latestUsage
 	grounded, err := applyGroundingMetadata(s.assistant.Parts, grounding)
 	if err != nil {
-		s.setErr(err)
+		s.setErr(outputvalidation.New(model.OutputValidationResponseShape, err))
 		return
 	}
 	s.assistant.Parts = grounded
@@ -304,13 +326,19 @@ func (s *geminiStreamer) discardSemanticOutput() {
 // ID receives a deterministic local value.
 func (s *geminiStreamer) handleFunctionCallPart(part *genai.Part, prep *preparedRequest) error {
 	if part.FunctionCall.Name == "" {
-		return errors.New("vertex: streamed function call is missing its name")
+		return outputvalidation.New(
+			model.OutputValidationToolIdentity,
+			errors.New("vertex: streamed function call is missing its name"),
+		)
 	}
 	name, ok := toolIdent(part.FunctionCall.Name, prep.provToCanon)
 	if !ok {
-		return fmt.Errorf(
-			"vertex: translate streamed function call: %w",
-			model.NewUnadvertisedToolNameError(part.FunctionCall.Name),
+		return outputvalidation.New(
+			model.OutputValidationToolIdentity,
+			fmt.Errorf(
+				"vertex: translate streamed function call: %w",
+				model.NewUnadvertisedToolNameError(part.FunctionCall.Name),
+			),
 		)
 	}
 	callID := part.FunctionCall.ID
@@ -319,12 +347,12 @@ func (s *geminiStreamer) handleFunctionCallPart(part *genai.Part, prep *prepared
 	}
 	if callID != "" {
 		if err := s.callIDs.reserve(callID); err != nil {
-			return err
+			return outputvalidation.New(model.OutputValidationToolIdentity, err)
 		}
 	}
 	payload, err := marshalArgs(part.FunctionCall.Args)
 	if err != nil {
-		return err
+		return outputvalidation.New(model.OutputValidationToolArguments, err)
 	}
 	if err := s.retainBytes(len(payload)); err != nil {
 		return err
@@ -392,7 +420,10 @@ func (s *geminiStreamer) handleThoughtPart(part *genai.Part) error {
 	}
 	if len(part.ThoughtSignature) > 0 {
 		if s.thoughtText.Len() == 0 {
-			return errors.New("vertex: thinking signature is missing plaintext content")
+			return outputvalidation.New(
+				model.OutputValidationResponseShape,
+				errors.New("vertex: thinking signature is missing plaintext content"),
+			)
 		}
 		signature, err := s.retainThoughtSignature(part.ThoughtSignature)
 		if err != nil {
@@ -464,7 +495,11 @@ func (s *geminiStreamer) setErr(err error) {
 			var validationErr *model.OutputValidationError
 			if !errors.As(err, &validationErr) {
 				usage := s.rejectedUsage
-				err = s.contract.RejectProviderOutput(&usage, err)
+				err = s.contract.RejectProviderOutput(
+					outputvalidation.RequiredKind(err),
+					&usage,
+					err,
+				)
 			}
 		}
 	}
@@ -495,10 +530,16 @@ func (s *geminiStreamer) retain(value string) error {
 // length before private stream state grows.
 func (s *geminiStreamer) retainBytes(size int) error {
 	if s.retainedValues >= 100_000 {
-		return errors.New("vertex: retained stream output exceeds 100000 values")
+		return outputvalidation.New(
+			model.OutputValidationOutputBounds,
+			errors.New("vertex: retained stream output exceeds 100000 values"),
+		)
 	}
 	if size > 16<<20-s.retainedBytes {
-		return errors.New("vertex: retained stream output exceeds 16777216 bytes")
+		return outputvalidation.New(
+			model.OutputValidationOutputBounds,
+			errors.New("vertex: retained stream output exceeds 16777216 bytes"),
+		)
 	}
 	s.retainedValues++
 	s.retainedBytes += size

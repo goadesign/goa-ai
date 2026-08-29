@@ -716,8 +716,13 @@ func (a *plannerActivityInvocation) outputContractFailureMetadata(
 	if origin == "" {
 		origin = planner.OutputContractOriginPlanner
 	}
+	var validationKind model.OutputValidationKind
+	if validationErr, ok := exactModelOutputValidation(outputErr.Unwrap()); ok {
+		validationKind = validationErr.Kind()
+	}
 	return &OutputContractFailure{
 		Origin:                          origin,
+		ModelOutputValidationKind:       validationKind,
 		ReasonSHA256:                    reasonSHA256,
 		ReasonSize:                      int64(reasonSize),
 		ModelResponsePresent:            responseEvidence.Present,

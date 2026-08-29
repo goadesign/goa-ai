@@ -12,6 +12,7 @@ import (
 
 	"google.golang.org/genai"
 
+	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -81,10 +82,16 @@ func (a *vertexToolCallIDAllocator) next() string {
 // set above 1 by this adapter).
 func translateResponse(resp *genai.GenerateContentResponse, modelID string, class model.ModelClass, provToCanon map[string]string, callIDs *vertexToolCallIDAllocator) (*model.Response, error) {
 	if resp == nil || len(resp.Candidates) == 0 {
-		return nil, errors.New("vertex: response has no candidates")
+		return nil, outputvalidation.New(
+			model.OutputValidationResponseShape,
+			errors.New("vertex: response has no candidates"),
+		)
 	}
 	if len(resp.Candidates) != 1 {
-		return nil, fmt.Errorf("vertex: response has %d candidates, want exactly one", len(resp.Candidates))
+		return nil, outputvalidation.New(
+			model.OutputValidationResponseShape,
+			fmt.Errorf("vertex: response has %d candidates, want exactly one", len(resp.Candidates)),
+		)
 	}
 	cand := resp.Candidates[0]
 	out := &model.Response{
@@ -92,7 +99,10 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 		OutputLimited: vertexOutputLimited(string(cand.FinishReason)),
 	}
 	if out.StopReason == "" {
-		return nil, errors.New("vertex: response candidate is missing its finish reason")
+		return nil, outputvalidation.New(
+			model.OutputValidationResponseShape,
+			errors.New("vertex: response candidate is missing its finish reason"),
+		)
 	}
 	if cand.Content != nil {
 		msg := model.Message{Role: model.ConversationRoleAssistant}
@@ -105,28 +115,37 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 				continue
 			}
 			if err := callIDs.reserve(part.FunctionCall.ID); err != nil {
-				return nil, err
+				return nil, outputvalidation.New(model.OutputValidationToolIdentity, err)
 			}
 		}
 		for _, part := range cand.Content.Parts {
 			if part == nil {
-				return nil, errors.New("vertex: response contains a nil part")
+				return nil, outputvalidation.New(
+					model.OutputValidationResponseShape,
+					errors.New("vertex: response contains a nil part"),
+				)
 			}
 			switch {
 			case part.FunctionCall != nil:
 				if part.FunctionCall.Name == "" {
-					return nil, errors.New("vertex: response function call is missing its name")
+					return nil, outputvalidation.New(
+						model.OutputValidationToolIdentity,
+						errors.New("vertex: response function call is missing its name"),
+					)
 				}
 				name, ok := toolIdent(part.FunctionCall.Name, provToCanon)
 				if !ok {
-					return nil, fmt.Errorf(
-						"vertex: translate response function call: %w",
-						model.NewUnadvertisedToolNameError(part.FunctionCall.Name),
+					return nil, outputvalidation.New(
+						model.OutputValidationToolIdentity,
+						fmt.Errorf(
+							"vertex: translate response function call: %w",
+							model.NewUnadvertisedToolNameError(part.FunctionCall.Name),
+						),
 					)
 				}
 				payload, err := marshalArgs(part.FunctionCall.Args)
 				if err != nil {
-					return nil, err
+					return nil, outputvalidation.New(model.OutputValidationToolArguments, err)
 				}
 				callID := part.FunctionCall.ID
 				if callID == "" {
@@ -140,7 +159,10 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 				})
 			case part.Thought:
 				if part.Text == "" || len(part.ThoughtSignature) == 0 {
-					return nil, errors.New("vertex: response thinking requires plaintext and signature")
+					return nil, outputvalidation.New(
+						model.OutputValidationResponseShape,
+						errors.New("vertex: response thinking requires plaintext and signature"),
+					)
 				}
 				msg.Parts = append(msg.Parts, model.ThinkingPart{
 					Text:      part.Text,
@@ -152,12 +174,15 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 			case part.Text != "":
 				msg.Parts = append(msg.Parts, model.TextPart{Text: part.Text})
 			default:
-				return nil, errors.New("vertex: unsupported response part")
+				return nil, outputvalidation.New(
+					model.OutputValidationResponseShape,
+					errors.New("vertex: unsupported response part"),
+				)
 			}
 		}
 		grounded, err := applyGroundingMetadata(msg.Parts, cand.GroundingMetadata)
 		if err != nil {
-			return nil, err
+			return nil, outputvalidation.New(model.OutputValidationResponseShape, err)
 		}
 		msg.Parts = grounded
 		if len(msg.Parts) > 0 {

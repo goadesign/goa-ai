@@ -146,7 +146,7 @@ func newHealthTracker(
 	rdb *redis.Client,
 	registryMapName string,
 	opts ...HealthTrackerOption,
-) (HealthTracker, error) {
+) (*healthTracker, error) {
 	if streamManager == nil {
 		return nil, fmt.Errorf("stream manager is required")
 	}
@@ -223,18 +223,7 @@ func (h *healthTracker) Health(
 	if entry.RegistrationToken != registrationToken {
 		return ToolsetHealth{}, errToolsetNotFound
 	}
-	health := ToolsetHealth{
-		ProviderCount:      routableProviderCount(entry, now),
-		StalenessThreshold: h.stalenessThreshold,
-	}
-	if entry.LastPongUnixNano != 0 {
-		health.LastPong = time.Unix(0, entry.LastPongUnixNano)
-		health.Age = now.Sub(health.LastPong)
-	}
-	health.Healthy = health.ProviderCount > 0 &&
-		!health.LastPong.IsZero() &&
-		health.Age <= health.StalenessThreshold
-	return health, nil
+	return h.healthFromEntry(entry, now), nil
 }
 
 // EnsurePingLoop implements HealthTracker.
@@ -259,6 +248,23 @@ func (h *healthTracker) Close() error {
 		<-h.doneCh
 	})
 	return nil
+}
+
+// healthFromEntry derives routing health from the same catalog record and clock
+// instant used to select its revision and provider leases.
+func (h *healthTracker) healthFromEntry(entry catalogEntry, now time.Time) ToolsetHealth {
+	health := ToolsetHealth{
+		ProviderCount:      routableProviderCount(entry, now),
+		StalenessThreshold: h.stalenessThreshold,
+	}
+	if entry.LastPongUnixNano != 0 {
+		health.LastPong = time.Unix(0, entry.LastPongUnixNano)
+		health.Age = now.Sub(health.LastPong)
+	}
+	health.Healthy = health.ProviderCount > 0 &&
+		!health.LastPong.IsZero() &&
+		health.Age <= health.StalenessThreshold
+	return health
 }
 
 // run is the single ping scheduler goroutine. It samples the catalog at a

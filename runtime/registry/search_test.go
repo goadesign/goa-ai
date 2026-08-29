@@ -58,6 +58,9 @@ func TestParseSearchResults(t *testing.T) {
 				SchemaRef:      "/schemas/test",
 				RelevanceScore: 0.85,
 				Tags:           []string{"test", "example"},
+				Version:        "1.2.3",
+				ToolCount:      3,
+				RegisteredAt:   "2026-08-28T20:00:00Z",
 				Origin:         testRegistryName,
 			},
 		}
@@ -91,6 +94,15 @@ func TestParseSearchResults(t *testing.T) {
 		}
 		if r.Origin != testRegistryName {
 			t.Errorf("Origin: got %q, want %q", r.Origin, testRegistryName)
+		}
+		if r.Version != "1.2.3" {
+			t.Errorf("Version: got %q, want %q", r.Version, "1.2.3")
+		}
+		if r.ToolCount != 3 {
+			t.Errorf("ToolCount: got %d, want %d", r.ToolCount, 3)
+		}
+		if r.RegisteredAt != "2026-08-28T20:00:00Z" {
+			t.Errorf("RegisteredAt: got %q, want %q", r.RegisteredAt, "2026-08-28T20:00:00Z")
 		}
 	})
 

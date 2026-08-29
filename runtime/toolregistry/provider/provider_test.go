@@ -16,6 +16,7 @@ import (
 	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
+	goa "goa.design/goa/v3/pkg"
 	"goa.design/pulse/streaming"
 	streamopts "goa.design/pulse/streaming/options"
 )
@@ -37,6 +38,12 @@ type backlogHandler struct {
 	unblockFirst chan struct{}
 	handled      chan string
 	calls        atomic.Int64
+}
+
+type selectiveBlockingHandler struct {
+	blockedToolUseID string
+	started          chan struct{}
+	unblock          chan struct{}
 }
 
 type invalidResultHandler struct{}
@@ -87,6 +94,14 @@ func (h *backlogHandler) HandleToolCall(_ context.Context, msg toolregistry.Tool
 		<-h.unblockFirst
 	}
 	h.handled <- msg.ToolUseID
+	return toolregistry.NewToolResultMessage(msg.RegistrationToken, msg.ToolUseID, json.RawMessage(`{"ok":true}`)), nil
+}
+
+func (h *selectiveBlockingHandler) HandleToolCall(_ context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
+	if msg.ToolUseID == h.blockedToolUseID {
+		close(h.started)
+		<-h.unblock
+	}
 	return toolregistry.NewToolResultMessage(msg.RegistrationToken, msg.ToolUseID, json.RawMessage(`{"ok":true}`)), nil
 }
 
@@ -333,9 +348,13 @@ func TestServeAcknowledgesRegistrySettledStaleQueuedCall(t *testing.T) {
 	})
 	registration.Claim = func(
 		_ context.Context,
-		_, _, _, providerToken, callToken, toolUseID, _ string,
+		request ClaimRequest,
 	) (ClaimDisposition, error) {
-		rejected <- [3]string{providerToken, callToken, toolUseID}
+		rejected <- [3]string{
+			request.ProviderRegistrationToken,
+			request.CallRegistrationToken,
+			request.ToolUseID,
+		}
 		return ClaimTerminal, nil
 	}
 	errc := make(chan error, 1)
@@ -526,7 +545,7 @@ func TestServeShutdownPublishesThenAcknowledgesBeforeRelease(t *testing.T) {
 	orderMu.Unlock()
 }
 
-func TestServeDrainingLeaseProcessesAcceptedBufferedCalls(t *testing.T) {
+func TestServeDrainingLeaseSettlesClaimedCallAndLeavesBufferedCallUnclaimed(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -604,8 +623,18 @@ func TestServeDrainingLeaseProcessesAcceptedBufferedCalls(t *testing.T) {
 	close(handler.unblock)
 
 	require.ErrorIs(t, <-errc, context.Canceled)
-	assert.ElementsMatch(t, []string{"drain-active", "drain-buffered"}, []string{<-completed, <-completed})
-	assert.ElementsMatch(t, []string{"drain-active", "drain-buffered"}, []string{<-acked, <-acked})
+	assert.Equal(t, "drain-active", <-completed)
+	assert.Equal(t, "drain-active", <-acked)
+	select {
+	case toolUseID := <-completed:
+		t.Fatalf("unclaimed buffered call %q completed during shutdown", toolUseID)
+	default:
+	}
+	select {
+	case eventID := <-acked:
+		t.Fatalf("unclaimed buffered event %q was acknowledged during shutdown", eventID)
+	default:
+	}
 	<-released
 }
 
@@ -665,6 +694,419 @@ func TestServeAckFailureIsExplicitAndPreventsRelease(t *testing.T) {
 	err = <-errc
 	require.ErrorContains(t, err, "ack unavailable")
 	assert.False(t, released.Load())
+}
+
+func TestServeSubscriptionFailureIsNotCancellation(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan *streaming.Event)
+	close(events)
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetClose(func(context.Context) error { return nil })
+	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
+	stream := mockpulse.NewStream(t)
+	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(string, ...streamopts.Stream) (pulse.Stream, error) {
+		return stream, nil
+	})
+
+	err := Serve(
+		context.Background(),
+		client,
+		"test.toolset",
+		&recordingHandler{},
+		successfulRegistration(),
+		Options{
+			ProviderID:      testProviderID,
+			Pong:            func(context.Context, string, string, string) error { return nil },
+			ShutdownTimeout: time.Second,
+		},
+	)
+
+	require.ErrorContains(t, err, "toolset stream subscription closed")
+	assert.NotErrorIs(t, err, context.Canceled)
+}
+
+func TestServeCancellationWinsReadyEvent(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan *streaming.Event, 1)
+	events <- testPingEvent(t, "simultaneous-cancel")
+	var pongs atomic.Int64
+	var acks atomic.Int64
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event {
+		cancel()
+		return events
+	})
+	sink.SetClose(func(context.Context) error { return nil })
+	sink.SetAck(func(context.Context, *streaming.Event) error {
+		acks.Add(1)
+		return nil
+	})
+	stream := mockpulse.NewStream(t)
+	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(string, ...streamopts.Stream) (pulse.Stream, error) {
+		return stream, nil
+	})
+
+	err := Serve(
+		ctx,
+		client,
+		"test.toolset",
+		&recordingHandler{},
+		successfulRegistration(),
+		Options{
+			ProviderID: testProviderID,
+			Pong: func(context.Context, string, string, string) error {
+				pongs.Add(1)
+				return nil
+			},
+			ShutdownTimeout: time.Second,
+		},
+	)
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Zero(t, pongs.Load())
+	assert.Zero(t, acks.Load())
+}
+
+func TestServeRegistrationSupersessionCancelsEventCallback(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan *streaming.Event, 1)
+	events <- testPingEvent(t, "superseded")
+	pongStarted := make(chan struct{})
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetClose(func(context.Context) error { return nil })
+	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
+	stream := mockpulse.NewStream(t)
+	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(string, ...streamopts.Stream) (pulse.Stream, error) {
+		return stream, nil
+	})
+
+	var registrations atomic.Int64
+	registration := successfulRegistration()
+	registration.Register = func(context.Context, string, string, string, string) (RegistrationLease, error) {
+		if registrations.Add(1) == 1 {
+			return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: 60 * time.Millisecond}, nil
+		}
+		return RegistrationLease{}, goa.NewServiceError(
+			errors.New("replacement waiting"),
+			"admission_blocked",
+			false,
+			false,
+			false,
+		)
+	}
+	registration.AttemptTimeout = 20 * time.Millisecond
+	registration.ShutdownMargin = time.Millisecond
+	registration.RetryInitialInterval = time.Millisecond
+	registration.RetryMaxInterval = time.Millisecond
+
+	startedAt := time.Now()
+	err := Serve(
+		context.Background(),
+		client,
+		"test.toolset",
+		&recordingHandler{},
+		registration,
+		Options{
+			ProviderID: testProviderID,
+			Pong: func(ctx context.Context, _, _, _ string) error {
+				close(pongStarted)
+				<-ctx.Done()
+				return ctx.Err()
+			},
+			PongTimeout:     time.Second,
+			ShutdownTimeout: time.Second,
+		},
+	)
+
+	require.ErrorIs(t, err, ErrRegistrationSuperseded)
+	assert.Less(t, time.Since(startedAt), 500*time.Millisecond)
+	select {
+	case <-pongStarted:
+	default:
+		t.Fatal("pong callback did not start before registration supersession")
+	}
+}
+
+func TestServeSettlesClaimWhoseResponseArrivesAfterShutdownStarts(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan *streaming.Event, 2)
+	events <- testToolCallEvent(t, "blocked-claim")
+	events <- testToolCallEvent(t, "queued-call")
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetClose(func(context.Context) error { return nil })
+	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
+	stream := mockpulse.NewStream(t)
+	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(string, ...streamopts.Stream) (pulse.Stream, error) {
+		return stream, nil
+	})
+
+	claimStarted := make(chan struct{})
+	allowClaimResult := make(chan struct{})
+	drainStarted := make(chan struct{})
+	var claims atomic.Int64
+	registration := successfulRegistration()
+	registration.Drain = func(context.Context, string, string, string, string, time.Duration) error {
+		close(drainStarted)
+		return nil
+	}
+	registration.Claim = func(ctx context.Context, _ ClaimRequest) (ClaimDisposition, error) {
+		if claims.Add(1) == 1 {
+			close(claimStarted)
+		}
+		select {
+		case <-allowClaimResult:
+			return ClaimExecute, nil
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
+	handler := &recordingHandler{}
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(
+			ctx,
+			client,
+			"test.toolset",
+			handler,
+			registration,
+			Options{
+				ProviderID:             testProviderID,
+				Pong:                   func(context.Context, string, string, string) error { return nil },
+				MaxConcurrentToolCalls: 1,
+				MaxQueuedToolCalls:     2,
+				ShutdownTimeout:        20 * time.Millisecond,
+			},
+		)
+	}()
+
+	select {
+	case <-claimStarted:
+	case <-time.After(time.Second):
+		t.Fatal("claim did not start")
+	}
+	cancel()
+	select {
+	case <-drainStarted:
+	case <-time.After(time.Second):
+		t.Fatal("provider drain did not start")
+	}
+	close(allowClaimResult)
+	select {
+	case err := <-errc:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("Serve exceeded the settlement deadline")
+	}
+	assert.Equal(t, int64(1), claims.Load())
+	assert.Equal(t, int64(1), handler.calls.Load())
+}
+
+func TestClaimToolCallCreatesOneOperationIDPerDelivery(t *testing.T) {
+	t.Parallel()
+
+	var requests []ClaimRequest
+	registration := registrationConfig{
+		claim: func(_ context.Context, request ClaimRequest) (ClaimDisposition, error) {
+			requests = append(requests, request)
+			return ClaimExecute, nil
+		},
+	}
+	message := toolregistry.ToolCallMessage{
+		RegistrationToken: testRegistrationTokenA,
+		ToolUseID:         "same-tool-use",
+	}
+	for range 2 {
+		disposition, err := claimToolCall(
+			context.Background(),
+			registration,
+			time.Second,
+			"test.toolset",
+			testProviderID,
+			testProviderIncarnationID,
+			testRegistrationTokenA,
+			message,
+			"1-0",
+		)
+		require.NoError(t, err)
+		require.Equal(t, ClaimExecute, disposition)
+	}
+	require.Len(t, requests, 2)
+	require.NotEmpty(t, requests[0].OperationID)
+	require.NotEmpty(t, requests[1].OperationID)
+	require.NotEqual(t, requests[0].OperationID, requests[1].OperationID)
+	require.Equal(t, requests[0].RequestEventID, requests[1].RequestEventID)
+}
+
+func TestServeConcurrentClaimCancellationDoesNotMaskFailure(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan *streaming.Event, 2)
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetClose(func(context.Context) error { return nil })
+	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
+	stream := mockpulse.NewStream(t)
+	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(string, ...streamopts.Stream) (pulse.Stream, error) {
+		return stream, nil
+	})
+
+	claimFailure := errors.New("claim failed")
+	allClaimsStarted := make(chan struct{})
+	var claims atomic.Int64
+	var released atomic.Int64
+	registration := successfulRegistration()
+	registration.Claim = func(
+		_ context.Context,
+		request ClaimRequest,
+	) (ClaimDisposition, error) {
+		if claims.Add(1) == 2 {
+			close(allClaimsStarted)
+		}
+		<-allClaimsStarted
+		if request.ToolUseID == "failing-claim" {
+			return "", claimFailure
+		}
+		return ClaimExecute, nil
+	}
+	registration.Release = func(context.Context, string, string, string, string) error {
+		released.Add(1)
+		return nil
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(
+			context.Background(),
+			client,
+			"test.toolset",
+			&recordingHandler{},
+			registration,
+			Options{
+				ProviderID:             testProviderID,
+				Pong:                   func(context.Context, string, string, string) error { return nil },
+				MaxConcurrentToolCalls: 2,
+				MaxQueuedToolCalls:     2,
+				ShutdownTimeout:        time.Second,
+			},
+		)
+	}()
+	events <- testToolCallEvent(t, "failing-claim")
+	events <- testToolCallEvent(t, "canceled-claim")
+
+	select {
+	case err := <-errc:
+		require.ErrorIs(t, err, claimFailure)
+		require.NotErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("Serve did not return after the claim failure")
+	}
+	assert.Equal(t, int64(2), claims.Load())
+	assert.Zero(t, released.Load())
+}
+
+func TestServeWorkerTimeoutStopsAcknowledgementLoop(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan *streaming.Event, 2)
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetClose(func(context.Context) error { return nil })
+	ackStarted := make(chan struct{})
+	ackStopped := make(chan struct{})
+	sink.SetAck(func(ctx context.Context, _ *streaming.Event) error {
+		close(ackStarted)
+		<-ctx.Done()
+		close(ackStopped)
+		return ctx.Err()
+	})
+	stream := mockpulse.NewStream(t)
+	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(string, ...streamopts.Stream) (pulse.Stream, error) {
+		return stream, nil
+	})
+
+	handler := &selectiveBlockingHandler{
+		blockedToolUseID: "blocked-handler",
+		started:          make(chan struct{}),
+		unblock:          make(chan struct{}),
+	}
+	t.Cleanup(func() {
+		close(handler.unblock)
+	})
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(
+			ctx,
+			client,
+			"test.toolset",
+			handler,
+			successfulRegistration(),
+			Options{
+				ProviderID:      testProviderID,
+				Pong:            func(context.Context, string, string, string) error { return nil },
+				ShutdownTimeout: 20 * time.Millisecond,
+			},
+		)
+	}()
+
+	events <- testToolCallEvent(t, "fast-handler")
+	select {
+	case <-ackStarted:
+	case <-time.After(time.Second):
+		t.Fatal("acknowledgement did not start")
+	}
+	events <- testToolCallEvent(t, "blocked-handler")
+	select {
+	case <-handler.started:
+	case <-time.After(time.Second):
+		t.Fatal("blocking handler did not start")
+	}
+	cancel()
+
+	select {
+	case err := <-errc:
+		require.ErrorContains(t, err, "settle tool workers")
+	case <-time.After(time.Second):
+		t.Fatal("Serve exceeded the settlement deadline")
+	}
+	select {
+	case <-ackStopped:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("acknowledgement loop remained blocked after worker timeout")
+	}
 }
 
 func TestServeDrainFailureStillClosesAndJoinsConsumer(t *testing.T) {
@@ -994,12 +1436,103 @@ func TestServeMaxQueuedToolCallsBoundsTotalWaitingWork(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("provider did not process ping while work queue was saturated")
 	}
-	cancel()
 	close(handler.unblock)
+	deadline := time.After(time.Second)
+	for published.Load() != 3 || acked.Load() != 4 {
+		select {
+		case <-deadline:
+			t.Fatalf(
+				"provider did not settle bounded queue: published=%d acked=%d",
+				published.Load(),
+				acked.Load(),
+			)
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
 	require.ErrorIs(t, <-errc, context.Canceled)
 	assert.Equal(t, int64(3), published.Load())
 	assert.Equal(t, int64(1), overloaded.Load())
 	assert.Equal(t, int64(4), acked.Load())
+}
+
+func TestServeInternalFailureCancelsOverloadWithoutMaskingCause(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan *streaming.Event, 3)
+	handler := &blockingHandler{started: make(chan struct{}), unblock: make(chan struct{})}
+	sink := mockpulse.NewSink(t)
+	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
+	sink.SetClose(func(context.Context) error { return nil })
+	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
+	toolsetStream := mockpulse.NewStream(t)
+	toolsetStream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
+		return sink, nil
+	})
+	client := mockpulse.NewClient(t)
+	client.SetStream(func(string, ...streamopts.Stream) (pulse.Stream, error) {
+		return toolsetStream, nil
+	})
+
+	claimFailure := errors.New("claim failed")
+	overloadStarted := make(chan struct{})
+	var released atomic.Int64
+	registration := successfulRegistration()
+	registration.Claim = func(
+		_ context.Context,
+		request ClaimRequest,
+	) (ClaimDisposition, error) {
+		if request.ToolUseID == "queue-2" {
+			return "", claimFailure
+		}
+		return ClaimExecute, nil
+	}
+	registration.ReportOverload = func(
+		ctx context.Context,
+		_, _, _, _, _, _, _ string,
+	) error {
+		close(overloadStarted)
+		close(handler.unblock)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	registration.Release = func(context.Context, string, string, string, string) error {
+		released.Add(1)
+		return nil
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Serve(
+			context.Background(),
+			client,
+			"test.toolset",
+			handler,
+			registration,
+			Options{
+				ProviderID:             testProviderID,
+				Pong:                   func(context.Context, string, string, string) error { return nil },
+				MaxConcurrentToolCalls: 1,
+				MaxQueuedToolCalls:     1,
+				ShutdownTimeout:        time.Second,
+			},
+		)
+	}()
+
+	events <- testToolCallEvent(t, "queue-1")
+	<-handler.started
+	events <- testToolCallEvent(t, "queue-2")
+	events <- testToolCallEvent(t, "queue-3")
+	select {
+	case <-overloadStarted:
+	case <-time.After(time.Second):
+		t.Fatal("overload reporting did not start")
+	}
+
+	err := <-errc
+	require.ErrorIs(t, err, claimFailure)
+	require.NotErrorIs(t, err, context.Canceled)
+	assert.Zero(t, released.Load())
 }
 
 func TestServeSettlesExpiredQueuedCallAndKeepsServing(t *testing.T) {
@@ -1044,14 +1577,14 @@ func TestServeSettlesExpiredQueuedCallAndKeepsServing(t *testing.T) {
 	})
 	registration.Claim = func(
 		_ context.Context,
-		_, _, _, providerToken, callToken, toolUseID, _ string,
+		request ClaimRequest,
 	) (ClaimDisposition, error) {
-		assert.Equal(t, testRegistrationTokenA, providerToken)
-		assert.Equal(t, testRegistrationTokenA, callToken)
-		if toolUseID != "expired" {
+		assert.Equal(t, testRegistrationTokenA, request.ProviderRegistrationToken)
+		assert.Equal(t, testRegistrationTokenA, request.CallRegistrationToken)
+		if request.ToolUseID != "expired" {
 			return ClaimExecute, nil
 		}
-		settled <- toolUseID
+		settled <- request.ToolUseID
 		return ClaimExpired, nil
 	}
 
@@ -1143,11 +1676,11 @@ func TestServeUsesRegistryExpirationForDeliveredCall(t *testing.T) {
 			})
 			registration.Claim = func(
 				_ context.Context,
-				_, _, _, providerToken, callToken, toolUseID, _ string,
+				request ClaimRequest,
 			) (ClaimDisposition, error) {
-				assert.Equal(t, testRegistrationTokenA, providerToken)
-				assert.Equal(t, testRegistrationTokenA, callToken)
-				settled <- toolUseID
+				assert.Equal(t, testRegistrationTokenA, request.ProviderRegistrationToken)
+				assert.Equal(t, testRegistrationTokenA, request.CallRegistrationToken)
+				settled <- request.ToolUseID
 				if test.registryExpired {
 					return ClaimExpired, nil
 				}
@@ -1299,7 +1832,7 @@ func TestServeRejectsInvalidHandlerResultBeforePublication(t *testing.T) {
 	assert.Zero(t, acked.Load())
 }
 
-func TestServeReportsHandlerSettlementTimeoutAndWithholdsRelease(t *testing.T) {
+func TestServeReturnsAtHandlerSettlementTimeoutAndWithholdsRelease(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1344,17 +1877,16 @@ func TestServeReportsHandlerSettlementTimeoutAndWithholdsRelease(t *testing.T) {
 	}()
 	events <- testToolCallEvent(t, "slow-handler")
 	<-handler.started
+	t.Cleanup(func() {
+		close(handler.unblock)
+	})
 	cancel()
 	select {
 	case err := <-errc:
-		t.Fatalf("Serve returned before the claimed call's worker joined: %v", err)
-	case <-handler.canceled:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Serve did not cancel the tool worker after its settlement deadline")
+		require.ErrorContains(t, err, "settle tool workers")
+	case <-time.After(time.Second):
+		t.Fatal("Serve exceeded the handler settlement deadline")
 	}
-	close(handler.unblock)
-	err := <-errc
-	require.ErrorContains(t, err, "settle tool worker")
 	assert.False(t, released.Load())
 }
 
@@ -1512,6 +2044,14 @@ func testToolCallEventAt(t *testing.T, toolUseID string, expiresAt time.Time) *s
 	payload, err := json.Marshal(call)
 	require.NoError(t, err)
 	return &streaming.Event{ID: toolUseID, EventName: "call", Payload: payload}
+}
+
+func testPingEvent(t *testing.T, pingID string) *streaming.Event {
+	t.Helper()
+	ping := toolregistry.NewPingMessage(testRegistrationTokenA, pingID)
+	payload, err := json.Marshal(ping)
+	require.NoError(t, err)
+	return &streaming.Event{ID: pingID, EventName: "ping", Payload: payload}
 }
 
 type outputDeltaHandler struct {

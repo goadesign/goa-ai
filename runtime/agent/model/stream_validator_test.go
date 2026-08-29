@@ -144,6 +144,9 @@ func TestStreamValidatorRejectsIncompleteStreamBeforeGeneratedPayload(t *testing
 	err := validator.finish(responseWithToolCall(call))
 
 	require.EqualError(t, err, "model stream ended without stop chunk")
+	kind, ok := classifiedOutputValidation(err)
+	require.True(t, ok)
+	require.Equal(t, OutputValidationStreamProtocol, kind)
 }
 
 func TestStreamValidatorReconcilesResponseBeforeGeneratedPayload(t *testing.T) {

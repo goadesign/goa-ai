@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	internaladmission "goa.design/goa-ai/internal/toolregistry/admission"
 	"goa.design/goa/v3/codegen"
 )
 
@@ -158,7 +159,18 @@ func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 			specImports := packagePlan.fileImports.publicSpecs.Imports()
 			specSections := []*codegen.SectionTemplate{
 				codegen.Header(ts.Name+" tool specs", ts.SpecsPackageName, specImports),
-				{Name: "tool-specs", Source: agentsTemplates.Read(toolSpecFileT), Data: toolSpecFileData{PackageName: ts.SpecsPackageName, Tools: specsData.tools, Types: specsData.typesList(), RequiredLabels: ts.RequiredLabels}, FuncMap: templateFuncMap()},
+				{
+					Name:   "tool-specs",
+					Source: agentsTemplates.Read(toolSpecFileT),
+					Data: toolSpecFileData{
+						PackageName:        ts.SpecsPackageName,
+						SchemaFingerprints: generatedToolsetSchemaFingerprints(packagePlan.registrationRoutes, specsData.tools),
+						Tools:              specsData.tools,
+						Types:              specsData.typesList(),
+						RequiredLabels:     ts.RequiredLabels,
+					},
+					FuncMap: templateFuncMap(),
+				},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "specs.go"), SectionTemplates: specSections})
 			// inject.go fills fields supplied by the server.
@@ -185,6 +197,40 @@ func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 	}
 
 	return out
+}
+
+// generatedToolsetSchemaFingerprints computes every registration schema
+// identity during generation. Runtime code only selects the route it serves.
+func generatedToolsetSchemaFingerprints(routes []string, entries []*toolEntry) []*toolsetSchemaFingerprintData {
+	tools := make([]internaladmission.ToolSchema, len(entries))
+	for i, entry := range entries {
+		description := entry.Description
+		var payloadSchema, resultSchema []byte
+		if entry.Payload != nil {
+			payloadSchema = entry.Payload.SchemaJSON
+		}
+		if entry.Result != nil {
+			resultSchema = entry.Result.SchemaJSON
+		}
+		tools[i] = internaladmission.ToolSchema{
+			Name:          entry.Name,
+			Description:   &description,
+			Tags:          entry.Tags,
+			PayloadSchema: payloadSchema,
+			ResultSchema:  resultSchema,
+		}
+	}
+	fingerprints := make([]*toolsetSchemaFingerprintData, len(routes))
+	for i, route := range routes {
+		fingerprints[i] = &toolsetSchemaFingerprintData{
+			Toolset: route,
+			Fingerprint: internaladmission.SchemaFingerprint(internaladmission.Schema{
+				Name:  route,
+				Tools: tools,
+			}),
+		}
+	}
+	return fingerprints
 }
 
 func toolsetProviderFile(ts *ToolsetData) *codegen.File {

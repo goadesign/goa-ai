@@ -6,12 +6,20 @@ import (
 
 type (
 	toolSpecFileData struct {
-		PackageName string
-		Tools       []*toolEntry
-		Types       []*typeData
+		PackageName        string
+		SchemaFingerprints []*toolsetSchemaFingerprintData
+		Tools              []*toolEntry
+		Types              []*typeData
 		// RequiredLabels lists, sorted and deduplicated, the run label keys
 		// this toolset's label-backed Inject() fields require.
 		RequiredLabels []string
+	}
+
+	// toolsetSchemaFingerprintData contains one generated registration route and
+	// the exact schema fingerprint accepted for that route.
+	toolsetSchemaFingerprintData struct {
+		Toolset     string
+		Fingerprint string
 	}
 
 	toolTypesFileData struct {

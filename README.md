@@ -63,8 +63,18 @@ part of their existing execution deadline. `Serve` generates one UUID incarnatio
 a delayed release from an old process cannot delete its replacement. Lease
 membership, health epoch, and last pong live in one CAS catalog record. Every
 retirement and replacement permanently retains the prior token; this set grows
-with distinct admissions and cannot be truncated safely. The gateway derives a
-global transport `ToolUseID` from required run plus call identity. Its global
+with distinct admissions and cannot be truncated safely. The read-only
+`CheckAdmission` operation derives its result from that same record so
+deployment systems can verify that the exact registration token derived from
+generated schemas and an admission revision has a routable lease and fresh pong
+without making workload readiness depend on admission. Generated toolset specs
+expose `RegistrationToken(admissionRevision)` so deployment code does not
+reimplement schema fingerprinting.
+Providers send that generated fingerprint with registration. The registry
+independently derives a fingerprint from the submitted toolset and rejects a
+mismatch before creating a stream or admission.
+The gateway derives a global transport `ToolUseID` from required run plus call
+identity. Its global
 call record stores a token-independent request digest, the provider token that
 becomes immutable at publication, overload state, and the complete canonical terminal. Exact retained calls
 replay before current routing or health lookup after a generation changes.
@@ -79,8 +89,10 @@ use the execution deadline; result streams use the retention expiration.
 The registry atomically stores each terminal with the call record. Replay
 restores a trimmed terminal from bounded delivery history. Output deltas have
 byte and per-call count limits, and overload reporting is idempotent per request
-event. Retired and draining leases retain authority to settle the exact
-already-published request events they own. At execution deadline, or sooner if
+event. Retired and draining leases retain authority to settle only claims that
+committed before draining. A claim-operation ID lets transport retries recover
+the original execute decision while a later event redelivery remains
+non-executable. At execution deadline, or sooner if
 that lease disappears, registry-owned settlement publishes `outcome_unknown`
 because the effect may have occurred; execution never transfers to another
 provider and the canonical terminal remains retained.
@@ -288,6 +300,13 @@ responses or streams. Pass it to `model.NewClient` before using an API that
 requires canonical model output. External packages cannot implement a valid
 `model.Client`; APIs that accept one verify the package-owned opaque client
 before inference.
+
+Mechanical response rejections return `*model.OutputValidationError`.
+`Kind()` reports one closed, privacy-safe category such as `tool_arguments` or
+`stream_protocol`; it never contains response text, provider text, tool names,
+arguments, or schema paths. The category is diagnostic only. Recovery still
+requires exact correction guidance produced by generated validation or planner
+policy, and remains bounded by the runtime's configured recovery-turn limit.
 
 Use `bedrock.NewAnthropic` for Claude deployments on Amazon Bedrock. It sends
 Anthropic Messages requests through Bedrock `InvokeModel`, so authored tool

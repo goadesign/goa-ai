@@ -34,6 +34,7 @@ func newSchemaValidator() *schemaValidator {
 // the registry admits. Payload and result schemas are required; sidecar schema
 // is optional but must compile when present.
 func (v *schemaValidator) ValidateToolSchemas(tools []*genregistry.ToolSchema) error {
+	names := make(map[string]struct{}, len(tools))
 	for _, tool := range tools {
 		if tool == nil {
 			return fmt.Errorf("tool schema is nil")
@@ -41,6 +42,10 @@ func (v *schemaValidator) ValidateToolSchemas(tools []*genregistry.ToolSchema) e
 		if tool.Name == "" {
 			return fmt.Errorf("tool schema missing name")
 		}
+		if _, exists := names[tool.Name]; exists {
+			return fmt.Errorf("duplicate tool schema name %q", tool.Name)
+		}
+		names[tool.Name] = struct{}{}
 		if err := v.validateRequiredSchema(tool.Name, "payload", tool.PayloadSchema); err != nil {
 			return err
 		}

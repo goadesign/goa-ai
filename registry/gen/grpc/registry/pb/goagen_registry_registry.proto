@@ -52,6 +52,14 @@ service Registry {
 	rpc ListToolsets (ListToolsetsRequest) returns (ListToolsetsResponse);
 	// Get a specific toolset by name including all tool schemas
 	rpc GetToolset (GetToolsetRequest) returns (GetToolsetResponse);
+	// Report whether the exact registration token derived from a deployed
+// provider's generated tool schemas is active and currently has an unexpired,
+// non-draining provider lease plus a fresh authenticated pong. Release
+// verification calls this after workload rollout because Kubernetes proves the
+// intended pods are running while the registry proves their exact tool
+// contract is routable. A missing or different active admission returns
+// ready=false rather than an error.
+	rpc CheckAdmission (CheckAdmissionRequest) returns (CheckAdmissionResponse);
 	// Search toolsets by keyword matching name, description, or tags
 	rpc Search (SearchRequest) returns (SearchResponse);
 	// Reject consumers whose required runtime-owned wire protocol version differs
@@ -94,15 +102,20 @@ service Registry {
 // then atomically appends retry control only while the authoritative call
 // record remains nonterminal.
 	rpc ReportToolCallOverload (ReportToolCallOverloadRequest) returns (ReportToolCallOverloadResponse);
-	// Atomically settle one queued request before handler dispatch. The registry
-// authenticates the exact provider lease and request event; only an active
-// non-draining lease may gain immutable execution ownership. Existing owners,
+	// Atomically decide whether one queued request may enter handler execution. An
+// active provider gains immutable ownership, and an exact replay of the same
+// claim operation returns the same execute decision so an uncertain transport
+// result can be retried safely. A Pulse redelivery starts a different claim
+// operation and therefore cannot repeat handler execution. A different owner,
 // retained terminal history, and Redis-owned expiration settle without
-// execution, while stale, draining, or retired unclaimed work receives the
-// canonical stale-generation terminal. Only the exact granted provider
-// incarnation and request event may publish deltas or complete the call;
-// ownership never transfers after a crash.
-	rpc ClaimToolCall (ClaimToolCallRequest) returns (ClaimToolCallResponse);
+// execution. A draining, expired, or retired lease is rejected without
+// changing unclaimed work, while a request authored under a stale registration
+// receives the canonical stale-generation terminal. Only the exact granted
+// provider incarnation and request event may publish deltas or complete the
+// call; ownership never transfers after a crash.
+	rpc ClaimToolCall (ClaimToolCallRequest) returns (ClaimToolCallResponse) {
+		option idempotency_level = IDEMPOTENT;
+	}
 }
 
 message RegisterRequest {
@@ -128,6 +141,10 @@ message RegisterRequest {
 	// Required runtime-owned version of the provider message envelope. The
 // registry admits only its exact canonical version.
 	optional sint32 wire_protocol_version = 9;
+	// Generated lowercase SHA-256 identity of the exact tool schemas sent by this
+// provider. The registry independently derives the identity and rejects
+// mismatches before admission.
+	optional string schema_fingerprint = 10;
 }
 // Tool schema declaration for registration with the tool registry gateway.
 message ToolSchema {
@@ -255,6 +272,20 @@ message GetToolsetResponse {
 	repeated ToolSchema tools = 5;
 	// ISO 8601 registration timestamp
 	optional string registered_at = 6;
+}
+
+message CheckAdmissionRequest {
+	// Name of the toolset whose admission must be checked.
+	optional string name = 1;
+	// Deterministic token derived from the deployed provider's generated schema,
+// admission revision, and wire protocol.
+	optional string expected_registration_token = 2;
+}
+
+message CheckAdmissionResponse {
+	// True only when the expected registration token is active and has a routable
+// provider plus a fresh authenticated pong.
+	optional bool ready = 1;
 }
 
 message SearchRequest {
@@ -410,6 +441,9 @@ message ReportToolCallOverloadResponse {
 }
 
 message ClaimToolCallRequest {
+	// Runtime UUID created once for this claim operation and reused by its
+// transport retries.
+	optional string claim_operation_id = 100;
 	// Toolset whose provider claimed the call.
 	optional string toolset = 1;
 	// Stable identity of the provider process.

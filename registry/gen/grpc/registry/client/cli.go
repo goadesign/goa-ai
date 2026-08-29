@@ -24,7 +24,7 @@ func BuildRegisterPayload(registryRegisterMessage *string) (*registry.RegisterPa
 		if registryRegisterMessage != nil {
 			err = protojson.Unmarshal([]byte(*registryRegisterMessage), &message)
 			if err != nil {
-				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"admission_revision\": \"example-release+schema-v1\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 8\n   }'")
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"admission_revision\": \"example-release+schema-v1\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"schema_fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 8\n   }'")
 			}
 		}
 	}
@@ -39,6 +39,7 @@ func BuildRegisterPayload(registryRegisterMessage *string) (*registry.RegisterPa
 		AdmissionRevision:     *message.AdmissionRevision,
 		ProviderIncarnationID: *message.ProviderIncarnationId,
 		WireProtocolVersion:   int(*message.WireProtocolVersion),
+		SchemaFingerprint:     *message.SchemaFingerprint,
 	}
 	if message.Version != nil {
 		version := registry.SemVer(*message.Version)
@@ -227,6 +228,31 @@ func BuildGetToolsetPayload(registryGetToolsetMessage *string) (*registry.GetToo
 	return v, nil
 }
 
+// BuildCheckAdmissionPayload builds the payload for the registry
+// CheckAdmission endpoint from CLI flags.
+func BuildCheckAdmissionPayload(registryCheckAdmissionMessage *string) (*registry.CheckAdmissionPayload, error) {
+	var err error
+	var message registrypb.CheckAdmissionRequest
+	{
+		if registryCheckAdmissionMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryCheckAdmissionMessage), &message)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"name\": \"data-tools\"\n   }'")
+			}
+		}
+	}
+	if err := ValidateCheckAdmissionRequest(&message); err != nil {
+		var zero *registry.CheckAdmissionPayload
+		return zero, err
+	}
+	v := &registry.CheckAdmissionPayload{
+		Name:                      *message.Name,
+		ExpectedRegistrationToken: *message.ExpectedRegistrationToken,
+	}
+
+	return v, nil
+}
+
 // BuildSearchPayload builds the payload for the registry Search endpoint from
 // CLI flags.
 func BuildSearchPayload(registrySearchMessage *string) (*registry.SearchPayload, error) {
@@ -407,22 +433,23 @@ func BuildReportToolCallOverloadPayload(registryReportToolCallOverloadMessage *s
 
 // BuildClaimToolCallPayload builds the payload for the registry ClaimToolCall
 // endpoint from CLI flags.
-func BuildClaimToolCallPayload(registryClaimToolCallMessage *string) (*registry.ProviderToolCallClaimPayload, error) {
+func BuildClaimToolCallPayload(registryClaimToolCallMessage *string) (*registry.ClaimToolCallPayload, error) {
 	var err error
 	var message registrypb.ClaimToolCallRequest
 	{
 		if registryClaimToolCallMessage != nil {
 			err = protojson.Unmarshal([]byte(*registryClaimToolCallMessage), &message)
 			if err != nil {
-				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"call_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"provider_registration_token\": \"2222222222222222222222222222222222222222222222222222222222222222\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"tool_use_id\": \"3333333333333333333333333333333333333333333333333333333333333333\",\n      \"toolset\": \"catalog.lookup\"\n   }'")
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"call_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"claim_operation_id\": \"00000000-0000-4000-8000-000000000002\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"provider_registration_token\": \"2222222222222222222222222222222222222222222222222222222222222222\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"tool_use_id\": \"3333333333333333333333333333333333333333333333333333333333333333\",\n      \"toolset\": \"catalog.lookup\"\n   }'")
 			}
 		}
 	}
 	if err := ValidateClaimToolCallRequest(&message); err != nil {
-		var zero *registry.ProviderToolCallClaimPayload
+		var zero *registry.ClaimToolCallPayload
 		return zero, err
 	}
-	v := &registry.ProviderToolCallClaimPayload{
+	v := &registry.ClaimToolCallPayload{
+		ClaimOperationID:          *message.ClaimOperationId,
 		Toolset:                   *message.Toolset,
 		ProviderID:                *message.ProviderId,
 		ProviderIncarnationID:     *message.ProviderIncarnationId,

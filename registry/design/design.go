@@ -108,6 +108,14 @@ var _ = Service("registry", func() {
 		GRPC(func() {})
 	})
 
+	Method("CheckAdmission", func() {
+		Description("Report whether the exact registration token derived from a deployed provider's generated tool schemas is active and currently has an unexpired, non-draining provider lease plus a fresh authenticated pong. Release verification calls this after workload rollout because Kubernetes proves the intended pods are running while the registry proves their exact tool contract is routable. A missing or different active admission returns ready=false rather than an error.")
+		Payload(CheckAdmissionPayload)
+		Result(AdmissionStatus)
+		Error("service_unavailable")
+		GRPC(func() {})
+	})
+
 	Method("Search", func() {
 		Description("Search toolsets by keyword matching name, description, or tags")
 		Payload(SearchPayload)
@@ -164,8 +172,9 @@ var _ = Service("registry", func() {
 	})
 
 	Method("ClaimToolCall", func() {
-		Description("Atomically settle one queued request before handler dispatch. The registry authenticates the exact provider lease and request event; only an active non-draining lease may gain immutable execution ownership. Existing owners, retained terminal history, and Redis-owned expiration settle without execution, while stale, draining, or retired unclaimed work receives the canonical stale-generation terminal. Only the exact granted provider incarnation and request event may publish deltas or complete the call; ownership never transfers after a crash.")
-		Payload(ProviderToolCallClaimPayload)
+		Description("Atomically decide whether one queued request may enter handler execution. An active provider gains immutable ownership, and an exact replay of the same claim operation returns the same execute decision so an uncertain transport result can be retried safely. A Pulse redelivery starts a different claim operation and therefore cannot repeat handler execution. A different owner, retained terminal history, and Redis-owned expiration settle without execution. A draining, expired, or retired lease is rejected without changing unclaimed work, while a request authored under a stale registration receives the canonical stale-generation terminal. Only the exact granted provider incarnation and request event may publish deltas or complete the call; ownership never transfers after a crash.")
+		Idempotent()
+		Payload(ClaimToolCallPayload)
 		Result(ClaimToolCallResult)
 		Error("validation_error")
 		Error("service_unavailable")
@@ -250,7 +259,11 @@ var RegisterPayload = Type("RegisterPayload", func() {
 		Enum(toolregistry.WireProtocolVersion)
 		Example(toolregistry.WireProtocolVersion)
 	})
-	Required("name", "tools", "provider_id", "admission_revision", "provider_incarnation_id", "wire_protocol_version")
+	Field(10, "schema_fingerprint", String, "Generated lowercase SHA-256 identity of the exact tool schemas sent by this provider. The registry independently derives the identity and rejects mismatches before admission.", func() {
+		Pattern(toolregistry.RegistrationTokenPattern)
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
+	})
+	Required("name", "tools", "provider_id", "admission_revision", "provider_incarnation_id", "wire_protocol_version", "schema_fingerprint")
 })
 
 var RegisterResult = Type("RegisterResult", func() {
@@ -363,6 +376,26 @@ var GetToolsetPayload = Type("GetToolsetPayload", func() {
 		Example("data-tools")
 	})
 	Required("name")
+})
+
+var CheckAdmissionPayload = Type("CheckAdmissionPayload", func() {
+	Description("The exact toolset admission derived from one deployed provider's generated schemas, admission revision, and wire protocol.")
+	Field(1, "name", String, "Name of the toolset whose admission must be checked.", func() {
+		MinLength(1)
+		MaxLength(256)
+		Example("data-tools")
+	})
+	Field(2, "expected_registration_token", String, "Deterministic token derived from the deployed provider's generated schema, admission revision, and wire protocol.", func() {
+		Pattern(toolregistry.RegistrationTokenPattern)
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
+	})
+	Required("name", "expected_registration_token")
+})
+
+var AdmissionStatus = Type("AdmissionStatus", func() {
+	Description("Authoritative routing readiness for one exact expected admission.")
+	Field(1, "ready", Boolean, "True only when the expected registration token is active and has a routable provider plus a fresh authenticated pong.")
+	Required("ready")
 })
 
 var SearchPayload = Type("SearchPayload", func() {
@@ -518,6 +551,16 @@ var ProviderToolCallClaimPayload = Type("ProviderToolCallClaimPayload", func() {
 		"tool_use_id",
 		"request_event_id",
 	)
+})
+
+var ClaimToolCallPayload = Type("ClaimToolCallPayload", func() {
+	Description("Exact provider claim operation for one request event. Transport retries reuse the operation ID; a later Pulse redelivery uses a new ID.")
+	Extend(ProviderToolCallClaimPayload)
+	Field(100, "claim_operation_id", String, "Runtime UUID created once for this claim operation and reused by its transport retries.", func() {
+		Format(FormatUUID)
+		Example("00000000-0000-4000-8000-000000000002")
+	})
+	Required("claim_operation_id")
 })
 
 var PublishToolOutputDeltaPayload = Type("PublishToolOutputDeltaPayload", func() {

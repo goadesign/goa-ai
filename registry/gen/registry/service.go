@@ -54,6 +54,14 @@ type Service interface {
 	ListToolsets(context.Context, *ListToolsetsPayload) (res *ListToolsetsResult, err error)
 	// Get a specific toolset by name including all tool schemas
 	GetToolset(context.Context, *GetToolsetPayload) (res *Toolset, err error)
+	// Report whether the exact registration token derived from a deployed
+	// provider's generated tool schemas is active and currently has an unexpired,
+	// non-draining provider lease plus a fresh authenticated pong. Release
+	// verification calls this after workload rollout because Kubernetes proves the
+	// intended pods are running while the registry proves their exact tool
+	// contract is routable. A missing or different active admission returns
+	// ready=false rather than an error.
+	CheckAdmission(context.Context, *CheckAdmissionPayload) (res *AdmissionStatus, err error)
 	// Search toolsets by keyword matching name, description, or tags
 	Search(context.Context, *SearchPayload) (res *SearchResult, err error)
 	// Reject consumers whose required runtime-owned wire protocol version differs
@@ -96,15 +104,18 @@ type Service interface {
 	// then atomically appends retry control only while the authoritative call
 	// record remains nonterminal.
 	ReportToolCallOverload(context.Context, *ProviderToolCallClaimPayload) (err error)
-	// Atomically settle one queued request before handler dispatch. The registry
-	// authenticates the exact provider lease and request event; only an active
-	// non-draining lease may gain immutable execution ownership. Existing owners,
+	// Atomically decide whether one queued request may enter handler execution. An
+	// active provider gains immutable ownership, and an exact replay of the same
+	// claim operation returns the same execute decision so an uncertain transport
+	// result can be retried safely. A Pulse redelivery starts a different claim
+	// operation and therefore cannot repeat handler execution. A different owner,
 	// retained terminal history, and Redis-owned expiration settle without
-	// execution, while stale, draining, or retired unclaimed work receives the
-	// canonical stale-generation terminal. Only the exact granted provider
-	// incarnation and request event may publish deltas or complete the call;
-	// ownership never transfers after a crash.
-	ClaimToolCall(context.Context, *ProviderToolCallClaimPayload) (res *ClaimToolCallResult, err error)
+	// execution. A draining, expired, or retired lease is rejected without
+	// changing unclaimed work, while a request authored under a stale registration
+	// receives the canonical stale-generation terminal. Only the exact granted
+	// provider incarnation and request event may publish deltas or complete the
+	// call; ownership never transfers after a crash.
+	ClaimToolCall(context.Context, *ClaimToolCallPayload) (res *ClaimToolCallResult, err error)
 }
 
 // APIName is the name of the API as defined in the design.
@@ -121,7 +132,15 @@ const ServiceName = "registry"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [14]string{"Register", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "ListToolsets", "GetToolset", "Search", "CallTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
+var MethodNames = [15]string{"Register", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "ListToolsets", "GetToolset", "CheckAdmission", "Search", "CallTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
+
+// AdmissionStatus is the result type of the registry service CheckAdmission
+// method.
+type AdmissionStatus struct {
+	// True only when the expected registration token is active and has a routable
+	// provider plus a fresh authenticated pong.
+	Ready bool
+}
 
 // CallToolPayload is the payload type of the registry service CallTool method.
 type CallToolPayload struct {
@@ -153,6 +172,38 @@ type CallToolResult struct {
 	// Later absolute Redis-owned expiration shared by the call record and result
 	// stream.
 	ResultStreamExpiresAt string
+}
+
+// CheckAdmissionPayload is the payload type of the registry service
+// CheckAdmission method.
+type CheckAdmissionPayload struct {
+	// Name of the toolset whose admission must be checked.
+	Name string
+	// Deterministic token derived from the deployed provider's generated schema,
+	// admission revision, and wire protocol.
+	ExpectedRegistrationToken string
+}
+
+// ClaimToolCallPayload is the payload type of the registry service
+// ClaimToolCall method.
+type ClaimToolCallPayload struct {
+	// Runtime UUID created once for this claim operation and reused by its
+	// transport retries.
+	ClaimOperationID string
+	// Toolset whose provider claimed the call.
+	Toolset string
+	// Stable identity of the provider process.
+	ProviderID string
+	// Runtime UUID of the exact Serve lifecycle.
+	ProviderIncarnationID string
+	// Exact registration token of the provider lease.
+	ProviderRegistrationToken string
+	// Admission token stamped on the claimed call.
+	CallRegistrationToken string
+	// Global transport identity stamped on the claimed call.
+	ToolUseID string
+	// Pulse request-stream event claimed by this provider.
+	RequestEventID string
 }
 
 // ClaimToolCallResult is the result type of the registry service ClaimToolCall
@@ -301,6 +352,10 @@ type RegisterPayload struct {
 	// Required runtime-owned version of the provider message envelope. The
 	// registry admits only its exact canonical version.
 	WireProtocolVersion int
+	// Generated lowercase SHA-256 identity of the exact tool schemas sent by this
+	// provider. The registry independently derives the identity and rejects
+	// mismatches before admission.
+	SchemaFingerprint string
 }
 
 // RegisterResult is the result type of the registry service Register method.

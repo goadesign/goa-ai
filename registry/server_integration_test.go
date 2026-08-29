@@ -62,7 +62,7 @@ func TestServerIntegration(t *testing.T) {
 		}
 	}()
 
-	client := startServerAndClient(t, reg)
+	client, rawClient := startServiceAndClients(t, reg.Service())
 	var testRegistrationToken string
 
 	t.Run("empty discovery succeeds", func(t *testing.T) {
@@ -91,7 +91,7 @@ func TestServerIntegration(t *testing.T) {
 		version := genregistry.SemVer(rawVersion)
 
 		// Register a toolset.
-		regResult, err := client.Register(ctx, &genregistry.RegisterPayload{
+		regResult, err := client.Register(ctx, registerPayloadWithSchemaFingerprint(&genregistry.RegisterPayload{
 			Name:                  testToolsetName,
 			Description:           &desc,
 			Version:               &version,
@@ -108,7 +108,7 @@ func TestServerIntegration(t *testing.T) {
 					ResultSchema:  []byte(`{"type":"object"}`),
 				},
 			},
-		})
+		}))
 		if err != nil {
 			t.Fatalf("register: %v", err)
 		}
@@ -128,6 +128,47 @@ func TestServerIntegration(t *testing.T) {
 		if listResult.Toolsets[0].Name != testToolsetName {
 			t.Errorf("expected name %q, got %q", testToolsetName, listResult.Toolsets[0].Name)
 		}
+	})
+
+	t.Run("check exact admission through gRPC", func(t *testing.T) {
+		pending, err := client.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
+			Name:                      testToolsetName,
+			ExpectedRegistrationToken: testRegistrationToken,
+		})
+		require.NoError(t, err)
+		assert.False(t, pending.Ready)
+
+		entry, err := reg.service.catalog.ActiveRegistration(ctx, testToolsetName)
+		require.NoError(t, err)
+		err = reg.service.catalog.RecordPong(
+			ctx,
+			testToolsetName,
+			"data-tools/provider-a",
+			testIncarnationA,
+			entry.RegistrationToken,
+			entry.HealthEpoch,
+		)
+		require.NoError(t, err)
+
+		ready, err := client.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
+			Name:                      testToolsetName,
+			ExpectedRegistrationToken: testRegistrationToken,
+		})
+		require.NoError(t, err)
+		assert.True(t, ready.Ready)
+
+		different, err := client.CheckAdmission(ctx, &genregistry.CheckAdmissionPayload{
+			Name:                      testToolsetName,
+			ExpectedRegistrationToken: testStaleToken,
+		})
+		require.NoError(t, err)
+		assert.False(t, different.Ready)
+
+		_, err = rawClient.CheckAdmission(ctx, &registrypb.CheckAdmissionRequest{
+			Name:                      proto.String(testToolsetName),
+			ExpectedRegistrationToken: proto.String("invalid"),
+		})
+		assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	})
 
 	t.Run("get toolset", func(t *testing.T) {
@@ -179,7 +220,7 @@ func TestServerIntegration(t *testing.T) {
 	t.Run("filter by tags", func(t *testing.T) {
 		// Register another toolset with different tags.
 		desc := "Analytics tools"
-		_, err := client.Register(ctx, &genregistry.RegisterPayload{
+		_, err := client.Register(ctx, registerPayloadWithSchemaFingerprint(&genregistry.RegisterPayload{
 			Name:                  "analytics-tools",
 			Description:           &desc,
 			Tags:                  []string{"analytics", "reporting"},
@@ -194,7 +235,7 @@ func TestServerIntegration(t *testing.T) {
 					ResultSchema:  []byte(`{"type":"object"}`),
 				},
 			},
-		})
+		}))
 		if err != nil {
 			t.Fatalf("register analytics: %v", err)
 		}
@@ -304,7 +345,7 @@ func TestServerMultiNodeSync(t *testing.T) {
 
 	// Register on node 1.
 	desc := "Shared toolset"
-	registration, err := client1.Register(ctx, &genregistry.RegisterPayload{
+	registration, err := client1.Register(ctx, registerPayloadWithSchemaFingerprint(&genregistry.RegisterPayload{
 		Name:                  "shared-tools",
 		Description:           &desc,
 		Tags:                  []string{"shared"},
@@ -319,7 +360,7 @@ func TestServerMultiNodeSync(t *testing.T) {
 				ResultSchema:  []byte(`{"type":"object"}`),
 			},
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatalf("register on node 1: %v", err)
 	}
@@ -378,6 +419,7 @@ func TestServerValidationErrors(t *testing.T) {
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     testAdmissionRevisionA,
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
+			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{
 				{
 					Name:          "bad-tool",
@@ -405,6 +447,7 @@ func TestServerValidationErrors(t *testing.T) {
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     testAdmissionRevisionA,
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
+			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{
 				{
 					Name:          "empty-tool",
@@ -431,6 +474,7 @@ func TestServerValidationErrors(t *testing.T) {
 			ProviderID:            "missing-admission-revision/provider-a",
 			ProviderIncarnationID: testIncarnationA,
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
+			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{{
 				Name:          "lookup",
 				PayloadSchema: []byte(`{"type":"object"}`),
@@ -447,6 +491,7 @@ func TestServerValidationErrors(t *testing.T) {
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     "contains whitespace",
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
+			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{{
 				Name:          "lookup",
 				PayloadSchema: []byte(`{"type":"object"}`),
@@ -462,6 +507,7 @@ func TestServerValidationErrors(t *testing.T) {
 			ProviderID:            "missing-wire-protocol-version/provider-a",
 			ProviderIncarnationID: testIncarnationA,
 			AdmissionRevision:     testAdmissionRevisionA,
+			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{{
 				Name:          "lookup",
 				PayloadSchema: []byte(`{"type":"object"}`),
@@ -493,7 +539,7 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, reg.Close(ctx)) })
 
 	counting := &callCountingService{Service: reg.Service()}
-	_, rawClient := startServiceAndClients(t, counting)
+	generatedClient, rawClient := startServiceAndClients(t, counting)
 	first, err := rawClient.Register(ctx, grpcRegisterRequest(
 		"status-tools",
 		"admission-a",
@@ -556,6 +602,19 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	assert.Zero(t, counting.calls.Load(), "invalid tool_call_id must be rejected before publication")
+
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = rawClient.CheckAdmission(canceledCtx, &registrypb.CheckAdmissionRequest{
+		Name:                      proto.String("status-tools"),
+		ExpectedRegistrationToken: proto.String(first.GetRegistrationToken()),
+	})
+	assert.Equal(t, codes.Canceled, status.Code(err))
+	_, err = generatedClient.CheckAdmission(canceledCtx, &genregistry.CheckAdmissionPayload{
+		Name:                      "status-tools",
+		ExpectedRegistrationToken: first.GetRegistrationToken(),
+	})
+	require.ErrorIs(t, err, context.Canceled)
 
 	rejected := &callCountingService{
 		Service:       reg.Service(),
@@ -648,6 +707,7 @@ func startServiceAndClients(
 		grpcCli.Pong(),
 		grpcCli.ListToolsets(),
 		grpcCli.GetToolset(),
+		grpcCli.CheckAdmission(),
 		grpcCli.Search(),
 		grpcCli.CallTool(),
 		grpcCli.RetryTool(),
@@ -662,7 +722,7 @@ func startServiceAndClients(
 func grpcRegisterRequest(
 	name, description, revision, providerID string,
 ) *registrypb.RegisterRequest {
-	return &registrypb.RegisterRequest{
+	request := &registrypb.RegisterRequest{
 		Name:                  proto.String(name),
 		Description:           &description,
 		ProviderId:            proto.String(providerID),
@@ -675,4 +735,14 @@ func grpcRegisterRequest(
 			ResultSchema:  []byte(`{"type":"object"}`),
 		}},
 	}
+	request.SchemaFingerprint = proto.String(toolsetSchemaFingerprint(&genregistry.Toolset{
+		Name:        name,
+		Description: &description,
+		Tools: []*genregistry.ToolSchema{{
+			Name:          "status.lookup",
+			PayloadSchema: []byte(`{"type":"object"}`),
+			ResultSchema:  []byte(`{"type":"object"}`),
+		}},
+	}))
+	return request
 }

@@ -275,6 +275,7 @@ func TestModelInvocationStreamFingerprintsRejectedCompleteResponse(t *testing.T)
 		Payload: rawjson.Message(`{}`),
 	})
 	rejection := contract.RejectResponse(
+		model.OutputValidationToolIdentity,
 		rejected,
 		model.NewUnadvertisedToolNameError("catalog.unknown"),
 	)
@@ -576,7 +577,11 @@ func TestModelInvocationRecoverySelectsEarliestConcurrentProductionCall(t *testi
 				Name:    tools.Ident(name),
 				Payload: rawjson.Message(`{}`),
 			})
-			return nil, contract.RejectResponse(response, model.NewUnadvertisedToolNameError(name))
+			return nil, contract.RejectResponse(
+				model.OutputValidationToolIdentity,
+				response,
+				model.NewUnadvertisedToolNameError(name),
+			)
 		},
 	}, invocations)
 	request := testModelRequest("catalog.allowed")

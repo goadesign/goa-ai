@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	brtypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
+	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -585,12 +586,9 @@ func TestChunkProcessorRejectsMessageStopWithOpenContentBlock(t *testing.T) {
 	require.EqualError(t, err, "bedrock stream: message stopped with 1 open content blocks")
 }
 
-// TestChunkProcessorClassifiesMessageStopWithoutStartAsEmptyStream verifies
-// that a messageStop arriving before messageStart is classified as a
-// retryable empty stream (model.ErrEmptyStream). Bedrock intermittently
-// produces this wire shape when the model emits an empty completion, so retry
-// middleware must be able to detect it without string matching.
-func TestChunkProcessorClassifiesMessageStopWithoutStartAsEmptyStream(t *testing.T) {
+// TestChunkProcessorClassifiesMessageStopWithoutStart verifies that a clean
+// provider event with invalid message order is a stream protocol rejection.
+func TestChunkProcessorClassifiesMessageStopWithoutStart(t *testing.T) {
 	cp := newChunkProcessor(
 		func(model.Chunk) error { return nil },
 		map[string]string{},
@@ -604,12 +602,9 @@ func TestChunkProcessorClassifiesMessageStopWithoutStartAsEmptyStream(t *testing
 		Value: brtypes.MessageStopEvent{StopReason: brtypes.StopReasonEndTurn},
 	})
 
-	require.ErrorIs(t, err, model.ErrEmptyStream)
-	pe, ok := model.AsProviderError(err)
-	require.True(t, ok)
-	require.Equal(t, model.ProviderErrorKindUnavailable, pe.Kind())
-	require.Equal(t, "empty_stream", pe.Code())
-	require.True(t, pe.Retryable())
+	require.Equal(t, model.OutputValidationStreamProtocol, outputvalidation.RequiredKind(err))
+	_, providerFailure := model.AsProviderError(err)
+	require.False(t, providerFailure)
 }
 
 // TestChunkProcessorRejectsDuplicateMessageStop verifies that a second
