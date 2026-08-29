@@ -220,7 +220,7 @@ func (c *Client) ReportToolCallOverload(ctx context.Context, p *ProviderToolCall
 //   - "validation_error" (type *goa.ServiceError)
 //   - "service_unavailable" (type *goa.ServiceError)
 //   - error: internal error
-func (c *Client) ClaimToolCall(ctx context.Context, p *ProviderToolCallClaimPayload) (res *ClaimToolCallResult, err error) {
+func (c *Client) ClaimToolCall(ctx context.Context, p *ClaimToolCallPayload) (res *ClaimToolCallResult, err error) {
 	var ires any
 	ires, err = c.ClaimToolCallEndpoint(ctx, p)
 	if err != nil {

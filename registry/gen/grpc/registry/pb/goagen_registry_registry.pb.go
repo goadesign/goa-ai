@@ -2092,6 +2092,9 @@ func (*ReportToolCallOverloadResponse) Descriptor() ([]byte, []int) {
 
 type ClaimToolCallRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Runtime UUID created once for this claim operation and reused by its
+	// transport retries.
+	ClaimOperationId string `protobuf:"bytes,100,opt,name=claim_operation_id,json=claimOperationId,proto3" json:"claim_operation_id,omitempty"`
 	// Toolset whose provider claimed the call.
 	Toolset string `protobuf:"bytes,1,opt,name=toolset,proto3" json:"toolset,omitempty"`
 	// Stable identity of the provider process.
@@ -2138,6 +2141,13 @@ func (x *ClaimToolCallRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ClaimToolCallRequest.ProtoReflect.Descriptor instead.
 func (*ClaimToolCallRequest) Descriptor() ([]byte, []int) {
 	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *ClaimToolCallRequest) GetClaimOperationId() string {
+	if x != nil {
+		return x.ClaimOperationId
+	}
+	return ""
 }
 
 func (x *ClaimToolCallRequest) GetToolset() string {
@@ -2401,8 +2411,9 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\x17call_registration_token\x18\x05 \x01(\tR\x15callRegistrationToken\x12\x1e\n" +
 	"\vtool_use_id\x18\x06 \x01(\tR\ttoolUseId\x12(\n" +
 	"\x10request_event_id\x18\a \x01(\tR\x0erequestEventId\" \n" +
-	"\x1eReportToolCallOverloadResponse\"\xcb\x02\n" +
-	"\x14ClaimToolCallRequest\x12\x18\n" +
+	"\x1eReportToolCallOverloadResponse\"\xf9\x02\n" +
+	"\x14ClaimToolCallRequest\x12,\n" +
+	"\x12claim_operation_id\x18d \x01(\tR\x10claimOperationId\x12\x18\n" +
 	"\atoolset\x18\x01 \x01(\tR\atoolset\x12\x1f\n" +
 	"\vprovider_id\x18\x02 \x01(\tR\n" +
 	"providerId\x126\n" +
@@ -2412,7 +2423,7 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\vtool_use_id\x18\x06 \x01(\tR\ttoolUseId\x12(\n" +
 	"\x10request_event_id\x18\a \x01(\tR\x0erequestEventId\"9\n" +
 	"\x15ClaimToolCallResponse\x12 \n" +
-	"\vdisposition\x18\x01 \x01(\tR\vdisposition2\x83\v\n" +
+	"\vdisposition\x18\x01 \x01(\tR\vdisposition2\x88\v\n" +
 	"\bRegistry\x12O\n" +
 	"\bRegister\x12 .goa_ai_registry.RegisterRequest\x1a!.goa_ai_registry.RegisterResponse\x12d\n" +
 	"\x0fReleaseProvider\x12'.goa_ai_registry.ReleaseProviderRequest\x1a(.goa_ai_registry.ReleaseProviderResponse\x12^\n" +
@@ -2429,8 +2440,8 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\tRetryTool\x12!.goa_ai_registry.RetryToolRequest\x1a\".goa_ai_registry.RetryToolResponse\x12g\n" +
 	"\x10CompleteToolCall\x12(.goa_ai_registry.CompleteToolCallRequest\x1a).goa_ai_registry.CompleteToolCallResponse\x12y\n" +
 	"\x16PublishToolOutputDelta\x12..goa_ai_registry.PublishToolOutputDeltaRequest\x1a/.goa_ai_registry.PublishToolOutputDeltaResponse\x12y\n" +
-	"\x16ReportToolCallOverload\x12..goa_ai_registry.ReportToolCallOverloadRequest\x1a/.goa_ai_registry.ReportToolCallOverloadResponse\x12^\n" +
-	"\rClaimToolCall\x12%.goa_ai_registry.ClaimToolCallRequest\x1a&.goa_ai_registry.ClaimToolCallResponseB\x14Z\x12/goa_ai_registrypbb\x06proto3"
+	"\x16ReportToolCallOverload\x12..goa_ai_registry.ReportToolCallOverloadRequest\x1a/.goa_ai_registry.ReportToolCallOverloadResponse\x12c\n" +
+	"\rClaimToolCall\x12%.goa_ai_registry.ClaimToolCallRequest\x1a&.goa_ai_registry.ClaimToolCallResponse\"\x03\x90\x02\x02B\x14Z\x12/goa_ai_registrypbb\x06proto3"
 
 var (
 	file_goagen_registry_registry_proto_rawDescOnce sync.Once

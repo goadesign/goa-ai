@@ -381,18 +381,19 @@ func BuildReportToolCallOverloadPayload(registryReportToolCallOverloadMessage st
 
 // BuildClaimToolCallPayload builds the payload for the registry ClaimToolCall
 // endpoint from CLI flags.
-func BuildClaimToolCallPayload(registryClaimToolCallMessage string) (*registry.ProviderToolCallClaimPayload, error) {
+func BuildClaimToolCallPayload(registryClaimToolCallMessage string) (*registry.ClaimToolCallPayload, error) {
 	var err error
 	var message registrypb.ClaimToolCallRequest
 	{
 		if registryClaimToolCallMessage != "" {
 			err = json.Unmarshal([]byte(registryClaimToolCallMessage), &message)
 			if err != nil {
-				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"call_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"provider_registration_token\": \"2222222222222222222222222222222222222222222222222222222222222222\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"tool_use_id\": \"3333333333333333333333333333333333333333333333333333333333333333\",\n      \"toolset\": \"catalog.lookup\"\n   }'")
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"call_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"claim_operation_id\": \"00000000-0000-4000-8000-000000000002\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"provider_registration_token\": \"2222222222222222222222222222222222222222222222222222222222222222\",\n      \"request_event_id\": \"1721736123456-0\",\n      \"tool_use_id\": \"3333333333333333333333333333333333333333333333333333333333333333\",\n      \"toolset\": \"catalog.lookup\"\n   }'")
 			}
 		}
 	}
-	v := &registry.ProviderToolCallClaimPayload{
+	v := &registry.ClaimToolCallPayload{
+		ClaimOperationID:          message.ClaimOperationId,
 		Toolset:                   message.Toolset,
 		ProviderID:                message.ProviderId,
 		ProviderIncarnationID:     message.ProviderIncarnationId,

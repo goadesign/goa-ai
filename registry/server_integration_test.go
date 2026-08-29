@@ -538,7 +538,7 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, reg.Close(ctx)) })
 
 	counting := &callCountingService{Service: reg.Service()}
-	_, rawClient := startServiceAndClients(t, counting)
+	generatedClient, rawClient := startServiceAndClients(t, counting)
 	first, err := rawClient.Register(ctx, grpcRegisterRequest(
 		"status-tools",
 		"admission-a",
@@ -609,6 +609,11 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 		ExpectedRegistrationToken: first.GetRegistrationToken(),
 	})
 	assert.Equal(t, codes.Canceled, status.Code(err))
+	_, err = generatedClient.CheckAdmission(canceledCtx, &genregistry.CheckAdmissionPayload{
+		Name:                      "status-tools",
+		ExpectedRegistrationToken: first.GetRegistrationToken(),
+	})
+	require.ErrorIs(t, err, context.Canceled)
 
 	rejected := &callCountingService{
 		Service:       reg.Service(),

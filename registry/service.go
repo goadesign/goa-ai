@@ -66,7 +66,7 @@ type (
 		Claim(
 			ctx context.Context,
 			toolset, toolUseID, callRegistrationToken, providerRegistrationToken,
-			providerLease, requestEventID, resultStreamID string,
+			providerLease, requestEventID, claimOperationID, resultStreamID string,
 			stalePayload []byte,
 		) (callClaimDisposition, error)
 	}
@@ -661,7 +661,7 @@ func (s *Service) ReportToolCallOverload(ctx context.Context, p *genregistry.Pro
 // ClaimToolCall performs the registry-owned pre-dispatch transition.
 func (s *Service) ClaimToolCall(
 	ctx context.Context,
-	p *genregistry.ProviderToolCallClaimPayload,
+	p *genregistry.ClaimToolCallPayload,
 ) (*genregistry.ClaimToolCallResult, error) {
 	stale := toolregistry.NewToolResultErrorMessage(
 		p.CallRegistrationToken,
@@ -681,6 +681,7 @@ func (s *Service) ClaimToolCall(
 		p.ProviderRegistrationToken,
 		providerLeaseKey(p.ProviderID, p.ProviderIncarnationID),
 		p.RequestEventID,
+		p.ClaimOperationID,
 		toolregistry.ResultStreamID(p.ToolUseID),
 		stalePayload,
 	)

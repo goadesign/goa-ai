@@ -172,8 +172,9 @@ var _ = Service("registry", func() {
 	})
 
 	Method("ClaimToolCall", func() {
-		Description("Atomically settle one queued request before handler dispatch. The registry authenticates the exact provider lease and request event; only an active non-draining lease may gain immutable execution ownership. Existing owners, retained terminal history, and Redis-owned expiration settle without execution, while stale, draining, or retired unclaimed work receives the canonical stale-generation terminal. Only the exact granted provider incarnation and request event may publish deltas or complete the call; ownership never transfers after a crash.")
-		Payload(ProviderToolCallClaimPayload)
+		Description("Atomically decide whether one queued request may enter handler execution. An active provider gains immutable ownership, and an exact replay of the same claim operation returns the same execute decision so an uncertain transport result can be retried safely. A Pulse redelivery starts a different claim operation and therefore cannot repeat handler execution. A different owner, retained terminal history, and Redis-owned expiration settle without execution. A draining, expired, or retired lease is rejected without changing unclaimed work, while a request authored under a stale registration receives the canonical stale-generation terminal. Only the exact granted provider incarnation and request event may publish deltas or complete the call; ownership never transfers after a crash.")
+		Idempotent()
+		Payload(ClaimToolCallPayload)
 		Result(ClaimToolCallResult)
 		Error("validation_error")
 		Error("service_unavailable")
@@ -550,6 +551,16 @@ var ProviderToolCallClaimPayload = Type("ProviderToolCallClaimPayload", func() {
 		"tool_use_id",
 		"request_event_id",
 	)
+})
+
+var ClaimToolCallPayload = Type("ClaimToolCallPayload", func() {
+	Description("Exact provider claim operation for one request event. Transport retries reuse the operation ID; a later Pulse redelivery uses a new ID.")
+	Extend(ProviderToolCallClaimPayload)
+	Field(100, "claim_operation_id", String, "Runtime UUID created once for this claim operation and reused by its transport retries.", func() {
+		Format(FormatUUID)
+		Example("00000000-0000-4000-8000-000000000002")
+	})
+	Required("claim_operation_id")
 })
 
 var PublishToolOutputDeltaPayload = Type("PublishToolOutputDeltaPayload", func() {

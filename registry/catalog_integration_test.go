@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -350,6 +351,7 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 		token,
 		providerLeaseKey("provider", testIncarnationA),
 		overload[0].eventID,
+		uuid.NewString(),
 		resultStreamID,
 		[]byte(`{"stale":true}`),
 	)
@@ -452,6 +454,7 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 		token,
 		providerLeaseKey("provider", testIncarnationA),
 		initial[0].eventID,
+		uuid.NewString(),
 		toolregistry.ResultStreamID(toolUseID),
 		[]byte(`{"stale":true}`),
 	)
@@ -469,6 +472,7 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 		token,
 		providerLeaseKey("provider", testIncarnationA),
 		initial[0].eventID,
+		uuid.NewString(),
 		toolregistry.ResultStreamID(toolUseID),
 		[]byte(`{"stale":true}`),
 	)

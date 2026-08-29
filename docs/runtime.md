@@ -1493,6 +1493,7 @@ go func() {
                     ProviderIncarnationID: incarnationID,
                     AdmissionRevision: admissionRevision,
                     WireProtocolVersion: registrywire.WireProtocolVersion,
+                    SchemaFingerprint: toolsetpkg.SchemaFingerprint,
                 })
                 if err != nil {
                     return toolprovider.RegistrationLease{}, err
@@ -1585,7 +1586,7 @@ go func() {
 This integration is intentionally split:
 
 - **Registry gateway**: validates payloads and atomically owns provider-incarnation leases, health epoch/pong state, per-call publication admission, absolute expiration, and terminal result publication
-- **Service provider loop**: executes tools using generated provider adapters and submits terminal results through the typed registry adapter
+- **Service provider loop**: executes tools using generated provider handlers and submits terminal results through generated registry client callbacks
 
 Import `goa.design/goa-ai/runtime/toolregistry` as `registrywire` in provider
 and registry-consumer composition roots.
@@ -1594,6 +1595,58 @@ message-envelope version. Every provider Register payload and every consumer
 CallTool or RetryTool payload must carry it. Consumers do not Register;
 CallTool performs initial admission, while RetryTool can republish only one
 existing exact admission after overload.
+
+Construct registry clients with Goa's generated gRPC transport and service
+types:
+
+```go
+import (
+	"fmt"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	genregistrygrpc "goa.design/goa-ai/registry/gen/grpc/registry/client"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+)
+
+func newRegistryClient(address string) (*genregistry.Client, func() error, error) {
+	conn, err := grpc.NewClient(
+		address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("connect to registry: %w", err)
+	}
+	transport := genregistrygrpc.NewClient(conn, grpc.WaitForReady(true))
+	return genregistry.NewClient(
+		transport.Register(),
+		transport.ReleaseProvider(),
+		transport.DrainProvider(),
+		transport.Unregister(),
+		transport.Pong(),
+		transport.ListToolsets(),
+		transport.GetToolset(),
+		transport.CheckAdmission(),
+		transport.Search(),
+		transport.CallTool(),
+		transport.RetryTool(),
+		transport.CompleteToolCall(),
+		transport.PublishToolOutputDelta(),
+		transport.ReportToolCallOverload(),
+		transport.ClaimToolCall(),
+	), conn.Close, nil
+}
+```
+
+The former `runtime/registry.GRPCClientAdapter` accepted the generated protobuf
+stub and owned protobuf-to-runtime conversion. It was removed. Provider,
+invocation, and direct discovery callers use the complete generated service
+client above. Applications that use `runtime/registry.Manager` pass that same
+service client to `runtime/registry.NewClient`; the transport-neutral wrapper
+projects generated discovery results into the manager's cached and federated
+resource types. The application retains ownership of the gRPC connection in
+both cases.
 
 Provider leases are scoped by stable `ProviderID` plus a runtime-generated UUID
 incarnation. `Serve` generates the incarnation once and passes it to typed
@@ -1660,13 +1713,20 @@ token. Any later A candidate after A→B receives permanent
 permanent unbounded correctness history and grows with distinct admissions.
 Do not truncate or probabilistically compact it.
 
-After every admitted exit, `Serve` stops renewal, atomically marks every exact
-token/incarnation lease draining, then closes the shared sink before processing
-the remaining local queue. Draining excludes that incarnation from new
-publication but preserves its authority to claim and complete request events
-already delivered before intake closed. The Drain request carries the
+After every admitted exit, `Serve` stops renewal and atomically marks the
+original admitted token/incarnation lease draining before it closes the shared
+sink. Workers finish only calls whose registry claims committed before
+draining began. Buffered, unclaimed request events remain pending for a
+replacement provider; draining rejects new claims while preserving authority
+to complete previously claimed calls. The Drain request carries the
 configured shutdown duration plus `SettlementAuthorityMargin`, and Redis
 extends the lease from the transition time through that authority window.
+`Serve` retains the renewal result before cleanup. If renewal returns a
+different token at the same time as process cancellation, cleanup drains that
+token concurrently under the same deadline and reports the token change as a
+terminal contract failure. The changed token is released only when its drain
+and the remaining settlement both succeed; otherwise the returned error
+preserves the failed cleanup and lease expiry removes it.
 `Serve` applies one shared `ShutdownTimeout` deadline to sink closure, worker
 and registry-owned terminal settlement, and queued acknowledgement drain. The
 lease margin keeps authority valid while the final operation crosses the
@@ -1681,6 +1741,11 @@ release token or missing lease is an idempotent success.
 Before each handler invocation, `Serve` calls `ClaimToolCall`. The registry
 authenticates the exact provider lease and request event, then atomically grants
 one immutable dispatch owner or returns `terminal`, `claimed`, or `expired`.
+If the transport loses the first response, the generated client retries the
+same idempotent request and claim-operation ID. That exact operation returns
+`execute` again. A later Pulse redelivery creates a different operation ID and
+returns `claimed`, even when the provider, lease, and request event are the
+same.
 Only `execute` invokes the handler. Terminal and claimed redeliveries are
 acknowledged without repeating side effects; a crashed owner is never replaced.
 Each claim enters global and exact-lease durable indexes. The absolute execution
@@ -1814,7 +1879,7 @@ Providers submit
 terminal results, overload notices, and output deltas through typed registry
 operations. Each operation verifies the exact token/incarnation lease and the
 specific request-stream event claim. A preserved retired or draining exact
-lease may settle already-published work it owns.
+lease may settle already-claimed work it owns.
 `CompleteToolCall` atomically appends the canonical result and commits terminal
 state; later overload notices and deltas become no-ops. Output fragments are
 bounded by `MaxToolOutputDeltaBytes` and

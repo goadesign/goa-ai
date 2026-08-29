@@ -197,8 +197,18 @@ end
 if execution_deadline <= now_millis then
   return 4
 end
-if redis.call("HGET", KEYS[1], "dispatch_provider_token") ~= "" then
+local dispatch_provider_token = redis.call("HGET", KEYS[1], "dispatch_provider_token")
+if dispatch_provider_token ~= "" then
+  if dispatch_provider_token == ARGV[4]
+  and redis.call("HGET", KEYS[1], "dispatch_provider_lease") == ARGV[5]
+  and redis.call("HGET", KEYS[1], "dispatch_request_event_id") == ARGV[6]
+  and redis.call("HGET", KEYS[1], "dispatch_claim_operation_id") == ARGV[11] then
+    return 1
+  end
   return 3
+end
+if lease.draining == true then
+  return redis.error_reply("PROVIDERLEASECHANGED")
 end
 if ARGV[2] ~= ARGV[4] then
   local id = redis.call("XADD", KEYS[3], "MAXLEN", "=", ARGV[10], "*", "n", ARGV[7], "p", ARGV[8])
@@ -220,6 +230,7 @@ redis.call(
   "dispatch_provider_token", ARGV[4],
   "dispatch_provider_lease", ARGV[5],
   "dispatch_request_event_id", ARGV[6],
+  "dispatch_claim_operation_id", ARGV[11],
   "dispatch_lease_expires_at_unix_milli", tostring(lease.expires_at_unix_milli)
 )
 local settlement_deadline = math.min(execution_deadline, tonumber(lease.expires_at_unix_milli))
@@ -542,13 +553,16 @@ func (s *callAdmissionStore) Complete(
 	return nil
 }
 
-// Claim atomically grants immutable dispatch ownership or returns the
-// authoritative non-execution disposition. Stale unclaimed calls receive their
-// canonical terminal event at the same linearization point.
+// Claim atomically grants immutable dispatch ownership only while the exact
+// provider lease remains routable. Draining leases reject new claims, while
+// an exact operation replay retains execution and completion authority after
+// drain. A later redelivery receives the existing-owner disposition. Stale
+// unclaimed calls receive their canonical terminal event at the same
+// linearization point.
 func (s *callAdmissionStore) Claim(
 	ctx context.Context,
 	toolset, toolUseID, callRegistrationToken, providerRegistrationToken,
-	providerLease, requestEventID, resultStreamID string,
+	providerLease, requestEventID, claimOperationID, resultStreamID string,
 	stalePayload []byte,
 ) (callClaimDisposition, error) {
 	key := s.callKey(toolUseID)
@@ -574,6 +588,7 @@ func (s *callAdmissionStore) Claim(
 		stalePayload,
 		hex.EncodeToString(digest[:]),
 		toolregistry.ResultStreamMaxLen,
+		claimOperationID,
 	).Int()
 	if err != nil {
 		switch {

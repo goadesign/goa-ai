@@ -138,14 +138,17 @@ type RegistryClient interface {
 	// then atomically appends retry control only while the authoritative call
 	// record remains nonterminal.
 	ReportToolCallOverload(ctx context.Context, in *ReportToolCallOverloadRequest, opts ...grpc.CallOption) (*ReportToolCallOverloadResponse, error)
-	// Atomically settle one queued request before handler dispatch. The registry
-	// authenticates the exact provider lease and request event; only an active
-	// non-draining lease may gain immutable execution ownership. Existing owners,
+	// Atomically decide whether one queued request may enter handler execution. An
+	// active provider gains immutable ownership, and an exact replay of the same
+	// claim operation returns the same execute decision so an uncertain transport
+	// result can be retried safely. A Pulse redelivery starts a different claim
+	// operation and therefore cannot repeat handler execution. A different owner,
 	// retained terminal history, and Redis-owned expiration settle without
-	// execution, while stale, draining, or retired unclaimed work receives the
-	// canonical stale-generation terminal. Only the exact granted provider
-	// incarnation and request event may publish deltas or complete the call;
-	// ownership never transfers after a crash.
+	// execution. A draining, expired, or retired lease is rejected without
+	// changing unclaimed work, while a request authored under a stale registration
+	// receives the canonical stale-generation terminal. Only the exact granted
+	// provider incarnation and request event may publish deltas or complete the
+	// call; ownership never transfers after a crash.
 	ClaimToolCall(ctx context.Context, in *ClaimToolCallRequest, opts ...grpc.CallOption) (*ClaimToolCallResponse, error)
 }
 
@@ -402,14 +405,17 @@ type RegistryServer interface {
 	// then atomically appends retry control only while the authoritative call
 	// record remains nonterminal.
 	ReportToolCallOverload(context.Context, *ReportToolCallOverloadRequest) (*ReportToolCallOverloadResponse, error)
-	// Atomically settle one queued request before handler dispatch. The registry
-	// authenticates the exact provider lease and request event; only an active
-	// non-draining lease may gain immutable execution ownership. Existing owners,
+	// Atomically decide whether one queued request may enter handler execution. An
+	// active provider gains immutable ownership, and an exact replay of the same
+	// claim operation returns the same execute decision so an uncertain transport
+	// result can be retried safely. A Pulse redelivery starts a different claim
+	// operation and therefore cannot repeat handler execution. A different owner,
 	// retained terminal history, and Redis-owned expiration settle without
-	// execution, while stale, draining, or retired unclaimed work receives the
-	// canonical stale-generation terminal. Only the exact granted provider
-	// incarnation and request event may publish deltas or complete the call;
-	// ownership never transfers after a crash.
+	// execution. A draining, expired, or retired lease is rejected without
+	// changing unclaimed work, while a request authored under a stale registration
+	// receives the canonical stale-generation terminal. Only the exact granted
+	// provider incarnation and request event may publish deltas or complete the
+	// call; ownership never transfers after a crash.
 	ClaimToolCall(context.Context, *ClaimToolCallRequest) (*ClaimToolCallResponse, error)
 	mustEmbedUnimplementedRegistryServer()
 }

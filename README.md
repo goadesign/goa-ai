@@ -89,8 +89,10 @@ use the execution deadline; result streams use the retention expiration.
 The registry atomically stores each terminal with the call record. Replay
 restores a trimmed terminal from bounded delivery history. Output deltas have
 byte and per-call count limits, and overload reporting is idempotent per request
-event. Retired and draining leases retain authority to settle the exact
-already-published request events they own. At execution deadline, or sooner if
+event. Retired and draining leases retain authority to settle only claims that
+committed before draining. A claim-operation ID lets transport retries recover
+the original execute decision while a later event redelivery remains
+non-executable. At execution deadline, or sooner if
 that lease disappears, registry-owned settlement publishes `outcome_unknown`
 because the effect may have occurred; execution never transfers to another
 provider and the canonical terminal remains retained.

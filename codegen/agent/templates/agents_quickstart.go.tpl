@@ -327,6 +327,7 @@ go func() {
                     ProviderIncarnationID: incarnationID,
                     AdmissionRevision: admissionRevision,
                     WireProtocolVersion: registrywire.WireProtocolVersion,
+                    SchemaFingerprint: toolsetpkg.SchemaFingerprint,
                 })
                 if err != nil {
                     return toolprovider.RegistrationLease{}, err
@@ -393,15 +394,16 @@ go func() {
                     RequestEventID:            requestEventID,
                 })
             },
-            Claim: func(ctx context.Context, toolset, providerID, incarnationID, providerToken, callToken, toolUseID, requestEventID string) (toolprovider.ClaimDisposition, error) {
-                result, err := registryClient.ClaimToolCall(ctx, &registry.ProviderToolCallClaimPayload{
-                    Toolset:                   toolset,
-                    ProviderID:                providerID,
-                    ProviderIncarnationID:     incarnationID,
-                    ProviderRegistrationToken: providerToken,
-                    CallRegistrationToken:     callToken,
-                    ToolUseID:                 toolUseID,
-                    RequestEventID:            requestEventID,
+            Claim: func(ctx context.Context, claim toolprovider.ClaimRequest) (toolprovider.ClaimDisposition, error) {
+                result, err := registryClient.ClaimToolCall(ctx, &registry.ClaimToolCallPayload{
+                    Toolset:                   claim.Toolset,
+                    ProviderID:                claim.ProviderID,
+                    ProviderIncarnationID:     claim.ProviderIncarnationID,
+                    ProviderRegistrationToken: claim.ProviderRegistrationToken,
+                    CallRegistrationToken:     claim.CallRegistrationToken,
+                    ToolUseID:                 claim.ToolUseID,
+                    RequestEventID:            claim.RequestEventID,
+                    ClaimOperationID:          claim.OperationID,
                 })
                 if err != nil {
                     return "", err

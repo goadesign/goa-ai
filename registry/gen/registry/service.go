@@ -104,15 +104,18 @@ type Service interface {
 	// then atomically appends retry control only while the authoritative call
 	// record remains nonterminal.
 	ReportToolCallOverload(context.Context, *ProviderToolCallClaimPayload) (err error)
-	// Atomically settle one queued request before handler dispatch. The registry
-	// authenticates the exact provider lease and request event; only an active
-	// non-draining lease may gain immutable execution ownership. Existing owners,
+	// Atomically decide whether one queued request may enter handler execution. An
+	// active provider gains immutable ownership, and an exact replay of the same
+	// claim operation returns the same execute decision so an uncertain transport
+	// result can be retried safely. A Pulse redelivery starts a different claim
+	// operation and therefore cannot repeat handler execution. A different owner,
 	// retained terminal history, and Redis-owned expiration settle without
-	// execution, while stale, draining, or retired unclaimed work receives the
-	// canonical stale-generation terminal. Only the exact granted provider
-	// incarnation and request event may publish deltas or complete the call;
-	// ownership never transfers after a crash.
-	ClaimToolCall(context.Context, *ProviderToolCallClaimPayload) (res *ClaimToolCallResult, err error)
+	// execution. A draining, expired, or retired lease is rejected without
+	// changing unclaimed work, while a request authored under a stale registration
+	// receives the canonical stale-generation terminal. Only the exact granted
+	// provider incarnation and request event may publish deltas or complete the
+	// call; ownership never transfers after a crash.
+	ClaimToolCall(context.Context, *ClaimToolCallPayload) (res *ClaimToolCallResult, err error)
 }
 
 // APIName is the name of the API as defined in the design.
@@ -179,6 +182,28 @@ type CheckAdmissionPayload struct {
 	// Deterministic token derived from the deployed provider's generated schema,
 	// admission revision, and wire protocol.
 	ExpectedRegistrationToken string
+}
+
+// ClaimToolCallPayload is the payload type of the registry service
+// ClaimToolCall method.
+type ClaimToolCallPayload struct {
+	// Runtime UUID created once for this claim operation and reused by its
+	// transport retries.
+	ClaimOperationID string
+	// Toolset whose provider claimed the call.
+	Toolset string
+	// Stable identity of the provider process.
+	ProviderID string
+	// Runtime UUID of the exact Serve lifecycle.
+	ProviderIncarnationID string
+	// Exact registration token of the provider lease.
+	ProviderRegistrationToken string
+	// Admission token stamped on the claimed call.
+	CallRegistrationToken string
+	// Global transport identity stamped on the claimed call.
+	ToolUseID string
+	// Pulse request-stream event claimed by this provider.
+	RequestEventID string
 }
 
 // ClaimToolCallResult is the result type of the registry service ClaimToolCall

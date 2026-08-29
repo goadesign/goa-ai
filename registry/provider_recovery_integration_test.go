@@ -148,16 +148,17 @@ func TestProviderRecoversAfterRedisStateLoss(t *testing.T) {
 			},
 			Claim: func(
 				ctx context.Context,
-				_, providerID, incarnationID, providerToken, callToken, toolUseID, requestEventID string,
+				claim provider.ClaimRequest,
 			) (provider.ClaimDisposition, error) {
-				result, err := svc.ClaimToolCall(ctx, &genregistry.ProviderToolCallClaimPayload{
-					Toolset:                   toolset,
-					ProviderID:                providerID,
-					ProviderIncarnationID:     incarnationID,
-					ProviderRegistrationToken: providerToken,
-					CallRegistrationToken:     callToken,
-					ToolUseID:                 toolUseID,
-					RequestEventID:            requestEventID,
+				result, err := svc.ClaimToolCall(ctx, &genregistry.ClaimToolCallPayload{
+					Toolset:                   claim.Toolset,
+					ProviderID:                claim.ProviderID,
+					ProviderIncarnationID:     claim.ProviderIncarnationID,
+					ProviderRegistrationToken: claim.ProviderRegistrationToken,
+					CallRegistrationToken:     claim.CallRegistrationToken,
+					ToolUseID:                 claim.ToolUseID,
+					RequestEventID:            claim.RequestEventID,
+					ClaimOperationID:          claim.OperationID,
 				})
 				if err != nil {
 					return "", err

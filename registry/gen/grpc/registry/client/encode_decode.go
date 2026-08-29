@@ -457,9 +457,9 @@ func BuildClaimToolCallFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.C
 // EncodeClaimToolCallRequest encodes requests sent to registry ClaimToolCall
 // endpoint.
 func EncodeClaimToolCallRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
-	payload, ok := v.(*registry.ProviderToolCallClaimPayload)
+	payload, ok := v.(*registry.ClaimToolCallPayload)
 	if !ok {
-		return nil, goagrpc.ErrInvalidType("registry", "ClaimToolCall", "*registry.ProviderToolCallClaimPayload", v)
+		return nil, goagrpc.ErrInvalidType("registry", "ClaimToolCall", "*registry.ClaimToolCallPayload", v)
 	}
 	return NewProtoClaimToolCallRequest(payload), nil
 }
