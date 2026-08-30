@@ -26,12 +26,7 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 	}
 
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
-		AgentID: "svc.agent",
-		Route: AgentRoute{
-			ID:               agent.Ident("svc.agent"),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition(agent.Ident("svc.agent"), "wf", "default", nil, nil),
 		PreChildValidator: func(context.Context, *AgentToolValidationInput) *tools.ValidationError {
 			return tools.NewValidationError(
 				"sources must come from prior evidence",

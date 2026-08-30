@@ -49,12 +49,7 @@ func TestPrepareAgentChildUsesRecordedActivityOutputWithoutRendering(t *testing.
 	}
 	toolName := tools.Ident("svc.agents.inspect")
 	cfg := AgentToolConfig{
-		AgentID: agent.Ident("nested.agent"),
-		Route: AgentRoute{
-			ID:               agent.Ident("nested.agent"),
-			WorkflowName:     "nested.workflow",
-			DefaultTaskQueue: "nested.queue",
-		},
+		Definition: testAgentDefinition(agent.Ident("nested.agent"), "nested.workflow", "nested.queue", nil, nil),
 		AgentToolContent: AgentToolContent{
 			PromptSpecs: map[tools.Ident]prompt.Ident{
 				toolName: "nested.request",

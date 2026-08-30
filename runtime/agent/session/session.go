@@ -67,7 +67,11 @@ type (
 		SessionID string
 		// ParentRunID identifies the parent workflow for a child start.
 		ParentRunID string
-		// StartedAt is the workflow-owned start time.
+		// PredecessorRunID identifies the suspended run whose saved state this
+		// workflow restores. Initial and one-shot starts leave it empty.
+		PredecessorRunID string
+		// StartedAt is the workflow-owned start time. It uses millisecond
+		// precision to match the runtime record contract.
 		StartedAt time.Time
 		// Labels are the run labels visible to lifecycle consumers.
 		Labels map[string]string
@@ -180,8 +184,12 @@ func ValidateRunStart(start RunStart, child bool) error {
 		return ErrParentRunIDRequired
 	case !child && start.ParentRunID != "":
 		return errors.New("root run cannot have parent run id")
+	case start.PredecessorRunID == start.RunID:
+		return errors.New("predecessor run id must differ from run id")
 	case start.StartedAt.IsZero():
 		return errors.New("started_at is required")
+	case !start.StartedAt.Equal(start.StartedAt.Truncate(time.Millisecond)):
+		return errors.New("started_at must use millisecond precision")
 	default:
 		return nil
 	}

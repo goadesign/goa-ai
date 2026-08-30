@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -711,10 +712,7 @@ func TestWorkflowRecoversInitialRejectedModelAnswer(t *testing.T) {
 
 	agentID := agent.Ident("catalog.initial-model-output")
 	resumes := 0
-	registration := AgentRegistration{
-		ID:                 agentID,
-		Specs:              []tools.ToolSpec{search},
-		PlanActivityName:   "plan",
+	registration := AgentRegistration{Definition: testRegistrationDefinition(agentID, engine.WorkflowDefinition{}, []tools.ToolSpec{search}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ResumeActivityName: "resume",
 		Planner: &stubPlanner{
 			start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
@@ -743,7 +741,7 @@ func TestWorkflowRecoversInitialRejectedModelAnswer(t *testing.T) {
 		Policy: RunPolicy{MaxRecoveryTurns: 1},
 	}
 	rt.agents[agentID] = registration
-	rt.agentToolSpecs[agentID] = registration.Specs
+	rt.agentToolSpecs[agentID] = registration.Definition.specs
 	rt.models["test"] = newRecoveryTestModel(t)
 
 	runInput := &RunInput{
@@ -870,9 +868,7 @@ func TestExecuteWorkflowRecoversInitialGeneratedModelToolCall(t *testing.T) {
 			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{request}}, nil
 		},
 	}
-	rt.agents[agentID] = AgentRegistration{
-		ID:                  agentID,
-		Planner:             pl,
+	rt.agents[agentID] = AgentRegistration{Definition: testRegistrationDefinition(agentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: pl,
 		PlanActivityName:    "start",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
@@ -1181,9 +1177,7 @@ func newRecoveryHarness(
 	}))
 
 	agentID := agent.Ident("catalog." + name)
-	registration := AgentRegistration{
-		ID:                  agentID,
-		Planner:             &stubPlanner{resume: resume},
+	registration := AgentRegistration{Definition: testRegistrationDefinition(agentID, engine.WorkflowDefinition{}, specs), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{resume: resume},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}

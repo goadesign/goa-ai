@@ -15,6 +15,10 @@ import (
 // validateCompletionToolPolicy proves that the required completion tool belongs
 // to the executing agent and can run under the caller's static policy.
 func (r *Runtime) validateCompletionToolPolicy(reg AgentRegistration, runPolicy *PolicyOverrides) error {
+	return validateCompletionToolPolicyForDefinition(reg.Definition, runPolicy)
+}
+
+func validateCompletionToolPolicyForDefinition(definition AgentDefinition, runPolicy *PolicyOverrides) error {
 	completion := completionToolFromPolicy(runPolicy)
 	if completion == "" {
 		return nil
@@ -22,9 +26,9 @@ func (r *Runtime) validateCompletionToolPolicy(reg AgentRegistration, runPolicy 
 	if runPolicy.LimitTerminalPlans != nil {
 		return errors.New("completion tool and limit terminal plans cannot be combined")
 	}
-	spec, ok := agentToolSpec(reg.Specs, completion)
+	spec, ok := definition.spec(completion)
 	if !ok {
-		return fmt.Errorf("completion tool %q is not registered for agent %q", completion, reg.ID)
+		return fmt.Errorf("completion tool %q is not registered for agent %q", completion, definition.route.ID)
 	}
 	if spec.TerminalRun {
 		return fmt.Errorf("completion tool %q must not be a terminal tool", completion)
@@ -47,6 +51,10 @@ func (r *Runtime) validateCompletionToolPolicy(reg AgentRegistration, runPolicy 
 // attempt must be the sole action in its planner result, while terminal output
 // is never a substitute for the required successful tool result.
 func (r *Runtime) validateCompletionToolPlanResult(result *PlanResult, completion tools.Ident) error {
+	return validateCompletionToolPlanResultWithSpecs(result, completion, r.toolSpec)
+}
+
+func validateCompletionToolPlanResultWithSpecs(result *PlanResult, completion tools.Ident, lookup toolSpecLookup) error {
 	if completion == "" {
 		return nil
 	}
@@ -65,7 +73,7 @@ func (r *Runtime) validateCompletionToolPlanResult(result *PlanResult, completio
 		}
 	}
 	for _, call := range result.ToolCalls {
-		spec, ok := r.toolSpec(call.Name)
+		spec, ok := lookup(call.Name)
 		if ok && spec.TerminalRun {
 			return completionToolRequiredError(
 				completion,

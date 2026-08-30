@@ -44,8 +44,9 @@ type (
 	// runStartedPayload is the complete payload stored for a RunStarted record.
 	// Run identity remains in the surrounding run-log record.
 	runStartedPayload struct {
-		ParentRunID string
-		Labels      map[string]string
+		ParentRunID      string            `json:"parent_run_id,omitempty"`
+		PredecessorRunID string            `json:"predecessor_run_id,omitempty"`
+		Labels           map[string]string `json:"labels,omitempty"`
 	}
 
 	turnIDSetter interface {
@@ -128,8 +129,9 @@ func EncodeRecordPayload(evt Event) (rawjson.Message, error) {
 	switch e := evt.(type) {
 	case *RunStartedEvent:
 		p := runStartedPayload{
-			ParentRunID: e.ParentRunID,
-			Labels:      e.Labels,
+			ParentRunID:      e.ParentRunID,
+			PredecessorRunID: e.PredecessorRunID,
+			Labels:           e.Labels,
 		}
 		b, err := json.Marshal(p)
 		if err != nil {
@@ -195,7 +197,14 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		if err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", RunStarted, err)
 		}
-		evt = NewRunStartedEvent(input.RunID, input.AgentID, input.SessionID, p.ParentRunID, p.Labels)
+		evt = NewRunStartedEvent(
+			input.RunID,
+			input.AgentID,
+			input.SessionID,
+			p.ParentRunID,
+			p.PredecessorRunID,
+			p.Labels,
+		)
 
 	case RunPhaseChanged:
 		var p RunPhaseChangedEvent

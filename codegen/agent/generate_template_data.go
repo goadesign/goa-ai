@@ -121,6 +121,7 @@ type (
 		RuntimeAlias                    string
 		ProviderAlias                   string
 		ProviderRegistrationConstructor string
+		Definition                      string
 	}
 
 	// usedToolsetFileData contains the saved tool names written into a local

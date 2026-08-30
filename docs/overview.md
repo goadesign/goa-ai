@@ -618,25 +618,24 @@ rt := runtime.New(
     runtime.WithLogger(logger),
     runtime.WithMetrics(metrics),
     runtime.WithTracer(tracer),
-    runtime.WithWorker(agentID, runtime.WorkerConfig{Queue: "custom"}),
 )
 ```
 
-`runtime.WithWorker(...)` handles placement only. Keep planner/tool attempt
-budgets in `RunPolicy.Timing` or `runtime.WithTiming(...)`; configure
-Temporal-specific queue-wait and liveness behavior on the Temporal engine
-itself.
+Each generated `AgentDefinition` owns the workflow name and default task queue.
+Keep planner and tool attempt budgets in `RunPolicy.Timing` or
+`runtime.WithTiming(...)`. Configure Temporal queue-wait and liveness behavior
+on the Temporal engine itself. A caller may select another queue for one run
+with `runtime.WithTaskQueue(...)`.
 
 ### Agent Registration
 
 ```go
 // Register generated agent (typically called by generated code)
 err := rt.RegisterAgent(ctx, runtime.AgentRegistration{
-    ID:       agent.Ident("service.agent"),
-    Planner:  myPlanner,
-    Workflow: workflow,
-    Toolsets: toolsets,
-    Policy:   policy,
+    Definition:      serviceagent.Definition(),
+    Planner:         myPlanner,
+    WorkflowHandler: rt.ExecuteWorkflow,
+    Policy:          policy,
     // ... activity names and options
 })
 
@@ -659,12 +658,8 @@ client, err := rt.Client(agent.Ident("service.agent"))
 // or panic variant:
 client := rt.MustClient(agent.Ident("service.agent"))
 
-// Get client for remote agent (workers elsewhere)
-client, err := rt.ClientFor(runtime.AgentRoute{
-    ID:               agent.Ident("service.agent"),
-    WorkflowName:     "ServiceAgentWorkflow",
-    DefaultTaskQueue: "service.agent",
-})
+// Get client for a generated agent whose worker runs elsewhere.
+client, err := rt.ClientFor(serviceagent.Definition())
 
 // Synchronous run
 out, err := client.Run(ctx, "session-1", messages,
@@ -1056,7 +1051,7 @@ The engine invokes the workflow handler, which calls `rt.ExecuteWorkflow`.
 | Path         | When           | How                                                               |
 |--------------|----------------|-------------------------------------------------------------------|
 | **Activity** | Default        | JSON‑encode via codec, schedule `ExecuteToolActivity`, collect futures |
-| **Child**    | Agent‑as‑tool  | Execute as child workflow via `ExecuteAgentChildWithRoute`        |
+| **Child**    | Agent‑as‑tool  | Execute as a child workflow using its generated definition        |
 
 `ExecuteToolActivity` decodes payloads, calls the toolset's `Execute`, re‑encodes results.
 Validation errors become `FailureInvalidCall` with a `RecoveryCorrectCall`
@@ -1098,9 +1093,11 @@ as child workflows, enabling linked streams and run links.
 ### Generated Provider Helpers
 
 - **Tool IDs** (fully qualified) and type aliases for codecs
-- **`New<Agent>ToolsetRegistration(rt *runtime.Runtime)`** — creates registration with routing info
-- **`NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)`** — configure per‑tool
-  text/templates
+- **`New<Agent>ToolsetRegistration(rt, definition)`** — creates a provider
+  registration from that agent's generated definition
+- **`NewRegistration(rt, definition, systemPrompt, ...runtime.AgentToolOption)`**
+  — configures per-tool text or templates while keeping the generated
+  definition as the only route and contract owner
 - **Typed call builders** like `New<Tool>Call(args)`. The runtime assigns the
   execution ID after the planner returns its `PlanResult`.
 
@@ -1109,7 +1106,8 @@ as child workflows, enabling linked streams and run links.
 1. Consumer registers with `rt.RegisterToolset(reg)`
 2. When the runtime sees a toolset call with `AgentTool` config:
    - Publishes `ChildRunLinkedEvent` linking parent to child
-   - Starts child workflow via `ExecuteAgentChildWithRoute`
+   - Starts the child workflow through `ExecuteAgentChild` using the child
+     `AgentDefinition`
    - Child runs full plan/execute/resume loop
 3. Results flow back through `ToolResult` with `RunLink` for correlation
 
@@ -1117,10 +1115,10 @@ as child workflows, enabling linked streams and run links.
 
 | Type                                   | Purpose                                          |
 |----------------------------------------|--------------------------------------------------|
-| `runtime.ToolsetRegistration`          | Name, Specs, Execute, TaskQueue, AgentTool       |
-| `runtime.AgentRoute`                   | ID, WorkflowName, DefaultTaskQueue               |
-| `runtime.AgentToolConfig`              | Route, activity names, prompts, templates        |
-| `runtime.ExecuteAgentChildWithRoute`   | Execute nested child workflow                    |
+| `runtime.ToolsetRegistration`          | Tool specifications and execution implementation |
+| `runtime.AgentDefinition`              | Agent route, tool contracts, labels, policy, and reachable children |
+| `runtime.AgentToolConfig`              | Child definition and optional prompt content     |
+| `runtime.ExecuteAgentChild`            | Execute a nested child workflow                  |
 
 ---
 
@@ -1131,7 +1129,7 @@ as child workflows, enabling linked streams and run links.
 - Implement `planner.Planner` (`PlanStart`, `PlanResume`)
 - Provide tool executors via `runtime.ToolCallExecutor`
 - Configure runtime: `runtime.New(runtimeStore, WithEngine, WithMemoryStore,
-  WithHooks, WithStream, WithLogger, WithMetrics, WithTracer, WithWorker)`
+  WithHooks, WithStream, WithLogger, WithMetrics, WithTracer)`
 - Register models: `rt.RegisterModel("model-id", client)`
 - Submit runs via generated clients
 - For agent‑as‑tool: configure text/templates with `runtime.WithText`, `runtime.WithTemplate`
@@ -1140,18 +1138,18 @@ as child workflows, enabling linked streams and run links.
 
 - Per agent: `AgentID`, `WorkflowName`, `DefaultTaskQueue`, activity names
 - `Register<Agent>(ctx, rt, Config)` — full registration
-- `NewWorker(...runtime.WorkerOption)` — worker configuration
-- `Route()` and `NewClient(rt)` — remote access
+- `Definition()` and `NewClient(rt)` — the shared caller and worker contract
 - Per toolset: `New<Agent><Toolset>ToolsetRegistration`
 
 ### Runtime/Library
 
 - `runtime.RegisterAgent`, `runtime.RegisterToolset`
 - `runtime.Client`, `runtime.ClientFor`, `runtime.MustClient`, `runtime.MustClientFor`
-- `runtime.AgentClient` with `Run/Start/Continue/StartContinuation`
+- `runtime.AgentClient` with `Run`, `Start`, `PrepareContinuation`,
+  `StartContinuation`, and `Continue`
 - `engine.Engine`, `engine.WorkflowDefinition`, `engine.ActivityDefinition`, `engine.WorkflowHandle`
 - Activities: `PlanStartActivity`, `PlanResumeActivity`, `ExecuteToolActivity`
-- Child composition: `runtime.ExecuteAgentChildWithRoute`
+- Child composition: `runtime.ExecuteAgentChild`
 - Tool infrastructure: `tools.ToolSpec`, `tools.JSONCodec`
 - Tool errors: `toolerrors.ToolError` for structured error reporting
 - Hooks: `hooks.Bus`, `hooks.Subscriber`, `hooks.Event` for runtime observability

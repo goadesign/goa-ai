@@ -315,10 +315,10 @@ func (r *Runtime) applyHistoryPolicy(ctx context.Context, reg *AgentRegistration
 	}
 	out, err := reg.Policy.History(ctx, msgs, tools)
 	if err != nil {
-		return nil, fmt.Errorf("history policy for agent %s: %w", reg.ID, err)
+		return nil, fmt.Errorf("history policy for agent %s: %w", reg.Definition.route.ID, err)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("history policy for agent %s returned no messages", reg.ID)
+		return nil, fmt.Errorf("history policy for agent %s returned no messages", reg.Definition.route.ID)
 	}
 	return out, nil
 }
@@ -448,6 +448,14 @@ func prepareRunStartRecords(ctx context.Context, events []hooks.Event, turnID st
 // or sessionless.
 func runStartStorageCommand(input *RunInput, records []*RecordActivityInput) (*api.StorageActivityCommand, error) {
 	if input.SessionID == "" {
+		if input.ParentRunID != "" {
+			if len(records) != 2 {
+				return nil, errors.New("runtime: one-shot child start requires parent-link and run-started records")
+			}
+			return &api.StorageActivityCommand{
+				OneShotChildStart: &api.OneShotChildRunStartCommand{ParentLinked: records[0], Started: records[1]},
+			}, nil
+		}
 		if len(records) != 1 {
 			return nil, errors.New("runtime: one-shot start requires one record")
 		}
@@ -475,6 +483,9 @@ func runStartStorageCommand(input *RunInput, records []*RecordActivityInput) (*a
 // input used to build the start command.
 func runStartStorageResult(input *RunInput, result *api.StorageActivityResult) *api.StartRunResult {
 	if input.SessionID == "" {
+		if input.ParentRunID != "" {
+			return result.OneShotChildStart
+		}
 		return result.OneShotStart
 	}
 	if input.ParentRunID == "" {

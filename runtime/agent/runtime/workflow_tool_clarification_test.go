@@ -78,7 +78,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	require.Equal(t, "provider-clarification-call-1", await.ModelToolCallID)
 	require.NotEqual(t, await.ToolCallID, await.ModelToolCallID)
 
-	checkpoint, err := rt.decodeWorkflowCheckpoint(out.Suspension)
+	checkpoint, err := decodeWorkflowCheckpoint(out.Suspension, testRuntimeDefinition(rt, "svc.agent"))
 	require.NoError(t, err)
 	continuedCtx := &testWorkflowContext{
 		ctx:           t.Context(),
@@ -185,7 +185,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 	require.Equal(t, "provider-question-call-1", await.ModelToolCallID)
 	require.NotEqual(t, await.ToolCallID, await.ModelToolCallID)
 
-	checkpoint, err := rt.decodeWorkflowCheckpoint(out.Suspension)
+	checkpoint, err := decodeWorkflowCheckpoint(out.Suspension, testRuntimeDefinition(rt, "svc.agent"))
 	require.NoError(t, err)
 	continuedCtx := &testWorkflowContext{
 		ctx:         t.Context(),
@@ -297,7 +297,7 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 	require.Equal(t, "provider-external-call-1", await.Items[0].ModelToolCallID)
 	require.Equal(t, "provider-external-call-2", await.Items[1].ModelToolCallID)
 
-	checkpoint, err := rt.decodeWorkflowCheckpoint(out.Suspension)
+	checkpoint, err := decodeWorkflowCheckpoint(out.Suspension, testRuntimeDefinition(rt, "svc.agent"))
 	require.NoError(t, err)
 	continuedCtx := &testWorkflowContext{
 		ctx:         t.Context(),

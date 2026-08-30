@@ -36,13 +36,9 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 	}
 
 	cfg := AgentToolConfig{
-		AgentID: agent.Ident("nested.agent"),
-		Name:    "svc.agenttools",
-		Route: AgentRoute{
-			ID:               agent.Ident("nested.agent"),
-			WorkflowName:     "nested.workflow",
-			DefaultTaskQueue: "q",
-		},
+		Definition: testAgentDefinition(agent.Ident("nested.agent"), "nested.workflow", "q", nil, nil),
+		Name:       "svc.agenttools",
+
 		AgentToolContent: AgentToolContent{
 			Prompt: func(id tools.Ident, payload any) string {
 				return "invoke"
@@ -57,10 +53,10 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 
 	spec1 := newAnyJSONSpec(tool1)
 	spec1.IsAgentTool = true
-	spec1.AgentID = string(cfg.AgentID)
+	spec1.AgentID = string(cfg.Definition.route.ID)
 	spec2 := newAnyJSONSpec(tool2)
 	spec2.IsAgentTool = true
-	spec2.AgentID = string(cfg.AgentID)
+	spec2.AgentID = string(cfg.Definition.route.ID)
 
 	seedTestToolset(rt, reg.Name, spec1, spec2)
 

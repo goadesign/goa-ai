@@ -142,6 +142,7 @@ func TestCancelRunComparesReasonAfterWorkflowClosure(t *testing.T) {
 	})
 	meta, err := store.LoadRun(t.Context(), "run")
 	require.NoError(t, err)
+	timestamp := time.Now().UTC().Truncate(time.Millisecond)
 	payload, err := json.Marshal(cancellationIntentPayload{Reason: run.CancellationReasonSessionEnded})
 	require.NoError(t, err)
 	_, err = store.RecordRunCancellation(t.Context(), storage.RunCancellation{
@@ -149,7 +150,7 @@ func TestCancelRunComparesReasonAfterWorkflowClosure(t *testing.T) {
 		Record: &runlog.Event{
 			EventKey: cancellationIntentEventKey, RunID: "run", AgentID: agent.Ident(meta.AgentID),
 			SessionID: meta.SessionID, Type: storage.CancellationRecordType, Payload: payload,
-			Timestamp: time.Now().UTC(),
+			Timestamp: timestamp,
 		},
 	})
 	require.NoError(t, err)
@@ -162,7 +163,7 @@ func TestCancelRunComparesReasonAfterWorkflowClosure(t *testing.T) {
 		meta.Labels,
 		context.Canceled,
 		&run.Cancellation{Reason: run.CancellationReasonSessionEnded},
-	), terminalRunEventKey, time.Now().UTC())
+	), terminalRunEventKey, timestamp)
 	_, err = store.RecordRunTerminal(t.Context(), storage.RunTerminal{
 		RunID: "run", Status: session.RunStatusCanceled,
 		Record: terminal,

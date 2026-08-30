@@ -98,7 +98,8 @@ type (
 		Type Type
 		// Payload is the canonical JSON-encoded payload for the event.
 		Payload rawjson.Message
-		// Timestamp is the event time.
+		// Timestamp is the event time. It uses millisecond precision to match the
+		// integer millisecond value carried by runtime records.
 		Timestamp time.Time
 	}
 

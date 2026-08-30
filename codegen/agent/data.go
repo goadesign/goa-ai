@@ -181,10 +181,10 @@ type (
 		ExecuteToolActivity string
 		// Constructor names the function that creates the agent wrapper.
 		Constructor string
-		// NewWorker names the function that creates a worker configuration.
-		NewWorker string
-		// Route names the function that returns this agent's route.
-		Route string
+		// Definition names the function that returns this agent's generated definition.
+		Definition string
+		// DefinitionValue names the private immutable generated definition.
+		DefinitionValue string
 		// NewClient names the function that creates a client for this agent.
 		NewClient string
 		// Register names the function that registers the agent.

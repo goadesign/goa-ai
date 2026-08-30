@@ -23,5 +23,9 @@ func {{ .Toolset.AgentToolsRegistrationConstructor }}(
     systemPrompt string,
     opts ...{{ .RuntimeAlias }}.AgentToolOption,
 ) ({{ .RuntimeAlias }}.ToolsetRegistration, error) {
-    return {{ .ProviderAlias }}.{{ .ProviderRegistrationConstructor }}(rt, systemPrompt, opts...)
+    definition, ok := {{ .Definition }}().ChildDefinition({{ .ProviderAlias }}.AgentID)
+    if !ok {
+        panic("generated agent definition is missing its child agent")
+    }
+    return {{ .ProviderAlias }}.{{ .ProviderRegistrationConstructor }}(rt, definition, systemPrompt, opts...)
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -204,9 +205,7 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 			return testModelResponse(nil, providerCall), nil
 		},
 	})
-	reg := AgentRegistration{
-		ID:                  agentID,
-		Planner:             pl,
+	reg := AgentRegistration{Definition: testRegistrationDefinition(agentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: pl,
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",

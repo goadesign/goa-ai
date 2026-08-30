@@ -7,7 +7,6 @@ package runtime
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -23,16 +22,31 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// ValidateContinuation verifies that this runtime can decode and execute a
-// suspension without starting a workflow or consuming its pending response.
-func (r *Runtime) ValidateContinuation(suspension *api.RunSuspension) error {
-	_, err := r.decodeWorkflowCheckpoint(suspension)
-	return err
+// continuationContractError marks a validation result that proves no
+// successor workflow was submitted for the rejected continuation.
+func continuationContractError(err error) error {
+	return fmt.Errorf("%w: %w", ErrContinuationRejected, err)
+}
+
+// prepareContinuation validates the complete saved state and the caller's one
+// pending response against the current generated agent definition.
+func prepareContinuation(input *RunInput, definition AgentDefinition) (*workflowCheckpoint, error) {
+	if input == nil || input.Continuation == nil {
+		return nil, errors.New("continuation input is required")
+	}
+	checkpoint, err := decodeWorkflowCheckpoint(input.Continuation.Suspension, definition)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateContinuationAgainstCheckpoint(input, checkpoint, definition); err != nil {
+		return nil, err
+	}
+	return checkpoint, nil
 }
 
 // decodeWorkflowCheckpoint validates the public envelope before decoding the
 // current private state.
-func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*workflowCheckpoint, error) {
+func decodeWorkflowCheckpoint(suspension *api.RunSuspension, definition AgentDefinition) (*workflowCheckpoint, error) {
 	checkpoint, err := decodeWorkflowCheckpointState(suspension)
 	if err != nil {
 		return nil, err
@@ -42,36 +56,40 @@ func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*work
 		return nil, errors.New("run suspension required tools do not match saved state")
 	}
 	for _, name := range current {
-		if _, ok := r.toolSpec(name); !ok {
-			return nil, fmt.Errorf("run suspension requires unregistered tool %q", name)
+		if _, ok := definition.spec(name); !ok {
+			return nil, fmt.Errorf("run suspension requires tool %q removed from the current agent definition", name)
 		}
 	}
 	if checkpoint.Policy != nil &&
 		(checkpoint.Policy.LimitTerminalPlans != nil || checkpoint.Policy.CompletionTool != "") {
-		reg, ok := r.agentByID(agent.Ident(checkpoint.AgentID))
-		if !ok {
-			return nil, fmt.Errorf("run suspension requires unregistered agent %q", checkpoint.AgentID)
+		if definition.route.ID != agent.Ident(checkpoint.AgentID) {
+			return nil, fmt.Errorf("run suspension agent %q does not match current definition %q", checkpoint.AgentID, definition.route.ID)
 		}
-		if err := r.validateCompletionToolPolicy(reg, checkpoint.Policy); err != nil {
+		if err := validateCompletionToolPolicyForDefinition(definition, checkpoint.Policy); err != nil {
 			return nil, fmt.Errorf("validate suspended completion tool: %w", err)
 		}
-		if err := r.validateLimitTerminalPlans(reg, checkpoint.Policy.LimitTerminalPlans); err != nil {
+		if err := validateLimitTerminalPlansForDefinition(definition, checkpoint.Policy.LimitTerminalPlans); err != nil {
 			return nil, fmt.Errorf("validate suspended limit terminal plans: %w", err)
 		}
 	}
-	if err := r.validateCompletionToolPlanResult(
+	if err := validateCompletionToolPlanResultWithSpecs(
 		checkpoint.Batch.Result,
 		completionToolFromPolicy(checkpoint.Policy),
+		definition.spec,
 	); err != nil {
 		return nil, fmt.Errorf("validate suspended completion plan: %w", err)
 	}
-	if err := r.validatePlannerResultPayloads(
+	if err := validatePlannerResultPayloadsWithSpecs(
 		plannerResultValidationProjection(checkpoint.Batch.Result),
 		checkpoint.Context.Tool,
+		definition.spec,
 	); err != nil {
 		return nil, fmt.Errorf("validate suspended planner result: %w", err)
 	}
-	program, err := r.normalizeStep(checkpoint.Batch.Result)
+	if err := validatePlanResultToolCallIDs(checkpoint.Batch.Result); err != nil {
+		return nil, fmt.Errorf("validate suspended planner result: %w", err)
+	}
+	program, err := normalizeStepWithSpecs(checkpoint.Batch.Result, definition.spec)
 	if err != nil {
 		return nil, fmt.Errorf("validate suspended planner result: %w", err)
 	}
@@ -88,59 +106,141 @@ func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*work
 	}) {
 		return nil, errors.New("run suspension await items do not match saved planner result")
 	}
-	if err := r.validateCheckpointToolValues(checkpoint); err != nil {
+	if err := validateCheckpointToolValues(checkpoint, definition); err != nil {
+		return nil, err
+	}
+	if err := validateCheckpointChildren(checkpoint, definition); err != nil {
 		return nil, err
 	}
 	return checkpoint, nil
 }
 
+// validateCheckpointChildren checks every nested suspension with the generated
+// definition of the child agent that owns its tool.
+func validateCheckpointChildren(checkpoint *workflowCheckpoint, definition AgentDefinition) error {
+	byCallID := make(map[string]checkpointToolRecord, len(checkpoint.Batch.Records))
+	for _, record := range checkpoint.Batch.Records {
+		if _, exists := byCallID[record.Call.ToolCallID]; exists {
+			return fmt.Errorf("run suspension has duplicate saved tool call id %q", record.Call.ToolCallID)
+		}
+		byCallID[record.Call.ToolCallID] = record
+		if record.ChildSuspension == nil {
+			continue
+		}
+		if err := validateCheckpointChild(record.Call, record.ChildSuspension, definition); err != nil {
+			return fmt.Errorf("validate suspended child for tool call %q: %w", record.Call.ToolCallID, err)
+		}
+	}
+	pendingByCallID := make(map[string]struct{})
+	for _, pending := range checkpoint.Pending {
+		if pending.Child == nil {
+			continue
+		}
+		record, ok := byCallID[pending.Child.ToolCallID]
+		if !ok {
+			return fmt.Errorf("pending child references unknown tool call %q", pending.Child.ToolCallID)
+		}
+		if record.ChildSuspension == nil || !reflect.DeepEqual(record.ChildSuspension, pending.Child.Suspension) {
+			return fmt.Errorf("pending child does not match saved suspension for tool call %q", pending.Child.ToolCallID)
+		}
+		if _, exists := pendingByCallID[pending.Child.ToolCallID]; exists {
+			return fmt.Errorf("run suspension has duplicate pending child for tool call %q", pending.Child.ToolCallID)
+		}
+		pendingByCallID[pending.Child.ToolCallID] = struct{}{}
+		if err := validateCheckpointChild(record.Call, pending.Child.Suspension, definition); err != nil {
+			return fmt.Errorf("validate pending child for tool call %q: %w", record.Call.ToolCallID, err)
+		}
+	}
+	for _, record := range checkpoint.Batch.Records {
+		if record.ChildSuspension == nil {
+			continue
+		}
+		if _, ok := pendingByCallID[record.Call.ToolCallID]; !ok {
+			return fmt.Errorf("saved child suspension for tool call %q has no pending response", record.Call.ToolCallID)
+		}
+	}
+	return nil
+}
+
+func validateCheckpointChild(call ToolCall, suspension *api.RunSuspension, definition AgentDefinition) error {
+	child, err := childDefinitionForCall(call, definition)
+	if err != nil {
+		return err
+	}
+	checkpoint, err := decodeWorkflowCheckpoint(suspension, child)
+	if err != nil {
+		return err
+	}
+	if checkpoint.AgentID != string(child.route.ID) {
+		return fmt.Errorf("child suspension agent %q does not match tool agent %q", checkpoint.AgentID, child.route.ID)
+	}
+	return nil
+}
+
+// childDefinitionForCall returns the immutable generated definition selected
+// by one agent-tool call.
+func childDefinitionForCall(call ToolCall, definition AgentDefinition) (AgentDefinition, error) {
+	spec, ok := definition.spec(call.Name)
+	if !ok {
+		return AgentDefinition{}, fmt.Errorf("child tool %q is not in the current agent definition", call.Name)
+	}
+	if !spec.IsAgentTool || spec.AgentID == "" {
+		return AgentDefinition{}, fmt.Errorf("tool %q does not define a child agent", call.Name)
+	}
+	child, ok := definition.agents[agent.Ident(spec.AgentID)]
+	if !ok {
+		return AgentDefinition{}, fmt.Errorf("child agent %q is not in the current definition graph", spec.AgentID)
+	}
+	child.agents = definition.agents
+	return child, nil
+}
+
 // validateCheckpointToolValues proves that every concrete payload or result
 // the continuation can execute or give back to planner code still satisfies
 // the current registered codecs.
-func (r *Runtime) validateCheckpointToolValues(checkpoint *workflowCheckpoint) error {
-	ctx := context.Background()
+func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition AgentDefinition) error {
 	for _, output := range checkpoint.State.ToolOutputs {
-		if err := r.validateCheckpointToolOutput(ctx, output); err != nil {
+		if err := validateCheckpointToolOutput(output, definition); err != nil {
 			return err
 		}
 	}
 	for _, output := range checkpoint.State.PendingRecovery {
-		if err := r.validateCheckpointToolOutput(ctx, output); err != nil {
+		if err := validateCheckpointToolOutput(output, definition); err != nil {
 			return err
 		}
 	}
 	for _, event := range checkpoint.State.ToolEvents {
-		if _, err := r.decodeCheckpointToolEvent(event); err != nil {
+		if _, err := decodeCheckpointToolEventWithSpecs(event, definition.spec); err != nil {
 			return err
 		}
 	}
 	for _, call := range checkpoint.Batch.Calls {
-		if err := r.validateCheckpointToolRequest(ctx, call); err != nil {
+		if err := validateCheckpointToolRequest(call, definition); err != nil {
 			return err
 		}
 	}
 	for _, record := range checkpoint.Batch.Records {
-		if err := r.validateCheckpointToolRequest(ctx, record.Call); err != nil {
+		if err := validateCheckpointToolRequest(record.Call, definition); err != nil {
 			return err
 		}
 		if record.ChildSuspension == nil {
-			if _, err := r.decodeCheckpointToolEvent(record.Result); err != nil {
+			if _, err := decodeCheckpointToolEventWithSpecs(record.Result, definition.spec); err != nil {
 				return err
 			}
 		}
 	}
 	for _, pending := range checkpoint.Pending {
 		if pending.Confirmation != nil {
-			if err := r.validateCheckpointToolRequest(ctx, pending.Confirmation.Call); err != nil {
+			if err := validateCheckpointToolRequest(pending.Confirmation.Call, definition); err != nil {
 				return err
 			}
-			if _, err := r.unmarshalToolValue(ctx, pending.Confirmation.Call.Name, pending.Confirmation.DeniedResult.RawMessage(), false); err != nil {
+			if err := decodeToolValue(definition, pending.Confirmation.Call.Name, pending.Confirmation.DeniedResult.RawMessage(), false); err != nil {
 				return fmt.Errorf("decode suspended denied result for %s: %w", pending.Confirmation.Call.Name, err)
 			}
 		}
 		if pending.Await != nil {
 			for _, call := range awaitToolRequests([]planner.AwaitItem{*pending.Await}) {
-				if err := r.validateCheckpointToolRequest(ctx, call); err != nil {
+				if err := validateCheckpointToolRequest(call, definition); err != nil {
 					return err
 				}
 			}
@@ -151,8 +251,8 @@ func (r *Runtime) validateCheckpointToolValues(checkpoint *workflowCheckpoint) e
 
 // validateCheckpointToolRequest decodes one saved executable payload through
 // the current generated input codec without executing the tool.
-func (r *Runtime) validateCheckpointToolRequest(ctx context.Context, call ToolCall) error {
-	if _, err := r.unmarshalToolValue(ctx, call.Name, call.Payload.RawMessage(), true); err != nil {
+func validateCheckpointToolRequest(call ToolCall, definition AgentDefinition) error {
+	if err := decodeToolValue(definition, call.Name, call.Payload.RawMessage(), true); err != nil {
 		return fmt.Errorf("decode suspended tool payload for %s: %w", call.Name, err)
 	}
 	return nil
@@ -160,16 +260,16 @@ func (r *Runtime) validateCheckpointToolRequest(ctx context.Context, call ToolCa
 
 // validateCheckpointToolOutput decodes the canonical call and successful
 // result bytes retained for planner resume.
-func (r *Runtime) validateCheckpointToolOutput(ctx context.Context, output *planner.ToolOutput) error {
+func validateCheckpointToolOutput(output *planner.ToolOutput, definition AgentDefinition) error {
 	if output == nil {
 		return errors.New("run suspension contains nil tool output")
 	}
-	if _, err := r.unmarshalToolValue(ctx, output.Name, output.Payload.RawMessage(), true); err != nil {
+	if err := decodeToolValue(definition, output.Name, output.Payload.RawMessage(), true); err != nil {
 		return fmt.Errorf("decode suspended tool payload for %s: %w", output.Name, err)
 	}
 	var spec *tools.ToolSpec
 	if output.Failure == nil {
-		registered, ok := r.toolSpec(output.Name)
+		registered, ok := definition.spec(output.Name)
 		if !ok {
 			return fmt.Errorf("suspended tool result references unregistered tool %q", output.Name)
 		}
@@ -186,6 +286,23 @@ func (r *Runtime) validateCheckpointToolOutput(ctx context.Context, output *plan
 		return fmt.Errorf("decode suspended tool result for %s: %w", output.Name, err)
 	}
 	return nil
+}
+
+// decodeToolValue decodes one saved value with the current generated codec.
+func decodeToolValue(definition AgentDefinition, name tools.Ident, data []byte, payload bool) error {
+	spec, ok := definition.spec(name)
+	if !ok {
+		return fmt.Errorf("tool %q is not in the current agent definition", name)
+	}
+	codec := spec.Result.Codec
+	if payload {
+		codec = spec.Payload.Codec
+	}
+	if codec.FromJSON == nil {
+		return fmt.Errorf("tool %q has no current generated codec", name)
+	}
+	_, err := codec.FromJSON(data)
+	return err
 }
 
 // decodeWorkflowCheckpointState verifies and decodes runtime-owned state
@@ -571,7 +688,7 @@ func validatePendingInputResponseFor(pending *api.PendingInput, response *api.Pe
 
 // validateContinuationAgainstCheckpoint checks the new run identity and the
 // one response accepted by the first request saved in the checkpoint.
-func validateContinuationAgainstCheckpoint(input *RunInput, checkpoint *workflowCheckpoint) error {
+func validateContinuationAgainstCheckpoint(input *RunInput, checkpoint *workflowCheckpoint, definition AgentDefinition) error {
 	if err := validateContinuationIdentity(input, checkpoint); err != nil {
 		return err
 	}
@@ -579,5 +696,118 @@ func validateContinuationAgainstCheckpoint(input *RunInput, checkpoint *workflow
 	if err != nil {
 		return err
 	}
-	return validatePendingInputResponseFor(publicPending[0], input.Continuation.Response)
+	if err := validatePendingInputResponseFor(publicPending[0], input.Continuation.Response); err != nil {
+		return err
+	}
+	return validateContinuationResponse(checkpoint, input.Continuation.Response, definition)
+}
+
+// validateContinuationResponse checks caller-supplied tool results with the
+// generated definition that owns the first pending request. Nested child
+// requests use the child's definition instead of the root agent's tools.
+func validateContinuationResponse(
+	checkpoint *workflowCheckpoint,
+	response *api.PendingInputResponse,
+	definition AgentDefinition,
+) error {
+	pending := checkpoint.Pending[0]
+	if pending.Child != nil {
+		record, ok := checkpointRecordByCallID(checkpoint.Batch.Records, pending.Child.ToolCallID)
+		if !ok {
+			return fmt.Errorf("pending child references unknown tool call %q", pending.Child.ToolCallID)
+		}
+		child, err := childDefinitionForCall(record.Call, definition)
+		if err != nil {
+			return err
+		}
+		childCheckpoint, err := decodeWorkflowCheckpoint(pending.Child.Suspension, child)
+		if err != nil {
+			return err
+		}
+		return validateContinuationResponse(childCheckpoint, response, child)
+	}
+	if pending.Await == nil || response.ToolResults == nil {
+		return nil
+	}
+	return validateProvidedToolResults(*pending.Await, response.ToolResults, definition)
+}
+
+// validateProvidedToolResults proves that one external result exists for each
+// awaited call and that successful bytes satisfy the current generated codec.
+func validateProvidedToolResults(
+	await planner.AwaitItem,
+	results *api.ToolResultsSet,
+	definition AgentDefinition,
+) error {
+	var calls []ToolCall
+	switch await.Kind {
+	case planner.AwaitItemKindQuestions:
+		question := await.Questions
+		calls = []ToolCall{{
+			Name: question.ToolName, ToolCallID: question.ToolCallID,
+			ModelToolCallID: question.ModelToolCallID, Payload: question.Payload,
+		}}
+	case planner.AwaitItemKindExternalTools:
+		calls = awaitToolRequests([]planner.AwaitItem{await})
+	case planner.AwaitItemKindClarification, planner.AwaitItemKindToolClarification:
+		return nil
+	default:
+		return fmt.Errorf("pending tool results have unknown await kind %q", await.Kind)
+	}
+	if len(results.Results) != len(calls) {
+		return fmt.Errorf("tool-results response has %d results, want %d", len(results.Results), len(calls))
+	}
+	byID := make(map[string]*api.ProvidedToolResult, len(results.Results))
+	for _, result := range results.Results {
+		if result == nil {
+			return errors.New("tool-results response contains a nil result")
+		}
+		if result.ToolCallID == "" {
+			return fmt.Errorf("tool result for %q requires tool_call_id", result.Name)
+		}
+		if _, exists := byID[result.ToolCallID]; exists {
+			return fmt.Errorf("tool-results response repeats tool_call_id %q", result.ToolCallID)
+		}
+		byID[result.ToolCallID] = result
+	}
+	for _, call := range calls {
+		result, ok := byID[call.ToolCallID]
+		if !ok {
+			return fmt.Errorf("tool-results response is missing tool_call_id %q", call.ToolCallID)
+		}
+		if result.Name != call.Name {
+			return fmt.Errorf("tool result %q names tool %q, want %q", call.ToolCallID, result.Name, call.Name)
+		}
+		if (result.Success == nil) == (result.Failure == nil) {
+			return fmt.Errorf("tool result %q must contain exactly one success or failure", call.ToolCallID)
+		}
+		spec, ok := definition.spec(call.Name)
+		if !ok {
+			return fmt.Errorf("tool result %q references tool %q removed from the current agent definition", call.ToolCallID, call.Name)
+		}
+		if result.Success != nil {
+			if _, err := decodeSuccessfulToolResult(spec, result.Success.Result); err != nil {
+				return fmt.Errorf("decode tool result %q: %w", call.ToolCallID, err)
+			}
+			if err := validateToolBoundsContract(spec, call, false, result.Success.Bounds); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := planner.ValidateToolFailure(canonicalProvidedToolFailure(result.Failure)); err != nil {
+			return fmt.Errorf("validate tool failure %q: %w", call.ToolCallID, err)
+		}
+	}
+	return nil
+}
+
+// checkpointRecordByCallID returns the single record already proved unique by
+// checkpoint validation.
+func checkpointRecordByCallID(records []checkpointToolRecord, toolCallID string) (checkpointToolRecord, bool) {
+	for _, record := range records {
+		if record.Call.ToolCallID == toolCallID {
+			return record, true
+		}
+	}
+	return checkpointToolRecord{}, false
 }

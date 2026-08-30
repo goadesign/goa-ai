@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"testing"
 	"text/template"
 	"time"
@@ -78,11 +77,7 @@ func TestStartRunSetsWorkflowName(t *testing.T) {
 		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {
-				ID: "service.agent",
-				Workflow: engine.WorkflowDefinition{
-					Name:      "service.workflow",
-					TaskQueue: "svc.queue",
-				},
+				Definition: testAgentDefinition("service.agent", "service.workflow", "svc.queue", nil, nil),
 			},
 		},
 	}
@@ -105,7 +100,7 @@ func TestStartRunRequiresSessionID(t *testing.T) {
 		tracer:  telemetry.NoopTracer{},
 		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
-			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"}},
+			"service.agent": {Definition: testAgentDefinition("service.agent", "service.workflow", "q", nil, nil)},
 		},
 	}
 	// Empty session ID
@@ -133,7 +128,7 @@ func TestStartRunDoesNotInjectSessionSearchAttribute(t *testing.T) {
 		tracer:  telemetry.NoopTracer{},
 		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
-			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"}},
+			"service.agent": {Definition: testAgentDefinition("service.agent", "service.workflow", "q", nil, nil)},
 		},
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
@@ -395,7 +390,7 @@ func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testi
 		Bus:     noopHooks{},
 		agents: map[agent.Ident]AgentRegistration{
 			"svc.agent": {
-				ID: "svc.agent",
+				Definition: testAgentDefinition("svc.agent", "svc.agent.workflow", "test", nil, nil),
 				Planner: &stubPlanner{start: func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 					require.Equal(t, "state-json", input.RunContext.Metadata["task_state"])
 					return &planner.PlanResult{
@@ -480,7 +475,7 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 	seedTestToolSpecs(rt, tool)
 	rt.agents = map[agent.Ident]AgentRegistration{
 		"svc.agent": {
-			ID: "svc.agent",
+			Definition: testAgentDefinition("svc.agent", "svc.agent.workflow", "test", []tools.ToolSpec{tool}, nil),
 			Planner: &stubPlanner{resume: func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 				require.NoError(t, transcript.ValidatePlannerTranscript(input.Messages))
 				return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{
@@ -528,6 +523,9 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, first.Suspension)
+	require.NoError(t, storeSuspensionForTest(ctx, store, firstInput.RunID, session.RunSuspension{
+		ID: first.Suspension.ID, Data: []byte(`{}`),
+	}))
 
 	secondContext := &testWorkflowContext{
 		ctx:         ctx,
@@ -555,8 +553,18 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 	var (
 		transcriptEvents []*runlog.Event
 		messages         []*model.Message
+		started          *hooks.RunStartedEvent
 	)
 	for _, event := range page.Events {
+		if event.Type == hooks.RunStarted {
+			decoded, err := hooks.DecodeFromRecordInput(&RecordActivityInput{
+				Type: event.Type, RunID: event.RunID, AgentID: event.AgentID,
+				SessionID: event.SessionID, TurnID: event.TurnID,
+				TimestampMS: event.Timestamp.UnixMilli(), Payload: event.Payload,
+			})
+			require.NoError(t, err)
+			started = decoded.(*hooks.RunStartedEvent)
+		}
 		if event.Type != transcript.RunLogMessagesSeeded && event.Type != transcript.RunLogMessagesAppended {
 			continue
 		}
@@ -572,6 +580,8 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 	require.Equal(t, model.ConversationRoleAssistant, messages[0].Role)
 	require.Equal(t, model.ConversationRoleUser, messages[1].Role)
 	require.Equal(t, model.ConversationRoleAssistant, messages[2].Role)
+	require.NotNil(t, started)
+	require.Equal(t, "run-1", started.PredecessorRunID)
 }
 
 func TestExecuteWorkflowEmitsRunLabelsOnTerminalCompletion(t *testing.T) {
@@ -590,7 +600,7 @@ func TestExecuteWorkflowEmitsRunLabelsOnTerminalCompletion(t *testing.T) {
 		Bus:     noopHooks{},
 		agents: map[agent.Ident]AgentRegistration{
 			"svc.agent": {
-				ID: "svc.agent",
+				Definition: testAgentDefinition("svc.agent", "svc.agent.workflow", "test", nil, nil),
 				Planner: &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
 					return &planner.PlanResult{
 						FinalResponse: &planner.FinalResponse{
@@ -655,11 +665,7 @@ func TestStartOneShotDoesNotRequireSession(t *testing.T) {
 		tracer:  telemetry.NoopTracer{},
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {
-				ID: "service.agent",
-				Workflow: engine.WorkflowDefinition{
-					Name:      "service.workflow",
-					TaskQueue: "q",
-				},
+				Definition: testAgentDefinition("service.agent", "service.workflow", "q", nil, nil),
 			},
 		},
 	}
@@ -693,11 +699,7 @@ func TestOneShotRunRejectsSessionSearchAttribute(t *testing.T) {
 		tracer:  telemetry.NoopTracer{},
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {
-				ID: "service.agent",
-				Workflow: engine.WorkflowDefinition{
-					Name:      "service.workflow",
-					TaskQueue: "q",
-				},
+				Definition: testAgentDefinition("service.agent", "service.workflow", "q", nil, nil),
 			},
 		},
 	}
@@ -737,12 +739,8 @@ func TestStartRunNeverSetsEngineRunTimeout(t *testing.T) {
 				Store:   newTestStore(),
 				agents: map[agent.Ident]AgentRegistration{
 					"service.agent": {
-						ID: "service.agent",
-						Workflow: engine.WorkflowDefinition{
-							Name:      "service.workflow",
-							TaskQueue: "svc.queue",
-						},
-						Policy: tc.policy,
+						Definition: testAgentDefinition("service.agent", "service.workflow", "svc.queue", nil, nil),
+						Policy:     tc.policy,
 						ResumeActivityOptions: engine.ActivityOptions{
 							StartToCloseTimeout: 20 * time.Second,
 						},
@@ -759,68 +757,59 @@ func TestStartRunNeverSetsEngineRunTimeout(t *testing.T) {
 	}
 }
 
-func TestWorkerConfigOnlyExposesQueuePlacement(t *testing.T) {
-	t.Parallel()
-
-	typ := reflect.TypeOf(WorkerConfig{})
-	_, hasPlan := typ.FieldByName("PlanActivityOptions")
-	_, hasResume := typ.FieldByName("ResumeActivityOptions")
-	_, hasTool := typ.FieldByName("ExecuteToolActivityOptions")
-
-	require.False(t, hasPlan)
-	require.False(t, hasResume)
-	require.False(t, hasTool)
-}
-
-func TestRegisterAgentAppliesWorkerQueueOverride(t *testing.T) {
+func TestRegisterAgentUsesDefinitionRouteAndAuthoredActivityQueues(t *testing.T) {
 	eng := &stubEngine{}
-	rt := New(newTestStore(),
-		WithEngine(eng),
-		WithWorker("service.agent", WorkerConfig{
-			Queue: "custom.queue",
-		}),
-	)
+	rt := New(newTestStore(), WithEngine(eng))
 
-	err := rt.RegisterAgent(context.Background(), AgentRegistration{
-		ID:      "service.agent",
-		Planner: &stubPlanner{},
-		Workflow: engine.WorkflowDefinition{
+	err := rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition("service.agent",
+
+		engine.WorkflowDefinition{
 			Name:      "service.workflow",
 			TaskQueue: "service.queue",
 			Handler:   rt.ExecuteWorkflow,
-		},
+		}, nil),
+
+		WorkflowHandler: (engine.WorkflowDefinition{
+			Name:      "service.workflow",
+			TaskQueue: "service.queue",
+			Handler:   rt.ExecuteWorkflow,
+		}).Handler, Planner: &stubPlanner{},
+
 		PlanActivityName: "service.agent.plan",
 		PlanActivityOptions: engine.ActivityOptions{
-			StartToCloseTimeout: time.Minute,
+			Queue: "plan.queue", StartToCloseTimeout: time.Minute,
 		},
 		ResumeActivityName: "service.agent.resume",
 		ResumeActivityOptions: engine.ActivityOptions{
-			StartToCloseTimeout: time.Minute,
+			Queue: "resume.queue", StartToCloseTimeout: time.Minute,
 		},
 		ExecuteToolActivity: "service.agent.executetool",
 		ExecuteToolActivityOptions: engine.ActivityOptions{
-			StartToCloseTimeout: 2 * time.Minute,
+			Queue: "tool.queue", StartToCloseTimeout: 2 * time.Minute,
 			RetryPolicy: engine.RetryPolicy{
 				MaxAttempts: 1,
 			},
 		},
 	})
 	require.NoError(t, err)
+	require.Equal(t, "service.workflow", eng.registeredWorkflow.Name)
+	require.Equal(t, "service.queue", eng.registeredWorkflow.TaskQueue)
+	require.NotNil(t, eng.registeredWorkflow.Handler)
 
 	planOpts := eng.registeredPlannerActivityOptions["service.agent.plan"]
-	require.Equal(t, "custom.queue", planOpts.Queue)
+	require.Equal(t, "plan.queue", planOpts.Queue)
 	require.Equal(t, time.Minute, planOpts.StartToCloseTimeout)
 	require.Zero(t, planOpts.ScheduleToStartTimeout)
 	require.Zero(t, planOpts.HeartbeatTimeout)
 
 	resumeOpts := eng.registeredPlannerActivityOptions["service.agent.resume"]
-	require.Equal(t, "custom.queue", resumeOpts.Queue)
+	require.Equal(t, "resume.queue", resumeOpts.Queue)
 	require.Equal(t, time.Minute, resumeOpts.StartToCloseTimeout)
 	require.Zero(t, resumeOpts.ScheduleToStartTimeout)
 	require.Zero(t, resumeOpts.HeartbeatTimeout)
 
 	executeOpts := eng.registeredExecuteActivityOptions["service.agent.executetool"]
-	require.Equal(t, "custom.queue", executeOpts.Queue)
+	require.Equal(t, "tool.queue", executeOpts.Queue)
 	require.Equal(t, 2*time.Minute, executeOpts.StartToCloseTimeout)
 	require.Zero(t, executeOpts.ScheduleToStartTimeout)
 	require.Zero(t, executeOpts.HeartbeatTimeout)
@@ -842,14 +831,20 @@ func TestRegisterAgentAppliesWorkerQueueOverride(t *testing.T) {
 func TestRegisterAgentRejectsNegativeRecoveryTurns(t *testing.T) {
 	rt := New(newTestStore())
 
-	err := rt.RegisterAgent(context.Background(), AgentRegistration{
-		ID:      "service.agent",
-		Planner: &stubPlanner{},
-		Workflow: engine.WorkflowDefinition{
+	err := rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition("service.agent",
+
+		engine.WorkflowDefinition{
 			Name:      "service.workflow",
 			TaskQueue: "service.queue",
 			Handler:   rt.ExecuteWorkflow,
-		},
+		}, nil),
+
+		WorkflowHandler: (engine.WorkflowDefinition{
+			Name:      "service.workflow",
+			TaskQueue: "service.queue",
+			Handler:   rt.ExecuteWorkflow,
+		}).Handler, Planner: &stubPlanner{},
+
 		PlanActivityName:    "service.agent.plan",
 		ResumeActivityName:  "service.agent.resume",
 		ExecuteToolActivity: "service.agent.executetool",
@@ -861,35 +856,15 @@ func TestRegisterAgentRejectsNegativeRecoveryTurns(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidConfig)
 }
 
-func TestRegisterAgentRejectsTerminalSpecWithoutBookkeeping(t *testing.T) {
-	eng := &stubEngine{}
-	rt := New(newTestStore(), WithEngine(eng))
-
-	err := rt.RegisterAgent(context.Background(), AgentRegistration{
-		ID:      "service.agent",
-		Planner: &stubPlanner{},
-		Workflow: engine.WorkflowDefinition{
-			Name:      "service.workflow",
-			TaskQueue: "service.queue",
-			Handler:   rt.ExecuteWorkflow,
+func TestAgentDefinitionRejectsTerminalSpecWithoutBookkeeping(t *testing.T) {
+	require.PanicsWithValue(t,
+		`runtime: invalid agent definition: invalid configuration: terminal tool "workflow.complete" must also declare bookkeeping`,
+		func() {
+			testAgentDefinition(
+				"service.agent", "service.workflow", "service.queue",
+				[]tools.ToolSpec{newInvalidTerminalSpec("workflow.complete")}, nil)
 		},
-		PlanActivityName: "service.agent.plan",
-		PlanActivityOptions: engine.ActivityOptions{
-			StartToCloseTimeout: time.Minute,
-		},
-		ResumeActivityName: "service.agent.resume",
-		ResumeActivityOptions: engine.ActivityOptions{
-			StartToCloseTimeout: time.Minute,
-		},
-		ExecuteToolActivity: "service.agent.executetool",
-		ExecuteToolActivityOptions: engine.ActivityOptions{
-			StartToCloseTimeout: time.Minute,
-		},
-		Specs: []tools.ToolSpec{newInvalidTerminalSpec("workflow.complete")},
-	})
-
-	require.ErrorIs(t, err, ErrInvalidConfig)
-	require.ErrorContains(t, err, "terminal tool \"workflow.complete\" must also declare bookkeeping")
+	)
 }
 
 func TestRegistrationRejectsGeneratedContinuationToolName(t *testing.T) {
@@ -897,26 +872,12 @@ func TestRegistrationRejectsGeneratedContinuationToolName(t *testing.T) {
 	spec := newAnyJSONSpec(reservedName)
 
 	t.Run("agent", func(t *testing.T) {
-		rt := New(newTestStore(), WithEngine(&stubEngine{}))
-		err := rt.RegisterAgent(t.Context(), AgentRegistration{
-			ID:      "service.agent",
-			Planner: &stubPlanner{},
-			Workflow: engine.WorkflowDefinition{
-				Name:      "service.workflow",
-				TaskQueue: "service.queue",
-				Handler:   rt.ExecuteWorkflow,
-			},
-			PlanActivityName:    "service.agent.plan",
-			ResumeActivityName:  "service.agent.resume",
-			ExecuteToolActivity: "service.agent.executetool",
-			Specs:               []tools.ToolSpec{spec},
-		})
-
-		require.ErrorIs(t, err, ErrInvalidConfig)
-		require.ErrorContains(t, err, fmt.Sprintf(
-			`tool name %q matches the runtime-generated continuation format "continue_" followed by 24 lowercase hexadecimal characters`,
+		require.PanicsWithValue(t, fmt.Sprintf(
+			`runtime: invalid agent definition: invalid configuration: tool name %q matches the runtime-generated continuation format "continue_" followed by 24 lowercase hexadecimal characters`,
 			reservedName,
-		))
+		), func() {
+			testAgentDefinition("service.agent", "service.workflow", "service.queue", []tools.ToolSpec{spec}, nil)
+		})
 	})
 
 	t.Run("toolset", func(t *testing.T) {
@@ -980,7 +941,7 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 		tracer:  telemetry.NoopTracer{},
 		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
-			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"}},
+			"service.agent": {Definition: testAgentDefinition("service.agent", "service.workflow", "q", nil, nil)},
 		},
 	}
 
@@ -1059,9 +1020,7 @@ func TestRecoveryFinishFinalizesWithoutConsumingTurn(t *testing.T) {
 		Name:       tools.Ident("fail"),
 		Payload:    rawjson.Message(`{}`),
 	}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{
-		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
+	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 		Policy:              RunPolicy{MaxRecoveryTurns: 1},
@@ -1076,7 +1035,7 @@ func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 		Engine: eng,
 		Store:  newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
-			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "defaultq"}},
+			"service.agent": {Definition: testAgentDefinition("service.agent", "service.workflow", "defaultq", nil, nil)},
 		},
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
@@ -1118,16 +1077,24 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 		toolsets: make(map[string]ToolsetRegistration),
 	}
 	// Register initial agent so we can start a run
-	err := rt.RegisterAgent(context.Background(), AgentRegistration{
-		ID:      "service.agent",
-		Planner: &stubPlanner{},
-		Workflow: engine.WorkflowDefinition{
+	err := rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition("service.agent",
+
+		engine.WorkflowDefinition{
 			Name:      "service.workflow",
 			TaskQueue: "q",
 			Handler: func(wfctx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
 				return &RunOutput{AgentID: "service.agent", RunID: "r1"}, nil
 			},
-		},
+		}, nil),
+
+		WorkflowHandler: (engine.WorkflowDefinition{
+			Name:      "service.workflow",
+			TaskQueue: "q",
+			Handler: func(wfctx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
+				return &RunOutput{AgentID: "service.agent", RunID: "r1"}, nil
+			},
+		}).Handler, Planner: &stubPlanner{},
+
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
@@ -1144,14 +1111,20 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 	require.Equal(t, 1, eng.sealCalls)
 
 	// Registering a new agent afterwards is rejected
-	err = rt.RegisterAgent(context.Background(), AgentRegistration{
-		ID:      "service.other",
-		Planner: &stubPlanner{},
-		Workflow: engine.WorkflowDefinition{
+	err = rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition("service.other",
+
+		engine.WorkflowDefinition{
 			Name:      "service.other.workflow",
 			TaskQueue: "q",
 			Handler:   func(wfctx engine.WorkflowContext, input *RunInput) (*RunOutput, error) { return &RunOutput{}, nil },
-		},
+		}, nil),
+
+		WorkflowHandler: (engine.WorkflowDefinition{
+			Name:      "service.other.workflow",
+			TaskQueue: "q",
+			Handler:   func(wfctx engine.WorkflowContext, input *RunInput) (*RunOutput, error) { return &RunOutput{}, nil },
+		}).Handler, Planner: &stubPlanner{},
+
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
@@ -1243,9 +1216,7 @@ func TestTimeBudgetExceeded(t *testing.T) {
 		Name:       tools.Ident("tool"),
 		Payload:    rawjson.Message(`{}`),
 	}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{
-		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
+	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 1}), wfCtx.Now().Add(-time.Second), wfCtx.Now().Add(-time.Second), "", nil)
@@ -1258,8 +1229,8 @@ func TestOverridePolicy_AppliesToNewRuns_MaxToolCalls(t *testing.T) {
 	rt := &Runtime{
 		agents: map[agent.Ident]AgentRegistration{
 			agentID: {
-				ID:     agentID,
-				Policy: RunPolicy{MaxToolCalls: 5},
+				Definition: testAgentDefinition(agentID, "svc.agent.workflow", "test", nil, nil),
+				Policy:     RunPolicy{MaxToolCalls: 5},
 			},
 		},
 	}
@@ -1280,7 +1251,7 @@ func TestOverridePolicyRejectsNegativeRecoveryTurns(t *testing.T) {
 	agentID := agent.Ident("svc.agent")
 	rt := &Runtime{
 		agents: map[agent.Ident]AgentRegistration{
-			agentID: {ID: agentID},
+			agentID: {Definition: testAgentDefinition(agentID, "svc.agent.workflow", "test", nil, nil)},
 		},
 	}
 
@@ -1365,9 +1336,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	}
 
 	// Register nested agent (planner + activity names)
-	nestedReg := AgentRegistration{
-		ID:                  "nested.agent",
-		Planner:             &nestedPlannerStub{},
+	nestedReg := AgentRegistration{Definition: testRegistrationDefinition("nested.agent", engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &nestedPlannerStub{},
 		PlanActivityName:    "nested.plan",
 		ResumeActivityName:  "nested.resume",
 		ExecuteToolActivity: "nested.execute",
@@ -1442,11 +1411,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 			rt.mu.Lock()
 			rt.agents = map[agent.Ident]AgentRegistration{"nested.agent": nestedReg}
 			rt.mu.Unlock()
-			outPtr, err := rt.ExecuteAgentChildWithRoute(wf, AgentRoute{
-				ID:               "nested.agent",
-				WorkflowName:     "nested.workflow",
-				DefaultTaskQueue: "q",
-			}, msgs, nestedCtx)
+			outPtr, err := rt.ExecuteAgentChild(wf, nestedReg.Definition, msgs, nestedCtx)
 			if err != nil {
 				return nil, err
 			}
@@ -1475,9 +1440,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		Payload:    rawjson.Message(`{}`),
 	}}}
 
-	_, err = rt.runLoop(wfCtx, AgentRegistration{
-		ID:                  parentInput.AgentID,
-		Planner:             &stubPlanner{},
+	_, err = rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(parentInput.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, parentInput, base, initial, initialCaps(RunPolicy{MaxToolCalls: 3}), time.Time{}, time.Time{}, parentInput.TurnID, nil)
@@ -1677,7 +1640,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 
 	started, err := prepareHookRecordInput(
 		wfCtx.Context(),
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, input.SessionID, input.ParentRunID, input.Labels),
+		hooks.NewRunStartedEvent(input.RunID, input.AgentID, input.SessionID, input.ParentRunID, "", input.Labels),
 		input.TurnID,
 	)
 	require.NoError(t, err)
@@ -1699,9 +1662,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 
 	_, err = rt.runLoop(
 		wfCtx,
-		AgentRegistration{
-			ID:                  input.AgentID,
-			Planner:             &stubPlanner{},
+		AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 			ExecuteToolActivity: "execute",
 			ResumeActivityName:  "resume",
 		},

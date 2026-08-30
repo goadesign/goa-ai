@@ -44,8 +44,7 @@ func TestAgentPackagePlanMovesDerivedNamesAroundPackageCollisions(t *testing.T) 
 	linked := data.Services[0].Agents[0]
 	require.Equal(t, "AgentID", linked.PackageNames.AgentID)
 	require.Equal(t, "WorkflowName", linked.PackageNames.WorkflowName)
-	require.Equal(t, "NewWorker", linked.PackageNames.NewWorker)
-	require.Equal(t, "Route", linked.PackageNames.Route)
+	require.Equal(t, "Definition", linked.PackageNames.Definition)
 	require.Equal(t, "NewClient", linked.PackageNames.NewClient)
 	require.Equal(t, "RegisterUsedToolsets", linked.PackageNames.RegisterUsedToolsets)
 	require.Equal(t, "ScribeAgent2", linked.StructName)
@@ -76,6 +75,7 @@ func TestAgentPackagePlanCoversEveryRenderedDeclaration(t *testing.T) {
 			RuntimeAlias:                    "runtime",
 			ProviderAlias:                   "provider",
 			ProviderRegistrationConstructor: "NewRegistration",
+			Definition:                      "Definition",
 		}),
 	}
 

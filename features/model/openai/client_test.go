@@ -1867,7 +1867,7 @@ func appendReplayTranscriptDelta(t *testing.T, ctx context.Context, store storag
 		TurnID:    "turn-1",
 		Type:      transcript.RunLogMessagesAppended,
 		Payload:   payload,
-		Timestamp: time.Now().UTC(),
+		Timestamp: time.Now().UTC().Truncate(time.Millisecond),
 	})
 	require.NoError(t, err)
 }
@@ -1876,10 +1876,10 @@ func appendReplayTranscriptDelta(t *testing.T, ctx context.Context, store storag
 func newReplayTranscriptStore(t *testing.T, ctx context.Context) *storageinmem.Store {
 	t.Helper()
 	store := storageinmem.New()
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Millisecond)
 	_, err := store.CreateSession(ctx, "session-1", now)
 	require.NoError(t, err)
-	started := replayLifecycleRecord(t, hooks.NewRunStartedEvent("run-1", "agent-1", "session-1", "", nil), "run-started", now)
+	started := replayLifecycleRecord(t, hooks.NewRunStartedEvent("run-1", "agent-1", "session-1", "", "", nil), "run-started", now)
 	canceled := replayLifecycleRecord(t, hooks.NewRunCompletedEvent(
 		"run-1",
 		"agent-1",

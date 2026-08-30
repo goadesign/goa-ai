@@ -14,6 +14,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -126,9 +127,11 @@ func TestValidateContinuationRejectsRemovedTool(t *testing.T) {
 	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
-	delete(runtime.toolSpecs, spec.Name)
+	runtime.agents["svc.agent"] = AgentRegistration{
+		Definition: testAgentDefinition("svc.agent", "svc.agent.workflow", "test", nil, nil),
+	}
 
-	require.ErrorContains(t, runtime.ValidateContinuation(suspension), `requires unregistered tool "svc.lookup"`)
+	require.ErrorContains(t, runtime.ValidateContinuation(suspension), `requires tool "svc.lookup" removed from the current agent definition`)
 }
 
 func TestValidateContinuationChecksSavedLimitTerminalPlans(t *testing.T) {
@@ -136,10 +139,7 @@ func TestValidateContinuationChecksSavedLimitTerminalPlans(t *testing.T) {
 	lookup := newAnyJSONSpec("svc.lookup")
 	terminal := strictLimitTerminalSpec()
 	seedTestToolSpecs(runtime, lookup, terminal)
-	runtime.agents["svc.agent"] = AgentRegistration{
-		ID:    "svc.agent",
-		Specs: []tools.ToolSpec{lookup, terminal},
-	}
+	runtime.agents["svc.agent"] = AgentRegistration{Definition: testRegistrationDefinition("svc.agent", engine.WorkflowDefinition{}, []tools.ToolSpec{lookup, terminal}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler}
 	suspension := suspensionContractFixture(t, lookup.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
 		checkpoint.Policy = &PolicyOverrides{
@@ -153,9 +153,11 @@ func TestValidateContinuationChecksSavedLimitTerminalPlans(t *testing.T) {
 	require.NoError(t, runtime.ValidateContinuation(suspension))
 
 	t.Run("removed tool", func(t *testing.T) {
-		delete(runtime.toolSpecs, terminal.Name)
-		require.ErrorContains(t, runtime.ValidateContinuation(suspension), `requires unregistered tool "service.tools.complete"`)
-		runtime.toolSpecs[terminal.Name] = terminal
+		runtime.agents["svc.agent"] = AgentRegistration{Definition: testRegistrationDefinition(
+			"svc.agent", engine.WorkflowDefinition{}, []tools.ToolSpec{lookup})}
+		require.ErrorContains(t, runtime.ValidateContinuation(suspension), `requires tool "service.tools.complete" removed from the current agent definition`)
+		runtime.agents["svc.agent"] = AgentRegistration{Definition: testRegistrationDefinition(
+			"svc.agent", engine.WorkflowDefinition{}, []tools.ToolSpec{lookup, terminal})}
 	})
 	t.Run("changed payload", func(t *testing.T) {
 		changed := terminal
@@ -164,10 +166,7 @@ func TestValidateContinuationChecksSavedLimitTerminalPlans(t *testing.T) {
 				return nil, errors.New("result contract changed")
 			},
 		}
-		runtime.agents["svc.agent"] = AgentRegistration{
-			ID:    "svc.agent",
-			Specs: []tools.ToolSpec{lookup, changed},
-		}
+		runtime.agents["svc.agent"] = AgentRegistration{Definition: testRegistrationDefinition("svc.agent", engine.WorkflowDefinition{}, []tools.ToolSpec{lookup, changed}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler}
 		require.ErrorContains(t, runtime.ValidateContinuation(suspension), "result contract changed")
 	})
 }
@@ -185,7 +184,7 @@ func TestValidateContinuationChecksSavedCompletionToolPolicy(t *testing.T) {
 			mutateSpec:    func(*tools.ToolSpec) {},
 			mutate:        func(*PolicyOverrides) {},
 			omitFromAgent: true,
-			want:          `completion tool "svc.persist" is not registered for agent "svc.agent"`,
+			want:          `requires tool "svc.persist" removed from the current agent definition`,
 		},
 		{
 			name: "bookkeeping tool",
@@ -215,10 +214,7 @@ func TestValidateContinuationChecksSavedCompletionToolPolicy(t *testing.T) {
 			if !tt.omitFromAgent {
 				agentSpecs = []tools.ToolSpec{spec}
 			}
-			runtime.agents["svc.agent"] = AgentRegistration{
-				ID:    "svc.agent",
-				Specs: agentSpecs,
-			}
+			runtime.agents["svc.agent"] = AgentRegistration{Definition: testRegistrationDefinition("svc.agent", engine.WorkflowDefinition{}, agentSpecs), WorkflowHandler: (engine.WorkflowDefinition{}).Handler}
 			suspension := suspensionContractFixture(t, spec.Name)
 			rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
 				checkpoint.Policy = &PolicyOverrides{CompletionTool: spec.Name}
@@ -242,8 +238,9 @@ func TestValidateContinuationRejectsNoncurrentSuspensionVersion(t *testing.T) {
 	})
 	suspension.Version = "goa-ai.run-suspension.v6"
 
-	require.EqualError(t, runtime.ValidateContinuation(suspension),
-		`unsupported run suspension version "goa-ai.run-suspension.v6"`)
+	err := runtime.ValidateContinuation(suspension)
+	require.ErrorIs(t, err, ErrContinuationRejected)
+	require.ErrorContains(t, err, `unsupported run suspension version "goa-ai.run-suspension.v6"`)
 }
 
 func TestValidateContinuationRejectsMissingRecoveryTurnMaximum(t *testing.T) {
@@ -268,10 +265,7 @@ func TestValidateContinuationChecksSavedCompletionPlan(t *testing.T) {
 	completion := newAnyJSONSpec("svc.persist")
 	lookup := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, completion, lookup)
-	runtime.agents["svc.agent"] = AgentRegistration{
-		ID:    "svc.agent",
-		Specs: []tools.ToolSpec{completion, lookup},
-	}
+	runtime.agents["svc.agent"] = AgentRegistration{Definition: testRegistrationDefinition("svc.agent", engine.WorkflowDefinition{}, []tools.ToolSpec{completion, lookup}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler}
 	suspension := suspensionContractFixture(t, completion.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
 		await := planner.AwaitClarificationItem(&planner.AwaitClarification{

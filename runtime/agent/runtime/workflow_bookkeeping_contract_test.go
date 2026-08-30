@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -347,13 +348,11 @@ func TestRunLoopRejectsProviderToolCallWithoutID(t *testing.T) {
 	require.NoError(t, err)
 	agentID := agent.Ident("agent-1")
 	resumeAttempts := 0
-	rt.agents[agentID] = AgentRegistration{
-		ID: agentID,
-		Planner: &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
-			resumeAttempts++
-			t.Fatal("planner must not resume after an invalid initial result")
-			return nil, nil
-		}},
+	rt.agents[agentID] = AgentRegistration{Definition: testRegistrationDefinition(agentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+		resumeAttempts++
+		t.Fatal("planner must not resume after an invalid initial result")
+		return nil, nil
+	}},
 	}
 	wfCtx := &routeWorkflowContext{
 		ctx:         context.Background(),
@@ -375,7 +374,7 @@ func TestRunLoopRejectsProviderToolCallWithoutID(t *testing.T) {
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ID: agentID, ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(agentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
 		input,
 		base,
 		initial,

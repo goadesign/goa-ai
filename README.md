@@ -543,11 +543,10 @@ Parent runs receive a tool result with a child run link. The engine first
 accepts the child workflow under its stable, single-use run ID. A second
 explicit child start with that ID is rejected even after the first child
 finishes; deterministic Temporal replay remains part of the original start.
-The child's first record
-then atomically creates its session metadata and appends `ChildRunLinked`; when
-the session is still active, it appends `RunStarted` next. If session ending
-wins that race, the child metadata is terminal canceled, the link remains
-visible, and no planner or tool work begins. The link stores only additional
+The child's first write atomically creates its session metadata and appends
+`ChildRunLinked` followed by `RunStarted`. If session ending wins that race, it
+also appends the canceled `RunCompleted` record; the link and exact start
+identity remain visible, and no planner or tool work begins. The link stores only additional
 child labels beyond its dedicated parent, tool, session, child-run, and
 child-agent fields. Streams emit `child_run_linked` so UIs can render nested
 runs without losing identity, logs, or telemetry.
@@ -669,10 +668,15 @@ continue. A run recorded as suspended returns
 `runtime.ErrRunSuspensionCorrupt` when its stored checkpoint is missing,
 malformed, inconsistent with its stored ID, invalid, or belongs to another
 predecessor run. This error identifies permanent stored-state corruption only;
-runtime-store failures retain their original errors. The
-application atomically accepts one answer, so concurrent requests cannot
-continue the same state twice. Then start a new workflow with the completed run
-ID and one response to its first pending request:
+runtime-store failures retain their original errors. The application first
+calls `PrepareContinuation` with the completed run ID, the requested successor
+ID, and one response to the first pending request. Preparation validates the
+complete saved checkpoint and response against the current generated
+definitions, copies the exact workflow input, and performs no write or workflow
+start. A rejected response therefore leaves the requested run ID unused. The
+application then atomically accepts that prepared answer, so concurrent
+requests cannot continue the same state twice, and calls `StartContinuation`.
+It may retry that same prepared value after an uncertain engine response:
 
 ```go
 out, err := client.Run(ctx, "session-1", messages, runtime.WithRunID("run-1"))
@@ -681,7 +685,7 @@ if err != nil {
 }
 if out.Suspension != nil {
 	pending := out.Suspension.Pending[0]
-	out, err = client.Continue(
+	prepared, err := client.PrepareContinuation(
 		ctx,
 		"session-1",
 		out.RunID,
@@ -695,6 +699,15 @@ if out.Suspension != nil {
 			Memo: map[string]any{"account_id": "account-42"},
 		},
 	)
+	if err != nil {
+		return err
+	}
+	// Atomically accept the answer in application storage here.
+	handle, err := client.StartContinuation(ctx, prepared)
+	if err != nil {
+		return err
+	}
+	out, err = handle.Wait(ctx)
 }
 ```
 
@@ -704,8 +717,9 @@ typed response. Callers may also select the task queue and attach memo or
 search attributes to the new workflow; these options do not override the
 checkpoint's planner policy or execution state. Before routing a continuation,
 the runtime verifies the checkpoint version, visible pending requests, and
-required tool names. The receiving worker restores saved payloads and results
-through its current generated codecs, so compatible
+required labels, planner results, nested child suspensions, and generated tool
+contracts. The receiving worker checks the same immutable input again before
+restoring it, so compatible
 tool evolution continues while incompatible saved values fail at the codec
 boundary. When an external answer completes a tool call from the previous
 workflow, the emitted `tool_end` keeps the current result run as its event run
@@ -715,12 +729,15 @@ runs.
 
 The host application owns session creation, ending, and permanent deletion.
 Its durable implementation stores sessions, runs, continuation checkpoints,
-and ordered run records behind one `storage.Store`. This lets each workflow
-state change and its matching record commit together. A purge first makes the
-session ID permanently unavailable, then removes all runtime data for the ended
-session. Goa-AI includes an integrated in-memory implementation for local
-development and tests. Production hosts own their durable implementation,
-database schema, migrations, and administrative API.
+and ordered run records in one repository, and exposes the worker-facing
+operations through `storage.Store`. When a separate Session service owns that
+repository, runtime workers use a `storage.Store` adapter built on its generated
+client instead of opening the database. This lets each workflow state change
+and its matching record commit together. A purge first makes the session ID
+permanently unavailable, then removes all runtime data for the ended session.
+Goa-AI includes an integrated in-memory implementation for local development
+and tests. Production hosts own their durable implementation, database schema,
+migrations, and administrative API.
 
 Generated agents, completion packages, runtime workers, and their callers form
 one release unit and use one generated contract. New saved runs use
@@ -988,18 +1005,23 @@ conflict. The shared versioned recipe digest includes the caller-submitted workf
 task queue, input payload, timeout, retry policy, memo, and search attributes
 without collapsing native payload types. After backend history expires, the
 owning application must use its durable command identity and must not reopen a
-settled obligation. The accepted workflow owns its lifecycle records. Its first activity calls `StartRootRun` or
-`StartChildRun`, which serializes with the active-to-ended transition on the
-owning session record. An active session produces running metadata; an ended
-session produces terminal canceled metadata with reason `session_ended` and no
-planner or tool work.
+settled obligation. The accepted workflow owns its lifecycle records. Its first
+activity calls `StartRootRun`, `StartChildRun`, `StartOneShotRun`, or
+`StartOneShotChildRun`. Sessionful starts serialize with the active-to-ended
+transition on the owning Session record. An active Session produces running
+metadata. An ended Session produces terminal canceled metadata with reason
+`session_ended` and no planner or tool work.
 
-The `storage.Store` interface starts root, child, and one-shot runs and records
-cancellation, suspension, and terminal outcomes. Prompt references and child
-relationships are derived from ordered run records instead of being copied into
-run metadata. A root start stores one selected record. A child start stores the
-parent link followed by either the started or canceled record. The returned
-`StartOutcome` tells the workflow whether it may proceed. Cancellation,
+The `storage.Store` interface starts sessionful roots and children plus
+sessionless roots and children. It also records cancellation, suspension, and
+terminal outcomes. Prompt references and child relationships are derived from
+ordered run records instead of being copied into run metadata. A root start
+always stores `RunStarted` and adds a canceled
+`RunCompleted` record when the Session has ended. A child start always stores
+the parent link followed by `RunStarted` and adds the canceled record when the
+Session has ended. A sessionless child start atomically stores its parent link
+and `RunStarted`. The returned `StartOutcome` tells the workflow whether it may
+proceed. Cancellation,
 suspension, and terminal methods store the lifecycle change and its matching
 record together, so there is no partial state for another runtime replica to
 repair. The hook bus receives saved records afterward and does not write
@@ -1023,6 +1045,8 @@ or terminal record through a repair-only store method. The store writes the
 repair only while the run is active; if the workflow stored another final
 record first, that record remains authoritative. Repair uses the completion
 time returned by the engine, so every retry submits the same record timestamp.
+All accepted lifecycle timestamps use millisecond precision because runtime
+records carry time as integer milliseconds.
 `GetRunSnapshot`, `ListRunEvents`, and other reads never change stored state.
 
 `RunOneShot` stores the run before invoking its callback. After the callback
@@ -1275,9 +1299,10 @@ Production checklist:
   `OneShotRun`/`StartOneShot` for sessionless work where the runtime may create
   the run ID.
 - Use persistent stores for transcripts, prompt overrides, and runtime storage
-  when runs must survive process restarts. The runtime store owns sessions, run
-  metadata, continuation checkpoints, ordered records, and exact rejected-model
-  evidence.
+  when runs must survive process restarts. The application's session owner
+  creates, ends, and purges sessions. Give runtime workers a persistent
+  `storage.Store` for run metadata, continuation checkpoints, ordered records,
+  and exact rejected-model evidence.
 - Implement the complete `storage.Store` contract in one host-owned durable
   repository. Deploy its schema and every caller together; mixed storage
   contracts are unsupported.

@@ -147,10 +147,6 @@ type (
 		// Per-agent tool specs registered during agent registration for introspection.
 		agentToolSpecs map[agent.Ident][]tools.ToolSpec
 
-		// workers holds optional per-agent worker configuration supplied at
-		// construction time.
-		workers map[agent.Ident]WorkerConfig
-
 		// registrationMu serializes agent and toolset registration so one global
 		// tool name cannot change contract between validation and storage.
 		registrationMu sync.Mutex
@@ -228,11 +224,6 @@ type (
 		// `runtime.store`. Zero means use the runtime default.
 		StorageActivityTimeout time.Duration
 
-		// Workers provides per-agent worker configuration. If an agent lacks
-		// an entry, the runtime uses a default worker configuration. Engines
-		// that do not poll (in-memory) ignore this map.
-		Workers map[agent.Ident]WorkerConfig
-
 		// ToolConfirmation configures runtime-enforced confirmation overrides for selected
 		// tools (for example, requiring explicit operator approval before executing
 		// additional tools that are not marked with design-time Confirmation).
@@ -246,32 +237,16 @@ type (
 	// RuntimeOption configures the runtime via functional options passed to NewWith.
 	RuntimeOption func(*Options)
 
-	// WorkerConfig configures per-agent queue placement. Engines that support
-	// background workers (for example Temporal) use this to select the workflow
-	// and activity queue for the agent. Engine-specific concurrency, liveness,
-	// and queue-wait tuning belongs in the engine adapter. In-memory engines
-	// ignore this configuration.
-	WorkerConfig struct {
-		// Queue overrides the default task queue for this agent's workflow and
-		// activities. When set, the runtime rebases workflow, planner, and tool
-		// activities onto this queue. Engine-specific liveness and queue-wait tuning
-		// belongs in the engine adapter, not the generic runtime surface.
-		Queue string
-	}
-
-	// WorkerOption configures a WorkerConfig.
-	WorkerOption func(*WorkerConfig)
-
 	// AgentRegistration bundles the generated assets for an agent. This struct is
 	// produced by codegen and passed to RegisterAgent to make an agent available
 	// for execution.
 	AgentRegistration struct {
-		// ID is the unique agent identifier (service.agent).
-		ID agent.Ident
+		// Definition is the immutable generated contract shared with callers.
+		Definition AgentDefinition
 		// Planner is the concrete planner implementation for the agent.
 		Planner planner.Planner
-		// Workflow describes the durable workflow registered with the engine.
-		Workflow engine.WorkflowDefinition
+		// WorkflowHandler runs the agent workflow on the local worker.
+		WorkflowHandler engine.WorkflowFunc
 		// PlanActivityName names the activity used for PlanStart.
 		PlanActivityName string
 		// PlanActivityOptions describes retry/timeout behavior for the PlanStart activity.
@@ -286,22 +261,8 @@ type (
 		// When set, these options are applied to all service-backed tool activities
 		// scheduled by this agent. Agent-as-tool executions run as child workflows.
 		ExecuteToolActivityOptions engine.ActivityOptions
-		// Specs provides JSON codecs for every tool declared in the agent design.
-		Specs []tools.ToolSpec
-		// ToolMetadataLookup resolves canonical policy metadata for the tools
-		// declared in Specs.
-		ToolMetadataLookup ToolMetadataLookup
 		// Policy configures caps, time budgets, and missing-field behavior for the agent.
 		Policy RunPolicy
-
-		// RequiredLabels lists, sorted and deduplicated, the run label keys
-		// that label-backed Inject() fields require across every toolset this
-		// agent uses (generated as the agent's aggregated specs package
-		// RequiredLabels var). Runtime.Start/OneShotRun rejects a run whose
-		// supplied labels omit any of these keys, before scheduling any
-		// workflow or activity. Empty when no used toolset injects a
-		// label-backed field.
-		RequiredLabels []string
 	}
 
 	// ToolsetRegistration holds the metadata and execution logic for a toolset.
@@ -475,9 +436,13 @@ var (
 	ErrInvalidConfig       = errors.New("invalid configuration")
 	ErrMissingSessionID    = errors.New("session id is required")
 	ErrSessionNotAllowed   = errors.New("session id is not allowed")
-	ErrWorkflowStartFailed = errors.New("workflow start failed")
-	ErrRegistrationClosed  = errors.New("registration closed after first run")
-	ErrMissingLabels       = errors.New("run start: missing required labels")
+	// ErrContinuationRejected means the saved checkpoint or submitted response
+	// cannot start a successor workflow. The runtime returns it before asking the
+	// workflow engine to start that successor.
+	ErrContinuationRejected = errors.New("continuation rejected before workflow start")
+	ErrWorkflowStartFailed  = errors.New("workflow start failed")
+	ErrRegistrationClosed   = errors.New("registration closed after first run")
+	ErrMissingLabels        = errors.New("run start: missing required labels")
 )
 
 // RunOption configures optional fields on RunInput for Run and Start. Required
@@ -747,7 +712,6 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 		toolSchemas:            make(map[string]map[string]any),
 		models:                 make(map[string]model.Client),
 		agentToolSpecs:         make(map[agent.Ident][]tools.ToolSpec),
-		workers:                opts.Workers,
 		reminders:              reminder.NewEngine(),
 		toolConfirmation:       opts.ToolConfirmation,
 		hintOverrides:          opts.HintOverrides,
@@ -901,23 +865,6 @@ func WithHintOverrides(m map[tools.Ident]HintOverrideFunc) RuntimeOption {
 	return func(o *Options) { o.HintOverrides = m }
 }
 
-// WithWorker configures the worker for a specific agent. Engines that support
-// worker polling use this configuration to bind the agent to a specific queue.
-// If unspecified, a default worker configuration is used.
-func WithWorker(id agent.Ident, cfg WorkerConfig) RuntimeOption {
-	return func(o *Options) {
-		if o.Workers == nil {
-			o.Workers = make(map[agent.Ident]WorkerConfig)
-		}
-		o.Workers[id] = cfg
-	}
-}
-
-// WithQueue returns a WorkerOption that sets the queue name on a WorkerConfig.
-func WithQueue(name string) WorkerOption {
-	return func(c *WorkerConfig) { c.Queue = name }
-}
-
 // Seal closes the registration phase and activates engines that stage worker
 // handlers until the runtime is fully configured. Worker deployments should call
 // Seal after registering all toolsets and agents, before serving traffic. When
@@ -948,6 +895,10 @@ func (r *Runtime) Seal(ctx context.Context) error {
 		return nil
 	}
 	r.registrationClosed = true
+	if err := r.validateAgentExecutionSupportLocked(); err != nil {
+		r.mu.Unlock()
+		return err
+	}
 	r.mu.Unlock()
 
 	if sealer, ok := r.Engine.(engine.RegistrationSealer); ok {
@@ -978,13 +929,13 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 		return ErrRegistrationClosed
 	}
 	r.mu.RUnlock()
-	if reg.ID == "" {
-		return fmt.Errorf("%w: missing agent ID", ErrInvalidConfig)
+	if !reg.Definition.valid() {
+		return fmt.Errorf("%w: missing agent definition", ErrInvalidConfig)
 	}
 	if reg.Planner == nil {
 		return fmt.Errorf("%w: missing planner", ErrInvalidConfig)
 	}
-	if reg.Workflow.Handler == nil {
+	if reg.WorkflowHandler == nil {
 		return fmt.Errorf("%w: missing workflow handler", ErrInvalidConfig)
 	}
 	if reg.ExecuteToolActivity == "" {
@@ -999,16 +950,15 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if err := validateRunPolicy(reg.Policy); err != nil {
 		return err
 	}
-	if err := validateSpecs(reg.Specs, reg.ToolMetadataLookup); err != nil {
+	if err := validateSpecs(reg.Definition.specs, reg.Definition.metadataFor); err != nil {
 		return err
 	}
 	if err := r.validateToolSpecRegistrations(toolSpecRegistration{
-		specs:  reg.Specs,
-		lookup: reg.ToolMetadataLookup,
+		specs:  reg.Definition.specs,
+		lookup: reg.Definition.metadataFor,
 	}); err != nil {
 		return err
 	}
-	reg = cloneAgentRegistration(reg)
 	if r.Engine == nil {
 		return ErrEngineNotConfigured
 	}
@@ -1017,16 +967,6 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	}
 	if err := r.ensureAgentChildActivityRegistered(ctx); err != nil {
 		return err
-	}
-
-	// Apply per-agent worker overrides before engine registration.
-	if cfg, ok := r.workers[reg.ID]; ok {
-		if q := cfg.Queue; q != "" {
-			reg.Workflow.TaskQueue = q
-			reg.PlanActivityOptions.Queue = q
-			reg.ResumeActivityOptions.Queue = q
-			reg.ExecuteToolActivityOptions.Queue = q
-		}
 	}
 
 	// Apply runtime-owned attempt defaults after queue rebasing. Engine-specific
@@ -1044,7 +984,11 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	// Register untyped workflow; Temporal adapter wraps with workflow.Context and
 	// we coerce input to *RunInput inside WorkflowHandler. This preserves engine
 	// boundaries and avoids leaking Temporal types here.
-	if err := r.Engine.RegisterWorkflow(ctx, reg.Workflow); err != nil {
+	if err := r.Engine.RegisterWorkflow(ctx, engine.WorkflowDefinition{
+		Name:      reg.Definition.route.WorkflowName,
+		TaskQueue: reg.Definition.route.DefaultTaskQueue,
+		Handler:   reg.WorkflowHandler,
+	}); err != nil {
 		return err
 	}
 	// Register typed activities for planner (start/resume) and execute_tool.
@@ -1076,16 +1020,34 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	}
 
 	r.mu.Lock()
-	r.agents[reg.ID] = reg
-	r.addToolSpecsLocked(reg.Specs, reg.ToolMetadataLookup)
-	if len(reg.Specs) > 0 {
+	r.agents[reg.Definition.route.ID] = reg
+	r.addToolSpecsLocked(reg.Definition.specs, reg.Definition.metadataFor)
+	if len(reg.Definition.specs) > 0 {
 		// store a shallow copy to avoid external mutation
-		cp := make([]tools.ToolSpec, len(reg.Specs))
-		copy(cp, reg.Specs)
-		r.agentToolSpecs[reg.ID] = cp
+		cp := make([]tools.ToolSpec, len(reg.Definition.specs))
+		copy(cp, reg.Definition.specs)
+		r.agentToolSpecs[reg.Definition.route.ID] = cp
 	}
 	r.mu.Unlock()
 
+	return nil
+}
+
+// validateAgentExecutionSupportLocked proves that every tool an agent may
+// execute has one registered toolset before workers begin polling.
+func (r *Runtime) validateAgentExecutionSupportLocked() error {
+	for _, registration := range r.agents {
+		for _, name := range registration.Definition.executableTools {
+			if _, ok := r.toolsetNames[name]; !ok {
+				return fmt.Errorf(
+					"%w: agent %q has no executor for tool %q",
+					ErrInvalidConfig,
+					registration.Definition.route.ID,
+					name,
+				)
+			}
+		}
+	}
 	return nil
 }
 
@@ -1189,8 +1151,8 @@ func validateToolsetSpecs(ts ToolsetRegistration) error {
 	}
 	if len(ts.Specs) == 0 {
 		agentID := ""
-		if ts.AgentTool != nil {
-			agentID = string(ts.AgentTool.AgentID)
+		if ts.AgentTool != nil && ts.AgentTool.Definition.valid() {
+			agentID = string(ts.AgentTool.Definition.route.ID)
 		}
 		if agentID != "" {
 			return fmt.Errorf("%w: agent toolset %q (agent=%s) requires tool specs/codecs", ErrInvalidConfig, ts.Name, agentID)
@@ -1240,43 +1202,21 @@ func validateAgentToolRegistration(ts ToolsetRegistration) error {
 			)
 		}
 		cfg := ts.AgentTool
-		if cfg.AgentID == "" {
+		if !cfg.Definition.valid() {
 			return fmt.Errorf(
-				"%w: agent tool %q requires a registered agent id",
-				ErrInvalidConfig,
-				spec.Name,
-			)
-		}
-		if cfg.Route.ID == "" {
-			return fmt.Errorf(
-				"%w: agent tool %q requires a route agent id",
+				"%w: agent tool %q requires a generated agent definition",
 				ErrInvalidConfig,
 				spec.Name,
 			)
 		}
 		specAgentID := agent.Ident(spec.AgentID)
-		if specAgentID != cfg.AgentID || cfg.AgentID != cfg.Route.ID {
+		if specAgentID != cfg.Definition.route.ID {
 			return fmt.Errorf(
-				"%w: agent tool %q agent ids must match: spec=%q registration=%q route=%q",
+				"%w: agent tool %q agent id %q does not match definition %q",
 				ErrInvalidConfig,
 				spec.Name,
 				specAgentID,
-				cfg.AgentID,
-				cfg.Route.ID,
-			)
-		}
-		if cfg.Route.WorkflowName == "" {
-			return fmt.Errorf(
-				"%w: agent tool %q requires a route workflow name",
-				ErrInvalidConfig,
-				spec.Name,
-			)
-		}
-		if cfg.Route.DefaultTaskQueue == "" {
-			return fmt.Errorf(
-				"%w: agent tool %q requires a route task queue",
-				ErrInvalidConfig,
-				spec.Name,
+				cfg.Definition.route.ID,
 			)
 		}
 	}
@@ -1526,61 +1466,44 @@ func (r *Runtime) agentByID(id agent.Ident) (AgentRegistration, bool) {
 	return agent, ok
 }
 
-// ExecuteAgentChildWithRoute starts a provider agent as a child workflow using the
-// explicit route metadata (workflow name and task queue). The child executes its own
-// plan/execute loop and returns a RunOutput which is adapted by callers.
-func (r *Runtime) ExecuteAgentChildWithRoute(
+// ExecuteAgentChild starts a provider agent as a child workflow using its
+// generated definition. The child executes its own plan and tool loop and
+// returns the output adapted by the caller.
+func (r *Runtime) ExecuteAgentChild(
 	wfCtx engine.WorkflowContext,
-	route AgentRoute,
+	definition AgentDefinition,
 	messages []*model.Message,
 	nestedRunCtx run.Context,
 ) (*RunOutput, error) {
-	return r.executeAgentChildWithRoute(wfCtx, route, agentChildRequest{
+	return r.executeAgentChild(wfCtx, definition, agentChildRequest{
 		messages:   messages,
 		runContext: nestedRunCtx,
 	})
 }
 
-// executeAgentChildWithRoute starts one fully assembled child request. Prompt
-// versions travel with the rendered messages and are stored by the child.
-func (r *Runtime) executeAgentChildWithRoute(
+// executeAgentChild starts one fully assembled child request. Prompt versions
+// travel with the rendered messages and are stored by the child.
+func (r *Runtime) executeAgentChild(
 	wfCtx engine.WorkflowContext,
-	route AgentRoute,
+	definition AgentDefinition,
 	request agentChildRequest,
 ) (*RunOutput, error) {
-	nestedRunCtx := request.runContext
-	if route.ID == "" || route.WorkflowName == "" || route.DefaultTaskQueue == "" {
-		return nil, fmt.Errorf("child route is incomplete")
+	input, err := agentChildRunInput(definition, request)
+	if err != nil {
+		return nil, err
 	}
-	if nestedRunCtx.SessionID != "" && (nestedRunCtx.ParentRunID == "" ||
-		nestedRunCtx.ParentToolCallID == "" || nestedRunCtx.Tool == "") {
-		return nil, errors.New("child run context is incomplete")
-	}
-	input := RunInput{
-		AgentID:          route.ID,
-		RunID:            nestedRunCtx.RunID,
-		SessionID:        nestedRunCtx.SessionID,
-		TurnID:           nestedRunCtx.TurnID,
-		ParentToolCallID: nestedRunCtx.ParentToolCallID,
-		ParentRunID:      nestedRunCtx.ParentRunID,
-		ParentAgentID:    nestedRunCtx.ParentAgentID,
-		Tool:             nestedRunCtx.Tool,
-		ToolArgs:         nestedRunCtx.ToolArgs,
-		Messages:         request.messages,
-		RenderedPrompts:  clonePromptRenderEvents(request.renderedPrompts),
-		Labels:           nestedRunCtx.Labels,
-	}
+	route := definition.route
 	handle, err := wfCtx.StartChildWorkflow(wfCtx.Context(), engine.ChildWorkflowRequest{
 		ID:        input.RunID,
 		Workflow:  route.WorkflowName,
 		TaskQueue: route.DefaultTaskQueue,
-		Input:     &input,
+		Input:     input,
 		// RunTimeout left to engine defaults; parent may cap via policy if desired.
 	})
 	if err != nil {
 		return nil, err
 	}
-	out, err := handle.Get(wfCtx.Context())
+	out, err := handle.Get(wfCtx.Detached().Context())
 	if err != nil {
 		return nil, err
 	}
@@ -1590,59 +1513,39 @@ func (r *Runtime) executeAgentChildWithRoute(
 	return out, nil
 }
 
-// StartRun launches the agent workflow asynchronously and returns a workflow handle
-// so callers can wait or cancel execution. The RunID is generated if not
-// provided in the input. Returns an error if the agent is not registered or if the
-// workflow fails to start.
-func (r *Runtime) startRun(ctx context.Context, input *RunInput) (engine.WorkflowHandle, error) {
-	if input.AgentID == "" {
-		return nil, fmt.Errorf("%w: missing agent id", ErrAgentNotFound)
+// agentChildRunInput builds and validates the immutable input submitted for a
+// child workflow. Every child start path uses this function before asking the
+// workflow engine to accept the child ID.
+func agentChildRunInput(definition AgentDefinition, request agentChildRequest) (*RunInput, error) {
+	if !definition.valid() {
+		return nil, errors.New("child agent definition is required")
 	}
-	reg, ok := r.agentByID(input.AgentID)
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrAgentNotFound, input.AgentID)
+	nested := request.runContext
+	if nested.ParentRunID == "" || nested.ParentAgentID == "" ||
+		nested.ParentToolCallID == "" || nested.Tool == "" {
+		return nil, errors.New("child run context is incomplete")
 	}
-	return r.startRunOn(ctx, input, reg.Workflow.Name, reg.Workflow.TaskQueue, true)
+	if err := validateRequiredLabels(definition, nested.Labels); err != nil {
+		return nil, err
+	}
+	return &RunInput{
+		AgentID:          definition.route.ID,
+		RunID:            nested.RunID,
+		SessionID:        nested.SessionID,
+		TurnID:           nested.TurnID,
+		ParentToolCallID: nested.ParentToolCallID,
+		ParentRunID:      nested.ParentRunID,
+		ParentAgentID:    nested.ParentAgentID,
+		Tool:             nested.Tool,
+		ToolArgs:         nested.ToolArgs,
+		Messages:         request.messages,
+		RenderedPrompts:  clonePromptRenderEvents(request.renderedPrompts),
+		Labels:           nested.Labels,
+	}, nil
 }
 
-// startRunWithMeta launches the agent workflow using client-supplied metadata
-// rather than a locally registered agent. This enables remote caller processes
-// to start runs when workers are registered in another process.
-func (r *Runtime) startRunWithRoute(ctx context.Context, input *RunInput, route AgentRoute) (engine.WorkflowHandle, error) {
-	if route.ID == "" || route.WorkflowName == "" {
-		return nil, fmt.Errorf("%w: missing route for agent client", ErrAgentNotFound)
-	}
-	if input.AgentID == "" {
-		input.AgentID = route.ID
-	}
-	return r.startRunOn(ctx, input, route.WorkflowName, route.DefaultTaskQueue, true)
-}
-
-// startOneShotRun launches a one-shot workflow that does not belong to a session.
-func (r *Runtime) startOneShotRun(ctx context.Context, input *RunInput) (engine.WorkflowHandle, error) {
-	if input.AgentID == "" {
-		return nil, fmt.Errorf("%w: missing agent id", ErrAgentNotFound)
-	}
-	reg, ok := r.agentByID(input.AgentID)
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrAgentNotFound, input.AgentID)
-	}
-	return r.startRunOn(ctx, input, reg.Workflow.Name, reg.Workflow.TaskQueue, false)
-}
-
-// startOneShotRunWithRoute launches a one-shot workflow using client-supplied route metadata.
-func (r *Runtime) startOneShotRunWithRoute(ctx context.Context, input *RunInput, route AgentRoute) (engine.WorkflowHandle, error) {
-	if route.ID == "" || route.WorkflowName == "" {
-		return nil, fmt.Errorf("%w: missing route for agent client", ErrAgentNotFound)
-	}
-	if input.AgentID == "" {
-		input.AgentID = route.ID
-	}
-	return r.startRunOn(ctx, input, route.WorkflowName, route.DefaultTaskQueue, false)
-}
-
-// startRunOn contains common start logic for both locally-registered and
-// remote-route clients.
+// startRunWithDefinition contains common start logic for local and remote
+// clients. Both use the same generated definition.
 //
 // When requireSession is true, the caller must provide a stable run ID and an
 // active session. The accepted workflow writes running or canceled lifecycle
@@ -1651,7 +1554,16 @@ func (r *Runtime) startOneShotRunWithRoute(ctx context.Context, input *RunInput,
 // When requireSession is false, the run is one-shot: SessionID must stay empty,
 // its runtime records do not belong to a session, and no SessionID search
 // attribute is set.
-func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName, defaultQueue string, requireSession bool) (engine.WorkflowHandle, error) {
+func (r *Runtime) startRunWithDefinition(ctx context.Context, input *RunInput, definition AgentDefinition, requireSession bool) (engine.WorkflowHandle, error) {
+	if !definition.valid() {
+		return nil, fmt.Errorf("%w: invalid agent definition", ErrAgentNotFound)
+	}
+	if input.AgentID == "" {
+		input.AgentID = definition.route.ID
+	}
+	if input.AgentID != definition.route.ID {
+		return nil, fmt.Errorf("%w: input agent %q does not match definition %q", ErrAgentNotFound, input.AgentID, definition.route.ID)
+	}
 	// Close registration on first run submission so local start paths cannot race
 	// later handler mutations. Worker deployments should call Seal during startup;
 	// local starters still converge on the same sealed contract here.
@@ -1659,6 +1571,9 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		return nil, err
 	}
 	if err := validateWorkflowRunInput(input); err != nil {
+		if input != nil && input.Continuation != nil {
+			return nil, continuationContractError(err)
+		}
 		return nil, err
 	}
 	if requireSession {
@@ -1677,35 +1592,40 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	if err := transcript.ValidatePlannerTranscript(input.Messages); err != nil {
 		return nil, fmt.Errorf("runtime: invalid transcript: %w", err)
 	}
-	reg, _ := r.agentByID(input.AgentID)
 	runLabels := input.Labels
 	effectivePolicy := input.Policy
 	if input.Continuation != nil {
-		checkpoint, err := decodeWorkflowCheckpointState(input.Continuation.Suspension)
+		checkpoint, err := prepareContinuation(input, definition)
 		if err != nil {
-			return nil, err
-		}
-		if err := validateContinuationAgainstCheckpoint(input, checkpoint); err != nil {
-			return nil, err
+			return nil, continuationContractError(err)
 		}
 		runLabels = checkpoint.Context.Labels
 		effectivePolicy = checkpoint.Policy
 	}
-	if err := validateRequiredLabels(reg, runLabels); err != nil {
+	if err := validateRequiredLabels(definition, runLabels); err != nil {
+		if input.Continuation != nil {
+			return nil, continuationContractError(err)
+		}
 		return nil, err
 	}
-	if reg.ID != "" && effectivePolicy != nil {
-		if err := r.validateCompletionToolPolicy(reg, effectivePolicy); err != nil {
+	if effectivePolicy != nil {
+		if err := validateCompletionToolPolicyForDefinition(definition, effectivePolicy); err != nil {
+			if input.Continuation != nil {
+				return nil, continuationContractError(err)
+			}
 			return nil, err
 		}
-		if err := r.validateLimitTerminalPlans(reg, effectivePolicy.LimitTerminalPlans); err != nil {
+		if err := validateLimitTerminalPlansForDefinition(definition, effectivePolicy.LimitTerminalPlans); err != nil {
+			if input.Continuation != nil {
+				return nil, continuationContractError(err)
+			}
 			return nil, err
 		}
 	}
 	req := engine.WorkflowStartRequest{
 		ID:        input.RunID,
-		Workflow:  workflowName,
-		TaskQueue: defaultQueue,
+		Workflow:  definition.route.WorkflowName,
+		TaskQueue: definition.route.DefaultTaskQueue,
 		Input:     input,
 		// RunTimeout is intentionally left zero (engine-unbounded): active-time
 		// enforcement is owned by the workflow's Budget and Hard deadlines
@@ -1738,21 +1658,14 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 
 // validateRequiredLabels fails fast, before any workflow or activity runs,
 // when the caller-supplied run labels omit a key that a label-backed
-// Inject() field requires. reg.RequiredLabels is generated data (the union
-// of every used toolset's RequiredLabels, computed once at codegen time); this
-// is a boundary check against genuinely dynamic caller input, not a
-// rediscovery of static structure.
-//
-// reg may be the zero value when the agent is not registered locally (for
-// example, a pure remote-route client start): RequiredLabels is empty in
-// that case, so validation trivially passes and the check is a no-op rather
-// than a false failure.
-func validateRequiredLabels(reg AgentRegistration, labels map[string]string) error {
-	if len(reg.RequiredLabels) == 0 {
+// Inject() field requires. The generated definition carries the complete list
+// to local workers and remote callers, so both reject the same invalid start.
+func validateRequiredLabels(definition AgentDefinition, labels map[string]string) error {
+	if len(definition.requiredLabels) == 0 {
 		return nil
 	}
 	var missing []string
-	for _, key := range reg.RequiredLabels {
+	for _, key := range definition.requiredLabels {
 		if _, ok := labels[key]; !ok {
 			missing = append(missing, key)
 		}
@@ -1761,7 +1674,7 @@ func validateRequiredLabels(reg AgentRegistration, labels map[string]string) err
 		return nil
 	}
 	return fmt.Errorf("%w: agent %q requires label(s) %v; call WithLabels(...) with these keys when starting the run",
-		ErrMissingLabels, reg.ID, missing)
+		ErrMissingLabels, definition.route.ID, missing)
 }
 
 // CancelRun requests cancellation of the workflow identified by req.RunID.

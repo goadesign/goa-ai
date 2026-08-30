@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -81,9 +82,7 @@ func TestPolicyAllowlistRewritesDeniedCalls(t *testing.T) {
 		{ToolCallID: "allowed-call", Name: tools.Ident("allowed"), Payload: rawjson.Message(`{}`)},
 		{ToolCallID: "blocked-call", Name: tools.Ident("blocked"), Payload: rawjson.Message(`{}`)},
 	}}
-	out, err := rt.runLoop(wfCtx, AgentRegistration{
-		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
+	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 5}), time.Time{}, time.Time{}, "turn-1", nil)
@@ -155,9 +154,7 @@ func TestRestrictedRunToolCapFinalizes(t *testing.T) {
 		Payload:    rawjson.Message(`{}`),
 	}}}
 
-	out, err := rt.runLoop(wfCtx, AgentRegistration{
-		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
+	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, policy.CapsState{
@@ -207,9 +204,7 @@ func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
 		Payload:    rawjson.Message(`{"q":"x"}`),
 	}}}
 
-	out, err := rt.runLoop(wfCtx, AgentRegistration{
-		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
+	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, policy.CapsState{
@@ -269,9 +264,7 @@ func TestRestrictedRunRecoveryCapFinalizes(t *testing.T) {
 		Payload:    rawjson.Message(`{}`),
 	}}}
 
-	out, err := rt.runLoop(wfCtx, AgentRegistration{
-		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
+	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, policy.CapsState{
@@ -314,9 +307,7 @@ func TestRestrictedUnknownToolFailsBeforeExecution(t *testing.T) {
 		Payload:    rawjson.Message(`{}`),
 	}}}
 
-	out, err := rt.runLoop(wfCtx, AgentRegistration{
-		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
+	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, policy.CapsState{

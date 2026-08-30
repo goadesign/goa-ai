@@ -35,6 +35,7 @@ func TestRunStartedCodecUsesCurrentDurablePayload(t *testing.T) {
 		agent.Ident("service.agent"),
 		testSessionID,
 		"parent-1",
+		"predecessor-1",
 		map[string]string{"facility": "north"},
 	)
 	record, err := EncodeToRecordInput(event, EncodeOptions{
@@ -43,8 +44,9 @@ func TestRunStartedCodecUsesCurrentDurablePayload(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.JSONEq(t, `{
-		"ParentRunID": "parent-1",
-		"Labels": {"facility": "north"}
+		"parent_run_id": "parent-1",
+		"predecessor_run_id": "predecessor-1",
+		"labels": {"facility": "north"}
 	}`, string(record.Payload))
 
 	decoded, err := DecodeFromRecordInput(record)
@@ -52,7 +54,30 @@ func TestRunStartedCodecUsesCurrentDurablePayload(t *testing.T) {
 	started, ok := decoded.(*RunStartedEvent)
 	require.True(t, ok)
 	assert.Equal(t, "parent-1", started.ParentRunID)
+	assert.Equal(t, "predecessor-1", started.PredecessorRunID)
 	assert.Equal(t, map[string]string{"facility": "north"}, started.Labels)
+}
+
+func TestRunStartedCodecOmitsMissingPredecessor(t *testing.T) {
+	t.Parallel()
+
+	record, err := EncodeToRecordInput(NewRunStartedEvent(
+		testRunID,
+		agent.Ident("service.agent"),
+		testSessionID,
+		"parent-1",
+		"",
+		nil,
+	), EncodeOptions{EventKey: "run-started", TimestampMS: 1})
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"parent_run_id": "parent-1"
+	}`, string(record.Payload))
+
+	decoded, err := DecodeFromRecordInput(record)
+	require.NoError(t, err)
+	started := decoded.(*RunStartedEvent)
+	assert.Empty(t, started.PredecessorRunID)
 }
 
 func TestRunStartedCodecRejectsLegacyAndUnknownPayloadFields(t *testing.T) {
@@ -75,7 +100,7 @@ func TestRunStartedCodecRejectsLegacyAndUnknownPayloadFields(t *testing.T) {
 		},
 		{
 			name:    "unknown field",
-			payload: `{"ParentRunID":"parent-1","Labels":{},"Other":true}`,
+			payload: `{"parent_run_id":"parent-1","labels":{},"Other":true}`,
 			field:   "Other",
 		},
 	}

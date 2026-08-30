@@ -286,10 +286,8 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 		TurnID:    "turn-1",
 	}
 	seedRunMeta(t, rt, input)
-	reg := AgentRegistration{
-		ID:                  input.AgentID,
-		ExecuteToolActivity: "execute",
-		ResumeActivityName:  "resume",
+	reg := AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ExecuteToolActivity: "execute",
+		ResumeActivityName: "resume",
 		Planner: &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
 			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{

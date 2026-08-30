@@ -77,6 +77,9 @@ type (
 		// ParentRunID identifies the parent of a child run. It is empty for a root
 		// or one-shot run.
 		ParentRunID string
+		// PredecessorRunID identifies the run whose saved planner state this run
+		// restored. It is empty when the run did not continue another run.
+		PredecessorRunID string
 		// Labels contains the immutable labels assigned when the run started.
 		Labels map[string]string
 	}
@@ -541,13 +544,19 @@ const (
 // NewRunStartedEvent constructs the small immutable record that creates a run.
 // Messages and planner state use their dedicated records instead of being
 // duplicated here.
-func NewRunStartedEvent(runID string, agentID agent.Ident, sessionID, parentRunID string, labels map[string]string) *RunStartedEvent {
+func NewRunStartedEvent(
+	runID string,
+	agentID agent.Ident,
+	sessionID, parentRunID, predecessorRunID string,
+	labels map[string]string,
+) *RunStartedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &RunStartedEvent{
-		baseEvent:   be,
-		ParentRunID: parentRunID,
-		Labels:      maps.Clone(labels),
+		baseEvent:        be,
+		ParentRunID:      parentRunID,
+		PredecessorRunID: predecessorRunID,
+		Labels:           maps.Clone(labels),
 	}
 }
 

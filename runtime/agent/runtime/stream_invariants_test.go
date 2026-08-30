@@ -68,13 +68,18 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 			}, nil
 		},
 	}
-	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{
-		ID:      "child.agent",
-		Planner: childPlanner,
-		Workflow: engine.WorkflowDefinition{
+	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{Definition: testRegistrationDefinition("child.agent",
+
+		engine.WorkflowDefinition{
 			Name:    "child.workflow",
 			Handler: rt.ExecuteWorkflow,
-		},
+		}, nil),
+
+		WorkflowHandler: (engine.WorkflowDefinition{
+			Name:    "child.workflow",
+			Handler: rt.ExecuteWorkflow,
+		}).Handler, Planner: childPlanner,
+
 		PlanActivityName:    "child.plan",
 		ResumeActivityName:  "child.resume",
 		ExecuteToolActivity: "child.execute_tool",
@@ -94,13 +99,8 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 	require.Equal(t, session.StatusActive, sess.Status)
 
 	agentTools := NewAgentToolsetRegistration(rt, AgentToolConfig{
-		AgentID: "child.agent",
-		Route: AgentRoute{
-			ID:               agent.Ident("child.agent"),
-			WorkflowName:     "child.workflow",
-			DefaultTaskQueue: "default",
-		},
-		Name: toolsetName,
+		Definition: testAgentDefinition(agent.Ident("child.agent"), "child.workflow", "default", nil, nil),
+		Name:       toolsetName,
 		AgentToolContent: AgentToolContent{
 			Prompt: func(id tools.Ident, payload any) string {
 				return "invoke"
@@ -139,13 +139,18 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 			}, nil
 		},
 	}
-	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{
-		ID:      "parent.agent",
-		Planner: parentPlanner,
-		Workflow: engine.WorkflowDefinition{
+	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{Definition: testRegistrationDefinition("parent.agent",
+
+		engine.WorkflowDefinition{
 			Name:    "parent.workflow",
 			Handler: rt.ExecuteWorkflow,
-		},
+		}, nil),
+
+		WorkflowHandler: (engine.WorkflowDefinition{
+			Name:    "parent.workflow",
+			Handler: rt.ExecuteWorkflow,
+		}).Handler, Planner: parentPlanner,
+
 		PlanActivityName:    "parent.plan",
 		ResumeActivityName:  "parent.resume",
 		ExecuteToolActivity: "parent.execute_tool",

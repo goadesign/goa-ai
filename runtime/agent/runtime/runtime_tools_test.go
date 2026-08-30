@@ -518,13 +518,8 @@ func TestPublishToolResultReceivedProjectsBoundsIntoResultPreview(t *testing.T) 
 func TestRegisterToolset_RejectsAgentToolsetWithoutSpecs(t *testing.T) {
 	rt := New(newTestStore())
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
-		AgentID: "svc.agent",
-		Name:    "svc.tools",
-		Route: AgentRoute{
-			ID:               "svc.agent",
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition("svc.agent", "wf", "default", nil, nil),
+		Name:       "svc.tools",
 	})
 
 	err := rt.RegisterToolset(reg)
@@ -549,9 +544,7 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 		Name:       tools.Ident("child"),
 		Payload:    rawjson.Message(`{}`),
 	}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{
-		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
+	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 1}), time.Time{}, time.Time{}, "", nil)
@@ -578,9 +571,7 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 		ToolCallID: "model-123",
 		Payload:    rawjson.Message(`{}`),
 	}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{
-		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
+	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 1}), time.Time{}, time.Time{}, "", nil)
@@ -1114,9 +1105,7 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	}}}
 	_, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{
-			ID:                  input.AgentID,
-			Planner:             &stubPlanner{},
+		AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 			ExecuteToolActivity: "execute",
 			ResumeActivityName:  "resume",
 		},

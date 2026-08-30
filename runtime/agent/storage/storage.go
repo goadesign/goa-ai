@@ -9,6 +9,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -35,6 +36,8 @@ type (
 		StartChildRun(context.Context, ChildRunStart) (ChildRunStartResult, error)
 		// StartOneShotRun records a sessionless run before it does any work.
 		StartOneShotRun(context.Context, OneShotRunStart) (OneShotRunStartResult, error)
+		// StartOneShotChildRun records a sessionless parent link and child start together.
+		StartOneShotChildRun(context.Context, OneShotChildRunStart) (OneShotChildRunStartResult, error)
 		// AppendRunRecord stores an ordinary record without changing run state.
 		AppendRunRecord(context.Context, *runlog.Event) (AppendResult, error)
 		// RecordRunCancellation stores the first cancellation reason and record.
@@ -61,27 +64,25 @@ type (
 		ListSessionRunRecords(context.Context, string, string, int) (runlog.Page, error)
 	}
 
-	// RootRunStart contains both records the store may select based on the
-	// session state observed during the write.
+	// RootRunStart contains the records stored for a session root run.
 	RootRunStart struct {
 		// Run is the immutable identity of the accepted workflow.
 		Run session.RunStart
-		// Started is stored when the session is active.
+		// Started is stored for every accepted workflow.
 		Started *runlog.Event
-		// Canceled is stored when the session has ended.
+		// Canceled is stored after Started when the session has ended.
 		Canceled *runlog.Event
 	}
 
-	// ChildRunStart contains the parent link and both possible first child
-	// records. The parent link is stored for either start outcome.
+	// ChildRunStart contains the parent link and child lifecycle records.
 	ChildRunStart struct {
 		// Run is the immutable identity of the accepted child workflow.
 		Run session.RunStart
 		// ParentLinked records which parent accepted the child.
 		ParentLinked *runlog.Event
-		// Started is stored when the session is active.
+		// Started is stored after ParentLinked for every accepted workflow.
 		Started *runlog.Event
-		// Canceled is stored when the session has ended.
+		// Canceled is stored after Started when the session has ended.
 		Canceled *runlog.Event
 	}
 
@@ -92,6 +93,18 @@ type (
 		// ParentRunID must be empty.
 		Run session.RunStart
 		// Started is the first durable record.
+		Started *runlog.Event
+	}
+
+	// OneShotChildRunStart contains the relationship and start records for a
+	// sessionless child workflow.
+	OneShotChildRunStart struct {
+		// Run is the immutable child identity. SessionID and PredecessorRunID must
+		// be empty, and ParentRunID must name an existing sessionless run.
+		Run session.RunStart
+		// ParentLinked records which parent tool call accepted the child.
+		ParentLinked *runlog.Event
+		// Started is stored on the child after ParentLinked.
 		Started *runlog.Event
 	}
 
@@ -142,14 +155,14 @@ type (
 		Record AppendResult
 	}
 
-	// RootRunStartResult reports the immutable root-run decision and its selected
-	// lifecycle record.
+	// RootRunStartResult reports the immutable root-run decision and records.
 	RootRunStartResult struct {
 		// Outcome tells the workflow whether it may do work.
 		Outcome session.RunStartOutcome
-		// Record is the started record when Outcome is proceed and the canceled
-		// record when Outcome is stop.
-		Record AppendResult
+		// Started is the run-started record stored for every outcome.
+		Started AppendResult
+		// Canceled is the run-completed record stored only when Outcome is stop.
+		Canceled AppendResult
 	}
 
 	// ChildRunStartResult reports the immutable child-run decision and the two
@@ -159,15 +172,25 @@ type (
 		Outcome session.RunStartOutcome
 		// ParentRecord is the child-link record stored on the parent run.
 		ParentRecord AppendResult
-		// RunRecord is the child started record when Outcome is proceed and the
-		// child canceled record when Outcome is stop.
-		RunRecord AppendResult
+		// Started is the child run-started record stored for every outcome.
+		Started AppendResult
+		// Canceled is the child run-completed record stored only when Outcome is stop.
+		Canceled AppendResult
 	}
 
 	// OneShotRunStartResult reports the first record for a sessionless run.
 	OneShotRunStartResult struct {
 		// Record is the run-started record.
 		Record AppendResult
+	}
+
+	// OneShotChildRunStartResult reports the two records stored for a
+	// sessionless child.
+	OneShotChildRunStartResult struct {
+		// ParentRecord is the child-link record stored on the parent run.
+		ParentRecord AppendResult
+		// Started is the run-started record stored on the child run.
+		Started AppendResult
 	}
 
 	// AppendResult reports the stored record and session state observed in the
@@ -227,6 +250,8 @@ func ValidateRunRecord(record *runlog.Event) error {
 		return errors.New("record payload is required")
 	case record.Timestamp.IsZero():
 		return errors.New("record timestamp is required")
+	case !record.Timestamp.Equal(record.Timestamp.Truncate(time.Millisecond)):
+		return errors.New("record timestamp must use millisecond precision")
 	default:
 		return nil
 	}

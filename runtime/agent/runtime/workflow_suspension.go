@@ -429,12 +429,16 @@ func requiredCheckpointToolNames(checkpoint *workflowCheckpoint) []tools.Ident {
 // decodeCheckpointToolEvent restores one runtime-produced tool result with the
 // registered result codec.
 func (r *Runtime) decodeCheckpointToolEvent(event *api.ToolEvent) (*planner.ToolResult, error) {
+	return decodeCheckpointToolEventWithSpecs(event, r.toolSpec)
+}
+
+func decodeCheckpointToolEventWithSpecs(event *api.ToolEvent, lookup toolSpecLookup) (*planner.ToolResult, error) {
 	if event == nil {
 		return nil, errors.New("run suspension contains nil tool event")
 	}
 	var spec *tools.ToolSpec
 	if event.Failure == nil {
-		registered, ok := r.toolSpec(event.Name)
+		registered, ok := lookup(event.Name)
 		if !ok {
 			return nil, fmt.Errorf("suspended tool result references unregistered tool %q", event.Name)
 		}
@@ -531,7 +535,7 @@ func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg Agen
 }
 
 func restoreContinuationRunInput(input *RunInput, checkpoint *workflowCheckpoint) error {
-	if err := validateContinuationAgainstCheckpoint(input, checkpoint); err != nil {
+	if err := validateContinuationIdentity(input, checkpoint); err != nil {
 		return err
 	}
 
@@ -906,9 +910,6 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 		return nil, fmt.Errorf("child continuation tool %q is not a registered agent tool", record.call.Name)
 	}
 	cfg := toolset.AgentTool
-	if cfg.Route.ID == "" || cfg.Route.WorkflowName == "" || cfg.Route.DefaultTaskQueue == "" {
-		return nil, fmt.Errorf("child continuation route is incomplete for %s", record.call.Name)
-	}
 
 	currentCall := retargetToolRequest(record.call, l.input, &l.base.RunContext)
 	nested := run.Context{
@@ -922,39 +923,32 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 		ToolArgs:         append(rawjson.Message(nil), currentCall.Payload...),
 		Labels:           cloneLabels(currentCall.Labels),
 	}
-	childInput := &RunInput{
-		AgentID:          cfg.Route.ID,
-		RunID:            nested.RunID,
-		SessionID:        nested.SessionID,
-		TurnID:           nested.TurnID,
-		ParentToolCallID: nested.ParentToolCallID,
-		ParentRunID:      nested.ParentRunID,
-		ParentAgentID:    nested.ParentAgentID,
-		Tool:             nested.Tool,
-		ToolArgs:         nested.ToolArgs,
-		Labels:           nested.Labels,
-		Continuation: &api.RunContinuationInput{
-			Suspension: pending.Suspension,
-			Response:   response,
-		},
+	childInput, err := agentChildRunInput(cfg.Definition, agentChildRequest{runContext: nested})
+	if err != nil {
+		return nil, err
 	}
+	childInput.Continuation = &api.RunContinuationInput{
+		Suspension: pending.Suspension,
+		Response:   response,
+	}
+	route := cfg.Definition.route
 	handle, err := l.wfCtx.StartChildWorkflow(l.wfCtx.Context(), engine.ChildWorkflowRequest{
 		ID:        childInput.RunID,
-		Workflow:  cfg.Route.WorkflowName,
-		TaskQueue: cfg.Route.DefaultTaskQueue,
+		Workflow:  route.WorkflowName,
+		TaskQueue: route.DefaultTaskQueue,
 		Input:     childInput,
 	})
 	if err != nil {
 		return nil, err
 	}
-	out, err := handle.Get(l.wfCtx.Context())
+	out, err := handle.Get(l.wfCtx.Detached().Context())
 	if err != nil {
 		return nil, err
 	}
 	if out == nil {
 		return nil, errors.New("child continuation returned no output")
 	}
-	if err := validateWorkflowOutput(out, cfg.Route.ID, childInput.RunID); err != nil {
+	if err := validateWorkflowOutput(out, route.ID, childInput.RunID); err != nil {
 		return nil, err
 	}
 	if out.Suspension != nil {

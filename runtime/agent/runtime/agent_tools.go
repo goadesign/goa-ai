@@ -23,7 +23,6 @@ import (
 	"strings"
 	"text/template"
 
-	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -108,24 +107,12 @@ type (
 		Prompt PromptBuilder
 	}
 
-	// AgentToolConfig configures how an agent-tool executes.
-	//
-	// AgentID identifies the nested agent to execute. SystemPrompts optionally
-	// maps tool IDs (globally unique simple names) to system prompts that will
-	// be prepended to the nested agent messages for that tool.
+	// AgentToolConfig configures how an agent-tool presents and adapts one child
+	// agent. The generated Definition owns the child identity, workflow route,
+	// tools, required labels, and completion policy.
 	AgentToolConfig struct {
-		// AgentID is the fully qualified identifier of the nested agent.
-		AgentID agent.Ident
-		// Route provides the routing metadata used to start the nested agent as a
-		// child workflow. Route must be set; agent-as-tool execution does not fall
-		// back to local agent registration.
-		Route AgentRoute
-		// PlanActivityName is the fully-qualified plan activity name for the nested agent.
-		PlanActivityName string
-		// ResumeActivityName is the fully-qualified resume activity name for the nested agent.
-		ResumeActivityName string
-		// ExecuteToolActivity is the fully-qualified execute_tool activity name for the nested agent.
-		ExecuteToolActivity string
+		// Definition is the immutable generated contract for the child agent.
+		Definition AgentDefinition
 		// SystemPrompt, when non-empty, is prepended as a system message for all tools.
 		SystemPrompt string
 		// AgentToolContent configures optional consumer-side user message rendering.
@@ -140,8 +127,6 @@ type (
 		Name string
 		// Description optionally describes the toolset.
 		Description string
-		// TaskQueue optionally sets the task queue for this toolset's activities.
-		TaskQueue string
 		// Aliases maps public tool identifiers to canonical provider tool identifiers.
 		// This allows consumers to expose tools under a different namespace without
 		// duplicating specs or templates. When present, message rendering and provider
@@ -217,16 +202,16 @@ func WithTemplateAll(ids []tools.Ident, t *template.Template) AgentToolOption {
 }
 
 // NewAgentToolsetRegistration creates a toolset registration for an agent-as-tool.
-// The returned registration executes the provider agent as a child workflow using
-// ExecuteAgentChildWithRoute, with optional per-tool system prompts/templates.
+// The returned registration executes the provider agent as a child workflow
+// using its generated definition, with optional per-tool system prompts and
+// templates.
 //
-// Callers should set Name/Description/Specs/TaskQueue on the returned registration
+// Callers should set Name, Description, and Specs on the returned registration
 // before registering it with the runtime.
 func NewAgentToolsetRegistration(rt *Runtime, cfg AgentToolConfig) ToolsetRegistration {
 	return ToolsetRegistration{
 		Name:        cfg.Name,
 		Description: cfg.Description,
-		TaskQueue:   cfg.TaskQueue,
 		Inline:      true,
 		Execute:     defaultAgentToolExecute(rt, cfg),
 		AgentTool:   &cfg,
@@ -345,8 +330,8 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 		if wfCtx == nil {
 			return nil, fmt.Errorf("workflow context not found")
 		}
-		if cfg.Route.ID == "" {
-			return nil, fmt.Errorf("agent tool route is required")
+		if !cfg.Definition.valid() {
+			return nil, fmt.Errorf("agent tool definition is required")
 		}
 		parentRun := &run.Context{
 			RunID:     call.RunID,
@@ -361,7 +346,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 			}
 			return Executed(result), nil
 		}
-		outPtr, err := rt.executeAgentChildWithRoute(wfCtx, cfg.Route, request)
+		outPtr, err := rt.executeAgentChild(wfCtx, cfg.Definition, request)
 		if err != nil {
 			return nil, fmt.Errorf("execute agent: %w", err)
 		}
@@ -597,7 +582,7 @@ func (r *Runtime) buildPromptTemplateData(ctx context.Context, toolName tools.Id
 func (r *Runtime) adaptAgentChildOutput(cfg *AgentToolConfig, call *ToolCall, nestedRunCtx run.Context, outPtr *RunOutput) (*planner.ToolResult, error) {
 	handle := &run.Handle{
 		RunID:            nestedRunCtx.RunID,
-		AgentID:          cfg.AgentID,
+		AgentID:          cfg.Definition.route.ID,
 		ParentRunID:      nestedRunCtx.ParentRunID,
 		ParentToolCallID: nestedRunCtx.ParentToolCallID,
 	}

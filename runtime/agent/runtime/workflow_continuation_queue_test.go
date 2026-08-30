@@ -50,7 +50,7 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, first.Suspension.Pending, 2)
 
-	firstCheckpoint, err := runtime.decodeWorkflowCheckpoint(first.Suspension)
+	firstCheckpoint, err := decodeWorkflowCheckpoint(first.Suspension, testRuntimeDefinition(runtime, "svc.agent"))
 	require.NoError(t, err)
 	secondInput := &RunInput{
 		AgentID: "agent-1", RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
@@ -76,7 +76,7 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, countRunEventsByType(secondEvents, hooks.AwaitClarification))
 
-	secondCheckpoint, err := runtime.decodeWorkflowCheckpoint(second.Suspension)
+	secondCheckpoint, err := decodeWorkflowCheckpoint(second.Suspension, testRuntimeDefinition(runtime, "svc.agent"))
 	require.NoError(t, err)
 	thirdInput := &RunInput{
 		AgentID: "agent-1", RunID: "run-3", SessionID: "session-1", TurnID: "turn-3",

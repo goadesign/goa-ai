@@ -151,9 +151,8 @@ func TestInjectNoLabelsToolsetHasEmptyRequiredLabels(t *testing.T) {
 // TestInjectAgentRequiredLabelsAggregation locks the agent-level
 // RequiredLabels contract at the generation layer: the agent's aggregated
 // specs package exposes the sorted, deduplicated union of every used
-// toolset's RequiredLabels, and registry.go wires that var onto
-// AgentRegistration so Runtime.Start/StartOneShot can enforce it before any
-// workflow is scheduled.
+// toolset's RequiredLabels, and agent.go stores it in the immutable definition
+// used by both callers and workers.
 func TestInjectAgentRequiredLabelsAggregation(t *testing.T) {
 	files := buildWithPrepare(t, testscenarios.InjectMultiToolsetLabelsExample())
 
@@ -171,9 +170,10 @@ func TestInjectAgentRequiredLabelsAggregation(t *testing.T) {
 	require.Equal(t, 1, strings.Count(agg, `"household_id",`),
 		"duplicate label keys across toolsets must be deduplicated in the aggregate")
 
-	// Registry wiring: the aggregate var reaches AgentRegistration.
-	registry := fileContent(t, files, "gen/calc/agents/scribe/registry.go")
-	require.Contains(t, registry, "RequiredLabels: specs.RequiredLabels(),")
+	// Definition wiring: the aggregate reaches the caller before any workflow is
+	// scheduled.
+	agent := fileContent(t, files, "gen/calc/agents/scribe/agent.go")
+	require.Contains(t, agent, "specs.RequiredLabels(),")
 }
 
 // TestInjectMixedBoundUnboundProviderScopesMeta locks the provider-side

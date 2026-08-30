@@ -40,13 +40,9 @@ func {{ .PackageNames.Register }}(ctx {{ .ContextAlias }}.Context, rt *{{ .Runti
         return err
     }
     if err := rt.RegisterAgent(ctx, {{ .RuntimeAlias }}.AgentRegistration{
-        ID:      {{ printf "%q" .ID }},
+        Definition: {{ .PackageNames.Definition }}(),
         Planner: {{ .AgentVar }}.Planner,
-        Workflow: {{ .EngineAlias }}.WorkflowDefinition{
-            Name:      {{ printf "%q" .Runtime.Workflow.Name }},
-            TaskQueue: {{ printf "%q" .Runtime.Workflow.Queue }},
-            Handler:   rt.ExecuteWorkflow,
-        },
+        WorkflowHandler: rt.ExecuteWorkflow,
 {{- if .PlanActivity }}
         PlanActivityName: {{ printf "%q" .Runtime.PlanActivity.Name }},
         PlanActivityOptions: {{ template "activityOptionsLiteral" .PlanActivity }},
@@ -59,13 +55,6 @@ func {{ .PackageNames.Register }}(ctx {{ .ContextAlias }}.Context, rt *{{ .Runti
         ExecuteToolActivity: {{ printf "%q" .Runtime.ExecuteTool.Name }},
         ExecuteToolActivityOptions: {{ template "activityOptionsLiteral" .ExecuteToolActivity }},
 {{- end }}
-        {{- if .Tools }}
-        Specs: {{ .ToolSpecsAlias }}.Specs(),
-        ToolMetadataLookup: {{ .ToolSpecsAlias }}.MetadataByName,
-        RequiredLabels: {{ .ToolSpecsAlias }}.RequiredLabels(),
-        {{- else }}
-        Specs: nil,
-        {{- end }}
         Policy: {{ .RuntimeAlias }}.RunPolicy{
 {{- if gt .RunPolicy.Caps.MaxToolCalls 0 }}
             MaxToolCalls: {{ .RunPolicy.Caps.MaxToolCalls }},

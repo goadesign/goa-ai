@@ -121,7 +121,7 @@ func appendTranscriptMessages(t *testing.T, ctx context.Context, store storage.S
 		TurnID:    turnID,
 		Type:      typ,
 		Payload:   payload,
-		Timestamp: time.Now().UTC(),
+		Timestamp: time.Now().UTC().Truncate(time.Millisecond),
 	})
 	require.NoError(t, err)
 }
@@ -131,11 +131,11 @@ func appendTranscriptMessages(t *testing.T, ctx context.Context, store storage.S
 func newTranscriptTestStore(t *testing.T, ctx context.Context) *storageinmem.Store {
 	t.Helper()
 	store := storageinmem.New()
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Millisecond)
 	_, err := store.CreateSession(ctx, "session-1", now)
 	require.NoError(t, err)
 	started := transcriptLifecycleRecord(t, hooks.NewRunStartedEvent(
-		"run-1", "agent-1", "session-1", "", nil,
+		"run-1", "agent-1", "session-1", "", "", nil,
 	), "run-started", now)
 	canceled := transcriptLifecycleRecord(t, hooks.NewRunCompletedEvent(
 		"run-1",

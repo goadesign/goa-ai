@@ -6,6 +6,7 @@ package temporal
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -325,6 +326,51 @@ func TestStartChildWorkflowRejectsCompletedIDReuse(t *testing.T) {
 	})
 
 	require.NoError(t, env.GetWorkflowError())
+}
+
+func TestStartChildWorkflowWaitsForCancellationCleanup(t *testing.T) {
+	var cleanupCalled atomic.Bool
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterWorkflowWithOptions(
+		func(ctx workflow.Context, _ *api.RunInput) (*api.RunOutput, error) {
+			if err := workflow.NewTimer(ctx, time.Hour).Get(ctx, nil); err != nil {
+				cleanupCtx, _ := workflow.NewDisconnectedContext(ctx)
+				if cleanupErr := workflow.NewTimer(cleanupCtx, 10*time.Minute).Get(cleanupCtx, nil); cleanupErr != nil {
+					return nil, cleanupErr
+				}
+				cleanupCalled.Store(true)
+				return nil, err
+			}
+			return nil, errors.New("child completed without cancellation")
+		},
+		workflow.RegisterOptions{Name: "child-with-cancellation-cleanup"},
+	)
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		child, err := wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
+			ID:       "child-with-cleanup",
+			Workflow: "child-with-cancellation-cleanup",
+			Input:    &api.RunInput{},
+		})
+		if err != nil {
+			return err
+		}
+		if err := workflow.NewTimer(ctx, time.Minute).Get(ctx, nil); err != nil {
+			return err
+		}
+		if err := child.Cancel(context.Background()); err != nil {
+			return err
+		}
+		_, err = child.Get(context.Background())
+		if !cleanupCalled.Load() {
+			return errors.New("child future returned before cancellation cleanup")
+		}
+		return err
+	})
+
+	require.Error(t, env.GetWorkflowError())
+	require.True(t, cleanupCalled.Load())
 }
 
 func TestActivityOptionsForLeavesQueueWaitUnsetWithoutTemporalDefault(t *testing.T) {

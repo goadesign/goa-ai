@@ -200,6 +200,22 @@ func (r *Runtime) LoadRunSuspension(ctx context.Context, runID string) (*api.Run
 			runID,
 		)
 	}
+	if checkpoint.AgentID != run.AgentID {
+		return nil, fmt.Errorf(
+			"%w: stored checkpoint agent %q does not match run agent %q",
+			ErrRunSuspensionCorrupt,
+			checkpoint.AgentID,
+			run.AgentID,
+		)
+	}
+	if checkpoint.SessionID != run.SessionID {
+		return nil, fmt.Errorf(
+			"%w: stored checkpoint session %q does not match run session %q",
+			ErrRunSuspensionCorrupt,
+			checkpoint.SessionID,
+			run.SessionID,
+		)
+	}
 	return &suspension, nil
 }
 

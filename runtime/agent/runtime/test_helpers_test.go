@@ -53,13 +53,13 @@ func (s *testStore) AppendRunRecord(ctx context.Context, record *runlog.Event) (
 	if !errors.Is(err, session.ErrRunNotFound) {
 		return result, err
 	}
-	startedAt := time.Now().UTC()
+	startedAt := time.Now().UTC().Truncate(time.Millisecond)
 	start := session.RunStart{
 		AgentID: string(record.AgentID), RunID: record.RunID,
 		SessionID: record.SessionID, StartedAt: startedAt,
 	}
 	started, encodeErr := encodeTestHookRecord(
-		hooks.NewRunStartedEvent(record.RunID, record.AgentID, record.SessionID, "", nil),
+		hooks.NewRunStartedEvent(record.RunID, record.AgentID, record.SessionID, "", "", nil),
 		"test/start",
 		startedAt,
 	)
@@ -117,7 +117,7 @@ func storeSuspensionForTest(ctx context.Context, store storage.Store, runID stri
 		"v6",
 		1,
 		nil,
-	), terminalRunEventKey, time.Now().UTC())
+	), terminalRunEventKey, time.Now().UTC().Truncate(time.Millisecond))
 	if err != nil {
 		return err
 	}
@@ -132,6 +132,29 @@ func storeSuspensionForTest(ctx context.Context, store storage.Store, runID stri
 // admitRunForTest creates a run through the same lifecycle operations used by
 // production code, then advances it to the status required by the test.
 func admitRunForTest(t testing.TB, store storage.Store, run session.RunMeta) {
+	admitRunWithPredecessorForTest(t, store, run, "")
+}
+
+// admitContinuedRunForTest creates a run whose start record names the run that
+// supplied its restored planner state.
+func admitContinuedRunForTest(
+	t testing.TB,
+	store storage.Store,
+	run session.RunMeta,
+	predecessorRunID string,
+) {
+	t.Helper()
+	admitRunWithPredecessorForTest(t, store, run, predecessorRunID)
+}
+
+// admitRunWithPredecessorForTest stores one run through the production
+// lifecycle operation and advances it to the status requested by the test.
+func admitRunWithPredecessorForTest(
+	t testing.TB,
+	store storage.Store,
+	run session.RunMeta,
+	predecessorRunID string,
+) {
 	t.Helper()
 	if run.SessionID != "" {
 		host := store.(interface {
@@ -146,16 +169,18 @@ func admitRunForTest(t testing.TB, store storage.Store, run session.RunMeta) {
 	if run.StartedAt.IsZero() {
 		run.StartedAt = time.Now().UTC()
 	}
+	run.StartedAt = run.StartedAt.Truncate(time.Millisecond)
 	start := session.RunStart{
 		AgentID: run.AgentID, RunID: run.RunID, SessionID: run.SessionID,
-		ParentRunID: run.ParentRunID, StartedAt: run.StartedAt,
-		Labels: run.Labels,
+		ParentRunID: run.ParentRunID, PredecessorRunID: predecessorRunID,
+		StartedAt: run.StartedAt, Labels: run.Labels,
 	}
 	started := testHookRecord(t, hooks.NewRunStartedEvent(
 		run.RunID,
 		agent.Ident(run.AgentID),
 		run.SessionID,
 		run.ParentRunID,
+		predecessorRunID,
 		run.Labels,
 	), "start", run.StartedAt)
 	canceled := testHookRecord(t, hooks.NewRunCompletedEvent(
@@ -365,6 +390,121 @@ func seedTestToolSpecs(rt *Runtime, specs ...tools.ToolSpec) {
 		rt.toolSpecs[spec.Name] = spec
 		rt.policyToolMetadata[spec.Name] = canonicalToolMetadata(spec, nil)
 	}
+	for id, registration := range rt.agents {
+		if !registration.Definition.valid() {
+			registration.Definition = testAgentDefinition(
+				id,
+				string(id)+".workflow",
+				"test",
+				specs,
+				nil)
+		} else if len(registration.Definition.specs) == 0 && len(specs) > 0 {
+			route := registration.Definition.route
+			registration.Definition = testAgentDefinition(
+				id, route.WorkflowName, route.DefaultTaskQueue,
+				specs, registration.Definition.requiredLabels)
+		}
+		rt.agents[id] = registration
+	}
+}
+
+func testAgentDefinition(
+	id agent.Ident,
+	workflow, queue string,
+	specs []tools.ToolSpec,
+	requiredLabels []string,
+) AgentDefinition {
+	return testAgentDefinitionWithChildren(id, workflow, queue, specs, requiredLabels, nil)
+}
+
+// testAgentDefinitionWithChildren builds one generated-style definition graph.
+func testAgentDefinitionWithChildren(
+	id agent.Ident,
+	workflow, queue string,
+	specs []tools.ToolSpec,
+	requiredLabels []string,
+	children []AgentDefinition,
+) AgentDefinition {
+	return NewAgentDefinition(
+		AgentRoute{ID: id, WorkflowName: workflow, DefaultTaskQueue: queue},
+		specs,
+		nil,
+		requiredLabels,
+		nil,
+		children,
+	)
+}
+
+// testRegistrationDefinition converts the route and generated facts used by
+// older handwritten fixtures into the same immutable definition codegen emits.
+func testRegistrationDefinition(
+	id agent.Ident,
+	workflow engine.WorkflowDefinition,
+	specs []tools.ToolSpec,
+) AgentDefinition {
+	if id == "" {
+		id = "test.agent"
+	}
+	if workflow.Name == "" {
+		workflow.Name = string(id) + ".workflow"
+	}
+	if workflow.TaskQueue == "" {
+		workflow.TaskQueue = "test"
+	}
+	return testAgentDefinition(id, workflow.Name, workflow.TaskQueue, specs, nil)
+}
+
+func testRuntimeDefinition(rt *Runtime, id agent.Ident) AgentDefinition {
+	registration := rt.agents[id]
+	if registration.Definition.valid() {
+		return registration.Definition
+	}
+	specs := make([]tools.ToolSpec, 0, len(rt.toolSpecs))
+	for _, spec := range rt.toolSpecs {
+		specs = append(specs, spec)
+	}
+	return testAgentDefinition(id, string(id)+".workflow", "test", specs, nil)
+}
+
+func (r *Runtime) ValidateContinuation(suspension *api.RunSuspension) error {
+	checkpoint, err := decodeWorkflowCheckpointState(suspension)
+	if err != nil {
+		return continuationContractError(err)
+	}
+	_, err = decodeWorkflowCheckpoint(suspension, testRuntimeDefinition(r, agent.Ident(checkpoint.AgentID)))
+	if err != nil {
+		return continuationContractError(err)
+	}
+	return nil
+}
+
+func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*workflowCheckpoint, error) {
+	checkpoint, err := decodeWorkflowCheckpointState(suspension)
+	if err != nil {
+		return nil, err
+	}
+	return decodeWorkflowCheckpoint(suspension, testRuntimeDefinition(r, agent.Ident(checkpoint.AgentID)))
+}
+
+func (r *Runtime) validateCheckpointToolOutput(ctx context.Context, output *planner.ToolOutput) error {
+	_ = ctx
+	return validateCheckpointToolOutput(output, testRuntimeDefinition(r, "svc.agent"))
+}
+
+func (r *Runtime) startRunOn(
+	ctx context.Context,
+	input *RunInput,
+	workflow, queue string,
+	requireSession bool,
+) (engine.WorkflowHandle, error) {
+	id := agent.Ident("")
+	if input != nil {
+		id = input.AgentID
+	}
+	definition := testRuntimeDefinition(r, id)
+	definition.route.WorkflowName = workflow
+	definition.route.DefaultTaskQueue = queue
+	return r.startRunWithDefinition(ctx, input, definition, requireSession)
 }
 
 // seedTestToolset records the local registration that executes the supplied
@@ -706,6 +846,8 @@ func testStorageResult(command *api.StorageActivityCommand) *api.StorageActivity
 		return &api.StorageActivityResult{ChildStart: &api.StartRunResult{Outcome: session.RunStartProceed}}
 	case command.OneShotStart != nil:
 		return &api.StorageActivityResult{OneShotStart: &api.StartRunResult{Outcome: session.RunStartProceed}}
+	case command.OneShotChildStart != nil:
+		return &api.StorageActivityResult{OneShotChildStart: &api.StartRunResult{Outcome: session.RunStartProceed}}
 	case command.Cancellation != nil:
 		return &api.StorageActivityResult{Cancellation: &api.RunCancellationResult{Outcome: api.RunCancellationAccepted}}
 	case command.Suspension != nil:
@@ -936,6 +1078,8 @@ func (s *stubPlanner) PlanResume(ctx context.Context, input *planner.PlanResumeI
 
 type stubEngine struct {
 	last                             engine.WorkflowStartRequest
+	startCalls                       int
+	registeredWorkflow               engine.WorkflowDefinition
 	registeredStorageActivityOptions map[string]engine.ActivityOptions
 	registeredPlannerActivityOptions map[string]engine.ActivityOptions
 	registeredExecuteActivityOptions map[string]engine.ActivityOptions
@@ -944,7 +1088,10 @@ type stubEngine struct {
 	sealErrors                       []error
 }
 
-func (s *stubEngine) RegisterWorkflow(context.Context, engine.WorkflowDefinition) error { return nil }
+func (s *stubEngine) RegisterWorkflow(_ context.Context, definition engine.WorkflowDefinition) error {
+	s.registeredWorkflow = definition
+	return nil
+}
 func (s *stubEngine) RegisterStorageActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.StorageActivityCommand) (*api.StorageActivityResult, error)) error {
 	if s.registeredStorageActivityOptions == nil {
 		s.registeredStorageActivityOptions = make(map[string]engine.ActivityOptions)
@@ -974,6 +1121,7 @@ func (s *stubEngine) RegisterAgentChildActivity(_ context.Context, name string, 
 	return nil
 }
 func (s *stubEngine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
+	s.startCalls++
 	s.last = req
 	return noopWorkflowHandle{}, nil
 }

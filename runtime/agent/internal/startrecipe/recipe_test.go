@@ -1,3 +1,4 @@
+// These tests prove workflow input snapshots and start digests preserve exact values.
 package startrecipe
 
 import (

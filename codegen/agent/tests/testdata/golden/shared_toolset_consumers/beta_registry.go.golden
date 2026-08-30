@@ -29,13 +29,9 @@ func RegisterBetaWorkerAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg
 		return err
 	}
 	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
-		ID:      "beta.beta_worker",
-		Planner: agent.Planner,
-		Workflow: engine.WorkflowDefinition{
-			Name:      "beta.beta_worker.workflow",
-			TaskQueue: "beta_beta_worker_workflow",
-			Handler:   rt.ExecuteWorkflow,
-		},
+		Definition:       Definition(),
+		Planner:          agent.Planner,
+		WorkflowHandler:  rt.ExecuteWorkflow,
 		PlanActivityName: "beta.beta_worker.plan",
 		PlanActivityOptions: engine.ActivityOptions{
 			Queue:               "beta_beta_worker_workflow",
@@ -64,10 +60,7 @@ func RegisterBetaWorkerAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg
 				BackoffCoefficient: 2,
 			},
 		},
-		Specs:              specs.Specs(),
-		ToolMetadataLookup: specs.MetadataByName,
-		RequiredLabels:     specs.RequiredLabels(),
-		Policy:             agentsruntime.RunPolicy{},
+		Policy: agentsruntime.RunPolicy{},
 	}); err != nil {
 		return err
 	}

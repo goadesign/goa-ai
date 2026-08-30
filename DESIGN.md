@@ -403,12 +403,17 @@ options for the new workflow, such as memo and search attributes used for
 ownership and observability. These options do not alter the saved execution
 contract. If requests remain, that workflow stores and returns a new
 suspension. The checkpoint restores the transcript, planner state, labels,
-policy, nested-agent identity, and exact tool-call/result provenance. Required
-tool names are recorded, and
-`Runtime.ValidateContinuation` rejects a checkpoint when the new worker does
-not register one of them. Restoration passes every concrete saved payload and
-result through the current generated codec. A value the current contract cannot
-decode fails at that typed boundary. A tool call created in an earlier workflow
+policy, nested-agent identity, and exact tool-call/result provenance. The
+generated caller and worker share one immutable `AgentDefinition` containing
+the route, tool specifications, codecs, required labels, completion policy, and
+transitive child definitions. `AgentClient.PrepareContinuation` loads the saved
+checkpoint and validates it and the supplied response against that complete
+definition before the workflow engine receives the successor ID. It returns an
+opaque snapshot. `StartContinuation` submits those exact bytes, so retrying a
+prepared start cannot silently load or construct a different request. The
+workflow validates the same stored input again before restoring it. A saved
+payload, result, child suspension, or policy value that the current generated
+contract does not accept rejects the continuation. A tool call created in an earlier workflow
 retains that workflow's run ID while its result records the new workflow's run
 ID. The tool-result hook and `tool_end` stream payload carry the original call
 run ID explicitly; the result event's own run ID identifies the workflow that
@@ -431,13 +436,21 @@ outcome and event.
 
 The runtime requires one `storage.Store`. It exposes commands that name one
 complete workflow state change instead of separate metadata and record writes.
-`StartRootRun`, `StartChildRun`, and `StartOneShotRun` accept a concrete
+`StartRootRun`, `StartChildRun`, `StartOneShotRun`, and
+`StartOneShotChildRun` accept a concrete
 `RunStart` after the engine accepts the workflow. Exact retries return the
 stored outcome and record identifiers; changed identity returns
 `session.ErrRunConflict`. `RecordRunCancellation`, `RecordRunSuspension`, and
 `RecordRunTerminal` store the state change and matching ordered record together.
 This is a source-breaking replacement for the former `session.Store` and
 `runlog.Store` interfaces.
+
+The consuming application owns session administration and the durable
+repository. If that repository belongs to a separate Session service, agent
+workers satisfy `storage.Store` through an adapter built on the service's
+generated client. They do not open or share the Session service's database.
+The complete worker-facing store contract is documented in
+[Runtime Store](docs/runtime.md#runtime-store-storagestore).
 
 Workflow start and session ending share one serialization point in the host's
 store. Root and child starts create running metadata when the session is active.
@@ -462,18 +475,27 @@ obligation; the engine does not add a second durable registry.
 
 The accepted workflow owns the run history. It sends every durable change
 through the single `runtime.store` activity. Each command sets exactly one of
-`Append`, `RootStart`, `ChildStart`, `OneShotStart`, `Cancellation`,
-`Suspension`, or `Terminal`; the result sets the same field and no other field.
+`Append`, `RootStart`, `ChildStart`, `OneShotStart`, `OneShotChildStart`,
+`Cancellation`, `Suspension`, or `Terminal`; the result sets the same field and
+no other field.
 The activity therefore cannot infer an operation from record contents or return
 an unrelated result shape. Hosts return `storage.ContractError` for stored-state
 conflicts and other permanent contract failures, so engines do not retry them.
 Temporary database and network failures remain ordinary errors and can retry.
 
-A root start stores either `RunStarted` or `RunCompleted` with canceled status.
-A child start stores `ChildRunLinked` followed by either `RunStarted` or
-`RunCompleted` with canceled status. The returned immutable `StartOutcome`
-tells the workflow whether it may begin planner work. Prompt references and
-child relationships are derived from these canonical records rather than
+A root start always stores `RunStarted`. If the session has ended, it then
+stores `RunCompleted` with canceled status and the workflow does no planner or
+tool work. A child start always stores `ChildRunLinked` followed by
+`RunStarted`; an ended session adds the canceled `RunCompleted` record. A
+continued run puts the exact run ID whose
+checkpoint it restored in `RunStarted.PredecessorRunID`; initial runs leave it
+empty. The same value is part of `session.RunStart`. Before writing any part of
+the successor start, the store requires the predecessor to exist, be suspended,
+and have the same session, agent, and parent. `RunMeta` does not duplicate the
+predecessor because the immutable start record owns that relationship. The
+returned immutable `StartOutcome` tells the workflow whether it may begin
+planner work. Prompt references are derived from `PromptRendered`, the
+continuation predecessor in `RunStarted`, and `ChildRunLinked` rather than
 duplicated in `RunMeta`. Cancellation, suspension, and terminal commands update
 run metadata and store their matching record in one transaction. The hook bus
 receives successfully stored records afterward and does not write lifecycle
@@ -506,8 +528,9 @@ planning before the first record is durable and deterministic defects do not
 loop. Child workflow IDs are single-use commands: Temporal uses
 `REJECT_DUPLICATE`, the in-memory engine rejects every second explicit issue,
 and Temporal replay remains execution of the original command. A child link
-stores only additional child labels; tool arguments, budgets, attempts, and
-repeated identity remain in workflow input or dedicated event fields.
+stores the tool and call that created the child plus the child run and agent;
+tool arguments, budgets, attempts, and repeated identity remain in workflow
+input or dedicated event fields.
 
 Cancellation stores its first reason and matching record before engine
 cancellation, retains it through every engine outcome, and never rolls it back.
@@ -528,7 +551,9 @@ event only when the repair owns the stored record. A failure to retrieve the
 engine result is distinct from the workflow's own final error and cannot be
 saved as the workflow outcome. The engine also returns the stable time at which
 it closed the workflow. Repair uses that time for the recovered record, so an
-exact retry cannot create a different timestamp.
+exact retry cannot create a different timestamp. Every accepted lifecycle
+timestamp uses millisecond precision because runtime records carry time as
+integer milliseconds.
 
 `RunOneShot` stores its start before invoking application code. It records
 prompt events and the terminal result after the callback returns, even when the
@@ -551,7 +576,7 @@ metadata derived from records. Old split-store writers and new integrated-store
 writers must not overlap. How the host reaches that state depends on its
 database and deployment environment.
 
-`ValidateContinuation` accepts only the current suspension schema,
+Continuation preparation accepts only the current suspension schema,
 `goa-ai.run-suspension.v7`. Earlier versions are rejected because they cannot
 preserve the exact identities and complete successful tool results required by
 the current continuation contract. Every model-authored

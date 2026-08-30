@@ -104,13 +104,6 @@ func toolSpecShape(spec tools.ToolSpec) tools.ToolSpec {
 	return spec
 }
 
-// cloneAgentRegistration takes ownership of mutable generated contract data.
-func cloneAgentRegistration(reg AgentRegistration) AgentRegistration {
-	reg.Specs = cloneToolSpecs(reg.Specs)
-	reg.RequiredLabels = append([]string(nil), reg.RequiredLabels...)
-	return reg
-}
-
 // cloneToolsetRegistration takes ownership of mutable specs, hint maps, and
 // nested-agent routing maps while retaining immutable functions and templates.
 func cloneToolsetRegistration(reg ToolsetRegistration) ToolsetRegistration {

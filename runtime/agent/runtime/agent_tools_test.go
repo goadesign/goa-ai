@@ -119,31 +119,33 @@ func TestAgentToolPlannerOutputFailureSkipsParentResume(t *testing.T) {
 			childSpec.AgentID = string(childID)
 			rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 
-			require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{
-				ID: childID,
-				Planner: &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
-					return nil, test.wrap(planner.NewOutputContractError(
-						errors.New("invalid child reply"),
-					))
-				}},
-				Workflow: engine.WorkflowDefinition{
+			require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(childID,
+
+				engine.WorkflowDefinition{
 					Name: childWorkflowName,
 					Handler: func(wfCtx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
 						return rt.ExecuteWorkflow(wfCtx, input)
 					},
-				},
+				}, nil),
+
+				WorkflowHandler: (engine.WorkflowDefinition{
+					Name: childWorkflowName,
+					Handler: func(wfCtx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
+						return rt.ExecuteWorkflow(wfCtx, input)
+					},
+				}).Handler, Planner: &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+					return nil, test.wrap(planner.NewOutputContractError(
+						errors.New("invalid child reply"),
+					))
+				}},
+
 				PlanActivityName:    childPlanActivity,
 				ResumeActivityName:  childResume,
 				ExecuteToolActivity: childExecute,
 			}))
 			childToolset := NewAgentToolsetRegistration(rt, AgentToolConfig{
-				AgentID: childID,
-				Route: AgentRoute{
-					ID:               childID,
-					WorkflowName:     childWorkflowName,
-					DefaultTaskQueue: "child.queue",
-				},
-				Name: "child.tools",
+				Definition: testAgentDefinition(childID, childWorkflowName, "child.queue", nil, nil),
+				Name:       "child.tools",
 				AgentToolContent: AgentToolContent{
 					Texts: map[tools.Ident]string{childTool: "run child"},
 				},
@@ -152,22 +154,30 @@ func TestAgentToolPlannerOutputFailureSkipsParentResume(t *testing.T) {
 			require.NoError(t, rt.RegisterToolset(childToolset))
 
 			var parentResumeCalls atomic.Int32
-			parentRegistration := AgentRegistration{
-				ID: parentID,
-				Planner: &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
-					parentResumeCalls.Add(1)
-					return finalPlannerResult("unexpected resume"), nil
-				}},
-				Workflow: engine.WorkflowDefinition{
+			parentRegistration := AgentRegistration{Definition: testRegistrationDefinition(parentID,
+
+				engine.WorkflowDefinition{
 					Name: parentWorkflowName,
 					Handler: func(wfCtx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
 						return rt.ExecuteWorkflow(wfCtx, input)
 					},
 				},
+
+				[]tools.ToolSpec{childSpec}),
+
+				WorkflowHandler: (engine.WorkflowDefinition{
+					Name: parentWorkflowName,
+					Handler: func(wfCtx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
+						return rt.ExecuteWorkflow(wfCtx, input)
+					},
+				}).Handler, Planner: &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+					parentResumeCalls.Add(1)
+					return finalPlannerResult("unexpected resume"), nil
+				}},
+
 				PlanActivityName:    parentPlan,
 				ResumeActivityName:  parentResume,
 				ExecuteToolActivity: parentExecute,
-				Specs:               []tools.ToolSpec{childSpec},
 			}
 			require.NoError(t, rt.RegisterAgent(context.Background(), parentRegistration))
 
@@ -277,10 +287,12 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
 	// Register nested agent
-	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{
-		ID:                  agentID,
-		Planner:             pl,
-		Workflow:            engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }},
+	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,
+
+		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}, nil),
+
+		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}).Handler, Planner: pl,
+
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
@@ -288,12 +300,7 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 
 	// Build registration with no per-tool content.
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
-		AgentID: agentID,
-		Route: AgentRoute{
-			ID:               agent.Ident(agentID),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition(agent.Ident(agentID), "wf", "default", nil, nil),
 	})
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
@@ -329,10 +336,12 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
-	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{
-		ID:                  agentID,
-		Planner:             pl,
-		Workflow:            engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }},
+	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,
+
+		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}, nil),
+
+		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}).Handler, Planner: pl,
+
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
@@ -369,12 +378,7 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 		Result: tools.TypeSpec{Codec: tools.AnyJSONCodec},
 	}
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
-		AgentID: agentID,
-		Route: AgentRoute{
-			ID:               agent.Ident(agentID),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition(agent.Ident(agentID), "wf", "default", nil, nil),
 		AgentToolContent: AgentToolContent{
 			Prompt: func(_ tools.Ident, payload any) string {
 				typed, ok := payload.(*strictPayload)
@@ -423,21 +427,18 @@ func TestAgentTool_TextContent(t *testing.T) {
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
-	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{
-		ID:                  agentID,
-		Planner:             pl,
-		Workflow:            engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }},
+	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,
+
+		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}, nil),
+
+		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}).Handler, Planner: pl,
+
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
 	}))
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
-		AgentID: agentID,
-		Route: AgentRoute{
-			ID:               agent.Ident(agentID),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition(agent.Ident(agentID), "wf", "default", nil, nil),
 		AgentToolContent: AgentToolContent{
 			Texts: map[tools.Ident]string{
 				tools.Ident("svc.tools.do"): "hello",
@@ -479,21 +480,18 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
-	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{
-		ID:                  agentID,
-		Planner:             pl,
-		Workflow:            engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }},
+	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,
+
+		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}, nil),
+
+		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}).Handler, Planner: pl,
+
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
 	}))
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
-		AgentID: agentID,
-		Route: AgentRoute{
-			ID:               agent.Ident(agentID),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition(agent.Ident(agentID), "wf", "default", nil, nil),
 		AgentToolContent: AgentToolContent{
 			Prompt: func(_ tools.Ident, payload any) string {
 				text, err := PayloadToString(payload)
@@ -542,21 +540,18 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
-	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{
-		ID:                  agentID,
-		Planner:             pl,
-		Workflow:            engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }},
+	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,
+
+		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}, nil),
+
+		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}).Handler, Planner: pl,
+
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
 	}))
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
-		AgentID: agentID,
-		Route: AgentRoute{
-			ID:               agent.Ident(agentID),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition:   testAgentDefinition(agent.Ident(agentID), "wf", "default", nil, nil),
 		SystemPrompt: "SYS",
 		AgentToolContent: AgentToolContent{
 			Prompt: func(id tools.Ident, payload any) string {
@@ -618,7 +613,9 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 	}
 	rt.toolSpecs[parent.Name] = parent
 
-	cfg := &AgentToolConfig{AgentID: "test.agent"}
+	cfg := &AgentToolConfig{
+		Definition: testAgentDefinition("test.agent", "test.workflow", "test.queue", nil, nil),
+	}
 	call := &ToolCall{
 		Name:       parent.Name,
 		ToolCallID: "toolcall",

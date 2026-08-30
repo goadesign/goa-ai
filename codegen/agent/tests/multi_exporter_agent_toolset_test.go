@@ -29,11 +29,15 @@ func TestMultiExporterAgentToolsetKeepsSelectedExporter(t *testing.T) {
 	alpha := fileContent(t, files, alphaPath)
 	beta := fileContent(t, files, betaPath)
 	assert.Contains(t, alpha, `"alpha.first"`)
-	assert.Contains(t, alpha, `"alpha.first.workflow"`)
 	assert.NotContains(t, alpha, `"beta.second"`)
 	assert.Contains(t, beta, `"beta.second"`)
-	assert.Contains(t, beta, `"beta.second.workflow"`)
 	assert.NotContains(t, beta, `"alpha.first"`)
+
+	definition := fileContent(t, files, "gen/consumer/agents/worker/agent.go")
+	assert.Contains(t, definition, `"beta.second"`)
+	assert.Contains(t, definition, `"beta.second.workflow"`)
+	assert.NotContains(t, definition, `"alpha.first"`)
+	assert.NotContains(t, definition, `"alpha.first.workflow"`)
 
 	consumer := fileContent(t, files, "gen/consumer/agents/worker/shared_agenttools_client.go")
 	assert.Contains(t, consumer, `"goa.design/goa-ai/gen/beta/agents/second/agenttools/shared"`)

@@ -8,9 +8,11 @@
 package chat
 
 import (
+	specs "example.com/quickstart/gen/orchestrator/agents/chat/specs"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // AgentID is the fully-qualified identifier for this agent.
@@ -43,32 +45,29 @@ func NewChatAgent(cfg ChatAgentConfig) (*ChatAgent, error) {
 	return &ChatAgent{Planner: cfg.Planner}, nil
 }
 
-// NewWorker returns a per-agent worker configuration. Engines that support
-// workers (e.g., Temporal) use this to bind the agent's workflow and activities
-// to a specific queue. Supplying no options uses the generated default queue.
-func NewWorker(opts ...agentsruntime.WorkerOption) agentsruntime.WorkerConfig {
-	var cfg agentsruntime.WorkerConfig
-	for _, o := range opts {
-		if o != nil {
-			o(&cfg)
-		}
-	}
-	return cfg
-}
-
-// Route returns the minimal route required to construct a client in a
-// caller process without registering the agent locally.
-func Route() agentsruntime.AgentRoute {
-	return agentsruntime.AgentRoute{
+var agentDefinition = agentsruntime.NewAgentDefinition(
+	agentsruntime.AgentRoute{
 		ID:               AgentID,
 		WorkflowName:     WorkflowName,
 		DefaultTaskQueue: DefaultTaskQueue,
-	}
+	},
+	specs.Specs(),
+	specs.MetadataByName,
+	specs.RequiredLabels(),
+	[]tools.Ident{
+		tools.Ident("helpers.answer"),
+	},
+	nil,
+)
+
+// Definition returns the immutable generated contract shared by callers and workers.
+func Definition() agentsruntime.AgentDefinition {
+	return agentDefinition
 }
 
 // NewClient returns a runtime.AgentClient bound to this agent. In caller
-// processes that do not register the agent locally, this uses ClientMeta to
-// construct a client that can start workflows against remote workers.
+// processes that do not register the agent locally, it still validates starts
+// against the same generated contract as the worker.
 func NewClient(rt *agentsruntime.Runtime) agentsruntime.AgentClient {
-	return rt.MustClientFor(Route())
+	return rt.MustClientFor(Definition())
 }

@@ -614,7 +614,6 @@ rt := runtime.New(
     runtime.WithLogger(logger),          // Structured logging
     runtime.WithMetrics(metrics),        // Counter/histogram recording
     runtime.WithTracer(tracer),          // Distributed tracing
-    runtime.WithWorker(agentID, cfg),    // Per-agent queue placement
 )
 ```
 
@@ -631,11 +630,13 @@ these defaults:
 | Hooks | In-process bus |
 | Logger/Metrics/Tracer | No-op implementations |
 
-`runtime.WithWorker(...)` is intentionally narrow: it controls agent placement
-(`Queue`) only. Semantic planner and tool attempt budgets come from the DSL
-(`RunPolicy.Timing`) or per-run overrides (`runtime.WithTiming(...)`). If you
-use the Temporal engine and need queue-wait or liveness tuning, configure those
-mechanics on `temporal.Options.ActivityDefaults` when constructing the engine.
+Each generated `AgentDefinition` contains the agent's workflow name and default
+task queue. Callers and workers use that same definition. A caller may still
+select a different queue for one run with `runtime.WithTaskQueue(...)`.
+Semantic planner and tool attempt budgets come from the DSL
+(`RunPolicy.Timing`) or per-run overrides (`runtime.WithTiming(...)`). Configure
+Temporal queue-wait and liveness behavior on
+`temporal.Options.ActivityDefaults` when constructing the engine.
 
 ### Prompt Registry and Overrides
 
@@ -1074,48 +1075,39 @@ recovery turn may end with an input suspension; continuing retains the selected
 failure evidence. A failed batch clears its earlier synthesis intent; a new
 retry batch may request `SynthesizeAfterTools` again.
 
-A retired tool is a tool whose complete executable toolset registration remains
-loaded only so saved work can finish. That registration binds the generated
-input and result codecs to the function that executes the tool. A standalone
-tool specification is not enough to authorize recovery. The retired tool is
-absent from the agent's current `Specs`, so new runs, ordinary continuation
-turns, replanning, and turns after recovery do not advertise it.
+Saved work must match the current generated `AgentDefinition`. Removing a tool,
+changing an incompatible codec, or changing completion policy deliberately
+invalidates a suspension that depends on the old contract. Continuation
+preparation rejects it before the workflow engine receives the successor run
+ID. Goa-AI does not keep a retired tool catalog or use an older worker
+registration as a fallback.
 
 `RegisterToolset` validates agent tools before adding any part of the toolset to
 the runtime. A registration with agent-tool execution configuration requires
 every specification in that toolset to be marked as an agent tool; a marked
 specification requires agent-tool execution configuration. Mixed marked and
 unmarked specifications are invalid. Each generated agent-tool specification
-must name the same agent as the registration and its child-workflow route. The
-registration must use inline child-agent execution and provide the route's
-workflow name and task queue. Missing or conflicting values fail application
-setup; the runtime never infers the marker or falls back to ordinary tool
-activity execution. Generated registrations already satisfy this contract.
+must name the same agent as the registration's generated `AgentDefinition`.
+That definition is the only owner of the child agent ID, workflow name, default
+task queue, tool contracts, and required labels. Missing or conflicting values
+fail application setup; the runtime never infers the marker or falls back to
+ordinary tool activity execution. Generated registrations already satisfy this
+contract.
 Applications that construct `ToolsetRegistration` directly must update partial
 agent-tool registrations before upgrading.
 
-Every `correct_call` recovery uses the same exact-catalog contract, whether its
-tool is current or retired. The existing resume activity reloads each failed
-output by its saved call ID, reads the typed recovery action, and derives tool
-names in first-failure order while removing later copies of the same name. It
-then requires each name in the owning executable toolset registration and
-advertises only that registration's exact definitions for the correction turn.
-An unknown tool, a specification without its executable toolset, or a tool the
-registration no longer contains fails before a model call. The saved failure
-proves which earlier call needs correction; the retained executable registration
-is the narrow, current grant to attempt that correction.
+Every accepted `correct_call` recovery reloads each failed output by its saved
+call ID, reads the typed recovery action, and derives tool names in
+first-failure order while removing later copies of the same name. It requires
+each name in the current executable toolset registration and advertises only
+that registration's exact definitions for the correction turn. An unknown
+tool, a specification without its executable toolset, or a tool the current
+registration no longer contains fails before a model call.
 
 Run tag restrictions still filter the correction catalog before the planner
 runs. Runtime policy and authorization implemented by the tool's downstream
-executor still evaluate the corrected call. Retaining an executable registration
-does not bypass those checks. Removing the registration revokes recovery
-immediately.
-
-For planned retirement, keep the complete executable registration only while
-the owning application has pending corrections that may use it. Remove that
-registration after those corrections complete, are explicitly ended, or are
-otherwise accounted for under the application's recovery policy. Retaining only
-the tool specification is invalid.
+executor still evaluate the corrected call. Removing the current registration
+revokes recovery immediately.
 
 This recovery does not add an activity, change the resume activity name, or
 change workflow command ordering. A turn with no `correct_call` failure
@@ -2043,8 +2035,7 @@ rt.RegisterToolset(reg)
 
 ```go
 reg := runtime.NewAgentToolsetRegistration(rt, runtime.AgentToolConfig{
-    AgentID: agent.Ident("service.nested"),
-    Route:   runtime.AgentRoute{...},
+    Definition: nestedagent.Definition(),
     // Optional per-tool prompts/templates
 })
 ```
@@ -2103,7 +2094,7 @@ the labels map itself.
    attribute-validation codegen, not hand-duplicated), and return a precise
    error naming the tool and key on a missing or invalid label. The toolset's
    `RequiredLabels` (sorted, deduplicated label keys) is generated onto its
-   specs package and aggregated, per agent, onto `AgentRegistration`.
+   specs package and included in the agent's immutable `AgentDefinition`.
 3. Runtime time: both execution topologies call the **same** generated
    `Inject<Tool>` function between decode and execute, so population never
    diverges by where a tool runs:
@@ -2121,33 +2112,17 @@ the labels map itself.
      **Use the toolset's generated `Decode<Tool>(payload []byte, meta
      runtime.ToolCallMeta, labels map[string]string) (*<Tool>Payload, error)`
      function to decode these tools' payloads**, not the raw
-     `<Tool>PayloadCodec.FromJSON` followed by a manual `Inject<Tool>` call.
+   `<Tool>PayloadCodec.FromJSON` followed by a manual `Inject<Tool>` call.
      `Decode<Tool>` composes both in one call; decoding with the codec alone
      silently leaves injected fields at their Go zero value, because their
      wire tag is `json:"-"` and there is no "missing key" signal. `payload`
      accepts a `runtime.ToolCall.Payload` (`rawjson.Message`) directly.
-4. Run start: `Runtime.Start`/`StartOneShot` (and their route variants)
-   validate the caller-supplied `WithLabels(...)` map against the starting
-   agent's aggregated `RequiredLabels` **before** scheduling any workflow or
-   activity, failing fast with every missing key named in one error.
-   **Gateway/orchestration no-op:** this check reads `RequiredLabels` off the
-   *locally registered* `AgentRegistration`. A process that only holds a
-   `Runtime.ClientFor(route AgentRoute)` (or `MustClientFor`) -- the pattern
-   this runtime documents for gateway and orchestration processes that do
-   not run the agent's workflow themselves -- has no local registration, so
-   the check is a silent no-op there; a missing label is instead caught
-   later, per tool call, when `Inject<Tool>` actually runs. Carry
-   `RequiredLabels` on `AgentRoute` yourself if this gap matters for your
-   deployment; the runtime does not do so today.
-   **Agent-as-tool child runs** bypass run-start validation the same way:
-   `ExecuteAgentChildWithRoute` starts the child workflow directly (no
-   `Start`/`StartOneShot` funnel), so the child's `RequiredLabels` are never
-   checked up front. The parent run's labels propagate to the child
-   unchanged (the child's `RunInput.Labels` is a copy of the parent tool
-   call's labels), so a parent started with the right `WithLabels(...)`
-   satisfies the child too; a label the child needs that the parent never
-   carried fails loud at the child's `Inject<Tool>` call, per tool call,
-   not at child start.
+4. Run start: the generated `AgentDefinition` carries the complete, deduplicated
+   required-label list to both callers and workers. `Start` and `StartOneShot`
+   validate `WithLabels(...)` before scheduling planner or tool work and report
+   every missing key in one error. Remote callers therefore enforce the same
+   contract without registering the worker locally. Continuation preparation
+   checks the restored labels against the same definition.
 
 **`WithLabels` contract:**
 
@@ -2322,7 +2297,8 @@ nested agents execute as child workflows with their own run IDs and event stream
 
 1. Parent planner requests tool (e.g., `"service.analysis.analyze"`)
 2. Runtime identifies it as an agent-tool via `ToolSpec.IsAgentTool`
-3. Runtime starts child workflow using `AgentToolConfig.Route`
+3. Runtime starts the child workflow using the route in its generated
+   `AgentDefinition`
 4. Child agent executes its own plan/execute loop
 5. Runtime returns a parent `ToolResult` derived from the child run output (final text and/or finalizer output, plus aggregated telemetry). **Artifacts are not propagated to the parent tool result**; they remain attached to the child tool events.
 6. `ChildRunLinked` event links parent and child for streaming
@@ -2331,19 +2307,12 @@ nested agents execute as child workflows with their own run IDs and event stream
 
 ```go
 reg := runtime.NewAgentToolsetRegistration(rt, runtime.AgentToolConfig{
-    AgentID:         agent.Ident("service.data-analyst"),
-    Route:           runtime.AgentRoute{
-        ID:               agent.Ident("service.data-analyst"),
-        WorkflowName:     "DataAnalystWorkflow",
-        DefaultTaskQueue: "orchestrator.data-analyst",
-    },
-    SystemPrompt:    "You are a data analysis expert.",
+    Definition:   dataanalystagent.Definition(),
+    SystemPrompt: "You are a data analysis expert.",
     AgentToolContent: runtime.AgentToolContent{
         Templates: compiledTemplates, // Per-tool user message templates (optional)
         Texts:     textMessages,      // Alternative to templates (optional)
     },
-    JSONOnly:        true,                // Return structured results
-    Finalizer:       myFinalizer,         // Custom result aggregation
 })
 ```
 
@@ -2407,10 +2376,37 @@ Before completing the workflow, the runtime stores the suspension, suspended
 status, and matching record together under the completed run ID. The checkpoint
 can contain private planner messages and tool state; do not send it to an
 untrusted client.
-The owning service must atomically accept one answer before starting the
-continuation, so concurrent answers cannot start two workflows from the same
-state. When one answer is ready, start a new workflow with the completed run ID,
-a new run ID, and a new turn ID:
+Before claiming an answer, the owning service prepares the continuation. This
+loads the exact saved suspension, checks the response and every nested child
+checkpoint against the current generated agent definitions, and takes an
+immutable copy of the complete workflow input. It does not write runtime state
+or call the workflow engine. A rejected response therefore leaves the requested
+run ID unused.
+
+The owning service then atomically accepts one prepared answer, so concurrent
+answers cannot start two workflows from the same state, and starts that exact
+prepared value. It may safely retry the same prepared value after an uncertain
+engine response because `StartContinuation` submits the same bytes each time:
+
+```go
+prepared, err := client.PrepareContinuation(
+    ctx,
+    "session-1",
+    previous.RunID,
+    "run-124",
+    "turn-2",
+    response,
+    nil,
+)
+if err != nil {
+    return err
+}
+// Atomically accept the answer in application storage here.
+handle, err := client.StartContinuation(ctx, prepared)
+```
+
+Callers that do not need a separate application write can use `Continue`, which
+prepares, starts, and waits for completion:
 
 ```go
 next, err := client.Continue(
@@ -2420,6 +2416,7 @@ next, err := client.Continue(
     "run-124",
     "turn-2",
     response,
+    nil,
 )
 ```
 
@@ -2437,9 +2434,13 @@ input remains, the new workflow ends with another suspension. The checkpoint
 restores the original messages, policy, labels, nested-tool identity, remaining
 active-time budget, and exact call/result provenance; callers cannot override
 those values. The runtime loads the suspension by predecessor run ID and checks
-the checkpoint version, public pending requests, and required tool names before routing. The receiving
-worker restores saved payloads and results through its current generated codecs;
-any saved value outside the current contract fails at that typed boundary. If
+the checkpoint version, public pending requests, saved planner result, required
+labels, every saved payload and result, and every nested child suspension before
+starting the workflow. Caller and worker use the same generated
+`AgentDefinition`, including the definitions of every reachable child agent.
+Removing a tool or changing its generated codec deliberately makes a suspension
+that depends on the old contract incompatible. The workflow checks the saved
+input again before using it. If
 the response closes a tool call created by the previous
 workflow, the `tool_end` event belongs to the new result run and its required
 `call_run_id` identifies the run that emitted the matching `tool_start`.
@@ -2484,9 +2485,33 @@ For MCP services:
 
 For runtime storage and workflow adapters:
 
+- Regenerate every agent package. Generated callers and workers now share one
+  immutable `AgentDefinition` containing the route, tool contracts, required
+  labels, completion policy, and every reachable child definition.
+- Replace handwritten `AgentRegistration` route, tool-specification, and
+  required-label fields with `Definition`. Keep only worker implementations and
+  activity settings in the registration. Remove `WorkerConfig`, `WorkerOption`,
+  `WithWorker`, and `WithQueue`; the generated definition owns the workflow name
+  and default task queue. `WithTaskQueue` remains available on an individual
+  start because that queue is part of the caller's exact start request.
+- Pass the generated child definition to handwritten `AgentToolConfig` values
+  and generated exported-agent registration helpers. Remove separate child
+  agent IDs, routes, queues, activity names, specifications, and required labels
+  from those registrations.
+- Replace a service-side load followed by a direct continuation start with
+  `PrepareContinuation` and `StartContinuation`. Preparation validates and
+  copies the complete input without calling the engine. Start submits only that
+  prepared value. Use `Continue` only when no application write must occur
+  between validation and start.
 - Replace separate `session.Store` and `runlog.Store` implementations with one
   `storage.Store`. Each method stores one complete lifecycle change and its
   ordered run record together.
+- When `session.RunStart.PredecessorRunID` is non-empty, implement root and
+  child starts so they require that run to exist, be suspended, and have the
+  same session, agent, and parent. Check those facts in the same transaction as
+  the successor start. Reject a mismatch before writing the successor or its
+  parent link. Do not copy the predecessor ID into `RunMeta`; `RunStarted` is
+  the immutable relationship record.
 - Pass that store as the first argument to `runtime.New`. Remove
   `WithSessionStore` and `WithRunEventStore`; they no longer exist:
 
@@ -2504,11 +2529,23 @@ For runtime storage and workflow adapters:
   history.
 - Convert every stored `RunStarted` payload offline before starting the new
   runtime. The old payload stored `RunContext` and `Input`. The new payload
-  stores only `ParentRunID` and `Labels`; copy those two values from the old
-  `RunContext` and discard the duplicated input. Keep the run ID, agent ID,
-  session ID, turn ID, event key, and timestamp in the surrounding run record.
-  The new decoder rejects the old fields and every unknown field instead of
-  silently ignoring them.
+  stores only `parent_run_id`, optional `predecessor_run_id`, and `labels`; copy
+  the parent and labels from the old `RunContext` and discard the duplicated input.
+  For every historical continuation, copy the exact run ID whose checkpoint it
+  restored from the application's stored continuation identity. Initial runs
+  and ordinary child runs leave `PredecessorRunID` empty. Do not infer a
+  predecessor from timestamps, labels, or record order. Keep the run ID, agent
+  ID, session ID, turn ID, event key, and timestamp in the surrounding run
+  record. The new decoder rejects the old fields and every unknown field
+  instead of silently ignoring them.
+- Synthesize a `RunStarted` record before the canceled `RunCompleted` record for
+  every historical run stopped because its Session had already ended. Every
+  admitted run now has exactly one start record. The two records use different
+  stable event keys and the same start timestamp, owner, and labels.
+- Change `Runtime.ResolvePromptRefs(ctx, runID)` calls to
+  `Runtime.ResolvePromptRefs(ctx, sessionID, runID)`. Pass the Session ID that
+  the caller has already authorized. A run from another Session is reported as
+  missing.
 - Remove `WorkflowOptions.RetryPolicy` and `api.RetryPolicy`. There is no
   per-run replacement. The runtime owns its workflow behavior. Custom engine
   adapters use `engine.RetryPolicy` only on the engine requests and activity
@@ -2551,17 +2588,10 @@ contract. Completed run history keeps the same meaning. A host may still need
 to convert its physical records or collections so the new store can read them.
 That conversion must preserve every recorded outcome and event.
 
-The current `storage.Store` interface is also a coordinated release contract.
-It replaces the separate session and run-record stores with one host-owned
-repository. Root, child, and one-shot starts select and store their first
-records atomically. Cancellation, suspension, and terminal commands store the
-lifecycle change and matching record together. Every custom store and every
-process that writes runtime data must use this interface in the same release;
-mixed writers are unsupported. Goa-AI does not provide a production database
-implementation or prescribe a migration procedure. The host owns its schema,
-data conversion, verification, backup, and deployment plan. Before the new
-runtime writes, existing data must satisfy the integrated store contract. How a
-host reaches that state depends on its database and deployment environment.
+A coordinated upgrade must replace every former session and run-record writer
+with the current `storage.Store` contract in one release. The host owns its
+schema, data conversion, verification, backup, and deployment plan. See
+[Runtime Store](#runtime-store-storagestore) for the steady-state contract.
 A release that introduces workflow recipe digests must also stop new
 admissions and prove that no unresolved pre-upgrade start obligation or active
 workflow still requires attachment by exact ID. Deploy every workflow starter
@@ -2575,7 +2605,7 @@ records and continuation responses use the former, while provider transcript
 reconstruction uses the latter.
 
 Ending a session stops future work but retains its run metadata for inspection.
-When the owning application permanently deletes the session's customer data, it
+When the owning application permanently deletes the session's application data, it
 must wait for in-flight workflow and stream work to settle and then purge the
 session through its own administrative API. Purging permanently reserves the
 session ID before removing the session, every owned run, all private
@@ -2814,7 +2844,7 @@ directly.
 
 | Event | When |
 |-------|------|
-| `RunStarted` | Run begins; its stored payload contains only `ParentRunID` and `Labels` |
+| `RunStarted` | Run begins; its stored payload contains `ParentRunID`, optional `PredecessorRunID`, and `Labels` |
 | `RunCompleted` | Run finishes (success, failed, canceled); carries the run's start labels |
 | `RunSuspended` | Workflow ended with a versioned checkpoint and ordered pending input |
 | `RunPhaseChanged` | Phase transitions (planning, executing_tools, etc.) |
@@ -3089,16 +3119,24 @@ store is configured.
 The runtime requires one store for run metadata, continuation checkpoints, and
 ordered run records. The host's concrete repository also owns session creation,
 ending, listing, and permanent deletion, but those administrative operations are
-not part of the worker-facing `storage.Store` interface.
+not part of the worker-facing `storage.Store` interface. A host may put that
+repository behind a Session service and give agent workers a `storage.Store`
+adapter built on the service's generated typed client. Agent workers must not
+open or share the Session service's database.
 
 Lifecycle commands store the state change and matching records together:
 
-- `StartRootRun` stores either `RunStarted` or `RunCompleted` with canceled
-  status after the engine accepts the workflow.
-- `StartChildRun` stores `ChildRunLinked` followed by either `RunStarted` or
-  `RunCompleted` with canceled status.
+- `StartRootRun` always stores `RunStarted` after the engine accepts the
+  workflow. If the Session has already ended, it then stores `RunCompleted`
+  with canceled status. A continued run puts the run whose planner state it
+  restored in the `RunStarted` record.
+- `StartChildRun` always stores `ChildRunLinked` followed by `RunStarted`. If
+  the Session has already ended, it then stores `RunCompleted` with canceled
+  status.
 - `StartOneShotRun` gives sessionless work the same durable run metadata and
   stores `RunStarted`.
+- `StartOneShotChildRun` atomically stores `ChildRunLinked` on a running
+  sessionless parent and `RunStarted` on its sessionless child.
 - `RecordRunCancellation`, `RecordRunSuspension`, and `RecordRunTerminal` each
   store the run change and its matching record atomically.
 - `AppendRunRecord` stores ordinary records and returns the session state
@@ -3118,7 +3156,8 @@ ordinary errors so the storage activity can retry them.
 
 Workflow code reaches the store through one `runtime.store` activity. Its
 `StorageActivityCommand` sets exactly one of `Append`, `RootStart`,
-`ChildStart`, `OneShotStart`, `Cancellation`, `Suspension`, or `Terminal`.
+`ChildStart`, `OneShotStart`, `OneShotChildStart`, `Cancellation`, `Suspension`,
+or `Terminal`.
 `StorageActivityResult` sets exactly the same field and no other field. The
 runtime rejects empty commands, multiple commands, empty results, multiple
 results, and a result field that does not match the command. This explicit
@@ -3151,8 +3190,31 @@ second lifecycle writer.
 
 Prompt references and child relationships are derived from canonical ordered
 records. `RunMeta` does not duplicate those values. `ChildRunLinked` contains
-only the additional child labels beyond its dedicated parent, tool, session,
-child-run, and child-agent identity fields.
+the tool and call that created the child plus the child run and agent. The
+record envelope names the parent run, parent agent, and Session.
+
+`Runtime.ResolvePromptRefs(ctx, sessionID, runID)` requires the Session ID that
+the caller has already authorized. The earlier form without `sessionID` has
+been removed; callers must pass the expected owner when they upgrade. The
+empty Session ID selects a sessionless one-shot run that the caller has already
+authorized by its run ID. The method reports any other owner as missing, then
+reads the requested run's records breadth-first across every predecessor named
+by its one `RunStarted` record and every `ChildRunLinked` child reachable from
+those runs.
+The predecessor is the suspended run whose saved planner messages the
+continuation restored. It must keep the same Session, agent, and parent run as
+its successor. Each child must keep the same Session and match the child agent
+and parent run named by its link record. A missing or mismatched related run, a
+relationship cycle, or more than one start record is a stored-data error; it is
+never skipped. A run stopped because its Session had already ended has
+`RunStarted` followed by a canceled `RunCompleted` record. The resolver
+validates both records against the stored run, including their owner, labels,
+reason, and start time. That run does no planner or tool work, so it contributes
+no prompt references or child relationships. The method collects each
+`PromptRendered` reference once and visits each run once. These records show
+which prompt versions and scopes contributed to the run. Exact rendered prompt
+text remains in immutable workflow input or workflow history and is not
+reconstructed from the references.
 
 Child workflow IDs are single-use. Every second explicit issue is rejected for
 open and closed children, including an otherwise identical request; Temporal
@@ -3194,6 +3256,9 @@ the operator and is never stored as the workflow's final error. Repeating a
 successful repair is a no-op.
 The engine supplies one stable workflow completion time. Repair uses that time
 for the recovered record, so a retry submits the exact same timestamp.
+Every accepted lifecycle timestamp uses millisecond precision because runtime
+records carry time as integer milliseconds. Stores reject finer timestamps
+instead of changing them, so an exact retry always carries the same value.
 
 Pass the required store as the first argument to `runtime.New`. Goa-AI provides
 `runtime/agent/storage/inmem` for local development and tests. Production hosts
@@ -3593,11 +3658,11 @@ type WorkflowContext interface {
 Custom engine adapters must implement `RegisterStorageActivity` and
 `ExecuteStorageActivity`. The runtime registers one typed `runtime.store`
 activity. Each `StorageActivityCommand` has exactly one `Append`, `RootStart`,
-`ChildStart`, `OneShotStart`, `Cancellation`, `Suspension`, or `Terminal`
-field. The returned `StorageActivityResult` must have exactly the matching
-field. The runtime uses `storage.ContractError` to tell an engine that the same
-command cannot succeed on retry. `runtime.WithStorageActivityTimeout` sets the
-activity's Start-to-Close timeout; it must be greater than zero.
+`ChildStart`, `OneShotStart`, `OneShotChildStart`, `Cancellation`, `Suspension`,
+or `Terminal` field. The returned `StorageActivityResult` must have exactly the
+matching field. The runtime uses `storage.ContractError` to tell an engine that
+the same command cannot succeed on retry. `runtime.WithStorageActivityTimeout`
+sets the activity's Start-to-Close timeout; it must be greater than zero.
 
 Custom adapters must also implement `RegisterAgentChildActivity` and
 `ExecuteAgentChildActivity`. This activity prepares a nested agent's messages,

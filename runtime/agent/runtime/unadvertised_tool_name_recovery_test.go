@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -126,10 +127,7 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 	}))
 
 	agentID := agent.Ident("catalog.assistant")
-	registration := AgentRegistration{
-		ID:                  agentID,
-		Specs:               []tools.ToolSpec{originalCatalog},
-		PlanActivityName:    "plan",
+	registration := AgentRegistration{Definition: testRegistrationDefinition(agentID, engine.WorkflowDefinition{}, []tools.ToolSpec{originalCatalog}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
 		Planner: &stubPlanner{
@@ -178,7 +176,7 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 		Policy: RunPolicy{MaxToolCalls: 1, MaxRecoveryTurns: 1},
 	}
 	rt.agents[agentID] = registration
-	rt.agentToolSpecs[agentID] = registration.Specs
+	rt.agentToolSpecs[agentID] = registration.Definition.specs
 	rt.models["test"] = mustTestModelClient(stubModelClient{
 		stream: func(_ context.Context, request *model.Request) (model.Streamer, error) {
 			usage := model.TokenUsage{
@@ -253,10 +251,7 @@ func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
 	require.NoError(t, err)
 
 	agentID := agent.Ident("catalog.repeating_assistant")
-	registration := AgentRegistration{
-		ID:                  agentID,
-		Specs:               []tools.ToolSpec{catalog},
-		PlanActivityName:    "plan",
+	registration := AgentRegistration{Definition: testRegistrationDefinition(agentID, engine.WorkflowDefinition{}, []tools.ToolSpec{catalog}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
 		Planner: &stubPlanner{
@@ -274,7 +269,7 @@ func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
 		Policy: RunPolicy{MaxToolCalls: 1, MaxRecoveryTurns: 1},
 	}
 	rt.agents[agentID] = registration
-	rt.agentToolSpecs[agentID] = registration.Specs
+	rt.agentToolSpecs[agentID] = registration.Definition.specs
 	var modelCalls int
 	rt.models["test"] = mustTestModelClient(stubModelClient{
 		complete: func(context.Context, *model.Request) (*model.Response, error) {

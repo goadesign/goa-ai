@@ -500,7 +500,7 @@ func appendBedrockReplayDelta(t *testing.T, ctx context.Context, store storage.S
 		TurnID:    "turn-1",
 		Type:      transcript.RunLogMessagesAppended,
 		Payload:   payload,
-		Timestamp: time.Now().UTC(),
+		Timestamp: time.Now().UTC().Truncate(time.Millisecond),
 	})
 	require.NoError(t, err)
 }
@@ -509,10 +509,10 @@ func appendBedrockReplayDelta(t *testing.T, ctx context.Context, store storage.S
 func newBedrockReplayStore(t *testing.T, ctx context.Context) *storageinmem.Store {
 	t.Helper()
 	store := storageinmem.New()
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Millisecond)
 	_, err := store.CreateSession(ctx, "session-1", now)
 	require.NoError(t, err)
-	started := bedrockLifecycleRecord(t, hooks.NewRunStartedEvent("run-1", "agent-1", "session-1", "", nil), "run-started", now)
+	started := bedrockLifecycleRecord(t, hooks.NewRunStartedEvent("run-1", "agent-1", "session-1", "", "", nil), "run-started", now)
 	canceled := bedrockLifecycleRecord(t, hooks.NewRunCompletedEvent(
 		"run-1",
 		"agent-1",

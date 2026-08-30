@@ -230,6 +230,7 @@ func agentToolsConsumerFiles(agent *AgentData) []*codegen.File {
 			RuntimeAlias:                    ts.agentToolsRuntimeAlias,
 			ProviderAlias:                   ts.agentToolsProviderAlias,
 			ProviderRegistrationConstructor: ts.AgentToolsProviderRegistrationConstructor,
+			Definition:                      agent.PackageNames.Definition,
 		}
 		sections := []*codegen.SectionTemplate{
 			codegen.Header(

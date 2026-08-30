@@ -28,32 +28,72 @@ func {{ .PackageNames.Constructor }}(cfg {{ .ConfigType }}) (*{{ .StructName }},
     return &{{ .StructName }}{Planner: cfg.Planner}, nil
 }
 
-// {{ .PackageNames.NewWorker }} returns a per-agent worker configuration. Engines that support
-// workers (e.g., Temporal) use this to bind the agent's workflow and activities
-// to a specific queue. Supplying no options uses the generated default queue.
-func {{ .PackageNames.NewWorker }}(opts ...{{ .RuntimeAlias }}.WorkerOption) {{ .RuntimeAlias }}.WorkerConfig {
-    var cfg {{ .RuntimeAlias }}.WorkerConfig
-    for _, o := range opts {
-        if o != nil {
-            o(&cfg)
-        }
-    }
-    return cfg
-}
-
-// {{ .PackageNames.Route }} returns the minimal route required to construct a client in a
-// caller process without registering the agent locally.
-func {{ .PackageNames.Route }}() {{ .RuntimeAlias }}.AgentRoute {
-    return {{ .RuntimeAlias }}.AgentRoute{
+var {{ .PackageNames.DefinitionValue }} = {{ .RuntimeAlias }}.NewAgentDefinition(
+    {{ .RuntimeAlias }}.AgentRoute{
         ID:               {{ .PackageNames.AgentID }},
         WorkflowName:     {{ .PackageNames.WorkflowName }},
         DefaultTaskQueue: {{ .PackageNames.DefaultTaskQueue }},
-    }
+    },
+{{- if .Tools }}
+    {{ .ToolSpecsAlias }}.Specs(),
+    {{ .ToolSpecsAlias }}.MetadataByName,
+    {{ .ToolSpecsAlias }}.RequiredLabels(),
+    []{{ .ToolsAlias }}.Ident{
+{{- range .UsedToolsets }}
+{{- range .Tools }}
+        {{ $.ToolsAlias }}.Ident({{ printf "%q" .QualifiedName }}),
+{{- end }}
+{{- end }}
+    },
+{{- else }}
+    nil,
+    nil,
+    nil,
+    nil,
+{{- end }}
+{{- if .ChildDefinitions }}
+    []{{ .RuntimeAlias }}.AgentDefinition{
+{{- range .ChildDefinitions }}
+        {{ $.RuntimeAlias }}.NewAgentDefinition(
+            {{ $.RuntimeAlias }}.AgentRoute{
+                ID:               {{ $.AgentAlias }}.Ident({{ printf "%q" .ID }}),
+                WorkflowName:     {{ printf "%q" .Runtime.Workflow.Name }},
+                DefaultTaskQueue: {{ printf "%q" .Runtime.Workflow.Queue }},
+            },
+{{- if .Tools }}
+            {{ .ToolSpecsAlias }}.Specs(),
+            {{ .ToolSpecsAlias }}.MetadataByName,
+            {{ .ToolSpecsAlias }}.RequiredLabels(),
+            []{{ $.ToolsAlias }}.Ident{
+{{- range .UsedToolsets }}
+{{- range .Tools }}
+                {{ $.ToolsAlias }}.Ident({{ printf "%q" .QualifiedName }}),
+{{- end }}
+{{- end }}
+            },
+{{- else }}
+            nil,
+            nil,
+            nil,
+            nil,
+{{- end }}
+            nil,
+        ),
+{{- end }}
+    },
+{{- else }}
+    nil,
+{{- end }}
+)
+
+// {{ .PackageNames.Definition }} returns the immutable generated contract shared by callers and workers.
+func {{ .PackageNames.Definition }}() {{ .RuntimeAlias }}.AgentDefinition {
+	return {{ .PackageNames.DefinitionValue }}
 }
 
 // {{ .PackageNames.NewClient }} returns a runtime.AgentClient bound to this agent. In caller
-// processes that do not register the agent locally, this uses ClientMeta to
-// construct a client that can start workflows against remote workers.
+// processes that do not register the agent locally, it still validates starts
+// against the same generated contract as the worker.
 func {{ .PackageNames.NewClient }}(rt *{{ .RuntimeAlias }}.Runtime) {{ .RuntimeAlias }}.AgentClient {
-    return rt.MustClientFor({{ .PackageNames.Route }}())
+    return rt.MustClientFor({{ .PackageNames.Definition }}())
 }

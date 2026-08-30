@@ -83,7 +83,7 @@ const (
 //
 // This is intended for workflows that run in the same Temporal worker as the goa-ai
 // engine but are not started through it, and still need to call runtime helpers
-// (for example ExecuteAgentChildWithRoute).
+// such as ExecuteAgentChild.
 //
 // The returned context uses engine defaults (queue, timeouts, retry) when invoking
 // typed planner/tool/record activities.
@@ -459,6 +459,7 @@ func (w *temporalWorkflowContext) StartChildWorkflow(ctx context.Context, req en
 		WorkflowID:            req.ID,
 		TaskQueue:             req.TaskQueue,
 		WorkflowRunTimeout:    req.RunTimeout,
+		WaitForCancellation:   true,
 		WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
 		RetryPolicy:           convertRetryPolicy(req.RetryPolicy),
 	}

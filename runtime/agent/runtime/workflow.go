@@ -63,7 +63,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	var checkpoint *workflowCheckpoint
 	if input.Continuation != nil {
 		var err error
-		checkpoint, err = r.decodeWorkflowCheckpoint(input.Continuation.Suspension)
+		checkpoint, err = prepareContinuation(input, reg.Definition)
 		if err != nil {
 			return nil, err
 		}
@@ -84,6 +84,10 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	// the run loop; the terminal RunCompleted event must carry the run-scoped
 	// labels as provided at start, so capture them before the loop runs.
 	startLabels := cloneLabels(input.Labels)
+	predecessorRunID := ""
+	if checkpoint != nil {
+		predecessorRunID = checkpoint.PreviousRunID
+	}
 	runCtx := run.Context{
 		RunID:            input.RunID,
 		SessionID:        input.SessionID,
@@ -118,6 +122,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		input.AgentID,
 		input.SessionID,
 		input.ParentRunID,
+		predecessorRunID,
 		startLabels,
 	))
 	promptEvents := make([]hooks.Event, 0, len(input.RenderedPrompts))
@@ -231,7 +236,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	recordTerminalResult = true
 	if len(promptRecords) > 0 {
 		if _, err := r.executeStorageWithRetry(wfCtx.Detached().Context(), appendStorageCommand(promptRecords...)); err != nil {
-			return nil, fmt.Errorf("record initial prompts: %w", err)
+			return nil, fmt.Errorf("record initial run context: %w", err)
 		}
 	}
 	// Initial phase: input has been received and planning is about to begin.

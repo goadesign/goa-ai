@@ -29,13 +29,9 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		return err
 	}
 	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
-		ID:      "alpha.scribe",
-		Planner: agent.Planner,
-		Workflow: engine.WorkflowDefinition{
-			Name:      "alpha.scribe.workflow",
-			TaskQueue: "alpha_scribe_workflow",
-			Handler:   rt.ExecuteWorkflow,
-		},
+		Definition:       Definition(),
+		Planner:          agent.Planner,
+		WorkflowHandler:  rt.ExecuteWorkflow,
 		PlanActivityName: "alpha.scribe.plan",
 		PlanActivityOptions: engine.ActivityOptions{
 			Queue:               "alpha_scribe_workflow",
@@ -64,9 +60,6 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 				BackoffCoefficient: 2,
 			},
 		},
-		Specs:              specs.Specs(),
-		ToolMetadataLookup: specs.MetadataByName,
-		RequiredLabels:     specs.RequiredLabels(),
 		Policy: agentsruntime.RunPolicy{
 			MaxToolCalls:     5,
 			MaxRecoveryTurns: 2,

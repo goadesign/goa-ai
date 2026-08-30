@@ -28,6 +28,8 @@ import (
 )
 
 type (
+	toolSpecLookup func(tools.Ident) (tools.ToolSpec, bool)
+
 	stepKind uint8
 
 	stepProgram struct {
@@ -108,6 +110,12 @@ func (k stepKind) String() string {
 // normalizeStep converts a planner result into the runtime's single-step
 // execution model.
 func (r *Runtime) normalizeStep(result *PlanResult) (stepProgram, error) {
+	return normalizeStepWithSpecs(result, r.toolSpec)
+}
+
+// normalizeStepWithSpecs validates one saved or current planner result against
+// the tool contracts supplied by its owning agent definition.
+func normalizeStepWithSpecs(result *PlanResult, lookup toolSpecLookup) (stepProgram, error) {
 	if result == nil {
 		return stepProgram{}, planner.NewOutputContractError(errors.New("workflow step received nil PlanResult"))
 	}
@@ -136,7 +144,7 @@ func (r *Runtime) normalizeStep(result *PlanResult) (stepProgram, error) {
 		if err := validateAwaitItems(awaitItems); err != nil {
 			return stepProgram{}, planner.NewOutputContractError(err)
 		}
-		if err := r.validateAwaitTools(awaitItems); err != nil {
+		if err := validateAwaitToolsWithSpecs(awaitItems, lookup); err != nil {
 			return stepProgram{}, planner.NewOutputContractError(err)
 		}
 	}
@@ -149,7 +157,7 @@ func (r *Runtime) normalizeStep(result *PlanResult) (stepProgram, error) {
 		)
 	}
 	if result.SynthesizeAfterTools {
-		if err := r.validateSynthesisAfterTools(result.ToolCalls); err != nil {
+		if err := validateSynthesisAfterToolsWithSpecs(result.ToolCalls, lookup); err != nil {
 			return stepProgram{}, planner.NewOutputContractError(err)
 		}
 	}
@@ -166,7 +174,7 @@ func (r *Runtime) normalizeStep(result *PlanResult) (stepProgram, error) {
 		}, nil
 	}
 	if hasTerminal {
-		if err := r.validateToolTerminalProgram(result.ToolCalls); err != nil {
+		if err := validateToolTerminalProgramWithSpecs(result.ToolCalls, lookup); err != nil {
 			return stepProgram{}, planner.NewOutputContractError(err)
 		}
 		return stepProgram{
@@ -261,8 +269,12 @@ func (r *Runtime) normalizePlanResultForExecution(ctx context.Context, result *P
 // validateAwaitTools requires every tool named by an await request to exist and
 // remain available after the user responds.
 func (r *Runtime) validateAwaitTools(items []planner.AwaitItem) error {
+	return validateAwaitToolsWithSpecs(items, r.toolSpec)
+}
+
+func validateAwaitToolsWithSpecs(items []planner.AwaitItem, lookup toolSpecLookup) error {
 	for _, call := range awaitToolRequests(items) {
-		spec, ok := r.toolSpec(call.Name)
+		spec, ok := lookup(call.Name)
 		if !ok {
 			return fmt.Errorf("planner await references unknown tool %q", call.Name)
 		}
@@ -459,19 +471,27 @@ func cloneAwaitQuestions(questions []planner.AwaitQuestion) []planner.AwaitQuest
 	return cloned
 }
 
-// validateSynthesisAfterTools requires a batch whose existing execution
-// classification guarantees a subsequent planner resume.
-func (r *Runtime) validateSynthesisAfterTools(calls []ToolCall) error {
+func validateSynthesisAfterToolsWithSpecs(calls []ToolCall, lookup toolSpecLookup) error {
 	for _, call := range calls {
-		spec, ok := r.toolSpec(call.Name)
+		spec, ok := lookup(call.Name)
 		if ok && spec.TerminalRun {
 			return fmt.Errorf("workflow step synthesis-after-tools cannot include terminal tool %q", call.Name)
 		}
 	}
-	if !r.hasBudgetedToolCalls(calls) {
+	if !hasBudgetedToolCallsWithSpecs(calls, lookup) {
 		return errors.New("workflow step synthesis-after-tools requires at least one budgeted tool")
 	}
 	return nil
+}
+
+func hasBudgetedToolCallsWithSpecs(calls []ToolCall, lookup toolSpecLookup) bool {
+	for _, call := range calls {
+		spec, ok := lookup(call.Name)
+		if !ok || !spec.Bookkeeping {
+			return true
+		}
+	}
+	return false
 }
 
 // hasBudgetedToolCalls distinguishes active work from runtime bookkeeping,
@@ -573,8 +593,12 @@ func validatePlanResultToolCallIDs(result *PlanResult) error {
 // shape: non-resuming bookkeeping side effects followed by a terminal planner
 // payload in the same step.
 func (r *Runtime) validateToolTerminalProgram(calls []ToolCall) error {
+	return validateToolTerminalProgramWithSpecs(calls, r.toolSpec)
+}
+
+func validateToolTerminalProgramWithSpecs(calls []ToolCall, lookup toolSpecLookup) error {
 	for _, call := range calls {
-		spec, ok := r.toolSpec(call.Name)
+		spec, ok := lookup(call.Name)
 		if !ok {
 			return fmt.Errorf("workflow step terminal payload cannot accompany unknown tool %q", call.Name)
 		}

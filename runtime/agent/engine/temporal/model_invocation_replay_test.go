@@ -214,13 +214,9 @@ func productionReplayWorkflow(
 	_, err := store.CreateSession(t.Context(), productionReplaySessionID, time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, rt.RegisterAgent(t.Context(), agentruntime.AgentRegistration{
-		ID:      productionReplayAgentID,
-		Planner: plannerStub,
-		Workflow: engine.WorkflowDefinition{
-			Name:      productionReplayWorkflowName,
-			TaskQueue: productionReplayTaskQueue,
-			Handler:   rt.ExecuteWorkflow,
-		},
+		Definition:          testTemporalAgentDefinition(productionReplayAgentID, productionReplayWorkflowName, productionReplayTaskQueue, nil),
+		Planner:             plannerStub,
+		WorkflowHandler:     rt.ExecuteWorkflow,
 		PlanActivityName:    productionReplayPlanActivity,
 		ResumeActivityName:  productionReplayResume,
 		ExecuteToolActivity: productionReplayExecute,

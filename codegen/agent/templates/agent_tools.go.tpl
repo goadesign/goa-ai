@@ -82,27 +82,13 @@ func {{ .HintsInstaller }}(reg *{{ .RuntimeAlias }}.ToolsetRegistration) error {
 // this agent. Each call starts the agent and returns its final response. The
 // generated registration also includes the labels and previews declared for
 // tool calls and results.
-//
-// Example usage:
-//
-//	rt := {{ .RuntimeAlias }}.New(...)
-//	reg := {{ .ProviderConstructor }}(rt)
-//	if err := rt.RegisterToolset(reg); err != nil {
-//		// handle error
-//	}
-func {{ .ProviderConstructor }}(rt *{{ .RuntimeAlias }}.Runtime) {{ .RuntimeAlias }}.ToolsetRegistration {
+func {{ .ProviderConstructor }}(
+    rt *{{ .RuntimeAlias }}.Runtime,
+    definition {{ .RuntimeAlias }}.AgentDefinition,
+) {{ .RuntimeAlias }}.ToolsetRegistration {
     cfg := {{ .RuntimeAlias }}.AgentToolConfig{
-        AgentID:   {{ .AgentIDName }},
-        Name:      {{ .ToolsetName }},
-        TaskQueue: {{ printf "%q" .Toolset.TaskQueue }},
-        Route: {{ .RuntimeAlias }}.AgentRoute{
-			ID:               {{ .AgentIDName }},
-			WorkflowName:     {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Name }},
-			DefaultTaskQueue: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Queue }},
-		},
-        PlanActivityName:    {{ printf "%q" .Toolset.Agent.Runtime.PlanActivity.Name }},
-        ResumeActivityName:  {{ printf "%q" .Toolset.Agent.Runtime.ResumeActivity.Name }},
-        ExecuteToolActivity: {{ printf "%q" .Toolset.Agent.Runtime.ExecuteTool.Name }},
+        Definition: definition,
+        Name:       {{ .ToolsetName }},
     }
     reg := {{ .RuntimeAlias }}.NewAgentToolsetRegistration(rt, cfg)
     reg.Specs = {{ .SpecsFunc }}()
@@ -120,23 +106,14 @@ func {{ .ProviderConstructor }}(rt *{{ .RuntimeAlias }}.Runtime) {{ .RuntimeAlia
 // templates, but each tool must use exactly one form.
 func {{ .RegistrationConstructor }}(
     rt *{{ .RuntimeAlias }}.Runtime,
+    definition {{ .RuntimeAlias }}.AgentDefinition,
     systemPrompt string,
     opts ...{{ .RuntimeAlias }}.AgentToolOption,
 ) ({{ .RuntimeAlias }}.ToolsetRegistration, error) {
     cfg := {{ .RuntimeAlias }}.AgentToolConfig{
-        AgentID:      {{ .AgentIDName }},
+        Definition:   definition,
         Name:         {{ .ToolsetName }},
-        TaskQueue:    {{ printf "%q" .Toolset.TaskQueue }},
         SystemPrompt: systemPrompt,
-        // Route identifies the workflow and queue that run the child agent.
-        Route: {{ .RuntimeAlias }}.AgentRoute{
-			ID:              {{ .AgentIDName }},
-			WorkflowName:    {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Name }},
-			DefaultTaskQueue: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Queue }},
-		},
-        PlanActivityName:    {{ printf "%q" .Toolset.Agent.Runtime.PlanActivity.Name }},
-        ResumeActivityName:  {{ printf "%q" .Toolset.Agent.Runtime.ResumeActivity.Name }},
-        ExecuteToolActivity: {{ printf "%q" .Toolset.Agent.Runtime.ExecuteTool.Name }},
     }
     for _, o := range opts {
         o(&cfg)

@@ -73,9 +73,11 @@ func (r *Runtime) RunOneShot(ctx context.Context, input OneShotRunInput, execute
 		Attempt:   1,
 		Labels:    cloneLabels(input.Labels),
 	}
-	if err := r.recordOneShotEvent(ctx, hooks.NewRunStartedEvent(
+	storageCtx := context.WithoutCancel(ctx)
+	if err := r.recordOneShotEvent(storageCtx, hooks.NewRunStartedEvent(
 		input.RunID,
 		input.AgentID,
+		"",
 		"",
 		"",
 		runCtx.Labels,
@@ -85,7 +87,6 @@ func (r *Runtime) RunOneShot(ctx context.Context, input OneShotRunInput, execute
 	promptRenders := prompt.NewRenderRecorder()
 	execCtx := prompt.WithRenderRecorder(ctx, promptRenders)
 	execErr := execute(execCtx)
-	storageCtx := context.WithoutCancel(ctx)
 	for _, rendered := range promptRenders.Events() {
 		if err := r.recordOneShotEvent(storageCtx, hooks.NewPromptRenderedEvent(
 			input.RunID,

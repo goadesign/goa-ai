@@ -1,7 +1,7 @@
-// Package startrecipe defines the byte-level workflow start identity shared by
-// workflow engine adapters. It converts values with the same Temporal payload
-// encoders used at execution boundaries, then hashes framed payload bytes so
-// adapter-specific map or JSON behavior cannot change duplicate detection.
+// Package startrecipe snapshots workflow starts and defines their byte-level
+// identity. The runtime and every engine adapter use the same type-preserving
+// conversion, so accepted input cannot change after validation and duplicate
+// detection cannot vary by adapter.
 package startrecipe
 
 import (

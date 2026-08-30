@@ -22,7 +22,28 @@ type (
 		attempts    int
 		terminalErr error
 	}
+
+	// uncertainStartStore commits the first start but reports a temporary error.
+	// The retry must observe that exact write before caller work runs.
+	uncertainStartStore struct {
+		storage.Store
+		cancel   context.CancelFunc
+		attempts int
+	}
 )
+
+func (s *uncertainStartStore) StartOneShotRun(ctx context.Context, command storage.OneShotRunStart) (storage.OneShotRunStartResult, error) {
+	s.attempts++
+	result, err := s.Store.StartOneShotRun(ctx, command)
+	if err != nil {
+		return storage.OneShotRunStartResult{}, err
+	}
+	if s.attempts == 1 {
+		s.cancel()
+		return storage.OneShotRunStartResult{}, errors.New("database reply lost after commit")
+	}
+	return result, nil
+}
 
 func (s *transientTerminalStore) RecordRunTerminal(ctx context.Context, command storage.RunTerminal) (storage.AppendResult, error) {
 	s.attempts++
@@ -144,6 +165,33 @@ func TestRunOneShotStoresPromptAndCancellationAfterCallbackCancelsContext(t *tes
 	require.Equal(t, hooks.RunStarted, page.Events[0].Type)
 	require.Equal(t, hooks.PromptRendered, page.Events[1].Type)
 	require.Equal(t, hooks.RunCompleted, page.Events[2].Type)
+}
+
+func TestRunOneShotCompletesLifecycleAfterUncertainStartAndCallerCancellation(t *testing.T) {
+	store := newTestStore()
+	ctx, cancel := context.WithCancel(context.Background())
+	retryingStore := &uncertainStartStore{Store: store, cancel: cancel}
+	runtime := newFromOptions(retryingStore, Options{Hooks: hooks.NewBus()})
+	executions := 0
+
+	err := runtime.RunOneShot(ctx, OneShotRunInput{
+		AgentID: "svc.agent", RunID: "run",
+	}, func(ctx context.Context) error {
+		executions++
+		return ctx.Err()
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, 2, retryingStore.attempts)
+	require.Equal(t, 1, executions)
+	meta, err := store.LoadRun(context.Background(), "run")
+	require.NoError(t, err)
+	require.Equal(t, session.RunStatusCanceled, meta.Status)
+	page, err := store.ListRunRecords(context.Background(), "run", "", 10)
+	require.NoError(t, err)
+	require.Len(t, page.Events, 2)
+	require.Equal(t, hooks.RunStarted, page.Events[0].Type)
+	require.Equal(t, hooks.RunCompleted, page.Events[1].Type)
 }
 
 func TestRunOneShotDoesNotRetryPermanentTerminalConflict(t *testing.T) {

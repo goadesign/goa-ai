@@ -47,7 +47,7 @@ func TestRegisterAgentKeepsExistingPlannerActivities(t *testing.T) {
 	require.Contains(t, eng.registeredPlannerActivityOptions, registration.ResumeActivityName)
 }
 
-func TestPublicContinuationRecoversGloballyRegisteredRetiredTool(t *testing.T) {
+func TestPublicContinuationRejectsToolRemovedFromGeneratedDefinition(t *testing.T) {
 	ctx := t.Context()
 	store, retired, current := suspendedRetiredToolFixture(t)
 
@@ -85,7 +85,8 @@ func TestPublicContinuationRecoversGloballyRegisteredRetiredTool(t *testing.T) {
 		[]tools.ToolSpec{current},
 	)))
 
-	handle, err := secondRuntime.MustClient(agent.Ident("catalog.agent")).StartContinuation(
+	client := secondRuntime.MustClient(agent.Ident("catalog.agent"))
+	_, err := client.PrepareContinuation(
 		ctx,
 		"session-correction",
 		"run-before-retirement",
@@ -97,12 +98,10 @@ func TestPublicContinuationRecoversGloballyRegisteredRetiredTool(t *testing.T) {
 		}},
 		nil,
 	)
-	require.NoError(t, err)
-	secondOutput, err := handle.Wait(ctx)
-	require.NoError(t, err)
-	require.Equal(t, "saved lookup completed", agentMessageText(secondOutput.Final))
-	require.Equal(t, 1, executions)
-	require.Equal(t, 2, resumes)
+	require.ErrorIs(t, err, ErrContinuationRejected)
+	require.ErrorContains(t, err, `requires tool "catalog.lookup_retired" removed from the current agent definition`)
+	require.Zero(t, executions)
+	require.Zero(t, resumes)
 }
 
 func TestPublicContinuationRejectsFreshRuntimeWithoutRetiredRegistration(t *testing.T) {
@@ -129,14 +128,17 @@ func TestPublicContinuationRejectsFreshRuntimeWithoutRetiredRegistration(t *test
 		[]tools.ToolSpec{current},
 	)))
 	schemaHolder := correctionTestRegistration(runtime, &stubPlanner{}, []tools.ToolSpec{retired})
-	schemaHolder.ID = "catalog.schema_holder"
-	schemaHolder.Workflow.Name = "catalog.schema_holder.workflow"
+	schemaHolder.Definition = testAgentDefinition(
+		"catalog.schema_holder", "catalog.schema_holder.workflow", "test",
+		[]tools.ToolSpec{retired}, nil)
+
 	schemaHolder.PlanActivityName = "catalog.schema_holder.plan"
 	schemaHolder.ResumeActivityName = "catalog.schema_holder.resume"
 	schemaHolder.ExecuteToolActivity = "catalog.schema_holder.execute_tool"
 	require.NoError(t, runtime.RegisterAgent(ctx, schemaHolder))
 
-	handle, err := runtime.MustClient(agent.Ident("catalog.agent")).StartContinuation(
+	client := runtime.MustClient(agent.Ident("catalog.agent"))
+	_, err := client.PrepareContinuation(
 		ctx,
 		"session-correction",
 		"run-before-retirement",
@@ -148,13 +150,8 @@ func TestPublicContinuationRejectsFreshRuntimeWithoutRetiredRegistration(t *test
 		}},
 		nil,
 	)
-	require.NoError(t, err)
-	_, err = handle.Wait(ctx)
-	require.ErrorContains(
-		t,
-		err,
-		`correct-call recovery tool "catalog.lookup_retired" has no executable toolset registration`,
-	)
+	require.ErrorIs(t, err, ErrContinuationRejected)
+	require.ErrorContains(t, err, `requires tool "catalog.lookup_retired" removed from the current agent definition`)
 	require.Zero(t, plannerCalls)
 }
 
@@ -403,8 +400,9 @@ func TestAgentRegistrationSpecDoesNotGrantCorrectCallRecovery(t *testing.T) {
 		WithLogger(telemetry.NoopLogger{}),
 	)
 	registration := correctionTestRegistration(runtime, &stubPlanner{}, []tools.ToolSpec{tool})
-	registration.ID = "catalog.other_agent"
-	registration.Workflow.Name = "catalog.other_agent.workflow"
+	registration.Definition = testAgentDefinition(
+		"catalog.other_agent", "catalog.other_agent.workflow", "test",
+		[]tools.ToolSpec{tool}, nil)
 
 	require.NoError(t, runtime.RegisterAgent(t.Context(), registration))
 	_, specRegistered := runtime.ToolSpec(tool.Name)
@@ -477,12 +475,7 @@ func TestCorrectCallRecoveryRequiresOwningExecutableRegistration(t *testing.T) {
 				registration := runtime.toolsets[toolsetName]
 				registration.Inline = true
 				registration.AgentTool = &AgentToolConfig{
-					AgentID: "catalog.provider",
-					Route: AgentRoute{
-						ID:               "catalog.provider",
-						WorkflowName:     "catalog.provider.workflow",
-						DefaultTaskQueue: "catalog.provider.queue",
-					},
+					Definition: testAgentDefinition("catalog.provider", "catalog.provider.workflow", "catalog.provider.queue", nil, nil),
 				}
 				runtime.toolsets[toolsetName] = registration
 			},
@@ -658,17 +651,24 @@ func correctionTestRegistration(
 	plannerImpl planner.Planner,
 	specs []tools.ToolSpec,
 ) AgentRegistration {
-	return AgentRegistration{
-		ID:      "catalog.agent",
-		Planner: plannerImpl,
-		Workflow: engine.WorkflowDefinition{
+	return AgentRegistration{Definition: testRegistrationDefinition("catalog.agent",
+
+		engine.WorkflowDefinition{
 			Name:    "catalog.agent.workflow",
 			Handler: rt.ExecuteWorkflow,
 		},
+
+		specs),
+
+		WorkflowHandler: (engine.WorkflowDefinition{
+			Name:    "catalog.agent.workflow",
+			Handler: rt.ExecuteWorkflow,
+		}).Handler, Planner: plannerImpl,
+
 		PlanActivityName:    "catalog.agent.plan",
 		ResumeActivityName:  "catalog.agent.resume",
 		ExecuteToolActivity: "catalog.agent.execute_tool",
-		Specs:               specs,
+
 		Policy: RunPolicy{
 			MaxToolCalls:     4,
 			MaxRecoveryTurns: 3,

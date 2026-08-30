@@ -921,6 +921,10 @@ func validatePlannerToolCallIDs(result *planner.PlanResult) error {
 // validatePlannerResultPayloads enforces canonical tool JSON before Temporal
 // serializes planner activity output.
 func (r *Runtime) validatePlannerResultPayloads(result *planner.PlanResult, parentTool tools.Ident) error {
+	return validatePlannerResultPayloadsWithSpecs(result, parentTool, r.toolSpec)
+}
+
+func validatePlannerResultPayloadsWithSpecs(result *planner.PlanResult, parentTool tools.Ident, lookup toolSpecLookup) error {
 	if result == nil {
 		return errors.New("planner returned a nil result")
 	}
@@ -939,7 +943,7 @@ func (r *Runtime) validatePlannerResultPayloads(result *planner.PlanResult, pare
 		if parentTool == "" {
 			return errors.New("planner final tool result requires a parent tool")
 		}
-		spec, ok := r.toolSpec(parentTool)
+		spec, ok := lookup(parentTool)
 		if !ok {
 			return fmt.Errorf("planner final tool result references unregistered parent tool %q", parentTool)
 		}

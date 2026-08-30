@@ -200,7 +200,7 @@ func TestValidateContinuationIdentityRequiresNewRunAndTurn(t *testing.T) {
 	runtime := New(newTestStore())
 	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
-	checkpoint, err := runtime.decodeWorkflowCheckpoint(suspensionContractFixture(t, spec.Name))
+	checkpoint, err := decodeWorkflowCheckpoint(suspensionContractFixture(t, spec.Name), testRuntimeDefinition(runtime, "svc.agent"))
 	require.NoError(t, err)
 
 	err = validateContinuationIdentity(&RunInput{

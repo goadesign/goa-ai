@@ -9,7 +9,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	temporalsdk "go.temporal.io/sdk/temporal"
 
-	"goa.design/goa-ai/runtime/agent/engine/internal/startrecipe"
+	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 )
 
 // convertSearchAttributes builds Temporal's typed start options from the same

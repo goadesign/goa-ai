@@ -6,6 +6,7 @@ package codegen
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	agentir "goa.design/goa-ai/codegen/ir"
@@ -37,6 +38,7 @@ type (
 		implementationPaths []string
 		configPaths         []string
 		registryPaths       []string
+		definitionAgentIDs  []string
 	}
 
 	// agentPackageFilesData contains the imports and package names used by the
@@ -59,6 +61,21 @@ type (
 		PlannerAlias string
 		// RuntimeAlias names the package that runs generated agents.
 		RuntimeAlias string
+		// ToolSpecsAlias names this agent's aggregate generated tool package.
+		ToolSpecsAlias string
+		// ToolsAlias names the runtime tool contract package.
+		ToolsAlias string
+		// ChildDefinitions contains every agent definition reachable through an
+		// agent tool, including definitions used only by nested child agents.
+		ChildDefinitions []*agentDefinitionFileData
+	}
+
+	// agentDefinitionFileData contains one reachable agent contract rendered
+	// into the caller's immutable definition graph.
+	agentDefinitionFileData struct {
+		*AgentData
+		// ToolSpecsAlias names this agent's aggregate generated tool package.
+		ToolSpecsAlias string
 	}
 
 	// agentConfigFileData contains the chosen import names used by config.go.
@@ -128,8 +145,8 @@ const (
 	planActivityName         = "PlanActivity"
 	resumeActivityName       = "ResumeActivity"
 	executeToolActivityName  = "ExecuteToolActivity"
-	newWorkerName            = "NewWorker"
-	routeName                = "Route"
+	definitionName           = "Definition"
+	agentDefinitionValueName = "agentDefinition"
 	newClientName            = "NewClient"
 	usedToolsetOptionsName   = "usedToolsetRegistrationOptions"
 	registerUsedToolsetsName = "RegisterUsedToolsets"
@@ -161,6 +178,7 @@ func planAgentPackages(generation *goacodegen.Generation, design *agentir.Design
 			agentToolsImports:   make(map[string]string),
 			specsImportPaths:    make(map[string]string),
 			helperImportPaths:   make(map[string]string),
+			definitionAgentIDs:  reachableAgentIDs(agent),
 		}
 		if err := packagePlan.declare(agent); err != nil {
 			return nil, fmt.Errorf("plan agent %q package names: %w", agent.ID, err)
@@ -172,13 +190,19 @@ func planAgentPackages(generation *goacodegen.Generation, design *agentir.Design
 
 // link copies Goa's final package names into the data rendered by templates.
 func (p *agentPackagesPlan) link(data *GeneratorData) error {
+	agentsByID := make(map[string]*AgentData)
+	for _, service := range data.Services {
+		for _, agent := range service.Agents {
+			agentsByID[agent.ID] = agent
+		}
+	}
 	for _, service := range data.Services {
 		for _, agent := range service.Agents {
 			planned := p.byAgent[agent.ID]
 			if planned == nil {
 				return fmt.Errorf("agent %q has no package name plan", agent.ID)
 			}
-			planned.link(agent)
+			planned.link(agent, agentsByID)
 		}
 	}
 	return nil
@@ -195,7 +219,8 @@ func (p *agentPackagePlan) declare(agent *agentir.Agent) error {
 			resumeActivityName,
 			executeToolActivityName,
 		},
-		goacodegen.NameFunction: {newWorkerName, routeName, newClientName},
+		goacodegen.NameFunction: {definitionName, newClientName},
+		goacodegen.NameVariable: {agentDefinitionValueName},
 	}); err != nil {
 		return err
 	}
@@ -248,7 +273,16 @@ func (p *agentPackagePlan) declare(agent *agentir.Agent) error {
 // declareFileImports records each package used by agent.go, config.go, and
 // registry.go before Goa chooses import names.
 func (p *agentPackagePlan) declareFileImports(agent *agentir.Agent) error {
-	p.implementationPaths = []string{agentRuntimeImportPath, runtimeImportPath, plannerImportPath}
+	p.implementationPaths = []string{agentRuntimeImportPath, runtimeImportPath, plannerImportPath, toolsImportPath}
+	if len(agent.UsedToolsets)+len(agent.ExportedToolsets) > 0 && agent.ToolSpecsImportPath != "" {
+		p.implementationPaths = append(p.implementationPaths, agent.ToolSpecsImportPath)
+	}
+	for _, childID := range p.definitionAgentIDs {
+		child := agentByID(agent, childID)
+		if child != nil && len(child.UsedToolsets)+len(child.ExportedToolsets) > 0 && child.ToolSpecsImportPath != "" {
+			p.implementationPaths = append(p.implementationPaths, child.ToolSpecsImportPath)
+		}
+	}
 	p.configPaths = []string{"errors", plannerImportPath}
 	p.registryPaths = []string{
 		"context",
@@ -309,6 +343,14 @@ func (p *agentPackagePlan) declareFileImports(agent *agentir.Agent) error {
 	if agent.ToolSpecsImportPath != "" {
 		requests[agent.ToolSpecsImportPath] = agent.ToolSpecsPackage
 		explicit[agent.ToolSpecsImportPath] = true
+	}
+	for _, childID := range p.definitionAgentIDs {
+		child := agentByID(agent, childID)
+		if child == nil || child.ToolSpecsImportPath == "" {
+			continue
+		}
+		requests[child.ToolSpecsImportPath] = child.ToolSpecsPackage
+		explicit[child.ToolSpecsImportPath] = true
 	}
 	for _, reference := range append(append([]*agentir.ToolsetRef{}, agent.UsedToolsets...), agent.ExportedToolsets...) {
 		if reference.PackageImportPath != "" {
@@ -523,7 +565,7 @@ func (p *agentPackagePlan) order(key string) agentPackageNameOrder {
 }
 
 // link stores the final names used by all templates for one agent package.
-func (p *agentPackagePlan) link(agent *AgentData) {
+func (p *agentPackagePlan) link(agent *AgentData, agentsByID map[string]*AgentData) {
 	agent.StructName = p.structType.Name()
 	agent.ConfigType = p.configType.Name()
 	agent.PackageNames = AgentPackageNames{
@@ -534,8 +576,8 @@ func (p *agentPackagePlan) link(agent *AgentData) {
 		ResumeActivity:      p.fixed[resumeActivityName].Name(),
 		ExecuteToolActivity: p.fixed[executeToolActivityName].Name(),
 		Constructor:         p.constructor.Name(),
-		NewWorker:           p.fixed[newWorkerName].Name(),
-		Route:               p.fixed[routeName].Name(),
+		Definition:          p.fixed[definitionName].Name(),
+		DefinitionValue:     p.fixed[agentDefinitionValueName].Name(),
 		NewClient:           p.fixed[newClientName].Name(),
 		Register:            p.register.Name(),
 	}
@@ -543,7 +585,7 @@ func (p *agentPackagePlan) link(agent *AgentData) {
 		agent.PackageNames.UsedToolsetOptions = p.usedOptions.Name()
 		agent.PackageNames.RegisterUsedToolsets = p.fixed[registerUsedToolsetsName].Name()
 	}
-	agent.packageFiles = p.linkFileData(agent)
+	agent.packageFiles = p.linkFileData(agent, agentsByID)
 	for _, toolset := range agent.AllToolsets {
 		if importPath := p.helperImportPaths[toolset.QualifiedName]; importPath != "" {
 			toolset.AgentPackageHelperAlias = p.pkg.ImportName(importPath)
@@ -577,13 +619,28 @@ func (p *agentPackagePlan) link(agent *AgentData) {
 
 // linkFileData copies the selected import lines and qualifiers into the data
 // used by each agent package template.
-func (p *agentPackagePlan) linkFileData(agent *AgentData) *agentPackageFilesData {
+func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]*AgentData) *agentPackageFilesData {
 	implementation := &agentImplementationFileData{
 		AgentData:    agent,
 		Imports:      p.linkImports(p.implementationPaths),
 		AgentAlias:   p.pkg.ImportName(agentRuntimeImportPath),
 		PlannerAlias: p.pkg.ImportName(plannerImportPath),
 		RuntimeAlias: p.pkg.ImportName(runtimeImportPath),
+		ToolsAlias:   p.pkg.ImportName(toolsImportPath),
+	}
+	if importPathIncluded(p.implementationPaths, agent.ToolSpecsImportPath) {
+		implementation.ToolSpecsAlias = p.pkg.ImportName(agent.ToolSpecsImportPath)
+	}
+	for _, childID := range p.definitionAgentIDs {
+		child := agentsByID[childID]
+		if child == nil {
+			panic(fmt.Sprintf("agent codegen: reachable agent %q has no generator data", childID))
+		}
+		definition := &agentDefinitionFileData{AgentData: child}
+		if importPathIncluded(p.implementationPaths, child.ToolSpecsImportPath) {
+			definition.ToolSpecsAlias = p.pkg.ImportName(child.ToolSpecsImportPath)
+		}
+		implementation.ChildDefinitions = append(implementation.ChildDefinitions, definition)
 	}
 	config := &agentConfigFileData{
 		AgentData:    agent,
@@ -625,6 +682,60 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData) *agentPackageFilesData
 		config:         config,
 		registry:       registry,
 	}
+}
+
+// reachableAgentIDs returns every agent reachable through generated agent
+// tools. The result excludes the root and remains stable when declarations are
+// reordered.
+func reachableAgentIDs(root *agentir.Agent) []string {
+	byID := make(map[string]*agentir.Agent)
+	queue := []*agentir.Agent{root}
+	seen := map[string]struct{}{root.ID: {}}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, reference := range current.UsedToolsets {
+			if reference.SourceExport == nil || reference.SourceExport.Agent == nil {
+				continue
+			}
+			child := reference.SourceExport.Agent
+			if _, ok := seen[child.ID]; ok {
+				continue
+			}
+			seen[child.ID] = struct{}{}
+			byID[child.ID] = child
+			queue = append(queue, child)
+		}
+	}
+	ids := make([]string, 0, len(byID))
+	for id := range byID {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// agentByID finds one reachable agent from the graph rooted at root.
+func agentByID(root *agentir.Agent, id string) *agentir.Agent {
+	queue := []*agentir.Agent{root}
+	seen := make(map[string]struct{})
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current.ID == id {
+			return current
+		}
+		if _, ok := seen[current.ID]; ok {
+			continue
+		}
+		seen[current.ID] = struct{}{}
+		for _, reference := range current.UsedToolsets {
+			if reference.SourceExport != nil && reference.SourceExport.Agent != nil {
+				queue = append(queue, reference.SourceExport.Agent)
+			}
+		}
+	}
+	return nil
 }
 
 // linkImports returns the final import lines for one generated file.

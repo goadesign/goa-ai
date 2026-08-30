@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -348,10 +349,7 @@ func TestCompletionToolPolicyRejectsUnexecutableTools(t *testing.T) {
 		}),
 		Specs: []tools.ToolSpec{foreign},
 	}))
-	reg := AgentRegistration{
-		ID:    "reports.writer",
-		Specs: []tools.ToolSpec{persist, lookup, audit, terminal, confirmed},
-	}
+	reg := AgentRegistration{Definition: testRegistrationDefinition("reports.writer", engine.WorkflowDefinition{}, []tools.ToolSpec{persist, lookup, audit, terminal, confirmed}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler}
 
 	tests := []struct {
 		name   string

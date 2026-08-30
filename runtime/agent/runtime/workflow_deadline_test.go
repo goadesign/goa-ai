@@ -200,9 +200,7 @@ func TestExecuteWorkflowFinalizesPlanStartAtBudget(t *testing.T) {
 	finalOutput := deadlineTestFinalOutput()
 	var finalErr error
 	rt := New(newTestStore())
-	rt.agents["agent-1"] = AgentRegistration{
-		ID:                 "agent-1",
-		PlanActivityName:   "plan",
+	rt.agents["agent-1"] = AgentRegistration{Definition: testRegistrationDefinition("agent-1", engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ResumeActivityName: "resume",
 		ResumeActivityOptions: engine.ActivityOptions{
 			StartToCloseTimeout: time.Minute,
@@ -253,9 +251,7 @@ func TestExecuteWorkflowKeepsPlanStartResultAtBudget(t *testing.T) {
 	var finalErr error
 	resumeCalls := 0
 	rt := New(newTestStore())
-	rt.agents["agent-1"] = AgentRegistration{
-		ID:                 "agent-1",
-		PlanActivityName:   "plan",
+	rt.agents["agent-1"] = AgentRegistration{Definition: testRegistrationDefinition("agent-1", engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ResumeActivityName: "resume",
 		Policy: RunPolicy{
 			TimeBudget: timeBudget,
@@ -356,9 +352,7 @@ func TestExecuteWorkflowPreservesPlanStartProviderTimeout(t *testing.T) {
 	finalOutput := deadlineTestFinalOutput()
 	var finalErr error
 	rt := New(newTestStore())
-	rt.agents["agent-1"] = AgentRegistration{
-		ID:                 "agent-1",
-		PlanActivityName:   "plan",
+	rt.agents["agent-1"] = AgentRegistration{Definition: testRegistrationDefinition("agent-1", engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ResumeActivityName: "resume",
 		Policy: RunPolicy{
 			TimeBudget: 20 * time.Second,
@@ -405,9 +399,7 @@ func TestExecuteWorkflowClassifiesExpiredPlanStartFinalizer(t *testing.T) {
 	finalOutput := deadlineTestFinalOutput()
 	var finalErr error
 	rt := New(newTestStore())
-	rt.agents["agent-1"] = AgentRegistration{
-		ID:                 "agent-1",
-		PlanActivityName:   "plan",
+	rt.agents["agent-1"] = AgentRegistration{Definition: testRegistrationDefinition("agent-1", engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ResumeActivityName: "resume",
 		ResumeActivityOptions: engine.ActivityOptions{
 			StartToCloseTimeout: finalizerGrace,

@@ -87,6 +87,14 @@ func TestValidateRunRecord(t *testing.T) {
 			},
 			want: "record timestamp is required",
 		},
+		{
+			name: "timestamp precision",
+			mutate: func(record *runlog.Event) *runlog.Event {
+				record.Timestamp = record.Timestamp.Add(time.Nanosecond)
+				return record
+			},
+			want: "record timestamp must use millisecond precision",
+		},
 	}
 
 	require.NoError(t, ValidateRunRecord(valid()))

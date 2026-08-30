@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
-	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
@@ -21,39 +20,39 @@ import (
 // genuinely dynamic caller input being validated against it.
 func TestValidateRequiredLabels(t *testing.T) {
 	cases := []struct {
-		name      string
-		reg       AgentRegistration
-		labels    map[string]string
-		wantErr   bool
-		wantInMsg []string
+		name       string
+		definition AgentDefinition
+		labels     map[string]string
+		wantErr    bool
+		wantInMsg  []string
 	}{
 		{
-			name: "no required labels is a no-op regardless of input",
-			reg:  AgentRegistration{ID: "svc.agent"},
+			name:       "no required labels is a no-op regardless of input",
+			definition: testAgentDefinition("svc.agent", "workflow", "queue", nil, nil),
 		},
 		{
-			name:   "all required labels present passes",
-			reg:    AgentRegistration{ID: "svc.agent", RequiredLabels: []string{"household_id"}},
-			labels: map[string]string{"household_id": "h1"},
+			name:       "all required labels present passes",
+			definition: testAgentDefinition("svc.agent", "workflow", "queue", nil, []string{"household_id"}),
+			labels:     map[string]string{"household_id": "h1"},
 		},
 		{
-			name:      "missing required label fails naming the key",
-			reg:       AgentRegistration{ID: "svc.agent", RequiredLabels: []string{"household_id"}},
-			labels:    nil,
-			wantErr:   true,
-			wantInMsg: []string{"household_id", "svc.agent"},
+			name:       "missing required label fails naming the key",
+			definition: testAgentDefinition("svc.agent", "workflow", "queue", nil, []string{"household_id"}),
+			labels:     nil,
+			wantErr:    true,
+			wantInMsg:  []string{"household_id", "svc.agent"},
 		},
 		{
-			name:      "missing subset of multiple required labels names only the missing ones",
-			reg:       AgentRegistration{ID: "svc.agent", RequiredLabels: []string{"household_id", "tenant_id"}},
-			labels:    map[string]string{"household_id": "h1"},
-			wantErr:   true,
-			wantInMsg: []string{"tenant_id"},
+			name:       "missing subset of multiple required labels names only the missing ones",
+			definition: testAgentDefinition("svc.agent", "workflow", "queue", nil, []string{"household_id", "tenant_id"}),
+			labels:     map[string]string{"household_id": "h1"},
+			wantErr:    true,
+			wantInMsg:  []string{"tenant_id"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateRequiredLabels(tc.reg, tc.labels)
+			err := validateRequiredLabels(tc.definition, tc.labels)
 			if !tc.wantErr {
 				require.NoError(t, err)
 				return
@@ -80,9 +79,7 @@ func TestStartRunRejectsMissingRequiredLabels(t *testing.T) {
 		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {
-				ID:             "service.agent",
-				RequiredLabels: []string{"household_id"},
-				Workflow:       engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"},
+				Definition: testAgentDefinition("service.agent", "service.workflow", "q", nil, []string{"household_id"}),
 			},
 		},
 	}
@@ -118,9 +115,7 @@ func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
 			"svc.agent": {
-				ID:             "svc.agent",
-				RequiredLabels: []string{"household_id"},
-				Workflow:       engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"},
+				Definition: testAgentDefinition("svc.agent", "service.workflow", "q", nil, []string{"household_id"}),
 			},
 		},
 	}
@@ -149,7 +144,7 @@ func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 		Memo:             map[string]any{"owner": "house-42"},
 		SearchAttributes: map[string]any{"tenant": "house-42"},
 	}
-	handle, err := client.StartContinuation(
+	prepared, err := client.PrepareContinuation(
 		context.Background(),
 		"session-1",
 		"run-1",
@@ -160,6 +155,8 @@ func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 		}},
 		workflowOptions,
 	)
+	require.NoError(t, err)
+	handle, err := client.StartContinuation(context.Background(), prepared)
 	require.NoError(t, err)
 	require.Equal(t, "service.workflow", eng.last.Workflow)
 	require.Equal(t, workflowOptions.Memo, eng.last.Memo)
@@ -180,9 +177,7 @@ func TestStartOneShotRejectsMissingRequiredLabels(t *testing.T) {
 		tracer:  telemetry.NoopTracer{},
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {
-				ID:             "service.agent",
-				RequiredLabels: []string{"household_id"},
-				Workflow:       engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"},
+				Definition: testAgentDefinition("service.agent", "service.workflow", "q", nil, []string{"household_id"}),
 			},
 		},
 	}
@@ -213,8 +208,7 @@ func TestStartRunSucceedsWithoutRequiredLabels(t *testing.T) {
 		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {
-				ID:       "service.agent",
-				Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"},
+				Definition: testAgentDefinition("service.agent", "service.workflow", "q", nil, nil),
 			},
 		},
 	}

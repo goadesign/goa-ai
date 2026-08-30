@@ -77,27 +77,13 @@ type ServiceResult = helpersspecs.ServiceResult
 // this agent. Each call starts the agent and returns its final response. The
 // generated registration also includes the labels and previews declared for
 // tool calls and results.
-//
-// Example usage:
-//
-//	rt := runtime.New(...)
-//	reg := NewScribeToolsetRegistration(rt)
-//	if err := rt.RegisterToolset(reg); err != nil {
-//		// handle error
-//	}
-func NewScribeToolsetRegistration(rt *runtime.Runtime) runtime.ToolsetRegistration {
+func NewScribeToolsetRegistration(
+	rt *runtime.Runtime,
+	definition runtime.AgentDefinition,
+) runtime.ToolsetRegistration {
 	cfg := runtime.AgentToolConfig{
-		AgentID:   AgentID,
-		Name:      ToolsetName,
-		TaskQueue: "alpha_scribe_helpers_tasks",
-		Route: runtime.AgentRoute{
-			ID:               AgentID,
-			WorkflowName:     "alpha.scribe.workflow",
-			DefaultTaskQueue: "alpha_scribe_workflow",
-		},
-		PlanActivityName:    "alpha.scribe.plan",
-		ResumeActivityName:  "alpha.scribe.resume",
-		ExecuteToolActivity: "alpha.scribe.executetool",
+		Definition: definition,
+		Name:       ToolsetName,
 	}
 	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
 	reg.Specs = agentToolSpecs()
@@ -110,23 +96,14 @@ func NewScribeToolsetRegistration(rt *runtime.Runtime) runtime.ToolsetRegistrati
 // templates, but each tool must use exactly one form.
 func NewRegistration(
 	rt *runtime.Runtime,
+	definition runtime.AgentDefinition,
 	systemPrompt string,
 	opts ...runtime.AgentToolOption,
 ) (runtime.ToolsetRegistration, error) {
 	cfg := runtime.AgentToolConfig{
-		AgentID:      AgentID,
+		Definition:   definition,
 		Name:         ToolsetName,
-		TaskQueue:    "alpha_scribe_helpers_tasks",
 		SystemPrompt: systemPrompt,
-		// Route identifies the workflow and queue that run the child agent.
-		Route: runtime.AgentRoute{
-			ID:               AgentID,
-			WorkflowName:     "alpha.scribe.workflow",
-			DefaultTaskQueue: "alpha_scribe_workflow",
-		},
-		PlanActivityName:    "alpha.scribe.plan",
-		ResumeActivityName:  "alpha.scribe.resume",
-		ExecuteToolActivity: "alpha.scribe.executetool",
 	}
 	for _, o := range opts {
 		o(&cfg)

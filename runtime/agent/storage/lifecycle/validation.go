@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"time"
 
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -57,6 +58,9 @@ func ValidateRootRunStart(command storage.RootRunStart) error {
 	if err := validateStoppedRecord(command.Canceled, command.Run); err != nil {
 		return fmt.Errorf("canceled record: %w", err)
 	}
+	if command.Started.EventKey == command.Canceled.EventKey {
+		return errors.New("started and canceled records require different event keys")
+	}
 	return nil
 }
 
@@ -75,6 +79,9 @@ func ValidateChildRunStart(command storage.ChildRunStart) error {
 	if err := validateStoppedRecord(command.Canceled, command.Run); err != nil {
 		return fmt.Errorf("canceled record: %w", err)
 	}
+	if command.Started.EventKey == command.Canceled.EventKey {
+		return errors.New("started and canceled records require different event keys")
+	}
 	return nil
 }
 
@@ -90,11 +97,46 @@ func ValidateOneShotRunStart(command storage.OneShotRunStart) error {
 		return errors.New("one-shot run cannot have session id")
 	case command.Run.ParentRunID != "":
 		return errors.New("one-shot run cannot have parent run id")
+	case command.Run.PredecessorRunID != "":
+		return errors.New("one-shot run cannot have predecessor run id")
 	case command.Run.StartedAt.IsZero():
 		return errors.New("started_at is required")
+	case !command.Run.StartedAt.Equal(command.Run.StartedAt.Truncate(time.Millisecond)):
+		return errors.New("started_at must use millisecond precision")
 	}
 	if err := validateStartedRecord(command.Started, command.Run); err != nil {
 		return fmt.Errorf("started record: %w", err)
+	}
+	return nil
+}
+
+// ValidateOneShotChildRunStart checks that a sessionless child and both
+// relationship records carry the same immutable identity.
+func ValidateOneShotChildRunStart(command storage.OneShotChildRunStart) error {
+	switch {
+	case command.Run.RunID == "":
+		return errors.New("run id is required")
+	case command.Run.AgentID == "":
+		return errors.New("agent id is required")
+	case command.Run.SessionID != "":
+		return errors.New("one-shot child cannot have session id")
+	case command.Run.ParentRunID == "":
+		return session.ErrParentRunIDRequired
+	case command.Run.PredecessorRunID != "":
+		return errors.New("one-shot child cannot have predecessor run id")
+	case command.Run.StartedAt.IsZero():
+		return errors.New("started_at is required")
+	case !command.Run.StartedAt.Equal(command.Run.StartedAt.Truncate(time.Millisecond)):
+		return errors.New("started_at must use millisecond precision")
+	}
+	if err := validateChildLinkRecord(command.ParentLinked, command.Run); err != nil {
+		return fmt.Errorf("parent link record: %w", err)
+	}
+	if err := validateStartedRecord(command.Started, command.Run); err != nil {
+		return fmt.Errorf("started record: %w", err)
+	}
+	if command.ParentLinked.EventKey == command.Started.EventKey {
+		return errors.New("parent link and started records require different event keys")
 	}
 	return nil
 }
@@ -194,8 +236,14 @@ func validateStartedRecord(record *runlog.Event, start session.RunStart) error {
 		return err
 	}
 	started := event.(*hooks.RunStartedEvent)
+	if !record.Timestamp.Equal(start.StartedAt) {
+		return errors.New("timestamp does not match run start")
+	}
 	if started.ParentRunID != start.ParentRunID {
 		return errors.New("parent run id does not match run")
+	}
+	if started.PredecessorRunID != start.PredecessorRunID {
+		return errors.New("predecessor run id does not match run")
 	}
 	if !maps.Equal(started.Labels, start.Labels) {
 		return errors.New("labels do not match run")
@@ -214,6 +262,9 @@ func validateStoppedRecord(record *runlog.Event, start session.RunStart) error {
 		return err
 	}
 	completed := event.(*hooks.RunCompletedEvent)
+	if !record.Timestamp.Equal(start.StartedAt) {
+		return errors.New("timestamp does not match run start")
+	}
 	if completed.Status != "canceled" || completed.Phase != run.PhaseCanceled {
 		return errors.New("ended-session record must cancel the run")
 	}

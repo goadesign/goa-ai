@@ -36,19 +36,22 @@ func setupTestAgentWithPlanner(plannerFn func(context.Context, *planner.PlanInpu
 	}
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
-	rt.agents["svc.agent"] = AgentRegistration{
-		ID:                  "svc.agent",
-		Planner:             &stubPlanner{start: plannerFn},
+	rt.agents["svc.agent"] = AgentRegistration{Definition: testRegistrationDefinition("svc.agent",
+
+		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}, nil),
+
+		WorkflowHandler:
+
+		// registerAgentToolTestConfig installs the same immutable spec and child
+		// configuration that production registration makes available to the activity.
+		(engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}).Handler, Planner: &stubPlanner{start: plannerFn},
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
-		Workflow:            engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }},
 	}
 	return rt, ctx
 }
 
-// registerAgentToolTestConfig installs the same immutable spec and child
-// configuration that production registration makes available to the activity.
 func registerAgentToolTestConfig(rt *Runtime, cfg AgentToolConfig, toolset string, spec tools.ToolSpec) {
 	if rt.toolsets == nil {
 		rt.toolsets = make(map[string]ToolsetRegistration)
@@ -57,7 +60,7 @@ func registerAgentToolTestConfig(rt *Runtime, cfg AgentToolConfig, toolset strin
 		rt.toolSpecs = make(map[tools.Ident]tools.ToolSpec)
 	}
 	spec.IsAgentTool = true
-	spec.AgentID = string(cfg.AgentID)
+	spec.AgentID = string(cfg.Definition.route.ID)
 	registration := NewAgentToolsetRegistration(rt, cfg)
 	registration.Name = toolset
 	registration.Specs = []tools.ToolSpec{spec}
@@ -76,12 +79,7 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 
 	tmpl := template.Must(template.New("t").Parse("hello {{.x}}"))
 	cfg := AgentToolConfig{
-		AgentID: "svc.agent",
-		Route: AgentRoute{
-			ID:               agent.Ident("svc.agent"),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition:   testAgentDefinition(agent.Ident("svc.agent"), "wf", "default", nil, nil),
 		SystemPrompt: "sys",
 		AgentToolContent: AgentToolContent{
 			Templates: map[tools.Ident]*template.Template{"tool": tmpl},
@@ -137,12 +135,7 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 	})
 
 	cfg := AgentToolConfig{
-		AgentID: "svc.agent",
-		Route: AgentRoute{
-			ID:               agent.Ident("svc.agent"),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition(agent.Ident("svc.agent"), "wf", "default", nil, nil),
 		AgentToolContent: AgentToolContent{
 			Texts: map[tools.Ident]string{"tool": "just text"},
 		},
@@ -180,12 +173,7 @@ func TestDefaultAgentToolExecute_DefaultContentFromPayload(t *testing.T) {
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	})
 	cfg := AgentToolConfig{
-		AgentID: "svc.agent",
-		Route: AgentRoute{
-			ID:               agent.Ident("svc.agent"),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition(agent.Ident("svc.agent"), "wf", "default", nil, nil),
 	}
 	exec := defaultAgentToolExecute(rt, cfg)
 	call := ToolCall{
@@ -214,12 +202,7 @@ func TestDefaultAgentToolExecute_PreChildValidatorReturnsToolResult(t *testing.T
 		return nil, nil
 	})
 	cfg := AgentToolConfig{
-		AgentID: "svc.agent",
-		Route: AgentRoute{
-			ID:               agent.Ident("svc.agent"),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition(agent.Ident("svc.agent"), "wf", "default", nil, nil),
 		PreChildValidator: func(context.Context, *AgentToolValidationInput) *tools.ValidationError {
 			return tools.NewValidationError(
 				"sources must come from prior evidence",
@@ -291,12 +274,7 @@ func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilde
 
 	tmpl := template.Must(template.New("fallback").Parse("from-template {{ .x }}"))
 	cfg := AgentToolConfig{
-		AgentID: "svc.agent",
-		Route: AgentRoute{
-			ID:               agent.Ident("svc.agent"),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition(agent.Ident("svc.agent"), "wf", "default", nil, nil),
 		AgentToolContent: AgentToolContent{
 			PromptSpecs: map[tools.Ident]prompt.Ident{
 				"tool": "agent.tool.prompt",
@@ -350,12 +328,7 @@ func TestDefaultAgentToolExecute_PromptSpecMissingReturnsError(t *testing.T) {
 	})
 	rt.PromptRegistry = prompt.NewRegistry(nil)
 	cfg := AgentToolConfig{
-		AgentID: "svc.agent",
-		Route: AgentRoute{
-			ID:               agent.Ident("svc.agent"),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition(agent.Ident("svc.agent"), "wf", "default", nil, nil),
 		AgentToolContent: AgentToolContent{
 			PromptSpecs: map[tools.Ident]prompt.Ident{
 				"tool": "missing.prompt",
@@ -432,12 +405,7 @@ func TestDefaultAgentToolExecute_PromptSpecRendersWithSchemaKeys(t *testing.T) {
 	spec := newAnyJSONSpec(call.Name)
 	spec.Payload.Codec = codec
 	cfg := AgentToolConfig{
-		AgentID: "svc.agent",
-		Route: AgentRoute{
-			ID:               agent.Ident("svc.agent"),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition(agent.Ident("svc.agent"), "wf", "default", nil, nil),
 		AgentToolContent: AgentToolContent{
 			PromptSpecs: map[tools.Ident]prompt.Ident{
 				call.Name: "agent.tool.prompt",
@@ -503,12 +471,7 @@ func TestDefaultAgentToolExecute_PromptSpecRejectsNonObjectPayloadShape(t *testi
 	spec := newAnyJSONSpec(call.Name)
 	spec.Payload.Codec = stringCodec
 	cfg := AgentToolConfig{
-		AgentID: "svc.agent",
-		Route: AgentRoute{
-			ID:               agent.Ident("svc.agent"),
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition(agent.Ident("svc.agent"), "wf", "default", nil, nil),
 		AgentToolContent: AgentToolContent{
 			PromptSpecs: map[tools.Ident]prompt.Ident{
 				call.Name: "agent.tool.prompt",

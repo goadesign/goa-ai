@@ -7,12 +7,14 @@ import (
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 )
 
-// RunPolicy emitted into registry registration.
-func TestGolden_RunPolicy(t *testing.T) {
+// TestGoldenRunPolicy verifies that authored runtime policy and local tool
+// execution support are emitted into worker registration.
+func TestGoldenRunPolicy(t *testing.T) {
 	design := testscenarios.RunPolicyBasic()
 	files := buildAndGenerate(t, design)
 	reg := fileContent(t, files, "gen/alpha/agents/scribe/registry.go")
-	require.Contains(t, reg, "Specs: specs.Specs()")
+	agent := fileContent(t, files, "gen/alpha/agents/scribe/agent.go")
+	require.Contains(t, agent, "specs.Specs(),")
 	require.Contains(t, reg, "ResultMaterializer: cfg.resultMaterializers[HelpersToolsetName]")
 	require.Contains(t, reg, "func WithHelpersResultMaterializer(materializer agentsruntime.ResultMaterializer)")
 	require.NotContains(t, reg, "InterruptsAllowed")

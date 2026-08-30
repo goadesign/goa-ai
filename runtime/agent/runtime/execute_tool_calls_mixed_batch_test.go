@@ -17,10 +17,12 @@ import (
 )
 
 func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *testing.T) {
+	const nestedAgentID = "nested.agent"
+
 	recorder := &recordingHooks{ch: make(chan hooks.Event, 128)}
 	agentToolSpec := newAnyJSONSpec("svc.agent.child")
 	agentToolSpec.IsAgentTool = true
-	agentToolSpec.AgentID = "nested.agent"
+	agentToolSpec.AgentID = nestedAgentID
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
@@ -51,13 +53,9 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 
 	// Register the agent toolset that maps svc.agenttools.* to child workflows.
 	cfg := AgentToolConfig{
-		AgentID: agent.Ident("nested.agent"),
-		Name:    "svc.agenttools",
-		Route: AgentRoute{
-			ID:               agent.Ident("nested.agent"),
-			WorkflowName:     "nested.workflow",
-			DefaultTaskQueue: "q",
-		},
+		Definition: testAgentDefinition(agent.Ident(nestedAgentID), "nested.workflow", "q", nil, nil),
+		Name:       "svc.agenttools",
+
 		AgentToolContent: AgentToolContent{
 			Prompt: func(id tools.Ident, payload any) string {
 				return invokePromptText
@@ -194,13 +192,9 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 		Bus:      recorder,
 	}
 	registration := NewAgentToolsetRegistration(rt, AgentToolConfig{
-		AgentID: agent.Ident("nested.cancel"),
-		Name:    "agent.cancel",
-		Route: AgentRoute{
-			ID:               agent.Ident("nested.cancel"),
-			WorkflowName:     "nested.cancel.workflow",
-			DefaultTaskQueue: "nested.cancel.queue",
-		},
+		Definition: testAgentDefinition(agent.Ident("nested.cancel"), "nested.cancel.workflow", "nested.cancel.queue", nil, nil),
+		Name:       "agent.cancel",
+
 		AgentToolContent: AgentToolContent{
 			Prompt: func(tools.Ident, any) string {
 				return invokePromptText

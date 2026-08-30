@@ -664,12 +664,17 @@ type (
 	StorageActivityCommand struct {
 		// Append stores ordinary records without changing run lifecycle state.
 		Append *AppendRecordsCommand
-		// RootStart stores the first record for a session root run.
+		// RootStart stores the start of a session root run. An ended session also
+		// stores the canceled completion that prevents the run from doing work.
 		RootStart *RootRunStartCommand
-		// ChildStart stores a parent link and the first record for a child run.
+		// ChildStart stores a parent link and the start of a child run. An ended
+		// session also stores the canceled completion that prevents the run from
+		// doing work.
 		ChildStart *ChildRunStartCommand
 		// OneShotStart stores the first record for a sessionless run.
 		OneShotStart *OneShotRunStartCommand
+		// OneShotChildStart stores a parent link and start for a sessionless child.
+		OneShotChildStart *OneShotChildRunStartCommand
 		// Cancellation stores the first cancellation reason and its record.
 		Cancellation *RunCancellationCommand
 		// Suspension stores a continuation checkpoint and its suspended record.
@@ -704,6 +709,14 @@ type (
 		Started *RecordActivityInput
 	}
 
+	// OneShotChildRunStartCommand carries the frozen records for a sessionless child.
+	OneShotChildRunStartCommand struct {
+		// ParentLinked is stored on the sessionless parent run.
+		ParentLinked *RecordActivityInput
+		// Started is stored on the child run.
+		Started *RecordActivityInput
+	}
+
 	// RunCancellationCommand carries the frozen cancellation-intent record.
 	RunCancellationCommand struct {
 		// Record contains the write-once cancellation reason.
@@ -735,6 +748,8 @@ type (
 		ChildStart *StartRunResult
 		// OneShotStart reports the one-shot start decision.
 		OneShotStart *StartRunResult
+		// OneShotChildStart reports the sessionless child start writes.
+		OneShotChildStart *StartRunResult
 		// Cancellation reports whether the cancellation reason was accepted.
 		Cancellation *RunCancellationResult
 		// Suspension reports the suspended record write.
@@ -749,13 +764,13 @@ type (
 		Records []storage.AppendResult
 	}
 
-	// StartRunResult reports the immutable start decision and selected writes.
+	// StartRunResult reports the immutable start decision and every stored record.
 	StartRunResult struct {
 		// Outcome is exactly proceed or stop.
 		Outcome session.RunStartOutcome
 		// CancellationReason is set only when Outcome is stop.
 		CancellationReason string
-		// Records contains the start records selected by the store.
+		// Records contains the stored records in durable commit order.
 		Records []storage.AppendResult
 	}
 

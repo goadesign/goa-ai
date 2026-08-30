@@ -56,7 +56,8 @@ type (
 	sessionRunStartResult struct {
 		outcome      session.RunStartOutcome
 		parentRecord storage.AppendResult
-		runRecord    storage.AppendResult
+		started      storage.AppendResult
+		canceled     storage.AppendResult
 	}
 )
 
@@ -213,31 +214,42 @@ func (s *Store) ListRunsBySession(_ context.Context, sessionID string, statuses 
 	return result, nil
 }
 
-// StartRootRun atomically stores the root metadata and the record selected by
-// the current session state.
+// StartRootRun atomically stores the root metadata and start record. When the
+// session has ended, it also stores the canceled completion.
 func (s *Store) StartRootRun(_ context.Context, command storage.RootRunStart) (storage.RootRunStartResult, error) {
 	if err := lifecycle.ValidateRootRunStart(command); err != nil {
 		return contractResult(storage.RootRunStartResult{}, err)
 	}
 	result, err := s.startSessionRun(command.Run, false, nil, command.Started, command.Canceled)
-	return contractResult(storage.RootRunStartResult{Outcome: result.outcome, Record: result.runRecord}, err)
+	return contractResult(storage.RootRunStartResult{
+		Outcome:  result.outcome,
+		Started:  result.started,
+		Canceled: result.canceled,
+	}, err)
 }
 
-// StartChildRun atomically stores the child metadata, parent link, and record
-// selected by the current session state.
+// StartChildRun atomically stores the child metadata, parent link, and start
+// record. When the session has ended, it also stores the canceled completion.
 func (s *Store) StartChildRun(_ context.Context, command storage.ChildRunStart) (storage.ChildRunStartResult, error) {
 	if err := lifecycle.ValidateChildRunStart(command); err != nil {
 		return contractResult(storage.ChildRunStartResult{}, err)
 	}
 	result, err := s.startSessionRun(command.Run, true, command.ParentLinked, command.Started, command.Canceled)
 	return contractResult(storage.ChildRunStartResult{
-		Outcome: result.outcome, ParentRecord: result.parentRecord, RunRecord: result.runRecord,
+		Outcome: result.outcome, ParentRecord: result.parentRecord,
+		Started: result.started, Canceled: result.canceled,
 	}, err)
 }
 
 // StartOneShotRun stores a sessionless run and its first record together.
 func (s *Store) StartOneShotRun(_ context.Context, command storage.OneShotRunStart) (storage.OneShotRunStartResult, error) {
 	return contractResult(s.startOneShotRun(command))
+}
+
+// StartOneShotChildRun stores a sessionless parent link and child start in one
+// operation.
+func (s *Store) StartOneShotChildRun(_ context.Context, command storage.OneShotChildRunStart) (storage.OneShotChildRunStartResult, error) {
+	return contractResult(s.startOneShotChildRun(command))
 }
 
 // startOneShotRun applies the command while StartOneShotRun assigns the public
@@ -265,6 +277,59 @@ func (s *Store) startOneShotRun(command storage.OneShotRunStart) (storage.OneSho
 	s.lifecycle[command.Run.RunID] = lifecycleRecords{start: command.Started.EventKey}
 	result, err := s.appendLocked(command.Started)
 	return storage.OneShotRunStartResult{Record: result}, err
+}
+
+// startOneShotChildRun applies the sessionless child start under the same lock
+// that protects the parent and both ordered record lists.
+func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (storage.OneShotChildRunStartResult, error) {
+	if err := lifecycle.ValidateOneShotChildRunStart(command); err != nil {
+		return storage.OneShotChildRunStartResult{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if existing, ok := s.runs[command.Run.RunID]; ok {
+		keys := s.lifecycle[command.Run.RunID]
+		if !sameRunStart(existing, command.Run) || existing.StartOutcome != session.RunStartProceed ||
+			keys.parentLink != command.ParentLinked.EventKey || keys.start != command.Started.EventKey {
+			return storage.OneShotChildRunStartResult{}, session.ErrRunConflict
+		}
+		parentRecord, err := s.appendLocked(command.ParentLinked)
+		if err != nil {
+			return storage.OneShotChildRunStartResult{}, err
+		}
+		started, err := s.appendLocked(command.Started)
+		return storage.OneShotChildRunStartResult{ParentRecord: parentRecord, Started: started}, err
+	}
+	parent, ok := s.runs[command.Run.ParentRunID]
+	if !ok {
+		return storage.OneShotChildRunStartResult{}, session.ErrRunNotFound
+	}
+	if parent.SessionID != "" {
+		return storage.OneShotChildRunStartResult{}, session.ErrRunSessionMismatch
+	}
+	if parent.Status != session.RunStatusRunning {
+		return storage.OneShotChildRunStartResult{}, session.ErrRunNotActive
+	}
+	if string(command.ParentLinked.AgentID) != parent.AgentID {
+		return storage.OneShotChildRunStartResult{}, storage.ErrRunRecordOwnerMismatch
+	}
+	if err := s.checkAppendLocked(command.ParentLinked); err != nil {
+		return storage.OneShotChildRunStartResult{}, err
+	}
+	if err := s.checkNewRunRecordLocked(command.Started, command.Run); err != nil {
+		return storage.OneShotChildRunStartResult{}, err
+	}
+	s.runs[command.Run.RunID] = newRunMeta(command.Run, session.RunStartProceed, session.RunStatusRunning)
+	s.lifecycle[command.Run.RunID] = lifecycleRecords{
+		parentLink: command.ParentLinked.EventKey,
+		start:      command.Started.EventKey,
+	}
+	parentRecord, err := s.appendLocked(command.ParentLinked)
+	if err != nil {
+		return storage.OneShotChildRunStartResult{}, err
+	}
+	started, err := s.appendLocked(command.Started)
+	return storage.OneShotChildRunStartResult{ParentRecord: parentRecord, Started: started}, err
 }
 
 // AppendRunRecord stores an ordinary record without changing lifecycle state.
@@ -574,6 +639,9 @@ func (s *Store) startSessionRun(start session.RunStart, child bool, parent, star
 	if _, purged := s.purged[start.SessionID]; purged {
 		return sessionRunStartResult{}, session.ErrSessionPurged
 	}
+	if err := s.validatePredecessorLocked(start); err != nil {
+		return sessionRunStartResult{}, err
+	}
 	if parent != nil {
 		if err := s.checkAppendLocked(parent); err != nil {
 			return sessionRunStartResult{}, err
@@ -607,23 +675,72 @@ func (s *Store) startSessionRun(start session.RunStart, child bool, parent, star
 		outcome = session.RunStartStop
 		status = session.RunStatusCanceled
 	}
-	selected := started
-	if outcome == session.RunStartStop {
-		selected = canceled
-	}
-	if err := s.checkNewRunRecordLocked(selected, start); err != nil {
+	if err := s.checkNewRunRecordLocked(started, start); err != nil {
 		return sessionRunStartResult{}, err
 	}
+	if outcome == session.RunStartStop {
+		if err := s.checkNewRunRecordLocked(canceled, start); err != nil {
+			return sessionRunStartResult{}, err
+		}
+		if started.EventKey == canceled.EventKey {
+			return sessionRunStartResult{}, errors.New("started and canceled records require different event keys")
+		}
+	}
 	s.runs[start.RunID] = newRunMeta(start, outcome, status)
-	keys := lifecycleRecords{start: selected.EventKey}
+	keys := lifecycleRecords{start: started.EventKey}
 	if parent != nil {
 		keys.parentLink = parent.EventKey
 	}
 	if outcome == session.RunStartStop {
-		keys.terminal = selected.EventKey
+		keys.terminal = canceled.EventKey
 	}
 	s.lifecycle[start.RunID] = keys
 	return s.appendStartRecordsLocked(outcome, parent, started, canceled)
+}
+
+// validatePredecessorLocked proves that a continuation restores a suspended
+// run with the same immutable owner and parent before the successor is stored.
+func (s *Store) validatePredecessorLocked(start session.RunStart) error {
+	if start.PredecessorRunID == "" {
+		return nil
+	}
+	predecessor, ok := s.runs[start.PredecessorRunID]
+	if !ok {
+		return fmt.Errorf("continuation predecessor %q: %w", start.PredecessorRunID, session.ErrRunNotFound)
+	}
+	if predecessor.Status != session.RunStatusSuspended {
+		return fmt.Errorf(
+			"continuation predecessor %q has status %q, want %q",
+			start.PredecessorRunID,
+			predecessor.Status,
+			session.RunStatusSuspended,
+		)
+	}
+	if predecessor.SessionID != start.SessionID {
+		return fmt.Errorf(
+			"continuation predecessor %q session id %q does not match successor %q",
+			start.PredecessorRunID,
+			predecessor.SessionID,
+			start.SessionID,
+		)
+	}
+	if predecessor.AgentID != start.AgentID {
+		return fmt.Errorf(
+			"continuation predecessor %q agent id %q does not match successor %q",
+			start.PredecessorRunID,
+			predecessor.AgentID,
+			start.AgentID,
+		)
+	}
+	if predecessor.ParentRunID != start.ParentRunID {
+		return fmt.Errorf(
+			"continuation predecessor %q parent run id %q does not match successor %q",
+			start.PredecessorRunID,
+			predecessor.ParentRunID,
+			start.ParentRunID,
+		)
+	}
+	return nil
 }
 
 // appendStartRecordsLocked appends the exact record set selected by outcome.
@@ -636,15 +753,18 @@ func (s *Store) appendStartRecordsLocked(outcome session.RunStartOutcome, parent
 		}
 		result.parentRecord = stored
 	}
-	selected := started
-	if outcome == session.RunStartStop {
-		selected = canceled
-	}
-	stored, err := s.appendLocked(selected)
+	stored, err := s.appendLocked(started)
 	if err != nil {
 		return sessionRunStartResult{}, err
 	}
-	result.runRecord = stored
+	result.started = stored
+	if outcome == session.RunStartStop {
+		stored, err = s.appendLocked(canceled)
+		if err != nil {
+			return sessionRunStartResult{}, err
+		}
+		result.canceled = stored
+	}
 	return result, nil
 }
 
@@ -658,22 +778,19 @@ func (s *Store) checkNewRunRecordLocked(record *runlog.Event, start session.RunS
 	return nil
 }
 
-// sameStartRecordKeys checks the records selected by the first durable start
-// decision. The unused active or ended candidate is not part of that decision.
+// sameStartRecordKeys checks every record stored by the first durable start decision.
 func sameStartRecordKeys(keys lifecycleRecords, outcome session.RunStartOutcome, parent, started, canceled *runlog.Event) bool {
 	if parent != nil && keys.parentLink != parent.EventKey {
 		return false
 	}
-	selected := started
-	if outcome == session.RunStartStop {
-		selected = canceled
+	if keys.start != started.EventKey {
+		return false
 	}
-	return keys.start == selected.EventKey
+	return outcome != session.RunStartStop || keys.terminal == canceled.EventKey
 }
 
-// checkNewRunRecordOwner validates a possible first record without comparing
-// it to stored records. Only the record selected by the session state takes
-// part in exact retry conflict checks.
+// checkNewRunRecordOwner validates a start or canceled completion record before
+// comparing it with records already stored for the run.
 func checkNewRunRecordOwner(record *runlog.Event, start session.RunStart) error {
 	if err := storage.ValidateRunRecord(record); err != nil {
 		return err

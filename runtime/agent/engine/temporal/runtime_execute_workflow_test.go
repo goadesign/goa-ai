@@ -40,6 +40,23 @@ import (
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
+// testTemporalAgentDefinition builds the immutable contract generated workers
+// pass to runtime registration.
+func testTemporalAgentDefinition(
+	id agent.Ident,
+	workflowName, taskQueue string,
+	specs []tools.ToolSpec,
+) agentruntime.AgentDefinition {
+	return agentruntime.NewAgentDefinition(
+		agentruntime.AgentRoute{ID: id, WorkflowName: workflowName, DefaultTaskQueue: taskQueue},
+		specs,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+}
+
 const runSuspensionType = "runtime.run_suspension"
 
 func TestPlannerOutputActivityFailureIsNotRetried(t *testing.T) {
@@ -118,14 +135,10 @@ func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) 
 	_, err := store.CreateSession(context.Background(), sessionID, time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, runtime.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
-		ID:      agentID,
-		Planner: plannerStub,
-		Workflow: engine.WorkflowDefinition{
-			Name:      workflowName,
-			TaskQueue: taskQueue,
-			Handler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-				return runtime.ExecuteWorkflow(wfCtx, input)
-			},
+		Definition: testTemporalAgentDefinition(agentID, workflowName, taskQueue, nil),
+		Planner:    plannerStub,
+		WorkflowHandler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
+			return runtime.ExecuteWorkflow(wfCtx, input)
 		},
 		PlanActivityName:    planActivityName,
 		ResumeActivityName:  resumeActivityName,
@@ -195,19 +208,14 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 	_, err := store.CreateSession(context.Background(), sessionID, time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, runtime.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
-		ID:      agentID,
-		Planner: plannerStub,
-		Workflow: engine.WorkflowDefinition{
-			Name:      workflowName,
-			TaskQueue: taskQueue,
-			Handler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-				return runtime.ExecuteWorkflow(wfCtx, input)
-			},
+		Definition: testTemporalAgentDefinition(agentID, workflowName, taskQueue, []tools.ToolSpec{anyJSONToolSpec(questionTool)}),
+		Planner:    plannerStub,
+		WorkflowHandler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
+			return runtime.ExecuteWorkflow(wfCtx, input)
 		},
 		PlanActivityName:    planActivityName,
 		ResumeActivityName:  resumeActivityName,
 		ExecuteToolActivity: executeActivityName,
-		Specs:               []tools.ToolSpec{anyJSONToolSpec(questionTool)},
 	}))
 
 	recorder := &hookRecorder{}
@@ -278,8 +286,8 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 	runtime := agentruntime.New(store)
 	_, err := store.CreateSession(context.Background(), sessionID, time.Now().UTC())
 	require.NoError(t, err)
-	startedAt := time.Now().UTC()
-	startedRecord := lifecycleRecord(t, hooks.NewRunStartedEvent(runID, agentID, sessionID, "", nil), "run-started", startedAt)
+	startedAt := time.Now().UTC().Truncate(time.Millisecond)
+	startedRecord := lifecycleRecord(t, hooks.NewRunStartedEvent(runID, agentID, sessionID, "", "", nil), "run-started", startedAt)
 	canceledRecord := lifecycleRecord(t, hooks.NewRunCompletedEvent(
 		runID,
 		agentID,
@@ -296,19 +304,14 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 	})
 	require.NoError(t, err)
 	require.NoError(t, runtime.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
-		ID:      agentID,
-		Planner: &cancelingServicePlanner{toolName: toolName},
-		Workflow: engine.WorkflowDefinition{
-			Name:      workflowName,
-			TaskQueue: taskQueue,
-			Handler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-				return runtime.ExecuteWorkflow(wfCtx, input)
-			},
+		Definition: testTemporalAgentDefinition(agentID, workflowName, taskQueue, []tools.ToolSpec{spec}),
+		Planner:    &cancelingServicePlanner{toolName: toolName},
+		WorkflowHandler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
+			return runtime.ExecuteWorkflow(wfCtx, input)
 		},
 		PlanActivityName:    planActivityName,
 		ResumeActivityName:  resumeActivityName,
 		ExecuteToolActivity: executeActivityName,
-		Specs:               []tools.ToolSpec{spec},
 		Policy:              agentruntime.RunPolicy{MaxToolCalls: 1},
 	}))
 	require.NoError(t, runtime.RegisterToolset(agentruntime.ToolsetRegistration{

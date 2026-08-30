@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -93,10 +94,8 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 	deadline := wfCtx.Now().Add(1 * time.Hour)
 	out, await, err := rt.applyMissingFieldsPolicy(
 		wfCtx,
-		AgentRegistration{
-			ID:                 input.AgentID,
-			ResumeActivityName: "resume",
-			Policy:             RunPolicy{OnMissingFields: MissingFieldsAwaitClarification},
+		AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ResumeActivityName: "resume",
+			Policy: RunPolicy{OnMissingFields: MissingFieldsAwaitClarification},
 		},
 		input,
 		base,
@@ -151,7 +150,7 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 		},
 	)
 	h.registration.Policy = RunPolicy{OnMissingFields: MissingFieldsAwaitClarification}
-	h.registration.Specs = []tools.ToolSpec{completion}
+	h.registration.Definition = testAgentDefinition(h.input.AgentID, string(h.input.AgentID)+".workflow", "test", []tools.ToolSpec{completion}, nil)
 	h.runtime.agents[h.input.AgentID] = h.registration
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
@@ -167,7 +166,7 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 	require.NotNil(t, first.Suspension)
 	require.Len(t, first.Suspension.Pending, 1)
 
-	checkpoint, err := h.runtime.decodeWorkflowCheckpoint(first.Suspension)
+	checkpoint, err := decodeWorkflowCheckpoint(first.Suspension, testRuntimeDefinition(h.runtime, h.input.AgentID))
 	require.NoError(t, err)
 	require.True(t, checkpoint.Batch.ResumePlannerAfterPending)
 	require.Equal(t, 2, checkpoint.State.Caps.RemainingToolCalls)

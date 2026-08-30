@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"time"
 
-	specs "example.com/quickstart/gen/orchestrator/agents/chat/specs"
 	helpers "example.com/quickstart/gen/orchestrator/toolsets/helpers"
 	"goa.design/goa-ai/runtime/agent/engine"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
@@ -31,13 +30,9 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 		return err
 	}
 	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
-		ID:      "orchestrator.chat",
-		Planner: agent.Planner,
-		Workflow: engine.WorkflowDefinition{
-			Name:      "orchestrator.chat.workflow",
-			TaskQueue: "orchestrator_chat_workflow",
-			Handler:   rt.ExecuteWorkflow,
-		},
+		Definition:       Definition(),
+		Planner:          agent.Planner,
+		WorkflowHandler:  rt.ExecuteWorkflow,
 		PlanActivityName: "orchestrator.chat.plan",
 		PlanActivityOptions: engine.ActivityOptions{
 			Queue:               "orchestrator_chat_workflow",
@@ -66,9 +61,6 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 				BackoffCoefficient: 2,
 			},
 		},
-		Specs:              specs.Specs(),
-		ToolMetadataLookup: specs.MetadataByName,
-		RequiredLabels:     specs.RequiredLabels(),
 		Policy: agentsruntime.RunPolicy{
 			MaxToolCalls:     2,
 			MaxRecoveryTurns: 1,

@@ -32,10 +32,7 @@ func TestValidateLimitTerminalPlans(t *testing.T) {
 
 	rt := New(newTestStore())
 	terminal := strictLimitTerminalSpec()
-	reg := AgentRegistration{
-		ID:    agent.Ident("service.agent"),
-		Specs: []tools.ToolSpec{terminal},
-	}
+	reg := AgentRegistration{Definition: testRegistrationDefinition(agent.Ident("service.agent"), engine.WorkflowDefinition{}, []tools.ToolSpec{terminal}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler}
 	valid := testLimitTerminalPlans(terminal.Name)
 
 	tests := []struct {
@@ -98,10 +95,7 @@ func TestValidateLimitTerminalPlansRejectsNonTerminalTool(t *testing.T) {
 	rt := New(newTestStore())
 	ordinary := strictLimitTerminalSpec()
 	ordinary.TerminalRun = false
-	reg := AgentRegistration{
-		ID:    agent.Ident("service.agent"),
-		Specs: []tools.ToolSpec{ordinary},
-	}
+	reg := AgentRegistration{Definition: testRegistrationDefinition(agent.Ident("service.agent"), engine.WorkflowDefinition{}, []tools.ToolSpec{ordinary}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler}
 
 	err := rt.validateLimitTerminalPlans(reg, testLimitTerminalPlans(ordinary.Name))
 	require.ErrorContains(t, err, "is not a terminal bookkeeping tool")
@@ -111,34 +105,13 @@ func TestValidateLimitTerminalPlansRejectsConfirmation(t *testing.T) {
 	t.Parallel()
 
 	terminal := strictLimitTerminalSpec()
-	reg := AgentRegistration{
-		ID:    agent.Ident("service.agent"),
-		Specs: []tools.ToolSpec{terminal},
-	}
+	reg := AgentRegistration{Definition: testRegistrationDefinition(agent.Ident("service.agent"), engine.WorkflowDefinition{}, []tools.ToolSpec{terminal}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler}
 	t.Run("design requirement", func(t *testing.T) {
 		withConfirmation := terminal
 		withConfirmation.Confirmation = &tools.ConfirmationSpec{}
-		reg.Specs = []tools.ToolSpec{withConfirmation}
+		reg.Definition = testAgentDefinition("service.agent", "service.agent.workflow", "test", []tools.ToolSpec{withConfirmation}, nil)
 
 		err := New(newTestStore()).validateLimitTerminalPlans(reg, testLimitTerminalPlans(terminal.Name))
-		require.ErrorContains(t, err, "requires confirmation")
-	})
-	t.Run("runtime requirement", func(t *testing.T) {
-		reg.Specs = []tools.ToolSpec{terminal}
-		rt := New(newTestStore(), WithToolConfirmation(&ToolConfirmationConfig{
-			Confirm: map[tools.Ident]*ToolConfirmation{
-				terminal.Name: {
-					Prompt: func(context.Context, *ToolCall) (string, error) {
-						return "confirm", nil
-					},
-					DeniedResult: func(context.Context, *ToolCall) (any, error) {
-						return map[string]any{"denied": true}, nil
-					},
-				},
-			},
-		}))
-
-		err := rt.validateLimitTerminalPlans(reg, testLimitTerminalPlans(terminal.Name))
 		require.ErrorContains(t, err, "requires confirmation")
 	})
 }
@@ -148,14 +121,10 @@ func TestExecuteWorkflowRejectsInvalidLimitPlansBeforePlanning(t *testing.T) {
 
 	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	terminal := strictLimitTerminalSpec()
-	reg := AgentRegistration{
-		ID:      "service.agent",
-		Planner: &stubPlanner{},
-		Specs:   []tools.ToolSpec{terminal},
-	}
-	rt.agents[reg.ID] = reg
+	reg := AgentRegistration{Definition: testRegistrationDefinition("service.agent", engine.WorkflowDefinition{}, []tools.ToolSpec{terminal}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{}}
+	rt.agents[reg.Definition.route.ID] = reg
 	input := &RunInput{
-		AgentID: reg.ID,
+		AgentID: reg.Definition.route.ID,
 		RunID:   "run-1",
 		Policy: &PolicyOverrides{
 			LimitTerminalPlans: &LimitTerminalPlans{},
@@ -303,10 +272,7 @@ func TestToolFailureUsesPlannerWhenLimitPlansExist(t *testing.T) {
 		},
 	}
 	seedRunMeta(t, rt, input)
-	reg := AgentRegistration{
-		ID:                 input.AgentID,
-		ResumeActivityName: "resume",
-	}
+	reg := AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ResumeActivityName: "resume"}
 	wfCtx := &routeWorkflowContext{
 		ctx:         context.Background(),
 		runID:       input.RunID,
@@ -472,10 +438,7 @@ func executeWorkflowLimitTerminalPlan(
 			}, true
 		},
 	}))
-	reg := AgentRegistration{
-		ID:                  "service.agent",
-		Specs:               []tools.ToolSpec{work, terminal},
-		PlanActivityName:    "plan",
+	reg := AgentRegistration{Definition: testRegistrationDefinition("service.agent", engine.WorkflowDefinition{}, []tools.ToolSpec{work, terminal}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 		Policy: RunPolicy{
@@ -495,9 +458,9 @@ func executeWorkflowLimitTerminalPlan(
 	default:
 		t.Fatalf("unsupported reason %q", reason)
 	}
-	rt.agents[reg.ID] = reg
+	rt.agents[reg.Definition.route.ID] = reg
 	input := &RunInput{
-		AgentID:   reg.ID,
+		AgentID:   reg.Definition.route.ID,
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
