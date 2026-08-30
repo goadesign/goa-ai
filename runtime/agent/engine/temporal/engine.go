@@ -6,11 +6,16 @@
 package temporal
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	temporalotel "go.temporal.io/sdk/contrib/opentelemetry"
@@ -20,9 +25,12 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
+
+const workflowStartRecipeMemoKey = startrecipe.MemoKey
 
 // Options configures the Temporal engine adapter. ClientOptions are required;
 // the adapter installs Goa-AI's workflow data contract and OTEL instrumentation
@@ -311,16 +319,23 @@ func (e *Engine) temporalWorkflowHandler(
 	}
 }
 
-// RegisterRecordActivity registers a typed runtime-record activity with the
-// Temporal engine. The activity persists one non-empty ordered batch outside
-// deterministic workflow code.
-func (e *Engine) RegisterRecordActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.RecordActivityBatchInput) error) error {
-	if err := e.requireWorkerMode("register record activities"); err != nil {
+// RegisterStorageActivity registers the one typed runtime storage activity
+// with Temporal.
+func (e *Engine) RegisterStorageActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.StorageActivityCommand) (*api.StorageActivityResult, error)) error {
+	if err := e.requireWorkerMode("register storage activities"); err != nil {
 		return err
 	}
 	opts = e.applyActivityClassDefaults(activityKindRecord, opts)
-	wrapped := func(ctx context.Context, in *api.RecordActivityBatchInput) error {
-		return temporalerrors.Wrap(fn(e.injectWorkflowContextIntoActivity(ctx), in))
+	wrapped := func(ctx context.Context, in *api.StorageActivityCommand) (*api.StorageActivityResult, error) {
+		out, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		if engine.IsActivityErrorNonRetryable(err) {
+			return out, temporal.NewNonRetryableApplicationError(
+				err.Error(),
+				"goa_ai_storage_contract",
+				err,
+			)
+		}
+		return out, temporalerrors.Wrap(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -375,6 +390,27 @@ func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opt
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
 
+// RegisterAgentChildActivity registers the activity that prepares one child
+// run outside deterministic workflow code.
+func (e *Engine) RegisterAgentChildActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error)) error {
+	if err := e.requireWorkerMode("register agent child activities"); err != nil {
+		return err
+	}
+	opts = e.applyActivityClassDefaults(activityKindPlanner, opts)
+	wrapped := func(ctx context.Context, in *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error) {
+		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		if engine.IsActivityErrorNonRetryable(err) {
+			return output, temporal.NewNonRetryableApplicationError(
+				err.Error(),
+				"goa_ai_agent_child_contract",
+				err,
+			)
+		}
+		return output, temporalerrors.Wrap(err)
+	}
+	return e.registerActivityWithCtx(name, opts, wrapped)
+}
+
 // StartWorkflow launches a new workflow execution on Temporal using the specified
 // workflow definition and input. It constructs Temporal-specific start options from
 // the request (ID, queue, retry policy) and executes the workflow asynchronously.
@@ -387,9 +423,13 @@ func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opt
 // an existing workflow, or if Temporal client execution fails.
 //
 // Thread-safe: Safe to call concurrently.
-//
-//nolint:unparam // engine.Engine requires returning a workflow handle.
 func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
+	if err := engine.ValidateWorkflowStartRequest(req); err != nil {
+		return nil, err
+	}
+	if req.ID == "" {
+		return nil, fmt.Errorf("temporal engine: workflow id is required")
+	}
 	if req.Workflow == "" {
 		return nil, fmt.Errorf("temporal engine: workflow name is required")
 	}
@@ -407,31 +447,69 @@ func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequ
 	}
 
 	opts := client.StartWorkflowOptions{
-		ID:        req.ID,
-		TaskQueue: queue,
+		ID:                                       req.ID,
+		TaskQueue:                                queue,
+		WorkflowIDReusePolicy:                    enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+		WorkflowExecutionErrorWhenAlreadyStarted: true,
 	}
-	if len(req.Memo) > 0 {
-		opts.Memo = req.Memo
+	if _, reserved := req.Memo[workflowStartRecipeMemoKey]; reserved {
+		return nil, fmt.Errorf("temporal engine: memo key %q is reserved", workflowStartRecipeMemoKey)
 	}
-	if len(req.SearchAttributes) > 0 {
-		typedSearchAttributes, err := convertSearchAttributes(req.SearchAttributes)
-		if err != nil {
-			return nil, err
-		}
-		opts.TypedSearchAttributes = typedSearchAttributes
+	dataConverter := NewAgentDataConverter()
+	inputSnapshot, err := startrecipe.SnapshotRunInput(dataConverter, req.Input)
+	if err != nil {
+		return nil, err
+	}
+	searchAttributes, err := startrecipe.EncodeSearchAttributes(req.SearchAttributes)
+	if err != nil {
+		return nil, err
+	}
+	fingerprint, err := startrecipe.Digest(dataConverter, startrecipe.DigestInput{
+		Workflow: req.Workflow, TaskQueue: req.TaskQueue, InputPayload: inputSnapshot.Payload,
+		RunTimeout: req.RunTimeout, RetryPolicy: req.RetryPolicy,
+		Memo: req.Memo, SearchAttributes: searchAttributes,
+	})
+	if err != nil {
+		return nil, err
+	}
+	opts.Memo = make(map[string]any, len(req.Memo)+1)
+	for key, value := range req.Memo {
+		opts.Memo[key] = value
+	}
+	opts.Memo[workflowStartRecipeMemoKey] = fingerprint[:]
+	if len(searchAttributes) > 0 {
+		opts.TypedSearchAttributes = convertSearchAttributes(searchAttributes)
 	}
 	if req.RunTimeout > 0 {
-		// Apply as WorkflowRunTimeout. Temporal also supports WorkflowExecutionTimeout;
-		// we set RunTimeout here to bound total execution wall time.
+		// WorkflowRunTimeout applies separately to each workflow retry attempt.
 		opts.WorkflowRunTimeout = req.RunTimeout
 	}
 	if rp := convertRetryPolicy(req.RetryPolicy); rp != nil {
 		opts.RetryPolicy = rp
 	}
 
-	run, err := e.client.ExecuteWorkflow(ctx, opts, def.Name, req.Input)
+	run, err := e.client.ExecuteWorkflow(ctx, opts, def.Name, inputSnapshot.Input)
 	if err != nil {
-		return nil, err
+		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
+		if !errors.As(err, &alreadyStarted) {
+			return nil, err
+		}
+		desc, describeErr := e.client.DescribeWorkflowExecution(ctx, req.ID, alreadyStarted.RunId)
+		if describeErr != nil {
+			return nil, describeErr
+		}
+		payload := desc.GetWorkflowExecutionInfo().GetMemo().GetFields()[workflowStartRecipeMemoKey]
+		if payload == nil {
+			return nil, &engine.WorkflowStartConflictError{ID: req.ID}
+		}
+		var storedFingerprint []byte
+		if decodeErr := NewAgentDataConverter().FromPayload(payload, &storedFingerprint); decodeErr != nil {
+			return nil, fmt.Errorf("decode workflow start recipe: %w", decodeErr)
+		}
+		if len(storedFingerprint) != sha256.Size || !bytes.Equal(storedFingerprint, fingerprint[:]) {
+			return nil, &engine.WorkflowStartConflictError{ID: req.ID}
+		}
+		run = e.client.GetWorkflow(ctx, req.ID, alreadyStarted.RunId)
 	}
 
 	return &workflowHandle{

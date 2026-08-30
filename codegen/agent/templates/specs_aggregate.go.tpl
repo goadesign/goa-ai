@@ -1,27 +1,40 @@
-// Specs returns fresh specifications for every tool exported by this agent.
-func Specs() []tools.ToolSpec {
-    specs := make([]tools.ToolSpec, 0)
+// {{ .SpecsFunc }} returns fresh specifications for every tool available to this agent.
+func {{ .SpecsFunc }}() []{{ .ToolsPackageName }}.ToolSpec {
+    specs := make([]{{ .ToolsPackageName }}.ToolSpec, 0)
 {{- range .Toolsets }}
+    {{- if .AgentID }}
+    {{- $pkg := .SpecsPackageName }}
+    {{- $agentID := .AgentID }}
+    {{- range .Tools }}
+    {
+        spec := {{ $pkg }}.{{ .Spec.SpecVar }}()
+        spec.IsAgentTool = true
+        spec.AgentID = {{ printf "%q" $agentID }}
+        specs = append(specs, spec)
+    }
+    {{- end }}
+    {{- else }}
     specs = append(specs, {{ .SpecsPackageName }}.Specs()...)
+    {{- end }}
 {{- end }}
     return specs
 }
 
-// Names returns fresh tool identifiers exported by this agent.
-func Names() []tools.Ident {
-    return []tools.Ident{
+// {{ .NamesFunc }} returns the identifiers for every tool available to this agent.
+func {{ .NamesFunc }}() []{{ .ToolsPackageName }}.Ident {
+    return []{{ .ToolsPackageName }}.Ident{
 {{- range .Toolsets }}
     {{- $pkg := .SpecsPackageName }}
     {{- range .Tools }}
-        {{ $pkg }}.{{ .ConstName }},
+        {{ $pkg }}.{{ .Spec.ConstName }},
     {{- end }}
 {{- end }}
     }
 }
 
-// RequiredLabels returns the sorted, deduplicated run label keys required by
-// label-backed Inject fields across every toolset this agent uses.
-func RequiredLabels() []string {
+// {{ .RequiredLabelsFunc }} returns the sorted run labels required by this
+// agent's generated tool payloads. Each label appears once.
+func {{ .RequiredLabelsFunc }}() []string {
     return []string{
 {{- range .RequiredLabels }}
         {{ printf "%q" . }},
@@ -29,62 +42,70 @@ func RequiredLabels() []string {
     }
 }
 
-// Spec returns the specification for the named tool if present.
-func Spec(name tools.Ident) (tools.ToolSpec, bool) {
+// {{ .SpecFunc }} returns the specification for the named tool if present.
+func {{ .SpecFunc }}(name {{ .ToolsPackageName }}.Ident) ({{ .ToolsPackageName }}.ToolSpec, bool) {
     switch name {
     {{- range .Toolsets }}
         {{- $pkg := .SpecsPackageName }}
+        {{- $agentID := .AgentID }}
         {{- range .Tools }}
-    case tools.Ident({{ printf "%q" .QualifiedName }}):
-        return {{ $pkg }}.Spec({{ $pkg }}.{{ .ConstName }})
+    case {{ $.ToolsPackageName }}.Ident({{ printf "%q" .Tool.QualifiedName }}):
+        {{- if $agentID }}
+        spec := {{ $pkg }}.{{ .Spec.SpecVar }}()
+        spec.IsAgentTool = true
+        spec.AgentID = {{ printf "%q" $agentID }}
+        return spec, true
+        {{- else }}
+        return {{ $pkg }}.Spec({{ $pkg }}.{{ .Spec.ConstName }})
+        {{- end }}
         {{- end }}
     {{- end }}
     default:
-        return tools.ToolSpec{}, false
+        return {{ .ToolsPackageName }}.ToolSpec{}, false
     }
 }
 
-// Metadata returns fresh policy metadata for the aggregated tools.
-func Metadata() []policy.ToolMetadata {
-    return []policy.ToolMetadata{
+// {{ .MetadataFunc }} returns policy details for every available tool.
+func {{ .MetadataFunc }}() []{{ .PolicyPackageName }}.ToolMetadata {
+    return []{{ .PolicyPackageName }}.ToolMetadata{
     {{- range .Toolsets }}
         {{- range .Tools }}
         {
-            ID:          tools.Ident({{ printf "%q" .QualifiedName }}),
-            Title:       {{ printf "%q" .Title }},
-            Description: {{ printf "%q" .Description }},
+            ID:          {{ $.ToolsPackageName }}.Ident({{ printf "%q" .Tool.QualifiedName }}),
+            Title:       {{ printf "%q" .Tool.Title }},
+            Description: {{ printf "%q" .Tool.Description }},
             Tags: []string{
-            {{- range .Tags }}
+            {{- range .Tool.Tags }}
                 {{ printf "%q" . }},
             {{- end }}
             },
-            BudgetClass: policy.ToolBudgetClass{{ if .Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
+            BudgetClass: {{ $.PolicyPackageName }}.ToolBudgetClass{{ if .Tool.Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
         },
         {{- end }}
     {{- end }}
     }
 }
 
-// MetadataByName returns policy metadata for the named tool if present.
-func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
+// {{ .MetadataByNameFunc }} returns policy metadata for the named tool if present.
+func {{ .MetadataByNameFunc }}(name {{ .ToolsPackageName }}.Ident) ({{ .PolicyPackageName }}.ToolMetadata, bool) {
     switch name {
     {{- range .Toolsets }}
         {{- range .Tools }}
-    case tools.Ident({{ printf "%q" .QualifiedName }}):
-        return policy.ToolMetadata{
-            ID:          tools.Ident({{ printf "%q" .QualifiedName }}),
-            Title:       {{ printf "%q" .Title }},
-            Description: {{ printf "%q" .Description }},
+    case {{ $.ToolsPackageName }}.Ident({{ printf "%q" .Tool.QualifiedName }}):
+        return {{ $.PolicyPackageName }}.ToolMetadata{
+            ID:          {{ $.ToolsPackageName }}.Ident({{ printf "%q" .Tool.QualifiedName }}),
+            Title:       {{ printf "%q" .Tool.Title }},
+            Description: {{ printf "%q" .Tool.Description }},
             Tags: []string{
-            {{- range .Tags }}
+            {{- range .Tool.Tags }}
                 {{ printf "%q" . }},
             {{- end }}
             },
-            BudgetClass: policy.ToolBudgetClass{{ if .Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
+            BudgetClass: {{ $.PolicyPackageName }}.ToolBudgetClass{{ if .Tool.Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
         }, true
         {{- end }}
     {{- end }}
     default:
-        return policy.ToolMetadata{}, false
+        return {{ .PolicyPackageName }}.ToolMetadata{}, false
     }
 }

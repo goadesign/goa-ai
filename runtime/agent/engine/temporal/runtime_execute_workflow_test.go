@@ -30,10 +30,32 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	agentrun "goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/runlog"
 	agentruntime "goa.design/goa-ai/runtime/agent/runtime"
+	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/storage"
+	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
+
+// testTemporalAgentDefinition builds the immutable contract generated workers
+// pass to runtime registration.
+func testTemporalAgentDefinition(
+	id agent.Ident,
+	workflowName, taskQueue string,
+	specs []tools.ToolSpec,
+) agentruntime.AgentDefinition {
+	return agentruntime.NewAgentDefinition(
+		agentruntime.AgentRoute{ID: id, WorkflowName: workflowName, DefaultTaskQueue: taskQueue},
+		specs,
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+}
 
 const runSuspensionType = "runtime.run_suspension"
 
@@ -108,18 +130,15 @@ func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) 
 
 	agentID := agent.Ident("publication.agent")
 	plannerStub := &publicationRetryPlanner{}
-	runtime := agentruntime.New()
-	_, err := runtime.CreateSession(context.Background(), sessionID)
+	store := storageinmem.New()
+	runtime := agentruntime.New(store)
+	_, err := store.CreateSession(context.Background(), sessionID, time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, runtime.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
-		ID:      agentID,
-		Planner: plannerStub,
-		Workflow: engine.WorkflowDefinition{
-			Name:      workflowName,
-			TaskQueue: taskQueue,
-			Handler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-				return runtime.ExecuteWorkflow(wfCtx, input)
-			},
+		Definition: testTemporalAgentDefinition(agentID, workflowName, taskQueue, nil),
+		Planner:    plannerStub,
+		WorkflowHandler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
+			return runtime.ExecuteWorkflow(wfCtx, input)
 		},
 		PlanActivityName:    planActivityName,
 		ResumeActivityName:  resumeActivityName,
@@ -133,7 +152,7 @@ func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) 
 	eng := &Engine{
 		defaultQueue: taskQueue,
 		activityOptions: map[string]engine.ActivityOptions{
-			"runtime.record_event": {
+			"runtime.store": {
 				StartToCloseTimeout: time.Second,
 				RetryPolicy:         engine.RetryPolicy{MaxAttempts: 2},
 			},
@@ -141,7 +160,7 @@ func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) 
 	}
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	env.RegisterActivityWithOptions(recorder.Record, activity.RegisterOptions{Name: "runtime.record_event"})
+	env.RegisterActivityWithOptions(recorder.Record, activity.RegisterOptions{Name: "runtime.store"})
 	env.RegisterActivityWithOptions(runtime.PlanStartActivity, activity.RegisterOptions{Name: planActivityName})
 	env.RegisterActivityWithOptions(runtime.PlanResumeActivity, activity.RegisterOptions{Name: resumeActivityName})
 	env.ExecuteWorkflow(func(ctx workflow.Context) (*api.RunOutput, error) {
@@ -184,30 +203,26 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 	agentID := agent.Ident("service.agent")
 	questionTool := tools.Ident("assistant.ask_question")
 	plannerStub := &awaitQuestionsPlanner{awaitID: awaitID, toolName: questionTool, toolCallID: modelToolCallID}
-	runtime := agentruntime.New()
-	_, err := runtime.CreateSession(context.Background(), sessionID)
+	store := storageinmem.New()
+	runtime := agentruntime.New(store)
+	_, err := store.CreateSession(context.Background(), sessionID, time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, runtime.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
-		ID:      agentID,
-		Planner: plannerStub,
-		Workflow: engine.WorkflowDefinition{
-			Name:      workflowName,
-			TaskQueue: taskQueue,
-			Handler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-				return runtime.ExecuteWorkflow(wfCtx, input)
-			},
+		Definition: testTemporalAgentDefinition(agentID, workflowName, taskQueue, []tools.ToolSpec{anyJSONToolSpec(questionTool)}),
+		Planner:    plannerStub,
+		WorkflowHandler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
+			return runtime.ExecuteWorkflow(wfCtx, input)
 		},
 		PlanActivityName:    planActivityName,
 		ResumeActivityName:  resumeActivityName,
 		ExecuteToolActivity: executeActivityName,
-		Specs:               []tools.ToolSpec{anyJSONToolSpec(questionTool, "assistant.await")},
 	}))
 
 	recorder := &hookRecorder{}
 	eng := &Engine{defaultQueue: taskQueue, activityOptions: make(map[string]engine.ActivityOptions)}
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	env.RegisterActivityWithOptions(recorder.Record, activity.RegisterOptions{Name: "runtime.record_event"})
+	env.RegisterActivityWithOptions(recorder.Record, activity.RegisterOptions{Name: "runtime.store"})
 	env.RegisterActivityWithOptions(runtime.PlanStartActivity, activity.RegisterOptions{Name: planActivityName})
 	env.RegisterActivityWithOptions(runtime.PlanResumeActivity, activity.RegisterOptions{Name: resumeActivityName})
 	env.ExecuteWorkflow(func(ctx workflow.Context) (*api.RunOutput, error) {
@@ -266,24 +281,37 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 
 	agentID := agent.Ident("service.cancel_agent")
 	toolName := tools.Ident("service.cancel.cancel")
-	spec := anyJSONToolSpec(toolName, "service.cancel")
-	runtime := agentruntime.New()
-	_, err := runtime.CreateSession(context.Background(), sessionID)
+	spec := anyJSONToolSpec(toolName)
+	store := storageinmem.New()
+	runtime := agentruntime.New(store)
+	_, err := store.CreateSession(context.Background(), sessionID, time.Now().UTC())
+	require.NoError(t, err)
+	startedAt := time.Now().UTC().Truncate(time.Millisecond)
+	startedRecord := lifecycleRecord(t, hooks.NewRunStartedEvent(runID, agentID, sessionID, "", "", nil), "run-started", startedAt)
+	canceledRecord := lifecycleRecord(t, hooks.NewRunCompletedEvent(
+		runID,
+		agentID,
+		sessionID,
+		"canceled",
+		agentrun.PhaseCanceled,
+		nil,
+		context.Canceled,
+		&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
+	), "run-stopped", startedAt)
+	_, err = store.StartRootRun(context.Background(), storage.RootRunStart{
+		Run:     session.RunStart{AgentID: string(agentID), RunID: runID, SessionID: sessionID, StartedAt: startedAt},
+		Started: startedRecord, Canceled: canceledRecord,
+	})
 	require.NoError(t, err)
 	require.NoError(t, runtime.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
-		ID:      agentID,
-		Planner: &cancelingServicePlanner{toolName: toolName},
-		Workflow: engine.WorkflowDefinition{
-			Name:      workflowName,
-			TaskQueue: taskQueue,
-			Handler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-				return runtime.ExecuteWorkflow(wfCtx, input)
-			},
+		Definition: testTemporalAgentDefinition(agentID, workflowName, taskQueue, []tools.ToolSpec{spec}),
+		Planner:    &cancelingServicePlanner{toolName: toolName},
+		WorkflowHandler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
+			return runtime.ExecuteWorkflow(wfCtx, input)
 		},
 		PlanActivityName:    planActivityName,
 		ResumeActivityName:  resumeActivityName,
 		ExecuteToolActivity: executeActivityName,
-		Specs:               []tools.ToolSpec{spec},
 		Policy:              agentruntime.RunPolicy{MaxToolCalls: 1},
 	}))
 	require.NoError(t, runtime.RegisterToolset(agentruntime.ToolsetRegistration{
@@ -298,7 +326,7 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 	eng := &Engine{defaultQueue: taskQueue, activityOptions: make(map[string]engine.ActivityOptions)}
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	env.RegisterActivityWithOptions(recorder.Record, activity.RegisterOptions{Name: "runtime.record_event"})
+	env.RegisterActivityWithOptions(recorder.Record, activity.RegisterOptions{Name: "runtime.store"})
 	env.RegisterActivityWithOptions(runtime.PlanStartActivity, activity.RegisterOptions{Name: planActivityName})
 	env.RegisterActivityWithOptions(runtime.PlanResumeActivity, activity.RegisterOptions{Name: resumeActivityName})
 	env.RegisterActivityWithOptions(runtime.ExecuteToolActivity, activity.RegisterOptions{Name: executeActivityName})
@@ -326,6 +354,24 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 	require.Equal(t, "canceled", completed.Status)
 	require.Nil(t, completed.Failure)
 	require.NotNil(t, completed.Cancellation)
+}
+
+// lifecycleRecord encodes a typed hook event for direct integrated-store
+// setup in Temporal runtime tests.
+func lifecycleRecord(t *testing.T, event hooks.Event, key string, at time.Time) *runlog.Event {
+	t.Helper()
+	input, err := hooks.EncodeToRecordInput(event, hooks.EncodeOptions{EventKey: key, TimestampMS: at.UnixMilli()})
+	require.NoError(t, err)
+	return &runlog.Event{
+		EventKey:  input.EventKey,
+		RunID:     input.RunID,
+		AgentID:   input.AgentID,
+		SessionID: input.SessionID,
+		TurnID:    input.TurnID,
+		Type:      input.Type,
+		Payload:   input.Payload,
+		Timestamp: time.UnixMilli(input.TimestampMS).UTC(),
+	}
 }
 
 type cancelingServicePlanner struct {
@@ -397,9 +443,10 @@ func (*publicationRetryPlanner) PlanResume(context.Context, *planner.PlanResumeI
 
 // Record persists non-publication records normally and exercises immutable
 // idempotency for the planner completion batch.
-func (r *publicationRetryRecorder) Record(ctx context.Context, batch *api.RecordActivityBatchInput) error {
+func (r *publicationRetryRecorder) Record(ctx context.Context, command *api.StorageActivityCommand) (*api.StorageActivityResult, error) {
+	records := storageCommandRecords(command)
 	hasPlannerPublication := false
-	for _, input := range batch.Records {
+	for _, input := range records {
 		if strings.Contains(input.EventKey, "/planner-publication/") {
 			hasPlannerPublication = true
 			break
@@ -411,12 +458,12 @@ func (r *publicationRetryRecorder) Record(ctx context.Context, batch *api.Record
 		r.activityIDs[activity.GetInfo(ctx).ActivityID] = struct{}{}
 		r.mu.Unlock()
 	}
-	for _, input := range batch.Records {
+	for _, input := range records {
 		if err := r.record(input); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return storageCommandResult(command, len(records)), nil
 }
 
 // record stores one item from the ordered activity input and fails once after
@@ -515,16 +562,63 @@ func (p *awaitQuestionsPlanner) ResumeCalls() int {
 	return p.resumeCalls
 }
 
-func (r *hookRecorder) Record(_ context.Context, batch *api.RecordActivityBatchInput) error {
-	for _, input := range batch.Records {
+func (r *hookRecorder) Record(_ context.Context, command *api.StorageActivityCommand) (*api.StorageActivityResult, error) {
+	records := storageCommandRecords(command)
+	for _, input := range records {
 		if err := r.record(input); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	recordCount := len(records)
+	if command.Suspension != nil {
+		recordCount = 1
+	}
+	return storageCommandResult(command, recordCount), nil
 }
 
-// record captures one ordered item from the runtime record activity.
+func storageCommandRecords(command *api.StorageActivityCommand) []*api.RecordActivityInput {
+	switch {
+	case command.Append != nil:
+		return command.Append.Records
+	case command.RootStart != nil:
+		return []*api.RecordActivityInput{command.RootStart.Started}
+	case command.ChildStart != nil:
+		return []*api.RecordActivityInput{command.ChildStart.ParentLinked, command.ChildStart.Started}
+	case command.OneShotStart != nil:
+		return []*api.RecordActivityInput{command.OneShotStart.Started}
+	case command.Cancellation != nil:
+		return []*api.RecordActivityInput{command.Cancellation.Record}
+	case command.Suspension != nil:
+		return []*api.RecordActivityInput{command.Suspension.Checkpoint, command.Suspension.Suspended}
+	default:
+		return []*api.RecordActivityInput{command.Terminal.Record}
+	}
+}
+
+func storageCommandResult(command *api.StorageActivityCommand, recordCount int) *api.StorageActivityResult {
+	results := make([]storage.AppendResult, recordCount)
+	for index := range results {
+		results[index] = storage.AppendResult{ID: fmt.Sprint(index + 1), Inserted: true, SessionStatus: session.StatusActive}
+	}
+	switch {
+	case command.Append != nil:
+		return &api.StorageActivityResult{Append: &api.AppendRecordsResult{Records: results}}
+	case command.RootStart != nil:
+		return &api.StorageActivityResult{RootStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: results}}
+	case command.ChildStart != nil:
+		return &api.StorageActivityResult{ChildStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: results}}
+	case command.OneShotStart != nil:
+		return &api.StorageActivityResult{OneShotStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: results}}
+	case command.Cancellation != nil:
+		return &api.StorageActivityResult{Cancellation: &api.RunCancellationResult{Outcome: api.RunCancellationAccepted, Record: results[0]}}
+	case command.Suspension != nil:
+		return &api.StorageActivityResult{Suspension: &api.RecordWriteResult{Record: results[0]}}
+	default:
+		return &api.StorageActivityResult{Terminal: &api.RecordWriteResult{Record: results[0]}}
+	}
+}
+
+// record captures one ordered item from the runtime storage activity.
 func (r *hookRecorder) record(input *api.RecordActivityInput) error {
 	if input.Type == transcript.RunLogMessagesSeeded || input.Type == transcript.RunLogMessagesAppended {
 		return nil
@@ -557,7 +651,7 @@ func (r *hookRecorder) SuspensionPersisted() bool {
 	return r.suspensionPersisted
 }
 
-func anyJSONToolSpec(name tools.Ident, toolset string) tools.ToolSpec {
+func anyJSONToolSpec(name tools.Ident) tools.ToolSpec {
 	codec := tools.JSONCodec[any]{
 		ToJSON: json.Marshal,
 		FromJSON: func(data []byte) (any, error) {
@@ -569,7 +663,7 @@ func anyJSONToolSpec(name tools.Ident, toolset string) tools.ToolSpec {
 		},
 	}
 	return tools.ToolSpec{
-		Name: name, Toolset: toolset,
+		Name:    name,
 		Payload: tools.TypeSpec{Name: string(name) + "_payload", Codec: codec},
 		Result:  tools.TypeSpec{Name: string(name) + "_result", Codec: codec},
 	}

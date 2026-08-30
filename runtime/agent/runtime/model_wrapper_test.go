@@ -1714,7 +1714,7 @@ func TestRawModelInvocationSelectionKeepsResponsesIsolated(t *testing.T) {
 // directly with planner.ConsumeStream. Capture must still happen even though
 // ConsumeStream itself never sees or forwards a signature.
 func TestConfiguredModelClientCapturesToolCallSignatureViaRawModelClient(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	events := newPlannerEvents("svc.agent", "run-1", "sess-1")
 	invocations := &modelInvocationJournal{}
 	streamer := &chunkStreamer{
@@ -1794,7 +1794,7 @@ func TestPreparePlannerActivityWiresSignatureCaptureIntoModelClients(t *testing.
 	}
 	rt := &Runtime{
 		agents: map[agent.Ident]AgentRegistration{
-			"svc.agent": {ID: "svc.agent"},
+			"svc.agent": {Definition: testAgentDefinition("svc.agent", "svc.agent.workflow", "test", nil, nil)},
 		},
 		models: map[string]model.Client{
 			"primary": mustTestModelClient(stubModelClient{

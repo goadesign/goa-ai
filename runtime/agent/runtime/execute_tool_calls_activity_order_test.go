@@ -11,21 +11,20 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestExecuteToolCalls_ServiceToolsPublishResultsAsComplete(t *testing.T) {
 	recorder := &recordingHooks{}
-	slowSpec := newAnyJSONSpec("svc.tools.slow", "svc.tools")
-	fastSpec := newAnyJSONSpec("svc.tools.fast", "svc.tools")
+	slowSpec := newAnyJSONSpec("svc.tools.slow")
+	fastSpec := newAnyJSONSpec("svc.tools.fast")
 	rt := &Runtime{
-		Bus:           recorder,
-		RunEventStore: runloginmem.New(),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
+		Bus:     recorder,
+		Store:   newTestStore(),
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},
@@ -93,13 +92,13 @@ func TestExecuteToolCalls_ServiceToolsPublishResultsAsComplete(t *testing.T) {
 
 func TestExecuteToolCalls_ServiceToolErrorDoesNotAbortRun(t *testing.T) {
 	recorder := &recordingHooks{}
-	failSpec := newAnyJSONSpec("svc.tools.fail", "svc.tools")
+	failSpec := newAnyJSONSpec("svc.tools.fail")
 	rt := &Runtime{
-		Bus:           recorder,
-		RunEventStore: runloginmem.New(),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
+		Bus:     recorder,
+		Store:   newTestStore(),
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},

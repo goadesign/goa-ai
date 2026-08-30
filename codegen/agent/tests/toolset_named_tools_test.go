@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -17,16 +16,13 @@ func TestToolsetNamedTools(t *testing.T) {
 	specsContent := fileContent(t, files, "gen/alpha/agents/helper/specs/specs.go")
 	require.NotEmpty(t, specsContent, "specs.go should be generated")
 
-	// The generated code should compile - the toolset "tools" should be aliased
-	// to "toolsspecs" to avoid conflicting with the runtime tools import
+	// The runtime package keeps its public qualifier.
 	require.Contains(t, specsContent, `tools "goa.design/goa-ai/runtime/agent/tools"`,
 		"runtime tools import should have explicit alias")
 
-	// The toolset import should be aliased to avoid conflict
-	require.True(t,
-		strings.Contains(specsContent, `toolsspecs "`) ||
-			strings.Contains(specsContent, "specs = append(specs, toolsspecs.Specs()...)"),
-		"toolset named 'tools' should be aliased to 'toolsspecs' in import or usage")
+	// Goa moves the generated toolset import away from the fixed runtime name.
+	require.Contains(t, specsContent, `tools2 "goa.design/goa-ai/gen/alpha/toolsets/tools"`)
+	require.Contains(t, specsContent, "specs = append(specs, tools2.Specs()...)")
 
 	// Verify the generated code is syntactically valid by checking structure
 	require.Contains(t, specsContent, "package specs")

@@ -5,9 +5,9 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-// InjectBoundMetaExample defines a BindTo tool that injects session_id from
-// call metadata and household_id from immutable run labels. It exercises the
-// complete generated registry provider path for both injection sources.
+// InjectBoundMetaExample defines a bound tool that fills session_id from call
+// metadata and household_id from labels fixed when the run starts. The
+// generated provider must pass both values to the bound service method.
 func InjectBoundMetaExample() func() {
 	return func() {
 		API("catalog", func() {})

@@ -52,7 +52,7 @@ func TestToolSpecsDeterministicTypeRefs(t *testing.T) {
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
 
-	files, err := codegen.Generate("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
+	files, err := codegen.BuildFilesForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root}, false)
 	require.NoError(t, err)
 
 	var codecs string
@@ -106,7 +106,7 @@ func TestToolSchemasJSONEmitted(t *testing.T) {
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
 
-	files, err := codegen.Generate("example.com/assistant", []eval.Root{goaexpr.Root, agentsExpr.Root}, nil)
+	files, err := codegen.BuildFilesForTest("example.com/assistant", []eval.Root{goaexpr.Root, agentsExpr.Root}, false)
 	require.NoError(t, err)
 
 	var payload string

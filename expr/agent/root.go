@@ -147,6 +147,9 @@ func (r *RootExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
 	r.validateSanitizedAgentSlugs(verr)
 	r.validateCompletionNames(verr)
+	r.validateAgentToolsetReferences(verr)
+	r.validateAgentToolsetSources(verr)
+	r.validateServiceExportRoutes(verr)
 
 	// Validate registry name uniqueness.
 	registries := make(map[string]*RegistryExpr)
@@ -229,6 +232,96 @@ func (r *RootExpr) Validate() error {
 	r.validateOwnerScopedToolsetSlugs(verr)
 
 	return verr
+}
+
+// validateAgentToolsetSources requires an explicit exporter when a plain Use
+// could select more than one agent in another service.
+func (r *RootExpr) validateAgentToolsetSources(verr *eval.ValidationErrors) {
+	exports := make(map[*ToolsetExpr][]*ToolsetExpr)
+	for _, agent := range r.Agents {
+		if agent.Exported == nil {
+			continue
+		}
+		for _, toolset := range agent.Exported.Toolsets {
+			exports[canonicalToolset(toolset)] = append(exports[canonicalToolset(toolset)], toolset)
+		}
+	}
+	for _, agent := range r.Agents {
+		if agent.Used == nil {
+			continue
+		}
+		for _, toolset := range agent.Used.Toolsets {
+			if toolset.Origin != nil && toolset.Origin.Agent != nil {
+				continue
+			}
+			count := 0
+			for _, export := range exports[canonicalToolset(toolset)] {
+				if export.Agent.Service != agent.Service {
+					count++
+				}
+			}
+			if count > 1 {
+				verr.Add(
+					toolset,
+					"toolset %q is exported by multiple agents; select one with AgentToolset",
+					toolset.Name,
+				)
+			}
+		}
+	}
+}
+
+// validateAgentToolsetReferences rejects repeated Use or Export entries. One
+// entry must own each generated registration inside an agent.
+func (r *RootExpr) validateAgentToolsetReferences(verr *eval.ValidationErrors) {
+	for _, agent := range r.Agents {
+		if agent.Used != nil {
+			validateAgentToolsetGroup(verr, agent, "uses", agent.Used.Toolsets)
+		}
+		if agent.Exported != nil {
+			validateAgentToolsetGroup(verr, agent, "exports", agent.Exported.Toolsets)
+		}
+	}
+}
+
+// validateAgentToolsetGroup reports repeated names inside one Use or Export
+// group because both entries would generate the same registration.
+func validateAgentToolsetGroup(verr *eval.ValidationErrors, agent *AgentExpr, verb string, toolsets []*ToolsetExpr) {
+	seen := make(map[string]struct{})
+	for _, toolset := range toolsets {
+		if _, exists := seen[toolset.Name]; exists {
+			verr.Add(
+				toolset,
+				"agent %q %s toolset %q more than once",
+				agent.Name,
+				verb,
+				toolset.Name,
+			)
+			continue
+		}
+		seen[toolset.Name] = struct{}{}
+	}
+}
+
+// validateServiceExportRoutes ensures one service route describes one selected
+// tool contract. Different services may export the same shared definition.
+func (r *RootExpr) validateServiceExportRoutes(verr *eval.ValidationErrors) {
+	routes := make(map[string]*ToolsetExpr)
+	for _, exports := range r.ServiceExports {
+		for _, toolset := range exports.Toolsets {
+			key := exports.Service.Name + ":" + toolset.Name
+			if _, ok := routes[key]; ok {
+				verr.Add(
+					toolset,
+					"service %q exports toolset %q more than once",
+					exports.Service.Name,
+					toolset.Name,
+				)
+				continue
+			}
+			routes[key] = toolset
+		}
+	}
 }
 
 func (r *RootExpr) validateSanitizedAgentSlugs(verr *eval.ValidationErrors) {
@@ -339,11 +432,8 @@ func sameToolsetOrigin(left, right *ToolsetExpr) bool {
 }
 
 func canonicalToolset(ts *ToolsetExpr) *ToolsetExpr {
-	if ts == nil {
-		return nil
-	}
-	if ts.Origin != nil {
-		return ts.Origin
+	for ts != nil && ts.Origin != nil {
+		ts = ts.Origin
 	}
 	return ts
 }
@@ -370,7 +460,7 @@ func (r *RootExpr) serviceExportScopeLabel(se *ServiceExportsExpr) string {
 func (r *RootExpr) validateOwnerScopedToolsetSlugs(verr *eval.ValidationErrors) {
 	owners := make(map[string]*ToolsetExpr)
 	refs := r.collectToolsetOwnerRefs()
-	for _, ts := range r.definingToolsetsForOwnerValidation() {
+	for _, ts := range r.DefiningToolsets() {
 		namespace, ok := r.toolsetOwnerNamespace(ts, refs[ts])
 		if !ok {
 			continue
@@ -441,10 +531,9 @@ func (r *RootExpr) collectToolsetOwnerRefs() map[*ToolsetExpr][]toolsetOwnerRef 
 	return refs
 }
 
-// definingToolsetsForOwnerValidation returns each defining toolset exactly once
-// regardless of whether it was declared top-level, inline under Use/Export, or
-// inside a service export block.
-func (r *RootExpr) definingToolsetsForOwnerValidation() []*ToolsetExpr {
+// DefiningToolsets returns each toolset that owns a generated contract exactly
+// once, whether it was declared at the top level or inline under Use or Export.
+func (r *RootExpr) DefiningToolsets() []*ToolsetExpr {
 	seen := make(map[*ToolsetExpr]struct{})
 	var toolsets []*ToolsetExpr
 	record := func(ts *ToolsetExpr) {

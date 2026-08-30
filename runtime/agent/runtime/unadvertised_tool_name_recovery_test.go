@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -107,11 +108,11 @@ func TestModelInvocationJournalExcludesNonOutputFailures(t *testing.T) {
 }
 
 func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
-	originalCatalog := newAnyJSONSpec("catalog.items.list_original", "catalog.items")
-	catalog := newAnyJSONSpec("catalog.items.list_items", "catalog.items")
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	originalCatalog := newAnyJSONSpec("catalog.items.list_original")
+	catalog := newAnyJSONSpec("catalog.items.list_items")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	sessionID := "session-unadvertised-tool"
-	_, err := rt.CreateSession(t.Context(), sessionID)
+	_, err := createSessionForTest(t.Context(), rt.Store, sessionID)
 	require.NoError(t, err)
 
 	var executions, resumes int
@@ -126,10 +127,7 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 	}))
 
 	agentID := agent.Ident("catalog.assistant")
-	registration := AgentRegistration{
-		ID:                  agentID,
-		Specs:               []tools.ToolSpec{originalCatalog},
-		PlanActivityName:    "plan",
+	registration := AgentRegistration{Definition: testRegistrationDefinition(agentID, engine.WorkflowDefinition{}, []tools.ToolSpec{originalCatalog}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
 		Planner: &stubPlanner{
@@ -178,7 +176,7 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 		Policy: RunPolicy{MaxToolCalls: 1, MaxRecoveryTurns: 1},
 	}
 	rt.agents[agentID] = registration
-	rt.agentToolSpecs[agentID] = registration.Specs
+	rt.agentToolSpecs[agentID] = registration.Definition.specs
 	rt.models["test"] = mustTestModelClient(stubModelClient{
 		stream: func(_ context.Context, request *model.Request) (model.Streamer, error) {
 			usage := model.TokenUsage{
@@ -220,7 +218,6 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 			Parts: []model.Part{model.TextPart{Text: "List the items."}},
 		}},
 	}
-	seedRunMeta(t, rt, runInput)
 	wfCtx := &routeWorkflowContext{
 		ctx:         t.Context(),
 		runID:       runInput.RunID,
@@ -247,17 +244,14 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 }
 
 func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
-	catalog := newAnyJSONSpec("catalog.items.list_items", "catalog.items")
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	catalog := newAnyJSONSpec("catalog.items.list_items")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	sessionID := "session-repeated-unadvertised-tool"
-	_, err := rt.CreateSession(t.Context(), sessionID)
+	_, err := createSessionForTest(t.Context(), rt.Store, sessionID)
 	require.NoError(t, err)
 
 	agentID := agent.Ident("catalog.repeating_assistant")
-	registration := AgentRegistration{
-		ID:                  agentID,
-		Specs:               []tools.ToolSpec{catalog},
-		PlanActivityName:    "plan",
+	registration := AgentRegistration{Definition: testRegistrationDefinition(agentID, engine.WorkflowDefinition{}, []tools.ToolSpec{catalog}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
 		Planner: &stubPlanner{
@@ -275,7 +269,7 @@ func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
 		Policy: RunPolicy{MaxToolCalls: 1, MaxRecoveryTurns: 1},
 	}
 	rt.agents[agentID] = registration
-	rt.agentToolSpecs[agentID] = registration.Specs
+	rt.agentToolSpecs[agentID] = registration.Definition.specs
 	var modelCalls int
 	rt.models["test"] = mustTestModelClient(stubModelClient{
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
@@ -305,7 +299,6 @@ func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
 		SessionID: sessionID,
 		TurnID:    "turn-repeated-unadvertised-tool",
 	}
-	seedRunMeta(t, rt, runInput)
 	wfCtx := &routeWorkflowContext{
 		ctx:         t.Context(),
 		runID:       runInput.RunID,

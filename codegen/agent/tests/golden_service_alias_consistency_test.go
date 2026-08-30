@@ -7,10 +7,10 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-// Ensures service-local user types use the same import alias as referenced by
-// Goa's NameScope when generating type references in codecs.
+// TestGolden_ServiceAlias_Consistency checks that generated tool code imports
+// an underscored service with the same package name used in Go references.
 func TestGolden_ServiceAlias_Consistency(t *testing.T) {
-	files := buildAndGenerate(t, func() {
+	files := buildCompleteGeneratedFiles(t, func() {
 		// Service name contains underscore to exercise alias vs path base.
 		API("catalog_agent", func() {})
 
@@ -21,18 +21,27 @@ func TestGolden_ServiceAlias_Consistency(t *testing.T) {
 		})
 
 		Service("catalog_agent", func() {
+			Method("read", func() {
+				Payload(Doc)
+				Result(Doc)
+			})
 			Agent("reader", "", func() {
 				Use("docs", func() {
 					Tool("read", "Read", func() {
 						Args(Doc)
 						Return(Doc)
+						BindTo("read")
 					})
 				})
 			})
 		})
 	})
 
-	// Compare generated codecs.go under tools/docs against golden.
+	provider := renderedFileContent(t, files, "gen/catalog_agent/toolsets/docs/provider.go")
+	transforms := renderedFileContent(t, files, "gen/catalog_agent/toolsets/docs/transforms.go")
 	codecs := fileContent(t, files, "gen/catalog_agent/toolsets/docs/codecs.go")
+	runCompleteGeneratedPackageTest(t, files, "./gen/catalog_agent/toolsets/docs/...")
+	assertGoldenGo(t, "service_alias_consistency", "provider.go.golden", provider)
+	assertGoldenGo(t, "service_alias_consistency", "transforms.go.golden", transforms)
 	assertGoldenGo(t, "service_alias_consistency", "codecs.go.golden", codecs)
 }

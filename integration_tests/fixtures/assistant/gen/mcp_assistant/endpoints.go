@@ -15,55 +15,29 @@ import (
 
 // Endpoints wraps the "mcp_assistant" service endpoints.
 type Endpoints struct {
-	Initialize           goa.Endpoint
-	Ping                 goa.Endpoint
-	ToolsList            goa.Endpoint
-	ToolsCall            goa.Endpoint
-	ResourcesList        goa.Endpoint
-	ResourcesRead        goa.Endpoint
-	ResourcesSubscribe   goa.Endpoint
-	ResourcesUnsubscribe goa.Endpoint
-	PromptsList          goa.Endpoint
-	PromptsGet           goa.Endpoint
-	NotifyStatusUpdate   goa.Endpoint
-	EventsStream         goa.Endpoint
-}
-
-// ToolsCallEndpointInput holds both the payload and the server stream of the
-// "tools/call" method.
-type ToolsCallEndpointInput struct {
-	// Payload is the method payload.
-	Payload *ToolsCallPayload
-	// RequestID is the JSON-RPC request ID (available for JSON-RPC transports).
-	RequestID any
-	// Stream is the server stream used by the "tools/call" method to send data.
-	Stream ToolsCallServerStream
-}
-
-// EventsStreamEndpointInput holds both the payload and the server stream of
-// the "events/stream" method.
-type EventsStreamEndpointInput struct {
-	// RequestID is the JSON-RPC request ID (available for JSON-RPC transports).
-	RequestID any
-	// Stream is the server stream used by the "events/stream" method to send data.
-	Stream EventsStreamServerStream
+	Initialize               goa.Endpoint
+	NotificationsInitialized goa.Endpoint
+	Ping                     goa.Endpoint
+	ToolsList                goa.Endpoint
+	ToolsCall                goa.Endpoint
+	ResourcesList            goa.Endpoint
+	ResourcesRead            goa.Endpoint
+	PromptsList              goa.Endpoint
+	PromptsGet               goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "mcp_assistant" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
-		Initialize:           NewInitializeEndpoint(s),
-		Ping:                 NewPingEndpoint(s),
-		ToolsList:            NewToolsListEndpoint(s),
-		ToolsCall:            NewToolsCallEndpoint(s),
-		ResourcesList:        NewResourcesListEndpoint(s),
-		ResourcesRead:        NewResourcesReadEndpoint(s),
-		ResourcesSubscribe:   NewResourcesSubscribeEndpoint(s),
-		ResourcesUnsubscribe: NewResourcesUnsubscribeEndpoint(s),
-		PromptsList:          NewPromptsListEndpoint(s),
-		PromptsGet:           NewPromptsGetEndpoint(s),
-		NotifyStatusUpdate:   NewNotifyStatusUpdateEndpoint(s),
-		EventsStream:         NewEventsStreamEndpoint(s),
+		Initialize:               NewInitializeEndpoint(s),
+		NotificationsInitialized: NewNotificationsInitializedEndpoint(s),
+		Ping:                     NewPingEndpoint(s),
+		ToolsList:                NewToolsListEndpoint(s),
+		ToolsCall:                NewToolsCallEndpoint(s),
+		ResourcesList:            NewResourcesListEndpoint(s),
+		ResourcesRead:            NewResourcesReadEndpoint(s),
+		PromptsList:              NewPromptsListEndpoint(s),
+		PromptsGet:               NewPromptsGetEndpoint(s),
 	}
 }
 
@@ -71,17 +45,14 @@ func NewEndpoints(s Service) *Endpoints {
 // endpoints.
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.Initialize = m(e.Initialize)
+	e.NotificationsInitialized = m(e.NotificationsInitialized)
 	e.Ping = m(e.Ping)
 	e.ToolsList = m(e.ToolsList)
 	e.ToolsCall = m(e.ToolsCall)
 	e.ResourcesList = m(e.ResourcesList)
 	e.ResourcesRead = m(e.ResourcesRead)
-	e.ResourcesSubscribe = m(e.ResourcesSubscribe)
-	e.ResourcesUnsubscribe = m(e.ResourcesUnsubscribe)
 	e.PromptsList = m(e.PromptsList)
 	e.PromptsGet = m(e.PromptsGet)
-	e.NotifyStatusUpdate = m(e.NotifyStatusUpdate)
-	e.EventsStream = m(e.EventsStream)
 }
 
 // NewInitializeEndpoint returns an endpoint function that calls the method
@@ -90,6 +61,14 @@ func NewInitializeEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*InitializePayload)
 		return s.Initialize(ctx, p)
+	}
+}
+
+// NewNotificationsInitializedEndpoint returns an endpoint function that calls
+// the method "notifications/initialized" of service "mcp_assistant".
+func NewNotificationsInitializedEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		return nil, s.NotificationsInitialized(ctx)
 	}
 }
 
@@ -114,12 +93,8 @@ func NewToolsListEndpoint(s Service) goa.Endpoint {
 // "tools/call" of service "mcp_assistant".
 func NewToolsCallEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
-		ep := req.(*ToolsCallEndpointInput)
-		res, err := s.ToolsCall(ctx, ep.Payload, ep.Stream)
-		if err != nil {
-			return nil, err
-		}
-		return res, nil
+		p := req.(*ToolsCallPayload)
+		return s.ToolsCall(ctx, p)
 	}
 }
 
@@ -141,24 +116,6 @@ func NewResourcesReadEndpoint(s Service) goa.Endpoint {
 	}
 }
 
-// NewResourcesSubscribeEndpoint returns an endpoint function that calls the
-// method "resources/subscribe" of service "mcp_assistant".
-func NewResourcesSubscribeEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*ResourcesSubscribePayload)
-		return nil, s.ResourcesSubscribe(ctx, p)
-	}
-}
-
-// NewResourcesUnsubscribeEndpoint returns an endpoint function that calls the
-// method "resources/unsubscribe" of service "mcp_assistant".
-func NewResourcesUnsubscribeEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*ResourcesUnsubscribePayload)
-		return nil, s.ResourcesUnsubscribe(ctx, p)
-	}
-}
-
 // NewPromptsListEndpoint returns an endpoint function that calls the method
 // "prompts/list" of service "mcp_assistant".
 func NewPromptsListEndpoint(s Service) goa.Endpoint {
@@ -174,27 +131,5 @@ func NewPromptsGetEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*PromptsGetPayload)
 		return s.PromptsGet(ctx, p)
-	}
-}
-
-// NewNotifyStatusUpdateEndpoint returns an endpoint function that calls the
-// method "notify_status_update" of service "mcp_assistant".
-func NewNotifyStatusUpdateEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*SendNotificationPayload)
-		return nil, s.NotifyStatusUpdate(ctx, p)
-	}
-}
-
-// NewEventsStreamEndpoint returns an endpoint function that calls the method
-// "events/stream" of service "mcp_assistant".
-func NewEventsStreamEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		ep := req.(*EventsStreamEndpointInput)
-		res, err := s.EventsStream(ctx, ep.Stream)
-		if err != nil {
-			return nil, err
-		}
-		return res, nil
 	}
 }

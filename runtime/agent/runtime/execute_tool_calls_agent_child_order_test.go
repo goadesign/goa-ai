@@ -9,8 +9,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 
@@ -22,25 +20,20 @@ const invokePromptText = "invoke"
 func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 	recorder := &recordingHooks{ch: make(chan hooks.Event, 64)}
 	rt := &Runtime{
-		agents:        make(map[agent.Ident]AgentRegistration),
-		toolsets:      make(map[string]ToolsetRegistration),
-		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           recorder,
-		SessionStore:  sessioninmem.New(),
+		agents:    make(map[agent.Ident]AgentRegistration),
+		toolsets:  make(map[string]ToolsetRegistration),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+		Store:     newTestStore(),
+		Bus:       recorder,
 	}
 
 	cfg := AgentToolConfig{
-		AgentID: agent.Ident("nested.agent"),
-		Name:    "svc.agenttools",
-		Route: AgentRoute{
-			ID:               agent.Ident("nested.agent"),
-			WorkflowName:     "nested.workflow",
-			DefaultTaskQueue: "q",
-		},
+		Definition: testAgentDefinition(agent.Ident("nested.agent"), "nested.workflow", "q", nil, nil),
+		Name:       "svc.agenttools",
+
 		AgentToolContent: AgentToolContent{
 			Prompt: func(id tools.Ident, payload any) string {
 				return invokePromptText
@@ -52,13 +45,13 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 
 	tool1 := tools.Ident("svc.agenttools.tool1")
 	tool2 := tools.Ident("svc.agenttools.tool2")
-	spec1 := newAnyJSONSpec(tool1, reg.Name)
+	spec1 := newAnyJSONSpec(tool1)
 	spec1.IsAgentTool = true
-	spec1.AgentID = string(cfg.AgentID)
-	spec2 := newAnyJSONSpec(tool2, reg.Name)
+	spec1.AgentID = string(cfg.Definition.route.ID)
+	spec2 := newAnyJSONSpec(tool2)
 	spec2.IsAgentTool = true
-	spec2.AgentID = string(cfg.AgentID)
-	seedTestToolSpecs(rt, spec1, spec2)
+	spec2.AgentID = string(cfg.Definition.route.ID)
+	seedTestToolset(rt, reg.Name, spec1, spec2)
 
 	childHandles := make(chan *controlledChildHandle, 2)
 	wfCtx := &testWorkflowContext{
@@ -72,7 +65,7 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 		SessionID: "session-1",
 		TurnID:    "turn-1",
 	}
-	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
+	seedParentRun(t, rt.Store, runCtx.RunID, runCtx.SessionID)
 	calls := []ToolCall{
 		{
 			Name:       tool1,
@@ -130,24 +123,19 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 	t.Parallel()
 
 	rt := &Runtime{
-		agents:        make(map[agent.Ident]AgentRegistration),
-		toolsets:      make(map[string]ToolsetRegistration),
-		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           &recordingHooks{},
-		SessionStore:  sessioninmem.New(),
+		agents:    make(map[agent.Ident]AgentRegistration),
+		toolsets:  make(map[string]ToolsetRegistration),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+		Store:     newTestStore(),
+		Bus:       &recordingHooks{},
 	}
 	cfg := AgentToolConfig{
-		AgentID: agent.Ident("nested.agent"),
-		Name:    "svc.agenttools",
-		Route: AgentRoute{
-			ID:               agent.Ident("nested.agent"),
-			WorkflowName:     "nested.workflow",
-			DefaultTaskQueue: "q",
-		},
+		Definition: testAgentDefinition(agent.Ident("nested.agent"), "nested.workflow", "q", nil, nil),
+		Name:       "svc.agenttools",
+
 		AgentToolContent: AgentToolContent{
 			Prompt: func(tools.Ident, any) string {
 				return invokePromptText
@@ -157,10 +145,10 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 	reg := NewAgentToolsetRegistration(rt, cfg)
 	rt.toolsets[reg.Name] = reg
 	tool := tools.Ident("svc.agenttools.slow")
-	spec := newAnyJSONSpec(tool, reg.Name)
+	spec := newAnyJSONSpec(tool)
 	spec.IsAgentTool = true
-	spec.AgentID = string(cfg.AgentID)
-	seedTestToolSpecs(rt, spec)
+	spec.AgentID = string(cfg.Definition.route.ID)
+	seedTestToolset(rt, reg.Name, spec)
 
 	childHandles := make(chan *controlledChildHandle, 1)
 	wfCtx := &testWorkflowContext{
@@ -173,7 +161,7 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 		SessionID: "session-1",
 		TurnID:    "turn-1",
 	}
-	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
+	seedParentRun(t, rt.Store, runCtx.RunID, runCtx.SessionID)
 	calls := []ToolCall{{
 		Name:       tool,
 		RunID:      runCtx.RunID,
@@ -183,25 +171,122 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 	}}
 
 	finishBy := wfCtx.Now().Add(15 * time.Millisecond)
-	results, timedOut, err := rt.executeToolCalls(
-		wfCtx,
-		"execute",
-		engine.ActivityOptions{},
-		agent.Ident("parent.agent"),
-		runCtx,
-		nil,
-		calls,
-		0,
-		nil,
-		finishBy,
-	)
-	require.NoError(t, err)
-	require.True(t, timedOut)
-	require.Len(t, results, 1)
-	require.Equal(t, canceledByTimeBudgetMessage, results[0].ToolResult.Failure.Error.Message)
+	type executionResult struct {
+		results  []*ToolExecutionResult
+		timedOut bool
+		err      error
+	}
+	done := make(chan executionResult, 1)
+	go func() {
+		results, timedOut, err := rt.executeToolCalls(
+			wfCtx,
+			"execute",
+			engine.ActivityOptions{},
+			agent.Ident("parent.agent"),
+			runCtx,
+			nil,
+			calls,
+			0,
+			nil,
+			finishBy,
+		)
+		done <- executionResult{results: results, timedOut: timedOut, err: err}
+	}()
 
 	handle := waitForChildHandle(t, childHandles, "timed out child")
-	require.True(t, handle.wasCanceled())
+	require.Eventually(t, handle.wasCanceled, time.Second, time.Millisecond)
+	select {
+	case <-done:
+		require.Fail(t, "parent returned before the child finished cancellation")
+	default:
+	}
+	close(handle.ready)
+	got := <-done
+	require.NoError(t, got.err)
+	require.True(t, got.timedOut)
+	require.Len(t, got.results, 1)
+	require.Equal(t, canceledByTimeBudgetMessage, got.results[0].ToolResult.Failure.Error.Message)
+}
+
+func TestExecuteToolCalls_WaitsForAgentChildAfterParentCancellation(t *testing.T) {
+	t.Parallel()
+
+	rt := &Runtime{
+		agents:    make(map[agent.Ident]AgentRegistration),
+		toolsets:  make(map[string]ToolsetRegistration),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+		Store:     newTestStore(),
+		Bus:       &recordingHooks{},
+	}
+	cfg := AgentToolConfig{
+		Definition: testAgentDefinition(agent.Ident("nested.agent"), "nested.workflow", "q", nil, nil),
+		Name:       "svc.agenttools",
+
+		AgentToolContent: AgentToolContent{
+			Prompt: func(tools.Ident, any) string {
+				return invokePromptText
+			},
+		},
+	}
+	reg := NewAgentToolsetRegistration(rt, cfg)
+	rt.toolsets[reg.Name] = reg
+	tool := tools.Ident("svc.agenttools.cancel")
+	spec := newAnyJSONSpec(tool)
+	spec.IsAgentTool = true
+	spec.AgentID = string(cfg.Definition.route.ID)
+	seedTestToolset(rt, reg.Name, spec)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	childHandles := make(chan *controlledChildHandle, 1)
+	wfCtx := &testWorkflowContext{
+		ctx:                    ctx,
+		hookRuntime:            rt,
+		controlledChildHandles: childHandles,
+	}
+	runCtx := &run.Context{
+		RunID:     "run-parent",
+		SessionID: "session-1",
+		TurnID:    "turn-1",
+	}
+	seedParentRun(t, rt.Store, runCtx.RunID, runCtx.SessionID)
+	calls := []ToolCall{{
+		Name:       tool,
+		RunID:      runCtx.RunID,
+		SessionID:  runCtx.SessionID,
+		TurnID:     runCtx.TurnID,
+		ToolCallID: "call-cancel",
+	}}
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := rt.executeToolCalls(
+			wfCtx,
+			"execute",
+			engine.ActivityOptions{},
+			agent.Ident("parent.agent"),
+			runCtx,
+			nil,
+			calls,
+			0,
+			nil,
+			time.Time{},
+		)
+		done <- err
+	}()
+
+	handle := waitForChildHandle(t, childHandles, "canceled child")
+	cancel()
+	require.Eventually(t, handle.wasCanceled, time.Second, time.Millisecond)
+	select {
+	case <-done:
+		require.Fail(t, "parent returned before the child finished cancellation")
+	default:
+	}
+	close(handle.ready)
+	require.ErrorIs(t, <-done, context.Canceled)
 }
 
 func waitForToolResult(t *testing.T, ch <-chan hooks.Event, toolCallID string) {

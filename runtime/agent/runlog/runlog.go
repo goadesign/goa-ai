@@ -1,16 +1,41 @@
-// Package runlog provides a durable, append-only event log for agent runs.
+// Package runlog provides a durable ordered event log for agent runs.
 //
 // The runlog is the canonical source of truth for run introspection. Runtimes
-// append events as runs execute and callers list them using opaque cursors.
+// append events as runs execute, callers list them using opaque cursors, and
+// applications may permanently purge every event owned by an ended session.
 package runlog
 
 import (
-	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
+
+var (
+	// ErrEventConflict reports reuse of a stable event key with different
+	// immutable identity or payload.
+	ErrEventConflict = errors.New("runlog: event conflict")
+)
+
+// EventConflictError identifies the run and stable key whose existing record
+// differs from the attempted append.
+type EventConflictError struct {
+	RunID    string
+	EventKey string
+}
+
+// Error implements error.
+func (e *EventConflictError) Error() string {
+	return fmt.Sprintf("run %q event key %q: %v", e.RunID, e.EventKey, ErrEventConflict)
+}
+
+// Unwrap exposes ErrEventConflict for errors.Is.
+func (e *EventConflictError) Unwrap() error {
+	return ErrEventConflict
+}
 
 type (
 	// Type identifies one canonical durable run-log record kind.
@@ -49,18 +74,6 @@ type (
 		Payload rawjson.Message
 	}
 
-	// AppendResult describes the outcome of storing a canonical run event.
-	//
-	// IDs remain store-assigned cursor values. Inserted reports whether this call
-	// inserted a new event or replayed an existing event with the same logical
-	// event key.
-	AppendResult struct {
-		// ID is the store-assigned opaque identifier for the canonical event.
-		ID string
-		// Inserted reports whether the event was newly inserted.
-		Inserted bool
-	}
-
 	// Event is a single immutable run event appended to the run log.
 	//
 	// Store implementations assign the ID when persisting the event. IDs are
@@ -85,7 +98,8 @@ type (
 		Type Type
 		// Payload is the canonical JSON-encoded payload for the event.
 		Payload rawjson.Message
-		// Timestamp is the event time.
+		// Timestamp is the event time. It uses millisecond precision to match the
+		// integer millisecond value carried by runtime records.
 		Timestamp time.Time
 	}
 
@@ -96,41 +110,5 @@ type (
 		// NextCursor is the cursor to use to fetch the next page.
 		// It is empty when there are no further events.
 		NextCursor string
-	}
-
-	// Store is an append-only event store for run introspection.
-	//
-	// Implementations must provide stable ordering within a run. Cursor values are
-	// store-owned and opaque to callers.
-	Store interface {
-		// Append stores the event in the run log.
-		//
-		// Store implementations assign the event ID and persist the payload
-		// verbatim. Append must be durable and idempotent on (run_id, event_key):
-		// retries with the same immutable identity and payload return the existing
-		// event ID with Inserted=false. The first append owns the event timestamp;
-		// retry-attempt timestamps are ignored. Conflicting identity or payload
-		// for the same key must fail loudly.
-		Append(ctx context.Context, e *Event) (AppendResult, error)
-
-		// List returns the next forward page of events for the given run ID.
-		//
-		// Cursor is an opaque value returned by a previous call to List (or empty
-		// to start from the beginning). Limit must be greater than zero.
-		List(ctx context.Context, runID string, cursor string, limit int) (Page, error)
-	}
-
-	// SessionReader lists canonical run-log records across all runs in a session.
-	//
-	// Session-scoped consumers such as transcript projections and evidence views
-	// use this interface to derive session state from canonical facts rather than
-	// from downstream materializations.
-	SessionReader interface {
-		// ListSession returns the next forward page of events for the given
-		// session ID.
-		//
-		// Cursor is an opaque value returned by a previous call to ListSession (or
-		// empty to start from the beginning). Limit must be greater than zero.
-		ListSession(ctx context.Context, sessionID string, cursor string, limit int) (Page, error)
 	}
 )

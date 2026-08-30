@@ -12,7 +12,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
-	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // cloneLimitTerminalPlans copies terminal call payloads so caller mutation
@@ -31,6 +30,10 @@ func cloneLimitTerminalPlans(plans *LimitTerminalPlans) *LimitTerminalPlans {
 // validateLimitTerminalPlans checks the complete set against the tools
 // registered for this agent before the first planner call.
 func (r *Runtime) validateLimitTerminalPlans(reg AgentRegistration, plans *LimitTerminalPlans) error {
+	return validateLimitTerminalPlansForDefinition(reg.Definition, plans)
+}
+
+func validateLimitTerminalPlansForDefinition(definition AgentDefinition, plans *LimitTerminalPlans) error {
 	if plans == nil {
 		return nil
 	}
@@ -42,30 +45,23 @@ func (r *Runtime) validateLimitTerminalPlans(reg AgentRegistration, plans *Limit
 		{reason: planner.TerminationReasonToolCap, call: plans.ToolCallCap},
 		{reason: planner.TerminationReasonRecoveryCap, call: plans.RecoveryCap},
 	} {
-		if err := r.validateLimitTerminalCall(reg, entry.call); err != nil {
+		if err := validateLimitTerminalCallForDefinition(definition, entry.call); err != nil {
 			return fmt.Errorf("runtime: invalid %s terminal call: %w", entry.reason, err)
 		}
 	}
 	return nil
 }
 
-// validateLimitTerminalCall requires canonical JSON for a terminal bookkeeping
-// tool owned by the agent that will execute the run.
-func (r *Runtime) validateLimitTerminalCall(reg AgentRegistration, call LimitTerminalCall) error {
-	spec, ok := agentToolSpec(reg.Specs, call.Name)
+func validateLimitTerminalCallForDefinition(definition AgentDefinition, call LimitTerminalCall) error {
+	spec, ok := definition.spec(call.Name)
 	if !ok {
-		return fmt.Errorf("tool %q is not registered for agent %q", call.Name, reg.ID)
+		return fmt.Errorf("tool %q is not registered for agent %q", call.Name, definition.route.ID)
 	}
 	if !spec.Bookkeeping || !spec.TerminalRun {
 		return fmt.Errorf("tool %q is not a terminal bookkeeping tool", call.Name)
 	}
 	if spec.Confirmation != nil {
 		return fmt.Errorf("tool %q requires confirmation", call.Name)
-	}
-	if r.toolConfirmation != nil {
-		if _, ok := r.toolConfirmation.Confirm[call.Name]; ok {
-			return fmt.Errorf("tool %q requires confirmation", call.Name)
-		}
 	}
 	if err := validatePlannerToolPayload(call.Payload); err != nil {
 		return fmt.Errorf("tool %q payload: %w", call.Name, err)
@@ -171,14 +167,4 @@ func cloneLimitTerminalCall(call LimitTerminalCall) LimitTerminalCall {
 		Name:    call.Name,
 		Payload: rawjson.Message(append([]byte(nil), call.Payload...)),
 	}
-}
-
-// agentToolSpec finds a tool in the registration that owns a run.
-func agentToolSpec(specs []tools.ToolSpec, name tools.Ident) (tools.ToolSpec, bool) {
-	for _, spec := range specs {
-		if spec.Name == name {
-			return spec, true
-		}
-	}
-	return tools.ToolSpec{}, false
 }

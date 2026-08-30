@@ -57,21 +57,24 @@ func DecodeToolsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var payload *mcpassistant.ToolsListPayload
 		var (
-			body ToolsListRequestBody
+			body *ToolsListRequestBody
 			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return payload, goa.MissingPayloadError()
+				err = nil
+			} else {
+				var gerr *goa.ServiceError
+				if errors.As(err, &gerr) {
+					return payload, gerr
+				}
+				return payload, goa.DecodePayloadError(err.Error())
 			}
-			var gerr *goa.ServiceError
-			if errors.As(err, &gerr) {
-				return payload, gerr
-			}
-			return payload, goa.DecodePayloadError(err.Error())
 		}
-		payload = NewToolsListPayload(&body)
+		if body != nil {
+		}
+		payload = NewToolsListPayload(body)
 
 		return payload, nil
 	}
@@ -115,21 +118,24 @@ func DecodeResourcesListRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var payload *mcpassistant.ResourcesListPayload
 		var (
-			body ResourcesListRequestBody
+			body *ResourcesListRequestBody
 			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return payload, goa.MissingPayloadError()
+				err = nil
+			} else {
+				var gerr *goa.ServiceError
+				if errors.As(err, &gerr) {
+					return payload, gerr
+				}
+				return payload, goa.DecodePayloadError(err.Error())
 			}
-			var gerr *goa.ServiceError
-			if errors.As(err, &gerr) {
-				return payload, gerr
-			}
-			return payload, goa.DecodePayloadError(err.Error())
 		}
-		payload = NewResourcesListPayload(&body)
+		if body != nil {
+		}
+		payload = NewResourcesListPayload(body)
 
 		return payload, nil
 	}
@@ -166,68 +172,6 @@ func DecodeResourcesReadRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 	}
 }
 
-// DecodeResourcesSubscribeRequest returns a decoder for requests sent to the
-// mcp_assistant resources/subscribe endpoint.
-func DecodeResourcesSubscribeRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.ResourcesSubscribePayload, error) {
-	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.ResourcesSubscribePayload, error) {
-		r.Body = io.NopCloser(bytes.NewReader(req.Params))
-		var payload *mcpassistant.ResourcesSubscribePayload
-		var (
-			body ResourcesSubscribeRequestBody
-			err  error
-		)
-		err = decoder(r).Decode(&body)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return payload, goa.MissingPayloadError()
-			}
-			var gerr *goa.ServiceError
-			if errors.As(err, &gerr) {
-				return payload, gerr
-			}
-			return payload, goa.DecodePayloadError(err.Error())
-		}
-		err = ValidateResourcesSubscribeRequestBody(&body)
-		if err != nil {
-			return payload, err
-		}
-		payload = NewResourcesSubscribePayload(&body)
-
-		return payload, nil
-	}
-}
-
-// DecodeResourcesUnsubscribeRequest returns a decoder for requests sent to the
-// mcp_assistant resources/unsubscribe endpoint.
-func DecodeResourcesUnsubscribeRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.ResourcesUnsubscribePayload, error) {
-	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.ResourcesUnsubscribePayload, error) {
-		r.Body = io.NopCloser(bytes.NewReader(req.Params))
-		var payload *mcpassistant.ResourcesUnsubscribePayload
-		var (
-			body ResourcesUnsubscribeRequestBody
-			err  error
-		)
-		err = decoder(r).Decode(&body)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return payload, goa.MissingPayloadError()
-			}
-			var gerr *goa.ServiceError
-			if errors.As(err, &gerr) {
-				return payload, gerr
-			}
-			return payload, goa.DecodePayloadError(err.Error())
-		}
-		err = ValidateResourcesUnsubscribeRequestBody(&body)
-		if err != nil {
-			return payload, err
-		}
-		payload = NewResourcesUnsubscribePayload(&body)
-
-		return payload, nil
-	}
-}
-
 // DecodePromptsListRequest returns a decoder for requests sent to the
 // mcp_assistant prompts/list endpoint.
 func DecodePromptsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.PromptsListPayload, error) {
@@ -235,21 +179,24 @@ func DecodePromptsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goa
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var payload *mcpassistant.PromptsListPayload
 		var (
-			body PromptsListRequestBody
+			body *PromptsListRequestBody
 			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				return payload, goa.MissingPayloadError()
+				err = nil
+			} else {
+				var gerr *goa.ServiceError
+				if errors.As(err, &gerr) {
+					return payload, gerr
+				}
+				return payload, goa.DecodePayloadError(err.Error())
 			}
-			var gerr *goa.ServiceError
-			if errors.As(err, &gerr) {
-				return payload, gerr
-			}
-			return payload, goa.DecodePayloadError(err.Error())
 		}
-		payload = NewPromptsListPayload(&body)
+		if body != nil {
+		}
+		payload = NewPromptsListPayload(body)
 
 		return payload, nil
 	}
@@ -286,41 +233,9 @@ func DecodePromptsGetRequest(mux goahttp.Muxer, decoder func(*http.Request) goah
 	}
 }
 
-// DecodeNotifyStatusUpdateRequest returns a decoder for requests sent to the
-// mcp_assistant notify_status_update endpoint.
-func DecodeNotifyStatusUpdateRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.SendNotificationPayload, error) {
-	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.SendNotificationPayload, error) {
-		r.Body = io.NopCloser(bytes.NewReader(req.Params))
-		var payload *mcpassistant.SendNotificationPayload
-		var (
-			body NotifyStatusUpdateRequestBody
-			err  error
-		)
-		err = decoder(r).Decode(&body)
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return payload, goa.MissingPayloadError()
-			}
-			var gerr *goa.ServiceError
-			if errors.As(err, &gerr) {
-				return payload, gerr
-			}
-			return payload, goa.DecodePayloadError(err.Error())
-		}
-		err = ValidateNotifyStatusUpdateRequestBody(&body)
-		if err != nil {
-			return payload, err
-		}
-		payload = NewNotifyStatusUpdateSendNotificationPayload(&body)
-
-		return payload, nil
-	}
-}
-
-// unmarshalClientInfoRequestBodyRequestBodyRequestBodyRequestBodyToMcpassistantClientInfo
-// builds a value of type *mcpassistant.ClientInfo from a value of type
-// *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody.
-func unmarshalClientInfoRequestBodyRequestBodyRequestBodyRequestBodyToMcpassistantClientInfo(v *ClientInfoRequestBodyRequestBodyRequestBodyRequestBody) *mcpassistant.ClientInfo {
+// unmarshalClientInfoRequestBodyToMcpassistantClientInfo builds a value of
+// type *mcpassistant.ClientInfo from a value of type *ClientInfoRequestBody.
+func unmarshalClientInfoRequestBodyToMcpassistantClientInfo(v *ClientInfoRequestBody) *mcpassistant.ClientInfo {
 	res := &mcpassistant.ClientInfo{
 		Name:    *v.Name,
 		Version: *v.Version,
@@ -329,65 +244,64 @@ func unmarshalClientInfoRequestBodyRequestBodyRequestBodyRequestBodyToMcpassista
 	return res
 }
 
-// marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBodyResponseBody
-// builds a value of type *ServerCapabilitiesResponseBodyResponseBody from a
-// value of type *mcpassistant.ServerCapabilities.
-func marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBodyResponseBody(v *mcpassistant.ServerCapabilities) *ServerCapabilitiesResponseBodyResponseBody {
-	res := &ServerCapabilitiesResponseBodyResponseBody{}
+// unmarshalClientCapabilitiesRequestBodyToMcpassistantClientCapabilities
+// builds a value of type *mcpassistant.ClientCapabilities from a value of type
+// *ClientCapabilitiesRequestBody.
+func unmarshalClientCapabilitiesRequestBodyToMcpassistantClientCapabilities(v *ClientCapabilitiesRequestBody) *mcpassistant.ClientCapabilities {
+	res := &mcpassistant.ClientCapabilities{}
+
+	return res
+}
+
+// marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBody builds
+// a value of type *ServerCapabilitiesResponseBody from a value of type
+// *mcpassistant.ServerCapabilities.
+func marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBody(v *mcpassistant.ServerCapabilities) *ServerCapabilitiesResponseBody {
+	res := &ServerCapabilitiesResponseBody{}
 	if v.Tools != nil {
-		res.Tools = marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBodyResponseBody(v.Tools)
+		res.Tools = marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBody(v.Tools)
 	}
 	if v.Resources != nil {
-		res.Resources = marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBodyResponseBody(v.Resources)
+		res.Resources = marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBody(v.Resources)
 	}
 	if v.Prompts != nil {
-		res.Prompts = marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBodyResponseBody(v.Prompts)
+		res.Prompts = marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBody(v.Prompts)
 	}
 
 	return res
 }
 
-// marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBodyResponseBody
-// builds a value of type *ToolsCapabilityResponseBodyResponseBody from a value
-// of type *mcpassistant.ToolsCapability.
-func marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBodyResponseBody(v *mcpassistant.ToolsCapability) *ToolsCapabilityResponseBodyResponseBody {
-	if v == nil {
-		return nil
-	}
-	res := &ToolsCapabilityResponseBodyResponseBody{}
+// marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBody builds a
+// value of type *ToolsCapabilityResponseBody from a value of type
+// *mcpassistant.ToolsCapability.
+func marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBody(v *mcpassistant.ToolsCapability) *ToolsCapabilityResponseBody {
+	res := &ToolsCapabilityResponseBody{}
 
 	return res
 }
 
-// marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBodyResponseBody
-// builds a value of type *ResourcesCapabilityResponseBodyResponseBody from a
-// value of type *mcpassistant.ResourcesCapability.
-func marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBodyResponseBody(v *mcpassistant.ResourcesCapability) *ResourcesCapabilityResponseBodyResponseBody {
-	if v == nil {
-		return nil
-	}
-	res := &ResourcesCapabilityResponseBodyResponseBody{}
+// marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBody
+// builds a value of type *ResourcesCapabilityResponseBody from a value of type
+// *mcpassistant.ResourcesCapability.
+func marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBody(v *mcpassistant.ResourcesCapability) *ResourcesCapabilityResponseBody {
+	res := &ResourcesCapabilityResponseBody{}
 
 	return res
 }
 
-// marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBodyResponseBody
-// builds a value of type *PromptsCapabilityResponseBodyResponseBody from a
-// value of type *mcpassistant.PromptsCapability.
-func marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBodyResponseBody(v *mcpassistant.PromptsCapability) *PromptsCapabilityResponseBodyResponseBody {
-	if v == nil {
-		return nil
-	}
-	res := &PromptsCapabilityResponseBodyResponseBody{}
+// marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBody builds a
+// value of type *PromptsCapabilityResponseBody from a value of type
+// *mcpassistant.PromptsCapability.
+func marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBody(v *mcpassistant.PromptsCapability) *PromptsCapabilityResponseBody {
+	res := &PromptsCapabilityResponseBody{}
 
 	return res
 }
 
-// marshalMcpassistantServerInfoToServerInfoResponseBodyResponseBody builds a
-// value of type *ServerInfoResponseBodyResponseBody from a value of type
-// *mcpassistant.ServerInfo.
-func marshalMcpassistantServerInfoToServerInfoResponseBodyResponseBody(v *mcpassistant.ServerInfo) *ServerInfoResponseBodyResponseBody {
-	res := &ServerInfoResponseBodyResponseBody{
+// marshalMcpassistantServerInfoToServerInfoResponseBody builds a value of type
+// *ServerInfoResponseBody from a value of type *mcpassistant.ServerInfo.
+func marshalMcpassistantServerInfoToServerInfoResponseBody(v *mcpassistant.ServerInfo) *ServerInfoResponseBody {
+	res := &ServerInfoResponseBody{
 		Name:    v.Name,
 		Version: v.Version,
 	}
@@ -395,39 +309,35 @@ func marshalMcpassistantServerInfoToServerInfoResponseBodyResponseBody(v *mcpass
 	return res
 }
 
-// marshalMcpassistantToolInfoToToolInfoResponseBodyResponseBody builds a value
-// of type *ToolInfoResponseBodyResponseBody from a value of type
-// *mcpassistant.ToolInfo.
-func marshalMcpassistantToolInfoToToolInfoResponseBodyResponseBody(v *mcpassistant.ToolInfo) *ToolInfoResponseBodyResponseBody {
-	res := &ToolInfoResponseBodyResponseBody{
-		Name:        v.Name,
-		Description: v.Description,
-		InputSchema: v.InputSchema,
+// marshalMcpassistantToolInfoToToolInfoResponseBody builds a value of type
+// *ToolInfoResponseBody from a value of type *mcpassistant.ToolInfo.
+func marshalMcpassistantToolInfoToToolInfoResponseBody(v *mcpassistant.ToolInfo) *ToolInfoResponseBody {
+	res := &ToolInfoResponseBody{
+		Name:         v.Name,
+		Description:  v.Description,
+		InputSchema:  v.InputSchema,
+		OutputSchema: v.OutputSchema,
 	}
 
 	return res
 }
 
-// marshalMcpassistantContentItemToContentItemResponseBodyResponseBody builds a
-// value of type *ContentItemResponseBodyResponseBody from a value of type
-// *mcpassistant.ContentItem.
-func marshalMcpassistantContentItemToContentItemResponseBodyResponseBody(v *mcpassistant.ContentItem) *ContentItemResponseBodyResponseBody {
-	res := &ContentItemResponseBodyResponseBody{
-		Type:     v.Type,
-		Text:     v.Text,
-		Data:     v.Data,
-		MimeType: v.MimeType,
-		URI:      v.URI,
+// marshalMcpassistantContentItemToContentItemResponseBody builds a value of
+// type *ContentItemResponseBody from a value of type *mcpassistant.ContentItem.
+func marshalMcpassistantContentItemToContentItemResponseBody(v *mcpassistant.ContentItem) *ContentItemResponseBody {
+	res := &ContentItemResponseBody{
+		Type: v.Type,
+		Text: v.Text,
 	}
 
 	return res
 }
 
-// marshalMcpassistantResourceInfoToResourceInfoResponseBodyResponseBody builds
-// a value of type *ResourceInfoResponseBodyResponseBody from a value of type
+// marshalMcpassistantResourceInfoToResourceInfoResponseBody builds a value of
+// type *ResourceInfoResponseBody from a value of type
 // *mcpassistant.ResourceInfo.
-func marshalMcpassistantResourceInfoToResourceInfoResponseBodyResponseBody(v *mcpassistant.ResourceInfo) *ResourceInfoResponseBodyResponseBody {
-	res := &ResourceInfoResponseBodyResponseBody{
+func marshalMcpassistantResourceInfoToResourceInfoResponseBody(v *mcpassistant.ResourceInfo) *ResourceInfoResponseBody {
+	res := &ResourceInfoResponseBody{
 		URI:         v.URI,
 		Name:        v.Name,
 		Description: v.Description,
@@ -437,50 +347,45 @@ func marshalMcpassistantResourceInfoToResourceInfoResponseBodyResponseBody(v *mc
 	return res
 }
 
-// marshalMcpassistantResourceContentToResourceContentResponseBodyResponseBody
-// builds a value of type *ResourceContentResponseBodyResponseBody from a value
-// of type *mcpassistant.ResourceContent.
-func marshalMcpassistantResourceContentToResourceContentResponseBodyResponseBody(v *mcpassistant.ResourceContent) *ResourceContentResponseBodyResponseBody {
-	res := &ResourceContentResponseBodyResponseBody{
+// marshalMcpassistantResourceContentToResourceContentResponseBody builds a
+// value of type *ResourceContentResponseBody from a value of type
+// *mcpassistant.ResourceContent.
+func marshalMcpassistantResourceContentToResourceContentResponseBody(v *mcpassistant.ResourceContent) *ResourceContentResponseBody {
+	res := &ResourceContentResponseBody{
 		URI:      v.URI,
 		MimeType: v.MimeType,
 		Text:     v.Text,
-		Blob:     v.Blob,
 	}
 
 	return res
 }
 
-// marshalMcpassistantPromptInfoToPromptInfoResponseBodyResponseBody builds a
-// value of type *PromptInfoResponseBodyResponseBody from a value of type
-// *mcpassistant.PromptInfo.
-func marshalMcpassistantPromptInfoToPromptInfoResponseBodyResponseBody(v *mcpassistant.PromptInfo) *PromptInfoResponseBodyResponseBody {
-	res := &PromptInfoResponseBodyResponseBody{
+// marshalMcpassistantPromptInfoToPromptInfoResponseBody builds a value of type
+// *PromptInfoResponseBody from a value of type *mcpassistant.PromptInfo.
+func marshalMcpassistantPromptInfoToPromptInfoResponseBody(v *mcpassistant.PromptInfo) *PromptInfoResponseBody {
+	res := &PromptInfoResponseBody{
 		Name:        v.Name,
 		Description: v.Description,
 	}
 	if v.Arguments != nil {
-		res.Arguments = make([]*PromptArgumentResponseBodyResponseBody, len(v.Arguments))
+		res.Arguments = make([]*PromptArgumentResponseBody, len(v.Arguments))
 		for i, val := range v.Arguments {
 			if val == nil {
 				res.Arguments[i] = nil
 				continue
 			}
-			res.Arguments[i] = marshalMcpassistantPromptArgumentToPromptArgumentResponseBodyResponseBody(val)
+			res.Arguments[i] = marshalMcpassistantPromptArgumentToPromptArgumentResponseBody(val)
 		}
 	}
 
 	return res
 }
 
-// marshalMcpassistantPromptArgumentToPromptArgumentResponseBodyResponseBody
-// builds a value of type *PromptArgumentResponseBodyResponseBody from a value
-// of type *mcpassistant.PromptArgument.
-func marshalMcpassistantPromptArgumentToPromptArgumentResponseBodyResponseBody(v *mcpassistant.PromptArgument) *PromptArgumentResponseBodyResponseBody {
-	if v == nil {
-		return nil
-	}
-	res := &PromptArgumentResponseBodyResponseBody{
+// marshalMcpassistantPromptArgumentToPromptArgumentResponseBody builds a value
+// of type *PromptArgumentResponseBody from a value of type
+// *mcpassistant.PromptArgument.
+func marshalMcpassistantPromptArgumentToPromptArgumentResponseBody(v *mcpassistant.PromptArgument) *PromptArgumentResponseBody {
+	res := &PromptArgumentResponseBody{
 		Name:        v.Name,
 		Description: v.Description,
 		Required:    v.Required,
@@ -489,30 +394,27 @@ func marshalMcpassistantPromptArgumentToPromptArgumentResponseBodyResponseBody(v
 	return res
 }
 
-// marshalMcpassistantPromptMessageToPromptMessageResponseBodyResponseBody
-// builds a value of type *PromptMessageResponseBodyResponseBody from a value
-// of type *mcpassistant.PromptMessage.
-func marshalMcpassistantPromptMessageToPromptMessageResponseBodyResponseBody(v *mcpassistant.PromptMessage) *PromptMessageResponseBodyResponseBody {
-	res := &PromptMessageResponseBodyResponseBody{
+// marshalMcpassistantPromptMessageToPromptMessageResponseBody builds a value
+// of type *PromptMessageResponseBody from a value of type
+// *mcpassistant.PromptMessage.
+func marshalMcpassistantPromptMessageToPromptMessageResponseBody(v *mcpassistant.PromptMessage) *PromptMessageResponseBody {
+	res := &PromptMessageResponseBody{
 		Role: v.Role,
 	}
 	if v.Content != nil {
-		res.Content = marshalMcpassistantMessageContentToMessageContentResponseBodyResponseBody(v.Content)
+		res.Content = marshalMcpassistantMessageContentToMessageContentResponseBody(v.Content)
 	}
 
 	return res
 }
 
-// marshalMcpassistantMessageContentToMessageContentResponseBodyResponseBody
-// builds a value of type *MessageContentResponseBodyResponseBody from a value
-// of type *mcpassistant.MessageContent.
-func marshalMcpassistantMessageContentToMessageContentResponseBodyResponseBody(v *mcpassistant.MessageContent) *MessageContentResponseBodyResponseBody {
-	res := &MessageContentResponseBodyResponseBody{
-		Type:     v.Type,
-		Text:     v.Text,
-		Data:     v.Data,
-		MimeType: v.MimeType,
-		URI:      v.URI,
+// marshalMcpassistantMessageContentToMessageContentResponseBody builds a value
+// of type *MessageContentResponseBody from a value of type
+// *mcpassistant.MessageContent.
+func marshalMcpassistantMessageContentToMessageContentResponseBody(v *mcpassistant.MessageContent) *MessageContentResponseBody {
+	res := &MessageContentResponseBody{
+		Type: v.Type,
+		Text: v.Text,
 	}
 
 	return res

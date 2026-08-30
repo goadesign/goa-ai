@@ -112,9 +112,9 @@ func TestAdvanceStepBudgetDeadline(t *testing.T) {
 }
 
 func TestAdvanceStepUsesAgentToolResultContractWhenNoChildrenRan(t *testing.T) {
-	agentTool := newAnyJSONSpec("specialist.inspect", "specialist")
+	agentTool := newAnyJSONSpec("specialist.inspect")
 	agentTool.IsAgentTool = true
-	nativeTool := newAnyJSONSpec("catalog.lookup", "catalog")
+	nativeTool := newAnyJSONSpec("catalog.lookup")
 
 	tests := []struct {
 		name            string
@@ -199,10 +199,8 @@ func TestExecuteWorkflowFinalizesPlanStartAtBudget(t *testing.T) {
 	planErr := engine.ErrPlannerActivityDeadlineExceeded
 	finalOutput := deadlineTestFinalOutput()
 	var finalErr error
-	rt := New()
-	rt.agents["agent-1"] = AgentRegistration{
-		ID:                 "agent-1",
-		PlanActivityName:   "plan",
+	rt := New(newTestStore())
+	rt.agents["agent-1"] = AgentRegistration{Definition: testRegistrationDefinition("agent-1", engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ResumeActivityName: "resume",
 		ResumeActivityOptions: engine.ActivityOptions{
 			StartToCloseTimeout: time.Minute,
@@ -252,10 +250,8 @@ func TestExecuteWorkflowKeepsPlanStartResultAtBudget(t *testing.T) {
 	finalOutput := deadlineTestFinalOutput()
 	var finalErr error
 	resumeCalls := 0
-	rt := New()
-	rt.agents["agent-1"] = AgentRegistration{
-		ID:                 "agent-1",
-		PlanActivityName:   "plan",
+	rt := New(newTestStore())
+	rt.agents["agent-1"] = AgentRegistration{Definition: testRegistrationDefinition("agent-1", engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ResumeActivityName: "resume",
 		Policy: RunPolicy{
 			TimeBudget: timeBudget,
@@ -355,10 +351,8 @@ func TestExecuteWorkflowPreservesPlanStartProviderTimeout(t *testing.T) {
 	planErr := context.DeadlineExceeded
 	finalOutput := deadlineTestFinalOutput()
 	var finalErr error
-	rt := New()
-	rt.agents["agent-1"] = AgentRegistration{
-		ID:                 "agent-1",
-		PlanActivityName:   "plan",
+	rt := New(newTestStore())
+	rt.agents["agent-1"] = AgentRegistration{Definition: testRegistrationDefinition("agent-1", engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ResumeActivityName: "resume",
 		Policy: RunPolicy{
 			TimeBudget: 20 * time.Second,
@@ -404,10 +398,8 @@ func TestExecuteWorkflowClassifiesExpiredPlanStartFinalizer(t *testing.T) {
 	planErr := engine.ErrPlannerActivityDeadlineExceeded
 	finalOutput := deadlineTestFinalOutput()
 	var finalErr error
-	rt := New()
-	rt.agents["agent-1"] = AgentRegistration{
-		ID:                 "agent-1",
-		PlanActivityName:   "plan",
+	rt := New(newTestStore())
+	rt.agents["agent-1"] = AgentRegistration{Definition: testRegistrationDefinition("agent-1", engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, PlanActivityName: "plan",
 		ResumeActivityName: "resume",
 		ResumeActivityOptions: engine.ActivityOptions{
 			StartToCloseTimeout: finalizerGrace,
@@ -551,7 +543,7 @@ func newResumeDeadlineTestLoop(
 ) (*workflowLoop, *routeWorkflowContext) {
 	t.Helper()
 
-	rt := New()
+	rt := New(newTestStore())
 	wfCtx := &routeWorkflowContext{
 		ctx:   context.Background(),
 		runID: "run-1",

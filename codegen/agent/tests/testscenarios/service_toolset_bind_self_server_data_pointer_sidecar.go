@@ -5,13 +5,12 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-// ServiceToolsetBindSelfServerDataPointerSidecar returns a DSL design function for a
-// method-backed toolset that emits pointer-typed server_data from an optional
-// bound method result field.
+// ServiceToolsetBindSelfServerDataOptional returns a design with optional
+// server data read from a service method result.
 //
-// The generated codecs must treat nil sidecar values as "no server_data" and
-// therefore encode them to JSON null rather than returning an error.
-func ServiceToolsetBindSelfServerDataPointerSidecar() func() {
+// The generated codec writes a nil value as JSON null instead of returning an
+// error.
+func ServiceToolsetBindSelfServerDataOptional() func() {
 	return func() {
 		API("alpha", func() {})
 

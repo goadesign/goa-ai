@@ -7,7 +7,7 @@ import (
 
 var _ = API("assistant", func() {
 	Title("AI Assistant API")
-	Description("Simple MCP example exposing tools, resources, prompts, and an agent consumer")
+	Description("Simple MCP example exposing unary tools, fixed resources, and static prompts")
 	Version("1.0")
 	Server("orchestrator", func() {
 		Host("dev", func() {
@@ -18,7 +18,7 @@ var _ = API("assistant", func() {
 })
 
 var _ = Service("assistant", func() {
-	Description("AI Assistant service with full MCP protocol support")
+	Description("AI Assistant service for the supported MCP protocol surface")
 
 	MCP("assistant-mcp", "1.0.0", ProtocolVersion("2025-06-18"))
 
@@ -34,11 +34,9 @@ var _ = Service("assistant", func() {
 		JSONRPC(func() {})
 	})
 
-	// Additional resources used by scenarios
 	Method("system_info", func() {
 		Description("Return system info")
 		Result(func() {
-			// Simple object; adapter marshals to JSON
 			Attribute("name", String, "System name")
 			Attribute("version", String, "System version")
 		})
@@ -46,46 +44,12 @@ var _ = Service("assistant", func() {
 		JSONRPC(func() {})
 	})
 
-	Method("conversation_history", func() {
-		Description("Return conversation history with optional query params")
-		Payload(func() {
-			Attribute("limit", Int, "Max items")
-			Attribute("flag", Boolean, "Sample boolean flag")
-			Attribute("nums", ArrayOf(Float64), "Numbers array")
-		})
-		Result(func() {
-			Attribute("items", ArrayOf(String), "History items")
-		})
-		Resource("conversation_history", "conversation://history", "application/json")
-		JSONRPC(func() {})
-	})
-
-	// Static prompt for tests
-	StaticPrompt("code_review", "Simple code review prompt", "system", "Review the provided code and suggest improvements.")
-
-	Method("generate_prompts", func() {
-		Description("Generate context-aware prompts")
-		Payload(func() {
-			Attribute("context", String, "Current context")
-			Attribute("task", String, "Task type")
-			Required("context", "task")
-		})
-		Result(PromptTemplates)
-		DynamicPrompt("contextual_prompts", "Generate prompts based on context")
-		JSONRPC(func() {})
-	})
-
-	Method("send_notification", func() {
-		Description("Send status notification to client")
-		Payload(func() {
-			Attribute("type", String, "Notification type")
-			Attribute("message", String, "Notification message")
-			Attribute("data", Any, "Additional data")
-			Required("type", "message")
-		})
-		Notification("status_update", "Send status updates to client")
-		JSONRPC(func() {})
-	})
+	StaticPrompt(
+		"code_review",
+		"Simple code review prompt",
+		"user",
+		"Review the provided code and suggest improvements.",
+	)
 
 	// ---- Tools (for MCP tools/list and tools/call) ----
 
@@ -164,14 +128,7 @@ var _ = Service("assistant", func() {
 	})
 })
 
-// ---- Shared Types (subset sufficient for integration tests) ----
-
 var Documents = Type("Documents", func() {
 	Attribute("items", ArrayOf(String), "Document entries")
 	Required("items")
-})
-
-var PromptTemplates = Type("PromptTemplates", func() {
-	Attribute("templates", ArrayOf(String), "Templates")
-	Required("templates")
 })

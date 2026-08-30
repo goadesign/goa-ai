@@ -7,22 +7,14 @@
 
 package assistant
 
-import (
-	"context"
-)
+import "context"
 
-// AI Assistant service with full MCP protocol support
+// AI Assistant service for the supported MCP protocol surface
 type Service interface {
 	// List available documents
 	ListDocuments(context.Context) (res *Documents, err error)
 	// Return system info
 	SystemInfo(context.Context) (res *SystemInfoResult, err error)
-	// Return conversation history with optional query params
-	ConversationHistory(context.Context, *ConversationHistoryPayload) (res *ConversationHistoryResult, err error)
-	// Generate context-aware prompts
-	GeneratePrompts(context.Context, *GeneratePromptsPayload) (res *PromptTemplates, err error)
-	// Send status notification to client
-	SendNotification(context.Context, *SendNotificationPayload) (err error)
 	// Analyze sentiment of text
 	AnalyzeSentiment(context.Context, *AnalyzeSentimentPayload) (res *AnalyzeSentimentResult, err error)
 	// Extract keywords from text
@@ -51,7 +43,7 @@ const ServiceName = "assistant"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [11]string{"list_documents", "system_info", "conversation_history", "generate_prompts", "send_notification", "analyze_sentiment", "extract_keywords", "summarize_text", "search", "execute_code", "process_batch"}
+var MethodNames = [8]string{"list_documents", "system_info", "analyze_sentiment", "extract_keywords", "summarize_text", "search", "execute_code", "process_batch"}
 
 // AnalyzeSentimentPayload is the payload type of the assistant service
 // analyze_sentiment method.
@@ -65,24 +57,6 @@ type AnalyzeSentimentPayload struct {
 type AnalyzeSentimentResult struct {
 	// Detected sentiment
 	Sentiment *string
-}
-
-// ConversationHistoryPayload is the payload type of the assistant service
-// conversation_history method.
-type ConversationHistoryPayload struct {
-	// Max items
-	Limit *int
-	// Sample boolean flag
-	Flag *bool
-	// Numbers array
-	Nums []float64
-}
-
-// ConversationHistoryResult is the result type of the assistant service
-// conversation_history method.
-type ConversationHistoryResult struct {
-	// History items
-	Items []string
 }
 
 // Documents is the result type of the assistant service list_documents method.
@@ -121,15 +95,6 @@ type ExtractKeywordsResult struct {
 	Keywords []string
 }
 
-// GeneratePromptsPayload is the payload type of the assistant service
-// generate_prompts method.
-type GeneratePromptsPayload struct {
-	// Current context
-	Context string
-	// Task type
-	Task string
-}
-
 // ProcessBatchPayload is the payload type of the assistant service
 // process_batch method.
 type ProcessBatchPayload struct {
@@ -152,13 +117,6 @@ type ProcessBatchResult struct {
 	OK *bool
 }
 
-// PromptTemplates is the result type of the assistant service generate_prompts
-// method.
-type PromptTemplates struct {
-	// Templates
-	Templates []string
-}
-
 // SearchPayload is the payload type of the assistant service search method.
 type SearchPayload struct {
 	// Search query
@@ -171,17 +129,6 @@ type SearchPayload struct {
 type SearchResult struct {
 	// Search results
 	Results []string
-}
-
-// SendNotificationPayload is the payload type of the assistant service
-// send_notification method.
-type SendNotificationPayload struct {
-	// Notification type
-	Type string
-	// Notification message
-	Message string
-	// Additional data
-	Data any
 }
 
 // SummarizeTextPayload is the payload type of the assistant service

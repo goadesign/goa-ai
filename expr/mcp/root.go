@@ -22,16 +22,12 @@ func init() {
 type RootExpr struct {
 	// MCPServers maps service names to their MCP server configurations.
 	MCPServers map[string]*MCPExpr
-	// DynamicPrompts maps service names to their dynamic prompt
-	// expressions.
-	DynamicPrompts map[string][]*DynamicPromptExpr
 }
 
 // NewRoot creates a new plugin root expression
 func NewRoot() *RootExpr {
 	return &RootExpr{
-		MCPServers:     make(map[string]*MCPExpr),
-		DynamicPrompts: make(map[string][]*DynamicPromptExpr),
+		MCPServers: make(map[string]*MCPExpr),
 	}
 }
 
@@ -58,14 +54,6 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 		mcps = append(mcps, mcp)
 	}
 	walk(mcps)
-
-	var caps eval.ExpressionSet
-	for _, m := range r.MCPServers {
-		if m.Capabilities != nil {
-			caps = append(caps, m.Capabilities)
-		}
-	}
-	walk(caps)
 
 	var tools eval.ExpressionSet
 	for _, m := range r.MCPServers {
@@ -95,25 +83,12 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	}
 	walk(prompts)
 	walk(messages)
-
-	var dynPrompts eval.ExpressionSet
-	for _, ps := range r.DynamicPrompts {
-		for _, p := range ps {
-			dynPrompts = append(dynPrompts, p)
-		}
-	}
-	walk(dynPrompts)
 }
 
 // RegisterMCP registers an MCP server configuration for a service
 func (r *RootExpr) RegisterMCP(svc *expr.ServiceExpr, mcp *MCPExpr) {
 	mcp.Service = svc
 	r.MCPServers[svc.Name] = mcp
-}
-
-// RegisterDynamicPrompt registers a dynamic prompt for a service
-func (r *RootExpr) RegisterDynamicPrompt(svc *expr.ServiceExpr, prompt *DynamicPromptExpr) {
-	r.DynamicPrompts[svc.Name] = append(r.DynamicPrompts[svc.Name], prompt)
 }
 
 // GetMCP returns the MCP configuration for a service.

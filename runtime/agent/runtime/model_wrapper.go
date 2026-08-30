@@ -273,7 +273,8 @@ func (c *modelInvocationCall) observeRejectedModelOutput(validationErr *model.Ou
 
 // ObserveClientStream returns journaling behavior for one validated stream or
 // records its setup rejection. The model client attaches returned behavior to
-// the exact stream and owns closing it when the prepared context is canceled.
+// the exact stream; the caller receives through cancellation or completion,
+// then finalizes it.
 func (c *modelInvocationCall) ObserveClientStream(err error) (model.StreamObserver, error) {
 	if err != nil {
 		var validationErr *model.OutputValidationError

@@ -34,6 +34,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	agentruntime "goa.design/goa-ai/runtime/agent/runtime"
+	"goa.design/goa-ai/runtime/agent/session"
+	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
@@ -43,7 +45,7 @@ const (
 	productionReplayPlanActivity = "replay.agent.plan"
 	productionReplayResume       = "replay.agent.resume"
 	productionReplayExecute      = "replay.agent.execute"
-	productionReplayRecord       = "runtime.record_event"
+	productionReplayRecord       = "runtime.store"
 	productionReplayRunID        = "replay-run"
 	productionReplaySessionID    = "replay-session"
 	productionReplayTurnID       = "replay-turn"
@@ -203,20 +205,18 @@ func productionReplayWorkflow(
 ) (*replayPlanner, func(workflow.Context, *api.RunInput) (*api.RunOutput, error)) {
 	t.Helper()
 	plannerStub := &replayPlanner{}
+	store := storageinmem.New()
 	rt := agentruntime.New(
+		store,
 		agentruntime.WithEngine(engineinmem.New()),
 		agentruntime.WithLogger(telemetry.NoopLogger{}),
 	)
-	_, err := rt.CreateSession(t.Context(), productionReplaySessionID)
+	_, err := store.CreateSession(t.Context(), productionReplaySessionID, time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, rt.RegisterAgent(t.Context(), agentruntime.AgentRegistration{
-		ID:      productionReplayAgentID,
-		Planner: plannerStub,
-		Workflow: engine.WorkflowDefinition{
-			Name:      productionReplayWorkflowName,
-			TaskQueue: productionReplayTaskQueue,
-			Handler:   rt.ExecuteWorkflow,
-		},
+		Definition:          testTemporalAgentDefinition(productionReplayAgentID, productionReplayWorkflowName, productionReplayTaskQueue, nil),
+		Planner:             plannerStub,
+		WorkflowHandler:     rt.ExecuteWorkflow,
 		PlanActivityName:    productionReplayPlanActivity,
 		ResumeActivityName:  productionReplayResume,
 		ExecuteToolActivity: productionReplayExecute,
@@ -293,6 +293,18 @@ func syntheticProductionReplayHistory(
 	require.NoError(t, err)
 	firstResult, err := dataConverter.ToPayloads(first)
 	require.NoError(t, err)
+	rootStartResult, err := dataConverter.ToPayloads(&api.StorageActivityResult{
+		RootStart: &api.StartRunResult{Outcome: session.RunStartProceed},
+	})
+	require.NoError(t, err)
+	appendResult, err := dataConverter.ToPayloads(&api.StorageActivityResult{
+		Append: &api.AppendRecordsResult{},
+	})
+	require.NoError(t, err)
+	terminalResult, err := dataConverter.ToPayloads(&api.StorageActivityResult{
+		Terminal: &api.RecordWriteResult{},
+	})
+	require.NoError(t, err)
 
 	events := []*historypb.HistoryEvent{
 		workflowExecutionStartedEvent(1, productionReplayWorkflowName, productionReplayTaskQueue, startInput),
@@ -301,19 +313,19 @@ func syntheticProductionReplayHistory(
 		workflowTaskCompletedEvent(4, 2, 3),
 		activityTaskScheduledEvent(5, productionReplayRecord, nil),
 		activityTaskStartedEvent(6, 5),
-		activityTaskCompletedEvent(7, 5, 6, nil),
+		activityTaskCompletedEvent(7, 5, 6, rootStartResult),
 		workflowTaskScheduledEvent(8),
 		workflowTaskStartedEvent(9),
 		workflowTaskCompletedEvent(10, 8, 9),
 		activityTaskScheduledEvent(11, productionReplayRecord, nil),
 		activityTaskStartedEvent(12, 11),
-		activityTaskCompletedEvent(13, 11, 12, nil),
+		activityTaskCompletedEvent(13, 11, 12, appendResult),
 		workflowTaskScheduledEvent(14),
 		workflowTaskStartedEvent(15),
 		workflowTaskCompletedEvent(16, 14, 15),
 		activityTaskScheduledEvent(17, productionReplayRecord, nil),
 		activityTaskStartedEvent(18, 17),
-		activityTaskCompletedEvent(19, 17, 18, nil),
+		activityTaskCompletedEvent(19, 17, 18, appendResult),
 		workflowTaskScheduledEvent(20),
 		workflowTaskStartedEvent(21),
 		workflowTaskCompletedEvent(22, 20, 21),
@@ -331,7 +343,7 @@ func syntheticProductionReplayHistory(
 			events = append(events,
 				activityTaskScheduledEvent(nextID, productionReplayRecord, publicationInput),
 				activityTaskStartedEvent(nextID+1, nextID),
-				activityTaskCompletedEvent(nextID+2, nextID, nextID+1, nil),
+				activityTaskCompletedEvent(nextID+2, nextID, nextID+1, appendResult),
 				workflowTaskScheduledEvent(nextID+3),
 				workflowTaskStartedEvent(nextID+4),
 				workflowTaskCompletedEvent(nextID+5, nextID+3, nextID+4),
@@ -341,7 +353,7 @@ func syntheticProductionReplayHistory(
 		events = append(events,
 			activityTaskScheduledEvent(nextID, productionReplayRecord, nil),
 			activityTaskStartedEvent(nextID+1, nextID),
-			activityTaskCompletedEvent(nextID+2, nextID, nextID+1, nil),
+			activityTaskCompletedEvent(nextID+2, nextID, nextID+1, appendResult),
 			workflowTaskScheduledEvent(nextID+3),
 			workflowTaskStartedEvent(nextID+4),
 			workflowTaskCompletedEvent(nextID+5, nextID+3, nextID+4),
@@ -380,13 +392,13 @@ func syntheticProductionReplayHistory(
 			workflowTaskCompletedEvent(resumeID+5, resumeID+3, resumeID+4),
 			activityTaskScheduledEvent(resumeID+6, productionReplayRecord, nil),
 			activityTaskStartedEvent(resumeID+7, resumeID+6),
-			activityTaskCompletedEvent(resumeID+8, resumeID+6, resumeID+7, nil),
+			activityTaskCompletedEvent(resumeID+8, resumeID+6, resumeID+7, appendResult),
 			workflowTaskScheduledEvent(resumeID+9),
 			workflowTaskStartedEvent(resumeID+10),
 			workflowTaskCompletedEvent(resumeID+11, resumeID+9, resumeID+10),
 			activityTaskScheduledEvent(resumeID+12, productionReplayRecord, nil),
 			activityTaskStartedEvent(resumeID+13, resumeID+12),
-			activityTaskCompletedEvent(resumeID+14, resumeID+12, resumeID+13, nil),
+			activityTaskCompletedEvent(resumeID+14, resumeID+12, resumeID+13, terminalResult),
 			workflowTaskScheduledEvent(resumeID+15),
 			workflowTaskStartedEvent(resumeID+16),
 			workflowTaskCompletedEvent(resumeID+17, resumeID+15, resumeID+16),
@@ -397,19 +409,19 @@ func syntheticProductionReplayHistory(
 	events = append(events,
 		activityTaskScheduledEvent(29, productionReplayRecord, nil),
 		activityTaskStartedEvent(30, 29),
-		activityTaskCompletedEvent(31, 29, 30, nil),
+		activityTaskCompletedEvent(31, 29, 30, appendResult),
 		workflowTaskScheduledEvent(32),
 		workflowTaskStartedEvent(33),
 		workflowTaskCompletedEvent(34, 32, 33),
 		activityTaskScheduledEvent(35, productionReplayRecord, nil),
 		activityTaskStartedEvent(36, 35),
-		activityTaskCompletedEvent(37, 35, 36, nil),
+		activityTaskCompletedEvent(37, 35, 36, appendResult),
 		workflowTaskScheduledEvent(38),
 		workflowTaskStartedEvent(39),
 		workflowTaskCompletedEvent(40, 38, 39),
 		activityTaskScheduledEvent(41, productionReplayRecord, nil),
 		activityTaskStartedEvent(42, 41),
-		activityTaskCompletedEvent(43, 41, 42, nil),
+		activityTaskCompletedEvent(43, 41, 42, terminalResult),
 		workflowTaskScheduledEvent(44),
 		workflowTaskStartedEvent(45),
 		workflowTaskCompletedEvent(46, 44, 45),
@@ -485,9 +497,12 @@ func recordedUsageEvents(t *testing.T, history *historypb.History) []model.Token
 		if attrs == nil || attrs.ActivityType.Name != productionReplayRecord || attrs.Input == nil {
 			continue
 		}
-		var batch api.RecordActivityBatchInput
-		require.NoError(t, NewAgentDataConverter().FromPayloads(attrs.Input, &batch))
-		for _, record := range batch.Records {
+		var command api.StorageActivityCommand
+		require.NoError(t, NewAgentDataConverter().FromPayloads(attrs.Input, &command))
+		if command.Append == nil {
+			continue
+		}
+		for _, record := range command.Append.Records {
 			if record.Type != hooks.Usage {
 				continue
 			}
@@ -500,7 +515,7 @@ func recordedUsageEvents(t *testing.T, history *historypb.History) []model.Token
 }
 
 // plannerPublicationInput serializes planner events into the same Temporal
-// batch shape used by the runtime's durable record activity.
+// append-command shape used by the runtime's durable storage activity.
 func plannerPublicationInput(
 	t *testing.T,
 	events []*api.PlannerEventRecord,
@@ -519,7 +534,9 @@ func plannerPublicationInput(
 			Payload:   event.Payload,
 		})
 	}
-	payloads, err := NewAgentDataConverter().ToPayloads(&api.RecordActivityBatchInput{Records: records})
+	payloads, err := NewAgentDataConverter().ToPayloads(&api.StorageActivityCommand{
+		Append: &api.AppendRecordsCommand{Records: records},
+	})
 	require.NoError(t, err)
 	return payloads
 }

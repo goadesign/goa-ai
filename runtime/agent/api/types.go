@@ -9,9 +9,12 @@ import (
 	"goa.design/goa-ai/runtime/agent/internal/responseevidence"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
+	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -64,6 +67,11 @@ type (
 		// Messages carries the conversation history supplied by the caller.
 		Messages []*model.Message
 
+		// RenderedPrompts lists prompts whose rendered text is already present in
+		// Messages. The accepted workflow stores these facts after it creates the
+		// run and before it starts planner work.
+		RenderedPrompts []prompt.RenderEvent
+
 		// Labels contains caller-provided metadata (account, priority, etc.).
 		Labels map[string]string
 
@@ -106,21 +114,6 @@ type (
 
 		// TaskQueue is the name of the task queue to use for the workflow.
 		TaskQueue string
-
-		// RetryPolicy is the retry policy to use for workflow start.
-		RetryPolicy RetryPolicy
-	}
-
-	// RetryPolicy defines retry semantics shared by workflows and activities at the API layer.
-	RetryPolicy struct {
-		// MaxAttempts caps the total number of retry attempts. Zero means engine default.
-		MaxAttempts int
-
-		// InitialInterval is the delay before the first retry. Zero means engine default.
-		InitialInterval time.Duration
-
-		// BackoffCoefficient multiplies the delay after each retry (for example, 2.0 for exponential).
-		BackoffCoefficient float64
 	}
 
 	// TagPolicyClause describes one tag-filtering clause for a run.
@@ -337,41 +330,18 @@ type (
 		ToolResults *ToolResultsSet
 	}
 
-	// ToolEvent is the workflow-boundary safe representation of a tool result emitted by a run.
-	//
-	// Contract:
-	// - Result and ServerData are canonical JSON bytes, not decoded Go values.
-	// - Runtimes must decode Result bytes using the registered tool result codec.
-	// - This is required for agent-as-tool: child workflow outputs cross a workflow boundary,
-	//   and `any` fields would otherwise rehydrate as map[string]any.
+	// ToolEvent carries a tool result through workflow execution without losing
+	// its generated Go type. Result and ServerData remain JSON bytes while the
+	// workflow engine transports them. The runtime decodes Result with the
+	// registered tool codec before giving it to a planner. This is necessary for
+	// nested agents because workflow engines decode arbitrary Go values as
+	// generic maps.
 	ToolEvent struct {
 		// Name is the fully-qualified tool identifier that produced this result.
 		Name tools.Ident
 
-		// Result is the canonical JSON result payload encoded using the tool result codec.
+		// Result is the JSON result encoded with the generated tool result codec.
 		Result rawjson.Message
-
-		// ResultBytes is the size, in bytes, of the canonical JSON result payload
-		// produced by the runtime before any workflow-boundary trimming is applied.
-		//
-		// When ResultOmitted is true, ResultBytes reports the original size even though
-		// Result is nil.
-		ResultBytes int
-
-		// ResultOmitted indicates that the runtime intentionally omitted Result bytes
-		// from this envelope to satisfy workflow-boundary payload budgets.
-		//
-		// This is used for workflow-safe child/final tool-result envelopes: workflow
-		// orchestration must not shuttle arbitrarily large result payloads. Full tool
-		// results remain available via the canonical run log when that path owns the
-		// execution history.
-		ResultOmitted bool
-
-		// ResultOmittedReason provides a stable, machine-readable reason for omitting
-		// the result bytes. Empty when ResultOmitted is false.
-		//
-		// Example values: "workflow_budget".
-		ResultOmittedReason string
 
 		// ServerData carries server-only data emitted alongside the tool result.
 		// It is never sent to model providers.
@@ -626,14 +596,6 @@ type (
 		// deterministic identities after this activity succeeds.
 		PlannerEvents []*PlannerEventRecord
 
-		// SessionEnded reports that the run's durable session was ended before
-		// this turn could be planned: the activity refused to plan and Result
-		// is nil. The workflow terminates the run as canceled. This is the
-		// turn-boundary enforcement of session lifecycle — the durable session
-		// status is the authority; engine cancellation only expedites
-		// shutdown.
-		SessionEnded bool
-
 		// RecoveryCatalog is present only for a recovery-aware resume activity
 		// and records the exact executable catalog shown to that planner turn.
 		RecoveryCatalog *RecoveryCatalog `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
@@ -696,14 +658,139 @@ type (
 	// durable runtime records.
 	RecordActivityInput = runlog.ActivityInput
 
-	// RecordActivityBatchInput carries one non-empty immutable ordered
-	// publication to the activity that persists and broadcasts it.
-	RecordActivityBatchInput struct {
-		// Records preserves the workflow-assigned event keys, timestamps, and
-		// publication order. Singular events use one item, and retries must reuse
-		// the exact list.
+	// StorageActivityCommand selects exactly one durable state change. Workflow
+	// code freezes records before scheduling the activity, and retries reuse the
+	// complete command without rebuilding it.
+	StorageActivityCommand struct {
+		// Append stores ordinary records without changing run lifecycle state.
+		Append *AppendRecordsCommand
+		// RootStart stores the start of a session root run. An ended session also
+		// stores the canceled completion that prevents the run from doing work.
+		RootStart *RootRunStartCommand
+		// ChildStart stores a parent link and the start of a child run. An ended
+		// session also stores the canceled completion that prevents the run from
+		// doing work.
+		ChildStart *ChildRunStartCommand
+		// OneShotStart stores the first record for a sessionless run.
+		OneShotStart *OneShotRunStartCommand
+		// OneShotChildStart stores a parent link and start for a sessionless child.
+		OneShotChildStart *OneShotChildRunStartCommand
+		// Cancellation stores the first cancellation reason and its record.
+		Cancellation *RunCancellationCommand
+		// Suspension stores a continuation checkpoint and its suspended record.
+		Suspension *RunSuspensionCommand
+		// Terminal stores a terminal record and final run status.
+		Terminal *RunTerminalCommand
+	}
+
+	// AppendRecordsCommand carries one non-empty immutable ordered record list.
+	AppendRecordsCommand struct {
+		// Records preserves workflow-assigned event keys, timestamps, and order.
 		Records []*RecordActivityInput
 	}
+
+	// RootRunStartCommand carries the frozen start record for a session root run.
+	RootRunStartCommand struct {
+		// Started is the run-started record.
+		Started *RecordActivityInput
+	}
+
+	// ChildRunStartCommand carries the records that link and start a child run.
+	ChildRunStartCommand struct {
+		// ParentLinked is stored on the parent run.
+		ParentLinked *RecordActivityInput
+		// Started is stored on the child run when its session is active.
+		Started *RecordActivityInput
+	}
+
+	// OneShotRunStartCommand carries the frozen start record for a sessionless run.
+	OneShotRunStartCommand struct {
+		// Started is the run-started record.
+		Started *RecordActivityInput
+	}
+
+	// OneShotChildRunStartCommand carries the frozen records for a sessionless child.
+	OneShotChildRunStartCommand struct {
+		// ParentLinked is stored on the sessionless parent run.
+		ParentLinked *RecordActivityInput
+		// Started is stored on the child run.
+		Started *RecordActivityInput
+	}
+
+	// RunCancellationCommand carries the frozen cancellation-intent record.
+	RunCancellationCommand struct {
+		// Record contains the write-once cancellation reason.
+		Record *RecordActivityInput
+	}
+
+	// RunSuspensionCommand carries one checkpoint and its matching suspended record.
+	RunSuspensionCommand struct {
+		// Checkpoint contains the opaque continuation state.
+		Checkpoint *RecordActivityInput
+		// Suspended records that the workflow stopped with this checkpoint.
+		Suspended *RecordActivityInput
+	}
+
+	// RunTerminalCommand carries one completed, failed, or canceled record.
+	RunTerminalCommand struct {
+		// Record is the final run-completed record.
+		Record *RecordActivityInput
+	}
+
+	// StorageActivityResult reports the result matching the selected command.
+	// Exactly one field is set, and it must match the command field.
+	StorageActivityResult struct {
+		// Append reports ordinary record writes.
+		Append *AppendRecordsResult
+		// RootStart reports the root-start decision.
+		RootStart *StartRunResult
+		// ChildStart reports the child-start decision.
+		ChildStart *StartRunResult
+		// OneShotStart reports the one-shot start decision.
+		OneShotStart *StartRunResult
+		// OneShotChildStart reports the sessionless child start writes.
+		OneShotChildStart *StartRunResult
+		// Cancellation reports whether the cancellation reason was accepted.
+		Cancellation *RunCancellationResult
+		// Suspension reports the suspended record write.
+		Suspension *RecordWriteResult
+		// Terminal reports the terminal record write.
+		Terminal *RecordWriteResult
+	}
+
+	// AppendRecordsResult reports ordinary writes in command order.
+	AppendRecordsResult struct {
+		// Records contains store results in durable commit order.
+		Records []storage.AppendResult
+	}
+
+	// StartRunResult reports the immutable start decision and every stored record.
+	StartRunResult struct {
+		// Outcome is exactly proceed or stop.
+		Outcome session.RunStartOutcome
+		// CancellationReason is set only when Outcome is stop.
+		CancellationReason string
+		// Records contains the stored records in durable commit order.
+		Records []storage.AppendResult
+	}
+
+	// RunCancellationResult reports the result of storing a cancellation reason.
+	RunCancellationResult struct {
+		// Outcome is exactly accepted or conflict.
+		Outcome RunCancellationOutcome
+		// Record contains the accepted write result. It is zero when Outcome is
+		// conflict because the stored reason belongs to an earlier command.
+		Record storage.AppendResult
+	}
+
+	// RecordWriteResult reports one suspension or terminal record write.
+	RecordWriteResult struct {
+		// Record is the durable store result.
+		Record storage.AppendResult
+	}
+
+	// RunCancellationOutcome reports whether the write-once reason was accepted.
+	RunCancellationOutcome string
 
 	// ToolInput carries the execution payload for one tool call from workflow
 	// code to its activity. The workflow retains model-authored transcript data.
@@ -738,6 +825,40 @@ type (
 
 		// ParentToolCallID is the identifier of the parent tool call when this invocation is nested.
 		ParentToolCallID string
+	}
+
+	// AgentChildActivityInput carries the exact parent state needed to prepare
+	// one child-agent run outside workflow code.
+	AgentChildActivityInput struct {
+		// Call is the validated agent-tool invocation that starts the child.
+		Call ToolCall
+
+		// Messages is the parent transcript visible to the child-call validator.
+		Messages []*model.Message
+
+		// ParentRun identifies the run that issued Call.
+		ParentRun run.Context
+	}
+
+	// AgentChildActivitySuccess contains the prompt facts recorded in workflow
+	// history after child preparation succeeds.
+	AgentChildActivitySuccess struct {
+		// Messages is the complete initial child transcript.
+		Messages []*model.Message
+
+		// RenderedPrompts identifies every stored prompt version used in Messages.
+		RenderedPrompts []prompt.RenderEvent
+	}
+
+	// AgentChildActivityOutput contains exactly one preparation result. Workflow
+	// replay reuses a recorded success without rendering the prompt again.
+	AgentChildActivityOutput struct {
+		// Success contains the prepared messages and prompt versions.
+		Success *AgentChildActivitySuccess
+
+		// Failure is the canonical correction returned when the model-authored
+		// tool payload cannot start a child.
+		Failure *planner.ToolFailure
 	}
 
 	// ToolOutput is returned by tool executors after invoking the tool implementation.
@@ -845,8 +966,8 @@ type (
 	// bounded-result metadata.
 	ProvidedToolSuccess struct {
 		// Result contains canonical JSON for the tool's result contract. It must
-		// be empty when the registered tool has no result contract. JSON null
-		// remains a successful result when a registered codec permits it.
+		// be empty when the registered tool has no result contract. A tool with a
+		// result contract must decode to one non-nil value.
 		Result rawjson.Message
 
 		// Bounds carries bounded-result metadata when the tool contract requires it.
@@ -890,6 +1011,13 @@ type (
 )
 
 const (
+	// RunCancellationAccepted means the command stored this reason or matched
+	// the reason stored by an exact retry.
+	RunCancellationAccepted RunCancellationOutcome = "accepted"
+
+	// RunCancellationConflict means the run already stores another reason.
+	RunCancellationConflict RunCancellationOutcome = "conflict"
+
 	// PendingInputKindClarification requires a Clarification response.
 	PendingInputKindClarification PendingInputKind = "clarification"
 
@@ -900,9 +1028,9 @@ const (
 	PendingInputKindToolResults PendingInputKind = "tool_results"
 
 	// RunSuspensionVersion is the checkpoint schema emitted by this runtime.
-	// Version 6 derives an exact correct-call catalog from saved typed failures
-	// instead of serializing a duplicate catalog in the checkpoint.
-	RunSuspensionVersion = "goa-ai.run-suspension.v6"
+	// Version 7 stores complete successful tool results and omits metadata that
+	// can be calculated from those bytes.
+	RunSuspensionVersion = "goa-ai.run-suspension.v7"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.

@@ -169,39 +169,6 @@ func methodToolsNeedInject(tools []*ToolData) bool {
 	return false
 }
 
-// toolInjectImports returns the imports required by the generated inject.go.
-// "goa" and "unicode/utf8" are only pulled in when at least one field's
-// compiled validation code references them, mirroring
-// toolSpecsData.needsGoaImport/needsUnicodeImport for http/validate.go.
-func toolInjectImports(tools []*ToolData) []*codegen.ImportSpec {
-	imports := []*codegen.ImportSpec{
-		codegen.SimpleImport("fmt"),
-		{Path: "goa.design/goa-ai/runtime/agent/runtime"},
-	}
-	var needsGoa, needsUnicode bool
-	for _, t := range tools {
-		if t == nil {
-			continue
-		}
-		for _, inj := range t.Injected {
-			if inj.ValidationCode == "" {
-				continue
-			}
-			needsGoa = true
-			if strings.Contains(inj.ValidationCode, "utf8.") {
-				needsUnicode = true
-			}
-		}
-	}
-	if needsGoa {
-		imports = append(imports, codegen.GoaImport(""))
-	}
-	if needsUnicode {
-		imports = append(imports, codegen.SimpleImport("unicode/utf8"))
-	}
-	return imports
-}
-
 // injectedFieldSource classifies name's compiled source: it is meta-backed
 // when Goifying it matches a runtime.ToolCallMeta field, regardless of
 // whether the design used snake_case ("session_id") or lowerCamel

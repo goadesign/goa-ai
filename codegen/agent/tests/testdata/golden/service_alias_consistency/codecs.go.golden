@@ -11,11 +11,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	toolhttp "goa.design/goa-ai/catalog_agent/toolsets/docs/http"
+	toolhttp "generated.local/gen/catalog_agent/toolsets/docs/http"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 	"io"
-	"slices"
 	"sort"
 	"strings"
 )
@@ -77,16 +76,6 @@ var readPayloadFieldJSONTypes = map[string]string{
 var readResultFieldJSONTypes = map[string]string{
 	"$payload": "object",
 	"id":       "string",
-}
-var readPayloadFieldAllowedObjectKeys = map[string][]string{
-	"": {
-		"id",
-	},
-}
-var readResultFieldAllowedObjectKeys = map[string][]string{
-	"": {
-		"id",
-	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -237,11 +226,10 @@ func UnmarshalReadPayload(data []byte) (*ReadPayload, error) {
 		return nil, fmt.Errorf("readPayload JSON is empty")
 	}
 	var tv toolhttp.ReadPayloadTransport
-	if err := decodeKnownJSON(
-		data,
-		&tv,
-		readPayloadFieldAllowedObjectKeys, readPayloadFieldJSONTypes, readPayloadFieldDescs,
-	); err != nil {
+	if err := validateReadPayloadJSON(data); err != nil {
+		return nil, invalidReadPayloadFieldTypeError(err)
+	}
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, invalidReadPayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateReadPayloadTransport(&tv); err != nil {
@@ -278,11 +266,10 @@ func UnmarshalReadResult(data []byte) (*ReadResult, error) {
 		return nil, fmt.Errorf("readResult JSON is empty")
 	}
 	var tv toolhttp.ReadResultTransport
-	if err := decodeKnownJSON(
-		data,
-		&tv,
-		readResultFieldAllowedObjectKeys, readResultFieldJSONTypes, readResultFieldDescs,
-	); err != nil {
+	if err := validateReadPayloadJSON(data); err != nil {
+		return nil, invalidReadResultFieldTypeError(err)
+	}
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, invalidReadResultFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateReadResultTransport(&tv); err != nil {
@@ -299,53 +286,9 @@ func UnmarshalReadResult(data []byte) (*ReadResult, error) {
 	return out, nil
 }
 
-// decodeStrictJSON decodes one JSON document and rejects null members and
-// object fields outside the generated transport contract.
-func decodeStrictJSON(
-	data []byte,
-	v any,
-	fieldTypes map[string]string,
-	fieldDescriptions map[string]string,
-) error {
-	if err := validateGeneratedJSON(data, nil, fieldTypes, fieldDescriptions); err != nil {
-		return err
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
-	}
-	return nil
-}
-
-// decodeKnownJSON decodes one JSON document after enforcing generated field
-// names and JSON categories. Open map fields remain open because their paths
-// are absent from the generated closed-object metadata.
-func decodeKnownJSON(
-	data []byte,
-	v any,
-	allowed map[string][]string,
-	fieldTypes map[string]string,
-	fieldDescriptions map[string]string,
-) error {
-	if err := validateGeneratedJSON(data, allowed, fieldTypes, fieldDescriptions); err != nil {
-		return err
-	}
-	return json.Unmarshal(data, v)
-}
-
-// validateGeneratedJSON checks raw JSON facts that Go's typed decoder cannot
-// preserve, including the difference between an absent optional member and an
-// explicit null.
-func validateGeneratedJSON(
-	data []byte,
-	allowed map[string][]string,
-	fieldTypes map[string]string,
-	fieldDescriptions map[string]string,
-) error {
+// validateReadPayloadJSON parses one JSON document and checks the exact value
+// shapes known from this generated Goa type.
+func validateReadPayloadJSON(data []byte) error {
 	var root any
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
@@ -355,104 +298,65 @@ func validateGeneratedJSON(
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return fmt.Errorf("multiple JSON documents")
 	}
-	return validateGeneratedJSONValue("", "", root, allowed, fieldTypes, fieldDescriptions, true)
+	return validateReadPayloadJSONValue("", root, "")
 }
 
-// validateGeneratedJSONValue walks one decoded value using paths emitted by
-// code generation. path names the actual caller field for errors; schemaPath
-// uses "*" where a map accepts caller-chosen keys.
-func validateGeneratedJSONValue(
-	path string,
-	schemaPath string,
-	value any,
-	allowed map[string][]string,
-	fieldTypes map[string]string,
-	fieldDescriptions map[string]string,
-	validateType bool,
-) error {
+// validateReadPayloadJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateReadPayloadJSONValue(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
 	}
-	schemaField := schemaPath
-	if schemaField == "" {
-		schemaField = "$payload"
-	}
-	expected, hasExpectedType := fieldTypes[schemaField]
-	description := fieldDescriptions[schemaField]
 	if value == nil {
-		if hasExpectedType {
-			return invalidGeneratedFieldTypeError(field, expected, "null", description)
-		}
-		return nil
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	if validateType {
-		actual := decodedJSONType(value)
-		if hasExpectedType && !generatedJSONTypesCompatible(expected, actual) {
-			return invalidGeneratedFieldTypeError(field, expected, actual, description)
-		}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
 	}
-	switch v := value.(type) {
-	case []any:
-		for _, item := range v {
-			if err := validateGeneratedJSONValue(
-				path,
-				schemaPath,
-				item,
-				allowed,
-				fieldTypes,
-				fieldDescriptions,
-				false,
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "id":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "ID",
 			); err != nil {
 				return err
 			}
-		}
-		return nil
-	case map[string]any:
-		allowedKeys, closed := allowed[schemaPath]
-		wildcardPath := "*"
-		if schemaPath != "" {
-			wildcardPath = schemaPath + ".*"
-		}
-		mapElements := !closed && hasGeneratedJSONPath(wildcardPath, allowed, fieldTypes)
-		keys := make([]string, 0, len(v))
-		for key := range v {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			if closed && !slices.Contains(allowedKeys, key) {
-				return unknownJSONFieldError(path, key, allowedKeys)
-			}
-			childPath := generatedJSONChildPath(path, key, mapElements)
-			childSchemaPath := key
-			if schemaPath != "" {
-				childSchemaPath = schemaPath + "." + key
-			}
-			if mapElements {
-				childSchemaPath = wildcardPath
-			}
-			if err := validateGeneratedJSONValue(
-				childPath,
-				childSchemaPath,
-				v[key],
-				allowed,
-				fieldTypes,
-				fieldDescriptions,
-				true,
-			); err != nil {
-				return err
-			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"id",
+			})
 		}
 	}
 	return nil
 }
 
-// generatedJSONChildPath keeps generated object fields in dotted form until an
-// open map introduces caller-chosen keys. From that point it uses JSON Pointer
-// so dots, slashes, and tildes in map keys remain unambiguous.
-func generatedJSONChildPath(path, key string, mapElement bool) string {
-	if mapElement || strings.HasPrefix(path, "/") {
+// validateStringJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateStringJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// generatedJSONChildPath keeps fixed object fields dotted. After an array index
+// or caller-defined map key, it uses slash-separated paths so later keys stay clear.
+func generatedJSONChildPath(path, key string, useSlashPath bool) string {
+	if useSlashPath || strings.HasPrefix(path, "/") {
 		if path != "" && !strings.HasPrefix(path, "/") {
 			path = dottedJSONPathPointer(path)
 		}
@@ -513,42 +417,6 @@ func generatedUnmarshalJSONType(value string) string {
 	default:
 		return ""
 	}
-}
-
-// generatedJSONTypesCompatible performs only the raw JSON category check.
-// Typed decoding remains responsible for integer syntax, ranges, and formats.
-func generatedJSONTypesCompatible(expected, actual string) bool {
-	if actual == "number" && (expected == "integer" || expected == "number") {
-		return true
-	}
-	return expected == actual
-}
-
-// hasGeneratedJSONPath reports whether code generation emitted metadata for a
-// field itself or for a closed object beneath it.
-func hasGeneratedJSONPath(
-	path string,
-	allowed map[string][]string,
-	fieldTypes map[string]string,
-) bool {
-	if _, ok := allowed[path]; ok {
-		return true
-	}
-	if _, ok := fieldTypes[path]; ok {
-		return true
-	}
-	prefix := path + "."
-	for candidate := range allowed {
-		if strings.HasPrefix(candidate, prefix) {
-			return true
-		}
-	}
-	for candidate := range fieldTypes {
-		if strings.HasPrefix(candidate, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 // invalidGeneratedFieldTypeError reports a raw JSON category that conflicts

@@ -1,7 +1,6 @@
 package framework
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -30,14 +29,17 @@ import (
 )
 
 const (
-	statusError = "error"
+	initializeMethod  = "initialize"
+	initializedMethod = "notifications/initialized"
+	statusError       = "error"
 )
 
 // Runner runs scenarios against the generated example server.
 type Runner struct {
-	server  *exec.Cmd
-	baseURL *url.URL
-	client  *http.Client
+	server          *exec.Cmd
+	baseURL         *url.URL
+	client          *http.Client
+	protocolVersion string
 
 	stdoutTail *ringBuffer
 	stderrTail *ringBuffer
@@ -56,9 +58,7 @@ type Scenario struct {
 
 // Defaults apply to steps when not explicitly set in a step.
 type Defaults struct {
-	Client     string            `yaml:"client"`      // e.g., "jsonrpc.mcp_assistant" (hint to pick generated client)
-	Headers    map[string]string `yaml:"headers"`     // default headers for all steps
-	ClientMode string            `yaml:"client_mode"` // http | cli (optional)
+	Headers map[string]string `yaml:"headers"`
 }
 
 // Pre controls scenario-level behavior (e.g., auto-initialize handshake).
@@ -68,15 +68,11 @@ type Pre struct {
 
 // Step defines a single operation invocation using a generated client.
 type Step struct {
-	Name         string            `yaml:"name"`
-	Client       string            `yaml:"client"`       // overrides defaults.client
-	Op           string            `yaml:"op"`           // generated endpoint method name, e.g., "ToolsCall"
-	Input        map[string]any    `yaml:"input"`        // maps to payload fields
-	Headers      map[string]string `yaml:"headers"`      // per-step headers (e.g., Accept)
-	Notification bool              `yaml:"notification"` // send as JSON-RPC notification (no id)
-	Expect       *Expect           `yaml:"expect"`
-	StreamExpect *StreamExpect     `yaml:"stream_expect"`
-	ExpectRetry  *ExpectRetry      `yaml:"expect_retry"` // generated client retry expectation
+	Name    string            `yaml:"name"`
+	Op      string            `yaml:"op"`
+	Input   map[string]any    `yaml:"input"`
+	Headers map[string]string `yaml:"headers"`
+	Expect  *Expect           `yaml:"expect"`
 }
 
 // ExpectedError captures expected JSON-RPC error.
@@ -87,28 +83,9 @@ type ExpectedError struct {
 
 // Expect describes non-streaming expectations.
 type Expect struct {
-	Status string         `yaml:"status"` // success | error | no_response
+	Status string         `yaml:"status"` // success | error
 	Error  *ExpectedError `yaml:"error"`
 	Result map[string]any `yaml:"result"`
-}
-
-// ExpectRetry describes retry expectations for generated client mode
-type ExpectRetry struct {
-	PromptContains string   `yaml:"prompt_contains"`
-	Contains       []string `yaml:"contains"`
-}
-
-// StreamExpect describes streaming expectations.
-type StreamExpect struct {
-	MinEvents int              `yaml:"min_events"`
-	TimeoutMS int              `yaml:"timeout_ms"`
-	Events    []StreamEventExp `yaml:"events"`
-}
-
-// StreamEventExp matches SSE event/data partially.
-type StreamEventExp struct {
-	Event string         `yaml:"event"`
-	Data  map[string]any `yaml:"data"`
 }
 
 // scenariosFile is the YAML root.
@@ -121,12 +98,6 @@ type ringBuffer struct {
 	mu  sync.Mutex
 	max int
 	buf []byte
-}
-
-// sseEvent represents a server-sent event.
-type sseEvent struct {
-	Event string
-	Data  map[string]any
 }
 
 const tailMaxBytes = 4096
@@ -176,11 +147,6 @@ func SupportsServer() bool {
 	if os.Getenv("TEST_SERVER_URL") != "" {
 		return true
 	}
-	return findExampleRoot() != ""
-}
-
-// SupportsCLI reports whether CLI-based scenarios can run.
-func SupportsCLI() bool {
 	return findExampleRoot() != ""
 }
 
@@ -248,21 +214,15 @@ func validateSubset(t *testing.T, actual map[string]any, expected map[string]any
 		case []any:
 			aarr, ok := vact.([]any)
 			require.Truef(t, ok, "key %q: expected array", k)
-			require.GreaterOrEqualf(
-				t,
-				len(aarr),
-				len(ev),
-				"key %q: expected at least %d items, got %d",
-				k,
-				len(ev),
-				len(aarr),
-			)
+			require.Len(t, aarr, len(ev), "key %q: array length mismatch", k)
 			for i := range ev {
 				if elemExp, ok := ev[i].(map[string]any); ok {
 					elemAct, ok := toMap(aarr[i])
 					require.Truef(t, ok, "key %q[%d]: expected object", k, i)
 					validateSubset(t, elemAct, elemExp)
+					continue
 				}
+				assert.Equalf(t, fmt.Sprintf("%v", ev[i]), fmt.Sprintf("%v", aarr[i]), "key %q[%d] mismatch", k, i)
 			}
 		default:
 			assert.Equalf(t, fmt.Sprintf("%v", vexp), fmt.Sprintf("%v", vact), "key %q mismatch", k)
@@ -320,11 +280,11 @@ func getFreePort() (string, error) {
 func methodFromOp(op string) string {
 	switch op {
 	case "Initialize":
-		return "initialize"
+		return initializeMethod
+	case "NotificationsInitialized":
+		return initializedMethod
 	case "Ping":
 		return "ping"
-	case "EventsStream":
-		return "events/stream"
 	case "ToolsList":
 		return "tools/list"
 	case "ToolsCall":
@@ -333,20 +293,10 @@ func methodFromOp(op string) string {
 		return "resources/list"
 	case "ResourcesRead":
 		return "resources/read"
-	case "ResourcesSubscribe":
-		return "resources/subscribe"
-	case "ResourcesUnsubscribe":
-		return "resources/unsubscribe"
 	case "PromptsList":
 		return "prompts/list"
 	case "PromptsGet":
 		return "prompts/get"
-	case "NotifyStatusUpdate":
-		return "notify_status_update"
-	case "Subscribe":
-		return "subscribe"
-	case "Unsubscribe":
-		return "unsubscribe"
 	default:
 		return op
 	}
@@ -371,35 +321,15 @@ func findExampleRoot() string {
 	return ""
 }
 
-// findServerCmdDir finds the server command directory.
+// findServerCmdDir returns the one server command owned by this fixture.
 func findServerCmdDir(exampleRoot string) (string, error) {
-	cmdRoot := filepath.Join(exampleRoot, "cmd")
-	entries, err := os.ReadDir(cmdRoot)
-	if err != nil {
-		return "", fmt.Errorf("read cmd root: %w", err)
-	}
-	var candidates []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		d := filepath.Join(cmdRoot, e.Name())
-		// Consider dirs that contain a main.go
-		if _, err := os.Stat(filepath.Join(d, "main.go")); err == nil {
-			candidates = append(candidates, d)
+	dir := filepath.Join(exampleRoot, "cmd", "orchestrator")
+	for _, name := range []string{"main.go", "http.go"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			return "", fmt.Errorf("fixture server command is missing %s: %w", name, err)
 		}
 	}
-	if len(candidates) == 0 {
-		return "", fmt.Errorf("no server cmd dirs found under %s", cmdRoot)
-	}
-	// Prefer one that also has http.go
-	for _, d := range candidates {
-		if _, err := os.Stat(filepath.Join(d, "http.go")); err == nil {
-			return d, nil
-		}
-	}
-	// Fallback to first
-	return candidates[0], nil
+	return dir, nil
 }
 
 // regenerateExample regenerates the example code.
@@ -435,14 +365,14 @@ func regenerateExample(t *testing.T, exampleRoot string) error {
 	if out, err := genCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("goa gen failed: %w\n%s", err, string(out))
 	}
-	// Remove top-level example stubs so goa example regenerates them with updated signatures
-	// Keep mcp_assistant.go to allow plugin-controlled adapter wiring in stub factory
-	_ = os.Remove(filepath.Join(exampleRoot, "assistant.go"))
-	_ = os.Remove(filepath.Join(exampleRoot, "streaming.go"))
-	_ = os.Remove(filepath.Join(exampleRoot, "websocket.go"))
-	_ = os.Remove(filepath.Join(exampleRoot, "grpcstream.go"))
-	_ = os.Remove(filepath.Join(exampleRoot, "mcp_assistant.go"))
-	// Run goa example (we rely on goa >= v3.22.2 for mixed JSON-RPC ServeHTTP).
+	// Rebuild the generated MCP adapter stub. The authored assistant fixture
+	// remains in place so its stable results continue to test the wire codecs.
+	for _, name := range []string{"mcp_assistant.go"} {
+		if err := os.Remove(filepath.Join(exampleRoot, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove generated example stub %s: %w", name, err)
+		}
+	}
+	// Run goa example.
 	exCmd := exec.CommandContext(
 		context.Background(),
 		"go",
@@ -456,8 +386,6 @@ func regenerateExample(t *testing.T, exampleRoot string) error {
 	if out, err := exCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("goa example failed: %w\n%s", err, string(out))
 	}
-	// Remove any adapter stub that may have been generated by templates not used in tests
-	_ = os.Remove(filepath.Join(exampleRoot, "mcp_assistant.go"))
 	// Tidy again after generation to pull any new deps from example scaffolding.
 	postTidy := exec.CommandContext(
 		context.Background(),
@@ -748,13 +676,13 @@ func (r *Runner) ping() error {
 
 // runSteps executes test steps.
 func (r *Runner) runSteps(t *testing.T, steps []Step, defaults *Defaults, pre *Pre) {
-	// Determine auto-init
+	t.Helper()
 	autoInit := false
 	if pre != nil && pre.AutoInitialize != nil {
 		autoInit = *pre.AutoInitialize
 	}
 	if autoInit {
-		_ = r.ensureInitialized()
+		require.NoError(t, r.ensureInitialized())
 	}
 
 	for _, st := range steps {
@@ -765,143 +693,16 @@ func (r *Runner) runSteps(t *testing.T, steps []Step, defaults *Defaults, pre *P
 		}
 		maps.Copy(headers, st.Headers)
 
-		// Resolve method name from op
 		method := methodFromOp(st.Op)
-
-		// Decide transport by Accept header or presence of stream expectations
-		accept := strings.ToLower(headers["Accept"])
-		isStream := accept == "text/event-stream" || st.StreamExpect != nil
-
-		if isStream {
-			r.runStepStreaming(t, st, headers, method)
-			continue
-		}
-
-		r.runStepNonStreaming(t, st, headers, method, defaults)
+		r.runStep(t, st, headers, method)
 	}
 }
 
-// runStepStreaming executes a streaming step and validates the response.
-func (r *Runner) runStepStreaming(t *testing.T, st Step, headers map[string]string, method string) {
-	resEvents, err := r.executeSSE(method, st.Input, headers, st.StreamExpect)
-	if st.Expect != nil && st.Expect.Status == statusError {
-		require.Error(t, err)
-		if st.Expect.Error != nil && st.Expect.Error.Code != 0 {
-			assert.Contains(t, err.Error(), strconv.Itoa(st.Expect.Error.Code))
-		}
-		if st.Expect.Error != nil && st.Expect.Error.Message != "" {
-			assert.Contains(t, err.Error(), st.Expect.Error.Message)
-		}
-		return
-	}
-	require.NoError(t, err)
-	if st.StreamExpect != nil {
-		if st.StreamExpect.MinEvents > 0 {
-			assert.GreaterOrEqual(t, len(resEvents), st.StreamExpect.MinEvents)
-		}
-		for i := range st.StreamExpect.Events {
-			if i >= len(resEvents) {
-				break
-			}
-			exp := st.StreamExpect.Events[i]
-			act := resEvents[i]
-			if exp.Event != "" {
-				assert.Equal(t, exp.Event, act.Event)
-			}
-			if exp.Data != nil {
-				validateSubset(t, act.Data, exp.Data)
-			}
-		}
-	}
-}
-
-// runStepNonStreaming executes a non-streaming step using either HTTP or CLI mode and validates the response.
-func (r *Runner) runStepNonStreaming(
-	t *testing.T,
-	st Step,
-	headers map[string]string,
-	method string,
-	defaults *Defaults,
-) {
+// runStep sends one JSON-RPC message over HTTP and validates its response.
+func (r *Runner) runStep(t *testing.T, st Step, headers map[string]string, method string) {
 	t.Helper()
-	notify := st.Notification || (st.Expect != nil && st.Expect.Status == "no_response")
-	clientMode := "http"
-	if defaults != nil && defaults.ClientMode != "" {
-		clientMode = strings.ToLower(defaults.ClientMode)
-	}
-
-	var (
-		result map[string]any
-		raw    []byte
-		err    error
-	)
-
-	if clientMode == "cli" {
-		if !SupportsCLI() {
-			t.Skip("CLI mode requires the generated example CLI; restore the example directory to run CLI scenarios")
-		}
-		svc := "assistant"
-		if defaults != nil && defaults.Client != "" {
-			parts := strings.Split(defaults.Client, ".")
-			last := parts[len(parts)-1]
-			last = strings.TrimPrefix(last, "mcp_")
-			if last != "" {
-				svc = last
-			}
-		}
-		subcmd := r.cliSubcommandFromOp(svc, st.Op)
-		exRoot := findExampleRoot()
-		require.NotEmpty(t, exRoot)
-		srvCmdPath, ferr := findServerCmdDir(exRoot)
-		require.NoError(t, ferr)
-		cliPath := filepath.Join(exRoot, "cmd", filepath.Base(srvCmdPath)+"-cli")
-		var bodyArg []string
-		if st.Input != nil && (subcmd == "analyze-text" ||
-			subcmd == "search-knowledge" ||
-			subcmd == "execute-code" ||
-			subcmd == "generate-prompts" ||
-			subcmd == "send-notification" ||
-			subcmd == "subscribe-to-updates" ||
-			subcmd == "process-batch") {
-			b, _ := json.Marshal(st.Input)
-			bodyArg = []string{"--body", string(b)}
-		}
-		cliArgs := []string{"run", "-C", cliPath, ".", "-url", r.baseURL.String(), svc, subcmd}
-		if len(bodyArg) > 0 {
-			cliArgs = append(cliArgs, bodyArg...)
-		}
-		cmd := exec.CommandContext(context.Background(), "go", cliArgs...) // #nosec G204
-		var out bytes.Buffer
-		var errb bytes.Buffer
-		cmd.Stdout = &out
-		cmd.Stderr = &errb
-		cerr := cmd.Run()
-		if st.ExpectRetry != nil {
-			require.Error(t, cerr)
-			if st.ExpectRetry.PromptContains != "" {
-				assert.Contains(t, errb.String(), st.ExpectRetry.PromptContains)
-			}
-			for _, s := range st.ExpectRetry.Contains {
-				assert.Contains(t, errb.String(), s)
-			}
-			return
-		}
-		if st.Expect != nil && st.Expect.Status == statusError {
-			require.Error(t, cerr, "cli stderr: %s", errb.String())
-			return
-		}
-		require.NoErrorf(t, cerr, "cli stderr: %s", errb.String())
-		var res map[string]any
-		_ = json.Unmarshal(out.Bytes(), &res)
-		result, raw = res, out.Bytes()
-	} else {
-		result, raw, err = r.executeJSONRPC(method, st.Input, headers, notify)
-	}
-
-	if st.Expect != nil && st.Expect.Status == "no_response" {
-		assert.Empty(t, raw)
-		return
-	}
+	notification := method == initializedMethod
+	result, err := r.executeJSONRPC(method, st.Input, headers, notification)
 	if st.Expect != nil && st.Expect.Status == statusError {
 		require.Error(t, err)
 		if st.Expect.Error != nil && st.Expect.Error.Code != 0 {
@@ -913,120 +714,76 @@ func (r *Runner) runStepNonStreaming(
 		return
 	}
 	require.NoError(t, err)
+	if method == initializeMethod {
+		version, ok := result["protocolVersion"].(string)
+		require.True(t, ok, "initialize response omitted protocolVersion")
+		r.protocolVersion = version
+	}
 	if st.Expect != nil && st.Expect.Result != nil {
 		validateSubset(t, result, st.Expect.Result)
 	}
 }
 
-// cliSubcommandFromOp maps an operation to the CLI subcommand for a given service.
-func (r *Runner) cliSubcommandFromOp(svc string, op string) string {
-	if svc == "assistant" {
-		switch op {
-		case "AnalyzeText":
-			return "analyze-text"
-		case "SearchKnowledge":
-			return "search-knowledge"
-		case "ExecuteCode":
-			return "execute-code"
-		case "ListDocuments":
-			return "list-documents"
-		case "GetSystemInfo":
-			return "get-system-info"
-		case "GeneratePrompts":
-			return "generate-prompts"
-		case "SendNotification":
-			return "send-notification"
-		case "SubscribeToUpdates":
-			return "subscribe-to-updates"
-		case "ProcessBatch":
-			return "process-batch"
-		}
-	}
-	return op
-}
-
-// ensureInitialized sends an initialize request.
+// ensureInitialized sends the request and notification that establish one MCP
+// session. The negotiated version is attached to the notification and every
+// later request.
 func (r *Runner) ensureInitialized() error {
 	payload := map[string]any{
 		"protocolVersion": "2025-06-18",
-		"capabilities":    map[string]any{"tools": true, "resources": true, "prompts": true},
+		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "runner", "version": "1.0.0"},
 	}
-	_, _, err := r.executeJSONRPC("initialize", payload, map[string]string{"Content-Type": "application/json"}, true)
+	result, err := r.executeJSONRPC(initializeMethod, payload, nil, false)
+	if err != nil {
+		return err
+	}
+	version, ok := result["protocolVersion"].(string)
+	if !ok {
+		return errors.New("initialize response omitted protocolVersion")
+	}
+	r.protocolVersion = version
+	_, err = r.executeJSONRPC(initializedMethod, nil, nil, true)
 	return err
 }
 
-// executeJSONRPC sends a JSON-RPC request and returns the result map, raw bytes, and error.
+// executeJSONRPC sends one JSON-RPC message and returns its decoded result.
 func (r *Runner) executeJSONRPC(
 	method string,
 	input map[string]any,
 	headers map[string]string,
 	notification bool,
-) (map[string]any, []byte, error) {
-	if input == nil {
-		input = map[string]any{}
+) (map[string]any, error) {
+	reqObj := map[string]any{"jsonrpc": "2.0", "method": method}
+	if input != nil {
+		reqObj["params"] = input
 	}
-	// For our JSON-RPC, payload is under "params"
-	reqObj := map[string]any{"jsonrpc": "2.0", "method": method, "params": input}
 	if !notification {
 		reqObj["id"] = 1
 	}
-	body, _ := json.Marshal(reqObj)
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, r.baseURL.String()+"/rpc", bytes.NewReader(body))
+	body, err := json.Marshal(reqObj)
+	if err != nil {
+		return nil, fmt.Errorf("encode MCP request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(
+		context.Background(),
+		http.MethodPost,
+		r.baseURL.String()+"/rpc",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("build MCP request: %w", err)
+	}
 	for k, v := range headers {
-		// Special-case env vars to allow tests to set process env for the example server
-		if strings.HasPrefix(k, "MCP_") {
-			_ = os.Setenv(k, v)
-			continue
-		}
 		req.Header.Set(k, v)
 	}
 	if req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	// #nosec G704 -- test runner issues requests to localhost (or a validated TEST_SERVER_URL)
-	resp, err := r.client.Do(req)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	raw, _ := io.ReadAll(resp.Body)
-	if len(raw) == 0 {
-		return nil, raw, nil
-	}
-	var env struct {
-		Result map[string]any `json:"result"`
-		Error  map[string]any `json:"error"`
-	}
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, raw, fmt.Errorf("invalid response JSON: %w", err)
-	}
-	if env.Error != nil {
-		code, _ := env.Error["code"].(float64)
-		msg, _ := env.Error["message"].(string)
-		return nil, raw, fmt.Errorf("MCP error %d: %s", int(code), msg)
-	}
-	return env.Result, raw, nil
-}
-
-// executeSSE sends a request expecting SSE and returns captured events.
-func (r *Runner) executeSSE(
-	method string,
-	input map[string]any,
-	headers map[string]string,
-	spec *StreamExpect,
-) ([]sseEvent, error) {
-	if input == nil {
-		input = map[string]any{}
-	}
-	reqObj := map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": input}
-	body, _ := json.Marshal(reqObj)
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, r.baseURL.String()+"/rpc", bytes.NewReader(body))
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
 	if req.Header.Get("Accept") == "" {
-		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("Accept", "application/json")
+	}
+	if r.protocolVersion != "" && method != initializeMethod {
+		req.Header.Set("MCP-Protocol-Version", r.protocolVersion)
 	}
 	// #nosec G704 -- test runner issues requests to localhost (or a validated TEST_SERVER_URL)
 	resp, err := r.client.Do(req)
@@ -1034,74 +791,33 @@ func (r *Runner) executeSSE(
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-
-	// Treat non-2xx as error, return body for diagnostics
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(raw))
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read MCP response: %w", err)
 	}
-	// Basic SSE content-type assertion
-	if ct := resp.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(strings.ToLower(ct), "text/event-stream") {
-		raw, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("unexpected content type: %s body: %s", ct, string(raw))
-	}
-
-	timeout := 10 * time.Second
-	if spec != nil && spec.TimeoutMS > 0 {
-		timeout = time.Duration(spec.TimeoutMS) * time.Millisecond
-	}
-	deadline := time.Now().Add(timeout)
-	reader := bufio.NewReader(resp.Body)
-	var events []sseEvent
-	var cur sseEvent
-	sawErrorEvent := false
-	var lastErrMsg string
-	var lastErrCode any
-	for time.Now().Before(deadline) {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return events, err
+	if notification {
+		if resp.StatusCode != http.StatusAccepted {
+			return nil, fmt.Errorf("MCP notification returned HTTP %d: %s", resp.StatusCode, string(raw))
 		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" { // event boundary
-			if cur.Event != "" || len(cur.Data) > 0 {
-				events = append(events, cur)
-				if cur.Event == "error" {
-					sawErrorEvent = true
-					if eobj, ok := cur.Data["error"].(map[string]any); ok {
-						lastErrCode = eobj["code"]
-						if msg, ok2 := eobj["message"].(string); ok2 {
-							lastErrMsg = msg
-						}
-					}
-				}
-				cur = sseEvent{}
-			}
-			if spec != nil && spec.MinEvents > 0 && len(events) >= spec.MinEvents {
-				break
-			}
-			continue
+		if len(raw) != 0 {
+			return nil, errors.New("MCP notification returned a response body")
 		}
-		if after, ok := strings.CutPrefix(line, "event:"); ok {
-			cur.Event = strings.TrimSpace(after)
-			continue
-		}
-		if after, ok := strings.CutPrefix(line, "data:"); ok {
-			data := after
-			var m map[string]any
-			_ = json.Unmarshal([]byte(data), &m)
-			if cur.Data == nil {
-				cur.Data = map[string]any{}
-			}
-			maps.Copy(cur.Data, m)
-			continue
-		}
+		return nil, nil
 	}
-	if spec == nil && sawErrorEvent {
-		return events, fmt.Errorf("MCP error %v: %s", lastErrCode, lastErrMsg)
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("MCP request returned HTTP %d without a response", resp.StatusCode)
 	}
-	return events, nil
+	var env struct {
+		Result map[string]any `json:"result"`
+		Error  map[string]any `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, fmt.Errorf("invalid response JSON: %w", err)
+	}
+	if env.Error != nil {
+		code, _ := env.Error["code"].(float64)
+		msg, _ := env.Error["message"].(string)
+		return nil, fmt.Errorf("MCP error %d: %s", int(code), msg)
+	}
+	return env.Result, nil
 }

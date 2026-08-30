@@ -25,6 +25,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
+	"goa.design/goa-ai/runtime/agent/storage"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -48,6 +50,7 @@ type (
 	// replayPublicationStore fails one append after retaining the successful
 	// prefix, then treats replayed event keys as idempotent duplicates.
 	replayPublicationStore struct {
+		storage.Store
 		mu        sync.Mutex
 		failCall  int
 		failed    bool
@@ -108,13 +111,15 @@ func TestPlanStartActivityWaitsForCanceledStreamReceiveCleanup(t *testing.T) {
 	cleanupRelease := make(chan struct{})
 	cleanupDone := make(chan struct{})
 	closeCalled := make(chan struct{})
+	streamFinished := make(chan error, 1)
 	pl := &stubPlanner{start: func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		client, ok := input.Agent.ModelClient("test")
 		require.True(t, ok)
 		stream, err := client.Stream(context.Background(), &model.Request{Model: "pending-stream"})
 		require.NoError(t, err)
 		go func() {
-			_, _ = stream.Recv()
+			_, recvErr := stream.Recv()
+			streamFinished <- stream.Finalize(recvErr)
 		}()
 		<-recvStarted
 		return finalPlannerResult("planner returned early"), nil
@@ -157,6 +162,7 @@ func TestPlanStartActivityWaitsForCanceledStreamReceiveCleanup(t *testing.T) {
 		planner.OutputContractOriginPlanner,
 		result.output.OutputContractFailure.Origin,
 	)
+	require.ErrorIs(t, <-streamFinished, context.Canceled)
 	<-closeCalled
 }
 
@@ -235,6 +241,7 @@ func TestPlanStartActivityRejectsOversizedResultBranches(t *testing.T) {
 	oversized := strings.Repeat("x", maxPlanActivityOutputBytes+1)
 	tests := []struct {
 		name   string
+		tool   tools.Ident
 		result *planner.PlanResult
 	}{
 		{
@@ -248,6 +255,7 @@ func TestPlanStartActivityRejectsOversizedResultBranches(t *testing.T) {
 		},
 		{
 			name: "final tool result",
+			tool: "service.tools.finish",
 			result: &planner.PlanResult{FinalToolResult: &planner.FinalToolResult{
 				Result: rawjson.Message(`"` + oversized + `"`),
 			}},
@@ -260,11 +268,14 @@ func TestPlanStartActivityRejectsOversizedResultBranches(t *testing.T) {
 					return test.result, nil
 				},
 			})
+			if test.tool != "" {
+				seedTestToolSpecs(rt, newAnyJSONSpec(test.tool))
+			}
 
 			output, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
 				AgentID:    "service.agent",
 				RunID:      "run-oversized-result",
-				RunContext: run.Context{RunID: "run-oversized-result"},
+				RunContext: run.Context{RunID: "run-oversized-result", Tool: test.tool},
 			})
 
 			requirePlannerOutputContractFailure(t, output, err)
@@ -477,7 +488,7 @@ func TestSuccessfulOutputReturnsExhaustedPublicationErrorWithoutReplanning(t *te
 		failCall: 1,
 		stored:   make(map[string]*runlog.Event),
 	}
-	rt.RunEventStore = store
+	rt.Store = store
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		runtime:     rt,
@@ -515,12 +526,12 @@ func TestNormalizePlanResultContractPreservesProviderIdentityInValidationProject
 	projected := plannerResultValidationProjection(result)
 	require.Equal(t, "provider-call-1", projected.ToolCalls[0].ModelToolCallID)
 	require.NotEqual(t, result.ToolCalls[0].ToolCallID, projected.ToolCalls[0].ModelToolCallID)
-	_, err := New().normalizePlanResultContract(result)
+	_, err := New(newTestStore()).normalizePlanResultContract(result, "")
 	require.NoError(t, err)
 }
 
 func TestInvalidPlannerActivityResultPublishesNoRecords(t *testing.T) {
-	toolSpec := newAnyJSONSpec("svc.tools.lookup", "svc.tools")
+	toolSpec := newAnyJSONSpec("svc.tools.lookup")
 	final := finalPlannerResult("done").FinalResponse
 	tests := []struct {
 		name   string
@@ -583,8 +594,8 @@ func TestInvalidPlannerActivityResultPublishesNoRecords(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store := &replayPublicationStore{stored: make(map[string]*runlog.Event)}
-			rt := New()
-			rt.RunEventStore = store
+			rt := New(newTestStore())
+			rt.Store = store
 			rt.Bus = noopHooks{}
 			seedTestToolSpecs(rt, toolSpec)
 			events := newPlannerEvents("service.agent", "run-invalid-result", "")
@@ -624,7 +635,7 @@ func TestInvalidPlannerActivityResultPublishesNoRecords(t *testing.T) {
 			var outputErr *planner.OutputContractError
 			require.ErrorAs(t, err, &outputErr)
 			require.Zero(t, store.storedCount())
-			require.Nil(t, wfCtx.lastHookCall.Input)
+			require.Nil(t, wfCtx.lastHookCall.Command)
 		})
 	}
 }
@@ -643,7 +654,7 @@ func TestOutputFailureReturnsExhaustedPublicationErrorWithoutReplanning(t *testi
 		failCall: 2,
 		stored:   make(map[string]*runlog.Event),
 	}
-	rt.RunEventStore = store
+	rt.Store = store
 	rt.Bus = noopHooks{}
 	rt.models["test"] = mustTestModelClient(stubModelClient{
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
@@ -692,11 +703,12 @@ func TestOutputFailurePublicationDoesNotMaskActivityErrorAfterCancellation(t *te
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &replayPublicationStore{
+		Store:     newTestStore(),
 		failCall:  1,
 		onFailure: cancel,
 		stored:    make(map[string]*runlog.Event),
 	}
-	rt.RunEventStore = store
+	rt.Store = store
 	rt.Bus = noopHooks{}
 	wfCtx := &testWorkflowContext{
 		ctx:         ctx,
@@ -733,12 +745,12 @@ func planActivityBudgetReasonFingerprint(t *testing.T) string {
 	return digest
 }
 
-// Append records every attempted identity, fails one configured call, and
+// AppendRunRecord records every attempted identity, fails one configured call, and
 // otherwise inserts each stable event key once.
-func (s *replayPublicationStore) Append(
+func (s *replayPublicationStore) AppendRunRecord(
 	_ context.Context,
 	event *runlog.Event,
-) (runlog.AppendResult, error) {
+) (storage.AppendResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.attempts = append(s.attempts, event.EventKey)
@@ -747,7 +759,7 @@ func (s *replayPublicationStore) Append(
 		if s.onFailure != nil {
 			s.onFailure()
 		}
-		return runlog.AppendResult{}, errors.New("record backend unavailable")
+		return storage.AppendResult{}, errors.New("record backend unavailable")
 	}
 	if stored, ok := s.stored[event.EventKey]; ok {
 		if stored.RunID != event.RunID ||
@@ -757,20 +769,15 @@ func (s *replayPublicationStore) Append(
 			stored.Type != event.Type ||
 			!stored.Timestamp.Equal(event.Timestamp) ||
 			!bytes.Equal(stored.Payload, event.Payload) {
-			return runlog.AppendResult{}, errors.New("duplicate event key changed immutable record")
+			return storage.AppendResult{}, errors.New("duplicate event key changed immutable record")
 		}
-		return runlog.AppendResult{ID: stored.ID, Inserted: false}, nil
+		return storage.AppendResult{ID: stored.ID, Inserted: false}, nil
 	}
 	cloned := *event
 	cloned.Payload = append(rawjson.Message(nil), event.Payload...)
 	cloned.ID = event.EventKey
 	s.stored[event.EventKey] = &cloned
-	return runlog.AppendResult{ID: cloned.ID, Inserted: true}, nil
-}
-
-// List is unused by publication tests.
-func (*replayPublicationStore) List(context.Context, string, string, int) (runlog.Page, error) {
-	return runlog.Page{}, nil
+	return storage.AppendResult{ID: cloned.ID, Inserted: true}, nil
 }
 
 // storedCount reports the number of unique durable identities.

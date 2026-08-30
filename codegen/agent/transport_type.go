@@ -13,10 +13,10 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// modelJSONTransportContext returns the Goa rendering context shared by
-// generated model JSON types, validators, and codecs. Pointer-backed union
-// fields preserve whether model-authored JSON omitted a field; packageName
-// qualifies references when codecs live outside the transport package.
+// modelJSONTransportContext returns the Goa rendering rules shared by generated
+// model JSON types, validators, and codecs. Pointers preserve missing fields and
+// null array elements until validation runs. The packageName argument qualifies
+// references when codecs live outside the transport package.
 func modelJSONTransportContext(
 	scope *goacodegen.NameScope,
 	pointer bool,
@@ -24,6 +24,7 @@ func modelJSONTransportContext(
 ) *goacodegen.AttributeContext {
 	ctx := goacodegen.NewAttributeContext(pointer, false, false, packageName, scope)
 	ctx.UnionPointer = true
+	ctx.ArrayElementPointer = true
 	return ctx
 }
 
@@ -38,13 +39,10 @@ func transportTypeDef(
 ) string {
 	switch actual := att.Type.(type) {
 	case goaexpr.Primitive:
-		if name, _ := goacodegen.GetMetaType(att); name != "" {
-			return name
-		}
-		return goacodegen.GoNativeTypeName(actual)
+		return scope.GoTypeName(att)
 	case *goaexpr.Array:
 		definition := transportTypeDef(scope, actual.ElemType, ctx)
-		if goaexpr.IsObject(actual.ElemType.Type) {
+		if goaexpr.IsObject(actual.ElemType.Type) || ctx.IsArrayElementPointer(actual) {
 			definition = "*" + definition
 		}
 		return "[]" + definition

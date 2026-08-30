@@ -10,7 +10,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -44,7 +43,7 @@ func TestExecuteToolActivityIsolatesExecutorMutation(t *testing.T) {
 			},
 		},
 	}
-	seedTestToolSpecs(rt, newAnyJSONSpec(toolName, toolset))
+	seedTestToolset(rt, toolset, newAnyJSONSpec(toolName))
 	input := &ToolInput{
 		RunID:            "run-1",
 		AgentID:          "svc.agent",
@@ -84,11 +83,11 @@ func TestInlineToolExecutionIsolatesExecutorMutation(t *testing.T) {
 	)
 	var executorResult *planner.ToolResult
 	rt := &Runtime{
-		Bus:           noopHooks{},
-		RunEventStore: runloginmem.New(),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
+		Bus:     noopHooks{},
+		Store:   newTestStore(),
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
 		toolsets: map[string]ToolsetRegistration{
 			toolset: {
 				Inline: true,
@@ -104,7 +103,7 @@ func TestInlineToolExecutionIsolatesExecutorMutation(t *testing.T) {
 			},
 		},
 	}
-	seedTestToolSpecs(rt, newAnyJSONSpec(toolName, toolset))
+	seedTestToolset(rt, toolset, newAnyJSONSpec(toolName))
 	canonical := ToolCall{
 		Name:                       toolName,
 		Payload:                    rawjson.Message(`{"query":"status"}`),

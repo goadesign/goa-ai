@@ -36,6 +36,9 @@ func (r *Runtime) validateToolSpecRegistrations(registrations ...toolSpecRegistr
 	}
 	for _, registration := range registrations {
 		for _, spec := range registration.specs {
+			if err := validateToolResultSpec(spec); err != nil {
+				return err
+			}
 			meta := canonicalToolMetadata(spec, registration.lookup)
 			if existing, ok := specs[spec.Name]; ok {
 				if !equivalentToolSpec(existing, spec) ||
@@ -51,6 +54,28 @@ func (r *Runtime) validateToolSpecRegistrations(registrations ...toolSpecRegistr
 			specs[spec.Name] = spec
 			metadata[spec.Name] = meta
 		}
+	}
+	return nil
+}
+
+// validateToolResultSpec requires either no result declaration or a complete
+// codec that can both save and restore the declared result.
+func validateToolResultSpec(spec tools.ToolSpec) error {
+	hasEncoder := spec.Result.Codec.ToJSON != nil
+	hasDecoder := spec.Result.Codec.FromJSON != nil
+	if hasEncoder != hasDecoder {
+		return fmt.Errorf(
+			"%w: tool %q result codec must define both ToJSON and FromJSON",
+			ErrInvalidConfig,
+			spec.Name,
+		)
+	}
+	if !hasEncoder && !reflect.DeepEqual(spec.Result, tools.TypeSpec{}) {
+		return fmt.Errorf(
+			"%w: tool %q result metadata requires a complete codec",
+			ErrInvalidConfig,
+			spec.Name,
+		)
 	}
 	return nil
 }
@@ -77,13 +102,6 @@ func toolSpecShape(spec tools.ToolSpec) tools.ToolSpec {
 		item.Type.Codec = tools.JSONCodec[any]{}
 	}
 	return spec
-}
-
-// cloneAgentRegistration takes ownership of mutable generated contract data.
-func cloneAgentRegistration(reg AgentRegistration) AgentRegistration {
-	reg.Specs = cloneToolSpecs(reg.Specs)
-	reg.RequiredLabels = append([]string(nil), reg.RequiredLabels...)
-	return reg
 }
 
 // cloneToolsetRegistration takes ownership of mutable specs, hint maps, and

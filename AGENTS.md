@@ -163,7 +163,9 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
     yourself.
 - Register agent-as-tool toolsets with `agenttools.NewRegistration(...)` and runtime-owned options. You may set per-tool or shared text/template content, but never both text and template for the same tool.
 - If no prompt override is provided, the runtime builds the default prompt from the optional system prompt plus the tool payload. Validate custom templates with `runtime.ValidateAgentToolTemplates`; templates compile with `missingkey=error`.
-- Agent-as-tool runs as child workflows by default via `ExecuteAgentChildWithRoute`. Do not schedule `ExecuteTool` activities for agent-as-tool.
+- Agent-as-tool runs as child workflows through `ExecuteAgentChild`. The child
+  route comes from its generated `AgentDefinition`. Do not schedule
+  `ExecuteTool` activities for agent-as-tool.
 - Provider agents run a worker on their workflow queue; consumers only register the toolset.
 - Nested agents always create real child runs. Correlate them through `ChildRunLinked` events and `ToolResult.RunLink`.
 - Stream visibility is controlled by `stream.StreamProfile` on the session-owned stream (`session/<session_id>`), with `run_stream_end` markers for per-run termination. If you need a flattened firehose, build a separate subscriber instead of changing the core runtime.

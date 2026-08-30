@@ -1,23 +1,22 @@
-# MCP Tools Test Scenarios (new shape)
-
 scenarios:
   - name: tools_list
-    defaults:
-      client: jsonrpc.mcp_assistant
     pre:
       auto_initialize: true
     steps:
       - name: list
         op: ToolsList
-        input: {}
         expect:
           status: success
           result:
-            tools: [ { name: "analyze_sentiment" }, { name: "extract_keywords" }, { name: "summarize_text" }, { name: "search" }, { name: "execute_code" }, { name: "process_batch" } ]
+            tools:
+              - { name: "analyze_sentiment" }
+              - { name: "extract_keywords" }
+              - { name: "summarize_text" }
+              - { name: "search" }
+              - { name: "execute_code" }
+              - { name: "process_batch" }
 
   - name: tools_list_schema
-    defaults:
-      client: jsonrpc.mcp_assistant
     pre:
       auto_initialize: true
     steps:
@@ -36,361 +35,132 @@ scenarios:
                     text:
                       type: string
                       description: "Input text to analyze"
+              - { name: "extract_keywords" }
+              - { name: "summarize_text" }
+              - { name: "search" }
+              - { name: "execute_code" }
+              - { name: "process_batch" }
 
-  - name: tool_analyze_sentiment
-    defaults:
-      client: jsonrpc.mcp_assistant
+  - name: tools_call_each_unary_method
     pre:
       auto_initialize: true
     steps:
-      - name: call
+      - name: analyze_sentiment
         op: ToolsCall
-        headers:
-          Accept: text/event-stream
         input:
           name: analyze_sentiment
-          arguments: { text: "I love this new feature! It works perfectly." }
-        stream_expect:
-          min_events: 1
-
-  - name: tool_extract_keywords
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call
+          arguments: { text: "The generated server works." }
+        expect:
+          status: success
+          result:
+            content: [ { type: text, text: '{"sentiment":"positive"}' } ]
+            structuredContent: { sentiment: positive }
+      - name: extract_keywords
         op: ToolsCall
-        headers:
-          Accept: text/event-stream
         input:
           name: extract_keywords
-          arguments: { text: "Machine learning algorithms process data to identify patterns." }
-        stream_expect:
-          min_events: 1
-
-  - name: tool_summarize_text
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call
+          arguments: { text: "MCP exposes typed tools." }
+        expect:
+          status: success
+          result:
+            content: [ { type: text, text: '{"keywords":["MCP","typed","tools"]}' } ]
+            structuredContent: { keywords: [MCP, typed, tools] }
+      - name: summarize_text
         op: ToolsCall
-        headers:
-          Accept: text/event-stream
         input:
           name: summarize_text
-          arguments: { text: "This is a long text that needs to be summarized." }
-        stream_expect:
-          min_events: 1
-
-  - name: tool_search_knowledge
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call
+          arguments: { text: "This text is summarized by the fixture." }
+        expect:
+          status: success
+          result:
+            content: [ { type: text, text: '{"summary":"The fixture returns a stable generated response."}' } ]
+            structuredContent: { summary: "The fixture returns a stable generated response." }
+      - name: search
         op: ToolsCall
-        headers:
-          Accept: text/event-stream
         input:
           name: search
           arguments: { query: "MCP protocol", limit: 5 }
-        stream_expect:
-          min_events: 1
-
-  - name: tool_search_knowledge_default_limit
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call
+        expect:
+          status: success
+          result:
+            content: [ { type: text, text: '{"results":["MCP protocol reference","Generated tool guide"]}' } ]
+            structuredContent: { results: ["MCP protocol reference", "Generated tool guide"] }
+      - name: execute_code
         op: ToolsCall
-        headers:
-          Accept: text/event-stream
-        input:
-          name: search
-          arguments: { query: "test query" }
-        stream_expect:
-          min_events: 1
-
-  - name: tool_execute_code_python
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call
-        op: ToolsCall
-        headers:
-          Accept: text/event-stream
         input:
           name: execute_code
           arguments: { language: python, code: "print(2 + 2)" }
-        stream_expect:
-          min_events: 1
-
-  - name: tool_execute_code_javascript
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call
+        expect:
+          status: success
+          result:
+            content: [ { type: text, text: '{"output":"4"}' } ]
+            structuredContent: { output: "4" }
+      - name: process_batch
         op: ToolsCall
-        headers:
-          Accept: text/event-stream
         input:
-          name: execute_code
-          arguments: { language: javascript, code: "console.log(Math.pow(2, 3))" }
-        stream_expect:
-          min_events: 1
+          name: process_batch
+          arguments: { items: ["first", "second"], format: json }
+        expect:
+          status: success
+          result:
+            content: [ { type: text, text: '{"ok":true}' } ]
+            structuredContent: { ok: true }
 
-  - name: tool_execute_code_invalid_language
-    defaults:
-      client: jsonrpc.mcp_assistant
+  - name: tools_list_rejects_cursor
+    pre:
+      auto_initialize: true
+    steps:
+      - name: list
+        op: ToolsList
+        input: { cursor: "next" }
+        expect:
+          status: error
+          error: { code: -32602 }
+
+  - name: tools_call_rejects_unknown_name
     pre:
       auto_initialize: true
     steps:
       - name: call
         op: ToolsCall
-        headers:
-          Accept: text/event-stream
-        input:
-          name: execute_code
-          arguments: { language: ruby, code: "puts 1" }
-        stream_expect:
-          min_events: 1
-          events:
-            - event: error
-              data:
-                error:
-                  code: -32602
+        input: { name: "unknown_tool", arguments: {} }
+        expect:
+          status: error
+          error: { code: -32602 }
 
-  - name: tool_call_invalid_name
-    defaults:
-      client: jsonrpc.mcp_assistant
+  - name: tools_call_rejects_missing_required_field
     pre:
       auto_initialize: true
     steps:
       - name: call
         op: ToolsCall
-        headers:
-          Accept: text/event-stream
-        input:
-          name: non_existent_tool
-          arguments: {}
-        stream_expect:
-          min_events: 1
-          events:
-            - event: error
-              data:
-                error: { code: -32602 }
+        input: { name: "analyze_sentiment", arguments: {} }
+        expect:
+          status: error
+          error: { code: -32602 }
 
-  - name: tool_call_missing_args
-    defaults:
-      client: jsonrpc.mcp_assistant
+  - name: tools_call_rejects_invalid_argument_type
     pre:
       auto_initialize: true
     steps:
       - name: call
         op: ToolsCall
-        headers:
-          Accept: text/event-stream
-        input:
-          name: analyze_sentiment
-          arguments: { text: "" }
-        stream_expect:
-          min_events: 1
-          events:
-            - event: error
-              data:
-                error:
-                  code: -32602
-                  message: "Missing required field: text"
-
-  - name: tool_call_invalid_arg_type
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call
-        op: ToolsCall
-        headers:
-          Accept: text/event-stream
         input:
           name: search
-          arguments: { query: "test", limit: "not a number" }
-        stream_expect:
-          min_events: 1
-          events:
-            - event: error
-              data:
-                error: { code: -32602 }
+          arguments: { query: "MCP", limit: "five" }
+        expect:
+          status: error
+          error: { code: -32602 }
 
-  - name: tool_call_invalid_enum
-    defaults:
-      client: jsonrpc.mcp_assistant
+  - name: tools_call_rejects_invalid_enum
     pre:
       auto_initialize: true
     steps:
       - name: call
         op: ToolsCall
-        headers:
-          Accept: text/event-stream
         input:
-          name: process_batch
-          arguments: { items: ["x"], format: invalid }
-        stream_expect:
-          min_events: 1
-          events:
-            - event: error
-              data:
-                error:
-                  code: -32602
-                  message: "Invalid value for format"
-
-  - name: tool_call_malformed_arguments
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call
-        op: ToolsCall
-        headers:
-          Accept: text/event-stream
-        input:
-          name: analyze_sentiment
-          arguments: "not-json-object"
-        stream_expect:
-          min_events: 1
-          events:
-            - event: error
-              data:
-                error: { code: -32602 }
-
-  - name: tool_process_batch_invalid_enum
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call
-        op: ToolsCall
-        headers:
-          Accept: text/event-stream
-        input:
-          name: process_batch
-          arguments: { items: ["x"], format: invalid }
-        stream_expect:
-          min_events: 1
-          events:
-            - event: error
-              data:
-                error:
-                  code: -32602
-                  message: "Invalid value for format"
-
-  - name: tool_process_batch_json
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call
-        op: ToolsCall
-        headers:
-          Accept: text/event-stream
-        input:
-          name: process_batch
-          arguments: { items: ["item1","item2","item3"] }
-        stream_expect:
-          min_events: 1
-
-  - name: tool_process_batch_stream_text
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call_stream_text
-        op: ToolsCall
-        headers:
-          Accept: text/event-stream
-        input:
-          name: process_batch
-          arguments: { items: ["item1","item2"], format: text }
-        stream_expect:
-          min_events: 1
-
-  - name: tool_process_batch_stream_blob
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call_stream_blob
-        op: ToolsCall
-        headers:
-          Accept: text/event-stream
-        input:
-          name: process_batch
-          arguments: { items: ["a","b"], format: blob, blob: "aGVsbG8=", mimeType: "text/plain" }
-        stream_expect:
-          min_events: 1
-
-  - name: tool_process_batch_stream_uri
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call_stream_uri
-        op: ToolsCall
-        headers:
-          Accept: text/event-stream
-        input:
-          name: process_batch
-          arguments: { items: ["x"], format: uri, uri: "system://info", mimeType: "application/json" }
-        stream_expect:
-          min_events: 1
-
-  - name: tool_analyze_sentiment_sse_on_non_streaming
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call_sse
-        op: ToolsCall
-        headers: { Accept: text/event-stream }
-        input:
-          name: analyze_sentiment
-          arguments: { text: "hello" }
-        stream_expect:
-          min_events: 1
-          events:
-            - event: response
-
-
-  - name: tool_process_batch_stream_error
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: call_stream_error
-        op: ToolsCall
-        headers:
-          Accept: text/event-stream
-        input:
-          name: non_existent_tool
-          arguments: {}
+          name: execute_code
+          arguments: { language: ruby, code: "puts 4" }
         expect:
           status: error
           error: { code: -32602 }

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"sync"
 
 	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 )
@@ -70,14 +69,6 @@ type (
 		finalizer      modelcall.Finalizer
 		finalizerIndex int
 		outcome        modelcall.Outcome
-	}
-
-	// contextStreamObserver lets Client close the exact validated stream when
-	// the prepared provider context is canceled. Middleware receives no stream
-	// capability and only observes safe stream facts.
-	contextStreamObserver struct {
-		done chan struct{}
-		once sync.Once
 	}
 )
 
@@ -219,7 +210,9 @@ func (c *validatedClient) Complete(ctx context.Context, req *Request) (*Response
 }
 
 // Stream owns one request before observer or provider work, closes any partial
-// stream returned with an error, and exposes only the validated stream.
+// stream returned with an error, and exposes only the validated stream. After
+// Stream succeeds, the caller receives through cancellation or completion and
+// then closes or finalizes the stream.
 func (c *validatedClient) Stream(ctx context.Context, req *Request) (*ValidatedStream, error) {
 	request, err := cloneRequest(req)
 	if err != nil {
@@ -404,27 +397,7 @@ func (c *validatedClient) observeClientStream(
 		return nil, lifecycle.finalize()
 	}
 	stream.registerClientCallLifecycle(lifecycle)
-	if ctx.Done() != nil {
-		lifecycle := &contextStreamObserver{done: make(chan struct{})}
-		observed, observeErr := stream.Observe(lifecycle)
-		if observeErr != nil {
-			stream.core.lifecycle.outcome.Framework = modelcall.Result{Called: true, Err: observeErr}
-			return nil, errors.Join(observeErr, stream.Close())
-		}
-		stream = observed
-		go closeStreamOnContext(ctx, stream, lifecycle.done)
-	}
 	return stream, nil
-}
-
-// closeStreamOnContext releases a stream whose prepared provider context was
-// canceled before its caller closed it. Normal stream closure stops the waiter.
-func closeStreamOnContext(ctx context.Context, stream *ValidatedStream, done <-chan struct{}) {
-	select {
-	case <-ctx.Done():
-		_ = stream.Close()
-	case <-done:
-	}
 }
 
 // newClientCallLifecycle finds the one internal runtime finalizer among the
@@ -554,19 +527,6 @@ func (o *clientCallStreamObserver) ObserveStreamClose(err error) error {
 		return nil
 	}
 	return o.observer.ObserveStreamClose(err)
-}
-
-// ObserveStreamRecv does not alter validated chunks.
-func (*contextStreamObserver) ObserveStreamRecv(StreamObservation) error {
-	return nil
-}
-
-// ObserveStreamClose stops the context cancellation waiter.
-func (o *contextStreamObserver) ObserveStreamClose(error) error {
-	o.once.Do(func() {
-		close(o.done)
-	})
-	return nil
 }
 
 // validatedClientCore checks the opaque client invariant before another public

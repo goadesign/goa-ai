@@ -5,12 +5,10 @@ package temporal
 // encoding, and rejects encoded payloads above the shared workflow byte limit.
 
 import (
-	"bytes"
 	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"reflect"
 
@@ -19,25 +17,14 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/engine/internal/boundary"
+	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 type (
-	// agentJSONPayloadConverter rejects planner values that must remain inside
-	// one process, then passes accepted values to Temporal's JSON converter.
-	//
-	// Temporal's default JSON converter decodes `any` fields as JSON-shaped values.
-	// Tool results and artifacts therefore cross workflow boundaries as validated
-	// JSON bytes (api.ToolEvent / api.ToolArtifact), not planner.ToolResult.
-	//
-	// This converter fails fast when code attempts to send planner.ToolResult
-	// across a Temporal boundary; callers must use api.ToolEvent.
-	agentJSONPayloadConverter struct {
-		*converter.JSONPayloadConverter
-	}
-
 	// boundedDataConverter limits the combined bytes for every workflow or
 	// activity argument list, including raw bytes and protobuf messages.
 	boundedDataConverter struct {
@@ -87,17 +74,8 @@ var (
 //   - Fails fast if planner.ToolResult crosses a Temporal boundary (use
 //     api.ToolEvent instead).
 func NewAgentDataConverter() converter.DataConverter {
-	base := converter.NewJSONPayloadConverter()
 	return &boundedDataConverter{
-		inner: converter.NewCompositeDataConverter(
-			converter.NewNilPayloadConverter(),
-			converter.NewByteSlicePayloadConverter(),
-			converter.NewProtoPayloadConverter(),
-			converter.NewProtoJSONPayloadConverter(),
-			&agentJSONPayloadConverter{
-				JSONPayloadConverter: base,
-			},
-		),
+		inner: startrecipe.NewDataConverter(),
 	}
 }
 
@@ -111,7 +89,7 @@ func (c *boundedDataConverter) ToPayload(value any) (*commonpb.Payload, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := validateTemporalPayloadBytes([]*commonpb.Payload{payload}); err != nil {
+	if err := boundary.ValidatePayloads(&commonpb.Payloads{Payloads: []*commonpb.Payload{payload}}); err != nil {
 		return nil, err
 	}
 	return payload, nil
@@ -119,7 +97,7 @@ func (c *boundedDataConverter) ToPayload(value any) (*commonpb.Payload, error) {
 
 // FromPayload rejects an oversized saved payload before decoding it.
 func (c *boundedDataConverter) FromPayload(payload *commonpb.Payload, valuePtr any) error {
-	if err := validateTemporalPayloadBytes([]*commonpb.Payload{payload}); err != nil {
+	if err := boundary.ValidatePayloads(&commonpb.Payloads{Payloads: []*commonpb.Payload{payload}}); err != nil {
 		return err
 	}
 	return c.inner.FromPayload(payload, valuePtr)
@@ -134,7 +112,7 @@ func (c *boundedDataConverter) ToPayloads(values ...any) (*commonpb.Payloads, er
 	if err != nil {
 		return nil, err
 	}
-	if err := validateTemporalPayloadBytes(payloads.GetPayloads()); err != nil {
+	if err := boundary.ValidatePayloads(payloads); err != nil {
 		return nil, err
 	}
 	return payloads, nil
@@ -142,7 +120,7 @@ func (c *boundedDataConverter) ToPayloads(values ...any) (*commonpb.Payloads, er
 
 // FromPayloads rejects oversized saved arguments before decoding them.
 func (c *boundedDataConverter) FromPayloads(payloads *commonpb.Payloads, valuePtrs ...any) error {
-	if err := validateTemporalPayloadBytes(payloads.GetPayloads()); err != nil {
+	if err := boundary.ValidatePayloads(payloads); err != nil {
 		return err
 	}
 	return c.inner.FromPayloads(payloads, valuePtrs...)
@@ -178,69 +156,6 @@ func preflightTemporalValues(values ...any) error {
 				return err
 			}
 		}
-	}
-	return nil
-}
-
-// validateTemporalPayloadBytes counts payload data and metadata without integer
-// overflow and applies one limit to their combined size.
-func validateTemporalPayloadBytes(payloads []*commonpb.Payload) error {
-	total := 0
-	for _, payload := range payloads {
-		if payload == nil {
-			continue
-		}
-		if err := addTemporalPayloadBytes(&total, len(payload.Data)); err != nil {
-			return err
-		}
-		for key, value := range payload.Metadata {
-			if err := addTemporalPayloadBytes(&total, len(key)); err != nil {
-				return err
-			}
-			if err := addTemporalPayloadBytes(&total, len(value)); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// addTemporalPayloadBytes adds one existing payload segment without allocating
-// a second list of segment sizes.
-func addTemporalPayloadBytes(total *int, size int) error {
-	if size > engine.MaxPayloadBytes-*total {
-		return fmt.Errorf(
-			"temporal: payloads exceed maximum aggregate size %d bytes",
-			engine.MaxPayloadBytes,
-		)
-	}
-	*total += size
-	return nil
-}
-
-// ToPayload rejects values that cannot safely cross a workflow boundary, then
-// delegates JSON encoding to Temporal.
-func (c *agentJSONPayloadConverter) ToPayload(value any) (*commonpb.Payload, error) {
-	if err := (&workflowJSONPreflight{}).walk(reflect.ValueOf(value), 0); err != nil {
-		return nil, err
-	}
-	return c.JSONPayloadConverter.ToPayload(value)
-}
-
-// FromPayload decodes one JSON payload without losing integer precision or
-// accepting unknown fields and trailing data.
-func (c *agentJSONPayloadConverter) FromPayload(payload *commonpb.Payload, valuePtr any) error {
-	if payload == nil {
-		return fmt.Errorf("temporal: payload is nil")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(payload.Data))
-	decoder.UseNumber()
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(valuePtr); err != nil {
-		return fmt.Errorf("temporal: decode canonical JSON payload: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("temporal: canonical JSON payload has trailing data")
 	}
 	return nil
 }

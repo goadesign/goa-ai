@@ -3,6 +3,7 @@ package prompt
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -123,6 +124,104 @@ func TestRegistryRenderReturnsScopedOverride(t *testing.T) {
 	expectedVersion := VersionFromTemplate("override {{ .Name }}")
 	if out.Ref.Version != expectedVersion {
 		t.Fatalf("unexpected override version: got %q want %q", out.Ref.Version, expectedVersion)
+	}
+}
+
+func TestRegistryRenderRecorderOwnsResolvedEvents(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry(nil)
+	if err := reg.Register(PromptSpec{
+		ID:       "example.agent.system",
+		AgentID:  "example.agent",
+		Role:     PromptRoleSystem,
+		Template: "hello",
+		Version:  "v1",
+	}); err != nil {
+		t.Fatalf("register spec: %v", err)
+	}
+	recorder := NewRenderRecorder()
+	scope := Scope{SessionID: "session", Labels: map[string]string{"site": "one"}}
+	_, err := reg.Render(WithRenderRecorder(context.Background(), recorder), "example.agent.system", scope, nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	scope.Labels["site"] = "changed"
+
+	events := recorder.Events()
+	if len(events) != 1 {
+		t.Fatalf("expected one render event, got %d", len(events))
+	}
+	if events[0].PromptID != "example.agent.system" || events[0].Version != "v1" {
+		t.Fatalf("unexpected render event: %#v", events[0])
+	}
+	if events[0].Scope.Labels["site"] != "one" {
+		t.Fatalf("recorder retained caller-owned labels: %#v", events[0].Scope.Labels)
+	}
+	events[0].Scope.Labels["site"] = "returned copy"
+	if recorder.Events()[0].Scope.Labels["site"] != "one" {
+		t.Fatal("Events returned the recorder's label map")
+	}
+}
+
+func TestRenderRecorderEventsHaveStableIdentityOrder(t *testing.T) {
+	t.Parallel()
+
+	recorder := NewRenderRecorder()
+	recorder.record(RenderEvent{
+		PromptID: "example.agent.user",
+		Version:  "v2",
+		Scope: Scope{
+			SessionID: "session",
+			Labels:    map[string]string{"site": "two"},
+		},
+	})
+	recorder.record(RenderEvent{
+		PromptID: "example.agent.system",
+		Version:  "v1",
+		Scope: Scope{
+			SessionID: "session",
+			Labels:    map[string]string{"site": "one"},
+		},
+	})
+	recorder.record(RenderEvent{
+		PromptID: "example.agent.system",
+		Version:  "v1",
+		Scope: Scope{
+			SessionID: "session",
+			Labels:    map[string]string{"site": "zero"},
+		},
+	})
+
+	events := recorder.Events()
+	want := []RenderEvent{
+		{
+			PromptID: "example.agent.system",
+			Version:  "v1",
+			Scope: Scope{
+				SessionID: "session",
+				Labels:    map[string]string{"site": "one"},
+			},
+		},
+		{
+			PromptID: "example.agent.system",
+			Version:  "v1",
+			Scope: Scope{
+				SessionID: "session",
+				Labels:    map[string]string{"site": "zero"},
+			},
+		},
+		{
+			PromptID: "example.agent.user",
+			Version:  "v2",
+			Scope: Scope{
+				SessionID: "session",
+				Labels:    map[string]string{"site": "two"},
+			},
+		},
+	}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("unexpected event order:\ngot:  %#v\nwant: %#v", events, want)
 	}
 }
 

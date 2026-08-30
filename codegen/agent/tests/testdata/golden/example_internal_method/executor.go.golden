@@ -7,21 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	scribe "goa.design/goa-ai/alpha/agents/scribe"
-	profilesspecs "goa.design/goa-ai/alpha/toolsets/profiles"
+	profilesspecs "goa.design/goa-ai/gen/alpha/toolsets/profiles"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
-
-// Register registers the method-backed toolset with the runtime using Execute.
-func Register(ctx context.Context, rt *runtime.Runtime) error {
-	if rt == nil {
-		return errors.New("runtime is required")
-	}
-	reg := scribe.NewScribeProfilesToolsetRegistration(runtime.ToolCallExecutorFunc(Execute))
-	return rt.RegisterToolset(reg)
-}
 
 // Execute checks one tool call against its generated argument contract. The
 // initial implementation returns the result example from the design;

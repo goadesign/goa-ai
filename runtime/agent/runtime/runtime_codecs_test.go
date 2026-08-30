@@ -33,7 +33,6 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 	}
 	spec := tools.ToolSpec{
 		Name:    tools.Ident("svc.ts.tool"),
-		Toolset: "svc.ts",
 		Payload: tools.TypeSpec{Name: "P", Codec: payloadCodec},
 		Result:  tools.TypeSpec{Name: "R", Codec: resultCodec},
 	}
@@ -52,7 +51,7 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 	}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{spec.Name: spec}
 
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: spec.Name, Payload: rawjson.Message([]byte(`{"server_data":"on"}`))}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: spec.Name, Payload: rawjson.Message([]byte(`{"server_data":"on"}`))}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -67,8 +66,7 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 func TestExecuteToolActivity_RejectsEmptyPayloadAtActivityBoundary(t *testing.T) {
 	var executed bool
 	spec := tools.ToolSpec{
-		Name:    tools.Ident("svc.ts.required"),
-		Toolset: "svc.ts",
+		Name: tools.Ident("svc.ts.required"),
 		Payload: tools.TypeSpec{
 			Name: "RequiredPayload",
 			Codec: tools.JSONCodec[any]{
@@ -98,9 +96,10 @@ func TestExecuteToolActivity_RejectsEmptyPayloadAtActivityBoundary(t *testing.T)
 	}
 
 	out, err := rt.ExecuteToolActivity(context.Background(), &ToolInput{
-		AgentID:  "agent",
-		RunID:    "run",
-		ToolName: spec.Name,
+		AgentID:     "agent",
+		RunID:       "run",
+		ToolsetName: "svc.ts",
+		ToolName:    spec.Name,
 	})
 
 	require.ErrorContains(t, err, "tool payload is invalid: payload is empty")

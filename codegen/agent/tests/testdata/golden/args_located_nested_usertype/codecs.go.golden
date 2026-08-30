@@ -11,12 +11,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	toolhttp "goa.design/goa-ai/alpha/toolsets/progress/http"
+	toolhttp "goa.design/goa-ai/gen/alpha/toolsets/progress/http"
 	types "goa.design/goa-ai/gen/types"
 	"goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 	"io"
-	"slices"
 	"sort"
 	"strings"
 )
@@ -45,22 +44,19 @@ var (
 	}
 )
 var setStepStatusPayloadFieldDescs = map[string]string{
-	"note":    "Optional note about progress.",
-	"status":  "New step status.",
-	"step_id": "Step identifier.",
+	"event":         "Status event to record.",
+	"event.note":    "Optional note about progress.",
+	"event.state":   "Selected step state.",
+	"event.status":  "New step status.",
+	"event.step_id": "Step identifier.",
 }
 var setStepStatusPayloadFieldJSONTypes = map[string]string{
-	"$payload": "object",
-	"note":     "string",
-	"status":   "string",
-	"step_id":  "string",
-}
-var setStepStatusPayloadFieldAllowedObjectKeys = map[string][]string{
-	"": {
-		"note",
-		"status",
-		"step_id",
-	},
+	"$payload":      "object",
+	"event":         "object",
+	"event.note":    "string",
+	"event.state":   "object",
+	"event.status":  "string",
+	"event.step_id": "string",
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -151,12 +147,8 @@ func MarshalSetStepStatusPayload(v *SetStepStatusPayload) ([]byte, error) {
 	in := v
 	_ = in
 	var out *toolhttp.SetStepStatusPayloadTransport
-	out = &toolhttp.SetStepStatusPayloadTransport{
-		StepID: &in.StepID,
-		Note:   in.Note,
-	}
-	status := toolhttp.StatusTransport(in.Status)
-	out.Status = &status
+	out = &toolhttp.SetStepStatusPayloadTransport{}
+	out.Event = encodeStatusChangedEventToStatusChangedEventTransport(in.Event)
 	return json.Marshal(out)
 }
 
@@ -166,11 +158,10 @@ func UnmarshalSetStepStatusPayload(data []byte) (*SetStepStatusPayload, error) {
 		return nil, fmt.Errorf("setStepStatusPayload JSON is empty")
 	}
 	var tv toolhttp.SetStepStatusPayloadTransport
-	if err := decodeKnownJSON(
-		data,
-		&tv,
-		setStepStatusPayloadFieldAllowedObjectKeys, setStepStatusPayloadFieldJSONTypes, setStepStatusPayloadFieldDescs,
-	); err != nil {
+	if err := validateSetStepStatusPayloadJSON(data); err != nil {
+		return nil, invalidSetStepStatusPayloadFieldTypeError(err)
+	}
+	if err := json.Unmarshal(data, &tv); err != nil {
 		return nil, invalidSetStepStatusPayloadFieldTypeError(err)
 	}
 	if err := toolhttp.ValidateSetStepStatusPayloadTransport(&tv); err != nil {
@@ -181,61 +172,14 @@ func UnmarshalSetStepStatusPayload(data []byte) (*SetStepStatusPayload, error) {
 	in := &tv
 	_ = in
 	var out *SetStepStatusPayload
-	out = &SetStepStatusPayload{
-		StepID: *in.StepID,
-		Status: types.Status(*in.Status),
-		Note:   in.Note,
-	}
+	out = &SetStepStatusPayload{}
+	out.Event = decodeStatusChangedEventTransportToStatusChangedEvent(in.Event)
 	return out, nil
 }
 
-// decodeStrictJSON decodes one JSON document and rejects null members and
-// object fields outside the generated transport contract.
-func decodeStrictJSON(
-	data []byte,
-	v any,
-	fieldTypes map[string]string,
-	fieldDescriptions map[string]string,
-) error {
-	if err := validateGeneratedJSON(data, nil, fieldTypes, fieldDescriptions); err != nil {
-		return err
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
-	}
-	return nil
-}
-
-// decodeKnownJSON decodes one JSON document after enforcing generated field
-// names and JSON categories. Open map fields remain open because their paths
-// are absent from the generated closed-object metadata.
-func decodeKnownJSON(
-	data []byte,
-	v any,
-	allowed map[string][]string,
-	fieldTypes map[string]string,
-	fieldDescriptions map[string]string,
-) error {
-	if err := validateGeneratedJSON(data, allowed, fieldTypes, fieldDescriptions); err != nil {
-		return err
-	}
-	return json.Unmarshal(data, v)
-}
-
-// validateGeneratedJSON checks raw JSON facts that Go's typed decoder cannot
-// preserve, including the difference between an absent optional member and an
-// explicit null.
-func validateGeneratedJSON(
-	data []byte,
-	allowed map[string][]string,
-	fieldTypes map[string]string,
-	fieldDescriptions map[string]string,
-) error {
+// validateSetStepStatusPayloadJSON parses one JSON document and checks the exact value
+// shapes known from this generated Goa type.
+func validateSetStepStatusPayloadJSON(data []byte) error {
 	var root any
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
@@ -245,104 +189,141 @@ func validateGeneratedJSON(
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return fmt.Errorf("multiple JSON documents")
 	}
-	return validateGeneratedJSONValue("", "", root, allowed, fieldTypes, fieldDescriptions, true)
+	return validateSetStepStatusPayloadJSONValue("", root, "")
 }
 
-// validateGeneratedJSONValue walks one decoded value using paths emitted by
-// code generation. path names the actual caller field for errors; schemaPath
-// uses "*" where a map accepts caller-chosen keys.
-func validateGeneratedJSONValue(
-	path string,
-	schemaPath string,
-	value any,
-	allowed map[string][]string,
-	fieldTypes map[string]string,
-	fieldDescriptions map[string]string,
-	validateType bool,
-) error {
+// validateSetStepStatusPayloadJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateSetStepStatusPayloadJSONValue(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
 	}
-	schemaField := schemaPath
-	if schemaField == "" {
-		schemaField = "$payload"
-	}
-	expected, hasExpectedType := fieldTypes[schemaField]
-	description := fieldDescriptions[schemaField]
 	if value == nil {
-		if hasExpectedType {
-			return invalidGeneratedFieldTypeError(field, expected, "null", description)
-		}
-		return nil
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	if validateType {
-		actual := decodedJSONType(value)
-		if hasExpectedType && !generatedJSONTypesCompatible(expected, actual) {
-			return invalidGeneratedFieldTypeError(field, expected, actual, description)
-		}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
 	}
-	switch v := value.(type) {
-	case []any:
-		for _, item := range v {
-			if err := validateGeneratedJSONValue(
-				path,
-				schemaPath,
-				item,
-				allowed,
-				fieldTypes,
-				fieldDescriptions,
-				false,
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "event":
+			if err := validateSetStepStatusPayloadStatusChangedEventTransportJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Status event to record.",
 			); err != nil {
 				return err
 			}
-		}
-		return nil
-	case map[string]any:
-		allowedKeys, closed := allowed[schemaPath]
-		wildcardPath := "*"
-		if schemaPath != "" {
-			wildcardPath = schemaPath + ".*"
-		}
-		mapElements := !closed && hasGeneratedJSONPath(wildcardPath, allowed, fieldTypes)
-		keys := make([]string, 0, len(v))
-		for key := range v {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
-			if closed && !slices.Contains(allowedKeys, key) {
-				return unknownJSONFieldError(path, key, allowedKeys)
-			}
-			childPath := generatedJSONChildPath(path, key, mapElements)
-			childSchemaPath := key
-			if schemaPath != "" {
-				childSchemaPath = schemaPath + "." + key
-			}
-			if mapElements {
-				childSchemaPath = wildcardPath
-			}
-			if err := validateGeneratedJSONValue(
-				childPath,
-				childSchemaPath,
-				v[key],
-				allowed,
-				fieldTypes,
-				fieldDescriptions,
-				true,
-			); err != nil {
-				return err
-			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"event",
+			})
 		}
 	}
 	return nil
 }
 
-// generatedJSONChildPath keeps generated object fields in dotted form until an
-// open map introduces caller-chosen keys. From that point it uses JSON Pointer
-// so dots, slashes, and tildes in map keys remain unambiguous.
-func generatedJSONChildPath(path, key string, mapElement bool) string {
-	if mapElement || strings.HasPrefix(path, "/") {
+// validateSetStepStatusPayloadStatusChangedEventTransportJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateSetStepStatusPayloadStatusChangedEventTransportJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "note":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Optional note about progress.",
+			); err != nil {
+				return err
+			}
+		case "state":
+			if err := validateObjectJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Selected step state.",
+			); err != nil {
+				return err
+			}
+		case "status":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "New step status.",
+			); err != nil {
+				return err
+			}
+		case "step_id":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Step identifier.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"note",
+				"state",
+				"status",
+				"step_id",
+			})
+		}
+	}
+	return nil
+}
+
+// validateStringJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateStringJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateObjectJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateObjectJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	_, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// generatedJSONChildPath keeps fixed object fields dotted. After an array index
+// or caller-defined map key, it uses slash-separated paths so later keys stay clear.
+func generatedJSONChildPath(path, key string, useSlashPath bool) string {
+	if useSlashPath || strings.HasPrefix(path, "/") {
 		if path != "" && !strings.HasPrefix(path, "/") {
 			path = dottedJSONPathPointer(path)
 		}
@@ -405,42 +386,6 @@ func generatedUnmarshalJSONType(value string) string {
 	}
 }
 
-// generatedJSONTypesCompatible performs only the raw JSON category check.
-// Typed decoding remains responsible for integer syntax, ranges, and formats.
-func generatedJSONTypesCompatible(expected, actual string) bool {
-	if actual == "number" && (expected == "integer" || expected == "number") {
-		return true
-	}
-	return expected == actual
-}
-
-// hasGeneratedJSONPath reports whether code generation emitted metadata for a
-// field itself or for a closed object beneath it.
-func hasGeneratedJSONPath(
-	path string,
-	allowed map[string][]string,
-	fieldTypes map[string]string,
-) bool {
-	if _, ok := allowed[path]; ok {
-		return true
-	}
-	if _, ok := fieldTypes[path]; ok {
-		return true
-	}
-	prefix := path + "."
-	for candidate := range allowed {
-		if strings.HasPrefix(candidate, prefix) {
-			return true
-		}
-	}
-	for candidate := range fieldTypes {
-		if strings.HasPrefix(candidate, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
 // invalidGeneratedFieldTypeError reports a raw JSON category that conflicts
 // with the generated schema and attaches that schema path's description.
 func invalidGeneratedFieldTypeError(field, expected, actual, description string) error {
@@ -475,4 +420,105 @@ func unknownJSONFieldError(path, field string, allowed []string) error {
 		},
 		nil,
 	)
+}
+
+// Helper transform functions
+func decodeStatusChangedEventTransportToStatusChangedEvent(v *toolhttp.StatusChangedEventTransport) *types.StatusChangedEvent {
+	res := &types.StatusChangedEvent{
+		StepID: *v.StepID,
+		Status: types.Status(*v.Status),
+		Note:   v.Note,
+	}
+	switch string(v.State.Kind()) {
+	case "active":
+		actual, _ := v.State.AsActive()
+		var obj *types.ActiveStatus
+		if actual != nil {
+			obj = decodeActiveStatusTransportToActiveStatus(actual)
+		}
+		u := res.State
+		u.SetActive((*types.ActiveStatus)(obj))
+		res.State = u
+	case "inactive":
+		actual, _ := v.State.AsInactive()
+		var obj *types.InactiveStatus
+		if actual != nil {
+			obj = decodeInactiveStatusTransportToInactiveStatus(actual)
+		}
+		u := res.State
+		u.SetInactive((*types.InactiveStatus)(obj))
+		res.State = u
+	case "since":
+		actual, _ := v.State.AsSince()
+		obj := types.StepStateBranchSince(actual)
+
+		u := res.State
+		u.SetSince((types.StepStateBranchSince)(obj))
+		res.State = u
+	}
+
+	return res
+}
+func decodeActiveStatusTransportToActiveStatus(v *toolhttp.ActiveStatusTransport) *types.ActiveStatus {
+	res := &types.ActiveStatus{
+		Status: types.Status(*v.Status),
+	}
+
+	return res
+}
+func decodeInactiveStatusTransportToInactiveStatus(v *toolhttp.InactiveStatusTransport) *types.InactiveStatus {
+	res := &types.InactiveStatus{}
+
+	return res
+}
+func encodeStatusChangedEventToStatusChangedEventTransport(v *types.StatusChangedEvent) *toolhttp.StatusChangedEventTransport {
+	res := &toolhttp.StatusChangedEventTransport{
+		StepID: &v.StepID,
+		Note:   v.Note,
+	}
+	status := toolhttp.StatusTransport(v.Status)
+	res.Status = &status
+	var stateValue toolhttp.StepState
+	switch string(v.State.Kind()) {
+	case "active":
+		actual, _ := v.State.AsActive()
+		var obj *toolhttp.ActiveStatusTransport
+		if actual != nil {
+			obj = encodeActiveStatusToActiveStatusTransport(actual)
+		}
+		u := stateValue
+		u.SetActive((*toolhttp.ActiveStatusTransport)(obj))
+		stateValue = u
+	case "inactive":
+		actual, _ := v.State.AsInactive()
+		var obj *toolhttp.InactiveStatusTransport
+		if actual != nil {
+			obj = encodeInactiveStatusToInactiveStatusTransport(actual)
+		}
+		u := stateValue
+		u.SetInactive((*toolhttp.InactiveStatusTransport)(obj))
+		stateValue = u
+	case "since":
+		actual, _ := v.State.AsSince()
+		obj := toolhttp.StepStateSinceTransport(actual)
+
+		u := stateValue
+		u.SetSince((toolhttp.StepStateSinceTransport)(obj))
+		stateValue = u
+	}
+	res.State = &stateValue
+
+	return res
+}
+func encodeActiveStatusToActiveStatusTransport(v *types.ActiveStatus) *toolhttp.ActiveStatusTransport {
+	res := &toolhttp.ActiveStatusTransport{}
+	status := toolhttp.StatusTransport(v.Status)
+	res.Status = &status
+
+	return res
+}
+func encodeInactiveStatusToInactiveStatusTransport(v *types.InactiveStatus) *toolhttp.InactiveStatusTransport {
+	res := &toolhttp.InactiveStatusTransport{}
+
+	return res
 }

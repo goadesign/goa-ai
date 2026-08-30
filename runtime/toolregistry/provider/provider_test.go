@@ -24,6 +24,7 @@ import (
 type blockingHandler struct {
 	started  chan struct{}
 	unblock  chan struct{}
+	canceled chan struct{}
 	deadline chan time.Time
 	callSeen atomic.Bool
 }
@@ -69,7 +70,16 @@ func (h *blockingHandler) HandleToolCall(ctx context.Context, msg toolregistry.T
 		deadline, _ := ctx.Deadline()
 		h.deadline <- deadline
 	}
-	<-h.unblock
+	if h.canceled == nil {
+		<-h.unblock
+	} else {
+		select {
+		case <-ctx.Done():
+			close(h.canceled)
+			<-h.unblock
+		case <-h.unblock:
+		}
+	}
 	return toolregistry.NewToolResultMessage(msg.RegistrationToken, msg.ToolUseID, json.RawMessage(`{"ok":true}`)), nil
 }
 
@@ -422,7 +432,11 @@ func TestServeShutdownPublishesThenAcknowledgesBeforeRelease(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	events := make(chan *streaming.Event, 1)
-	handler := &blockingHandler{started: make(chan struct{}), unblock: make(chan struct{})}
+	handler := &blockingHandler{
+		started:  make(chan struct{}),
+		unblock:  make(chan struct{}),
+		canceled: make(chan struct{}),
+	}
 	resultPublished := make(chan struct{})
 	allowAck := make(chan struct{})
 	released := make(chan struct{})

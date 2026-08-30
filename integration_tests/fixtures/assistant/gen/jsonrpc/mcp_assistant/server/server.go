@@ -9,18 +9,44 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
 	goahttp "goa.design/goa/v3/http"
 	"goa.design/goa/v3/jsonrpc"
 	goa "goa.design/goa/v3/pkg"
 )
+
+type (
+	// noOutputResponseWriter accepts notification output without storing or
+	// sending it.
+	noOutputResponseWriter struct {
+		header http.Header
+	}
+)
+
+// Header returns the private headers written while a notification is encoded.
+func (w *noOutputResponseWriter) Header() http.Header {
+	return w.header
+}
+
+// Write accepts notification bytes without storing or sending them.
+func (w *noOutputResponseWriter) Write(data []byte) (int, error) {
+	return len(data), nil
+}
+
+// WriteHeader accepts a notification status without sending it.
+func (w *noOutputResponseWriter) WriteHeader(int) {
+}
+
+// Flush completes successfully because notification bytes are not sent.
+func (w *noOutputResponseWriter) Flush() {
+}
 
 // Server handles JSON-RPC requests for the mcp_assistant service.
 type Server struct {
@@ -30,6 +56,9 @@ type Server struct {
 
 	// Initialize is the handler for the initialize method.
 	Initialize func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
+	// NotificationsInitialized is the handler for the notifications/initialized
+	// method.
+	NotificationsInitialized func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// Ping is the handler for the ping method.
 	Ping func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// ToolsList is the handler for the tools/list method.
@@ -40,18 +69,10 @@ type Server struct {
 	ResourcesList func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// ResourcesRead is the handler for the resources/read method.
 	ResourcesRead func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	// ResourcesSubscribe is the handler for the resources/subscribe method.
-	ResourcesSubscribe func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	// ResourcesUnsubscribe is the handler for the resources/unsubscribe method.
-	ResourcesUnsubscribe func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// PromptsList is the handler for the prompts/list method.
 	PromptsList func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// PromptsGet is the handler for the prompts/get method.
 	PromptsGet func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	// NotifyStatusUpdate is the handler for the notify_status_update method.
-	NotifyStatusUpdate func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	// EventsStream is the handler for the events/stream method.
-	EventsStream func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 
 	decoder    func(*http.Request) goahttp.Decoder
 	encoder    func(context.Context, http.ResponseWriter) goahttp.Encoder
@@ -70,42 +91,43 @@ func New(
 	s := &Server{
 		Methods: []string{
 			"initialize",
+			"notifications/initialized",
 			"ping",
 			"tools/list",
 			"tools/call",
 			"resources/list",
 			"resources/read",
-			"resources/subscribe",
-			"resources/unsubscribe",
 			"prompts/list",
 			"prompts/get",
-			"notify_status_update",
-			"events/stream",
 		},
-		Initialize:           NewInitializeHandler(endpoints.Initialize, mux, decoder, encoder, errhandler),
-		Ping:                 NewPingHandler(endpoints.Ping, mux, decoder, encoder, errhandler),
-		ToolsList:            NewToolsListHandler(endpoints.ToolsList, mux, decoder, encoder, errhandler),
-		ToolsCall:            NewToolsCallHandler(endpoints.ToolsCall, mux, decoder, encoder, errhandler),
-		ResourcesList:        NewResourcesListHandler(endpoints.ResourcesList, mux, decoder, encoder, errhandler),
-		ResourcesRead:        NewResourcesReadHandler(endpoints.ResourcesRead, mux, decoder, encoder, errhandler),
-		ResourcesSubscribe:   NewResourcesSubscribeHandler(endpoints.ResourcesSubscribe, mux, decoder, encoder, errhandler),
-		ResourcesUnsubscribe: NewResourcesUnsubscribeHandler(endpoints.ResourcesUnsubscribe, mux, decoder, encoder, errhandler),
-		PromptsList:          NewPromptsListHandler(endpoints.PromptsList, mux, decoder, encoder, errhandler),
-		PromptsGet:           NewPromptsGetHandler(endpoints.PromptsGet, mux, decoder, encoder, errhandler),
-		NotifyStatusUpdate:   NewNotifyStatusUpdateHandler(endpoints.NotifyStatusUpdate, mux, decoder, encoder, errhandler),
-		EventsStream:         NewEventsStreamHandler(endpoints.EventsStream, mux, decoder, encoder, errhandler),
-		decoder:              decoder,
-		encoder:              encoder,
-		errhandler:           errhandler,
+		Initialize:               NewInitializeHandler(endpoints.Initialize, mux, decoder, encoder, errhandler),
+		NotificationsInitialized: NewNotificationsInitializedHandler(endpoints.NotificationsInitialized, mux, decoder, encoder, errhandler),
+		Ping:                     NewPingHandler(endpoints.Ping, mux, decoder, encoder, errhandler),
+		ToolsList:                NewToolsListHandler(endpoints.ToolsList, mux, decoder, encoder, errhandler),
+		ToolsCall:                NewToolsCallHandler(endpoints.ToolsCall, mux, decoder, encoder, errhandler),
+		ResourcesList:            NewResourcesListHandler(endpoints.ResourcesList, mux, decoder, encoder, errhandler),
+		ResourcesRead:            NewResourcesReadHandler(endpoints.ResourcesRead, mux, decoder, encoder, errhandler),
+		PromptsList:              NewPromptsListHandler(endpoints.PromptsList, mux, decoder, encoder, errhandler),
+		PromptsGet:               NewPromptsGetHandler(endpoints.PromptsGet, mux, decoder, encoder, errhandler),
+		decoder:                  decoder,
+		encoder:                  encoder,
+		errhandler:               errhandler,
 	}
-	// Default HTTP handler per transport kind
-	// Plain HTTP JSON-RPC
+	// Install the request handler required by this service's methods.
+	// ServeHTTP handles ordinary JSON-RPC request bodies.
 	s.Handler = http.HandlerFunc(s.ServeHTTP)
 	return s
 }
 
 // Service returns the name of the service served.
 func (s *Server) Service() string { return "mcp_assistant" }
+
+// reportRejectedNotification reports a notification sent to a request-only
+// method without allowing the error handler to write a response.
+func (s *Server) reportRejectedNotification(ctx context.Context, req *jsonrpc.RawRequest) {
+	outputWriter := &noOutputResponseWriter{header: make(http.Header)}
+	s.errhandler(ctx, outputWriter, fmt.Errorf("JSON-RPC notification cannot call request method %q", req.Method))
+}
 
 // Use wraps the server handlers with the given middleware.
 func (s *Server) Use(m func(http.Handler) http.Handler) {
@@ -115,46 +137,47 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 // MethodNames returns the methods served.
 func (s *Server) MethodNames() []string { return mcpassistant.MethodNames[:] }
 
-// ServeHTTP handles JSON-RPC requests with content negotiation for mixed HTTP/SSE transports.
+// ServeHTTP handles JSON-RPC requests.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Check Accept header for SSE
-	accept := r.Header.Get("Accept")
-	if strings.Contains(accept, "text/event-stream") {
-		// Route to SSE handler for streaming methods
-		s.handleSSE(w, r)
-		return
-	}
-
-	// Otherwise handle as regular JSON-RPC HTTP request
 	s.handleHTTP(w, r)
 }
 
-// handleHTTP handles JSON-RPC requests.
+// handleHTTP reads one JSON-RPC request object or one array of requests.
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	// Peek at the first byte to determine request type
-	bufReader := bufio.NewReader(r.Body)
-	peek, err := bufReader.Peek(1)
-	if err != nil && err != io.EOF {
-		r.Body.Close()
-		s.errhandler(r.Context(), w, fmt.Errorf("failed to read request body: %w", err))
-		return
+	originalBody := r.Body
+
+	// Find the first JSON byte so leading whitespace does not change whether the
+	// body is decoded as one request or an array.
+	bufReader := bufio.NewReader(originalBody)
+	var peek []byte
+	for {
+		var err error
+		peek, err = bufReader.Peek(1)
+		if err != nil && err != io.EOF {
+			closeErr := originalBody.Close()
+			s.errhandler(r.Context(), w, fmt.Errorf("failed to read request body: %w", errors.Join(err, closeErr)))
+			return
+		}
+		if len(peek) == 0 || (peek[0] != ' ' && peek[0] != '\t' && peek[0] != '\n' && peek[0] != '\r') {
+			break
+		}
+		if _, err := bufReader.Discard(1); err != nil {
+			closeErr := originalBody.Close()
+			s.errhandler(r.Context(), w, fmt.Errorf("failed to read request body: %w", errors.Join(err, closeErr)))
+			return
+		}
 	}
 
-	// Wrap the buffered reader with the original closer
-	r.Body = struct {
-		io.Reader
-		io.Closer
-	}{
-		Reader: bufReader,
-		Closer: r.Body,
-	}
-	defer func(r *http.Request) {
-		if err := r.Body.Close(); err != nil {
+	// The generated handler owns the original body. Decoders receive a wrapper
+	// whose Close method cannot close it a second time.
+	r.Body = io.NopCloser(bufReader)
+	defer func() {
+		if err := originalBody.Close(); err != nil {
 			s.errhandler(r.Context(), w, fmt.Errorf("failed to close request body: %w", err))
 		}
-	}(r)
+	}()
 
-	// Route to appropriate handler
+	// A leading '[' starts an array of requests.
 	if len(peek) > 0 && peek[0] == '[' {
 		s.handleBatch(w, r)
 		return
@@ -162,11 +185,11 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handleSingle(w, r)
 }
 
-// handleSingle handles a single JSON-RPC request.
+// handleSingle decodes and runs one JSON-RPC request.
 func (s *Server) handleSingle(w http.ResponseWriter, r *http.Request) {
 	var req jsonrpc.RawRequest
 	if err := s.decoder(r).Decode(&req); err != nil {
-		// JSON-RPC parse error with null id and generic message
+		// A request that cannot be decoded receives the JSON-RPC parse error.
 		response := jsonrpc.MakeErrorResponse(nil, jsonrpc.ParseError, "Parse error", nil)
 		if encErr := s.encoder(r.Context(), w).Encode(response); encErr != nil {
 			s.errhandler(r.Context(), w, fmt.Errorf("failed to encode parse error response: %w", encErr))
@@ -176,100 +199,169 @@ func (s *Server) handleSingle(w http.ResponseWriter, r *http.Request) {
 	s.processRequest(r.Context(), r, &req, w)
 }
 
-// handleBatch handles a batch of JSON-RPC requests.
+// handleBatch handles an array of JSON-RPC values and writes the required responses.
 func (s *Server) handleBatch(w http.ResponseWriter, r *http.Request) {
 	var reqs []jsonrpc.RawRequest
 	if err := s.decoder(r).Decode(&reqs); err != nil {
-		// JSON-RPC parse error for batch with null id and generic message
+		// An array that cannot be decoded receives the JSON-RPC parse error.
 		response := jsonrpc.MakeErrorResponse(nil, jsonrpc.ParseError, "Parse error", nil)
 		if encErr := s.encoder(r.Context(), w).Encode(response); encErr != nil {
 			s.errhandler(r.Context(), w, fmt.Errorf("failed to encode parse error response: %w", encErr))
 		}
 		return
 	}
+	if len(reqs) == 0 {
+		// JSON-RPC defines an empty request array as one invalid request.
+		response := jsonrpc.MakeErrorResponse(nil, jsonrpc.InvalidRequest, "Invalid request", nil)
+		if err := s.encoder(r.Context(), w).Encode(response); err != nil {
+			s.errhandler(r.Context(), w, fmt.Errorf("failed to encode invalid request response: %w", err))
+		}
+		return
+	}
 
-	// Write responses
+	// Write every response into one JSON array.
 	w.Header().Set("Content-Type", "application/json")
 	writer := &batchWriter{Writer: w}
 
 	for _, req := range reqs {
-		// Process the request with batch writer
+		// The writer inserts the array separators around each response.
 		s.processRequest(r.Context(), r, &req, writer)
 	}
 
-	// Close the batch array
+	// Write the closing bracket only when at least one request produced a response.
 	if writer.written {
-		writer.Writer.Write([]byte{']'})
+		if _, err := writer.Writer.Write([]byte{']'}); err != nil {
+			s.errhandler(r.Context(), w, fmt.Errorf("failed to close JSON-RPC batch response: %w", err))
+		}
 	}
 }
 
-// ProcessRequest processes a single JSON-RPC request.
+// processRequest validates the JSON-RPC version and method, then calls the matching handler.
 func (s *Server) processRequest(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) {
-	if req.JSONRPC != "2.0" {
+	if req.Invalid || req.JSONRPC != "2.0" {
 		s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
 		return
 	}
 
-	if req.Method == "" {
+	if !req.HasMethod {
 		s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Missing method field", nil)
 		return
 	}
 
 	switch req.Method {
 	case "initialize":
+		if !req.HasID {
+			s.reportRejectedNotification(ctx, req)
+			return
+		}
+		if req.ID == nil {
+			s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
+			return
+		}
 		if err := s.Initialize(ctx, r, req, w); err != nil {
 			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "initialize", err))
 		}
+	case "notifications/initialized":
+		if req.HasID {
+			s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
+			return
+		}
+		if err := s.NotificationsInitialized(ctx, r, req, w); err != nil {
+			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "notifications/initialized", err))
+		}
 	case "ping":
+		if !req.HasID {
+			s.reportRejectedNotification(ctx, req)
+			return
+		}
+		if req.ID == nil {
+			s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
+			return
+		}
 		if err := s.Ping(ctx, r, req, w); err != nil {
 			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "ping", err))
 		}
 	case "tools/list":
+		if !req.HasID {
+			s.reportRejectedNotification(ctx, req)
+			return
+		}
+		if req.ID == nil {
+			s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
+			return
+		}
 		if err := s.ToolsList(ctx, r, req, w); err != nil {
 			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "tools/list", err))
 		}
 	case "tools/call":
+		if !req.HasID {
+			s.reportRejectedNotification(ctx, req)
+			return
+		}
+		if req.ID == nil {
+			s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
+			return
+		}
 		if err := s.ToolsCall(ctx, r, req, w); err != nil {
 			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "tools/call", err))
 		}
 	case "resources/list":
+		if !req.HasID {
+			s.reportRejectedNotification(ctx, req)
+			return
+		}
+		if req.ID == nil {
+			s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
+			return
+		}
 		if err := s.ResourcesList(ctx, r, req, w); err != nil {
 			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "resources/list", err))
 		}
 	case "resources/read":
+		if !req.HasID {
+			s.reportRejectedNotification(ctx, req)
+			return
+		}
+		if req.ID == nil {
+			s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
+			return
+		}
 		if err := s.ResourcesRead(ctx, r, req, w); err != nil {
 			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "resources/read", err))
 		}
-	case "resources/subscribe":
-		if err := s.ResourcesSubscribe(ctx, r, req, w); err != nil {
-			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "resources/subscribe", err))
-		}
-	case "resources/unsubscribe":
-		if err := s.ResourcesUnsubscribe(ctx, r, req, w); err != nil {
-			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "resources/unsubscribe", err))
-		}
 	case "prompts/list":
+		if !req.HasID {
+			s.reportRejectedNotification(ctx, req)
+			return
+		}
+		if req.ID == nil {
+			s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
+			return
+		}
 		if err := s.PromptsList(ctx, r, req, w); err != nil {
 			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "prompts/list", err))
 		}
 	case "prompts/get":
+		if !req.HasID {
+			s.reportRejectedNotification(ctx, req)
+			return
+		}
+		if req.ID == nil {
+			s.encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidRequest, "Invalid request", nil)
+			return
+		}
 		if err := s.PromptsGet(ctx, r, req, w); err != nil {
 			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "prompts/get", err))
 		}
-	case "notify_status_update":
-		if err := s.NotifyStatusUpdate(ctx, r, req, w); err != nil {
-			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "notify_status_update", err))
-		}
-	case "events/stream":
-		if err := s.EventsStream(ctx, r, req, w); err != nil {
-			s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", "events/stream", err))
-		}
 	default:
-		s.encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, "Method not found", nil)
+		if req.HasID {
+			s.encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, "Method not found", nil)
+		}
 	}
 }
 
-// batchWriter is a helper type that implements http.ResponseWriter for writing multiple JSON-RPC responses
+// batchWriter inserts JSON array separators around responses from one request
+// array.
 type batchWriter struct {
 	io.Writer
 	header     http.Header
@@ -292,70 +384,32 @@ func (rb *batchWriter) WriteHeader(statusCode int) {
 }
 
 func (rb *batchWriter) Write(data []byte) (int, error) {
+	separator := byte(',')
 	if !rb.written {
-		rb.written = true
-		rb.Writer.Write([]byte{'['})
-	} else {
-		rb.Writer.Write([]byte{','})
+		separator = '['
 	}
+	if _, err := rb.Writer.Write([]byte{separator}); err != nil {
+		return 0, err
+	}
+	rb.written = true
 	return rb.Writer.Write(data)
 }
 
-// handleSSE handles JSON-RPC SSE requests by dispatching to the appropriate method.
-func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	// Read the JSON-RPC request
-	var req jsonrpc.RawRequest
-	if err := s.decoder(r).Decode(&req); err != nil {
-		// Emit JSON-RPC parse error as SSE event
-		stream := &sseServerStream{w: w, r: r, encoder: s.encoder}
-		_ = stream.sendError(ctx, nil, jsonrpc.ParseError, "Parse error", nil)
-		return
-	}
-
-	// Validate JSON-RPC request
-	if req.JSONRPC != "2.0" {
-		stream := &sseServerStream{w: w, r: r, encoder: s.encoder}
-		_ = stream.sendError(ctx, req.ID, jsonrpc.InvalidRequest, "Invalid request", nil)
-		return
-	}
-
-	if req.Method == "" {
-		stream := &sseServerStream{w: w, r: r, encoder: s.encoder}
-		_ = stream.sendError(ctx, req.ID, jsonrpc.InvalidRequest, "Invalid request", nil)
-		return
-	}
-
-	// Find the appropriate handler based on method name
-	var handler func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	switch req.Method {
-	case "tools/call":
-		handler = s.ToolsCall
-	case "events/stream":
-		handler = s.EventsStream
-	default:
-		stream := &sseServerStream{w: w, r: r, encoder: s.encoder}
-		_ = stream.sendError(ctx, req.ID, jsonrpc.MethodNotFound, "Method not found", nil)
-		return
-	}
-
-	// Call the handler for the specific method
-	if err := handler(ctx, r, &req, w); err != nil {
-		s.errhandler(ctx, w, fmt.Errorf("handler error for %s: %w", req.Method, err))
-		return
-	}
-
-	// For notifications (requests without ID) that don't stream, return 204 No Content
-	switch req.Method {
-	}
-} // Mount configures the mux to serve the JSON-RPC mcp_assistant service methods.
+// Mount configures the mux to serve the JSON-RPC mcp_assistant service methods.
 func Mount(mux goahttp.Muxer, h *Server) {
-	// Mixed transports: mount unified handler that negotiates HTTP vs SSE by Accept header.
-	//
-	// MCP policy headers are propagated via request context so the service
-	// implementation can enforce per-request allow/deny lists.
-	mux.Handle("POST", "/rpc", withMCPPolicyHeaders(h.ServeHTTP))
+	MountWithOrigins(mux, h, nil)
+}
+
+// MountWithOrigins configures the mux to serve the JSON-RPC service. Requests
+// that send an Origin header must exactly match one of the allowed origins.
+func MountWithOrigins(mux goahttp.Muxer, h *Server, origins []string) {
+	allowedOrigins := make(map[string]struct{}, len(origins))
+	for _, origin := range origins {
+		allowedOrigins[origin] = struct{}{}
+	}
+	// Every method in this server writes one JSON-RPC response.
+	mux.Handle("POST", "/rpc", withMCPTransport(h, allowedOrigins, h.ServeHTTP))
+	mux.Handle("GET", "/rpc", mcpGETHandler(allowedOrigins))
 }
 
 // Mount configures the mux to serve the JSON-RPC mcp_assistant service methods.
@@ -363,29 +417,90 @@ func (s *Server) Mount(mux goahttp.Muxer) {
 	Mount(mux, s)
 }
 
-// withMCPPolicyHeaders propagates MCP policy header values into the request context.
-//
-// The MCP adapter enforces resource allow/deny policies based on context values:
-//   - "mcp_allow_names" (CSV list of resource names)
-//   - "mcp_deny_names"  (CSV list of resource names)
-//
-// This helper maps those values from the corresponding HTTP headers:
-//   - x-mcp-allow-names
-//   - x-mcp-deny-names
-//
-// It is installed by the JSON-RPC Mount functions so consumers do not need
-// to patch example servers or wire middleware manually.
-func withMCPPolicyHeaders(next http.HandlerFunc) http.HandlerFunc {
+// MountWithOrigins configures the mux to serve this JSON-RPC service.
+// Requests that send an Origin header must exactly match an allowed origin.
+func (s *Server) MountWithOrigins(mux goahttp.Muxer, origins []string) {
+	MountWithOrigins(mux, s, origins)
+}
+
+// mcpResponseWriter records whether the JSON-RPC handler wrote a response.
+type mcpResponseWriter struct {
+	http.ResponseWriter
+	written bool
+}
+
+// withMCPTransport enforces the HTTP rules that MCP adds to JSON-RPC.
+func withMCPTransport(h *Server, allowedOrigins map[string]struct{}, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		if allow := r.Header.Get("x-mcp-allow-names"); allow != "" {
-			ctx = context.WithValue(ctx, "mcp_allow_names", allow)
+		if !mcpOriginAllowed(r, allowedOrigins) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
 		}
-		if deny := r.Header.Get("x-mcp-deny-names"); deny != "" {
-			ctx = context.WithValue(ctx, "mcp_deny_names", deny)
+
+		originalBody := r.Body
+		body, readErr := io.ReadAll(originalBody)
+		closeErr := originalBody.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
+			h.errhandler(r.Context(), w, fmt.Errorf("read MCP request body: %w", err))
+			return
 		}
-		next(w, r.WithContext(ctx))
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		body = bytes.TrimSpace(body)
+		if len(body) > 0 && body[0] == '[' {
+			response := jsonrpc.MakeErrorResponse(nil, jsonrpc.InvalidRequest, "Invalid request", nil)
+			if err := h.encoder(r.Context(), w).Encode(response); err != nil {
+				h.errhandler(r.Context(), w, fmt.Errorf("encode MCP invalid request response: %w", err))
+			}
+			return
+		}
+		var request jsonrpc.RawRequest
+		if err := request.UnmarshalJSON(body); err == nil && request.HasMethod && request.Method != "initialize" &&
+			r.Header.Get("MCP-Protocol-Version") != mcpassistant.DefaultProtocolVersion {
+			http.Error(w, "Unsupported MCP protocol version", http.StatusBadRequest)
+			return
+		}
+
+		response := &mcpResponseWriter{ResponseWriter: w}
+		next(response, r)
+		if !response.written {
+			w.WriteHeader(http.StatusAccepted)
+		}
 	}
+}
+
+// mcpGETHandler rejects server event streams because this generated server
+// supports request responses only.
+func mcpGETHandler(allowedOrigins map[string]struct{}) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !mcpOriginAllowed(r, allowedOrigins) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// mcpOriginAllowed reports whether the request omits Origin or names an origin
+// the application allowed when it mounted the server.
+func mcpOriginAllowed(r *http.Request, allowedOrigins map[string]struct{}) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	_, ok := allowedOrigins[origin]
+	return ok
+}
+
+// WriteHeader records that the JSON-RPC handler selected an HTTP status.
+func (w *mcpResponseWriter) WriteHeader(statusCode int) {
+	w.written = true
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+// Write records that the JSON-RPC handler wrote a response body.
+func (w *mcpResponseWriter) Write(data []byte) (int, error) {
+	w.written = true
+	return w.ResponseWriter.Write(data)
 }
 
 // NewInitializeHandler creates a JSON-RPC handler which calls the
@@ -403,66 +518,46 @@ func NewInitializeHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
-			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
 		res, err := endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
-					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-				}
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
-			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
 
-		// For methods with no result, check if this is a notification
-
-		// For methods with results, determine the ID to use for the response
-		var id any
-		// No ID field in result - use request ID
-		id = req.ID
-
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
-		// Send response with the result
-		// Convert result to response body with proper JSON tags
+		// The response repeats the exact request ID.
+		// Build the response body with the fields and JSON names declared by the service.
 		body := NewInitializeResponseBody(res.(*mcpassistant.InitializeResult))
-		response := jsonrpc.MakeSuccessResponse(id, body)
+		response := jsonrpc.MakeSuccessResponse(req.ID, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
 		}
+		return nil
+	}
+}
+
+// NewNotificationsInitializedHandler creates a JSON-RPC handler which calls
+// the "mcp_assistant" service "notifications/initialized" endpoint.
+func NewNotificationsInitializedHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+) func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error {
+	return func(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) error {
+		ctx = context.WithValue(ctx, goa.MethodKey, "notifications/initialized")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
+		// A declared notification reports failures without writing an HTTP response.
+		outputWriter := &noOutputResponseWriter{header: make(http.Header)}
+		_, err := endpoint(ctx, nil)
+		if err != nil {
+			errhandler(ctx, outputWriter, fmt.Errorf("endpoint error: %w", err))
+			return nil
+		}
+		// A declared notification receives no response.
 		return nil
 	}
 }
@@ -481,48 +576,12 @@ func NewPingHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		res, err := endpoint(ctx, nil)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
-					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-				}
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
-			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
 
-		// For methods with no result, check if this is a notification
-
-		// For methods with results, determine the ID to use for the response
-		var id any
-		// No ID field in result - use request ID
-		id = req.ID
-
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
-		// Send response with the result
-		// Convert result to response body with proper JSON tags
-		body := NewPingResponseBody(res.(*mcpassistant.PingResult))
-		response := jsonrpc.MakeSuccessResponse(id, body)
+		// The response repeats the exact request ID.
+		response := jsonrpc.MakeSuccessResponse(req.ID, res)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
 		}
@@ -545,63 +604,39 @@ func NewToolsListHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
-			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
 		res, err := endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
+			var en goa.GoaErrorNamer
+			if errors.As(err, &en) {
 				switch en.GoaErrorName() {
 				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+					var res *goa.ServiceError
+					if !errors.As(err, &res) {
+						panic("JSON-RPC error name does not match its generated service error type")
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+					body := NewToolsListInvalidParamsResponseBody(res)
+					data := struct {
+						Name string                              `json:"name"`
+						Body *ToolsListInvalidParamsResponseBody `json:"body"`
+					}{
+						Name: "invalid_params",
+						Body: body,
+					}
+					encodeJSONRPCError(ctx, w, req, -32602, err.Error(), data, encoder, errhandler)
+					return nil
 				}
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
 
-		// For methods with no result, check if this is a notification
-
-		// For methods with results, determine the ID to use for the response
-		var id any
-		// No ID field in result - use request ID
-		id = req.ID
-
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
-		// Send response with the result
-		// Convert result to response body with proper JSON tags
+		// The response repeats the exact request ID.
+		// Build the response body with the fields and JSON names declared by the service.
 		body := NewToolsListResponseBody(res.(*mcpassistant.ToolsListResult))
-		response := jsonrpc.MakeSuccessResponse(id, body)
+		response := jsonrpc.MakeSuccessResponse(req.ID, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
 		}
@@ -618,38 +653,62 @@ func NewToolsCallHandler(
 	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
 	errhandler func(context.Context, http.ResponseWriter, error),
 ) func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error {
+	decodeParams := DecodeToolsCallRequest(mux, decoder)
 	return func(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) error {
 		ctx = context.WithValue(ctx, goa.MethodKey, "tools/call")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
-		// Initialize SSE stream early so decode errors can be sent as SSE error events
-		strm := &ToolsCallServerStream{
-			sseServerStream: sseServerStream{
-				w:       w,
-				r:       r,
-				encoder: encoder,
-			},
-			requestID: req.ID,
-		}
-		decodeParams := DecodeToolsCallRequest(mux, decoder)
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Send error via SSE (JSON-RPC error event) to match SSE transport semantics
-			if req.ID != nil && req.ID != "" {
-				strm.SendError(ctx, jsonrpc.IDToString(req.ID), err)
-			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
-		v := &mcpassistant.ToolsCallEndpointInput{
-			Stream:  strm,
-			Payload: params,
-		}
-		if _, err := endpoint(ctx, v); err != nil {
-			// Send the error as a JSON-RPC error event; SendError applies the
-			// design-driven error code mapping.
-			if req.ID != nil && req.ID != "" {
-				return strm.SendError(ctx, jsonrpc.IDToString(req.ID), err)
+		res, err := endpoint(ctx, params)
+		if err != nil {
+			var en goa.GoaErrorNamer
+			if errors.As(err, &en) {
+				switch en.GoaErrorName() {
+				case "invalid_params":
+					var res *goa.ServiceError
+					if !errors.As(err, &res) {
+						panic("JSON-RPC error name does not match its generated service error type")
+					}
+					body := NewToolsCallInvalidParamsResponseBody(res)
+					data := struct {
+						Name string                              `json:"name"`
+						Body *ToolsCallInvalidParamsResponseBody `json:"body"`
+					}{
+						Name: "invalid_params",
+						Body: body,
+					}
+					encodeJSONRPCError(ctx, w, req, -32602, err.Error(), data, encoder, errhandler)
+					return nil
+				case "internal_error":
+					var res *goa.ServiceError
+					if !errors.As(err, &res) {
+						panic("JSON-RPC error name does not match its generated service error type")
+					}
+					body := NewToolsCallInternalErrorResponseBody(res)
+					data := struct {
+						Name string                              `json:"name"`
+						Body *ToolsCallInternalErrorResponseBody `json:"body"`
+					}{
+						Name: "internal_error",
+						Body: body,
+					}
+					encodeJSONRPCError(ctx, w, req, -32603, err.Error(), data, encoder, errhandler)
+					return nil
+				}
 			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			return nil
+		}
+
+		// The response repeats the exact request ID.
+		// Build the response body with the fields and JSON names declared by the service.
+		body := NewToolsCallResponseBody(res.(*mcpassistant.ToolsCallResult))
+		response := jsonrpc.MakeSuccessResponse(req.ID, body)
+		if err := encoder(ctx, w).Encode(response); err != nil {
+			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
 		}
 		return nil
 	}
@@ -670,63 +729,39 @@ func NewResourcesListHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
-			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
 		res, err := endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
+			var en goa.GoaErrorNamer
+			if errors.As(err, &en) {
 				switch en.GoaErrorName() {
 				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+					var res *goa.ServiceError
+					if !errors.As(err, &res) {
+						panic("JSON-RPC error name does not match its generated service error type")
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+					body := NewResourcesListInvalidParamsResponseBody(res)
+					data := struct {
+						Name string                                  `json:"name"`
+						Body *ResourcesListInvalidParamsResponseBody `json:"body"`
+					}{
+						Name: "invalid_params",
+						Body: body,
+					}
+					encodeJSONRPCError(ctx, w, req, -32602, err.Error(), data, encoder, errhandler)
+					return nil
 				}
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
 
-		// For methods with no result, check if this is a notification
-
-		// For methods with results, determine the ID to use for the response
-		var id any
-		// No ID field in result - use request ID
-		id = req.ID
-
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
-		// Send response with the result
-		// Convert result to response body with proper JSON tags
+		// The response repeats the exact request ID.
+		// Build the response body with the fields and JSON names declared by the service.
 		body := NewResourcesListResponseBody(res.(*mcpassistant.ResourcesListResult))
-		response := jsonrpc.MakeSuccessResponse(id, body)
+		response := jsonrpc.MakeSuccessResponse(req.ID, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
 		}
@@ -749,203 +784,54 @@ func NewResourcesReadHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
-			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
 		res, err := endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
+			var en goa.GoaErrorNamer
+			if errors.As(err, &en) {
 				switch en.GoaErrorName() {
 				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+					var res *goa.ServiceError
+					if !errors.As(err, &res) {
+						panic("JSON-RPC error name does not match its generated service error type")
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+					body := NewResourcesReadInvalidParamsResponseBody(res)
+					data := struct {
+						Name string                                  `json:"name"`
+						Body *ResourcesReadInvalidParamsResponseBody `json:"body"`
+					}{
+						Name: "invalid_params",
+						Body: body,
+					}
+					encodeJSONRPCError(ctx, w, req, -32602, err.Error(), data, encoder, errhandler)
+					return nil
+				case "internal_error":
+					var res *goa.ServiceError
+					if !errors.As(err, &res) {
+						panic("JSON-RPC error name does not match its generated service error type")
+					}
+					body := NewResourcesReadInternalErrorResponseBody(res)
+					data := struct {
+						Name string                                  `json:"name"`
+						Body *ResourcesReadInternalErrorResponseBody `json:"body"`
+					}{
+						Name: "internal_error",
+						Body: body,
+					}
+					encodeJSONRPCError(ctx, w, req, -32603, err.Error(), data, encoder, errhandler)
+					return nil
 				}
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
 
-		// For methods with no result, check if this is a notification
-
-		// For methods with results, determine the ID to use for the response
-		var id any
-		// No ID field in result - use request ID
-		id = req.ID
-
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
-		// Send response with the result
-		// Convert result to response body with proper JSON tags
+		// The response repeats the exact request ID.
+		// Build the response body with the fields and JSON names declared by the service.
 		body := NewResourcesReadResponseBody(res.(*mcpassistant.ResourcesReadResult))
-		response := jsonrpc.MakeSuccessResponse(id, body)
-		if err := encoder(ctx, w).Encode(response); err != nil {
-			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
-		}
-		return nil
-	}
-}
-
-// NewResourcesSubscribeHandler creates a JSON-RPC handler which calls the
-// "mcp_assistant" service "resources/subscribe" endpoint.
-func NewResourcesSubscribeHandler(
-	endpoint goa.Endpoint,
-	mux goahttp.Muxer,
-	decoder func(*http.Request) goahttp.Decoder,
-	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
-	errhandler func(context.Context, http.ResponseWriter, error),
-) func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error {
-	decodeParams := DecodeResourcesSubscribeRequest(mux, decoder)
-	return func(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) error {
-		ctx = context.WithValue(ctx, goa.MethodKey, "resources/subscribe")
-		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
-		params, err := decodeParams(r, req)
-		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
-			}
-			return nil
-		}
-		_, err = endpoint(ctx, params)
-		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
-					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-				}
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
-			}
-			return nil
-		}
-
-		// For methods with no result, check if this is a notification
-		if req.ID == nil || req.ID == "" {
-			// Notification - no response
-			return nil
-		}
-		// Request with no result - send empty success response
-		response := jsonrpc.MakeSuccessResponse(req.ID, nil)
-		if err := encoder(ctx, w).Encode(response); err != nil {
-			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
-		}
-		return nil
-	}
-}
-
-// NewResourcesUnsubscribeHandler creates a JSON-RPC handler which calls the
-// "mcp_assistant" service "resources/unsubscribe" endpoint.
-func NewResourcesUnsubscribeHandler(
-	endpoint goa.Endpoint,
-	mux goahttp.Muxer,
-	decoder func(*http.Request) goahttp.Decoder,
-	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
-	errhandler func(context.Context, http.ResponseWriter, error),
-) func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error {
-	decodeParams := DecodeResourcesUnsubscribeRequest(mux, decoder)
-	return func(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) error {
-		ctx = context.WithValue(ctx, goa.MethodKey, "resources/unsubscribe")
-		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
-		params, err := decodeParams(r, req)
-		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
-			}
-			return nil
-		}
-		_, err = endpoint(ctx, params)
-		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
-					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-				}
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
-			}
-			return nil
-		}
-
-		// For methods with no result, check if this is a notification
-		if req.ID == nil || req.ID == "" {
-			// Notification - no response
-			return nil
-		}
-		// Request with no result - send empty success response
-		response := jsonrpc.MakeSuccessResponse(req.ID, nil)
+		response := jsonrpc.MakeSuccessResponse(req.ID, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
 		}
@@ -968,63 +854,39 @@ func NewPromptsListHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
-			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
 		res, err := endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
+			var en goa.GoaErrorNamer
+			if errors.As(err, &en) {
 				switch en.GoaErrorName() {
 				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+					var res *goa.ServiceError
+					if !errors.As(err, &res) {
+						panic("JSON-RPC error name does not match its generated service error type")
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+					body := NewPromptsListInvalidParamsResponseBody(res)
+					data := struct {
+						Name string                                `json:"name"`
+						Body *PromptsListInvalidParamsResponseBody `json:"body"`
+					}{
+						Name: "invalid_params",
+						Body: body,
+					}
+					encodeJSONRPCError(ctx, w, req, -32602, err.Error(), data, encoder, errhandler)
+					return nil
 				}
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
 
-		// For methods with no result, check if this is a notification
-
-		// For methods with results, determine the ID to use for the response
-		var id any
-		// No ID field in result - use request ID
-		id = req.ID
-
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
-		// Send response with the result
-		// Convert result to response body with proper JSON tags
+		// The response repeats the exact request ID.
+		// Build the response body with the fields and JSON names declared by the service.
 		body := NewPromptsListResponseBody(res.(*mcpassistant.PromptsListResult))
-		response := jsonrpc.MakeSuccessResponse(id, body)
+		response := jsonrpc.MakeSuccessResponse(req.ID, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
 		}
@@ -1047,63 +909,54 @@ func NewPromptsGetHandler(
 		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
 		params, err := decodeParams(r, req)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
-			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
 		res, err := endpoint(ctx, params)
 		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
+			var en goa.GoaErrorNamer
+			if errors.As(err, &en) {
 				switch en.GoaErrorName() {
 				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
+					var res *goa.ServiceError
+					if !errors.As(err, &res) {
+						panic("JSON-RPC error name does not match its generated service error type")
 					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
+					body := NewPromptsGetInvalidParamsResponseBody(res)
+					data := struct {
+						Name string                               `json:"name"`
+						Body *PromptsGetInvalidParamsResponseBody `json:"body"`
+					}{
+						Name: "invalid_params",
+						Body: body,
+					}
+					encodeJSONRPCError(ctx, w, req, -32602, err.Error(), data, encoder, errhandler)
+					return nil
+				case "internal_error":
+					var res *goa.ServiceError
+					if !errors.As(err, &res) {
+						panic("JSON-RPC error name does not match its generated service error type")
+					}
+					body := NewPromptsGetInternalErrorResponseBody(res)
+					data := struct {
+						Name string                               `json:"name"`
+						Body *PromptsGetInternalErrorResponseBody `json:"body"`
+					}{
+						Name: "internal_error",
+						Body: body,
+					}
+					encodeJSONRPCError(ctx, w, req, -32603, err.Error(), data, encoder, errhandler)
+					return nil
 				}
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
 			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
 			return nil
 		}
 
-		// For methods with no result, check if this is a notification
-
-		// For methods with results, determine the ID to use for the response
-		var id any
-		// No ID field in result - use request ID
-		id = req.ID
-
-		if id == nil || id == "" {
-			// Notification - no response
-			return nil
-		}
-
-		// Send response with the result
-		// Convert result to response body with proper JSON tags
+		// The response repeats the exact request ID.
+		// Build the response body with the fields and JSON names declared by the service.
 		body := NewPromptsGetResponseBody(res.(*mcpassistant.PromptsGetResult))
-		response := jsonrpc.MakeSuccessResponse(id, body)
+		response := jsonrpc.MakeSuccessResponse(req.ID, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
 		}
@@ -1111,120 +964,14 @@ func NewPromptsGetHandler(
 	}
 }
 
-// NewNotifyStatusUpdateHandler creates a JSON-RPC handler which calls the
-// "mcp_assistant" service "notify_status_update" endpoint.
-func NewNotifyStatusUpdateHandler(
-	endpoint goa.Endpoint,
-	mux goahttp.Muxer,
-	decoder func(*http.Request) goahttp.Decoder,
-	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
-	errhandler func(context.Context, http.ResponseWriter, error),
-) func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error {
-	decodeParams := DecodeNotifyStatusUpdateRequest(mux, decoder)
-	return func(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) error {
-		ctx = context.WithValue(ctx, goa.MethodKey, "notify_status_update")
-		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
-		params, err := decodeParams(r, req)
-		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				code := jsonrpc.InternalError
-				if _, ok := err.(*goa.ServiceError); ok {
-					code = jsonrpc.InvalidParams
-				}
-				encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("failed to decode parameters: %w", err))
-			}
-			return nil
-		}
-		_, err = endpoint(ctx, params)
-		if err != nil {
-			// Only send error response if request has ID (not nil or empty string)
-			if req.ID != nil && req.ID != "" {
-				var en goa.GoaErrorNamer
-				if !errors.As(err, &en) {
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
-					return nil
-				}
-				switch en.GoaErrorName() {
-				case "invalid_params":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
-				case "method_not_found":
-					encodeJSONRPCError(ctx, w, req, jsonrpc.MethodNotFound, err.Error(), nil, encoder, errhandler)
-				default:
-					code := jsonrpc.InternalError
-					if _, ok := err.(*goa.ServiceError); ok {
-						code = jsonrpc.InvalidParams
-					}
-					encodeJSONRPCError(ctx, w, req, code, err.Error(), nil, encoder, errhandler)
-				}
-			} else {
-				// No ID means notification - just log error
-				errhandler(ctx, w, fmt.Errorf("endpoint error: %w", err))
-			}
-			return nil
-		}
-
-		// For methods with no result, check if this is a notification
-		if req.ID == nil || req.ID == "" {
-			// Notification - no response
-			return nil
-		}
-		// Request with no result - send empty success response
-		response := jsonrpc.MakeSuccessResponse(req.ID, nil)
-		if err := encoder(ctx, w).Encode(response); err != nil {
-			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
-		}
-		return nil
-	}
-}
-
-// NewEventsStreamHandler creates a JSON-RPC handler which calls the
-// "mcp_assistant" service "events/stream" endpoint.
-func NewEventsStreamHandler(
-	endpoint goa.Endpoint,
-	mux goahttp.Muxer,
-	decoder func(*http.Request) goahttp.Decoder,
-	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
-	errhandler func(context.Context, http.ResponseWriter, error),
-) func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error {
-	return func(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) error {
-		ctx = context.WithValue(ctx, goa.MethodKey, "events/stream")
-		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
-		// Initialize SSE stream early so decode errors can be sent as SSE error events
-		strm := &EventsStreamServerStream{
-			sseServerStream: sseServerStream{
-				w:       w,
-				r:       r,
-				encoder: encoder,
-			},
-			requestID: req.ID,
-		}
-		v := &mcpassistant.EventsStreamEndpointInput{
-			Stream: strm,
-		}
-		if _, err := endpoint(ctx, v); err != nil {
-			// Send the error as a JSON-RPC error event; SendError applies the
-			// design-driven error code mapping.
-			if req.ID != nil && req.ID != "" {
-				return strm.SendError(ctx, jsonrpc.IDToString(req.ID), err)
-			}
-			return nil
-		}
-		return nil
-	}
-}
-
-// encodeJSONRPCError creates and sends a JSON-RPC error response (handles nil
-// ID gracefully)
+// encodeJSONRPCError writes one error, copying the request ID or using null
+// when none is available.
 func (s *Server) encodeJSONRPCError(ctx context.Context, w http.ResponseWriter, req *jsonrpc.RawRequest, code jsonrpc.Code, message string, data any) {
 	encodeJSONRPCError(ctx, w, req, code, message, data, s.encoder, s.errhandler)
 }
 
-// encodeJSONRPCError creates and sends a JSON-RPC error response (handles nil
-// ID gracefully)
+// encodeJSONRPCError writes one error, copying the request ID or using null
+// when none is available.
 func encodeJSONRPCError(
 	ctx context.Context,
 	w http.ResponseWriter,
@@ -1235,10 +982,8 @@ func encodeJSONRPCError(
 	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
 	errhandler func(context.Context, http.ResponseWriter, error),
 ) {
-	if req.ID != nil {
-		response := jsonrpc.MakeErrorResponse(req.ID, code, message, data)
-		if err := encoder(ctx, w).Encode(response); err != nil {
-			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
-		}
+	response := jsonrpc.MakeErrorResponse(req.ID, code, message, data)
+	if err := encoder(ctx, w).Encode(response); err != nil {
+		errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
 	}
 }

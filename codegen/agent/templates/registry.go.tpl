@@ -1,24 +1,24 @@
 {{- define "activityOptionsLiteral" -}}
-engine.ActivityOptions{
+{{ .EngineAlias }}.ActivityOptions{
 {{- if ne .Queue "" }}
     Queue: {{ printf "%q" .Queue }},
 {{- end }}
 {{- if gt .ScheduleToStartTimeout 0 }}
-    ScheduleToStartTimeout: time.Duration({{ printf "%d" .ScheduleToStartTimeout }}),
+    ScheduleToStartTimeout: {{ .TimeAlias }}.Duration({{ printf "%d" .ScheduleToStartTimeout }}),
 {{- end }}
 {{- if gt .StartToCloseTimeout 0 }}
-    StartToCloseTimeout: time.Duration({{ printf "%d" .StartToCloseTimeout }}),
+    StartToCloseTimeout: {{ .TimeAlias }}.Duration({{ printf "%d" .StartToCloseTimeout }}),
 {{- end }}
 {{- if gt .HeartbeatTimeout 0 }}
-    HeartbeatTimeout: time.Duration({{ printf "%d" .HeartbeatTimeout }}),
+    HeartbeatTimeout: {{ .TimeAlias }}.Duration({{ printf "%d" .HeartbeatTimeout }}),
 {{- end }}
 {{- if or (gt .RetryPolicy.MaxAttempts 0) (gt .RetryPolicy.InitialInterval 0) (ne .RetryPolicy.BackoffCoefficient 0.0) }}
-    RetryPolicy: engine.RetryPolicy{
+    RetryPolicy: {{ .EngineAlias }}.RetryPolicy{
 {{- if gt .RetryPolicy.MaxAttempts 0 }}
         MaxAttempts: {{ .RetryPolicy.MaxAttempts }},
 {{- end }}
 {{- if gt .RetryPolicy.InitialInterval 0 }}
-        InitialInterval: time.Duration({{ printf "%d" .RetryPolicy.InitialInterval }}),
+        InitialInterval: {{ .TimeAlias }}.Duration({{ printf "%d" .RetryPolicy.InitialInterval }}),
 {{- end }}
 {{- if ne .RetryPolicy.BackoffCoefficient 0.0 }}
         BackoffCoefficient: {{ printf "%g" .RetryPolicy.BackoffCoefficient }},
@@ -28,46 +28,34 @@ engine.ActivityOptions{
 }
 {{- end }}
 
-// Register{{ .StructName }} registers the generated agent components with the local runtime.
-// This helper wires generated code into `agentsruntime.Runtime`; it does not
-// implement the clustered `registry` service or the `runtime/toolregistry`
-// wire protocol.
-func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, cfg {{ .ConfigType }}) error {
+// {{ .PackageNames.Register }} registers the generated agent components with the local runtime.
+// This helper registers only with the runtime in this process. It does not
+// publish the agent to a registry service.
+func {{ .PackageNames.Register }}(ctx {{ .ContextAlias }}.Context, rt *{{ .RuntimeAlias }}.Runtime, cfg {{ .ConfigType }}) error {
     if rt == nil {
-        return errors.New("runtime is required")
+        return {{ .ErrorsAlias }}.New("runtime is required")
     }
-    agent, err := New{{ .StructName }}(cfg)
+    {{ .AgentVar }}, err := {{ .PackageNames.Constructor }}(cfg)
     if err != nil {
         return err
     }
-    if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
-        ID:      {{ printf "%q" .ID }},
-        Planner: agent.Planner,
-        Workflow: engine.WorkflowDefinition{
-            Name:      {{ printf "%q" .Runtime.Workflow.Name }},
-            TaskQueue: {{ printf "%q" .Runtime.Workflow.Queue }},
-            Handler:   rt.ExecuteWorkflow,
-        },
-{{- if .Runtime.PlanActivity }}
+    if err := rt.RegisterAgent(ctx, {{ .RuntimeAlias }}.AgentRegistration{
+        Definition: {{ .PackageNames.Definition }}(),
+        Planner: {{ .AgentVar }}.Planner,
+        WorkflowHandler: rt.ExecuteWorkflow,
+{{- if .PlanActivity }}
         PlanActivityName: {{ printf "%q" .Runtime.PlanActivity.Name }},
-        PlanActivityOptions: {{ template "activityOptionsLiteral" .Runtime.PlanActivity }},
+        PlanActivityOptions: {{ template "activityOptionsLiteral" .PlanActivity }},
 {{- end }}
-{{- if .Runtime.ResumeActivity }}
+{{- if .ResumeActivity }}
         ResumeActivityName: {{ printf "%q" .Runtime.ResumeActivity.Name }},
-        ResumeActivityOptions: {{ template "activityOptionsLiteral" .Runtime.ResumeActivity }},
+        ResumeActivityOptions: {{ template "activityOptionsLiteral" .ResumeActivity }},
 {{- end }}
-{{- if .Runtime.ExecuteTool }}
+{{- if .ExecuteToolActivity }}
         ExecuteToolActivity: {{ printf "%q" .Runtime.ExecuteTool.Name }},
-        ExecuteToolActivityOptions: {{ template "activityOptionsLiteral" .Runtime.ExecuteTool }},
+        ExecuteToolActivityOptions: {{ template "activityOptionsLiteral" .ExecuteToolActivity }},
 {{- end }}
-        {{- if .Tools }}
-        Specs: {{ .ToolSpecsPackage }}.Specs(),
-        ToolMetadataLookup: {{ .ToolSpecsPackage }}.MetadataByName,
-        RequiredLabels: {{ .ToolSpecsPackage }}.RequiredLabels(),
-        {{- else }}
-        Specs: nil,
-        {{- end }}
-        Policy: agentsruntime.RunPolicy{
+        Policy: {{ .RuntimeAlias }}.RunPolicy{
 {{- if gt .RunPolicy.Caps.MaxToolCalls 0 }}
             MaxToolCalls: {{ .RunPolicy.Caps.MaxToolCalls }},
 {{- end }}
@@ -75,23 +63,23 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
             MaxRecoveryTurns: {{ .RunPolicy.Caps.MaxRecoveryTurns }},
 {{- end }}
 {{- if gt .RunPolicy.TimeBudget 0 }}
-            TimeBudget: time.Duration({{ printf "%d" .RunPolicy.TimeBudget }}),
+            TimeBudget: {{ .TimeAlias }}.Duration({{ printf "%d" .RunPolicy.TimeBudget }}),
 {{- end }}
 {{- if .RunPolicy.OnMissingFields }}
             {{- if eq .RunPolicy.OnMissingFields "finalize" }}
-            OnMissingFields: agentsruntime.MissingFieldsFinalize,
+            OnMissingFields: {{ .RuntimeAlias }}.MissingFieldsFinalize,
             {{- else if eq .RunPolicy.OnMissingFields "await_clarification" }}
-            OnMissingFields: agentsruntime.MissingFieldsAwaitClarification,
+            OnMissingFields: {{ .RuntimeAlias }}.MissingFieldsAwaitClarification,
             {{- else if eq .RunPolicy.OnMissingFields "resume" }}
-            OnMissingFields: agentsruntime.MissingFieldsResume,
+            OnMissingFields: {{ .RuntimeAlias }}.MissingFieldsResume,
             {{- end }}
 {{- end }}
 {{- if .RunPolicy.History }}
-            History: func() agentsruntime.HistoryPolicy {
+            History: func() {{ .RuntimeAlias }}.HistoryPolicy {
             {{- if eq .RunPolicy.History.Mode "keep_recent" }}
-                return agentsruntime.KeepRecentTurns({{ .RunPolicy.History.KeepRecent }})
+                return {{ .RuntimeAlias }}.KeepRecentTurns({{ .RunPolicy.History.KeepRecent }})
             {{- else if eq .RunPolicy.History.Mode "compress" }}
-                historyCompression := agentsruntime.HistoryCompressionConfig{
+                historyCompression := {{ .RuntimeAlias }}.HistoryCompressionConfig{
                 {{- if gt .RunPolicy.History.CompressAtTurns 0 }}
                     CompressAtTurns: {{ .RunPolicy.History.CompressAtTurns }},
                 {{- end }}
@@ -108,12 +96,12 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
                 if cfg.HistoryCompression != nil {
                     historyCompression = *cfg.HistoryCompression
                 }
-                return agentsruntime.Compress(cfg.HistoryModel, historyCompression)
+                return {{ .RuntimeAlias }}.Compress(cfg.HistoryModel, historyCompression)
             {{- end }}
             }(),
 {{- end }}
 {{- if or .RunPolicy.Cache.AfterSystem .RunPolicy.Cache.AfterTools }}
-            Cache: agentsruntime.CachePolicy{
+            Cache: {{ .RuntimeAlias }}.CachePolicy{
             {{- if .RunPolicy.Cache.AfterSystem }}
                 AfterSystem: true,
             {{- end }}
@@ -127,36 +115,35 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
         return err
     }
 
-    {{- if .HasExternalMCP }}
+    {{- if .MCPToolsets }}
     // Register MCP-backed toolsets using local executors and callers from config.
     if cfg.MCPCallers == nil {
-        return fmt.Errorf("mcp callers are required for agent %s", {{ printf "%q" .ID }})
+        return {{ .FmtAlias }}.Errorf("mcp callers are required for agent %s", {{ printf "%q" .ID }})
     }
-    {{- range .AllToolsets }}
-    {{- if isMCPBacked . }}
+    {{- range .MCPToolsets }}
     {
         caller := cfg.MCPCallers[{{ .MCP.ConstName }}]
         if caller == nil {
-            return fmt.Errorf("mcp caller for %s is required", {{ .MCP.ConstName }})
+            return {{ $.FmtAlias }}.Errorf("mcp caller for %s is required", {{ .MCP.ConstName }})
         }
-        exec := {{ .PackageName }}.New{{ $.GoName }}{{ goify .PathName true }}MCPExecutor(caller)
-        // Build a runtime ToolsetRegistration inline to avoid exposing method/service adapters.
-        reg := agentsruntime.ToolsetRegistration{
+        exec := {{ .AgentPackageHelperAlias }}.{{ .MCPExecutorConstructor }}(caller)
+        // Register this remote toolset without exposing its generated service caller.
+        reg := {{ $.RuntimeAlias }}.ToolsetRegistration{
             Name: {{ printf "%q" .QualifiedName }},
-            // Use the used-toolset specs package for strong-contract payload/result codecs.
-            Specs: {{ .SpecsPackageName }}.Specs(),
-            ToolMetadataLookup: {{ .SpecsPackageName }}.MetadataByName,
-            Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
+            // Decode calls and results with the schemas generated for this toolset.
+            Specs: {{ .AgentPackageSpecsAlias }}.Specs(),
+            ToolMetadataLookup: {{ .AgentPackageSpecsAlias }}.MetadataByName,
+            Execute: func(ctx {{ $.ContextAlias }}.Context, call *{{ $.RuntimeAlias }}.ToolCall) (*{{ $.RuntimeAlias }}.ToolExecutionResult, error) {
                 if call == nil {
-                    return nil, fmt.Errorf("tool request is nil")
+                    return nil, {{ $.FmtAlias }}.Errorf("tool request is nil")
                 }
-                meta := agentsruntime.ToolCallMetaFromCall(*call)
+                meta := {{ $.RuntimeAlias }}.ToolCallMetaFromCall(*call)
                 result, err := exec.Execute(ctx, &meta, call)
                 if err != nil {
                     return nil, err
                 }
                 if result == nil {
-                    return nil, fmt.Errorf("executor returned nil execution result")
+                    return nil, {{ $.FmtAlias }}.Errorf("executor returned nil execution result")
                 }
                 return result, nil
             },
@@ -167,45 +154,35 @@ func Register{{ .StructName }}(ctx context.Context, rt *agentsruntime.Runtime, c
     }
     {{- end }}
     {{- end }}
-    {{- end }}
 
-    // Service-backed toolsets (method-backed Used toolsets) are registered by
-    // application code using executors. Agent-exported toolsets are wired via
-    // provider agenttools helpers and consumer-side agent toolset helpers.
+    // Application code registers toolsets that call Goa service methods.
+    // Generated helpers register toolsets provided by another agent.
     return nil
 }
 
-{{- $had := false -}}
-{{- range .UsedToolsets }}
-{{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
-{{- $had = true -}}
-{{- end }}
-{{- end }}
-{{- if $had }}
-type usedToolsetRegistrationOptions struct {
-    executors          map[string]agentsruntime.ToolCallExecutor
-    resultMaterializers map[string]agentsruntime.ResultMaterializer
+{{- if .DirectToolsets }}
+type {{ .PackageNames.UsedToolsetOptions }} struct {
+    executors          map[string]{{ .RuntimeAlias }}.ToolCallExecutor
+    resultMaterializers map[string]{{ .RuntimeAlias }}.ResultMaterializer
 }
 
-// RegisterUsedToolsets registers all non-MCP Used toolsets for this agent with
+// {{ .PackageNames.RegisterUsedToolsets }} registers all non-MCP Used toolsets for this agent with
 // the local runtime. Provide executors for each required toolset and optional
 // result materializers through typed generated options.
 //
 // Example:
-//   err := RegisterUsedToolsets(ctx, rt,
-{{- range .UsedToolsets }}
-{{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
-//       With{{ goify .PathName true }}Executor(exec),
-{{- end }}
+//   err := {{ .PackageNames.RegisterUsedToolsets }}(ctx, rt,
+{{- range .DirectToolsets }}
+//       {{ .ExecutorOption }}(exec),
 {{- end }}
 //   )
-func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts ...func(*usedToolsetRegistrationOptions)) error {
+func {{ .PackageNames.RegisterUsedToolsets }}(ctx {{ .ContextAlias }}.Context, rt *{{ .RuntimeAlias }}.Runtime, opts ...func(*{{ .PackageNames.UsedToolsetOptions }})) error {
     if rt == nil {
-        return errors.New("runtime is required")
+        return {{ .ErrorsAlias }}.New("runtime is required")
     }
-    cfg := &usedToolsetRegistrationOptions{
-        executors:           make(map[string]agentsruntime.ToolCallExecutor),
-        resultMaterializers: make(map[string]agentsruntime.ResultMaterializer),
+    cfg := &{{ .PackageNames.UsedToolsetOptions }}{
+        executors:           make(map[string]{{ .RuntimeAlias }}.ToolCallExecutor),
+        resultMaterializers: make(map[string]{{ .RuntimeAlias }}.ResultMaterializer),
     }
     for _, o := range opts {
         if o != nil {
@@ -213,38 +190,34 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
         }
     }
     var missing []string
-    {{- range .UsedToolsets }}
-    {{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
-    if cfg.executors[{{ printf "%q" .QualifiedName }}] == nil {
-        missing = append(missing, {{ printf "%q" .QualifiedName }})
+    {{- range .DirectToolsets }}
+    if cfg.executors[{{ .RegistrationNameConst }}] == nil {
+        missing = append(missing, {{ .RegistrationNameConst }})
     }
-    {{- end }}
     {{- end }}
     if len(missing) > 0 {
-        return fmt.Errorf("missing executors for toolsets: %v", missing)
+        return {{ .FmtAlias }}.Errorf("missing executors for toolsets: %v", missing)
     }
     // Register non-MCP used toolsets that are not provided by agent-as-tool exports.
-    {{- range .UsedToolsets }}
-    {{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
+    {{- range .DirectToolsets }}
     {
-        const toolsetID = {{ printf "%q" .QualifiedName }}
-        exec := cfg.executors[toolsetID]
-        reg := agentsruntime.ToolsetRegistration{
-            Name:               toolsetID,
-            Specs:              {{ .SpecsPackageName }}.Specs(),
-            ToolMetadataLookup: {{ .SpecsPackageName }}.MetadataByName,
-            ResultMaterializer: cfg.resultMaterializers[toolsetID],
-            Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
+        exec := cfg.executors[{{ .RegistrationNameConst }}]
+        reg := {{ $.RuntimeAlias }}.ToolsetRegistration{
+            Name:               {{ .RegistrationNameConst }},
+            Specs:              {{ .AgentPackageSpecsAlias }}.Specs(),
+            ToolMetadataLookup: {{ .AgentPackageSpecsAlias }}.MetadataByName,
+            ResultMaterializer: cfg.resultMaterializers[{{ .RegistrationNameConst }}],
+            Execute: func(ctx {{ $.ContextAlias }}.Context, call *{{ $.RuntimeAlias }}.ToolCall) (*{{ $.RuntimeAlias }}.ToolExecutionResult, error) {
                 if call == nil {
-                    return nil, fmt.Errorf("tool request is nil")
+                    return nil, {{ $.FmtAlias }}.Errorf("tool request is nil")
                 }
-                meta := agentsruntime.ToolCallMetaFromCall(*call)
+                meta := {{ $.RuntimeAlias }}.ToolCallMetaFromCall(*call)
                 result, err := exec.Execute(ctx, &meta, call)
                 if err != nil {
                     return nil, err
                 }
                 if result == nil {
-                    return nil, fmt.Errorf("executor returned nil execution result")
+                    return nil, {{ $.FmtAlias }}.Errorf("executor returned nil execution result")
                 }
                 return result, nil
             },
@@ -256,7 +229,7 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
         {{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
         {{- end }}
         {{- if or $hasCallHints $hasResultHints }}
-        if err := install{{ goify .PathName true }}GeneratedHints(&reg); err != nil {
+        if err := {{ .GeneratedHintsInstaller }}(&reg); err != nil {
             return err
         }
         {{- end }}
@@ -265,23 +238,24 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
         }
     }
     {{- end }}
-    {{- end }}
     return nil
 }
 
-    {{- range .UsedToolsets }}
-    {{- if and (not (isMCPBacked .)) (eq .AgentToolsImportPath "") }}
-// With{{ goify .PathName true }}Executor associates an executor for {{ .QualifiedName }}.
-func With{{ goify .PathName true }}Executor(exec agentsruntime.ToolCallExecutor) func(*usedToolsetRegistrationOptions) {
-    return func(cfg *usedToolsetRegistrationOptions) {
-        cfg.executors[{{ printf "%q" .QualifiedName }}] = exec
+    {{- range .DirectToolsets }}
+// {{ .RegistrationNameConst }} is the local registration name for {{ .QualifiedName }}.
+const {{ .RegistrationNameConst }} = {{ printf "%q" .QualifiedName }}
+
+// {{ .ExecutorOption }} associates an executor for {{ .QualifiedName }}.
+func {{ .ExecutorOption }}(exec {{ $.RuntimeAlias }}.ToolCallExecutor) func(*{{ $.PackageNames.UsedToolsetOptions }}) {
+    return func(cfg *{{ $.PackageNames.UsedToolsetOptions }}) {
+        cfg.executors[{{ .RegistrationNameConst }}] = exec
     }
 }
 
-// With{{ goify .PathName true }}ResultMaterializer associates a result materializer for {{ .QualifiedName }}.
-func With{{ goify .PathName true }}ResultMaterializer(materializer agentsruntime.ResultMaterializer) func(*usedToolsetRegistrationOptions) {
-    return func(cfg *usedToolsetRegistrationOptions) {
-        cfg.resultMaterializers[{{ printf "%q" .QualifiedName }}] = materializer
+// {{ .ResultMaterializerOption }} associates a result materializer for {{ .QualifiedName }}.
+func {{ .ResultMaterializerOption }}(materializer {{ $.RuntimeAlias }}.ResultMaterializer) func(*{{ $.PackageNames.UsedToolsetOptions }}) {
+    return func(cfg *{{ $.PackageNames.UsedToolsetOptions }}) {
+        cfg.resultMaterializers[{{ .RegistrationNameConst }}] = materializer
     }
 }
 
@@ -292,12 +266,12 @@ func With{{ goify .PathName true }}ResultMaterializer(materializer agentsruntime
 {{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
 {{- end }}
 {{- if or $hasCallHints $hasResultHints }}
-func install{{ goify .PathName true }}GeneratedHints(reg *agentsruntime.ToolsetRegistration) error {
+func {{ .GeneratedHintsInstaller }}(reg *{{ $.RuntimeAlias }}.ToolsetRegistration) error {
     {{- if $hasCallHints }}
-    callHints, err := hints.CompileHintTemplates(map[tools.Ident]string{
+    callHints, err := {{ $.HintsAlias }}.CompileHintTemplates(map[{{ $.ToolsAlias }}.Ident]string{
     {{- range .Tools }}
     {{- if .CallHintTemplate }}
-        tools.Ident({{ printf "%q" .QualifiedName }}): {{ printf "%q" .CallHintTemplate }},
+        {{ $.ToolsAlias }}.Ident({{ printf "%q" .QualifiedName }}): {{ printf "%q" .CallHintTemplate }},
     {{- end }}
     {{- end }}
     }, nil)
@@ -307,10 +281,10 @@ func install{{ goify .PathName true }}GeneratedHints(reg *agentsruntime.ToolsetR
     reg.CallHints = callHints
     {{- end }}
     {{- if $hasResultHints }}
-    resultHints, err := hints.CompileHintTemplates(map[tools.Ident]string{
+    resultHints, err := {{ $.HintsAlias }}.CompileHintTemplates(map[{{ $.ToolsAlias }}.Ident]string{
     {{- range .Tools }}
     {{- if .ResultHintTemplate }}
-        tools.Ident({{ printf "%q" .QualifiedName }}): {{ printf "%q" .ResultHintTemplate }},
+        {{ $.ToolsAlias }}.Ident({{ printf "%q" .QualifiedName }}): {{ printf "%q" .ResultHintTemplate }},
     {{- end }}
     {{- end }}
     }, nil)
@@ -321,7 +295,6 @@ func install{{ goify .PathName true }}GeneratedHints(reg *agentsruntime.ToolsetR
     {{- end }}
     return nil
 }
-{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

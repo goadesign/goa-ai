@@ -15,7 +15,7 @@ import (
 // toolset registration sets DecodeInExecutor=true, ExecuteToolActivity forwards
 // the raw JSON payload to the executor without pre-decoding.
 func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	// Register a toolset with DecodeInExecutor enabled.
 	called := false
 	decoded := false
@@ -29,9 +29,7 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 			return &planner.ToolResult{Name: tools.Ident("svc.ts.tool"), Result: map[string]any{"ok": true}}, nil
 		}),
 		Specs: []tools.ToolSpec{{
-			Name:    tools.Ident("svc.ts.tool"),
-			Service: "svc",
-			Toolset: "ts",
+			Name: tools.Ident("svc.ts.tool"),
 			Payload: tools.TypeSpec{
 				Name: "P",
 				Codec: tools.JSONCodec[any]{

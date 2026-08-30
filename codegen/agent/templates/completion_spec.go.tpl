@@ -6,8 +6,8 @@ const (
 )
 
 {{- range .Completions }}
-// spec{{ .ConstName }} returns a fresh typed completion contract for {{ .Name }}.
-func spec{{ .ConstName }}() completion.Spec[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}] {
+// {{ .SpecFunc }} returns a fresh typed completion contract for {{ .Name }}.
+func {{ .SpecFunc }}() completion.Spec[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}] {
     return completion.Spec[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}]{
         Name:        {{ .ConstName }},
         Description: {{ printf "%q" .Description }},
@@ -18,21 +18,21 @@ func spec{{ .ConstName }}() completion.Spec[{{ if .Result.Pointer }}*{{ end }}{{
     }
 }
 
-// {{ .ConstName }}Example returns an immutable copy of the generated example
+// {{ .Example }} returns an immutable copy of the generated example
 // used to demonstrate {{ .Name }} output.
-func {{ .ConstName }}Example() rawjson.Message {
-    return slices.Clone(spec{{ .ConstName }}().ExampleJSON)
+func {{ .Example }}() rawjson.Message {
+    return slices.Clone({{ .SpecFunc }}().ExampleJSON)
 }
 {{- end }}
 
 {{- range .Completions }}
-// Complete{{ .ConstName }} runs the unary typed completion for {{ .Name }}.
-func Complete{{ .ConstName }}(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}], error) {
-    return completion.Complete(ctx, client, req, spec{{ .ConstName }}())
+// {{ .Complete }} runs the unary typed completion for {{ .Name }}.
+func {{ .Complete }}(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}], error) {
+    return completion.Complete(ctx, client, req, {{ .SpecFunc }}())
 }
 
-// StreamComplete{{ .ConstName }} starts the typed completion stream for {{ .Name }}.
-func StreamComplete{{ .ConstName }}(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}], error) {
-    return completion.Stream(ctx, client, req, spec{{ .ConstName }}())
+// {{ .Stream }} starts the typed completion stream for {{ .Name }}.
+func {{ .Stream }}(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[{{ if .Result.Pointer }}*{{ end }}{{ .Result.FullRef }}], error) {
+    return completion.Stream(ctx, client, req, {{ .SpecFunc }}())
 }
 {{- end }}

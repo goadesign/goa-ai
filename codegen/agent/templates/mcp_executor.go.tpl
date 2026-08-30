@@ -1,31 +1,94 @@
-// New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor returns a ToolCallExecutor that
-// proxies tool calls to an MCP caller using generated per-toolset codecs.
-func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
-    suite := {{ printf "%q" .Toolset.QualifiedName }}
-
+// {{ .Constructor }} returns a ToolCallExecutor that
+// sends tool calls through MCP and uses generated JSON converters for results.
+func {{ .Constructor }}(caller mcpruntime.Caller) runtime.ToolCallExecutor {
     return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
         if call == nil {
-            return runtime.Executed(failedMCPToolResult("", planner.FailureInternal, planner.RecoveryFinish, errors.New("tool request is nil"))), nil
+            return runtime.Executed({{ .Failure }}("", planner.FailureInternal, planner.RecoveryFinish, errors.New("tool request is nil"))), nil
         }
         if meta == nil {
-            return runtime.Executed(failedMCPToolResult(call.Name, planner.FailureInternal, planner.RecoveryFinish, errors.New("tool call meta is nil"))), nil
+            return runtime.Executed({{ .Failure }}(call.Name, planner.FailureInternal, planner.RecoveryFinish, errors.New("tool call meta is nil"))), nil
         }
         switch call.Name {
         {{- range .Tools }}
-        case {{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}:
+        case {{ $.SpecsAlias }}.{{ .ConstName }}:
             resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
-				Suite:   suite,
 				Tool:    {{ printf "%q" .LocalName }},
 				Payload: json.RawMessage(call.Payload),
             })
             if err != nil {
-                return runtime.Executed(mcpCallFailure(call, err)), nil
+                return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil
             }
             var value any
-            {{- if .HasResult }}
-            v, err := {{ $.Toolset.SpecsPackageName }}.Spec{{ .ConstName }}().Result.Codec.FromJSON(resp.Result)
+            {{- if .StructuredResult }}
+            if len(resp.StructuredContent) == 0 {
+                return runtime.Executed({{ $.Failure }}(
+                    call.Name,
+                    planner.FailureMalformedResult,
+                    planner.RecoveryFinish,
+                    mcpruntime.NewMalformedResponseError(errors.New("MCP response is missing structured content")),
+                )), nil
+            }
+            v, err := {{ $.SpecsAlias }}.{{ .SpecVar }}().Result.Codec.FromJSON(resp.StructuredContent)
+            {{- else if .TextResult }}
+            if len(resp.Content) != 1 {
+                return runtime.Executed({{ $.Failure }}(
+                    call.Name,
+                    planner.FailureMalformedResult,
+                    planner.RecoveryFinish,
+                    mcpruntime.NewMalformedResponseError(errors.New("MCP response must contain one text result")),
+                )), nil
+            }
+            text, ok := resp.Content[0].(*mcpruntime.TextContent)
+            if !ok {
+                return runtime.Executed({{ $.Failure }}(
+                    call.Name,
+                    planner.FailureMalformedResult,
+                    planner.RecoveryFinish,
+                    mcpruntime.NewMalformedResponseError(errors.New("MCP response result must be text")),
+                )), nil
+            }
+            encoded, err := json.Marshal(text.Text)
             if err != nil {
-                return runtime.Executed(failedMCPToolResult(
+                return runtime.Executed({{ $.Failure }}(
+                    call.Name,
+                    planner.FailureInternal,
+                    planner.RecoveryFinish,
+                    err,
+                )), nil
+            }
+            v, err := {{ $.SpecsAlias }}.{{ .SpecVar }}().Result.Codec.FromJSON(encoded)
+            {{- else if .HasResult }}
+            if len(resp.Content) != 1 {
+                return runtime.Executed({{ $.Failure }}(
+                    call.Name,
+                    planner.FailureMalformedResult,
+                    planner.RecoveryFinish,
+                    mcpruntime.NewMalformedResponseError(errors.New("MCP response must contain one text result")),
+                )), nil
+            }
+            text, ok := resp.Content[0].(*mcpruntime.TextContent)
+            if !ok {
+                return runtime.Executed({{ $.Failure }}(
+                    call.Name,
+                    planner.FailureMalformedResult,
+                    planner.RecoveryFinish,
+                    mcpruntime.NewMalformedResponseError(errors.New("MCP response result must be text")),
+                )), nil
+            }
+            v, err := {{ $.SpecsAlias }}.{{ .SpecVar }}().Result.Codec.FromJSON([]byte(text.Text))
+            {{- else }}
+            if len(resp.Content) != 0 || len(resp.StructuredContent) != 0 {
+                return runtime.Executed({{ $.Failure }}(
+                    call.Name,
+                    planner.FailureMalformedResult,
+                    planner.RecoveryFinish,
+                    mcpruntime.NewMalformedResponseError(errors.New("MCP response for a method without a result must be empty")),
+                )), nil
+            }
+            {{- end }}
+            {{- if .HasResult }}
+            if err != nil {
+                return runtime.Executed({{ $.Failure }}(
                     call.Name,
                     planner.FailureMalformedResult,
                     planner.RecoveryFinish,
@@ -35,10 +98,10 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller 
             value = v
             {{- end }}
             var tel *telemetry.ToolTelemetry
-            if len(resp.Structured) > 0 {
+            if len(resp.StructuredContent) > 0 {
                 tel = &telemetry.ToolTelemetry{
 					Extra: map[string]any{
-						"structured": json.RawMessage(resp.Structured),
+						"structured": json.RawMessage(resp.StructuredContent),
 					},
 				}
             }
@@ -49,7 +112,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller 
 			}), nil
         {{- end }}
         default:
-            return runtime.Executed(failedMCPToolResult(
+            return runtime.Executed({{ .Failure }}(
                 call.Name,
                 planner.FailureInvalidCall,
                 planner.RecoveryReplan,
@@ -59,52 +122,8 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}MCPExecutor(caller 
     })
 }
 
-// mcpCallFailure classifies MCP protocol and transport failures without
-// converting error text into control flow.
-func mcpCallFailure(call *runtime.ToolCall, err error) *planner.ToolResult {
-    kind := planner.FailureUnavailable
-    action := planner.RecoveryReplan
-    if errors.Is(err, context.DeadlineExceeded) {
-        return failedMCPToolResult(call.Name, planner.FailureTimeout, planner.RecoveryFinish, err)
-    }
-    var malformed *mcpruntime.MalformedResponseError
-    if errors.As(err, &malformed) {
-        return failedMCPToolResult(call.Name, planner.FailureMalformedResult, planner.RecoveryFinish, err)
-    }
-    var internal *mcpruntime.InternalError
-    if errors.As(err, &internal) {
-        return failedMCPToolResult(call.Name, planner.FailureInternal, planner.RecoveryFinish, err)
-    }
-    var execution *mcpruntime.ToolExecutionError
-    if errors.As(err, &execution) {
-        return failedMCPToolResult(call.Name, planner.FailureDomainRejection, planner.RecoveryReplan, err)
-    }
-    var rpcErr *mcpruntime.Error
-    if errors.As(err, &rpcErr) {
-        switch rpcErr.Code {
-        case mcpruntime.JSONRPCInvalidParams:
-            return &planner.ToolResult{
-                Name: call.Name,
-                Failure: &planner.ToolFailure{
-                    Kind:  planner.FailureInvalidCall,
-                    Error: planner.ToolErrorFromError(err),
-                    Recovery: planner.RecoveryDirective{
-                        Action: planner.RecoveryCorrectCall,
-                    },
-                },
-            }
-        case mcpruntime.JSONRPCMethodNotFound:
-            kind = planner.FailureInvalidCall
-        default:
-            kind = planner.FailureInternal
-            action = planner.RecoveryFinish
-        }
-    }
-    return failedMCPToolResult(call.Name, kind, action, err)
-}
-
-// failedMCPToolResult constructs a classified MCP tool failure.
-func failedMCPToolResult(name tools.Ident, kind planner.FailureKind, action planner.RecoveryAction, err error) *planner.ToolResult {
+// {{ .Failure }} constructs a classified MCP tool failure.
+func {{ .Failure }}(name tools.Ident, kind planner.FailureKind, action planner.RecoveryAction, err error) *planner.ToolResult {
     return &planner.ToolResult{
         Name: name,
         Failure: &planner.ToolFailure{

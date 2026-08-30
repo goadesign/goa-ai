@@ -1,3 +1,5 @@
+// Package codegen builds the saved tool names, types, schemas, and JSON functions
+// that generated files read.
 package codegen
 
 import (
@@ -6,41 +8,50 @@ import (
 	"sort"
 	"strings"
 
-	"goa.design/goa-ai/codegen/shared"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// buildToolSpecsData builds tool specs metadata for the given agent.
-func buildToolSpecsData(agent *AgentData) (*toolSpecsData, error) {
-	return buildToolSpecsDataFor(agent.Genpkg, agent.Service, agent.Tools)
-}
-
-// buildToolSpecsDataFor builds specs/types/codecs data for the provided tool
-// slice using the owning service as the context for type/import resolution.
-func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) (*toolSpecsData, error) {
+// buildToolSpecsDataForPackage builds one toolset's files with the package
+// names recorded before Goa started writing source.
+func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*ToolData, planned *toolSpecsPackagePlan, api *goaexpr.APIExpr) (*toolSpecsData, error) {
 	data := newToolSpecsData(genpkg, svc)
-	builder := newToolSpecBuilder(genpkg, svc)
+	builder := newToolSpecBuilder(svc, planned, api)
 	for _, tool := range tools {
 		owner := newToolContractTypeOwner(tool)
-		scope := builder.scopeForTool()
 		goName := codegen.Goify(tool.Name, true)
-		// Reserve the tool ID constant name *before* materializing any type
-		// definitions so nested helper types (HashedUnique) can avoid colliding
-		// with it (e.g., a nested user type named "Answer").
-		constName := scope.Unique(goName)
+		// Read every tool name from the package record made before Goa chose the
+		// final names.
+		names := planned.tools[tool.Name]
+		constName := names.constant.Name()
+		tool.ConstName = constName
+		if names.inject != nil {
+			tool.InjectFunc = names.inject.Name()
+			tool.DecodeFunc = names.decode.Name()
+		}
+		if names.methodPayloadTransform != nil {
+			tool.MethodPayloadTransform = names.methodPayloadTransform.Name()
+		}
+		if names.toolResultTransform != nil {
+			tool.ToolResultTransform = names.toolResultTransform.Name()
+		}
+		if len(names.serverDataTransforms) > 0 {
+			for _, serverData := range tool.ServerData {
+				if declaration := names.serverDataTransforms[serverData.Kind]; declaration != nil {
+					serverData.Transform = declaration.Name()
+				}
+			}
+		}
 
 		payload, err := builder.typeFor(owner, tool.Args, usagePayload)
 		if err != nil {
 			return nil, err
 		}
 		if payload != nil && len(tool.Injected) > 0 {
-			// The tool declares Inject() fields, so its generated payload codec's
-			// GoDoc must steer custom executors to the composed Decode<Tool>
-			// helper (tool_inject.go.tpl), whose name is derived from the same
-			// ConstName inject.go uses.
-			payload.InjectDecodeFunc = "Decode" + constName
+			// Custom executors use this function to decode the input and fill fields
+			// supplied by the server.
+			payload.InjectDecodeFunc = names.decode.Name()
 		}
 		var result *typeData
 		if tool.HasResult {
@@ -49,34 +60,66 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 				return nil, err
 			}
 		}
+		if payload != nil {
+			tool.PayloadTypeName = payload.TypeName
+			tool.PayloadCodecName = payload.ExportedCodec
+		}
+		if result != nil {
+			tool.ResultTypeName = result.TypeName
+			tool.ResultCodecName = result.ExportedCodec
+		}
 		serverDataEntries, err := serverDataEntriesForTool(tool, builder)
 		if err != nil {
 			return nil, err
 		}
+		for _, serverData := range tool.ServerData {
+			if plannedType := names.serverDataTypes[serverData.Kind]; plannedType != nil {
+				serverData.CodecName = plannedType.exportedCodec.Name()
+			}
+		}
 		metaPairs := toolMetaPairs(tool.Meta)
 		entry := &toolEntry{
 			// Name is the qualified tool ID used at runtime (toolset.tool).
-			Name:              tool.QualifiedName,
-			GoName:            goName,
-			ConstName:         constName,
-			Title:             tool.Title,
-			Service:           serviceName(tool),
-			Toolset:           toolsetName(tool),
-			Description:       tool.Description,
-			ServerData:        serverDataEntries,
-			Tags:              tool.Tags,
-			Meta:              tool.Meta,
-			MetaPairs:         metaPairs,
-			IsExportedByAgent: tool.IsExportedByAgent,
-			ExportingAgentID:  tool.ExportingAgentID,
-			Payload:           payload,
-			Result:            result,
-			HasResult:         tool.HasResult,
-			Bounds:            tool.Bounds,
-			TerminalRun:       tool.TerminalRun,
-			Bookkeeping:       tool.Bookkeeping,
-			ResultReminder:    tool.ResultReminder,
-			Confirmation:      tool.Confirmation,
+			Name:           tool.QualifiedName,
+			GoName:         goName,
+			ConstName:      constName,
+			Title:          tool.Title,
+			Description:    tool.Description,
+			ServerData:     serverDataEntries,
+			Tags:           tool.Tags,
+			Meta:           tool.Meta,
+			MetaPairs:      metaPairs,
+			Payload:        payload,
+			Result:         result,
+			HasResult:      tool.HasResult,
+			Bounds:         tool.Bounds,
+			TerminalRun:    tool.TerminalRun,
+			Bookkeeping:    tool.Bookkeeping,
+			ResultReminder: tool.ResultReminder,
+			Confirmation:   tool.Confirmation,
+		}
+		entry.ConstructorFunc = names.constructor.Name()
+		entry.SpecVar = names.spec.Name()
+		if names.inject != nil {
+			entry.InjectFunc = names.inject.Name()
+			entry.DecodeFunc = names.decode.Name()
+		}
+		if names.methodPayloadTransform != nil {
+			entry.MethodPayloadTransform = names.methodPayloadTransform.Name()
+		}
+		if names.toolResultTransform != nil {
+			entry.ToolResultTransform = names.toolResultTransform.Name()
+		}
+		for _, serverData := range entry.ServerData {
+			if transform := names.serverDataTransforms[serverData.Kind]; transform != nil {
+				serverData.Transform = transform.Name()
+			}
+		}
+		tool.SpecVar = entry.SpecVar
+		entry.TypedToolVar = names.typed.Name()
+		if names.canonicalizeServerData != nil {
+			entry.CanonicalizeServerDataFunc = names.canonicalizeServerData.Name()
+			entry.CanonicalizeServerDataItemFunc = names.canonicalizeServerDataItem.Name()
 		}
 		data.addTool(entry)
 	}
@@ -84,6 +127,8 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 	data.Unions = builder.unionTypes()
 	data.TransportUnions = builder.transportUnionTypes()
 	data.CodecTransformHelpers = builder.codecTransformHelpers
+	data.JSONValidators = materializeJSONValidators(planned.jsonValidators)
+	data.JSONDocumentValidators = materializeJSONDocumentValidators(planned.jsonDocumentValidators)
 	// Add any additional nested/local types in a deterministic order.
 	if len(builder.types) > 0 {
 		infos := make([]*typeData, 0, len(builder.types))
@@ -98,34 +143,11 @@ func buildToolSpecsDataFor(genpkg string, svc *service.Data, tools []*ToolData) 
 	sort.Slice(data.tools, func(i, j int) bool {
 		return data.tools[i].Name < data.tools[j].Name
 	})
-	assignTypedToolFactories(data)
 	return data, nil
 }
 
-// assignTypedToolFactories names the exported typed tool descriptor for every
-// tool with a payload codec. Descriptor names derive from the
-// tool constant plus a "Tool" suffix and are made unique against every other
-// package-level identifier the specs package emits (tool constants and
-// materialized type names), so a design type that happens to Goify to the same
-// identifier cannot collide.
-func assignTypedToolFactories(data *toolSpecsData) {
-	scope := codegen.NewNameScope()
-	for _, entry := range data.tools {
-		scope.Unique(entry.ConstName)
-	}
-	for _, info := range data.typesList() {
-		scope.Unique(info.TypeName)
-	}
-	for _, entry := range data.tools {
-		if entry.Payload == nil {
-			continue
-		}
-		entry.TypedToolVar = scope.Unique(entry.ConstName + "Tool")
-	}
-}
-
-// newToolContractTypeOwner projects a tool into the minimal owner metadata
-// needed by the shared contract type builder.
+// newToolContractTypeOwner copies the tool name, toolset name, method result,
+// bounds, and hidden input fields used to build its generated types.
 func newToolContractTypeOwner(tool *ToolData) *contractTypeOwner {
 	if tool == nil {
 		return nil
@@ -199,7 +221,7 @@ func (d *toolSpecsData) typesList() []*typeData {
 	return d.order
 }
 
-// pureTypes returns the subset of types that need a Go type definition emitted.
+// pureTypes returns the types that need a Go definition.
 func (d *toolSpecsData) pureTypes() []*typeData {
 	var out []*typeData
 	for _, info := range d.order {
@@ -208,41 +230,6 @@ func (d *toolSpecsData) pureTypes() []*typeData {
 		}
 	}
 	return out
-}
-
-// needsGoaImport reports whether any generated type requires goa runtime helpers
-// (validation helpers).
-func (d *toolSpecsData) needsGoaImport() bool {
-	for _, info := range d.order {
-		if strings.TrimSpace(strings.Join(info.TransportValidationSrc, "\n")) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-// needsJSONTypeIssueImport reports whether codecs emit structured JSON type issues.
-func (d *toolSpecsData) needsJSONTypeIssueImport() bool {
-	for _, info := range d.order {
-		if len(info.FieldJSONTypes) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// needsStringImport reports whether codecs emit string manipulation for Goa
-// validation paths or generated transport field names.
-func (d *toolSpecsData) needsStringImport() bool {
-	if d.needsGoaImport() {
-		return true
-	}
-	for _, info := range d.order {
-		if len(info.FieldJSONTypes) > 0 && info.TransportTypeName != "" {
-			return true
-		}
-	}
-	return false
 }
 
 // validationCodeWithContext wraps goa ValidationCode so that any panic carries
@@ -274,15 +261,13 @@ func validationCodeWithContext(
 	return codegen.ValidationCode(att, put, attCtx, req, alias, view, target)
 }
 
-// assertNoNilTypes walks the given attribute and panics when it encounters a
-// nil AttributeExpr or a nil Type. It also follows user types so that synthetic
-// helpers respect the same invariants as Goa-evaluated DSL:
+// assertNoNilTypes walks att and stops generation when an attribute or its type
+// is missing. It also checks the contents of named user types.
 //
 //  1. Every AttributeExpr has a non-nil Type.
 //  2. Every user type has a non-nil AttributeExpr with a non-nil Type.
 //
-// Violations are treated as generator bugs and must be fixed at the
-// construction site rather than papered over with defensive checks.
+// A failure here is a generator bug in the code that built the attribute.
 func assertNoNilTypes(att *goaexpr.AttributeExpr, owner *contractTypeOwner, usage typeUsage, ctx string) {
 	if att == nil {
 		panic(fmt.Sprintf(
@@ -367,142 +352,6 @@ func assertNoNilTypes(att *goaexpr.AttributeExpr, owner *contractTypeOwner, usag
 	walk("", att)
 }
 
-// needsUnicodeImport reports whether generated validations reference unicode/utf8.
-func (d *toolSpecsData) needsUnicodeImport() bool {
-	for _, info := range d.order {
-		if strings.Contains(strings.Join(info.TransportValidationSrc, "\n"), "utf8.") {
-			return true
-		}
-	}
-	return false
-}
-
-// typeImports returns the imports required by the generated tool types file.
-func (d *toolSpecsData) typeImports() []*codegen.ImportSpec {
-	if len(d.order) == 0 {
-		return nil
-	}
-	uniq := make(map[string]*codegen.ImportSpec)
-	for _, info := range d.order {
-		for _, im := range info.TypeImports {
-			if im.Path == "" {
-				continue
-			}
-			uniq[im.Path] = im
-		}
-		if info.ServiceImport != nil && info.ServiceImport.Path != "" {
-			uniq[info.ServiceImport.Path] = info.ServiceImport
-		}
-	}
-	if len(uniq) == 0 {
-		return nil
-	}
-	paths := make([]string, 0, len(uniq))
-	for p := range uniq {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	imports := make([]*codegen.ImportSpec, 0, len(paths))
-	for _, p := range paths {
-		imports = append(imports, uniq[p])
-	}
-	return imports
-}
-
-// codecsImports returns the imports required by the generated tool codecs file.
-func (d *toolSpecsData) codecsImports() []*codegen.ImportSpec {
-	needsGoa := d.needsGoaImport()
-	needsJSONTypeIssues := d.needsJSONTypeIssueImport()
-	base := []*codegen.ImportSpec{
-		codegen.SimpleImport("bytes"),
-		codegen.SimpleImport("encoding/json"),
-		codegen.SimpleImport("io"),
-	}
-	if needsGoa || needsJSONTypeIssues {
-		base = append(base, codegen.SimpleImport("errors"))
-	}
-	base = append(base,
-		codegen.SimpleImport("fmt"),
-		codegen.SimpleImport("slices"),
-		codegen.SimpleImport("sort"),
-		codegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
-	)
-	if d.needsUnicodeImport() {
-		base = append(base, codegen.SimpleImport("unicode/utf8"))
-	}
-	extra := make(map[string]*codegen.ImportSpec)
-	needsServiceImport := false
-	serviceImportPath := shared.JoinImportPath(d.genpkg, d.svc.PathName)
-	for _, info := range d.typesList() {
-		if info.Import != nil && info.Import.Path != "" {
-			extra[info.Import.Path] = info.Import
-			if info.Import.Name == d.svc.PkgName {
-				needsServiceImport = true
-			}
-		}
-		if info.ServiceImport != nil && info.ServiceImport.Path != "" {
-			extra[info.ServiceImport.Path] = info.ServiceImport
-			if info.ServiceImport.Name == d.svc.PkgName {
-				needsServiceImport = true
-			}
-		}
-		for _, im := range info.TypeImports {
-			if im.Path == "" {
-				continue
-			}
-			extra[im.Path] = im
-		}
-	}
-	if needsServiceImport && serviceImportPath != "" {
-		if _, exists := extra[serviceImportPath]; !exists {
-			extra[serviceImportPath] = &codegen.ImportSpec{Name: d.svc.PkgName, Path: serviceImportPath}
-		}
-	}
-	if len(extra) > 0 {
-		paths := make([]string, 0, len(extra))
-		for p := range extra {
-			paths = append(paths, p)
-		}
-		sort.Strings(paths)
-		for _, p := range paths {
-			base = append(base, extra[p])
-		}
-	}
-	if needsGoa {
-		base = append(base, codegen.GoaImport(""))
-	}
-	if d.needsStringImport() {
-		// Keep strings import last to match golden expectations.
-		base = append(base, codegen.SimpleImport("strings"))
-	}
-	return base
-}
-
-func (d *toolSpecsData) transportTypeImports() []*codegen.ImportSpec {
-	uniq := make(map[string]*codegen.ImportSpec)
-	for _, info := range d.order {
-		for _, im := range info.TransportImports {
-			if im == nil || im.Path == "" {
-				continue
-			}
-			uniq[im.Path] = im
-		}
-	}
-	if len(uniq) == 0 {
-		return nil
-	}
-	paths := make([]string, 0, len(uniq))
-	for p := range uniq {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	imports := make([]*codegen.ImportSpec, 0, len(paths))
-	for _, p := range paths {
-		imports = append(imports, uniq[p])
-	}
-	return imports
-}
-
 func serverDataEntriesForTool(tool *ToolData, builder *toolSpecBuilder) ([]*serverDataEntry, error) {
 	if tool == nil || len(tool.ServerData) == 0 {
 		return nil, nil
@@ -516,7 +365,7 @@ func serverDataEntriesForTool(tool *ToolData, builder *toolSpecBuilder) ([]*serv
 		if sd.Schema == nil || sd.Schema.Type == nil || sd.Schema.Type == goaexpr.Empty {
 			return nil, fmt.Errorf("tool %q: ServerData(%q) missing schema", tool.QualifiedName, sd.Kind)
 		}
-		td, err := builder.buildTypeInfo(owner, sd.Schema, usageSidecar, sd.Kind)
+		td, err := builder.buildTypeInfo(owner, sd.Schema, usageServerData, sd.Kind)
 		if err != nil {
 			return nil, err
 		}

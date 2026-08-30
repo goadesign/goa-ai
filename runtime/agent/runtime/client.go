@@ -4,11 +4,16 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -16,7 +21,7 @@ type (
 	//
 	// Contract:
 	// - Run and Start are sessionful APIs: callers must provide a concrete
-	//   session ID that already exists in the runtime SessionStore.
+	//   session ID that the host application has already created.
 	// - StartOneShot and OneShotRun are sessionless: callers provide no session
 	//   ID and the runtime persists only canonical run-log events for
 	//   introspection by RunID.
@@ -47,17 +52,19 @@ type (
 			workflowOptions *WorkflowOptions,
 		) (*RunOutput, error)
 
-		// StartContinuation starts a new sessionful workflow from one exact
-		// suspension and returns immediately. RunID and TurnID are required caller-
-		// owned identities for the new workflow and conversational turn.
-		// WorkflowOptions let trusted callers attach engine visibility metadata
-		// such as memo and search attributes to the new workflow.
-		StartContinuation(
+		// PrepareContinuation loads and validates one exact stored suspension
+		// without starting a workflow or creating a successor run.
+		PrepareContinuation(
 			ctx context.Context,
 			sessionID, predecessorRunID, runID, turnID string,
 			response *api.PendingInputResponse,
 			workflowOptions *WorkflowOptions,
-		) (engine.WorkflowHandle, error)
+		) (*PreparedContinuation, error)
+
+		// StartContinuation submits one value returned by PrepareContinuation.
+		// The prepared value can only be used by a client for the same generated
+		// agent definition.
+		StartContinuation(ctx context.Context, prepared *PreparedContinuation) (engine.WorkflowHandle, error)
 
 		// StartOneShot starts one sessionless workflow and returns immediately with
 		// a workflow handle for asynchronous coordination.
@@ -78,12 +85,9 @@ type (
 		OneShotRun(ctx context.Context, messages []*model.Message, opts ...RunOption) (*RunOutput, error)
 	}
 
-	// AgentRoute carries the minimum metadata needed to run an agent when the
-	// caller process does not register that agent locally.
-	//
-	// Generated NewClient helpers embed this route metadata so most callers do
-	// not construct AgentRoute directly. Use Runtime.ClientFor when routing is
-	// dynamic (for example, gateway and orchestration processes).
+	// AgentRoute identifies the workflow and default task queue for one agent.
+	// Generated AgentDefinition values include this route so callers and workers
+	// use the same workflow identity.
 	AgentRoute struct {
 		// ID is the canonical agent identifier.
 		// It must match the identifier used by worker-side registration.
@@ -98,18 +102,144 @@ type (
 		DefaultTaskQueue string
 	}
 
-	// agentClient binds execution to one locally-registered agent.
-	agentClient struct {
-		r  *Runtime
-		id agent.Ident
+	// AgentDefinition is the generated contract shared by callers and workers.
+	// It owns the workflow route and every generated tool fact needed to validate
+	// a run before the workflow engine accepts it. Its data cannot be changed
+	// after construction.
+	AgentDefinition struct {
+		identity        *agentDefinitionIdentity
+		route           AgentRoute
+		specs           []tools.ToolSpec
+		specByName      map[tools.Ident]tools.ToolSpec
+		metadata        map[tools.Ident]policy.ToolMetadata
+		requiredLabels  []string
+		executableTools []tools.Ident
+		agents          map[agent.Ident]AgentDefinition
 	}
 
-	// agentClientRoute binds execution to one externally supplied route.
-	agentClientRoute struct {
-		r     *Runtime
-		route AgentRoute
+	// PreparedContinuation is an immutable continuation start accepted by one
+	// generated agent client. Callers can retain it to retry the exact same
+	// engine start after a transport failure.
+	PreparedContinuation struct {
+		definitionIdentity *agentDefinitionIdentity
+		snapshot           startrecipe.RunInputSnapshot
+	}
+
+	// agentDefinitionIdentity distinguishes generated definitions that happen
+	// to use the same route while carrying different static contracts.
+	agentDefinitionIdentity byte
+
+	// agentClient binds execution to one generated agent definition.
+	agentClient struct {
+		r          *Runtime
+		definition AgentDefinition
 	}
 )
+
+// NewAgentDefinition builds an immutable copy of one generated agent contract.
+// Generated packages call it once and return the same value to caller clients
+// and worker registration.
+func NewAgentDefinition(
+	route AgentRoute,
+	specs []tools.ToolSpec,
+	metadata ToolMetadataLookup,
+	requiredLabels []string,
+	executableTools []tools.Ident,
+	children []AgentDefinition,
+) AgentDefinition {
+	if route.ID == "" || route.WorkflowName == "" || route.DefaultTaskQueue == "" {
+		panic("runtime: agent definition requires a complete route")
+	}
+	if err := validateSpecs(specs, metadata); err != nil {
+		panic(fmt.Sprintf("runtime: invalid agent definition: %v", err))
+	}
+	ownedSpecs := cloneToolSpecs(specs)
+	byName := make(map[tools.Ident]tools.ToolSpec, len(ownedSpecs))
+	ownedMetadata := make(map[tools.Ident]policy.ToolMetadata, len(ownedSpecs))
+	for _, spec := range ownedSpecs {
+		if _, exists := byName[spec.Name]; exists {
+			panic(fmt.Sprintf("runtime: agent definition has duplicate tool %q", spec.Name))
+		}
+		byName[spec.Name] = spec
+		ownedMetadata[spec.Name] = canonicalToolMetadata(spec, metadata)
+	}
+	ownedExecutable := append([]tools.Ident(nil), executableTools...)
+	slices.Sort(ownedExecutable)
+	for index, name := range ownedExecutable {
+		if _, ok := byName[name]; !ok {
+			panic(fmt.Sprintf("runtime: executable tool %q is not in the agent definition", name))
+		}
+		if index > 0 && ownedExecutable[index-1] == name {
+			panic(fmt.Sprintf("runtime: agent definition has duplicate executable tool %q", name))
+		}
+	}
+	ownedLabels := append([]string(nil), requiredLabels...)
+	slices.Sort(ownedLabels)
+	for index, label := range ownedLabels {
+		if label == "" {
+			panic("runtime: agent definition has an empty required label")
+		}
+		if index > 0 && ownedLabels[index-1] == label {
+			panic(fmt.Sprintf("runtime: agent definition has duplicate required label %q", label))
+		}
+	}
+	ownedAgents := make(map[agent.Ident]AgentDefinition, len(children)+1)
+	for _, child := range children {
+		if !child.valid() {
+			panic("runtime: agent definition has an invalid child definition")
+		}
+		if _, exists := ownedAgents[child.route.ID]; exists {
+			panic(fmt.Sprintf("runtime: agent definition has duplicate child agent %q", child.route.ID))
+		}
+		ownedAgents[child.route.ID] = child
+	}
+	definition := AgentDefinition{
+		identity:        new(agentDefinitionIdentity),
+		route:           route,
+		specs:           ownedSpecs,
+		specByName:      byName,
+		metadata:        ownedMetadata,
+		requiredLabels:  ownedLabels,
+		executableTools: ownedExecutable,
+		agents:          ownedAgents,
+	}
+	if _, exists := ownedAgents[route.ID]; exists {
+		panic(fmt.Sprintf("runtime: agent definition repeats root agent %q", route.ID))
+	}
+	ownedAgents[route.ID] = definition
+	definition.agents = ownedAgents
+	return definition
+}
+
+// Route returns this definition's workflow route.
+func (d AgentDefinition) Route() AgentRoute {
+	return d.route
+}
+
+// ChildDefinition returns the generated definition for one reachable child
+// agent. The boolean is false when the agent is not part of this definition's
+// generated composition graph.
+func (d AgentDefinition) ChildDefinition(id agent.Ident) (AgentDefinition, bool) {
+	child, ok := d.agents[id]
+	return child, ok
+}
+
+// valid reports whether the definition was created with NewAgentDefinition.
+func (d AgentDefinition) valid() bool {
+	return d.identity != nil && d.route.ID != "" && d.route.WorkflowName != "" && d.route.DefaultTaskQueue != "" && d.specByName != nil
+}
+
+// spec returns one owned generated tool contract.
+func (d AgentDefinition) spec(name tools.Ident) (tools.ToolSpec, bool) {
+	spec, ok := d.specByName[name]
+	return spec, ok
+}
+
+// metadataFor returns one generated policy record owned by the definition.
+func (d AgentDefinition) metadataFor(name tools.Ident) (policy.ToolMetadata, bool) {
+	metadata, ok := d.metadata[name]
+	return metadata, ok
+}
 
 // Client returns a typed client for one locally registered agent.
 //
@@ -119,10 +249,11 @@ func (r *Runtime) Client(id agent.Ident) (AgentClient, error) {
 	if id == "" {
 		return nil, ErrAgentNotFound
 	}
-	if _, ok := r.agentByID(id); !ok {
+	registration, ok := r.agentByID(id)
+	if !ok {
 		return nil, ErrAgentNotFound
 	}
-	return &agentClient{r: r, id: id}, nil
+	return &agentClient{r: r, definition: registration.Definition}, nil
 }
 
 // MustClient is like Client but panics when the agent is unknown.
@@ -142,19 +273,19 @@ func (r *Runtime) MustClient(id agent.Ident) AgentClient {
 // Use this in caller-only processes that do not register agents locally but
 // still need to start workflows against worker-owned routes.
 // Returns ErrAgentNotFound when route metadata is incomplete.
-func (r *Runtime) ClientFor(route AgentRoute) (AgentClient, error) {
-	if route.ID == "" || route.WorkflowName == "" {
+func (r *Runtime) ClientFor(definition AgentDefinition) (AgentClient, error) {
+	if !definition.valid() {
 		return nil, ErrAgentNotFound
 	}
-	return &agentClientRoute{r: r, route: route}, nil
+	return &agentClient{r: r, definition: definition}, nil
 }
 
 // MustClientFor is like ClientFor but panics on invalid route metadata.
 //
 // This is intended for startup paths where route metadata is expected to be
 // validated by construction.
-func (r *Runtime) MustClientFor(route AgentRoute) AgentClient {
-	client, err := r.ClientFor(route)
+func (r *Runtime) MustClientFor(definition AgentDefinition) AgentClient {
+	client, err := r.ClientFor(definition)
 	if err != nil {
 		panic(err)
 	}
@@ -170,8 +301,8 @@ func (c *agentClient) Run(ctx context.Context, sessionID string, messages []*mod
 }
 
 func (c *agentClient) Start(ctx context.Context, sessionID string, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error) {
-	input := buildSessionRunInput(c.id, sessionID, messages, opts)
-	return c.r.startRun(ctx, &input)
+	input := buildSessionRunInput(c.definition.route.ID, sessionID, messages, opts)
+	return c.r.startRunWithDefinition(ctx, &input, c.definition, true)
 }
 
 func (c *agentClient) Continue(
@@ -180,84 +311,57 @@ func (c *agentClient) Continue(
 	response *api.PendingInputResponse,
 	workflowOptions *WorkflowOptions,
 ) (*RunOutput, error) {
-	handle, err := c.StartContinuation(ctx, sessionID, predecessorRunID, runID, turnID, response, workflowOptions)
+	prepared, err := c.PrepareContinuation(ctx, sessionID, predecessorRunID, runID, turnID, response, workflowOptions)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := c.StartContinuation(ctx, prepared)
 	if err != nil {
 		return nil, err
 	}
 	return handle.Wait(ctx)
 }
 
-func (c *agentClient) StartContinuation(
+func (c *agentClient) PrepareContinuation(
 	ctx context.Context,
 	sessionID, predecessorRunID, runID, turnID string,
 	response *api.PendingInputResponse,
 	workflowOptions *WorkflowOptions,
-) (engine.WorkflowHandle, error) {
-	input, err := c.r.buildStoredContinuationRunInput(ctx, c.id, sessionID, predecessorRunID, runID, turnID, response, workflowOptions)
+) (*PreparedContinuation, error) {
+	input, err := c.r.buildStoredContinuationRunInput(ctx, c.definition, sessionID, predecessorRunID, runID, turnID, response, workflowOptions)
 	if err != nil {
 		return nil, err
 	}
-	return c.r.startRun(ctx, input)
+	snapshot, err := startrecipe.SnapshotRunInput(startrecipe.NewDataConverter(), input)
+	if err != nil {
+		return nil, continuationContractError(err)
+	}
+	return &PreparedContinuation{
+		definitionIdentity: c.definition.identity,
+		snapshot:           snapshot,
+	}, nil
+}
+
+func (c *agentClient) StartContinuation(ctx context.Context, prepared *PreparedContinuation) (engine.WorkflowHandle, error) {
+	if prepared == nil {
+		return nil, continuationContractError(errors.New("prepared continuation is required"))
+	}
+	if prepared.definitionIdentity != c.definition.identity {
+		return nil, continuationContractError(errors.New("prepared continuation belongs to another agent definition"))
+	}
+	var input *RunInput
+	if err := startrecipe.NewDataConverter().FromPayload(prepared.snapshot.Payload, &input); err != nil {
+		return nil, continuationContractError(fmt.Errorf("decode prepared continuation: %w", err))
+	}
+	return c.r.startRunWithDefinition(ctx, input, c.definition, true)
 }
 
 func (c *agentClient) StartOneShot(ctx context.Context, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error) {
-	input := buildOneShotRunInput(c.id, messages, opts)
-	return c.r.startOneShotRun(ctx, &input)
+	input := buildOneShotRunInput(c.definition.route.ID, messages, opts)
+	return c.r.startRunWithDefinition(ctx, &input, c.definition, false)
 }
 
 func (c *agentClient) OneShotRun(ctx context.Context, messages []*model.Message, opts ...RunOption) (*RunOutput, error) {
-	handle, err := c.StartOneShot(ctx, messages, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return handle.Wait(ctx)
-}
-
-func (c *agentClientRoute) Run(ctx context.Context, sessionID string, messages []*model.Message, opts ...RunOption) (*RunOutput, error) {
-	handle, err := c.Start(ctx, sessionID, messages, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return handle.Wait(ctx)
-}
-
-func (c *agentClientRoute) Start(ctx context.Context, sessionID string, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error) {
-	input := buildSessionRunInput(c.route.ID, sessionID, messages, opts)
-	return c.r.startRunWithRoute(ctx, &input, c.route)
-}
-
-func (c *agentClientRoute) Continue(
-	ctx context.Context,
-	sessionID, predecessorRunID, runID, turnID string,
-	response *api.PendingInputResponse,
-	workflowOptions *WorkflowOptions,
-) (*RunOutput, error) {
-	handle, err := c.StartContinuation(ctx, sessionID, predecessorRunID, runID, turnID, response, workflowOptions)
-	if err != nil {
-		return nil, err
-	}
-	return handle.Wait(ctx)
-}
-
-func (c *agentClientRoute) StartContinuation(
-	ctx context.Context,
-	sessionID, predecessorRunID, runID, turnID string,
-	response *api.PendingInputResponse,
-	workflowOptions *WorkflowOptions,
-) (engine.WorkflowHandle, error) {
-	input, err := c.r.buildStoredContinuationRunInput(ctx, c.route.ID, sessionID, predecessorRunID, runID, turnID, response, workflowOptions)
-	if err != nil {
-		return nil, err
-	}
-	return c.r.startRunWithRoute(ctx, input, c.route)
-}
-
-func (c *agentClientRoute) StartOneShot(ctx context.Context, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error) {
-	input := buildOneShotRunInput(c.route.ID, messages, opts)
-	return c.r.startOneShotRunWithRoute(ctx, &input, c.route)
-}
-
-func (c *agentClientRoute) OneShotRun(ctx context.Context, messages []*model.Message, opts ...RunOption) (*RunOutput, error) {
 	handle, err := c.StartOneShot(ctx, messages, opts...)
 	if err != nil {
 		return nil, err
@@ -326,31 +430,28 @@ func buildContinuationRunInput(agentID agent.Ident, sessionID, runID, turnID str
 // durable runtime storage so callers provide only domain response and run IDs.
 func (r *Runtime) buildStoredContinuationRunInput(
 	ctx context.Context,
-	agentID agent.Ident,
+	definition AgentDefinition,
 	sessionID, predecessorRunID, runID, turnID string,
 	response *api.PendingInputResponse,
 	workflowOptions *WorkflowOptions,
 ) (*RunInput, error) {
 	if predecessorRunID == "" {
-		return nil, errors.New("predecessor run id is required")
+		return nil, continuationContractError(errors.New("predecessor run id is required"))
 	}
 	suspension, err := r.LoadRunSuspension(ctx, predecessorRunID)
 	if err != nil {
 		return nil, err
 	}
-	input, err := buildContinuationRunInput(agentID, sessionID, runID, turnID, suspension, response)
+	input, err := buildContinuationRunInput(definition.route.ID, sessionID, runID, turnID, suspension, response)
 	if err != nil {
-		return nil, err
+		return nil, continuationContractError(err)
 	}
-	checkpoint, err := decodeWorkflowCheckpointState(suspension)
+	checkpoint, err := prepareContinuation(input, definition)
 	if err != nil {
-		return nil, err
-	}
-	if err := validateContinuationIdentity(input, checkpoint); err != nil {
-		return nil, err
+		return nil, continuationContractError(err)
 	}
 	if checkpoint.PreviousRunID != predecessorRunID {
-		return nil, errors.New("predecessor run id does not match stored suspension")
+		return nil, continuationContractError(errors.New("predecessor run id does not match stored suspension"))
 	}
 	input.WorkflowOptions = workflowOptions
 	return input, nil

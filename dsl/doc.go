@@ -51,6 +51,9 @@
 //
 //	Service("name", func() {         // Goa service definition
 //	    MCP("name", "version")       // Enable MCP for this service
+//	    JSONRPC(func() {              // Set the generated MCP path
+//	        POST("/mcp")
+//	    })
 //
 //	    Agent("name", "desc", func() {   // Inside Service
 //	        Use(MyTools)                 // Reference toolsets
@@ -124,12 +127,7 @@
 //   - [MCP] enables MCP protocol for a service
 //   - [ProtocolVersion] configures MCP protocol version
 //   - [Resource] marks a method as an MCP resource
-//   - [WatchableResource] marks a method as a subscribable MCP resource
 //   - [StaticPrompt] defines a static MCP prompt template
-//   - [DynamicPrompt] marks a method as a dynamic prompt generator
-//   - [Notification] marks a method as an MCP notification sender
-//   - [Subscription] defines a subscription handler
-//   - [SubscriptionMonitor] defines an SSE subscription monitor
 //
 // Registry Functions:
 //   - [Registry] declares a remote registry source

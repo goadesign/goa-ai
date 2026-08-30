@@ -25,7 +25,6 @@ type (
 	//   - AssistantTurnCommitted → EventAssistantTurn
 	//   - PlannerNote           → EventPlannerThought
 	//   - PromptRendered        → EventPromptRendered
-	//   - ToolCallArgsDelta     → EventToolCallArgsDelta (optional)
 	//   - ToolCallScheduled     → EventToolStart
 	//   - ToolCallUpdated       → EventToolUpdate
 	//   - ToolResultReceived    → EventToolEnd
@@ -102,7 +101,6 @@ func (s *Subscriber) HandleProvisionalEvent(ctx context.Context, event Event) er
 //   - AssistantTurnCommitted → EventAssistantTurn
 //   - PlannerNote → EventPlannerThought
 //   - PromptRendered → EventPromptRendered
-//   - ToolCallArgsDelta → EventToolCallArgsDelta (optional)
 //   - ToolCallScheduled → EventToolStart
 //   - ToolCallUpdated → EventToolUpdate
 //   - ToolResultReceived → EventToolEnd
@@ -216,25 +214,6 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Base: newBaseFromHook(evt, EventToolAuthorization, payload),
 			Data: payload,
 		})
-	case *hooks.ToolCallArgsDeltaEvent:
-		if !s.profile.ToolCallArgsDelta {
-			return nil
-		}
-		if evt.ToolCallID == "" || evt.Delta == "" {
-			return nil
-		}
-		if evt.ToolName == "" {
-			return fmt.Errorf("tool_call_args_delta missing tool name for tool_call_id %q", evt.ToolCallID)
-		}
-		payload := ToolCallArgsDeltaPayload{
-			ToolCallID: evt.ToolCallID,
-			ToolName:   string(evt.ToolName),
-			Delta:      evt.Delta,
-		}
-		return s.sink.Send(ctx, ToolCallArgsDelta{
-			Base: newBaseFromHook(evt, EventToolCallArgsDelta, payload),
-			Data: payload,
-		})
 	case *hooks.ToolCallScheduledEvent:
 		if !s.profile.ToolStart {
 			return nil
@@ -338,18 +317,15 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			return errors.New("stream: tool_end missing tool_name")
 		}
 		payload := ToolEndPayload{
-			CallRunID:           evt.CallRunID,
-			ToolCallID:          evt.ToolCallID,
-			ParentToolCallID:    evt.ParentToolCallID,
-			ToolName:            string(evt.ToolName),
-			Result:              evt.ResultJSON,
-			ResultBytes:         evt.ResultBytes,
-			ResultOmitted:       evt.ResultOmitted,
-			ResultOmittedReason: evt.ResultOmittedReason,
-			Bounds:              evt.Bounds,
-			Duration:            evt.Duration,
-			Telemetry:           evt.Telemetry,
-			Failure:             evt.Failure,
+			CallRunID:        evt.CallRunID,
+			ToolCallID:       evt.ToolCallID,
+			ParentToolCallID: evt.ParentToolCallID,
+			ToolName:         string(evt.ToolName),
+			Result:           evt.ResultJSON,
+			Bounds:           evt.Bounds,
+			Duration:         evt.Duration,
+			Telemetry:        evt.Telemetry,
+			Failure:          evt.Failure,
 		}
 		if preview := clampPreview(evt.ResultPreview); preview != "" {
 			payload.ResultPreview = preview

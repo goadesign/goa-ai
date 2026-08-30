@@ -1,3 +1,5 @@
+// Package codegen stores the tool names, types, schemas, and JSON functions read by
+// generated tool files.
 package codegen
 
 import (
@@ -7,10 +9,8 @@ import (
 )
 
 type (
-	// toolSpecsData aggregates all type and codec metadata for a set of tools
-	// owned by a single Goa service. It collects type definitions, schemas, and
-	// codec functions during the generation process and provides them to
-	// templates for rendering.
+	// toolSpecsData stores the tool names, types, schemas, and JSON functions
+	// written for one generated tool package.
 	toolSpecsData struct {
 		// svc is the Goa service that owns the tools.
 		svc *service.Data
@@ -35,10 +35,22 @@ type (
 		// These are emitted once per package to support recursive types without
 		// duplicating helper declarations.
 		CodecTransformHelpers []*codegen.TransformFunctionData
-		// Scope captures the name scope used to materialize nested local types for
-		// this toolset. It is reused by other generator passes (e.g., adapter
-		// transforms) to compute type references that match the specs package.
+		// JSONValidators contains each generated raw JSON value check once.
+		JSONValidators []*jsonValidatorData
+		// JSONDocumentValidators contains each generated JSON document reader once.
+		JSONDocumentValidators []*jsonDocumentValidatorData
+		// Scope contains the final names used in the public tool package.
 		Scope *codegen.NameScope
+		// adapterTransforms contains functions that copy tool values to and from service values.
+		adapterTransforms []transformFuncData
+		// adapterHelpers contains extra copy functions needed by types that contain themselves.
+		adapterHelpers []*codegen.TransformFunctionData
+		// adapterImports contains packages used by the copy functions.
+		adapterImports []*codegen.ImportSpec
+		// providerImports contains the final imports used by provider.go.
+		providerImports []*codegen.ImportSpec
+		// serviceTypeRef is the final Goa service interface reference used by provider.go.
+		serviceTypeRef string
 	}
 
 	// toolEntry pairs a tool declaration with its payload/result type metadata.
@@ -49,20 +61,31 @@ type (
 		Name string
 		// GoName is the Go-friendly identifier for this tool (e.g., "GetTimeSeries").
 		GoName string
-		// ConstName is the Go constant identifier for this tool's ID, computed
-		// using the name scope to ensure uniqueness within the package.
+		// ConstName is the saved Go constant name for this tool's ID.
 		ConstName string
-		// TypedToolVar is the exported typed descriptor factory name (e.g.,
-		// "SummarizeDocTool") pairing the tool identifier with its typed payload
-		// and result codecs. Empty when the tool lacks a payload type, in which
-		// case no descriptor is generated.
+		// ConstructorFunc names the private function that builds this tool's specification.
+		ConstructorFunc string
+		// SpecVar names the public function that returns this tool's specification.
+		SpecVar string
+		// InjectFunc names the function that fills server-owned payload fields.
+		InjectFunc string
+		// DecodeFunc names the function that decodes and fills a tool payload.
+		DecodeFunc string
+		// MethodPayloadTransform names the function that builds the service payload.
+		MethodPayloadTransform string
+		// ToolResultTransform names the function that builds the tool result.
+		ToolResultTransform string
+		// TypedToolVar is the exported typed descriptor variable name (e.g.,
+		// "SummarizeDocTool") pairing the tool identifier with its typed
+		// payload and result codecs. Empty when the tool lacks a payload or
+		// result type, in which case no descriptor is generated.
 		TypedToolVar string
+		// CanonicalizeServerDataFunc names the function that checks all server data.
+		CanonicalizeServerDataFunc string
+		// CanonicalizeServerDataItemFunc names the function that checks one server data item.
+		CanonicalizeServerDataItemFunc string
 		// Title is the human-friendly display title.
 		Title string
-		// Service name that owns the tool.
-		Service string
-		// Toolset name that contains the tool.
-		Toolset string
 		// Tool description for documentation and LLM context.
 		Description string
 		// ServerData enumerates server-only payloads emitted alongside the tool
@@ -76,16 +99,11 @@ type (
 		// MetaPairs is a deterministic representation of Meta for templates that
 		// need stable ordering in emitted Go source.
 		MetaPairs []toolMetaPair
-		// Whether this tool is exported by an agent (agent-as-tool).
-		IsExportedByAgent bool
-		// ID of the agent that exports this tool.
-		ExportingAgentID string
 		// Type metadata for the tool's input arguments.
 		Payload *typeData
 		// Type metadata for the tool's output result.
 		Result *typeData
-		// HasResult reports whether the design declares a result. Generated
-		// empty transport types do not change this semantic fact.
+		// HasResult reports whether the tool returns a value.
 		HasResult bool
 		// Bounds declares the out-of-band bounded-result contract for this tool.
 		// It is propagated into ToolSpec for runtime consumers.
@@ -108,22 +126,62 @@ type (
 		Audience    string
 		Description string
 		Type        *typeData
+		// Transform names the function that builds this server result from the
+		// service method result field.
+		Transform string
 	}
 
 	unionTypeData struct {
-		Name     string
-		KindName string
-		Fields   []*unionFieldData
+		Name               string
+		KindName           string
+		DiscriminatorError string
+		Fields             []*unionFieldData
 	}
 
 	unionFieldData struct {
-		Name      string
-		KindConst string
-		FieldName string
-		FieldType string
-		Nilable   bool
-		JSONType  string
-		TypeTag   string
+		Name        string
+		KindConst   string
+		Constructor string
+		FieldName   string
+		FieldType   string
+		Nilable     bool
+		JSONType    string
+		TypeTag     string
+	}
+
+	// jsonValidatorData describes one generated function that checks a known
+	// part of a tool's raw JSON value before Go decodes it into a typed value.
+	jsonValidatorData struct {
+		Name            string
+		Kind            string
+		Expected        string
+		SignedInteger   bool
+		UnsignedInteger bool
+		IntegerBits     int
+		Fields          []*jsonValidatorFieldData
+		Element         *jsonValidatorCallData
+	}
+
+	// jsonDocumentValidatorData names one JSON document reader and the value
+	// check called for its decoded root.
+	jsonDocumentValidatorData struct {
+		Name string
+		Root string
+	}
+
+	// jsonValidatorFieldData describes one accepted field in a generated object
+	// validator. A nil call accepts the field without inspecting its value.
+	jsonValidatorFieldData struct {
+		Name string
+		Call *jsonValidatorCallData
+	}
+
+	// jsonValidatorCallData names the generated validator called for one child
+	// value and tells the template where its error description comes from.
+	jsonValidatorCallData struct {
+		Name               string
+		Description        string
+		InheritDescription bool
 	}
 
 	toolMetaPair struct {
@@ -132,6 +190,17 @@ type (
 	}
 
 	contractTypeOwnerKind string
+
+	// specTypeKey identifies one tool or completion value before its Go name is
+	// chosen. Separate fields prevent two DSL names from sharing a type plan.
+	specTypeKey struct {
+		OwnerKind     contractTypeOwnerKind
+		ScopeName     string
+		QualifiedName string
+		Name          string
+		Usage         typeUsage
+		Qualifier     string
+	}
 
 	// contractTypeOwner captures the contract-local metadata needed to derive
 	// shared payload/result type information for either a tool or a completion.
@@ -173,13 +242,10 @@ type (
 		// available. For payloads, it is derived from Goa examples and can be used
 		// by runtimes to surface concrete examples in correction directives or UI prompts.
 		ExampleJSON []byte
-		// ScaffoldExampleJSON holds an authored result example for generated
-		// application scaffolds. It remains private generator data so tool result
-		// examples do not become model-facing TypeSpec metadata.
+		// ScaffoldExampleJSON holds a result example for starter application code.
+		// It is not included in the schema shown to the model.
 		ScaffoldExampleJSON []byte
-		// ExportedCodec names the typed codec factory. Tool contracts export it
-		// (for example, "MyToolPayloadCodec"); completion contracts keep it
-		// private behind their generated Complete and StreamComplete operations.
+		// Typed codec variable name (e.g., "MyToolPayloadCodec").
 		ExportedCodec string
 		// InjectDecodeFunc is the generated composed decode helper name
 		// (e.g., "DecodeGetData") when this type is the payload of a tool
@@ -195,6 +261,18 @@ type (
 		UnmarshalFunc string
 		// Validation function name (e.g., "ValidateMyToolPayload").
 		ValidateFunc string
+		// FieldDescsVar names the map that stores field descriptions.
+		FieldDescsVar string
+		// FieldJSONTypesVar names the map that stores each field's JSON type.
+		FieldJSONTypesVar string
+		// JSONValidatorFunc names the private function that checks the raw JSON document.
+		JSONValidatorFunc string
+		// JSONValueValidatorFunc names the private function that checks the document's root value.
+		JSONValueValidatorFunc string
+		// EnrichValidationFunc names the function that adds field descriptions to an error.
+		EnrichValidationFunc string
+		// InvalidFieldTypeFunc names the function that reports the expected JSON type.
+		InvalidFieldTypeFunc string
 		// Validation code body.
 		Validation string
 		// PublicType is the Goa expression for the tool-facing public type as it
@@ -218,9 +296,6 @@ type (
 		TransportTypeName string
 		// TransportDef is the Go type definition for the internal transport type.
 		TransportDef string
-		// TransportImports are the imports required by the transport type
-		// definition. These are used to generate the toolset-local http package.
-		TransportImports []*codegen.ImportSpec
 		// TransportValidationSrc is validation code (as lines) that validates a
 		// pointer to the transport type (variable name: "body").
 		TransportValidationSrc []string
@@ -238,13 +313,8 @@ type (
 		EncodeTransform string
 		// Whether to generate a type definition.
 		NeedType bool
-		// IsToolType is true when this entry represents a top-level tool-facing
-		// payload/result/sidecar type (not a nested helper type or JSON helper).
+		// IsToolType is true for a tool input, output, or server data type.
 		IsToolType bool
-		// Import spec for the type's package (when aliasing external types).
-		Import *codegen.ImportSpec
-		// Import spec for the service package (when referencing service types).
-		ServiceImport *codegen.ImportSpec
 		// Error message for nil values.
 		NilError string
 		// Error message for decode failures.
@@ -255,19 +325,12 @@ type (
 		EmptyError string
 		// Whether this is a payload or result type.
 		Usage typeUsage
-		// Imports needed for this type's definition.
-		TypeImports []*codegen.ImportSpec
 		// Whether to generate codec functions.
 		GenerateCodec bool
 		// FieldDescs maps dotted field paths to descriptions (for payload types).
 		FieldDescs map[string]string
 		// FieldJSONTypes maps dotted field paths to their generated JSON type.
 		FieldJSONTypes map[string]string
-		// FieldAllowedObjectKeys maps dotted closed-object paths to the JSON
-		// property names accepted at that object level. It is used only by
-		// generated payload and result codecs to reject unknown fields before
-		// transport decoding.
-		FieldAllowedObjectKeys map[string][]string
 		// AcceptEmpty indicates that empty JSON input should be accepted and
 		// treated as the zero value (only for payloads). This is true for
 		// payload types that are empty structs (no fields).
@@ -278,31 +341,38 @@ type (
 	// schemas, and validation code. It maintains caches for deduplication and
 	// handles cross-service type references for MCP and external toolsets.
 	toolSpecBuilder struct {
-		// Generation package base path.
-		genpkg string
 		// Service data for the owning service.
 		service *service.Data
-		// Name scope for service type references.
+		// api is the Goa API supplied to this generation command.
+		api *goaexpr.APIExpr
+		// publicScope contains names written in the public tool package.
+		publicScope *codegen.NameScope
+		// transportScope contains names written in the HTTP package.
+		transportScope *codegen.NameScope
+		// publicPackage contains the union declarations for the public tool package.
+		publicPackage *codegen.GeneratedPackage
+		// transportPackage contains the union declarations for the HTTP package.
+		transportPackage     *codegen.GeneratedPackage
+		publicUnionErrors    map[codegen.UnionDeclarationID]*codegen.NameDeclaration
+		transportUnionErrors map[codegen.UnionDeclarationID]*codegen.NameDeclaration
+		// planned contains the saved types, names, and copy functions for both packages.
+		planned *toolSpecsPackagePlan
+		// svcScope contains names used in service type references.
 		svcScope *codegen.NameScope
-		// Import specs for service types.
-		svcImports map[string]*codegen.ImportSpec
-		// Cache of generated type metadata indexed by cache key.
+		// types stores each generated type by its tool and use.
+		contractTypes map[specTypeKey]*typeData
+		// types stores materialized types by their final Go name.
 		types map[string]*typeData
-		// helperScope provides a global scope to assign short, unique names
-		// to transform helper functions across all generated tool payloads.
-		// Using a shared scope ensures there are no collisions while keeping
-		// names compact and readable.
+		// helperScope contains helper function names written in the public tool package.
 		helperScope *codegen.NameScope
-		// unions accumulates all union sum types referenced by generated tool
-		// payload/result/sidecar types in this specs package, indexed by union hash.
-		unions map[string]*unionTypeData
-		// transportUnions accumulates all union sum types referenced by transport
-		// helper graphs emitted into the toolset-local http package.
-		transportUnions map[string]*unionTypeData
-		// codecTransformHelpers accumulates unique GoTransform helper functions
-		// required by codec-local conversions (transport <-> public).
-		codecTransformHelpers    []*codegen.TransformFunctionData
-		codecTransformHelperKeys map[string]struct{}
+		// unions contains input, output, and server data unions indexed by the
+		// OneOf fields written in the design.
+		unions map[codegen.UnionDeclarationID]*unionTypeData
+		// transportUnions contains HTTP decoding unions indexed by the OneOf fields
+		// written in the design.
+		transportUnions map[codegen.UnionDeclarationID]*unionTypeData
+		// codecTransformHelpers contains extra copy functions needed by recursive types.
+		codecTransformHelpers []*codegen.TransformFunctionData
 	}
 
 	typeUsage string
@@ -312,7 +382,7 @@ const (
 	contractTypeOwnerTool       contractTypeOwnerKind = "tool"
 	contractTypeOwnerCompletion contractTypeOwnerKind = "completion"
 
-	usagePayload typeUsage = "payload"
-	usageResult  typeUsage = "result"
-	usageSidecar typeUsage = "sidecar"
+	usagePayload    typeUsage = "payload"
+	usageResult     typeUsage = "result"
+	usageServerData typeUsage = "server-data"
 )

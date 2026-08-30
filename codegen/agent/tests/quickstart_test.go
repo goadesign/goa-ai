@@ -26,11 +26,16 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping quickstart integration test in short mode")
 	}
+	ctx := context.Background()
 
 	// Get the quickstart directory path (relative to repo root)
 	_, thisFile, _, _ := runtime.Caller(0)
 	repoRoot := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
 	quickstartSrcDir := filepath.Join(repoRoot, "quickstart")
+	goaRoot, err := selectedGoaModuleDir(ctx, repoRoot)
+	if err != nil {
+		t.Fatalf("resolve selected Goa module: %v", err)
+	}
 
 	// Check required preconditions
 	designPath := filepath.Join(quickstartSrcDir, "design", "design.go")
@@ -48,11 +53,9 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 		t.Fatalf("copy quickstart fixture: %v", err)
 	}
 
-	// The quickstart module uses a relative replace for goa-ai (=> ..) so it can
-	// be generated and run from the repo tree. Once copied into a temp dir, that
-	// relative path no longer points at the repo root. Rewrite it to an absolute
-	// replace so `goa gen` and `go mod tidy` can resolve the local goa-ai module.
-	if err := rewriteQuickstartModule(quickstartDir, repoRoot); err != nil {
+	// Point the copied module at the same goa-ai and Goa source used to build
+	// this test. The copied module can then run without the caller's workspace.
+	if err := rewriteQuickstartModule(ctx, quickstartDir, repoRoot, goaRoot); err != nil {
 		t.Fatalf("rewrite quickstart go.mod: %v", err)
 	}
 
@@ -73,14 +76,11 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 		}
 	}
 
-	ctx := context.Background()
-
 	// Step 0: Ensure the module graph is tidy before running goa. The goa CLI
 	// compiles the design package via `go list`, which fails when the module has
 	// pending sum updates.
 	t.Run("go_mod_tidy_pre", func(t *testing.T) {
-		cmd := exec.CommandContext(ctx, "go", "mod", "tidy")
-		cmd.Dir = quickstartDir
+		cmd := isolatedGoCommand(ctx, quickstartDir, "mod", "tidy")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("go mod tidy failed: %v\nOutput:\n%s", err, out)
@@ -89,8 +89,8 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 
 	// Step 1: Run goa gen
 	t.Run("goa_gen", func(t *testing.T) {
-		cmd := exec.CommandContext(ctx, "goa", "gen", "example.com/quickstart/design")
-		cmd.Dir = quickstartDir
+		cmd := isolatedGoCommand(ctx, quickstartDir,
+			"run", "goa.design/goa/v3/cmd/goa", "gen", "example.com/quickstart/design")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("goa gen failed: %v\nOutput:\n%s", err, out)
@@ -128,8 +128,8 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 
 	// Step 2: Run goa example
 	t.Run("goa_example", func(t *testing.T) {
-		cmd := exec.CommandContext(ctx, "goa", "example", "example.com/quickstart/design")
-		cmd.Dir = quickstartDir
+		cmd := isolatedGoCommand(ctx, quickstartDir,
+			"run", "goa.design/goa/v3/cmd/goa", "example", "example.com/quickstart/design")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("goa example failed: %v\nOutput:\n%s", err, out)
@@ -147,7 +147,7 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 				t.Errorf("close quickstart root: %v", err)
 			}
 		}()
-		bootstrapPath := filepath.Join("internal", "agents", "bootstrap", "bootstrap.go")
+		bootstrapPath := filepath.Join("internal", "agents", "orchestrator", "bootstrap", "bootstrap.go")
 		const marker = "\n// application wiring survives regeneration\n"
 		file, err := root.OpenFile(bootstrapPath, os.O_APPEND|os.O_WRONLY, 0)
 		if err != nil {
@@ -161,8 +161,8 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 			t.Fatalf("close generated bootstrap: %v", err)
 		}
 
-		cmd := exec.CommandContext(ctx, "goa", "example", "example.com/quickstart/design")
-		cmd.Dir = quickstartDir
+		cmd := isolatedGoCommand(ctx, quickstartDir,
+			"run", "goa.design/goa/v3/cmd/goa", "example", "example.com/quickstart/design")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("second goa example failed: %v\nOutput:\n%s", err, out)
 		}
@@ -178,8 +178,7 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 	// Step 2b: Ensure module sums include dependencies pulled in by generated code.
 	// This is required when tests run with module updates disabled (e.g. GOFLAGS=-mod=readonly).
 	t.Run("go_mod_tidy", func(t *testing.T) {
-		cmd := exec.CommandContext(ctx, "go", "mod", "tidy")
-		cmd.Dir = quickstartDir
+		cmd := isolatedGoCommand(ctx, quickstartDir, "mod", "tidy")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("go mod tidy failed: %v\nOutput:\n%s", err, out)
@@ -188,8 +187,7 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 
 	// Step 3: Verify compilation
 	t.Run("go_build", func(t *testing.T) {
-		cmd := exec.CommandContext(ctx, "go", "build", "./cmd/...")
-		cmd.Dir = quickstartDir
+		cmd := isolatedGoCommand(ctx, quickstartDir, "build", "./cmd/...")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("go build failed: %v\nOutput:\n%s", err, out)
@@ -198,8 +196,7 @@ func TestQuickstartGeneratesAndRuns(t *testing.T) {
 
 	// Step 4: Run the example and verify output
 	t.Run("run_example", func(t *testing.T) {
-		cmd := exec.CommandContext(ctx, "go", "run", "./cmd/orchestrator")
-		cmd.Dir = quickstartDir
+		cmd := isolatedGoCommand(ctx, quickstartDir, "run", "./cmd/orchestrator")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("go run failed: %v\nOutput:\n%s", err, out)
@@ -237,32 +234,44 @@ func TestQuickstartDesignExists(t *testing.T) {
 	}
 }
 
-// rewriteQuickstartModule rewrites the copied quickstart module so its local
-// goa-ai replace points back at the repository root.
-func rewriteQuickstartModule(rootPath, repoRoot string) (err error) {
-	root, err := os.OpenRoot(rootPath)
+// selectedGoaModuleDir returns the Goa source directory selected for this test.
+// It runs before copied-module commands disable the caller's Go workspace.
+func selectedGoaModuleDir(ctx context.Context, repoRoot string) (string, error) {
+	cmd := exec.CommandContext(ctx, "go", "list", "-m", "-f", "{{.Dir}}", "goa.design/goa/v3")
+	cmd.Dir = repoRoot
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("open quickstart root: %w", err)
+		return "", fmt.Errorf("go list Goa module: %w: %s", err, out)
 	}
-	defer func() {
-		if closeErr := root.Close(); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("close quickstart root: %w", closeErr))
-		}
-	}()
+	return strings.TrimSpace(string(out)), nil
+}
 
-	raw, err := root.ReadFile("go.mod")
-	if err != nil {
-		return fmt.Errorf("read quickstart go.mod: %w", err)
-	}
-	updated := strings.ReplaceAll(
-		string(raw),
-		"replace goa.design/goa-ai => ..",
-		"replace goa.design/goa-ai => "+repoRoot,
+// rewriteQuickstartModule points the copied module at the goa-ai and Goa
+// source directories selected for this test.
+func rewriteQuickstartModule(ctx context.Context, rootPath, repoRoot, goaRoot string) error {
+	cmd := isolatedGoCommand(
+		ctx,
+		rootPath,
+		"mod",
+		"edit",
+		"-replace=goa.design/goa-ai="+repoRoot,
+		"-replace=goa.design/goa/v3="+goaRoot,
 	)
-	if err := root.WriteFile("go.mod", []byte(updated), 0o600); err != nil {
-		return fmt.Errorf("write quickstart go.mod: %w", err)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("go mod edit: %w: %s", err, out)
 	}
 	return nil
+}
+
+// isolatedGoCommand runs one command inside the copied module without using
+// a Go workspace that does not list the copied directory.
+func isolatedGoCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	// #nosec G204 -- command arguments come from this test file.
+	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+	return cmd
 }
 
 // readQuickstartGuide reads the generated guide through a directory-scoped

@@ -13,7 +13,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -46,11 +45,10 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 	ctx := context.Background()
 	bus := hooks.NewBus()
 	sink := &recordingStreamSink{}
-	rt := New(
+	rt := New(newTestStore(),
 		WithEngine(engineinmem.New()),
 		WithHooks(bus),
 		WithStream(sink),
-		WithRunEventStore(runloginmem.New()),
 		WithLogger(telemetry.NoopLogger{}),
 		WithMetrics(telemetry.NoopMetrics{}),
 		WithTracer(telemetry.NoopTracer{}),
@@ -70,13 +68,18 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 			}, nil
 		},
 	}
-	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{
-		ID:      "child.agent",
-		Planner: childPlanner,
-		Workflow: engine.WorkflowDefinition{
+	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{Definition: testRegistrationDefinition("child.agent",
+
+		engine.WorkflowDefinition{
 			Name:    "child.workflow",
 			Handler: rt.ExecuteWorkflow,
-		},
+		}, nil),
+
+		WorkflowHandler: (engine.WorkflowDefinition{
+			Name:    "child.workflow",
+			Handler: rt.ExecuteWorkflow,
+		}).Handler, Planner: childPlanner,
+
 		PlanActivityName:    "child.plan",
 		ResumeActivityName:  "child.resume",
 		ExecuteToolActivity: "child.execute_tool",
@@ -90,19 +93,14 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 		toolsetName  = "svc.agenttools"
 	)
 
-	sess, err := rt.CreateSession(ctx, sessionID)
+	sess, err := createSessionForTest(ctx, rt.Store, sessionID)
 	require.NoError(t, err)
 	require.Equal(t, sessionID, sess.ID)
 	require.Equal(t, session.StatusActive, sess.Status)
 
 	agentTools := NewAgentToolsetRegistration(rt, AgentToolConfig{
-		AgentID: "child.agent",
-		Route: AgentRoute{
-			ID:               agent.Ident("child.agent"),
-			WorkflowName:     "child.workflow",
-			DefaultTaskQueue: "default",
-		},
-		Name: toolsetName,
+		Definition: testAgentDefinition(agent.Ident("child.agent"), "child.workflow", "default", nil, nil),
+		Name:       toolsetName,
 		AgentToolContent: AgentToolContent{
 			Prompt: func(id tools.Ident, payload any) string {
 				return "invoke"
@@ -110,7 +108,7 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 		},
 	})
 	agentTools.Specs = []tools.ToolSpec{
-		newAnyJSONSpec(invokeToolID, toolsetName),
+		newAnyJSONSpec(invokeToolID),
 	}
 	agentTools.Specs[0].IsAgentTool = true
 	agentTools.Specs[0].AgentID = "child.agent"
@@ -141,13 +139,18 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 			}, nil
 		},
 	}
-	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{
-		ID:      "parent.agent",
-		Planner: parentPlanner,
-		Workflow: engine.WorkflowDefinition{
+	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{Definition: testRegistrationDefinition("parent.agent",
+
+		engine.WorkflowDefinition{
 			Name:    "parent.workflow",
 			Handler: rt.ExecuteWorkflow,
-		},
+		}, nil),
+
+		WorkflowHandler: (engine.WorkflowDefinition{
+			Name:    "parent.workflow",
+			Handler: rt.ExecuteWorkflow,
+		}).Handler, Planner: parentPlanner,
+
 		PlanActivityName:    "parent.plan",
 		ResumeActivityName:  "parent.resume",
 		ExecuteToolActivity: "parent.execute_tool",

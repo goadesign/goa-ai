@@ -48,10 +48,10 @@ func TestToolModelJSONNamesUseSnakeCase(t *testing.T) {
 	require.Contains(t, codecs, `"record_key": "Record key to review."`)
 	require.Contains(t, codecs, `"include_details": "Whether the tool should include detailed output."`)
 	require.Contains(t, codecs, `"time_context.start_time": "Start time for the request."`)
-	require.Contains(t, codecs, `"reviewer_summaries.user_id": "Reviewer identifier."`)
+	require.Contains(t, codecs, `"reviewer_summaries.*.user_id": "Reviewer identifier."`)
 	require.Contains(t, codecs, `"record_key": "string"`)
 	require.Contains(t, codecs, `"include_details": "boolean"`)
 	require.Contains(t, codecs, `"source_ids": "array"`)
 	require.Contains(t, codecs, `"time_context.start_time": "string"`)
-	require.Contains(t, codecs, `"reviewer_summaries.user_id": "string"`)
+	require.Contains(t, codecs, `"reviewer_summaries.*.user_id": "string"`)
 }

@@ -1,637 +1,523 @@
 package runtime
 
+// These tests cover the runtime activity's translation from workflow records
+// to the unified storage commands. Store-level retry and conflict behavior is
+// covered by runtime/agent/storage/inmem.
+
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	agent "goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/prompt"
-	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
-	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/session"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
-	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
-type recordingRunlog struct {
-	events []*runlog.Event
-	err    error
-	delay  time.Duration
-}
-
-// failOnceRunlog simulates a storage outage at one record while preserving the
-// successful prefix in the real idempotent in-memory store.
-type failOnceRunlog struct {
-	store   runlog.Store
-	failKey string
-	failed  bool
-}
-
-func (r *recordingRunlog) Append(_ context.Context, e *runlog.Event) (runlog.AppendResult, error) {
-	if r.err != nil {
-		return runlog.AppendResult{}, r.err
-	}
-	if e == nil {
-		return runlog.AppendResult{}, errors.New("event is nil")
-	}
-	if r.delay > 0 {
-		time.Sleep(r.delay)
-	}
-	r.events = append(r.events, e)
-	return runlog.AppendResult{ID: e.ID, Inserted: true}, nil
-}
-
-func (r *recordingRunlog) List(context.Context, string, string, int) (runlog.Page, error) {
-	return runlog.Page{}, errors.New("not implemented")
-}
-
-func (r *failOnceRunlog) Append(ctx context.Context, event *runlog.Event) (runlog.AppendResult, error) {
-	if event.EventKey == r.failKey && !r.failed {
-		r.failed = true
-		return runlog.AppendResult{}, errors.New("record backend unavailable")
-	}
-	return r.store.Append(ctx, event)
-}
-
-func (r *failOnceRunlog) List(ctx context.Context, runID, cursor string, limit int) (runlog.Page, error) {
-	return r.store.List(ctx, runID, cursor, limit)
-}
-
-func mustEncodeHookRecord(t *testing.T, evt hooks.Event, eventKey string, timestampMS int64) *runlog.ActivityInput {
-	t.Helper()
-	input, err := hooks.EncodeToRecordInput(evt, hooks.EncodeOptions{
-		TurnID:      "turn-1",
-		EventKey:    eventKey,
-		TimestampMS: timestampMS,
-	})
-	require.NoError(t, err)
-	return input
-}
-
-func TestHookActivityAppendsBeforePublish(t *testing.T) {
-	t.Parallel()
-
-	rl := &recordingRunlog{}
-	bus := hooks.NewBus()
-	store := sessioninmem.New()
-
-	var published hooks.Event
-	sub, err := bus.Register(hooks.SubscriberFunc(func(ctx context.Context, evt hooks.Event) error {
-		published = evt
-		return nil
-	}))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = sub.Close() })
-
-	rt := &Runtime{
-		RunEventStore: rl,
-		Bus:           bus,
-		SessionStore:  store,
+type (
+	// cancellationRecordConflictStore returns a stored-record conflict from the
+	// cancellation command while delegating every other operation.
+	cancellationRecordConflictStore struct {
+		storage.Store
 	}
 
-	now := time.Now().UTC()
-	_, err = store.CreateSession(context.Background(), "sess-1", now)
-	require.NoError(t, err)
-	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
-		AgentID:   "svc.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		Status:    session.RunStatusPending,
-		StartedAt: now,
-		UpdatedAt: now,
-		Labels:    nil,
-		Metadata:  nil,
-	}))
+	// startSessionStatusStore returns selected start results without applying a
+	// write so tests can exercise the runtime's store-result checks.
+	startSessionStatusStore struct {
+		storage.Store
+		root    storage.RootRunStartResult
+		child   storage.ChildRunStartResult
+		oneShot storage.OneShotRunStartResult
+	}
+)
 
-	input := mustEncodeHookRecord(
-		t,
-		hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil),
-		"evt-1",
-		1,
-	)
-
-	err = rt.recordActivity(context.Background(), testRecordBatch(input))
-	require.NoError(t, err)
-
-	require.NotNil(t, published)
-	require.Len(t, rl.events, 1)
-	require.Equal(t, "run-1", rl.events[0].RunID)
-	require.Equal(t, hooks.PlannerNote, rl.events[0].Type)
-	require.Equal(t, input.Payload, rl.events[0].Payload)
+func (s cancellationRecordConflictStore) RecordRunCancellation(context.Context, storage.RunCancellation) (storage.AppendResult, error) {
+	return storage.AppendResult{}, storage.NewContractError(runlog.ErrEventConflict)
 }
 
-func TestRecordActivityRetryPreservesOrderWithoutDuplicateDelivery(t *testing.T) {
+func (s startSessionStatusStore) StartRootRun(context.Context, storage.RootRunStart) (storage.RootRunStartResult, error) {
+	return s.root, nil
+}
+
+func (s startSessionStatusStore) StartChildRun(context.Context, storage.ChildRunStart) (storage.ChildRunStartResult, error) {
+	return s.child, nil
+}
+
+func (s startSessionStatusStore) StartOneShotRun(context.Context, storage.OneShotRunStart) (storage.OneShotRunStartResult, error) {
+	return s.oneShot, nil
+}
+
+func TestRecordActivityStoresRootStartDecision(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		end     bool
+		outcome session.RunStartOutcome
+		status  session.RunStatus
+		type_   string
+	}{
+		{name: "active", outcome: session.RunStartProceed, status: session.RunStatusRunning, type_: string(hooks.RunStarted)},
+		{name: "ended", end: true, outcome: session.RunStartStop, status: session.RunStatusCanceled, type_: string(hooks.RunStarted)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newTestStore()
+			_, err := store.CreateSession(ctx, "session", time.Now().UTC())
+			require.NoError(t, err)
+			if test.end {
+				_, err = store.EndSession(ctx, "session", time.Now().UTC())
+				require.NoError(t, err)
+			}
+			runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
+			event := hooks.NewRunStartedEvent(
+				"run", agent.Ident("svc.agent"), "session", "", "", map[string]string{"site": "one"},
+			)
+			record, err := prepareHookRecordInput(ctx, event, "turn")
+			require.NoError(t, err)
+
+			output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
+				RootStart: &api.RootRunStartCommand{Started: record},
+			})
+			require.NoError(t, err)
+			start := output.RootStart
+			require.Equal(t, test.outcome, start.Outcome)
+			if test.end {
+				require.Equal(t, run.CancellationReasonSessionEnded, start.CancellationReason)
+			} else {
+				require.Empty(t, start.CancellationReason)
+			}
+			meta, err := store.LoadRun(ctx, "run")
+			require.NoError(t, err)
+			require.Equal(t, test.status, meta.Status)
+			page, err := store.ListRunRecords(ctx, "run", "", 10)
+			require.NoError(t, err)
+			wantRecords := 1
+			if test.end {
+				wantRecords = 2
+			}
+			require.Len(t, page.Events, wantRecords)
+			require.Equal(t, test.type_, string(page.Events[0].Type))
+			if test.end {
+				require.Equal(t, string(hooks.RunCompleted), string(page.Events[1].Type))
+			}
+		})
+	}
+}
+
+func TestRecordActivityStoresRenderedPromptsOnlyForStartedRun(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		endSession bool
+		wantTypes  []string
+	}{
+		{name: "active", wantTypes: []string{string(hooks.RunStarted), string(hooks.PromptRendered)}},
+		{name: "ended", endSession: true, wantTypes: []string{string(hooks.RunStarted), string(hooks.RunCompleted)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newTestStore()
+			_, err := store.CreateSession(ctx, "session", time.Now().UTC())
+			require.NoError(t, err)
+			if test.endSession {
+				_, err = store.EndSession(ctx, "session", time.Now().UTC())
+				require.NoError(t, err)
+			}
+			runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
+			started, err := prepareHookRecordInput(ctx, hooks.NewRunStartedEvent(
+				"run",
+				agent.Ident("svc.agent"),
+				"session",
+				"",
+				"",
+				nil,
+			), "turn")
+			require.NoError(t, err)
+			rendered, err := prepareHookRecordInput(ctx, hooks.NewPromptRenderedEvent(
+				"run",
+				agent.Ident("svc.agent"),
+				"session",
+				prompt.Ident("svc.agent.system"),
+				"v1",
+				prompt.Scope{SessionID: "session"},
+			), "turn")
+			require.NoError(t, err)
+
+			output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
+				RootStart: &api.RootRunStartCommand{Started: started},
+			})
+			require.NoError(t, err)
+			wantStartRecords := 1
+			if output.RootStart.Outcome == session.RunStartStop {
+				wantStartRecords = 2
+			}
+			require.Len(t, output.RootStart.Records, wantStartRecords)
+			if output.RootStart.Outcome == session.RunStartProceed {
+				promptOutput, err := runtime.executeStorageCommand(ctx, testAppendCommand(rendered))
+				require.NoError(t, err)
+				require.Len(t, promptOutput.Append.Records, 1)
+			}
+			page, err := store.ListRunRecords(ctx, "run", "", 10)
+			require.NoError(t, err)
+			require.Len(t, page.Events, len(test.wantTypes))
+			for index, want := range test.wantTypes {
+				require.Equal(t, want, string(page.Events[index].Type))
+			}
+		})
+	}
+}
+
+func TestRecordActivityStartsOneShotRun(t *testing.T) {
 	ctx := context.Background()
-	store := &failOnceRunlog{
-		store:   runloginmem.New(),
-		failKey: "event-2",
-	}
-	bus := hooks.NewBus()
-	var delivered []string
-	sub, err := bus.Register(hooks.SubscriberFunc(func(_ context.Context, event hooks.Event) error {
-		delivered = append(delivered, event.EventKey())
-		return nil
-	}))
+	store := newTestStore()
+	runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
+	event := hooks.NewRunStartedEvent("run", agent.Ident("svc.agent"), "", "", "", nil)
+	record, err := prepareHookRecordInput(ctx, event, "")
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, sub.Close()) })
 
-	rt := &Runtime{
-		RunEventStore: store,
-		Bus:           bus,
-	}
-	batch := testRecordBatch(
-		mustEncodeHookRecord(t, hooks.NewPlannerNoteEvent("run-1", "svc.agent", "", "first", nil), "event-1", 1),
-		mustEncodeHookRecord(t, hooks.NewPlannerNoteEvent("run-1", "svc.agent", "", "second", nil), "event-2", 2),
-		mustEncodeHookRecord(t, hooks.NewPlannerNoteEvent("run-1", "svc.agent", "", "third", nil), "event-3", 3),
-	)
-
-	require.Error(t, rt.recordActivity(ctx, batch))
-	require.NoError(t, rt.recordActivity(ctx, batch))
-
-	page, err := store.List(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-	require.Len(t, page.Events, 3)
-	require.Equal(t, []string{"event-1", "event-2", "event-3"}, []string{
-		page.Events[0].EventKey,
-		page.Events[1].EventKey,
-		page.Events[2].EventKey,
+	output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
+		OneShotStart: &api.OneShotRunStartCommand{Started: record},
 	})
-	require.Equal(t, []int64{1, 2, 3}, []int64{
-		page.Events[0].Timestamp.UnixMilli(),
-		page.Events[1].Timestamp.UnixMilli(),
-		page.Events[2].Timestamp.UnixMilli(),
+	require.NoError(t, err)
+	require.Equal(t, session.RunStartProceed, output.OneShotStart.Outcome)
+	meta, err := store.LoadRun(ctx, "run")
+	require.NoError(t, err)
+	require.Empty(t, meta.SessionID)
+}
+
+func TestRecordActivityStartsOneShotChildRun(t *testing.T) {
+	store := newTestStore()
+	runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
+	parentEvent := hooks.NewRunStartedEvent("parent", agent.Ident("parent.agent"), "", "", "", nil)
+	parentRecord, err := prepareHookRecordInput(t.Context(), parentEvent, "turn")
+	require.NoError(t, err)
+	_, err = runtime.executeStorageCommand(t.Context(), &api.StorageActivityCommand{
+		OneShotStart: &api.OneShotRunStartCommand{Started: parentRecord},
 	})
-	require.Equal(t, []string{"event-1", "event-2", "event-3"}, delivered)
-}
-
-func TestGenAITimelineSubscriberEmitsSpans(t *testing.T) {
-	tracer := &recordingTelemetryTracer{}
-	rl := &recordingRunlog{}
-	bus := hooks.NewBus()
-	store := sessioninmem.New()
-	rt := &Runtime{
-		RunEventStore: rl,
-		Bus:           bus,
-		SessionStore:  store,
-		tracer:        tracer,
-	}
-	sub, err := bus.Register(hooks.SubscriberFunc(rt.recordGenAITelemetryEvent))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = sub.Close() })
-	now := time.Now().UTC()
-	_, err = store.CreateSession(context.Background(), "sess-1", now)
+	childEvent := hooks.NewRunStartedEvent(
+		"child", agent.Ident("child.agent"), "", "parent", "", nil,
+	)
+	childRecord, err := prepareHookRecordInput(t.Context(), childEvent, "turn")
 	require.NoError(t, err)
-	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
-		AgentID:   "svc.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		Status:    session.RunStatusRunning,
-		StartedAt: now,
-		UpdatedAt: now,
-	}))
-
-	toolEvent := hooks.NewToolResultReceivedEvent(
-		"run-1",
-		"svc.agent",
-		"sess-1",
-		"run-1",
-		"svc.tools.search",
-		"call-1",
+	linkedRecord, err := prepareHookRecordInput(t.Context(), hooks.NewChildRunLinkedEvent(
+		"parent",
+		agent.Ident("parent.agent"),
 		"",
-		nil,
-		0,
-		false,
-		"",
-		nil,
-		"",
-		nil,
-		150*time.Millisecond,
-		nil,
-		nil,
-	)
-	childEvent := hooks.NewChildRunLinkedEvent(
-		"run-1",
-		"svc.agent",
-		"sess-1",
-		"svc.tools.delegate",
-		"call-2",
-		"child-run",
-		"svc.child",
-	)
-
-	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(mustEncodeHookRecord(t, toolEvent, "evt-tool", 1_000))))
-	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(mustEncodeHookRecord(t, childEvent, "evt-child", 2_000))))
-
-	require.Len(t, tracer.spans, 2)
-
-	toolAttrs := attrsByKey(tracer.spans[0].attrs)
-	require.Equal(t, "execute_tool svc.tools.search", tracer.spans[0].name)
-	require.Equal(t, telemetry.GenAIOperationExecuteTool, toolAttrs[telemetry.AttrGenAIOperationName].AsString())
-	require.Equal(t, "sess-1", toolAttrs[telemetry.AttrGenAIConversationID].AsString())
-	require.Equal(t, "svc.agent", toolAttrs[telemetry.AttrGenAIAgentName].AsString())
-	require.Equal(t, "svc.tools.search", toolAttrs[telemetry.AttrGenAIToolName].AsString())
-	require.Equal(t, "call-1", toolAttrs[telemetry.AttrGenAIToolCallID].AsString())
-
-	invokeAttrs := attrsByKey(tracer.spans[1].attrs)
-	require.Equal(t, "invoke_agent svc.child", tracer.spans[1].name)
-	require.Equal(t, telemetry.GenAIOperationInvokeAgent, invokeAttrs[telemetry.AttrGenAIOperationName].AsString())
-	require.Equal(t, "svc.agent", invokeAttrs[telemetry.AttrGenAIAgentName].AsString())
-	require.Equal(t, "call-2", invokeAttrs[telemetry.AttrGenAIToolCallID].AsString())
-}
-
-func TestHookActivityAppendFailureAbortsPublish(t *testing.T) {
-	t.Parallel()
-
-	appendErr := errors.New("append failed")
-	rl := &recordingRunlog{err: appendErr}
-	bus := hooks.NewBus()
-	store := sessioninmem.New()
-
-	var published hooks.Event
-	sub, err := bus.Register(hooks.SubscriberFunc(func(ctx context.Context, evt hooks.Event) error {
-		published = evt
-		return nil
-	}))
+		tools.Ident("parent.tools.child"),
+		"call",
+		"child",
+		agent.Ident("child.agent"),
+	), "turn")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = sub.Close() })
 
-	rt := &Runtime{
-		RunEventStore: rl,
-		Bus:           bus,
-		SessionStore:  store,
-	}
-
-	now := time.Now().UTC()
-	_, err = store.CreateSession(context.Background(), "sess-1", now)
-	require.NoError(t, err)
-	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
-		AgentID:   "svc.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		Status:    session.RunStatusPending,
-		StartedAt: now,
-		UpdatedAt: now,
-		Labels:    nil,
-		Metadata:  nil,
-	}))
-
-	input := mustEncodeHookRecord(
-		t,
-		hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil),
-		"evt-2",
-		2,
-	)
-
-	err = rt.recordActivity(context.Background(), testRecordBatch(input))
-	require.ErrorIs(t, err, appendErr)
-	require.Nil(t, published)
-}
-
-func TestHookActivity_ReplayedChildRunLinkDoesNotDuplicateSessionProjection(t *testing.T) {
-	t.Parallel()
-
-	store := sessioninmem.New()
-	now := time.Now().UTC()
-	_, err := store.CreateSession(context.Background(), "sess-1", now)
-	require.NoError(t, err)
-	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
-		AgentID:   "svc.agent",
-		RunID:     "parent-run",
-		SessionID: "sess-1",
-		Status:    session.RunStatusRunning,
-		StartedAt: now,
-		UpdatedAt: now,
-	}))
-
-	rt := &Runtime{
-		RunEventStore: runloginmem.New(),
-		Bus:           hooks.NewBus(),
-		SessionStore:  store,
-	}
-
-	input := mustEncodeHookRecord(
-		t,
-		hooks.NewChildRunLinkedEvent(
-			"parent-run",
-			"svc.agent",
-			"sess-1",
-			tools.Ident("svc.agent.child"),
-			"tool-call-1",
-			"child-run",
-			"svc.child",
-		),
-		"evt-3",
-		3,
-	)
-
-	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
-	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
-
-	parent, err := store.LoadRun(context.Background(), "parent-run")
-	require.NoError(t, err)
-	require.Equal(t, []string{"child-run"}, parent.ChildRunIDs)
-}
-
-func TestHookActivityRecordsHeartbeatsWhenConfigured(t *testing.T) {
-	t.Parallel()
-
-	recorder := &heartbeatRecorder{}
-	rl := &recordingRunlog{delay: 10 * time.Millisecond}
-	store := sessioninmem.New()
-	rt := &Runtime{
-		RunEventStore: rl,
-		Bus:           hooks.NewBus(),
-		SessionStore:  store,
-	}
-
-	now := time.Now().UTC()
-	_, err := store.CreateSession(context.Background(), "sess-1", now)
-	require.NoError(t, err)
-	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
-		AgentID:   "svc.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		Status:    session.RunStatusPending,
-		StartedAt: now,
-		UpdatedAt: now,
-	}))
-
-	input := mustEncodeHookRecord(
-		t,
-		hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil),
-		"evt-4",
-		4,
-	)
-
-	ctx := context.Background()
-	ctx = engine.WithActivityHeartbeatRecorder(ctx, recorder)
-	ctx = engine.WithActivityHeartbeatTimeout(ctx, 3*time.Millisecond)
-
-	require.NoError(t, rt.recordActivity(ctx, testRecordBatch(input)))
-	require.GreaterOrEqual(t, recorder.Count(), 1)
-}
-
-func TestHookActivity_EnrichesToolCallScheduledDisplayHintInRunlog(t *testing.T) {
-	t.Parallel()
-
-	toolID := tools.Ident("runtime.hints.test.scheduled")
-	rthints.RegisterCallHint(toolID, mustTemplate(t, toolID, "Checking {{.Resolution}} energy rates"))
-
-	rl := &recordingRunlog{}
-	bus := hooks.NewBus()
-	store := sessioninmem.New()
-
-	rt := &Runtime{
-		RunEventStore: rl,
-		Bus:           bus,
-		SessionStore:  store,
-		logger:        telemetry.NoopLogger{},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			toolID: newTypedHintSpec(toolID),
+	output, err := runtime.executeStorageCommand(t.Context(), &api.StorageActivityCommand{
+		OneShotChildStart: &api.OneShotChildRunStartCommand{
+			ParentLinked: linkedRecord,
+			Started:      childRecord,
 		},
-	}
+	})
 
-	now := time.Now().UTC()
-	_, err := store.CreateSession(context.Background(), "sess-1", now)
 	require.NoError(t, err)
-	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
-		AgentID:   "svc.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		Status:    session.RunStatusPending,
-		StartedAt: now,
-		UpdatedAt: now,
-	}))
-
-	ev := hooks.NewToolCallScheduledEvent(
-		"run-1",
-		"svc.agent",
-		"sess-1",
-		toolID,
-		"call-1",
-		rawjson.Message([]byte(`{"resolution":"hourly"}`)),
-		"queue",
-		"",
-		0,
-	)
-	// Hooks constructors do not render hints. The runtime fills in a durable default
-	// hint (when possible) using typed payloads at publish time.
-	require.Empty(t, ev.DisplayHint)
-
-	input := mustEncodeHookRecord(t, ev, "evt-5", 5)
-
-	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
-	require.Len(t, rl.events, 1)
-	require.Equal(t, hooks.ToolCallScheduled, rl.events[0].Type)
-	require.Contains(t, string(rl.events[0].Payload), "Checking hourly energy rates")
+	require.Equal(t, session.RunStartProceed, output.OneShotChildStart.Outcome)
+	require.Len(t, output.OneShotChildStart.Records, 2)
+	for _, record := range output.OneShotChildStart.Records {
+		require.Empty(t, record.SessionStatus)
+	}
+	child, err := store.LoadRun(t.Context(), "child")
+	require.NoError(t, err)
+	require.Empty(t, child.SessionID)
+	require.Equal(t, "parent", child.ParentRunID)
 }
 
-func TestHookActivity_EnrichesMalformedToolCallScheduledDisplayHintInRunlog(t *testing.T) {
-	t.Parallel()
-
-	toolID := tools.Ident("runtime.hints.test.scheduled_malformed")
-	rthints.RegisterCallHint(toolID, mustTemplate(t, toolID, "Checking {{.Resolution}} energy rates"))
-
-	rl := &recordingRunlog{}
-	bus := hooks.NewBus()
-	store := sessioninmem.New()
-
-	rt := &Runtime{
-		RunEventStore: rl,
-		Bus:           bus,
-		SessionStore:  store,
-		logger:        telemetry.NoopLogger{},
-		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			toolID: newTypedHintSpec(toolID),
-		},
-		policyToolMetadata: map[tools.Ident]policy.ToolMetadata{
-			toolID: {
-				ID:    toolID,
-				Title: "Check Energy Rates",
-			},
-		},
-	}
-
-	now := time.Now().UTC()
-	_, err := store.CreateSession(context.Background(), "sess-1", now)
-	require.NoError(t, err)
-	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
-		AgentID:   "svc.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		Status:    session.RunStatusPending,
-		StartedAt: now,
-		UpdatedAt: now,
-	}))
-
-	ev := hooks.NewToolCallScheduledEvent(
-		"run-1",
-		"svc.agent",
-		"sess-1",
-		toolID,
-		"call-1",
-		rawjson.Message([]byte(`{"resolution":42}`)),
-		"queue",
-		"",
-		0,
-	)
-	require.Empty(t, ev.DisplayHint)
-
-	input := mustEncodeHookRecord(t, ev, "evt-malformed", 5)
-
-	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
-	require.Len(t, rl.events, 1)
-	require.Equal(t, hooks.ToolCallScheduled, rl.events[0].Type)
-	require.Contains(t, string(rl.events[0].Payload), "Check Energy Rates")
-}
-
-func TestHookActivity_EnrichesToolUnavailableDisplayHintInRunlog(t *testing.T) {
-	t.Parallel()
-
-	rl := &recordingRunlog{}
-	bus := hooks.NewBus()
-	store := sessioninmem.New()
-	rt := New(
-		WithRunEventStore(rl),
-		WithHooks(bus),
-		WithSessionStore(store),
-	)
-
-	now := time.Now().UTC()
-	_, err := store.CreateSession(context.Background(), "sess-1", now)
-	require.NoError(t, err)
-	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
-		AgentID:   "svc.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		Status:    session.RunStatusPending,
-		StartedAt: now,
-		UpdatedAt: now,
-	}))
-
-	ev := hooks.NewToolCallScheduledEvent(
-		"run-1",
-		"svc.agent",
-		"sess-1",
-		tools.ToolUnavailable,
-		"call-1",
-		rawjson.Message([]byte(`{"requested_tool":"catalog.resolve_sources"}`)),
-		"queue",
-		"",
-		0,
-	)
-	require.Empty(t, ev.DisplayHint)
-
-	input := mustEncodeHookRecord(t, ev, "evt-6", 6)
-
-	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
-	require.Len(t, rl.events, 1)
-	require.Equal(t, hooks.ToolCallScheduled, rl.events[0].Type)
-	require.Contains(t, string(rl.events[0].Payload), "Tool not available: catalog.resolve_sources")
-}
-
-func TestHookActivityAccumulatesPromptRefsOnRunMeta(t *testing.T) {
-	t.Parallel()
-
-	rl := &recordingRunlog{}
-	bus := hooks.NewBus()
-	store := sessioninmem.New()
-	rt := &Runtime{
-		RunEventStore: rl,
-		Bus:           bus,
-		SessionStore:  store,
-	}
-
-	now := time.Now().UTC()
-	_, err := store.CreateSession(context.Background(), "sess-1", now)
-	require.NoError(t, err)
-	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
-		AgentID:   "svc.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		Status:    session.RunStatusPending,
-		StartedAt: now,
-		UpdatedAt: now,
-	}))
-
-	ev := hooks.NewPromptRenderedEvent(
-		"run-1",
-		"svc.agent",
-		"sess-1",
-		prompt.Ident("assistant.system"),
-		"v1",
-		prompt.Scope{
-			SessionID: "sess-1",
-			Labels:    nil,
-		},
-	)
-	input := mustEncodeHookRecord(t, ev, "evt-6", 6)
-	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
-
-	input2 := mustEncodeHookRecord(t, ev, "evt-7", 7)
-	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input2)))
-
-	run, err := store.LoadRun(context.Background(), "run-1")
-	require.NoError(t, err)
-	require.Equal(t, []prompt.PromptRef{
+func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
+	active := storage.AppendResult{SessionStatus: session.StatusActive}
+	ended := storage.AppendResult{SessionStatus: session.StatusEnded}
+	for _, test := range []struct {
+		name  string
+		kind  storageCommandKind
+		store startSessionStatusStore
+		want  string
+	}{
 		{
-			ID:      prompt.Ident("assistant.system"),
-			Version: "v1",
+			name: "root proceed invalid status",
+			kind: storageCommandRootStart,
+			store: startSessionStatusStore{root: storage.RootRunStartResult{
+				Outcome: session.RunStartProceed,
+				Started: storage.AppendResult{Inserted: true, SessionStatus: session.StatusEnded},
+			}},
+			want: `newly inserted proceeding start record 0 reports ended session`,
 		},
-	}, run.PromptRefs)
+		{
+			name: "root stop",
+			kind: storageCommandRootStart,
+			store: startSessionStatusStore{root: storage.RootRunStartResult{
+				Outcome:  session.RunStartStop,
+				Started:  ended,
+				Canceled: active,
+			}},
+			want: `start record 1 has session status "active", want all records to report "ended"`,
+		},
+		{
+			name: "child proceed parent link",
+			kind: storageCommandChildStart,
+			store: startSessionStatusStore{child: storage.ChildRunStartResult{
+				Outcome:      session.RunStartProceed,
+				ParentRecord: ended,
+				Started:      active,
+			}},
+			want: `start record 1 has session status "active", want all records to report "ended"`,
+		},
+		{
+			name: "child stop start",
+			kind: storageCommandChildStart,
+			store: startSessionStatusStore{child: storage.ChildRunStartResult{
+				Outcome:      session.RunStartStop,
+				ParentRecord: ended,
+				Started:      active,
+				Canceled:     ended,
+			}},
+			want: `start record 1 has session status "active", want all records to report "ended"`,
+		},
+		{
+			name: "child stop cancellation",
+			kind: storageCommandChildStart,
+			store: startSessionStatusStore{child: storage.ChildRunStartResult{
+				Outcome:      session.RunStartStop,
+				ParentRecord: ended,
+				Started:      ended,
+				Canceled:     active,
+			}},
+			want: `start record 2 has session status "active", want all records to report "ended"`,
+		},
+		{
+			name: "one shot",
+			kind: storageCommandOneShotStart,
+			store: startSessionStatusStore{oneShot: storage.OneShotRunStartResult{
+				Record: active,
+			}},
+			want: `one-shot start has session status "active", want empty`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			started := hooks.NewRunStartedEvent(
+				"run", agent.Ident("svc.agent"), "session", "", "", nil,
+			)
+			if test.kind == storageCommandChildStart {
+				started = hooks.NewRunStartedEvent(
+					"run", agent.Ident("svc.agent"), "session", "parent", "", nil,
+				)
+			}
+			if test.kind == storageCommandOneShotStart {
+				started = hooks.NewRunStartedEvent(
+					"run", agent.Ident("svc.agent"), "", "", "", nil,
+				)
+			}
+			startedInput, err := prepareHookRecordInput(t.Context(), started, "turn")
+			require.NoError(t, err)
+			var linkedInput *RecordActivityInput
+			if test.kind == storageCommandChildStart {
+				linkedInput, err = prepareHookRecordInput(t.Context(), hooks.NewChildRunLinkedEvent(
+					"parent",
+					agent.Ident("svc.parent"),
+					"session",
+					tools.Ident("svc.parent.child"),
+					"call",
+					"run",
+					agent.Ident("svc.agent"),
+				), "turn")
+				require.NoError(t, err)
+			}
+			runtime := &Runtime{Store: test.store, Bus: hooks.NewBus()}
+
+			_, err = runtime.storeRunStart(t.Context(), test.kind, startedInput, linkedInput)
+
+			require.ErrorContains(t, err, test.want)
+			require.True(t, engine.IsActivityErrorNonRetryable(err))
+		})
+	}
 }
 
-func TestHookActivityLinksChildRunsOnParentRunMeta(t *testing.T) {
-	t.Parallel()
-
-	rl := &recordingRunlog{}
-	bus := hooks.NewBus()
-	store := sessioninmem.New()
-	rt := &Runtime{
-		RunEventStore: rl,
-		Bus:           bus,
-		SessionStore:  store,
+func TestRecordActivityAcceptsProceedRetryAfterSessionEnds(t *testing.T) {
+	store := newTestStore()
+	_, err := store.CreateSession(t.Context(), "session", time.Now().UTC())
+	require.NoError(t, err)
+	runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
+	started, err := prepareHookRecordInput(t.Context(), hooks.NewRunStartedEvent(
+		"run", agent.Ident("svc.agent"), "session", "", "", nil,
+	), "turn")
+	require.NoError(t, err)
+	command := &api.StorageActivityCommand{
+		RootStart: &api.RootRunStartCommand{Started: started},
 	}
 
-	now := time.Now().UTC()
-	_, err := store.CreateSession(context.Background(), "sess-1", now)
+	first, err := runtime.executeStorageCommand(t.Context(), command)
 	require.NoError(t, err)
-	require.NoError(t, store.UpsertRun(context.Background(), session.RunMeta{
-		AgentID:   "svc.parent",
-		RunID:     "run-parent",
-		SessionID: "sess-1",
-		Status:    session.RunStatusRunning,
-		StartedAt: now,
-		UpdatedAt: now,
-	}))
-
-	linked := hooks.NewChildRunLinkedEvent(
-		"run-parent",
-		"svc.parent",
-		"sess-1",
-		"svc.child",
-		"tool-use-1",
-		"run-child",
-		"svc.child",
-	)
-	input := mustEncodeHookRecord(t, linked, "evt-8", 8)
-	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
-	require.NoError(t, rt.recordActivity(context.Background(), testRecordBatch(input)))
-
-	parentRun, err := store.LoadRun(context.Background(), "run-parent")
+	require.Equal(t, session.RunStartProceed, first.RootStart.Outcome)
+	require.Equal(t, session.StatusActive, first.RootStart.Records[0].SessionStatus)
+	_, err = store.EndSession(t.Context(), "session", time.Now().UTC())
 	require.NoError(t, err)
-	require.Equal(t, []string{"run-child"}, parentRun.ChildRunIDs)
 
-	childRun, err := store.LoadRun(context.Background(), "run-child")
+	retry, err := runtime.executeStorageCommand(t.Context(), command)
+
 	require.NoError(t, err)
-	require.Equal(t, "svc.child", childRun.AgentID)
-	require.Equal(t, session.RunStatusPending, childRun.Status)
+	require.Equal(t, session.RunStartProceed, retry.RootStart.Outcome)
+	require.Equal(t, session.StatusEnded, retry.RootStart.Records[0].SessionStatus)
+}
+
+func TestRecordActivityStoresFirstCancellationReason(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore()
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+	})
+	runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
+	record := func(reason string) *RecordActivityInput {
+		payload, err := json.Marshal(cancellationIntentPayload{Reason: reason})
+		require.NoError(t, err)
+		return &RecordActivityInput{
+			Type: storage.CancellationRecordType, EventKey: cancellationIntentEventKey,
+			RunID: "run", AgentID: agent.Ident("svc.agent"), SessionID: "session",
+			TimestampMS: time.Now().UnixMilli(), Payload: payload,
+		}
+	}
+
+	firstRecord := record(run.CancellationReasonUserRequested)
+	first, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
+		Cancellation: &api.RunCancellationCommand{Record: firstRecord},
+	})
+	require.NoError(t, err)
+	require.Equal(t, api.RunCancellationAccepted, first.Cancellation.Outcome)
+	require.True(t, first.Cancellation.Record.Inserted)
+
+	retry, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
+		Cancellation: &api.RunCancellationCommand{Record: firstRecord},
+	})
+	require.NoError(t, err)
+	require.Equal(t, api.RunCancellationAccepted, retry.Cancellation.Outcome)
+	require.False(t, retry.Cancellation.Record.Inserted)
+
+	conflict, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
+		Cancellation: &api.RunCancellationCommand{Record: record(run.CancellationReasonSessionEnded)},
+	})
+	require.NoError(t, err)
+	require.Equal(t, api.RunCancellationConflict, conflict.Cancellation.Outcome)
+
+	meta, err := store.LoadRun(ctx, "run")
+	require.NoError(t, err)
+	require.Equal(t, run.CancellationReasonUserRequested, meta.CancellationReason)
+}
+
+func TestRecordActivityPreservesCancellationRecordConflict(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore()
+	runtime := &Runtime{
+		Store: cancellationRecordConflictStore{Store: store},
+		Bus:   hooks.NewBus(),
+	}
+	payload, err := json.Marshal(cancellationIntentPayload{Reason: run.CancellationReasonUserRequested})
+	require.NoError(t, err)
+
+	output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
+		Cancellation: &api.RunCancellationCommand{Record: &RecordActivityInput{
+			Type: storage.CancellationRecordType, EventKey: cancellationIntentEventKey,
+			RunID: "run", AgentID: agent.Ident("svc.agent"), SessionID: "session",
+			TimestampMS: time.Now().UnixMilli(), Payload: payload,
+		}},
+	})
+
+	require.Nil(t, output)
+	require.ErrorIs(t, err, runlog.ErrEventConflict)
+	require.True(t, engine.IsActivityErrorNonRetryable(err))
+}
+
+func TestClassifyStorageActivityErrorRetriesOnlyTemporaryFailures(t *testing.T) {
+	permanent := classifyStorageActivityError(fmt.Errorf(
+		"store start: %w",
+		storage.NewContractError(session.ErrSessionPurged),
+	))
+	require.ErrorIs(t, permanent, session.ErrSessionPurged)
+	require.True(t, engine.IsActivityErrorNonRetryable(permanent))
+
+	temporary := errors.New("database unavailable")
+	require.Same(t, temporary, classifyStorageActivityError(temporary))
+	require.False(t, engine.IsActivityErrorNonRetryable(temporary))
+}
+
+func TestStorageActivityRejectsCommandsWithoutExactlyOneOperation(t *testing.T) {
+	runtime := &Runtime{Store: newTestStore(), Bus: hooks.NewBus()}
+	for _, command := range []*api.StorageActivityCommand{
+		{},
+		{
+			Append:   &api.AppendRecordsCommand{Records: []*RecordActivityInput{{}}},
+			Terminal: &api.RunTerminalCommand{Record: &RecordActivityInput{}},
+		},
+	} {
+		output, err := runtime.executeStorageCommand(t.Context(), command)
+		require.Nil(t, output)
+		require.ErrorContains(t, err, "exactly one operation")
+		require.True(t, engine.IsActivityErrorNonRetryable(err))
+	}
+}
+
+func TestMalformedStorageCommandIsNotAStoreContractError(t *testing.T) {
+	runtime := &Runtime{Store: newTestStore(), Bus: hooks.NewBus()}
+	for _, test := range []struct {
+		name    string
+		command *api.StorageActivityCommand
+		want    string
+	}{
+		{
+			name:    "empty append",
+			command: &api.StorageActivityCommand{Append: &api.AppendRecordsCommand{}},
+			want:    "append command is empty",
+		},
+		{
+			name: "nil record",
+			command: &api.StorageActivityCommand{Append: &api.AppendRecordsCommand{
+				Records: []*RecordActivityInput{nil},
+			}},
+			want: "record input is nil",
+		},
+		{
+			name: "malformed transcript",
+			command: &api.StorageActivityCommand{Append: &api.AppendRecordsCommand{
+				Records: []*RecordActivityInput{{
+					Type: transcript.RunLogMessagesAppended, Payload: []byte(`{"messages":`),
+				}},
+			}},
+			want: "decode transcript delta",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := runtime.executeStorageCommand(t.Context(), test.command)
+			require.ErrorContains(t, err, test.want)
+			require.True(t, engine.IsActivityErrorNonRetryable(err))
+			var contractErr *storage.ContractError
+			require.NotErrorAs(t, err, &contractErr)
+		})
+	}
+}
+
+func TestStorageActivityRejectsUnknownStartOutcome(t *testing.T) {
+	result := &api.StorageActivityResult{
+		RootStart: &api.StartRunResult{Outcome: session.RunStartOutcome("unknown")},
+	}
+	require.ErrorContains(t, validateStorageResult(storageCommandRootStart, result), "unknown start outcome")
+}
+
+func TestStorageActivityRejectsMismatchedResult(t *testing.T) {
+	result := &api.StorageActivityResult{Append: &api.AppendRecordsResult{}}
+	require.ErrorContains(t, validateStorageResult(storageCommandTerminal, result), "does not match command")
 }

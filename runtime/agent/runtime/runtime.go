@@ -14,11 +14,12 @@
 //
 // The Runtime is thread-safe and can be used concurrently to register agents
 // and execute workflows. Production deployments typically configure the Runtime
-// with a durable workflow engine (Temporal) and a durable memory store.
+// with a durable workflow engine, one host-provided runtime store, and a
+// durable memory store.
 //
 // Example usage: use AgentClient for execution.
 //
-//	rt := runtime.New(runtime.Options{ Engine: temporalEngine, ... })
+//	rt := runtime.New(runtimeStore, runtime.WithEngine(temporalEngine))
 //	if err := rt.RegisterAgent(ctx, agentReg); err != nil {
 //		log.Fatal(err)
 //	}
@@ -34,6 +35,7 @@ import (
 	"maps"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -54,18 +56,14 @@ import (
 	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/session"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 	"google.golang.org/genai"
-
-	"text/template"
-
-	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 )
 
 type (
@@ -110,12 +108,11 @@ type (
 		Memory memory.Store
 		// PromptRegistry resolves prompt specs and optional scoped overrides.
 		PromptRegistry *prompt.Registry
-		// SessionStore persists session lifecycle state and run metadata.
-		SessionStore session.Store
+		// Store persists run lifecycle state, continuation checkpoints, and
+		// ordered run records in one transaction boundary.
+		Store storage.Store
 		// Policy evaluates allowlists and caps per planner turn.
 		Policy policy.Engine
-		// RunEventStore is the canonical append-only run event log.
-		RunEventStore runlog.Store
 		// Bus is the bus used for streaming runtime events.
 		Bus hooks.Bus
 		// Stream publishes planner/tool/assistant events to the caller.
@@ -136,6 +133,9 @@ type (
 		agents    map[agent.Ident]AgentRegistration
 		toolsets  map[string]ToolsetRegistration
 		toolSpecs map[tools.Ident]tools.ToolSpec
+		// toolsetNames maps each global tool name to the one registered toolset
+		// that executes it in this runtime.
+		toolsetNames map[tools.Ident]string
 		// policyToolMetadata stores canonical per-tool policy metadata resolved at
 		// registration time from generated lookups or, for manual registrations,
 		// derived once from the supplied specs.
@@ -146,18 +146,6 @@ type (
 
 		// Per-agent tool specs registered during agent registration for introspection.
 		agentToolSpecs map[agent.Ident][]tools.ToolSpec
-
-		handleMu   sync.RWMutex
-		runHandles map[string]engine.WorkflowHandle
-
-		// completionRepairMu serializes no-handle terminal repair so concurrent
-		// readers cannot append duplicate terminal events for the same missing
-		// canonical completion window.
-		completionRepairMu sync.Mutex
-
-		// workers holds optional per-agent worker configuration supplied at
-		// construction time.
-		workers map[agent.Ident]WorkerConfig
 
 		// registrationMu serializes agent and toolset registration so one global
 		// tool name cannot change contract between validation and storage.
@@ -177,14 +165,16 @@ type (
 		// and a failed attempt may be retried deterministically.
 		sealMu sync.Mutex
 
-		// recordActivityRegistered tracks whether the runtime record activity has
+		// storageActivityRegistered tracks whether the runtime storage activity has
 		// been registered with the engine.
-		recordActivityRegistered bool
+		storageActivityRegistered bool
+		// agentChildActivityRegistered tracks whether child prompt preparation is
+		// available to every registered workflow.
+		agentChildActivityRegistered bool
 
-		// recordActivityTimeout overrides the StartToClose timeout used for the
-		// durable record activity (`runtime.record_event`). Zero means use the
-		// runtime default.
-		recordActivityTimeout time.Duration
+		// storageActivityTimeout overrides the StartToClose timeout used for
+		// `runtime.store`. Zero means use the runtime default.
+		storageActivityTimeout time.Duration
 
 		// reminders manages run-scoped system reminders used for backstage
 		// guidance (safety, correctness, workflow) injected into prompts by
@@ -211,12 +201,8 @@ type (
 		// PromptStore resolves scoped prompt overrides. When nil, prompt rendering
 		// uses baseline registered PromptSpecs only.
 		PromptStore prompt.Store
-		// SessionStore persists session lifecycle state and run metadata.
-		SessionStore session.Store
 		// Policy evaluates allowlists and caps per planner turn.
 		Policy policy.Engine
-		// RunEventStore is the canonical append-only run event log.
-		RunEventStore runlog.Store
 		// Hooks is the Pulse-backed bus used for streaming runtime events.
 		Hooks hooks.Bus
 		// Stream publishes planner/tool/assistant events to the caller.
@@ -234,15 +220,9 @@ type (
 		// disabled unless explicitly troubleshooting.
 		CaptureGenAIMessages bool
 
-		// RecordActivityTimeout overrides the StartToClose timeout for the
-		// durable record activity (`runtime.record_event`). Zero means use the
-		// runtime default.
-		RecordActivityTimeout time.Duration
-
-		// Workers provides per-agent worker configuration. If an agent lacks
-		// an entry, the runtime uses a default worker configuration. Engines
-		// that do not poll (in-memory) ignore this map.
-		Workers map[agent.Ident]WorkerConfig
+		// StorageActivityTimeout overrides the StartToClose timeout for
+		// `runtime.store`. Zero means use the runtime default.
+		StorageActivityTimeout time.Duration
 
 		// ToolConfirmation configures runtime-enforced confirmation overrides for selected
 		// tools (for example, requiring explicit operator approval before executing
@@ -257,32 +237,16 @@ type (
 	// RuntimeOption configures the runtime via functional options passed to NewWith.
 	RuntimeOption func(*Options)
 
-	// WorkerConfig configures per-agent queue placement. Engines that support
-	// background workers (for example Temporal) use this to select the workflow
-	// and activity queue for the agent. Engine-specific concurrency, liveness,
-	// and queue-wait tuning belongs in the engine adapter. In-memory engines
-	// ignore this configuration.
-	WorkerConfig struct {
-		// Queue overrides the default task queue for this agent's workflow and
-		// activities. When set, the runtime rebases workflow, planner, and tool
-		// activities onto this queue. Engine-specific liveness and queue-wait tuning
-		// belongs in the engine adapter, not the generic runtime surface.
-		Queue string
-	}
-
-	// WorkerOption configures a WorkerConfig.
-	WorkerOption func(*WorkerConfig)
-
 	// AgentRegistration bundles the generated assets for an agent. This struct is
 	// produced by codegen and passed to RegisterAgent to make an agent available
 	// for execution.
 	AgentRegistration struct {
-		// ID is the unique agent identifier (service.agent).
-		ID agent.Ident
+		// Definition is the immutable generated contract shared with callers.
+		Definition AgentDefinition
 		// Planner is the concrete planner implementation for the agent.
 		Planner planner.Planner
-		// Workflow describes the durable workflow registered with the engine.
-		Workflow engine.WorkflowDefinition
+		// WorkflowHandler runs the agent workflow on the local worker.
+		WorkflowHandler engine.WorkflowFunc
 		// PlanActivityName names the activity used for PlanStart.
 		PlanActivityName string
 		// PlanActivityOptions describes retry/timeout behavior for the PlanStart activity.
@@ -297,22 +261,8 @@ type (
 		// When set, these options are applied to all service-backed tool activities
 		// scheduled by this agent. Agent-as-tool executions run as child workflows.
 		ExecuteToolActivityOptions engine.ActivityOptions
-		// Specs provides JSON codecs for every tool declared in the agent design.
-		Specs []tools.ToolSpec
-		// ToolMetadataLookup resolves canonical policy metadata for the tools
-		// declared in Specs.
-		ToolMetadataLookup ToolMetadataLookup
 		// Policy configures caps, time budgets, and missing-field behavior for the agent.
 		Policy RunPolicy
-
-		// RequiredLabels lists, sorted and deduplicated, the run label keys
-		// that label-backed Inject() fields require across every toolset this
-		// agent uses (generated as the agent's aggregated specs package
-		// RequiredLabels var). Runtime.Start/OneShotRun rejects a run whose
-		// supplied labels omit any of these keys, before scheduling any
-		// workflow or activity. Empty when no used toolset injects a
-		// label-backed field.
-		RequiredLabels []string
 	}
 
 	// ToolsetRegistration holds the metadata and execution logic for a toolset.
@@ -463,7 +413,8 @@ const (
 	defaultPlanActivityTimeout        = 2 * time.Minute
 	defaultResumeActivityTimeout      = 2 * time.Minute
 	defaultExecuteToolActivityTimeout = 2 * time.Minute
-	defaultRecordActivityTimeout      = 15 * time.Second
+	defaultAgentChildActivityTimeout  = 2 * time.Minute
+	defaultStorageActivityTimeout     = 15 * time.Second
 )
 
 // defaultRetriedActivityPolicy returns the runtime's standard infrastructure
@@ -485,9 +436,13 @@ var (
 	ErrInvalidConfig       = errors.New("invalid configuration")
 	ErrMissingSessionID    = errors.New("session id is required")
 	ErrSessionNotAllowed   = errors.New("session id is not allowed")
-	ErrWorkflowStartFailed = errors.New("workflow start failed")
-	ErrRegistrationClosed  = errors.New("registration closed after first run")
-	ErrMissingLabels       = errors.New("run start: missing required labels")
+	// ErrContinuationRejected means the saved checkpoint or submitted response
+	// cannot start a successor workflow. The runtime returns it before asking the
+	// workflow engine to start that successor.
+	ErrContinuationRejected = errors.New("continuation rejected before workflow start")
+	ErrWorkflowStartFailed  = errors.New("workflow start failed")
+	ErrRegistrationClosed   = errors.New("registration closed after first run")
+	ErrMissingLabels        = errors.New("run start: missing required labels")
 )
 
 // RunOption configures optional fields on RunInput for Run and Start. Required
@@ -522,6 +477,14 @@ func WithMetadata(meta map[string]any) RunOption {
 		for k, v := range meta {
 			in.Metadata[k] = v
 		}
+	}
+}
+
+// WithRenderedPrompts records prompts whose rendered text is already included
+// in the run input. The accepted workflow stores them before planner work.
+func WithRenderedPrompts(events []prompt.RenderEvent) RunOption {
+	return func(in *RunInput) {
+		in.RenderedPrompts = clonePromptRenderEvents(events)
 	}
 }
 
@@ -699,7 +662,10 @@ func WithTagPolicyClauses(clauses []TagPolicyClause) RunOption {
 
 // newFromOptions constructs a Runtime using the provided options. Internal helper
 // used by the public New(...RuntimeOption) constructor.
-func newFromOptions(opts Options) *Runtime {
+func newFromOptions(store storage.Store, opts Options) *Runtime {
+	if store == nil {
+		panic("runtime: storage store is required")
+	}
 	if opts.ToolConfirmation != nil {
 		if err := opts.ToolConfirmation.validate(); err != nil {
 			panic(err)
@@ -725,40 +691,31 @@ func newFromOptions(opts Options) *Runtime {
 	if tracer == nil {
 		tracer = telemetry.NoopTracer{}
 	}
-	if opts.RunEventStore == nil {
-		opts.RunEventStore = runloginmem.New()
-	}
-	if opts.SessionStore == nil {
-		opts.SessionStore = sessioninmem.New()
-	}
 	rt := &Runtime{
-		Engine:                eng,
-		Memory:                opts.MemoryStore,
-		PromptRegistry:        prompt.NewRegistry(opts.PromptStore),
-		SessionStore:          opts.SessionStore,
-		Policy:                opts.Policy,
-		RunEventStore:         opts.RunEventStore,
-		Bus:                   bus,
-		Stream:                opts.Stream,
-		recordActivityTimeout: opts.RecordActivityTimeout,
-		logger:                logger,
-		metrics:               metrics,
-		tracer:                tracer,
-		captureGenAIMessages:  opts.CaptureGenAIMessages,
-		agents:                make(map[agent.Ident]AgentRegistration),
-		toolsets:              make(map[string]ToolsetRegistration),
-		toolSpecs:             make(map[tools.Ident]tools.ToolSpec),
-		policyToolMetadata:    make(map[tools.Ident]policy.ToolMetadata),
-		toolSchemas:           make(map[string]map[string]any),
-		models:                make(map[string]model.Client),
-		runHandles:            make(map[string]engine.WorkflowHandle),
-		agentToolSpecs:        make(map[agent.Ident][]tools.ToolSpec),
-		workers:               opts.Workers,
-		reminders:             reminder.NewEngine(),
-		toolConfirmation:      opts.ToolConfirmation,
-		hintOverrides:         opts.HintOverrides,
+		Engine:                 eng,
+		Memory:                 opts.MemoryStore,
+		PromptRegistry:         prompt.NewRegistry(opts.PromptStore),
+		Store:                  store,
+		Policy:                 opts.Policy,
+		Bus:                    bus,
+		Stream:                 opts.Stream,
+		storageActivityTimeout: opts.StorageActivityTimeout,
+		logger:                 logger,
+		metrics:                metrics,
+		tracer:                 tracer,
+		captureGenAIMessages:   opts.CaptureGenAIMessages,
+		agents:                 make(map[agent.Ident]AgentRegistration),
+		toolsets:               make(map[string]ToolsetRegistration),
+		toolSpecs:              make(map[tools.Ident]tools.ToolSpec),
+		toolsetNames:           make(map[tools.Ident]string),
+		policyToolMetadata:     make(map[tools.Ident]policy.ToolMetadata),
+		toolSchemas:            make(map[string]map[string]any),
+		models:                 make(map[string]model.Client),
+		agentToolSpecs:         make(map[agent.Ident][]tools.ToolSpec),
+		reminders:              reminder.NewEngine(),
+		toolConfirmation:       opts.ToolConfirmation,
+		hintOverrides:          opts.HintOverrides,
 	}
-	rt.PromptRegistry.SetObserver(rt.onPromptRendered)
 	// Install runtime-owned toolsets before any agent registration so planners
 	// and transcripts can rely on a stable tool vocabulary.
 	rt.mu.Lock()
@@ -766,70 +723,6 @@ func newFromOptions(opts Options) *Runtime {
 	rt.mu.Unlock()
 	if _, err := bus.Register(hooks.SubscriberFunc(rt.recordGenAITelemetryEvent)); err != nil {
 		panic(fmt.Errorf("register GenAI telemetry subscriber: %w", err))
-	}
-	if rt.SessionStore != nil {
-		sessionSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
-			if event.SessionID() == "" {
-				return nil
-			}
-			var (
-				status   session.RunStatus
-				metadata map[string]any
-			)
-			ts := time.UnixMilli(event.Timestamp()).UTC()
-			switch evt := event.(type) {
-			case *hooks.RunStartedEvent:
-				status = session.RunStatusRunning
-				return rt.SessionStore.UpsertRun(ctx, session.RunMeta{
-					AgentID:   evt.AgentID(),
-					RunID:     evt.RunID(),
-					SessionID: evt.SessionID(),
-					Status:    status,
-					UpdatedAt: ts,
-					Labels:    evt.RunContext.Labels,
-					Metadata:  nil,
-					StartedAt: time.Time{},
-				})
-			case *hooks.RunSuspendedEvent:
-				status = session.RunStatusSuspended
-				return rt.SessionStore.UpsertRun(ctx, session.RunMeta{
-					AgentID:   evt.AgentID(),
-					RunID:     evt.RunID(),
-					SessionID: evt.SessionID(),
-					Status:    status,
-					UpdatedAt: ts,
-				})
-			case *hooks.RunCompletedEvent:
-				switch evt.Status {
-				case "success":
-					status = session.RunStatusCompleted
-				case "failed":
-					status = session.RunStatusFailed
-				case "canceled":
-					status = session.RunStatusCanceled
-				default:
-					return fmt.Errorf("unexpected run completed status %q", evt.Status)
-				}
-				if evt.Cancellation != nil {
-					metadata = map[string]any{
-						runMetaCancellationReason: evt.Cancellation.Reason,
-					}
-				}
-				return rt.SessionStore.UpsertRun(ctx, session.RunMeta{
-					AgentID:   evt.AgentID(),
-					RunID:     evt.RunID(),
-					SessionID: evt.SessionID(),
-					Status:    status,
-					UpdatedAt: ts,
-					Metadata:  metadata,
-				})
-			default:
-				return nil
-			}
-		})
-		if _, err := bus.Register(sessionSub); err != nil {
-			rt.logger.Warn(context.Background(), "failed to register session subscriber", "err", err)
-		}
 	}
 	if rt.Memory != nil {
 		memSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
@@ -899,32 +792,31 @@ func newFromOptions(opts Options) *Runtime {
 	return rt
 }
 
-// New constructs a Runtime using functional options. It installs sane defaults
-// (in-memory engine, noop logger/metrics/tracer, in-process event bus) when not
-// provided. The returned Runtime is immediately usable for agent registration.
-func New(opts ...RuntimeOption) *Runtime {
+// New constructs a Runtime using the required host-owned store and functional
+// options. It installs an in-memory engine, no-op telemetry, and an in-process
+// event bus when callers do not provide them.
+func New(store storage.Store, opts ...RuntimeOption) *Runtime {
 	var o Options
 	for _, fn := range opts {
 		if fn != nil {
 			fn(&o)
 		}
 	}
-	return newFromOptions(o)
+	return newFromOptions(store, o)
 }
 
 // WithEngine sets the workflow engine.
 func WithEngine(e engine.Engine) RuntimeOption { return func(o *Options) { o.Engine = e } }
 
-// WithRecordActivityTimeout sets the StartToClose timeout for the durable
-// record activity (`runtime.record_event`). This activity persists canonical
-// run-log records and fans out hook-backed records while a session is active.
+// WithStorageActivityTimeout sets the StartToClose timeout for `runtime.store`.
+// This activity applies every runtime Store command outside workflow code.
 //
 // d must be greater than zero.
-func WithRecordActivityTimeout(d time.Duration) RuntimeOption {
+func WithStorageActivityTimeout(d time.Duration) RuntimeOption {
 	if d <= 0 {
-		panic("runtime: record activity timeout must be greater than zero")
+		panic("runtime: storage activity timeout must be greater than zero")
 	}
-	return func(o *Options) { o.RecordActivityTimeout = d }
+	return func(o *Options) { o.StorageActivityTimeout = d }
 }
 
 // WithMemoryStore sets the memory store.
@@ -932,12 +824,6 @@ func WithMemoryStore(m memory.Store) RuntimeOption { return func(o *Options) { o
 
 // WithPromptStore sets the prompt override store.
 func WithPromptStore(s prompt.Store) RuntimeOption { return func(o *Options) { o.PromptStore = s } }
-
-// WithSessionStore sets the session store.
-func WithSessionStore(s session.Store) RuntimeOption { return func(o *Options) { o.SessionStore = s } }
-
-// WithRunEventStore sets the canonical run event store.
-func WithRunEventStore(s runlog.Store) RuntimeOption { return func(o *Options) { o.RunEventStore = s } }
 
 // WithPolicy sets the policy engine.
 func WithPolicy(p policy.Engine) RuntimeOption { return func(o *Options) { o.Policy = p } }
@@ -979,23 +865,6 @@ func WithHintOverrides(m map[tools.Ident]HintOverrideFunc) RuntimeOption {
 	return func(o *Options) { o.HintOverrides = m }
 }
 
-// WithWorker configures the worker for a specific agent. Engines that support
-// worker polling use this configuration to bind the agent to a specific queue.
-// If unspecified, a default worker configuration is used.
-func WithWorker(id agent.Ident, cfg WorkerConfig) RuntimeOption {
-	return func(o *Options) {
-		if o.Workers == nil {
-			o.Workers = make(map[agent.Ident]WorkerConfig)
-		}
-		o.Workers[id] = cfg
-	}
-}
-
-// WithQueue returns a WorkerOption that sets the queue name on a WorkerConfig.
-func WithQueue(name string) WorkerOption {
-	return func(c *WorkerConfig) { c.Queue = name }
-}
-
 // Seal closes the registration phase and activates engines that stage worker
 // handlers until the runtime is fully configured. Worker deployments should call
 // Seal after registering all toolsets and agents, before serving traffic. When
@@ -1026,6 +895,10 @@ func (r *Runtime) Seal(ctx context.Context) error {
 		return nil
 	}
 	r.registrationClosed = true
+	if err := r.validateAgentExecutionSupportLocked(); err != nil {
+		r.mu.Unlock()
+		return err
+	}
 	r.mu.Unlock()
 
 	if sealer, ok := r.Engine.(engine.RegistrationSealer); ok {
@@ -1056,13 +929,13 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 		return ErrRegistrationClosed
 	}
 	r.mu.RUnlock()
-	if reg.ID == "" {
-		return fmt.Errorf("%w: missing agent ID", ErrInvalidConfig)
+	if !reg.Definition.valid() {
+		return fmt.Errorf("%w: missing agent definition", ErrInvalidConfig)
 	}
 	if reg.Planner == nil {
 		return fmt.Errorf("%w: missing planner", ErrInvalidConfig)
 	}
-	if reg.Workflow.Handler == nil {
+	if reg.WorkflowHandler == nil {
 		return fmt.Errorf("%w: missing workflow handler", ErrInvalidConfig)
 	}
 	if reg.ExecuteToolActivity == "" {
@@ -1077,31 +950,23 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if err := validateRunPolicy(reg.Policy); err != nil {
 		return err
 	}
-	if err := validateSpecs(reg.Specs, reg.ToolMetadataLookup); err != nil {
+	if err := validateSpecs(reg.Definition.specs, reg.Definition.metadataFor); err != nil {
 		return err
 	}
 	if err := r.validateToolSpecRegistrations(toolSpecRegistration{
-		specs:  reg.Specs,
-		lookup: reg.ToolMetadataLookup,
+		specs:  reg.Definition.specs,
+		lookup: reg.Definition.metadataFor,
 	}); err != nil {
 		return err
 	}
-	reg = cloneAgentRegistration(reg)
 	if r.Engine == nil {
 		return ErrEngineNotConfigured
 	}
-	if err := r.ensureRecordActivityRegistered(ctx); err != nil {
+	if err := r.ensureStorageActivityRegistered(ctx); err != nil {
 		return err
 	}
-
-	// Apply per-agent worker overrides before engine registration.
-	if cfg, ok := r.workers[reg.ID]; ok {
-		if q := cfg.Queue; q != "" {
-			reg.Workflow.TaskQueue = q
-			reg.PlanActivityOptions.Queue = q
-			reg.ResumeActivityOptions.Queue = q
-			reg.ExecuteToolActivityOptions.Queue = q
-		}
+	if err := r.ensureAgentChildActivityRegistered(ctx); err != nil {
+		return err
 	}
 
 	// Apply runtime-owned attempt defaults after queue rebasing. Engine-specific
@@ -1119,7 +984,11 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	// Register untyped workflow; Temporal adapter wraps with workflow.Context and
 	// we coerce input to *RunInput inside WorkflowHandler. This preserves engine
 	// boundaries and avoids leaking Temporal types here.
-	if err := r.Engine.RegisterWorkflow(ctx, reg.Workflow); err != nil {
+	if err := r.Engine.RegisterWorkflow(ctx, engine.WorkflowDefinition{
+		Name:      reg.Definition.route.WorkflowName,
+		TaskQueue: reg.Definition.route.DefaultTaskQueue,
+		Handler:   reg.WorkflowHandler,
+	}); err != nil {
 		return err
 	}
 	// Register typed activities for planner (start/resume) and execute_tool.
@@ -1151,28 +1020,46 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	}
 
 	r.mu.Lock()
-	r.agents[reg.ID] = reg
-	r.addToolSpecsLocked(reg.Specs, reg.ToolMetadataLookup)
-	if len(reg.Specs) > 0 {
+	r.agents[reg.Definition.route.ID] = reg
+	r.addToolSpecsLocked(reg.Definition.specs, reg.Definition.metadataFor)
+	if len(reg.Definition.specs) > 0 {
 		// store a shallow copy to avoid external mutation
-		cp := make([]tools.ToolSpec, len(reg.Specs))
-		copy(cp, reg.Specs)
-		r.agentToolSpecs[reg.ID] = cp
+		cp := make([]tools.ToolSpec, len(reg.Definition.specs))
+		copy(cp, reg.Definition.specs)
+		r.agentToolSpecs[reg.Definition.route.ID] = cp
 	}
 	r.mu.Unlock()
 
 	return nil
 }
 
-func (r *Runtime) ensureRecordActivityRegistered(ctx context.Context) error {
+// validateAgentExecutionSupportLocked proves that every tool an agent may
+// execute has one registered toolset before workers begin polling.
+func (r *Runtime) validateAgentExecutionSupportLocked() error {
+	for _, registration := range r.agents {
+		for _, name := range registration.Definition.executableTools {
+			if _, ok := r.toolsetNames[name]; !ok {
+				return fmt.Errorf(
+					"%w: agent %q has no executor for tool %q",
+					ErrInvalidConfig,
+					registration.Definition.route.ID,
+					name,
+				)
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Runtime) ensureStorageActivityRegistered(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.recordActivityRegistered {
+	if r.storageActivityRegistered {
 		return nil
 	}
-	timeout := defaultRecordActivityTimeout
-	if r.recordActivityTimeout > 0 {
-		timeout = r.recordActivityTimeout
+	timeout := defaultStorageActivityTimeout
+	if r.storageActivityTimeout > 0 {
+		timeout = r.storageActivityTimeout
 	}
 	opts := engine.ActivityOptions{
 		StartToCloseTimeout: timeout,
@@ -1181,10 +1068,29 @@ func (r *Runtime) ensureRecordActivityRegistered(ctx context.Context) error {
 	if opts.StartToCloseTimeout == 0 {
 		opts.StartToCloseTimeout = timeout
 	}
-	if err := r.Engine.RegisterRecordActivity(ctx, recordActivityName, opts, r.recordActivity); err != nil {
+	if err := r.Engine.RegisterStorageActivity(ctx, storageActivityName, opts, r.executeStorageCommand); err != nil {
 		return err
 	}
-	r.recordActivityRegistered = true
+	r.storageActivityRegistered = true
+	return nil
+}
+
+// ensureAgentChildActivityRegistered installs the one runtime-owned activity
+// that prepares child inputs for all agent workflows.
+func (r *Runtime) ensureAgentChildActivityRegistered(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.agentChildActivityRegistered {
+		return nil
+	}
+	opts := engine.ActivityOptions{
+		StartToCloseTimeout: defaultAgentChildActivityTimeout,
+		RetryPolicy:         defaultRetriedActivityPolicy(),
+	}
+	if err := r.Engine.RegisterAgentChildActivity(ctx, agentChildActivityName, opts, r.prepareAgentChildActivity); err != nil {
+		return err
+	}
+	r.agentChildActivityRegistered = true
 	return nil
 }
 
@@ -1217,6 +1123,9 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	if exists {
 		return fmt.Errorf("%w: toolset %q is already registered", ErrInvalidConfig, ts.Name)
 	}
+	if err := r.validateToolsetRoutes(ts); err != nil {
+		return err
+	}
 	if err := r.validateToolSpecRegistrations(toolSpecRegistration{
 		specs:  ts.Specs,
 		lookup: ts.ToolMetadataLookup,
@@ -1242,8 +1151,8 @@ func validateToolsetSpecs(ts ToolsetRegistration) error {
 	}
 	if len(ts.Specs) == 0 {
 		agentID := ""
-		if ts.AgentTool != nil {
-			agentID = string(ts.AgentTool.AgentID)
+		if ts.AgentTool != nil && ts.AgentTool.Definition.valid() {
+			agentID = string(ts.AgentTool.Definition.route.ID)
 		}
 		if agentID != "" {
 			return fmt.Errorf("%w: agent toolset %q (agent=%s) requires tool specs/codecs", ErrInvalidConfig, ts.Name, agentID)
@@ -1293,43 +1202,41 @@ func validateAgentToolRegistration(ts ToolsetRegistration) error {
 			)
 		}
 		cfg := ts.AgentTool
-		if cfg.AgentID == "" {
+		if !cfg.Definition.valid() {
 			return fmt.Errorf(
-				"%w: agent tool %q requires a registered agent id",
-				ErrInvalidConfig,
-				spec.Name,
-			)
-		}
-		if cfg.Route.ID == "" {
-			return fmt.Errorf(
-				"%w: agent tool %q requires a route agent id",
+				"%w: agent tool %q requires a generated agent definition",
 				ErrInvalidConfig,
 				spec.Name,
 			)
 		}
 		specAgentID := agent.Ident(spec.AgentID)
-		if specAgentID != cfg.AgentID || cfg.AgentID != cfg.Route.ID {
+		if specAgentID != cfg.Definition.route.ID {
 			return fmt.Errorf(
-				"%w: agent tool %q agent ids must match: spec=%q registration=%q route=%q",
+				"%w: agent tool %q agent id %q does not match definition %q",
 				ErrInvalidConfig,
 				spec.Name,
 				specAgentID,
-				cfg.AgentID,
-				cfg.Route.ID,
+				cfg.Definition.route.ID,
 			)
 		}
-		if cfg.Route.WorkflowName == "" {
+	}
+	return nil
+}
+
+// validateToolsetRoutes rejects two local executors for the same global tool
+// name. A planner call names only the tool, so the runtime could not choose
+// between different registrations.
+func (r *Runtime) validateToolsetRoutes(ts ToolsetRegistration) error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, spec := range ts.Specs {
+		if registered, ok := r.toolsetNames[spec.Name]; ok && registered != ts.Name {
 			return fmt.Errorf(
-				"%w: agent tool %q requires a route workflow name",
+				"%w: tool %q is already executed by toolset %q and cannot also be registered by %q",
 				ErrInvalidConfig,
 				spec.Name,
-			)
-		}
-		if cfg.Route.DefaultTaskQueue == "" {
-			return fmt.Errorf(
-				"%w: agent tool %q requires a route task queue",
-				ErrInvalidConfig,
-				spec.Name,
+				registered,
+				ts.Name,
 			)
 		}
 	}
@@ -1559,42 +1466,44 @@ func (r *Runtime) agentByID(id agent.Ident) (AgentRegistration, bool) {
 	return agent, ok
 }
 
-// ExecuteAgentChildWithRoute starts a provider agent as a child workflow using the
-// explicit route metadata (workflow name and task queue). The child executes its own
-// plan/execute loop and returns a RunOutput which is adapted by callers.
-func (r *Runtime) ExecuteAgentChildWithRoute(
+// ExecuteAgentChild starts a provider agent as a child workflow using its
+// generated definition. The child executes its own plan and tool loop and
+// returns the output adapted by the caller.
+func (r *Runtime) ExecuteAgentChild(
 	wfCtx engine.WorkflowContext,
-	route AgentRoute,
+	definition AgentDefinition,
 	messages []*model.Message,
 	nestedRunCtx run.Context,
 ) (*RunOutput, error) {
-	if route.ID == "" || route.WorkflowName == "" || route.DefaultTaskQueue == "" {
-		return nil, fmt.Errorf("child route is incomplete")
+	return r.executeAgentChild(wfCtx, definition, agentChildRequest{
+		messages:   messages,
+		runContext: nestedRunCtx,
+	})
+}
+
+// executeAgentChild starts one fully assembled child request. Prompt versions
+// travel with the rendered messages and are stored by the child.
+func (r *Runtime) executeAgentChild(
+	wfCtx engine.WorkflowContext,
+	definition AgentDefinition,
+	request agentChildRequest,
+) (*RunOutput, error) {
+	input, err := agentChildRunInput(definition, request)
+	if err != nil {
+		return nil, err
 	}
-	input := RunInput{
-		AgentID:          route.ID,
-		RunID:            nestedRunCtx.RunID,
-		SessionID:        nestedRunCtx.SessionID,
-		TurnID:           nestedRunCtx.TurnID,
-		ParentToolCallID: nestedRunCtx.ParentToolCallID,
-		ParentRunID:      nestedRunCtx.ParentRunID,
-		ParentAgentID:    nestedRunCtx.ParentAgentID,
-		Tool:             nestedRunCtx.Tool,
-		ToolArgs:         nestedRunCtx.ToolArgs,
-		Messages:         messages,
-		Labels:           nestedRunCtx.Labels,
-	}
+	route := definition.route
 	handle, err := wfCtx.StartChildWorkflow(wfCtx.Context(), engine.ChildWorkflowRequest{
 		ID:        input.RunID,
 		Workflow:  route.WorkflowName,
 		TaskQueue: route.DefaultTaskQueue,
-		Input:     &input,
+		Input:     input,
 		// RunTimeout left to engine defaults; parent may cap via policy if desired.
 	})
 	if err != nil {
 		return nil, err
 	}
-	out, err := handle.Get(wfCtx.Context())
+	out, err := handle.Get(wfCtx.Detached().Context())
 	if err != nil {
 		return nil, err
 	}
@@ -1604,66 +1513,57 @@ func (r *Runtime) ExecuteAgentChildWithRoute(
 	return out, nil
 }
 
-// StartRun launches the agent workflow asynchronously and returns a workflow handle
-// so callers can wait or cancel execution. The RunID is generated if not
-// provided in the input. Returns an error if the agent is not registered or if the
-// workflow fails to start.
-func (r *Runtime) startRun(ctx context.Context, input *RunInput) (engine.WorkflowHandle, error) {
-	if input.AgentID == "" {
-		return nil, fmt.Errorf("%w: missing agent id", ErrAgentNotFound)
+// agentChildRunInput builds and validates the immutable input submitted for a
+// child workflow. Every child start path uses this function before asking the
+// workflow engine to accept the child ID.
+func agentChildRunInput(definition AgentDefinition, request agentChildRequest) (*RunInput, error) {
+	if !definition.valid() {
+		return nil, errors.New("child agent definition is required")
 	}
-	reg, ok := r.agentByID(input.AgentID)
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrAgentNotFound, input.AgentID)
+	nested := request.runContext
+	if nested.ParentRunID == "" || nested.ParentAgentID == "" ||
+		nested.ParentToolCallID == "" || nested.Tool == "" {
+		return nil, errors.New("child run context is incomplete")
 	}
-	return r.startRunOn(ctx, input, reg.Workflow.Name, reg.Workflow.TaskQueue, true)
+	if err := validateRequiredLabels(definition, nested.Labels); err != nil {
+		return nil, err
+	}
+	return &RunInput{
+		AgentID:          definition.route.ID,
+		RunID:            nested.RunID,
+		SessionID:        nested.SessionID,
+		TurnID:           nested.TurnID,
+		ParentToolCallID: nested.ParentToolCallID,
+		ParentRunID:      nested.ParentRunID,
+		ParentAgentID:    nested.ParentAgentID,
+		Tool:             nested.Tool,
+		ToolArgs:         nested.ToolArgs,
+		Messages:         request.messages,
+		RenderedPrompts:  clonePromptRenderEvents(request.renderedPrompts),
+		Labels:           nested.Labels,
+	}, nil
 }
 
-// startRunWithMeta launches the agent workflow using client-supplied metadata
-// rather than a locally registered agent. This enables remote caller processes
-// to start runs when workers are registered in another process.
-func (r *Runtime) startRunWithRoute(ctx context.Context, input *RunInput, route AgentRoute) (engine.WorkflowHandle, error) {
-	if route.ID == "" || route.WorkflowName == "" {
-		return nil, fmt.Errorf("%w: missing route for agent client", ErrAgentNotFound)
-	}
-	if input.AgentID == "" {
-		input.AgentID = route.ID
-	}
-	return r.startRunOn(ctx, input, route.WorkflowName, route.DefaultTaskQueue, true)
-}
-
-// startOneShotRun launches a one-shot workflow that does not belong to a session.
-func (r *Runtime) startOneShotRun(ctx context.Context, input *RunInput) (engine.WorkflowHandle, error) {
-	if input.AgentID == "" {
-		return nil, fmt.Errorf("%w: missing agent id", ErrAgentNotFound)
-	}
-	reg, ok := r.agentByID(input.AgentID)
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrAgentNotFound, input.AgentID)
-	}
-	return r.startRunOn(ctx, input, reg.Workflow.Name, reg.Workflow.TaskQueue, false)
-}
-
-// startOneShotRunWithRoute launches a one-shot workflow using client-supplied route metadata.
-func (r *Runtime) startOneShotRunWithRoute(ctx context.Context, input *RunInput, route AgentRoute) (engine.WorkflowHandle, error) {
-	if route.ID == "" || route.WorkflowName == "" {
-		return nil, fmt.Errorf("%w: missing route for agent client", ErrAgentNotFound)
-	}
-	if input.AgentID == "" {
-		input.AgentID = route.ID
-	}
-	return r.startRunOn(ctx, input, route.WorkflowName, route.DefaultTaskQueue, false)
-}
-
-// startRunOn contains common start logic for both locally-registered and
-// remote-route clients.
+// startRunWithDefinition contains common start logic for local and remote
+// clients. Both use the same generated definition.
 //
-// When requireSession is true, the run must resolve to an active session and the
-// runtime writes pending RunMeta before starting the workflow.
+// When requireSession is true, the caller must provide a stable run ID and an
+// active session. The accepted workflow writes running or canceled lifecycle
+// metadata from its first durable record after the engine accepts the start.
 //
 // When requireSession is false, the run is one-shot: SessionID must stay empty,
-// no SessionStore writes are performed, and no SessionID search attribute is set.
-func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName, defaultQueue string, requireSession bool) (engine.WorkflowHandle, error) {
+// its runtime records do not belong to a session, and no SessionID search
+// attribute is set.
+func (r *Runtime) startRunWithDefinition(ctx context.Context, input *RunInput, definition AgentDefinition, requireSession bool) (engine.WorkflowHandle, error) {
+	if !definition.valid() {
+		return nil, fmt.Errorf("%w: invalid agent definition", ErrAgentNotFound)
+	}
+	if input.AgentID == "" {
+		input.AgentID = definition.route.ID
+	}
+	if input.AgentID != definition.route.ID {
+		return nil, fmt.Errorf("%w: input agent %q does not match definition %q", ErrAgentNotFound, input.AgentID, definition.route.ID)
+	}
 	// Close registration on first run submission so local start paths cannot race
 	// later handler mutations. Worker deployments should call Seal during startup;
 	// local starters still converge on the same sealed contract here.
@@ -1671,62 +1571,61 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		return nil, err
 	}
 	if err := validateWorkflowRunInput(input); err != nil {
+		if input != nil && input.Continuation != nil {
+			return nil, continuationContractError(err)
+		}
 		return nil, err
-	}
-	if input.RunID == "" {
-		input.RunID = generateRunID(string(input.AgentID))
 	}
 	if requireSession {
 		if strings.TrimSpace(input.SessionID) == "" {
 			return nil, ErrMissingSessionID
 		}
-		sess, err := r.SessionStore.LoadSession(ctx, input.SessionID)
-		if err != nil {
-			return nil, err
-		}
-		if sess.Status == session.StatusEnded {
-			return nil, session.ErrSessionEnded
-		}
 	} else if strings.TrimSpace(input.SessionID) != "" {
 		return nil, ErrSessionNotAllowed
+	}
+	if input.RunID == "" {
+		if requireSession {
+			return nil, errors.New("run id is required for a sessionful workflow")
+		}
+		input.RunID = generateRunID(string(input.AgentID))
 	}
 	if err := transcript.ValidatePlannerTranscript(input.Messages); err != nil {
 		return nil, fmt.Errorf("runtime: invalid transcript: %w", err)
 	}
-	reg, _ := r.agentByID(input.AgentID)
 	runLabels := input.Labels
-	runMetadata := input.Metadata
 	effectivePolicy := input.Policy
 	if input.Continuation != nil {
-		checkpoint, err := decodeWorkflowCheckpointState(input.Continuation.Suspension)
+		checkpoint, err := prepareContinuation(input, definition)
 		if err != nil {
-			return nil, err
-		}
-		if err := validateContinuationIdentity(input, checkpoint); err != nil {
-			return nil, err
+			return nil, continuationContractError(err)
 		}
 		runLabels = checkpoint.Context.Labels
-		runMetadata = checkpoint.Context.Metadata
 		effectivePolicy = checkpoint.Policy
 	}
-	if err := validateRequiredLabels(reg, runLabels); err != nil {
+	if err := validateRequiredLabels(definition, runLabels); err != nil {
+		if input.Continuation != nil {
+			return nil, continuationContractError(err)
+		}
 		return nil, err
 	}
-	if reg.ID != "" && effectivePolicy != nil {
-		if err := r.validateCompletionToolPolicy(reg, effectivePolicy); err != nil {
+	if effectivePolicy != nil {
+		if err := validateCompletionToolPolicyForDefinition(definition, effectivePolicy); err != nil {
+			if input.Continuation != nil {
+				return nil, continuationContractError(err)
+			}
 			return nil, err
 		}
-		if err := r.validateLimitTerminalPlans(reg, effectivePolicy.LimitTerminalPlans); err != nil {
+		if err := validateLimitTerminalPlansForDefinition(definition, effectivePolicy.LimitTerminalPlans); err != nil {
+			if input.Continuation != nil {
+				return nil, continuationContractError(err)
+			}
 			return nil, err
 		}
-	}
-	if err := validateCompletionToolWorkflowRetry(effectivePolicy, input.WorkflowOptions); err != nil {
-		return nil, err
 	}
 	req := engine.WorkflowStartRequest{
 		ID:        input.RunID,
-		Workflow:  workflowName,
-		TaskQueue: defaultQueue,
+		Workflow:  definition.route.WorkflowName,
+		TaskQueue: definition.route.DefaultTaskQueue,
 		Input:     input,
 		// RunTimeout is intentionally left zero (engine-unbounded): active-time
 		// enforcement is owned by the workflow's Budget and Hard deadlines
@@ -1740,32 +1639,10 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		}
 		req.Memo = cloneMetadata(opts.Memo)
 		req.SearchAttributes = cloneMetadata(opts.SearchAttributes)
-		// Convert API retry policy to engine retry policy.
-		rp := engine.RetryPolicy{
-			MaxAttempts:        opts.RetryPolicy.MaxAttempts,
-			InitialInterval:    opts.RetryPolicy.InitialInterval,
-			BackoffCoefficient: opts.RetryPolicy.BackoffCoefficient,
-		}
-		if !isZeroRetryPolicy(rp) {
-			req.RetryPolicy = rp
-		}
 	}
 	if requireSession {
 		if v, ok := req.SearchAttributes["SessionID"]; ok && v != input.SessionID {
 			return nil, fmt.Errorf("workflow search attribute SessionID=%v does not match session id %q", v, input.SessionID)
-		}
-		now := time.Now().UTC()
-		if err := r.SessionStore.UpsertRun(ctx, session.RunMeta{
-			AgentID:   string(input.AgentID),
-			RunID:     input.RunID,
-			SessionID: input.SessionID,
-			Status:    session.RunStatusPending,
-			StartedAt: now,
-			UpdatedAt: now,
-			Labels:    cloneLabels(runLabels),
-			Metadata:  cloneMetadata(runMetadata),
-		}); err != nil {
-			return nil, err
 		}
 	} else if req.SearchAttributes != nil {
 		if _, ok := req.SearchAttributes["SessionID"]; ok {
@@ -1776,31 +1653,19 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrWorkflowStartFailed, err)
 	}
-	if r.RunEventStore != nil {
-		observed := newObservedWorkflowHandle(r, input, runLabels, handle)
-		handle = observed
-	}
-	r.storeWorkflowHandle(input.RunID, handle)
 	return handle, nil
 }
 
 // validateRequiredLabels fails fast, before any workflow or activity runs,
 // when the caller-supplied run labels omit a key that a label-backed
-// Inject() field requires. reg.RequiredLabels is generated data (the union
-// of every used toolset's RequiredLabels, computed once at codegen time); this
-// is a boundary check against genuinely dynamic caller input, not a
-// rediscovery of static structure.
-//
-// reg may be the zero value when the agent is not registered locally (for
-// example, a pure remote-route client start): RequiredLabels is empty in
-// that case, so validation trivially passes and the check is a no-op rather
-// than a false failure.
-func validateRequiredLabels(reg AgentRegistration, labels map[string]string) error {
-	if len(reg.RequiredLabels) == 0 {
+// Inject() field requires. The generated definition carries the complete list
+// to local workers and remote callers, so both reject the same invalid start.
+func validateRequiredLabels(definition AgentDefinition, labels map[string]string) error {
+	if len(definition.requiredLabels) == 0 {
 		return nil
 	}
 	var missing []string
-	for _, key := range reg.RequiredLabels {
+	for _, key := range definition.requiredLabels {
 		if _, ok := labels[key]; !ok {
 			missing = append(missing, key)
 		}
@@ -1809,14 +1674,14 @@ func validateRequiredLabels(reg AgentRegistration, labels map[string]string) err
 		return nil
 	}
 	return fmt.Errorf("%w: agent %q requires label(s) %v; call WithLabels(...) with these keys when starting the run",
-		ErrMissingLabels, reg.ID, missing)
+		ErrMissingLabels, definition.route.ID, missing)
 }
 
 // CancelRun requests cancellation of the workflow identified by req.RunID.
 //
-// Cancellation must work across process restarts, so it is implemented via the
-// engine's cancel-by-ID capability rather than relying on in-process workflow
-// handles.
+// Cancellation must work across process restarts, so the engine sends the
+// request to the workflow identified by RunID. The workflow stores the reason
+// before the engine stops it.
 //
 // CancelRun is idempotent: if the workflow does not exist (already completed,
 // canceled, or never started), CancelRun returns nil.
@@ -1827,100 +1692,55 @@ func (r *Runtime) CancelRun(ctx context.Context, req CancelRequest) error {
 	if req.Reason == "" {
 		return errors.New("cancel reason is required")
 	}
-	canceler, ok := r.Engine.(engine.Canceler)
-	if !ok || canceler == nil {
-		return fmt.Errorf("engine does not support cancel-by-id")
+	requester, ok := r.Engine.(engine.CancellationRequester)
+	if !ok || requester == nil {
+		return errors.New("engine does not support durable cancellation")
 	}
-	previous, wrote, err := r.recordRunCancellation(ctx, req)
-	if err != nil {
-		return fmt.Errorf("record cancellation: %w", err)
+	err := requester.RequestCancellation(ctx, engine.CancellationRequest{
+		RunID:  req.RunID,
+		Reason: req.Reason,
+	})
+	if err == nil {
+		return nil
 	}
-	if err := canceler.CancelByID(ctx, req.RunID); err != nil {
-		if wrote {
-			if rollbackErr := r.rollbackRunCancellation(ctx, previous, req); rollbackErr != nil {
-				return errors.Join(err, fmt.Errorf("rollback cancellation provenance: %w", rollbackErr))
-			}
-		}
-		if errors.Is(err, engine.ErrWorkflowNotFound) {
+	var conflict *engine.CancellationConflictError
+	if errors.As(err, &conflict) {
+		return &CancellationReasonConflictError{RunID: req.RunID, Reason: req.Reason}
+	}
+	if errors.Is(err, engine.ErrWorkflowNotFound) || errors.Is(err, engine.ErrWorkflowCompleted) {
+		// A closed engine history cannot accept another command. The durable run
+		// state distinguishes an already settled run from an active run whose
+		// workflow disappeared unexpectedly.
+		meta, loadErr := r.Store.LoadRun(ctx, req.RunID)
+		if errors.Is(loadErr, session.ErrRunNotFound) {
 			return nil
 		}
-		return err
+		if loadErr != nil {
+			return loadErr
+		}
+		if !session.IsTerminalRunStatus(meta.Status) {
+			return fmt.Errorf("runtime: active run %q has no engine workflow: %w", req.RunID, err)
+		}
+		if meta.CancellationReason != "" && meta.CancellationReason != req.Reason {
+			return &CancellationReasonConflictError{RunID: req.RunID, Reason: req.Reason}
+		}
+		return nil
 	}
-	return nil
-}
-
-// isTerminalRunStatus reports whether the run lifecycle is permanently closed.
-func isTerminalRunStatus(status engine.RunStatus) bool {
-	switch status {
-	case engine.RunStatusCompleted, engine.RunStatusTimedOut, engine.RunStatusFailed, engine.RunStatusCanceled:
-		return true
-	case engine.RunStatusPending, engine.RunStatusRunning, engine.RunStatusPaused:
-		return false
-	}
-	return false
+	return err
 }
 
 // ListRunEvents returns a forward page of canonical run events for the given run.
 func (r *Runtime) ListRunEvents(ctx context.Context, runID, cursor string, limit int) (runlog.Page, error) {
-	page, err := r.RunEventStore.List(ctx, runID, cursor, limit)
-	if err != nil {
-		return runlog.Page{}, err
-	}
-	if !runEventPageNeedsTerminalRepair(page) {
-		return page, nil
-	}
-	if err := r.repairTerminalRunCompletion(ctx, runID); err != nil {
-		return runlog.Page{}, fmt.Errorf("repair terminal run %s before listing events: %w", runID, err)
-	}
-	repaired, err := r.RunEventStore.List(ctx, runID, cursor, limit)
-	if err != nil {
-		return runlog.Page{}, err
-	}
-	if !repairedTailNeedsCompletionDelta(page, repaired) {
-		return repaired, nil
-	}
-	delta, err := r.RunEventStore.List(ctx, runID, page.Events[len(page.Events)-1].ID, 1)
-	if err != nil {
-		return runlog.Page{}, err
-	}
-	if len(delta.Events) == 0 || !isTerminalRunEventType(delta.Events[0].Type) {
-		return repaired, nil
-	}
-	events := append([]*runlog.Event(nil), page.Events...)
-	events = append(events, delta.Events[0])
-	return runlog.Page{
-		Events:     events,
-		NextCursor: delta.NextCursor,
-	}, nil
+	return r.Store.ListRunRecords(ctx, runID, cursor, limit)
 }
 
 // GetRunSnapshot derives a compact snapshot of the run state by replaying the
 // canonical run log.
 func (r *Runtime) GetRunSnapshot(ctx context.Context, runID string) (*run.Snapshot, error) {
-	snapshot, err := r.loadRunSnapshot(ctx, runID)
-	if err != nil {
-		if errors.Is(err, run.ErrNotFound) {
-			if repairErr := r.repairTerminalRunCompletion(ctx, runID); repairErr != nil {
-				return nil, fmt.Errorf("repair terminal run %s before loading snapshot: %w", runID, repairErr)
-			}
-			return r.loadRunSnapshot(ctx, runID)
-		}
-		return nil, err
-	}
-	if snapshot.Status == run.StatusCompleted ||
-		snapshot.Status == run.StatusFailed ||
-		snapshot.Status == run.StatusCanceled ||
-		snapshot.Status == run.StatusSuspended {
-		return snapshot, nil
-	}
-	if err := r.repairTerminalRunCompletion(ctx, runID); err != nil {
-		return nil, fmt.Errorf("repair terminal run %s before loading snapshot: %w", runID, err)
-	}
 	return r.loadRunSnapshot(ctx, runID)
 }
 
-// loadRunSnapshot replays the canonical run log without attempting terminal
-// repair. Callers that serve external reads should repair first.
+// loadRunSnapshot replays the canonical run log without changing stored state.
 func (r *Runtime) loadRunSnapshot(ctx context.Context, runID string) (*run.Snapshot, error) {
 	const pageSize = 512
 
@@ -1929,7 +1749,7 @@ func (r *Runtime) loadRunSnapshot(ctx context.Context, runID string) (*run.Snaps
 		events []*runlog.Event
 	)
 	for {
-		page, err := r.RunEventStore.List(ctx, runID, cursor, pageSize)
+		page, err := r.Store.ListRunRecords(ctx, runID, cursor, pageSize)
 		if err != nil {
 			return nil, err
 		}
@@ -1940,31 +1760,6 @@ func (r *Runtime) loadRunSnapshot(ctx context.Context, runID string) (*run.Snaps
 		cursor = page.NextCursor
 	}
 	return newRunSnapshot(events)
-}
-
-// runEventPageNeedsTerminalRepair reports whether a caller is currently reading
-// the durable tail of the run log without a canonical terminal event.
-func runEventPageNeedsTerminalRepair(page runlog.Page) bool {
-	if page.NextCursor != "" {
-		return false
-	}
-	if len(page.Events) == 0 {
-		return true
-	}
-	return !isTerminalRunEventType(page.Events[len(page.Events)-1].Type)
-}
-
-// repairedTailNeedsCompletionDelta reports whether repair appended a terminal
-// event behind an originally full tail page, so callers need that single new
-// event stitched into the same response to observe convergence immediately.
-func repairedTailNeedsCompletionDelta(original, repaired runlog.Page) bool {
-	if len(original.Events) == 0 || len(repaired.Events) == 0 {
-		return false
-	}
-	if repaired.NextCursor == "" {
-		return false
-	}
-	return !isTerminalRunEventType(repaired.Events[len(repaired.Events)-1].Type)
 }
 
 // isTerminalRunEventType reports the two durable events that permanently end
@@ -1978,6 +1773,12 @@ func isTerminalRunEventType(eventType runlog.Type) bool {
 // Caller must hold r.mu.
 func (r *Runtime) addToolsetLocked(ts ToolsetRegistration) {
 	r.toolsets[ts.Name] = ts
+	if r.toolsetNames == nil {
+		r.toolsetNames = make(map[tools.Ident]string)
+	}
+	for _, spec := range ts.Specs {
+		r.toolsetNames[spec.Name] = ts.Name
+	}
 	r.addToolSpecsLocked(ts.Specs, ts.ToolMetadataLookup)
 	if len(ts.CallHints) > 0 {
 		rthints.RegisterCallHints(ts.CallHints)
@@ -2011,6 +1812,19 @@ func (r *Runtime) toolSpec(name tools.Ident) (tools.ToolSpec, bool) {
 	spec, ok := r.toolSpecs[name]
 	r.mu.RUnlock()
 	return spec, ok
+}
+
+// toolsetForTool returns the executable registration that owns name in this
+// runtime.
+func (r *Runtime) toolsetForTool(name tools.Ident) (string, ToolsetRegistration, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	toolsetName, ok := r.toolsetNames[name]
+	if !ok {
+		return "", ToolsetRegistration{}, false
+	}
+	toolset, ok := r.toolsets[toolsetName]
+	return toolsetName, toolset, ok
 }
 
 func (r *Runtime) policyMetadata(name tools.Ident) (policy.ToolMetadata, bool) {
@@ -2167,24 +1981,4 @@ func validateMaxRecoveryTurns(value int) error {
 		return fmt.Errorf("%w: max recovery turns cannot be negative", ErrInvalidConfig)
 	}
 	return nil
-}
-
-func (r *Runtime) storeWorkflowHandle(runID string, handle engine.WorkflowHandle) {
-	r.handleMu.Lock()
-	if r.runHandles == nil {
-		r.runHandles = make(map[string]engine.WorkflowHandle)
-	}
-	if handle == nil {
-		delete(r.runHandles, runID)
-	} else {
-		r.runHandles[runID] = handle
-	}
-	r.handleMu.Unlock()
-}
-
-func (r *Runtime) workflowHandle(runID string) (engine.WorkflowHandle, bool) {
-	r.handleMu.RLock()
-	h, ok := r.runHandles[runID]
-	r.handleMu.RUnlock()
-	return h, ok
 }

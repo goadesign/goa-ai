@@ -22,7 +22,7 @@ import (
 )
 
 func TestRestoredCorrectableOutputUsesBoundedRecoveryAndResetsAfterSuccess(t *testing.T) {
-	kickoff := newAnyJSONSpec("catalog.kickoff", "catalog")
+	kickoff := newAnyJSONSpec("catalog.kickoff")
 	lookup := newStrictRecoverySpec()
 	var providerCalls, lookupCalls, replacementTurns int
 	h := newRecoveryHarness(
@@ -83,7 +83,7 @@ func TestRestoredCorrectableOutputUsesBoundedRecoveryAndResetsAfterSuccess(t *te
 }
 
 func TestRestoredCorrectableOutputStopsAtRecoveryCap(t *testing.T) {
-	kickoff := newAnyJSONSpec("catalog.kickoff", "catalog")
+	kickoff := newAnyJSONSpec("catalog.kickoff")
 	var providerCalls, replacementTurns int
 	h := newRecoveryHarness(
 		t,

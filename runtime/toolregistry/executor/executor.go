@@ -56,10 +56,13 @@ type (
 		Spec(name tools.Ident) (*tools.ToolSpec, bool)
 	}
 
+	// Executor sends calls for one toolset to the remote registry and decodes
+	// the returned result with the generated tool contract.
 	Executor struct {
-		client Client
-		pulse  pulsec.Client
-		specs  SpecLookup
+		client  Client
+		pulse   pulsec.Client
+		toolset string
+		specs   SpecLookup
 
 		outputDeltaKey string
 		streamSink     aistream.Sink
@@ -68,6 +71,7 @@ type (
 		tracer telemetry.Tracer
 	}
 
+	// Option configures optional executor logging, tracing, and output streaming.
 	Option func(*Executor)
 
 	// readerFailureDiagnostics captures stable, high-signal context for reader
@@ -116,10 +120,16 @@ func WithTracer(tracer telemetry.Tracer) Option {
 	}
 }
 
-func New(client Client, pulse pulsec.Client, specs SpecLookup, opts ...Option) *Executor {
+// New builds an executor that sends every call to toolset in the remote
+// registry and uses specs to decode returned values.
+func New(client Client, pulse pulsec.Client, toolset string, specs SpecLookup, opts ...Option) (*Executor, error) {
+	if toolset == "" {
+		return nil, errors.New("registry toolset name is required")
+	}
 	e := &Executor{
 		client:         client,
 		pulse:          pulse,
+		toolset:        toolset,
 		specs:          specs,
 		outputDeltaKey: toolregistry.OutputDeltaEventKey,
 		logger:         telemetry.NewNoopLogger(),
@@ -130,9 +140,10 @@ func New(client Client, pulse pulsec.Client, specs SpecLookup, opts ...Option) *
 			o(e)
 		}
 	}
-	return e
+	return e, nil
 }
 
+// Execute sends one tool call to the registry and waits for its final result.
 func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
 	if call == nil {
 		return runtime.Executed(internalFailureResult("", "", "tool request is nil")), nil
@@ -157,14 +168,7 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 		result.Failure.Recovery.Action = planner.RecoveryReplan
 		return runtime.Executed(result), nil
 	}
-	toolsetID := spec.Toolset
-	if toolsetID == "" {
-		return runtime.Executed(internalFailureResult(
-			call.Name,
-			meta.ToolCallID,
-			fmt.Sprintf("tool %q missing toolset routing id", call.Name),
-		)), nil
-	}
+	toolsetID := e.toolset
 	ctx, span := e.tracer.Start(
 		ctx,
 		"toolregistry.execute",

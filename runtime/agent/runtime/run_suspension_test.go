@@ -1,7 +1,6 @@
+// Package runtime tests durable suspension reads against the run identity that
+// owns the stored checkpoint.
 package runtime
-
-// run_suspension_test.go verifies that the runtime, rather than an application
-// caller or Temporal history, owns the private state needed for continuation.
 
 import (
 	"context"
@@ -10,67 +9,67 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/storage"
 )
 
-func TestSaveAndLoadRunSuspension(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
-	seedTestToolSpecs(runtime, spec)
-	suspension := suspensionContractFixture(t, spec.Name)
-	require.NoError(t, runtime.SessionStore.UpsertRun(context.Background(), session.RunMeta{
-		RunID: "run-1", AgentID: "svc.agent", SessionID: "session-1",
-	}))
-	payload, err := json.Marshal(suspension)
-	require.NoError(t, err)
-	input := &RecordActivityInput{
-		Type: runSuspensionRecordType, RunID: "run-1", AgentID: "svc.agent",
-		SessionID: "session-1", Payload: payload,
+type suspensionReadStore struct {
+	storage.Store
+	run        session.RunMeta
+	suspension session.RunSuspension
+}
+
+func TestLoadRunSuspensionRejectsCheckpointOwnerMismatch(t *testing.T) {
+	tests := []struct {
+		name     string
+		mutate   func(*session.RunMeta)
+		wantText string
+	}{
+		{
+			name: "agent",
+			mutate: func(run *session.RunMeta) {
+				run.AgentID = "svc.other"
+			},
+			wantText: "does not match run agent",
+		},
+		{
+			name: "session",
+			mutate: func(run *session.RunMeta) {
+				run.SessionID = "session-other"
+			},
+			wantText: "does not match run session",
+		},
 	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			suspension := suspensionContractFixtureWithContext(
+				t, "svc.lookup", "svc.agent", "run-1", nil, nil,
+			)
+			data, err := json.Marshal(suspension)
+			require.NoError(t, err)
+			run := session.RunMeta{
+				RunID: "run-1", AgentID: "svc.agent", SessionID: "session-1",
+				Status: session.RunStatusSuspended,
+			}
+			test.mutate(&run)
+			store := suspensionReadStore{
+				run: run,
+				suspension: session.RunSuspension{
+					ID: suspension.ID, Data: data,
+				},
+			}
 
-	require.NoError(t, runtime.saveRunSuspension(context.Background(), input))
-	require.NoError(t, runtime.saveRunSuspension(context.Background(), input))
-	loaded, err := runtime.LoadRunSuspension(context.Background(), "run-1")
-	require.NoError(t, err)
-	require.Equal(t, suspension, loaded)
-}
-
-func TestSaveRunSuspensionRejectsMismatchedActivityIdentity(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
-	seedTestToolSpecs(runtime, spec)
-	suspension := suspensionContractFixture(t, spec.Name)
-	payload, err := json.Marshal(suspension)
-	require.NoError(t, err)
-
-	err = runtime.saveRunSuspension(context.Background(), &RecordActivityInput{
-		Type: runSuspensionRecordType, RunID: "another-run", AgentID: "svc.agent",
-		SessionID: "session-1", Payload: payload,
-	})
-	require.ErrorContains(t, err, "identity does not match checkpoint")
-}
-
-func TestLoadRunSuspensionRejectsCorruptStoredEnvelope(t *testing.T) {
-	runtime := New()
-	require.NoError(t, runtime.SessionStore.UpsertRun(context.Background(), session.RunMeta{
-		RunID: "run-1", AgentID: "svc.agent", SessionID: "session-1",
-	}))
-	require.NoError(t, runtime.SessionStore.SaveRunSuspension(context.Background(), "run-1", session.RunSuspension{
-		ID:   "different-id",
-		Data: []byte(`{"id":"suspension-1","version":"` + api.RunSuspensionVersion + `","checkpoint":{},"pending":[]}`),
-	}))
-
-	_, err := runtime.LoadRunSuspension(context.Background(), "run-1")
-	require.ErrorContains(t, err, "id does not match payload")
-}
-
-func TestDecodeStoredRunSuspensionRejectsUnknownAndTrailingData(t *testing.T) {
-	for _, data := range [][]byte{
-		[]byte(`{"id":"s","unknown":true}`),
-		[]byte(`{"id":"s"} {}`),
-	} {
-		var suspension api.RunSuspension
-		require.Error(t, decodeStoredRunSuspension(data, &suspension))
+			_, err = New(store).LoadRunSuspension(t.Context(), run.RunID)
+			require.ErrorIs(t, err, ErrRunSuspensionCorrupt)
+			require.ErrorContains(t, err, test.wantText)
+		})
 	}
+}
+
+func (s suspensionReadStore) LoadRun(context.Context, string) (session.RunMeta, error) {
+	return s.run, nil
+}
+
+func (s suspensionReadStore) LoadRunSuspension(context.Context, string) (session.RunSuspension, error) {
+	return s.suspension, nil
 }

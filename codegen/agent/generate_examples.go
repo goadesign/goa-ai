@@ -1,14 +1,12 @@
-// Package codegen keeps example-only scaffolding separate from the main agent
-// generator.
+// Package codegen writes starter application code for generated agents.
 //
-// This file owns the `goa example` path: it emits application-side bootstrap,
-// planner, executor, and main wiring files that live outside `gen/`. The
-// helpers are idempotent over Goa's in-memory example file list so rerunning
-// generation updates scaffolded files without affecting the regular `gen`
-// output produced by the main generator entrypoint.
+// The goa example command writes startup, planning, tool execution, and main
+// files outside gen. Running it again updates those starter files without
+// changing files written by goa gen.
 package codegen
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,17 +18,55 @@ import (
 )
 
 type (
-	// quickstartData feeds the AGENTS_QUICKSTART.md template. It bundles the
-	// agent-bearing services with the evaluation suites declared in the design
-	// so the generated guide documents both.
+	// quickstartData holds the agents and evaluation suites listed in the
+	// generated quickstart guide.
 	quickstartData struct {
-		*GeneratorData
+		// Services lists only services that declare at least one agent.
+		Services []*quickstartServiceData
+		// HasServiceProviders reports whether the guide needs the section for
+		// service-side tool providers.
+		HasServiceProviders bool
 		// Suites lists the declared evaluation suites in declaration order.
 		Suites []*quickstartSuiteData
 	}
 
-	// quickstartSuiteData describes one declared evaluation suite for the
-	// generated guide.
+	// quickstartServiceData contains one service and the agent descriptions
+	// written into the generated guide.
+	quickstartServiceData struct {
+		*ServiceAgentsData
+		// Agents contains quickstart-specific data for the service's agents.
+		Agents []*quickstartAgentData
+	}
+
+	// quickstartAgentData contains one agent and documentation-ready toolset
+	// descriptions. Provider labels and example variable names are prepared
+	// before the guide is rendered.
+	quickstartAgentData struct {
+		*AgentData
+		// UsedToolsets lists the toolsets this agent calls.
+		UsedToolsets []*quickstartToolsetData
+		// ExportedToolsets lists the toolsets this agent provides to other agents.
+		ExportedToolsets []*quickstartToolsetData
+		// MCPToolsets lists the remote callers shown in the configuration example.
+		MCPToolsets []*quickstartMCPToolsetData
+	}
+
+	// quickstartToolsetData contains the exact label displayed for one toolset.
+	quickstartToolsetData struct {
+		*ToolsetData
+		// ProviderLabel identifies the remote MCP service and toolset. It is empty
+		// for toolsets that run locally.
+		ProviderLabel string
+	}
+
+	// quickstartMCPToolsetData contains one remote MCP caller shown in the guide.
+	quickstartMCPToolsetData struct {
+		*MCPToolsetMeta
+		// CallerName is the lowercase example variable suffix for this suite.
+		CallerName string
+	}
+
+	// quickstartSuiteData describes one evaluation suite in the generated guide.
 	quickstartSuiteData struct {
 		// Name is the suite identifier, e.g. "chat_quality".
 		Name string
@@ -55,45 +91,106 @@ type (
 		// HasInput reports whether the scenario hook receives a typed input.
 		HasInput bool
 	}
+
+	// exampleBootstrapFileData contains only the names and values printed into
+	// one service bootstrap file.
+	exampleBootstrapFileData struct {
+		Service           *ServiceAgentsData
+		Agents            []*exampleBootstrapAgentData
+		ClientVersion     string
+		ContextAlias      string
+		FlagAlias         string
+		FmtAlias          string
+		AgentRuntimeAlias string
+		MCPRuntimeAlias   string
+		StorageAlias      string
+		HasMCP            bool
+	}
+
+	// exampleBootstrapAgentData contains the linked imports and toolsets used to
+	// start one agent.
+	exampleBootstrapAgentData struct {
+		Alias           string
+		PlannerAlias    string
+		ExampleToolsets []*exampleBootstrapToolsetData
+		MCPToolsets     []*exampleBootstrapMCPData
+		Agent           *AgentData
+	}
+
+	// exampleBootstrapToolsetData contains the executor import chosen for one
+	// application-owned toolset.
+	exampleBootstrapToolsetData struct {
+		ExecutorAlias string
+		Toolset       *ToolsetData
+	}
+
+	// exampleBootstrapMCPData contains the finalized endpoint names used for one
+	// MCP-backed toolset.
+	exampleBootstrapMCPData struct {
+		*MCPToolsetMeta
+		EndpointVar string
+		FlagName    string
+	}
+
+	// exampleMainFileData contains the final agent import names and completion
+	// helpers written into one example main program.
+	exampleMainFileData struct {
+		Agents           []*exampleMainAgentData
+		Completions      []*CompletionData
+		ContextAlias     string
+		FmtAlias         string
+		IOAlias          string
+		LogAlias         string
+		TimeAlias        string
+		BootstrapAlias   string
+		CompletionsAlias string
+		ModelAlias       string
+		RawJSONAlias     string
+		RuntimeAlias     string
+		StorageAlias     string
+	}
+
+	// exampleMainAgentData contains one agent and its final import name in the
+	// example main package.
+	exampleMainAgentData struct {
+		*AgentData
+		Alias string
+	}
 )
 
-// GenerateExample appends a service-local bootstrap helper and planner stub(s)
-// so developers can run agents inside the service process with no manual wiring.
-//
-// Behavior:
-//   - For each service that declares at least one agent, emits:
-//   - cmd/<service>/agents_bootstrap.go
-//   - cmd/<service>/agents_planner_<agent>.go (one per agent)
-//   - Patches cmd/<service>/main.go to call bootstrapAgents(ctx) at process start.
-//
-// The function is idempotent over the in-memory file list provided by Goa’s example
-// pipeline. It does not modify gen/ output; it only adds/patches service-side files.
-func GenerateExample(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
-	data, err := buildGeneratorData(genpkg, roots)
-	if err != nil {
-		return nil, err
-	}
+// generateExampleFiles adds startup code and starter implementations for each
+// generated agent.
+func generateExampleFiles(data *GeneratorData, bootstraps *exampleBootstrapPackagesPlan, mains *exampleMainPackagesPlan, apiVersion string, files []*codegen.File) ([]*codegen.File, error) {
 	if len(data.Services) == 0 {
 		return files, nil
 	}
 
-	// Emit application-owned scaffold under internal/agents/; do not patch main.
-	moduleBase := moduleBaseImport(genpkg)
+	// Write application-owned files under internal/agents without changing an
+	// existing main package.
+	moduleBase := moduleBaseImport(data.Genpkg)
 	for _, svc := range data.Services {
 		if len(svc.Agents) == 0 {
 			continue
 		}
-		if f := emitInternalBootstrap(svc, moduleBase); f != nil {
+		f, err := emitInternalBootstrap(svc, bootstraps, apiVersion)
+		if err != nil {
+			return nil, err
+		}
+		if f != nil {
 			files = append(files, f)
 		}
-		if f := emitCmdMain(svc, moduleBase, files); f != nil {
+		f, err = emitCmdMain(svc, mains, files)
+		if err != nil {
+			return nil, err
+		}
+		if f != nil {
 			files = append(files, f)
 		}
 		for _, ag := range svc.Agents {
 			if f := emitPlannerInternalStub(moduleBase, ag); f != nil {
 				files = append(files, f)
 			}
-			// Internal executor stubs under internal/agents/<agent>/toolsets/<toolset>/
+			// Write one starter executor for each local toolset.
 			for _, ts := range ag.AllToolsets {
 				if f := emitExecutorInternalStub(ag, ts); f != nil {
 					files = append(files, f)
@@ -114,94 +211,81 @@ func moduleBaseImport(genpkg string) string {
 	return base
 }
 
-// emitInternalBootstrap emits internal/agents/bootstrap/bootstrap.go with a
-// simple New(ctx) bootstrap for every generated agent in one service.
-func emitInternalBootstrap(svc *ServiceAgentsData, moduleBase string) *codegen.File {
+// emitInternalBootstrap writes the startup package used by one service
+// command. The package starts only the agents declared by that service.
+func emitInternalBootstrap(svc *ServiceAgentsData, bootstraps *exampleBootstrapPackagesPlan, apiVersion string) (*codegen.File, error) {
 	if svc == nil || len(svc.Agents) == 0 {
-		return nil
+		return nil, nil
+	}
+	planned := bootstraps.byService[svc.Service.PathName]
+	if planned == nil {
+		return nil, fmt.Errorf("service %q has no example bootstrap plan", svc.Service.Name)
 	}
 	imports := []*codegen.ImportSpec{
-		{Path: "context"},
-		{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "agentsruntime"},
+		planned.pkg.Import("context"),
+		planned.pkg.Import(bootstrapAgentRuntimeImportPath),
+		planned.pkg.Import(bootstrapStorageImportPath),
 	}
-	needsMCP := svc.HasMCP
-	if needsMCP {
-		imports = append(imports, &codegen.ImportSpec{Path: "fmt"})
+	if svc.HasMCP {
+		imports = append(imports, planned.pkg.Import("fmt"))
+		imports = append(imports, planned.pkg.Import("flag"))
+		imports = append(imports, planned.pkg.Import(bootstrapMCPRuntimeImportPath))
 	}
-	if needsMCP {
-		imports = append(imports, &codegen.ImportSpec{Path: "flag"})
-		imports = append(imports, &codegen.ImportSpec{Name: "mcpruntime", Path: "goa.design/goa-ai/runtime/mcp"})
-	}
-	// Import generated agent registration packages and per-agent planner packages.
-	type toolsetImport struct{ Alias, Path string }
-	type exampleToolsetImport struct {
-		ExecutorAlias string
-		Toolset       *ToolsetData
-	}
-	type agentImport struct {
-		Alias, Path, PlannerAlias, PlannerPath string
-		Toolsets                               []toolsetImport
-		ExampleToolsets                        []exampleToolsetImport
-		Agent                                  *AgentData
-	}
-	agents := make([]agentImport, 0, len(svc.Agents))
+	agents := make([]*exampleBootstrapAgentData, 0, len(svc.Agents))
 	for _, ag := range svc.Agents {
-		imports = append(imports, &codegen.ImportSpec{Path: ag.ImportPath, Name: ag.PackageName})
-		palias := "planner" + ag.PathName
-		ppath := filepath.ToSlash(filepath.Join(moduleBase, "internal", "agents", ag.PathName, "planner"))
-		imports = append(imports, &codegen.ImportSpec{Path: ppath, Name: palias})
-		// Import internal toolset executor packages for method-backed toolsets.
-		var tsImports []toolsetImport
-		for _, ts := range ag.MethodBackedToolsets {
-			tpath := filepath.ToSlash(filepath.Join(moduleBase, "internal", "agents", ag.PathName, "toolsets", ts.PathName))
-			talias := "toolset" + ag.PathName + ts.PathName
-			imports = append(imports, &codegen.ImportSpec{Path: tpath, Name: talias})
-			tsImports = append(tsImports, toolsetImport{Alias: talias, Path: tpath})
+		agentPlan := planned.agents[ag.ID]
+		if agentPlan == nil {
+			return nil, fmt.Errorf("agent %q has no example bootstrap plan", ag.ID)
 		}
-		var exampleToolsets []exampleToolsetImport
+		imports = append(imports, planned.pkg.Import(agentPlan.agentImportPath))
+		imports = append(imports, planned.pkg.Import(agentPlan.plannerImportPath))
+		agentData := &exampleBootstrapAgentData{
+			Alias:        planned.pkg.ImportName(agentPlan.agentImportPath),
+			PlannerAlias: planned.pkg.ImportName(agentPlan.plannerImportPath),
+			Agent:        ag,
+		}
 		for _, ts := range ag.UsedToolsets {
-			if ts == nil || ts.IsRegistryBacked || ts.MCP != nil || ts.SpecsImportPath == "" {
+			if !starterExecutorToolset(ts) {
 				continue
 			}
-			hasMethod := false
-			for _, tool := range ts.Tools {
-				if tool != nil && tool.IsMethodBacked {
-					hasMethod = true
-					break
-				}
+			executorPath := agentPlan.executorPaths[ts.QualifiedName]
+			if executorPath == "" {
+				return nil, fmt.Errorf("toolset %q has no example executor import plan", ts.QualifiedName)
 			}
-			if hasMethod {
-				continue
-			}
-			serviceData := ts.SourceService
-			if serviceData == nil {
-				serviceData = ag.Service
-			}
-			specs, err := buildToolSpecsDataFor(ag.Genpkg, serviceData, ts.Tools)
-			if err != nil || len(specs.tools) == 0 {
-				continue
-			}
-			executorAlias := "toolset" + ag.PathName + ts.PathName
-			executorPath := filepath.ToSlash(
-				filepath.Join(moduleBase, "internal", "agents", ag.PathName, "toolsets", ts.PathName),
-			)
-			imports = append(imports, &codegen.ImportSpec{Path: executorPath, Name: executorAlias})
-			exampleToolsets = append(exampleToolsets, exampleToolsetImport{
-				ExecutorAlias: executorAlias,
+			imports = append(imports, planned.pkg.Import(executorPath))
+			agentData.ExampleToolsets = append(agentData.ExampleToolsets, &exampleBootstrapToolsetData{
+				ExecutorAlias: planned.pkg.ImportName(executorPath),
 				Toolset:       ts,
 			})
 		}
-		agents = append(agents, agentImport{
-			Alias:           ag.PackageName,
-			Path:            ag.ImportPath,
-			PlannerAlias:    palias,
-			PlannerPath:     ppath,
-			Toolsets:        tsImports,
-			ExampleToolsets: exampleToolsets,
-			Agent:           ag,
-		})
+		for _, meta := range ag.MCPToolsets {
+			mcpPlan := agentPlan.mcp[meta.QualifiedName]
+			if mcpPlan == nil {
+				return nil, fmt.Errorf("MCP toolset %q has no example endpoint plan", meta.QualifiedName)
+			}
+			agentData.MCPToolsets = append(agentData.MCPToolsets, &exampleBootstrapMCPData{
+				MCPToolsetMeta: meta,
+				EndpointVar:    mcpPlan.endpoint.Name(),
+				FlagName:       mcpPlan.flagName,
+			})
+		}
+		agents = append(agents, agentData)
 	}
-	path := filepath.Join("internal", "agents", "bootstrap", "bootstrap.go")
+	path := filepath.Join("internal", "agents", svc.Service.PathName, "bootstrap", "bootstrap.go")
+	data := exampleBootstrapFileData{
+		Service:           svc,
+		Agents:            agents,
+		ClientVersion:     apiVersion,
+		ContextAlias:      planned.pkg.ImportName("context"),
+		AgentRuntimeAlias: planned.pkg.ImportName(bootstrapAgentRuntimeImportPath),
+		StorageAlias:      planned.pkg.ImportName(bootstrapStorageImportPath),
+		HasMCP:            svc.HasMCP,
+	}
+	if svc.HasMCP {
+		data.FlagAlias = planned.pkg.ImportName("flag")
+		data.FmtAlias = planned.pkg.ImportName("fmt")
+		data.MCPRuntimeAlias = planned.pkg.ImportName(bootstrapMCPRuntimeImportPath)
+	}
 	sections := []*codegen.SectionTemplate{
 		applicationHeader(
 			"bootstrap",
@@ -211,18 +295,14 @@ func emitInternalBootstrap(svc *ServiceAgentsData, moduleBase string) *codegen.F
 		{
 			Name:   "bootstrap-internal",
 			Source: agentsTemplates.Read(bootstrapInternalT),
-			Data: struct {
-				Service *ServiceAgentsData
-				Agents  []agentImport
-			}{svc, agents},
-			FuncMap: templateFuncMap(),
+			Data:   data,
 		},
 	}
-	return &codegen.File{Path: path, SectionTemplates: sections, SkipExist: true}
+	return &codegen.File{Path: path, SectionTemplates: sections, SkipExist: true}, nil
 }
 
-// emitPlannerInternalStub emits internal/agents/<agent>/planner/planner.go
-// with the minimal planner scaffold for an example application.
+// emitPlannerInternalStub writes a starter planner that makes one sample tool
+// call when the design provides complete examples.
 func emitPlannerInternalStub(_ string, ag *AgentData) *codegen.File {
 	if ag == nil {
 		return nil
@@ -235,27 +315,14 @@ func emitPlannerInternalStub(_ string, ag *AgentData) *codegen.File {
 	var exampleTool *toolEntry
 	var exampleToolset *ToolsetData
 	for _, toolset := range ag.UsedToolsets {
-		if toolset == nil || toolset.IsRegistryBacked || toolset.MCP != nil || toolset.SpecsImportPath == "" {
+		if !starterExecutorToolset(toolset) {
 			continue
 		}
-		serviceData := toolset.SourceService
-		if serviceData == nil {
-			serviceData = ag.Service
-		}
-		specs, err := buildToolSpecsDataFor(ag.Genpkg, serviceData, toolset.Tools)
-		if err != nil || len(specs.tools) == 0 {
-			continue
-		}
-		// The scaffold can demonstrate a complete tool round trip when the
-		// design supplies a model payload and either no result or an authored
-		// result example. Bounded tools need real executor-owned counts and are
-		// not replaced with invented scaffold metadata.
-		for _, tool := range specs.tools {
-			if len(tool.Payload.ExampleJSON) == 0 || tool.Bounds != nil {
+		for _, tool := range toolset.specs.tools {
+			if tool.Payload == nil || len(tool.Payload.ExampleJSON) == 0 || tool.Bounds != nil {
 				continue
 			}
-			if tool.HasResult &&
-				(tool.Result == nil || len(tool.Result.ScaffoldExampleJSON) == 0) {
+			if tool.HasResult && (tool.Result == nil || len(tool.Result.ScaffoldExampleJSON) == 0) {
 				continue
 			}
 			exampleTool = tool
@@ -267,10 +334,7 @@ func emitPlannerInternalStub(_ string, ag *AgentData) *codegen.File {
 		exampleToolset = toolset
 		imports = append(imports,
 			&codegen.ImportSpec{Path: "fmt"},
-			&codegen.ImportSpec{
-				Path: toolset.SpecsImportPath,
-				Name: "gentool",
-			},
+			&codegen.ImportSpec{Path: toolset.SpecsImportPath, Name: "gentool"},
 		)
 		break
 	}
@@ -295,15 +359,12 @@ func emitPlannerInternalStub(_ string, ag *AgentData) *codegen.File {
 	return &codegen.File{Path: path, SectionTemplates: sections, SkipExist: true}
 }
 
-// emitExecutorInternalStub emits one application-owned executor package for a
-// local used toolset. The generated implementation decodes the exact payload
-// contract and returns its typed example result until the application replaces
-// that result with a service call.
+// emitExecutorInternalStub writes starter execution code for one local
+// toolset. It uses authored examples until the application supplies real work.
 func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
-	if ts == nil || ts.IsRegistryBacked || ts.MCP != nil || ts.SpecsImportPath == "" {
+	if !starterExecutorToolset(ts) {
 		return nil
 	}
-	agentImport := &codegen.ImportSpec{Path: ag.ImportPath, Name: ag.PackageName}
 	imports := make([]*codegen.ImportSpec, 0, 6)
 	imports = append(imports,
 		codegen.SimpleImport("context"),
@@ -312,61 +373,33 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/planner"},
 		&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/tools"},
 	)
-	// Import specs package for typed payloads and transforms.
 	specsAlias := ts.SpecsPackageName + "specs"
 	imports = append(imports, &codegen.ImportSpec{Path: ts.SpecsImportPath, Name: specsAlias})
 
-	// Build tool switch metadata.
-	type execTool struct {
-		ID               string
-		ConstName        string
-		TypedTool        string
-		InjectDecodeFunc string
-		ResultExample    string
-		HasResult        bool
-		HasResultExample bool
-	}
-	serviceData := ts.SourceService
-	if serviceData == nil {
-		serviceData = ag.Service
-	}
-	specs, err := buildToolSpecsDataFor(ag.Genpkg, serviceData, ts.Tools)
-	if err != nil || len(specs.tools) == 0 {
-		return nil
-	}
-	tools := make([]execTool, 0, len(specs.tools))
-	register := false
+	tools := make([]*exampleExecutorToolData, 0, len(ts.specs.tools))
 	needsFmt := false
 	needsRawJSON := false
-	for _, tool := range ts.Tools {
-		register = register || tool.IsMethodBacked
-	}
-	for _, t := range specs.tools {
-		tool := execTool{
-			ID:               t.Name,
-			ConstName:        t.ConstName,
-			TypedTool:        t.TypedToolVar,
-			InjectDecodeFunc: t.Payload.InjectDecodeFunc,
-			HasResult:        t.HasResult,
+	for _, tool := range ts.specs.tools {
+		entry := &exampleExecutorToolData{
+			ID:               tool.Name,
+			ConstName:        tool.ConstName,
+			TypedTool:        tool.TypedToolVar,
+			InjectDecodeFunc: tool.Payload.InjectDecodeFunc,
+			HasResult:        tool.HasResult,
 		}
-		if t.HasResult {
+		if tool.HasResult {
 			needsFmt = true
-			tool.ResultExample = string(t.Result.ScaffoldExampleJSON)
-			tool.HasResultExample = len(t.Result.ScaffoldExampleJSON) > 0
-			needsRawJSON = needsRawJSON || tool.HasResultExample
+			entry.ResultExample = string(tool.Result.ScaffoldExampleJSON)
+			entry.HasResultExample = len(tool.Result.ScaffoldExampleJSON) > 0
+			needsRawJSON = needsRawJSON || entry.HasResultExample
 		}
-		tools = append(tools, tool)
+		tools = append(tools, entry)
 	}
 	if needsFmt {
 		imports = append(imports, codegen.SimpleImport("fmt"))
 	}
 	if needsRawJSON {
-		imports = append(imports,
-			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
-		)
-	}
-	if register {
-		imports = append(imports, agentImport)
+		imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"})
 	}
 	sections := []*codegen.SectionTemplate{
 		applicationHeader(
@@ -377,14 +410,12 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 		{
 			Name:   "example-executor-stub",
 			Source: agentsTemplates.Read(exampleExecutorStubT),
-			Data: struct {
-				Agent       *AgentData
-				Toolset     *ToolsetData
-				AgentImport *codegen.ImportSpec
-				SpecsAlias  string
-				Tools       []execTool
-				Register    bool
-			}{ag, ts, agentImport, specsAlias, tools, register},
+			Data: exampleExecutorFileData{
+				Agent:      ag,
+				Toolset:    ts,
+				SpecsAlias: specsAlias,
+				Tools:      tools,
+			},
 			FuncMap: templateFuncMap(),
 		},
 	}
@@ -392,9 +423,16 @@ func emitExecutorInternalStub(ag *AgentData, ts *ToolsetData) *codegen.File {
 	return &codegen.File{Path: path, SectionTemplates: sections, SkipExist: true}
 }
 
-// applicationHeader emits the package and imports for a file the application
-// edits after Goa creates it. It deliberately omits Go's generated-code marker
-// so formatters and linters continue to inspect the file.
+// starterExecutorToolset reports whether goa example can write a local
+// executor for the toolset.
+func starterExecutorToolset(toolset *ToolsetData) bool {
+	return toolset != nil && toolset.AgentToolsImportPath == "" &&
+		!toolset.IsRegistryBacked && toolset.MCP == nil &&
+		toolset.SpecsImportPath != "" && toolset.specs != nil && len(toolset.specs.tools) > 0
+}
+
+// applicationHeader writes the package comment and imports for application
+// code. These files are created once and belong to the application afterward.
 func applicationHeader(packageName, purpose string, imports []*codegen.ImportSpec) *codegen.SectionTemplate {
 	const source = `// Package {{ .Package }} {{ .Purpose }}
 // Goa creates this file only when it does not already exist. The application
@@ -443,18 +481,64 @@ func agentQuickstartData(data *GeneratorData, roots []eval.Root) *quickstartData
 	if data == nil {
 		return nil
 	}
-	doc := &quickstartData{GeneratorData: &GeneratorData{Genpkg: data.Genpkg}}
+	doc := &quickstartData{}
 	for _, svc := range data.Services {
 		if svc == nil || len(svc.Agents) == 0 {
 			continue
 		}
-		doc.Services = append(doc.Services, svc)
+		serviceDoc := &quickstartServiceData{ServiceAgentsData: svc}
+		for _, agent := range svc.Agents {
+			agentDoc := &quickstartAgentData{AgentData: agent}
+			for _, toolset := range agent.UsedToolsets {
+				agentDoc.UsedToolsets = append(agentDoc.UsedToolsets, newQuickstartToolsetData(toolset))
+			}
+			for _, toolset := range agent.ExportedToolsets {
+				agentDoc.ExportedToolsets = append(agentDoc.ExportedToolsets, newQuickstartToolsetData(toolset))
+			}
+			for _, toolset := range agent.MCPToolsets {
+				agentDoc.MCPToolsets = append(agentDoc.MCPToolsets, &quickstartMCPToolsetData{
+					MCPToolsetMeta: toolset,
+					CallerName:     strings.ToLower(toolset.SuiteName),
+				})
+			}
+			serviceDoc.Agents = append(serviceDoc.Agents, agentDoc)
+			if !doc.HasServiceProviders && agentHasServiceProvider(agent) {
+				doc.HasServiceProviders = true
+			}
+		}
+		doc.Services = append(doc.Services, serviceDoc)
 	}
 	if len(doc.Services) == 0 {
 		return nil
 	}
 	doc.Suites = quickstartSuites(roots)
 	return doc
+}
+
+// newQuickstartToolsetData prepares the optional provider label displayed next
+// to a remote MCP toolset.
+func newQuickstartToolsetData(toolset *ToolsetData) *quickstartToolsetData {
+	data := &quickstartToolsetData{ToolsetData: toolset}
+	if toolset.MCP != nil {
+		data.ProviderLabel = toolset.MCP.ServiceName + "." + toolset.Name
+	}
+	return data
+}
+
+// agentHasServiceProvider reports whether generation writes a provider that
+// receives registry-routed calls for any toolset owned by this agent.
+func agentHasServiceProvider(agent *AgentData) bool {
+	for _, toolset := range agent.AllToolsets {
+		if toolset.SpecsDir == "" || toolset.SourceService == nil || toolset.IsRegistryBacked {
+			continue
+		}
+		for _, tool := range toolset.Tools {
+			if tool.IsMethodBacked {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // quickstartSuites projects the evaluated eval DSL root, when present, into
@@ -498,9 +582,13 @@ func quickstartSuites(roots []eval.Root) []*quickstartSuiteData {
 // also demonstrates service-owned completions when present. If Goa core already
 // generated the file in memory, the function rewrites its sections in place.
 // Otherwise it creates a new example main unless one already exists on disk.
-func emitCmdMain(svc *ServiceAgentsData, moduleBase string, files []*codegen.File) *codegen.File {
+func emitCmdMain(svc *ServiceAgentsData, mains *exampleMainPackagesPlan, files []*codegen.File) (*codegen.File, error) {
 	if svc == nil || len(svc.Agents) == 0 {
-		return nil
+		return nil, nil
+	}
+	planned := mains.byService[svc.Service.PathName]
+	if planned == nil {
+		return nil, fmt.Errorf("service %q has no example main plan", svc.Service.Name)
 	}
 	mainPath := filepath.Join("cmd", svc.Service.PathName, "main.go")
 	completions := make([]*CompletionData, 0, len(svc.Completions))
@@ -519,33 +607,56 @@ func emitCmdMain(svc *ServiceAgentsData, moduleBase string, files []*codegen.Fil
 	}
 
 	imports := []*codegen.ImportSpec{
-		{Path: "context"},
-		{Path: "fmt"},
-		{Path: "log"},
-		{Path: filepath.ToSlash(filepath.Join(moduleBase, "internal", "agents", "bootstrap"))},
-		{Path: "goa.design/goa-ai/runtime/agent/model", Name: "model"},
+		planned.pkg.Import("context"),
+		planned.pkg.Import("fmt"),
+		planned.pkg.Import("log"),
+		planned.pkg.Import("time"),
+		planned.pkg.Import(planned.bootstrapPath),
+		planned.pkg.Import(exampleMainModelImportPath),
+		planned.pkg.Import(bootstrapAgentRuntimeImportPath),
+		planned.pkg.Import(exampleMainStorageInmemImportPath),
 	}
 	if len(completions) > 0 {
 		imports = append(imports,
-			&codegen.ImportSpec{Path: "io"},
-			&codegen.ImportSpec{Path: filepath.ToSlash(filepath.Join(moduleBase, "gen", svc.Service.PathName, "completions"))},
-			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
+			planned.pkg.Import("io"),
+			planned.pkg.Import(planned.completionsPath),
+			planned.pkg.Import(exampleMainRawJSONImportPath),
 		)
 	}
+	agents := make([]*exampleMainAgentData, 0, len(svc.Agents))
 	for _, ag := range svc.Agents {
-		imports = append(imports, &codegen.ImportSpec{Path: ag.ImportPath, Name: ag.PackageName})
+		importPath := planned.agentPaths[ag.ID]
+		if importPath == "" {
+			return nil, fmt.Errorf("agent %q has no example main import plan", ag.ID)
+		}
+		imports = append(imports, planned.pkg.Import(importPath))
+		agents = append(agents, &exampleMainAgentData{
+			AgentData: ag,
+			Alias:     planned.pkg.ImportName(importPath),
+		})
 	}
 
+	data := exampleMainFileData{
+		Agents:         agents,
+		Completions:    completions,
+		ContextAlias:   planned.pkg.ImportName("context"),
+		FmtAlias:       planned.pkg.ImportName("fmt"),
+		LogAlias:       planned.pkg.ImportName("log"),
+		TimeAlias:      planned.pkg.ImportName("time"),
+		BootstrapAlias: planned.pkg.ImportName(planned.bootstrapPath),
+		ModelAlias:     planned.pkg.ImportName(exampleMainModelImportPath),
+		RuntimeAlias:   planned.pkg.ImportName(bootstrapAgentRuntimeImportPath),
+		StorageAlias:   planned.pkg.ImportName(exampleMainStorageInmemImportPath),
+	}
+	if len(completions) > 0 {
+		data.IOAlias = planned.pkg.ImportName("io")
+		data.CompletionsAlias = planned.pkg.ImportName(planned.completionsPath)
+		data.RawJSONAlias = planned.pkg.ImportName(exampleMainRawJSONImportPath)
+	}
 	agentSection := &codegen.SectionTemplate{
-		Name:   "cmd-main",
-		Source: agentsTemplates.Read(cmdMainT),
-		Data: struct {
-			Agents      []*AgentData
-			Completions []*CompletionData
-		}{
-			Agents:      svc.Agents,
-			Completions: completions,
-		},
+		Name:    "cmd-main",
+		Source:  agentsTemplates.Read(cmdMainT),
+		Data:    data,
 		FuncMap: templateFuncMap(),
 	}
 
@@ -554,11 +665,11 @@ func emitCmdMain(svc *ServiceAgentsData, moduleBase string, files []*codegen.Fil
 			codegen.Header("Example main for "+svc.Service.Name, "main", imports),
 			agentSection,
 		}
-		return nil
+		return nil, nil
 	}
 
 	if _, err := os.Stat(mainPath); !os.IsNotExist(err) {
-		return nil
+		return nil, nil
 	}
 
 	return &codegen.File{
@@ -567,5 +678,5 @@ func emitCmdMain(svc *ServiceAgentsData, moduleBase string, files []*codegen.Fil
 			codegen.Header("Example main for "+svc.Service.Name, "main", imports),
 			agentSection,
 		},
-	}
+	}, nil
 }

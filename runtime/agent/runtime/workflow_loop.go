@@ -115,7 +115,7 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 		if err := l.r.validateCompletionToolPlanResult(l.st.Result, completionTool(l.input)); err != nil {
 			return nil, err
 		}
-		program, err := l.r.normalizePlanResultContract(l.st.Result)
+		program, err := l.r.normalizePlanResultContract(l.st.Result, l.base.RunContext.Tool)
 		if err != nil {
 			return nil, err
 		}

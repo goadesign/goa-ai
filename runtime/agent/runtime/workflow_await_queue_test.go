@@ -15,8 +15,8 @@ import (
 )
 
 func TestPublishAwaitToolUsesQuestionsDoesNotDuplicateCommittedResponse(t *testing.T) {
-	rt := New()
-	seedTestToolSpecs(rt, newAnyJSONSpec("assistant.ask_question", "assistant"))
+	rt := New(newTestStore())
+	seedTestToolSpecs(rt, newAnyJSONSpec("assistant.ask_question"))
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1", SessionID: "sess-1"}}
 	input := &RunInput{AgentID: agent.Ident("agent-1"), RunID: "run-1", SessionID: "sess-1"}
 	item := planner.AwaitQuestionsItem(&planner.AwaitQuestions{
@@ -52,8 +52,8 @@ func TestPublishAwaitToolUsesQuestionsDoesNotDuplicateCommittedResponse(t *testi
 }
 
 func TestPublishAwaitToolUsesExternalToolsDoesNotRecordAssistantResponse(t *testing.T) {
-	rt := New()
-	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.a", "svc.tools"), newAnyJSONSpec("svc.tools.b", "svc.tools"))
+	rt := New(newTestStore())
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.a"), newAnyJSONSpec("svc.tools.b"))
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1", SessionID: "sess-1"}}
 	input := &RunInput{AgentID: agent.Ident("agent-1"), RunID: "run-1", SessionID: "sess-1"}
 	item := planner.AwaitExternalToolsItem(&planner.AwaitExternalTools{

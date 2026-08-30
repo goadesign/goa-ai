@@ -104,7 +104,7 @@ func TestBuildGeneratorData(t *testing.T) {
 
 func TestGenerateProducesFiles(t *testing.T) {
 	roots := runAgentDesign(t, 2)
-	files, err := codegen.Generate("goa.design/goa-ai", roots, nil)
+	files, err := codegen.BuildFilesForTest("goa.design/goa-ai", roots, false)
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
 
@@ -130,7 +130,7 @@ func TestUnconfiguredRecoveryTurnsRemainAuthoredZero(t *testing.T) {
 	require.Zero(t, caps.MaxRecoveryTurns)
 	require.Equal(t, policy.DefaultMaxRecoveryTurns, caps.EffectiveMaxRecoveryTurns)
 
-	files, err := codegen.Generate("goa.design/goa-ai", roots, nil)
+	files, err := codegen.BuildFilesForTest("goa.design/goa-ai", roots, false)
 	require.NoError(t, err)
 	outputDir := t.TempDir()
 	renderedRegistry := false
@@ -180,6 +180,32 @@ func TestBuildGeneratorData_AliasedMCPToolsetUsesDefinitionNameForArtifacts(t *t
 	require.Len(t, used.Tools, 1)
 	require.Equal(t, "add", used.Tools[0].Name)
 	require.Equal(t, "calc-remote.add", used.Tools[0].QualifiedName)
+}
+
+func TestBuildGeneratorDataUsesPassedMCPRoot(t *testing.T) {
+	roots := runAliasedMCPDesign(t)
+	other := mcpexpr.NewRoot()
+	other.MCPServers["calc"] = &mcpexpr.MCPExpr{
+		Name:  "core",
+		Tools: []*mcpexpr.ToolExpr{{Name: "other"}},
+	}
+	previous := mcpexpr.Root
+	mcpexpr.Root = other
+	t.Cleanup(func() { mcpexpr.Root = previous })
+
+	data, err := codegen.BuildDataForTest("goa.design/goa-ai", roots)
+	require.NoError(t, err)
+	var consumerAgent *codegen.AgentData
+	for _, service := range data.Services {
+		if service.Service.Name == alphaServiceName {
+			consumerAgent = service.Agents[0]
+			break
+		}
+	}
+	require.NotNil(t, consumerAgent)
+	require.Len(t, consumerAgent.UsedToolsets, 1)
+	require.Len(t, consumerAgent.UsedToolsets[0].Tools, 1)
+	require.Equal(t, "add", consumerAgent.UsedToolsets[0].Tools[0].Name)
 }
 
 func TestBuildGeneratorData_AliasedMCPToolsetsUseDistinctConstNames(t *testing.T) {
@@ -287,7 +313,7 @@ func runAgentDesign(t *testing.T, maxRecoveryTurns int) []eval.Root {
 
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+	return []eval.Root{goaexpr.Root, mcpexpr.Root, agentsExpr.Root}
 }
 
 func runAliasedMCPDesign(t *testing.T) []eval.Root {
@@ -312,6 +338,9 @@ func runAliasedMCPDesign(t *testing.T) []eval.Root {
 		API("calc", func() {})
 		Service("calc", func() {
 			MCP("core", "1.0.0")
+			JSONRPC(func() {
+				POST("/calc")
+			})
 			Method("add", func() {
 				Payload(func() {
 					Attribute("a", Int, "First operand")
@@ -333,7 +362,7 @@ func runAliasedMCPDesign(t *testing.T) []eval.Root {
 
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+	return []eval.Root{goaexpr.Root, mcpexpr.Root, agentsExpr.Root}
 }
 
 func runDuplicateAliasedMCPDesign(t *testing.T) []eval.Root {
@@ -358,6 +387,9 @@ func runDuplicateAliasedMCPDesign(t *testing.T) []eval.Root {
 		API("calc", func() {})
 		Service("calc", func() {
 			MCP("core", "1.0.0")
+			JSONRPC(func() {
+				POST("/calc")
+			})
 			Method("add", func() {
 				Payload(func() {
 					Attribute("a", Int, "First operand")
@@ -381,7 +413,7 @@ func runDuplicateAliasedMCPDesign(t *testing.T) []eval.Root {
 
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+	return []eval.Root{goaexpr.Root, mcpexpr.Root, agentsExpr.Root}
 }
 
 func runDirectMCPUseDesign(t *testing.T) []eval.Root {
@@ -406,6 +438,9 @@ func runDirectMCPUseDesign(t *testing.T) []eval.Root {
 		API("calc", func() {})
 		Service("calc", func() {
 			MCP("core", "1.0.0")
+			JSONRPC(func() {
+				POST("/calc")
+			})
 			Method("add", func() {
 				Payload(func() {
 					Attribute("a", Int, "First operand")
@@ -427,7 +462,7 @@ func runDirectMCPUseDesign(t *testing.T) []eval.Root {
 
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+	return []eval.Root{goaexpr.Root, mcpexpr.Root, agentsExpr.Root}
 }
 
 func runPartitionedMCPConstCollisionDesign(t *testing.T) []eval.Root {
@@ -452,6 +487,9 @@ func runPartitionedMCPConstCollisionDesign(t *testing.T) []eval.Root {
 		API("calc", func() {})
 		Service("calc-core", func() {
 			MCP("remote", "1.0.0")
+			JSONRPC(func() {
+				POST("/calc-core")
+			})
 			Method("add", func() {
 				Payload(func() {
 					Attribute("a", Int, "First operand")
@@ -464,6 +502,9 @@ func runPartitionedMCPConstCollisionDesign(t *testing.T) []eval.Root {
 		})
 		Service("calc", func() {
 			MCP("core", "1.0.0")
+			JSONRPC(func() {
+				POST("/calc")
+			})
 			Method("multiply", func() {
 				Payload(func() {
 					Attribute("a", Int, "First operand")
@@ -487,5 +528,5 @@ func runPartitionedMCPConstCollisionDesign(t *testing.T) []eval.Root {
 
 	require.True(t, eval.Execute(design, nil), eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	return []eval.Root{goaexpr.Root, agentsExpr.Root}
+	return []eval.Root{goaexpr.Root, mcpexpr.Root, agentsExpr.Root}
 }

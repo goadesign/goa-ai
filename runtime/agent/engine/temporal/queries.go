@@ -12,6 +12,7 @@ import (
 	"go.temporal.io/api/serviceerror"
 	workflowpb "go.temporal.io/api/workflow/v1"
 	"go.temporal.io/sdk/converter"
+	temporalsdk "go.temporal.io/sdk/temporal"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -30,35 +31,47 @@ func (e *Engine) QueryWorkflow(ctx context.Context, workflowID, queryType string
 	return e.client.QueryWorkflow(ctx, workflowID, "", queryType, args...)
 }
 
-// QueryRunStatus returns the current lifecycle status for a workflow execution
-// by querying Temporal. The workflowID parameter is the Temporal WorkflowID and
-// this queries the latest run for that durable workflow.
-func (e *Engine) QueryRunStatus(ctx context.Context, workflowID string) (engine.RunStatus, error) {
+// QueryRunCompletion returns Temporal's current workflow status and retrieves
+// the final output only after Temporal reports that the workflow has closed.
+func (e *Engine) QueryRunCompletion(ctx context.Context, workflowID string) (engine.RunCompletion, error) {
 	if workflowID == "" {
-		return "", fmt.Errorf("workflow id is required")
+		return engine.RunCompletion{}, fmt.Errorf("workflow id is required")
 	}
 	desc, err := e.client.DescribeWorkflowExecution(ctx, workflowID, "")
 	if err != nil {
-		return "", mapDescribeWorkflowExecutionError(err)
+		return engine.RunCompletion{}, mapDescribeWorkflowExecutionError(err)
 	}
-	return queryRunStatusFromInfo(desc.GetWorkflowExecutionInfo()), nil
-}
-
-// QueryRunCompletion returns the terminal output/error for a workflow by
-// workflow identifier so restart-time repair can preserve the original failure.
-func (e *Engine) QueryRunCompletion(ctx context.Context, workflowID string) (*api.RunOutput, error) {
-	if workflowID == "" {
-		return nil, fmt.Errorf("workflow id is required")
+	status := queryRunStatusFromInfo(desc.GetWorkflowExecutionInfo())
+	if !isTerminalRunStatus(status) {
+		return engine.RunCompletion{Status: status}, nil
 	}
+	completedAt := desc.GetWorkflowExecutionInfo().GetCloseTime().AsTime().UTC()
 	var out *api.RunOutput
 	if err := e.client.GetWorkflow(ctx, workflowID, "").Get(ctx, &out); err != nil {
 		var notFound *serviceerror.NotFound
 		if errors.As(err, &notFound) {
-			return nil, engine.ErrWorkflowNotFound
+			return engine.RunCompletion{}, engine.ErrWorkflowNotFound
 		}
-		return nil, err
+		var workflowErr *temporalsdk.WorkflowExecutionError
+		if errors.As(err, &workflowErr) {
+			return engine.RunCompletion{Status: status, CompletedAt: completedAt, WorkflowError: err}, nil
+		}
+		return engine.RunCompletion{}, err
 	}
-	return out, nil
+	return engine.RunCompletion{Status: status, CompletedAt: completedAt, Output: out}, nil
+}
+
+// isTerminalRunStatus reports whether Temporal has a final workflow result.
+func isTerminalRunStatus(status engine.RunStatus) bool {
+	switch status {
+	case engine.RunStatusCompleted, engine.RunStatusTimedOut,
+		engine.RunStatusFailed, engine.RunStatusCanceled:
+		return true
+	case engine.RunStatusPending, engine.RunStatusRunning, engine.RunStatusPaused:
+		return false
+	default:
+		panic("temporal engine: unsupported run status: " + string(status))
+	}
 }
 
 // queryRunStatusFromInfo maps Temporal execution info into the engine's coarse

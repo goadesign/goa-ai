@@ -5,6 +5,7 @@ package runtime
 // before the parent tool call receives a result.
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -20,24 +21,91 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func TestChildSuspensionPropagatesThroughParentContinuation(t *testing.T) {
-	runtime := New(WithLogger(telemetry.NoopLogger{}))
-	parentRegistration := AgentRegistration{ResumeActivityName: "resume", ExecuteToolActivity: "execute"}
-	runtime.agents["parent.agent"] = parentRegistration
-	tool := newAnyJSONSpec("svc.agent.child", "svc.agent")
+func TestChildContinuationWaitsAfterParentCancellation(t *testing.T) {
+	t.Parallel()
+
+	runtime := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	tool := newAnyJSONSpec("svc.agent.child")
 	tool.IsAgentTool = true
 	tool.AgentID = "nested.agent"
-	seedTestToolSpecs(runtime, tool)
 	cfg := AgentToolConfig{
-		AgentID: "nested.agent",
-		Name:    "svc.agent",
-		Route: AgentRoute{
-			ID: "nested.agent", WorkflowName: "nested.workflow", DefaultTaskQueue: "nested.queue",
-		},
+		Definition:       testAgentDefinition("nested.agent", "nested.workflow", "nested.queue", nil, nil),
+		Name:             "svc.agent",
 		AgentToolContent: AgentToolContent{Prompt: func(tools.Ident, any) string { return "work" }},
 	}
 	registration := NewAgentToolsetRegistration(runtime, cfg)
 	runtime.toolsets[registration.Name] = registration
+	seedTestToolset(runtime, registration.Name, tool)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	childHandles := make(chan *controlledChildHandle, 1)
+	wfCtx := &testWorkflowContext{
+		ctx:                    ctx,
+		hookRuntime:            runtime,
+		controlledChildHandles: childHandles,
+	}
+	input := &RunInput{
+		AgentID: "parent.agent", RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
+	}
+	base := &planner.PlanInput{RunContext: run.Context{
+		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID,
+	}}
+	suspension := &api.RunSuspension{ID: "child-suspension"}
+	batch := stepBatch{records: []stepToolRecord{{
+		call: ToolCall{
+			Name: tool.Name, ToolCallID: "call-child", Payload: rawjson.Message(`{}`),
+		},
+		childSuspension: suspension,
+	}}}
+	loop := &workflowLoop{r: runtime, wfCtx: wfCtx, input: input, base: base}
+	pending := &checkpointChildContinuation{
+		ToolCallID: "call-child",
+		Suspension: suspension,
+	}
+	response := &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
+		ID: "clarification-1", Answer: "Unit 7",
+	}}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := loop.applyChildContinuation(&batch, pending, response)
+		done <- err
+	}()
+	handle := waitForChildHandle(t, childHandles, "continued child")
+	cancel()
+	select {
+	case err := <-done:
+		t.Fatalf("parent continuation returned before the child finished cancellation: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	handle.err = context.Canceled
+	close(handle.ready)
+	require.ErrorIs(t, <-done, context.Canceled)
+}
+
+func TestChildSuspensionPropagatesThroughParentContinuation(t *testing.T) {
+	runtime := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	tool := newAnyJSONSpec("svc.agent.child")
+	tool.IsAgentTool = true
+	tool.AgentID = "nested.agent"
+	childTool := newAnyJSONSpec("child.lookup")
+	childDefinition := testAgentDefinition("nested.agent", "nested.workflow", "nested.queue", []tools.ToolSpec{childTool}, nil)
+	parentDefinition := testAgentDefinitionWithChildren(
+		"parent.agent", "parent.workflow", "parent.queue", []tools.ToolSpec{tool}, nil,
+		[]AgentDefinition{childDefinition})
+
+	parentRegistration := AgentRegistration{
+		Definition: parentDefinition, ResumeActivityName: "resume", ExecuteToolActivity: "execute",
+	}
+	runtime.agents["parent.agent"] = parentRegistration
+	cfg := AgentToolConfig{
+		Definition:       childDefinition,
+		Name:             "svc.agent",
+		AgentToolContent: AgentToolContent{Prompt: func(tools.Ident, any) string { return "work" }},
+	}
+	registration := NewAgentToolsetRegistration(runtime, cfg)
+	runtime.toolsets[registration.Name] = registration
+	seedTestToolset(runtime, registration.Name, tool)
 
 	firstInput := &RunInput{AgentID: "parent.agent", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
 	seedRunMeta(t, runtime, firstInput)
@@ -69,8 +137,7 @@ func TestChildSuspensionPropagatesThroughParentContinuation(t *testing.T) {
 		}{out: out, err: err}
 	}()
 	firstChild := <-firstChildren
-	childRuntime := New(WithLogger(telemetry.NoopLogger{}))
-	childTool := newAnyJSONSpec("child.lookup", "child")
+	childRuntime := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	seedTestToolSpecs(childRuntime, childTool)
 	childSuspension := suspensionContractFixtureWithContext(
 		t,
@@ -94,7 +161,7 @@ func TestChildSuspensionPropagatesThroughParentContinuation(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, countRunEventsByType(parentEvents, hooks.AwaitClarification))
 
-	checkpoint, err := runtime.decodeWorkflowCheckpoint(first.out.Suspension)
+	checkpoint, err := decodeWorkflowCheckpoint(first.out.Suspension, parentDefinition)
 	require.NoError(t, err)
 	secondInput := &RunInput{
 		AgentID: "parent.agent", RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",

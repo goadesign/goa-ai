@@ -1,10 +1,14 @@
+// This file verifies the service contract built by the MCP generator before
+// Goa plans and renders it.
 package codegen
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"text/template"
 
@@ -15,6 +19,8 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
+const readDocumentMethod = "ReadDocument"
+
 func TestPrepareServices_RejectsUnmappedMCPMethods(t *testing.T) {
 	restore := resetMCPCodegenState(t)
 	defer restore()
@@ -24,49 +30,194 @@ func TestPrepareServices_RejectsUnmappedMCPMethods(t *testing.T) {
 		jsonrpcService(svc, "/rpc"),
 	})
 	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
-		Name:    "calc",
-		Version: "1.0.0",
+		Name:            "calc",
+		Version:         "1.0.0",
+		ProtocolVersion: "2025-06-18",
 		Tools: []*mcpexpr.ToolExpr{
 			{Name: "add", Method: methods["add"]},
 		},
 	})
 
-	err := PrepareServices("", []eval.Root{root})
+	err := prepareServices([]eval.Root{root})
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, `service "calc"`)
 	require.ErrorContains(t, err, "subtract")
 }
 
-func TestGenerate_RejectsUnmappedPureMCPMethodsWithoutPrepareServices(t *testing.T) {
-	restore := resetMCPCodegenState(t)
-	defer restore()
-
-	svc, methods := testService("calc", "add", "subtract")
-	root := testRootExpr([]*expr.ServiceExpr{svc}, []*expr.HTTPServiceExpr{
-		jsonrpcService(svc, "/rpc"),
-	})
-	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
-		Name:    "calc",
-		Version: "1.0.0",
-		Tools: []*mcpexpr.ToolExpr{
-			{Name: "add", Method: methods["add"]},
-		},
-	})
-
-	_, err := Generate("example.com/calc/gen", []eval.Root{root}, nil)
-
-	require.Error(t, err)
-	require.ErrorContains(t, err, `service "calc"`)
-	require.ErrorContains(t, err, "subtract")
-}
-
-func TestGenerateMCPClientAdapter_DoesNotRenderOriginalClientFallback(t *testing.T) {
+func TestPrepareServices_AttachesGeneratedMCPDesign(t *testing.T) {
 	restore := resetMCPCodegenState(t)
 	defer restore()
 
 	svc, methods := testService("calc", "add")
-	methods["add"].Result = &expr.AttributeExpr{Type: expr.Empty}
+	root := testRootExpr([]*expr.ServiceExpr{svc}, []*expr.HTTPServiceExpr{
+		jsonrpcService(svc, "/rpc"),
+	})
+	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
+		Name:            "calc",
+		Version:         "1.0.0",
+		ProtocolVersion: "2025-06-18",
+		Tools: []*mcpexpr.ToolExpr{
+			{Name: "add", Method: methods["add"]},
+		},
+	})
+
+	err := prepareServices([]eval.Root{root})
+
+	require.NoError(t, err)
+	require.Len(t, root.Services, 2)
+	require.Equal(t, "mcp_calc", root.Services[1].Name)
+	require.NotEmpty(t, root.Types)
+	require.Empty(t, root.API.HTTP.Services)
+	require.Len(t, root.API.JSONRPC.Services, 1)
+	require.Same(t, root.Services[1], root.API.JSONRPC.Services[0].ServiceExpr)
+	require.Equal(t, "/rpc", root.API.JSONRPC.Services[0].JSONRPCRoute.Path)
+	mcpService := root.Services[1]
+	initialized := mcpService.Method("notifications/initialized")
+	require.NotNil(t, initialized)
+	initializedPayload := expr.AsObject(initialized.Payload.Type)
+	require.NotNil(t, initializedPayload)
+	require.Empty(t, *initializedPayload)
+	initializedEndpoint := root.API.JSONRPC.Services[0].EndpointFor(initialized)
+	require.NotNil(t, initializedEndpoint)
+	require.True(t, initializedEndpoint.IsJSONRPCNotification())
+	initialize := mcpService.Method("initialize")
+	require.NotNil(t, initialize)
+	initializePayload := expr.AsObject(initialize.Payload.Type)
+	require.NotNil(t, initializePayload.Attribute("capabilities"))
+	require.Nil(t, initializePayload.Attribute("protocolVersion").Validation)
+	require.True(t, initialize.Payload.IsRequired("capabilities"))
+	toolsCall := mcpService.Method("tools/call")
+	require.NotNil(t, toolsCall.Result)
+	require.Same(t, toolsCall.Result, toolsCall.StreamingResult)
+	require.False(t, toolsCall.IsStreaming())
+	require.False(t, toolsCall.HasMixedResults())
+	require.Nil(t, mcpService.Method("resources/subscribe"))
+	require.Nil(t, mcpService.Method("resources/unsubscribe"))
+	require.Nil(t, mcpService.Method("events/stream"))
+	ping := mcpService.Method("ping")
+	require.NotNil(t, ping)
+	require.Empty(t, *expr.AsObject(ping.Result.Type))
+}
+
+func TestPrepareServices_BuildsMCP202506WireTypes(t *testing.T) {
+	restore := resetMCPCodegenState(t)
+	defer restore()
+
+	svc, methods := testService("assistant", "call", "read")
+	methods["call"].Result = &expr.AttributeExpr{Type: &expr.Object{
+		{Name: "answer", Attribute: &expr.AttributeExpr{Type: expr.String}},
+	}}
+	root := testRootExpr([]*expr.ServiceExpr{svc}, []*expr.HTTPServiceExpr{
+		jsonrpcService(svc, "/rpc"),
+	})
+	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
+		Name:    "assistant",
+		Version: "1.0.0",
+		Tools: []*mcpexpr.ToolExpr{
+			{Name: "call", Method: methods["call"]},
+		},
+		Resources: []*mcpexpr.ResourceExpr{
+			{Name: "read", URI: "doc://read", MimeType: "application/json", Method: methods["read"]},
+		},
+		Prompts: []*mcpexpr.PromptExpr{{
+			Name: "help",
+			Messages: []*mcpexpr.MessageExpr{{
+				Role:    "user",
+				Content: "Help the user.",
+			}},
+		}},
+	})
+
+	require.NoError(t, prepareServices([]eval.Root{root}))
+	toolInfo := testRootType(t, root, "ToolInfo")
+	require.True(t, toolInfo.IsRequired("name"))
+	require.True(t, toolInfo.IsRequired("inputSchema"))
+	require.NotNil(t, expr.AsObject(toolInfo.Type).Attribute("outputSchema"))
+	callResult := testRootType(t, root, "ToolsCallResult")
+	require.NotNil(t, expr.AsObject(callResult.Type).Attribute("structuredContent"))
+	content := testRootType(t, root, "ContentItem")
+	require.Equal(t, []string{"type", "text"}, content.Validation.Required)
+	require.Equal(t, []any{"text"}, expr.AsObject(content.Type).Attribute("type").Validation.Values)
+	require.Nil(t, expr.AsObject(content.Type).Attribute("mimeType"))
+	require.Nil(t, expr.AsObject(content.Type).Attribute("data"))
+	require.Nil(t, expr.AsObject(content.Type).Attribute("uri"))
+
+	resource := testRootType(t, root, "ResourceInfo")
+	require.True(t, resource.IsRequired("uri"))
+	require.True(t, resource.IsRequired("name"))
+	resourceContent := testRootType(t, root, "ResourceContent")
+	require.Equal(t, []string{"uri", "text"}, resourceContent.Validation.Required)
+	require.Nil(t, expr.AsObject(resourceContent.Type).Attribute("blob"))
+
+	promptArgument := testRootType(t, root, "PromptArgument")
+	require.True(t, promptArgument.IsRequired("name"))
+	require.False(t, promptArgument.IsRequired("required"))
+	promptMessage := testRootType(t, root, "PromptMessage")
+	role := expr.AsObject(promptMessage.Type).Attribute("role")
+	require.Equal(t, []any{"user", "assistant"}, role.Validation.Values)
+	messageContent := testRootType(t, root, "MessageContent")
+	require.Equal(t, []string{"type", "text"}, messageContent.Validation.Required)
+	promptsGet := testRootType(t, root, "PromptsGetPayload")
+	arguments := expr.AsMap(expr.AsObject(promptsGet.Type).Attribute("arguments").Type)
+	require.NotNil(t, arguments)
+	require.Equal(t, expr.String, arguments.KeyType.Type)
+	require.Equal(t, expr.String, arguments.ElemType.Type)
+
+	for _, typeName := range []string{"ToolsListResult", "ResourcesListResult", "PromptsListResult"} {
+		result := testRootType(t, root, typeName)
+		require.NotNil(t, expr.AsObject(result.Type).Attribute("nextCursor"), typeName)
+	}
+	for _, tc := range []struct {
+		typeName  string
+		fieldName string
+	}{
+		{typeName: "ToolsListResult", fieldName: "tools"},
+		{typeName: "ToolsCallResult", fieldName: "content"},
+		{typeName: "ResourcesListResult", fieldName: "resources"},
+		{typeName: "ResourcesReadResult", fieldName: "contents"},
+		{typeName: "PromptsListResult", fieldName: "prompts"},
+		{typeName: "PromptInfo", fieldName: "arguments"},
+		{typeName: "PromptsGetResult", fieldName: "messages"},
+	} {
+		attribute := expr.AsObject(testRootType(t, root, tc.typeName).Type).Attribute(tc.fieldName)
+		require.True(t, expr.AsArray(attribute.Type).NonNullableElems, "%s.%s", tc.typeName, tc.fieldName)
+	}
+}
+
+func TestPrepareServices_DoesNotBuildNotificationRequestSurface(t *testing.T) {
+	restore := resetMCPCodegenState(t)
+	defer restore()
+
+	svc, methods := testService("calc", "add")
+	root := testRootExpr([]*expr.ServiceExpr{svc}, []*expr.HTTPServiceExpr{
+		jsonrpcService(svc, "/rpc"),
+	})
+	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
+		Name:    "calc",
+		Version: "1.0.0",
+		Tools: []*mcpexpr.ToolExpr{
+			{Name: "add", Method: methods["add"]},
+		},
+	})
+
+	require.NoError(t, prepareServices([]eval.Root{root}))
+	for _, method := range root.Services[1].Methods {
+		require.False(t, strings.HasPrefix(method.Name, "notify_"), method.Name)
+	}
+	for _, userType := range root.Types {
+		require.NotEqual(t, "SendNotificationPayload", userType.Name())
+	}
+}
+
+func TestBuildAdapterDataRejectsAnExampleThatCannotBeEncodedAsJSON(t *testing.T) {
+	svc, methods := testService("calc", "add")
+	methods["add"].Payload = &expr.AttributeExpr{
+		Type: expr.String,
+		UserExamples: []*expr.ExampleExpr{{
+			Value: make(chan int),
+		}},
+	}
 	mcp := &mcpexpr.MCPExpr{
 		Name:    "calc",
 		Version: "1.0.0",
@@ -74,305 +225,57 @@ func TestGenerateMCPClientAdapter_DoesNotRenderOriginalClientFallback(t *testing
 			{Name: "add", Method: methods["add"]},
 		},
 	}
-	data, err := newAdapterGenerator(
-		"example.com/calc/gen",
+
+	_, err := newAdapterGenerator(
 		svc,
 		mcp,
-		newMCPExprBuilder(svc, mcp, nil).BuildServiceMapping(),
 	).buildAdapterData()
 
-	require.NoError(t, err)
-	files := generateMCPClientAdapter("example.com/calc/gen", svc, data)
-
-	require.Len(t, files, 1)
-	require.NotContains(t, renderGeneratedFile(t, files[0]), "origClient")
+	require.ErrorContains(t, err, `build example for tool "add"`)
+	require.ErrorContains(t, err, "unsupported type: chan int")
 }
 
-func TestGenerateMCPClientAdapter_RendersNotificationEndpoints(t *testing.T) {
-	restore := resetMCPCodegenState(t)
-	defer restore()
-
-	svc, methods := testService("assistant", "send_notification")
-	methods["send_notification"].Payload = testNotificationPayload()
-	methods["send_notification"].Result = &expr.AttributeExpr{Type: expr.Empty}
-	mcp := &mcpexpr.MCPExpr{
-		Name:    "assistant-mcp",
-		Version: "1.0.0",
-		Notifications: []*mcpexpr.NotificationExpr{
-			{
-				Name:   "status_update",
-				Method: methods["send_notification"],
-			},
-		},
-	}
-	data, err := newAdapterGenerator(
-		"example.com/assistant/gen",
-		svc,
-		mcp,
-		newMCPExprBuilder(svc, mcp, nil).BuildServiceMapping(),
-	).buildAdapterData()
-
-	require.NoError(t, err)
-	files := generateMCPClientAdapter("example.com/assistant/gen", svc, data)
-
-	require.Len(t, files, 1)
-	rendered := renderGeneratedFile(t, files[0])
-	require.Contains(t, rendered, "e.SendNotification =")
-	require.Contains(t, rendered, "NotifyStatusUpdate")
-}
-
-func TestGenerateMCPClientAdapter_RendersOriginalClientForResourceResults(t *testing.T) {
-	restore := resetMCPCodegenState(t)
-	defer restore()
-
-	svc, methods := testService("assistant", "read_document")
-	methods["read_document"].Payload = testResourceQueryPayload()
-	mcp := &mcpexpr.MCPExpr{
-		Name:    "assistant-mcp",
-		Version: "1.0.0",
-		Resources: []*mcpexpr.ResourceExpr{
-			{
-				Name:   "documents",
-				URI:    "doc://list",
-				Method: methods["read_document"],
-			},
-		},
-	}
-	data, err := newAdapterGenerator(
-		"example.com/assistant/gen",
-		svc,
-		mcp,
-		newMCPExprBuilder(svc, mcp, nil).BuildServiceMapping(),
-	).buildAdapterData()
-
-	require.NoError(t, err)
-	files := generateMCPClientAdapter("example.com/assistant/gen", svc, data)
-
-	require.Len(t, files, 1)
-	rendered := renderGeneratedFile(t, files[0])
-	require.Contains(t, rendered, "origC :=")
-	require.Contains(t, rendered, "origC.BuildReadDocumentRequest")
-}
-
-func TestGenerateMCPClientAdapter_RendersOriginalClientForDynamicPrompts(t *testing.T) {
-	restore := resetMCPCodegenState(t)
-	defer restore()
-
-	svc, methods := testService("assistant", "generate_prompt")
-	root := testRootExpr([]*expr.ServiceExpr{svc}, []*expr.HTTPServiceExpr{
-		jsonrpcService(svc, "/rpc"),
-	})
-	mcp := &mcpexpr.MCPExpr{
-		Name:    "assistant-mcp",
-		Version: "1.0.0",
-	}
-	mcpexpr.Root.RegisterMCP(svc, mcp)
-	mcpexpr.Root.DynamicPrompts[svc.Name] = []*mcpexpr.DynamicPromptExpr{
-		{Name: "assistant_prompt", Method: methods["generate_prompt"]},
-	}
-	data, err := newAdapterGenerator(
-		"example.com/assistant/gen",
-		svc,
-		mcp,
-		newMCPExprBuilder(svc, mcp, collectSourceSnapshot([]eval.Root{root})).BuildServiceMapping(),
-	).buildAdapterData()
-
-	require.NoError(t, err)
-	files := generateMCPClientAdapter("example.com/assistant/gen", svc, data)
-
-	require.Len(t, files, 1)
-	rendered := renderGeneratedFile(t, files[0])
-	require.Contains(t, rendered, "origC :=")
-	require.Contains(t, rendered, "origC.BuildGeneratePromptRequest")
-}
-
-func TestGenerateMCPClientAdapter_SpecializesResourceQueryConstruction(t *testing.T) {
-	restore := resetMCPCodegenState(t)
-	defer restore()
-
-	svc, methods := testService("assistant", "read_document")
-	methods["read_document"].Payload = testResourceQueryPayload()
-	mcp := &mcpexpr.MCPExpr{
-		Name:    "assistant-mcp",
-		Version: "1.0.0",
-		Resources: []*mcpexpr.ResourceExpr{
-			{
-				Name:   "documents",
-				URI:    "doc://list",
-				Method: methods["read_document"],
-			},
-		},
-	}
-	data, err := newAdapterGenerator(
-		"example.com/assistant/gen",
-		svc,
-		mcp,
-		newMCPExprBuilder(svc, mcp, nil).BuildServiceMapping(),
-	).buildAdapterData()
-
-	require.NoError(t, err)
-	files := generateMCPClientAdapter("example.com/assistant/gen", svc, data)
-
-	require.Len(t, files, 1)
-	rendered := renderGeneratedFile(t, files[0])
-	require.NotContains(t, rendered, "json.Unmarshal")
-	require.NotContains(t, rendered, "map[string]any")
-	require.NotContains(t, rendered, "sort.Strings")
-	require.NotContains(t, rendered, "\"reflect\"")
-	require.NotContains(t, rendered, "hasMCPQueryValue")
-	require.NotContains(t, rendered, "encodeMCPQueryValue")
-	require.Contains(t, rendered, "query := url.Values{}")
-	require.Contains(t, rendered, `query.Add("cursor", payload.Cursor)`)
-	require.Contains(t, rendered, "if payload.Offset != nil {")
-	require.Contains(t, rendered, `query.Add("offset", strconv.FormatInt(int64(*payload.Offset), 10))`)
-	require.Contains(t, rendered, "if payload.Limit != 0 {")
-	require.Contains(t, rendered, `query.Add("limit", strconv.FormatUint(uint64(payload.Limit), 10))`)
-	require.Contains(t, rendered, "if payload.Enabled != nil {")
-	require.Contains(t, rendered, `query.Add("enabled", strconv.FormatBool(*payload.Enabled))`)
-	require.Contains(t, rendered, "if payload.Ratio != nil {")
-	require.Contains(t, rendered, `query.Add("ratio", strconv.FormatFloat(*payload.Ratio, 'g', -1, 64))`)
-	require.Contains(t, rendered, "for _, value := range payload.Tags {")
-	require.Contains(t, rendered, `query.Add("tags", value)`)
-	require.Contains(t, rendered, `query.Add("tenant", payload.Tenant)`)
-}
-
-func TestPrepareServices_RejectsNonPostJSONRPCPath(t *testing.T) {
-	restore := resetMCPCodegenState(t)
-	defer restore()
-
-	svc, methods := testService("assistant", "analyze")
-	root := testRootExpr([]*expr.ServiceExpr{svc}, []*expr.HTTPServiceExpr{
-		jsonrpcServiceWithMethod(svc, "/rpc", http.MethodGet),
-	})
-	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
-		Name:    "assistant-mcp",
-		Version: "1.0.0",
-		Tools: []*mcpexpr.ToolExpr{
-			{Name: "analyze", Method: methods["analyze"]},
-		},
-	})
-
-	err := PrepareServices("", []eval.Root{root})
-
-	require.Error(t, err)
-	require.ErrorContains(t, err, `service "assistant"`)
-	require.ErrorContains(t, err, "JSONRPC")
-	require.ErrorContains(t, err, "POST")
-}
-
-func TestPrepareServices_RejectsIncompatibleNotificationPayload(t *testing.T) {
-	restore := resetMCPCodegenState(t)
-	defer restore()
-
-	svc, methods := testService("assistant", "send_notification")
-	methods["send_notification"].Payload = &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "status", Attribute: &expr.AttributeExpr{Type: expr.String}},
-		},
-		Validation: &expr.ValidationExpr{Required: []string{"status"}},
-	}
-	methods["send_notification"].Result = &expr.AttributeExpr{Type: expr.Empty}
-	root := testRootExpr([]*expr.ServiceExpr{svc}, []*expr.HTTPServiceExpr{
-		jsonrpcService(svc, "/rpc"),
-	})
-	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
-		Name:    "assistant-mcp",
-		Version: "1.0.0",
-		Notifications: []*mcpexpr.NotificationExpr{
-			{Name: "status_update", Method: methods["send_notification"]},
-		},
-	})
-
-	err := PrepareServices("", []eval.Root{root})
-
-	require.Error(t, err)
-	require.ErrorContains(t, err, "send_notification")
-	require.ErrorContains(t, err, "notification payload")
-}
-
-func TestPrepareServices_RejectsResultBearingNotificationMethod(t *testing.T) {
-	restore := resetMCPCodegenState(t)
-	defer restore()
-
-	svc, methods := testService("assistant", "send_notification")
-	methods["send_notification"].Payload = testNotificationPayload()
-	root := testRootExpr([]*expr.ServiceExpr{svc}, []*expr.HTTPServiceExpr{
-		jsonrpcService(svc, "/rpc"),
-	})
-	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
-		Name:    "assistant-mcp",
-		Version: "1.0.0",
-		Notifications: []*mcpexpr.NotificationExpr{
-			{Name: "status_update", Method: methods["send_notification"]},
-		},
-	})
-
-	err := PrepareServices("", []eval.Root{root})
-
-	require.Error(t, err)
-	require.ErrorContains(t, err, "send_notification")
-	require.ErrorContains(t, err, "must not declare a result")
-}
-
-func TestPrepareServices_RejectsUnsupportedResourceQueryFieldType(t *testing.T) {
-	testCases := []struct {
-		name      string
-		fieldName string
-		fieldType expr.DataType
-	}{
-		{
-			name:      "map",
-			fieldName: "filters",
-			fieldType: &expr.Map{
-				KeyType:  &expr.AttributeExpr{Type: expr.String},
-				ElemType: &expr.AttributeExpr{Type: expr.String},
-			},
-		},
-		{
-			name:      "array any",
-			fieldName: "nums",
-			fieldType: &expr.Array{ElemType: &expr.AttributeExpr{Type: expr.Any}},
-		},
+func TestStaticPromptsRenderWithoutAProvider(t *testing.T) {
+	data := &AdapterData{
+		MCPPackage: "mcpassistant",
+		StaticPrompts: []*StaticPromptAdapter{{
+			Name:        "daily_report",
+			Description: "Summarize the day",
+			Messages: []*PromptMessageAdapter{{
+				Role:    "user",
+				Content: "Summarize today.",
+			}},
+		}},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			restore := resetMCPCodegenState(t)
-			defer restore()
-
-			svc, methods := testService("assistant", "read_document")
-			methods["read_document"].Payload = &expr.AttributeExpr{
-				Type: &expr.Object{
-					{
-						Name: tc.fieldName,
-						Attribute: &expr.AttributeExpr{
-							Type: tc.fieldType,
-						},
-					},
-				},
-			}
-			root := testRootExpr([]*expr.ServiceExpr{svc}, []*expr.HTTPServiceExpr{
-				jsonrpcService(svc, "/rpc"),
-			})
-			mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
-				Name:    "assistant-mcp",
-				Version: "1.0.0",
-				Resources: []*mcpexpr.ResourceExpr{
-					{Name: "documents", URI: "doc://list", Method: methods["read_document"]},
-				},
-			})
-
-			err := PrepareServices("", []eval.Root{root})
-
-			require.Error(t, err)
-			require.ErrorContains(t, err, "read_document")
-			require.ErrorContains(t, err, "resource query")
-			require.ErrorContains(t, err, tc.fieldName)
-		})
+	files := generateMCPTransport("example.com/assistant/gen", &expr.ServiceExpr{Name: "assistant"}, data)
+	require.Len(t, files, 2)
+	for _, file := range files {
+		require.NotEqual(t, "gen/mcp_assistant/prompt_provider.go", filepath.ToSlash(file.Path))
 	}
+
+	adapter := renderGeneratedFile(t, files[0])
+	require.Contains(t, adapter, `case "daily_report":`)
+	require.Contains(t, adapter, `Text: "Summarize today."`)
+	require.NotContains(t, adapter, "PromptProvider")
+	require.NotContains(t, adapter, "promptProvider")
 }
 
-func TestPrepareServices_RejectsResourcePayloadWithoutQueryableFields(t *testing.T) {
+func renderTemplateSection(t *testing.T, name string, data any) string {
+	t.Helper()
+	file := &gcodegen.File{SectionTemplates: []*gcodegen.SectionTemplate{{
+		Name:   name,
+		Source: mcpTemplates.Read(name),
+		Data:   data,
+		FuncMap: map[string]any{
+			"comment": gcodegen.Comment,
+			"quote":   func(value string) string { return fmt.Sprintf("%q", value) },
+		},
+	}}}
+	return renderGeneratedFile(t, file)
+}
+
+func TestPrepareServices_RejectsResourcePayload(t *testing.T) {
 	restore := resetMCPCodegenState(t)
 	defer restore()
 
@@ -385,97 +288,18 @@ func TestPrepareServices_RejectsResourcePayloadWithoutQueryableFields(t *testing
 		Name:    "assistant-mcp",
 		Version: "1.0.0",
 		Resources: []*mcpexpr.ResourceExpr{
-			{Name: "documents", URI: "doc://list", Method: methods["read_document"]},
+			{Name: "documents", URI: "doc://list", MimeType: "application/json", Method: methods["read_document"]},
 		},
 	})
 
-	err := PrepareServices("", []eval.Root{root})
+	err := prepareServices([]eval.Root{root})
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, "read_document")
-	require.ErrorContains(t, err, "resource query")
-	require.ErrorContains(t, err, "at least one")
+	require.ErrorContains(t, err, "must not define a payload")
 }
 
-func TestPrepareServices_AcceptsNotificationPayloadInheritedFromBase(t *testing.T) {
-	restore := resetMCPCodegenState(t)
-	defer restore()
-
-	svc, methods := testService("assistant", "send_notification")
-	methods["send_notification"].Result = &expr.AttributeExpr{Type: expr.Empty}
-	basePayload := &expr.UserTypeExpr{
-		TypeName: "NotificationBase",
-		AttributeExpr: &expr.AttributeExpr{
-			Type: &expr.Object{
-				{Name: "type", Attribute: &expr.AttributeExpr{Type: expr.String}},
-				{Name: "message", Attribute: &expr.AttributeExpr{Type: expr.String}},
-			},
-			Validation: &expr.ValidationExpr{Required: []string{"type", "message"}},
-		},
-	}
-	methods["send_notification"].Payload = &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "data", Attribute: &expr.AttributeExpr{Type: expr.Any}},
-		},
-		Bases: []expr.DataType{basePayload},
-	}
-	root := testRootExpr([]*expr.ServiceExpr{svc}, []*expr.HTTPServiceExpr{
-		jsonrpcService(svc, "/rpc"),
-	})
-	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
-		Name:    "assistant-mcp",
-		Version: "1.0.0",
-		Notifications: []*mcpexpr.NotificationExpr{
-			{Name: "status_update", Method: methods["send_notification"]},
-		},
-	})
-
-	err := PrepareServices("", []eval.Root{root})
-
-	require.NoError(t, err)
-}
-
-func TestPrepareServices_AcceptsNotificationPayloadDirectFieldsOverBase(t *testing.T) {
-	restore := resetMCPCodegenState(t)
-	defer restore()
-
-	svc, methods := testService("assistant", "send_notification")
-	methods["send_notification"].Result = &expr.AttributeExpr{Type: expr.Empty}
-	basePayload := &expr.UserTypeExpr{
-		TypeName: "NotificationBase",
-		AttributeExpr: &expr.AttributeExpr{
-			Type: &expr.Object{
-				{Name: "type", Attribute: &expr.AttributeExpr{Type: expr.Int}},
-				{Name: "message", Attribute: &expr.AttributeExpr{Type: expr.String}},
-			},
-			Validation: &expr.ValidationExpr{Required: []string{"type", "message"}},
-		},
-	}
-	methods["send_notification"].Payload = &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "type", Attribute: &expr.AttributeExpr{Type: expr.String}},
-			{Name: "data", Attribute: &expr.AttributeExpr{Type: expr.Any}},
-		},
-		Bases:      []expr.DataType{basePayload},
-		Validation: &expr.ValidationExpr{Required: []string{"type"}},
-	}
-	root := testRootExpr([]*expr.ServiceExpr{svc}, []*expr.HTTPServiceExpr{
-		jsonrpcService(svc, "/rpc"),
-	})
-	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
-		Name:    "assistant-mcp",
-		Version: "1.0.0",
-		Notifications: []*mcpexpr.NotificationExpr{
-			{Name: "status_update", Method: methods["send_notification"]},
-		},
-	})
-
-	err := PrepareServices("", []eval.Root{root})
-
-	require.NoError(t, err)
-}
-
-func TestPrepareServices_AcceptedPureMCPServiceAssignsEveryOriginalEndpoint(t *testing.T) {
+func TestPrepareServices_AcceptedMCPServiceAssignsEveryOriginalEndpoint(t *testing.T) {
 	restore := resetMCPCodegenState(t)
 	defer restore()
 
@@ -483,11 +307,7 @@ func TestPrepareServices_AcceptedPureMCPServiceAssignsEveryOriginalEndpoint(t *t
 		"assistant",
 		"analyze",
 		"read_document",
-		"generate_prompt",
-		"send_notification",
 	)
-	methods["send_notification"].Payload = testNotificationPayload()
-	methods["send_notification"].Result = &expr.AttributeExpr{Type: expr.Empty}
 	root := testRootExpr([]*expr.ServiceExpr{svc}, []*expr.HTTPServiceExpr{
 		jsonrpcService(svc, "/rpc"),
 	})
@@ -498,120 +318,62 @@ func TestPrepareServices_AcceptedPureMCPServiceAssignsEveryOriginalEndpoint(t *t
 			{Name: "analyze", Method: methods["analyze"]},
 		},
 		Resources: []*mcpexpr.ResourceExpr{
-			{Name: "documents", URI: "doc://list", Method: methods["read_document"]},
-		},
-		Notifications: []*mcpexpr.NotificationExpr{
-			{Name: "status_update", Method: methods["send_notification"]},
+			{Name: "documents", URI: "doc://list", MimeType: "application/json", Method: methods["read_document"]},
 		},
 	}
 	mcpexpr.Root.RegisterMCP(svc, mcp)
-	mcpexpr.Root.DynamicPrompts[svc.Name] = []*mcpexpr.DynamicPromptExpr{
-		{Name: "assistant_prompt", Method: methods["generate_prompt"]},
-	}
 
-	require.NoError(t, PrepareServices("", []eval.Root{root}))
+	require.NoError(t, prepareServices([]eval.Root{root}))
+	resourcesRead := root.Services[1].Method("resources/read")
+	require.NotNil(t, resourcesRead.Result)
+	require.Same(t, resourcesRead.Result, resourcesRead.StreamingResult)
+	require.False(t, resourcesRead.IsStreaming())
+	require.False(t, resourcesRead.HasMixedResults())
 
 	data, err := newAdapterGenerator(
-		"example.com/assistant/gen",
 		svc,
 		mcp,
-		newMCPExprBuilder(svc, mcp, nil).BuildServiceMapping(),
 	).buildAdapterData()
 	require.NoError(t, err)
-
-	files := generateMCPClientAdapter("example.com/assistant/gen", svc, data)
-	require.Len(t, files, 1)
-
-	rendered := renderGeneratedFile(t, files[0])
-	require.Contains(t, rendered, "func encodeOriginalPayload(")
-	require.Contains(t, rendered, "func decodeOriginalJSONRPCResult(")
-	require.NotContains(t, rendered, "reqArgs, _ :=")
-	require.NotContains(t, rendered, "req3, _ :=")
-	require.Contains(t, rendered, "e.Analyze =")
-	require.Contains(t, rendered, "e.ReadDocument =")
-	require.Contains(t, rendered, "e.GeneratePrompt =")
-	require.Contains(t, rendered, "e.SendNotification =")
-}
-
-func TestGenerate_FailsWhenOriginalServiceHasNoJSONRPCPath(t *testing.T) {
-	restore := resetMCPCodegenState(t)
-	defer restore()
-
-	svc, methods := testService("assistant", "analyze")
-	root := testRootExpr([]*expr.ServiceExpr{svc}, nil)
-	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
-		Name:    "assistant-mcp",
-		Version: "1.0.0",
-		Tools: []*mcpexpr.ToolExpr{
-			{Name: "analyze", Method: methods["analyze"]},
-		},
-	})
-
-	_, err := Generate("example.com/assistant/gen", []eval.Root{root}, nil)
-
-	require.Error(t, err)
-	require.ErrorContains(t, err, `service "assistant" must declare JSONRPC`)
-}
-
-func TestPrepareServices_RejectsUnsupportedPureMCPMethodKinds(t *testing.T) {
-	testCases := []struct {
-		name string
-		mcp  *mcpexpr.MCPExpr
-	}{
-		{
-			name: "subscription",
-			mcp: &mcpexpr.MCPExpr{
-				Name:    "watcher",
-				Version: "1.0.0",
-				Subscriptions: []*mcpexpr.SubscriptionExpr{
-					{
-						ResourceName: "documents",
-					},
-				},
-			},
-		},
-		{
-			name: "subscription monitor",
-			mcp: &mcpexpr.MCPExpr{
-				Name:    "watcher",
-				Version: "1.0.0",
-				SubscriptionMonitors: []*mcpexpr.SubscriptionMonitorExpr{
-					{
-						Name: "events_stream",
-					},
-				},
-			},
-		},
+	require.Equal(t, "analyze", data.Tools[0].userMethodName)
+	require.Equal(t, "read_document", data.Resources[0].userMethodName)
+	data.CodecImportPath = testCodecImportPath
+	data.CodecPackage = testCodecPackage
+	data.Tools[0].Codec = &MethodCodecData{
+		PayloadDecode: "DecodeAnalyzePayload",
+		ResultEncode:  "EncodeAnalyzeResult",
 	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			restore := resetMCPCodegenState(t)
-			defer restore()
-
-			svc, methods := testService("watcher", "watch_documents")
-			switch tc.name {
-			case "subscription":
-				tc.mcp.Subscriptions[0].Method = methods["watch_documents"]
-			case "subscription monitor":
-				tc.mcp.SubscriptionMonitors[0].Method = methods["watch_documents"]
-			}
-
-			root := testRootExpr([]*expr.ServiceExpr{svc}, []*expr.HTTPServiceExpr{
-				jsonrpcService(svc, "/rpc"),
-			})
-			mcpexpr.Root.RegisterMCP(svc, tc.mcp)
-
-			err := PrepareServices("", []eval.Root{root})
-
-			require.Error(t, err)
-			require.ErrorContains(t, err, `service "watcher"`)
-			require.ErrorContains(t, err, "watch_documents")
-		})
+	data.Resources[0].Codec = &MethodCodecData{
+		ResultEncode: "EncodeReadDocumentResult",
 	}
+	data.Tools[0].ServiceMethodName = "Analyze"
+	data.Resources[0].ServiceMethodName = readDocumentMethod
+
+	data.NeedsServerCodec = true
+	data.MCPPackage = "mcpassistant"
+	data.serverImports = []*gcodegen.ImportSpec{
+		{Path: "context"},
+		{Path: "encoding/json"},
+		{Path: "fmt"},
+		{Path: "example.com/assistant/gen/assistant", Name: "assistant"},
+		{Path: "goa.design/goa/v3/http", Name: "goahttp"},
+		{Path: "goa.design/goa/v3/pkg", Name: "goa"},
+		{Path: "net/url"},
+		{Path: "strings"},
+		{Path: data.CodecImportPath, Name: data.CodecPackage},
+	}
+	serverFiles := generateMCPTransport("example.com/assistant/gen", svc, data)
+	require.NotEmpty(t, serverFiles)
+	server := renderGeneratedFile(t, serverFiles[0])
+	require.Contains(t, server, "\n\t\"strings\"\n")
+	require.NotContains(t, server, "\n\t\"bytes\"\n")
+	require.NotContains(t, server, "\n\t\"io\"\n")
+	require.NotContains(t, server, "\n\t\"net/http\"\n")
+	require.NotContains(t, server, "\n\t\"path\"\n")
+	require.NotContains(t, server, "\n\t\"strconv\"\n")
 }
 
-func TestPrepareExample_OnlyMountsMCPOnOriginalServers(t *testing.T) {
+func TestPrepareMCPMountsGeneratedServiceOnOriginalServers(t *testing.T) {
 	restore := resetMCPCodegenState(t)
 	defer restore()
 
@@ -620,12 +382,7 @@ func TestPrepareExample_OnlyMountsMCPOnOriginalServers(t *testing.T) {
 	root := &expr.RootExpr{
 		Services: []*expr.ServiceExpr{alpha, beta},
 		API: &expr.APIExpr{
-			HTTP: &expr.HTTPExpr{
-				Services: []*expr.HTTPServiceExpr{
-					httpService(alpha),
-					httpService(beta),
-				},
-			},
+			HTTP: &expr.HTTPExpr{},
 			JSONRPC: &expr.JSONRPCExpr{
 				HTTPExpr: expr.HTTPExpr{
 					Services: []*expr.HTTPServiceExpr{
@@ -635,7 +392,7 @@ func TestPrepareExample_OnlyMountsMCPOnOriginalServers(t *testing.T) {
 				},
 			},
 			Servers: []*expr.ServerExpr{
-				{Name: "alpha-server", Services: []string{"alpha"}},
+				{Name: "alpha-server", Services: []string{"alpha", "mcp_alpha"}},
 				{Name: "beta-server", Services: []string{"beta"}},
 			},
 		},
@@ -648,10 +405,10 @@ func TestPrepareExample_OnlyMountsMCPOnOriginalServers(t *testing.T) {
 		},
 	})
 
-	err := PrepareExample("", []eval.Root{root})
+	_, err := prepareMCPServices([]eval.Root{root, mcpexpr.Root})
 
 	require.NoError(t, err)
-	require.True(t, slices.Contains(root.API.Servers[0].Services, "mcp_alpha"))
+	require.Equal(t, []string{"alpha", "mcp_alpha"}, root.API.Servers[0].Services)
 	require.False(t, slices.Contains(root.API.Servers[1].Services, "mcp_alpha"))
 }
 
@@ -682,62 +439,34 @@ func testService(name string, methodNames ...string) (*expr.ServiceExpr, map[str
 	return svc, methods
 }
 
-func testNotificationPayload() *expr.AttributeExpr {
-	return &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "type", Attribute: &expr.AttributeExpr{Type: expr.String}},
-			{Name: "message", Attribute: &expr.AttributeExpr{Type: expr.String}},
-			{Name: "data", Attribute: &expr.AttributeExpr{Type: expr.Any}},
-		},
-		Validation: &expr.ValidationExpr{Required: []string{"type"}},
+func testRootType(t *testing.T, root *expr.RootExpr, name string) *expr.UserTypeExpr {
+	t.Helper()
+	for _, userType := range root.Types {
+		if userType.Name() == name {
+			return userType.(*expr.UserTypeExpr)
+		}
 	}
-}
-
-func testResourceQueryPayload() *expr.AttributeExpr {
-	baseQuery := &expr.UserTypeExpr{
-		TypeName: "ResourceQueryBase",
-		AttributeExpr: &expr.AttributeExpr{
-			Type: &expr.Object{
-				{Name: "tenant", Attribute: &expr.AttributeExpr{Type: expr.String}},
-			},
-			Validation: &expr.ValidationExpr{Required: []string{"tenant"}},
-		},
-	}
-	return &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "cursor", Attribute: &expr.AttributeExpr{Type: expr.String}},
-			{Name: "offset", Attribute: &expr.AttributeExpr{Type: expr.Int}},
-			{Name: "limit", Attribute: &expr.AttributeExpr{Type: expr.UInt, DefaultValue: 25}},
-			{Name: "enabled", Attribute: &expr.AttributeExpr{Type: expr.Boolean}},
-			{Name: "ratio", Attribute: &expr.AttributeExpr{Type: expr.Float64}},
-			{
-				Name: "tags",
-				Attribute: &expr.AttributeExpr{
-					Type: &expr.Array{
-						ElemType: &expr.AttributeExpr{Type: expr.String},
-					},
-				},
-			},
-		},
-		Bases:      []expr.DataType{baseQuery},
-		Validation: &expr.ValidationExpr{Required: []string{"cursor"}},
-	}
+	t.Fatalf("generated type %q not found", name)
+	return nil
 }
 
 func testRootExpr(services []*expr.ServiceExpr, jsonrpcServices []*expr.HTTPServiceExpr) *expr.RootExpr {
-	httpServices := make([]*expr.HTTPServiceExpr, 0, len(services))
 	servers := make([]*expr.ServerExpr, 0, len(services))
 	for _, svc := range services {
-		httpServices = append(httpServices, httpService(svc))
 		servers = append(servers, &expr.ServerExpr{
 			Name:     svc.Name + "-server",
 			Services: []string{svc.Name},
+			Hosts: []*expr.HostExpr{{
+				Name:      "test",
+				URIs:      []expr.URIExpr{"http://localhost:8080"},
+				Variables: &expr.AttributeExpr{Type: &expr.Object{}},
+			}},
 		})
 	}
 	return &expr.RootExpr{
 		Services: services,
 		API: &expr.APIExpr{
-			HTTP: &expr.HTTPExpr{Services: httpServices},
+			HTTP: &expr.HTTPExpr{},
 			JSONRPC: &expr.JSONRPCExpr{
 				HTTPExpr: expr.HTTPExpr{Services: jsonrpcServices},
 			},
@@ -746,19 +475,11 @@ func testRootExpr(services []*expr.ServiceExpr, jsonrpcServices []*expr.HTTPServ
 	}
 }
 
-func httpService(svc *expr.ServiceExpr) *expr.HTTPServiceExpr {
-	return &expr.HTTPServiceExpr{ServiceExpr: svc}
-}
-
 func jsonrpcService(svc *expr.ServiceExpr, path string) *expr.HTTPServiceExpr {
-	return jsonrpcServiceWithMethod(svc, path, http.MethodPost)
-}
-
-func jsonrpcServiceWithMethod(svc *expr.ServiceExpr, path string, method string) *expr.HTTPServiceExpr {
 	return &expr.HTTPServiceExpr{
 		ServiceExpr: svc,
 		JSONRPCRoute: &expr.RouteExpr{
-			Method: method,
+			Method: http.MethodPost,
 			Path:   path,
 		},
 	}
@@ -789,4 +510,10 @@ func renderGeneratedFile(t *testing.T, file *gcodegen.File) string {
 
 	require.NotEmpty(t, output.String(), filepath.ToSlash(file.Path))
 	return output.String()
+}
+
+// prepareServices returns the error raised while adding MCP services to a test root.
+func prepareServices(roots []eval.Root) error {
+	_, err := prepareMCPServices(append(roots, mcpexpr.Root))
+	return err
 }

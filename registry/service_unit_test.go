@@ -22,7 +22,10 @@ import (
 	streamopts "goa.design/pulse/streaming/options"
 )
 
-const testActiveRegistrationToken = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const (
+	testActiveRegistrationToken = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	generatedValidationToolset  = "test.toolset"
+)
 
 type (
 	// recordingCallAdmissions captures the provider token selected by CallTool.
@@ -53,39 +56,52 @@ type (
 func TestGeneratedCallToolRejectsMissingWireProtocolVersion(t *testing.T) {
 	t.Parallel()
 
+	toolset := generatedValidationToolset
+	tool := "test.toolset.lookup"
+	runID := "run-1"
+	sessionID := "session-1"
+	toolCallID := "call-1"
+	wireProtocolVersion := int32(toolregistry.WireProtocolVersion)
 	request := &genregistrypb.CallToolRequest{
-		Toolset:     "test.toolset",
-		Tool:        "test.toolset.lookup",
+		Toolset:     &toolset,
+		Tool:        &tool,
 		PayloadJson: []byte(`{}`),
 		Meta: &genregistrypb.ToolCallMeta{
-			RunId:      "run-1",
-			SessionId:  "session-1",
-			ToolCallId: "call-1",
+			RunId:      &runID,
+			SessionId:  &sessionID,
+			ToolCallId: &toolCallID,
 		},
 	}
 	require.Error(t, genregistryserver.ValidateCallToolRequest(request))
 
-	request.WireProtocolVersion = int32(toolregistry.WireProtocolVersion)
+	request.WireProtocolVersion = &wireProtocolVersion
 	require.NoError(t, genregistryserver.ValidateCallToolRequest(request))
 }
 
 func TestGeneratedRetryToolRequiresAdmissionFence(t *testing.T) {
 	t.Parallel()
 
+	toolset := generatedValidationToolset
+	tool := "test.toolset.lookup"
+	runID := "run-1"
+	sessionID := "session-1"
+	toolCallID := "call-1"
+	wireProtocolVersion := int32(toolregistry.WireProtocolVersion)
+	expectedRegistrationToken := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	request := &genregistrypb.RetryToolRequest{
-		Toolset:             "test.toolset",
-		Tool:                "test.toolset.lookup",
+		Toolset:             &toolset,
+		Tool:                &tool,
 		PayloadJson:         []byte(`{}`),
-		WireProtocolVersion: int32(toolregistry.WireProtocolVersion),
+		WireProtocolVersion: &wireProtocolVersion,
 		Meta: &genregistrypb.ToolCallMeta{
-			RunId:      "run-1",
-			SessionId:  "session-1",
-			ToolCallId: "call-1",
+			RunId:      &runID,
+			SessionId:  &sessionID,
+			ToolCallId: &toolCallID,
 		},
 	}
 	require.Error(t, genregistryserver.ValidateRetryToolRequest(request))
 
-	request.ExpectedRegistrationToken = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	request.ExpectedRegistrationToken = &expectedRegistrationToken
 	require.NoError(t, genregistryserver.ValidateRetryToolRequest(request))
 }
 
@@ -127,12 +143,14 @@ func validRegisterPayloadForSchemaAdmission(name string) *genregistry.RegisterPa
 func TestGeneratedCheckAdmissionRequiresExpectedToken(t *testing.T) {
 	t.Parallel()
 
+	name := generatedValidationToolset
+	expectedRegistrationToken := testActiveRegistrationToken
 	request := &genregistrypb.CheckAdmissionRequest{
-		Name: "test.toolset",
+		Name: &name,
 	}
 	require.Error(t, genregistryserver.ValidateCheckAdmissionRequest(request))
 
-	request.ExpectedRegistrationToken = testActiveRegistrationToken
+	request.ExpectedRegistrationToken = &expectedRegistrationToken
 	require.NoError(t, genregistryserver.ValidateCheckAdmissionRequest(request))
 }
 

@@ -9,49 +9,6 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
-func TestPatchCLIForServer_UsesMCPAdapterClient(t *testing.T) {
-	// Arrange: CLI file with header and start sections
-	header := &codegen.SectionTemplate{
-		Name: headerSection,
-		Data: map[string]any{
-			"Imports": []*codegen.ImportSpec{
-				{Path: "example.com/assistant/gen/jsonrpc/cli/orchestrator/cli"},
-			},
-		},
-	}
-	start := &codegen.SectionTemplate{Name: "cli-http-start", Source: "// original"}
-	cliFile := &codegen.File{
-		Path:             "cmd/orchestrator-cli/jsonrpc.go",
-		SectionTemplates: []*codegen.SectionTemplate{header, start},
-	}
-
-	// One MCP-enabled service with one method
-	svc := &expr.ServiceExpr{Name: "orchestrator", Methods: []*expr.MethodExpr{{Name: "EventsStream"}}}
-	svr := &expr.ServerExpr{Name: "srv", Services: []string{"orchestrator"}}
-
-	files := patchCLIForServer("orchestrator", svr, []*expr.ServiceExpr{svc}, []*codegen.File{cliFile})
-	require.Len(t, files, 1)
-
-	// Assert: header now imports the MCP adapter client and start section is replaced
-	var hasAdapterImport bool
-	if data, ok := header.Data.(map[string]any); ok {
-		if imv, ok2 := data["Imports"]; ok2 {
-			if specs, ok3 := imv.([]*codegen.ImportSpec); ok3 {
-				for _, s := range specs {
-					if s.Path == "example.com/assistant/gen/mcp_orchestrator/adapter/client" {
-						hasAdapterImport = true
-						break
-					}
-				}
-			}
-		}
-	}
-	require.True(t, hasAdapterImport, "expected adapter client import to be added")
-
-	// The start section should have been rewritten by the template renderer
-	require.NotEqual(t, "// original", start.Source)
-}
-
 func TestGenerateExampleAdapterStubs_ReplacesStub(t *testing.T) {
 	// Arrange: existing stub file with a header and a dummy body
 	svc := &expr.ServiceExpr{Name: "Orchestrator"}
@@ -69,13 +26,23 @@ func TestGenerateExampleAdapterStubs_ReplacesStub(t *testing.T) {
 	}
 	stub := &codegen.File{Path: "mcp_orchestrator.go", SectionTemplates: []*codegen.SectionTemplate{header, body}}
 
-	files, err := generateExampleAdapterStubs([]*expr.ServiceExpr{svc}, []*codegen.File{stub})
+	files, err := generateExampleAdapterStubs(
+		[]exampleMCPService{{
+			service:             svc,
+			mcpConstructorName:  "NewMCPOrchestratorEndpoint",
+			userConstructorName: "NewOrchestratorEndpoint",
+			mcpServiceInterface: "ServiceEndpoint",
+		}},
+		[]*codegen.File{stub},
+	)
 	require.NoError(t, err)
 	require.Len(t, files, 1)
-	// Body should now contain a call to NewMCPAdapter(NewOrchestrator())
+	// The body uses Goa's final constructor and service interface names.
 	found := false
 	for _, s := range files[0].SectionTemplates {
-		if s.Name == "example-mcp-stub" && strings.Contains(s.Source, "NewMCPAdapter(NewOrchestrator()") {
+		if s.Name == "example-mcp-stub" &&
+			strings.Contains(s.Source, "func NewMCPOrchestratorEndpoint() mcporchestrator.ServiceEndpoint") &&
+			strings.Contains(s.Source, "NewMCPAdapter(NewOrchestratorEndpoint()") {
 			found = true
 		}
 	}
@@ -97,7 +64,10 @@ func TestGenerateExampleAdapterStubs_RequiresExpectedStubPath(t *testing.T) {
 		SectionTemplates: []*codegen.SectionTemplate{header},
 	}
 
-	_, err := generateExampleAdapterStubs([]*expr.ServiceExpr{svc}, []*codegen.File{stub})
+	_, err := generateExampleAdapterStubs(
+		[]exampleMCPService{{service: svc}},
+		[]*codegen.File{stub},
+	)
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, `expected MCP example stub "mcp_orchestrator.go"`)
@@ -118,7 +88,10 @@ func TestGenerateExampleAdapterStubs_RequiresExplicitMCPImportAlias(t *testing.T
 		SectionTemplates: []*codegen.SectionTemplate{header},
 	}
 
-	_, err := generateExampleAdapterStubs([]*expr.ServiceExpr{svc}, []*codegen.File{stub})
+	_, err := generateExampleAdapterStubs(
+		[]exampleMCPService{{service: svc}},
+		[]*codegen.File{stub},
+	)
 
 	require.Error(t, err)
 	require.ErrorContains(t, err, `must import "example.com/assistant/gen/mcp_orchestrator" with an explicit alias`)
@@ -136,4 +109,47 @@ func TestReplaceHTTPServiceByNameReplacesOriginalExactlyOnce(t *testing.T) {
 
 	require.Len(t, services, 1)
 	require.Same(t, replacement, services[0])
+}
+
+func TestRemoveMCPClientCommands(t *testing.T) {
+	service := &expr.ServiceExpr{Name: "assistant"}
+	root := &expr.RootExpr{API: &expr.APIExpr{Servers: []*expr.ServerExpr{{
+		Name:     "orchestrator",
+		Services: []string{"assistant", "mcp_assistant"},
+	}}}}
+	server := &codegen.File{Path: "cmd/orchestrator/main.go"}
+	command := &codegen.File{Path: "cmd/orchestrator-cli/main.go"}
+	parser := &codegen.File{Path: "gen/jsonrpc/cli/orchestrator/cli.go"}
+
+	files := removeMCPClientCommands(
+		root,
+		[]exampleMCPService{{service: service}},
+		[]*codegen.File{server, command, parser},
+	)
+
+	require.Equal(t, []*codegen.File{server}, files)
+}
+
+func TestRemoveMCPGeneratedClientCommands(t *testing.T) {
+	root := &expr.RootExpr{API: &expr.APIExpr{Servers: []*expr.ServerExpr{{
+		Name:     "orchestrator",
+		Services: []string{"mcp_assistant"},
+	}}}}
+	planned := &plannedMCPService{
+		prepared: &preparedMCPService{
+			root:       root,
+			mcpService: &expr.ServiceExpr{Name: "mcp_assistant"},
+		},
+		adapterData: &AdapterData{mcpPathName: "mcp_assistant"},
+	}
+	server := &codegen.File{Path: "gen/jsonrpc/mcp_assistant/server/server.go"}
+	clientCLI := &codegen.File{Path: "gen/jsonrpc/mcp_assistant/client/cli.go"}
+	serverCLI := &codegen.File{Path: "gen/jsonrpc/cli/orchestrator/cli.go"}
+
+	files := removeMCPGeneratedClientCommands(
+		[]*plannedMCPService{planned},
+		[]*codegen.File{server, clientCLI, serverCLI},
+	)
+
+	require.Equal(t, []*codegen.File{server}, files)
 }

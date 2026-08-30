@@ -28,7 +28,7 @@
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
-//	rt := runtime.New(runtime.WithEngine(eng))
+//	rt := runtime.New(runtimeStore, runtime.WithEngine(eng))
 //	// Register toolsets first, then agents.
 //	sealCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 //	defer cancel()
