@@ -15,9 +15,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -25,25 +23,24 @@ import (
 func seedRunMeta(t *testing.T, rt *Runtime, input *RunInput) {
 	t.Helper()
 	now := time.Now().UTC()
-	_, err := rt.SessionStore.CreateSession(context.Background(), input.SessionID, now)
+	_, err := createSessionForTest(context.Background(), rt.Store, input.SessionID)
 	require.NoError(t, err)
-	require.NoError(t, rt.SessionStore.UpsertRun(context.Background(), session.RunMeta{
+	admitRunForTest(t, rt.Store, session.RunMeta{
 		AgentID:   string(input.AgentID),
 		RunID:     input.RunID,
 		SessionID: input.SessionID,
 		Status:    session.RunStatusRunning,
 		StartedAt: now,
 		UpdatedAt: now,
-	}))
+	})
 }
 
 func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 	rt := &Runtime{
-		RunEventStore: runloginmem.New(),
-		SessionStore:  sessioninmem.New(),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
+		Store:   newTestStore(),
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
 	}
 	seedTestToolSpecs(rt, tools.ToolSpec{
 		Name: tools.Ident("tool"),
@@ -123,7 +120,7 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 }
 
 func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
-	completion := newAnyJSONSpec("reports.persist", "catalog")
+	completion := newAnyJSONSpec("reports.persist")
 	completion.Payload.FieldDescriptions = map[string]string{
 		"title": "The title to save.",
 	}

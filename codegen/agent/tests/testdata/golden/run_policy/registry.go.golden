@@ -9,13 +9,17 @@ package scribe
 import (
 	"context"
 	"errors"
+	"fmt"
+	specs "goa.design/goa-ai/gen/alpha/agents/scribe/specs"
+	helpers "goa.design/goa-ai/gen/alpha/toolsets/helpers"
 	"goa.design/goa-ai/runtime/agent/engine"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
-	specs "goa.design/goa-ai/alpha/agents/scribe/specs"
 	"time"
 )
 
-// RegisterScribeAgent registers the generated agent components with the runtime.
+// RegisterScribeAgent registers the generated agent components with the local runtime.
+// This helper registers only with the runtime in this process. It does not
+// publish the agent to a registry service.
 func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ScribeAgentConfig) error {
 	if rt == nil {
 		return errors.New("runtime is required")
@@ -25,17 +29,16 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		return err
 	}
 	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
-		ID:       "alpha.scribe",
-		Planner:  agent.Planner,
-		Workflow: ScribeWorkflowDefinition,
-		Activities: []engine.ActivityDefinition{
-			ScribePlanActivityDefinition,
-			ScribeResumeActivityDefinition,
-			ScribeExecuteToolActivityDefinition,
+		ID:      "alpha.scribe",
+		Planner: agent.Planner,
+		Workflow: engine.WorkflowDefinition{
+			Name:      "alpha.scribe.workflow",
+			TaskQueue: "alpha_scribe_workflow",
+			Handler:   rt.ExecuteWorkflow,
 		},
 		PlanActivityName: "alpha.scribe.plan",
 		PlanActivityOptions: engine.ActivityOptions{
-			Queue:   "alpha_scribe_workflow",
+			Queue:               "alpha_scribe_workflow",
 			StartToCloseTimeout: time.Duration(120000000000),
 			RetryPolicy: engine.RetryPolicy{
 				MaxAttempts:        3,
@@ -45,7 +48,7 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		},
 		ResumeActivityName: "alpha.scribe.resume",
 		ResumeActivityOptions: engine.ActivityOptions{
-			Queue:   "alpha_scribe_workflow",
+			Queue:               "alpha_scribe_workflow",
 			StartToCloseTimeout: time.Duration(120000000000),
 			RetryPolicy: engine.RetryPolicy{
 				MaxAttempts:        3,
@@ -54,17 +57,107 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 			},
 		},
 		ExecuteToolActivity: "alpha.scribe.executetool",
-		Specs:               specs.Specs,
+		ExecuteToolActivityOptions: engine.ActivityOptions{
+			RetryPolicy: engine.RetryPolicy{
+				MaxAttempts:        3,
+				InitialInterval:    time.Duration(1000000000),
+				BackoffCoefficient: 2,
+			},
+		},
+		Specs:              specs.Specs(),
+		ToolMetadataLookup: specs.MetadataByName,
+		RequiredLabels:     specs.RequiredLabels(),
 		Policy: agentsruntime.RunPolicy{
-			MaxToolCalls:                  5,
+			MaxToolCalls:     5,
 			MaxRecoveryTurns: 2,
-			TimeBudget:                    time.Duration(30000000000),
+			TimeBudget:       time.Duration(30000000000),
 		},
 	}); err != nil {
 		return err
 	}
 
-	// Service toolsets are registered by application code using executors.
-
+	// Application code registers toolsets that call Goa service methods.
+	// Generated helpers register toolsets provided by another agent.
 	return nil
+}
+
+type usedToolsetRegistrationOptions struct {
+	executors           map[string]agentsruntime.ToolCallExecutor
+	resultMaterializers map[string]agentsruntime.ResultMaterializer
+}
+
+// RegisterUsedToolsets registers all non-MCP Used toolsets for this agent with
+// the local runtime. Provide executors for each required toolset and optional
+// result materializers through typed generated options.
+//
+// Example:
+//
+//	err := RegisterUsedToolsets(ctx, rt,
+//	    WithHelpersExecutor(exec),
+//	)
+func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts ...func(*usedToolsetRegistrationOptions)) error {
+	if rt == nil {
+		return errors.New("runtime is required")
+	}
+	cfg := &usedToolsetRegistrationOptions{
+		executors:           make(map[string]agentsruntime.ToolCallExecutor),
+		resultMaterializers: make(map[string]agentsruntime.ResultMaterializer),
+	}
+	for _, o := range opts {
+		if o != nil {
+			o(cfg)
+		}
+	}
+	var missing []string
+	if cfg.executors[HelpersToolsetName] == nil {
+		missing = append(missing, HelpersToolsetName)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing executors for toolsets: %v", missing)
+	}
+	// Register non-MCP used toolsets that are not provided by agent-as-tool exports.
+	{
+		exec := cfg.executors[HelpersToolsetName]
+		reg := agentsruntime.ToolsetRegistration{
+			Name:               HelpersToolsetName,
+			Specs:              helpers.Specs(),
+			ToolMetadataLookup: helpers.MetadataByName,
+			ResultMaterializer: cfg.resultMaterializers[HelpersToolsetName],
+			Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
+				if call == nil {
+					return nil, fmt.Errorf("tool request is nil")
+				}
+				meta := agentsruntime.ToolCallMetaFromCall(*call)
+				result, err := exec.Execute(ctx, &meta, call)
+				if err != nil {
+					return nil, err
+				}
+				if result == nil {
+					return nil, fmt.Errorf("executor returned nil execution result")
+				}
+				return result, nil
+			},
+		}
+		if err := rt.RegisterToolset(reg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// HelpersToolsetName is the local registration name for alpha.helpers.
+const HelpersToolsetName = "alpha.helpers"
+
+// WithHelpersExecutor associates an executor for alpha.helpers.
+func WithHelpersExecutor(exec agentsruntime.ToolCallExecutor) func(*usedToolsetRegistrationOptions) {
+	return func(cfg *usedToolsetRegistrationOptions) {
+		cfg.executors[HelpersToolsetName] = exec
+	}
+}
+
+// WithHelpersResultMaterializer associates a result materializer for alpha.helpers.
+func WithHelpersResultMaterializer(materializer agentsruntime.ResultMaterializer) func(*usedToolsetRegistrationOptions) {
+	return func(cfg *usedToolsetRegistrationOptions) {
+		cfg.resultMaterializers[HelpersToolsetName] = materializer
+	}
 }

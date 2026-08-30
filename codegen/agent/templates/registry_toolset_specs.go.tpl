@@ -22,9 +22,6 @@ type ToolSchema struct {
 	ResultSchema    []byte
 }
 
-// RegistryToolsetID is the identifier for this registry-backed toolset.
-const RegistryToolsetID = {{ printf "%q" .QualifiedName }}
-
 // RegistryName is the name of the registry source.
 const RegistryName = {{ printf "%q" .Registry.RegistryName }}
 
@@ -74,8 +71,6 @@ func DiscoverAndPopulate(ctx context.Context, client RegistryClient) error {
 	for _, tool := range toolset.Tools {
 		spec := tools.ToolSpec{
 			Name:        tools.Ident(tool.Name),
-			Service:     {{ printf "%q" .ServiceName }},
-			Toolset:     ToolsetName,
 			Description: tool.Description,
 			Tags:        tool.Tags,
 			Payload: tools.TypeSpec{

@@ -3,11 +3,13 @@
 //
 // # Codegen Philosophy
 //
-// MCP code generation is intentionally fail-fast and transport-closed:
-// MCP-enabled services either generate a pure MCP surface or generation fails.
-// The package derives all per-run state from the evaluated Goa roots, then
-// builds a synthetic MCP service expression and lets Goa generate the JSON-RPC
-// transport/client code that MCP needs.
+// An MCP-enabled service may also expose ordinary HTTP, file, and gRPC
+// endpoints. Its service-level JSON-RPC declaration supplies the path for the
+// generated MCP endpoint, while Goa preserves the other transports and rejects
+// routes that would register two handlers for the same method and path. The
+// package derives all per-run state from the evaluated Goa roots, builds a
+// synthetic MCP service expression, and lets Goa generate the JSON-RPC
+// transport and client code that MCP needs.
 //
 // Where MCP needs behavior beyond Goa's standard JSON-RPC generator
 // (tool/resource/prompt adapters, MCP-specific clients, helper packages), this

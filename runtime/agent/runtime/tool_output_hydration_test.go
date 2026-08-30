@@ -10,30 +10,31 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-type nilEventRunlog struct{}
-
-// Append panics because hydration must only read the test store.
-func (nilEventRunlog) Append(context.Context, *runlog.Event) (runlog.AppendResult, error) {
-	panic("Append must not be called")
+type nilEventStore struct {
+	storage.Store
 }
 
-// List returns the impossible nil event that hydration must reject.
-func (nilEventRunlog) List(context.Context, string, string, int) (runlog.Page, error) {
+// Append panics because hydration must only read the test store.
+// ListRunRecords returns the impossible nil event that hydration must reject.
+func (nilEventStore) ListRunRecords(context.Context, string, string, int) (runlog.Page, error) {
 	return runlog.Page{Events: []*runlog.Event{nil}}, nil
 }
 
 func TestLoadCanonicalToolEventsRejectsNilStoredEvent(t *testing.T) {
 	t.Parallel()
 
-	runtime := &Runtime{RunEventStore: nilEventRunlog{}}
+	runtime := &Runtime{Store: nilEventStore{Store: newTestStore()}}
 	_, err := runtime.loadCanonicalToolEvents(
 		context.Background(),
 		"run-1",
@@ -110,6 +111,8 @@ func TestPlannerToolOutputFromCanonicalEventsRequiresMatchingIdentity(t *testing
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+			runtime := &Runtime{}
+			seedTestToolSpecs(runtime, newAnyJSONSpec(toolName))
 
 			scheduledCallID := test.scheduledCallID
 			if scheduledCallID == "" {
@@ -139,9 +142,6 @@ func TestPlannerToolOutputFromCanonicalEventsRequiresMatchingIdentity(t *testing
 				resultCallID,
 				test.resultParent,
 				rawjson.Message(`{}`),
-				2,
-				false,
-				"",
 				nil,
 				"",
 				nil,
@@ -150,7 +150,7 @@ func TestPlannerToolOutputFromCanonicalEventsRequiresMatchingIdentity(t *testing
 				nil,
 			)}
 
-			output, err := plannerToolOutputFromCanonicalEvents(
+			output, err := runtime.plannerToolOutputFromCanonicalEvents(
 				callRunID,
 				resultRunID,
 				toolCallID,
@@ -199,9 +199,6 @@ func TestLoadCanonicalToolEventsValidatesToolResultPlacement(t *testing.T) {
 			"call-1",
 			"",
 			rawjson.Message(`{}`),
-			2,
-			false,
-			"",
 			nil,
 			"",
 			nil,
@@ -243,7 +240,7 @@ func TestLoadCanonicalToolEventsValidatesToolResultPlacement(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			store := runloginmem.New()
+			store := newTestStore()
 			for index, event := range test.events {
 				appendHistoricalHookEvent(
 					t,
@@ -253,7 +250,7 @@ func TestLoadCanonicalToolEventsValidatesToolResultPlacement(t *testing.T) {
 					int64(index+1),
 				)
 			}
-			runtime := &Runtime{RunEventStore: store}
+			runtime := &Runtime{Store: store}
 			events, err := runtime.loadCanonicalToolEvents(
 				context.Background(),
 				test.runID,
@@ -272,7 +269,7 @@ func TestLoadCanonicalToolEventsValidatesToolResultPlacement(t *testing.T) {
 func TestLoadCanonicalToolEventsRetainsOnlyWantedCalls(t *testing.T) {
 	t.Parallel()
 
-	store := runloginmem.New()
+	store := newTestStore()
 	toolName := tools.Ident("svc.tools.lookup")
 	for index, callID := range []string{"unrelated-1", "wanted", "unrelated-2"} {
 		appendHistoricalHookEvent(t, store, hooks.NewToolCallScheduledEvent(
@@ -295,9 +292,6 @@ func TestLoadCanonicalToolEventsRetainsOnlyWantedCalls(t *testing.T) {
 			callID,
 			"",
 			rawjson.Message(`{}`),
-			2,
-			false,
-			"",
 			nil,
 			"",
 			nil,
@@ -307,7 +301,7 @@ func TestLoadCanonicalToolEventsRetainsOnlyWantedCalls(t *testing.T) {
 		), fmt.Sprintf("result-%d", index), int64(index*2+2))
 	}
 
-	runtime := &Runtime{RunEventStore: store}
+	runtime := &Runtime{Store: store}
 	events, err := runtime.loadCanonicalToolEvents(
 		context.Background(),
 		"run-1",
@@ -323,8 +317,12 @@ func TestLoadCanonicalToolEventsRetainsOnlyWantedCalls(t *testing.T) {
 func TestLoadCanonicalToolEventsDecodesUnrelatedCalls(t *testing.T) {
 	t.Parallel()
 
-	store := runloginmem.New()
-	_, err := store.Append(context.Background(), &runlog.Event{
+	store := newTestStore()
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+		Status: session.RunStatusRunning,
+	})
+	_, err := store.AppendRunRecord(context.Background(), &runlog.Event{
 		EventKey:  "malformed-unrelated",
 		RunID:     "run-1",
 		AgentID:   "svc.agent",
@@ -335,7 +333,7 @@ func TestLoadCanonicalToolEventsDecodesUnrelatedCalls(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	runtime := &Runtime{RunEventStore: store}
+	runtime := &Runtime{Store: store}
 	_, err = runtime.loadCanonicalToolEvents(
 		context.Background(),
 		"run-1",
@@ -348,7 +346,7 @@ func TestLoadCanonicalToolEventsDecodesUnrelatedCalls(t *testing.T) {
 func TestLoadPlannerToolOutputsAcceptsCrossRunContinuationResult(t *testing.T) {
 	t.Parallel()
 
-	store := runloginmem.New()
+	store := newTestStore()
 	toolName := tools.Ident("svc.tools.lookup")
 	appendHistoricalHookEvent(t, store, hooks.NewToolCallScheduledEvent(
 		"call-run",
@@ -370,9 +368,6 @@ func TestLoadPlannerToolOutputsAcceptsCrossRunContinuationResult(t *testing.T) {
 		"call-1",
 		"parent-1",
 		rawjson.Message(`{"value":"found"}`),
-		len(`{"value":"found"}`),
-		false,
-		"",
 		nil,
 		"",
 		nil,
@@ -381,7 +376,8 @@ func TestLoadPlannerToolOutputsAcceptsCrossRunContinuationResult(t *testing.T) {
 		nil,
 	), "result", 2)
 
-	runtime := &Runtime{RunEventStore: store}
+	runtime := &Runtime{Store: store}
+	seedTestToolSpecs(runtime, newAnyJSONSpec(toolName))
 	outputs, err := runtime.loadPlannerToolOutputs(context.Background(), []*api.ToolOutputRef{{
 		CallRunID:   "call-run",
 		ResultRunID: "result-run",
@@ -397,7 +393,80 @@ func TestLoadPlannerToolOutputsAcceptsCrossRunContinuationResult(t *testing.T) {
 	require.JSONEq(t, `{"value":"found"}`, string(outputs[0].Result))
 }
 
-func TestPlannerToolOutputFromCanonicalEventsRejectsInvalidSuccess(t *testing.T) {
+func TestLoadPlannerToolOutputsRequiresRegisteredSpecOnlyForSuccess(t *testing.T) {
+	t.Parallel()
+
+	toolName := tools.Ident("svc.tools.removed")
+	for _, test := range []struct {
+		name    string
+		result  rawjson.Message
+		failure *planner.ToolFailure
+		wantErr string
+	}{
+		{
+			name:    "successful result",
+			result:  rawjson.Message(`{"value":"found"}`),
+			wantErr: `canonical tool history references unregistered tool "svc.tools.removed"`,
+		},
+		{
+			name:    "failed result",
+			failure: testToolFailure(planner.FailureUnavailable, planner.RecoveryReplan, "service unavailable"),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := newTestStore()
+			appendHistoricalHookEvent(t, store, hooks.NewToolCallScheduledEvent(
+				"run-1",
+				"svc.agent",
+				"session-1",
+				toolName,
+				"call-1",
+				rawjson.Message(`{}`),
+				"",
+				"",
+				0,
+			), "schedule", 1)
+			appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
+				"run-1",
+				"svc.agent",
+				"session-1",
+				"run-1",
+				toolName,
+				"call-1",
+				"",
+				test.result,
+				nil,
+				"",
+				nil,
+				time.Second,
+				nil,
+				test.failure,
+			), "result", 2)
+
+			runtime := &Runtime{Store: store}
+			outputs, err := runtime.loadPlannerToolOutputs(context.Background(), []*api.ToolOutputRef{{
+				CallRunID:   "run-1",
+				ResultRunID: "run-1",
+				ToolCallID:  "call-1",
+			}})
+			if test.wantErr != "" {
+				require.Nil(t, outputs)
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, outputs, 1)
+			require.Equal(t, test.failure.Kind, outputs[0].Failure.Kind)
+			require.Equal(t, test.failure.Error.Message, outputs[0].Failure.Error.Message)
+			require.Equal(t, test.failure.Recovery.Action, outputs[0].Failure.Recovery.Action)
+			require.Empty(t, outputs[0].Result)
+		})
+	}
+}
+
+func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.T) {
 	t.Parallel()
 
 	toolName := tools.Ident("svc.tools.lookup")
@@ -414,31 +483,42 @@ func TestPlannerToolOutputFromCanonicalEventsRejectsInvalidSuccess(t *testing.T)
 	)}
 	tests := []struct {
 		name    string
+		spec    tools.ToolSpec
 		result  *hooks.ToolResultReceivedEvent
 		wantErr string
 	}{
 		{
-			name: "omitted",
-			result: &hooks.ToolResultReceivedEvent{
-				CallRunID:     "run-1",
-				ToolName:      toolName,
-				ToolCallID:    "call-1",
-				ResultOmitted: true,
-				ResultBytes:   2,
-			},
-			wantErr: "canonical successful tool result is omitted",
-		},
-		{
-			name: "empty",
+			name: "result-bearing tool with empty result",
+			spec: tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
 			result: &hooks.ToolResultReceivedEvent{
 				CallRunID:  "run-1",
 				ToolName:   toolName,
 				ToolCallID: "call-1",
 			},
-			wantErr: "canonical successful tool result is empty",
+			wantErr: "tool result is missing",
+		},
+		{
+			name: "no-result tool with empty result",
+			result: &hooks.ToolResultReceivedEvent{
+				CallRunID:  "run-1",
+				ToolName:   toolName,
+				ToolCallID: "call-1",
+			},
+		},
+		{
+			name: "no-result tool with unexpected result",
+			result: &hooks.ToolResultReceivedEvent{
+				CallRunID:   "run-1",
+				ToolName:    toolName,
+				ToolCallID:  "call-1",
+				ResultJSON:  rawjson.Message(`{}`),
+				ResultBytes: 2,
+			},
+			wantErr: "does not define a result but contains one",
 		},
 		{
 			name: "wrong byte count",
+			spec: tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
 			result: &hooks.ToolResultReceivedEvent{
 				CallRunID:   "run-1",
 				ToolName:    toolName,
@@ -448,12 +528,118 @@ func TestPlannerToolOutputFromCanonicalEventsRejectsInvalidSuccess(t *testing.T)
 			},
 			wantErr: "canonical tool result size mismatch",
 		},
+		{
+			name: "result decoder returns nil",
+			spec: tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
+			result: &hooks.ToolResultReceivedEvent{
+				CallRunID:   "run-1",
+				ToolName:    toolName,
+				ToolCallID:  "call-1",
+				ResultJSON:  rawjson.Message(`null`),
+				ResultBytes: len(`null`),
+			},
+			wantErr: "tool result decoded to nil",
+		},
+		{
+			name: "failed result with result JSON",
+			result: &hooks.ToolResultReceivedEvent{
+				CallRunID:   "run-1",
+				ToolName:    toolName,
+				ToolCallID:  "call-1",
+				ResultJSON:  rawjson.Message(`{}`),
+				ResultBytes: 2,
+				Failure:     testToolFailure(planner.FailureUnavailable, planner.RecoveryReplan, "unavailable"),
+			},
+			wantErr: "failure and result JSON are both set",
+		},
+		{
+			name: "failed result with server data",
+			result: &hooks.ToolResultReceivedEvent{
+				CallRunID:  "run-1",
+				ToolName:   toolName,
+				ToolCallID: "call-1",
+				ServerData: rawjson.Message(`[]`),
+				Failure:    testToolFailure(planner.FailureUnavailable, planner.RecoveryReplan, "unavailable"),
+			},
+			wantErr: "failure and server data are both set",
+		},
+		{
+			name: "failed result with bounds",
+			result: &hooks.ToolResultReceivedEvent{
+				CallRunID:  "run-1",
+				ToolName:   toolName,
+				ToolCallID: "call-1",
+				Bounds:     &agent.Bounds{Returned: 1},
+				Failure:    testToolFailure(planner.FailureUnavailable, planner.RecoveryReplan, "unavailable"),
+			},
+			wantErr: "failure and bounds are both set",
+		},
+		{
+			name: "invalid failure",
+			result: &hooks.ToolResultReceivedEvent{
+				CallRunID:  "run-1",
+				ToolName:   toolName,
+				ToolCallID: "call-1",
+				Failure:    &planner.ToolFailure{},
+			},
+			wantErr: "invalid failure",
+		},
+		{
+			name: "successful result with malformed server data",
+			spec: tools.ToolSpec{
+				Result: tools.TypeSpec{Codec: tools.AnyJSONCodec},
+				CanonicalizeServerData: func(rawjson.Message) (rawjson.Message, error) {
+					return nil, fmt.Errorf("malformed server data")
+				},
+			},
+			result: &hooks.ToolResultReceivedEvent{
+				CallRunID:   "run-1",
+				ToolName:    toolName,
+				ToolCallID:  "call-1",
+				ResultJSON:  rawjson.Message(`{}`),
+				ResultBytes: 2,
+				ServerData:  rawjson.Message(`{}`),
+			},
+			wantErr: "invalid server data: malformed server data",
+		},
+		{
+			name: "bounded success without bounds",
+			spec: tools.ToolSpec{
+				Result: tools.TypeSpec{Codec: tools.AnyJSONCodec},
+				Bounds: &tools.BoundsSpec{},
+			},
+			result: &hooks.ToolResultReceivedEvent{
+				CallRunID:   "run-1",
+				ToolName:    toolName,
+				ToolCallID:  "call-1",
+				ResultJSON:  rawjson.Message(`{}`),
+				ResultBytes: 2,
+			},
+			wantErr: "returned result without bounds",
+		},
+		{
+			name: "unbounded success with bounds",
+			spec: tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
+			result: &hooks.ToolResultReceivedEvent{
+				CallRunID:   "run-1",
+				ToolName:    toolName,
+				ToolCallID:  "call-1",
+				ResultJSON:  rawjson.Message(`{}`),
+				ResultBytes: 2,
+				Bounds:      &agent.Bounds{Returned: 1},
+			},
+			wantErr: "returned unexpected bounds metadata",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
+			runtime := &Runtime{}
+			spec := test.spec
+			spec.Name = toolName
+			seedTestToolSpecs(runtime, spec)
 
-			result := hooks.NewToolResultReceivedEvent(
+			resultEvent := hooks.NewToolResultReceivedEvent(
 				"run-1",
 				"svc.agent",
 				"session",
@@ -462,26 +648,30 @@ func TestPlannerToolOutputFromCanonicalEventsRejectsInvalidSuccess(t *testing.T)
 				test.result.ToolCallID,
 				"",
 				test.result.ResultJSON,
-				test.result.ResultBytes,
-				test.result.ResultOmitted,
-				test.result.ResultOmittedReason,
-				nil,
+				test.result.ServerData,
 				"",
-				nil,
+				test.result.Bounds,
 				0,
 				nil,
-				nil,
+				test.result.Failure,
 			)
-			output, err := plannerToolOutputFromCanonicalEvents(
+			resultEvent.ResultBytes = test.result.ResultBytes
+			output, err := runtime.plannerToolOutputFromCanonicalEvents(
 				"run-1",
 				"run-1",
 				"call-1",
 				callEvents,
-				&canonicalToolEvents{result: result},
+				&canonicalToolEvents{result: resultEvent},
 			)
 
-			require.Nil(t, output)
-			require.ErrorContains(t, err, test.wantErr)
+			if test.wantErr != "" {
+				require.Nil(t, output)
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, output)
+			require.Empty(t, output.Result)
 		})
 	}
 }

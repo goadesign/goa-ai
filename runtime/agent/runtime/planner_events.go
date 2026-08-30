@@ -10,6 +10,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/prompt"
 )
 
 type (
@@ -21,6 +22,7 @@ type (
 		agentID   agent.Ident
 		runID     string
 		sessionID string
+		prompts   *prompt.RenderRecorder
 
 		mu      sync.Mutex
 		pending []hooks.Event
@@ -34,6 +36,7 @@ func newPlannerEvents(agentID agent.Ident, runID, sessionID string) *runtimePlan
 		agentID:   agentID,
 		runID:     runID,
 		sessionID: sessionID,
+		prompts:   prompt.NewRenderRecorder(),
 	}
 }
 
@@ -59,8 +62,21 @@ func (e *runtimePlannerEvents) acceptedRecords(
 	e.mu.Lock()
 	pending := append([]hooks.Event(nil), e.pending...)
 	e.mu.Unlock()
-	records := make([]*api.PlannerEventRecord, 0, len(pending))
-	for _, event := range pending {
+	renders := e.prompts.Events()
+	events := make([]hooks.Event, 0, len(renders)+len(pending))
+	for _, rendered := range renders {
+		events = append(events, hooks.NewPromptRenderedEvent(
+			e.runID,
+			e.agentID,
+			e.sessionID,
+			rendered.PromptID,
+			rendered.Version,
+			rendered.Scope,
+		))
+	}
+	events = append(events, pending...)
+	records := make([]*api.PlannerEventRecord, 0, len(events))
+	for _, event := range events {
 		payload, err := hooks.EncodeRecordPayload(event)
 		if err != nil {
 			return nil, err

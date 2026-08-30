@@ -14,11 +14,12 @@
 //
 // The Runtime is thread-safe and can be used concurrently to register agents
 // and execute workflows. Production deployments typically configure the Runtime
-// with a durable workflow engine (Temporal) and a durable memory store.
+// with a durable workflow engine, one host-provided runtime store, and a
+// durable memory store.
 //
 // Example usage: use AgentClient for execution.
 //
-//	rt := runtime.New(runtime.Options{ Engine: temporalEngine, ... })
+//	rt := runtime.New(runtimeStore, runtime.WithEngine(temporalEngine))
 //	if err := rt.RegisterAgent(ctx, agentReg); err != nil {
 //		log.Fatal(err)
 //	}
@@ -34,6 +35,7 @@ import (
 	"maps"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
@@ -54,18 +56,14 @@ import (
 	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/session"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 	"google.golang.org/genai"
-
-	"text/template"
-
-	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 )
 
 type (
@@ -110,12 +108,11 @@ type (
 		Memory memory.Store
 		// PromptRegistry resolves prompt specs and optional scoped overrides.
 		PromptRegistry *prompt.Registry
-		// SessionStore persists session lifecycle state and run metadata.
-		SessionStore session.Store
+		// Store persists run lifecycle state, continuation checkpoints, and
+		// ordered run records in one transaction boundary.
+		Store storage.Store
 		// Policy evaluates allowlists and caps per planner turn.
 		Policy policy.Engine
-		// RunEventStore is the canonical append-only run event log.
-		RunEventStore runlog.Store
 		// Bus is the bus used for streaming runtime events.
 		Bus hooks.Bus
 		// Stream publishes planner/tool/assistant events to the caller.
@@ -136,6 +133,9 @@ type (
 		agents    map[agent.Ident]AgentRegistration
 		toolsets  map[string]ToolsetRegistration
 		toolSpecs map[tools.Ident]tools.ToolSpec
+		// toolsetNames maps each global tool name to the one registered toolset
+		// that executes it in this runtime.
+		toolsetNames map[tools.Ident]string
 		// policyToolMetadata stores canonical per-tool policy metadata resolved at
 		// registration time from generated lookups or, for manual registrations,
 		// derived once from the supplied specs.
@@ -146,14 +146,6 @@ type (
 
 		// Per-agent tool specs registered during agent registration for introspection.
 		agentToolSpecs map[agent.Ident][]tools.ToolSpec
-
-		handleMu   sync.RWMutex
-		runHandles map[string]engine.WorkflowHandle
-
-		// completionRepairMu serializes no-handle terminal repair so concurrent
-		// readers cannot append duplicate terminal events for the same missing
-		// canonical completion window.
-		completionRepairMu sync.Mutex
 
 		// workers holds optional per-agent worker configuration supplied at
 		// construction time.
@@ -177,14 +169,16 @@ type (
 		// and a failed attempt may be retried deterministically.
 		sealMu sync.Mutex
 
-		// recordActivityRegistered tracks whether the runtime record activity has
+		// storageActivityRegistered tracks whether the runtime storage activity has
 		// been registered with the engine.
-		recordActivityRegistered bool
+		storageActivityRegistered bool
+		// agentChildActivityRegistered tracks whether child prompt preparation is
+		// available to every registered workflow.
+		agentChildActivityRegistered bool
 
-		// recordActivityTimeout overrides the StartToClose timeout used for the
-		// durable record activity (`runtime.record_event`). Zero means use the
-		// runtime default.
-		recordActivityTimeout time.Duration
+		// storageActivityTimeout overrides the StartToClose timeout used for
+		// `runtime.store`. Zero means use the runtime default.
+		storageActivityTimeout time.Duration
 
 		// reminders manages run-scoped system reminders used for backstage
 		// guidance (safety, correctness, workflow) injected into prompts by
@@ -211,12 +205,8 @@ type (
 		// PromptStore resolves scoped prompt overrides. When nil, prompt rendering
 		// uses baseline registered PromptSpecs only.
 		PromptStore prompt.Store
-		// SessionStore persists session lifecycle state and run metadata.
-		SessionStore session.Store
 		// Policy evaluates allowlists and caps per planner turn.
 		Policy policy.Engine
-		// RunEventStore is the canonical append-only run event log.
-		RunEventStore runlog.Store
 		// Hooks is the Pulse-backed bus used for streaming runtime events.
 		Hooks hooks.Bus
 		// Stream publishes planner/tool/assistant events to the caller.
@@ -234,10 +224,9 @@ type (
 		// disabled unless explicitly troubleshooting.
 		CaptureGenAIMessages bool
 
-		// RecordActivityTimeout overrides the StartToClose timeout for the
-		// durable record activity (`runtime.record_event`). Zero means use the
-		// runtime default.
-		RecordActivityTimeout time.Duration
+		// StorageActivityTimeout overrides the StartToClose timeout for
+		// `runtime.store`. Zero means use the runtime default.
+		StorageActivityTimeout time.Duration
 
 		// Workers provides per-agent worker configuration. If an agent lacks
 		// an entry, the runtime uses a default worker configuration. Engines
@@ -463,7 +452,8 @@ const (
 	defaultPlanActivityTimeout        = 2 * time.Minute
 	defaultResumeActivityTimeout      = 2 * time.Minute
 	defaultExecuteToolActivityTimeout = 2 * time.Minute
-	defaultRecordActivityTimeout      = 15 * time.Second
+	defaultAgentChildActivityTimeout  = 2 * time.Minute
+	defaultStorageActivityTimeout     = 15 * time.Second
 )
 
 // defaultRetriedActivityPolicy returns the runtime's standard infrastructure
@@ -522,6 +512,14 @@ func WithMetadata(meta map[string]any) RunOption {
 		for k, v := range meta {
 			in.Metadata[k] = v
 		}
+	}
+}
+
+// WithRenderedPrompts records prompts whose rendered text is already included
+// in the run input. The accepted workflow stores them before planner work.
+func WithRenderedPrompts(events []prompt.RenderEvent) RunOption {
+	return func(in *RunInput) {
+		in.RenderedPrompts = clonePromptRenderEvents(events)
 	}
 }
 
@@ -699,7 +697,10 @@ func WithTagPolicyClauses(clauses []TagPolicyClause) RunOption {
 
 // newFromOptions constructs a Runtime using the provided options. Internal helper
 // used by the public New(...RuntimeOption) constructor.
-func newFromOptions(opts Options) *Runtime {
+func newFromOptions(store storage.Store, opts Options) *Runtime {
+	if store == nil {
+		panic("runtime: storage store is required")
+	}
 	if opts.ToolConfirmation != nil {
 		if err := opts.ToolConfirmation.validate(); err != nil {
 			panic(err)
@@ -725,40 +726,32 @@ func newFromOptions(opts Options) *Runtime {
 	if tracer == nil {
 		tracer = telemetry.NoopTracer{}
 	}
-	if opts.RunEventStore == nil {
-		opts.RunEventStore = runloginmem.New()
-	}
-	if opts.SessionStore == nil {
-		opts.SessionStore = sessioninmem.New()
-	}
 	rt := &Runtime{
-		Engine:                eng,
-		Memory:                opts.MemoryStore,
-		PromptRegistry:        prompt.NewRegistry(opts.PromptStore),
-		SessionStore:          opts.SessionStore,
-		Policy:                opts.Policy,
-		RunEventStore:         opts.RunEventStore,
-		Bus:                   bus,
-		Stream:                opts.Stream,
-		recordActivityTimeout: opts.RecordActivityTimeout,
-		logger:                logger,
-		metrics:               metrics,
-		tracer:                tracer,
-		captureGenAIMessages:  opts.CaptureGenAIMessages,
-		agents:                make(map[agent.Ident]AgentRegistration),
-		toolsets:              make(map[string]ToolsetRegistration),
-		toolSpecs:             make(map[tools.Ident]tools.ToolSpec),
-		policyToolMetadata:    make(map[tools.Ident]policy.ToolMetadata),
-		toolSchemas:           make(map[string]map[string]any),
-		models:                make(map[string]model.Client),
-		runHandles:            make(map[string]engine.WorkflowHandle),
-		agentToolSpecs:        make(map[agent.Ident][]tools.ToolSpec),
-		workers:               opts.Workers,
-		reminders:             reminder.NewEngine(),
-		toolConfirmation:      opts.ToolConfirmation,
-		hintOverrides:         opts.HintOverrides,
+		Engine:                 eng,
+		Memory:                 opts.MemoryStore,
+		PromptRegistry:         prompt.NewRegistry(opts.PromptStore),
+		Store:                  store,
+		Policy:                 opts.Policy,
+		Bus:                    bus,
+		Stream:                 opts.Stream,
+		storageActivityTimeout: opts.StorageActivityTimeout,
+		logger:                 logger,
+		metrics:                metrics,
+		tracer:                 tracer,
+		captureGenAIMessages:   opts.CaptureGenAIMessages,
+		agents:                 make(map[agent.Ident]AgentRegistration),
+		toolsets:               make(map[string]ToolsetRegistration),
+		toolSpecs:              make(map[tools.Ident]tools.ToolSpec),
+		toolsetNames:           make(map[tools.Ident]string),
+		policyToolMetadata:     make(map[tools.Ident]policy.ToolMetadata),
+		toolSchemas:            make(map[string]map[string]any),
+		models:                 make(map[string]model.Client),
+		agentToolSpecs:         make(map[agent.Ident][]tools.ToolSpec),
+		workers:                opts.Workers,
+		reminders:              reminder.NewEngine(),
+		toolConfirmation:       opts.ToolConfirmation,
+		hintOverrides:          opts.HintOverrides,
 	}
-	rt.PromptRegistry.SetObserver(rt.onPromptRendered)
 	// Install runtime-owned toolsets before any agent registration so planners
 	// and transcripts can rely on a stable tool vocabulary.
 	rt.mu.Lock()
@@ -766,70 +759,6 @@ func newFromOptions(opts Options) *Runtime {
 	rt.mu.Unlock()
 	if _, err := bus.Register(hooks.SubscriberFunc(rt.recordGenAITelemetryEvent)); err != nil {
 		panic(fmt.Errorf("register GenAI telemetry subscriber: %w", err))
-	}
-	if rt.SessionStore != nil {
-		sessionSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
-			if event.SessionID() == "" {
-				return nil
-			}
-			var (
-				status   session.RunStatus
-				metadata map[string]any
-			)
-			ts := time.UnixMilli(event.Timestamp()).UTC()
-			switch evt := event.(type) {
-			case *hooks.RunStartedEvent:
-				status = session.RunStatusRunning
-				return rt.SessionStore.UpsertRun(ctx, session.RunMeta{
-					AgentID:   evt.AgentID(),
-					RunID:     evt.RunID(),
-					SessionID: evt.SessionID(),
-					Status:    status,
-					UpdatedAt: ts,
-					Labels:    evt.RunContext.Labels,
-					Metadata:  nil,
-					StartedAt: time.Time{},
-				})
-			case *hooks.RunSuspendedEvent:
-				status = session.RunStatusSuspended
-				return rt.SessionStore.UpsertRun(ctx, session.RunMeta{
-					AgentID:   evt.AgentID(),
-					RunID:     evt.RunID(),
-					SessionID: evt.SessionID(),
-					Status:    status,
-					UpdatedAt: ts,
-				})
-			case *hooks.RunCompletedEvent:
-				switch evt.Status {
-				case "success":
-					status = session.RunStatusCompleted
-				case "failed":
-					status = session.RunStatusFailed
-				case "canceled":
-					status = session.RunStatusCanceled
-				default:
-					return fmt.Errorf("unexpected run completed status %q", evt.Status)
-				}
-				if evt.Cancellation != nil {
-					metadata = map[string]any{
-						runMetaCancellationReason: evt.Cancellation.Reason,
-					}
-				}
-				return rt.SessionStore.UpsertRun(ctx, session.RunMeta{
-					AgentID:   evt.AgentID(),
-					RunID:     evt.RunID(),
-					SessionID: evt.SessionID(),
-					Status:    status,
-					UpdatedAt: ts,
-					Metadata:  metadata,
-				})
-			default:
-				return nil
-			}
-		})
-		if _, err := bus.Register(sessionSub); err != nil {
-			rt.logger.Warn(context.Background(), "failed to register session subscriber", "err", err)
-		}
 	}
 	if rt.Memory != nil {
 		memSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
@@ -899,32 +828,31 @@ func newFromOptions(opts Options) *Runtime {
 	return rt
 }
 
-// New constructs a Runtime using functional options. It installs sane defaults
-// (in-memory engine, noop logger/metrics/tracer, in-process event bus) when not
-// provided. The returned Runtime is immediately usable for agent registration.
-func New(opts ...RuntimeOption) *Runtime {
+// New constructs a Runtime using the required host-owned store and functional
+// options. It installs an in-memory engine, no-op telemetry, and an in-process
+// event bus when callers do not provide them.
+func New(store storage.Store, opts ...RuntimeOption) *Runtime {
 	var o Options
 	for _, fn := range opts {
 		if fn != nil {
 			fn(&o)
 		}
 	}
-	return newFromOptions(o)
+	return newFromOptions(store, o)
 }
 
 // WithEngine sets the workflow engine.
 func WithEngine(e engine.Engine) RuntimeOption { return func(o *Options) { o.Engine = e } }
 
-// WithRecordActivityTimeout sets the StartToClose timeout for the durable
-// record activity (`runtime.record_event`). This activity persists canonical
-// run-log records and fans out hook-backed records while a session is active.
+// WithStorageActivityTimeout sets the StartToClose timeout for `runtime.store`.
+// This activity applies every runtime Store command outside workflow code.
 //
 // d must be greater than zero.
-func WithRecordActivityTimeout(d time.Duration) RuntimeOption {
+func WithStorageActivityTimeout(d time.Duration) RuntimeOption {
 	if d <= 0 {
-		panic("runtime: record activity timeout must be greater than zero")
+		panic("runtime: storage activity timeout must be greater than zero")
 	}
-	return func(o *Options) { o.RecordActivityTimeout = d }
+	return func(o *Options) { o.StorageActivityTimeout = d }
 }
 
 // WithMemoryStore sets the memory store.
@@ -932,12 +860,6 @@ func WithMemoryStore(m memory.Store) RuntimeOption { return func(o *Options) { o
 
 // WithPromptStore sets the prompt override store.
 func WithPromptStore(s prompt.Store) RuntimeOption { return func(o *Options) { o.PromptStore = s } }
-
-// WithSessionStore sets the session store.
-func WithSessionStore(s session.Store) RuntimeOption { return func(o *Options) { o.SessionStore = s } }
-
-// WithRunEventStore sets the canonical run event store.
-func WithRunEventStore(s runlog.Store) RuntimeOption { return func(o *Options) { o.RunEventStore = s } }
 
 // WithPolicy sets the policy engine.
 func WithPolicy(p policy.Engine) RuntimeOption { return func(o *Options) { o.Policy = p } }
@@ -1090,7 +1012,10 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if r.Engine == nil {
 		return ErrEngineNotConfigured
 	}
-	if err := r.ensureRecordActivityRegistered(ctx); err != nil {
+	if err := r.ensureStorageActivityRegistered(ctx); err != nil {
+		return err
+	}
+	if err := r.ensureAgentChildActivityRegistered(ctx); err != nil {
 		return err
 	}
 
@@ -1164,15 +1089,15 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	return nil
 }
 
-func (r *Runtime) ensureRecordActivityRegistered(ctx context.Context) error {
+func (r *Runtime) ensureStorageActivityRegistered(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.recordActivityRegistered {
+	if r.storageActivityRegistered {
 		return nil
 	}
-	timeout := defaultRecordActivityTimeout
-	if r.recordActivityTimeout > 0 {
-		timeout = r.recordActivityTimeout
+	timeout := defaultStorageActivityTimeout
+	if r.storageActivityTimeout > 0 {
+		timeout = r.storageActivityTimeout
 	}
 	opts := engine.ActivityOptions{
 		StartToCloseTimeout: timeout,
@@ -1181,10 +1106,29 @@ func (r *Runtime) ensureRecordActivityRegistered(ctx context.Context) error {
 	if opts.StartToCloseTimeout == 0 {
 		opts.StartToCloseTimeout = timeout
 	}
-	if err := r.Engine.RegisterRecordActivity(ctx, recordActivityName, opts, r.recordActivity); err != nil {
+	if err := r.Engine.RegisterStorageActivity(ctx, storageActivityName, opts, r.executeStorageCommand); err != nil {
 		return err
 	}
-	r.recordActivityRegistered = true
+	r.storageActivityRegistered = true
+	return nil
+}
+
+// ensureAgentChildActivityRegistered installs the one runtime-owned activity
+// that prepares child inputs for all agent workflows.
+func (r *Runtime) ensureAgentChildActivityRegistered(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.agentChildActivityRegistered {
+		return nil
+	}
+	opts := engine.ActivityOptions{
+		StartToCloseTimeout: defaultAgentChildActivityTimeout,
+		RetryPolicy:         defaultRetriedActivityPolicy(),
+	}
+	if err := r.Engine.RegisterAgentChildActivity(ctx, agentChildActivityName, opts, r.prepareAgentChildActivity); err != nil {
+		return err
+	}
+	r.agentChildActivityRegistered = true
 	return nil
 }
 
@@ -1216,6 +1160,9 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	r.mu.RUnlock()
 	if exists {
 		return fmt.Errorf("%w: toolset %q is already registered", ErrInvalidConfig, ts.Name)
+	}
+	if err := r.validateToolsetRoutes(ts); err != nil {
+		return err
 	}
 	if err := r.validateToolSpecRegistrations(toolSpecRegistration{
 		specs:  ts.Specs,
@@ -1330,6 +1277,26 @@ func validateAgentToolRegistration(ts ToolsetRegistration) error {
 				"%w: agent tool %q requires a route task queue",
 				ErrInvalidConfig,
 				spec.Name,
+			)
+		}
+	}
+	return nil
+}
+
+// validateToolsetRoutes rejects two local executors for the same global tool
+// name. A planner call names only the tool, so the runtime could not choose
+// between different registrations.
+func (r *Runtime) validateToolsetRoutes(ts ToolsetRegistration) error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, spec := range ts.Specs {
+		if registered, ok := r.toolsetNames[spec.Name]; ok && registered != ts.Name {
+			return fmt.Errorf(
+				"%w: tool %q is already executed by toolset %q and cannot also be registered by %q",
+				ErrInvalidConfig,
+				spec.Name,
+				registered,
+				ts.Name,
 			)
 		}
 	}
@@ -1568,8 +1535,26 @@ func (r *Runtime) ExecuteAgentChildWithRoute(
 	messages []*model.Message,
 	nestedRunCtx run.Context,
 ) (*RunOutput, error) {
+	return r.executeAgentChildWithRoute(wfCtx, route, agentChildRequest{
+		messages:   messages,
+		runContext: nestedRunCtx,
+	})
+}
+
+// executeAgentChildWithRoute starts one fully assembled child request. Prompt
+// versions travel with the rendered messages and are stored by the child.
+func (r *Runtime) executeAgentChildWithRoute(
+	wfCtx engine.WorkflowContext,
+	route AgentRoute,
+	request agentChildRequest,
+) (*RunOutput, error) {
+	nestedRunCtx := request.runContext
 	if route.ID == "" || route.WorkflowName == "" || route.DefaultTaskQueue == "" {
 		return nil, fmt.Errorf("child route is incomplete")
+	}
+	if nestedRunCtx.SessionID != "" && (nestedRunCtx.ParentRunID == "" ||
+		nestedRunCtx.ParentToolCallID == "" || nestedRunCtx.Tool == "") {
+		return nil, errors.New("child run context is incomplete")
 	}
 	input := RunInput{
 		AgentID:          route.ID,
@@ -1581,7 +1566,8 @@ func (r *Runtime) ExecuteAgentChildWithRoute(
 		ParentAgentID:    nestedRunCtx.ParentAgentID,
 		Tool:             nestedRunCtx.Tool,
 		ToolArgs:         nestedRunCtx.ToolArgs,
-		Messages:         messages,
+		Messages:         request.messages,
+		RenderedPrompts:  clonePromptRenderEvents(request.renderedPrompts),
 		Labels:           nestedRunCtx.Labels,
 	}
 	handle, err := wfCtx.StartChildWorkflow(wfCtx.Context(), engine.ChildWorkflowRequest{
@@ -1658,11 +1644,13 @@ func (r *Runtime) startOneShotRunWithRoute(ctx context.Context, input *RunInput,
 // startRunOn contains common start logic for both locally-registered and
 // remote-route clients.
 //
-// When requireSession is true, the run must resolve to an active session and the
-// runtime writes pending RunMeta before starting the workflow.
+// When requireSession is true, the caller must provide a stable run ID and an
+// active session. The accepted workflow writes running or canceled lifecycle
+// metadata from its first durable record after the engine accepts the start.
 //
 // When requireSession is false, the run is one-shot: SessionID must stay empty,
-// no SessionStore writes are performed, and no SessionID search attribute is set.
+// its runtime records do not belong to a session, and no SessionID search
+// attribute is set.
 func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName, defaultQueue string, requireSession bool) (engine.WorkflowHandle, error) {
 	// Close registration on first run submission so local start paths cannot race
 	// later handler mutations. Worker deployments should call Seal during startup;
@@ -1673,40 +1661,34 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	if err := validateWorkflowRunInput(input); err != nil {
 		return nil, err
 	}
-	if input.RunID == "" {
-		input.RunID = generateRunID(string(input.AgentID))
-	}
 	if requireSession {
 		if strings.TrimSpace(input.SessionID) == "" {
 			return nil, ErrMissingSessionID
 		}
-		sess, err := r.SessionStore.LoadSession(ctx, input.SessionID)
-		if err != nil {
-			return nil, err
-		}
-		if sess.Status == session.StatusEnded {
-			return nil, session.ErrSessionEnded
-		}
 	} else if strings.TrimSpace(input.SessionID) != "" {
 		return nil, ErrSessionNotAllowed
+	}
+	if input.RunID == "" {
+		if requireSession {
+			return nil, errors.New("run id is required for a sessionful workflow")
+		}
+		input.RunID = generateRunID(string(input.AgentID))
 	}
 	if err := transcript.ValidatePlannerTranscript(input.Messages); err != nil {
 		return nil, fmt.Errorf("runtime: invalid transcript: %w", err)
 	}
 	reg, _ := r.agentByID(input.AgentID)
 	runLabels := input.Labels
-	runMetadata := input.Metadata
 	effectivePolicy := input.Policy
 	if input.Continuation != nil {
 		checkpoint, err := decodeWorkflowCheckpointState(input.Continuation.Suspension)
 		if err != nil {
 			return nil, err
 		}
-		if err := validateContinuationIdentity(input, checkpoint); err != nil {
+		if err := validateContinuationAgainstCheckpoint(input, checkpoint); err != nil {
 			return nil, err
 		}
 		runLabels = checkpoint.Context.Labels
-		runMetadata = checkpoint.Context.Metadata
 		effectivePolicy = checkpoint.Policy
 	}
 	if err := validateRequiredLabels(reg, runLabels); err != nil {
@@ -1719,9 +1701,6 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		if err := r.validateLimitTerminalPlans(reg, effectivePolicy.LimitTerminalPlans); err != nil {
 			return nil, err
 		}
-	}
-	if err := validateCompletionToolWorkflowRetry(effectivePolicy, input.WorkflowOptions); err != nil {
-		return nil, err
 	}
 	req := engine.WorkflowStartRequest{
 		ID:        input.RunID,
@@ -1740,32 +1719,10 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 		}
 		req.Memo = cloneMetadata(opts.Memo)
 		req.SearchAttributes = cloneMetadata(opts.SearchAttributes)
-		// Convert API retry policy to engine retry policy.
-		rp := engine.RetryPolicy{
-			MaxAttempts:        opts.RetryPolicy.MaxAttempts,
-			InitialInterval:    opts.RetryPolicy.InitialInterval,
-			BackoffCoefficient: opts.RetryPolicy.BackoffCoefficient,
-		}
-		if !isZeroRetryPolicy(rp) {
-			req.RetryPolicy = rp
-		}
 	}
 	if requireSession {
 		if v, ok := req.SearchAttributes["SessionID"]; ok && v != input.SessionID {
 			return nil, fmt.Errorf("workflow search attribute SessionID=%v does not match session id %q", v, input.SessionID)
-		}
-		now := time.Now().UTC()
-		if err := r.SessionStore.UpsertRun(ctx, session.RunMeta{
-			AgentID:   string(input.AgentID),
-			RunID:     input.RunID,
-			SessionID: input.SessionID,
-			Status:    session.RunStatusPending,
-			StartedAt: now,
-			UpdatedAt: now,
-			Labels:    cloneLabels(runLabels),
-			Metadata:  cloneMetadata(runMetadata),
-		}); err != nil {
-			return nil, err
 		}
 	} else if req.SearchAttributes != nil {
 		if _, ok := req.SearchAttributes["SessionID"]; ok {
@@ -1776,11 +1733,6 @@ func (r *Runtime) startRunOn(ctx context.Context, input *RunInput, workflowName,
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrWorkflowStartFailed, err)
 	}
-	if r.RunEventStore != nil {
-		observed := newObservedWorkflowHandle(r, input, runLabels, handle)
-		handle = observed
-	}
-	r.storeWorkflowHandle(input.RunID, handle)
 	return handle, nil
 }
 
@@ -1814,9 +1766,9 @@ func validateRequiredLabels(reg AgentRegistration, labels map[string]string) err
 
 // CancelRun requests cancellation of the workflow identified by req.RunID.
 //
-// Cancellation must work across process restarts, so it is implemented via the
-// engine's cancel-by-ID capability rather than relying on in-process workflow
-// handles.
+// Cancellation must work across process restarts, so the engine sends the
+// request to the workflow identified by RunID. The workflow stores the reason
+// before the engine stops it.
 //
 // CancelRun is idempotent: if the workflow does not exist (already completed,
 // canceled, or never started), CancelRun returns nil.
@@ -1827,100 +1779,55 @@ func (r *Runtime) CancelRun(ctx context.Context, req CancelRequest) error {
 	if req.Reason == "" {
 		return errors.New("cancel reason is required")
 	}
-	canceler, ok := r.Engine.(engine.Canceler)
-	if !ok || canceler == nil {
-		return fmt.Errorf("engine does not support cancel-by-id")
+	requester, ok := r.Engine.(engine.CancellationRequester)
+	if !ok || requester == nil {
+		return errors.New("engine does not support durable cancellation")
 	}
-	previous, wrote, err := r.recordRunCancellation(ctx, req)
-	if err != nil {
-		return fmt.Errorf("record cancellation: %w", err)
+	err := requester.RequestCancellation(ctx, engine.CancellationRequest{
+		RunID:  req.RunID,
+		Reason: req.Reason,
+	})
+	if err == nil {
+		return nil
 	}
-	if err := canceler.CancelByID(ctx, req.RunID); err != nil {
-		if wrote {
-			if rollbackErr := r.rollbackRunCancellation(ctx, previous, req); rollbackErr != nil {
-				return errors.Join(err, fmt.Errorf("rollback cancellation provenance: %w", rollbackErr))
-			}
-		}
-		if errors.Is(err, engine.ErrWorkflowNotFound) {
+	var conflict *engine.CancellationConflictError
+	if errors.As(err, &conflict) {
+		return &CancellationReasonConflictError{RunID: req.RunID, Reason: req.Reason}
+	}
+	if errors.Is(err, engine.ErrWorkflowNotFound) || errors.Is(err, engine.ErrWorkflowCompleted) {
+		// A closed engine history cannot accept another command. The durable run
+		// state distinguishes an already settled run from an active run whose
+		// workflow disappeared unexpectedly.
+		meta, loadErr := r.Store.LoadRun(ctx, req.RunID)
+		if errors.Is(loadErr, session.ErrRunNotFound) {
 			return nil
 		}
-		return err
+		if loadErr != nil {
+			return loadErr
+		}
+		if !session.IsTerminalRunStatus(meta.Status) {
+			return fmt.Errorf("runtime: active run %q has no engine workflow: %w", req.RunID, err)
+		}
+		if meta.CancellationReason != "" && meta.CancellationReason != req.Reason {
+			return &CancellationReasonConflictError{RunID: req.RunID, Reason: req.Reason}
+		}
+		return nil
 	}
-	return nil
-}
-
-// isTerminalRunStatus reports whether the run lifecycle is permanently closed.
-func isTerminalRunStatus(status engine.RunStatus) bool {
-	switch status {
-	case engine.RunStatusCompleted, engine.RunStatusTimedOut, engine.RunStatusFailed, engine.RunStatusCanceled:
-		return true
-	case engine.RunStatusPending, engine.RunStatusRunning, engine.RunStatusPaused:
-		return false
-	}
-	return false
+	return err
 }
 
 // ListRunEvents returns a forward page of canonical run events for the given run.
 func (r *Runtime) ListRunEvents(ctx context.Context, runID, cursor string, limit int) (runlog.Page, error) {
-	page, err := r.RunEventStore.List(ctx, runID, cursor, limit)
-	if err != nil {
-		return runlog.Page{}, err
-	}
-	if !runEventPageNeedsTerminalRepair(page) {
-		return page, nil
-	}
-	if err := r.repairTerminalRunCompletion(ctx, runID); err != nil {
-		return runlog.Page{}, fmt.Errorf("repair terminal run %s before listing events: %w", runID, err)
-	}
-	repaired, err := r.RunEventStore.List(ctx, runID, cursor, limit)
-	if err != nil {
-		return runlog.Page{}, err
-	}
-	if !repairedTailNeedsCompletionDelta(page, repaired) {
-		return repaired, nil
-	}
-	delta, err := r.RunEventStore.List(ctx, runID, page.Events[len(page.Events)-1].ID, 1)
-	if err != nil {
-		return runlog.Page{}, err
-	}
-	if len(delta.Events) == 0 || !isTerminalRunEventType(delta.Events[0].Type) {
-		return repaired, nil
-	}
-	events := append([]*runlog.Event(nil), page.Events...)
-	events = append(events, delta.Events[0])
-	return runlog.Page{
-		Events:     events,
-		NextCursor: delta.NextCursor,
-	}, nil
+	return r.Store.ListRunRecords(ctx, runID, cursor, limit)
 }
 
 // GetRunSnapshot derives a compact snapshot of the run state by replaying the
 // canonical run log.
 func (r *Runtime) GetRunSnapshot(ctx context.Context, runID string) (*run.Snapshot, error) {
-	snapshot, err := r.loadRunSnapshot(ctx, runID)
-	if err != nil {
-		if errors.Is(err, run.ErrNotFound) {
-			if repairErr := r.repairTerminalRunCompletion(ctx, runID); repairErr != nil {
-				return nil, fmt.Errorf("repair terminal run %s before loading snapshot: %w", runID, repairErr)
-			}
-			return r.loadRunSnapshot(ctx, runID)
-		}
-		return nil, err
-	}
-	if snapshot.Status == run.StatusCompleted ||
-		snapshot.Status == run.StatusFailed ||
-		snapshot.Status == run.StatusCanceled ||
-		snapshot.Status == run.StatusSuspended {
-		return snapshot, nil
-	}
-	if err := r.repairTerminalRunCompletion(ctx, runID); err != nil {
-		return nil, fmt.Errorf("repair terminal run %s before loading snapshot: %w", runID, err)
-	}
 	return r.loadRunSnapshot(ctx, runID)
 }
 
-// loadRunSnapshot replays the canonical run log without attempting terminal
-// repair. Callers that serve external reads should repair first.
+// loadRunSnapshot replays the canonical run log without changing stored state.
 func (r *Runtime) loadRunSnapshot(ctx context.Context, runID string) (*run.Snapshot, error) {
 	const pageSize = 512
 
@@ -1929,7 +1836,7 @@ func (r *Runtime) loadRunSnapshot(ctx context.Context, runID string) (*run.Snaps
 		events []*runlog.Event
 	)
 	for {
-		page, err := r.RunEventStore.List(ctx, runID, cursor, pageSize)
+		page, err := r.Store.ListRunRecords(ctx, runID, cursor, pageSize)
 		if err != nil {
 			return nil, err
 		}
@@ -1940,31 +1847,6 @@ func (r *Runtime) loadRunSnapshot(ctx context.Context, runID string) (*run.Snaps
 		cursor = page.NextCursor
 	}
 	return newRunSnapshot(events)
-}
-
-// runEventPageNeedsTerminalRepair reports whether a caller is currently reading
-// the durable tail of the run log without a canonical terminal event.
-func runEventPageNeedsTerminalRepair(page runlog.Page) bool {
-	if page.NextCursor != "" {
-		return false
-	}
-	if len(page.Events) == 0 {
-		return true
-	}
-	return !isTerminalRunEventType(page.Events[len(page.Events)-1].Type)
-}
-
-// repairedTailNeedsCompletionDelta reports whether repair appended a terminal
-// event behind an originally full tail page, so callers need that single new
-// event stitched into the same response to observe convergence immediately.
-func repairedTailNeedsCompletionDelta(original, repaired runlog.Page) bool {
-	if len(original.Events) == 0 || len(repaired.Events) == 0 {
-		return false
-	}
-	if repaired.NextCursor == "" {
-		return false
-	}
-	return !isTerminalRunEventType(repaired.Events[len(repaired.Events)-1].Type)
 }
 
 // isTerminalRunEventType reports the two durable events that permanently end
@@ -1978,6 +1860,12 @@ func isTerminalRunEventType(eventType runlog.Type) bool {
 // Caller must hold r.mu.
 func (r *Runtime) addToolsetLocked(ts ToolsetRegistration) {
 	r.toolsets[ts.Name] = ts
+	if r.toolsetNames == nil {
+		r.toolsetNames = make(map[tools.Ident]string)
+	}
+	for _, spec := range ts.Specs {
+		r.toolsetNames[spec.Name] = ts.Name
+	}
 	r.addToolSpecsLocked(ts.Specs, ts.ToolMetadataLookup)
 	if len(ts.CallHints) > 0 {
 		rthints.RegisterCallHints(ts.CallHints)
@@ -2011,6 +1899,19 @@ func (r *Runtime) toolSpec(name tools.Ident) (tools.ToolSpec, bool) {
 	spec, ok := r.toolSpecs[name]
 	r.mu.RUnlock()
 	return spec, ok
+}
+
+// toolsetForTool returns the executable registration that owns name in this
+// runtime.
+func (r *Runtime) toolsetForTool(name tools.Ident) (string, ToolsetRegistration, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	toolsetName, ok := r.toolsetNames[name]
+	if !ok {
+		return "", ToolsetRegistration{}, false
+	}
+	toolset, ok := r.toolsets[toolsetName]
+	return toolsetName, toolset, ok
 }
 
 func (r *Runtime) policyMetadata(name tools.Ident) (policy.ToolMetadata, bool) {
@@ -2167,24 +2068,4 @@ func validateMaxRecoveryTurns(value int) error {
 		return fmt.Errorf("%w: max recovery turns cannot be negative", ErrInvalidConfig)
 	}
 	return nil
-}
-
-func (r *Runtime) storeWorkflowHandle(runID string, handle engine.WorkflowHandle) {
-	r.handleMu.Lock()
-	if r.runHandles == nil {
-		r.runHandles = make(map[string]engine.WorkflowHandle)
-	}
-	if handle == nil {
-		delete(r.runHandles, runID)
-	} else {
-		r.runHandles[runID] = handle
-	}
-	r.handleMu.Unlock()
-}
-
-func (r *Runtime) workflowHandle(runID string) (engine.WorkflowHandle, bool) {
-	r.handleMu.RLock()
-	h, ok := r.runHandles[runID]
-	r.handleMu.RUnlock()
-	return h, ok
 }

@@ -52,6 +52,12 @@ func cloneModelSchemaAttribute(att *goaexpr.AttributeExpr) *goaexpr.AttributeExp
 //   - ensures object fields carry json:name tags matching the model-facing
 //     field names.
 func normalizeModelJSONTransportAttrRecursive(att *goaexpr.AttributeExpr) {
+	normalizeModelJSONTransportAttr(att, make(map[goaexpr.UserType]struct{}))
+}
+
+// normalizeModelJSONTransportAttr visits every distinct named type once so a
+// recursive type can point back to itself without starting the walk again.
+func normalizeModelJSONTransportAttr(att *goaexpr.AttributeExpr, seen map[goaexpr.UserType]struct{}) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return
 	}
@@ -60,7 +66,12 @@ func normalizeModelJSONTransportAttrRecursive(att *goaexpr.AttributeExpr) {
 
 	switch dt := att.Type.(type) {
 	case goaexpr.UserType:
-		normalizeModelJSONTransportAttrRecursive(dt.Attribute())
+		origin := dt.Origin()
+		if _, ok := seen[origin]; ok {
+			return
+		}
+		seen[origin] = struct{}{}
+		normalizeModelJSONTransportAttr(dt.Attribute(), seen)
 	case *goaexpr.Object:
 		for _, nat := range *dt {
 			if nat == nil || nat.Attribute == nil {
@@ -80,19 +91,19 @@ func normalizeModelJSONTransportAttrRecursive(att *goaexpr.AttributeExpr) {
 			} else {
 				nat.Attribute.Meta["struct:tag:json:name"] = []string{modelJSONName(nat.Name)}
 			}
-			normalizeModelJSONTransportAttrRecursive(nat.Attribute)
+			normalizeModelJSONTransportAttr(nat.Attribute, seen)
 		}
 	case *goaexpr.Array:
-		normalizeModelJSONTransportAttrRecursive(dt.ElemType)
+		normalizeModelJSONTransportAttr(dt.ElemType, seen)
 	case *goaexpr.Map:
-		normalizeModelJSONTransportAttrRecursive(dt.KeyType)
-		normalizeModelJSONTransportAttrRecursive(dt.ElemType)
+		normalizeModelJSONTransportAttr(dt.KeyType, seen)
+		normalizeModelJSONTransportAttr(dt.ElemType, seen)
 	case *goaexpr.Union:
 		for _, nat := range dt.Values {
 			if nat == nil {
 				continue
 			}
-			normalizeModelJSONTransportAttrRecursive(nat.Attribute)
+			normalizeModelJSONTransportAttr(nat.Attribute, seen)
 		}
 	}
 }
@@ -100,6 +111,12 @@ func normalizeModelJSONTransportAttrRecursive(att *goaexpr.AttributeExpr) {
 // normalizeModelSchemaAttrRecursive rewrites a cloned attribute graph so Goa's
 // OpenAPI schema generator naturally emits the model JSON contract.
 func normalizeModelSchemaAttrRecursive(att *goaexpr.AttributeExpr) {
+	normalizeModelSchemaAttr(att, make(map[goaexpr.UserType]struct{}))
+}
+
+// normalizeModelSchemaAttr visits every distinct named type once so recursive
+// schemas keep their cycle while every reachable field is normalized.
+func normalizeModelSchemaAttr(att *goaexpr.AttributeExpr, seen map[goaexpr.UserType]struct{}) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return
 	}
@@ -114,20 +131,25 @@ func normalizeModelSchemaAttrRecursive(att *goaexpr.AttributeExpr) {
 
 	switch dt := att.Type.(type) {
 	case goaexpr.UserType:
-		normalizeModelSchemaAttrRecursive(dt.Attribute())
+		origin := dt.Origin()
+		if _, ok := seen[origin]; ok {
+			return
+		}
+		seen[origin] = struct{}{}
+		normalizeModelSchemaAttr(dt.Attribute(), seen)
 	case *goaexpr.Object:
-		normalizeModelSchemaObject(att, dt)
+		normalizeModelSchemaObject(att, dt, seen)
 	case *goaexpr.Array:
-		normalizeModelSchemaAttrRecursive(dt.ElemType)
+		normalizeModelSchemaAttr(dt.ElemType, seen)
 	case *goaexpr.Map:
-		normalizeModelSchemaAttrRecursive(dt.KeyType)
-		normalizeModelSchemaAttrRecursive(dt.ElemType)
+		normalizeModelSchemaAttr(dt.KeyType, seen)
+		normalizeModelSchemaAttr(dt.ElemType, seen)
 	case *goaexpr.Union:
 		for _, nat := range dt.Values {
 			if nat == nil {
 				continue
 			}
-			normalizeModelSchemaAttrRecursive(nat.Attribute)
+			normalizeModelSchemaAttr(nat.Attribute, seen)
 		}
 	}
 }
@@ -158,7 +180,7 @@ func normalizeModelSchemaUserExamples(att *goaexpr.AttributeExpr) {
 
 // normalizeModelSchemaObject projects object field names to model JSON names
 // and removes fields that are hidden from the model contract.
-func normalizeModelSchemaObject(att *goaexpr.AttributeExpr, obj *goaexpr.Object) {
+func normalizeModelSchemaObject(att *goaexpr.AttributeExpr, obj *goaexpr.Object, typeSeen map[goaexpr.UserType]struct{}) {
 	var requiredList []string
 	if att.Validation != nil {
 		requiredList = att.Validation.Required
@@ -179,7 +201,7 @@ func normalizeModelSchemaObject(att *goaexpr.AttributeExpr, obj *goaexpr.Object)
 			panic("agent/codegen: model JSON field " + name + " collides between " + previous + " and " + originalName)
 		}
 		seen[name] = originalName
-		normalizeModelSchemaAttrRecursive(nat.Attribute)
+		normalizeModelSchemaAttr(nat.Attribute, typeSeen)
 		nat.Name = name
 		projected = append(projected, nat)
 		required[originalName] = name

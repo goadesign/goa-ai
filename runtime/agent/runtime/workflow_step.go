@@ -192,7 +192,7 @@ func (r *Runtime) normalizeStep(result *PlanResult) (stepProgram, error) {
 
 // normalizePlanResultContract validates the complete runtime-owned structure of
 // one planner result before transcript persistence or step selection.
-func (r *Runtime) normalizePlanResultContract(result *PlanResult) (stepProgram, error) {
+func (r *Runtime) normalizePlanResultContract(result *PlanResult, parentTool tools.Ident) (stepProgram, error) {
 	program, err := r.normalizeStep(result)
 	if err != nil {
 		return stepProgram{}, err
@@ -201,7 +201,7 @@ func (r *Runtime) normalizePlanResultContract(result *PlanResult) (stepProgram, 
 		return stepProgram{}, planner.NewOutputContractError(err)
 	}
 	plannerResult := plannerResultValidationProjection(result)
-	if err := validatePlannerResultPayloads(plannerResult); err != nil {
+	if err := r.validatePlannerResultPayloads(plannerResult, parentTool); err != nil {
 		return stepProgram{}, planner.NewOutputContractError(err)
 	}
 	return program, nil
@@ -232,8 +232,8 @@ func plannerResultValidationProjection(result *PlanResult) *planner.PlanResult {
 
 // normalizePlanResultForExecution validates generated tool payload contracts
 // before planner events are published or the workflow accepts tool work.
-func (r *Runtime) normalizePlanResultForExecution(ctx context.Context, result *PlanResult) (stepProgram, error) {
-	program, err := r.normalizePlanResultContract(result)
+func (r *Runtime) normalizePlanResultForExecution(ctx context.Context, result *PlanResult, parentTool tools.Ident) (stepProgram, error) {
+	program, err := r.normalizePlanResultContract(result, parentTool)
 	if err != nil {
 		return stepProgram{}, err
 	}
@@ -713,13 +713,8 @@ func (l *workflowLoop) prepareRecoveryRecords(batch *stepBatch) {
 		}
 		record.scheduleQueue = l.toolOpts.Queue
 		if record.scheduleQueue == "" {
-			if spec, ok := l.r.toolSpec(record.call.Name); ok {
-				l.r.mu.RLock()
-				toolset, exists := l.r.toolsets[spec.Toolset]
-				l.r.mu.RUnlock()
-				if exists {
-					record.scheduleQueue = toolset.TaskQueue
-				}
+			if _, toolset, ok := l.r.toolsetForTool(record.call.Name); ok {
+				record.scheduleQueue = toolset.TaskQueue
 			}
 		}
 		record.expectedChildren = batch.program.result.ExpectedChildren

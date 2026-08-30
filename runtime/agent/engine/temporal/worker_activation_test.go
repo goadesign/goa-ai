@@ -90,12 +90,20 @@ func TestSealRegistrationTimesOutWhenActivationNeverSucceeds(t *testing.T) {
 	assert.GreaterOrEqual(t, fake.startCallCount(), 1)
 }
 
-func TestSealRegistrationCanRetryAfterActivationTimeout(t *testing.T) {
+func TestSealRegistrationCanRetryAfterActivationCancellation(t *testing.T) {
 	t.Parallel()
 
+	startResults := make(chan error, 1)
+	releaseStart := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() {
+			close(releaseStart)
+		})
+	}
+	defer release()
 	fake := &fakeWorker{startErrors: []error{errors.New("frontend not healthy"), nil}}
 	eng := newActivationTestEngine(t, fake)
-	eng.activationRetryInterval = 50 * time.Millisecond
 	err := eng.RegisterPlannerActivity(context.Background(), "planner.activity", engine.ActivityOptions{
 		Queue:               "queue.alpha",
 		StartToCloseTimeout: time.Minute,
@@ -103,16 +111,38 @@ func TestSealRegistrationCanRetryAfterActivationTimeout(t *testing.T) {
 		return &api.PlanActivityOutput{}, nil
 	})
 	require.NoError(t, err)
+	eng.workers["queue.alpha"].worker = &controlledStartWorker{
+		Worker:  fake,
+		results: startResults,
+		release: releaseStart,
+	}
 
-	firstCtx, firstCancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	firstCtx, firstCancel := context.WithCancel(context.Background())
 	defer firstCancel()
-	err = eng.SealRegistration(firstCtx)
+	firstResult := make(chan error, 1)
+	go func() {
+		firstResult <- eng.SealRegistration(firstCtx)
+	}()
+
+	// The wrapper waits after the fake worker returns its first error. Cancel
+	// here so the retry loop receives that error only after cancellation is set.
+	select {
+	case startErr := <-startResults:
+		require.EqualError(t, startErr, "frontend not healthy")
+	case <-time.After(5 * time.Second):
+		t.Fatal("first worker start did not return")
+	}
+	firstCancel()
+	release()
+	select {
+	case err = <-firstResult:
+	case <-time.After(5 * time.Second):
+		t.Fatal("registration did not return after activation cancellation")
+	}
 	require.ErrorContains(t, err, `temporal worker "queue.alpha" activation did not complete`)
 	require.False(t, eng.workers["queue.alpha"].isStarted())
 
-	secondCtx, secondCancel := context.WithTimeout(context.Background(), time.Second)
-	defer secondCancel()
-	require.NoError(t, eng.SealRegistration(secondCtx))
+	require.NoError(t, eng.SealRegistration(context.Background()))
 	require.True(t, eng.workers["queue.alpha"].isStarted())
 	assert.Equal(t, 2, fake.startCallCount())
 }
@@ -187,15 +217,25 @@ func newActivationTestEngine(t *testing.T, fake *fakeWorker) *Engine {
 	return eng
 }
 
-type fakeWorker struct {
-	mu sync.Mutex
+type (
+	fakeWorker struct {
+		mu sync.Mutex
 
-	startErrors []error
-	startCalls  int
-	stopCalls   int
+		startErrors []error
+		startCalls  int
+		stopCalls   int
 
-	onFatalError func(error)
-}
+		onFatalError func(error)
+	}
+
+	// controlledStartWorker reports the wrapped worker's Start result and waits
+	// until the test allows that result to reach the activation retry loop.
+	controlledStartWorker struct {
+		worker.Worker
+		results chan<- error
+		release <-chan struct{}
+	}
+)
 
 func (w *fakeWorker) Start() error {
 	w.mu.Lock()
@@ -210,6 +250,13 @@ func (w *fakeWorker) Start() error {
 		return w.startErrors[len(w.startErrors)-1]
 	}
 	return w.startErrors[call]
+}
+
+func (w *controlledStartWorker) Start() error {
+	err := w.Worker.Start()
+	w.results <- err
+	<-w.release
+	return err
 }
 
 func (w *fakeWorker) Run(<-chan interface{}) error {

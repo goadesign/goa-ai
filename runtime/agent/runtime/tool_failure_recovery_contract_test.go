@@ -15,7 +15,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -59,15 +58,15 @@ func TestRuntimeOwnsCorrectCallRecoveryContext(t *testing.T) {
 					ExampleJSON: maliciousExample,
 				},
 			}
-			spec := newAnyJSONSpec(toolName, toolsetName)
+			spec := newAnyJSONSpec(toolName)
 			spec.Payload.ExampleJSON = registeredExample
 			recorder := &recordingHooks{}
 			rt := &Runtime{
-				Bus:           recorder,
-				logger:        telemetry.NoopLogger{},
-				metrics:       telemetry.NoopMetrics{},
-				tracer:        telemetry.NoopTracer{},
-				RunEventStore: runloginmem.New(),
+				Bus:     recorder,
+				logger:  telemetry.NoopLogger{},
+				metrics: telemetry.NoopMetrics{},
+				tracer:  telemetry.NoopTracer{},
+				Store:   newTestStore(),
 			}
 			if test.activity {
 				rt.toolsets = map[string]ToolsetRegistration{toolsetName: {}}
@@ -81,7 +80,7 @@ func TestRuntimeOwnsCorrectCallRecoveryContext(t *testing.T) {
 					},
 				}
 			}
-			seedTestToolSpecs(rt, spec)
+			seedTestToolset(rt, toolsetName, spec)
 
 			wfCtx := &testWorkflowContext{
 				ctx:         context.Background(),
@@ -181,7 +180,7 @@ func TestToolActivityCarriesUncanonicalizedCorrectionFailure(t *testing.T) {
 			ExampleJSON: example,
 		},
 	}
-	spec := newAnyJSONSpec(toolName, toolsetName)
+	spec := newAnyJSONSpec(toolName)
 	rt := &Runtime{
 		logger: telemetry.NoopLogger{},
 		toolsets: map[string]ToolsetRegistration{
@@ -195,14 +194,15 @@ func TestToolActivityCarriesUncanonicalizedCorrectionFailure(t *testing.T) {
 			},
 		},
 	}
-	seedTestToolSpecs(rt, spec)
+	seedTestToolset(rt, toolsetName, spec)
 
 	out, err := rt.ExecuteToolActivity(context.Background(), &ToolInput{
-		RunID:      "run-1",
-		AgentID:    "svc.agent",
-		ToolName:   toolName,
-		ToolCallID: "tool-call-1",
-		Payload:    rawjson.Message(`{"query":"execution"}`),
+		RunID:       "run-1",
+		AgentID:     "svc.agent",
+		ToolsetName: toolsetName,
+		ToolName:    toolName,
+		ToolCallID:  "tool-call-1",
+		Payload:     rawjson.Message(`{"query":"execution"}`),
 	})
 
 	require.NoError(t, err)
@@ -223,7 +223,7 @@ func TestToolActivityCarriesUncanonicalizedCorrectionFailure(t *testing.T) {
 // recovery action, or field issues.
 func TestExecutorFailureIngressRejectsOwnedContractViolations(t *testing.T) {
 	const toolName = tools.Ident("svc.tools.example")
-	spec := newAnyJSONSpec(toolName, "svc.tools")
+	spec := newAnyJSONSpec(toolName)
 	rt := &Runtime{
 		toolSpecs: map[tools.Ident]tools.ToolSpec{toolName: spec},
 	}
@@ -319,7 +319,7 @@ func TestWorkflowCorrectionUsesModelTranscriptPayload(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			spec := newAnyJSONSpec(test.call.Name, "svc.tools")
+			spec := newAnyJSONSpec(test.call.Name)
 			spec.Payload.ExampleJSON = rawjson.Message(`{"query":"example"}`)
 			result := &planner.ToolResult{
 				Name:       test.call.Name,
@@ -352,14 +352,14 @@ func TestAutomaticContinuationCannotRequestCorrectCall(t *testing.T) {
 		toolsetName   = "svc.tools"
 		privateCursor = "private-cursor-value"
 	)
-	spec := newAnyJSONSpec(toolName, toolsetName)
+	spec := newAnyJSONSpec(toolName)
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		Bus:           recorder,
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		Bus:     recorder,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 		toolsets: map[string]ToolsetRegistration{
 			toolsetName: {
 				Execute: wrapExecute(func(context.Context, *ToolCall) (*planner.ToolResult, error) {
@@ -376,7 +376,7 @@ func TestAutomaticContinuationCannotRequestCorrectCall(t *testing.T) {
 			},
 		},
 	}
-	seedTestToolSpecs(rt, spec)
+	seedTestToolset(rt, toolsetName, spec)
 	runCtx := run.Context{
 		RunID:     "run-1",
 		SessionID: "session-1",

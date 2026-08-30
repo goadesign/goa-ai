@@ -105,7 +105,7 @@ func newCustomLookupHouseholdToolset(t *testing.T, resultHouseholdID *string) To
 			*resultHouseholdID = *p.HouseholdID
 			return &planner.ToolResult{Name: call.Name, Result: map[string]any{"ok": true}}, nil
 		}),
-		Specs: []tools.ToolSpec{newAnyJSONSpec(tools.Ident("helpers.lookup_household"), "helpers")},
+		Specs: []tools.ToolSpec{newAnyJSONSpec(tools.Ident("helpers.lookup_household"))},
 	}
 }
 
@@ -115,7 +115,7 @@ func newCustomLookupHouseholdToolset(t *testing.T, resultHouseholdID *string) To
 // ToolCall.Labels, see activities.go's ExecuteToolActivity) ends
 // up as a validated, typed field on a custom executor's decoded payload.
 func TestCustomExecutorLabelInjection_TypedFieldPopulated(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	var gotHouseholdID string
 	ts := newCustomLookupHouseholdToolset(t, &gotHouseholdID)
 	rt.mu.Lock()
@@ -141,7 +141,7 @@ func TestCustomExecutorLabelInjection_TypedFieldPopulated(t *testing.T) {
 // the run-start enforcement gate, which this test bypasses by calling
 // ExecuteToolActivity directly.
 func TestCustomExecutorLabelInjection_MissingLabelProducesPreciseToolError(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	var gotHouseholdID string
 	ts := newCustomLookupHouseholdToolset(t, &gotHouseholdID)
 	rt.mu.Lock()
@@ -169,7 +169,7 @@ func TestCustomExecutorLabelInjection_MissingLabelProducesPreciseToolError(t *te
 // codegen/agent/inject.go:fieldValidationCode) with a precise error instead
 // of silently accepting a malformed value.
 func TestCustomExecutorLabelInjection_MalformedLabelProducesPreciseToolError(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	var gotHouseholdID string
 	ts := newCustomLookupHouseholdToolset(t, &gotHouseholdID)
 	rt.mu.Lock()

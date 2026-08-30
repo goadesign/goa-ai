@@ -443,6 +443,64 @@ func TestClientFinalizeRetainsCanceledContext(t *testing.T) {
 	require.Equal(t, 1, raw.closeCalls)
 }
 
+func TestClientCancellationLeavesStreamLifecycleToCaller(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	raw := &cancellationBlockedStreamFixture{
+		ctx:            ctx,
+		recvStarted:    make(chan struct{}),
+		cleanupStarted: make(chan struct{}),
+		cleanupRelease: make(chan struct{}),
+		closeCalled:    make(chan struct{}),
+	}
+	events := []string{}
+	call := &observerTestFinalizingCall{observerTestCall: &observerTestCall{
+		name:   "runtime",
+		events: &events,
+	}}
+	client, err := newValidatedClient(
+		&observerTestProvider{stream: raw},
+		nil,
+		[]ProviderCallObserver{
+			&observerTestPreparer{name: "runtime", events: &events, call: call},
+		},
+	)
+	require.NoError(t, err)
+	stream, err := client.Stream(ctx, &Request{})
+	require.NoError(t, err)
+	recvResult := make(chan error, 1)
+	go func() {
+		_, recvErr := stream.Recv()
+		recvResult <- recvErr
+	}()
+	<-raw.recvStarted
+
+	cancel()
+	<-raw.cleanupStarted
+	close(raw.cleanupRelease)
+	recvErr := <-recvResult
+	require.ErrorIs(t, recvErr, context.Canceled)
+	select {
+	case <-raw.closeCalled:
+		t.Fatal("context cancellation closed the provider stream")
+	default:
+	}
+
+	operationErr := stream.Finalize(recvErr)
+
+	require.ErrorIs(t, operationErr, context.Canceled)
+	require.Equal(t, 1, raw.closeCalls)
+	require.Equal(t, 1, call.finishCalls)
+	require.Equal(t, 1, call.finalizeCalls)
+	require.True(t, call.outcome.Completed)
+	require.False(t, call.outcome.Incomplete)
+	require.Len(t, call.outcome.ProviderReceives, 1)
+	require.True(t, call.outcome.ProviderReceives[0].Called)
+	require.ErrorIs(t, call.outcome.ProviderReceives[0].Err, context.Canceled)
+	require.True(t, call.outcome.ProviderClose.Called)
+	require.True(t, call.outcome.Context.Called)
+	require.ErrorIs(t, call.outcome.Context.Err, context.Canceled)
+}
+
 func TestClientFinalizeResamplesCancellationDuringLifecycle(t *testing.T) {
 	tests := []struct {
 		name      string

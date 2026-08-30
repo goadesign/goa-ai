@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
+	workflowpb "go.temporal.io/api/workflow/v1"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
@@ -183,14 +185,16 @@ func TestStartWorkflowPropagatesMemoAndSearchAttributes(t *testing.T) {
 		},
 	}
 
-	_, err = eng.StartWorkflow(context.Background(), req)
+	handle, err := eng.StartWorkflow(context.Background(), req)
 	require.NoError(t, err)
 
 	startReq := service.startRequest()
 	require.NotNil(t, startReq)
 	require.Equal(t, req.ID, startReq.WorkflowId)
 	require.Equal(t, eng.defaultQueue, startReq.TaskQueue.GetName())
+	require.Equal(t, enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, startReq.WorkflowIdReusePolicy)
 	require.Equal(t, "memo-value", decodePayload[string](t, startReq.GetMemo().GetFields()["memo_key"]))
+	require.Len(t, decodePayload[[]byte](t, startReq.GetMemo().GetFields()[workflowStartRecipeMemoKey]), 32)
 
 	fields := startReq.GetSearchAttributes().GetIndexedFields()
 	requireSearchAttribute(t, fields, "SessionID", enumspb.INDEXED_VALUE_TYPE_KEYWORD, "session-123")
@@ -199,6 +203,11 @@ func TestStartWorkflowPropagatesMemoAndSearchAttributes(t *testing.T) {
 	requireSearchAttribute(t, fields, "Score", enumspb.INDEXED_VALUE_TYPE_DOUBLE, 12.5)
 	requireSearchAttribute(t, fields, "OccurredAt", enumspb.INDEXED_VALUE_TYPE_DATETIME, occurredAt)
 	requireSearchAttribute(t, fields, "Labels", enumspb.INDEXED_VALUE_TYPE_KEYWORD_LIST, []string{"alpha", "beta"})
+
+	require.NoError(t, handle.Cancel(context.Background()))
+	cancelReq := service.cancelRequest()
+	require.Equal(t, req.ID, cancelReq.GetWorkflowExecution().GetWorkflowId())
+	require.Empty(t, cancelReq.GetWorkflowExecution().GetRunId())
 }
 
 func TestStartWorkflowRejectsUnsupportedSearchAttributeType(t *testing.T) {
@@ -222,6 +231,66 @@ func TestStartWorkflowRejectsUnsupportedSearchAttributeType(t *testing.T) {
 		},
 	})
 	require.ErrorContains(t, err, `search attribute "Unsupported" has unsupported type []int`)
+}
+
+func TestStartWorkflowRejectsReservedRecipeMemoKey(t *testing.T) {
+	eng := newTestEngine(t)
+	require.NoError(t, eng.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{
+		Name: "agent.workflow",
+		Handler: func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
+			return &api.RunOutput{}, nil
+		},
+	}))
+
+	_, err := eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
+		ID: "run", Workflow: "agent.workflow",
+		Memo: map[string]any{workflowStartRecipeMemoKey: "caller"},
+	})
+	require.ErrorContains(t, err, "reserved")
+}
+
+func TestStartWorkflowValidatesDuplicateRecipe(t *testing.T) {
+	t.Parallel()
+
+	service := &testWorkflowService{}
+	eng, err := NewWorker(Options{
+		ClientOptions: &client.Options{},
+		WorkerOptions: WorkerOptions{
+			TaskQueue: "default.queue",
+		},
+	})
+	require.NoError(t, err)
+	eng.client.Close()
+	eng.client = newWorkflowServiceClient(t, service)
+	t.Cleanup(func() {
+		require.NoError(t, eng.Close())
+	})
+	err = eng.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{
+		Name: "agent.workflow",
+		Handler: func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
+			return &api.RunOutput{}, nil
+		},
+	})
+	require.NoError(t, err)
+	request := engine.WorkflowStartRequest{
+		ID: "run-123", Workflow: "agent.workflow",
+		Input: &api.RunInput{RunID: "run-123"},
+		Memo:  map[string]any{"kind": []byte("binary")},
+	}
+
+	_, err = eng.StartWorkflow(t.Context(), request)
+	require.NoError(t, err)
+	_, err = eng.StartWorkflow(t.Context(), request)
+	require.NoError(t, err)
+
+	changed := request
+	changed.Memo = map[string]any{"kind": "binary"}
+	_, err = eng.StartWorkflow(t.Context(), changed)
+	require.ErrorIs(t, err, engine.ErrWorkflowStartConflict)
+
+	service.removeRecipeMemo()
+	_, err = eng.StartWorkflow(t.Context(), request)
+	require.ErrorIs(t, err, engine.ErrWorkflowStartConflict)
 }
 
 func TestNewClientRejectsRegistration(t *testing.T) {
@@ -304,8 +373,19 @@ func requireSearchAttribute[T any](t *testing.T, fields map[string]*commonpb.Pay
 type testWorkflowService struct {
 	workflowservice.UnimplementedWorkflowServiceServer
 
-	mu       sync.Mutex
-	startReq *workflowservice.StartWorkflowExecutionRequest
+	mu        sync.Mutex
+	startReq  *workflowservice.StartWorkflowExecutionRequest
+	cancelReq *workflowservice.RequestCancelWorkflowExecutionRequest
+}
+
+func (s *testWorkflowService) RequestCancelWorkflowExecution(
+	_ context.Context,
+	req *workflowservice.RequestCancelWorkflowExecutionRequest,
+) (*workflowservice.RequestCancelWorkflowExecutionResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cancelReq = req
+	return &workflowservice.RequestCancelWorkflowExecutionResponse{}, nil
 }
 
 func (s *testWorkflowService) GetSystemInfo(context.Context, *workflowservice.GetSystemInfoRequest) (*workflowservice.GetSystemInfoResponse, error) {
@@ -318,9 +398,31 @@ func (s *testWorkflowService) GetSystemInfo(context.Context, *workflowservice.Ge
 
 func (s *testWorkflowService) StartWorkflowExecution(ctx context.Context, req *workflowservice.StartWorkflowExecutionRequest) (*workflowservice.StartWorkflowExecutionResponse, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.startReq != nil {
+		alreadyStarted := &serviceerror.WorkflowExecutionAlreadyStarted{
+			Message:        "workflow already started",
+			StartRequestId: s.startReq.RequestId,
+			RunId:          "temporal-run-123",
+		}
+		return nil, alreadyStarted.Status().Err()
+	}
 	s.startReq = req
-	s.mu.Unlock()
 	return &workflowservice.StartWorkflowExecutionResponse{RunId: "temporal-run-123"}, nil
+}
+
+func (s *testWorkflowService) DescribeWorkflowExecution(context.Context, *workflowservice.DescribeWorkflowExecutionRequest) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return &workflowservice.DescribeWorkflowExecutionResponse{
+		WorkflowExecutionInfo: &workflowpb.WorkflowExecutionInfo{
+			Execution: &commonpb.WorkflowExecution{
+				WorkflowId: s.startReq.WorkflowId,
+				RunId:      "temporal-run-123",
+			},
+			Memo: s.startReq.Memo,
+		},
+	}, nil
 }
 
 // startRequest returns the most recent workflow start request observed by the
@@ -329,4 +431,19 @@ func (s *testWorkflowService) startRequest() *workflowservice.StartWorkflowExecu
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.startReq
+}
+
+// cancelRequest returns the cancellation observed by the local gRPC server.
+func (s *testWorkflowService) cancelRequest() *workflowservice.RequestCancelWorkflowExecutionRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cancelReq
+}
+
+// removeRecipeMemo simulates a queryable workflow started before recipe
+// fingerprints were deployed.
+func (s *testWorkflowService) removeRecipeMemo() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.startReq.Memo.Fields, workflowStartRecipeMemoKey)
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -21,8 +22,8 @@ import (
 )
 
 func TestValidateContinuationRejectsSavedServerDataOutsideCurrentContract(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	canonicalizerCalled := false
 	spec.CanonicalizeServerData = func(rawjson.Message) (rawjson.Message, error) {
 		canonicalizerCalled = true
@@ -41,14 +42,88 @@ func TestValidateContinuationRejectsSavedServerDataOutsideCurrentContract(t *tes
 
 	err := runtime.ValidateContinuation(suspension)
 
-	require.ErrorContains(t, err, "validate suspended svc.lookup server data")
+	require.ErrorContains(t, err, "decode suspended tool result for svc.lookup")
+	require.ErrorContains(t, err, "invalid server data")
 	require.ErrorContains(t, err, "does not match the current contract")
 	require.True(t, canonicalizerCalled)
 }
 
+func TestValidateCheckpointToolOutputEnforcesPersistedResultContract(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		bounded bool
+		output  *planner.ToolOutput
+		wantErr string
+	}{
+		{
+			name: "failed result with result JSON",
+			output: &planner.ToolOutput{
+				Result:  rawjson.Message(`{}`),
+				Failure: testToolFailure(planner.FailureUnavailable, planner.RecoveryReplan, "unavailable"),
+			},
+			wantErr: "failure and result JSON are both set",
+		},
+		{
+			name: "failed result with server data",
+			output: &planner.ToolOutput{
+				ServerData: rawjson.Message(`[]`),
+				Failure:    testToolFailure(planner.FailureUnavailable, planner.RecoveryReplan, "unavailable"),
+			},
+			wantErr: "failure and server data are both set",
+		},
+		{
+			name: "failed result with bounds",
+			output: &planner.ToolOutput{
+				Bounds:  &agent.Bounds{Returned: 1},
+				Failure: testToolFailure(planner.FailureUnavailable, planner.RecoveryReplan, "unavailable"),
+			},
+			wantErr: "failure and bounds are both set",
+		},
+		{
+			name:    "invalid failure",
+			output:  &planner.ToolOutput{Failure: &planner.ToolFailure{}},
+			wantErr: "invalid failure",
+		},
+		{
+			name:    "bounded success without bounds",
+			bounded: true,
+			output:  &planner.ToolOutput{Result: rawjson.Message(`{}`)},
+			wantErr: "returned result without bounds",
+		},
+		{
+			name: "unbounded success with bounds",
+			output: &planner.ToolOutput{
+				Result: rawjson.Message(`{}`),
+				Bounds: &agent.Bounds{Returned: 1},
+			},
+			wantErr: "returned unexpected bounds metadata",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			runtime := New(newTestStore())
+			spec := newAnyJSONSpec("svc.lookup")
+			if test.bounded {
+				spec.Bounds = &tools.BoundsSpec{}
+			}
+			seedTestToolSpecs(runtime, spec)
+			test.output.Name = spec.Name
+			test.output.ToolCallID = "call-1"
+			test.output.Payload = rawjson.Message(`{}`)
+
+			err := runtime.validateCheckpointToolOutput(t.Context(), test.output)
+
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
 func TestValidateContinuationRejectsRemovedTool(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	delete(runtime.toolSpecs, spec.Name)
@@ -57,8 +132,8 @@ func TestValidateContinuationRejectsRemovedTool(t *testing.T) {
 }
 
 func TestValidateContinuationChecksSavedLimitTerminalPlans(t *testing.T) {
-	runtime := New()
-	lookup := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	lookup := newAnyJSONSpec("svc.lookup")
 	terminal := strictLimitTerminalSpec()
 	seedTestToolSpecs(runtime, lookup, terminal)
 	runtime.agents["svc.agent"] = AgentRegistration{
@@ -132,8 +207,8 @@ func TestValidateContinuationChecksSavedCompletionToolPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runtime := New()
-			spec := newAnyJSONSpec("svc.persist", "svc")
+			runtime := New(newTestStore())
+			spec := newAnyJSONSpec("svc.persist")
 			tt.mutateSpec(&spec)
 			seedTestToolSpecs(runtime, spec)
 			var agentSpecs []tools.ToolSpec
@@ -158,22 +233,22 @@ func TestValidateContinuationChecksSavedCompletionToolPolicy(t *testing.T) {
 }
 
 func TestValidateContinuationRejectsNoncurrentSuspensionVersion(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
-		checkpoint.Version = "goa-ai.run-suspension.v2"
+		checkpoint.Version = "goa-ai.run-suspension.v6"
 	})
-	suspension.Version = "goa-ai.run-suspension.v2"
+	suspension.Version = "goa-ai.run-suspension.v6"
 
 	require.EqualError(t, runtime.ValidateContinuation(suspension),
-		`unsupported run suspension version "goa-ai.run-suspension.v2"`)
+		`unsupported run suspension version "goa-ai.run-suspension.v6"`)
 }
 
 func TestValidateContinuationRejectsMissingRecoveryTurnMaximum(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
@@ -189,9 +264,9 @@ func TestValidateContinuationRejectsMissingRecoveryTurnMaximum(t *testing.T) {
 }
 
 func TestValidateContinuationChecksSavedCompletionPlan(t *testing.T) {
-	runtime := New()
-	completion := newAnyJSONSpec("svc.persist", "svc")
-	lookup := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	completion := newAnyJSONSpec("svc.persist")
+	lookup := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, completion, lookup)
 	runtime.agents["svc.agent"] = AgentRegistration{
 		ID:    "svc.agent",
@@ -217,8 +292,8 @@ func TestValidateContinuationChecksSavedCompletionPlan(t *testing.T) {
 }
 
 func TestValidateContinuationRejectsIncompatibleSavedResult(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	spec.Result.Codec = tools.JSONCodec[any]{
 		FromJSON: func([]byte) (any, error) {
 			return nil, errors.New("value must be a string")
@@ -238,8 +313,8 @@ func TestValidateContinuationRejectsIncompatibleSavedResult(t *testing.T) {
 }
 
 func TestValidateContinuationRejectsIncompatibleSavedPayload(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	spec.Payload.Codec = tools.JSONCodec[any]{
 		FromJSON: func([]byte) (any, error) {
 			return nil, errors.New("query must use a numeric identifier")
@@ -254,8 +329,8 @@ func TestValidateContinuationRejectsIncompatibleSavedPayload(t *testing.T) {
 }
 
 func TestValidateContinuationRejectsPublicPendingMutation(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	suspension.Pending[0].Await.Clarification.Question = "different question"
@@ -264,8 +339,8 @@ func TestValidateContinuationRejectsPublicPendingMutation(t *testing.T) {
 }
 
 func TestValidateContinuationRejectsUnknownSavedAwaitKind(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 
@@ -277,8 +352,8 @@ func TestValidateContinuationRejectsUnknownSavedAwaitKind(t *testing.T) {
 }
 
 func TestValidateContinuationRejectsUnknownSavedStepKind(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
@@ -339,8 +414,8 @@ func TestDecodeWorkflowCheckpointPreservesMetadataIntegers(t *testing.T) {
 }
 
 func TestValidateContinuationRejectsNilSavedToolValue(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
@@ -351,8 +426,8 @@ func TestValidateContinuationRejectsNilSavedToolValue(t *testing.T) {
 }
 
 func TestValidateContinuationRequiresRecoveryCatalog(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
@@ -369,8 +444,8 @@ func TestValidateContinuationRequiresRecoveryCatalog(t *testing.T) {
 }
 
 func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 
 	newCorrectCallSuspension := func(t *testing.T, version string, catalog *RecoveryCatalog) *api.RunSuspension {
@@ -387,42 +462,18 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 		return suspension
 	}
 
-	t.Run("valid version 5 serialized catalog", func(t *testing.T) {
-		suspension := newCorrectCallSuspension(
-			t,
-			legacyRunSuspensionVersion,
-			&RecoveryCatalog{Tools: []tools.Ident{spec.Name}},
-		)
-		require.NoError(t, runtime.ValidateContinuation(suspension))
-		checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
-		require.NoError(t, err)
-		state, err := runtime.restoreCheckpointState(t.Context(), checkpoint.Version, checkpoint.State)
-		require.NoError(t, err)
-		_, catalog := toolRecovery(state.PendingRecovery)
-		require.Equal(t, &RecoveryCatalog{Tools: []tools.Ident{spec.Name}}, catalog)
-	})
-
-	t.Run("invalid version 5 absent catalog", func(t *testing.T) {
-		suspension := newCorrectCallSuspension(t, legacyRunSuspensionVersion, nil)
-		require.ErrorContains(
-			t,
-			runtime.ValidateContinuation(suspension),
-			"pending recovery failures requires a recovery catalog",
-		)
-	})
-
-	t.Run("valid version 6 absent catalog", func(t *testing.T) {
+	t.Run("valid current version absent catalog", func(t *testing.T) {
 		suspension := newCorrectCallSuspension(t, api.RunSuspensionVersion, nil)
 		require.NoError(t, runtime.ValidateContinuation(suspension))
 		checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
 		require.NoError(t, err)
-		state, err := runtime.restoreCheckpointState(t.Context(), checkpoint.Version, checkpoint.State)
+		state, err := runtime.restoreCheckpointState(checkpoint.State)
 		require.NoError(t, err)
 		_, catalog := toolRecovery(state.PendingRecovery)
 		require.Equal(t, &RecoveryCatalog{Tools: []tools.Ident{spec.Name}}, catalog)
 	})
 
-	t.Run("invalid version 6 contradictory catalog", func(t *testing.T) {
+	t.Run("invalid current version contradictory catalog", func(t *testing.T) {
 		suspension := newCorrectCallSuspension(
 			t,
 			api.RunSuspensionVersion,
@@ -431,11 +482,11 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 		require.ErrorContains(
 			t,
 			runtime.ValidateContinuation(suspension),
-			"version 6 correct-call recovery cannot carry a recovery catalog",
+			"correct-call recovery cannot carry a recovery catalog",
 		)
 	})
 
-	t.Run("valid version 6 replan serialized catalog", func(t *testing.T) {
+	t.Run("valid current version replan serialized catalog", func(t *testing.T) {
 		suspension := suspensionContractFixture(t, spec.Name)
 		rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
 			checkpoint.State.PendingRecovery = []*planner.ToolOutput{
@@ -450,8 +501,8 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 }
 
 func TestLoadPlannerToolOutputsCombinesDifferentRunLogs(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	require.NoError(t, runtime.publishHookErr(t.Context(), hooks.NewToolCallScheduledEvent(
 		"run-call", "svc.agent", "session-1", spec.Name, "call-1",
@@ -460,7 +511,7 @@ func TestLoadPlannerToolOutputsCombinesDifferentRunLogs(t *testing.T) {
 	result := rawjson.Message(`{"value":"42"}`)
 	require.NoError(t, runtime.publishHookErr(t.Context(), hooks.NewToolResultReceivedEvent(
 		"run-result", "svc.agent", "session-1", "run-call", spec.Name, "call-1", "",
-		result, len(result), false, "", nil, "", nil, 0, nil, nil,
+		result, nil, "", nil, 0, nil, nil,
 	), "turn-1"))
 
 	outputs, err := runtime.loadPlannerToolOutputs(t.Context(), []*api.ToolOutputRef{{

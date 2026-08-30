@@ -181,10 +181,12 @@ func Serve(
 	registration Registration,
 	opts Options,
 ) error {
-	return serve(ctx, pulse, toolset, handler, registration, opts)
+	return serve(ctx, pulse, toolset, handler, registration, opts, waitRegistrationDelay)
 }
 
-// serve runs one provider lifecycle.
+// serve runs one provider lifecycle. wait schedules registry retries and
+// renewals; Serve supplies the real timer while focused tests control the
+// ordering without short wall-clock leases.
 func serve(
 	ctx context.Context,
 	pulse pulseclients.Client,
@@ -192,6 +194,7 @@ func serve(
 	handler Handler,
 	registration Registration,
 	opts Options,
+	wait registrationWait,
 ) error {
 	if pulse == nil {
 		return fmt.Errorf("pulse client is required")
@@ -281,7 +284,7 @@ func serve(
 		incarnationID,
 		registrationConfig,
 		logger,
-		waitRegistrationDelay,
+		wait,
 	)
 	if err != nil {
 		return err
@@ -302,7 +305,7 @@ func serve(
 			admittedToken,
 			registrationConfig,
 			logger,
-			waitRegistrationDelay,
+			wait,
 		)
 		return errors.Join(
 			fmt.Errorf(
@@ -391,7 +394,7 @@ func serve(
 			registrationState,
 			registrationConfig,
 			logger,
-			waitRegistrationDelay,
+			wait,
 		)
 		registrationResult <- registrationErr
 		cancel()
@@ -841,7 +844,7 @@ func serve(
 			leaseTokens,
 			registrationConfig,
 			logger,
-			waitRegistrationDelay,
+			wait,
 		)
 		return errors.Join(runErr, releaseErr)
 	}

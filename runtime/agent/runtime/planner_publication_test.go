@@ -18,19 +18,19 @@ import (
 
 type countingRecordWorkflowContext struct {
 	*testWorkflowContext
-	calls int
-	input *api.RecordActivityBatchInput
-	err   error
+	calls   int
+	command *api.StorageActivityCommand
+	err     error
 }
 
-func (w *countingRecordWorkflowContext) PublishRecords(call engine.RecordActivityCall) error {
+func (w *countingRecordWorkflowContext) ExecuteStorageActivity(call engine.StorageActivityCall) (*api.StorageActivityResult, error) {
 	w.calls++
-	w.input = call.Input
-	return w.err
+	w.command = call.Command
+	return &api.StorageActivityResult{Append: &api.AppendRecordsResult{}}, w.err
 }
 
 func TestPlannerPublicationReturnsExhaustedActivityErrorWithoutRescheduling(t *testing.T) {
-	publicationErr := errors.New("record activity retries exhausted")
+	publicationErr := errors.New("storage activity retries exhausted")
 	wfCtx := &countingRecordWorkflowContext{
 		testWorkflowContext: &testWorkflowContext{ctx: context.Background()},
 		err:                 publicationErr,
@@ -62,9 +62,9 @@ func TestPlannerPublicationSchedulesOneActivityForThousandsOfRecords(t *testing.
 
 	require.NoError(t, publishPlannerPublicationBatch(wfCtx, records))
 	require.Equal(t, 1, wfCtx.calls)
-	require.NotNil(t, wfCtx.input)
-	require.Len(t, wfCtx.input.Records, recordCount)
-	for index, record := range wfCtx.input.Records {
+	require.NotNil(t, wfCtx.command)
+	require.Len(t, wfCtx.command.Append.Records, recordCount)
+	for index, record := range wfCtx.command.Append.Records {
 		require.Same(t, records[index], record)
 		require.Equal(t, records[index].EventKey, record.EventKey)
 		require.Equal(t, int64(index), record.TimestampMS)

@@ -32,8 +32,8 @@ import (
 //  5. The canonical model messages survive a durable JSON serialization hop
 //     byte for byte.
 func TestToolCallThoughtSignatureRoundTripsProviderChunkToTranscript(t *testing.T) {
-	rt := New()
-	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.read", "svc.tools"))
+	rt := New(newTestStore())
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.read"))
 	agentID := agent.Ident("agent-1")
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 

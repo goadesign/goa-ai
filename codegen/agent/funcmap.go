@@ -3,7 +3,6 @@ package codegen
 import (
 	"strings"
 
-	agentsExpr "goa.design/goa-ai/expr/agent"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -49,60 +48,6 @@ func templateFuncMap() map[string]any {
 				}
 			}
 			return false
-		},
-		// hasServiceSideProviders reports whether the generator emitted at least one
-		// service-side tool provider (specs/<toolset>/provider.go). Providers are
-		// generated only for service-owned toolsets that contain at least one
-		// method-backed tool and are not registry-backed.
-		"hasServiceSideProviders": func(data *GeneratorData) bool {
-			if data == nil || len(data.Services) == 0 {
-				return false
-			}
-			for _, svc := range data.Services {
-				if svc == nil || len(svc.Agents) == 0 {
-					continue
-				}
-				for _, ag := range svc.Agents {
-					if ag == nil || len(ag.AllToolsets) == 0 {
-						continue
-					}
-					for _, ts := range ag.AllToolsets {
-						if ts == nil || ts.SpecsDir == "" || ts.SourceService == nil || ts.IsRegistryBacked {
-							continue
-						}
-						for _, t := range ts.Tools {
-							if t != nil && t.IsMethodBacked {
-								return true
-							}
-						}
-					}
-				}
-			}
-			return false
-		},
-		// hasExportedTools reports whether the given toolset contains at least
-		// one tool exported by an agent (agent-as-tool pattern).
-		"hasExportedTools": func(ts *ToolsetData) bool {
-			if ts == nil || len(ts.Tools) == 0 {
-				return false
-			}
-			for _, t := range ts.Tools {
-				if t != nil && t.IsExportedByAgent {
-					return true
-				}
-			}
-			return false
-		},
-		// isMCPBacked reports whether the given toolset is backed by an MCP server.
-		"isMCPBacked": func(ts *ToolsetData) bool {
-			return ts != nil && ts.Expr != nil && ts.Expr.Provider != nil && ts.Expr.Provider.Kind == agentsExpr.ProviderMCP
-		},
-		// mcpService returns the MCP service name for an MCP-backed toolset.
-		"mcpService": func(ts *ToolsetData) string {
-			if ts == nil || ts.Expr == nil || ts.Expr.Provider == nil {
-				return ""
-			}
-			return ts.Expr.Provider.MCPService
 		},
 		// simpleField reports whether the named field on the given attribute
 		// resolves to a simple assignable type between packages: primitives

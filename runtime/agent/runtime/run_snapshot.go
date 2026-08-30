@@ -85,7 +85,7 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 		}
 		switch p := decoded.(type) {
 		case *hooks.RunStartedEvent:
-			s.Labels = p.RunContext.Labels
+			s.Labels = p.Labels
 
 		case *hooks.ChildRunLinkedEvent:
 			s.ChildRuns = append(s.ChildRuns, &run.ChildRunLink{

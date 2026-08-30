@@ -8,13 +8,11 @@
 package client
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 
 	goahttp "goa.design/goa/v3/http"
@@ -25,12 +23,6 @@ import (
 type Client struct {
 	// Doer is the HTTP client used to make requests to the mcp_assistant service.
 	Doer goahttp.Doer
-	// ToolsCall Doer is the HTTP client used to make requests to the tools/call
-	// endpoint.
-	ToolsCallDoer goahttp.Doer
-	// EventsStream Doer is the HTTP client used to make requests to the
-	// events/stream endpoint.
-	EventsStreamDoer goahttp.Doer
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -41,13 +33,12 @@ type Client struct {
 	decoder func(*http.Response) goahttp.Decoder
 }
 
-// bufferPool is a pool of bytes.Buffers for encoding requests.
+// bufferPool reuses byte buffers while requests are encoded.
 var bufferPool = sync.Pool{
 	New: func() any { return new(bytes.Buffer) },
 }
 
-// NewClient instantiates HTTP clients for all the mcp_assistant service
-// servers.
+// NewClient creates HTTP clients for all the mcp_assistant service servers.
 func NewClient(
 	scheme string,
 	host string,
@@ -56,11 +47,8 @@ func NewClient(
 	dec func(*http.Response) goahttp.Decoder,
 	restoreBody bool,
 ) *Client {
-
 	return &Client{
 		Doer:                doer,
-		ToolsCallDoer:       doer,
-		EventsStreamDoer:    doer,
 		RestoreResponseBody: restoreBody,
 		scheme:              scheme,
 		host:                host,
@@ -81,14 +69,48 @@ func (c *Client) Initialize() goa.Endpoint {
 		if err != nil {
 			return nil, err
 		}
-		if err := encodeRequest(req, v); err != nil {
+		requestID, err := encodeRequest(req, v)
+		if err != nil {
 			return nil, err
 		}
 		resp, err := c.Doer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("mcp_assistant", "initialize", err)
 		}
-		return decodeResponse(resp)
+		return decodeResponse(resp, requestID)
+	}
+}
+
+// NotificationsInitialized returns an endpoint that sends JSON-RPC
+// notifications to the mcp_assistant service notifications/initialized method.
+func (c *Client) NotificationsInitialized() goa.Endpoint {
+	var (
+		encodeRequest = EncodeNotificationsInitializedRequest(c.encoder)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildNotificationsInitializedRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		if err := encodeRequest(req, v); err != nil {
+			return nil, err
+		}
+		resp, err := c.Doer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("mcp_assistant", "notifications/initialized", err)
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			body, readErr := io.ReadAll(resp.Body)
+			closeErr := resp.Body.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "notifications/initialized", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "notifications/initialized", resp.StatusCode, string(body))
+		}
+		if err := resp.Body.Close(); err != nil {
+			return nil, goahttp.ErrDecodingError("mcp_assistant", "notifications/initialized", err)
+		}
+		return nil, nil
 	}
 }
 
@@ -104,14 +126,15 @@ func (c *Client) Ping() goa.Endpoint {
 		if err != nil {
 			return nil, err
 		}
-		if err := encodeRequest(req, v); err != nil {
+		requestID, err := encodeRequest(req, v)
+		if err != nil {
 			return nil, err
 		}
 		resp, err := c.Doer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("mcp_assistant", "ping", err)
 		}
-		return decodeResponse(resp)
+		return decodeResponse(resp, requestID)
 	}
 }
 
@@ -127,14 +150,15 @@ func (c *Client) ToolsList() goa.Endpoint {
 		if err != nil {
 			return nil, err
 		}
-		if err := encodeRequest(req, v); err != nil {
+		requestID, err := encodeRequest(req, v)
+		if err != nil {
 			return nil, err
 		}
 		resp, err := c.Doer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("mcp_assistant", "tools/list", err)
 		}
-		return decodeResponse(resp)
+		return decodeResponse(resp, requestID)
 	}
 }
 
@@ -142,42 +166,23 @@ func (c *Client) ToolsList() goa.Endpoint {
 // mcp_assistant service tools/call method.
 func (c *Client) ToolsCall() goa.Endpoint {
 	var (
-		encodeRequest = EncodeToolsCallRequest(c.encoder)
+		encodeRequest  = EncodeToolsCallRequest(c.encoder)
+		decodeResponse = DecodeToolsCallResponse(c.decoder, c.RestoreResponseBody)
 	)
 	return func(ctx context.Context, v any) (any, error) {
 		req, err := c.BuildToolsCallRequest(ctx, v)
 		if err != nil {
 			return nil, err
 		}
-		if err := encodeRequest(req, v); err != nil {
+		requestID, err := encodeRequest(req, v)
+		if err != nil {
 			return nil, err
 		}
-		// For SSE endpoints, send JSON-RPC request and establish stream
 		resp, err := c.Doer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("mcp_assistant", "tools/call", err)
 		}
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "tools/call", resp.StatusCode, string(body))
-		}
-
-		contentType := resp.Header.Get("Content-Type")
-		if contentType != "" && !strings.HasPrefix(contentType, "text/event-stream") {
-			resp.Body.Close()
-			return nil, fmt.Errorf("unexpected content type: %s (expected text/event-stream)", contentType)
-		}
-
-		// Create the SSE client stream
-		stream := &ToolsCallClientStream{
-			resp:    resp,
-			reader:  bufio.NewReader(resp.Body),
-			decoder: c.decoder,
-		}
-
-		return stream, nil
+		return decodeResponse(resp, requestID)
 	}
 }
 
@@ -193,14 +198,15 @@ func (c *Client) ResourcesList() goa.Endpoint {
 		if err != nil {
 			return nil, err
 		}
-		if err := encodeRequest(req, v); err != nil {
+		requestID, err := encodeRequest(req, v)
+		if err != nil {
 			return nil, err
 		}
 		resp, err := c.Doer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("mcp_assistant", "resources/list", err)
 		}
-		return decodeResponse(resp)
+		return decodeResponse(resp, requestID)
 	}
 }
 
@@ -216,60 +222,15 @@ func (c *Client) ResourcesRead() goa.Endpoint {
 		if err != nil {
 			return nil, err
 		}
-		if err := encodeRequest(req, v); err != nil {
+		requestID, err := encodeRequest(req, v)
+		if err != nil {
 			return nil, err
 		}
 		resp, err := c.Doer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("mcp_assistant", "resources/read", err)
 		}
-		return decodeResponse(resp)
-	}
-}
-
-// ResourcesSubscribe returns an endpoint that makes JSON-RPC requests to the
-// mcp_assistant service resources/subscribe method.
-func (c *Client) ResourcesSubscribe() goa.Endpoint {
-	var (
-		encodeRequest  = EncodeResourcesSubscribeRequest(c.encoder)
-		decodeResponse = DecodeResourcesSubscribeResponse(c.decoder, c.RestoreResponseBody)
-	)
-	return func(ctx context.Context, v any) (any, error) {
-		req, err := c.BuildResourcesSubscribeRequest(ctx, v)
-		if err != nil {
-			return nil, err
-		}
-		if err := encodeRequest(req, v); err != nil {
-			return nil, err
-		}
-		resp, err := c.Doer.Do(req)
-		if err != nil {
-			return nil, goahttp.ErrRequestError("mcp_assistant", "resources/subscribe", err)
-		}
-		return decodeResponse(resp)
-	}
-}
-
-// ResourcesUnsubscribe returns an endpoint that makes JSON-RPC requests to the
-// mcp_assistant service resources/unsubscribe method.
-func (c *Client) ResourcesUnsubscribe() goa.Endpoint {
-	var (
-		encodeRequest  = EncodeResourcesUnsubscribeRequest(c.encoder)
-		decodeResponse = DecodeResourcesUnsubscribeResponse(c.decoder, c.RestoreResponseBody)
-	)
-	return func(ctx context.Context, v any) (any, error) {
-		req, err := c.BuildResourcesUnsubscribeRequest(ctx, v)
-		if err != nil {
-			return nil, err
-		}
-		if err := encodeRequest(req, v); err != nil {
-			return nil, err
-		}
-		resp, err := c.Doer.Do(req)
-		if err != nil {
-			return nil, goahttp.ErrRequestError("mcp_assistant", "resources/unsubscribe", err)
-		}
-		return decodeResponse(resp)
+		return decodeResponse(resp, requestID)
 	}
 }
 
@@ -285,14 +246,15 @@ func (c *Client) PromptsList() goa.Endpoint {
 		if err != nil {
 			return nil, err
 		}
-		if err := encodeRequest(req, v); err != nil {
+		requestID, err := encodeRequest(req, v)
+		if err != nil {
 			return nil, err
 		}
 		resp, err := c.Doer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("mcp_assistant", "prompts/list", err)
 		}
-		return decodeResponse(resp)
+		return decodeResponse(resp, requestID)
 	}
 }
 
@@ -308,79 +270,14 @@ func (c *Client) PromptsGet() goa.Endpoint {
 		if err != nil {
 			return nil, err
 		}
-		if err := encodeRequest(req, v); err != nil {
+		requestID, err := encodeRequest(req, v)
+		if err != nil {
 			return nil, err
 		}
 		resp, err := c.Doer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("mcp_assistant", "prompts/get", err)
 		}
-		return decodeResponse(resp)
-	}
-}
-
-// NotifyStatusUpdate returns an endpoint that makes JSON-RPC requests to the
-// mcp_assistant service notify_status_update method.
-func (c *Client) NotifyStatusUpdate() goa.Endpoint {
-	var (
-		encodeRequest  = EncodeNotifyStatusUpdateRequest(c.encoder)
-		decodeResponse = DecodeNotifyStatusUpdateResponse(c.decoder, c.RestoreResponseBody)
-	)
-	return func(ctx context.Context, v any) (any, error) {
-		req, err := c.BuildNotifyStatusUpdateRequest(ctx, v)
-		if err != nil {
-			return nil, err
-		}
-		if err := encodeRequest(req, v); err != nil {
-			return nil, err
-		}
-		resp, err := c.Doer.Do(req)
-		if err != nil {
-			return nil, goahttp.ErrRequestError("mcp_assistant", "notify_status_update", err)
-		}
-		return decodeResponse(resp)
-	}
-}
-
-// EventsStream returns an endpoint that makes JSON-RPC requests to the
-// mcp_assistant service events/stream method.
-func (c *Client) EventsStream() goa.Endpoint {
-	var (
-		encodeRequest = EncodeEventsStreamRequest(c.encoder)
-	)
-	return func(ctx context.Context, v any) (any, error) {
-		req, err := c.BuildEventsStreamRequest(ctx, v)
-		if err != nil {
-			return nil, err
-		}
-		if err := encodeRequest(req, v); err != nil {
-			return nil, err
-		}
-		// For SSE endpoints, send JSON-RPC request and establish stream
-		resp, err := c.Doer.Do(req)
-		if err != nil {
-			return nil, goahttp.ErrRequestError("mcp_assistant", "events/stream", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "events/stream", resp.StatusCode, string(body))
-		}
-
-		contentType := resp.Header.Get("Content-Type")
-		if contentType != "" && !strings.HasPrefix(contentType, "text/event-stream") {
-			resp.Body.Close()
-			return nil, fmt.Errorf("unexpected content type: %s (expected text/event-stream)", contentType)
-		}
-
-		// Create the SSE client stream
-		stream := &EventsStreamClientStream{
-			resp:    resp,
-			reader:  bufio.NewReader(resp.Body),
-			decoder: c.decoder,
-		}
-
-		return stream, nil
+		return decodeResponse(resp, requestID)
 	}
 }

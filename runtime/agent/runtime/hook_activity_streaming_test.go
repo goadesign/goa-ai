@@ -1,20 +1,21 @@
 package runtime
 
+// These tests verify that the session state returned by the durable append
+// controls live delivery without a second session lookup.
+
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/runlog"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/stream"
-	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
@@ -22,403 +23,154 @@ type failingStreamSink struct {
 	err error
 }
 
-type countingStreamSink struct {
-	count int
+// retryingStreamSink fails its first delivery and accepts the exact retry.
+type retryingStreamSink struct {
+	mu    sync.Mutex
+	err   error
+	calls int
 }
 
-type failAfterFirstKeyedPublicationSink struct {
-	err    error
-	events map[string]stream.Event
-}
-
-func (s failingStreamSink) Send(ctx context.Context, event stream.Event) error {
+func (s failingStreamSink) Send(context.Context, stream.Event) error {
 	return s.err
 }
 
-func (s failingStreamSink) Close(ctx context.Context) error {
+func (s failingStreamSink) Close(context.Context) error {
 	return nil
 }
 
-func (s *countingStreamSink) Send(ctx context.Context, event stream.Event) error {
-	s.count++
-	return nil
-}
-
-func (s *countingStreamSink) Close(ctx context.Context) error {
-	return nil
-}
-
-func (s *failAfterFirstKeyedPublicationSink) Send(ctx context.Context, event stream.Event) error {
-	if _, exists := s.events[event.EventKey()]; exists {
-		return nil
-	}
-	s.events[event.EventKey()] = event
-	if s.err != nil {
-		err := s.err
-		s.err = nil
-		return err
+func (s *retryingStreamSink) Send(context.Context, stream.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	if s.calls == 1 {
+		return s.err
 	}
 	return nil
 }
 
-func (s *failAfterFirstKeyedPublicationSink) Close(ctx context.Context) error {
+func (s *retryingStreamSink) Close(context.Context) error {
 	return nil
 }
 
-func TestHookActivity_StreamFailureFailsRunWhileSessionActive(t *testing.T) {
-	t.Parallel()
+// callCount returns the number of attempted stream deliveries.
+func (s *retryingStreamSink) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
 
+func TestHookActivityUsesCommittedSessionStateForStreaming(t *testing.T) {
 	streamErr := errors.New("stream send failed")
-	store := sessioninmem.New()
-	rl := &recordingRunlog{}
+	for _, test := range []struct {
+		name      string
+		end       bool
+		wantError bool
+	}{
+		{name: "active", wantError: true},
+		{name: "ended", end: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newTestStore()
+			_, err := store.CreateSession(ctx, "session", time.Now().UTC())
+			require.NoError(t, err)
+			admitRunForTest(t, store, session.RunMeta{
+				AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+			})
+			if test.end {
+				_, err = store.EndSession(ctx, "session", time.Now().UTC())
+				require.NoError(t, err)
+			}
+			subscriber, err := stream.NewSubscriber(failingStreamSink{err: streamErr})
+			require.NoError(t, err)
+			runtime := &Runtime{Store: store, Bus: hooks.NewBus(), streamSubscriber: subscriber}
+			record, err := hooks.EncodeToRecordInput(
+				hooks.NewPlannerNoteEvent("run", "svc.agent", "session", "note", nil),
+				hooks.EncodeOptions{EventKey: "note", TimestampMS: 1},
+			)
+			require.NoError(t, err)
 
-	sub, err := stream.NewSubscriber(failingStreamSink{err: streamErr})
-	require.NoError(t, err)
-
-	rt := &Runtime{
-		RunEventStore:    rl,
-		Bus:              hooks.NewBus(),
-		SessionStore:     store,
-		streamSubscriber: sub,
+			err = runtime.recordActivity(ctx, testRecordBatch(record))
+			if test.wantError {
+				require.ErrorIs(t, err, streamErr)
+			} else {
+				require.NoError(t, err)
+			}
+			page, listErr := store.ListRunRecords(ctx, "run", "", 10)
+			require.NoError(t, listErr)
+			require.Len(t, page.Events, 2)
+		})
 	}
+}
 
-	now := time.Now().UTC()
-	_, err = store.CreateSession(context.Background(), "sess-1", now)
+func TestHookActivityRetriesStreamAfterDurableInsert(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore()
+	_, err := store.CreateSession(ctx, "session", time.Now().UTC())
 	require.NoError(t, err)
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+	})
 
-	input, err := hooks.EncodeToRecordInput(
-		hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil),
-		hooks.EncodeOptions{
-			TurnID:      "turn-1",
-			EventKey:    "evt-stream-fail-active",
-			TimestampMS: 1,
-		},
+	bus := hooks.NewBus()
+	busCalls := 0
+	_, err = bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
+		busCalls++
+		return nil
+	}))
+	require.NoError(t, err)
+	streamErr := errors.New("stream send failed")
+	sink := &retryingStreamSink{err: streamErr}
+	subscriber, err := stream.NewSubscriber(sink)
+	require.NoError(t, err)
+	runtime := &Runtime{Store: store, Bus: bus, streamSubscriber: subscriber}
+	record, err := hooks.EncodeToRecordInput(
+		hooks.NewPlannerNoteEvent("run", "svc.agent", "session", "note", nil),
+		hooks.EncodeOptions{EventKey: "note", TimestampMS: 1},
 	)
 	require.NoError(t, err)
 
-	err = rt.recordActivity(context.Background(), testRecordBatch(input))
+	err = runtime.recordActivity(ctx, testRecordBatch(record))
 	require.ErrorIs(t, err, streamErr)
-	require.Len(t, rl.events, 1, "expected canonical run log append even when stream send fails")
+	require.NoError(t, runtime.recordActivity(ctx, testRecordBatch(record)))
+
+	require.Equal(t, 2, sink.callCount())
+	require.Equal(t, 1, busCalls)
+	page, err := store.ListRunRecords(ctx, "run", "", 10)
+	require.NoError(t, err)
+	require.Len(t, page.Events, 2)
 }
 
-func TestHookActivity_StreamFailureNoopAfterSessionEnded(t *testing.T) {
-	t.Parallel()
-
+func TestTranscriptActivityRetriesStreamAfterDurableInsert(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore()
+	_, err := store.CreateSession(ctx, "session", time.Now().UTC())
+	require.NoError(t, err)
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+	})
+	payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
+		Role:  model.ConversationRoleAssistant,
+		Parts: []model.Part{model.TextPart{Text: "done"}},
+	}})
+	require.NoError(t, err)
+	record := &RecordActivityInput{
+		Type: transcript.RunLogMessagesAppended, EventKey: "messages", RunID: "run",
+		AgentID: "svc.agent", SessionID: "session", TurnID: "turn", TimestampMS: 1,
+		Payload: payload,
+	}
 	streamErr := errors.New("stream send failed")
-	store := sessioninmem.New()
-	rl := &recordingRunlog{}
-
-	sub, err := stream.NewSubscriber(failingStreamSink{err: streamErr})
+	sink := &retryingStreamSink{err: streamErr}
+	subscriber, err := stream.NewSubscriber(sink)
 	require.NoError(t, err)
+	runtime := &Runtime{Store: store, Bus: hooks.NewBus(), streamSubscriber: subscriber}
 
-	rt := &Runtime{
-		RunEventStore:    rl,
-		Bus:              hooks.NewBus(),
-		SessionStore:     store,
-		streamSubscriber: sub,
-	}
+	err = runtime.recordActivity(ctx, testRecordBatch(record))
+	require.ErrorIs(t, err, streamErr)
+	require.NoError(t, runtime.recordActivity(ctx, testRecordBatch(record)))
 
-	now := time.Now().UTC()
-	_, err = store.CreateSession(context.Background(), "sess-1", now)
+	require.Equal(t, 2, sink.callCount())
+	page, err := store.ListRunRecords(ctx, "run", "", 10)
 	require.NoError(t, err)
-	_, err = store.EndSession(context.Background(), "sess-1", now.Add(time.Second))
-	require.NoError(t, err)
-
-	input, err := hooks.EncodeToRecordInput(
-		hooks.NewPlannerNoteEvent("run-1", "svc.agent", "sess-1", "note", nil),
-		hooks.EncodeOptions{
-			TurnID:      "turn-1",
-			EventKey:    "evt-stream-fail-ended",
-			TimestampMS: 2,
-		},
-	)
-	require.NoError(t, err)
-
-	err = rt.recordActivity(context.Background(), testRecordBatch(input))
-	require.NoError(t, err)
-
-	// runlog append remains canonical even after session end.
-	require.Len(t, rl.events, 1)
-	require.Equal(t, "run-1", rl.events[0].RunID)
-	require.Equal(t, hooks.PlannerNote, rl.events[0].Type)
+	require.Len(t, page.Events, 2)
 }
-
-func TestHookActivity_RetryCompletesStreamAndTelemetryOnce(t *testing.T) {
-	ctx := context.Background()
-	store := sessioninmem.New()
-	_, err := store.CreateSession(ctx, "sess-1", time.Unix(0, 0).UTC())
-	require.NoError(t, err)
-	sink := &failAfterFirstKeyedPublicationSink{
-		err:    errors.New("post-publication callback failed"),
-		events: make(map[string]stream.Event),
-	}
-	sub, err := stream.NewSubscriber(sink)
-	require.NoError(t, err)
-	tracer := &recordingTelemetryTracer{}
-	bus := hooks.NewBus()
-	rt := &Runtime{
-		RunEventStore:    runloginmem.New(),
-		Bus:              bus,
-		SessionStore:     store,
-		streamSubscriber: sub,
-		tracer:           tracer,
-	}
-	telemetrySub, err := bus.Register(hooks.SubscriberFunc(rt.recordGenAITelemetryEvent))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = telemetrySub.Close() })
-	input, err := hooks.EncodeToRecordInput(
-		hooks.NewToolResultReceivedEvent(
-			"run-1",
-			"svc.agent",
-			"sess-1",
-			"run-1",
-			"svc.tools.complete",
-			"call-1",
-			"",
-			nil,
-			0,
-			false,
-			"",
-			nil,
-			"",
-			nil,
-			50*time.Millisecond,
-			nil,
-			nil,
-		),
-		hooks.EncodeOptions{
-			TurnID:      "turn-1",
-			EventKey:    "evt-retry",
-			TimestampMS: 1,
-		},
-	)
-	require.NoError(t, err)
-
-	require.Error(t, rt.recordActivity(ctx, testRecordBatch(input)))
-	require.NoError(t, rt.recordActivity(ctx, testRecordBatch(input)))
-
-	page, err := rt.RunEventStore.List(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-	require.Len(t, page.Events, 1)
-	require.Len(t, sink.events, 1)
-	require.Contains(t, sink.events, "evt-retry")
-	require.Len(t, tracer.spans, 1)
-	require.Equal(t, "execute_tool svc.tools.complete", tracer.spans[0].name)
-	attrs := attrsByKey(tracer.spans[0].attrs)
-	require.Equal(t, "sess-1", attrs[telemetry.AttrGenAIConversationID].AsString())
-	require.Equal(t, "call-1", attrs[telemetry.AttrGenAIToolCallID].AsString())
-}
-
-func TestRecordActivity_TranscriptDeltaSkipsBusAndNonAssistantStreamEvents(t *testing.T) {
-	t.Parallel()
-
-	rl := &recordingRunlog{}
-	bus := hooks.NewBus()
-	store := sessioninmem.New()
-	sink := &countingStreamSink{}
-	sub, err := stream.NewSubscriber(sink)
-	require.NoError(t, err)
-
-	published := false
-	busSub, err := bus.Register(hooks.SubscriberFunc(func(ctx context.Context, evt hooks.Event) error {
-		published = true
-		return nil
-	}))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = busSub.Close() })
-
-	payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
-		Role:  model.ConversationRoleUser,
-		Parts: []model.Part{model.TextPart{Text: "hello"}},
-	}})
-	require.NoError(t, err)
-
-	rt := &Runtime{
-		RunEventStore:    rl,
-		Bus:              bus,
-		SessionStore:     store,
-		streamSubscriber: sub,
-	}
-	_, err = store.CreateSession(context.Background(), "sess-1", time.Now().UTC())
-	require.NoError(t, err)
-
-	err = rt.recordActivity(context.Background(), testRecordBatch(&runlog.ActivityInput{
-		Type:        transcript.RunLogMessagesAppended,
-		EventKey:    "evt-transcript",
-		RunID:       "run-1",
-		AgentID:     "svc.agent",
-		SessionID:   "sess-1",
-		TurnID:      "turn-1",
-		TimestampMS: 1,
-		Payload:     payload,
-	}))
-	require.NoError(t, err)
-	require.Len(t, rl.events, 1)
-	require.False(t, published)
-	require.Equal(t, 0, sink.count)
-}
-
-func TestRecordActivity_TranscriptSeedDoesNotStreamCommittedAssistantTurns(t *testing.T) {
-	t.Parallel()
-
-	rl := &recordingRunlog{}
-	store := sessioninmem.New()
-	sink := &countingStreamSink{}
-	sub, err := stream.NewSubscriber(sink)
-	require.NoError(t, err)
-
-	rt := &Runtime{
-		RunEventStore:    rl,
-		Bus:              hooks.NewBus(),
-		SessionStore:     store,
-		streamSubscriber: sub,
-	}
-	_, err = store.CreateSession(context.Background(), "sess-1", time.Now().UTC())
-	require.NoError(t, err)
-
-	payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
-		Role:  model.ConversationRoleAssistant,
-		Parts: []model.Part{model.TextPart{Text: "seeded hello"}},
-	}})
-	require.NoError(t, err)
-
-	err = rt.recordActivity(context.Background(), testRecordBatch(&runlog.ActivityInput{
-		Type:        transcript.RunLogMessagesSeeded,
-		EventKey:    "evt-transcript-seed",
-		RunID:       "run-1",
-		AgentID:     "svc.agent",
-		SessionID:   "sess-1",
-		TurnID:      "turn-1",
-		TimestampMS: 1,
-		Payload:     payload,
-	}))
-	require.NoError(t, err)
-	require.Len(t, rl.events, 1)
-	require.Equal(t, 0, sink.count)
-}
-
-func TestRecordActivity_TranscriptDeltaStreamsCommittedAssistantTurns(t *testing.T) {
-	t.Parallel()
-
-	rl := &recordingRunlog{}
-	store := sessioninmem.New()
-	sink := &countingStreamSink{}
-	sub, err := stream.NewSubscriber(sink)
-	require.NoError(t, err)
-
-	rt := &Runtime{
-		RunEventStore:    rl,
-		Bus:              hooks.NewBus(),
-		SessionStore:     store,
-		streamSubscriber: sub,
-	}
-	_, err = store.CreateSession(context.Background(), "sess-1", time.Now().UTC())
-	require.NoError(t, err)
-
-	payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
-		Role:  model.ConversationRoleAssistant,
-		Parts: []model.Part{model.TextPart{Text: "hello"}},
-	}})
-	require.NoError(t, err)
-
-	err = rt.recordActivity(context.Background(), testRecordBatch(&runlog.ActivityInput{
-		Type:        transcript.RunLogMessagesAppended,
-		EventKey:    "evt-transcript-assistant",
-		RunID:       "run-1",
-		AgentID:     "svc.agent",
-		SessionID:   "sess-1",
-		TurnID:      "turn-1",
-		TimestampMS: 1,
-		Payload:     payload,
-	}))
-	require.NoError(t, err)
-	require.Len(t, rl.events, 1)
-	require.Equal(t, 1, sink.count)
-}
-
-func TestRecordActivity_TranscriptRetryCompletesOneCommittedAssistantTurn(t *testing.T) {
-	ctx := context.Background()
-	store := sessioninmem.New()
-	_, err := store.CreateSession(ctx, "sess-1", time.Unix(0, 0).UTC())
-	require.NoError(t, err)
-	sink := &failAfterFirstKeyedPublicationSink{
-		err:    errors.New("post-publication callback failed"),
-		events: make(map[string]stream.Event),
-	}
-	sub, err := stream.NewSubscriber(sink)
-	require.NoError(t, err)
-	rt := &Runtime{
-		RunEventStore:    runloginmem.New(),
-		Bus:              hooks.NewBus(),
-		SessionStore:     store,
-		streamSubscriber: sub,
-	}
-	payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
-		Role:  model.ConversationRoleAssistant,
-		Parts: []model.Part{model.TextPart{Text: "hello"}},
-	}})
-	require.NoError(t, err)
-	input := &runlog.ActivityInput{
-		Type:        transcript.RunLogMessagesAppended,
-		EventKey:    "evt-transcript-retry",
-		RunID:       "run-1",
-		AgentID:     "svc.agent",
-		SessionID:   "sess-1",
-		TurnID:      "turn-1",
-		TimestampMS: 1,
-		Payload:     payload,
-	}
-
-	require.Error(t, rt.recordActivity(ctx, testRecordBatch(input)))
-	require.NoError(t, rt.recordActivity(ctx, testRecordBatch(input)))
-
-	page, err := rt.RunEventStore.List(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-	require.Len(t, page.Events, 1)
-	require.Len(t, sink.events, 1)
-	require.Contains(t, sink.events, "evt-transcript-retry/assistant/0")
-}
-
-func TestRecordActivity_TranscriptDeltaStreamsCommittedAssistantCitationsTurns(t *testing.T) {
-	t.Parallel()
-
-	rl := &recordingRunlog{}
-	store := sessioninmem.New()
-	sink := &countingStreamSink{}
-	sub, err := stream.NewSubscriber(sink)
-	require.NoError(t, err)
-
-	rt := &Runtime{
-		RunEventStore:    rl,
-		Bus:              hooks.NewBus(),
-		SessionStore:     store,
-		streamSubscriber: sub,
-	}
-	_, err = store.CreateSession(context.Background(), "sess-1", time.Now().UTC())
-	require.NoError(t, err)
-
-	payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
-		Role: model.ConversationRoleAssistant,
-		Parts: []model.Part{model.CitationsPart{
-			Text: "supported by cited content",
-		}},
-	}})
-	require.NoError(t, err)
-
-	err = rt.recordActivity(context.Background(), testRecordBatch(&runlog.ActivityInput{
-		Type:        transcript.RunLogMessagesAppended,
-		EventKey:    "evt-transcript-assistant-citations",
-		RunID:       "run-1",
-		AgentID:     "svc.agent",
-		SessionID:   "sess-1",
-		TurnID:      "turn-1",
-		TimestampMS: 1,
-		Payload:     payload,
-	}))
-	require.NoError(t, err)
-	require.Len(t, rl.events, 1)
-	require.Equal(t, 1, sink.count)
-}
-
-var _ runlog.Store = (*recordingRunlog)(nil)
-var _ session.Store = (*sessioninmem.Store)(nil)

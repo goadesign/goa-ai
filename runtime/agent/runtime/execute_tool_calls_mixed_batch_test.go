@@ -10,8 +10,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 
@@ -20,7 +18,7 @@ import (
 
 func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *testing.T) {
 	recorder := &recordingHooks{ch: make(chan hooks.Event, 128)}
-	agentToolSpec := newAnyJSONSpec("svc.agent.child", "svc.agenttools")
+	agentToolSpec := newAnyJSONSpec("svc.agent.child")
 	agentToolSpec.IsAgentTool = true
 	agentToolSpec.AgentID = "nested.agent"
 	rt := &Runtime{
@@ -37,20 +35,19 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 				}),
 			},
 		},
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           recorder,
-		SessionStore:  sessioninmem.New(),
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
+		Bus:     recorder,
 	}
-	seedTestToolSpecs(
+	seedTestToolset(
 		rt,
-		newAnyJSONSpec("svc.tools.a1", "svc.tools"),
-		newAnyJSONSpec("svc.tools.a2", "svc.tools"),
-		newAnyJSONSpec("inline.ts.inline", "inline.ts"),
-		agentToolSpec,
+		"svc.tools",
+		newAnyJSONSpec("svc.tools.a1"),
+		newAnyJSONSpec("svc.tools.a2"),
 	)
+	seedTestToolset(rt, "inline.ts", newAnyJSONSpec("inline.ts.inline"))
 
 	// Register the agent toolset that maps svc.agenttools.* to child workflows.
 	cfg := AgentToolConfig{
@@ -69,6 +66,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 	}
 	reg := NewAgentToolsetRegistration(rt, cfg)
 	rt.toolsets[reg.Name] = reg
+	seedTestToolset(rt, reg.Name, agentToolSpec)
 
 	childHandles := make(chan *controlledChildHandle, 1)
 	act1 := &controlledToolFuture{ready: make(chan struct{}), out: &ToolOutput{Payload: []byte("1")}}
@@ -81,7 +79,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 	}
 
 	runCtx := &run.Context{RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
-	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
+	seedParentRun(t, rt.Store, runCtx.RunID, runCtx.SessionID)
 	calls := []ToolCall{
 		{Name: tools.Ident("inline.ts.inline"), RunID: runCtx.RunID, SessionID: runCtx.SessionID, TurnID: runCtx.TurnID, ToolCallID: "call-inline"},
 		{Name: tools.Ident("svc.tools.a1"), RunID: runCtx.RunID, SessionID: runCtx.SessionID, TurnID: runCtx.TurnID, ToolCallID: "call-a1"},
@@ -96,7 +94,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 	}
 	done := make(chan out, 1)
 	go func() {
-		results, timedOut, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, nil, calls, 0, nil, time.Time{})
+		results, timedOut, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, nil, calls, 0, nil, time.Time{})
 		done <- out{results: results, timedOut: timedOut, err: err}
 	}()
 
@@ -134,7 +132,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 
 func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
 	recorder := &recordingHooks{}
-	spec := newAnyJSONSpec("inline.cancel.cancel", "inline.cancel")
+	spec := newAnyJSONSpec("inline.cancel.cancel")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"inline.cancel": {
@@ -144,13 +142,13 @@ func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
 				},
 			},
 		},
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           recorder,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
+		Bus:     recorder,
 	}
-	seedTestToolSpecs(rt, spec)
+	seedTestToolset(rt, "inline.cancel", spec)
 	runCtx := &run.Context{RunID: "run-inline-canceled", SessionID: "session-1", TurnID: "turn-1"}
 	call := ToolCall{
 		Name:       spec.Name,
@@ -164,7 +162,7 @@ func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
 		&testWorkflowContext{ctx: context.Background(), hookRuntime: rt},
 		"execute",
 		engine.ActivityOptions{},
-		agent.Ident("agent-1"),
+		agent.Ident("parent.agent"),
 		runCtx,
 		nil,
 		[]ToolCall{call},
@@ -184,19 +182,17 @@ func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
 
 func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 	recorder := &recordingHooks{}
-	spec := newAnyJSONSpec("agent.cancel.child", "agent.cancel")
+	spec := newAnyJSONSpec("agent.cancel.child")
 	spec.IsAgentTool = true
 	spec.AgentID = "nested.cancel"
 	rt := &Runtime{
-		toolsets:      make(map[string]ToolsetRegistration),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           recorder,
-		SessionStore:  sessioninmem.New(),
+		toolsets: make(map[string]ToolsetRegistration),
+		logger:   telemetry.NoopLogger{},
+		metrics:  telemetry.NoopMetrics{},
+		tracer:   telemetry.NoopTracer{},
+		Store:    newTestStore(),
+		Bus:      recorder,
 	}
-	seedTestToolSpecs(rt, spec)
 	registration := NewAgentToolsetRegistration(rt, AgentToolConfig{
 		AgentID: agent.Ident("nested.cancel"),
 		Name:    "agent.cancel",
@@ -212,6 +208,7 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 		},
 	})
 	rt.toolsets[registration.Name] = registration
+	seedTestToolset(rt, registration.Name, spec)
 	childHandles := make(chan *controlledChildHandle, 1)
 	wfCtx := &testWorkflowContext{
 		ctx:                    context.Background(),
@@ -219,7 +216,7 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 		controlledChildHandles: childHandles,
 	}
 	runCtx := &run.Context{RunID: "run-child-canceled", SessionID: "session-1", TurnID: "turn-1"}
-	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
+	seedParentRun(t, rt.Store, runCtx.RunID, runCtx.SessionID)
 	call := ToolCall{
 		Name:       spec.Name,
 		RunID:      runCtx.RunID,
@@ -237,7 +234,7 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 			wfCtx,
 			"execute",
 			engine.ActivityOptions{},
-			agent.Ident("agent-1"),
+			agent.Ident("parent.agent"),
 			runCtx,
 			nil,
 			[]ToolCall{call},

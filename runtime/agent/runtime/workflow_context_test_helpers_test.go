@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -22,11 +23,12 @@ type routeWorkflowContext struct {
 	plannerRoutes map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error)
 	toolRoutes    map[string]func(context.Context, *ToolInput) (*ToolOutput, error)
 
-	lastHookCall    engine.RecordActivityCall
-	lastPlannerCall engine.PlannerActivityCall
-	lastToolCall    engine.ToolActivityCall
-	sequenceMu      sync.Mutex
-	nextSequence    uint64
+	lastHookCall        engine.StorageActivityCall
+	lastPlannerCall     engine.PlannerActivityCall
+	lastToolCall        engine.ToolActivityCall
+	sequenceMu          sync.Mutex
+	nextSequence        uint64
+	cancellationHandler engine.CancellationHandler
 
 	hookRuntime  *Runtime
 	childRuntime *Runtime
@@ -145,6 +147,11 @@ func (r *routeWorkflowContext) SetQueryHandler(string, any) error {
 	return nil
 }
 
+func (r *routeWorkflowContext) SetCancellationHandler(handler engine.CancellationHandler) error {
+	r.root().cancellationHandler = handler
+	return nil
+}
+
 func (r *routeWorkflowContext) StartChildWorkflow(
 	_ context.Context,
 	request engine.ChildWorkflowRequest,
@@ -156,15 +163,15 @@ func (r *routeWorkflowContext) StartChildWorkflow(
 	}, nil
 }
 
-func (r *routeWorkflowContext) PublishRecords(call engine.RecordActivityCall) error {
+func (r *routeWorkflowContext) ExecuteStorageActivity(call engine.StorageActivityCall) (*api.StorageActivityResult, error) {
 	r.lastHookCall = call
-	if call.Name != recordActivityName {
-		return fmt.Errorf("unexpected record activity name %q", call.Name)
+	if call.Name != storageActivityName {
+		return nil, fmt.Errorf("unexpected storage activity name %q", call.Name)
 	}
 	if r.hookRuntime == nil {
-		return nil
+		return testStorageResult(call.Command), nil
 	}
-	return r.hookRuntime.recordActivity(r.Context(), call.Input)
+	return r.hookRuntime.executeStorageCommand(r.Context(), call.Command)
 }
 
 func (r *routeWorkflowContext) ExecutePlannerActivity(
@@ -199,4 +206,11 @@ func (r *routeWorkflowContext) ExecuteToolActivityAsync(
 	future := &testToolFuture{}
 	future.result, future.err = handler(r.Context(), call.Input)
 	return future, nil
+}
+
+func (r *routeWorkflowContext) ExecuteAgentChildActivity(call engine.AgentChildActivityCall) (*api.AgentChildActivityOutput, error) {
+	if r.childRuntime == nil {
+		return nil, errors.New("agent child activity runtime is required")
+	}
+	return r.childRuntime.prepareAgentChildActivity(r.Context(), call.Input)
 }

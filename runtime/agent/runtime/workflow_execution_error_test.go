@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -50,8 +51,8 @@ func (w *failingRecordWorkflowContext) WithCancel() (engine.WorkflowContext, fun
 	}, cancel
 }
 
-func (w *failingRecordWorkflowContext) PublishRecords(call engine.RecordActivityCall) error {
-	for _, record := range call.Input.Records {
+func (w *failingRecordWorkflowContext) ExecuteStorageActivity(call engine.StorageActivityCall) (*api.StorageActivityResult, error) {
+	for _, record := range testStorageCommandRecords(call.Command) {
 		w.state.calls++
 		failAtCall := w.state.failAt > 0 && w.state.calls == w.state.failAt
 		failAtType := w.state.failType != "" &&
@@ -59,17 +60,36 @@ func (w *failingRecordWorkflowContext) PublishRecords(call engine.RecordActivity
 			!w.state.failed
 		if failAtCall || failAtType {
 			w.state.failed = true
-			return w.state.err
+			return nil, w.state.err
 		}
 	}
-	return w.testWorkflowContext.PublishRecords(call)
+	return w.testWorkflowContext.ExecuteStorageActivity(call)
+}
+
+func testStorageCommandRecords(command *api.StorageActivityCommand) []*RecordActivityInput {
+	switch {
+	case command.Append != nil:
+		return command.Append.Records
+	case command.RootStart != nil:
+		return []*RecordActivityInput{command.RootStart.Started}
+	case command.ChildStart != nil:
+		return []*RecordActivityInput{command.ChildStart.ParentLinked, command.ChildStart.Started}
+	case command.OneShotStart != nil:
+		return []*RecordActivityInput{command.OneShotStart.Started}
+	case command.Cancellation != nil:
+		return []*RecordActivityInput{command.Cancellation.Record}
+	case command.Suspension != nil:
+		return []*RecordActivityInput{command.Suspension.Checkpoint, command.Suspension.Suspended}
+	default:
+		return []*RecordActivityInput{command.Terminal.Record}
+	}
 }
 
 func TestRunLoopRecordsPartialInlineResultsBeforeExecutionError(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
-	first := newAnyJSONSpec(tools.Ident("svc.first"), "svc")
-	second := newAnyJSONSpec(tools.Ident("svc.second"), "svc")
-	third := newAnyJSONSpec(tools.Ident("svc.third"), "svc")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	first := newAnyJSONSpec(tools.Ident("svc.first"))
+	second := newAnyJSONSpec(tools.Ident("svc.second"))
+	third := newAnyJSONSpec(tools.Ident("svc.third"))
 	executed := make([]tools.Ident, 0, 3)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name:   "svc",
@@ -130,9 +150,9 @@ func TestRunLoopRecordsPartialInlineResultsBeforeExecutionError(t *testing.T) {
 }
 
 func TestRunLoopPreservesConcreteResultAndContinuesBookkeepingAfterHookError(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
-	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
-	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"))
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"))
 	bookkeeping.Bookkeeping = true
 	executed := make([]tools.Ident, 0, 2)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
@@ -191,9 +211,9 @@ func TestRunLoopPreservesConcreteResultAndContinuesBookkeepingAfterHookError(t *
 }
 
 func TestRunLoopRecordsCompleteCapDenialBeforePublicationError(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
-	first := newAnyJSONSpec(tools.Ident("svc.first"), "svc")
-	second := newAnyJSONSpec(tools.Ident("svc.second"), "svc")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	first := newAnyJSONSpec(tools.Ident("svc.first"))
+	second := newAnyJSONSpec(tools.Ident("svc.second"))
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
 		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {

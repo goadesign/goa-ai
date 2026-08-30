@@ -1,3 +1,4 @@
+// Package codegen reads Goa-backed MCP tool definitions for agent code generation.
 package codegen
 
 import (
@@ -10,26 +11,17 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// populateMCPToolset discovers and populates tools for Goa-backed MCP toolsets
-// by querying the evaluated MCP design root.
-//
-// The function looks up the MCP server/toolset definition by service and toolset
-// name, then creates ToolData entries for each tool defined in that toolset. Tool
-// payloads and
-// results are extracted from the associated MCP method definitions. Tools are sorted
-// alphabetically by name for deterministic generation.
-//
-// If the toolset has no description, it inherits the description from the MCP
-// server/toolset. When the MCP root or toolset cannot be found, the function
-// returns false so the caller can fail with a precise contract error.
-func populateMCPToolset(ts *ToolsetData) bool {
+// populateMCPToolset reads the named server from the MCP definitions supplied
+// to this generation and adds its tools to ts. It returns false when the toolset
+// or server is missing.
+func populateMCPToolset(mcpRoot *mcpexpr.RootExpr, ts *ToolsetData) bool {
 	if ts.Expr == nil || ts.Expr.Provider == nil || ts.Expr.Provider.Kind != agentsExpr.ProviderMCP {
 		return false
 	}
-	if mcpexpr.Root == nil {
+	if mcpRoot == nil {
 		return false
 	}
-	mcp := mcpexpr.Root.ServiceMCP(ts.Expr.Provider.MCPService, ts.Expr.Provider.MCPToolset)
+	mcp := mcpRoot.ServiceMCP(ts.Expr.Provider.MCPService, ts.Expr.Provider.MCPToolset)
 	if mcp == nil {
 		return false
 	}

@@ -16,8 +16,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -27,14 +25,14 @@ const jsonNullLiteral = "null"
 // setupTestAgentWithPlanner creates a test runtime with an agent that uses the provided planner function.
 func setupTestAgentWithPlanner(plannerFn func(context.Context, *planner.PlanInput) (*planner.PlanResult, error)) (*Runtime, context.Context) {
 	rt := &Runtime{
-		agents:        make(map[agent.Ident]AgentRegistration),
-		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           noopHooks{},
-		SessionStore:  sessioninmem.New(),
+		agents:    make(map[agent.Ident]AgentRegistration),
+		toolsets:  make(map[string]ToolsetRegistration),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+		Store:     newTestStore(),
+		Bus:       noopHooks{},
 	}
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
@@ -47,6 +45,23 @@ func setupTestAgentWithPlanner(plannerFn func(context.Context, *planner.PlanInpu
 		Workflow:            engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }},
 	}
 	return rt, ctx
+}
+
+// registerAgentToolTestConfig installs the same immutable spec and child
+// configuration that production registration makes available to the activity.
+func registerAgentToolTestConfig(rt *Runtime, cfg AgentToolConfig, toolset string, spec tools.ToolSpec) {
+	if rt.toolsets == nil {
+		rt.toolsets = make(map[string]ToolsetRegistration)
+	}
+	if rt.toolSpecs == nil {
+		rt.toolSpecs = make(map[tools.Ident]tools.ToolSpec)
+	}
+	spec.IsAgentTool = true
+	spec.AgentID = string(cfg.AgentID)
+	registration := NewAgentToolsetRegistration(rt, cfg)
+	registration.Name = toolset
+	registration.Specs = []tools.ToolSpec{spec}
+	rt.addToolsetLocked(registration)
 }
 
 func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
@@ -82,8 +97,9 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 		SessionID:  "sess-1",
 		Payload:    rawjson.Message([]byte(`{"x":"world"}`)),
 	}
-	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
-	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec(call.Name))
+	call.AgentID = parentAgentID
+	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -120,7 +136,6 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	})
 
-	rt.toolSpecs["tool"] = newAnyJSONSpec("tool", "svc.tools")
 	cfg := AgentToolConfig{
 		AgentID: "svc.agent",
 		Route: AgentRoute{
@@ -132,6 +147,7 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 			Texts: map[tools.Ident]string{"tool": "just text"},
 		},
 	}
+	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec("tool"))
 	exec := defaultAgentToolExecute(rt, cfg)
 	call := ToolCall{
 		ToolCallID: "call-1",
@@ -139,7 +155,8 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 		RunID:      "run",
 		SessionID:  "sess-1",
 	}
-	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	call.AgentID = parentAgentID
+	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -178,8 +195,9 @@ func TestDefaultAgentToolExecute_DefaultContentFromPayload(t *testing.T) {
 		SessionID:  "sess-1",
 		Payload:    rawjson.Message([]byte(`{"x":"world"}`)),
 	}
-	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
-	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec(call.Name))
+	call.AgentID = parentAgentID
+	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, res)
@@ -226,8 +244,9 @@ func TestDefaultAgentToolExecute_PreChildValidatorReturnsToolResult(t *testing.T
 		SessionID:       "sess-1",
 		Payload:         rawjson.Message([]byte(`{"sources":["x"]}`)),
 	}
-	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
-	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec(call.Name))
+	call.AgentID = parentAgentID
+	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 
 	result, err := exec(ctx, &call)
 	require.NoError(t, err)
@@ -301,8 +320,9 @@ func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilde
 		SessionID:  "sess-1",
 		Payload:    rawjson.Message([]byte(`{"x":"world"}`)),
 	}
-	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
-	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec(call.Name))
+	call.AgentID = parentAgentID
+	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 
 	res, err := exec(ctx, &call)
 	require.NoError(t, err)
@@ -349,8 +369,9 @@ func TestDefaultAgentToolExecute_PromptSpecMissingReturnsError(t *testing.T) {
 		RunID:      "run",
 		SessionID:  "sess-1",
 	}
-	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
-	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec(call.Name))
+	call.AgentID = parentAgentID
+	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 
 	_, err := exec(ctx, &call)
 	require.Error(t, err)
@@ -408,9 +429,8 @@ func TestDefaultAgentToolExecute_PromptSpecRendersWithSchemaKeys(t *testing.T) {
 		SessionID:  "sess-1",
 		Payload:    rawjson.Message([]byte(`{"time_context":"last 48h"}`)),
 	}
-	spec := newAnyJSONSpec(call.Name, "svc.tools")
+	spec := newAnyJSONSpec(call.Name)
 	spec.Payload.Codec = codec
-	rt.toolSpecs[call.Name] = spec
 	cfg := AgentToolConfig{
 		AgentID: "svc.agent",
 		Route: AgentRoute{
@@ -424,7 +444,9 @@ func TestDefaultAgentToolExecute_PromptSpecRendersWithSchemaKeys(t *testing.T) {
 			},
 		},
 	}
-	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	registerAgentToolTestConfig(rt, cfg, "svc.tools", spec)
+	call.AgentID = parentAgentID
+	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	exec := defaultAgentToolExecute(rt, cfg)
 	_, err := exec(ctx, &call)
 	require.NoError(t, err)
@@ -478,9 +500,8 @@ func TestDefaultAgentToolExecute_PromptSpecRejectsNonObjectPayloadShape(t *testi
 		SessionID:  "sess-1",
 		Payload:    rawjson.Message([]byte(`"last 48h"`)),
 	}
-	spec := newAnyJSONSpec(call.Name, "svc.tools")
+	spec := newAnyJSONSpec(call.Name)
 	spec.Payload.Codec = stringCodec
-	rt.toolSpecs[call.Name] = spec
 	cfg := AgentToolConfig{
 		AgentID: "svc.agent",
 		Route: AgentRoute{
@@ -494,7 +515,9 @@ func TestDefaultAgentToolExecute_PromptSpecRejectsNonObjectPayloadShape(t *testi
 			},
 		},
 	}
-	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	registerAgentToolTestConfig(rt, cfg, "svc.tools", spec)
+	call.AgentID = parentAgentID
+	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	exec := defaultAgentToolExecute(rt, cfg)
 	_, err := exec(ctx, &call)
 	require.Error(t, err)
@@ -508,7 +531,7 @@ func TestBuildAgentChildRequest_PreservesCanonicalToolArgs(t *testing.T) {
 	}
 
 	toolName := tools.Ident("tool")
-	spec := newAnyJSONSpec(toolName, "svc.tools")
+	spec := newAnyJSONSpec(toolName)
 	spec.Payload.Codec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
 			panic(fmt.Sprintf("payload codec ToJSON must not be called in child args handoff, got %T", v))
@@ -539,9 +562,51 @@ func TestBuildAgentChildRequest_PreservesCanonicalToolArgs(t *testing.T) {
 		},
 	}
 
-	_, nestedRunCtx, err := rt.buildAgentChildRequest(context.Background(), cfg, call, nil, nil)
+	request, err := rt.buildAgentChildRequest(context.Background(), cfg, call, nil, nil)
 	require.NoError(t, err)
-	require.Equal(t, payload, nestedRunCtx.ToolArgs)
+	require.Equal(t, payload, request.runContext.ToolArgs)
+	require.Empty(t, request.renderedPrompts)
+}
+
+func TestBuildAgentChildRequestCarriesRenderedPromptToChild(t *testing.T) {
+	rt := &Runtime{
+		toolSpecs:      make(map[tools.Ident]tools.ToolSpec),
+		logger:         telemetry.NoopLogger{},
+		PromptRegistry: prompt.NewRegistry(nil),
+	}
+	toolName := tools.Ident("tool")
+	spec := newAnyJSONSpec(toolName)
+	spec.Payload.Codec = tools.JSONCodec[any]{
+		ToJSON: json.Marshal,
+		FromJSON: func(data []byte) (any, error) {
+			var decoded map[string]any
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				return nil, err
+			}
+			return decoded, nil
+		},
+	}
+	rt.toolSpecs[toolName] = spec
+	require.NoError(t, rt.PromptRegistry.Register(prompt.PromptSpec{
+		ID:       "svc.agent.tool",
+		AgentID:  "svc.agent",
+		Role:     prompt.PromptRoleUser,
+		Template: "use {{ .time_context }}",
+		Version:  "v1",
+	}))
+	request, err := rt.buildAgentChildRequest(context.Background(), &AgentToolConfig{
+		AgentToolContent: AgentToolContent{PromptSpecs: map[tools.Ident]prompt.Ident{
+			toolName: "svc.agent.tool",
+		}},
+	}, &ToolCall{
+		Name: toolName, RunID: "parent", SessionID: "session", ToolCallID: "tool-call",
+		Payload: rawjson.Message([]byte(`{"time_context":"last 48h"}`)),
+	}, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, request.renderedPrompts, 1)
+	require.Equal(t, prompt.Ident("svc.agent.tool"), request.renderedPrompts[0].PromptID)
+	require.Equal(t, "v1", request.renderedPrompts[0].Version)
+	require.Equal(t, "session", request.renderedPrompts[0].Scope.SessionID)
 }
 
 func TestBuildAgentChildRequestRejectsMissingPayloadThroughCodec(t *testing.T) {
@@ -551,7 +616,7 @@ func TestBuildAgentChildRequestRejectsMissingPayloadThroughCodec(t *testing.T) {
 	}
 
 	toolName := tools.Ident("tool")
-	spec := newAnyJSONSpec(toolName, "svc.tools")
+	spec := newAnyJSONSpec(toolName)
 	spec.Payload.Codec = tools.JSONCodec[any]{
 		FromJSON: func(data []byte) (any, error) {
 			var decoded map[string]any
@@ -580,7 +645,7 @@ func TestBuildAgentChildRequestRejectsMissingPayloadThroughCodec(t *testing.T) {
 		},
 	}
 
-	_, _, err := rt.buildAgentChildRequest(context.Background(), cfg, call, nil, nil)
+	_, err := rt.buildAgentChildRequest(context.Background(), cfg, call, nil, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "scope_context is required")
 }

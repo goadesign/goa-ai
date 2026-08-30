@@ -107,11 +107,11 @@ func TestModelInvocationJournalExcludesNonOutputFailures(t *testing.T) {
 }
 
 func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
-	originalCatalog := newAnyJSONSpec("catalog.items.list_original", "catalog.items")
-	catalog := newAnyJSONSpec("catalog.items.list_items", "catalog.items")
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	originalCatalog := newAnyJSONSpec("catalog.items.list_original")
+	catalog := newAnyJSONSpec("catalog.items.list_items")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	sessionID := "session-unadvertised-tool"
-	_, err := rt.CreateSession(t.Context(), sessionID)
+	_, err := createSessionForTest(t.Context(), rt.Store, sessionID)
 	require.NoError(t, err)
 
 	var executions, resumes int
@@ -220,7 +220,6 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 			Parts: []model.Part{model.TextPart{Text: "List the items."}},
 		}},
 	}
-	seedRunMeta(t, rt, runInput)
 	wfCtx := &routeWorkflowContext{
 		ctx:         t.Context(),
 		runID:       runInput.RunID,
@@ -247,10 +246,10 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 }
 
 func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
-	catalog := newAnyJSONSpec("catalog.items.list_items", "catalog.items")
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	catalog := newAnyJSONSpec("catalog.items.list_items")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	sessionID := "session-repeated-unadvertised-tool"
-	_, err := rt.CreateSession(t.Context(), sessionID)
+	_, err := createSessionForTest(t.Context(), rt.Store, sessionID)
 	require.NoError(t, err)
 
 	agentID := agent.Ident("catalog.repeating_assistant")
@@ -305,7 +304,6 @@ func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
 		SessionID: sessionID,
 		TurnID:    "turn-repeated-unadvertised-tool",
 	}
-	seedRunMeta(t, rt, runInput)
 	wfCtx := &routeWorkflowContext{
 		ctx:         t.Context(),
 		runID:       runInput.RunID,

@@ -42,19 +42,6 @@ func (r *Runtime) validateCompletionToolPolicy(reg AgentRegistration, runPolicy 
 	return nil
 }
 
-// validateCompletionToolWorkflowRetry prevents engine retries from recreating
-// run caps and deadlines after a completion-policy failure.
-func validateCompletionToolWorkflowRetry(runPolicy *PolicyOverrides, opts *WorkflowOptions) error {
-	if completionToolFromPolicy(runPolicy) == "" || opts == nil {
-		return nil
-	}
-	retry := opts.RetryPolicy
-	if retry.MaxAttempts != 0 || retry.InitialInterval != 0 || retry.BackoffCoefficient != 0 {
-		return errors.New("completion tool runs cannot configure whole-workflow retries")
-	}
-	return nil
-}
-
 // validateCompletionToolPlanResult rejects planner output that assigns another
 // action to the same decision as the completion side effect. A completion
 // attempt must be the sole action in its planner result, while terminal output

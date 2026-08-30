@@ -23,12 +23,13 @@ import (
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+const parentAgentID = "parent.agent"
 
 func TestAgentToolPlannerOutputFailureEndsParentWorkflow(t *testing.T) {
 	t.Parallel()
@@ -113,10 +114,10 @@ func TestAgentToolPlannerOutputFailureSkipsParentResume(t *testing.T) {
 			childID := agent.Ident("service.child")
 			parentID := agent.Ident("service.parent")
 			childTool := tools.Ident("child.tools.run")
-			childSpec := newAnyJSONSpec(childTool, "child.tools")
+			childSpec := newAnyJSONSpec(childTool)
 			childSpec.IsAgentTool = true
 			childSpec.AgentID = string(childID)
-			rt := New(WithLogger(telemetry.NoopLogger{}))
+			rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 
 			require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{
 				ID: childID,
@@ -171,7 +172,7 @@ func TestAgentToolPlannerOutputFailureSkipsParentResume(t *testing.T) {
 			require.NoError(t, rt.RegisterAgent(context.Background(), parentRegistration))
 
 			sessionID := "session-" + test.name
-			_, err := rt.CreateSession(context.Background(), sessionID)
+			_, err := createSessionForTest(context.Background(), rt.Store, sessionID)
 			require.NoError(t, err)
 			input := &RunInput{
 				AgentID:   parentID,
@@ -246,34 +247,32 @@ func firstText(m *model.Message) string {
 
 // seedParentRun ensures runtime tests exercise agent-tool execution with a
 // persisted parent run contract. Child-run linkage now requires the parent run
-// to exist in the session store before hook events are processed.
-func seedParentRun(t *testing.T, store session.Store, runID, sessionID string) {
+// to exist in the runtime store before hook events are processed.
+func seedParentRun(t *testing.T, store storage.Store, runID, sessionID string) {
 	t.Helper()
 	now := time.Now().UTC()
-	_, err := store.CreateSession(context.Background(), sessionID, now)
+	_, err := createSessionForTest(context.Background(), store, sessionID)
 	require.NoError(t, err)
-	err = store.UpsertRun(context.Background(), session.RunMeta{
-		AgentID:   "test.parent",
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID:   parentAgentID,
 		RunID:     runID,
 		SessionID: sessionID,
 		Status:    session.RunStatusRunning,
 		StartedAt: now,
 		UpdatedAt: now,
 	})
-	require.NoError(t, err)
 }
 
 func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 	rt := &Runtime{
-		agents:        make(map[agent.Ident]AgentRegistration),
-		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
-		Engine:        engineinmem.New(),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           noopHooks{},
-		SessionStore:  sessioninmem.New(),
+		agents:    make(map[agent.Ident]AgentRegistration),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		Engine:    engineinmem.New(),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+		Store:     newTestStore(),
+		Bus:       noopHooks{},
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
@@ -306,8 +305,9 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 		Name:       tools.Ident("svc.tools.do"),
 		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
-	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
-	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	registerAgentToolTestConfig(rt, *reg.AgentTool, "svc.tools", newAnyJSONSpec(call.Name))
+	call.AgentID = parentAgentID
+	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
@@ -318,15 +318,14 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 
 func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 	rt := &Runtime{
-		agents:        make(map[agent.Ident]AgentRegistration),
-		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
-		Engine:        engineinmem.New(),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           noopHooks{},
-		SessionStore:  sessioninmem.New(),
+		agents:    make(map[agent.Ident]AgentRegistration),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		Engine:    engineinmem.New(),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+		Store:     newTestStore(),
+		Bus:       noopHooks{},
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
@@ -343,9 +342,8 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 		SourcesRef string `json:"sources_ref"`
 	}
 	callName := tools.Ident("svc.tools.get_time_series")
-	rt.toolSpecs[callName] = tools.ToolSpec{
-		Name:    callName,
-		Toolset: "svc.tools",
+	spec := tools.ToolSpec{
+		Name: callName,
 		Payload: tools.TypeSpec{
 			Codec: tools.JSONCodec[any]{
 				FromJSON: func(data []byte) (any, error) {
@@ -385,6 +383,7 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 			},
 		},
 	})
+	registerAgentToolTestConfig(rt, *reg.AgentTool, "svc.tools", spec)
 
 	call := ToolCall{
 		ToolCallID:      "call-1",
@@ -394,7 +393,8 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 		Name:            callName,
 		Payload:         rawjson.Message([]byte(`{"sources_ref":"src_1","server_data":"on"}`)),
 	}
-	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	call.AgentID = parentAgentID
+	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
 	tr, err := reg.Execute(ctx, &call)
@@ -412,15 +412,14 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 
 func TestAgentTool_TextContent(t *testing.T) {
 	rt := &Runtime{
-		agents:        make(map[agent.Ident]AgentRegistration),
-		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
-		Engine:        engineinmem.New(),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           noopHooks{},
-		SessionStore:  sessioninmem.New(),
+		agents:    make(map[agent.Ident]AgentRegistration),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		Engine:    engineinmem.New(),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+		Store:     newTestStore(),
+		Bus:       noopHooks{},
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
@@ -454,8 +453,9 @@ func TestAgentTool_TextContent(t *testing.T) {
 		Name:       tools.Ident("svc.tools.do"),
 		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
-	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
-	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	registerAgentToolTestConfig(rt, *reg.AgentTool, "svc.tools", newAnyJSONSpec(call.Name))
+	call.AgentID = parentAgentID
+	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
@@ -468,15 +468,14 @@ func TestAgentTool_TextContent(t *testing.T) {
 
 func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 	rt := &Runtime{
-		agents:        make(map[agent.Ident]AgentRegistration),
-		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
-		Engine:        engineinmem.New(),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           noopHooks{},
-		SessionStore:  sessioninmem.New(),
+		agents:    make(map[agent.Ident]AgentRegistration),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		Engine:    engineinmem.New(),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+		Store:     newTestStore(),
+		Bus:       noopHooks{},
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
@@ -512,8 +511,9 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 		Name:       tools.Ident("svc.tools.do"),
 		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
-	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
-	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	registerAgentToolTestConfig(rt, *reg.AgentTool, "svc.tools", newAnyJSONSpec(call.Name))
+	call.AgentID = parentAgentID
+	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	tr, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
@@ -531,15 +531,14 @@ func TestWithPromptSpecSetsPromptID(t *testing.T) {
 
 func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 	rt := &Runtime{
-		agents:        make(map[agent.Ident]AgentRegistration),
-		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
-		Engine:        engineinmem.New(),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           noopHooks{},
-		SessionStore:  sessioninmem.New(),
+		agents:    make(map[agent.Ident]AgentRegistration),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		Engine:    engineinmem.New(),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+		Store:     newTestStore(),
+		Bus:       noopHooks{},
 	}
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
@@ -575,8 +574,9 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 		Name:       tools.Ident("svc.tools.do"),
 		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
-	rt.toolSpecs[call.Name] = newAnyJSONSpec(call.Name, "svc.tools")
-	seedParentRun(t, rt.SessionStore, call.RunID, call.SessionID)
+	registerAgentToolTestConfig(rt, *reg.AgentTool, "svc.tools", newAnyJSONSpec(call.Name))
+	call.AgentID = parentAgentID
+	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	_, err := reg.Execute(ctx, &call)
 	require.NoError(t, err)
 	require.Len(t, pl.msgs, 2)
@@ -587,11 +587,11 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 
 func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 	rt := &Runtime{
-		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+		Store:     newTestStore(),
 	}
 
 	type ParentResult struct {
@@ -599,7 +599,7 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 	}
 
 	parent := tools.ToolSpec{
-		Name: tools.Ident("test.parent"),
+		Name: tools.Ident(parentAgentID),
 		Payload: tools.TypeSpec{
 			Codec: tools.AnyJSONCodec,
 		},
@@ -638,7 +638,7 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 		},
 	}
 
-	tr, err := rt.adaptAgentChildOutput(context.Background(), cfg, call, run.Context{RunID: "child-run"}, out)
+	tr, err := rt.adaptAgentChildOutput(cfg, call, run.Context{RunID: "child-run"}, out)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
 	require.Nil(t, tr.Failure)

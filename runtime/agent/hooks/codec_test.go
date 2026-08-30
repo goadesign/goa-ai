@@ -14,6 +14,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -25,6 +26,78 @@ const (
 	testRunID     = "run-1"
 	testSessionID = "session-1"
 )
+
+func TestRunStartedCodecUsesCurrentDurablePayload(t *testing.T) {
+	t.Parallel()
+
+	event := NewRunStartedEvent(
+		testRunID,
+		agent.Ident("service.agent"),
+		testSessionID,
+		"parent-1",
+		map[string]string{"facility": "north"},
+	)
+	record, err := EncodeToRecordInput(event, EncodeOptions{
+		EventKey:    "run-started",
+		TimestampMS: 1,
+	})
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"ParentRunID": "parent-1",
+		"Labels": {"facility": "north"}
+	}`, string(record.Payload))
+
+	decoded, err := DecodeFromRecordInput(record)
+	require.NoError(t, err)
+	started, ok := decoded.(*RunStartedEvent)
+	require.True(t, ok)
+	assert.Equal(t, "parent-1", started.ParentRunID)
+	assert.Equal(t, map[string]string{"facility": "north"}, started.Labels)
+}
+
+func TestRunStartedCodecRejectsLegacyAndUnknownPayloadFields(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		payload string
+		field   string
+	}{
+		{
+			name:    "legacy run context",
+			payload: `{"RunContext":{"RunID":"run-1"}}`,
+			field:   "RunContext",
+		},
+		{
+			name:    "legacy input",
+			payload: `{"Input":{"messages":[]}}`,
+			field:   "Input",
+		},
+		{
+			name:    "unknown field",
+			payload: `{"ParentRunID":"parent-1","Labels":{},"Other":true}`,
+			field:   "Other",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := DecodeFromRecordInput(&runlog.ActivityInput{
+				Type:    RunStarted,
+				RunID:   testRunID,
+				AgentID: agent.Ident("service.agent"),
+				Payload: rawjson.Message(tt.payload),
+			})
+
+			require.EqualError(
+				t,
+				err,
+				`decode run_started payload: json: unknown field "`+tt.field+`"`,
+			)
+		})
+	}
+}
 
 func TestToolCallScheduledCodecPreservesContinuationRoot(t *testing.T) {
 	t.Parallel()
@@ -318,9 +391,6 @@ func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *tes
 		toolCallID,
 		"",
 		resultJSON,
-		len(resultJSON),
-		false,
-		"",
 		serverData,
 		"preview",
 		nil,
@@ -345,9 +415,30 @@ func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *tes
 	require.Equal(t, "call-run", tr.CallRunID)
 	require.Equal(t, toolCallID, tr.ToolCallID)
 	require.Equal(t, len(resultJSON), tr.ResultBytes)
-	require.False(t, tr.ResultOmitted)
-	require.Empty(t, tr.ResultOmittedReason)
 	require.JSONEq(t, string(serverData), string(tr.ServerData))
+}
+
+func TestEncodeRecordPayloadRejectsFailureWithResultJSON(t *testing.T) {
+	event := NewToolResultReceivedEvent(
+		testRunID,
+		"agent-1",
+		testSessionID,
+		"call-run",
+		"svc.tools.lookup",
+		"call-1",
+		"",
+		rawjson.Message(`{"summary":"partial"}`),
+		nil,
+		"",
+		nil,
+		0,
+		nil,
+		&planner.ToolFailure{},
+	)
+
+	_, err := EncodeRecordPayload(event)
+
+	require.EqualError(t, err, "encode tool result payload: failure and result JSON are both set")
 }
 
 func TestDecodeFromRecordInput_PromptRenderedRoundTrip(t *testing.T) {

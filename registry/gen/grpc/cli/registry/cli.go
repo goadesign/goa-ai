@@ -28,8 +28,27 @@ func UsageCommands() []string {
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "registry register --message '{\n      \"admission_revision\": \"example-release+schema-v1\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"schema_fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 8\n   }'" + "\n" +
+	return os.Args[0] + " " + "registry register --message '{\n      \"admission_revision\": \"example-release+schema-v1\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"schema_fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 8\n   }'" + "\n" +
 		""
+}
+
+// cliStringFlag keeps an omitted command-line flag distinct from an explicitly empty flag.
+type cliStringFlag struct {
+	value *string
+}
+
+// String returns the flag text shown by the standard flag package.
+func (f *cliStringFlag) String() string {
+	if f.value == nil {
+		return ""
+	}
+	return *f.value
+}
+
+// Set records that the user supplied the flag, even when value is empty.
+func (f *cliStringFlag) Set(value string) error {
+	f.value = &value
+	return nil
 }
 
 // ParseEndpoint returns the endpoint and payload as specified on the command
@@ -42,50 +61,66 @@ func ParseEndpoint(
 		registryFlags = flag.NewFlagSet("registry", flag.ContinueOnError)
 
 		registryRegisterFlags       = flag.NewFlagSet("register", flag.ExitOnError)
-		registryRegisterMessageFlag = registryRegisterFlags.String("message", "", "")
+		registryRegisterMessageFlag = new(cliStringFlag)
 
 		registryReleaseProviderFlags       = flag.NewFlagSet("release-provider", flag.ExitOnError)
-		registryReleaseProviderMessageFlag = registryReleaseProviderFlags.String("message", "", "")
+		registryReleaseProviderMessageFlag = new(cliStringFlag)
 
 		registryDrainProviderFlags       = flag.NewFlagSet("drain-provider", flag.ExitOnError)
-		registryDrainProviderMessageFlag = registryDrainProviderFlags.String("message", "", "")
+		registryDrainProviderMessageFlag = new(cliStringFlag)
 
 		registryUnregisterFlags       = flag.NewFlagSet("unregister", flag.ExitOnError)
-		registryUnregisterMessageFlag = registryUnregisterFlags.String("message", "", "")
+		registryUnregisterMessageFlag = new(cliStringFlag)
 
 		registryPongFlags       = flag.NewFlagSet("pong", flag.ExitOnError)
-		registryPongMessageFlag = registryPongFlags.String("message", "", "")
+		registryPongMessageFlag = new(cliStringFlag)
 
 		registryListToolsetsFlags       = flag.NewFlagSet("list-toolsets", flag.ExitOnError)
-		registryListToolsetsMessageFlag = registryListToolsetsFlags.String("message", "", "")
+		registryListToolsetsMessageFlag = new(cliStringFlag)
 
 		registryGetToolsetFlags       = flag.NewFlagSet("get-toolset", flag.ExitOnError)
-		registryGetToolsetMessageFlag = registryGetToolsetFlags.String("message", "", "")
+		registryGetToolsetMessageFlag = new(cliStringFlag)
 
 		registryCheckAdmissionFlags       = flag.NewFlagSet("check-admission", flag.ExitOnError)
-		registryCheckAdmissionMessageFlag = registryCheckAdmissionFlags.String("message", "", "")
+		registryCheckAdmissionMessageFlag = new(cliStringFlag)
 
 		registrySearchFlags       = flag.NewFlagSet("search", flag.ExitOnError)
-		registrySearchMessageFlag = registrySearchFlags.String("message", "", "")
+		registrySearchMessageFlag = new(cliStringFlag)
 
 		registryCallToolFlags       = flag.NewFlagSet("call-tool", flag.ExitOnError)
-		registryCallToolMessageFlag = registryCallToolFlags.String("message", "", "")
+		registryCallToolMessageFlag = new(cliStringFlag)
 
 		registryRetryToolFlags       = flag.NewFlagSet("retry-tool", flag.ExitOnError)
-		registryRetryToolMessageFlag = registryRetryToolFlags.String("message", "", "")
+		registryRetryToolMessageFlag = new(cliStringFlag)
 
 		registryCompleteToolCallFlags       = flag.NewFlagSet("complete-tool-call", flag.ExitOnError)
-		registryCompleteToolCallMessageFlag = registryCompleteToolCallFlags.String("message", "", "")
+		registryCompleteToolCallMessageFlag = new(cliStringFlag)
 
 		registryPublishToolOutputDeltaFlags       = flag.NewFlagSet("publish-tool-output-delta", flag.ExitOnError)
-		registryPublishToolOutputDeltaMessageFlag = registryPublishToolOutputDeltaFlags.String("message", "", "")
+		registryPublishToolOutputDeltaMessageFlag = new(cliStringFlag)
 
 		registryReportToolCallOverloadFlags       = flag.NewFlagSet("report-tool-call-overload", flag.ExitOnError)
-		registryReportToolCallOverloadMessageFlag = registryReportToolCallOverloadFlags.String("message", "", "")
+		registryReportToolCallOverloadMessageFlag = new(cliStringFlag)
 
 		registryClaimToolCallFlags       = flag.NewFlagSet("claim-tool-call", flag.ExitOnError)
-		registryClaimToolCallMessageFlag = registryClaimToolCallFlags.String("message", "", "")
+		registryClaimToolCallMessageFlag = new(cliStringFlag)
 	)
+	registryRegisterFlags.Var(registryRegisterMessageFlag, "message", "")
+	registryReleaseProviderFlags.Var(registryReleaseProviderMessageFlag, "message", "")
+	registryDrainProviderFlags.Var(registryDrainProviderMessageFlag, "message", "")
+	registryUnregisterFlags.Var(registryUnregisterMessageFlag, "message", "")
+	registryPongFlags.Var(registryPongMessageFlag, "message", "")
+	registryListToolsetsFlags.Var(registryListToolsetsMessageFlag, "message", "")
+	registryGetToolsetFlags.Var(registryGetToolsetMessageFlag, "message", "")
+	registryCheckAdmissionFlags.Var(registryCheckAdmissionMessageFlag, "message", "")
+	registrySearchFlags.Var(registrySearchMessageFlag, "message", "")
+	registryCallToolFlags.Var(registryCallToolMessageFlag, "message", "")
+	registryRetryToolFlags.Var(registryRetryToolMessageFlag, "message", "")
+	registryCompleteToolCallFlags.Var(registryCompleteToolCallMessageFlag, "message", "")
+	registryPublishToolOutputDeltaFlags.Var(registryPublishToolOutputDeltaMessageFlag, "message", "")
+	registryReportToolCallOverloadFlags.Var(registryReportToolCallOverloadMessageFlag, "message", "")
+	registryClaimToolCallFlags.Var(registryClaimToolCallMessageFlag, "message", "")
+
 	registryFlags.Usage = registryUsage
 	registryRegisterFlags.Usage = registryRegisterUsage
 	registryReleaseProviderFlags.Usage = registryReleaseProviderUsage
@@ -209,49 +244,49 @@ func ParseEndpoint(
 			switch epn {
 			case "register":
 				endpoint = c.Register()
-				data, err = registryc.BuildRegisterPayload(*registryRegisterMessageFlag)
+				data, err = registryc.BuildRegisterPayload(registryRegisterMessageFlag.value)
 			case "release-provider":
 				endpoint = c.ReleaseProvider()
-				data, err = registryc.BuildReleaseProviderPayload(*registryReleaseProviderMessageFlag)
+				data, err = registryc.BuildReleaseProviderPayload(registryReleaseProviderMessageFlag.value)
 			case "drain-provider":
 				endpoint = c.DrainProvider()
-				data, err = registryc.BuildDrainProviderPayload(*registryDrainProviderMessageFlag)
+				data, err = registryc.BuildDrainProviderPayload(registryDrainProviderMessageFlag.value)
 			case "unregister":
 				endpoint = c.Unregister()
-				data, err = registryc.BuildUnregisterPayload(*registryUnregisterMessageFlag)
+				data, err = registryc.BuildUnregisterPayload(registryUnregisterMessageFlag.value)
 			case "pong":
 				endpoint = c.Pong()
-				data, err = registryc.BuildPongPayload(*registryPongMessageFlag)
+				data, err = registryc.BuildPongPayload(registryPongMessageFlag.value)
 			case "list-toolsets":
 				endpoint = c.ListToolsets()
-				data, err = registryc.BuildListToolsetsPayload(*registryListToolsetsMessageFlag)
+				data, err = registryc.BuildListToolsetsPayload(registryListToolsetsMessageFlag.value)
 			case "get-toolset":
 				endpoint = c.GetToolset()
-				data, err = registryc.BuildGetToolsetPayload(*registryGetToolsetMessageFlag)
+				data, err = registryc.BuildGetToolsetPayload(registryGetToolsetMessageFlag.value)
 			case "check-admission":
 				endpoint = c.CheckAdmission()
-				data, err = registryc.BuildCheckAdmissionPayload(*registryCheckAdmissionMessageFlag)
+				data, err = registryc.BuildCheckAdmissionPayload(registryCheckAdmissionMessageFlag.value)
 			case "search":
 				endpoint = c.Search()
-				data, err = registryc.BuildSearchPayload(*registrySearchMessageFlag)
+				data, err = registryc.BuildSearchPayload(registrySearchMessageFlag.value)
 			case "call-tool":
 				endpoint = c.CallTool()
-				data, err = registryc.BuildCallToolPayload(*registryCallToolMessageFlag)
+				data, err = registryc.BuildCallToolPayload(registryCallToolMessageFlag.value)
 			case "retry-tool":
 				endpoint = c.RetryTool()
-				data, err = registryc.BuildRetryToolPayload(*registryRetryToolMessageFlag)
+				data, err = registryc.BuildRetryToolPayload(registryRetryToolMessageFlag.value)
 			case "complete-tool-call":
 				endpoint = c.CompleteToolCall()
-				data, err = registryc.BuildCompleteToolCallPayload(*registryCompleteToolCallMessageFlag)
+				data, err = registryc.BuildCompleteToolCallPayload(registryCompleteToolCallMessageFlag.value)
 			case "publish-tool-output-delta":
 				endpoint = c.PublishToolOutputDelta()
-				data, err = registryc.BuildPublishToolOutputDeltaPayload(*registryPublishToolOutputDeltaMessageFlag)
+				data, err = registryc.BuildPublishToolOutputDeltaPayload(registryPublishToolOutputDeltaMessageFlag.value)
 			case "report-tool-call-overload":
 				endpoint = c.ReportToolCallOverload()
-				data, err = registryc.BuildReportToolCallOverloadPayload(*registryReportToolCallOverloadMessageFlag)
+				data, err = registryc.BuildReportToolCallOverloadPayload(registryReportToolCallOverloadMessageFlag.value)
 			case "claim-tool-call":
 				endpoint = c.ClaimToolCall()
-				data, err = registryc.BuildClaimToolCallPayload(*registryClaimToolCallMessageFlag)
+				data, err = registryc.BuildClaimToolCallPayload(registryClaimToolCallMessageFlag.value)
 			}
 		}
 	}
@@ -301,7 +336,7 @@ func registryRegisterUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry register --message '{\n      \"admission_revision\": \"example-release+schema-v1\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"schema_fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 8\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry register --message '{\n      \"admission_revision\": \"example-release+schema-v1\",\n      \"description\": \"Tools for data processing and analysis\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\",\n      \"schema_fingerprint\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"tags\": [\n         \"data\",\n         \"etl\",\n         \"analytics\"\n      ],\n      \"tools\": [\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         },\n         {\n            \"description\": \"Find records that match a catalog query.\",\n            \"name\": \"catalog.lookup.find_records\",\n            \"payload_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJxdWVyeSI6eyJ0eXBlIjoic3RyaW5nIn19LCJyZXF1aXJlZCI6WyJxdWVyeSJdfQ==\",\n            \"result_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJvayI6eyJ0eXBlIjoiYm9vbGVhbiJ9fSwicmVxdWlyZWQiOlsib2siXX0=\",\n            \"sidecar_schema\": \"eyJ0eXBlIjoib2JqZWN0IiwicHJvcGVydGllcyI6eyJhcnRpZmFjdF9raW5kIjp7InR5cGUiOiJzdHJpbmcifX19\",\n            \"tags\": [\n               \"catalog\",\n               \"records\",\n               \"read\"\n            ]\n         }\n      ],\n      \"version\": \"1.0.0\",\n      \"wire_protocol_version\": 8\n   }'")
 }
 
 func registryReleaseProviderUsage() {

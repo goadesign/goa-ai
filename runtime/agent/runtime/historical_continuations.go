@@ -13,7 +13,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -41,11 +40,6 @@ func (r *Runtime) loadHistoricalContinuationOutputs(
 	if input.RunContext.SessionID == "" {
 		return nil, fmt.Errorf("runtime: historical continuation transcript requires a session id")
 	}
-	reader, ok := r.RunEventStore.(runlog.SessionReader)
-	if !ok {
-		return nil, fmt.Errorf("runtime: run event store does not support session reads for historical continuations")
-	}
-
 	wanted := make(map[string]struct{}, len(toolCallIDs))
 	for _, toolCallID := range toolCallIDs {
 		wanted[toolCallID] = struct{}{}
@@ -53,7 +47,7 @@ func (r *Runtime) loadHistoricalContinuationOutputs(
 	events := make(map[string]*historicalToolEvents, len(wanted))
 	cursor := ""
 	for {
-		page, err := reader.ListSession(
+		page, err := r.Store.ListSessionRunRecords(
 			ctx,
 			input.RunContext.SessionID,
 			cursor,
@@ -115,7 +109,7 @@ func (r *Runtime) loadHistoricalContinuationOutputs(
 		if entry == nil {
 			continue
 		}
-		output, err := plannerToolOutputFromCanonicalEvents(
+		output, err := r.plannerToolOutputFromCanonicalEvents(
 			entry.callRunID,
 			entry.resultRunID,
 			toolCallID,

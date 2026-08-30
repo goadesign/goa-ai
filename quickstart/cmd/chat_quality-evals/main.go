@@ -16,15 +16,17 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	genevalchatquality "example.com/quickstart/gen/evals/chat_quality"
 	genchat "example.com/quickstart/gen/orchestrator/agents/chat"
 	genhelpers "example.com/quickstart/gen/orchestrator/toolsets/helpers"
-	"example.com/quickstart/internal/agents/bootstrap"
+	"example.com/quickstart/internal/agents/orchestrator/bootstrap"
 	eval "goa.design/goa-ai/eval"
 	"goa.design/goa-ai/eval/evidence"
 	model "goa.design/goa-ai/runtime/agent/model"
 	agentruntime "goa.design/goa-ai/runtime/agent/runtime"
+	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 	"goa.design/goa-ai/runtime/agent/stream"
 	streambridge "goa.design/goa-ai/runtime/agent/stream/bridge"
 )
@@ -33,8 +35,9 @@ type (
 	// hooks executes scenarios against the real chat agent running on the
 	// in-memory engine, exactly like cmd/orchestrator does.
 	hooks struct {
-		rt   *agentruntime.Runtime
-		chat agentruntime.AgentClient
+		rt    *agentruntime.Runtime
+		chat  agentruntime.AgentClient
+		store *storageinmem.Store
 	}
 
 	// collectorSink feeds one scenario's stream events into its evidence
@@ -72,12 +75,13 @@ func run(ctx context.Context, opts options) error {
 	if len(opts.scenarios) > 0 && len(opts.tags) > 0 {
 		return errors.New("--scenario and --tag cannot be combined")
 	}
-	rt, cleanup, err := bootstrap.New(ctx)
+	store := storageinmem.New()
+	rt, cleanup, err := bootstrap.New(ctx, store)
 	if err != nil {
 		return fmt.Errorf("initialize runtime: %w", err)
 	}
 	defer cleanup()
-	suite, err := genevalchatquality.New(&hooks{rt: rt, chat: genchat.NewClient(rt)}, scenarioInputs())
+	suite, err := genevalchatquality.New(&hooks{rt: rt, chat: genchat.NewClient(rt), store: store}, scenarioInputs())
 	if err != nil {
 		return err
 	}
@@ -132,7 +136,7 @@ func scenarioInputs() genevalchatquality.Inputs {
 // real model client is wired.
 func (h *hooks) GreetingReply(ctx context.Context, input *genevalchatquality.AskPayload) (eval.Result, error) {
 	const sessionID = "eval-greeting-reply"
-	if _, err := h.rt.CreateSession(ctx, sessionID); err != nil {
+	if _, err := h.store.CreateSession(ctx, sessionID, time.Now().UTC()); err != nil {
 		return eval.Result{}, fmt.Errorf("create session: %w", err)
 	}
 	collector := evidence.NewCollector()

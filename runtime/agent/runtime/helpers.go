@@ -1,3 +1,6 @@
+// Package runtime builds immutable workflow records, schedules typed storage
+// commands, and provides shared runtime utilities used by planning and tool
+// execution.
 package runtime
 
 import (
@@ -7,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -32,70 +36,13 @@ import (
 const (
 	unknownID                     = "unknown"
 	generatedToolCallIDHashDomain = "goa-ai/runtime-tool-call-id/v2\x00"
+	terminalRunEventKey           = "runtime/terminal"
 	// maxHookPayloadBytes is a safety bound on the serialized hook payload passed
 	// across the workflow/activity boundary. Exceeding Temporal's payload limit
 	// terminates the workflow task; failing early keeps failures explicit and
 	// debuggable.
 	maxHookPayloadBytes = 1_000_000
 )
-
-type (
-	// PromptRenderHookContext identifies one agent run turn for prompt_rendered
-	// hook emission.
-	//
-	// Callers that render prompts through Runtime.PromptRegistry outside planner
-	// contexts must stamp the render context with this metadata so runtime can
-	// append canonical prompt_rendered events to the run log.
-	PromptRenderHookContext struct {
-		RunID     string
-		AgentID   agent.Ident
-		SessionID string
-		TurnID    string
-	}
-
-	promptRenderHookContextKey struct{}
-	plannerEventCollectorKey   struct{}
-)
-
-// WithPromptRenderHookContext returns ctx stamped with run metadata used by
-// runtime prompt observer callbacks to emit canonical prompt_rendered events.
-func WithPromptRenderHookContext(ctx context.Context, meta PromptRenderHookContext) context.Context {
-	return context.WithValue(ctx, promptRenderHookContextKey{}, meta)
-}
-
-// withPromptRenderHookContext returns a context stamped with runtime run metadata
-// used by onPromptRendered to publish canonical prompt_rendered hook events.
-func withPromptRenderHookContext(ctx context.Context, meta PromptRenderHookContext) context.Context {
-	return WithPromptRenderHookContext(ctx, meta)
-}
-
-// promptRenderHookContextFromContext extracts prompt-render hook metadata.
-func promptRenderHookContextFromContext(ctx context.Context) (PromptRenderHookContext, bool) {
-	if ctx == nil {
-		return PromptRenderHookContext{}, false
-	}
-	meta, ok := ctx.Value(promptRenderHookContextKey{}).(PromptRenderHookContext)
-	if !ok {
-		return PromptRenderHookContext{}, false
-	}
-	return meta, true
-}
-
-// withPlannerEventCollector makes prompt-render events part of the accepted
-// planner activity output instead of publishing from the retryable activity.
-func withPlannerEventCollector(ctx context.Context, events *runtimePlannerEvents) context.Context {
-	return context.WithValue(ctx, plannerEventCollectorKey{}, events)
-}
-
-// plannerEventCollectorFromContext returns the planner event batch attached to
-// ctx when prompt rendering is running inside a planner activity.
-func plannerEventCollectorFromContext(ctx context.Context) (*runtimePlannerEvents, bool) {
-	if ctx == nil {
-		return nil, false
-	}
-	events, ok := ctx.Value(plannerEventCollectorKey{}).(*runtimePlannerEvents)
-	return events, ok
-}
 
 // hasNonNullJSON reports whether raw contains a non-empty JSON value other than
 // the literal `null`.
@@ -228,11 +175,6 @@ func newTextAgentMessage(role model.ConversationRole, text string) *model.Messag
 	}
 }
 
-// isZeroRetryPolicy checks if a retry policy is effectively zero (no retries configured).
-func isZeroRetryPolicy(policy engine.RetryPolicy) bool {
-	return policy.MaxAttempts == 0 && policy.InitialInterval == 0 && policy.BackoffCoefficient == 0
-}
-
 // cloneLabels creates a defensive copy of a string map. Returns nil if the source
 // map is empty to avoid unnecessary allocations.
 func cloneLabels(src map[string]string) map[string]string {
@@ -244,6 +186,23 @@ func cloneLabels(src map[string]string) map[string]string {
 		dst[k] = v
 	}
 	return dst
+}
+
+// clonePromptRenderEvents copies prompt scopes so the workflow input cannot be
+// changed after the caller submits it.
+func clonePromptRenderEvents(events []prompt.RenderEvent) []prompt.RenderEvent {
+	if len(events) == 0 {
+		return nil
+	}
+	cloned := make([]prompt.RenderEvent, len(events))
+	for index, event := range events {
+		event.Scope = prompt.Scope{
+			SessionID: event.Scope.SessionID,
+			Labels:    cloneLabels(event.Scope.Labels),
+		}
+		cloned[index] = event
+	}
+	return cloned
 }
 
 // cloneToolCall gives an executor ownership of every mutable field while the
@@ -383,8 +342,8 @@ func (r *Runtime) logWarn(ctx context.Context, msg string, err error, kv ...any)
 // publishHookErr emits a runtime hook event and returns an error on failure.
 //
 // When called from workflow code (ctx carries engine.WorkflowContext), publishHookErr
-// schedules the runtime record activity. Outside workflows, it calls the record
-// activity directly. In both cases, the record activity is responsible for
+// schedules the runtime storage activity. Outside workflows, it calls the
+// activity directly. In both cases, the storage activity is responsible for
 // appending the event to the canonical run log before publishing to the bus.
 //
 // This function exists because runtime hook emission is semantically split:
@@ -420,7 +379,20 @@ func prepareHookRecordInput(
 	evt hooks.Event,
 	turnID string,
 ) (*RecordActivityInput, error) {
-	meta := recordDispatchMetadataForContext(ctx)
+	return prepareHookRecordInputWithMetadata(evt, turnID, recordDispatchMetadataForContext(ctx))
+}
+
+// prepareHookRecordInputWithMetadata freezes a record using the caller's
+// durable identity and occurrence time. Completion repair uses the engine's
+// close time so every retry reconstructs the same terminal record.
+func prepareHookRecordInputWithMetadata(
+	evt hooks.Event,
+	turnID string,
+	meta recordDispatchMetadata,
+) (*RecordActivityInput, error) {
+	if isTerminalRunEventType(evt.Type()) {
+		meta.EventKey = terminalRunEventKey
+	}
 	if eventKey := toolLifecycleEventKey(evt); eventKey != "" {
 		meta.EventKey = eventKey
 	}
@@ -444,21 +416,111 @@ func prepareHookRecordInput(
 	return in, nil
 }
 
-// publishPreparedHook persists a previously frozen hook envelope.
-func (r *Runtime) publishPreparedHook(
-	ctx context.Context,
-	in *RecordActivityInput,
-	options engine.ActivityOptions,
-) error {
-	batch := &api.RecordActivityBatchInput{Records: []*RecordActivityInput{in}}
-	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
-		return wfCtx.PublishRecords(engine.RecordActivityCall{
-			Name:    recordActivityName,
-			Input:   batch,
-			Options: options,
-		})
+// publishPreparedHook persists a previously frozen hook envelope when the
+// caller does not need a lifecycle decision.
+func (r *Runtime) publishPreparedHook(ctx context.Context, in *RecordActivityInput, options engine.ActivityOptions) error {
+	var command *api.StorageActivityCommand
+	if in.Type == hooks.RunCompleted {
+		command = &api.StorageActivityCommand{Terminal: &api.RunTerminalCommand{Record: in}}
+	} else {
+		command = appendStorageCommand(in)
 	}
-	return r.recordActivity(ctx, batch)
+	_, err := r.executeStorage(ctx, command, options)
+	return err
+}
+
+// prepareRunStartRecords freezes one ordered event batch before the workflow
+// schedules storage. Every retry therefore uses the same records.
+func prepareRunStartRecords(ctx context.Context, events []hooks.Event, turnID string) ([]*RecordActivityInput, error) {
+	records := make([]*RecordActivityInput, 0, len(events))
+	for _, event := range events {
+		in, err := prepareHookRecordInput(ctx, event, turnID)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, in)
+	}
+	return records, nil
+}
+
+// runStartStorageCommand selects the start operation from the workflow input,
+// whose session and parent identifiers define whether the run is root, child,
+// or sessionless.
+func runStartStorageCommand(input *RunInput, records []*RecordActivityInput) (*api.StorageActivityCommand, error) {
+	if input.SessionID == "" {
+		if len(records) != 1 {
+			return nil, errors.New("runtime: one-shot start requires one record")
+		}
+		return &api.StorageActivityCommand{
+			OneShotStart: &api.OneShotRunStartCommand{Started: records[0]},
+		}, nil
+	}
+	if input.ParentRunID == "" {
+		if len(records) != 1 {
+			return nil, errors.New("runtime: root start requires one record")
+		}
+		return &api.StorageActivityCommand{
+			RootStart: &api.RootRunStartCommand{Started: records[0]},
+		}, nil
+	}
+	if len(records) != 2 {
+		return nil, errors.New("runtime: child start requires parent-link and run-started records")
+	}
+	return &api.StorageActivityCommand{
+		ChildStart: &api.ChildRunStartCommand{ParentLinked: records[0], Started: records[1]},
+	}, nil
+}
+
+// runStartStorageResult returns the branch selected from the same workflow
+// input used to build the start command.
+func runStartStorageResult(input *RunInput, result *api.StorageActivityResult) *api.StartRunResult {
+	if input.SessionID == "" {
+		return result.OneShotStart
+	}
+	if input.ParentRunID == "" {
+		return result.RootStart
+	}
+	return result.ChildStart
+}
+
+// executeStorageWithRetry applies one frozen command with unlimited retries
+// for temporary failures.
+func (r *Runtime) executeStorageWithRetry(ctx context.Context, command *api.StorageActivityCommand) (*api.StorageActivityResult, error) {
+	return r.executeStorage(ctx, command, engine.ActivityOptions{
+		RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true},
+	})
+}
+
+// executeStorage applies one typed command through the workflow engine when
+// called by workflow code and directly when called by an activity or server.
+func (r *Runtime) executeStorage(ctx context.Context, command *api.StorageActivityCommand, options engine.ActivityOptions) (*api.StorageActivityResult, error) {
+	kind, err := selectedStorageCommandKind(command)
+	if err != nil {
+		return nil, err
+	}
+	call := engine.StorageActivityCall{
+		Name:    storageActivityName,
+		Command: command,
+		Options: options,
+	}
+	var output *api.StorageActivityResult
+	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
+		output, err = wfCtx.ExecuteStorageActivity(call)
+	} else {
+		output, err = r.executeStorageCommand(ctx, command)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := validateStorageResult(kind, output); err != nil {
+		return nil, err
+	}
+	return output, nil
+}
+
+// appendStorageCommand creates the explicit append branch for frozen records.
+func appendStorageCommand(records ...*RecordActivityInput) *api.StorageActivityCommand {
+	return &api.StorageActivityCommand{Append: &api.AppendRecordsCommand{Records: records}}
 }
 
 // toolLifecycleEventKey gives each tool-call lifecycle transition one stable
@@ -479,7 +541,7 @@ func toolLifecycleEventKey(evt hooks.Event) string {
 // publishHook emits a runtime hook event and returns an error on failure.
 //
 // Note that bus publish failures do not cause publishHookErr to return an error;
-// only failures to encode, dispatch the record activity, or append to the canonical
+// only failures to encode, dispatch the storage activity, or append to the canonical
 // run log are considered fatal.
 func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, turnID string) error {
 	return r.publishHookErr(ctx, evt, turnID)
@@ -519,14 +581,8 @@ func (r *Runtime) publishTranscriptMessagesErr(
 		TimestampMS: meta.TimestampMS,
 		Payload:     payload,
 	}
-	batch := &api.RecordActivityBatchInput{Records: []*RecordActivityInput{input}}
-	if wfCtx := engine.WorkflowContextFromContext(ctx); wfCtx != nil && !engine.IsActivityContext(ctx) {
-		return wfCtx.PublishRecords(engine.RecordActivityCall{
-			Name:  recordActivityName,
-			Input: batch,
-		})
-	}
-	return r.recordActivity(ctx, batch)
+	_, err = r.executeStorage(ctx, appendStorageCommand(input), engine.ActivityOptions{})
+	return err
 }
 
 // publishTranscriptSeedErr persists canonical transcript seed messages for a
@@ -635,43 +691,6 @@ func recordDispatchMetadataForContext(ctx context.Context) recordDispatchMetadat
 // records into the same parent run without key collisions.
 func formatWorkflowRecordEventKey(emitterWorkflowID string, seq uint64) string {
 	return fmt.Sprintf("%s/%d", url.PathEscape(emitterWorkflowID), seq)
-}
-
-// onPromptRendered is the runtime-owned observer callback used by PromptRegistry.
-//
-// The registry must never publish directly to the hook bus. Runtime owns the
-// append-to-runlog-then-publish ordering through publishHookErr, and this callback
-// is the integration seam where prompt-render hook events are emitted.
-func (r *Runtime) onPromptRendered(ctx context.Context, event prompt.RenderEvent) {
-	meta, ok := promptRenderHookContextFromContext(ctx)
-	if !ok {
-		panic(fmt.Sprintf(
-			"runtime: prompt_rendered missing hook context (prompt_id=%s version=%s)",
-			event.PromptID,
-			event.Version,
-		))
-	}
-	hookEvent := hooks.NewPromptRenderedEvent(
-		meta.RunID,
-		meta.AgentID,
-		meta.SessionID,
-		event.PromptID,
-		event.Version,
-		event.Scope,
-	)
-	if events, ok := plannerEventCollectorFromContext(ctx); ok {
-		events.publish(ctx, hookEvent)
-		return
-	}
-	if err := r.publishHookErr(ctx, hookEvent, meta.TurnID); err != nil {
-		panic(fmt.Errorf(
-			"runtime: prompt_rendered hook publish failed (run_id=%s prompt_id=%s version=%s): %w",
-			meta.RunID,
-			event.PromptID,
-			event.Version,
-			err,
-		))
-	}
 }
 
 // mergeCaps merges policy decision caps into the current caps state. Policy

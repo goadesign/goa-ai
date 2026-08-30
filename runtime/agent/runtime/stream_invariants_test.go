@@ -13,7 +13,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -46,11 +45,10 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 	ctx := context.Background()
 	bus := hooks.NewBus()
 	sink := &recordingStreamSink{}
-	rt := New(
+	rt := New(newTestStore(),
 		WithEngine(engineinmem.New()),
 		WithHooks(bus),
 		WithStream(sink),
-		WithRunEventStore(runloginmem.New()),
 		WithLogger(telemetry.NoopLogger{}),
 		WithMetrics(telemetry.NoopMetrics{}),
 		WithTracer(telemetry.NoopTracer{}),
@@ -90,7 +88,7 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 		toolsetName  = "svc.agenttools"
 	)
 
-	sess, err := rt.CreateSession(ctx, sessionID)
+	sess, err := createSessionForTest(ctx, rt.Store, sessionID)
 	require.NoError(t, err)
 	require.Equal(t, sessionID, sess.ID)
 	require.Equal(t, session.StatusActive, sess.Status)
@@ -110,7 +108,7 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 		},
 	})
 	agentTools.Specs = []tools.ToolSpec{
-		newAnyJSONSpec(invokeToolID, toolsetName),
+		newAnyJSONSpec(invokeToolID),
 	}
 	agentTools.Specs[0].IsAgentTool = true
 	agentTools.Specs[0].AgentID = "child.agent"

@@ -64,6 +64,21 @@ func serviceToolsetBindSelfBoundedResult(exactTotal bool) func() {
 							NextCursor("next_cursor")
 						})
 					})
+					if !exactTotal {
+						Tool("search_copy", "Search with the same limits", func() {
+							Args(SearchPayload)
+							Return(SearchResult)
+							BindTo("alpha", "Search")
+							BoundedResult(func() {
+								Cursor("cursor")
+								NextCursor("next_cursor")
+							})
+						})
+						Tool("search_all", "Search without generated limits", func() {
+							Args(SearchPayload)
+							Return(SearchResult)
+						})
+					}
 				})
 			})
 		})

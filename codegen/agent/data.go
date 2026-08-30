@@ -7,10 +7,10 @@ import (
 
 	ir "goa.design/goa-ai/codegen/ir"
 	agentsExpr "goa.design/goa-ai/expr/agent"
+	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
-	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
@@ -31,6 +31,8 @@ type (
 	GeneratorData struct {
 		// Genpkg is the Go import path to the generated code root (typically `<module>/gen`).
 		Genpkg string
+		// DisableAgentDocs reports whether this design omits the generated guide.
+		DisableAgentDocs bool
 		// Services bundles the agent metadata grouped by Goa service.
 		Services []*ServiceAgentsData
 	}
@@ -54,6 +56,8 @@ type (
 		Agents []*AgentData
 		// Completions lists each typed assistant-output contract declared by the service.
 		Completions []*CompletionData
+		// RegistryClients lists the registry clients written under this service.
+		RegistryClients []*RegistryClientData
 		// HasMCP indicates whether any agent under this service references external
 		// MCP toolsets. Example-phase generators use this to decide whether to emit
 		// MCP caller scaffolding/imports.
@@ -107,6 +111,11 @@ type (
 		Dir string
 		// ImportPath is the full Go import path to the agent package.
 		ImportPath string
+		// PackageNames contains the names chosen for declarations shared across
+		// the generated files in this agent package.
+		PackageNames AgentPackageNames
+		// packageFiles contains imports chosen before the agent files render.
+		packageFiles *agentPackageFilesData
 
 		// ConfigType names the generated configuration struct.
 		ConfigType string
@@ -153,6 +162,37 @@ type (
 		Runtime RuntimeData
 		// Methods contains the routing strategies for agent methods.
 		Methods []*MethodData
+	}
+
+	// AgentPackageNames contains every fixed or derived name rendered into the
+	// root of one generated agent package.
+	AgentPackageNames struct {
+		// AgentID names the agent identifier constant.
+		AgentID string
+		// WorkflowName names the workflow identifier constant.
+		WorkflowName string
+		// DefaultTaskQueue names the default task queue constant.
+		DefaultTaskQueue string
+		// PlanActivity names the planning activity constant.
+		PlanActivity string
+		// ResumeActivity names the resume activity constant.
+		ResumeActivity string
+		// ExecuteToolActivity names the tool activity constant.
+		ExecuteToolActivity string
+		// Constructor names the function that creates the agent wrapper.
+		Constructor string
+		// NewWorker names the function that creates a worker configuration.
+		NewWorker string
+		// Route names the function that returns this agent's route.
+		Route string
+		// NewClient names the function that creates a client for this agent.
+		NewClient string
+		// Register names the function that registers the agent.
+		Register string
+		// UsedToolsetOptions names the private options type used by RegisterUsedToolsets.
+		UsedToolsetOptions string
+		// RegisterUsedToolsets names the function that registers directly used toolsets.
+		RegisterUsedToolsets string
 	}
 
 	// MethodData captures the routing strategy for an agent method.
@@ -285,14 +325,17 @@ type (
 	//   - ToolsetKindExported: tools provided by the agent (generates adapters + helpers)
 	//   - ToolsetKindGlobal: shared toolsets not bound to an agent
 	//
-	// The AgentTools* fields are only populated when Kind == ToolsetKindExported,
-	// as these generate helper functions for invoking the agent-as-tool pattern.
+	// The AgentTools* fields identify the exact exporter for agent-as-tool
+	// references. Export entries own their package; Use entries point to the
+	// selected export package.
 	//
 	// External toolsets have their Tools populated by populateMCPToolset rather than
 	// from DSL expressions, reflecting the runtime discovery of MCP capabilities.
 	//
 	// Created by newToolsetData during agent data construction; immutable afterward.
 	ToolsetData struct {
+		// definition is the saved toolset whose generated package this reference uses.
+		definition *ir.Toolset
 		// Expr is the original toolset expression.
 		Expr *agentsExpr.ToolsetExpr
 		// Name is the DSL-specified toolset identifier.
@@ -311,9 +354,6 @@ type (
 		// SourceService points to the Goa service that originally declared the toolset.
 		// For external providers (e.g., MCP) this differs from the consuming agent service.
 		SourceService *service.Data
-		// SourceServiceImports caches the user type imports for the source service. This
-		// enables tool spec generation to reference external service types.
-		SourceServiceImports map[string]*codegen.ImportSpec
 		// QualifiedName is the toolset-scoped identifier (`toolset`).
 		QualifiedName string
 		// TaskQueue is the derived Temporal/engine queue for tool execution.
@@ -326,12 +366,16 @@ type (
 		PathName string
 		// PackageName is the Go package name for generated helper code.
 		PackageName string
+		// AgentPackageHelperAlias is the final helper import name used by the agent package.
+		AgentPackageHelperAlias string
 		// PackageImportPath is the Go import path to that helper package.
 		PackageImportPath string
 		// Dir is the filesystem target for toolset-specific files.
 		Dir string
 		// SpecsPackageName is the Go package name for per-toolset specs/types/codecs.
 		SpecsPackageName string
+		// AgentPackageSpecsAlias is the final import name used by the agent package.
+		AgentPackageSpecsAlias string
 		// SpecsImportPath is the import path for per-toolset specs/types/codecs.
 		SpecsImportPath string
 		// SpecsDir is the filesystem directory for per-toolset specs/types/codecs.
@@ -345,8 +389,43 @@ type (
 		// Used toolsets that consume the same provider so consumer agents can
 		// reference provider agent-as-tool registrations.
 		AgentToolsImportPath string
+		// AgentToolAgentID is the identifier of the agent that executes this toolset.
+		AgentToolAgentID string
+		// RegistrationNameConst names the exported constant for this agent's local
+		// route to a directly used toolset.
+		RegistrationNameConst string
+		// ExecutorOption names the generated option that installs this toolset's executor.
+		ExecutorOption string
+		// ResultMaterializerOption names the generated option that installs this
+		// toolset's result materializer.
+		ResultMaterializerOption string
+		// GeneratedHintsInstaller names the private function that installs generated hints.
+		GeneratedHintsInstaller string
+		// AgentToolsRegistrationConstructor names the consumer helper for a toolset
+		// exported by another agent.
+		AgentToolsRegistrationConstructor string
+		// AgentToolsProviderRegistrationConstructor names the registration helper in
+		// the exporting agent's generated package.
+		AgentToolsProviderRegistrationConstructor string
+		// MCPExecutorConstructor names the function that sends this toolset's calls
+		// through its configured MCP connection.
+		MCPExecutorConstructor string
 		// Tools lists the tools defined inside the toolset.
 		Tools []*ToolData
+		// specs stores the tool names and types selected for this generated specs
+		// package before its files are written.
+		specs *toolSpecsData
+		// agentTools stores the final names written into the exported agent-tool
+		// helper package.
+		agentTools *agentToolsetFileData
+		// agentToolsConsumerImports stores the imports selected for the consuming
+		// agent's registration helper.
+		agentToolsConsumerImports []*codegen.ImportSpec
+		// agentToolsRuntimeAlias names the runtime package in the consuming agent.
+		agentToolsRuntimeAlias string
+		// agentToolsProviderAlias names the exporting agent's helper package in the
+		// consuming agent.
+		agentToolsProviderAlias string
 		// MCP describes the external MCP helper metadata when this toolset references
 		// an MCP server/toolset.
 		MCP *MCPToolsetMeta
@@ -436,6 +515,12 @@ type (
 		// MethodResultField is the bound method result field name when the payload
 		// is sourced from a method result field.
 		MethodResultField string
+		// MethodResultFieldName is the generated Go selector for MethodResultField.
+		MethodResultFieldName string
+		// Transform names the generated function that converts the method result field.
+		Transform string
+		// CodecName names the generated JSON codec for this server data value.
+		CodecName string
 	}
 
 	// ToolData captures metadata about an individual tool, including its DSL
@@ -451,8 +536,7 @@ type (
 	//
 	// Tool implementation strategies:
 	//   - IsMethodBacked=true: tool dispatches to a Goa service method (client call)
-	//   - IsExportedByAgent=true: tool invokes another agent (agent-as-tool pattern)
-	//   - Both false: tool requires a custom executor implementation
+	//   - Otherwise the reference decides whether an agent or custom executor runs it
 	//
 	// Args and Return are Goa attribute expressions that define the tool's input/output
 	// schema. Code generation uses these to create type-safe marshalers, validators,
@@ -466,6 +550,32 @@ type (
 		// ConstName is a Go-safe exported identifier for referencing this tool
 		// in generated code (e.g., AnalyzeData for tool name "analyze_data").
 		ConstName string
+		// InjectFunc names the generated function that fills server-owned fields.
+		InjectFunc string
+		// DecodeFunc names the generated function that decodes and fills a payload.
+		DecodeFunc string
+		// SpecVar names the generated variable that stores the tool specification.
+		SpecVar string
+		// PayloadTypeName names the generated payload type.
+		PayloadTypeName string
+		// PayloadPointer reports whether generated callers pass the public payload
+		// type by pointer.
+		PayloadPointer bool
+		// PayloadCodecName names the generated payload codec.
+		PayloadCodecName string
+		// ResultTypeName names the generated result type.
+		ResultTypeName string
+		// ResultCodecName names the generated result codec.
+		ResultCodecName string
+		// MethodPayloadTransform names the generated function that builds the service payload.
+		MethodPayloadTransform string
+		// ToolResultTransform names the generated function that builds the tool result.
+		ToolResultTransform string
+		// BoundsFunc names the generated function that copies method result bounds.
+		BoundsFunc string
+		// HelperCallerOption names the option that supplies this tool's service
+		// caller to an agent-local executor.
+		HelperCallerOption string
 		// Description is the DSL description for docs and planners.
 		Description string
 		// QualifiedName is the toolset-scoped identifier (`toolset.tool`).
@@ -493,8 +603,7 @@ type (
 		HasMethodPayload bool
 
 		// MethodResultAttr is the Goa attribute for the bound service result
-		// (resolved user type). Used to generate default result adapters and to
-		// materialize specs when the tool Return is not specified.
+		// type. It supplies the generated result when the tool has no Return.
 		MethodResultAttr *goaexpr.AttributeExpr
 		// HasMethodResult reports whether the bound Goa method returns a value in
 		// addition to an error.
@@ -506,13 +615,6 @@ type (
 		// when either the tool Return is specified in the DSL or the bound service
 		// method defines a non-empty result type.
 		HasResult bool
-		// IsExportedByAgent indicates this tool is exported by an agent (agent-as-tool).
-		// Set to true when the tool's toolset is in an agent's Exports block.
-		IsExportedByAgent bool
-		// ExportingAgentID is the fully qualified agent identifier (e.g., "service.agent_name").
-		// Only set when IsExportedByAgent is true.
-		ExportingAgentID string
-
 		// IsMethodBacked indicates this tool is bound to a Goa service method via
 		// the DSL Method() function. When true, code generation emits client dispatch
 		// logic that adapts tool arguments to the method's payload type and maps the
@@ -581,9 +683,8 @@ type (
 		// cursor from the preceding bounded result.
 		ModelHiddenPayloadFields []string
 
-		// Bounds declares the out-of-band bounded-result contract for this tool.
-		// When non-nil, codegen emits runtime specs and method-result projection
-		// helpers without mutating the semantic result schema.
+		// Bounds describes result limits such as returned rows and a next cursor.
+		// Generated helpers read these values without changing the tool result.
 		Bounds *ToolBoundsData
 
 		// TerminalRun indicates that once this tool executes, the runtime should
@@ -608,6 +709,10 @@ type (
 		// PassthroughMethod is the Goa method name for deterministic forwarding
 		// when this tool is part of an exported toolset.
 		PassthroughMethod string
+
+		// method is the bound Goa method whose finalized plan supplies selectors
+		// and type references for generated service calls.
+		method *goaexpr.MethodExpr
 	}
 
 	// ToolBoundsData captures the generated bounded-result contract for a tool.
@@ -785,6 +890,10 @@ const (
 	// are invoked, plus helper functions in the agenttools package.
 	ToolsetKindExported ToolsetKind = "exported"
 
+	// ToolsetKindServiceExport labels a toolset exported directly by a Goa service.
+	// It produces reusable specs without agent registration helpers.
+	ToolsetKindServiceExport ToolsetKind = "service_export"
+
 	// ToolsetKindGlobal labels toolsets declared at the design's top level,
 	// not bound to any agent. These represent shared capabilities or external
 	// providers (MCP servers) available across all services.
@@ -815,28 +924,24 @@ const (
 	defaultPlannerActivityTimeout = 2 * time.Minute
 )
 
-// buildGeneratorData builds render data from the canonical IR.
-func buildGeneratorData(genpkg string, roots []eval.Root) (*GeneratorData, error) {
-	design, err := ir.Build(genpkg, roots)
-	if err != nil {
-		return nil, err
-	}
-	return buildGeneratorDataFromIR(design)
-}
-
-func buildGeneratorDataFromIR(design *ir.Design) (*GeneratorData, error) {
+// buildGeneratorDataFromIR combines the saved agent design with the service
+// types and package names chosen for this command.
+func buildGeneratorDataFromIR(
+	design *ir.Design,
+	servicesData *service.ServicesData,
+	mcpRoot *mcpexpr.RootExpr,
+) (*GeneratorData, error) {
 	if design == nil {
 		return &GeneratorData{}, nil
 	}
-	servicesData := service.NewServicesData(design.GoaRoot)
 	services := make([]*ServiceAgentsData, 0, len(design.Services))
 	for _, svcIR := range design.Services {
 		if svcIR == nil || (len(svcIR.Agents) == 0 && len(svcIR.Completions) == 0) {
 			continue
 		}
-		svc := &ServiceAgentsData{Service: svcIR.Goa}
+		svc := &ServiceAgentsData{Service: servicesData.Get(svcIR.Name)}
 		for _, agentIR := range svcIR.Agents {
-			agentData, err := newAgentData(design.Genpkg, agentIR, servicesData)
+			agentData, err := newAgentData(design.Genpkg, agentIR, servicesData, mcpRoot)
 			if err != nil {
 				return nil, err
 			}
@@ -850,10 +955,19 @@ func buildGeneratorDataFromIR(design *ir.Design) (*GeneratorData, error) {
 		}
 		services = append(services, svc)
 	}
-	return &GeneratorData{Genpkg: design.Genpkg, Services: services}, nil
+	return &GeneratorData{
+		Genpkg:           design.Genpkg,
+		DisableAgentDocs: design.AgentsRoot.DisableAgentDocs,
+		Services:         services,
+	}, nil
 }
 
-func newAgentData(genpkg string, agentIR *ir.Agent, servicesData *service.ServicesData) (*AgentData, error) {
+func newAgentData(
+	genpkg string,
+	agentIR *ir.Agent,
+	servicesData *service.ServicesData,
+	mcpRoot *mcpexpr.RootExpr,
+) (*AgentData, error) {
 	agent := &AgentData{
 		Genpkg:                genpkg,
 		Name:                  agentIR.Name,
@@ -861,7 +975,7 @@ func newAgentData(genpkg string, agentIR *ir.Agent, servicesData *service.Servic
 		ID:                    agentIR.ID,
 		GoName:                codegen.Goify(agentIR.Name, true),
 		Slug:                  agentIR.Slug,
-		Service:               agentIR.Service.Goa,
+		Service:               servicesData.Get(agentIR.Service.Name),
 		PackageName:           agentIR.PackageName,
 		PathName:              agentIR.PathName,
 		Dir:                   agentIR.Dir,
@@ -924,11 +1038,11 @@ func newAgentData(genpkg string, agentIR *ir.Agent, servicesData *service.Servic
 			agent.Runtime.ExecuteTool.StartToCloseTimeout = agent.RunPolicy.ToolTimeout
 		}
 	}
-	usedToolsets, err := collectToolsets(agent, agentIR.UsedToolsets, servicesData)
+	usedToolsets, err := collectToolsets(agent, agentIR.UsedToolsets, servicesData, mcpRoot)
 	if err != nil {
 		return nil, err
 	}
-	exportedToolsets, err := collectToolsets(agent, agentIR.ExportedToolsets, servicesData)
+	exportedToolsets, err := collectToolsets(agent, agentIR.ExportedToolsets, servicesData, mcpRoot)
 	if err != nil {
 		return nil, err
 	}

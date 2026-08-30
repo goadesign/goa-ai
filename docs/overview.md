@@ -42,8 +42,8 @@ Think of it as a pipeline from intention to execution:
 4. **Engine** (`runtime/agent/engine`) — Swap backends without changing code. In‑memory for fast
    iteration; Temporal for production durability.
 
-5. **Features** (`features/*`) — Plug in what you need: Mongo for memory/sessions/run event logs and prompt
-   overrides, Pulse for real‑time streams, Bedrock/OpenAI/Gateway model clients, policy engines.
+5. **Features** (`features/*`) — Plug in what you need: Mongo for memory and prompt overrides,
+   Pulse for real-time streams, Bedrock/OpenAI/Gateway model clients, policy engines.
 
 ## Ways to Work
 
@@ -69,8 +69,10 @@ handling, retries, and tracing baked in.
 
 ### Full Observability (Streaming & Telemetry)
 
-Configure a memory store and stream sink once. The runtime automatically persists transcripts,
-publishes real‑time events, and instruments everything with OTEL‑aware logging, metrics, and traces.
+Configure a runtime store and stream sink once. The runtime stores the canonical
+transcript records needed for replay, publishes real‑time events, and instruments
+everything with OTEL‑aware logging, metrics, and traces. Product transcripts remain
+owned by the application and may use a separate memory store.
 
 ---
 
@@ -298,11 +300,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	chat "example.com/quickstart/gen/orchestrator/agents/chat"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/runtime"
+	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 )
 
 // A tiny planner: always replies, no tools (perfect for first run)
@@ -337,7 +341,11 @@ func (p *StubPlanner) PlanResume(
 }
 
 func main() {
-	rt := runtime.New() // in‑memory engine by default
+	runtimeStore := storageinmem.New()
+	if _, err := runtimeStore.CreateSession(context.Background(), "session-1", time.Now().UTC()); err != nil {
+		panic(err)
+	}
+	rt := runtime.New(runtimeStore) // in-memory engine by default
 
 	if err := chat.RegisterChatAgent(context.Background(), rt, chat.ChatAgentConfig{
 		Planner: &StubPlanner{},
@@ -353,6 +361,7 @@ func main() {
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "Say hi"}},
 		}},
+		runtime.WithRunID("run-1"),
 	)
 	if err != nil {
 		panic(err)
@@ -376,7 +385,7 @@ History compression is design-owned. Declare `History(...)` inside the agent's
 **Want durability?** Just swap in a Temporal engine:
 
 ```go
-rt := runtime.New(runtime.WithEngine(temporalEngine))
+rt := runtime.New(runtimeStore, runtime.WithEngine(temporalEngine))
 ```
 
 Then use `Start/Wait` for asynchronous runs with task queues, memos, and search attributes.
@@ -410,13 +419,12 @@ Per‑turn enforcement of:
 |---------------------|--------------------------------------------------------------------------------------|
 | **Native toolsets** | Your implementations + generated codecs = typed, validated tools                     |
 | **Agent‑as‑tool**   | Child workflow executes the nested agent with linked streams and run links           |
-| **MCP toolsets**    | Generated wrappers preserve JSON schemas and typed transport failures across HTTP/SSE/stdio |
+| **MCP toolsets**    | Generated wrappers preserve JSON schemas and typed transport failures across HTTP and stdio |
 
-MCP callers in `runtime/mcp` support multiple transports:
+MCP callers in `runtime/mcp` support two transports:
 
 - **`StdioCaller`** — Spawns MCP server as subprocess, communicates via stdin/stdout
-- **`HTTPCaller`** — HTTP POST to MCP endpoints
-- **`SSECaller`** — Server‑Sent Events for streaming MCP responses
+- **`HTTPCaller`** — Sends JSON-RPC over HTTP and accepts JSON or event-stream responses
 
 All callers implement the `Caller` interface, preserve structured MCP error data, and include
 distributed tracing. Recovery is selected by the runtime from the typed failure contract rather
@@ -426,7 +434,7 @@ than by parsing error text or retrying transport calls implicitly.
 
 The hook bus publishes events (`tool_start`, `tool_result`, `assistant_message`, `prompt_rendered`, ...) that:
 
-- **Memory/session stores** (e.g., Mongo) subscribe to for transcript persistence
+- **Memory stores** subscribe to for transcript persistence
 - **Stream sinks** (e.g., Pulse) carry to real‑time UIs
 - **OTEL instrumentation** captures for logs, metrics, and traces
 
@@ -447,8 +455,8 @@ workflow open:
   the workflow with a typed suspension.
 - **Await External Tools** — Planner requests out‑of‑band tool execution and the
   workflow ends with the exact calls awaiting results.
-- **Continue** — The runtime stores the opaque suspension in its configured
-  session store before the workflow completes. The caller atomically accepts
+- **Continue** — The runtime stores the opaque suspension in its required
+  runtime store before the workflow completes. The caller atomically accepts
   one answer and passes the completed run ID to `AgentClient.Continue`;
   multiple pending requests are consumed in order, one workflow per answer.
 
@@ -586,12 +594,11 @@ the toolsets with the runtime.
 | `MCP(name, version, opts...)` | Enable MCP support for a service |
 | `ProtocolVersion(string)` | Configure MCP protocol version |
 | `Resource(name, uri, mimeType)` | Mark method as MCP resource provider |
-| `WatchableResource(name, uri, mimeType)` | Mark method as subscribable MCP resource |
 | `StaticPrompt(name, desc, messages...)` | Add static prompt template |
-| `DynamicPrompt(name, desc)` | Mark method as dynamic prompt generator |
-| `Notification(name, desc)` | Mark method as MCP notification sender |
-| `Subscription(resourceName)` | Mark method as subscription handler |
-| `SubscriptionMonitor(name)` | Mark method as SSE subscription monitor |
+
+An MCP service must also declare a service-level JSON-RPC `POST` route. For
+example, `JSONRPC(func() { POST("/mcp") })` exposes the generated MCP methods at
+`/mcp`.
 
 ---
 
@@ -600,8 +607,9 @@ the toolsets with the runtime.
 ### Runtime Construction
 
 ```go
-// Create runtime with functional options
+// Pass the required host-owned runtime store, then functional options.
 rt := runtime.New(
+    runtimeStore,
     runtime.WithEngine(temporalEngine),
     runtime.WithMemoryStore(memoryMongo),
     runtime.WithPolicy(basicPolicy),
@@ -911,8 +919,19 @@ Prompt rendering is runtime-native and versioned:
 - Register immutable baseline prompts as `prompt.PromptSpec` in `Runtime.PromptRegistry`.
 - Optionally configure scoped overrides with `runtime.WithPromptStore(...)` using a `prompt.Store`
   implementation (for example, `features/prompt/mongo`).
-- Render prompts from planners with `PlannerContext.RenderPrompt(...)`; rendered text includes a
-  `prompt.PromptRef` (`id`, `version`) for provenance.
+- Rendering returns text and a `prompt.PromptRef`; it does not write runtime
+  storage.
+- A context carrying `prompt.RenderRecorder` collects one `prompt.RenderEvent`
+  for each successful render. The event contains the resolved prompt ID,
+  version, and scope. Failed renders add no event.
+- Before `Start`, pass `recorder.Events()` through
+  `runtime.WithRenderedPrompts(...)` with the messages containing the rendered
+  text. The accepted workflow stores those events after its start record and
+  before planner work.
+- Planner rendering, consumer-side child prompt rendering, and `RunOneShot`
+  use the same event shape. The runtime carries planner events in the accepted
+  activity result, child events in the accepted child input, and one-shot events
+  to the already-created one-shot run.
 - Carry prompt provenance through model calls by setting `model.Request.PromptRefs`.
 - Observe render lifecycle through hook/stream `prompt_rendered` events.
 
@@ -996,7 +1015,12 @@ engine-level queue-wait or heartbeat tuning.
 - `ID` (generated if absent)
 - `Workflow` (from registration)
 - `TaskQueue`, `Input` (`*runtime.RunInput`)
-- Optional `Memo`, `SearchAttributes`, `RetryPolicy`
+- Optional `Memo` and `SearchAttributes`
+
+The agent runtime deliberately does not expose whole-workflow retries. One
+accepted workflow owns one durable run lifecycle, including its terminal
+record. Activities may retry temporary failures because each activity command
+is safe to repeat.
 
 `Engine.StartWorkflow` returns an `engine.WorkflowHandle` for waiting or cancellation.
 
@@ -1106,8 +1130,8 @@ as child workflows, enabling linked streams and run links.
 
 - Implement `planner.Planner` (`PlanStart`, `PlanResume`)
 - Provide tool executors via `runtime.ToolCallExecutor`
-- Configure runtime: `runtime.New(WithEngine, WithMemoryStore, WithHooks, WithStream,
-  WithLogger, WithMetrics, WithTracer, WithWorker)`
+- Configure runtime: `runtime.New(runtimeStore, WithEngine, WithMemoryStore,
+  WithHooks, WithStream, WithLogger, WithMetrics, WithTracer, WithWorker)`
 - Register models: `rt.RegisterModel("model-id", client)`
 - Submit runs via generated clients
 - For agent‑as‑tool: configure text/templates with `runtime.WithText`, `runtime.WithTemplate`
@@ -1160,7 +1184,7 @@ func (s *MySink) Close(ctx context.Context) error {
 
 ```go
 sink := &MySink{}
-rt := runtime.New(runtime.WithStream(sink))
+rt := runtime.New(runtimeStore, runtime.WithStream(sink))
 ```
 
 ### Manual Bridge (Direct Bus Access)
@@ -1205,15 +1229,13 @@ profile := stream.MetricsProfile()
 | Runtime guide   | `docs/runtime.md`                                  |
 | Quickstart      | `quickstart/README.md`                             |
 | MCP integration | `codegen/mcp` and `runtime/mcp`                    |
-| Features        | `features/*` (memory, session, run, stream, model clients) |
+| Features        | `features/*` (memory, prompt, stream, and model integrations) |
 
 ### Feature Packages
 
 | Package                  | Purpose                                                |
 |--------------------------|--------------------------------------------------------|
 | `features/memory/mongo`  | Mongo‑backed memory store for transcripts              |
-| `features/runlog/mongo`  | Mongo‑backed run event log store for run introspection |
-| `features/session/mongo` | Mongo‑backed session store for multi‑turn state        |
 | `features/stream/pulse`  | Pulse message bus sink for real‑time streaming         |
 | `features/model/bedrock` | AWS Bedrock model client (Claude, etc.)                |
 | `features/model/openai`  | OpenAI‑compatible model client                         |

@@ -1,106 +1,80 @@
-package client
-
-import (
-    "context"
-    "encoding/json"
-    "errors"
-    "io"
-
-    genjsonrpc "goa.design/goa/v3/jsonrpc"
-    mcpruntime "goa.design/goa-ai/runtime/mcp"
-    mcppkg "{{ .MCPImportPath }}"
-)
-
-// Caller adapts the generated MCP JSON-RPC client to the runtime Caller interface.
+// Caller lets the runtime call tools through the generated MCP client.
 type Caller struct {
-    suite string
-    client *Client
+    client       *Client
+    clientInfo   mcpruntime.ClientInfo
+    session      *mcpruntime.HTTPSession
+    initializeMu sync.Mutex
 }
 
-// NewCaller wraps the generated Client so it can register with the goa-ai runtime.
-func NewCaller(client *Client, suite string) mcpruntime.Caller {
-    if client == nil {
-        panic("MCP caller requires a generated client")
+// NewCaller initializes the MCP session and returns a caller only when the
+// server accepts the generated protocol version and client information.
+func NewCaller(ctx context.Context, client *Client, clientInfo mcpruntime.ClientInfo) (mcpruntime.Caller, error) {
+    if err := InitializeSession(ctx, client, clientInfo); err != nil {
+        return nil, err
     }
-    return Caller{suite: suite, client: client}
+    return &Caller{
+        client:     client,
+        clientInfo: clientInfo,
+        session:    client.Doer.(*mcpruntime.HTTPSession),
+    }, nil
 }
 
-// CallTool invokes tools/call via the generated JSON-RPC client and normalizes the response.
-func (c Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
-    payload := &mcppkg.ToolsCallPayload{Name: req.Tool, Arguments: json.RawMessage(req.Payload)}
-    streamEndpoint := c.client.ToolsCall()
-    stream, err := streamEndpoint(ctx, payload)
-    if err != nil{
-
-        return mcpruntime.CallResponse{
-
-    }, callerError(err)
+// CallTool sends one tools/call request and returns its content to the runtime.
+func (c *Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
+    if err := c.ensureSession(ctx); err != nil {
+        return mcpruntime.CallResponse{}, err
     }
-    clientStream, ok := stream.(*ToolsCallClientStream)
-    if !ok{
-
-        return mcpruntime.CallResponse{
-
-    }, mcpruntime.NewInternalError(errors.New("invalid tools/call stream type"))
-    }
-    var last *mcppkg.ToolsCallResult
-    for {
-        ev, recvErr := clientStream.Recv(ctx)
-        if recvErr == io.EOF {
-            break
+    payload := &{{ .MCPPackage }}.ToolsCallPayload{Name: req.Tool, Arguments: json.RawMessage(req.Payload)}
+    ires, err := c.client.ToolsCall()(ctx, payload)
+    if err != nil {
+        if initializeErr := c.ensureSession(ctx); initializeErr != nil {
+            return mcpruntime.CallResponse{}, errors.Join(
+                callerError(err),
+                fmt.Errorf("start new MCP session: %w", initializeErr),
+            )
         }
-        if recvErr != nil{
-
-            return mcpruntime.CallResponse{
-
-        }, callerError(recvErr)
+        return mcpruntime.CallResponse{}, callerError(err)
+    }
+    result := ires.(*{{ .MCPPackage }}.ToolsCallResult)
+    content := make([]mcpruntime.ContentBlock, len(result.Content))
+    for i, item := range result.Content {
+        content[i] = &mcpruntime.TextContent{Text: item.Text}
+    }
+    response := mcpruntime.CallResponse{Content: content}
+    if len(result.StructuredContent) > 0 {
+        var object map[string]json.RawMessage
+        if err := json.Unmarshal(result.StructuredContent, &object); err != nil || object == nil {
+            return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(
+                errors.New("structuredContent must be a JSON object"),
+            )
         }
-        last = ev
+        response.StructuredContent = append(json.RawMessage(nil), result.StructuredContent...)
     }
-    if last == nil || len(last.Content) == 0{
-
-        return mcpruntime.CallResponse{
-
-    }, mcpruntime.NewMalformedResponseError(errors.New("empty MCP response"))
+    if result.IsError != nil && *result.IsError {
+        return mcpruntime.CallResponse{}, mcpruntime.NewToolExecutionError(response)
     }
-    item := last.Content[0]
-    var result json.RawMessage
-    if item.Text != nil {
-        txt := []byte(*item.Text)
-        if json.Valid(txt) {
-            result = append(json.RawMessage(nil), txt...)
-        } else {
-            marshaled, err := json.Marshal(*item.Text)
-            if err != nil{
-
-                return mcpruntime.CallResponse{
-
-            }, err
-            }
-            result = marshaled
-        }
-    } else {
-        result = json.RawMessage("null")
+    {{- range .Tools }}
+    {{- if .HasStructuredResult }}
+    if req.Tool == {{ printf "%q" .Name }} && len(response.StructuredContent) == 0 {
+        return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(
+            errors.New("MCP response is missing structured content"),
+        )
     }
-    if last.IsError != nil && *last.IsError {
-        return mcpruntime.CallResponse{}, mcpruntime.NewToolExecutionError(result)
-    }
-    var structured json.RawMessage
-    if item.MimeType != nil && *item.MimeType == "application/json" {
-        structured = append(json.RawMessage(nil), result...)
-    }
-    return mcpruntime.CallResponse{Result: result, Structured: structured}, nil
+    {{- end }}
+    {{- end }}
+    return response, nil
 }
 
-// callerError preserves JSON-RPC error codes across the generated transport
-// boundary so agent recovery can classify protocol failures structurally.
-func callerError(err error) error {
-    var rpcErr *genjsonrpc.ErrorResponse
-    if errors.As(err, &rpcErr) {
-        return &mcpruntime.Error{
-            Code:    int(rpcErr.Code),
-            Message: rpcErr.Message,
-        }
+// ensureSession starts one replacement handshake after the server expires the
+// current HTTP session. It never repeats the tool call that observed expiry.
+func (c *Caller) ensureSession(ctx context.Context) error {
+    if c.session.Initialized() {
+        return nil
     }
-    return err
+    c.initializeMu.Lock()
+    defer c.initializeMu.Unlock()
+    if c.session.Initialized() {
+        return nil
+    }
+    return InitializeSession(ctx, c.client, c.clientInfo)
 }

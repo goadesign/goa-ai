@@ -1,10 +1,11 @@
+// Package codegen collects the names, schemas, and JSON conversion functions
+// used to generate an MCP adapter for one Goa service.
 package codegen
 
 import (
 	"encoding/json"
 	"fmt"
-	"path"
-	"sort"
+	"mime"
 	"strings"
 
 	"goa.design/goa-ai/codegen/naming"
@@ -15,198 +16,256 @@ import (
 )
 
 type (
-	// AdapterData holds the data for generating the adapter
+	// AdapterData contains everything the MCP templates need for one Goa service.
 	AdapterData struct {
-		ServiceName         string
-		ServiceGoName       string
-		MCPServiceName      string
-		MCPName             string
-		MCPVersion          string
-		ProtocolVersion     string
-		Package             string
-		MCPPackage          string
-		ServiceJSONRPCAlias string
-		ImportPath          string
-		Tools               []*ToolAdapter
-		Resources           []*ResourceAdapter
-		StaticPrompts       []*StaticPromptAdapter
-		DynamicPrompts      []*DynamicPromptAdapter
-		Notifications       []*NotificationAdapter
-		Subscriptions       []*SubscriptionAdapter
-		// Streaming flags derived from original service DSL
-		ToolsCallStreaming bool
-		// Derived flags
-		HasWatchableResources bool
-		NeedsMCPClient        bool
-		NeedsOriginalClient   bool
-		NeedsQueryFormatting  bool
+		// ServiceName is the service name written in the Goa design.
+		ServiceName string
+		// ServiceGoName is the final Go name of the service.
+		ServiceGoName string
+		// MCPName is the server name returned during MCP initialization.
+		MCPName string
+		// MCPVersion is the server version returned during MCP initialization.
+		MCPVersion string
+		// ProtocolVersion is the MCP protocol version implemented by the generated
+		// server.
+		ProtocolVersion string
+		// Package is the import name of the generated Goa service package.
+		Package string
+		// MCPPackage is the import name of the generated MCP service package.
+		MCPPackage string
+		// CodecImportPath is the private generated package that converts service
+		// values to and from the JSON carried by MCP.
+		CodecImportPath string
+		// CodecPackage is the import name used for CodecImportPath.
+		CodecPackage string
+		// NeedsServerCodec reports whether the MCP server adapter calls a codec.
+		NeedsServerCodec bool
+		// NeedsRegisterCodec reports whether generated tool registration decodes
+		// results.
+		NeedsRegisterCodec bool
+		// Tools contains the Goa methods exposed as MCP tools.
+		Tools []*ToolAdapter
+		// Resources contains the Goa methods exposed as MCP resources.
+		Resources []*ResourceAdapter
+		// StaticPrompts contains the prompts written directly in the Goa design.
+		StaticPrompts []*StaticPromptAdapter
+		// NeedsNoArgumentsValidation reports whether a tool has no payload.
+		NeedsNoArgumentsValidation bool
+		// NeedsBoolPtr reports that generated tool errors set MCP's optional flag.
+		NeedsBoolPtr bool
 
-		Register     *RegisterData
+		// Register contains the values used to generate agent runtime registration.
+		Register *RegisterData
+		// ClientSession contains the values used to generate MCP initialization.
+		ClientSession *ClientSessionData
+		// ClientCaller contains the values used to generate tool calls.
 		ClientCaller *ClientCallerData
+
+		mcpPackage              *codegen.GeneratedPackage
+		serviceImportPath       string
+		mcpImportPath           string
+		mcpPathName             string
+		serviceGeneratedImport  *codegen.ImportSpec
+		mcpGeneratedImport      *codegen.ImportSpec
+		jsonrpcClientImportPath string
+		jsonrpcServerImports    *codegen.GeneratedImportPlan
+		serverImportPaths       []string
+		registerImportPaths     []string
+		serverImports           []*codegen.ImportSpec
+		registerImports         []*codegen.ImportSpec
+	}
+
+	// MethodCodecData names the generated JSON functions for one service method.
+	// Empty names mean the method has no value in that direction.
+	MethodCodecData struct {
+		// PayloadEncode converts a service payload into MCP JSON.
+		PayloadEncode string
+		// PayloadDecode converts MCP JSON into a validated service payload.
+		PayloadDecode string
+		// ResultEncode converts a service result into MCP JSON.
+		ResultEncode string
+		// ResultDecode converts MCP JSON into a validated service result.
+		ResultDecode string
 	}
 
 	// RegisterData drives generation of runtime registration helpers.
 	RegisterData struct {
-		Package            string
-		HelperName         string
-		ServiceName        string
-		SuiteName          string
+		// HelperName is the Go name shared by the generated registration helpers.
+		HelperName string
+		// ServiceName is the Goa service that owns the tools.
+		ServiceName string
+		// SuiteName is the local MCP toolset name.
+		SuiteName string
+		// SuiteQualifiedName identifies the toolset by its service and suite names.
 		SuiteQualifiedName string
-		Description        string
-		Tools              []RegisterTool
+		// Description explains the generated toolset to the agent runtime.
+		Description string
+		// Tools contains the tools registered with the agent runtime.
+		Tools []RegisterTool
 	}
 
+	// ClientCallerData contains the names and result shapes used by the generated
+	// MCP caller.
 	ClientCallerData struct {
-		MCPImportPath string
+		// MCPPackage is the final import name for the generated MCP service.
+		MCPPackage string
+		// Tools describes the statically known result contract for each tool.
+		Tools []*ToolAdapter
+
+		clientPackage     *codegen.GeneratedPackage
+		clientImportPaths []string
+		imports           []*codegen.ImportSpec
+	}
+
+	// ClientSessionData drives the generated MCP initialization helper.
+	ClientSessionData struct {
+		// MCPPackage is the final import name for the generated MCP service.
+		MCPPackage string
+		// JSONRPCPackage is the final import name for Goa's JSON-RPC package.
+		JSONRPCPackage string
+		// InitializedRequestBuilder is Goa's final request builder name for the
+		// notifications/initialized method.
+		InitializedRequestBuilder string
+		// InitializedRequestEncoder is Goa's final request encoder name for the
+		// notifications/initialized method.
+		InitializedRequestEncoder string
+		// HasTools reports that the generated client can call MCP tools.
+		HasTools bool
+		// HasResources reports that the generated client can read MCP resources.
+		HasResources bool
+		// HasPrompts reports that the generated client can get MCP prompts.
+		HasPrompts bool
+
+		clientPackage     *codegen.GeneratedPackage
+		clientImportPaths []string
+		imports           []*codegen.ImportSpec
 	}
 
 	// RegisterTool represents a single tool entry in the helper file.
 	RegisterTool struct {
-		ID            string
-		Title         string
+		// ID is the tool name sent through MCP.
+		ID string
+		// Title is the tool name shown to users.
+		Title string
+		// QualifiedName identifies the service, toolset, and tool.
 		QualifiedName string
-		Description   string
-		PayloadType   string
-		ResultType    string
-		InputSchema   string
-		ExampleArgs   string
-	}
-
-	// ToolAdapter represents a tool adapter
-	ToolAdapter struct {
-		Name               string
-		Description        string
-		OriginalMethodName string
-		HasPayload         bool
-		HasResult          bool
-		PayloadType        string
-		ResultType         string
-		InputSchema        string
-		IsStreaming        bool
-		StreamInterface    string
-		StreamEventType    string
-		// Simple validations (top-level only)
-		RequiredFields []string
-		EnumFields     map[string][]string
-		EnumFieldsPtr  map[string]bool
-		// ExampleArguments contains a minimal valid JSON for tool arguments
-		ExampleArguments string
-	}
-
-	// ResourceAdapter represents a resource adapter
-	ResourceAdapter struct {
-		Name               string
-		Description        string
-		URI                string
-		MimeType           string
-		OriginalMethodName string
-		HasPayload         bool
-		HasResult          bool
-		PayloadType        string
-		ResultType         string
-		QueryFields        []*ResourceQueryField
-		Watchable          bool
-	}
-
-	// ResourceQueryField describes one statically known query parameter binding
-	// for a resource payload field.
-	ResourceQueryField struct {
-		QueryKey       string
-		GuardExpr      string
-		ValueExpr      string
-		CollectionExpr string
-		FormatKind     string
-		Repeated       bool
-	}
-
-	// resourceQueryFieldDefinition captures one flattened top-level resource
-	// query field together with the presence rules implied by the Goa payload.
-	resourceQueryFieldDefinition struct {
-		Attribute        *expr.AttributeExpr
-		Required         bool
-		PrimitivePointer bool
-	}
-
-	// StaticPromptAdapter represents a static prompt
-	StaticPromptAdapter struct {
-		Name        string
+		// Description explains the tool to the model.
 		Description string
-		Messages    []*PromptMessageAdapter
+		// HasPayload reports whether the Goa method accepts a payload.
+		HasPayload bool
+		// HasResult reports whether the Goa method returns a result.
+		HasResult bool
+		// HasStructuredResult reports whether MCP returns the result as structured
+		// JSON.
+		HasStructuredResult bool
+		// TextResult reports whether MCP returns the result as plain text.
+		TextResult bool
+		// PayloadType is the final Go payload type.
+		PayloadType string
+		// ResultType is the final Go result type.
+		ResultType string
+		// InputSchema is the JSON Schema for tool arguments.
+		InputSchema string
+		// ResultSchema is the JSON Schema for the tool result.
+		ResultSchema string
+		// ExampleArgs is a valid JSON example for tool arguments.
+		ExampleArgs string
+		// Codec names the generated result decoder used after an MCP call.
+		Codec *MethodCodecData
 	}
 
-	// PromptMessageAdapter represents a prompt message
+	// ToolAdapter contains the generated code choices for one MCP tool.
+	ToolAdapter struct {
+		// Name is the tool name sent through MCP.
+		Name string
+		// Description explains the tool to MCP clients.
+		Description string
+		// ServiceMethodName is Goa's final Go name for the original service method.
+		ServiceMethodName string
+		// HasPayload reports whether the Goa method accepts a payload.
+		HasPayload bool
+		// HasResult reports whether the Goa method returns a result.
+		HasResult bool
+		// PayloadType is the final Go payload type.
+		PayloadType string
+		// ResultType is the final Go result type.
+		ResultType string
+		// InputSchema is the JSON Schema sent by tools/list.
+		InputSchema string
+		// ResultSchema is the JSON Schema used by the agent runtime for the
+		// authored result type.
+		ResultSchema string
+		// OutputSchema is the JSON Schema for an object result. It is empty
+		// when the method has no result or returns a non-object value.
+		OutputSchema string
+		// HasStructuredResult reports that successful calls include the
+		// object result in MCP structuredContent.
+		HasStructuredResult bool
+		// TextResult reports that the result is a string sent as plain MCP text.
+		TextResult bool
+		// Codec names the functions for the original method payload and result.
+		Codec *MethodCodecData
+		// ExampleArguments contains a minimal valid JSON value for tool arguments.
+		ExampleArguments string
+
+		userMethodName string
+	}
+
+	// ResourceAdapter contains the generated code choices for one fixed MCP
+	// resource.
+	ResourceAdapter struct {
+		// Name is the resource name sent through MCP.
+		Name string
+		// Description explains the resource to MCP clients.
+		Description string
+		// URI is the exact resource address accepted by resources/read.
+		URI string
+		// MimeType describes the resource content.
+		MimeType string
+		// ServiceMethodName is Goa's final Go name for the original service method.
+		ServiceMethodName string
+		// TextResult reports that the method result is a string returned without
+		// JSON quoting because the resource declares a text MIME type.
+		TextResult bool
+		// Codec names the functions for the original method payload and result.
+		Codec *MethodCodecData
+
+		userMethodName string
+	}
+
+	// StaticPromptAdapter contains one prompt written directly in the Goa design.
+	StaticPromptAdapter struct {
+		// Name is the prompt name sent through MCP.
+		Name string
+		// Description explains the prompt to MCP clients.
+		Description string
+		// Messages is the fixed message sequence returned by prompts/get.
+		Messages []*PromptMessageAdapter
+	}
+
+	// PromptMessageAdapter contains one fixed text message in a generated prompt.
 	PromptMessageAdapter struct {
-		Role    string
+		// Role identifies the message author as user or assistant.
+		Role string
+		// Content is the message text.
 		Content string
 	}
 
-	// DynamicPromptAdapter represents a dynamic prompt adapter
-	DynamicPromptAdapter struct {
-		Name               string
-		Description        string
-		OriginalMethodName string
-		HasPayload         bool
-		PayloadType        string
-		ResultType         string
-		// Arguments describes prompt arguments derived from the payload (dynamic prompts)
-		Arguments []PromptArg
-		// ExampleArguments contains a minimal valid JSON for prompt arguments
-		ExampleArguments string
-	}
-
-	// PromptArg is a lightweight representation for generating PromptArgument values
-	PromptArg struct {
-		Name        string
-		Description string
-		Required    bool
-	}
-
-	// NotificationAdapter represents a notification mapping
-	NotificationAdapter struct {
-		Name               string
-		Description        string
-		OriginalMethodName string
-	}
-
-	// SubscriptionAdapter represents a subscription mapping
-	SubscriptionAdapter struct {
-		ResourceName       string
-		ResourceURI        string
-		OriginalMethodName string
-	}
-
-	// adapterGenerator generates the adapter layer between MCP and the original service
+	// adapterGenerator builds the values used to generate an MCP adapter for one
+	// Goa service.
 	adapterGenerator struct {
-		genpkg          string
 		originalService *expr.ServiceExpr
 		mcp             *mcpexpr.MCPExpr
-		mapping         *ServiceMethodMapping
-		scope           *codegen.NameScope
 	}
 )
 
-const (
-	resourceQueryFormatString  = "string"
-	resourceQueryFormatBool    = "bool"
-	resourceQueryFormatInt     = "int"
-	resourceQueryFormatUint    = "uint"
-	resourceQueryFormatFloat32 = "float32"
-	resourceQueryFormatFloat64 = "float64"
-)
+const noArgumentsSchema = `{"type":"object","properties":{},"additionalProperties":false}`
 
-// newAdapterGenerator creates a new adapter generator
-func newAdapterGenerator(
-	genpkg string,
-	svc *expr.ServiceExpr,
-	mcp *mcpexpr.MCPExpr,
-	mapping *ServiceMethodMapping,
-) *adapterGenerator {
+// newAdapterGenerator creates a generator for one Goa service and MCP server.
+func newAdapterGenerator(svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr) *adapterGenerator {
 	return &adapterGenerator{
-		genpkg:          genpkg,
 		originalService: svc,
 		mcp:             mcp,
-		mapping:         mapping,
-		scope:           codegen.NewNameScope(),
 	}
 }
 
@@ -223,48 +282,42 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 		return nil, err
 	}
 	data := &AdapterData{
-		ServiceName:         g.originalService.Name,
-		ServiceGoName:       codegen.Goify(g.originalService.Name, true),
-		MCPServiceName:      g.originalService.Name,
-		MCPName:             g.mcp.Name,
-		MCPVersion:          g.mcp.Version,
-		ProtocolVersion:     g.mcp.ProtocolVersion,
-		Package:             codegen.SnakeCase(g.originalService.Name),
-		MCPPackage:          "mcp" + strings.ToLower(codegen.Goify(g.originalService.Name, false)),
-		ServiceJSONRPCAlias: codegen.SnakeCase(g.originalService.Name) + "jsonrpc",
-		ImportPath:          g.genpkg,
-		Tools:               tools,
-		Resources:           resources,
-		DynamicPrompts:      g.buildDynamicPromptAdapters(),
-		Notifications:       g.buildNotificationAdapters(),
-		Subscriptions:       g.buildSubscriptionAdapters(),
+		ServiceName:     g.originalService.Name,
+		ServiceGoName:   codegen.Goify(g.originalService.Name, true),
+		MCPName:         g.mcp.Name,
+		MCPVersion:      g.mcp.Version,
+		ProtocolVersion: g.mcp.ProtocolVersion,
+		Package:         codegen.SnakeCase(g.originalService.Name),
+		Tools:           tools,
+		Resources:       resources,
+		NeedsBoolPtr:    len(tools) > 0,
 	}
-
-	// Streaming: tools/call uses SSE. For non-streaming tools the adapter sends
-	// a single final event via SendAndClose; clients consistently use SSE.
-	data.ToolsCallStreaming = true
 
 	// Static prompts are handled directly in the adapter
 	data.StaticPrompts = g.buildStaticPrompts()
 
-	// Derive watchable resources presence
-	for _, r := range data.Resources {
-		if r.Watchable {
-			data.HasWatchableResources = true
-			break
-		}
-	}
-	data.NeedsMCPClient = len(data.Tools) > 0 ||
-		len(data.Resources) > 0 ||
-		len(data.DynamicPrompts) > 0 ||
-		len(data.Notifications) > 0
-	data.NeedsOriginalClient = len(data.DynamicPrompts) > 0 || adapterDataNeedsOriginalClient(data.Tools, data.Resources)
-	data.NeedsQueryFormatting = adapterDataNeedsQueryFormatting(data.Resources)
+	data.NeedsNoArgumentsValidation = adapterDataNeedsNoArgumentsValidation(data)
 
 	data.Register = g.buildRegisterData(data)
-	data.ClientCaller = g.buildClientCallerData(data, g.genpkg)
+	data.ClientSession = &ClientSessionData{
+		HasTools:     len(data.Tools) > 0,
+		HasResources: len(data.Resources) > 0,
+		HasPrompts:   len(data.StaticPrompts) > 0,
+	}
+	data.ClientCaller = g.buildClientCallerData(data)
 
 	return data, nil
+}
+
+// adapterDataNeedsNoArgumentsValidation reports whether generated request code
+// must reject arguments for a tool or prompt that accepts no input.
+func adapterDataNeedsNoArgumentsValidation(data *AdapterData) bool {
+	for _, tool := range data.Tools {
+		if !tool.HasPayload {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *adapterGenerator) buildRegisterData(data *AdapterData) *RegisterData {
@@ -279,7 +332,6 @@ func (g *adapterGenerator) buildRegisterData(data *AdapterData) *RegisterData {
 	}
 	helper := serviceGoName + suiteGoName + "Toolset"
 	reg := &RegisterData{
-		Package:            data.MCPPackage,
 		HelperName:         helper,
 		ServiceName:        g.originalService.Name,
 		SuiteName:          g.mcp.Name,
@@ -287,10 +339,6 @@ func (g *adapterGenerator) buildRegisterData(data *AdapterData) *RegisterData {
 		Description:        desc,
 	}
 	for _, tool := range data.Tools {
-		schema := tool.InputSchema
-		if schema == "" {
-			schema = "{}"
-		}
 		payloadType := tool.PayloadType
 		if payloadType == "" {
 			payloadType = "any"
@@ -300,57 +348,29 @@ func (g *adapterGenerator) buildRegisterData(data *AdapterData) *RegisterData {
 			resultType = "any"
 		}
 		reg.Tools = append(reg.Tools, RegisterTool{
-			ID:            tool.Name,
-			Title:         naming.HumanizeTitle(tool.Name),
-			QualifiedName: fmt.Sprintf("%s.%s.%s", reg.ServiceName, reg.SuiteName, tool.Name),
-			Description:   tool.Description,
-			PayloadType:   payloadType,
-			ResultType:    resultType,
-			InputSchema:   schema,
-			ExampleArgs:   tool.ExampleArguments,
+			ID:                  tool.Name,
+			Title:               naming.HumanizeTitle(tool.Name),
+			QualifiedName:       fmt.Sprintf("%s.%s.%s", reg.ServiceName, reg.SuiteName, tool.Name),
+			Description:         tool.Description,
+			HasPayload:          tool.HasPayload,
+			HasResult:           tool.HasResult,
+			HasStructuredResult: tool.HasStructuredResult,
+			TextResult:          tool.TextResult,
+			PayloadType:         payloadType,
+			ResultType:          resultType,
+			InputSchema:         tool.InputSchema,
+			ResultSchema:        tool.ResultSchema,
+			ExampleArgs:         tool.ExampleArguments,
 		})
 	}
 	return reg
 }
 
-func (g *adapterGenerator) buildClientCallerData(data *AdapterData, genpkg string) *ClientCallerData {
+func (g *adapterGenerator) buildClientCallerData(data *AdapterData) *ClientCallerData {
 	if data.Register == nil {
 		return nil
 	}
-	svcName := codegen.SnakeCase(g.originalService.Name)
-	importPath := path.Join(genpkg, "mcp_"+svcName)
-	return &ClientCallerData{
-		MCPImportPath: importPath,
-	}
-}
-
-// adapterDataNeedsOriginalClient reports whether any generated endpoint must
-// decode an MCP response through the original JSON-RPC client.
-func adapterDataNeedsOriginalClient(tools []*ToolAdapter, resources []*ResourceAdapter) bool {
-	for _, tool := range tools {
-		if tool.HasResult {
-			return true
-		}
-	}
-	for _, resource := range resources {
-		if resource.HasResult {
-			return true
-		}
-	}
-	return false
-}
-
-// adapterDataNeedsQueryFormatting reports whether resource query emission needs
-// strconv-based formatting for non-string primitive query values.
-func adapterDataNeedsQueryFormatting(resources []*ResourceAdapter) bool {
-	for _, resource := range resources {
-		for _, field := range resource.QueryFields {
-			if field.FormatKind != resourceQueryFormatString {
-				return true
-			}
-		}
-	}
-	return false
+	return &ClientCallerData{Tools: data.Tools}
 }
 
 // buildToolAdapters creates adapter data for tools.
@@ -362,107 +382,48 @@ func (g *adapterGenerator) buildToolAdapters() ([]*ToolAdapter, error) {
 		hasRealPayload := tool.Method.Payload != nil && tool.Method.Payload.Type != expr.Empty
 
 		adapter := &ToolAdapter{
-			Name:               tool.Name,
-			Description:        tool.Description,
-			OriginalMethodName: codegen.Goify(tool.Method.Name, true),
-			HasPayload:         hasRealPayload,
-			HasResult:          tool.Method.Result != nil,
-			IsStreaming:        tool.Method.Stream == expr.ServerStreamKind,
-		}
-
-		// Set streaming interface and event types for server-streaming methods
-		if adapter.IsStreaming {
-			adapter.StreamInterface = codegen.Goify(tool.Method.Name, true) + "ServerStream"
-			adapter.StreamEventType = codegen.Goify(tool.Method.Name, true) + "Event"
+			Name:           tool.Name,
+			Description:    tool.Description,
+			HasPayload:     hasRealPayload,
+			HasResult:      hasMCPValue(tool.Method.Result),
+			userMethodName: tool.Method.Name,
 		}
 
 		// Set payload type reference only for real payloads
 		if hasRealPayload {
-			adapter.PayloadType = g.getTypeReference(tool.Method.Payload)
 			// Generate a minimal JSON Schema for MCP tools/list
 			schema, err := shared.ToJSONSchema(tool.Method.Payload)
 			if err != nil {
 				return nil, fmt.Errorf("build schema for tool %q: %w", tool.Name, err)
 			}
 			adapter.InputSchema = schema
-			// Collect simple validations for adapter-side checks
-			req, enums, enumPtr := g.collectTopLevelValidations(tool.Method.Payload)
-			adapter.RequiredFields = req
-			adapter.EnumFields = enums
-			adapter.EnumFieldsPtr = enumPtr
-			// Produce a minimal valid example JSON for arguments
-			adapter.ExampleArguments = g.buildExampleJSON(tool.Method.Payload)
+			// Produce a minimal valid example JSON for arguments.
+			example, err := g.buildExampleJSON(tool.Method)
+			if err != nil {
+				return nil, fmt.Errorf("build example for tool %q: %w", tool.Name, err)
+			}
+			adapter.ExampleArguments = example
 		} else {
+			adapter.InputSchema = noArgumentsSchema
 			adapter.ExampleArguments = "{}"
 		}
-
-		// Set result type reference
-		if tool.Method.Result != nil {
-			adapter.ResultType = g.getTypeReference(tool.Method.Result)
+		if adapter.HasResult {
+			schema, err := shared.ToJSONSchema(tool.Method.Result)
+			if err != nil {
+				return nil, fmt.Errorf("build output schema for tool %q: %w", tool.Name, err)
+			}
+			adapter.ResultSchema = schema
+			if expr.AsObject(tool.Method.Result.Type) != nil {
+				adapter.OutputSchema = schema
+				adapter.HasStructuredResult = true
+			}
+			adapter.TextResult = shared.IsStringType(tool.Method.Result.Type)
 		}
 
 		adapters = append(adapters, adapter)
 	}
 
 	return adapters, nil
-}
-
-// collectTopLevelValidations extracts required fields and enum values for a top-level object payload
-func (g *adapterGenerator) collectTopLevelValidations(
-	attr *expr.AttributeExpr,
-) ([]string, map[string][]string, map[string]bool) {
-	if attr == nil || attr.Type == nil || attr.Type == expr.Empty {
-		return nil, nil, nil
-	}
-	// Unwrap user type
-	if ut, ok := attr.Type.(expr.UserType); ok {
-		return g.collectTopLevelValidations(ut.Attribute())
-	}
-	obj, ok := attr.Type.(*expr.Object)
-	if !ok {
-		return nil, nil, nil
-	}
-	req := []string{}
-	enums := map[string][]string{}
-	enumPtr := map[string]bool{}
-	// Build a quick map of attribute by name
-	fields := map[string]*expr.AttributeExpr{}
-	for _, nat := range *obj {
-		fields[nat.Name] = nat.Attribute
-		// enum capture: stringify values to support string and numeric enums
-		if nat.Attribute.Validation == nil || len(nat.Attribute.Validation.Values) == 0 {
-			continue
-		}
-		vals := []string{}
-		for _, v := range nat.Attribute.Validation.Values {
-			vals = append(vals, fmt.Sprint(v))
-		}
-		if len(vals) > 0 {
-			enums[nat.Name] = vals
-		}
-	}
-	if attr.Validation != nil && len(attr.Validation.Required) > 0 {
-		for _, name := range attr.Validation.Required {
-			if fa, ok := fields[name]; ok {
-				// Only require string fields here (simple non-empty check)
-				if pk, okp := fa.Type.(expr.Primitive); okp && pk.Kind() == expr.StringKind {
-					req = append(req, name)
-				}
-			}
-		}
-	}
-	// Determine pointer-ness for enum fields: string enum fields not required are pointers
-	reqSet := map[string]struct{}{}
-	if attr.Validation != nil {
-		for _, n := range attr.Validation.Required {
-			reqSet[n] = struct{}{}
-		}
-	}
-	for n := range enums {
-		_, isReq := reqSet[n]
-		enumPtr[n] = !isReq
-	}
-	return req, enums, enumPtr
 }
 
 // buildResourceAdapters creates adapter data for resources.
@@ -470,33 +431,17 @@ func (g *adapterGenerator) buildResourceAdapters() ([]*ResourceAdapter, error) {
 	adapters := make([]*ResourceAdapter, 0, len(g.mcp.Resources))
 
 	for _, resource := range g.mcp.Resources {
-		// Check if payload is Empty type (added by Goa during Finalize)
-		hasRealPayload := resource.Method.Payload != nil && resource.Method.Payload.Type != expr.Empty
-
+		mediaType, _, err := mime.ParseMediaType(resource.MimeType)
+		if err != nil {
+			return nil, fmt.Errorf("parse MIME type for resource %q: %w", resource.Name, err)
+		}
 		adapter := &ResourceAdapter{
-			Name:               resource.Name,
-			Description:        resource.Description,
-			URI:                resource.URI,
-			MimeType:           resource.MimeType,
-			OriginalMethodName: codegen.Goify(resource.Method.Name, true),
-			HasPayload:         hasRealPayload,
-			HasResult:          resource.Method.Result != nil,
-			Watchable:          resource.Watchable,
-		}
-
-		// Set payload type reference only for real payloads
-		if hasRealPayload {
-			adapter.PayloadType = g.getTypeReference(resource.Method.Payload)
-			queryFields, err := buildResourceQueryFields(resource.Method.Payload)
-			if err != nil {
-				return nil, fmt.Errorf("build resource query fields for %q: %w", resource.Method.Name, err)
-			}
-			adapter.QueryFields = queryFields
-		}
-
-		// Set result type reference
-		if resource.Method.Result != nil {
-			adapter.ResultType = g.getTypeReference(resource.Method.Result)
+			Name:           resource.Name,
+			Description:    resource.Description,
+			URI:            resource.URI,
+			MimeType:       resource.MimeType,
+			TextResult:     strings.HasPrefix(mediaType, "text/"),
+			userMethodName: resource.Method.Name,
 		}
 
 		adapters = append(adapters, adapter)
@@ -505,316 +450,29 @@ func (g *adapterGenerator) buildResourceAdapters() ([]*ResourceAdapter, error) {
 	return adapters, nil
 }
 
-// buildResourceQueryFields computes the statically known resource query plan so
-// the template can emit direct query assembly without rediscovering payload
-// structure at runtime.
-func buildResourceQueryFields(payload *expr.AttributeExpr) ([]*ResourceQueryField, error) {
-	definitions := make(map[string]resourceQueryFieldDefinition)
-	collectResourceQueryFields(payload, payload, definitions, make(map[string]struct{}))
-	if len(definitions) == 0 {
-		return nil, fmt.Errorf(
-			"payload must define at least one top-level primitive or array-of-primitive query field",
-		)
-	}
-	names := make([]string, 0, len(definitions))
-	for name := range definitions {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	fields := make([]*ResourceQueryField, 0, len(names))
-	for _, name := range names {
-		field, err := newResourceQueryField(name, definitions[name])
-		if err != nil {
-			return nil, err
-		}
-		fields = append(fields, field)
-	}
-	return fields, nil
+// hasMCPValue reports whether a method side carries application data.
+func hasMCPValue(attribute *expr.AttributeExpr) bool {
+	return attribute != nil && attribute.Type != nil && attribute.Type != expr.Empty
 }
 
-// collectResourceQueryFields flattens the top-level resource payload across
-// direct fields, bases, and references so generated query assembly preserves
-// the original payload surface without runtime rediscovery.
-func collectResourceQueryFields(
-	root *expr.AttributeExpr,
-	att *expr.AttributeExpr,
-	fields map[string]resourceQueryFieldDefinition,
-	seen map[string]struct{},
-) {
-	if att == nil || att.Type == nil {
-		return
-	}
-	hash := att.Type.Hash()
-	if _, ok := seen[hash]; ok {
-		return
-	}
-	seen[hash] = struct{}{}
-	for _, base := range att.Bases {
-		collectResourceQueryFields(root, attributeDataType(base), fields, seen)
-	}
-	for _, ref := range att.References {
-		collectResourceQueryFields(root, attributeDataType(ref), fields, seen)
-	}
-	object := expr.AsObject(att.Type)
-	if object == nil {
-		return
-	}
-	for _, named := range *object {
-		required := att.IsRequired(named.Name) || root.IsRequired(named.Name)
-		fields[named.Name] = resourceQueryFieldDefinition{
-			Attribute:        named.Attribute,
-			Required:         required,
-			PrimitivePointer: !required && att.IsPrimitivePointer(named.Name, true),
-		}
-	}
-}
-
-// newResourceQueryField converts one flattened payload field into a concrete
-// query-rendering plan for the client adapter template.
-func newResourceQueryField(name string, definition resourceQueryFieldDefinition) (*ResourceQueryField, error) {
-	fieldName := codegen.Goify(name, true)
-	if array := expr.AsArray(definition.Attribute.Type); array != nil {
-		formatKind, err := resourceQueryFormatKind(name, array.ElemType.Type)
-		if err != nil {
-			return nil, err
-		}
-		return &ResourceQueryField{
-			QueryKey:       name,
-			GuardExpr:      fmt.Sprintf("len(payload.%s) > 0", fieldName),
-			CollectionExpr: fmt.Sprintf("payload.%s", fieldName),
-			ValueExpr:      "value",
-			FormatKind:     formatKind,
-			Repeated:       true,
-		}, nil
-	}
-
-	formatKind, err := resourceQueryFormatKind(name, definition.Attribute.Type)
-	if err != nil {
-		return nil, err
-	}
-	field := &ResourceQueryField{
-		QueryKey:       name,
-		ValueExpr:      fmt.Sprintf("payload.%s", fieldName),
-		FormatKind:     formatKind,
-		CollectionExpr: "",
-	}
-	if definition.Required {
-		return field, nil
-	}
-	if definition.PrimitivePointer {
-		field.GuardExpr = fmt.Sprintf("payload.%s != nil", fieldName)
-		field.ValueExpr = fmt.Sprintf("*payload.%s", fieldName)
-		return field, nil
-	}
-	field.GuardExpr = resourceQueryZeroGuardExpr(formatKind, fieldName)
-	return field, nil
-}
-
-// attributeDataType recovers the full attribute metadata for base and reference
-// types when they are modeled as named user types.
-func attributeDataType(dt expr.DataType) *expr.AttributeExpr {
-	if userType, ok := dt.(expr.UserType); ok {
-		return userType.Attribute()
-	}
-	return &expr.AttributeExpr{Type: dt}
-}
-
-// resourceQueryFormatKind classifies one supported scalar query value so the
-// template can emit direct string formatting without runtime JSON marshalling.
-func resourceQueryFormatKind(fieldName string, dt expr.DataType) (string, error) {
-	underlying := resourceQueryUnderlyingType(dt)
-	if array := expr.AsArray(underlying); array != nil {
-		return "", fmt.Errorf(
-			`field %q uses nested array query values; expected primitive or array of primitive values`,
-			fieldName,
-		)
-	}
-	if !expr.IsPrimitive(underlying) {
-		return "", fmt.Errorf(
-			`field %q uses unsupported resource query type %q; expected primitive or array of primitive values`,
-			fieldName,
-			underlying.Name(),
-		)
-	}
-	switch underlying.Kind() {
-	case expr.StringKind:
-		return resourceQueryFormatString, nil
-	case expr.BooleanKind:
-		return resourceQueryFormatBool, nil
-	case expr.IntKind, expr.Int32Kind, expr.Int64Kind:
-		return resourceQueryFormatInt, nil
-	case expr.UIntKind, expr.UInt32Kind, expr.UInt64Kind:
-		return resourceQueryFormatUint, nil
-	case expr.Float32Kind:
-		return resourceQueryFormatFloat32, nil
-	case expr.Float64Kind:
-		return resourceQueryFormatFloat64, nil
-	case expr.BytesKind,
-		expr.ArrayKind,
-		expr.ObjectKind,
-		expr.MapKind,
-		expr.UnionKind,
-		expr.UserTypeKind,
-		expr.ResultTypeKind,
-		expr.AnyKind:
-		return "", fmt.Errorf(
-			`field %q uses unsupported resource query type %q; expected string, bool, int, uint, float, or arrays of those values`,
-			fieldName,
-			underlying.Name(),
-		)
-	}
-	return "", fmt.Errorf(
-		`field %q uses unsupported resource query type %q; expected string, bool, int, uint, float, or arrays of those values`,
-		fieldName,
-		underlying.Name(),
-	)
-}
-
-// resourceQueryZeroGuardExpr returns the direct zero-value guard for optional
-// non-pointer scalar query fields.
-func resourceQueryZeroGuardExpr(formatKind string, fieldName string) string {
-	switch formatKind {
-	case resourceQueryFormatString:
-		return fmt.Sprintf(`payload.%s != ""`, fieldName)
-	case resourceQueryFormatBool:
-		return fmt.Sprintf("payload.%s", fieldName)
-	default:
-		return fmt.Sprintf("payload.%s != 0", fieldName)
-	}
-}
-
-// resourceQueryUnderlyingType resolves aliases so query-field guard selection
-// follows the concrete runtime kind that Goa will generate.
-func resourceQueryUnderlyingType(dt expr.DataType) expr.DataType {
-	switch actual := dt.(type) {
-	case *expr.UserTypeExpr:
-		return resourceQueryUnderlyingType(actual.Type)
-	case *expr.ResultTypeExpr:
-		return resourceQueryUnderlyingType(actual.Type)
-	default:
-		return actual
-	}
-}
-
-// buildDynamicPromptAdapters creates adapter data for dynamic prompts
-func (g *adapterGenerator) buildDynamicPromptAdapters() []*DynamicPromptAdapter {
-	var adapters []*DynamicPromptAdapter
-
-	if mcpexpr.Root != nil {
-		dynamicPrompts := mcpexpr.Root.DynamicPrompts[g.originalService.Name]
-		for _, dp := range dynamicPrompts {
-			// Check if payload is Empty type (added by Goa during Finalize)
-			hasRealPayload := dp.Method.Payload != nil && dp.Method.Payload.Type != expr.Empty
-
-			adapter := &DynamicPromptAdapter{
-				Name:               dp.Name,
-				Description:        dp.Description,
-				OriginalMethodName: codegen.Goify(dp.Method.Name, true),
-				HasPayload:         hasRealPayload,
-			}
-
-			// Set payload type reference only for real payloads
-			if hasRealPayload {
-				adapter.PayloadType = g.getTypeReference(dp.Method.Payload)
-				adapter.Arguments = g.promptArgsFromPayload(dp.Method.Payload)
-				adapter.ExampleArguments = g.buildExampleJSON(dp.Method.Payload)
-			} else {
-				adapter.ExampleArguments = "{}"
-			}
-
-			// Set result type reference if present
-			if dp.Method.Result != nil {
-				adapter.ResultType = g.getTypeReference(dp.Method.Result)
-			}
-
-			adapters = append(adapters, adapter)
-		}
-	}
-
-	return adapters
-}
-
-// buildExampleJSON produces a minimal valid JSON string for the given payload attribute.
-// It prioritizes required fields and uses enum defaults when available.
-func (g *adapterGenerator) buildExampleJSON(attr *expr.AttributeExpr) string {
+// buildExampleJSON returns a repeatable JSON example for a method payload.
+func (g *adapterGenerator) buildExampleJSON(method *expr.MethodExpr) (string, error) {
+	attr := method.Payload
 	if attr == nil || attr.Type == nil || attr.Type == expr.Empty {
-		return "{}"
+		return "{}", nil
 	}
-	// Use Goa's example generator with a deterministic randomizer for stable output
-	r := &expr.ExampleGenerator{Randomizer: expr.NewDeterministicRandomizer()}
+	r := expr.NewExampleGenerator(expr.NewDeterministicRandomizerFactory()).At(
+		expr.MethodPayloadExampleIdentity(method),
+	)
 	v := attr.Example(r)
 	if v == nil {
-		return "{}"
+		return "", fmt.Errorf("method %q did not produce a payload example", method.Name)
 	}
 	b, err := json.Marshal(v)
 	if err != nil {
-		return "{}"
+		return "", fmt.Errorf("encode method %q payload example: %w", method.Name, err)
 	}
-	return string(b)
-}
-
-// promptArgsFromPayload builds a flat list of prompt arguments from a payload attribute (top-level only)
-func (g *adapterGenerator) promptArgsFromPayload(attr *expr.AttributeExpr) []PromptArg {
-	if attr == nil || attr.Type == nil || attr.Type == expr.Empty {
-		return nil
-	}
-	// Unwrap user type
-	if ut, ok := attr.Type.(expr.UserType); ok {
-		return g.promptArgsFromPayload(ut.Attribute())
-	}
-	obj, ok := attr.Type.(*expr.Object)
-	if !ok {
-		return nil
-	}
-	// Pre-allocate based on number of top-level fields
-	out := make([]PromptArg, 0, len(*obj))
-	// Build required set
-	required := map[string]struct{}{}
-	if attr.Validation != nil {
-		for _, n := range attr.Validation.Required {
-			required[n] = struct{}{}
-		}
-	}
-	for _, nat := range *obj {
-		name := nat.Name
-		desc := ""
-		if nat.Attribute != nil && nat.Attribute.Description != "" {
-			desc = nat.Attribute.Description
-		}
-		_, req := required[name]
-		out = append(out, PromptArg{Name: name, Description: desc, Required: req})
-	}
-	return out
-}
-
-// buildNotificationAdapters creates adapter data for notifications
-func (g *adapterGenerator) buildNotificationAdapters() []*NotificationAdapter {
-	adapters := make([]*NotificationAdapter, 0)
-	if g.mcp != nil {
-		for _, n := range g.mcp.Notifications {
-			adapters = append(adapters, &NotificationAdapter{
-				Name:               n.Name,
-				Description:        n.Description,
-				OriginalMethodName: codegen.Goify(n.Method.Name, true),
-			})
-		}
-	}
-	return adapters
-}
-
-// buildSubscriptionAdapters creates adapter data for subscriptions
-func (g *adapterGenerator) buildSubscriptionAdapters() []*SubscriptionAdapter {
-	adapters := make([]*SubscriptionAdapter, 0)
-	if g.mcp != nil {
-		for _, s := range g.mcp.Subscriptions {
-			adapters = append(adapters, &SubscriptionAdapter{
-				ResourceName:       s.ResourceName,
-				OriginalMethodName: codegen.Goify(s.Method.Name, true),
-			})
-		}
-	}
-	return adapters
+	return string(b), nil
 }
 
 // buildStaticPrompts creates data for static prompts
@@ -839,18 +497,4 @@ func (g *adapterGenerator) buildStaticPrompts() []*StaticPromptAdapter {
 	}
 
 	return prompts
-}
-
-// getTypeReference returns a Go type reference for an attribute
-func (g *adapterGenerator) getTypeReference(attr *expr.AttributeExpr) string {
-	// Service package alias used in adapter imports.
-	svcAlias := codegen.SnakeCase(g.originalService.Name)
-	// External user types should be qualified with their locator package alias.
-	if ut, ok := attr.Type.(expr.UserType); ok && ut != nil {
-		if loc := codegen.UserTypeLocation(ut); loc != nil && loc.PackageName() != "" {
-			return g.scope.GoFullTypeRef(attr, loc.PackageName())
-		}
-	}
-	// For composites and service-local user types, qualify nested refs with service alias.
-	return g.scope.GoFullTypeRef(attr, svcAlias)
 }

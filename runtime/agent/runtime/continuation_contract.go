@@ -20,6 +20,7 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // ValidateContinuation verifies that this runtime can decode and execute a
@@ -30,7 +31,7 @@ func (r *Runtime) ValidateContinuation(suspension *api.RunSuspension) error {
 }
 
 // decodeWorkflowCheckpoint validates the public envelope before decoding the
-// version 5 or version 6 private state.
+// current private state.
 func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*workflowCheckpoint, error) {
 	checkpoint, err := decodeWorkflowCheckpointState(suspension)
 	if err != nil {
@@ -63,6 +64,12 @@ func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*work
 		completionToolFromPolicy(checkpoint.Policy),
 	); err != nil {
 		return nil, fmt.Errorf("validate suspended completion plan: %w", err)
+	}
+	if err := r.validatePlannerResultPayloads(
+		plannerResultValidationProjection(checkpoint.Batch.Result),
+		checkpoint.Context.Tool,
+	); err != nil {
+		return nil, fmt.Errorf("validate suspended planner result: %w", err)
 	}
 	program, err := r.normalizeStep(checkpoint.Batch.Result)
 	if err != nil {
@@ -103,7 +110,7 @@ func (r *Runtime) validateCheckpointToolValues(checkpoint *workflowCheckpoint) e
 		}
 	}
 	for _, event := range checkpoint.State.ToolEvents {
-		if _, err := r.decodeCheckpointToolEvent(ctx, event); err != nil {
+		if _, err := r.decodeCheckpointToolEvent(event); err != nil {
 			return err
 		}
 	}
@@ -117,7 +124,7 @@ func (r *Runtime) validateCheckpointToolValues(checkpoint *workflowCheckpoint) e
 			return err
 		}
 		if record.ChildSuspension == nil {
-			if _, err := r.decodeCheckpointToolEvent(ctx, record.Result); err != nil {
+			if _, err := r.decodeCheckpointToolEvent(record.Result); err != nil {
 				return err
 			}
 		}
@@ -160,10 +167,23 @@ func (r *Runtime) validateCheckpointToolOutput(ctx context.Context, output *plan
 	if _, err := r.unmarshalToolValue(ctx, output.Name, output.Payload.RawMessage(), true); err != nil {
 		return fmt.Errorf("decode suspended tool payload for %s: %w", output.Name, err)
 	}
-	if output.Failure == nil && !output.ResultOmitted {
-		if _, err := r.unmarshalToolValue(ctx, output.Name, output.Result.RawMessage(), false); err != nil {
-			return fmt.Errorf("decode suspended tool result for %s: %w", output.Name, err)
+	var spec *tools.ToolSpec
+	if output.Failure == nil {
+		registered, ok := r.toolSpec(output.Name)
+		if !ok {
+			return fmt.Errorf("suspended tool result references unregistered tool %q", output.Name)
 		}
+		spec = &registered
+	}
+	if _, err := validatePersistedToolResult(
+		spec,
+		ToolCall{Name: output.Name, ToolCallID: output.ToolCallID},
+		output.Result,
+		output.ServerData,
+		output.Bounds,
+		output.Failure,
+	); err != nil {
+		return fmt.Errorf("decode suspended tool result for %s: %w", output.Name, err)
 	}
 	return nil
 }
@@ -176,8 +196,7 @@ func decodeWorkflowCheckpointState(suspension *api.RunSuspension) (*workflowChec
 	if err := validatePublicRunSuspension(suspension); err != nil {
 		return nil, err
 	}
-	if suspension.Version != legacyRunSuspensionVersion &&
-		suspension.Version != api.RunSuspensionVersion {
+	if suspension.Version != api.RunSuspensionVersion {
 		return nil, fmt.Errorf("unsupported run suspension version %q", suspension.Version)
 	}
 	var checkpoint workflowCheckpoint
@@ -311,27 +330,19 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 }
 
 // checkpointRecoveryCatalog returns the one catalog representation permitted
-// by the checkpoint version and typed pending failures. Version 5 always reads
-// the serialized activity catalog. Version 6 derives an exact correct-call
-// catalog and rejects a duplicate serialized value; recovery actions whose
+// by typed pending failures. Exact correction tools are derived from the saved
+// failures and reject a duplicate serialized catalog. Recovery actions whose
 // visible tools cannot be derived still require their serialized catalog.
 func checkpointRecoveryCatalog(checkpoint *workflowCheckpoint) (*RecoveryCatalog, error) {
 	catalog := checkpoint.State.PendingRecoveryCatalog
 	exactTools := correctCallCatalog(checkpoint.State.PendingRecovery)
-	switch checkpoint.Version {
-	case legacyRunSuspensionVersion:
+	if len(exactTools) == 0 {
 		return catalog, nil
-	case api.RunSuspensionVersion:
-		if len(exactTools) == 0 {
-			return catalog, nil
-		}
-		if catalog != nil {
-			return nil, errors.New("run suspension checkpoint version 6 correct-call recovery cannot carry a recovery catalog")
-		}
-		return &RecoveryCatalog{Tools: exactTools}, nil
-	default:
-		return nil, fmt.Errorf("unsupported run suspension checkpoint version %q", checkpoint.Version)
 	}
+	if catalog != nil {
+		return nil, errors.New("run suspension checkpoint correct-call recovery cannot carry a recovery catalog")
+	}
+	return &RecoveryCatalog{Tools: exactTools}, nil
 }
 
 // validatePublicRunSuspension checks the portion of a child suspension that a
@@ -405,6 +416,14 @@ func validateWorkflowRunInput(input *RunInput) error {
 	if input == nil {
 		return errors.New("run input is required")
 	}
+	for index, rendered := range input.RenderedPrompts {
+		if rendered.PromptID == "" || rendered.Version == "" {
+			return fmt.Errorf("rendered prompt %d requires prompt id and version", index)
+		}
+		if rendered.Scope.SessionID != "" && rendered.Scope.SessionID != input.SessionID {
+			return fmt.Errorf("rendered prompt %d scope session does not match run session", index)
+		}
+	}
 	if input.Continuation == nil {
 		if input.Policy != nil {
 			return validateMaxRecoveryTurns(input.Policy.MaxRecoveryTurns)
@@ -416,7 +435,8 @@ func validateWorkflowRunInput(input *RunInput) error {
 	}
 	if len(input.Messages) > 0 || len(input.Labels) > 0 || len(input.Metadata) > 0 ||
 		input.Policy != nil || input.ParentRunID != "" || input.ParentAgentID != "" ||
-		input.ParentToolCallID != "" || input.Tool != "" || len(input.ToolArgs) > 0 {
+		input.ParentToolCallID != "" || input.Tool != "" || len(input.ToolArgs) > 0 ||
+		len(input.RenderedPrompts) > 0 {
 		return errors.New("run continuation cannot include caller-supplied checkpoint state")
 	}
 	return nil
@@ -482,4 +502,82 @@ func validatePendingInputResponse(response *api.PendingInputResponse) error {
 		return fmt.Errorf("pending input response has %d variants", variants)
 	}
 	return nil
+}
+
+// validatePendingInputResponseFor checks that one response completes the
+// first visible request stored in a suspension.
+func validatePendingInputResponseFor(pending *api.PendingInput, response *api.PendingInputResponse) error {
+	if err := validatePendingInput(pending); err != nil {
+		return err
+	}
+	if err := validatePendingInputResponse(response); err != nil {
+		return err
+	}
+	switch pending.Kind {
+	case api.PendingInputKindConfirmation:
+		if response.Confirmation == nil {
+			return errors.New("run continuation requires a confirmation response")
+		}
+		if response.Confirmation.ID != pending.Confirmation.ID {
+			return fmt.Errorf(
+				"confirmation response id %q does not match pending id %q",
+				response.Confirmation.ID,
+				pending.Confirmation.ID,
+			)
+		}
+	case api.PendingInputKindClarification:
+		if response.Clarification == nil {
+			return errors.New("run continuation requires a clarification response")
+		}
+		var expectedID string
+		switch pending.Await.Kind {
+		case planner.AwaitItemKindClarification:
+			expectedID = pending.Await.Clarification.ID
+		case planner.AwaitItemKindToolClarification:
+			expectedID = pending.Await.ToolClarification.ID
+		case planner.AwaitItemKindQuestions, planner.AwaitItemKindExternalTools:
+			return fmt.Errorf("clarification pending input has await kind %q", pending.Await.Kind)
+		}
+		if response.Clarification.ID != expectedID {
+			return fmt.Errorf(
+				"clarification response id %q does not match pending id %q",
+				response.Clarification.ID,
+				expectedID,
+			)
+		}
+	case api.PendingInputKindToolResults:
+		if response.ToolResults == nil {
+			return errors.New("run continuation requires a tool-results response")
+		}
+		var expectedID string
+		switch pending.Await.Kind {
+		case planner.AwaitItemKindQuestions:
+			expectedID = pending.Await.Questions.ID
+		case planner.AwaitItemKindExternalTools:
+			expectedID = pending.Await.ExternalTools.ID
+		case planner.AwaitItemKindClarification, planner.AwaitItemKindToolClarification:
+			return fmt.Errorf("tool-results pending input has await kind %q", pending.Await.Kind)
+		}
+		if response.ToolResults.ID != expectedID {
+			return fmt.Errorf(
+				"tool-results response id %q does not match pending id %q",
+				response.ToolResults.ID,
+				expectedID,
+			)
+		}
+	}
+	return nil
+}
+
+// validateContinuationAgainstCheckpoint checks the new run identity and the
+// one response accepted by the first request saved in the checkpoint.
+func validateContinuationAgainstCheckpoint(input *RunInput, checkpoint *workflowCheckpoint) error {
+	if err := validateContinuationIdentity(input, checkpoint); err != nil {
+		return err
+	}
+	publicPending, err := publicPendingInputs(checkpoint.Pending)
+	if err != nil {
+		return err
+	}
+	return validatePendingInputResponseFor(publicPending[0], input.Continuation.Response)
 }

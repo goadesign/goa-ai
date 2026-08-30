@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -15,7 +16,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -55,8 +57,8 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 	t.Parallel()
 
 	rt, search, continuation := continuationTestRuntime()
-	store := runloginmem.New()
-	rt.RunEventStore = store
+	store := newTestStore()
+	rt.Store = store
 	const (
 		sessionID = "session-1"
 		agentID   = "svc.agent"
@@ -83,9 +85,6 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 		"source-1",
 		"",
 		rawjson.Message(`{"items":["page-1"]}`),
-		len(`{"items":["page-1"]}`),
-		false,
-		"",
 		nil,
 		"page 1",
 		&agent.Bounds{Returned: 1, Truncated: true, NextCursor: &firstCursor},
@@ -117,9 +116,6 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 		"continue-1",
 		"",
 		rawjson.Message(`{"items":["page-2"]}`),
-		len(`{"items":["page-2"]}`),
-		false,
-		"",
 		nil,
 		"page 2",
 		&agent.Bounds{Returned: 1, Truncated: true, NextCursor: &secondCursor},
@@ -438,9 +434,6 @@ func TestPlannerToolOutputHydrationPreservesContinuationRoot(t *testing.T) {
 		scheduled.ToolCallID,
 		"",
 		rawjson.Message(`{}`),
-		2,
-		false,
-		"",
 		nil,
 		"",
 		nil,
@@ -452,7 +445,9 @@ func TestPlannerToolOutputHydrationPreservesContinuationRoot(t *testing.T) {
 		scheduled: scheduled,
 		result:    result,
 	}
-	output, err := plannerToolOutputFromCanonicalEvents("run-1", "run-1", "continue-1", events, events)
+	runtime := &Runtime{}
+	seedTestToolSpecs(runtime, newAnyJSONSpec(scheduled.ToolName))
+	output, err := runtime.plannerToolOutputFromCanonicalEvents("run-1", "run-1", "continue-1", events, events)
 	require.NoError(t, err)
 	assert.Equal(t, "source-1", output.ContinuationRootToolCallID)
 }
@@ -520,7 +515,7 @@ func TestBindContinuationRejectsCanonicalToolAndModelArguments(t *testing.T) {
 }
 
 func continuationTestSpecs() (tools.ToolSpec, tools.ToolSpec) {
-	search := newAnyJSONSpec("tools.search", "svc.tools")
+	search := newAnyJSONSpec("tools.search")
 	search.Payload.FieldJSONTypes = map[string]string{
 		"limit": "integer",
 		"query": "string",
@@ -530,7 +525,7 @@ func continuationTestSpecs() (tools.ToolSpec, tools.ToolSpec) {
 		CursorField:     "cursor",
 		NextCursorField: "next_cursor",
 	}}
-	continuation := newAnyJSONSpec("tools.continue_search", "svc.tools")
+	continuation := newAnyJSONSpec("tools.continue_search")
 	continuation.Payload.Schema = rawjson.Message(`{"type":"object"}`)
 	continuation.Payload.FieldJSONTypes = map[string]string{"$payload": "object"}
 	continuation.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{
@@ -545,6 +540,7 @@ func continuationTestSpecs() (tools.ToolSpec, tools.ToolSpec) {
 func continuationTestRuntime() (*Runtime, tools.ToolSpec, tools.ToolSpec) {
 	search, continuation := continuationTestSpecs()
 	return &Runtime{
+		Store: newTestStore(),
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
 			search.Name:       search,
 			continuation.Name: continuation,
@@ -581,7 +577,7 @@ func pointer[T any](value T) *T {
 // by the cross-run continuation reconstruction test.
 func appendHistoricalHookEvent(
 	t *testing.T,
-	store runlog.Store,
+	store storage.Store,
 	event hooks.Event,
 	eventKey string,
 	timestampMS int64,
@@ -593,7 +589,13 @@ func appendHistoricalHookEvent(
 		TimestampMS: timestampMS,
 	})
 	require.NoError(t, err)
-	_, err = store.Append(context.Background(), &runlog.Event{
+	if _, loadErr := store.LoadRun(context.Background(), input.RunID); errors.Is(loadErr, session.ErrRunNotFound) {
+		admitRunForTest(t, store, session.RunMeta{
+			AgentID: string(input.AgentID), RunID: input.RunID, SessionID: input.SessionID,
+			Status: session.RunStatusRunning, StartedAt: time.UnixMilli(input.TimestampMS).UTC(),
+		})
+	}
+	_, err = store.AppendRunRecord(context.Background(), &runlog.Event{
 		EventKey:  input.EventKey,
 		RunID:     input.RunID,
 		AgentID:   input.AgentID,

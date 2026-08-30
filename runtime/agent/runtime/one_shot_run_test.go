@@ -2,128 +2,166 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/prompt"
-	"goa.design/goa-ai/runtime/agent/runlog"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
+	"goa.design/goa-ai/runtime/agent/storage"
 )
 
-func TestRunOneShotPersistsCanonicalRunlogWithoutSessionState(t *testing.T) {
-	t.Parallel()
+type (
+	// transientTerminalStore fails the first terminal write so the one-shot
+	// runtime must retry the same record without running caller work again.
+	transientTerminalStore struct {
+		storage.Store
+		failures    int
+		attempts    int
+		terminalErr error
+	}
+)
 
-	bus := hooks.NewBus()
-	published := 0
-	sub, err := bus.Register(hooks.SubscriberFunc(func(ctx context.Context, evt hooks.Event) error {
-		published++
+func (s *transientTerminalStore) RecordRunTerminal(ctx context.Context, command storage.RunTerminal) (storage.AppendResult, error) {
+	s.attempts++
+	if s.terminalErr != nil {
+		return storage.AppendResult{}, s.terminalErr
+	}
+	if s.failures > 0 {
+		s.failures--
+		return storage.AppendResult{}, errors.New("database unavailable")
+	}
+	return s.Store.RecordRunTerminal(ctx, command)
+}
+
+func TestRunOneShotStoresCompleteLifecycle(t *testing.T) {
+	store := newTestStore()
+	runtime := newFromOptions(store, Options{Hooks: hooks.NewBus()})
+	err := runtime.RunOneShot(context.Background(), OneShotRunInput{
+		AgentID: "svc.agent", RunID: "run",
+	}, func(context.Context) error {
 		return nil
-	}))
+	})
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = sub.Close()
-	})
+	meta, err := store.LoadRun(context.Background(), "run")
+	require.NoError(t, err)
+	require.Equal(t, session.RunStatusCompleted, meta.Status)
+	page, err := store.ListRunRecords(context.Background(), "run", "", 10)
+	require.NoError(t, err)
+	require.Len(t, page.Events, 2)
+	require.Equal(t, hooks.RunStarted, page.Events[0].Type)
+	require.Equal(t, hooks.RunCompleted, page.Events[1].Type)
+}
 
-	sessionStore := sessioninmem.New()
-	runlogStore := runloginmem.New()
-	rt := newFromOptions(Options{
-		Hooks:         bus,
-		SessionStore:  sessionStore,
-		RunEventStore: runlogStore,
-	})
-	require.NoError(t, rt.PromptRegistry.Register(prompt.PromptSpec{
-		ID:       "example.agent.system",
-		AgentID:  "example.agent",
+func TestRunOneShotStoresPromptAfterStart(t *testing.T) {
+	store := newTestStore()
+	runtime := newFromOptions(store, Options{Hooks: hooks.NewBus()})
+	require.NoError(t, runtime.PromptRegistry.Register(prompt.PromptSpec{
+		ID:       "svc.agent.system",
+		AgentID:  "svc.agent",
 		Role:     prompt.PromptRoleSystem,
-		Template: "hello {{ .Name }}",
+		Template: "hello",
+		Version:  "v1",
 	}))
-
-	runID := "oneshot-run-1"
-	err = rt.RunOneShot(context.Background(), OneShotRunInput{
-		AgentID: "example.agent",
-		RunID:   runID,
-	}, func(runCtx context.Context) error {
-		_, renderErr := rt.PromptRegistry.Render(runCtx, "example.agent.system", prompt.Scope{}, map[string]any{
-			"Name": "operator",
-		})
-		return renderErr
+	err := runtime.RunOneShot(context.Background(), OneShotRunInput{
+		AgentID: "svc.agent", RunID: "run",
+	}, func(ctx context.Context) error {
+		_, err := runtime.PromptRegistry.Render(ctx, "svc.agent.system", prompt.Scope{}, nil)
+		return err
 	})
 	require.NoError(t, err)
-
-	page, err := runlogStore.List(context.Background(), runID, "", 20)
+	page, err := store.ListRunRecords(context.Background(), "run", "", 10)
 	require.NoError(t, err)
 	require.Len(t, page.Events, 3)
 	require.Equal(t, hooks.RunStarted, page.Events[0].Type)
 	require.Equal(t, hooks.PromptRendered, page.Events[1].Type)
 	require.Equal(t, hooks.RunCompleted, page.Events[2].Type)
-	for _, event := range page.Events {
-		require.Equal(t, runID, event.RunID)
-		require.Empty(t, event.SessionID)
-	}
-	_, err = sessionStore.LoadRun(context.Background(), runID)
-	require.ErrorIs(t, err, session.ErrRunNotFound)
-	require.Equal(t, 3, published)
 }
 
-func TestRunOneShotRejectsMissingAgentID(t *testing.T) {
-	t.Parallel()
-
-	rt := newFromOptions(Options{})
-	err := rt.RunOneShot(context.Background(), OneShotRunInput{}, func(context.Context) error {
-		return nil
-	})
-	require.ErrorIs(t, err, ErrAgentNotFound)
-}
-
-func TestRunOneShotRequiresExecutor(t *testing.T) {
-	t.Parallel()
-
-	rt := newFromOptions(Options{})
-	err := rt.RunOneShot(context.Background(), OneShotRunInput{
-		AgentID: "example.agent",
-	}, nil)
-	require.EqualError(t, err, "one-shot executor is required")
-}
-
-func TestRunOneShotClassifiesCanceledExecutionAsCanceled(t *testing.T) {
-	t.Parallel()
-
-	runlogStore := runloginmem.New()
-	rt := newFromOptions(Options{
-		RunEventStore: runlogStore,
-	})
-	runID := "oneshot-run-canceled"
-	labels := map[string]string{"household_id": "house-42"}
-	err := rt.RunOneShot(context.Background(), OneShotRunInput{
-		AgentID: "example.agent",
-		RunID:   runID,
-		Labels:  labels,
+func TestRunOneShotStoresFailedLifecycle(t *testing.T) {
+	store := newTestStore()
+	runtime := newFromOptions(store, Options{Hooks: hooks.NewBus()})
+	want := errors.New("failed")
+	err := runtime.RunOneShot(context.Background(), OneShotRunInput{
+		AgentID: "svc.agent", RunID: "run",
 	}, func(context.Context) error {
+		return want
+	})
+	require.ErrorIs(t, err, want)
+	meta, err := store.LoadRun(context.Background(), "run")
+	require.NoError(t, err)
+	require.Equal(t, session.RunStatusFailed, meta.Status)
+}
+
+func TestRunOneShotStoresDeadlineAsFailure(t *testing.T) {
+	store := newTestStore()
+	runtime := newFromOptions(store, Options{Hooks: hooks.NewBus()})
+	err := runtime.RunOneShot(t.Context(), OneShotRunInput{
+		AgentID: "svc.agent", RunID: "run",
+	}, func(context.Context) error {
+		return context.DeadlineExceeded
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	meta, err := store.LoadRun(t.Context(), "run")
+	require.NoError(t, err)
+	require.Equal(t, session.RunStatusFailed, meta.Status)
+}
+
+func TestRunOneShotStoresPromptAndCancellationAfterCallbackCancelsContext(t *testing.T) {
+	store := newTestStore()
+	retryingStore := &transientTerminalStore{Store: store, failures: 1}
+	runtime := newFromOptions(retryingStore, Options{Hooks: hooks.NewBus()})
+	require.NoError(t, runtime.PromptRegistry.Register(prompt.PromptSpec{
+		ID:       "svc.agent.system",
+		AgentID:  "svc.agent",
+		Role:     prompt.PromptRoleSystem,
+		Template: "hello",
+		Version:  "v1",
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	executions := 0
+	err := runtime.RunOneShot(ctx, OneShotRunInput{
+		AgentID: "svc.agent", RunID: "run",
+	}, func(ctx context.Context) error {
+		executions++
+		_, err := runtime.PromptRegistry.Render(ctx, "svc.agent.system", prompt.Scope{}, nil)
+		require.NoError(t, err)
+		cancel()
 		return context.Canceled
 	})
+
 	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, 1, executions)
+	require.Equal(t, 2, retryingStore.attempts)
+	meta, err := store.LoadRun(context.Background(), "run")
+	require.NoError(t, err)
+	require.Equal(t, session.RunStatusCanceled, meta.Status)
+	page, err := store.ListRunRecords(context.Background(), "run", "", 10)
+	require.NoError(t, err)
+	require.Len(t, page.Events, 3)
+	require.Equal(t, hooks.RunStarted, page.Events[0].Type)
+	require.Equal(t, hooks.PromptRendered, page.Events[1].Type)
+	require.Equal(t, hooks.RunCompleted, page.Events[2].Type)
+}
 
-	page, listErr := runlogStore.List(context.Background(), runID, "", 20)
-	require.NoError(t, listErr)
-	require.Len(t, page.Events, 2)
-	require.Equal(t, hooks.RunCompleted, page.Events[1].Type)
-
-	input := &runlog.ActivityInput{
-		Type:      page.Events[1].Type,
-		RunID:     page.Events[1].RunID,
-		AgentID:   "example.agent",
-		SessionID: page.Events[1].SessionID,
-		TurnID:    page.Events[1].TurnID,
-		Payload:   page.Events[1].Payload,
+func TestRunOneShotDoesNotRetryPermanentTerminalConflict(t *testing.T) {
+	store := newTestStore()
+	conflictingStore := &transientTerminalStore{
+		Store: store, terminalErr: storage.NewContractError(session.ErrRunTerminalConflict),
 	}
-	event, decodeErr := hooks.DecodeFromRecordInput(input)
-	require.NoError(t, decodeErr)
-	completed, ok := event.(*hooks.RunCompletedEvent)
-	require.True(t, ok)
-	require.Equal(t, runStatusCanceled, completed.Status)
-	require.Equal(t, labels, completed.Labels)
+	runtime := newFromOptions(conflictingStore, Options{Hooks: hooks.NewBus()})
+	executions := 0
+
+	err := runtime.RunOneShot(t.Context(), OneShotRunInput{
+		AgentID: "svc.agent", RunID: "run",
+	}, func(context.Context) error {
+		executions++
+		return nil
+	})
+
+	require.ErrorIs(t, err, session.ErrRunTerminalConflict)
+	require.Equal(t, 1, executions)
+	require.Equal(t, 1, conflictingStore.attempts)
 }

@@ -2,7 +2,8 @@ package provider
 
 // These tests pin provider lifecycle ownership: no consumer-group sink exists
 // before admission, renewals remain bounded by the authoritative lease, and
-// cancellation waits for context-compliant callbacks.
+// cancellation waits for context-compliant callbacks. Every successfully
+// returned renewal lease remains owned until shutdown reconciles it.
 
 import (
 	"context"
@@ -750,13 +751,15 @@ func TestRegisterProviderDeadlineIgnoresWallClockEpochSkew(t *testing.T) {
 	}
 }
 
-func TestRegistrationSupervisorRejectsChangedRenewalToken(t *testing.T) {
+func TestRegistrationSupervisorChangedTokenOwnsCleanupAfterOldCutoff(t *testing.T) {
 	t.Parallel()
 
-	now := time.Unix(1_700_000_000, 0)
+	started := time.Unix(1_700_000_000, 0)
+	now := started
 	registration := registrationConfig{
 		admissionRevision: testAdmissionRevision,
 		register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+			now = started.Add(59*time.Second + time.Nanosecond)
 			return RegistrationLease{RegistrationToken: testRegistrationTokenB, Duration: time.Minute}, nil
 		},
 		retryInitialInterval: time.Second,
@@ -785,7 +788,11 @@ func TestRegistrationSupervisorRejectsChangedRenewalToken(t *testing.T) {
 	)
 
 	require.ErrorIs(t, err, ErrRegistrationTokenChanged)
-	assert.True(t, now.Before(time.Unix(1_700_000_000, 0).Add(59*time.Second)))
+	var changedTokenErr *registrationTokenChangedError
+	require.ErrorAs(t, err, &changedTokenErr)
+	assert.True(t, now.After(started.Add(59*time.Second)))
+	assert.Equal(t, testRegistrationTokenA, changedTokenErr.expectedToken)
+	assert.Equal(t, testRegistrationTokenB, changedTokenErr.receivedToken)
 }
 
 func TestRegisterProviderRejectsExcessiveLeaseDuration(t *testing.T) {
@@ -842,10 +849,13 @@ func TestRegisterProviderRejectsLeaseInsideShutdownRetryBudget(t *testing.T) {
 	require.ErrorContains(t, err, "must exceed shutdown and retry budget")
 }
 
-func TestServeChangedRenewalTokenReleasesBothExactLeases(t *testing.T) {
+func TestServeChangedRenewalOwnsCleanupWhenCancellationStopsServe(t *testing.T) {
 	t.Parallel()
 
+	ctx, cancel := context.WithCancel(context.Background())
 	events := make(chan *streaming.Event)
+	renewalStarted := make(chan struct{})
+	allowRenewal := make(chan struct{})
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
 	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
@@ -868,11 +878,12 @@ func TestServeChangedRenewalTokenReleasesBothExactLeases(t *testing.T) {
 	registration := Registration{
 		AdmissionRevision: testAdmissionRevision,
 		Register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
-			token := testRegistrationTokenA
-			if registrations.Add(1) > 1 {
-				token = testRegistrationTokenB
+			if registrations.Add(1) == 1 {
+				return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: time.Minute}, nil
 			}
-			return RegistrationLease{RegistrationToken: token, Duration: 60 * time.Millisecond}, nil
+			close(renewalStarted)
+			<-allowRenewal
+			return RegistrationLease{RegistrationToken: testRegistrationTokenB, Duration: time.Minute}, nil
 		},
 		Drain: func(_ context.Context, _, _, _ string, token string, _ time.Duration) error {
 			leaseMu.Lock()
@@ -889,18 +900,21 @@ func TestServeChangedRenewalTokenReleasesBothExactLeases(t *testing.T) {
 		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
 			return nil
 		},
-		PublishOutputDelta:   publishOutputDeltaSuccess,
-		ReportOverload:       reportOverloadSuccess,
-		Claim:                claimExecute,
-		RetryInitialInterval: time.Millisecond,
-		RetryMaxInterval:     time.Millisecond,
-		AttemptTimeout:       20 * time.Millisecond,
-		ShutdownMargin:       time.Millisecond,
-		ReleaseTimeout:       time.Second,
+		PublishOutputDelta: publishOutputDeltaSuccess,
+		ReportOverload:     reportOverloadSuccess,
+		Claim:              claimExecute,
 	}
 
-	err := Serve(
-		context.Background(),
+	go func() {
+		<-renewalStarted
+		// Start shutdown first, then let the in-flight Register call report its
+		// successful B lease. Shutdown must still own that returned lease.
+		cancel()
+		close(allowRenewal)
+	}()
+
+	err := serve(
+		ctx,
 		client,
 		"test.toolset",
 		&recordingHandler{},
@@ -910,6 +924,7 @@ func TestServeChangedRenewalTokenReleasesBothExactLeases(t *testing.T) {
 			Pong:            func(context.Context, string, string, string) error { return nil },
 			ShutdownTimeout: time.Second,
 		},
+		func(context.Context, time.Duration) error { return nil },
 	)
 	require.ErrorIs(t, err, ErrRegistrationTokenChanged)
 	leaseMu.Lock()
@@ -1282,7 +1297,7 @@ func TestRegistrationSupervisorRejectsRenewalCompletingAfterOldCutoff(t *testing
 		admissionRevision: testAdmissionRevision,
 		register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
 			now = started.Add(9*time.Second + time.Millisecond)
-			return RegistrationLease{RegistrationToken: testRegistrationTokenB, Duration: time.Minute}, nil
+			return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: time.Minute}, nil
 		},
 		retryInitialInterval: time.Second,
 		retryMaxInterval:     time.Second,

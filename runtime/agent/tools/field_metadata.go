@@ -1,14 +1,15 @@
 package tools
 
-// This file defines how generated field metadata paths match caller-chosen map
-// keys. Every generated codec and runtime consumer uses the same rule.
+// This file defines how generated field metadata paths match array indexes and
+// caller-chosen map keys. Every generated codec and runtime consumer uses the
+// same rule.
 
 import "strings"
 
 // LookupFieldMetadata returns metadata for a generated dotted path or an RFC
 // 6901 JSON Pointer reported by a generated codec. "*" in generated metadata
-// matches exactly one caller-chosen map key. Exact matches take precedence;
-// ambiguous matches return no value.
+// matches exactly one array index or caller-chosen map key. Exact matches take
+// precedence; ambiguous matches return no value.
 func LookupFieldMetadata[T any](metadata map[string]T, path string) (T, bool) {
 	if value, ok := metadata[path]; ok {
 		return value, true

@@ -12,12 +12,15 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"time"
 
 	chat "example.com/quickstart/gen/orchestrator/agents/chat"
 	"example.com/quickstart/gen/orchestrator/completions"
-	"example.com/quickstart/internal/agents/bootstrap"
+	"example.com/quickstart/internal/agents/orchestrator/bootstrap"
 	model "goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/runtime"
+	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 )
 
 // This example main demonstrates running the agent using the generated bootstrap.
@@ -155,10 +158,14 @@ func (s *exampleCompletionStreamer) Close() error {
 
 func main() {
 	ctx := context.Background()
+	store := storageinmem.New()
+	if _, err := store.CreateSession(ctx, "demo-session", time.Now().UTC()); err != nil {
+		log.Fatalf("failed to create session: %v", err)
+	}
 
 	// Initialize the runtime using the generated bootstrap which wires
 	// planners and toolsets for all agents.
-	rt, cleanup, err := bootstrap.New(ctx)
+	rt, cleanup, err := bootstrap.New(ctx, store)
 	if err != nil {
 		log.Fatalf("failed to initialize runtime: %v", err)
 	}
@@ -166,12 +173,6 @@ func main() {
 
 	// Example: run the first registered agent with a simple message.
 	// Replace this with your own CLI, HTTP server, or integration.
-	// Sessions are first-class: create a session explicitly before starting runs.
-	// Creating an already-active session is idempotent.
-	if _, err := rt.CreateSession(ctx, "demo-session"); err != nil {
-		log.Fatalf("failed to create session: %v", err)
-	}
-
 	{
 		client := chat.NewClient(rt)
 		out, err := client.Run(ctx, "demo-session", []*model.Message{
@@ -179,7 +180,7 @@ func main() {
 				Role:  model.ConversationRoleUser,
 				Parts: []model.Part{model.TextPart{Text: "What is the capital of Japan?"}},
 			},
-		})
+		}, runtime.WithRunID("demo-chat-run"))
 		if err != nil {
 			log.Fatalf("agent run failed: %v", err)
 		}

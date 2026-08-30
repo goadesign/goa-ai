@@ -8,16 +8,20 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/session"
 )
 
 func TestNewFromOptionsInitializesPromptRegistryWithStore(t *testing.T) {
 	t.Parallel()
 
 	store := prompt.NewInMemoryStore()
-	rt := newFromOptions(Options{
+	rt := newFromOptions(newTestStore(), Options{
 		PromptStore: store,
 	})
-
+	admitRunForTest(t, rt.Store, session.RunMeta{
+		AgentID: "example.agent", RunID: "run_1", SessionID: "sess_1",
+		Status: session.RunStatusRunning,
+	})
 	require.NotNil(t, rt.PromptRegistry)
 	require.NoError(t, rt.PromptRegistry.Register(prompt.PromptSpec{
 		ID:       "example.agent.system",
@@ -33,7 +37,7 @@ func TestNewFromOptionsInitializesPromptRegistryWithStore(t *testing.T) {
 		},
 	}, "override {{ .Name }}", nil))
 
-	rendered, err := rt.PromptRegistry.Render(testPromptRenderContext(), "example.agent.system", prompt.Scope{
+	rendered, err := rt.PromptRegistry.Render(context.Background(), "example.agent.system", prompt.Scope{
 		SessionID: "sess_1",
 		Labels: map[string]string{
 			"account": "acme",
@@ -49,7 +53,11 @@ func TestNewFromOptionsInitializesPromptRegistryWithStore(t *testing.T) {
 func TestNewFromOptionsInitializesPromptRegistryWithoutStore(t *testing.T) {
 	t.Parallel()
 
-	rt := newFromOptions(Options{})
+	rt := newFromOptions(newTestStore(), Options{})
+	admitRunForTest(t, rt.Store, session.RunMeta{
+		AgentID: "example.agent", RunID: "run_1", SessionID: "sess_1",
+		Status: session.RunStatusRunning,
+	})
 	require.NotNil(t, rt.PromptRegistry)
 	require.NoError(t, rt.PromptRegistry.Register(prompt.PromptSpec{
 		ID:       "example.agent.system",
@@ -58,7 +66,7 @@ func TestNewFromOptionsInitializesPromptRegistryWithoutStore(t *testing.T) {
 		Template: "baseline {{ .Name }}",
 	}))
 
-	rendered, err := rt.PromptRegistry.Render(testPromptRenderContext(), "example.agent.system", prompt.Scope{}, map[string]any{
+	rendered, err := rt.PromptRegistry.Render(context.Background(), "example.agent.system", prompt.Scope{}, map[string]any{
 		"Name": "operator",
 	})
 	require.NoError(t, err)
@@ -69,8 +77,12 @@ func TestPlannerContextRenderPromptUsesRunScope(t *testing.T) {
 	t.Parallel()
 
 	store := prompt.NewInMemoryStore()
-	rt := newFromOptions(Options{
+	rt := newFromOptions(newTestStore(), Options{
 		PromptStore: store,
+	})
+	admitRunForTest(t, rt.Store, session.RunMeta{
+		AgentID: "example.agent", RunID: "run_1", SessionID: "sess_1",
+		Status: session.RunStatusRunning,
 	})
 
 	require.NoError(t, rt.PromptRegistry.Register(prompt.PromptSpec{
@@ -96,6 +108,7 @@ func TestPlannerContextRenderPromptUsesRunScope(t *testing.T) {
 			"account": "acme",
 			"region":  "west",
 		},
+		events: newPlannerEvents("example.agent", "run_1", "sess_1"),
 	})
 	rendered, err := agentCtx.RenderPrompt(context.Background(), "example.agent.system", map[string]any{
 		"Name": "operator",
@@ -104,95 +117,30 @@ func TestPlannerContextRenderPromptUsesRunScope(t *testing.T) {
 	require.Equal(t, "override operator", rendered.Text)
 }
 
-func TestOnPromptRenderedPublishesHookEvent(t *testing.T) {
+func TestPlannerContextRenderPromptCollectsAcceptedEvent(t *testing.T) {
 	t.Parallel()
 
-	rt := newFromOptions(Options{})
-
-	var rendered *hooks.PromptRenderedEvent
-	sub, err := rt.Bus.Register(hooks.SubscriberFunc(func(ctx context.Context, evt hooks.Event) error {
-		e, ok := evt.(*hooks.PromptRenderedEvent)
-		if !ok {
-			return nil
-		}
-		rendered = e
-		return nil
-	}))
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = sub.Close()
-	})
-
-	ctx := withPromptRenderHookContext(context.Background(), PromptRenderHookContext{
-		RunID:     "run_1",
-		AgentID:   "example.agent",
-		SessionID: "sess_1",
-		TurnID:    "turn_1",
-	})
-	rt.onPromptRendered(ctx, prompt.RenderEvent{
-		PromptID: "example.agent.system",
+	rt := newFromOptions(newTestStore(), Options{})
+	require.NoError(t, rt.PromptRegistry.Register(prompt.PromptSpec{
+		ID:       "example.agent.system",
+		AgentID:  "example.agent",
+		Role:     prompt.PromptRoleSystem,
+		Template: "hello",
 		Version:  "v2",
-		Scope: prompt.Scope{
-			SessionID: "sess_1",
-			Labels: map[string]string{
-				"account": "acme",
-				"region":  "west",
-			},
-		},
-	})
-
-	require.NotNil(t, rendered)
-	require.Equal(t, "run_1", rendered.RunID())
-	require.Equal(t, "example.agent", rendered.AgentID())
-	require.Equal(t, "sess_1", rendered.SessionID())
-	require.Equal(t, "turn_1", rendered.TurnID())
-	require.Equal(t, prompt.Ident("example.agent.system"), rendered.PromptID)
-	require.Equal(t, "v2", rendered.Version)
-	require.Equal(t, "sess_1", rendered.Scope.SessionID)
-	require.Equal(t, "acme", rendered.Scope.Labels["account"])
-	require.Equal(t, "west", rendered.Scope.Labels["region"])
-}
-
-func TestOnPromptRenderedCollectsPlannerActivityEvent(t *testing.T) {
-	t.Parallel()
-
-	rt := newFromOptions(Options{})
-	var published int
-	sub, err := rt.Bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
-		published++
-		return nil
 	}))
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = sub.Close()
-	})
 	events := newPlannerEvents("example.agent", "run_1", "sess_1")
-	ctx := withPromptRenderHookContext(context.Background(), PromptRenderHookContext{
-		RunID:     "run_1",
-		AgentID:   "example.agent",
-		SessionID: "sess_1",
-		TurnID:    "turn_1",
+	agentCtx := newAgentContext(agentContextOptions{
+		runtime:   rt,
+		agentID:   "example.agent",
+		runID:     "run_1",
+		sessionID: "sess_1",
+		events:    events,
 	})
-	ctx = withPlannerEventCollector(ctx, events)
-
-	rt.onPromptRendered(ctx, prompt.RenderEvent{
-		PromptID: "example.agent.system",
-		Version:  "v2",
-		Scope:    prompt.Scope{SessionID: "sess_1"},
-	})
+	_, err := agentCtx.RenderPrompt(context.Background(), "example.agent.system", nil)
+	require.NoError(t, err)
 
 	records, err := events.acceptedRecords(nil)
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	require.Equal(t, hooks.PromptRendered, records[0].Type)
-	require.Zero(t, published)
-}
-
-func testPromptRenderContext() context.Context {
-	return withPromptRenderHookContext(context.Background(), PromptRenderHookContext{
-		RunID:     "run_1",
-		AgentID:   "example.agent",
-		SessionID: "sess_1",
-		TurnID:    "turn_1",
-	})
 }

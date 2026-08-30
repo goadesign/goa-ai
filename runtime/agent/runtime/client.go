@@ -16,7 +16,7 @@ type (
 	//
 	// Contract:
 	// - Run and Start are sessionful APIs: callers must provide a concrete
-	//   session ID that already exists in the runtime SessionStore.
+	//   session ID that the host application has already created.
 	// - StartOneShot and OneShotRun are sessionless: callers provide no session
 	//   ID and the runtime persists only canonical run-log events for
 	//   introspection by RunID.
@@ -346,7 +346,7 @@ func (r *Runtime) buildStoredContinuationRunInput(
 	if err != nil {
 		return nil, err
 	}
-	if err := validateContinuationIdentity(input, checkpoint); err != nil {
+	if err := validateContinuationAgainstCheckpoint(input, checkpoint); err != nil {
 		return nil, err
 	}
 	if checkpoint.PreviousRunID != predecessorRunID {

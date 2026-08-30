@@ -1,21 +1,14 @@
+// Package runtime prepares successful tool results before they are stored or
+// sent to a planner.
+//
+// Direct execution and continuation responses follow the same steps. The
+// runtime validates the result, lets the toolset attach private server data,
+// encodes the result with the generated codec, and publishes the same bytes to
+// stored run records and stream events. External callers provide only result
+// JSON; they do not construct the runtime's internal `api.ToolEvent`.
 package runtime
 
-// tool_result_materialization.go owns the runtime's typed tool-result
-// enrichment path.
-//
-// Contract:
-// - All successful tool results, whether executed directly or provided in a
-//   continuation response, are materialized before canonical JSON
-//   encoding and hook publication.
-// - Toolset-owned server-only sidecars must be attached here so streamed
-//   `tool_result` events and durable run logs observe the same canonical result
-//   shape and planner-visible metadata, and planner resume hydration can
-//   reconstruct them exactly.
-// - External callers provide raw result JSON only; they never construct the
-//   runtime's internal `api.ToolEvent` envelope.
-
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -28,9 +21,9 @@ import (
 	"goa.design/goa-ai/runtime/toolserverdata"
 )
 
-// materializeToolResult prepares one result inside the workflow, replaces any
-// executor-authored correction evidence with data from the retained model call
-// and registered specification, and returns canonical result JSON.
+// materializeToolResult prepares one workflow result, replaces correction data
+// supplied by the executor with data from the saved model call and registered
+// tool definition, and returns encoded result JSON.
 func (r *Runtime) materializeToolResult(ctx context.Context, call ToolCall, result *planner.ToolResult) (rawjson.Message, error) {
 	spec, ok := r.toolSpec(call.Name)
 	if !ok {
@@ -47,8 +40,8 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call ToolCall, resu
 }
 
 // materializeActivityToolResult prepares one activity result without creating
-// model-facing correction evidence. The workflow still owns the complete call
-// and adds that evidence after the activity returns.
+// correction data for the model. The workflow retains the complete call and
+// adds that data after the activity returns.
 func (r *Runtime) materializeActivityToolResult(ctx context.Context, call ToolCall, result *planner.ToolResult) (rawjson.Message, error) {
 	spec, ok := r.toolSpec(call.Name)
 	if !ok {
@@ -61,9 +54,9 @@ func (r *Runtime) materializeActivityToolResult(ctx context.Context, call ToolCa
 	return resultJSON, nil
 }
 
-// materializeToolResultData takes ownership of executor failures before
-// validating them, then applies toolset-owned result conversion and server-data
-// validation. Contract-invalid successes become malformed-result failures.
+// materializeToolResultData validates an executor failure or converts a
+// successful result and validates its private server data. A success that does
+// not match the registered tool contract becomes a malformed-result failure.
 func (r *Runtime) materializeToolResultData(
 	ctx context.Context,
 	spec tools.ToolSpec,
@@ -108,9 +101,9 @@ func (r *Runtime) materializeToolResultData(
 	return rawjson.Message(encoded), nil
 }
 
-// materializeToolExecutionResult validates the runtime-owned execution wrapper,
-// materializes the durable tool result, and returns the current-batch user
-// question separately from planner-visible history.
+// materializeToolExecutionResult validates the execution result, prepares its
+// stored form, and returns a question for the current batch separately from
+// the history visible to the planner.
 func (r *Runtime) materializeToolExecutionResult(
 	ctx context.Context,
 	call ToolCall,
@@ -134,9 +127,9 @@ func (r *Runtime) materializeToolExecutionResult(
 	return exec.ToolResult, resultJSON, exec.Clarification, nil
 }
 
-// materializeActivityToolExecutionResult prepares the result returned by an
-// activity executor while leaving correct-call transcript evidence for the
-// workflow that retained the original model call.
+// materializeActivityToolExecutionResult prepares an activity result while the
+// workflow that saved the original model call remains responsible for its
+// correction transcript.
 func (r *Runtime) materializeActivityToolExecutionResult(
 	ctx context.Context,
 	call ToolCall,
@@ -163,9 +156,7 @@ func (r *Runtime) materializeActivityToolExecutionResult(
 // applyResultMaterializer invokes the toolset-owned typed result materializer
 // when the toolset registered one.
 func (r *Runtime) applyResultMaterializer(ctx context.Context, spec tools.ToolSpec, call ToolCall, result *planner.ToolResult) error {
-	r.mu.RLock()
-	reg, ok := r.toolsets[spec.Toolset]
-	r.mu.RUnlock()
+	_, reg, ok := r.toolsetForTool(spec.Name)
 	if !ok || reg.ResultMaterializer == nil {
 		return nil
 	}
@@ -221,13 +212,7 @@ func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolS
 	var err error
 	if item.Success != nil {
 		bounds = agent.CloneBounds(item.Success.Bounds)
-		if spec.Result.Codec.FromJSON == nil {
-			if len(bytes.TrimSpace(item.Success.Result)) > 0 {
-				err = errors.New("tool has no result contract but success contains result JSON")
-			}
-		} else {
-			decoded, err = spec.Result.Codec.FromJSON(item.Success.Result.RawMessage())
-		}
+		decoded, err = decodeSuccessfulToolResult(spec, item.Success.Result)
 	}
 	result := &planner.ToolResult{
 		Name:       call.Name,
@@ -253,9 +238,6 @@ func setMalformedToolResult(result *planner.ToolResult, call ToolCall, cause err
 	result.Name = call.Name
 	result.Result = nil
 	result.Bounds = nil
-	result.ResultBytes = 0
-	result.ResultOmitted = false
-	result.ResultOmittedReason = ""
 	result.ServerData = nil
 	result.Failure = &planner.ToolFailure{
 		Kind: planner.FailureMalformedResult,

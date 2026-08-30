@@ -1,19 +1,76 @@
 package codegen
 
 import (
-	"strings"
-
+	"goa.design/goa/v3/codegen"
+	"goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/eval"
+	goaexpr "goa.design/goa/v3/expr"
 )
 
-// BuildDataForTest exposes buildGeneratorData to external tests.
+// BuildDataForTest chooses service and agent names exactly as generation does,
+// then returns the agent data used to write files.
 func BuildDataForTest(genpkg string, roots []eval.Root) (*GeneratorData, error) {
-	return buildGeneratorData(genpkg, roots)
+	plan, err := buildAgentPlanForTest(genpkg, roots, false)
+	if err != nil {
+		return nil, err
+	}
+	return plan.data, nil
 }
 
-// BuildToolSpecsDataForTest exposes buildToolSpecsData to external tests.
-func BuildToolSpecsDataForTest(agent *AgentData) (*toolSpecsData, error) {
-	return buildToolSpecsData(agent)
+// BuildFilesForTest runs the same name selection and file-building steps as the
+// agent plugin without writing files to disk.
+func BuildFilesForTest(genpkg string, roots []eval.Root, example bool) ([]*codegen.File, error) {
+	plan, err := buildAgentPlanForTest(genpkg, roots, example)
+	if err != nil {
+		return nil, err
+	}
+	return plan.Files(nil)
+}
+
+// buildAgentPlanForTest chooses every Goa and agent name and builds the data
+// used by a focused generator test.
+func buildAgentPlanForTest(genpkg string, roots []eval.Root, example bool) (*Plan, error) {
+	if err := Prepare(genpkg, roots); err != nil {
+		return nil, err
+	}
+	generation, err := codegen.NewGeneration(genpkg, roots)
+	if err != nil {
+		return nil, err
+	}
+	goaRoot, _ := agentDesignRoots(generation.Roots())
+	servicePlan, err := service.NewPlan(
+		goaRoot,
+		generation,
+		goaexpr.NewExampleGenerator(goaRoot.API.RandomizerFactory),
+	)
+	if err != nil {
+		return nil, err
+	}
+	var plan *Plan
+	if example {
+		plan, err = NewExamplePlan(generation, servicePlan)
+	} else {
+		plan, err = NewPlan(generation, servicePlan)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := generation.Freeze(); err != nil {
+		return nil, err
+	}
+	if err := servicePlan.Link(); err != nil {
+		return nil, err
+	}
+	if err := plan.Link(); err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+// ToolSpecsDataForTest returns the names, types, and schemas already built for
+// the agent's tool packages.
+func ToolSpecsDataForTest(agent *AgentData) *toolSpecsData {
+	return agentToolSpecsData(agent)
 }
 
 // CollectToolNamesForTest returns each generated tool constant and injected
@@ -77,61 +134,6 @@ func CollectTypeJSONTypesForTest(specs *toolSpecsData) map[string]map[string]str
 			copied[field] = jsonType
 		}
 		out[td.TypeName] = copied
-	}
-	return out
-}
-
-// CollectTypeImportAliasesForTest returns the distinct import aliases used by
-// the given type (matched by substring on type name). It includes both the
-// direct Import (if any) and TypeImports collected during analysis.
-func CollectTypeImportAliasesForTest(specs *toolSpecsData, nameContains string) []string {
-	seen := make(map[string]struct{})
-	// Preallocate a small capacity; typical import sets are small.
-	out := make([]string, 0, 8)
-	if specs == nil {
-		return out
-	}
-	for _, td := range specs.typesList() {
-		if !strings.Contains(td.TypeName, nameContains) {
-			continue
-		}
-		if td.Import != nil && td.Import.Name != "" {
-			if _, ok := seen[td.Import.Name]; !ok {
-				seen[td.Import.Name] = struct{}{}
-				out = append(out, td.Import.Name)
-			}
-		}
-		for _, im := range td.TypeImports {
-			if im == nil || im.Name == "" {
-				continue
-			}
-			if _, ok := seen[im.Name]; !ok {
-				seen[im.Name] = struct{}{}
-				out = append(out, im.Name)
-			}
-		}
-	}
-	return out
-}
-
-// CollectAllImportAliasesForTest returns all import aliases used across the
-// tool specs files (types/specs/codecs). This leverages the aggregate
-// computation used by templates to render imports.
-func CollectAllImportAliasesForTest(specs *toolSpecsData) []string {
-	seen := make(map[string]struct{})
-	out := make([]string, 0, 8)
-	if specs == nil {
-		return out
-	}
-	for _, im := range specs.typeImports() {
-		if im == nil || im.Name == "" {
-			continue
-		}
-		if _, ok := seen[im.Name]; ok {
-			continue
-		}
-		seen[im.Name] = struct{}{}
-		out = append(out, im.Name)
 	}
 	return out
 }

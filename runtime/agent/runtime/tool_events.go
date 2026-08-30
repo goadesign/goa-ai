@@ -40,8 +40,6 @@ func (r *Runtime) encodeToolEvents(ctx context.Context, events []*planner.ToolRe
 		out = append(out, &api.ToolEvent{
 			Name:          ev.Name,
 			Result:        rawjson.Message(result),
-			ResultBytes:   len(result),
-			ResultOmitted: false,
 			ServerData:    append(rawjson.Message(nil), ev.ServerData...),
 			Bounds:        ev.Bounds,
 			Failure:       planner.CloneToolFailure(ev.Failure),
@@ -79,21 +77,17 @@ func (r *Runtime) buildPlannerToolOutputRecords(ctx context.Context, records []s
 			ModelToolCallID:            call.ModelToolCallID,
 			ContinuationRootToolCallID: call.ContinuationRootToolCallID,
 			Payload:                    append(rawjson.Message(nil), call.Payload...),
-			ResultBytes:                result.ResultBytes,
-			ResultOmitted:              result.ResultOmitted,
-			ResultOmittedReason:        result.ResultOmittedReason,
 			ServerData:                 append(rawjson.Message(nil), result.ServerData...),
 			Bounds:                     result.Bounds,
 			Failure:                    planner.CloneToolFailure(result.Failure),
 			Telemetry:                  result.Telemetry,
 		}
-		if !result.ResultOmitted {
+		if result.Failure == nil {
 			resultJSON, err := r.marshalToolValue(ctx, call.Name, result.Result, result.Bounds)
 			if err != nil {
 				return nil, fmt.Errorf("build planner tool output result for %s: %w", call.Name, err)
 			}
 			output.Result = rawjson.Message(resultJSON)
-			output.ResultBytes = len(resultJSON)
 		}
 		out = append(out, output)
 	}

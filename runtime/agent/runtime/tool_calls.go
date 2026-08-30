@@ -278,10 +278,6 @@ func (e *toolBatchExec) publishToolResultReceived(
 	duration time.Duration,
 ) (*RecordActivityInput, error) {
 	parentID := parentToolCallID(call, e.runCtx)
-	resultBytes := tr.ResultBytes
-	if !tr.ResultOmitted {
-		resultBytes = len(resultJSON)
-	}
 	preview, err := formatToolResultPreviewForCall(ctx, e.r, &call, tr)
 	if err != nil {
 		return nil, err
@@ -295,9 +291,6 @@ func (e *toolBatchExec) publishToolResultReceived(
 		call.ToolCallID,
 		parentID,
 		resultJSON,
-		resultBytes,
-		tr.ResultOmitted,
-		tr.ResultOmittedReason,
 		tr.ServerData,
 		preview,
 		tr.Bounds,
@@ -413,9 +406,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			}
 			continue
 		}
-		e.r.mu.RLock()
-		ts, hasTS := e.r.toolsets[spec.Toolset]
-		e.r.mu.RUnlock()
+		toolsetName, ts, hasTS := e.r.toolsetForTool(call.Name)
 
 		queue := ""
 		if hasTS && !ts.Inline {
@@ -441,7 +432,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		if hasTS && ts.Inline {
 			// Agent-as-tool: start child workflows concurrently and fan in results later.
 			if spec.IsAgentTool {
-				messages, nestedRunCtx, err := e.r.buildAgentChildRequest(ctx, ts.AgentTool, &call, e.messages, e.runCtx)
+				request, err := e.r.prepareAgentChild(wfCtx, call, e.messages, *e.runCtx)
 				if err != nil {
 					tr, err := agentToolRequestFailureResult(call, err)
 					if err != nil {
@@ -465,10 +456,6 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 					}
 					continue
 				}
-				if err := e.r.publishHook(wfCtx.Context(), hooks.NewChildRunLinkedEvent(call.RunID, call.AgentID, call.SessionID, call.Name, call.ToolCallID, nestedRunCtx.RunID, ts.AgentTool.AgentID), ""); err != nil {
-					executionErr = errors.Join(executionErr, err)
-					continue
-				}
 				route := ts.AgentTool.Route
 				if route.ID == "" || route.WorkflowName == "" || route.DefaultTaskQueue == "" {
 					executionErr = errors.Join(
@@ -479,16 +466,17 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 				}
 				input := RunInput{
 					AgentID:          route.ID,
-					RunID:            nestedRunCtx.RunID,
-					SessionID:        nestedRunCtx.SessionID,
-					TurnID:           nestedRunCtx.TurnID,
-					ParentToolCallID: nestedRunCtx.ParentToolCallID,
-					ParentRunID:      nestedRunCtx.ParentRunID,
-					ParentAgentID:    nestedRunCtx.ParentAgentID,
-					Tool:             nestedRunCtx.Tool,
-					ToolArgs:         nestedRunCtx.ToolArgs,
-					Labels:           nestedRunCtx.Labels,
-					Messages:         messages,
+					RunID:            request.runContext.RunID,
+					SessionID:        request.runContext.SessionID,
+					TurnID:           request.runContext.TurnID,
+					ParentToolCallID: request.runContext.ParentToolCallID,
+					ParentRunID:      request.runContext.ParentRunID,
+					ParentAgentID:    request.runContext.ParentAgentID,
+					Tool:             request.runContext.Tool,
+					ToolArgs:         request.runContext.ToolArgs,
+					Labels:           request.runContext.Labels,
+					Messages:         request.messages,
+					RenderedPrompts:  clonePromptRenderEvents(request.renderedPrompts),
 				}
 				handle, err := wfCtx.StartChildWorkflow(wfCtx.Context(), engine.ChildWorkflowRequest{ID: input.RunID, Workflow: route.WorkflowName, TaskQueue: route.DefaultTaskQueue, Input: &input})
 				if err != nil {
@@ -502,7 +490,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 					handle:    handle,
 					call:      call,
 					cfg:       ts.AgentTool,
-					nestedRun: nestedRunCtx,
+					nestedRun: request.runContext,
 					startTime: wfCtx.Now(),
 				})
 				if e.parentTracker != nil {
@@ -557,7 +545,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		toolInput := ToolInput{
 			AgentID:          e.agentID,
 			RunID:            e.runID,
-			ToolsetName:      spec.Toolset,
+			ToolsetName:      toolsetName,
 			ToolName:         call.Name,
 			ToolCallID:       call.ToolCallID,
 			Payload:          append(rawjson.Message(nil), call.Payload...),
@@ -792,7 +780,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 				}
 				continue
 			}
-			tr, err := e.r.adaptAgentChildOutput(ctx, info.cfg, &info.call, info.nestedRun, outPtr)
+			tr, err := e.r.adaptAgentChildOutput(info.cfg, &info.call, info.nestedRun, outPtr)
 			if err != nil {
 				executionErr = errors.Join(executionErr, err)
 				continue
@@ -906,11 +894,9 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 		for _, call := range calls {
 			call = exec.normalizeToolCall(call)
 			queue := ""
-			spec, ok := r.toolSpec(call.Name)
+			_, ok := r.toolSpec(call.Name)
 			if ok {
-				r.mu.RLock()
-				ts, hasTS := r.toolsets[spec.Toolset]
-				r.mu.RUnlock()
+				_, ts, hasTS := r.toolsetForTool(call.Name)
 				if hasTS && !ts.Inline {
 					queue = toolActOptions.Queue
 					if queue == "" {

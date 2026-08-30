@@ -421,14 +421,14 @@ func superviseRegistration(
 		}
 		renewed, err := registerProvider(ctx, toolset, providerID, incarnationID, registration, cutoff)
 		if err == nil {
-			if !registration.now().Before(cutoff) {
-				return fmt.Errorf("%w while renewal was in flight", ErrRegistrationLeaseExpired)
-			}
 			if renewed.lease.RegistrationToken != state.lease.RegistrationToken {
 				return &registrationTokenChangedError{
 					expectedToken: state.lease.RegistrationToken,
 					receivedToken: renewed.lease.RegistrationToken,
 				}
+			}
+			if !registration.now().Before(cutoff) {
+				return fmt.Errorf("%w while renewal was in flight", ErrRegistrationLeaseExpired)
 			}
 			if !renewed.deadline.After(registration.now().Add(registration.shutdownMargin)) {
 				return fmt.Errorf(

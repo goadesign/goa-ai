@@ -1,0 +1,85 @@
+package records
+
+// Helper transform functions
+func decodeFirstResultTransportToFirstResult(v *toolhttp.FirstResultTransport) *FirstResult {
+	res := &FirstResult{}
+	res.Filter = decodeSharedFilterTransportToSharedFilter(v.Filter)
+
+	return res
+}
+func decodeSharedFilterTransportToSharedFilter(v *toolhttp.SharedFilterTransport) *types.SharedFilter {
+	res := &types.SharedFilter{}
+	switch string(v.Filter.Kind()) {
+	case "name":
+		actual, _ := v.Filter.AsName()
+		obj := types.FilterBranchName(actual)
+
+		u := res.Filter
+		u.SetName((types.FilterBranchName)(obj))
+		res.Filter = u
+	case "all":
+		actual, _ := v.Filter.AsAll()
+		var obj *types.FilterBranchAll
+		if actual != nil {
+			obj = decodeMatchAllTransportToMatchAll(actual)
+		}
+		u := res.Filter
+		u.SetAll((*types.FilterBranchAll)(obj))
+		res.Filter = u
+	}
+
+	return res
+}
+func decodeMatchAllTransportToMatchAll(v *toolhttp.MatchAllTransport) *types.FilterBranchAll {
+	res := &types.FilterBranchAll{}
+
+	return res
+}
+func decodeSecondResultTransportToSecondResult(v *toolhttp.SecondResultTransport) *SecondResult {
+	res := &SecondResult{}
+	res.Filter = decodeSharedFilterTransportToSharedFilter(v.Filter)
+
+	return res
+}
+func encodeFirstResultToFirstResultTransport(v *FirstResult) *toolhttp.FirstResultTransport {
+	res := &toolhttp.FirstResultTransport{}
+	res.Filter = encodeSharedFilterToSharedFilterTransport(v.Filter)
+
+	return res
+}
+func encodeSharedFilterToSharedFilterTransport(v *types.SharedFilter) *toolhttp.SharedFilterTransport {
+	res := &toolhttp.SharedFilterTransport{}
+	var filterValue toolhttp.Filter
+	switch string(v.Filter.Kind()) {
+	case "name":
+		actual, _ := v.Filter.AsName()
+		obj := toolhttp.FilterNameTransport(actual)
+
+		u := filterValue
+		u.SetName((toolhttp.FilterNameTransport)(obj))
+		filterValue = u
+	case "all":
+		actual, _ := v.Filter.AsAll()
+		var obj *toolhttp.MatchAllTransport
+		if actual != nil {
+			obj = encodeMatchAllToMatchAllTransport(actual)
+		}
+		u := filterValue
+		u.SetAll((*toolhttp.MatchAllTransport)(obj))
+		filterValue = u
+	}
+	res.Filter = &filterValue
+
+	return res
+}
+func encodeMatchAllToMatchAllTransport(v *types.FilterBranchAll) *toolhttp.MatchAllTransport {
+	res := &toolhttp.MatchAllTransport{}
+
+	return res
+}
+func encodeSecondResultToSecondResultTransport(v *SecondResult) *toolhttp.SecondResultTransport {
+	res := &toolhttp.SecondResultTransport{}
+	res.Filter = encodeSharedFilterToSharedFilterTransport(v.Filter)
+
+	return res
+}

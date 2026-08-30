@@ -54,6 +54,30 @@ func (e *correctableServiceError) Issues() []*tools.FieldIssue {
 	return e.issues
 }
 
+func TestNewRequiresToolsetRoute(t *testing.T) {
+	t.Parallel()
+
+	_, err := New(fakeRegistryClient{}, fakePulseClient{}, "", fakeSpecs{})
+	require.ErrorContains(t, err, "registry toolset name is required")
+}
+
+// newExecutor builds a valid executor so each behavior test can focus on the
+// call it exercises.
+func newExecutor(
+	t testing.TB,
+	client Client,
+	pulseClient pulse.Client,
+	toolset string,
+	specs SpecLookup,
+	opts ...Option,
+) *Executor {
+	t.Helper()
+
+	exec, err := New(client, pulseClient, toolset, specs, opts...)
+	require.NoError(t, err)
+	return exec
+}
+
 func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 	t.Parallel()
 
@@ -66,7 +90,6 @@ func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 	specs := fakeSpecs{
 		spec: &tools.ToolSpec{
 			Name:    "queue.update_items",
-			Toolset: "queue.items",
 			Result:  tools.TypeSpec{},
 			Payload: tools.TypeSpec{},
 		},
@@ -93,10 +116,12 @@ func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 	}
 
 	var dispatchedMeta toolregistry.ToolCallMeta
-	exec := New(fakeRegistryClient{
+	var dispatchedToolset string
+	exec := newExecutor(t, fakeRegistryClient{
 		toolUseID: toolUseID,
 		meta:      &dispatchedMeta,
-	}, pc, specs)
+		toolset:   &dispatchedToolset,
+	}, pc, "todos.todos", specs)
 
 	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
 		RunID:     "run",
@@ -111,6 +136,7 @@ func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 	assert.NotNil(t, res)
 	require.NotNil(t, res.ToolResult)
 	assert.Equal(t, tools.Ident("queue.update_items"), res.ToolResult.Name)
+	assert.Equal(t, "todos.todos", dispatchedToolset)
 	assert.Equal(t, map[string]string{"scope": "detached"}, dispatchedMeta.Labels)
 	assert.False(t, stream.destroyed)
 }
@@ -132,12 +158,12 @@ func TestExecutorSequentialAndConcurrentWaitersReplayTerminalHistory(t *testing.
 			}),
 		}},
 	}
-	exec := New(
+	exec := newExecutor(t,
 		fakeRegistryClient{toolUseID: toolUseID},
 		fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream},
+		"todos.todos",
 		fakeSpecs{spec: &tools.ToolSpec{
 			Name:    "queue.update_items",
-			Toolset: "queue.items",
 			Result:  tools.TypeSpec{},
 			Payload: tools.TypeSpec{},
 		}},
@@ -185,12 +211,12 @@ func TestExecutorRejectsMalformedTerminalHistoryImmediately(t *testing.T) {
 			Payload:   []byte(`{"registration_token":`),
 		}},
 	}
-	exec := New(
+	exec := newExecutor(t,
 		fakeRegistryClient{toolUseID: toolUseID},
 		fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream},
+		"todos.todos",
 		fakeSpecs{spec: &tools.ToolSpec{
 			Name:    "queue.update_items",
-			Toolset: "queue.items",
 			Result:  tools.TypeSpec{},
 			Payload: tools.TypeSpec{},
 		}},
@@ -236,16 +262,16 @@ func TestExecutorAsksRegistryToRetryTransientProviderOverload(t *testing.T) {
 	}
 	var calls atomic.Int64
 	var retryToken string
-	exec := New(
+	exec := newExecutor(t,
 		fakeRegistryClient{
 			toolUseID:          toolUseID,
 			calls:              &calls,
 			retryExpectedToken: &retryToken,
 		},
 		fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream},
+		"todos.todos",
 		fakeSpecs{spec: &tools.ToolSpec{
 			Name:    "queue.update_items",
-			Toolset: "queue.items",
 			Result:  tools.TypeSpec{},
 			Payload: tools.TypeSpec{},
 		}},
@@ -373,7 +399,6 @@ func TestExecutorRejectsMalformedRetryControl(t *testing.T) {
 				test.msg,
 				&tools.ToolSpec{
 					Name:    "queue.update_items",
-					Toolset: "queue.items",
 					Result:  tools.TypeSpec{},
 					Payload: tools.TypeSpec{},
 				},
@@ -415,12 +440,12 @@ func TestExecutorIgnoresLateResultFromReusedToolUseID(t *testing.T) {
 			},
 		},
 	}
-	exec := New(
+	exec := newExecutor(t,
 		fakeRegistryClient{toolUseID: toolUseID},
 		fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream},
+		"todos.todos",
 		fakeSpecs{spec: &tools.ToolSpec{
 			Name:    "queue.update_items",
-			Toolset: "queue.items",
 			Result:  tools.TypeSpec{},
 			Payload: tools.TypeSpec{},
 		}},
@@ -463,7 +488,6 @@ func TestExecutorRegistryErrorsCarryCanonicalRecovery(t *testing.T) {
 			t.Parallel()
 			spec := &tools.ToolSpec{
 				Name:    "catalog.lookup.find_records",
-				Toolset: "catalog.lookup",
 				Result:  tools.TypeSpec{},
 				Payload: tools.TypeSpec{ExampleJSON: example},
 			}
@@ -503,7 +527,6 @@ func TestExecutorPreservesProviderOwnedRecovery(t *testing.T) {
 
 	result, err := executeRegistryResultMessage(t, toolUseID, toolCallID, message, &tools.ToolSpec{
 		Name:    "catalog.lookup.find_records",
-		Toolset: "catalog.lookup",
 		Result:  tools.TypeSpec{},
 		Payload: tools.TypeSpec{},
 	})
@@ -537,9 +560,8 @@ func TestExecutorPreservesServiceFailureWithoutOwningCorrectionEvidence(t *testi
 		},
 	)
 	spec := &tools.ToolSpec{
-		Name:    "catalog.lookup.find_records",
-		Toolset: "catalog.lookup",
-		Result:  tools.TypeSpec{},
+		Name:   "catalog.lookup.find_records",
+		Result: tools.TypeSpec{},
 		Payload: tools.TypeSpec{
 			ExampleJSON: tools.RawJSON(`{"query":"recent orders"}`),
 		},
@@ -562,13 +584,13 @@ func TestExecutorTransportFailureClassifiesToolUnavailable(t *testing.T) {
 
 	spec := &tools.ToolSpec{
 		Name:    "catalog.lookup.find_records",
-		Toolset: "catalog.lookup",
 		Result:  tools.TypeSpec{},
 		Payload: tools.TypeSpec{ExampleJSON: tools.RawJSON(`{"query":"latency"}`)},
 	}
-	exec := New(
+	exec := newExecutor(t,
 		fakeRegistryClient{err: errors.New("dial registry gateway: connection refused")},
 		fakePulseClient{},
+		"atlas.read",
 		fakeSpecs{spec: spec},
 	)
 
@@ -596,15 +618,15 @@ func TestExecutorAllowsRegistryAdmissionDecisionToReachCaller(t *testing.T) {
 
 	var callDeadline time.Time
 	before := time.Now()
-	exec := New(
+	exec := newExecutor(t,
 		fakeRegistryClient{
 			err:          errors.New("registry unavailable"),
 			callDeadline: &callDeadline,
 		},
 		fakePulseClient{},
+		"atlas.read",
 		fakeSpecs{spec: &tools.ToolSpec{
 			Name:    "catalog.lookup.find_records",
-			Toolset: "catalog.lookup",
 			Result:  tools.TypeSpec{},
 			Payload: tools.TypeSpec{},
 		}},
@@ -682,11 +704,10 @@ func TestExecutorClassifiesTypedPreAdmissionFailures(t *testing.T) {
 
 			spec := &tools.ToolSpec{
 				Name:    "catalog.lookup.find_records",
-				Toolset: "catalog.lookup",
 				Result:  tools.TypeSpec{},
 				Payload: tools.TypeSpec{},
 			}
-			exec := New(
+			exec := newExecutor(t,
 				fakeRegistryClient{err: goa.NewServiceError(
 					errors.New("registry rejected call"),
 					test.registry,
@@ -695,6 +716,7 @@ func TestExecutorClassifiesTypedPreAdmissionFailures(t *testing.T) {
 					false,
 				)},
 				fakePulseClient{},
+				"atlas.read",
 				fakeSpecs{spec: spec},
 			)
 
@@ -716,15 +738,15 @@ func TestExecutorClassifiesTypedPreAdmissionFailures(t *testing.T) {
 func TestExecutorRejectsNoncanonicalRegistrationToken(t *testing.T) {
 	t.Parallel()
 
-	exec := New(
+	exec := newExecutor(t,
 		fakeRegistryClient{
 			toolUseID:         "tooluse-invalid-token",
 			registrationToken: "ABC123",
 		},
 		fakePulseClient{},
+		"todos.todos",
 		fakeSpecs{spec: &tools.ToolSpec{
 			Name:    "queue.update_items",
-			Toolset: "queue.items",
 			Result:  tools.TypeSpec{},
 			Payload: tools.TypeSpec{},
 		}},
@@ -757,7 +779,6 @@ func TestExecutorDerivesResultStreamIDFromToolUseID(t *testing.T) {
 	specs := fakeSpecs{
 		spec: &tools.ToolSpec{
 			Name:    "queue.update_items",
-			Toolset: "queue.items",
 			Result:  tools.TypeSpec{},
 			Payload: tools.TypeSpec{},
 		},
@@ -783,9 +804,9 @@ func TestExecutorDerivesResultStreamIDFromToolUseID(t *testing.T) {
 		stream:   stream,
 	}
 
-	exec := New(fakeRegistryClient{
+	exec := newExecutor(t, fakeRegistryClient{
 		toolUseID: toolUseID,
-	}, pc, specs)
+	}, pc, "todos.todos", specs)
 
 	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
 		RunID:     "run",
@@ -807,7 +828,7 @@ func TestExecutorWaitsOnlyThroughExecutionDeadline(t *testing.T) {
 	const toolUseID = "tooluse-deadline"
 	deadline := time.Now().Add(30 * time.Millisecond).UTC().Truncate(time.Millisecond)
 	stream := &fakeStream{t: t, requiredStart: "0", keepOpen: true}
-	exec := New(
+	exec := newExecutor(t,
 		fakeRegistryClient{
 			toolUseID:         toolUseID,
 			executionDeadline: deadline,
@@ -816,9 +837,9 @@ func TestExecutorWaitsOnlyThroughExecutionDeadline(t *testing.T) {
 			streamID: toolregistry.ResultStreamID(toolUseID),
 			stream:   stream,
 		},
+		"todos.todos",
 		fakeSpecs{spec: &tools.ToolSpec{
 			Name:    "queue.update_items",
-			Toolset: "queue.items",
 			Result:  tools.TypeSpec{},
 			Payload: tools.TypeSpec{},
 		}},
@@ -848,7 +869,6 @@ func TestExecutorEmitsRegistrySpan(t *testing.T) {
 	specs := fakeSpecs{
 		spec: &tools.ToolSpec{
 			Name:    "queue.update_items",
-			Toolset: "queue.items",
 			Result:  tools.TypeSpec{},
 			Payload: tools.TypeSpec{},
 		},
@@ -868,9 +888,10 @@ func TestExecutorEmitsRegistrySpan(t *testing.T) {
 			},
 		},
 	}
-	exec := New(
+	exec := newExecutor(t,
 		fakeRegistryClient{toolUseID: toolUseID},
 		fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream},
+		"todos.todos",
 		specs,
 		WithTracer(tracer),
 	)
@@ -891,7 +912,7 @@ func TestExecutorEmitsRegistrySpan(t *testing.T) {
 	assert.Equal(t, "toolregistry.execute", tracer.spans[0].name)
 	attrs := attrsByKey(tracer.spans[0].attrs)
 	assert.Equal(t, "queue.update_items", attrs[attribute.Key("toolregistry.tool")].AsString())
-	assert.Equal(t, "queue.items", attrs[attribute.Key("toolregistry.toolset")].AsString())
+	assert.Equal(t, "todos.todos", attrs[attribute.Key("toolregistry.toolset")].AsString())
 	assert.Equal(t, "toolcall-1", attrs[attribute.Key("toolregistry.tool_call_id")].AsString())
 	_, hasConsumerGroup := attrs[attribute.Key("toolregistry.sink")]
 	assert.False(t, hasConsumerGroup)
@@ -931,7 +952,6 @@ func TestExecutorForwardsOnlyExactAdmissionOutputDeltaForReusedToolUseID(t *test
 	specs := fakeSpecs{
 		spec: &tools.ToolSpec{
 			Name:    "queue.update_items",
-			Toolset: "queue.items",
 			Result:  tools.TypeSpec{},
 			Payload: tools.TypeSpec{},
 		},
@@ -991,11 +1011,12 @@ func TestExecutorForwardsOnlyExactAdmissionOutputDeltaForReusedToolUseID(t *test
 	}
 
 	sink := &captureSink{}
-	exec := New(
+	exec := newExecutor(t,
 		fakeRegistryClient{
 			toolUseID: toolUseID,
 		},
 		pc,
+		"todos.todos",
 		specs,
 		WithStreamSink(sink),
 	)
@@ -1036,7 +1057,6 @@ func TestExecutorRestoresBoundsFromRegistryMessage(t *testing.T) {
 	specs := fakeSpecs{
 		spec: &tools.ToolSpec{
 			Name:    "catalog.lookup.list_records",
-			Toolset: "catalog.lookup",
 			Result:  tools.TypeSpec{},
 			Payload: tools.TypeSpec{},
 			Bounds: &tools.BoundsSpec{
@@ -1074,11 +1094,12 @@ func TestExecutorRestoresBoundsFromRegistryMessage(t *testing.T) {
 		stream:   stream,
 	}
 
-	exec := New(
+	exec := newExecutor(t,
 		fakeRegistryClient{
 			toolUseID: toolUseID,
 		},
 		pc,
+		"atlas.read",
 		specs,
 	)
 
@@ -1230,7 +1251,6 @@ func TestExecutorRejectsInvalidRegistryErrorResults(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			res, err := executeRegistryResultMessage(t, toolUseID, toolCallID, tc.msg, &tools.ToolSpec{
 				Name:    "catalog.lookup.list_records",
-				Toolset: "catalog.lookup",
 				Result:  tools.TypeSpec{},
 				Payload: tools.TypeSpec{},
 			})
@@ -1253,8 +1273,7 @@ func TestExecutorResultDecodeFailureReturnsModelVisibleErrorWithoutBounds(t *tes
 	)
 	nextCursor := "cursor-2"
 	spec := &tools.ToolSpec{
-		Name:    "catalog.lookup.list_records",
-		Toolset: "catalog.lookup",
+		Name: "catalog.lookup.list_records",
 		Result: tools.TypeSpec{
 			Codec: tools.JSONCodec[any]{
 				FromJSON: func(data []byte) (any, error) {
@@ -1306,8 +1325,7 @@ func TestExecutorInvalidServerDataFailsWholeResult(t *testing.T) {
 		toolCallID = "toolcall-invalid-server-data"
 	)
 	spec := &tools.ToolSpec{
-		Name:    "catalog.lookup.get_chart",
-		Toolset: "catalog.lookup",
+		Name: "catalog.lookup.get_chart",
 		Result: tools.TypeSpec{
 			Codec: tools.JSONCodec[any]{
 				FromJSON: func(data []byte) (any, error) {
@@ -1481,11 +1499,12 @@ type fakeRegistryClient struct {
 	calls              *atomic.Int64
 	retryExpectedToken *string
 	meta               *toolregistry.ToolCallMeta
+	toolset            *string
 }
 
 func (c fakeRegistryClient) CallTool(
 	ctx context.Context,
-	_ string,
+	toolset string,
 	_ tools.Ident,
 	_ []byte,
 	meta toolregistry.ToolCallMeta,
@@ -1498,6 +1517,9 @@ func (c fakeRegistryClient) CallTool(
 	}
 	if c.meta != nil {
 		*c.meta = meta
+	}
+	if c.toolset != nil {
+		*c.toolset = toolset
 	}
 	if c.err != nil {
 		return toolregistry.ToolCallRef{}, c.err
@@ -1721,9 +1743,10 @@ func executeRegistryResultMessage(
 			},
 		},
 	}
-	exec := New(
+	exec := newExecutor(t,
 		fakeRegistryClient{toolUseID: toolUseID},
 		fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream},
+		"atlas.read",
 		fakeSpecs{spec: spec},
 	)
 	return exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{

@@ -26,7 +26,6 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
@@ -49,6 +48,20 @@ type (
 	// rendering failures (which stay terminal workflow errors).
 	agentToolPayloadError struct {
 		cause error
+	}
+
+	// agentChildRequestFailure carries an already classified model correction
+	// from the child preparation activity back to workflow code.
+	agentChildRequestFailure struct {
+		failure *planner.ToolFailure
+	}
+
+	// agentChildRequest contains the complete immutable input assembled before a
+	// child workflow starts, including prompt versions used in its messages.
+	agentChildRequest struct {
+		messages        []*model.Message
+		runContext      run.Context
+		renderedPrompts []prompt.RenderEvent
 	}
 
 	// PromptBuilder builds a user message for a tool call from its payload when
@@ -340,7 +353,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 			SessionID: call.SessionID,
 			TurnID:    call.TurnID,
 		}
-		messages, nestedRunCtx, err := rt.buildAgentChildRequest(wfCtx.Context(), &cfg, call, nil, parentRun)
+		request, err := rt.prepareAgentChild(wfCtx, *call, nil, *parentRun)
 		if err != nil {
 			result, err := agentToolRequestFailureResult(*call, err)
 			if err != nil {
@@ -348,22 +361,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 			}
 			return Executed(result), nil
 		}
-		if err := rt.publishHook(
-			wfCtx.Context(),
-			hooks.NewChildRunLinkedEvent(
-				call.RunID,
-				call.AgentID,
-				call.SessionID,
-				call.Name,
-				call.ToolCallID,
-				nestedRunCtx.RunID,
-				cfg.AgentID,
-			),
-			"",
-		); err != nil {
-			return nil, err
-		}
-		outPtr, err := rt.ExecuteAgentChildWithRoute(wfCtx, cfg.Route, messages, nestedRunCtx)
+		outPtr, err := rt.executeAgentChildWithRoute(wfCtx, cfg.Route, request)
 		if err != nil {
 			return nil, fmt.Errorf("execute agent: %w", err)
 		}
@@ -373,7 +371,7 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 				childSuspension: outPtr.Suspension,
 			}, nil
 		}
-		result, err := rt.adaptAgentChildOutput(ctx, &cfg, call, nestedRunCtx, outPtr)
+		result, err := rt.adaptAgentChildOutput(&cfg, call, request.runContext, outPtr)
 		if err != nil {
 			return nil, err
 		}
@@ -385,6 +383,14 @@ func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Cont
 // into executor-owned failure facts. The normal tool collection path adds
 // workflow-owned correction evidence before recording the result.
 func agentToolRequestFailureResult(call ToolCall, err error) (*planner.ToolResult, error) {
+	var prepared *agentChildRequestFailure
+	if errors.As(err, &prepared) {
+		return &planner.ToolResult{
+			Name:       call.Name,
+			ToolCallID: call.ToolCallID,
+			Failure:    prepared.failure,
+		}, nil
+	}
 	failure := buildToolFailureFromAgentToolRequestError(err)
 	if failure == nil {
 		return nil, err
@@ -397,6 +403,11 @@ func agentToolRequestFailureResult(call ToolCall, err error) (*planner.ToolResul
 	return result, nil
 }
 
+// Error reports the correction returned by child preparation.
+func (e *agentChildRequestFailure) Error() string {
+	return e.failure.Error.Message
+}
+
 // attachRunLink stamps the parent tool result with a run handle linking to the
 // nested agent run that produced it.
 func attachRunLink(result *planner.ToolResult, handle *run.Handle) {
@@ -406,14 +417,14 @@ func attachRunLink(result *planner.ToolResult, handle *run.Handle) {
 // buildAgentChildRequest constructs the nested agent messages and run context for an
 // agent-as-tool invocation based on the tool call and configuration. It decodes the
 // payload for prompt/template rendering and records canonical JSON args for the child.
-func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConfig, call *ToolCall, messages []*model.Message, parentRun *run.Context) ([]*model.Message, run.Context, error) {
-	var zeroCtx run.Context
+func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConfig, call *ToolCall, messages []*model.Message, parentRun *run.Context) (agentChildRequest, error) {
+	var zeroRequest agentChildRequest
 
 	// Decode payload for prompt/template rendering. Prefer tool codecs when
 	// specs are registered. Agent-as-tool payloads must be validated at the
 	// parent boundary; do not fall back to untyped JSON decoding.
 	if _, ok := r.ToolSpec(call.Name); !ok {
-		return nil, zeroCtx, fmt.Errorf(
+		return zeroRequest, fmt.Errorf(
 			"agent tool %s requires a registered ToolSpec for payload decoding (missing specs/codecs)",
 			call.Name,
 		)
@@ -425,7 +436,7 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 	}
 	val, err := r.unmarshalToolValue(ctx, call.Name, rawPayload.RawMessage(), true)
 	if err != nil {
-		return nil, zeroCtx, fmt.Errorf("decode agent tool payload for %s: %w", call.Name, &agentToolPayloadError{cause: err})
+		return zeroRequest, fmt.Errorf("decode agent tool payload for %s: %w", call.Name, &agentToolPayloadError{cause: err})
 	}
 	promptPayload := val
 	if cfg.PreChildValidator != nil {
@@ -435,7 +446,7 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 			Messages:  messages,
 			ParentRun: parentRun,
 		}); err != nil {
-			return nil, zeroCtx, err
+			return zeroRequest, err
 		}
 	}
 
@@ -450,16 +461,22 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 	// Build per-tool user message using prompt specs first, then template, then
 	// text, then prompt builder.
 	var userContent string
+	promptRenders := prompt.NewRenderRecorder()
 	if promptID, ok := cfg.PromptSpecs[call.Name]; ok {
-		rendered, err := r.renderAgentToolPrompt(ctx, promptID, call, promptPayload)
+		rendered, err := r.renderAgentToolPrompt(
+			prompt.WithRenderRecorder(ctx, promptRenders),
+			promptID,
+			call,
+			promptPayload,
+		)
 		if err != nil {
-			return nil, zeroCtx, fmt.Errorf("render prompt for %s: %w", call.Name, err)
+			return zeroRequest, fmt.Errorf("render prompt for %s: %w", call.Name, err)
 		}
 		userContent = rendered
 	} else if tmpl := cfg.Templates[call.Name]; tmpl != nil {
 		var b strings.Builder
 		if err := tmpl.Execute(&b, promptPayload); err != nil {
-			return nil, zeroCtx, fmt.Errorf("render tool template for %s: %w", call.Name, err)
+			return zeroRequest, fmt.Errorf("render tool template for %s: %w", call.Name, err)
 		}
 		userContent = b.String()
 	} else if txt, ok := cfg.Texts[call.Name]; ok {
@@ -483,8 +500,18 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 		childMessages = append(childMessages, &model.Message{Role: model.ConversationRoleUser})
 	}
 
-	// Build nested run context from explicit ToolRequest fields.
-	nestedRunCtx := run.Context{
+	return agentChildRequest{
+		messages:        childMessages,
+		runContext:      agentChildRunContext(call),
+		renderedPrompts: promptRenders.Events(),
+	}, nil
+}
+
+// agentChildRunContext derives child identity from the validated parent tool
+// call. Activities do not return these values because workflow code already
+// owns the exact call recorded in its history.
+func agentChildRunContext(call *ToolCall) run.Context {
+	return run.Context{
 		Tool:             call.Name,
 		RunID:            NestedRunIDForToolCall(call.RunID, call.Name, call.ToolCallID),
 		SessionID:        call.SessionID,
@@ -492,20 +519,9 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 		ParentToolCallID: call.ToolCallID,
 		ParentRunID:      call.RunID,
 		ParentAgentID:    call.AgentID,
+		ToolArgs:         append(rawjson.Message(nil), call.Payload...),
 		Labels:           cloneLabels(call.Labels),
 	}
-	// Preserve the canonical payload bytes as child tool args.
-	//
-	// Contract:
-	//   - ToolCall.Payload is already canonical JSON at this boundary.
-	//   - Child run ToolArgs must be exactly the parent payload bytes.
-	//   - Re-encoding through payload codecs here is invalid because payload codecs
-	//     encode typed values, while this boundary carries canonical raw JSON.
-	if len(call.Payload) > 0 {
-		nestedRunCtx.ToolArgs = append(rawjson.Message(nil), call.Payload...)
-	}
-
-	return childMessages, nestedRunCtx, nil
 }
 
 // renderAgentToolPrompt resolves and renders a configured prompt spec for one tool call.
@@ -520,13 +536,7 @@ func (r *Runtime) renderAgentToolPrompt(ctx context.Context, promptID prompt.Ide
 	if err != nil {
 		return "", fmt.Errorf("build prompt template data for %s: %w", call.Name, err)
 	}
-	renderContext := withPromptRenderHookContext(ctx, PromptRenderHookContext{
-		RunID:     call.RunID,
-		AgentID:   call.AgentID,
-		SessionID: call.SessionID,
-		TurnID:    call.TurnID,
-	})
-	content, err := r.PromptRegistry.Render(renderContext, promptID, prompt.Scope{
+	content, err := r.PromptRegistry.Render(ctx, promptID, prompt.Scope{
 		SessionID: call.SessionID,
 		Labels:    cloneLabels(call.Labels),
 	}, renderData)
@@ -584,7 +594,7 @@ func (r *Runtime) buildPromptTemplateData(ctx context.Context, toolName tools.Id
 // becomes the parent-visible text result.
 //
 // In all cases the returned ToolResult is linked back to the child run.
-func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfig, call *ToolCall, nestedRunCtx run.Context, outPtr *RunOutput) (*planner.ToolResult, error) {
+func (r *Runtime) adaptAgentChildOutput(cfg *AgentToolConfig, call *ToolCall, nestedRunCtx run.Context, outPtr *RunOutput) (*planner.ToolResult, error) {
 	handle := &run.Handle{
 		RunID:            nestedRunCtx.RunID,
 		AgentID:          cfg.AgentID,
@@ -593,7 +603,7 @@ func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfi
 	}
 
 	if outPtr.FinalToolResult != nil {
-		tr, err := r.decodeAgentChildFinalToolResult(ctx, call, outPtr.FinalToolResult)
+		tr, err := r.decodeAgentChildFinalToolResult(call, outPtr.FinalToolResult)
 		if err != nil {
 			return nil, err
 		}
@@ -616,28 +626,35 @@ func (r *Runtime) adaptAgentChildOutput(ctx context.Context, cfg *AgentToolConfi
 // decodeAgentChildFinalToolResult decodes the workflow-safe final tool-result
 // envelope emitted by a nested child run into the parent planner.ToolResult
 // shape.
-func (r *Runtime) decodeAgentChildFinalToolResult(ctx context.Context, call *ToolCall, event *api.ToolEvent) (*planner.ToolResult, error) {
+func (r *Runtime) decodeAgentChildFinalToolResult(call *ToolCall, event *api.ToolEvent) (*planner.ToolResult, error) {
 	if call == nil {
 		return nil, errors.New("agent-tool final result: tool call is required")
 	}
 	if event == nil {
 		return nil, fmt.Errorf("agent-tool final result for %s: event is nil", call.Name)
 	}
-	result := &planner.ToolResult{
-		Name:                call.Name,
-		ResultBytes:         event.ResultBytes,
-		ResultOmitted:       event.ResultOmitted,
-		ResultOmittedReason: event.ResultOmittedReason,
-		ServerData:          append(rawjson.Message(nil), event.ServerData...),
-		Bounds:              event.Bounds,
-		Failure:             event.Failure,
-		Telemetry:           event.Telemetry,
+	spec, ok := r.toolSpec(call.Name)
+	if !ok {
+		return nil, fmt.Errorf("agent-tool final result references unregistered tool %q", call.Name)
 	}
-	if hasNonNullJSON(event.Result.RawMessage()) && event.Failure == nil {
-		decoded, err := r.unmarshalToolValue(ctx, call.Name, event.Result.RawMessage(), false)
-		if err != nil {
-			return nil, fmt.Errorf("decode final tool result for %s: %w", call.Name, err)
+	result := &planner.ToolResult{
+		Name:       call.Name,
+		ServerData: append(rawjson.Message(nil), event.ServerData...),
+		Bounds:     event.Bounds,
+		Failure:    event.Failure,
+		Telemetry:  event.Telemetry,
+	}
+	if event.Failure != nil {
+		if len(event.Result) > 0 {
+			return nil, fmt.Errorf("agent-tool final result for %s contains both a failure and result JSON", call.Name)
 		}
+		return result, nil
+	}
+	decoded, err := decodeSuccessfulToolResult(spec, event.Result)
+	if err != nil {
+		return nil, fmt.Errorf("decode final tool result for %s: %w", call.Name, err)
+	}
+	if decoded != nil {
 		result.Result = decoded
 	}
 	return result, nil

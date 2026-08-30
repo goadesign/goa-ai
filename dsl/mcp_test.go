@@ -1,3 +1,5 @@
+// This file verifies how MCP declarations are recorded and rejected through
+// the public design language.
 package dsl_test
 
 import (
@@ -17,6 +19,9 @@ func TestMCPBasicConfiguration(t *testing.T) {
 		API("test", func() {})
 		Service("calculator", func() {
 			MCP("calc", "1.0.0")
+			JSONRPC(func() {
+				POST("/mcp")
+			})
 		})
 	})
 
@@ -33,6 +38,9 @@ func TestMCPWithProtocolVersion(t *testing.T) {
 		API("test", func() {})
 		Service("calculator", func() {
 			MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+			JSONRPC(func() {
+				POST("/mcp")
+			})
 		})
 	})
 
@@ -42,11 +50,135 @@ func TestMCPWithProtocolVersion(t *testing.T) {
 	require.Equal(t, "2025-06-18", mcp.ProtocolVersion)
 }
 
+func TestGoaJSONRPCNotificationRemainsAvailable(t *testing.T) {
+	runMCPDSL(t, func() {
+		API("test", func() {})
+		Service("records", func() {
+			JSONRPC(func() {
+				POST("/rpc")
+			})
+			Method("record", func() {
+				Payload(func() {
+					Attribute("message", String)
+					Required("message")
+				})
+				JSONRPC(func() {
+					Notification()
+				})
+			})
+		})
+	})
+
+	endpoint := goaexpr.Root.API.JSONRPC.Services[0].HTTPEndpoints[0]
+	require.True(t, endpoint.IsJSONRPCNotification())
+}
+
+func TestMCPAcceptsOrdinaryHTTPMethodRoutes(t *testing.T) {
+	runMCPDSL(t, func() {
+		API("test", func() {})
+		Service("calculator", func() {
+			MCP("calc", "1.0.0")
+			JSONRPC(func() {
+				POST("/mcp")
+			})
+			Method("add", func() {
+				Result(Int)
+				Tool("add", "Add numbers")
+				HTTP(func() {
+					GET("/add")
+				})
+			})
+		})
+	})
+}
+
+func TestMCPAcceptsOrdinaryHTTPFileServers(t *testing.T) {
+	runMCPDSL(t, func() {
+		API("test", func() {})
+		Service("documents", func() {
+			MCP("documents", "1.0.0")
+			JSONRPC(func() {
+				POST("/mcp")
+			})
+			Files("/assets/{*path}", "public/assets")
+		})
+	})
+}
+
+func TestMCPAcceptsServiceHTTPSettingsWithoutRoutes(t *testing.T) {
+	runMCPDSL(t, func() {
+		API("test", func() {})
+		Service("calculator", func() {
+			MCP("calc", "1.0.0")
+			JSONRPC(func() {
+				POST("/mcp")
+			})
+			HTTP(func() {
+				Path("/calculator")
+			})
+		})
+	})
+}
+
+func TestMCPAcceptsJSONRPCAndGRPC(t *testing.T) {
+	runMCPDSL(t, func() {
+		API("test", func() {})
+		Service("calculator", func() {
+			MCP("calc", "1.0.0")
+			JSONRPC(func() {
+				POST("/mcp")
+			})
+			Method("status", func() {
+				Result(String)
+				Tool("status", "Read status")
+				JSONRPC(func() {})
+				GRPC(func() {})
+			})
+		})
+	})
+}
+
+func TestMCPRequiresServiceJSONRPCPost(t *testing.T) {
+	err := runMCPDSLWithError(t, func() {
+		API("test", func() {})
+		Service("calculator", func() {
+			MCP("calc", "1.0.0")
+			Method("status", func() {
+				Result(String)
+				Tool("status", "Read status")
+			})
+		})
+	})
+
+	require.ErrorContains(t, err, `service "calculator" must declare JSONRPC(func(){ POST(...) }) with a service-level path`)
+}
+
+func TestMCPRejectsServiceJSONRPCGet(t *testing.T) {
+	err := runMCPDSLWithError(t, func() {
+		API("test", func() {})
+		Service("calculator", func() {
+			MCP("calc", "1.0.0")
+			JSONRPC(func() {
+				GET("/mcp")
+			})
+			Method("status", func() {
+				Result(String)
+				Tool("status", "Read status")
+			})
+		})
+	})
+
+	require.ErrorContains(t, err, `service "calculator" must declare JSONRPC(func(){ POST(...) }) with a service-level path; found GET "/mcp"`)
+}
+
 func TestMCPResource(t *testing.T) {
 	runMCPDSL(t, func() {
 		API("test", func() {})
 		Service("docs", func() {
 			MCP("docs-server", "1.0")
+			JSONRPC(func() {
+				POST("/mcp")
+			})
 			Method("readme", func() {
 				Result(String)
 				Resource("readme", "file:///docs/README.md", "text/markdown")
@@ -62,33 +194,6 @@ func TestMCPResource(t *testing.T) {
 	require.Equal(t, "readme", res.Name)
 	require.Equal(t, "file:///docs/README.md", res.URI)
 	require.Equal(t, "text/markdown", res.MimeType)
-	require.False(t, res.Watchable)
-}
-
-func TestMCPWatchableResource(t *testing.T) {
-	runMCPDSL(t, func() {
-		API("test", func() {})
-		Service("status", func() {
-			MCP("status-server", "1.0")
-			Method("system_status", func() {
-				Result(func() {
-					Attribute("status", String)
-					Attribute("uptime", Int)
-				})
-				WatchableResource("status", "status://system", "application/json")
-			})
-		})
-	})
-
-	require.Len(t, mcpexpr.Root.MCPServers, 1)
-	mcp := mcpexpr.Root.MCPServers["status"]
-	require.NotNil(t, mcp)
-	require.Len(t, mcp.Resources, 1)
-	res := mcp.Resources[0]
-	require.Equal(t, "status", res.Name)
-	require.Equal(t, "status://system", res.URI)
-	require.Equal(t, "application/json", res.MimeType)
-	require.True(t, res.Watchable)
 }
 
 func TestMCPStaticPrompt(t *testing.T) {
@@ -96,8 +201,11 @@ func TestMCPStaticPrompt(t *testing.T) {
 		API("test", func() {})
 		Service("assistant", func() {
 			MCP("assistant", "1.0")
+			JSONRPC(func() {
+				POST("/mcp")
+			})
 			StaticPrompt("greeting", "Friendly greeting",
-				"system", "You are a helpful assistant",
+				"user", "You are a helpful assistant",
 				"user", "Hello!")
 		})
 	})
@@ -110,7 +218,7 @@ func TestMCPStaticPrompt(t *testing.T) {
 	require.Equal(t, "greeting", prompt.Name)
 	require.Equal(t, "Friendly greeting", prompt.Description)
 	require.Len(t, prompt.Messages, 2)
-	require.Equal(t, "system", prompt.Messages[0].Role)
+	require.Equal(t, "user", prompt.Messages[0].Role)
 	require.Equal(t, "You are a helpful assistant", prompt.Messages[0].Content)
 	require.Equal(t, "user", prompt.Messages[1].Role)
 	require.Equal(t, "Hello!", prompt.Messages[1].Content)
@@ -122,7 +230,7 @@ func TestMCPStaticPromptRejectsOddMessageList(t *testing.T) {
 		Service("assistant", func() {
 			MCP("assistant", "1.0")
 			StaticPrompt("greeting", "Friendly greeting",
-				"system", "You are a helpful assistant",
+				"user", "You are a helpful assistant",
 				"user")
 		})
 	})
@@ -131,114 +239,14 @@ func TestMCPStaticPromptRejectsOddMessageList(t *testing.T) {
 	require.ErrorContains(t, err, "StaticPrompt requires role/content pairs")
 }
 
-func TestMCPDynamicPrompt(t *testing.T) {
-	runMCPDSL(t, func() {
-		API("test", func() {})
-		Service("assistant", func() {
-			MCP("assistant", "1.0")
-			Method("code_review", func() {
-				Payload(func() {
-					Attribute("language", String)
-					Attribute("code", String)
-				})
-				Result(ArrayOf(String))
-				DynamicPrompt("code_review", "Generate code review prompt")
-			})
-		})
-	})
-
-	require.Len(t, mcpexpr.Root.DynamicPrompts, 1)
-	prompts := mcpexpr.Root.DynamicPrompts["assistant"]
-	require.Len(t, prompts, 1)
-	prompt := prompts[0]
-	require.Equal(t, "code_review", prompt.Name)
-	require.Equal(t, "Generate code review prompt", prompt.Description)
-	require.NotNil(t, prompt.Method)
-	require.Equal(t, "code_review", prompt.Method.Name)
-}
-
-func TestMCPNotification(t *testing.T) {
-	runMCPDSL(t, func() {
-		API("test", func() {})
-		Service("tasks", func() {
-			MCP("tasks-server", "1.0")
-			Method("progress_update", func() {
-				Payload(func() {
-					Attribute("task_id", String)
-					Attribute("progress", Int)
-				})
-				Notification("progress", "Task progress notification")
-			})
-		})
-	})
-
-	require.Len(t, mcpexpr.Root.MCPServers, 1)
-	mcp := mcpexpr.Root.MCPServers["tasks"]
-	require.NotNil(t, mcp)
-	require.Len(t, mcp.Notifications, 1)
-	notif := mcp.Notifications[0]
-	require.Equal(t, "progress", notif.Name)
-	require.Equal(t, "Task progress notification", notif.Description)
-	require.NotNil(t, notif.Method)
-}
-
-func TestMCPSubscription(t *testing.T) {
-	runMCPDSL(t, func() {
-		API("test", func() {})
-		Service("status", func() {
-			MCP("status-server", "1.0")
-			Method("system_status", func() {
-				Result(String)
-				WatchableResource("status", "status://system", "application/json")
-			})
-			Method("subscribe_status", func() {
-				Payload(func() {
-					Attribute("uri", String)
-				})
-				Result(String)
-				Subscription("status")
-			})
-		})
-	})
-
-	require.Len(t, mcpexpr.Root.MCPServers, 1)
-	mcp := mcpexpr.Root.MCPServers["status"]
-	require.NotNil(t, mcp)
-	require.Len(t, mcp.Subscriptions, 1)
-	sub := mcp.Subscriptions[0]
-	require.Equal(t, "status", sub.ResourceName)
-	require.NotNil(t, sub.Method)
-}
-
-func TestMCPSubscriptionMonitor(t *testing.T) {
-	runMCPDSL(t, func() {
-		API("test", func() {})
-		Service("status", func() {
-			MCP("status-server", "1.0")
-			Method("watch_subscriptions", func() {
-				StreamingResult(func() {
-					Attribute("resource", String)
-					Attribute("event", String)
-				})
-				SubscriptionMonitor("subscriptions")
-			})
-		})
-	})
-
-	require.Len(t, mcpexpr.Root.MCPServers, 1)
-	mcp := mcpexpr.Root.MCPServers["status"]
-	require.NotNil(t, mcp)
-	require.Len(t, mcp.SubscriptionMonitors, 1)
-	monitor := mcp.SubscriptionMonitors[0]
-	require.Equal(t, "subscriptions", monitor.Name)
-	require.NotNil(t, monitor.Method)
-}
-
 func TestMCPToolInMethod(t *testing.T) {
 	runMCPDSL(t, func() {
 		API("test", func() {})
 		Service("calculator", func() {
 			MCP("calc", "1.0.0")
+			JSONRPC(func() {
+				POST("/mcp")
+			})
 			Method("add", func() {
 				Payload(func() {
 					Attribute("a", Int)

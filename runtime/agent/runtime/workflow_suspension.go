@@ -6,7 +6,6 @@ package runtime
 // reconstructs typed planner/tool state with registered codecs.
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -25,7 +24,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"goa.design/goa-ai/runtime/toolserverdata"
 )
 
 type (
@@ -129,11 +127,9 @@ type (
 	}
 )
 
-const legacyRunSuspensionVersion = "goa-ai.run-suspension.v5"
-
 // suspendRun serializes the current workflow state after all visible await
-// events have been recorded. It returns a successful terminal output; no
-// workflow execution or timer remains open.
+// events have been recorded. Workflow finalization stores the returned
+// checkpoint after it has stopped accepting cancellation requests.
 func (l *workflowLoop) suspendRun(batch stepBatch, confirmations []confirmationAwait, items []planner.AwaitItem) (*RunOutput, error) {
 	return l.suspendCheckpointRun(batch, confirmations, items, nil)
 }
@@ -164,9 +160,6 @@ func (l *workflowLoop) suspendCheckpointRun(batch stepBatch, confirmations []con
 		Checkpoint:    rawjson.Message(payload),
 		Pending:       pending,
 		RequiredTools: requiredTools,
-	}
-	if err := l.r.persistRunSuspension(l.wfCtx, l.input, suspension); err != nil {
-		return nil, fmt.Errorf("persist run suspension: %w", err)
 	}
 	return &RunOutput{
 		AgentID:    l.input.AgentID,
@@ -299,9 +292,8 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 	baseContext := retargetRunContext(l.base.RunContext, l.input)
 	pendingRecovery, pendingRecoveryCatalog := toolRecovery(l.st.PendingRecovery)
 	if len(correctCallCatalog(pendingRecovery)) > 0 {
-		// A version 6 checkpoint stores the authenticated failed outputs and
-		// derives their exact correction tools when it is read. The checkpoint
-		// therefore omits the duplicate recovery catalog.
+		// The checkpoint already contains the failed outputs needed to rebuild
+		// these correction tools, so it does not store the same tool list again.
 		pendingRecoveryCatalog = nil
 	}
 	checkpoint := &workflowCheckpoint{
@@ -436,43 +428,40 @@ func requiredCheckpointToolNames(checkpoint *workflowCheckpoint) []tools.Ident {
 
 // decodeCheckpointToolEvent restores one runtime-produced tool result with the
 // registered result codec.
-func (r *Runtime) decodeCheckpointToolEvent(ctx context.Context, event *api.ToolEvent) (*planner.ToolResult, error) {
+func (r *Runtime) decodeCheckpointToolEvent(event *api.ToolEvent) (*planner.ToolResult, error) {
 	if event == nil {
 		return nil, errors.New("run suspension contains nil tool event")
 	}
-	if event.Failure != nil && len(event.ServerData) > 0 {
-		return nil, fmt.Errorf("suspended failed tool result %s contains server data", event.Name)
-	}
-	serverData := rawjson.Message(nil)
-	if len(event.ServerData) > 0 {
-		spec, ok := r.toolSpec(event.Name)
+	var spec *tools.ToolSpec
+	if event.Failure == nil {
+		registered, ok := r.toolSpec(event.Name)
 		if !ok {
 			return nil, fmt.Errorf("suspended tool result references unregistered tool %q", event.Name)
 		}
-		var err error
-		serverData, err = toolserverdata.Apply(spec.CanonicalizeServerData, event.ServerData)
-		if err != nil {
-			return nil, fmt.Errorf("validate suspended %s server data: %w", event.Name, err)
-		}
+		spec = &registered
+	}
+	decoded, err := validatePersistedToolResult(
+		spec,
+		ToolCall{Name: event.Name, ToolCallID: event.ToolCallID},
+		event.Result,
+		event.ServerData,
+		event.Bounds,
+		event.Failure,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("decode suspended tool result for %s: %w", event.Name, err)
 	}
 	result := &planner.ToolResult{
-		Name:                event.Name,
-		ServerData:          serverData,
-		ResultBytes:         event.ResultBytes,
-		ResultOmitted:       event.ResultOmitted,
-		ResultOmittedReason: event.ResultOmittedReason,
-		Bounds:              event.Bounds,
-		Failure:             planner.CloneToolFailure(event.Failure),
-		Telemetry:           event.Telemetry,
-		ToolCallID:          event.ToolCallID,
-		ChildrenCount:       event.ChildrenCount,
-		RunLink:             event.RunLink,
+		Name:          event.Name,
+		ServerData:    append(rawjson.Message(nil), event.ServerData...),
+		Bounds:        event.Bounds,
+		Failure:       planner.CloneToolFailure(event.Failure),
+		Telemetry:     event.Telemetry,
+		ToolCallID:    event.ToolCallID,
+		ChildrenCount: event.ChildrenCount,
+		RunLink:       event.RunLink,
 	}
-	if event.Failure == nil && !event.ResultOmitted {
-		decoded, err := r.unmarshalToolValue(ctx, event.Name, event.Result.RawMessage(), false)
-		if err != nil {
-			return nil, fmt.Errorf("decode suspended tool result for %s: %w", event.Name, err)
-		}
+	if event.Failure == nil {
 		result.Result = decoded
 	}
 	return result, nil
@@ -485,11 +474,11 @@ func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg Agen
 		Messages:   checkpoint.BaseMessages,
 		RunContext: restoreCheckpointRunContext(checkpoint.Context, input),
 	}
-	state, err := r.restoreCheckpointState(wfCtx.Context(), checkpoint.Version, checkpoint.State)
+	state, err := r.restoreCheckpointState(checkpoint.State)
 	if err != nil {
 		return nil, err
 	}
-	batch, err := r.restoreCheckpointBatch(wfCtx.Context(), checkpoint.Batch, input, &base.RunContext)
+	batch, err := r.restoreCheckpointBatch(checkpoint.Batch, input, &base.RunContext)
 	if err != nil {
 		return nil, err
 	}
@@ -542,7 +531,7 @@ func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg Agen
 }
 
 func restoreContinuationRunInput(input *RunInput, checkpoint *workflowCheckpoint) error {
-	if err := validateContinuationIdentity(input, checkpoint); err != nil {
+	if err := validateContinuationAgainstCheckpoint(input, checkpoint); err != nil {
 		return err
 	}
 
@@ -625,15 +614,13 @@ func restoreCheckpointRunContext(saved checkpointRunContext, input *RunInput) ru
 }
 
 // restoreCheckpointState decodes saved tool results and reconstructs pending
-// recovery state according to the checkpoint's explicit version.
+// recovery state from the current checkpoint contract.
 func (r *Runtime) restoreCheckpointState(
-	ctx context.Context,
-	version string,
 	checkpoint checkpointRunState,
 ) (*runLoopState, error) {
 	toolEvents := make([]*planner.ToolResult, 0, len(checkpoint.ToolEvents))
 	for _, event := range checkpoint.ToolEvents {
-		decoded, err := r.decodeCheckpointToolEvent(ctx, event)
+		decoded, err := r.decodeCheckpointToolEvent(event)
 		if err != nil {
 			return nil, err
 		}
@@ -650,11 +637,9 @@ func (r *Runtime) restoreCheckpointState(
 	}
 	if len(checkpoint.PendingRecovery) > 0 {
 		recoveryCatalog := checkpoint.PendingRecoveryCatalog
-		if version == api.RunSuspensionVersion {
-			exactTools := correctCallCatalog(checkpoint.PendingRecovery)
-			if len(exactTools) > 0 {
-				recoveryCatalog = &RecoveryCatalog{Tools: exactTools}
-			}
+		exactTools := correctCallCatalog(checkpoint.PendingRecovery)
+		if len(exactTools) > 0 {
+			recoveryCatalog = &RecoveryCatalog{Tools: exactTools}
 		}
 		state.PendingRecovery = pendingToolRecovery{
 			outputs: checkpoint.PendingRecovery,
@@ -664,7 +649,7 @@ func (r *Runtime) restoreCheckpointState(
 	return state, nil
 }
 
-func (r *Runtime) restoreCheckpointBatch(ctx context.Context, checkpoint checkpointStepBatch, input *RunInput, runContext *run.Context) (stepBatch, error) {
+func (r *Runtime) restoreCheckpointBatch(checkpoint checkpointStepBatch, input *RunInput, runContext *run.Context) (stepBatch, error) {
 	result := checkpoint.Result
 	retargetPlanResult(result, input, runContext)
 	records := make([]stepToolRecord, 0, len(checkpoint.Records))
@@ -672,7 +657,7 @@ func (r *Runtime) restoreCheckpointBatch(ctx context.Context, checkpoint checkpo
 		var decoded *planner.ToolResult
 		if record.ChildSuspension == nil {
 			var err error
-			decoded, err = r.decodeCheckpointToolEvent(ctx, record.Result)
+			decoded, err = r.decodeCheckpointToolEvent(record.Result)
 			if err != nil {
 				return stepBatch{}, err
 			}
@@ -915,10 +900,8 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 		return nil, fmt.Errorf("child continuation does not match tool_call_id %s", pending.ToolCallID)
 	}
 
-	l.r.mu.RLock()
-	spec, specOK := l.r.toolSpecs[record.call.Name]
-	toolset, toolsetOK := l.r.toolsets[spec.Toolset]
-	l.r.mu.RUnlock()
+	_, specOK := l.r.toolSpec(record.call.Name)
+	_, toolset, toolsetOK := l.r.toolsetForTool(record.call.Name)
 	if !specOK || !toolsetOK || toolset.AgentTool == nil {
 		return nil, fmt.Errorf("child continuation tool %q is not a registered agent tool", record.call.Name)
 	}
@@ -939,22 +922,17 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 		ToolArgs:         append(rawjson.Message(nil), currentCall.Payload...),
 		Labels:           cloneLabels(currentCall.Labels),
 	}
-	if err := l.r.publishHook(l.wfCtx.Context(), hooks.NewChildRunLinkedEvent(
-		currentCall.RunID,
-		currentCall.AgentID,
-		currentCall.SessionID,
-		currentCall.Name,
-		currentCall.ToolCallID,
-		nested.RunID,
-		cfg.AgentID,
-	), l.turnID); err != nil {
-		return nil, err
-	}
 	childInput := &RunInput{
-		AgentID:   cfg.Route.ID,
-		RunID:     nested.RunID,
-		SessionID: nested.SessionID,
-		TurnID:    nested.TurnID,
+		AgentID:          cfg.Route.ID,
+		RunID:            nested.RunID,
+		SessionID:        nested.SessionID,
+		TurnID:           nested.TurnID,
+		ParentToolCallID: nested.ParentToolCallID,
+		ParentRunID:      nested.ParentRunID,
+		ParentAgentID:    nested.ParentAgentID,
+		Tool:             nested.Tool,
+		ToolArgs:         nested.ToolArgs,
+		Labels:           nested.Labels,
 		Continuation: &api.RunContinuationInput{
 			Suspension: pending.Suspension,
 			Response:   response,
@@ -986,7 +964,7 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 			Suspension: out.Suspension,
 		}}}, nil
 	}
-	result, err := l.r.adaptAgentChildOutput(l.wfCtx.Context(), cfg, &currentCall, nested, out)
+	result, err := l.r.adaptAgentChildOutput(cfg, &currentCall, nested, out)
 	if err != nil {
 		return nil, err
 	}
@@ -994,22 +972,4 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 	record.childSuspension = nil
 	record.requiresResume = true
 	return nil, nil
-}
-
-// runStartedHookInput removes the private checkpoint and submitted response
-// from the lifecycle event while retaining the exact predecessor identity and
-// visible continuation contract used for operational correlation.
-func runStartedHookInput(input *RunInput) RunInput {
-	eventInput := *input
-	if input.Continuation == nil {
-		return eventInput
-	}
-	suspension := input.Continuation.Suspension
-	eventInput.Continuation = &api.RunContinuationInput{Suspension: &api.RunSuspension{
-		ID:            suspension.ID,
-		Version:       suspension.Version,
-		Pending:       suspension.Pending,
-		RequiredTools: append([]tools.Ident(nil), suspension.RequiredTools...),
-	}}
-	return eventInput
 }

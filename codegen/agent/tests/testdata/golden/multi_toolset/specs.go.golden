@@ -7,13 +7,13 @@
 package specs
 
 import (
-	math "goa.design/goa-ai/alpha/toolsets/math"
-	ops "goa.design/goa-ai/alpha/toolsets/ops"
+	math "goa.design/goa-ai/gen/alpha/toolsets/math"
+	ops "goa.design/goa-ai/gen/alpha/toolsets/ops"
 	"goa.design/goa-ai/runtime/agent/policy"
 	tools "goa.design/goa-ai/runtime/agent/tools"
 )
 
-// Specs returns fresh specifications for every tool exported by this agent.
+// Specs returns fresh specifications for every tool available to this agent.
 func Specs() []tools.ToolSpec {
 	specs := make([]tools.ToolSpec, 0)
 	specs = append(specs, math.Specs()...)
@@ -21,7 +21,7 @@ func Specs() []tools.ToolSpec {
 	return specs
 }
 
-// Names returns fresh tool identifiers exported by this agent.
+// Names returns the identifiers for every tool available to this agent.
 func Names() []tools.Ident {
 	return []tools.Ident{
 		math.Add,
@@ -29,8 +29,8 @@ func Names() []tools.Ident {
 	}
 }
 
-// RequiredLabels returns the sorted, deduplicated run label keys required by
-// label-backed Inject fields across every toolset this agent uses.
+// RequiredLabels returns the sorted run labels required by this
+// agent's generated tool payloads. Each label appears once.
 func RequiredLabels() []string {
 	return []string{}
 }
@@ -47,7 +47,7 @@ func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 	}
 }
 
-// Metadata returns fresh policy metadata for the aggregated tools.
+// Metadata returns policy details for every available tool.
 func Metadata() []policy.ToolMetadata {
 	return []policy.ToolMetadata{
 		{

@@ -24,9 +24,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
@@ -39,7 +37,7 @@ type forgedRuntimeClient struct {
 func TestRegisterModelRejectsTypedNilClient(t *testing.T) {
 	var client *forgedRuntimeClient
 
-	err := New().RegisterModel("primary", client)
+	err := New(newTestStore()).RegisterModel("primary", client)
 
 	require.EqualError(t, err, `register model "primary": model client is required`)
 }
@@ -73,11 +71,11 @@ func (p *nestedPlannerStub) PlanResume(ctx context.Context, in *planner.PlanResu
 func TestStartRunSetsWorkflowName(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:       eng,
-		logger:       telemetry.NoopLogger{},
-		metrics:      telemetry.NoopMetrics{},
-		tracer:       telemetry.NoopTracer{},
-		SessionStore: sessioninmem.New(),
+		Engine:  eng,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {
 				ID: "service.agent",
@@ -89,11 +87,11 @@ func TestStartRunSetsWorkflowName(t *testing.T) {
 		},
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
-	sess, err := rt.CreateSession(context.Background(), "sess-1")
+	sess, err := createSessionForTest(context.Background(), rt.Store, "sess-1")
 	require.NoError(t, err)
 	require.Equal(t, "sess-1", sess.ID)
 	require.Equal(t, session.StatusActive, sess.Status)
-	_, err = client.Start(context.Background(), "sess-1", nil)
+	_, err = client.Start(context.Background(), "sess-1", nil, WithRunID("run-1"))
 	require.NoError(t, err)
 	require.Equal(t, "service.workflow", eng.last.Workflow)
 }
@@ -101,58 +99,58 @@ func TestStartRunSetsWorkflowName(t *testing.T) {
 func TestStartRunRequiresSessionID(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:       eng,
-		logger:       telemetry.NoopLogger{},
-		metrics:      telemetry.NoopMetrics{},
-		tracer:       telemetry.NoopTracer{},
-		SessionStore: sessioninmem.New(),
+		Engine:  eng,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"}},
 		},
 	}
 	// Empty session ID
 	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := client.Start(context.Background(), "", nil)
+	_, err := client.Start(context.Background(), "", nil, WithRunID("run-1"))
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrMissingSessionID)
 	// Whitespace session ID
-	_, err = client.Start(context.Background(), "  \t  ", nil)
+	_, err = client.Start(context.Background(), "  \t  ", nil, WithRunID("run-1"))
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrMissingSessionID)
 	// Valid session ID
-	_, err = rt.CreateSession(context.Background(), "s1")
+	_, err = createSessionForTest(context.Background(), rt.Store, "s1")
 	require.NoError(t, err)
-	_, err = client.Start(context.Background(), "s1", nil)
+	_, err = client.Start(context.Background(), "s1", nil, WithRunID("run-1"))
 	require.NoError(t, err)
 }
 
 func TestStartRunDoesNotInjectSessionSearchAttribute(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:       eng,
-		logger:       telemetry.NoopLogger{},
-		metrics:      telemetry.NoopMetrics{},
-		tracer:       telemetry.NoopTracer{},
-		SessionStore: sessioninmem.New(),
+		Engine:  eng,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"}},
 		},
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := rt.CreateSession(context.Background(), "sess-1")
+	_, err := createSessionForTest(context.Background(), rt.Store, "sess-1")
 	require.NoError(t, err)
-	_, err = client.Start(context.Background(), "sess-1", nil)
+	_, err = client.Start(context.Background(), "sess-1", nil, WithRunID("run-1"))
 	require.NoError(t, err)
 	require.Nil(t, eng.last.SearchAttributes)
 }
 
 func TestFinishCurrentPlanResult_UsesPlannerFinalToolResult(t *testing.T) {
 	rt := &Runtime{
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           noopHooks{},
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
+		Bus:     noopHooks{},
 	}
 	input := &RunInput{
 		AgentID:   "svc.agent",
@@ -183,12 +181,13 @@ func TestFinishCurrentPlanResult_UsesPlannerFinalToolResult(t *testing.T) {
 
 func TestRunLoopWithStateAcceptsInitialFinalToolResult(t *testing.T) {
 	rt := &Runtime{
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           noopHooks{},
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
+		Bus:     noopHooks{},
 	}
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.do"))
 	wf := &testWorkflowContext{ctx: context.Background()}
 	input := &RunInput{
 		AgentID:   "svc.agent",
@@ -229,11 +228,11 @@ func TestRunLoopWithStateAcceptsInitialFinalToolResult(t *testing.T) {
 
 func TestFinishCurrentPlanResultRejectsDualTerminalOutputs(t *testing.T) {
 	rt := &Runtime{
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           noopHooks{},
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
+		Bus:     noopHooks{},
 	}
 	input := &RunInput{
 		AgentID:   "svc.agent",
@@ -271,12 +270,12 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscript(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := runloginmem.New()
+	store := newTestStore()
 	rt := &Runtime{
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: store,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   store,
 	}
 	input := &RunInput{
 		AgentID:   "svc.agent",
@@ -317,12 +316,12 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscript(t *testing.T) {
 	require.Equal(t, "done", agentMessageText(out.Final))
 	require.Equal(t, []model.Part{model.TextPart{Text: "done"}}, out.Final.Parts)
 
-	page, err := store.List(ctx, "run-1", "", 10)
+	page, err := store.ListRunRecords(ctx, "run-1", "", 10)
 	require.NoError(t, err)
-	require.Len(t, page.Events, 1)
-	require.Equal(t, transcript.RunLogMessagesAppended, page.Events[0].Type)
+	require.Len(t, page.Events, 2)
+	require.Equal(t, transcript.RunLogMessagesAppended, page.Events[1].Type)
 
-	msgs, err := transcript.DecodeRunLogDelta(page.Events[0].Payload)
+	msgs, err := transcript.DecodeRunLogDelta(page.Events[1].Payload)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	require.Equal(t, "done", agentMessageText(msgs[0]))
@@ -333,12 +332,12 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *te
 	t.Parallel()
 
 	ctx := context.Background()
-	store := runloginmem.New()
+	store := newTestStore()
 	rt := &Runtime{
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: store,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   store,
 	}
 	input := &RunInput{
 		AgentID:   "svc.agent",
@@ -369,12 +368,12 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *te
 	require.NoError(t, err)
 	require.Equal(t, "cited answer", agentMessageText(out.Final))
 
-	page, err := store.List(ctx, "run-1", "", 10)
+	page, err := store.ListRunRecords(ctx, "run-1", "", 10)
 	require.NoError(t, err)
-	require.Len(t, page.Events, 1)
-	require.Equal(t, transcript.RunLogMessagesAppended, page.Events[0].Type)
+	require.Len(t, page.Events, 2)
+	require.Equal(t, transcript.RunLogMessagesAppended, page.Events[1].Type)
 
-	msgs, err := transcript.DecodeRunLogDelta(page.Events[0].Payload)
+	msgs, err := transcript.DecodeRunLogDelta(page.Events[1].Payload)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
 	require.Equal(t, "cited answer", agentMessageText(msgs[0]))
@@ -384,17 +383,16 @@ func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testi
 	t.Parallel()
 
 	ctx := context.Background()
-	store := runloginmem.New()
-	sessions := sessioninmem.New()
+	store := newTestStore()
+	sessions := store
 	_, err := sessions.CreateSession(ctx, "sess-1", time.Now().UTC())
 	require.NoError(t, err)
 	rt := &Runtime{
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: store,
-		SessionStore:  sessions,
-		Bus:           noopHooks{},
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   store,
+		Bus:     noopHooks{},
 		agents: map[agent.Ident]AgentRegistration{
 			"svc.agent": {
 				ID: "svc.agent",
@@ -418,7 +416,6 @@ func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testi
 		runtime:     rt,
 		hookRuntime: rt,
 	}
-
 	_, err = rt.ExecuteWorkflow(wfCtx, &RunInput{
 		AgentID:   "svc.agent",
 		RunID:     "run-1",
@@ -437,8 +434,11 @@ func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testi
 		},
 	})
 	require.NoError(t, err)
+	storedRun, err := sessions.LoadRun(ctx, "run-1")
+	require.NoError(t, err)
+	require.Empty(t, storedRun.CancellationReason)
 
-	page, err := store.List(ctx, "run-1", "", 20)
+	page, err := store.ListRunRecords(ctx, "run-1", "", 20)
 	require.NoError(t, err)
 	var transcriptEvents []*runlog.Event
 	for _, event := range page.Events {
@@ -465,18 +465,17 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := runloginmem.New()
-	sessions := sessioninmem.New()
+	store := newTestStore()
+	sessions := store
 	_, err := sessions.CreateSession(ctx, "sess-1", time.Now().UTC())
 	require.NoError(t, err)
-	tool := newAnyJSONSpec(tools.Ident("assistant.ask_clarification"), "assistant")
+	tool := newAnyJSONSpec(tools.Ident("assistant.ask_clarification"))
 	rt := &Runtime{
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: store,
-		SessionStore:  sessions,
-		Bus:           noopHooks{},
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   store,
+		Bus:     noopHooks{},
 	}
 	seedTestToolSpecs(rt, tool)
 	rt.agents = map[agent.Ident]AgentRegistration{
@@ -551,7 +550,7 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "done", agentMessageText(out.Final))
 
-	page, err := store.List(ctx, "run-2", "", 20)
+	page, err := store.ListRunRecords(ctx, "run-2", "", 20)
 	require.NoError(t, err)
 	var (
 		transcriptEvents []*runlog.Event
@@ -579,17 +578,16 @@ func TestExecuteWorkflowEmitsRunLabelsOnTerminalCompletion(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := runloginmem.New()
-	sessions := sessioninmem.New()
+	store := newTestStore()
+	sessions := store
 	_, err := sessions.CreateSession(ctx, "sess-1", time.Now().UTC())
 	require.NoError(t, err)
 	rt := &Runtime{
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: store,
-		SessionStore:  sessions,
-		Bus:           noopHooks{},
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   store,
+		Bus:     noopHooks{},
 		agents: map[agent.Ident]AgentRegistration{
 			"svc.agent": {
 				ID: "svc.agent",
@@ -623,7 +621,7 @@ func TestExecuteWorkflowEmitsRunLabelsOnTerminalCompletion(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	page, err := store.List(ctx, "run-1", "", 20)
+	page, err := store.ListRunRecords(ctx, "run-1", "", 20)
 	require.NoError(t, err)
 	require.NotEmpty(t, page.Events)
 	last := page.Events[len(page.Events)-1]
@@ -651,11 +649,10 @@ func TestExecuteWorkflowEmitsRunLabelsOnTerminalCompletion(t *testing.T) {
 func TestStartOneShotDoesNotRequireSession(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:     eng,
-		logger:     telemetry.NoopLogger{},
-		metrics:    telemetry.NoopMetrics{},
-		tracer:     telemetry.NoopTracer{},
-		runHandles: make(map[string]engine.WorkflowHandle),
+		Engine:  eng,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {
 				ID: "service.agent",
@@ -733,11 +730,11 @@ func TestStartRunNeverSetsEngineRunTimeout(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			eng := &stubEngine{}
 			rt := &Runtime{
-				Engine:       eng,
-				logger:       telemetry.NoopLogger{},
-				metrics:      telemetry.NoopMetrics{},
-				tracer:       telemetry.NoopTracer{},
-				SessionStore: sessioninmem.New(),
+				Engine:  eng,
+				logger:  telemetry.NoopLogger{},
+				metrics: telemetry.NoopMetrics{},
+				tracer:  telemetry.NoopTracer{},
+				Store:   newTestStore(),
 				agents: map[agent.Ident]AgentRegistration{
 					"service.agent": {
 						ID: "service.agent",
@@ -753,9 +750,9 @@ func TestStartRunNeverSetsEngineRunTimeout(t *testing.T) {
 				},
 			}
 			client := rt.MustClient(agent.Ident("service.agent"))
-			_, err := rt.CreateSession(context.Background(), "sess-1")
+			_, err := createSessionForTest(context.Background(), rt.Store, "sess-1")
 			require.NoError(t, err)
-			_, err = client.Start(context.Background(), "sess-1", nil)
+			_, err = client.Start(context.Background(), "sess-1", nil, WithRunID("run-1"))
 			require.NoError(t, err)
 			require.Zero(t, eng.last.RunTimeout)
 		})
@@ -777,7 +774,7 @@ func TestWorkerConfigOnlyExposesQueuePlacement(t *testing.T) {
 
 func TestRegisterAgentAppliesWorkerQueueOverride(t *testing.T) {
 	eng := &stubEngine{}
-	rt := New(
+	rt := New(newTestStore(),
 		WithEngine(eng),
 		WithWorker("service.agent", WorkerConfig{
 			Queue: "custom.queue",
@@ -829,15 +826,21 @@ func TestRegisterAgentAppliesWorkerQueueOverride(t *testing.T) {
 	require.Zero(t, executeOpts.HeartbeatTimeout)
 	require.Equal(t, 1, executeOpts.RetryPolicy.MaxAttempts)
 
-	recordOpts := eng.registeredRecordActivityOptions[recordActivityName]
+	recordOpts := eng.registeredStorageActivityOptions[storageActivityName]
 	require.Equal(t, 15*time.Second, recordOpts.StartToCloseTimeout)
 	require.Equal(t, 3, recordOpts.RetryPolicy.MaxAttempts)
 	require.Equal(t, time.Second, recordOpts.RetryPolicy.InitialInterval)
 	require.InDelta(t, 2.0, recordOpts.RetryPolicy.BackoffCoefficient, 0.000001)
+
+	agentChildOpts := eng.registeredAgentChildOptions[agentChildActivityName]
+	require.Equal(t, 2*time.Minute, agentChildOpts.StartToCloseTimeout)
+	require.Equal(t, 3, agentChildOpts.RetryPolicy.MaxAttempts)
+	require.Equal(t, time.Second, agentChildOpts.RetryPolicy.InitialInterval)
+	require.InDelta(t, 2.0, agentChildOpts.RetryPolicy.BackoffCoefficient, 0.000001)
 }
 
 func TestRegisterAgentRejectsNegativeRecoveryTurns(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 
 	err := rt.RegisterAgent(context.Background(), AgentRegistration{
 		ID:      "service.agent",
@@ -860,7 +863,7 @@ func TestRegisterAgentRejectsNegativeRecoveryTurns(t *testing.T) {
 
 func TestRegisterAgentRejectsTerminalSpecWithoutBookkeeping(t *testing.T) {
 	eng := &stubEngine{}
-	rt := New(WithEngine(eng))
+	rt := New(newTestStore(), WithEngine(eng))
 
 	err := rt.RegisterAgent(context.Background(), AgentRegistration{
 		ID:      "service.agent",
@@ -891,10 +894,10 @@ func TestRegisterAgentRejectsTerminalSpecWithoutBookkeeping(t *testing.T) {
 
 func TestRegistrationRejectsGeneratedContinuationToolName(t *testing.T) {
 	reservedName := continuationActionName("svc.tools.continue_results", "source-1")
-	spec := newAnyJSONSpec(reservedName, "svc.tools")
+	spec := newAnyJSONSpec(reservedName)
 
 	t.Run("agent", func(t *testing.T) {
-		rt := New(WithEngine(&stubEngine{}))
+		rt := New(newTestStore(), WithEngine(&stubEngine{}))
 		err := rt.RegisterAgent(t.Context(), AgentRegistration{
 			ID:      "service.agent",
 			Planner: &stubPlanner{},
@@ -917,7 +920,7 @@ func TestRegistrationRejectsGeneratedContinuationToolName(t *testing.T) {
 	})
 
 	t.Run("toolset", func(t *testing.T) {
-		rt := New()
+		rt := New(newTestStore())
 		err := rt.RegisterToolset(ToolsetRegistration{
 			Name: "svc.tools",
 			Execute: wrapExecute(func(context.Context, *ToolCall) (*planner.ToolResult, error) {
@@ -934,13 +937,13 @@ func TestRegistrationRejectsGeneratedContinuationToolName(t *testing.T) {
 	})
 
 	t.Run("similar authored name", func(t *testing.T) {
-		rt := New()
+		rt := New(newTestStore())
 		err := rt.RegisterToolset(ToolsetRegistration{
 			Name: "svc.tools",
 			Execute: wrapExecute(func(context.Context, *ToolCall) (*planner.ToolResult, error) {
 				return &planner.ToolResult{}, nil
 			}),
-			Specs: []tools.ToolSpec{newAnyJSONSpec("continue_authored_tool", "svc.tools")},
+			Specs: []tools.ToolSpec{newAnyJSONSpec("continue_authored_tool")},
 		})
 
 		require.NoError(t, err)
@@ -948,14 +951,14 @@ func TestRegistrationRejectsGeneratedContinuationToolName(t *testing.T) {
 }
 
 func TestRegisterToolsetRejectsEmptyToolMetadataTitle(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	toolID := tools.Ident("svc.tools.fetch")
 	err := rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc.tools",
 		Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{}, nil
 		}),
-		Specs: []tools.ToolSpec{newAnyJSONSpec(toolID, "svc.tools")},
+		Specs: []tools.ToolSpec{newAnyJSONSpec(toolID)},
 		ToolMetadataLookup: func(name tools.Ident) (policy.ToolMetadata, bool) {
 			return policy.ToolMetadata{
 				ID:          name,
@@ -971,12 +974,11 @@ func TestRegisterToolsetRejectsEmptyToolMetadataTitle(t *testing.T) {
 func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:       eng,
-		logger:       telemetry.NoopLogger{},
-		metrics:      telemetry.NoopMetrics{},
-		tracer:       telemetry.NoopTracer{},
-		SessionStore: sessioninmem.New(),
-		runHandles:   make(map[string]engine.WorkflowHandle),
+		Engine:  eng,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"}},
 		},
@@ -991,6 +993,7 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 		SessionID: "sess-1",
 	}
 	for _, o := range []RunOption{
+		WithRunID("run-1"),
 		WithTurnID("turn-1"),
 		WithMetadata(meta),
 		WithTaskQueue("custom.q"),
@@ -1000,12 +1003,13 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 		o(&in)
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := rt.CreateSession(context.Background(), in.SessionID)
+	_, err := createSessionForTest(context.Background(), rt.Store, in.SessionID)
 	require.NoError(t, err)
 	_, err = client.Start(
 		context.Background(),
 		in.SessionID,
 		nil,
+		WithRunID(in.RunID),
 		WithTurnID(in.TurnID),
 		WithMetadata(in.Metadata),
 		WithTaskQueue(in.WorkflowOptions.TaskQueue),
@@ -1028,7 +1032,7 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 }
 
 func TestRecoveryFinishFinalizesWithoutConsumingTurn(t *testing.T) {
-	failSpec := newAnyJSONSpec("fail", "svc.tools")
+	failSpec := newAnyJSONSpec("fail")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
@@ -1043,7 +1047,7 @@ func TestRecoveryFinishFinalizesWithoutConsumingTurn(t *testing.T) {
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
 	}
-	seedTestToolSpecs(rt, failSpec)
+	seedTestToolset(rt, "svc.tools", failSpec)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		asyncResult: ToolOutput{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom")},
@@ -1069,9 +1073,8 @@ func TestRecoveryFinishFinalizesWithoutConsumingTurn(t *testing.T) {
 func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:       eng,
-		SessionStore: sessioninmem.New(),
-		runHandles:   make(map[string]engine.WorkflowHandle),
+		Engine: eng,
+		Store:  newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {ID: "service.agent", Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "defaultq"}},
 		},
@@ -1086,11 +1089,10 @@ func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 			TaskQueue:        "customq",
 			Memo:             map[string]any{"k": "v"},
 			SearchAttributes: map[string]any{"sa": "x"},
-			RetryPolicy:      api.RetryPolicy{MaxAttempts: 5, InitialInterval: 5 * time.Second, BackoffCoefficient: 1.5},
 		},
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err := rt.CreateSession(context.Background(), in.SessionID)
+	_, err := createSessionForTest(context.Background(), rt.Store, in.SessionID)
 	require.NoError(t, err)
 	_, err = client.Start(context.Background(), in.SessionID, nil, WithRunID(in.RunID), WithWorkflowOptions(in.WorkflowOptions))
 	require.NoError(t, err)
@@ -1100,23 +1102,20 @@ func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 	require.Equal(t, map[string]any{
 		"sa": "x",
 	}, eng.last.SearchAttributes)
-	require.Equal(t, 5, eng.last.RetryPolicy.MaxAttempts)
-	require.Equal(t, 5*time.Second, eng.last.RetryPolicy.InitialInterval)
-	require.InEpsilon(t, 1.5, eng.last.RetryPolicy.BackoffCoefficient, 1e-9)
+	require.Zero(t, eng.last.RetryPolicy)
 }
 
 func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 	t.Parallel()
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:       eng,
-		logger:       telemetry.NoopLogger{},
-		metrics:      telemetry.NoopMetrics{},
-		tracer:       telemetry.NoopTracer{},
-		SessionStore: sessioninmem.New(),
-		runHandles:   make(map[string]engine.WorkflowHandle),
-		agents:       make(map[agent.Ident]AgentRegistration),
-		toolsets:     make(map[string]ToolsetRegistration),
+		Engine:   eng,
+		logger:   telemetry.NoopLogger{},
+		metrics:  telemetry.NoopMetrics{},
+		tracer:   telemetry.NoopTracer{},
+		Store:    newTestStore(),
+		agents:   make(map[agent.Ident]AgentRegistration),
+		toolsets: make(map[string]ToolsetRegistration),
 	}
 	// Register initial agent so we can start a run
 	err := rt.RegisterAgent(context.Background(), AgentRegistration{
@@ -1136,9 +1135,11 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	// First run closes registration
-	_, err = rt.CreateSession(context.Background(), "sess-1")
+	_, err = createSessionForTest(context.Background(), rt.Store, "sess-1")
 	require.NoError(t, err)
-	_, err = rt.MustClient(agent.Ident("service.agent")).Start(context.Background(), "sess-1", nil)
+	_, err = rt.MustClient(agent.Ident("service.agent")).Start(
+		context.Background(), "sess-1", nil, WithRunID("run-1"),
+	)
 	require.NoError(t, err)
 	require.Equal(t, 1, eng.sealCalls)
 
@@ -1163,14 +1164,13 @@ func TestSealClosesRegistrationAndDelegatesToEngine(t *testing.T) {
 
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:       eng,
-		logger:       telemetry.NoopLogger{},
-		metrics:      telemetry.NoopMetrics{},
-		tracer:       telemetry.NoopTracer{},
-		SessionStore: sessioninmem.New(),
-		runHandles:   make(map[string]engine.WorkflowHandle),
-		agents:       make(map[agent.Ident]AgentRegistration),
-		toolsets:     make(map[string]ToolsetRegistration),
+		Engine:   eng,
+		logger:   telemetry.NoopLogger{},
+		metrics:  telemetry.NoopMetrics{},
+		tracer:   telemetry.NoopTracer{},
+		Store:    newTestStore(),
+		agents:   make(map[agent.Ident]AgentRegistration),
+		toolsets: make(map[string]ToolsetRegistration),
 	}
 
 	require.NoError(t, rt.Seal(context.Background()))
@@ -1193,14 +1193,13 @@ func TestSealRetriesAfterActivationFailure(t *testing.T) {
 
 	eng := &stubEngine{sealErrors: []error{errors.New("temporal unavailable"), nil}}
 	rt := &Runtime{
-		Engine:       eng,
-		logger:       telemetry.NoopLogger{},
-		metrics:      telemetry.NoopMetrics{},
-		tracer:       telemetry.NoopTracer{},
-		SessionStore: sessioninmem.New(),
-		runHandles:   make(map[string]engine.WorkflowHandle),
-		agents:       make(map[agent.Ident]AgentRegistration),
-		toolsets:     make(map[string]ToolsetRegistration),
+		Engine:   eng,
+		logger:   telemetry.NoopLogger{},
+		metrics:  telemetry.NoopMetrics{},
+		tracer:   telemetry.NoopTracer{},
+		Store:    newTestStore(),
+		agents:   make(map[agent.Ident]AgentRegistration),
+		toolsets: make(map[string]ToolsetRegistration),
 	}
 
 	err := rt.Seal(context.Background())
@@ -1223,7 +1222,7 @@ func TestSealRetriesAfterActivationFailure(t *testing.T) {
 }
 
 func TestTimeBudgetExceeded(t *testing.T) {
-	toolSpec := newAnyJSONSpec("tool", "svc.ts")
+	toolSpec := newAnyJSONSpec("tool")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return &planner.ToolResult{
@@ -1235,7 +1234,7 @@ func TestTimeBudgetExceeded(t *testing.T) {
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
 	}
-	seedTestToolSpecs(rt, toolSpec)
+	seedTestToolset(rt, "svc.ts", toolSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
@@ -1331,13 +1330,15 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		logger:         telemetry.NoopLogger{},
 		metrics:        telemetry.NoopMetrics{},
 		tracer:         telemetry.NoopTracer{},
-		RunEventStore:  runloginmem.New(),
-		SessionStore:   sessioninmem.New(),
-		runHandles:     make(map[string]engine.WorkflowHandle),
+		Store:          newTestStore(),
 		agentToolSpecs: make(map[agent.Ident][]tools.ToolSpec),
 	}
-	_, err := rt.CreateSession(context.Background(), "session-1")
+	_, err := createSessionForTest(context.Background(), rt.Store, "session-1")
 	require.NoError(t, err)
+	admitRunForTest(t, rt.Store, session.RunMeta{
+		AgentID: "parent.agent", RunID: "run-parent", SessionID: "session-1",
+		Status: session.RunStatusRunning,
+	})
 
 	// Register nested tools toolset used by nested agent
 	rt.toolsets = map[string]ToolsetRegistration{
@@ -1350,11 +1351,12 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 			}),
 		},
 	}
-	seedTestToolSpecs(
+	seedTestToolset(
 		rt,
-		newAnyJSONSpec("child1", "nested.tools"),
-		newAnyJSONSpec("child2", "nested.tools"),
-		newAnyJSONSpec("child3", "nested.tools"),
+		"nested.tools",
+		newAnyJSONSpec("child1"),
+		newAnyJSONSpec("child2"),
+		newAnyJSONSpec("child3"),
 	)
 	rt.agentToolSpecs["nested.agent"] = []tools.ToolSpec{
 		rt.toolSpecs["child1"],
@@ -1434,6 +1436,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 				ParentAgentID:    call.AgentID,
 				SessionID:        call.SessionID,
 				TurnID:           call.TurnID,
+				Tool:             call.Name,
 			}
 			// Inject nested agent registration into runtime for lookup
 			rt.mu.Lock()
@@ -1460,7 +1463,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	// Register parent toolset
 	rt.mu.Lock()
 	rt.toolsets[agentTools.Name] = agentTools
-	seedTestToolSpecs(rt, newAnyJSONSpec("invoke", "svc.agenttools"))
+	seedTestToolset(rt, agentTools.Name, newAnyJSONSpec("invoke"))
 	rt.mu.Unlock()
 
 	// Parent run requests a single agent-tool invocation
@@ -1533,8 +1536,8 @@ func TestChildTrackerLifecycle(t *testing.T) {
 
 func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 	recorder := &recordingHooks{}
-	child1Spec := newAnyJSONSpec("child1", "svc.export")
-	child2Spec := newAnyJSONSpec("child2", "svc.export")
+	child1Spec := newAnyJSONSpec("child1")
+	child2Spec := newAnyJSONSpec("child2")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.export": {
@@ -1545,13 +1548,13 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 				}),
 			},
 		},
-		Bus:           recorder,
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		Bus:     recorder,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 	}
-	seedTestToolSpecs(rt, child1Spec, child2Spec)
+	seedTestToolset(rt, "svc.export", child1Spec, child2Spec)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
@@ -1613,14 +1616,13 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 			},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			"search": newAnyJSONSpec("search", "svc.tools"),
+			"search": newAnyJSONSpec("search"),
 		},
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		models:        make(map[string]model.Client),
-		SessionStore:  sessioninmem.New(),
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
+		models:  make(map[string]model.Client),
 	}
 
 	var policyEvent *hooks.PolicyDecisionEvent
@@ -1646,9 +1648,8 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 			"account": "acme",
 		},
 	}
-	_, sessionErr := rt.CreateSession(context.Background(), input.SessionID)
+	_, sessionErr := createSessionForTest(context.Background(), rt.Store, input.SessionID)
 	require.NoError(t, sessionErr)
-
 	base := &planner.PlanInput{
 		Messages: []*model.Message{
 			{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}},
@@ -1674,11 +1675,15 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		hasPlanResult: true,
 	}
 
-	err = rt.publishHook(
+	started, err := prepareHookRecordInput(
 		wfCtx.Context(),
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, base.RunContext, input),
+		hooks.NewRunStartedEvent(input.RunID, input.AgentID, input.SessionID, input.ParentRunID, input.Labels),
 		input.TurnID,
 	)
+	require.NoError(t, err)
+	_, err = rt.executeStorageCommand(context.Background(), &api.StorageActivityCommand{
+		RootStart: &api.RootRunStartCommand{Started: started},
+	})
 	require.NoError(t, err)
 
 	initial := &PlanResult{

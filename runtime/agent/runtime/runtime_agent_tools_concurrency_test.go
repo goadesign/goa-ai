@@ -11,8 +11,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 
@@ -25,17 +23,16 @@ import (
 func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		agents:        make(map[agent.Ident]AgentRegistration),
-		toolsets:      make(map[string]ToolsetRegistration),
-		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           recorder,
-		models:        make(map[string]model.Client),
-		Policy:        &stubPolicyEngine{decision: policy.Decision{Caps: policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 10}}},
-		SessionStore:  sessioninmem.New(),
+		agents:    make(map[agent.Ident]AgentRegistration),
+		toolsets:  make(map[string]ToolsetRegistration),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+		Store:     newTestStore(),
+		Bus:       recorder,
+		models:    make(map[string]model.Client),
+		Policy:    &stubPolicyEngine{decision: policy.Decision{Caps: policy.CapsState{MaxToolCalls: 10, RemainingToolCalls: 10}}},
 	}
 
 	cfg := AgentToolConfig{
@@ -58,14 +55,14 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 	tool1 := tools.Ident("svc.agenttools.tool1")
 	tool2 := tools.Ident("svc.agenttools.tool2")
 
-	spec1 := newAnyJSONSpec(tool1, reg.Name)
+	spec1 := newAnyJSONSpec(tool1)
 	spec1.IsAgentTool = true
 	spec1.AgentID = string(cfg.AgentID)
-	spec2 := newAnyJSONSpec(tool2, reg.Name)
+	spec2 := newAnyJSONSpec(tool2)
 	spec2.IsAgentTool = true
 	spec2.AgentID = string(cfg.AgentID)
 
-	seedTestToolSpecs(rt, spec1, spec2)
+	seedTestToolset(rt, reg.Name, spec1, spec2)
 
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
@@ -78,7 +75,7 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 		SessionID: "session-1",
 		TurnID:    "turn-1",
 	}
-	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
+	seedParentRun(t, rt.Store, runCtx.RunID, runCtx.SessionID)
 
 	calls := []ToolCall{
 		{

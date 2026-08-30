@@ -42,6 +42,95 @@ func TestValidatePendingInputResponseRequiresOneVariant(t *testing.T) {
 	}
 }
 
+func TestValidatePendingInputResponseForRequiresMatchingFirstRequest(t *testing.T) {
+	clarification := planner.AwaitClarificationItem(&planner.AwaitClarification{
+		ID:       "clarification-1",
+		Question: "Which facility?",
+	})
+	questions := planner.AwaitQuestionsItem(&planner.AwaitQuestions{
+		ID:              "questions-1",
+		ToolName:        "svc.questions",
+		ModelToolCallID: "model-call-1",
+		Questions: []planner.AwaitQuestion{{
+			ID:     "question-1",
+			Prompt: "Choose one",
+		}},
+	})
+	tests := []struct {
+		name     string
+		pending  *api.PendingInput
+		response *api.PendingInputResponse
+		wantErr  string
+	}{
+		{
+			name: "clarification",
+			pending: &api.PendingInput{
+				Kind:  api.PendingInputKindClarification,
+				Await: &clarification,
+			},
+			response: &api.PendingInputResponse{
+				Clarification: &api.ClarificationAnswer{ID: "clarification-1"},
+			},
+		},
+		{
+			name: "confirmation",
+			pending: &api.PendingInput{
+				Kind: api.PendingInputKindConfirmation,
+				Confirmation: &api.PendingConfirmation{
+					ID:         "confirmation-1",
+					ToolName:   "svc.update",
+					ToolCallID: "tool-call-1",
+				},
+			},
+			response: &api.PendingInputResponse{
+				Confirmation: &api.ConfirmationDecision{ID: "confirmation-1"},
+			},
+		},
+		{
+			name: "tool results",
+			pending: &api.PendingInput{
+				Kind:  api.PendingInputKindToolResults,
+				Await: &questions,
+			},
+			response: &api.PendingInputResponse{
+				ToolResults: &api.ToolResultsSet{ID: "questions-1"},
+			},
+		},
+		{
+			name: "wrong kind",
+			pending: &api.PendingInput{
+				Kind:  api.PendingInputKindClarification,
+				Await: &clarification,
+			},
+			response: &api.PendingInputResponse{
+				Confirmation: &api.ConfirmationDecision{ID: "clarification-1"},
+			},
+			wantErr: "requires a clarification response",
+		},
+		{
+			name: "wrong id",
+			pending: &api.PendingInput{
+				Kind:  api.PendingInputKindClarification,
+				Await: &clarification,
+			},
+			response: &api.PendingInputResponse{
+				Clarification: &api.ClarificationAnswer{ID: "clarification-2"},
+			},
+			wantErr: "does not match pending id",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validatePendingInputResponseFor(test.pending, test.response)
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestValidateWorkflowRunInputRejectsMixedContinuationState(t *testing.T) {
 	response := &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{}}
 	require.NoError(t, validateWorkflowRunInput(&RunInput{
@@ -108,8 +197,8 @@ func TestValidateWorkflowOutputEnforcesIdentityAndTerminalShape(t *testing.T) {
 }
 
 func TestValidateContinuationIdentityRequiresNewRunAndTurn(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	checkpoint, err := runtime.decodeWorkflowCheckpoint(suspensionContractFixture(t, spec.Name))
 	require.NoError(t, err)

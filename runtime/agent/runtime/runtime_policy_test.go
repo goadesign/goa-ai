@@ -16,7 +16,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -42,12 +41,12 @@ func restrictedFinalPlanResult(text string) *PlanResult {
 
 func TestPolicyAllowlistRewritesDeniedCalls(t *testing.T) {
 	recorder := &recordingHooks{}
-	allowedSpec := newAnyJSONSpec("allowed", "svc.tools")
-	blockedSpec := newAnyJSONSpec("blocked", "svc.tools")
-	rt := New()
+	allowedSpec := newAnyJSONSpec("allowed")
+	blockedSpec := newAnyJSONSpec("blocked")
+	rt := New(newTestStore())
 	rt.Bus = recorder
 	rt.Policy = &stubPolicyEngine{decision: policy.Decision{AllowedTools: []tools.Ident{tools.Ident("allowed")}}}
-	rt.RunEventStore = runloginmem.New()
+	rt.Store = newTestStore()
 	for name, metadata := range canonicalMetadataMap(allowedSpec, blockedSpec) {
 		rt.policyToolMetadata[name] = metadata
 	}
@@ -102,7 +101,7 @@ func TestPolicyAllowlistRewritesDeniedCalls(t *testing.T) {
 }
 
 func TestRewriteToolCallUnavailablePreservesCompiledModelIdentity(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	call := ToolCall{
 		ToolCallID:   "call-1",
 		Name:         "service.execute",
@@ -126,13 +125,13 @@ func TestRewriteToolCallUnavailablePreservesCompiledModelIdentity(t *testing.T) 
 func TestRestrictedRunToolCapFinalizes(t *testing.T) {
 	t.Parallel()
 
-	toolSpec := newAnyJSONSpec("svc.tools.read", "svc.tools")
+	toolSpec := newAnyJSONSpec("svc.tools.read")
 	rt := &Runtime{
-		Bus:           noopHooks{},
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		Bus:     noopHooks{},
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 	}
 	seedTestToolSpecs(rt, toolSpec)
 	wfCtx := &testWorkflowContext{
@@ -178,13 +177,13 @@ func TestRestrictedRunToolCapFinalizes(t *testing.T) {
 func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
 	t.Parallel()
 
-	toolSpec := newAnyJSONSpec("svc.tools.read", "svc.tools")
+	toolSpec := newAnyJSONSpec("svc.tools.read")
 	rt := &Runtime{
-		Bus:           noopHooks{},
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		Bus:     noopHooks{},
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 	}
 	seedTestToolSpecs(rt, toolSpec)
 	wfCtx := &testWorkflowContext{
@@ -237,13 +236,13 @@ func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
 func TestRestrictedRunRecoveryCapFinalizes(t *testing.T) {
 	t.Parallel()
 
-	toolSpec := newAnyJSONSpec("svc.tools.read", "svc.tools")
+	toolSpec := newAnyJSONSpec("svc.tools.read")
 	rt := &Runtime{
-		Bus:           noopHooks{},
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		Bus:     noopHooks{},
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 	}
 	seedTestToolSpecs(rt, toolSpec)
 	wfCtx := &testWorkflowContext{
@@ -292,7 +291,7 @@ func TestRestrictedRunRecoveryCapFinalizes(t *testing.T) {
 func TestRestrictedUnknownToolFailsBeforeExecution(t *testing.T) {
 	t.Parallel()
 
-	rt := New(WithRunEventStore(runloginmem.New()))
+	rt := New(newTestStore())
 	wfCtx := &testWorkflowContext{
 		ctx:           context.Background(),
 		hookRuntime:   rt,
@@ -336,21 +335,21 @@ func TestRestrictedUnknownToolFailsBeforeExecution(t *testing.T) {
 
 func TestApplyPerRunOverridesRejectsCallsExcludedByAnyTagClause(t *testing.T) {
 	visibleSpec := func() tools.ToolSpec {
-		spec := newAnyJSONSpec("visible", "svc.tools")
+		spec := newAnyJSONSpec("visible")
 		spec.Tags = []string{"system", "profile"}
 		return spec
 	}()
 	missingSpec := func() tools.ToolSpec {
-		spec := newAnyJSONSpec("missing", "svc.tools")
+		spec := newAnyJSONSpec("missing")
 		spec.Tags = []string{"system"}
 		return spec
 	}()
 	deniedSpec := func() tools.ToolSpec {
-		spec := newAnyJSONSpec("denied", "svc.tools")
+		spec := newAnyJSONSpec("denied")
 		spec.Tags = []string{"system", "profile", "blocked"}
 		return spec
 	}()
-	rt := New()
+	rt := New(newTestStore())
 	rt.policyToolMetadata = canonicalMetadataMap(visibleSpec, missingSpec, deniedSpec)
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		"visible": visibleSpec,
@@ -461,7 +460,7 @@ func TestApplyRuntimePolicyRejectsInvalidRecoveryCaps(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			rt := New()
+			rt := New(newTestStore())
 			rt.Policy = &stubPolicyEngine{decision: policy.Decision{Caps: test.caps}}
 			current := policy.CapsState{
 				MaxRecoveryTurns:       3,
@@ -499,13 +498,13 @@ func TestFilterToolCallsKeepsToolUnavailable(t *testing.T) {
 
 func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{})
-	visible := newAnyJSONSpec("svc.tools.visible", "svc.tools")
+	visible := newAnyJSONSpec("svc.tools.visible")
 	visible.Description = "Visible tool"
 	visible.Payload.Schema = tools.RawJSON(`{"type":"object","properties":{"q":{"type":"string"}}}`)
 	visible.Payload.SchemaWithoutRootExample = tools.RawJSON(`{"type":"object"}`)
 	visible.Payload.ExampleJSON = tools.RawJSON(`{"q":"status"}`)
 	visible.Tags = []string{"system", "profile"}
-	blocked := newAnyJSONSpec("svc.tools.blocked", "svc.tools")
+	blocked := newAnyJSONSpec("svc.tools.blocked")
 	blocked.Tags = []string{"system"}
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
 		"service.agent": {visible, blocked},
@@ -528,8 +527,8 @@ func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 }
 
 func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
-	spec := newAnyJSONSpec("svc.tools.search", "svc.tools")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	spec := newAnyJSONSpec("svc.tools.search")
 	spec.Description = "Spec description should not be re-derived"
 	spec.Tags = []string{"spec"}
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
@@ -568,7 +567,7 @@ func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {
 func TestPolicyMetadataPanicsWithoutCanonicalMetadata(t *testing.T) {
 	rt := &Runtime{
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			"svc.tools.search": newAnyJSONSpec("svc.tools.search", "svc.tools"),
+			"svc.tools.search": newAnyJSONSpec("svc.tools.search"),
 		},
 	}
 

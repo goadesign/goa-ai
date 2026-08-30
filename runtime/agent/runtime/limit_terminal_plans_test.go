@@ -30,7 +30,7 @@ import (
 func TestValidateLimitTerminalPlans(t *testing.T) {
 	t.Parallel()
 
-	rt := New()
+	rt := New(newTestStore())
 	terminal := strictLimitTerminalSpec()
 	reg := AgentRegistration{
 		ID:    agent.Ident("service.agent"),
@@ -95,7 +95,7 @@ func TestValidateLimitTerminalPlans(t *testing.T) {
 func TestValidateLimitTerminalPlansRejectsNonTerminalTool(t *testing.T) {
 	t.Parallel()
 
-	rt := New()
+	rt := New(newTestStore())
 	ordinary := strictLimitTerminalSpec()
 	ordinary.TerminalRun = false
 	reg := AgentRegistration{
@@ -120,12 +120,12 @@ func TestValidateLimitTerminalPlansRejectsConfirmation(t *testing.T) {
 		withConfirmation.Confirmation = &tools.ConfirmationSpec{}
 		reg.Specs = []tools.ToolSpec{withConfirmation}
 
-		err := New().validateLimitTerminalPlans(reg, testLimitTerminalPlans(terminal.Name))
+		err := New(newTestStore()).validateLimitTerminalPlans(reg, testLimitTerminalPlans(terminal.Name))
 		require.ErrorContains(t, err, "requires confirmation")
 	})
 	t.Run("runtime requirement", func(t *testing.T) {
 		reg.Specs = []tools.ToolSpec{terminal}
-		rt := New(WithToolConfirmation(&ToolConfirmationConfig{
+		rt := New(newTestStore(), WithToolConfirmation(&ToolConfirmationConfig{
 			Confirm: map[tools.Ident]*ToolConfirmation{
 				terminal.Name: {
 					Prompt: func(context.Context, *ToolCall) (string, error) {
@@ -146,7 +146,7 @@ func TestValidateLimitTerminalPlansRejectsConfirmation(t *testing.T) {
 func TestExecuteWorkflowRejectsInvalidLimitPlansBeforePlanning(t *testing.T) {
 	t.Parallel()
 
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	terminal := strictLimitTerminalSpec()
 	reg := AgentRegistration{
 		ID:      "service.agent",
@@ -236,10 +236,17 @@ func TestRestoreContinuationRunInputCopiesLimitTerminalPlans(t *testing.T) {
 	t.Parallel()
 
 	plans := testLimitTerminalPlans("service.tools.complete")
+	await := planner.AwaitClarificationItem(&planner.AwaitClarification{
+		ID:       "clarification-1",
+		Question: "Which facility?",
+	})
 	checkpoint := &workflowCheckpoint{
 		AgentID:       "service.agent",
 		SessionID:     "session-1",
 		PreviousRunID: "run-1",
+		Pending: []checkpointPendingInput{{
+			Await: &await,
+		}},
 		Policy: &PolicyOverrides{
 			LimitTerminalPlans: plans,
 		},
@@ -248,6 +255,11 @@ func TestRestoreContinuationRunInputCopiesLimitTerminalPlans(t *testing.T) {
 		AgentID:   "service.agent",
 		RunID:     "run-2",
 		SessionID: "session-1",
+		Continuation: &api.RunContinuationInput{
+			Response: &api.PendingInputResponse{
+				Clarification: &api.ClarificationAnswer{ID: "clarification-1"},
+			},
+		},
 	}
 
 	require.NoError(t, restoreContinuationRunInput(input, checkpoint))
@@ -260,7 +272,7 @@ func TestRestoreContinuationRunInputCopiesLimitTerminalPlans(t *testing.T) {
 func TestContinuationRejectsLimitTerminalPlanOverride(t *testing.T) {
 	t.Parallel()
 
-	rt := New(WithEngine(&stubEngine{}))
+	rt := New(newTestStore(), WithEngine(&stubEngine{}))
 	input := &RunInput{
 		AgentID: "service.agent",
 		Policy: &PolicyOverrides{
@@ -280,7 +292,7 @@ func TestContinuationRejectsLimitTerminalPlanOverride(t *testing.T) {
 func TestToolFailureUsesPlannerWhenLimitPlansExist(t *testing.T) {
 	t.Parallel()
 
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	input := &RunInput{
 		AgentID:   "service.agent",
 		RunID:     "run-1",
@@ -410,15 +422,15 @@ func executeWorkflowLimitTerminalPlan(
 ) *ToolCall {
 	t.Helper()
 
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	if withLabels {
 		rt.Policy = limitTerminalLabelPolicy{}
 	}
 	terminal := strictLimitTerminalSpec()
-	work := newAnyJSONSpec("service.tools.work", terminal.Toolset)
+	work := newAnyJSONSpec("service.tools.work")
 	var executed *ToolCall
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-		Name: terminal.Toolset,
+		Name: "service.tools",
 		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			if call.Name == work.Name {
 				assert.NotContains(t, call.Labels, FinalizationReasonLabel)
@@ -503,6 +515,8 @@ func executeWorkflowLimitTerminalPlan(
 			FinalizationReasonLabel: "incorrect-run-value",
 		}
 	}
+	_, err := createSessionForTest(context.Background(), rt.Store, input.SessionID)
+	require.NoError(t, err)
 	current := time.Unix(100, 0)
 	plannerCalls := 0
 	wfCtx := &routeWorkflowContext{
@@ -607,7 +621,6 @@ func strictLimitTerminalSpec() tools.ToolSpec {
 	}
 	return tools.ToolSpec{
 		Name:        "service.tools.complete",
-		Toolset:     "service.tools",
 		Bookkeeping: true,
 		TerminalRun: true,
 		Payload: tools.TypeSpec{

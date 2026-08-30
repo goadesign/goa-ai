@@ -33,8 +33,8 @@ type recoveryHarness struct {
 }
 
 func TestRunLoopCombinesFailedCallsIntoFewerCorrections(t *testing.T) {
-	search := newAnyJSONSpec("catalog.search", "catalog")
-	list := newAnyJSONSpec("catalog.list", "catalog")
+	search := newAnyJSONSpec("catalog.search")
+	list := newAnyJSONSpec("catalog.list")
 	var resumes int
 	h := newRecoveryHarness(
 		t,
@@ -116,8 +116,8 @@ func TestRunLoopCorrectionMayRetryFailedToolOrAnswer(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			search := newAnyJSONSpec("catalog.search", "catalog")
-			list := newAnyJSONSpec("catalog.list", "catalog")
+			search := newAnyJSONSpec("catalog.search")
+			list := newAnyJSONSpec("catalog.list")
 			resumes := 0
 			h := newRecoveryHarness(
 				t,
@@ -156,8 +156,8 @@ func TestRunLoopCorrectionMayRetryFailedToolOrAnswer(t *testing.T) {
 }
 
 func TestRunLoopPreservesCorrectionEvidenceAcrossClarification(t *testing.T) {
-	search := newAnyJSONSpec("catalog.search", "catalog")
-	list := newAnyJSONSpec("catalog.list", "catalog")
+	search := newAnyJSONSpec("catalog.search")
+	list := newAnyJSONSpec("catalog.list")
 	var resumes int
 	h := newRecoveryHarness(
 		t,
@@ -213,7 +213,7 @@ func TestRunLoopPreservesCorrectionEvidenceAcrossClarification(t *testing.T) {
 }
 
 func TestRunLoopInvalidCallReachesFailureFinalization(t *testing.T) {
-	search := newAnyJSONSpec("catalog.search", "catalog")
+	search := newAnyJSONSpec("catalog.search")
 	var recoveryTurns int
 	h := newRecoveryHarness(
 		t,
@@ -265,8 +265,8 @@ func TestRunLoopInvalidCallReachesFailureFinalization(t *testing.T) {
 }
 
 func TestRunLoopRecoveryCatalogRejectsExcludedCallBeforeExecution(t *testing.T) {
-	search := newAnyJSONSpec("catalog.search", "catalog")
-	list := newAnyJSONSpec("catalog.list", "catalog")
+	search := newAnyJSONSpec("catalog.search")
+	list := newAnyJSONSpec("catalog.list")
 	var listCalls, searchCalls, resumes int
 	h := newRecoveryHarness(
 		t,
@@ -329,15 +329,15 @@ func TestRunLoopRecoveryCatalogRejectsExcludedCallBeforeExecution(t *testing.T) 
 func TestRecoveryCatalogAndMixedFailureContracts(t *testing.T) {
 	t.Parallel()
 
-	search := newAnyJSONSpec("catalog.search", "catalog")
-	list := newAnyJSONSpec("catalog.list", "catalog")
+	search := newAnyJSONSpec("catalog.search")
+	list := newAnyJSONSpec("catalog.list")
 	outputs := []*planner.ToolOutput{
 		recoveryOutput(search.Name, "search-correct", planner.RecoveryCorrectCall),
 		recoveryOutput(search.Name, "search-replan", planner.RecoveryReplan),
 		recoveryOutput(list.Name, "list-replan", planner.RecoveryReplan),
 	}
 
-	rt := New()
+	rt := New(newTestStore())
 	seedTestToolSpecs(rt, search, list)
 	assert.Equal(t, []tools.Ident{list.Name}, rt.recoveryUnavailableTools("", outputs, false))
 	reminders := rt.recoveryReminders(outputs)
@@ -412,8 +412,8 @@ func TestRecoveryCatalogAndMixedFailureContracts(t *testing.T) {
 }
 
 func TestFinishFailureFinalizesWithExactCause(t *testing.T) {
-	search := newAnyJSONSpec("catalog.search", "catalog")
-	load := newAnyJSONSpec("catalog.load", "catalog")
+	search := newAnyJSONSpec("catalog.search")
+	load := newAnyJSONSpec("catalog.load")
 	var resumes int
 	h := newRecoveryHarness(
 		t,
@@ -457,10 +457,10 @@ func TestFinishFailureFinalizesWithExactCause(t *testing.T) {
 }
 
 func TestFinishFailureFinalizationRetainsOnlyTerminalTools(t *testing.T) {
-	load := newAnyJSONSpec("catalog.load", "catalog")
-	progress := newAnyJSONSpec("catalog.progress", "catalog")
+	load := newAnyJSONSpec("catalog.load")
+	progress := newAnyJSONSpec("catalog.progress")
 	progress.Bookkeeping = true
-	complete := newAnyJSONSpec("catalog.complete", "catalog")
+	complete := newAnyJSONSpec("catalog.complete")
 	complete.Bookkeeping = true
 	complete.TerminalRun = true
 	var completeCalls int
@@ -514,9 +514,7 @@ func TestFinishFailureFinalizationRetainsOnlyTerminalTools(t *testing.T) {
 
 func TestFinishFailurePreservesLiveContinuation(t *testing.T) {
 	search, continuation := continuationTestSpecs()
-	search.Toolset = "catalog"
-	continuation.Toolset = "catalog"
-	load := newAnyJSONSpec("catalog.load", "catalog")
+	load := newAnyJSONSpec("catalog.load")
 	continueAction := continuationActionName(continuation.Name, "search-call")
 	var resumes int
 	h := newRecoveryHarness(
@@ -593,7 +591,7 @@ func TestFinishFailurePreservesLiveContinuation(t *testing.T) {
 }
 
 func TestRunLoopRecoversRejectedModelAnswer(t *testing.T) {
-	search := newAnyJSONSpec("catalog.search", "catalog")
+	search := newAnyJSONSpec("catalog.search")
 	resumes := 0
 	h := newRecoveryHarness(
 		t,
@@ -646,7 +644,7 @@ func TestRunLoopRecoversRejectedModelAnswer(t *testing.T) {
 }
 
 func TestRunLoopSharesRecoveryBudgetBetweenToolAndModelRejections(t *testing.T) {
-	search := newAnyJSONSpec("catalog.search", "catalog")
+	search := newAnyJSONSpec("catalog.search")
 	resumes := 0
 	h := newRecoveryHarness(
 		t,
@@ -705,10 +703,10 @@ func TestRunLoopSharesRecoveryBudgetBetweenToolAndModelRejections(t *testing.T) 
 }
 
 func TestWorkflowRecoversInitialRejectedModelAnswer(t *testing.T) {
-	search := newAnyJSONSpec("catalog.search", "catalog")
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	search := newAnyJSONSpec("catalog.search")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	sessionID := "session-initial-model-output"
-	_, err := rt.CreateSession(context.Background(), sessionID)
+	_, err := createSessionForTest(context.Background(), rt.Store, sessionID)
 	require.NoError(t, err)
 
 	agentID := agent.Ident("catalog.initial-model-output")
@@ -754,7 +752,6 @@ func TestWorkflowRecoversInitialRejectedModelAnswer(t *testing.T) {
 		SessionID: sessionID,
 		TurnID:    "turn-initial-model-output",
 	}
-	seedRunMeta(t, rt, runInput)
 	wfCtx := &routeWorkflowContext{
 		ctx:         context.Background(),
 		runID:       runInput.RunID,
@@ -774,7 +771,7 @@ func TestWorkflowRecoversInitialRejectedModelAnswer(t *testing.T) {
 }
 
 func TestRunLoopStopsAfterConfiguredModelOutputRecoveryTurns(t *testing.T) {
-	search := newAnyJSONSpec("catalog.search", "catalog")
+	search := newAnyJSONSpec("catalog.search")
 	recoveryAttempts := 0
 	h := newRecoveryHarness(
 		t,
@@ -827,9 +824,9 @@ func TestRunLoopStopsAfterConfiguredModelOutputRecoveryTurns(t *testing.T) {
 func TestExecuteWorkflowRecoversInitialGeneratedModelToolCall(t *testing.T) {
 	lookup := newStrictRecoverySpec()
 	var providerCalls, lookupCalls, resumes int
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	sessionID := "session-initial-recovery"
-	_, err := rt.CreateSession(context.Background(), sessionID)
+	_, err := createSessionForTest(context.Background(), rt.Store, sessionID)
 	require.NoError(t, err)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name:  "catalog",
@@ -886,7 +883,6 @@ func TestExecuteWorkflowRecoversInitialGeneratedModelToolCall(t *testing.T) {
 		RunID:     "run-initial-recovery",
 		SessionID: sessionID,
 	}
-	seedRunMeta(t, rt, input)
 	wfCtx := &routeWorkflowContext{
 		ctx:         context.Background(),
 		runID:       input.RunID,
@@ -911,7 +907,7 @@ func TestExecuteWorkflowRecoversInitialGeneratedModelToolCall(t *testing.T) {
 }
 
 func TestRunLoopRecoversGeneratedModelToolCallBeforeExecution(t *testing.T) {
-	kickoff := newAnyJSONSpec("catalog.kickoff", "catalog")
+	kickoff := newAnyJSONSpec("catalog.kickoff")
 	lookup := newStrictRecoverySpec()
 	var providerCalls, lookupCalls, resumes int
 	h := newRecoveryHarness(
@@ -982,7 +978,7 @@ func TestRunLoopRecoversGeneratedModelToolCallBeforeExecution(t *testing.T) {
 }
 
 func TestRunLoopModelInvocationRecoveryUsesSharedTurnCap(t *testing.T) {
-	kickoff := newAnyJSONSpec("catalog.kickoff", "catalog")
+	kickoff := newAnyJSONSpec("catalog.kickoff")
 	lookup := newStrictRecoverySpec()
 	var providerCalls, lookupCalls, recoveryAttempts int
 	h := newRecoveryHarness(
@@ -1036,7 +1032,7 @@ func TestRunLoopModelInvocationRecoveryUsesSharedTurnCap(t *testing.T) {
 }
 
 func TestRunLoopCancellationPreventsModelInvocationReplacement(t *testing.T) {
-	kickoff := newAnyJSONSpec("catalog.kickoff", "catalog")
+	kickoff := newAnyJSONSpec("catalog.kickoff")
 	lookup := newStrictRecoverySpec()
 	var providerCalls, plannerCalls int
 	h := newRecoveryHarness(
@@ -1092,7 +1088,7 @@ func TestRunLoopCancellationPreventsModelInvocationReplacement(t *testing.T) {
 }
 
 func TestRunLoopConsumesRecordedModelInvocationRecoveryWithoutProviderCall(t *testing.T) {
-	kickoff := newAnyJSONSpec("catalog.kickoff", "catalog")
+	kickoff := newAnyJSONSpec("catalog.kickoff")
 	var providerCalls, plannerCalls int
 	h := newRecoveryHarness(
 		t,
@@ -1174,9 +1170,9 @@ func newRecoveryHarness(
 ) *recoveryHarness {
 	t.Helper()
 
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	sessionID := "session-" + name
-	_, err := rt.CreateSession(context.Background(), sessionID)
+	_, err := createSessionForTest(context.Background(), rt.Store, sessionID)
 	require.NoError(t, err)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name:    "catalog",
@@ -1279,7 +1275,6 @@ func newStrictRecoverySpec() tools.ToolSpec {
 	return tools.ToolSpec{
 		Name:        "catalog.lookup",
 		Description: "Looks up one synthetic record.",
-		Toolset:     "catalog",
 		Payload: tools.TypeSpec{
 			Name:   "LookupPayload",
 			Schema: rawjson.Message(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`),

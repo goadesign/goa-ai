@@ -22,11 +22,11 @@ type exampleCompletionStreamer struct {
 
 // newExampleCompletionClient constructs the example structured-output client
 // from the generated completion example payload.
-func newExampleCompletionClient(name string, payload []byte) (model.Client, error) {
+func newExampleCompletionClient(name string, payload []byte) ({{ $.ModelAlias }}.Client, error) {
 	if len(payload) == 0 {
-		return nil, fmt.Errorf("completion %q example JSON is required for generated example", name)
+		return nil, {{ $.FmtAlias }}.Errorf("completion %q example JSON is required for generated example", name)
 	}
-	return model.NewClient(&exampleCompletionProvider{
+	return {{ $.ModelAlias }}.NewClient(&exampleCompletionProvider{
 		name:    name,
 		payload: append([]byte(nil), payload...),
 	})
@@ -34,37 +34,37 @@ func newExampleCompletionClient(name string, payload []byte) (model.Client, erro
 
 // validateRequest enforces the structured-output contract expected by the
 // generated completion helpers.
-func (c *exampleCompletionProvider) validateRequest(req *model.Request, stream bool) error {
+func (c *exampleCompletionProvider) validateRequest(req *{{ $.ModelAlias }}.Request, stream bool) error {
 	if req == nil {
-		return fmt.Errorf("completion %q request is nil", c.name)
+		return {{ $.FmtAlias }}.Errorf("completion %q request is nil", c.name)
 	}
 	if req.Stream != stream {
-		return fmt.Errorf("completion %q stream=%t; expected %t", c.name, req.Stream, stream)
+		return {{ $.FmtAlias }}.Errorf("completion %q stream=%t; expected %t", c.name, req.Stream, stream)
 	}
 	if req.StructuredOutput == nil {
-		return fmt.Errorf("completion %q requires structured output", c.name)
+		return {{ $.FmtAlias }}.Errorf("completion %q requires structured output", c.name)
 	}
 	if req.StructuredOutput.Name != c.name {
-		return fmt.Errorf("completion %q received structured output %q", c.name, req.StructuredOutput.Name)
+		return {{ $.FmtAlias }}.Errorf("completion %q received structured output %q", c.name, req.StructuredOutput.Name)
 	}
 	if len(req.StructuredOutput.Schema) == 0 {
-		return fmt.Errorf("completion %q requires a structured output schema", c.name)
+		return {{ $.FmtAlias }}.Errorf("completion %q requires a structured output schema", c.name)
 	}
 	return nil
 }
 
 // Complete returns the canonical assistant JSON payload for unary completion
 // examples.
-func (c *exampleCompletionProvider) Complete(_ context.Context, req *model.Request) (*model.Response, error) {
+func (c *exampleCompletionProvider) Complete(_ {{ $.ContextAlias }}.Context, req *{{ $.ModelAlias }}.Request) (*{{ $.ModelAlias }}.Response, error) {
 	if err := c.validateRequest(req, false); err != nil {
 		return nil, err
 	}
-	return &model.Response{
-		Content: []model.Message{
+	return &{{ $.ModelAlias }}.Response{
+		Content: []{{ $.ModelAlias }}.Message{
 			{
-				Role: model.ConversationRoleAssistant,
-				Parts: []model.Part{
-					model.TextPart{Text: string(c.payload)},
+				Role: {{ $.ModelAlias }}.ConversationRoleAssistant,
+				Parts: []{{ $.ModelAlias }}.Part{
+					{{ $.ModelAlias }}.TextPart{Text: string(c.payload)},
 				},
 			},
 		},
@@ -73,7 +73,7 @@ func (c *exampleCompletionProvider) Complete(_ context.Context, req *model.Reque
 }
 
 // Stream emits a preview fragment followed by the canonical completion payload.
-func (c *exampleCompletionProvider) Stream(_ context.Context, req *model.Request) (model.Streamer, error) {
+func (c *exampleCompletionProvider) Stream(_ {{ $.ContextAlias }}.Context, req *{{ $.ModelAlias }}.Request) ({{ $.ModelAlias }}.Streamer, error) {
 	if err := c.validateRequest(req, true); err != nil {
 		return nil, err
 	}
@@ -84,43 +84,43 @@ func (c *exampleCompletionProvider) Stream(_ context.Context, req *model.Request
 }
 
 // Recv advances the example stream through preview, completion, and stop.
-func (s *exampleCompletionStreamer) Recv() (model.Chunk, error) {
+func (s *exampleCompletionStreamer) Recv() ({{ $.ModelAlias }}.Chunk, error) {
 	switch s.step {
 	case 0:
 		s.step++
 		end := min(len(s.payload), 24)
-		return model.CompletionDeltaChunk{
-			Delta: model.CompletionDelta{
+		return {{ $.ModelAlias }}.CompletionDeltaChunk{
+			Delta: {{ $.ModelAlias }}.CompletionDelta{
 				Name:  s.name,
 				Delta: string(s.payload[:end]),
 			},
 		}, nil
 	case 1:
 		s.step++
-		completion := model.Completion{
+		completion := {{ $.ModelAlias }}.Completion{
 			Name:    s.name,
-			Payload: rawjson.Message(append([]byte(nil), s.payload...)),
+			Payload: {{ $.RawJSONAlias }}.Message(append([]byte(nil), s.payload...)),
 		}
-		return model.CompletionChunk{Completion: completion}, nil
+		return {{ $.ModelAlias }}.CompletionChunk{Completion: completion}, nil
 	case 2:
 		s.step++
-		return model.StopChunk{Reason: "completed"}, nil
+		return {{ $.ModelAlias }}.StopChunk{Reason: "completed"}, nil
 	default:
-		return nil, io.EOF
+		return nil, {{ $.IOAlias }}.EOF
 	}
 }
 
 // Response returns the canonical example response after clean EOF.
-func (s *exampleCompletionStreamer) Response() *model.Response {
+func (s *exampleCompletionStreamer) Response() *{{ $.ModelAlias }}.Response {
 	if s.step < 3 {
 		return nil
 	}
-	return &model.Response{
-		Content: []model.Message{
+	return &{{ $.ModelAlias }}.Response{
+		Content: []{{ $.ModelAlias }}.Message{
 			{
-				Role: model.ConversationRoleAssistant,
-				Parts: []model.Part{
-					model.TextPart{Text: string(s.payload)},
+				Role: {{ $.ModelAlias }}.ConversationRoleAssistant,
+				Parts: []{{ $.ModelAlias }}.Part{
+					{{ $.ModelAlias }}.TextPart{Text: string(s.payload)},
 				},
 			},
 		},
@@ -136,40 +136,38 @@ func (s *exampleCompletionStreamer) Close() error {
 {{- end }}
 
 func main() {
-	ctx := context.Background()
+	ctx := {{ $.ContextAlias }}.Background()
+	store := {{ $.StorageAlias }}.New()
+	if _, err := store.CreateSession(ctx, "demo-session", {{ $.TimeAlias }}.Now().UTC()); err != nil {
+		{{ $.LogAlias }}.Fatalf("failed to create session: %v", err)
+	}
 
 	// Initialize the runtime using the generated bootstrap which wires
 	// planners and toolsets for all agents.
-	rt, cleanup, err := bootstrap.New(ctx)
+	rt, cleanup, err := {{ $.BootstrapAlias }}.New(ctx, store)
 	if err != nil {
-		log.Fatalf("failed to initialize runtime: %v", err)
+		{{ $.LogAlias }}.Fatalf("failed to initialize runtime: %v", err)
 	}
 	defer cleanup()
 
 	// Example: run the first registered agent with a simple message.
 	// Replace this with your own CLI, HTTP server, or integration.
-	// Sessions are first-class: create a session explicitly before starting runs.
-	// Creating an already-active session is idempotent.
-	if _, err := rt.CreateSession(ctx, "demo-session"); err != nil {
-		log.Fatalf("failed to create session: %v", err)
-	}
-
 {{ range .Agents }}
 	{
-		client := {{ .PackageName }}.NewClient(rt)
-		out, err := client.Run(ctx, "demo-session", []*model.Message{
+		client := {{ .Alias }}.NewClient(rt)
+		out, err := client.Run(ctx, "demo-session", []*{{ $.ModelAlias }}.Message{
 			{
-				Role:  model.ConversationRoleUser,
-				Parts: []model.Part{model.TextPart{Text: "What is the capital of Japan?"}},
+				Role:  {{ $.ModelAlias }}.ConversationRoleUser,
+				Parts: []{{ $.ModelAlias }}.Part{ {{ $.ModelAlias }}.TextPart{Text: "What is the capital of Japan?"}},
 			},
-		})
+		}, {{ $.RuntimeAlias }}.WithRunID("demo-{{ .Name }}-run"))
 		if err != nil {
-			log.Fatalf("agent run failed: %v", err)
+			{{ $.LogAlias }}.Fatalf("agent run failed: %v", err)
 		}
-		fmt.Println("RunID:", out.RunID)
+		{{ $.FmtAlias }}.Println("RunID:", out.RunID)
 		if out.Final != nil && len(out.Final.Parts) > 0 {
-			if tp, ok := out.Final.Parts[0].(model.TextPart); ok {
-				fmt.Println("Assistant:", tp.Text)
+			if tp, ok := out.Final.Parts[0].({{ $.ModelAlias }}.TextPart); ok {
+				{{ $.FmtAlias }}.Println("Assistant:", tp.Text)
 			}
 		}
 	}
@@ -178,64 +176,64 @@ func main() {
 
 	{
 		client, err := newExampleCompletionClient(
-			string(completions.{{ .GoName }}),
-			completions.{{ .GoName }}Example(),
+			string({{ $.CompletionsAlias }}.{{ .ConstName }}),
+			{{ $.CompletionsAlias }}.{{ .ExampleFunc }}(),
 		)
 		if err != nil {
-			log.Fatalf("completion client setup failed: %v", err)
+			{{ $.LogAlias }}.Fatalf("completion client setup failed: %v", err)
 		}
-		out, err := completions.Complete{{ .GoName }}(ctx, client, &model.Request{
-			Messages: []*model.Message{
+		out, err := {{ $.CompletionsAlias }}.{{ .CompleteFunc }}(ctx, client, &{{ $.ModelAlias }}.Request{
+			Messages: []*{{ $.ModelAlias }}.Message{
 				{
-					Role:  model.ConversationRoleUser,
-					Parts: []model.Part{model.TextPart{Text: "Draft a task for preparing a launch checklist."}},
+					Role:  {{ $.ModelAlias }}.ConversationRoleUser,
+					Parts: []{{ $.ModelAlias }}.Part{ {{ $.ModelAlias }}.TextPart{Text: "Draft a task for preparing a launch checklist."}},
 				},
 			},
 		})
 		if err != nil {
-			log.Fatalf("completion run failed: %v", err)
+			{{ $.LogAlias }}.Fatalf("completion run failed: %v", err)
 		}
-		fmt.Printf("Completion %s: %+v\n", completions.{{ .GoName }}, out.Value)
+		{{ $.FmtAlias }}.Printf("Completion %s: %+v\n", {{ $.CompletionsAlias }}.{{ .ConstName }}, out.Value)
 	}
 
 	{
 		client, err := newExampleCompletionClient(
-			string(completions.{{ .GoName }}),
-			completions.{{ .GoName }}Example(),
+			string({{ $.CompletionsAlias }}.{{ .ConstName }}),
+			{{ $.CompletionsAlias }}.{{ .ExampleFunc }}(),
 		)
 		if err != nil {
-			log.Fatalf("completion stream client setup failed: %v", err)
+			{{ $.LogAlias }}.Fatalf("completion stream client setup failed: %v", err)
 		}
-		stream, err := completions.StreamComplete{{ .GoName }}(ctx, client, &model.Request{
-			Messages: []*model.Message{
+		stream, err := {{ $.CompletionsAlias }}.{{ .StreamFunc }}(ctx, client, &{{ $.ModelAlias }}.Request{
+			Messages: []*{{ $.ModelAlias }}.Message{
 				{
-					Role:  model.ConversationRoleUser,
-					Parts: []model.Part{model.TextPart{Text: "Draft a task for preparing a launch checklist."}},
+					Role:  {{ $.ModelAlias }}.ConversationRoleUser,
+					Parts: []{{ $.ModelAlias }}.Part{ {{ $.ModelAlias }}.TextPart{Text: "Draft a task for preparing a launch checklist."}},
 				},
 			},
 		})
 		if err != nil {
-			log.Fatalf("completion stream failed to start: %v", err)
+			{{ $.LogAlias }}.Fatalf("completion stream failed to start: %v", err)
 		}
 		for {
 			chunk, err := stream.Recv()
-			if err == io.EOF {
+			if err == {{ $.IOAlias }}.EOF {
 				break
 			}
 			if err != nil {
-				log.Fatalf("completion stream failed: %v", err)
+				{{ $.LogAlias }}.Fatalf("completion stream failed: %v", err)
 			}
-			if delta, ok := chunk.(model.CompletionDeltaChunk); ok {
-				fmt.Printf("Completion delta %s: %s\n", completions.{{ .GoName }}, delta.Delta.Delta)
+			if delta, ok := chunk.({{ $.ModelAlias }}.CompletionDeltaChunk); ok {
+				{{ $.FmtAlias }}.Printf("Completion delta %s: %s\n", {{ $.CompletionsAlias }}.{{ .ConstName }}, delta.Delta.Delta)
 			}
 		}
 		value, ok := stream.Value()
 		if !ok {
-			log.Fatal("completion stream ended without a typed value")
+			{{ $.LogAlias }}.Fatal("completion stream ended without a typed value")
 		}
-		fmt.Printf("Completion stream %s: %+v\n", completions.{{ .GoName }}, value)
+		{{ $.FmtAlias }}.Printf("Completion stream %s: %+v\n", {{ $.CompletionsAlias }}.{{ .ConstName }}, value)
 		if err := stream.Close(); err != nil {
-			log.Fatalf("completion stream close failed: %v", err)
+			{{ $.LogAlias }}.Fatalf("completion stream close failed: %v", err)
 		}
 	}
 {{- end }}

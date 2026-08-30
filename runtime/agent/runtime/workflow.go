@@ -20,6 +20,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
@@ -40,7 +41,7 @@ const (
 // and runtime hooks. Returns the final agent output or an error if the workflow
 // fails. Generated code calls this from the workflow handler registered with
 // the engine.
-func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
+func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput) (output *RunOutput, workflowErr error) {
 	if err := validateWorkflowRunInput(input); err != nil {
 		return nil, err
 	}
@@ -51,7 +52,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		return nil, errors.New("agent id is required")
 	}
 	defer func() {
-		r.storeWorkflowHandle(input.RunID, nil)
 		if r.reminders != nil {
 			r.reminders.ClearRun(input.RunID)
 		}
@@ -72,9 +72,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		}
 	}
 	if err := r.validateCompletionToolPolicy(reg, input.Policy); err != nil {
-		return nil, err
-	}
-	if err := validateCompletionToolWorkflowRetry(input.Policy, input.WorkflowOptions); err != nil {
 		return nil, err
 	}
 	if input.Policy != nil {
@@ -100,61 +97,95 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		Labels:           input.Labels,
 		Metadata:         input.Metadata,
 	}
-	// Get turn ID for event stamping
+	// The accepted workflow owns session-run creation. A child first records its
+	// parent link from child history; a root uses its start event for the same
+	// atomic active-versus-ended decision.
 	turnID := input.TurnID
-	if err := r.publishHook(
-		wfCtx.Context(),
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, runStartedHookInput(input)),
-		turnID,
-	); err != nil {
+	startEvents := make([]hooks.Event, 0, 2)
+	if input.ParentRunID != "" {
+		startEvents = append(startEvents, hooks.NewChildRunLinkedEvent(
+			input.ParentRunID,
+			input.ParentAgentID,
+			input.SessionID,
+			input.Tool,
+			input.ParentToolCallID,
+			input.RunID,
+			input.AgentID,
+		))
+	}
+	startEvents = append(startEvents, hooks.NewRunStartedEvent(
+		input.RunID,
+		input.AgentID,
+		input.SessionID,
+		input.ParentRunID,
+		startLabels,
+	))
+	promptEvents := make([]hooks.Event, 0, len(input.RenderedPrompts))
+	for _, rendered := range input.RenderedPrompts {
+		promptEvents = append(promptEvents, hooks.NewPromptRenderedEvent(
+			input.RunID,
+			input.AgentID,
+			input.SessionID,
+			rendered.PromptID,
+			rendered.Version,
+			rendered.Scope,
+		))
+	}
+	startRecords, err := prepareRunStartRecords(wfCtx.Context(), startEvents, turnID)
+	if err != nil {
 		return nil, err
 	}
-	// Initial phase: input has been received and planning is about to begin.
-	if err := r.publishHook(
-		wfCtx.Context(),
-		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhasePrompted),
-		turnID,
-	); err != nil {
+	promptRecords, err := prepareRunStartRecords(wfCtx.Context(), promptEvents, turnID)
+	if err != nil {
 		return nil, err
 	}
 	finalStatus := runStatusSuccess
+	finalization := &workflowFinalizationState{}
 	var (
-		finalErr        error
-		finalSuspension *api.RunSuspension
+		finalErr             error
+		finalSuspension      *api.RunSuspension
+		recordTerminalResult bool
 	)
 	defer func() {
-		// Use a fresh context with timeout for terminal events. The workflow
-		// engine supplies a replay-aware context so subscribers can avoid
-		// re-applying side effects during history replay while still allowing
-		// session stores and UIs to observe one terminal phase.
+		cancellationAccepted, err := finalization.beginFinalization(wfCtx.Detached())
+		if err != nil {
+			workflowErr = errors.Join(workflowErr, fmt.Errorf("close cancellation admission: %w", err))
+			return
+		}
+		defer finalization.finishFinalization()
+		if cancellationAccepted {
+			if workflowErr == nil {
+				workflowErr = context.Canceled
+			}
+			output = nil
+		}
+		if !recordTerminalResult {
+			return
+		}
+		// Suspension and cancellation both end the run. Store exactly one after
+		// cancellation admission closes so neither outcome can overtake the other.
+		if finalSuspension != nil && workflowErr == nil {
+			if err := r.persistRunSuspension(wfCtx.Detached(), input, finalSuspension); err != nil {
+				workflowErr = fmt.Errorf("persist run suspension: %w", err)
+				output = nil
+			} else {
+				return
+			}
+		}
+		if workflowErr != nil {
+			finalErr = workflowErr
+			finalStatus = terminalRunStatusForError(workflowErr)
+		}
+		// Use a cancellation-independent workflow context for the terminal
+		// record. The workflow does not finish until storage accepts the exact
+		// result, so temporary store failures retry without losing lifecycle state.
 		//
 		// Emit only RunCompletedEvent or RunSuspendedEvent (each carries its
 		// terminal phase). Emitting a separate RunPhaseChangedEvent first causes
 		// two terminal workflow events to reach subscribers, which can trigger
 		// race conditions in frontends that close streams on the first
 		// terminal event.
-		detached := wfCtx.Detached()
-		termCtx, cancel := context.WithTimeout(detached.Context(), 10*time.Second)
-		defer cancel()
-		if finalSuspension != nil {
-			if err := r.publishHookWithOptions(
-				termCtx,
-				hooks.NewRunSuspendedEvent(
-					input.RunID,
-					input.AgentID,
-					input.SessionID,
-					finalSuspension.ID,
-					finalSuspension.Version,
-					len(finalSuspension.Pending),
-					finalSuspension.RequiredTools,
-				),
-				turnID,
-				engine.ActivityOptions{ScheduleToCloseTimeout: 10 * time.Second},
-			); err != nil {
-				r.logWarn(termCtx, "run suspended hook failed", err, "run_id", input.RunID, "agent_id", input.AgentID)
-			}
-			return
-		}
+		termCtx := wfCtx.Detached().Context()
 		phase := terminalRunPhaseForStatus(finalStatus)
 		completed, buildErr := r.buildRunCompletedEvent(
 			termCtx,
@@ -167,7 +198,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			finalErr,
 		)
 		if buildErr != nil {
-			r.logWarn(termCtx, "run completion build failed", buildErr, "run_id", input.RunID, "agent_id", input.AgentID)
+			workflowErr = errors.Join(workflowErr, fmt.Errorf("build terminal run record: %w", buildErr))
 			return
 		}
 		if err := r.publishHookWithOptions(
@@ -175,12 +206,42 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			completed,
 			turnID,
 			engine.ActivityOptions{
-				ScheduleToCloseTimeout: 10 * time.Second,
+				RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true},
 			},
 		); err != nil {
-			r.logWarn(termCtx, "run completed hook failed", err, "run_id", input.RunID, "agent_id", input.AgentID)
+			workflowErr = errors.Join(workflowErr, fmt.Errorf("record terminal run result: %w", err))
 		}
 	}()
+	startCommand, err := runStartStorageCommand(input, startRecords)
+	if err != nil {
+		return nil, err
+	}
+	if err := wfCtx.SetCancellationHandler(func(cancelCtx engine.WorkflowContext, request engine.CancellationRequest) error {
+		return r.handleWorkflowCancellation(finalization, cancelCtx, input, startCommand, request)
+	}); err != nil {
+		return nil, fmt.Errorf("register cancellation handler: %w", err)
+	}
+	startOutput, err := r.executeStorageWithRetry(wfCtx.Detached().Context(), startCommand)
+	if err != nil {
+		return nil, err
+	}
+	if runStartStorageResult(input, startOutput).Outcome == session.RunStartStop {
+		return nil, context.Canceled
+	}
+	recordTerminalResult = true
+	if len(promptRecords) > 0 {
+		if _, err := r.executeStorageWithRetry(wfCtx.Detached().Context(), appendStorageCommand(promptRecords...)); err != nil {
+			return nil, fmt.Errorf("record initial prompts: %w", err)
+		}
+	}
+	// Initial phase: input has been received and planning is about to begin.
+	if err := r.publishHook(
+		wfCtx.Context(),
+		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhasePrompted),
+		turnID,
+	); err != nil {
+		return nil, err
+	}
 	if checkpoint != nil {
 		if len(checkpoint.BaseMessages) > 0 {
 			// A continuation starts a distinct run from the complete planner

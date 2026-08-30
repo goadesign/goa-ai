@@ -1,27 +1,8 @@
-package {{ .Register.Package }}
-
-import (
-	"context"
-	"encoding/json"
-	"errors"
-	"strings"
-
-	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/policy"
-	"goa.design/goa-ai/runtime/agent/rawjson"
-	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
-	"goa.design/goa-ai/runtime/agent/telemetry"
-	"goa.design/goa-ai/runtime/agent/tools"
-	mcpruntime "goa.design/goa-ai/runtime/mcp"
-)
-
 // {{ .Register.HelperName }}ToolSpecs contains the tool specifications for the {{ .Register.SuiteName }} toolset.
 var {{ .Register.HelperName }}ToolSpecs = []tools.ToolSpec{
 {{- range .Register.Tools }}
 	{
 		Name:        {{ printf "%q" .ID }},
-		Service:     {{ printf "%q" $.Register.ServiceName }},
-		Toolset:     {{ printf "%q" $.Register.SuiteQualifiedName }},
 		Description: {{ printf "%q" .Description }},
 		Payload: tools.TypeSpec{
 			Name:        {{ printf "%q" .PayloadType }},
@@ -29,44 +10,54 @@ var {{ .Register.HelperName }}ToolSpecs = []tools.ToolSpec{
 			ExampleJSON: []byte({{ printf "%q" .ExampleArgs }}),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
-					return json.Marshal(v)
+					{{- if .HasPayload }}
+					value, ok := v.({{ .PayloadType }})
+					if !ok {
+						return nil, errors.New({{ printf "%q" (printf "tool %s payload must be %s" .QualifiedName .PayloadType) }})
+					}
+					return {{ $.CodecPackage }}.{{ .Codec.PayloadEncode }}(value)
+					{{- else }}
+					if v != nil {
+						return nil, errors.New({{ printf "%q" (printf "tool %s does not accept a payload" .QualifiedName) }})
+					}
+					return []byte("{}"), nil
+					{{- end }}
 				},
 				FromJSON: func(data []byte) (any, error) {
-					if len(data) == 0 {
-						return nil, nil
-					}
-					var out any
-					if err := json.Unmarshal(data, &out); err != nil {
+					{{- if .HasPayload }}
+					return {{ $.CodecPackage }}.{{ .Codec.PayloadDecode }}(data)
+					{{- else }}
+					if err := validateNoArguments(data); err != nil {
 						return nil, err
 					}
-					return out, nil
+					return nil, nil
+					{{- end }}
 				},
 			},
 		},
+		{{- if .HasResult }}
 		Result: tools.TypeSpec{
 			Name:   {{ printf "%q" .ResultType }},
-			Schema: nil,
+			Schema: []byte({{ printf "%q" .ResultSchema }}),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
-					return json.Marshal(v)
+					value, ok := v.({{ .ResultType }})
+					if !ok {
+						return nil, errors.New({{ printf "%q" (printf "tool %s result must be %s" .QualifiedName .ResultType) }})
+					}
+					return {{ $.CodecPackage }}.{{ .Codec.ResultEncode }}(value)
 				},
 				FromJSON: func(data []byte) (any, error) {
-					if len(data) == 0 {
-						return nil, nil
-					}
-					var out any
-					if err := json.Unmarshal(data, &out); err != nil {
-						return nil, err
-					}
-					return out, nil
+					return {{ $.CodecPackage }}.{{ .Codec.ResultDecode }}(data)
 				},
 			},
 		},
+		{{- end }}
 	},
 {{- end }}
 }
 
-// {{ .Register.HelperName }}ToolMetadata contains canonical policy metadata for the {{ .Register.SuiteName }} toolset.
+// {{ .Register.HelperName }}ToolMetadata describes each tool in the {{ .Register.SuiteName }} toolset.
 var {{ .Register.HelperName }}ToolMetadata = []policy.ToolMetadata{
 {{- range .Register.Tools }}
 	{
@@ -78,7 +69,7 @@ var {{ .Register.HelperName }}ToolMetadata = []policy.ToolMetadata{
 {{- end }}
 }
 
-// {{ .Register.HelperName }}ToolMetadataByName returns canonical policy metadata for the named MCP tool.
+// {{ .Register.HelperName }}ToolMetadataByName returns the description for the named MCP tool.
 func {{ .Register.HelperName }}ToolMetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
 	switch name {
 {{- range $i, $tool := .Register.Tools }}
@@ -109,7 +100,6 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 		}
 
 		resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
-			Suite:   {{ printf "%q" .Register.SuiteQualifiedName }},
 			Tool:    toolName,
 			Payload: json.RawMessage(call.Payload),
 		})
@@ -118,36 +108,79 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 		}
 
 		var value any
-		if len(resp.Result) > 0 {
-			if err := json.Unmarshal(resp.Result, &value); err != nil {
-				return {{ .Register.HelperName }}HandleError(
+		switch toolName {
+		{{- range .Register.Tools }}
+		case {{ printf "%q" .ID }}:
+			{{- if .HasStructuredResult }}
+			if len(resp.StructuredContent) == 0 {
+				return {{ $.Register.HelperName }}HandleError(
 					fullName,
 					call.Payload,
-					mcpruntime.NewMalformedResponseError(err),
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response is missing structured content")),
 				), nil
 			}
-		}
-
-		var toolTelemetry *telemetry.ToolTelemetry
-		if len(resp.Structured) > 0 {
-			var structured any
-			if err := json.Unmarshal(resp.Structured, &structured); err != nil {
-				return {{ .Register.HelperName }}HandleError(
+			value, err = {{ $.CodecPackage }}.{{ .Codec.ResultDecode }}(resp.StructuredContent)
+			{{- else if .TextResult }}
+			if len(resp.Content) != 1 {
+				return {{ $.Register.HelperName }}HandleError(
 					fullName,
 					call.Payload,
-					mcpruntime.NewMalformedResponseError(err),
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response must contain one text result")),
 				), nil
 			}
-			toolTelemetry = &telemetry.ToolTelemetry{
-				Extra: map[string]any{"structured": structured},
+			text, ok := resp.Content[0].(*mcpruntime.TextContent)
+			if !ok {
+				return {{ $.Register.HelperName }}HandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response result must be text")),
+				), nil
 			}
+			encoded, err := json.Marshal(text.Text)
+			if err != nil {
+				return {{ $.Register.HelperName }}HandleError(fullName, call.Payload, err), nil
+			}
+			value, err = {{ $.CodecPackage }}.{{ .Codec.ResultDecode }}(encoded)
+			{{- else if .HasResult }}
+			if len(resp.Content) != 1 {
+				return {{ $.Register.HelperName }}HandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response must contain one text result")),
+				), nil
+			}
+			text, ok := resp.Content[0].(*mcpruntime.TextContent)
+			if !ok {
+				return {{ $.Register.HelperName }}HandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response result must be text")),
+				), nil
+			}
+			value, err = {{ $.CodecPackage }}.{{ .Codec.ResultDecode }}([]byte(text.Text))
+			{{- else }}
+			if len(resp.Content) != 0 || len(resp.StructuredContent) != 0 {
+				return {{ $.Register.HelperName }}HandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response for a method without a result must be empty")),
+				), nil
+			}
+			break
+			{{- end }}
+		{{- end }}
+		default:
+			return planner.ToolResult{}, errors.New("generated MCP toolset does not define " + toolName)
+		}
+		if err != nil {
+			return {{ .Register.HelperName }}HandleError(
+				fullName,
+				call.Payload,
+				mcpruntime.NewMalformedResponseError(err),
+			), nil
 		}
 
-		return planner.ToolResult{
-			Name:      fullName,
-			Result:    value,
-			Telemetry: toolTelemetry,
-		}, nil
+		return planner.ToolResult{Name: fullName, Result: value}, nil
 	}
 
 	return rt.RegisterToolset(agentsruntime.ToolsetRegistration{
@@ -169,73 +202,15 @@ func Register{{ .Register.HelperName }}(ctx context.Context, rt *agentsruntime.R
 	})
 }
 
-// {{ .Register.HelperName }}HandleError converts an MCP failure into the
-// canonical classification and recovery transition.
-func {{ .Register.HelperName }}HandleError(toolName tools.Ident, input rawjson.Message, err error) planner.ToolResult {
-	failure := &planner.ToolFailure{
-		Kind:  planner.FailureUnavailable,
-		Error: planner.ToolErrorFromError(err),
-		Recovery: planner.RecoveryDirective{
-			Action: planner.RecoveryReplan,
-		},
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		failure.Kind = planner.FailureTimeout
-		failure.Recovery.Action = planner.RecoveryFinish
-		return planner.ToolResult{Name: toolName, Failure: failure}
-	}
-	var malformed *mcpruntime.MalformedResponseError
-	if errors.As(err, &malformed) {
-		failure.Kind = planner.FailureMalformedResult
-		failure.Recovery.Action = planner.RecoveryFinish
-		return planner.ToolResult{Name: toolName, Failure: failure}
-	}
-	var internal *mcpruntime.InternalError
-	if errors.As(err, &internal) {
-		failure.Kind = planner.FailureInternal
-		failure.Recovery.Action = planner.RecoveryFinish
-		return planner.ToolResult{Name: toolName, Failure: failure}
-	}
-	var execution *mcpruntime.ToolExecutionError
-	if errors.As(err, &execution) {
-		failure.Kind = planner.FailureDomainRejection
-		return planner.ToolResult{Name: toolName, Failure: failure}
-	}
-	var rpcErr *mcpruntime.Error
-	if errors.As(err, &rpcErr) {
-		switch rpcErr.Code {
-		case mcpruntime.JSONRPCInvalidParams:
-			failure = {{ .Register.HelperName }}CorrectionFailure(string(toolName), input, err)
-		case mcpruntime.JSONRPCMethodNotFound:
-			failure = &planner.ToolFailure{
-				Kind:  planner.FailureInvalidCall,
-				Error: planner.ToolErrorFromError(err),
-				Recovery: planner.RecoveryDirective{
-					Action: planner.RecoveryReplan,
-				},
-			}
-		}
-	}
-	return planner.ToolResult{Name: toolName, Failure: failure}
+// {{ .Register.HelperName }}HandleError uses the runtime's MCP error rules. The
+// runtime adds the retained model input and registered example when needed.
+func {{ .Register.HelperName }}HandleError(toolName tools.Ident, _ rawjson.Message, err error) planner.ToolResult {
+	return *agentsruntime.MCPCallFailure(toolName, err)
 }
 
-// {{ .Register.HelperName }}CorrectionFailure attaches the exact rejected input
-// and the generated example for one MCP tool payload.
-func {{ .Register.HelperName }}CorrectionFailure(toolName string, input rawjson.Message, err error) *planner.ToolFailure {
-	var example rawjson.Message
-	switch toolName {
-{{- range .Register.Tools }}
-	case {{ printf "%q" .ID }}:
-		example = rawjson.Message({{ printf "%q" .ExampleArgs }})
-{{- end }}
-	}
-	return &planner.ToolFailure{
-		Kind:  planner.FailureInvalidCall,
-		Error: planner.ToolErrorFromError(err),
-		Recovery: planner.RecoveryDirective{
-			Action:      planner.RecoveryCorrectCall,
-			PriorInput:  append(rawjson.Message(nil), input...),
-			ExampleJSON: example,
-		},
-	}
+// {{ .Register.HelperName }}CorrectionFailure keeps the generated helper used by
+// existing plugins. The runtime adds the retained input and registered example.
+func {{ .Register.HelperName }}CorrectionFailure(toolName string, _ rawjson.Message, err error) *planner.ToolFailure {
+	rpcErr := &mcpruntime.Error{Code: mcpruntime.JSONRPCInvalidParams, Message: err.Error()}
+	return agentsruntime.MCPCallFailure(tools.Ident(toolName), rpcErr).Failure
 }

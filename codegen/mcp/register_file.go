@@ -10,9 +10,9 @@ func registerFile(data *AdapterData) *codegen.File {
 	if data == nil || data.Register == nil {
 		return nil
 	}
-	svcPkg := "mcp_" + codegen.SnakeCase(data.ServiceName)
-	path := filepath.Join(codegen.Gendir, svcPkg, "register.go")
+	path := filepath.Join(codegen.Gendir, data.mcpPathName, "register.go")
 	sections := []*codegen.SectionTemplate{
+		codegen.Header("MCP tool registration helpers", data.MCPPackage, data.registerImports),
 		{
 			Name:   "mcp-register",
 			Source: mcpTemplates.Read("mcp_register"),

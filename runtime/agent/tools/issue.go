@@ -161,17 +161,13 @@ func FieldDescriptionsForIssues(
 	for _, issue := range issues {
 		fields := []string{issue.Field}
 		if issue.Constraint == "unknown_field" {
-			prefix := ""
-			if separator := strings.LastIndexByte(issue.Field, '.'); separator >= 0 {
-				prefix = issue.Field[:separator+1]
-			}
 			for _, allowed := range issue.Allowed {
-				fields = append(fields, prefix+allowed)
+				fields = append(fields, siblingFieldPath(issue.Field, allowed))
 			}
 		}
 		for _, field := range fields {
 			for _, source := range descriptions {
-				if description := source[field]; description != "" {
+				if description, ok := LookupFieldMetadata(source, field); ok && description != "" {
 					selected[field] = description
 					break
 				}
@@ -182,6 +178,26 @@ func FieldDescriptionsForIssues(
 		return nil
 	}
 	return selected
+}
+
+// siblingFieldPath replaces the final field name while preserving the path
+// format used by the generated validation issue.
+func siblingFieldPath(path, sibling string) string {
+	if strings.HasPrefix(path, "/") {
+		if separator := strings.LastIndexByte(path, '/'); separator >= 0 {
+			return path[:separator+1] + escapeJSONPointerToken(sibling)
+		}
+	}
+	if separator := strings.LastIndexByte(path, '.'); separator >= 0 {
+		return path[:separator+1] + sibling
+	}
+	return sibling
+}
+
+// escapeJSONPointerToken keeps one field name inside an RFC 6901 JSON Pointer.
+func escapeJSONPointerToken(token string) string {
+	token = strings.ReplaceAll(token, "~", "~0")
+	return strings.ReplaceAll(token, "/", "~1")
 }
 
 // cloneStringMap copies field descriptions so errors own their metadata.

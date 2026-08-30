@@ -1,0 +1,55 @@
+// Package bootstrap wires the goa-ai runtime and registers generated agents.
+// Goa creates this file only when it does not already exist. The application
+// owns all later edits.
+package bootstrap
+
+import (
+	"context"
+	"flag"
+	"fmt"
+
+	context2 "generated.local/gen/alpha/agents/context"
+	plannercontext "generated.local/internal/agents/context/planner"
+	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
+	"goa.design/goa-ai/runtime/agent/storage"
+	mcpruntime "goa.design/goa-ai/runtime/mcp"
+)
+
+// Define flags for MCP endpoints (if any). Pass values via your cmd main.
+var (
+	mcpCalcCoreEndpoint = flag.String("mcp-calc-core-endpoint", "", "MCP core HTTP endpoint (e.g., http://127.0.0.1:8080/rpc)")
+)
+
+// New constructs a runtime with the host-owned store and registers all agents
+// for this service. Replace the example planner and tool executors as you adopt
+// production wiring.
+func New(ctx context.Context, store storage.Store) (*agentsruntime.Runtime, func(), error) {
+	rt := agentsruntime.New(store)
+	cleanup := func() {}
+
+	// Register agents with example planners. Replace with your own planner impls.
+	{
+		cfg := context2.ContextAgentConfig{Planner: plannercontext.New()}
+		// Configure MCP callers for external toolsets.
+		cfg.MCPCallers = map[string]mcpruntime.Caller{}
+		if mcpCalcCoreEndpoint != nil && *mcpCalcCoreEndpoint != "" {
+			caller, err := mcpruntime.NewHTTPCaller(ctx, mcpruntime.HTTPOptions{
+				Endpoint:   *mcpCalcCoreEndpoint,
+				ClientInfo: mcpruntime.ClientInfo{Name: "alpha", Version: "0.0.1"},
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+			cfg.MCPCallers[context2.ContextCalcServiceCoreSuiteToolsetID] = caller
+		} else {
+			cfg.MCPCallers[context2.ContextCalcServiceCoreSuiteToolsetID] = mcpruntime.CallerFunc(func(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
+				return mcpruntime.CallResponse{}, fmt.Errorf("configure MCP caller for %s via -mcp-calc-core-endpoint flag", "core")
+			})
+		}
+		if err := context2.RegisterContextAgent(ctx, rt, cfg); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return rt, cleanup, nil
+}

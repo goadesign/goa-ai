@@ -1,16 +1,11 @@
-// Package runtime loads planner-facing tool outputs from the canonical run log
-// after compact planner activity inputs cross the workflow boundary.
+// Package runtime loads the full tool outputs that planner activities need from
+// stored run records.
 //
-// Contract:
-//   - `api.ToolOutputRef` carries the exact recording run and tool-call identity
-//     across the plan activity boundary.
-//   - Canonical tool payload lives in the durable run log via
-//     `ToolCallScheduledEvent`.
-//   - Canonical planner-visible tool outcome state lives in the durable run log
-//     via `ToolResultReceivedEvent`.
-//   - Planner code receives fully hydrated `planner.ToolOutput` values. Missing or
-//     inconsistent canonical run-log entries are invariant violations and fail
-//     fast.
+// A planner activity receives only the run IDs and tool-call ID in an
+// `api.ToolOutputRef`. The runtime loads the matching payload from
+// `ToolCallScheduledEvent` and the matching outcome from
+// `ToolResultReceivedEvent`. It returns a complete `planner.ToolOutput` or an
+// error when either stored record is missing or inconsistent.
 package runtime
 
 import (
@@ -22,6 +17,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type canonicalToolEvents struct {
@@ -29,16 +25,12 @@ type canonicalToolEvents struct {
 	result    *hooks.ToolResultReceivedEvent
 }
 
-// loadPlannerToolOutputs hydrates canonical planner-facing tool outputs from the
-// run log using workflow-safe tool-output references.
+// loadPlannerToolOutputs rebuilds planner tool outputs from their stored run
+// records.
 func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOutputRef) ([]*planner.ToolOutput, error) {
 	if len(refs) == 0 {
 		return nil, nil
 	}
-	if r.RunEventStore == nil {
-		return nil, fmt.Errorf("runtime: run event store is nil")
-	}
-
 	wantedByRun := make(map[string]map[string]struct{})
 	seen := make(map[string]struct{}, len(refs))
 	for idx, ref := range refs {
@@ -77,7 +69,7 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOu
 
 	outputs := make([]*planner.ToolOutput, 0, len(refs))
 	for _, ref := range refs {
-		output, err := plannerToolOutputFromCanonicalEvents(
+		output, err := r.plannerToolOutputFromCanonicalEvents(
 			ref.CallRunID,
 			ref.ResultRunID,
 			ref.ToolCallID,
@@ -92,9 +84,9 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOu
 	return outputs, nil
 }
 
-// plannerToolOutputFromCanonicalEvents constructs one planner ToolOutput from
-// canonical scheduled/result events in the run log.
-func plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID string, callEvents, resultEvents *canonicalToolEvents) (*planner.ToolOutput, error) {
+// plannerToolOutputFromCanonicalEvents builds one planner output from the
+// stored call and result events.
+func (r *Runtime) plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID string, callEvents, resultEvents *canonicalToolEvents) (*planner.ToolOutput, error) {
 	if callEvents == nil {
 		return nil, fmt.Errorf("runtime: missing canonical tool history in run log (run_id=%s tool_call_id=%s)", callRunID, toolCallID)
 	}
@@ -130,42 +122,48 @@ func plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID str
 		ModelToolCallID:            callEvents.scheduled.ModelToolCallID,
 		ContinuationRootToolCallID: callEvents.scheduled.ContinuationRootToolCallID,
 		Payload:                    append(rawjson.Message(nil), callEvents.scheduled.Payload...),
-		ResultBytes:                resultEvents.result.ResultBytes,
-		ResultOmitted:              resultEvents.result.ResultOmitted,
-		ResultOmittedReason:        resultEvents.result.ResultOmittedReason,
 		ServerData:                 append(rawjson.Message(nil), resultEvents.result.ServerData...),
 		Bounds:                     resultEvents.result.Bounds,
 		Failure:                    resultEvents.result.Failure,
 		Telemetry:                  resultEvents.result.Telemetry,
 	}
-	if resultEvents.result.Failure == nil {
-		if output.ResultOmitted {
-			return nil, fmt.Errorf(
-				"runtime: canonical successful tool result is omitted (run_id=%s tool_call_id=%s tool=%s)",
-				resultRunID,
-				toolCallID,
-				output.Name,
-			)
+	resultJSON := resultEvents.result.ResultJSON
+	if len(resultJSON) != resultEvents.result.ResultBytes {
+		return nil, fmt.Errorf(
+			"runtime: canonical tool result size mismatch (run_id=%s tool_call_id=%s tool=%s got=%d want=%d)",
+			resultRunID,
+			toolCallID,
+			output.Name,
+			len(resultJSON),
+			resultEvents.result.ResultBytes,
+		)
+	}
+	var spec *tools.ToolSpec
+	if output.Failure == nil {
+		registered, ok := r.toolSpec(output.Name)
+		if !ok {
+			return nil, fmt.Errorf("runtime: canonical tool history references unregistered tool %q", output.Name)
 		}
-		if len(resultEvents.result.ResultJSON) == 0 {
-			return nil, fmt.Errorf(
-				"runtime: canonical successful tool result is empty (run_id=%s tool_call_id=%s tool=%s)",
-				resultRunID,
-				toolCallID,
-				output.Name,
-			)
-		}
-		if len(resultEvents.result.ResultJSON) != output.ResultBytes {
-			return nil, fmt.Errorf(
-				"runtime: canonical tool result size mismatch (run_id=%s tool_call_id=%s tool=%s got=%d want=%d)",
-				resultRunID,
-				toolCallID,
-				output.Name,
-				len(resultEvents.result.ResultJSON),
-				output.ResultBytes,
-			)
-		}
-		output.Result = append(rawjson.Message(nil), resultEvents.result.ResultJSON...)
+		spec = &registered
+	}
+	if _, err := validatePersistedToolResult(
+		spec,
+		ToolCall{Name: output.Name, ToolCallID: output.ToolCallID},
+		resultJSON,
+		output.ServerData,
+		output.Bounds,
+		output.Failure,
+	); err != nil {
+		return nil, fmt.Errorf(
+			"runtime: canonical tool result is invalid (run_id=%s tool_call_id=%s tool=%s): %w",
+			resultRunID,
+			toolCallID,
+			output.Name,
+			err,
+		)
+	}
+	if output.Failure == nil {
+		output.Result = append(rawjson.Message(nil), resultJSON...)
 	}
 	return output, nil
 }
@@ -180,7 +178,7 @@ func (r *Runtime) loadCanonicalToolEvents(ctx context.Context, runID string, wan
 	events := make(map[string]*canonicalToolEvents, len(wanted))
 
 	for {
-		page, err := r.RunEventStore.List(ctx, runID, cursor, pageSize)
+		page, err := r.Store.ListRunRecords(ctx, runID, cursor, pageSize)
 		if err != nil {
 			return nil, fmt.Errorf("runtime: list run log for tool hydration (run_id=%s): %w", runID, err)
 		}

@@ -1,0 +1,315 @@
+// ReportsCoreToolsetToolSpecs contains the tool specifications for the core toolset.
+var ReportsCoreToolsetToolSpecs = []tools.ToolSpec{
+	{
+		Name:        "summarize",
+		Description: "Summarize a report",
+		Payload: tools.TypeSpec{
+			Name:        "*reports.SummarizePayload",
+			Schema:      []byte("{\"type\":\"object\",\"additionalProperties\":false}"),
+			ExampleJSON: []byte("{\"text\":\"report\"}"),
+			Codec: tools.JSONCodec[any]{
+				ToJSON: func(v any) ([]byte, error) {
+					value, ok := v.(*reports.SummarizePayload)
+					if !ok {
+						return nil, errors.New("tool reports.core.summarize payload must be *reports.SummarizePayload")
+					}
+					return mcpcodec.EncodeSummarizePayload(value)
+				},
+				FromJSON: func(data []byte) (any, error) {
+					return mcpcodec.DecodeSummarizePayload(data)
+				},
+			},
+		},
+		Result: tools.TypeSpec{
+			Name:   "*reports.SummarizeResult",
+			Schema: []byte("{\"type\":\"object\",\"additionalProperties\":false}"),
+			Codec: tools.JSONCodec[any]{
+				ToJSON: func(v any) ([]byte, error) {
+					value, ok := v.(*reports.SummarizeResult)
+					if !ok {
+						return nil, errors.New("tool reports.core.summarize result must be *reports.SummarizeResult")
+					}
+					return mcpcodec.EncodeSummarizeResult(value)
+				},
+				FromJSON: func(data []byte) (any, error) {
+					return mcpcodec.DecodeSummarizeResult(data)
+				},
+			},
+		},
+	},
+	{
+		Name:        "title",
+		Description: "Return a title",
+		Payload: tools.TypeSpec{
+			Name:        "any",
+			Schema:      []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+			ExampleJSON: []byte("{}"),
+			Codec: tools.JSONCodec[any]{
+				ToJSON: func(v any) ([]byte, error) {
+					if v != nil {
+						return nil, errors.New("tool reports.core.title does not accept a payload")
+					}
+					return []byte("{}"), nil
+				},
+				FromJSON: func(data []byte) (any, error) {
+					if err := validateNoArguments(data); err != nil {
+						return nil, err
+					}
+					return nil, nil
+				},
+			},
+		},
+		Result: tools.TypeSpec{
+			Name:   "string",
+			Schema: []byte("{\"type\":\"string\"}"),
+			Codec: tools.JSONCodec[any]{
+				ToJSON: func(v any) ([]byte, error) {
+					value, ok := v.(string)
+					if !ok {
+						return nil, errors.New("tool reports.core.title result must be string")
+					}
+					return mcpcodec.EncodeTitleResult(value)
+				},
+				FromJSON: func(data []byte) (any, error) {
+					return mcpcodec.DecodeTitleResult(data)
+				},
+			},
+		},
+	},
+	{
+		Name:        "tags",
+		Description: "Return report tags",
+		Payload: tools.TypeSpec{
+			Name:        "any",
+			Schema:      []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+			ExampleJSON: []byte("{}"),
+			Codec: tools.JSONCodec[any]{
+				ToJSON: func(v any) ([]byte, error) {
+					if v != nil {
+						return nil, errors.New("tool reports.core.tags does not accept a payload")
+					}
+					return []byte("{}"), nil
+				},
+				FromJSON: func(data []byte) (any, error) {
+					if err := validateNoArguments(data); err != nil {
+						return nil, err
+					}
+					return nil, nil
+				},
+			},
+		},
+		Result: tools.TypeSpec{
+			Name:   "[]string",
+			Schema: []byte("{\"type\":\"array\",\"items\":{\"type\":\"string\"}}"),
+			Codec: tools.JSONCodec[any]{
+				ToJSON: func(v any) ([]byte, error) {
+					value, ok := v.([]string)
+					if !ok {
+						return nil, errors.New("tool reports.core.tags result must be []string")
+					}
+					return mcpcodec.EncodeTagsResult(value)
+				},
+				FromJSON: func(data []byte) (any, error) {
+					return mcpcodec.DecodeTagsResult(data)
+				},
+			},
+		},
+	},
+	{
+		Name:        "notify",
+		Description: "Send a notification",
+		Payload: tools.TypeSpec{
+			Name:        "any",
+			Schema:      []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+			ExampleJSON: []byte("{}"),
+			Codec: tools.JSONCodec[any]{
+				ToJSON: func(v any) ([]byte, error) {
+					if v != nil {
+						return nil, errors.New("tool reports.core.notify does not accept a payload")
+					}
+					return []byte("{}"), nil
+				},
+				FromJSON: func(data []byte) (any, error) {
+					if err := validateNoArguments(data); err != nil {
+						return nil, err
+					}
+					return nil, nil
+				},
+			},
+		},
+	},
+}
+
+// ReportsCoreToolsetToolMetadata describes each tool in the core toolset.
+var ReportsCoreToolsetToolMetadata = []policy.ToolMetadata{
+	{
+		ID:          "summarize",
+		Title:       "Summarize",
+		Description: "Summarize a report",
+		BudgetClass: policy.ToolBudgetClassBudgeted,
+	},
+	{
+		ID:          "title",
+		Title:       "Title",
+		Description: "Return a title",
+		BudgetClass: policy.ToolBudgetClassBudgeted,
+	},
+	{
+		ID:          "tags",
+		Title:       "Tags",
+		Description: "Return report tags",
+		BudgetClass: policy.ToolBudgetClassBudgeted,
+	},
+	{
+		ID:          "notify",
+		Title:       "Notify",
+		Description: "Send a notification",
+		BudgetClass: policy.ToolBudgetClassBudgeted,
+	},
+}
+
+// ReportsCoreToolsetToolMetadataByName returns the description for the named MCP tool.
+func ReportsCoreToolsetToolMetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
+	switch name {
+	case "summarize":
+		return ReportsCoreToolsetToolMetadata[0], true
+	case "title":
+		return ReportsCoreToolsetToolMetadata[1], true
+	case "tags":
+		return ReportsCoreToolsetToolMetadata[2], true
+	case "notify":
+		return ReportsCoreToolsetToolMetadata[3], true
+	default:
+		return policy.ToolMetadata{}, false
+	}
+}
+
+// RegisterReportsCoreToolset registers the core toolset with the runtime.
+// The caller parameter provides the MCP client for making remote calls.
+func RegisterReportsCoreToolset(ctx context.Context, rt *agentsruntime.Runtime, caller mcpruntime.Caller) error {
+	if rt == nil {
+		return errors.New("runtime is required")
+	}
+	if caller == nil {
+		return errors.New("mcp caller is required")
+	}
+
+	exec := func(ctx context.Context, call agentsruntime.ToolCall) (planner.ToolResult, error) {
+		fullName := call.Name
+		toolName := string(fullName)
+		const suitePrefix = "reports.core" + "."
+		if strings.HasPrefix(toolName, suitePrefix) {
+			toolName = toolName[len(suitePrefix):]
+		}
+
+		resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
+			Tool:    toolName,
+			Payload: json.RawMessage(call.Payload),
+		})
+		if err != nil {
+			return ReportsCoreToolsetHandleError(fullName, call.Payload, err), nil
+		}
+
+		var value any
+		switch toolName {
+		case "summarize":
+			if len(resp.StructuredContent) == 0 {
+				return ReportsCoreToolsetHandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response is missing structured content")),
+				), nil
+			}
+			value, err = mcpcodec.DecodeSummarizeResult(resp.StructuredContent)
+		case "title":
+			if len(resp.Content) != 1 {
+				return ReportsCoreToolsetHandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response must contain one text result")),
+				), nil
+			}
+			text, ok := resp.Content[0].(*mcpruntime.TextContent)
+			if !ok {
+				return ReportsCoreToolsetHandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response result must be text")),
+				), nil
+			}
+			encoded, err := json.Marshal(text.Text)
+			if err != nil {
+				return ReportsCoreToolsetHandleError(fullName, call.Payload, err), nil
+			}
+			value, err = mcpcodec.DecodeTitleResult(encoded)
+		case "tags":
+			if len(resp.Content) != 1 {
+				return ReportsCoreToolsetHandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response must contain one text result")),
+				), nil
+			}
+			text, ok := resp.Content[0].(*mcpruntime.TextContent)
+			if !ok {
+				return ReportsCoreToolsetHandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response result must be text")),
+				), nil
+			}
+			value, err = mcpcodec.DecodeTagsResult([]byte(text.Text))
+		case "notify":
+			if len(resp.Content) != 0 || len(resp.StructuredContent) != 0 {
+				return ReportsCoreToolsetHandleError(
+					fullName,
+					call.Payload,
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response for a method without a result must be empty")),
+				), nil
+			}
+			break
+		default:
+			return planner.ToolResult{}, errors.New("generated MCP toolset does not define " + toolName)
+		}
+		if err != nil {
+			return ReportsCoreToolsetHandleError(
+				fullName,
+				call.Payload,
+				mcpruntime.NewMalformedResponseError(err),
+			), nil
+		}
+
+		return planner.ToolResult{Name: fullName, Result: value}, nil
+	}
+
+	return rt.RegisterToolset(agentsruntime.ToolsetRegistration{
+		Name:        "reports.core",
+		Description: "Report tools",
+		Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
+			if call == nil {
+				return nil, errors.New("tool request is nil")
+			}
+			out, err := exec(ctx, *call)
+			if err != nil {
+				return nil, err
+			}
+			return agentsruntime.Executed(&out), nil
+		},
+		Specs:              ReportsCoreToolsetToolSpecs,
+		ToolMetadataLookup: ReportsCoreToolsetToolMetadataByName,
+		DecodeInExecutor:   true,
+	})
+}
+
+// ReportsCoreToolsetHandleError uses the runtime's MCP error rules. The
+// runtime adds the retained model input and registered example when needed.
+func ReportsCoreToolsetHandleError(toolName tools.Ident, _ rawjson.Message, err error) planner.ToolResult {
+	return *agentsruntime.MCPCallFailure(toolName, err)
+}
+
+// ReportsCoreToolsetCorrectionFailure keeps the generated helper used by
+// existing plugins. The runtime adds the retained input and registered example.
+func ReportsCoreToolsetCorrectionFailure(toolName string, _ rawjson.Message, err error) *planner.ToolFailure {
+	rpcErr := &mcpruntime.Error{Code: mcpruntime.JSONRPCInvalidParams, Message: err.Error()}
+	return agentsruntime.MCPCallFailure(tools.Ident(toolName), rpcErr).Failure
+}

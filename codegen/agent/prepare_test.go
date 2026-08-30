@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	agentsExpr "goa.design/goa-ai/expr/agent"
+	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
@@ -35,7 +36,7 @@ func TestPrepare_ForceGenerateToolTypesRecursively(t *testing.T) {
 	require.Nil(t, goaexpr.Root.UserType("B"))
 
 	// Run Prepare
-	err := Prepare("example.com/mod", nil)
+	err := Prepare("example.com/mod", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
 
 	// Both types must be force-generated and present in Root.Types.
@@ -95,7 +96,7 @@ func TestPrepare_ForceGenerateReferencedUserTypes(t *testing.T) {
 	ag.Used.Toolsets = []*agentsExpr.ToolsetExpr{ts}
 	agentsExpr.Root.Agents = []*agentsExpr.AgentExpr{ag}
 
-	err := Prepare("example.com/mod", nil)
+	err := Prepare("example.com/mod", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
 
 	got := goaexpr.Root.UserType("TaskStepStatus")
@@ -110,13 +111,23 @@ func TestPrepare_DoesNotSynthesizeUnionBranchTypes(t *testing.T) {
 	agentsExpr.Root = &agentsExpr.RootExpr{}
 	goaexpr.Root.Types = nil
 
+	branch := func(name string, primitive goaexpr.Primitive) *goaexpr.NamedAttributeExpr {
+		value := &goaexpr.AttributeExpr{Type: primitive}
+		return &goaexpr.NamedAttributeExpr{
+			Name: name,
+			Attribute: &goaexpr.AttributeExpr{Type: &goaexpr.UserTypeExpr{
+				AttributeExpr: value,
+				TypeName:      "Value" + goaexpr.Title(name),
+			}},
+		}
+	}
 	u := &goaexpr.Union{
 		TypeName: "Value",
 		Values: []*goaexpr.NamedAttributeExpr{
-			{Name: "number_value", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.Float64}},
-			{Name: "boolean_value", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.Boolean}},
-			{Name: "enum_value", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.String}},
-			{Name: "text_value", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.String}},
+			branch("number_value", goaexpr.Float64),
+			branch("boolean_value", goaexpr.Boolean),
+			branch("enum_value", goaexpr.String),
+			branch("text_value", goaexpr.String),
 		},
 	}
 	propertyValueObj := &goaexpr.Object{
@@ -146,11 +157,12 @@ func TestPrepare_DoesNotSynthesizeUnionBranchTypes(t *testing.T) {
 	ag.Used.Toolsets = []*agentsExpr.ToolsetExpr{ts}
 	agentsExpr.Root.Agents = []*agentsExpr.AgentExpr{ag}
 
-	err := Prepare("example.com/mod", nil)
+	err := Prepare("example.com/mod", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
 
 	got := goaexpr.Root.UserType("PropertyValue")
 	require.NotNil(t, got)
+	require.Len(t, goaexpr.Root.Types, 1)
 	_, ok := got.Attribute().Meta["type:generate:force"]
 	require.True(t, ok, "PropertyValue must be marked type:generate:force")
 	require.Equal(t, []string{"false"}, got.Attribute().Meta["openapi:generate"])
@@ -188,7 +200,7 @@ func TestPrepare_PreservesExplicitOpenAPIGenerateMetadata(t *testing.T) {
 	ag.Used.Toolsets = []*agentsExpr.ToolsetExpr{ts}
 	agentsExpr.Root.Agents = []*agentsExpr.AgentExpr{ag}
 
-	require.NoError(t, Prepare("example.com/mod", nil))
+	require.NoError(t, Prepare("example.com/mod", []eval.Root{goaexpr.Root, agentsExpr.Root}))
 
 	got := goaexpr.Root.UserType("PublicToolType")
 	require.NotNil(t, got)

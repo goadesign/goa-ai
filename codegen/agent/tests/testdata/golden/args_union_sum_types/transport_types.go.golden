@@ -14,9 +14,9 @@ type (
 	// the public tool type.
 	EchoPayloadTransport struct {
 		// Request identifier
-		ID            *string         `json:"id"`
-		Value         *Value2         `json:"value"`
-		OptionalValue *OptionalValue2 `json:"optional_value,omitempty"`
+		ID            *string        `json:"id"`
+		Value         *Value         `json:"value"`
+		OptionalValue *OptionalValue `json:"optional_value,omitempty"`
 	}
 	// EchoResultTransport is the internal JSON transport type for EchoResult.
 	// It lives in the toolset-local http package and is used only for JSON
@@ -24,9 +24,9 @@ type (
 	// the public tool type.
 	EchoResultTransport struct {
 		// Request identifier
-		ID            *string         `json:"id"`
-		Value         *Value2         `json:"value"`
-		OptionalValue *OptionalValue2 `json:"optional_value,omitempty"`
+		ID            *string        `json:"id"`
+		Value         *Value         `json:"value"`
+		OptionalValue *OptionalValue `json:"optional_value,omitempty"`
 	}
 	// OptionalValueNumberTransport is the internal JSON transport type for OptionalValueNumberTransport.
 	// It lives in the toolset-local http package and is used only for JSON

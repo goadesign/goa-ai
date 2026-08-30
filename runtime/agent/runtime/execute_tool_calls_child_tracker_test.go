@@ -10,7 +10,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 
@@ -19,7 +18,7 @@ import (
 
 func TestExecuteToolCalls_ChildTrackerUpdateEmittedOnIncrease(t *testing.T) {
 	recorder := &recordingHooks{}
-	toolSpec := newAnyJSONSpec("inline.ts.t", "inline.ts")
+	toolSpec := newAnyJSONSpec("inline.ts.t")
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"inline.ts": {
@@ -33,11 +32,11 @@ func TestExecuteToolCalls_ChildTrackerUpdateEmittedOnIncrease(t *testing.T) {
 				}),
 			},
 		},
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           recorder,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
+		Bus:     recorder,
 	}
 	seedTestToolSpecs(rt, toolSpec)
 

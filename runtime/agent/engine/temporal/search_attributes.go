@@ -4,57 +4,43 @@
 package temporal
 
 import (
-	"fmt"
 	"time"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	temporalsdk "go.temporal.io/sdk/temporal"
+
+	"goa.design/goa-ai/runtime/agent/engine/internal/startrecipe"
 )
 
-// convertSearchAttributes maps the engine's generic visibility metadata
-// contract into Temporal's typed search-attribute API at the adapter boundary.
-func convertSearchAttributes(attributes map[string]any) (temporalsdk.SearchAttributes, error) {
+// convertSearchAttributes builds Temporal's typed start options from the same
+// normalized values and payloads included in the shared start recipe.
+func convertSearchAttributes(attributes []startrecipe.SearchAttribute) temporalsdk.SearchAttributes {
 	updates := make([]temporalsdk.SearchAttributeUpdate, 0, len(attributes))
-	for name, value := range attributes {
-		update, err := convertSearchAttribute(name, value)
-		if err != nil {
-			return temporalsdk.SearchAttributes{}, err
-		}
-		updates = append(updates, update)
+	for _, attribute := range attributes {
+		updates = append(updates, convertSearchAttribute(attribute))
 	}
-	return temporalsdk.NewSearchAttributes(updates...), nil
+	return temporalsdk.NewSearchAttributes(updates...)
 }
 
-// convertSearchAttribute infers the Temporal search-attribute key from the Go
-// value type. The engine contract does not distinguish text from keyword
-// strings, so strings are emitted as keyword attributes because runtime callers
-// use them as exact-match visibility identifiers.
-func convertSearchAttribute(name string, value any) (temporalsdk.SearchAttributeUpdate, error) {
-	switch typed := value.(type) {
-	case nil:
-		return nil, fmt.Errorf("temporal engine: search attribute %q has nil value", name)
-	case string:
-		return temporalsdk.NewSearchAttributeKeyKeyword(name).ValueSet(typed), nil
-	case bool:
-		return temporalsdk.NewSearchAttributeKeyBool(name).ValueSet(typed), nil
-	case int:
-		return temporalsdk.NewSearchAttributeKeyInt64(name).ValueSet(int64(typed)), nil
-	case int8:
-		return temporalsdk.NewSearchAttributeKeyInt64(name).ValueSet(int64(typed)), nil
-	case int16:
-		return temporalsdk.NewSearchAttributeKeyInt64(name).ValueSet(int64(typed)), nil
-	case int32:
-		return temporalsdk.NewSearchAttributeKeyInt64(name).ValueSet(int64(typed)), nil
-	case int64:
-		return temporalsdk.NewSearchAttributeKeyInt64(name).ValueSet(typed), nil
-	case float32:
-		return temporalsdk.NewSearchAttributeKeyFloat64(name).ValueSet(float64(typed)), nil
-	case float64:
-		return temporalsdk.NewSearchAttributeKeyFloat64(name).ValueSet(typed), nil
-	case time.Time:
-		return temporalsdk.NewSearchAttributeKeyTime(name).ValueSet(typed), nil
-	case []string:
-		return temporalsdk.NewSearchAttributeKeyKeywordList(name).ValueSet(typed), nil
+// convertSearchAttribute selects the typed key that matches the payload type
+// already validated by startrecipe.EncodeSearchAttributes.
+func convertSearchAttribute(attribute startrecipe.SearchAttribute) temporalsdk.SearchAttributeUpdate {
+	switch attribute.ValueType {
+	case enumspb.INDEXED_VALUE_TYPE_KEYWORD:
+		return temporalsdk.NewSearchAttributeKeyKeyword(attribute.Name).ValueSet(attribute.Value.(string))
+	case enumspb.INDEXED_VALUE_TYPE_BOOL:
+		return temporalsdk.NewSearchAttributeKeyBool(attribute.Name).ValueSet(attribute.Value.(bool))
+	case enumspb.INDEXED_VALUE_TYPE_INT:
+		return temporalsdk.NewSearchAttributeKeyInt64(attribute.Name).ValueSet(attribute.Value.(int64))
+	case enumspb.INDEXED_VALUE_TYPE_DOUBLE:
+		return temporalsdk.NewSearchAttributeKeyFloat64(attribute.Name).ValueSet(attribute.Value.(float64))
+	case enumspb.INDEXED_VALUE_TYPE_DATETIME:
+		return temporalsdk.NewSearchAttributeKeyTime(attribute.Name).ValueSet(attribute.Value.(time.Time))
+	case enumspb.INDEXED_VALUE_TYPE_KEYWORD_LIST:
+		return temporalsdk.NewSearchAttributeKeyKeywordList(attribute.Name).ValueSet(attribute.Value.([]string))
+	case enumspb.INDEXED_VALUE_TYPE_UNSPECIFIED, enumspb.INDEXED_VALUE_TYPE_TEXT:
+		panic("start recipe returned a search attribute type not supported by the engine contract")
 	default:
-		return nil, fmt.Errorf("temporal engine: search attribute %q has unsupported type %T", name, value)
+		panic("start recipe returned an unsupported Temporal search attribute type")
 	}
 }

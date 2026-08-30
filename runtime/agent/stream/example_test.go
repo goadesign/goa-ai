@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
+	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 	"goa.design/goa-ai/runtime/agent/stream"
 	streambridge "goa.design/goa-ai/runtime/agent/stream/bridge"
 )
@@ -27,7 +27,7 @@ func Example_broadcast() {
 	ctx := context.Background()
 	sink := &collectSink{}
 
-	rt := agentsruntime.New(agentsruntime.WithRunEventStore(runloginmem.New()))
+	rt := agentsruntime.New(storageinmem.New())
 
 	// Attach a subscriber that forwards user-facing hook events to the sink.
 	sub, _ := streambridge.Register(rt.Bus, sink)

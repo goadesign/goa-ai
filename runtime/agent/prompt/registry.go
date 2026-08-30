@@ -12,21 +12,20 @@ import (
 type (
 	// RenderEvent is emitted by Registry after successful prompt rendering.
 	RenderEvent struct {
+		// PromptID identifies the prompt whose rendered text was consumed.
 		PromptID Ident
-		Version  string
-		Scope    Scope
+		// Version identifies the exact baseline or override content that rendered.
+		Version string
+		// Scope contains the values used to choose a stored prompt override.
+		Scope Scope
 	}
-
-	// RenderObserver receives prompt render events.
-	RenderObserver func(ctx context.Context, event RenderEvent)
 
 	// Registry keeps immutable baseline prompt specs and resolves runtime content
 	// by layering scoped store overrides on top.
 	Registry struct {
-		mu       sync.RWMutex
-		specs    map[Ident]PromptSpec
-		store    Store
-		observer RenderObserver
+		mu    sync.RWMutex
+		specs map[Ident]PromptSpec
+		store Store
 	}
 )
 
@@ -129,20 +128,6 @@ func (r *Registry) List() []PromptSpec {
 	return specs
 }
 
-// SetObserver configures the observer for successful render events.
-func (r *Registry) SetObserver(observer RenderObserver) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.observer = observer
-}
-
-// SetStore updates the override store used by Render.
-func (r *Registry) SetStore(store Store) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.store = store
-}
-
 // lookupSpec resolves one prompt spec by ID.
 func (r *Registry) lookupSpec(id Ident) (PromptSpec, error) {
 	r.mu.RLock()
@@ -155,15 +140,11 @@ func (r *Registry) lookupSpec(id Ident) (PromptSpec, error) {
 	return clonePromptSpec(spec), nil
 }
 
-// publishRender emits render events if an observer is configured.
+// publishRender records the resolved prompt when the caller supplied a recorder.
 func (r *Registry) publishRender(ctx context.Context, event RenderEvent) {
-	r.mu.RLock()
-	observer := r.observer
-	r.mu.RUnlock()
-	if observer == nil {
-		return
+	if recorder := renderRecorderFromContext(ctx); recorder != nil {
+		recorder.record(event)
 	}
-	observer(ctx, event)
 }
 
 // renderTemplate parses and executes one prompt template.

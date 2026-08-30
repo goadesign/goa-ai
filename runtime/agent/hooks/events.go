@@ -74,12 +74,11 @@ type (
 	// RunStartedEvent fires when a run begins execution.
 	RunStartedEvent struct {
 		baseEvent
-		// RunContext carries the execution metadata (run ID, attempt, labels, caps)
-		// for this run invocation.
-		RunContext run.Context
-		// Input is the initial payload passed to the run, typically containing
-		// messages and caller-provided metadata.
-		Input any
+		// ParentRunID identifies the parent of a child run. It is empty for a root
+		// or one-shot run.
+		ParentRunID string
+		// Labels contains the immutable labels assigned when the run started.
+		Labels map[string]string
 	}
 
 	// RunCompletedEvent fires after a run finishes without a suspension, whether
@@ -220,15 +219,9 @@ type (
 		// This is the canonical durable representation consumed by stream sinks,
 		// persistence layers, and planner resume hydration.
 		ResultJSON rawjson.Message
-		// ResultBytes is the size, in bytes, of the canonical JSON result payload
-		// before any workflow-boundary omission is applied.
+		// ResultBytes is the stored size of ResultJSON. Replay verifies this count
+		// before returning the result to a planner.
 		ResultBytes int
-		// ResultOmitted indicates that the canonical result payload was omitted
-		// from the workflow-safe envelope that produced this event.
-		ResultOmitted bool
-		// ResultOmittedReason provides a stable, machine-readable reason for omitting
-		// the canonical result payload. Empty when ResultOmitted is false.
-		ResultOmittedReason string
 		// ServerData carries server-only data emitted by tool providers. This payload
 		// must not be serialized into model provider requests and is treated as opaque
 		// JSON bytes by the runtime.
@@ -267,25 +260,6 @@ type (
 		// ExpectedChildrenTotal is the new count of expected child tools. This value
 		// grows as child tools are discovered dynamically during execution.
 		ExpectedChildrenTotal int
-	}
-
-	// ToolCallArgsDeltaEvent fires when a provider streams an incremental tool-call
-	// argument fragment while constructing the final tool input JSON.
-	//
-	// Contract:
-	//   - This event is best-effort and may be ignored or dropped entirely.
-	//   - Delta is not guaranteed to be valid JSON on its own.
-	//   - The canonical tool payload is still emitted via ToolCallScheduledEvent
-	//     and ToolResultReceivedEvent (and, at the model boundary, the finalized
-	//     tool call chunk).
-	ToolCallArgsDeltaEvent struct {
-		baseEvent
-		// ToolCallID is the provider-issued identifier for the tool call.
-		ToolCallID string
-		// ToolName is the canonical tool identifier when known.
-		ToolName tools.Ident
-		// Delta is a raw JSON fragment emitted while streaming tool input JSON.
-		Delta string
 	}
 
 	// PlannerNoteEvent fires when the planner emits an annotation or
@@ -564,15 +538,16 @@ const (
 	ErrorKindInternal = "internal"
 )
 
-// NewRunStartedEvent constructs a RunStartedEvent with the current
-// timestamp. RunContext and Input capture the initial run state.
-func NewRunStartedEvent(runID string, agentID agent.Ident, runContext run.Context, input any) *RunStartedEvent {
+// NewRunStartedEvent constructs the small immutable record that creates a run.
+// Messages and planner state use their dedicated records instead of being
+// duplicated here.
+func NewRunStartedEvent(runID string, agentID agent.Ident, sessionID, parentRunID string, labels map[string]string) *RunStartedEvent {
 	be := newBaseEvent(runID, agentID)
-	be.sessionID = runContext.SessionID
+	be.sessionID = sessionID
 	return &RunStartedEvent{
-		baseEvent:  be,
-		RunContext: runContext,
-		Input:      input,
+		baseEvent:   be,
+		ParentRunID: parentRunID,
+		Labels:      maps.Clone(labels),
 	}
 }
 
@@ -910,25 +885,23 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 // identifies the exact run that emitted the matching scheduled-call event;
 // runID identifies the run emitting this result. The canonical result JSON and
 // server-side data are stored exactly once here.
-func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID, callRunID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, resultBytes int, resultOmitted bool, resultOmittedReason string, serverData rawjson.Message, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, failure *planner.ToolFailure) *ToolResultReceivedEvent {
+func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID, callRunID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, serverData rawjson.Message, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, failure *planner.ToolFailure) *ToolResultReceivedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &ToolResultReceivedEvent{
-		baseEvent:           be,
-		CallRunID:           callRunID,
-		ToolCallID:          toolCallID,
-		ParentToolCallID:    parentToolCallID,
-		ToolName:            toolName,
-		ResultJSON:          resultJSON,
-		ResultBytes:         resultBytes,
-		ResultOmitted:       resultOmitted,
-		ResultOmittedReason: resultOmittedReason,
-		ServerData:          serverData,
-		ResultPreview:       resultPreview,
-		Bounds:              agent.CloneBounds(bounds),
-		Duration:            duration,
-		Telemetry:           telemetry,
-		Failure:             planner.CloneToolFailure(failure),
+		baseEvent:        be,
+		CallRunID:        callRunID,
+		ToolCallID:       toolCallID,
+		ParentToolCallID: parentToolCallID,
+		ToolName:         toolName,
+		ResultJSON:       resultJSON,
+		ResultBytes:      len(resultJSON),
+		ServerData:       serverData,
+		ResultPreview:    resultPreview,
+		Bounds:           agent.CloneBounds(bounds),
+		Duration:         duration,
+		Telemetry:        telemetry,
+		Failure:          planner.CloneToolFailure(failure),
 	}
 }
 
@@ -941,18 +914,6 @@ func NewToolCallUpdatedEvent(runID string, agentID agent.Ident, sessionID string
 		baseEvent:             be,
 		ToolCallID:            toolCallID,
 		ExpectedChildrenTotal: expectedChildrenTotal,
-	}
-}
-
-// NewToolCallArgsDeltaEvent constructs a ToolCallArgsDeltaEvent.
-func NewToolCallArgsDeltaEvent(runID string, agentID agent.Ident, sessionID string, toolCallID string, toolName tools.Ident, delta string) *ToolCallArgsDeltaEvent {
-	be := newBaseEvent(runID, agentID)
-	be.sessionID = sessionID
-	return &ToolCallArgsDeltaEvent{
-		baseEvent:  be,
-		ToolCallID: toolCallID,
-		ToolName:   toolName,
-		Delta:      delta,
 	}
 }
 
@@ -1276,7 +1237,6 @@ func (e *RunSuspendedEvent) Type() EventType       { return RunSuspended }
 func (e *ToolCallScheduledEvent) Type() EventType  { return ToolCallScheduled }
 func (e *ToolResultReceivedEvent) Type() EventType { return ToolResultReceived }
 func (e *ToolCallUpdatedEvent) Type() EventType    { return ToolCallUpdated }
-func (e *ToolCallArgsDeltaEvent) Type() EventType  { return ToolCallArgsDelta }
 func (e *PlannerNoteEvent) Type() EventType        { return PlannerNote }
 func (e *AssistantMessageEvent) Type() EventType   { return AssistantMessage }
 func (e *AssistantTurnCommittedEvent) Type() EventType {

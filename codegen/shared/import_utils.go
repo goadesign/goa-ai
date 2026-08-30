@@ -26,15 +26,19 @@ func JoinImportPath(genpkg, rel string) string {
 // and meta-type imports referenced by the given attribute expression.
 func GatherAttributeImports(genpkg string, att *expr.AttributeExpr) []*codegen.ImportSpec {
 	uniq := make(map[string]*codegen.ImportSpec)
+	seen := make(map[*expr.AttributeExpr]struct{})
 	var visit func(*expr.AttributeExpr)
 	visit = func(a *expr.AttributeExpr) {
 		if a == nil {
 			return
 		}
-		for _, im := range codegen.GetMetaTypeImports(a) {
-			if im != nil && im.Path != "" {
-				uniq[im.Path] = im
-			}
+		if _, ok := seen[a]; ok {
+			return
+		}
+		seen[a] = struct{}{}
+		_, im := codegen.GetMetaType(a)
+		if im != nil && im.Path != "" {
+			uniq[im.Path] = im
 		}
 		switch dt := a.Type.(type) {
 		case expr.UserType:

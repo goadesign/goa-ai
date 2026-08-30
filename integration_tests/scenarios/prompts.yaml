@@ -1,87 +1,64 @@
-# MCP Prompts Test Scenarios (new shape)
-
 scenarios:
   - name: prompts_list
-    defaults:
-      client: jsonrpc.mcp_assistant
     pre:
       auto_initialize: true
     steps:
       - name: list
         op: PromptsList
-        input: {}
         expect:
           status: success
           result:
             prompts:
-              - name: contextual_prompts
-                arguments:
-                  - { name: context, required: true }
-                  - { name: task, required: true }
+              - { name: "code_review", description: "Simple code review prompt" }
 
   - name: prompts_get_static
-    defaults:
-      client: jsonrpc.mcp_assistant
+    pre:
+      auto_initialize: true
+    steps:
+      - name: get
+        op: PromptsGet
+        input: { name: "code_review" }
+        expect:
+          status: success
+          result:
+            description: "Simple code review prompt"
+            messages:
+              - role: user
+                content:
+                  type: text
+                  text: "Review the provided code and suggest improvements."
+
+  - name: prompts_get_rejects_arguments
     pre:
       auto_initialize: true
     steps:
       - name: get
         op: PromptsGet
         input:
-          name: code_review
-          arguments: { code: "func add(a, b int) int { return a + b }" }
-        expect:
-          status: success
-
-  - name: prompts_get_dynamic
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: get
-        op: PromptsGet
-        input:
-          name: contextual_prompts
-          arguments: { context: testing, task: unit-test }
-        expect:
-          status: success
-
-  - name: prompts_get_invalid
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: get
-        op: PromptsGet
-        input: { name: non_existent_prompt, arguments: {} }
-        expect:
-          status: error
-          error: { code: -32601 }
-
-  - name: prompts_get_missing_name
-    defaults:
-      client: jsonrpc.mcp_assistant
-    pre:
-      auto_initialize: true
-    steps:
-      - name: get
-        op: PromptsGet
-        input: { name: "" }
+          name: "code_review"
+          arguments: { code: "package main" }
         expect:
           status: error
           error: { code: -32602 }
 
-  - name: prompts_get_missing_arg_http
-    defaults:
-      client: jsonrpc.mcp_assistant
+  - name: prompts_list_rejects_cursor
     pre:
       auto_initialize: true
     steps:
-      - name: get_missing_task
+      - name: list
+        op: PromptsList
+        input: { cursor: "next" }
+        expect:
+          status: error
+          error: { code: -32602 }
+
+  - name: prompts_get_unknown_name
+    pre:
+      auto_initialize: true
+    steps:
+      - name: get
         op: PromptsGet
-        input: { name: contextual_prompts, arguments: { context: testing } }
+        input: { name: "unknown_prompt" }
         expect:
           status: error
           error: { code: -32602 }

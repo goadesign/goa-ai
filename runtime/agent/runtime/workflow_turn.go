@@ -489,10 +489,6 @@ func (r *Runtime) publishStepToolResult(
 	if err != nil {
 		return err
 	}
-	resultBytes := record.result.ResultBytes
-	if !record.result.ResultOmitted {
-		resultBytes = len(resultJSON)
-	}
 	event := hooks.NewToolResultReceivedEvent(
 		base.RunContext.RunID,
 		input.AgentID,
@@ -502,9 +498,6 @@ func (r *Runtime) publishStepToolResult(
 		record.call.ToolCallID,
 		parentToolCallID(record.call, &base.RunContext),
 		resultJSON,
-		resultBytes,
-		record.result.ResultOmitted,
-		record.result.ResultOmittedReason,
 		record.result.ServerData,
 		preview,
 		record.result.Bounds,
@@ -631,9 +624,6 @@ func (l *workflowLoop) recordCapDeniedToolCall(
 		call.ToolCallID,
 		parentID,
 		resultJSON,
-		len(resultJSON),
-		false,
-		"",
 		nil,
 		"",
 		nil,

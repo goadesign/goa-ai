@@ -19,7 +19,7 @@ import (
 )
 
 func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
-	runtime := New(WithLogger(telemetry.NoopLogger{}))
+	runtime := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	registration := AgentRegistration{ResumeActivityName: "resume", ExecuteToolActivity: "execute"}
 	firstInput := &RunInput{
 		AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1",

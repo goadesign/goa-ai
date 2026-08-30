@@ -5,9 +5,11 @@
 package hooks
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
@@ -21,7 +23,7 @@ import (
 
 type (
 	// EncodeOptions supplies the durable metadata required to transport one hook
-	// event through the runtime record activity.
+	// event through the runtime storage activity.
 	EncodeOptions struct {
 		TurnID      string
 		EventKey    string
@@ -39,6 +41,13 @@ type (
 		Labels       map[string]string `json:"labels,omitempty"`
 	}
 
+	// runStartedPayload is the complete payload stored for a RunStarted record.
+	// Run identity remains in the surrounding run-log record.
+	runStartedPayload struct {
+		ParentRunID string
+		Labels      map[string]string
+	}
+
 	turnIDSetter interface {
 		SetTurnID(string)
 	}
@@ -52,25 +61,23 @@ type (
 	}
 
 	toolResultReceivedPayload struct {
-		CallRunID           string                   `json:"call_run_id"`
-		ToolCallID          string                   `json:"tool_call_id"`
-		ParentToolCallID    string                   `json:"parent_tool_call_id,omitempty"`
-		ToolName            tools.Ident              `json:"tool_name"`
-		ResultJSON          rawjson.Message          `json:"result_json,omitempty"`
-		ResultBytes         int                      `json:"result_bytes,omitempty"`
-		ResultOmitted       bool                     `json:"result_omitted,omitempty"`
-		ResultOmittedReason string                   `json:"result_omitted_reason,omitempty"`
-		ServerData          rawjson.Message          `json:"server_data,omitempty"`
-		ResultPreview       string                   `json:"result_preview,omitempty"`
-		Bounds              *agent.Bounds            `json:"bounds,omitempty"`
-		Duration            time.Duration            `json:"duration"`
-		Telemetry           *telemetry.ToolTelemetry `json:"telemetry,omitempty"`
-		Failure             *planner.ToolFailure     `json:"failure,omitempty"`
+		CallRunID        string                   `json:"call_run_id"`
+		ToolCallID       string                   `json:"tool_call_id"`
+		ParentToolCallID string                   `json:"parent_tool_call_id,omitempty"`
+		ToolName         tools.Ident              `json:"tool_name"`
+		ResultJSON       rawjson.Message          `json:"result_json,omitempty"`
+		ResultBytes      int                      `json:"result_bytes,omitempty"`
+		ServerData       rawjson.Message          `json:"server_data,omitempty"`
+		ResultPreview    string                   `json:"result_preview,omitempty"`
+		Bounds           *agent.Bounds            `json:"bounds,omitempty"`
+		Duration         time.Duration            `json:"duration"`
+		Telemetry        *telemetry.ToolTelemetry `json:"telemetry,omitempty"`
+		Failure          *planner.ToolFailure     `json:"failure,omitempty"`
 	}
 )
 
 // EncodeToRecordInput creates a durable runtime-record envelope from one hook
-// event for serialization and transport to the record activity.
+// event for serialization and transport to the storage activity.
 func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, error) {
 	if evt == nil {
 		return nil, errors.New("encode hook record: event is nil")
@@ -119,6 +126,16 @@ func EncodeRecordPayload(evt Event) (rawjson.Message, error) {
 	}
 	var payload rawjson.Message
 	switch e := evt.(type) {
+	case *RunStartedEvent:
+		p := runStartedPayload{
+			ParentRunID: e.ParentRunID,
+			Labels:      e.Labels,
+		}
+		b, err := json.Marshal(p)
+		if err != nil {
+			return nil, fmt.Errorf("marshal run started payload: %w", err)
+		}
+		payload = rawjson.Message(b)
 	case *RunCompletedEvent:
 		p := runCompletedPayload{
 			Status:       e.Status,
@@ -133,21 +150,22 @@ func EncodeRecordPayload(evt Event) (rawjson.Message, error) {
 		}
 		payload = rawjson.Message(b)
 	case *ToolResultReceivedEvent:
+		if e.Failure != nil && len(e.ResultJSON) > 0 {
+			return nil, errors.New("encode tool result payload: failure and result JSON are both set")
+		}
 		p := toolResultReceivedPayload{
-			CallRunID:           e.CallRunID,
-			ToolCallID:          e.ToolCallID,
-			ParentToolCallID:    e.ParentToolCallID,
-			ToolName:            e.ToolName,
-			ResultJSON:          e.ResultJSON,
-			ResultBytes:         e.ResultBytes,
-			ResultOmitted:       e.ResultOmitted,
-			ResultOmittedReason: e.ResultOmittedReason,
-			ServerData:          e.ServerData,
-			ResultPreview:       e.ResultPreview,
-			Bounds:              e.Bounds,
-			Duration:            e.Duration,
-			Telemetry:           e.Telemetry,
-			Failure:             e.Failure,
+			CallRunID:        e.CallRunID,
+			ToolCallID:       e.ToolCallID,
+			ParentToolCallID: e.ParentToolCallID,
+			ToolName:         e.ToolName,
+			ResultJSON:       e.ResultJSON,
+			ResultBytes:      e.ResultBytes,
+			ServerData:       e.ServerData,
+			ResultPreview:    e.ResultPreview,
+			Bounds:           e.Bounds,
+			Duration:         e.Duration,
+			Telemetry:        e.Telemetry,
+			Failure:          e.Failure,
 		}
 		b, err := json.Marshal(p)
 		if err != nil {
@@ -173,11 +191,11 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 	var evt Event
 	switch input.Type {
 	case RunStarted:
-		var p RunStartedEvent
-		if err := json.Unmarshal(input.Payload, &p); err != nil {
+		p, err := decodeRunStartedPayload(input.Payload)
+		if err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", RunStarted, err)
 		}
-		evt = NewRunStartedEvent(input.RunID, input.AgentID, p.RunContext, p.Input)
+		evt = NewRunStartedEvent(input.RunID, input.AgentID, input.SessionID, p.ParentRunID, p.Labels)
 
 	case RunPhaseChanged:
 		var p RunPhaseChangedEvent
@@ -225,14 +243,15 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", ChildRunLinked, err)
 		}
-		evt = NewChildRunLinkedEvent(input.RunID, input.AgentID, input.SessionID, p.ToolName, p.ToolCallID, p.ChildRunID, p.ChildAgentID)
-
-	case ToolCallArgsDelta:
-		var p ToolCallArgsDeltaEvent
-		if err := json.Unmarshal(input.Payload, &p); err != nil {
-			return nil, fmt.Errorf("decode %s payload: %w", ToolCallArgsDelta, err)
-		}
-		evt = NewToolCallArgsDeltaEvent(input.RunID, input.AgentID, input.SessionID, p.ToolCallID, p.ToolName, p.Delta)
+		evt = NewChildRunLinkedEvent(
+			input.RunID,
+			input.AgentID,
+			input.SessionID,
+			p.ToolName,
+			p.ToolCallID,
+			p.ChildRunID,
+			p.ChildAgentID,
+		)
 
 	case AwaitClarification:
 		var p AwaitClarificationEvent
@@ -331,7 +350,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", ToolResultReceived, err)
 		}
-		evt = NewToolResultReceivedEvent(
+		result := NewToolResultReceivedEvent(
 			input.RunID,
 			input.AgentID,
 			input.SessionID,
@@ -340,9 +359,6 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			p.ToolCallID,
 			p.ParentToolCallID,
 			p.ResultJSON,
-			p.ResultBytes,
-			p.ResultOmitted,
-			p.ResultOmittedReason,
 			p.ServerData,
 			p.ResultPreview,
 			p.Bounds,
@@ -350,6 +366,10 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			p.Telemetry,
 			p.Failure,
 		)
+		// Preserve the saved count so replay can detect a record whose JSON bytes
+		// were changed without updating its integrity metadata.
+		result.ResultBytes = p.ResultBytes
+		evt = result
 
 	case PolicyDecision:
 		var p PolicyDecisionEvent
@@ -444,6 +464,24 @@ func DecodeRunlogEvent(event *runlog.Event) (Event, error) {
 		return nil, fmt.Errorf("decode runlog hook event %q: %w", event.ID, err)
 	}
 	return decoded, nil
+}
+
+// decodeRunStartedPayload rejects fields outside the current durable record
+// shape so stored records must be converted before this runtime reads them.
+func decodeRunStartedPayload(data []byte) (runStartedPayload, error) {
+	var payload runStartedPayload
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
+		return runStartedPayload{}, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return runStartedPayload{}, errors.New("multiple JSON values")
+		}
+		return runStartedPayload{}, err
+	}
+	return payload, nil
 }
 
 func stampTurnID(evt Event, turnID string) {

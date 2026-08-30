@@ -10,45 +10,64 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestValidatePlannerFinalToolResult(t *testing.T) {
 	t.Parallel()
 
+	var typedNil *struct{}
+	typedNilCodec := tools.JSONCodec[any]{
+		ToJSON: func(any) ([]byte, error) {
+			return []byte(`{}`), nil
+		},
+		FromJSON: func([]byte) (any, error) {
+			return typedNil, nil
+		},
+	}
 	tests := []struct {
 		name  string
+		spec  tools.ToolSpec
 		final *planner.FinalToolResult
 		want  string
 	}{
 		{
-			name: "result",
-			final: &planner.FinalToolResult{
-				Result:      rawjson.Message(`{"status":"ok"}`),
-				ResultBytes: 15,
-			},
+			name:  "result-bearing tool",
+			spec:  tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
+			final: &planner.FinalToolResult{Result: rawjson.Message(`{"status":"ok"}`)},
 		},
 		{
-			name: "failure",
-			final: &planner.FinalToolResult{
-				Failure: &planner.ToolFailure{},
-			},
+			name:  "failure",
+			spec:  tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
+			final: &planner.FinalToolResult{Failure: &planner.ToolFailure{}},
+		},
+		{name: "no-result tool", final: &planner.FinalToolResult{}},
+		{
+			name:  "no-result tool with whitespace bytes",
+			final: &planner.FinalToolResult{Result: rawjson.Message(` `)},
+			want:  "does not define a result but contains one",
 		},
 		{
-			name: "omitted result",
-			final: &planner.FinalToolResult{
-				ResultOmitted:       true,
-				ResultOmittedReason: "payload_limit",
-			},
+			name:  "malformed result",
+			spec:  tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
+			final: &planner.FinalToolResult{Result: rawjson.Message(`{`)},
+			want:  "result is not valid JSON",
 		},
 		{
-			name: "malformed result",
-			final: &planner.FinalToolResult{
-				Result: rawjson.Message(`{`),
-			},
-			want: "result is not valid JSON",
+			name:  "result decoder returns nil",
+			spec:  tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
+			final: &planner.FinalToolResult{Result: rawjson.Message(`null`)},
+			want:  "tool result decoded to nil",
+		},
+		{
+			name:  "result decoder returns typed nil",
+			spec:  tools.ToolSpec{Result: tools.TypeSpec{Codec: typedNilCodec}},
+			final: &planner.FinalToolResult{Result: rawjson.Message(`{}`)},
+			want:  "tool result decoded to nil",
 		},
 		{
 			name: "malformed server data",
+			spec: tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
 			final: &planner.FinalToolResult{
 				Result:     rawjson.Message(`{"status":"ok"}`),
 				ServerData: rawjson.Message(`{`),
@@ -56,15 +75,8 @@ func TestValidatePlannerFinalToolResult(t *testing.T) {
 			want: "server data is not valid JSON",
 		},
 		{
-			name: "negative byte count",
-			final: &planner.FinalToolResult{
-				Result:      rawjson.Message(`{"status":"ok"}`),
-				ResultBytes: -1,
-			},
-			want: "byte count cannot be negative",
-		},
-		{
 			name: "failure and result",
+			spec: tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
 			final: &planner.FinalToolResult{
 				Result:  rawjson.Message(`{"status":"ok"}`),
 				Failure: &planner.ToolFailure{},
@@ -72,38 +84,20 @@ func TestValidatePlannerFinalToolResult(t *testing.T) {
 			want: "both a failure and a result",
 		},
 		{
-			name:  "missing result",
+			name:  "result-bearing tool missing result",
+			spec:  tools.ToolSpec{Result: tools.TypeSpec{Codec: tools.AnyJSONCodec}},
 			final: &planner.FinalToolResult{},
-			want:  "missing its result",
+			want:  "tool result is missing",
 		},
 		{
-			name: "omitted with result",
-			final: &planner.FinalToolResult{
-				Result:              rawjson.Message(`{"status":"ok"}`),
-				ResultOmitted:       true,
-				ResultOmittedReason: "payload_limit",
-			},
-			want: "marked omitted but contains a result",
-		},
-		{
-			name: "omitted without reason",
-			final: &planner.FinalToolResult{
-				ResultOmitted: true,
-			},
-			want: "marked omitted without a reason",
-		},
-		{
-			name: "reason without omission",
-			final: &planner.FinalToolResult{
-				Result:              rawjson.Message(`{"status":"ok"}`),
-				ResultOmittedReason: "payload_limit",
-			},
-			want: "omission reason but is not omitted",
+			name:  "no-result tool with result",
+			final: &planner.FinalToolResult{Result: rawjson.Message(`{"status":"ok"}`)},
+			want:  "does not define a result but contains one",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := validatePlannerFinalToolResult(test.final)
+			err := validatePlannerFinalToolResult(test.spec, test.final)
 			if test.want == "" {
 				require.NoError(t, err)
 				return

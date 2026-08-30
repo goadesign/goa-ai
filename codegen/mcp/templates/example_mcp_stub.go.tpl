@@ -1,9 +1,4 @@
-// Example MCP stub: ensure NewMcp{{ .ServiceGo }} returns the adapter-wrapped service.
-func NewMcp{{ .ServiceGo }}() {{ .MCPAlias }}.Service {
-    {{- if .HasPrompts }}
-    return {{ .MCPAlias }}.NewMCPAdapter(New{{ .ServiceGo }}(), nil, nil)
-    {{- else }}
-    return {{ .MCPAlias }}.NewMCPAdapter(New{{ .ServiceGo }}(), nil)
-    {{- end }}
+// {{ .MCPConstructorName }} returns the MCP service backed by the user service.
+func {{ .MCPConstructorName }}() {{ .MCPAlias }}.{{ .MCPServiceInterface }} {
+    return {{ .MCPAlias }}.NewMCPAdapter({{ .UserConstructorName }}(), nil)
 }
-

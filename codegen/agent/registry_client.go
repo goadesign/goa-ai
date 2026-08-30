@@ -1,3 +1,5 @@
+// Package codegen builds clients that read tool definitions from configured
+// registries.
 package codegen
 
 import (
@@ -11,9 +13,11 @@ import (
 )
 
 type (
-	// RegistryClientData holds the template-ready data for generating a registry
-	// client. Each declared Registry in the DSL produces one client package.
+	// RegistryClientData contains the values written to one generated registry
+	// client package.
 	RegistryClientData struct {
+		clientImports  []*codegen.ImportSpec
+		optionsImports []*codegen.ImportSpec
 		// Name is the DSL-provided registry identifier.
 		Name string
 		// GoName is the exported Go identifier derived from Name.
@@ -44,7 +48,7 @@ type (
 		Federation *FederationData
 	}
 
-	// RetryPolicyData holds retry configuration for code generation.
+	// RetryPolicyData contains the retry settings written to a registry client.
 	RetryPolicyData struct {
 		// MaxRetries is the maximum number of retry attempts.
 		MaxRetries int
@@ -54,7 +58,7 @@ type (
 		BackoffMax time.Duration
 	}
 
-	// SecuritySchemeData holds security scheme information for code generation.
+	// SecuritySchemeData contains one generated registry authentication method.
 	SecuritySchemeData struct {
 		// Name is the security scheme name.
 		Name string
@@ -66,9 +70,14 @@ type (
 		ParamName string
 		// Scopes lists required OAuth2 scopes.
 		Scopes []string
+		// AuthTypeName is the generated authentication type name.
+		AuthTypeName string
+		// OptionName is the generated option function name.
+		OptionName string
 	}
 
-	// FederationData holds federation configuration for code generation.
+	// FederationData contains the namespace patterns written to a registry
+	// client.
 	FederationData struct {
 		// Include patterns for namespaces to import.
 		Include []string
@@ -82,31 +91,16 @@ const (
 	authorizationHeader = "Authorization"
 )
 
-// registryClientFiles generates the registry client files for all declared
-// registries. Each registry produces a client package under
-// gen/<service>/registry/<name>/.
-func registryClientFiles(genpkg string, svc *ServiceAgentsData) []*codegen.File {
-	if svc == nil || svc.Service == nil {
-		return nil
-	}
-
+// registryClientFiles writes every registry client saved by the generation
+// plan, including clients owned by services without agents.
+func registryClientFiles(clients []*RegistryClientData) []*codegen.File {
 	var files []*codegen.File
-	for _, reg := range agentsExpr.Root.Registries {
-		if reg == nil {
-			continue
-		}
-		data := newRegistryClientData(genpkg, svc.Service.PathName, reg)
-		if data == nil {
-			continue
-		}
-
-		// Generate client.go
+	for _, data := range clients {
 		clientFile := registryClientFile(data)
 		if clientFile != nil {
 			files = append(files, clientFile)
 		}
 
-		// Generate options.go
 		optionsFile := registryClientOptionsFile(data)
 		if optionsFile != nil {
 			files = append(files, optionsFile)
@@ -115,12 +109,13 @@ func registryClientFiles(genpkg string, svc *ServiceAgentsData) []*codegen.File 
 	return files
 }
 
-// newRegistryClientData transforms a RegistryExpr into template-ready data.
-func newRegistryClientData(genpkg, svcPath string, reg *agentsExpr.RegistryExpr) *RegistryClientData {
-	if reg == nil {
-		return nil
-	}
-
+// newRegistryClientData reads one registry definition and the names chosen for
+// its generated package.
+func newRegistryClientData(
+	genpkg, svcPath string,
+	reg *agentsExpr.RegistryExpr,
+	planned *plannedRegistryClient,
+) *RegistryClientData {
 	goName := codegen.Goify(reg.Name, true)
 	pkgName := codegen.SnakeCase(reg.Name)
 	dir := filepath.Join("gen", svcPath, "registry", pkgName)
@@ -138,6 +133,21 @@ func newRegistryClientData(genpkg, svcPath string, reg *agentsExpr.RegistryExpr)
 		Timeout:      reg.Timeout,
 		SyncInterval: reg.SyncInterval,
 		CacheTTL:     reg.CacheTTL,
+		clientImports: importsForPaths(planned.pkg, []string{
+			"context",
+			"encoding/json",
+			"errors",
+			"fmt",
+			"io",
+			"net/http",
+			"net/url",
+			"time",
+			"goa.design/goa-ai/runtime/registry",
+		}),
+		optionsImports: importsForPaths(planned.pkg, []string{
+			"net/http",
+			"time",
+		}),
 	}
 
 	// Convert retry policy
@@ -157,8 +167,10 @@ func newRegistryClientData(genpkg, svcPath string, reg *agentsExpr.RegistryExpr)
 				continue
 			}
 			schemeData := &SecuritySchemeData{
-				Name: scheme.SchemeName,
-				Kind: scheme.Kind,
+				Name:         scheme.SchemeName,
+				Kind:         scheme.Kind,
+				AuthTypeName: planned.security[scheme].authType.Name(),
+				OptionName:   planned.security[scheme].option.Name(),
 			}
 			switch scheme.Kind {
 			case goaexpr.APIKeyKind:
@@ -201,20 +213,8 @@ func registryClientFile(data *RegistryClientData) *codegen.File {
 		return nil
 	}
 
-	imports := []*codegen.ImportSpec{
-		{Path: "context"},
-		{Path: "encoding/json"},
-		{Path: "errors"},
-		{Path: "fmt"},
-		{Path: "io"},
-		{Path: "net/http"},
-		{Path: "net/url"},
-		{Path: "time"},
-		{Path: "goa.design/goa-ai/runtime/registry", Name: "registry"},
-	}
-
 	sections := []*codegen.SectionTemplate{
-		codegen.Header(data.GoName+" registry client", data.PackageName, imports),
+		codegen.Header(data.GoName+" registry client", data.PackageName, data.clientImports),
 		{
 			Name:    "registry-client",
 			Source:  agentsTemplates.Read(registryClientFileT),
@@ -235,13 +235,8 @@ func registryClientOptionsFile(data *RegistryClientData) *codegen.File {
 		return nil
 	}
 
-	imports := []*codegen.ImportSpec{
-		{Path: "net/http"},
-		{Path: "time"},
-	}
-
 	sections := []*codegen.SectionTemplate{
-		codegen.Header(data.GoName+" registry client options", data.PackageName, imports),
+		codegen.Header(data.GoName+" registry client options", data.PackageName, data.optionsImports),
 		{
 			Name:    "registry-client-options",
 			Source:  agentsTemplates.Read(registryClientOptionsFileT),

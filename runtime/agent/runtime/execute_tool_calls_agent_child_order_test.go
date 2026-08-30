@@ -9,8 +9,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 
@@ -22,15 +20,14 @@ const invokePromptText = "invoke"
 func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 	recorder := &recordingHooks{ch: make(chan hooks.Event, 64)}
 	rt := &Runtime{
-		agents:        make(map[agent.Ident]AgentRegistration),
-		toolsets:      make(map[string]ToolsetRegistration),
-		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           recorder,
-		SessionStore:  sessioninmem.New(),
+		agents:    make(map[agent.Ident]AgentRegistration),
+		toolsets:  make(map[string]ToolsetRegistration),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+		Store:     newTestStore(),
+		Bus:       recorder,
 	}
 
 	cfg := AgentToolConfig{
@@ -52,13 +49,13 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 
 	tool1 := tools.Ident("svc.agenttools.tool1")
 	tool2 := tools.Ident("svc.agenttools.tool2")
-	spec1 := newAnyJSONSpec(tool1, reg.Name)
+	spec1 := newAnyJSONSpec(tool1)
 	spec1.IsAgentTool = true
 	spec1.AgentID = string(cfg.AgentID)
-	spec2 := newAnyJSONSpec(tool2, reg.Name)
+	spec2 := newAnyJSONSpec(tool2)
 	spec2.IsAgentTool = true
 	spec2.AgentID = string(cfg.AgentID)
-	seedTestToolSpecs(rt, spec1, spec2)
+	seedTestToolset(rt, reg.Name, spec1, spec2)
 
 	childHandles := make(chan *controlledChildHandle, 2)
 	wfCtx := &testWorkflowContext{
@@ -72,7 +69,7 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 		SessionID: "session-1",
 		TurnID:    "turn-1",
 	}
-	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
+	seedParentRun(t, rt.Store, runCtx.RunID, runCtx.SessionID)
 	calls := []ToolCall{
 		{
 			Name:       tool1,
@@ -130,15 +127,14 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 	t.Parallel()
 
 	rt := &Runtime{
-		agents:        make(map[agent.Ident]AgentRegistration),
-		toolsets:      make(map[string]ToolsetRegistration),
-		toolSpecs:     make(map[tools.Ident]tools.ToolSpec),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		Bus:           &recordingHooks{},
-		SessionStore:  sessioninmem.New(),
+		agents:    make(map[agent.Ident]AgentRegistration),
+		toolsets:  make(map[string]ToolsetRegistration),
+		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
+		logger:    telemetry.NoopLogger{},
+		metrics:   telemetry.NoopMetrics{},
+		tracer:    telemetry.NoopTracer{},
+		Store:     newTestStore(),
+		Bus:       &recordingHooks{},
 	}
 	cfg := AgentToolConfig{
 		AgentID: agent.Ident("nested.agent"),
@@ -157,10 +153,10 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 	reg := NewAgentToolsetRegistration(rt, cfg)
 	rt.toolsets[reg.Name] = reg
 	tool := tools.Ident("svc.agenttools.slow")
-	spec := newAnyJSONSpec(tool, reg.Name)
+	spec := newAnyJSONSpec(tool)
 	spec.IsAgentTool = true
 	spec.AgentID = string(cfg.AgentID)
-	seedTestToolSpecs(rt, spec)
+	seedTestToolset(rt, reg.Name, spec)
 
 	childHandles := make(chan *controlledChildHandle, 1)
 	wfCtx := &testWorkflowContext{
@@ -173,7 +169,7 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 		SessionID: "session-1",
 		TurnID:    "turn-1",
 	}
-	seedParentRun(t, rt.SessionStore, runCtx.RunID, runCtx.SessionID)
+	seedParentRun(t, rt.Store, runCtx.RunID, runCtx.SessionID)
 	calls := []ToolCall{{
 		Name:       tool,
 		RunID:      runCtx.RunID,

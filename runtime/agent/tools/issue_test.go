@@ -147,6 +147,29 @@ func TestFieldDescriptionsForIssuesDistinguishesFieldsFromEnumValues(t *testing.
 	}, nestedDescriptions)
 }
 
+func TestFieldDescriptionsForIssuesMatchesIndexedCollections(t *testing.T) {
+	invalidDescriptions := FieldDescriptionsForIssues([]*FieldIssue{{
+		Field:      "/groups/0/a~1b",
+		Constraint: "invalid_field_type",
+	}}, map[string]string{
+		"groups.*.*": "Group count",
+	})
+	unknownDescriptions := FieldDescriptionsForIssues([]*FieldIssue{{
+		Field:      "/groups/0/extra",
+		Constraint: "unknown_field",
+		Allowed:    []string{"name"},
+	}}, map[string]string{
+		"groups.*.name": "Group name",
+	})
+
+	assert.Equal(t, map[string]string{
+		"/groups/0/a~1b": "Group count",
+	}, invalidDescriptions)
+	assert.Equal(t, map[string]string{
+		"/groups/0/name": "Group name",
+	}, unknownDescriptions)
+}
+
 func TestNewUnionDiscriminatorErrorPanicsOnInvalidConstruction(t *testing.T) {
 	tests := []struct {
 		name string

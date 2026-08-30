@@ -29,7 +29,7 @@ func TestGolden_ServerData_UsesGeneratedCodec(t *testing.T) {
 
 	executor := generatedContentBySuffix(t, files, "agents/scribe/lookup/service_executor.go")
 	require.Contains(t, executor, "ByIDRecordsEvidenceServerDataCodec().ToJSON")
-	require.Contains(t, executor, "lookup.InitByIDRecordsEvidenceServerData(mr.Evidence)")
+	require.Contains(t, executor, "lookupspecs.InitByIDRecordsEvidenceServerData(mr.Evidence)")
 	require.NotContains(t, executor, "json.Marshal(mr.")
 	require.Contains(t, executor, "var serverData rawjson.Message")
 	require.Contains(t, executor, "serverData = rawjson.Message(b)")

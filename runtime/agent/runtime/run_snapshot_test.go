@@ -16,7 +16,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
@@ -58,16 +58,10 @@ func TestNewRunSnapshotDerivesToolStateAndCompletion(t *testing.T) {
 
 	labels := map[string]string{"household_id": "house-42"}
 	events := []*runlog.Event{
-		mk(t0, hooks.NewRunStartedEvent(runID, agentID, run.Context{
-			RunID:     runID,
-			SessionID: sessionID,
-			TurnID:    turnID,
-			Attempt:   1,
-			Labels:    labels,
-		}, nil)),
+		mk(t0, hooks.NewRunStartedEvent(runID, agentID, sessionID, "", labels)),
 		mk(t1, hooks.NewRunPhaseChangedEvent(runID, agentID, sessionID, run.PhasePlanning)),
 		mk(t2, hooks.NewToolCallScheduledEvent(runID, agentID, sessionID, tools.Ident("svc.tools.search"), "call-1", []byte(`{"q":"x"}`), "q", "", 0)),
-		mk(t3, hooks.NewToolResultReceivedEvent(runID, agentID, sessionID, runID, tools.Ident("svc.tools.search"), "call-1", "", nil, 0, false, "", nil, "", nil, 250*time.Millisecond, nil, testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom"))),
+		mk(t3, hooks.NewToolResultReceivedEvent(runID, agentID, sessionID, runID, tools.Ident("svc.tools.search"), "call-1", "", nil, nil, "", nil, 250*time.Millisecond, nil, testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom"))),
 		mk(t4, hooks.NewRunCompletedEvent(runID, agentID, sessionID, "failed", run.PhaseFailed, labels, errors.New("run failed"), nil)),
 	}
 
@@ -89,8 +83,11 @@ func TestNewRunSnapshotDerivesToolStateAndCompletion(t *testing.T) {
 func TestGetRunSnapshotReadsThroughStore(t *testing.T) {
 	t.Parallel()
 
-	rl := runloginmem.New()
-	_, err := rl.Append(context.Background(), &runlog.Event{
+	store := newTestStore()
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run-1", SessionID: "sess-1", Status: session.RunStatusRunning,
+	})
+	_, err := store.AppendRunRecord(context.Background(), &runlog.Event{
 		EventKey:  "evt-1",
 		RunID:     "run-1",
 		AgentID:   agent.Ident("svc.agent"),
@@ -102,9 +99,7 @@ func TestGetRunSnapshotReadsThroughStore(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	rt := &Runtime{
-		RunEventStore: rl,
-	}
+	rt := &Runtime{Store: store}
 
 	_, err = rt.GetRunSnapshot(context.Background(), "run-1")
 	require.NoError(t, err)
@@ -168,9 +163,6 @@ func TestNewRunSnapshotEnforcesLocalToolOrder(t *testing.T) {
 			callID,
 			parent,
 			nil,
-			0,
-			false,
-			"",
 			nil,
 			"",
 			nil,
@@ -230,9 +222,6 @@ func TestNewRunSnapshotEnforcesLocalToolOrder(t *testing.T) {
 					"child-1",
 					parentID,
 					nil,
-					0,
-					false,
-					"",
 					nil,
 					"",
 					nil,
@@ -298,9 +287,6 @@ func TestNewRunSnapshotValidatesToolResultPlacement(t *testing.T) {
 			"call-1",
 			"",
 			nil,
-			0,
-			false,
-			"",
 			nil,
 			"",
 			nil,

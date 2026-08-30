@@ -11,19 +11,18 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.T) {
 	rt := &Runtime{
-		toolsets:      map[string]ToolsetRegistration{},
-		Bus:           noopHooks{},
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		toolsets: map[string]ToolsetRegistration{},
+		Bus:      noopHooks{},
+		logger:   telemetry.NoopLogger{},
+		metrics:  telemetry.NoopMetrics{},
+		tracer:   telemetry.NoopTracer{},
+		Store:    newTestStore(),
 	}
 
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
@@ -49,9 +48,9 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 		},
 	})
 	rt.toolsets["svc.tools"] = reg
-	spec := newAnyJSONSpec("svc.tools.do", "svc.tools")
+	spec := newAnyJSONSpec("svc.tools.do")
 	spec.IsAgentTool = true
-	seedTestToolSpecs(rt, spec)
+	seedTestToolset(rt, "svc.tools", spec)
 
 	wfCtx := &testWorkflowContext{
 		ctx:     context.Background(),
