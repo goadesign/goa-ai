@@ -96,7 +96,7 @@ func TestPublicContinuationRejectsToolRemovedFromGeneratedDefinition(t *testing.
 			ID:     "correction-input",
 			Answer: "Use the corrected query.",
 		}},
-		nil,
+		WorkflowOptions{},
 	)
 	require.ErrorIs(t, err, ErrContinuationRejected)
 	require.ErrorContains(t, err, `requires tool "catalog.lookup_retired" removed from the current agent definition`)
@@ -148,7 +148,7 @@ func TestPublicContinuationRejectsFreshRuntimeWithoutRetiredRegistration(t *test
 			ID:     "correction-input",
 			Answer: "Use the corrected query.",
 		}},
-		nil,
+		WorkflowOptions{},
 	)
 	require.ErrorIs(t, err, ErrContinuationRejected)
 	require.ErrorContains(t, err, `requires tool "catalog.lookup_retired" removed from the current agent definition`)

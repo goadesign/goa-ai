@@ -107,3 +107,18 @@ func TestRequestCancellationRetriesCompletedUpdate(t *testing.T) {
 	require.Equal(t, request.RunID, fakeClient.priorHandleLookup.WorkflowID)
 	require.Equal(t, cancellationUpdateID, fakeClient.priorHandleLookup.UpdateID)
 }
+
+func TestRequestCancellationRejectsCompletedWithoutPriorUpdate(t *testing.T) {
+	request := engine.CancellationRequest{RunID: "run", Reason: "user_requested"}
+	fakeClient := &cancellationClient{
+		updateErr: serviceerror.NewFailedPrecondition("workflow completed"),
+		priorHandle: &cancellationUpdateHandle{
+			err: serviceerror.NewNotFound("cancellation update not found"),
+		},
+	}
+	implementation := &Engine{client: fakeClient}
+
+	err := implementation.RequestCancellation(t.Context(), request)
+	require.ErrorIs(t, err, engine.ErrWorkflowCompleted)
+	require.NotErrorIs(t, err, engine.ErrWorkflowNotFound)
+}

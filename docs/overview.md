@@ -456,9 +456,13 @@ workflow open:
 - **Await External Tools** — Planner requests out‑of‑band tool execution and the
   workflow ends with the exact calls awaiting results.
 - **Continue** — The runtime stores the opaque suspension in its required
-  runtime store before the workflow completes. The caller atomically accepts
-  one answer and passes the completed run ID to `AgentClient.Continue`;
-  multiple pending requests are consumed in order, one workflow per answer.
+  runtime store before the workflow completes. `AgentClient.Continue` is a
+  convenience call for applications that need no database write between
+  validating an answer and starting its workflow. An application that must
+  accept one answer in a database transaction uses `PrepareContinuation`,
+  stores `MarshalBinary` bytes in that transaction, then uses
+  `ParsePreparedRun` and `StartPrepared`. Multiple pending requests are
+  consumed in order, one workflow per answer.
 
 The suspension records the remaining active-time budget and the tool names
 needed by the next worker. The next worker validates the concrete saved values
@@ -696,6 +700,7 @@ next, err := client.Continue(
         ID:     pending.Await.Clarification.ID,
         Answer: "The user meant Unit 7",
     }},
+    runtime.WorkflowOptions{},
 )
 ```
 
@@ -971,7 +976,7 @@ Use the generated `NewClient(rt)` to get a `runtime.AgentClient`, then:
 
 - **Synchronous**: `Run(ctx, sessionID, messages, ...opts)` — start and wait
 - **Asynchronous**: `Start(ctx, sessionID, messages, ...opts)` → `engine.WorkflowHandle` → `Wait/Cancel`
-- **Continuation**: `Continue(ctx, sessionID, predecessorRunID, newRunID, newTurnID, response)` — start a new workflow from one stored request
+- **Continuation**: `Continue(ctx, sessionID, predecessorRunID, newRunID, newTurnID, response, runtime.WorkflowOptions{})` — start a new workflow from one stored request
 
 The `sessionID` argument is required and must be a non-empty, non-whitespace string.
 
@@ -1004,13 +1009,20 @@ engine-level queue-wait or heartbeat tuning.
 
 ### 2. Engine Start
 
-`AgentClient.Start` calls `runtime.startRun`, which resolves the agent and delegates to
-`startRunOn`. This constructs an `engine.WorkflowStartRequest` with:
+`AgentClient.Start` calls `Prepare`, then passes the returned `PreparedRun` to
+`StartPrepared`. Preparation checks the generated agent definition and builds
+an `engine.WorkflowStartRequest` with:
 
-- `ID` (generated if absent)
+- `ID` equal to `Input.RunID`; sessionful callers provide it, while one-shot
+  preparation generates it when absent
 - `Workflow` (from registration)
 - `TaskQueue`, `Input` (`*runtime.RunInput`)
-- Optional `Memo` and `SearchAttributes`
+- Optional encoded `Memo` and typed `SearchAttributes`
+
+`StartPrepared` checks the immutable request against the current generated
+definition, closes registration, and submits it to the engine. `Start` does not
+serialize the optional durable JSON form. Applications call `MarshalBinary`
+only when they need to store the exact request before submission.
 
 The agent runtime deliberately does not expose whole-workflow retries. One
 accepted workflow owns one durable run lifecycle, including its terminal
@@ -1018,6 +1030,15 @@ record. Activities may retry temporary failures because each activity command
 is safe to repeat.
 
 `Engine.StartWorkflow` returns an `engine.WorkflowHandle` for waiting or cancellation.
+Custom engines call `engine/contract.NormalizeRootRequest` before retaining a
+root request and `contract.NormalizeChildRequest` before retaining a child.
+They call `contract.CopyRunInput` before every initial or retry handler attempt,
+retain one private `contract.CopyRunOutput` result, and copy that result again
+for every wait, query, or other caller-facing read. Shared normalization fixes
+portable search values and the root digest; each adapter still submits those
+values through its own backend. These functions apply the same ownership,
+validation, exact-retry identity, and size rules as the shipped engines without
+exposing backend types.
 
 ### 3. Worker Execution
 
@@ -1145,9 +1166,15 @@ as child workflows, enabling linked streams and run links.
 
 - `runtime.RegisterAgent`, `runtime.RegisterToolset`
 - `runtime.Client`, `runtime.ClientFor`, `runtime.MustClient`, `runtime.MustClientFor`
-- `runtime.AgentClient` with `Run`, `Start`, `PrepareContinuation`,
-  `StartContinuation`, and `Continue`
+- `runtime.AgentClient` with sessionful `Run`, `Prepare`, and `Start`, one-shot
+  `OneShotRun`, `PrepareOneShot`, and `StartOneShot`, plus
+  `PrepareContinuation`, `StartPrepared`, and `Continue`
+- `runtime.PreparedRun` with `RunID`, `MarshalBinary`, and
+  `runtime.ParsePreparedRun` for identifying and storing one exact accepted
+  start request across process restarts
 - `engine.Engine`, `engine.WorkflowDefinition`, `engine.ActivityDefinition`, `engine.WorkflowHandle`
+- `engine/contract.NormalizeRootRequest`, `NormalizeChildRequest`,
+  `CopyRunInput`, and `CopyRunOutput` for custom engine adapters
 - Activities: `PlanStartActivity`, `PlanResumeActivity`, `ExecuteToolActivity`
 - Child composition: `runtime.ExecuteAgentChild`
 - Tool infrastructure: `tools.ToolSpec`, `tools.JSONCodec`

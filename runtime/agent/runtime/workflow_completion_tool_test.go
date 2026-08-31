@@ -409,9 +409,10 @@ func TestCompletionToolPolicyRejectsUnexecutableTools(t *testing.T) {
 }
 
 func TestWithRunCompletionToolSetsSerializedPolicy(t *testing.T) {
-	input := &RunInput{}
+	start := &runStart{}
 
-	WithRunCompletionTool("reports.persist")(input)
+	WithRunCompletionTool("reports.persist").apply(start)
+	input := &start.input
 	payload, err := json.Marshal(input.Policy)
 	require.NoError(t, err)
 

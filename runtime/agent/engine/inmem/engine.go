@@ -20,12 +20,12 @@ import (
 	"time"
 
 	commonpb "go.temporal.io/api/common/v1"
-	"go.temporal.io/sdk/converter"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/engine/internal/boundary"
+	"goa.design/goa-ai/runtime/agent/engine/contract"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
+	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 )
 
 type (
@@ -280,49 +280,27 @@ func (e *eng) RegisterAgentChildActivity(_ context.Context, name string, opts en
 // workflow runs independently of the submission context and remains attached
 // to its exact recipe digest for the lifetime of this engine.
 func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
-	return e.startWorkflow(context.WithoutCancel(ctx), req)
-}
-
-// startWorkflow starts a workflow whose lifetime follows executionCtx. Root
-// acceptance passes a detached context. Child startup passes the parent
-// workflow context so cancellation matches Temporal child behavior.
-func (e *eng) startWorkflow(executionCtx context.Context, req engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
 	if err := engine.ValidateWorkflowStartRequest(req); err != nil {
 		return nil, err
 	}
+	if _, reserved := req.Memo[startrecipe.MemoKey]; reserved {
+		return nil, fmt.Errorf("in-memory engine: memo key %q is reserved", startrecipe.MemoKey)
+	}
+	snapshot, err := startrecipe.SnapshotRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	req = snapshot.Request
 	e.mu.RLock()
 	def, ok := e.workflows[req.Workflow]
 	e.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("workflow %q not registered", req.Workflow)
 	}
-	if req.ID == "" {
-		return nil, errors.New("workflow id is required")
-	}
-	if _, reserved := req.Memo[startrecipe.MemoKey]; reserved {
-		return nil, fmt.Errorf("in-memory engine: memo key %q is reserved", startrecipe.MemoKey)
-	}
-	dataConverter := startrecipe.NewDataConverter()
-	inputSnapshot, err := startrecipe.SnapshotRunInput(dataConverter, req.Input)
-	if err != nil {
-		return nil, err
-	}
-	searchAttributes, err := startrecipe.EncodeSearchAttributes(req.SearchAttributes)
-	if err != nil {
-		return nil, err
-	}
-	recipe, err := startrecipe.Digest(dataConverter, startrecipe.DigestInput{
-		Workflow: req.Workflow, TaskQueue: req.TaskQueue, InputPayload: inputSnapshot.Payload,
-		RunTimeout: req.RunTimeout, RetryPolicy: req.RetryPolicy,
-		Memo: req.Memo, SearchAttributes: searchAttributes,
-	})
-	if err != nil {
-		return nil, err
-	}
 
 	e.mu.Lock()
 	if existingRecipe, exists := e.recipes[req.ID]; exists {
-		if existingRecipe != recipe {
+		if existingRecipe != snapshot.Digest {
 			e.mu.Unlock()
 			return nil, &engine.WorkflowStartConflictError{ID: req.ID}
 		}
@@ -330,7 +308,21 @@ func (e *eng) startWorkflow(executionCtx context.Context, req engine.WorkflowSta
 		e.mu.Unlock()
 		return handle, nil
 	}
+	if _, exists := e.handles[req.ID]; exists {
+		e.mu.Unlock()
+		return nil, &engine.WorkflowStartConflictError{ID: req.ID}
+	}
+	h, executionCtx := e.reserveWorkflowLocked(context.WithoutCancel(ctx), req.ID)
+	e.recipes[req.ID] = snapshot.Digest
+	e.mu.Unlock()
 
+	e.executeWorkflow(executionCtx, req.ID, req.RunTimeout, req.RetryPolicy, def, snapshot.InputPayload, h)
+	return h, nil
+}
+
+// reserveWorkflowLocked records one accepted execution before its handler can
+// run. The caller holds e.mu and has already established that the ID is free.
+func (e *eng) reserveWorkflowLocked(executionCtx context.Context, id string) (*handle, context.Context) {
 	executionCtx, cancel := context.WithCancel(executionCtx)
 	cancellations := &cancellationState{cancel: cancel}
 	h := &handle{done: make(chan struct{}), cancel: cancel, cancellations: cancellations}
@@ -338,16 +330,28 @@ func (e *eng) startWorkflow(executionCtx context.Context, req engine.WorkflowSta
 	if e.statuses == nil {
 		e.statuses = make(map[string]engine.RunStatus)
 	}
-	e.statuses[req.ID] = engine.RunStatusRunning
-	e.handles[req.ID] = h
-	e.recipes[req.ID] = recipe
-	e.mu.Unlock()
+	e.statuses[id] = engine.RunStatusRunning
+	e.handles[id] = h
+	return h, executionCtx
+}
 
+// executeWorkflow runs one accepted workflow from the copied input bytes. Root
+// and child starts use the same retry and completion behavior after the engine
+// accepts their requests.
+func (e *eng) executeWorkflow(
+	executionCtx context.Context,
+	id string,
+	runTimeout time.Duration,
+	retryPolicy engine.RetryPolicy,
+	def engine.WorkflowDefinition,
+	inputPayload *commonpb.Payload,
+	h *handle,
+) {
 	go func() {
-		defer cancel()
+		defer h.cancel()
 		defer close(h.done)
-		res, err := e.runWorkflow(executionCtx, req, def, dataConverter, inputSnapshot.Payload, cancellations)
-		cancellations.finish()
+		res, err := e.runWorkflow(executionCtx, id, runTimeout, retryPolicy, def, inputPayload, h.cancellations)
+		h.cancellations.finish()
 		h.mu.Lock()
 		h.result = res
 		h.err = err
@@ -357,35 +361,35 @@ func (e *eng) startWorkflow(executionCtx context.Context, req engine.WorkflowSta
 		e.mu.Lock()
 		switch {
 		case err == nil:
-			e.statuses[req.ID] = engine.RunStatusCompleted
+			e.statuses[id] = engine.RunStatusCompleted
 		case errors.Is(err, context.Canceled):
-			e.statuses[req.ID] = engine.RunStatusCanceled
+			e.statuses[id] = engine.RunStatusCanceled
 		case errors.Is(err, context.DeadlineExceeded):
-			e.statuses[req.ID] = engine.RunStatusTimedOut
+			e.statuses[id] = engine.RunStatusTimedOut
 		default:
-			e.statuses[req.ID] = engine.RunStatusFailed
+			e.statuses[id] = engine.RunStatusFailed
 		}
 		e.mu.Unlock()
 	}()
-
-	return h, nil
 }
 
 // runWorkflow executes fresh workflow attempts from the accepted input bytes.
 // A run timeout applies to each attempt, matching Temporal's WorkflowRunTimeout.
 func (e *eng) runWorkflow(
 	executionCtx context.Context,
-	req engine.WorkflowStartRequest,
+	id string,
+	runTimeout time.Duration,
+	retryPolicy engine.RetryPolicy,
 	def engine.WorkflowDefinition,
-	dataConverter converter.DataConverter,
 	inputPayload *commonpb.Payload,
 	cancellations *cancellationState,
 ) (*api.RunOutput, error) {
-	delay := req.RetryPolicy.InitialInterval
+	dataConverter := workflowcodec.NewDataConverter()
+	delay := retryPolicy.InitialInterval
 	if delay == 0 {
 		delay = time.Second
 	}
-	coefficient := req.RetryPolicy.BackoffCoefficient
+	coefficient := retryPolicy.BackoffCoefficient
 	if coefficient == 0 {
 		coefficient = 2
 	}
@@ -395,14 +399,14 @@ func (e *eng) runWorkflow(
 			return nil, fmt.Errorf("decode workflow retry input: %w", err)
 		}
 		attemptCtx, cancel := context.WithCancel(executionCtx)
-		if req.RunTimeout > 0 {
-			attemptCtx, cancel = context.WithTimeout(executionCtx, req.RunTimeout)
+		if runTimeout > 0 {
+			attemptCtx, cancel = context.WithTimeout(executionCtx, runTimeout)
 		}
 		wctx := &wfCtx{
 			ctx: attemptCtx,
-			id:  req.ID,
+			id:  id,
 			// In-memory assigns workflow ID as run ID.
-			runID:           req.ID,
+			runID:           id,
 			eng:             e,
 			seq:             &sequenceCounter{},
 			cancellations:   cancellations,
@@ -414,7 +418,14 @@ func (e *eng) runWorkflow(
 			err = attemptCtx.Err()
 		}
 		cancel()
-		if err == nil || errors.Is(err, context.Canceled) || !workflowRetryAllowed(req.RetryPolicy, attempt) {
+		if err == nil {
+			copied, copyErr := contract.CopyRunOutput(result)
+			if copyErr != nil {
+				return nil, copyErr
+			}
+			return copied, nil
+		}
+		if errors.Is(err, context.Canceled) || !workflowRetryAllowed(retryPolicy, attempt) {
 			return result, err
 		}
 		cancellations.endAttempt()
@@ -456,10 +467,34 @@ func (e *eng) QueryRunCompletion(ctx context.Context, workflowID string) (engine
 	case <-h.done:
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	result := h.result
+	workflowErr := h.err
+	completedAt := h.completedAt
+	h.mu.Unlock()
+	var output *api.RunOutput
+	if workflowErr == nil {
+		var err error
+		output, err = copyRetainedWorkflowOutput(result)
+		if err != nil {
+			return engine.RunCompletion{}, err
+		}
+	}
 	return engine.RunCompletion{
-		Status: status, CompletedAt: h.completedAt, Output: h.result, WorkflowError: h.err,
+		Status: status, CompletedAt: completedAt, Output: output, WorkflowError: workflowErr,
 	}, nil
+}
+
+// copyRetainedWorkflowOutput reconstructs the saved output so callers cannot
+// change the value returned to another workflow handle or completion query.
+func copyRetainedWorkflowOutput(result *api.RunOutput) (*api.RunOutput, error) {
+	if result == nil {
+		return nil, nil
+	}
+	output, err := contract.CopyRunOutput(result)
+	if err != nil {
+		return nil, err
+	}
+	return output, nil
 }
 
 // isTerminalRunStatus reports whether an in-memory workflow has a final result.
@@ -499,8 +534,17 @@ func (h *handle) Wait(ctx context.Context) (*api.RunOutput, error) {
 		return nil, ctx.Err()
 	case <-h.done:
 		h.mu.Lock()
-		defer h.mu.Unlock()
-		return h.result, h.err
+		result := h.result
+		workflowErr := h.err
+		h.mu.Unlock()
+		if workflowErr != nil {
+			return nil, workflowErr
+		}
+		output, err := copyRetainedWorkflowOutput(result)
+		if err != nil {
+			return nil, err
+		}
+		return output, nil
 	}
 }
 
@@ -700,6 +744,14 @@ func (w *wfCtx) RunID() string {
 }
 
 func (w *wfCtx) StartChildWorkflow(_ context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
+	if err := engine.ValidateChildWorkflowRequest(req); err != nil {
+		return nil, err
+	}
+	snapshot, err := startrecipe.SnapshotChildRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	req = snapshot.Request
 	w.childMu.Lock()
 	if _, exists := w.startedChildren[req.ID]; exists {
 		w.childMu.Unlock()
@@ -708,17 +760,22 @@ func (w *wfCtx) StartChildWorkflow(_ context.Context, req engine.ChildWorkflowRe
 	w.startedChildren[req.ID] = struct{}{}
 	w.childMu.Unlock()
 
-	h, err := w.eng.startWorkflow(w.ctx, engine.WorkflowStartRequest{
-		ID:          req.ID,
-		Workflow:    req.Workflow,
-		TaskQueue:   req.TaskQueue,
-		Input:       req.Input,
-		RunTimeout:  req.RunTimeout,
-		RetryPolicy: req.RetryPolicy,
-	})
-	if err != nil {
-		return nil, err
+	w.eng.mu.RLock()
+	def, ok := w.eng.workflows[req.Workflow]
+	w.eng.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("workflow %q not registered", req.Workflow)
 	}
+
+	w.eng.mu.Lock()
+	if _, exists := w.eng.handles[req.ID]; exists {
+		w.eng.mu.Unlock()
+		return nil, &engine.ChildWorkflowIDReuseError{ID: req.ID}
+	}
+	h, executionCtx := w.eng.reserveWorkflowLocked(w.ctx, req.ID)
+	w.eng.mu.Unlock()
+
+	w.eng.executeWorkflow(executionCtx, req.ID, req.RunTimeout, req.RetryPolicy, def, snapshot.InputPayload, h)
 	return &childHandle{h: h}, nil
 }
 
@@ -900,8 +957,8 @@ func executeRecordedActivity[I, O any](ctx context.Context, startToClose time.Du
 	if err != nil {
 		return nil, err
 	}
-	dataConverter := startrecipe.NewDataConverter()
-	output, err := boundary.Copy(dataConverter, out)
+	dataConverter := workflowcodec.NewDataConverter()
+	output, err := workflowcodec.Copy(dataConverter, out)
 	if err != nil {
 		return nil, fmt.Errorf("copy recorded activity output: %w", err)
 	}
@@ -912,8 +969,8 @@ func executeRecordedActivity[I, O any](ctx context.Context, startToClose time.Du
 // each attempt. The caller decides whether its successful output also crosses
 // the recorded-value boundary.
 func executeActivityAttempts[I, O any](ctx context.Context, startToClose time.Duration, retry engine.RetryPolicy, input *I, execute func(context.Context, *I) (*O, error)) (*O, error) {
-	dataConverter := startrecipe.NewDataConverter()
-	recordedInput, err := boundary.Encode(dataConverter, input)
+	dataConverter := workflowcodec.NewDataConverter()
+	recordedInput, err := workflowcodec.Encode(dataConverter, input)
 	if err != nil {
 		return nil, fmt.Errorf("encode recorded activity input: %w", err)
 	}

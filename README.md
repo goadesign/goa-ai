@@ -675,7 +675,7 @@ complete saved checkpoint and response against the current generated
 definitions, copies the exact workflow input, and performs no write or workflow
 start. A rejected response therefore leaves the requested run ID unused. The
 application then atomically accepts that prepared answer, so concurrent
-requests cannot continue the same state twice, and calls `StartContinuation`.
+requests cannot continue the same state twice, and calls `StartPrepared`.
 It may retry that same prepared value after an uncertain engine response:
 
 ```go
@@ -695,15 +695,34 @@ if out.Suspension != nil {
 			ID:     pending.Await.Clarification.ID,
 			Answer: "Unit 7",
 		}},
-		&runtime.WorkflowOptions{
+		runtime.WorkflowOptions{
 			Memo: map[string]any{"account_id": "account-42"},
 		},
 	)
 	if err != nil {
 		return err
 	}
-	// Atomically accept the answer in application storage here.
-	handle, err := client.StartContinuation(ctx, prepared)
+	preparedBytes, err := prepared.MarshalBinary()
+	if err != nil {
+		return err
+	}
+	// This application-owned method uses one database transaction to accept the
+	// answer and store the prepared workflow ID with preparedBytes.
+	err = workflowStarts.AcceptContinuation(ctx, out.RunID, prepared.RunID(), preparedBytes)
+	if err != nil {
+		return err
+	}
+	// A later process loads the same bytes. No in-memory value from preparation
+	// is required after the database transaction commits.
+	preparedBytes, err = workflowStarts.Load(ctx, "new-run-id")
+	if err != nil {
+		return err
+	}
+	stored, err := runtime.ParsePreparedRun(preparedBytes)
+	if err != nil {
+		return err
+	}
+	handle, err := client.StartPrepared(ctx, stored)
 	if err != nil {
 		return err
 	}
@@ -711,15 +730,62 @@ if out.Suspension != nil {
 }
 ```
 
+Initial runs use the same durable command when an application must record the
+exact request before launch. `Prepare` validates the run and returns a
+`PreparedRun`. Its `RunID` method returns the exact workflow ID that the
+application must store with the command. `MarshalBinary` creates the versioned
+storage bytes, `ParsePreparedRun` loads them in a later process, and
+`StartPrepared` submits the request. `Start` is the convenience form that
+prepares and starts immediately. `Continue` does the same for a continuation
+and waits for its result.
+
+`Prepare` and `PrepareOneShot` are client-only operations: they copy and
+validate the complete request without writing runtime storage, sealing worker
+registration, or calling the workflow engine. `PrepareContinuation` additionally
+reads the saved suspension. It still performs no write and does not start a
+workflow. Preparation also does not create the optional storage bytes.
+`MarshalBinary` is the storage boundary, while `StartPrepared` is the engine
+submission boundary. `Start` and `Continue` do not call `MarshalBinary`.
+
+Prepared bytes can contain the complete transcript, tool results, and a private
+continuation checkpoint. Keep them in trusted, access-controlled application
+storage. Memo, search attributes, and the selected task queue configure the
+engine start; `api.RunInput` contains only workflow input. A workflow start may
+use at most `engine.MaxPayloadBytes` (1,048,576) bytes in total. The stored JSON
+record has a separate 8,388,608-byte limit for the complete encoded record.
+That larger storage limit does not increase the workflow request limit. Store
+large domain values separately and prepare a durable reference instead. See
+[External Input and Workflow Continuations](docs/runtime.md#external-input-and-workflow-continuations)
+for the exact values counted by each limit.
+
+`MarshalBinary` reports a storage-encoding failure as
+`ErrPreparedRunRejected`. The failure does not change the in-memory
+`PreparedRun`, which remains valid for `StartPrepared`; an application that
+requires durable admission must not start it until its bytes have been stored.
+`ErrPreparedRunRejected` from `ParsePreparedRun` means the stored bytes are
+malformed or are not the exact format produced by `MarshalBinary`; they cannot
+be retried. `StartPrepared` returns the
+same error when the request no longer satisfies the current generated agent
+contract; that command cannot start with this generated release. It also
+returns the error when valid bytes are passed to the wrong agent client. In
+that case the bytes remain valid and must be submitted through the matching
+generated client. `ErrWorkflowStartFailed` means the engine did not confirm the start.
+Goa-AI does not retry the start automatically. The application explicitly calls
+`StartPrepared` again with the same value, or parses and submits the same stored
+bytes after a restart. A nested `engine.ErrWorkflowStartConflict` is permanent
+because a different request already owns that workflow ID.
+
 The checkpoint is opaque and may contain private planner state. The runtime
 store keeps it; callers pass only the completed run ID and the user's
 typed response. Callers may also select the task queue and attach memo or
 search attributes to the new workflow; these options do not override the
-checkpoint's planner policy or execution state. Before routing a continuation,
-the runtime verifies the checkpoint version, visible pending requests, and
-required labels, planner results, nested child suspensions, and generated tool
-contracts. The receiving worker checks the same immutable input again before
-restoring it, so compatible
+checkpoint's planner policy or execution state. Continuation methods take these
+settings as a `runtime.WorkflowOptions` value. Initial and one-shot runs use
+`WithTaskQueue`, `WithMemo`, and `WithSearchAttributes` instead. Before routing
+a continuation, the runtime verifies the checkpoint version, visible pending
+requests, and required labels, planner results, nested child suspensions, and
+generated tool contracts. The receiving worker checks the same immutable input
+again before restoring it, so compatible
 tool evolution continues while incompatible saved values fail at the codec
 boundary. When an external answer completes a tool call from the previous
 workflow, the emitted `tool_end` keeps the current result run as its event run
@@ -1005,7 +1071,24 @@ conflict. The shared versioned recipe digest includes the caller-submitted workf
 task queue, input payload, timeout, retry policy, memo, and search attributes
 without collapsing native payload types. After backend history expires, the
 owning application must use its durable command identity and must not reopen a
-settled obligation. The accepted workflow owns its lifecycle records. Its first
+settled obligation. Every root and child request requires its engine workflow ID
+to equal `RunInput.RunID`. A zero `engine.RetryPolicy` leaves retry behavior at
+the engine default. When a caller supplies a policy, `MaxAttempts` includes the
+first attempt; retry timing is accepted only with a positive `MaxAttempts` or
+`UnlimitedAttempts`.
+
+Custom workflow engines call `engine/contract.NormalizeRootRequest` before
+retaining a root request. The returned request owns all mutable values, and its
+digest is the value the engine binds to the workflow ID for exact-retry checks.
+Child starts use `contract.NormalizeChildRequest`. Before every initial or retry
+attempt, the engine gives the workflow handler a fresh input from
+`contract.CopyRunInput`. It retains one private `contract.CopyRunOutput` result
+and makes another copy for every wait, query, or other caller-facing read.
+Shared normalization fixes the portable search values and digest; each adapter
+still owns submission to its backend. These functions apply the same validation,
+copying, and size rules as the shipped engines without exposing backend types.
+
+The accepted workflow owns its lifecycle records. Its first
 activity calls `StartRootRun`, `StartChildRun`, `StartOneShotRun`, or
 `StartOneShotChildRun`. Sessionful starts serialize with the active-to-ended
 transition on the owning Session record. An active Session produces running
@@ -1029,6 +1112,13 @@ lifecycle state. The first start retries temporary storage failures without an
 attempt ceiling, and planner or tool work cannot begin until it is durable.
 Malformed records and stable-key conflicts fail immediately as non-retryable
 contract errors.
+
+The in-memory engine sends every successful root or child output through the
+same strict, 1 MiB converter used at the Temporal workflow boundary before it
+retains or returns the value. The caller receives an independent copy, so local
+tests cannot pass with an oversized or unserializable output that Temporal would
+reject. Temporal child starts wait for Temporal to accept or reject the child ID
+before returning a handle; waiting on that handle is only for child completion.
 
 Cancellation stores the first reason and its matching record before engine
 cancellation and never rolls it back after an engine error. Active metadata
@@ -1167,6 +1257,9 @@ static prompts.
 This preview changes the generated MCP surface. The
 [preview upgrade guide](docs/runtime.md#preview-upgrade-guide) lists every
 removed API and the supported replacement.
+The same guide requires a coordinated runtime cutover: finish or cancel old
+active workflows and abandon unresolved old start attempts before deploying the
+new workers. The new runtime does not replay or retry those old requests.
 
 ### Discover Tools Through Registries
 

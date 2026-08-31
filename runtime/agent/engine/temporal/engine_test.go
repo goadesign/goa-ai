@@ -2,9 +2,11 @@ package temporal
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,6 +26,8 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
+	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 )
 
 // These tests lock the Temporal adapter contract around duplicate registration
@@ -142,15 +146,12 @@ func TestRegisterPlannerActivityRejectsDuplicateNameAcrossQueues(t *testing.T) {
 	assert.False(t, exists)
 }
 
-func TestStartWorkflowPropagatesMemoAndSearchAttributes(t *testing.T) {
+func TestClientStartWorkflowPropagatesRequestedValuesWithoutRegistration(t *testing.T) {
 	t.Parallel()
 
 	service := &testWorkflowService{}
-	eng, err := NewWorker(Options{
+	eng, err := NewClient(Options{
 		ClientOptions: &client.Options{},
-		WorkerOptions: WorkerOptions{
-			TaskQueue: "default.queue",
-		},
 	})
 	require.NoError(t, err)
 	eng.client.Close()
@@ -159,22 +160,19 @@ func TestStartWorkflowPropagatesMemoAndSearchAttributes(t *testing.T) {
 		require.NoError(t, eng.Close())
 	})
 
-	handler := func(ctx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-		return &api.RunOutput{}, nil
-	}
-	err = eng.RegisterWorkflow(context.Background(), engine.WorkflowDefinition{
-		Name:    "agent.workflow",
-		Handler: handler,
-	})
-	require.NoError(t, err)
-
 	input := &api.RunInput{RunID: "run-123"}
 	occurredAt := time.Date(2026, time.March, 14, 15, 9, 26, 0, time.UTC)
 	req := engine.WorkflowStartRequest{
-		ID:       "run-123",
-		Workflow: "agent.workflow",
-		Input:    input,
-		Memo:     map[string]any{"memo_key": "memo-value"},
+		ID:        "run-123",
+		Workflow:  "agent.workflow",
+		TaskQueue: "agent.queue",
+		Input:     input,
+		Memo: map[string]engine.EncodedValue{
+			"memo_key": {
+				Metadata: map[string][]byte{"encoding": []byte("json/plain")},
+				Data:     []byte(`"memo-value"`),
+			},
+		},
 		SearchAttributes: map[string]any{
 			"SessionID":  "session-123",
 			"Approved":   true,
@@ -191,8 +189,12 @@ func TestStartWorkflowPropagatesMemoAndSearchAttributes(t *testing.T) {
 	startReq := service.startRequest()
 	require.NotNil(t, startReq)
 	require.Equal(t, req.ID, startReq.WorkflowId)
-	require.Equal(t, eng.defaultQueue, startReq.TaskQueue.GetName())
+	require.Equal(t, req.Workflow, startReq.GetWorkflowType().GetName())
+	require.Equal(t, req.TaskQueue, startReq.TaskQueue.GetName())
 	require.Equal(t, enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE, startReq.WorkflowIdReusePolicy)
+	require.Nil(t, startReq.RetryPolicy)
+	require.Equal(t, req.Memo["memo_key"].Metadata, startReq.GetMemo().GetFields()["memo_key"].Metadata)
+	require.Equal(t, req.Memo["memo_key"].Data, startReq.GetMemo().GetFields()["memo_key"].Data)
 	require.Equal(t, "memo-value", decodePayload[string](t, startReq.GetMemo().GetFields()["memo_key"]))
 	require.Len(t, decodePayload[[]byte](t, startReq.GetMemo().GetFields()[workflowStartRecipeMemoKey]), 32)
 
@@ -210,6 +212,36 @@ func TestStartWorkflowPropagatesMemoAndSearchAttributes(t *testing.T) {
 	require.Empty(t, cancelReq.GetWorkflowExecution().GetRunId())
 }
 
+func TestClientStartWorkflowEnforcesExactPayloadLimitBeforeSubmission(t *testing.T) {
+	t.Parallel()
+
+	service := &testWorkflowService{}
+	eng, err := NewClient(Options{ClientOptions: &client.Options{}})
+	require.NoError(t, err)
+	eng.client.Close()
+	eng.client = newWorkflowServiceClient(t, service)
+	t.Cleanup(func() {
+		require.NoError(t, eng.Close())
+	})
+
+	dataConverter := workflowcodec.NewDataConverter()
+	recipePayload, err := dataConverter.ToPayload(make([]byte, sha256.Size))
+	require.NoError(t, err)
+	reserved := len(startrecipe.MemoKey) + temporalPayloadSize(recipePayload)
+	exact := temporalInputAtWorkflowBudget(t, "root-1", "agent.workflow", "agent.queue", reserved, 0)
+	_, err = eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
+		ID: "root-1", Workflow: "agent.workflow", TaskQueue: "agent.queue", Input: exact,
+	})
+	require.NoError(t, err)
+
+	oversized := temporalInputAtWorkflowBudget(t, "root-2", "agent.workflow", "agent.queue", reserved, 1)
+	_, err = eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
+		ID: "root-2", Workflow: "agent.workflow", TaskQueue: "agent.queue", Input: oversized,
+	})
+	require.ErrorContains(t, err, "payloads exceed maximum aggregate size")
+	require.Equal(t, "root-1", service.startRequest().GetWorkflowId())
+}
+
 func TestStartWorkflowRejectsUnsupportedSearchAttributeType(t *testing.T) {
 	t.Parallel()
 
@@ -223,9 +255,10 @@ func TestStartWorkflowRejectsUnsupportedSearchAttributeType(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = eng.StartWorkflow(context.Background(), engine.WorkflowStartRequest{
-		ID:       "run-123",
-		Workflow: "agent.workflow",
-		Input:    &api.RunInput{RunID: "run-123"},
+		ID:        "run-123",
+		Workflow:  "agent.workflow",
+		TaskQueue: "agent.queue",
+		Input:     &api.RunInput{RunID: "run-123"},
 		SearchAttributes: map[string]any{
 			"Unsupported": []int{1, 2, 3},
 		},
@@ -243,8 +276,9 @@ func TestStartWorkflowRejectsReservedRecipeMemoKey(t *testing.T) {
 	}))
 
 	_, err := eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
-		ID: "run", Workflow: "agent.workflow",
-		Memo: map[string]any{workflowStartRecipeMemoKey: "caller"},
+		ID: "run", Workflow: "agent.workflow", TaskQueue: "agent.queue",
+		Input: &api.RunInput{RunID: "run"},
+		Memo:  map[string]engine.EncodedValue{workflowStartRecipeMemoKey: {Data: []byte("caller")}},
 	})
 	require.ErrorContains(t, err, "reserved")
 }
@@ -273,9 +307,11 @@ func TestStartWorkflowValidatesDuplicateRecipe(t *testing.T) {
 	})
 	require.NoError(t, err)
 	request := engine.WorkflowStartRequest{
-		ID: "run-123", Workflow: "agent.workflow",
+		ID: "run-123", Workflow: "agent.workflow", TaskQueue: "agent.queue",
 		Input: &api.RunInput{RunID: "run-123"},
-		Memo:  map[string]any{"kind": []byte("binary")},
+		Memo: map[string]engine.EncodedValue{
+			"kind": {Metadata: map[string][]byte{"encoding": []byte("binary/plain")}, Data: []byte("value")},
+		},
 	}
 
 	_, err = eng.StartWorkflow(t.Context(), request)
@@ -283,14 +319,88 @@ func TestStartWorkflowValidatesDuplicateRecipe(t *testing.T) {
 	_, err = eng.StartWorkflow(t.Context(), request)
 	require.NoError(t, err)
 
-	changed := request
-	changed.Memo = map[string]any{"kind": "binary"}
-	_, err = eng.StartWorkflow(t.Context(), changed)
-	require.ErrorIs(t, err, engine.ErrWorkflowStartConflict)
+	tests := []struct {
+		name  string
+		value engine.EncodedValue
+	}{
+		{
+			name: "metadata",
+			value: engine.EncodedValue{
+				Metadata: map[string][]byte{"encoding": []byte("json/plain")},
+				Data:     []byte("value"),
+			},
+		},
+		{
+			name: "data",
+			value: engine.EncodedValue{
+				Metadata: map[string][]byte{"encoding": []byte("binary/plain")},
+				Data:     []byte("changed"),
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			changed := request
+			changed.Memo = map[string]engine.EncodedValue{"kind": test.value}
+			_, err := eng.StartWorkflow(t.Context(), changed)
+			require.ErrorIs(t, err, engine.ErrWorkflowStartConflict)
+		})
+	}
 
 	service.removeRecipeMemo()
 	_, err = eng.StartWorkflow(t.Context(), request)
 	require.ErrorIs(t, err, engine.ErrWorkflowStartConflict)
+}
+
+func TestStartWorkflowRejectsIncompleteRequest(t *testing.T) {
+	t.Parallel()
+
+	eng, err := NewClient(Options{ClientOptions: &client.Options{}})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, eng.Close())
+	})
+	valid := engine.WorkflowStartRequest{
+		ID:        "run-123",
+		Workflow:  "agent.workflow",
+		TaskQueue: "agent.queue",
+		Input:     &api.RunInput{RunID: "run-123"},
+	}
+	tests := []struct {
+		name    string
+		wantErr string
+		change  func(*engine.WorkflowStartRequest)
+	}{
+		{name: "missing id", wantErr: "workflow id is required", change: func(req *engine.WorkflowStartRequest) {
+			req.ID = ""
+		}},
+		{name: "missing workflow", wantErr: "workflow name is required", change: func(req *engine.WorkflowStartRequest) {
+			req.Workflow = ""
+		}},
+		{name: "missing task queue", wantErr: "workflow task queue is required", change: func(req *engine.WorkflowStartRequest) {
+			req.TaskQueue = ""
+		}},
+		{name: "missing input", wantErr: "workflow input is required", change: func(req *engine.WorkflowStartRequest) {
+			req.Input = nil
+		}},
+		{name: "mismatched run id", wantErr: "workflow id must match input run id", change: func(req *engine.WorkflowStartRequest) {
+			req.Input = &api.RunInput{RunID: "other-run"}
+		}},
+		{name: "retry interval without attempts", wantErr: "workflow retry timing requires max attempts or unlimited attempts", change: func(req *engine.WorkflowStartRequest) {
+			req.RetryPolicy.InitialInterval = time.Second
+		}},
+		{name: "retry backoff without attempts", wantErr: "workflow retry timing requires max attempts or unlimited attempts", change: func(req *engine.WorkflowStartRequest) {
+			req.RetryPolicy.BackoffCoefficient = 2
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := valid
+			test.change(&req)
+			_, err := eng.StartWorkflow(t.Context(), req)
+			require.EqualError(t, err, test.wantErr)
+		})
+	}
 }
 
 func TestNewClientRejectsRegistration(t *testing.T) {
@@ -446,4 +556,35 @@ func (s *testWorkflowService) removeRecipeMemo() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.startReq.Memo.Fields, workflowStartRecipeMemoKey)
+}
+
+// temporalInputAtWorkflowBudget builds input whose encoded bytes and start
+// names are exactly at the shared limit, plus extra bytes for rejection tests.
+func temporalInputAtWorkflowBudget(
+	t *testing.T,
+	id, workflow, queue string,
+	reserved, extra int,
+) *api.RunInput {
+	t.Helper()
+	dataConverter := workflowcodec.NewDataConverter()
+	base := &api.RunInput{RunID: id, Metadata: map[string]any{"payload": ""}}
+	payload, err := dataConverter.ToPayload(base)
+	require.NoError(t, err)
+	padding := engine.MaxPayloadBytes - temporalPayloadSize(payload) - len(id) - len(workflow) - len(queue) - reserved + extra
+	require.Positive(t, padding)
+	input := &api.RunInput{RunID: id, Metadata: map[string]any{"payload": strings.Repeat("x", padding)}}
+	payload, err = dataConverter.ToPayload(input)
+	require.NoError(t, err)
+	require.Equal(t, engine.MaxPayloadBytes+extra, temporalPayloadSize(payload)+len(id)+len(workflow)+len(queue)+reserved)
+	return input
+}
+
+// temporalPayloadSize returns the encoded data and metadata bytes charged to
+// one workflow start.
+func temporalPayloadSize(payload *commonpb.Payload) int {
+	size := len(payload.Data)
+	for key, value := range payload.Metadata {
+		size += len(key) + len(value)
+	}
+	return size
 }

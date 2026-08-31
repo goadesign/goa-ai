@@ -68,11 +68,13 @@ func (e *Engine) requestCancellationUpdate(ctx context.Context, request engine.C
 		WaitForStage: client.WorkflowUpdateStageCompleted,
 	}
 	handle, err := e.client.UpdateWorkflow(ctx, options)
+	workflowCompleted := false
 	if err != nil {
 		mapped := mapWorkflowMutationError(err)
 		if !errors.Is(mapped, engine.ErrWorkflowCompleted) {
 			return "", mapped
 		}
+		workflowCompleted = true
 		handle = e.client.GetWorkflowUpdateHandle(client.GetWorkflowUpdateHandleOptions{
 			WorkflowID: request.RunID,
 			UpdateID:   cancellationUpdateID,
@@ -80,7 +82,11 @@ func (e *Engine) requestCancellationUpdate(ctx context.Context, request engine.C
 	}
 	var acceptedReason string
 	if err := handle.Get(ctx, &acceptedReason); err != nil {
-		return "", mapCancellationUpdateError(err)
+		mapped := mapCancellationUpdateError(err)
+		if workflowCompleted && errors.Is(mapped, engine.ErrWorkflowNotFound) {
+			return "", engine.ErrWorkflowCompleted
+		}
+		return "", mapped
 	}
 	return acceptedReason, nil
 }

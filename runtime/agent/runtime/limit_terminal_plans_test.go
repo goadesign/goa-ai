@@ -192,9 +192,10 @@ func TestWithLimitTerminalPlansCopiesPayloads(t *testing.T) {
 	t.Parallel()
 
 	plans := testLimitTerminalPlans("service.tools.complete")
-	input := &RunInput{}
-	WithLimitTerminalPlans(*plans)(input)
+	start := &runStart{}
+	WithLimitTerminalPlans(*plans).apply(start)
 	plans.TimeBudget.Payload[0] = '['
+	input := &start.input
 
 	require.NotNil(t, input.Policy)
 	require.NotNil(t, input.Policy.LimitTerminalPlans)
@@ -254,7 +255,7 @@ func TestContinuationRejectsLimitTerminalPlanOverride(t *testing.T) {
 		},
 	}
 
-	_, err := rt.startRunOn(t.Context(), input, "workflow", "queue", false)
+	err := rt.buildAndSubmitWorkflowForTest(t.Context(), input, "workflow", "queue", false)
 	require.ErrorContains(t, err, "cannot include caller-supplied checkpoint state")
 }
 

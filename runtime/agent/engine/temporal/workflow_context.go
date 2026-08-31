@@ -19,11 +19,13 @@ import (
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
@@ -450,11 +452,18 @@ func (w *temporalWorkflowContext) activityOptionsFor(name string, override engin
 	}
 }
 
-// StartChildWorkflow starts a Temporal child workflow with explicit workflow name and task queue.
-//
-// This avoids parent-side registration lookups: the caller supplies the workflow name and the
-// engine starts it directly in Temporal.
-func (w *temporalWorkflowContext) StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
+// StartChildWorkflow copies and validates the complete child request, then
+// waits until Temporal accepts or rejects the start. The returned handle tracks
+// completion independently after Temporal accepts the child.
+func (w *temporalWorkflowContext) StartChildWorkflow(_ context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
+	if err := engine.ValidateChildWorkflowRequest(req); err != nil {
+		return nil, err
+	}
+	snapshot, err := startrecipe.SnapshotChildRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	req = snapshot.Request
 	opts := workflow.ChildWorkflowOptions{
 		WorkflowID:            req.ID,
 		TaskQueue:             req.TaskQueue,
@@ -466,7 +475,18 @@ func (w *temporalWorkflowContext) StartChildWorkflow(ctx context.Context, req en
 
 	cctx := workflow.WithChildOptions(w.ctx, opts)
 	cctx, cancel := workflow.WithCancel(cctx)
-	fut := workflow.ExecuteChildWorkflow(cctx, req.Workflow, req.Input)
+	fut := workflow.ExecuteChildWorkflow(
+		cctx,
+		req.Workflow,
+		converter.NewRawValue(snapshot.InputPayload),
+	)
+	if err := fut.GetChildWorkflowExecution().Get(cctx, nil); err != nil {
+		cancel()
+		if temporal.IsWorkflowExecutionAlreadyStartedError(err) {
+			return nil, &engine.ChildWorkflowIDReuseError{ID: req.ID}
+		}
+		return nil, normalizeTemporalError(err)
+	}
 	return &temporalChildHandle{future: fut, ctx: cctx, cancel: cancel}, nil
 }
 

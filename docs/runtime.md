@@ -2386,7 +2386,7 @@ run ID unused.
 The owning service then atomically accepts one prepared answer, so concurrent
 answers cannot start two workflows from the same state, and starts that exact
 prepared value. It may safely retry the same prepared value after an uncertain
-engine response because `StartContinuation` submits the same bytes each time:
+engine response because `StartPrepared` submits the same stored request each time:
 
 ```go
 prepared, err := client.PrepareContinuation(
@@ -2396,14 +2396,86 @@ prepared, err := client.PrepareContinuation(
     "run-124",
     "turn-2",
     response,
-    nil,
+    runtime.WorkflowOptions{},
 )
 if err != nil {
     return err
 }
-// Atomically accept the answer in application storage here.
-handle, err := client.StartContinuation(ctx, prepared)
+preparedBytes, err := prepared.MarshalBinary()
+if err != nil {
+    return err
+}
+// This application-owned method uses one database transaction to accept the
+// answer and store the prepared workflow ID with preparedBytes.
+err = workflowStarts.AcceptContinuation(ctx, previous.RunID, prepared.RunID(), preparedBytes)
+if err != nil {
+    return err
+}
 ```
+
+A later process can submit the accepted request without retaining any in-memory
+state from preparation:
+
+```go
+preparedBytes, err := workflowStarts.Load(ctx, "run-124")
+if err != nil {
+    return err
+}
+stored, err := runtime.ParsePreparedRun(preparedBytes)
+if err != nil {
+    return err
+}
+handle, err := client.StartPrepared(ctx, stored)
+```
+
+Initial runs use the same durable command. Call `Prepare`, store the bytes from
+`MarshalBinary`, restore them with `ParsePreparedRun` after a restart, and call
+`StartPrepared`. `PreparedRun.RunID` returns the exact workflow ID to associate
+with the stored command. `Start` prepares and submits in memory when the
+application does not need a durable write between validation and engine
+submission.
+
+`Prepare` and `PrepareOneShot` are client-only operations. They copy and
+validate a complete request without writing runtime storage, sealing worker
+registration, or calling the workflow engine. `PrepareContinuation` first reads
+the saved suspension but still performs no write and starts no workflow.
+Preparation does not serialize the optional stored form. `MarshalBinary`
+creates that form; `StartPrepared` independently submits the engine request.
+`Start`, `StartOneShot`, and `Continue` never call `MarshalBinary`.
+
+Prepared bytes can contain the complete transcript, tool results, and private
+continuation checkpoint. Store them only in trusted, access-controlled
+application storage. Workflow launch settings are stored only in the engine
+request; `api.RunInput` contains only workflow input. One workflow start may use
+at most `engine.MaxPayloadBytes` (1,048,576) bytes. This inclusive count covers
+the workflow ID, workflow and queue names, memo and search-attribute names, the
+encoded workflow input, every memo and search value's data and metadata, and
+the reserved digest memo added by the engine. Exactly 1,048,576 bytes is
+accepted and one more is rejected. The stored JSON record has its own
+8,388,608-byte ceiling for its complete representation, including the agent ID,
+explicit queue override, JSON escaping, base64 expansion, and JSON field syntax.
+`MarshalBinary` checks the complete record when it creates the bytes, and
+`ParsePreparedRun` checks it before decoding. This second limit protects the
+stored format; it does not increase the workflow request limit. Store large
+domain values separately and pass durable references instead.
+
+`MarshalBinary` reports a storage-encoding failure as
+`ErrPreparedRunRejected` without changing the in-memory prepared request. It
+remains startable, but an application that requires durable admission must not
+start it until the bytes are stored. `ErrPreparedRunRejected` from
+`ParsePreparedRun` means the stored bytes are malformed or are not the exact
+format produced by `MarshalBinary`; they cannot be retried. `StartPrepared`
+returns the same error when the stored
+request no longer satisfies the current generated agent definition; that
+command cannot start with this generated release. It also returns the error
+when valid bytes are passed to the wrong generated agent client. The bytes
+remain valid and must be submitted through the matching client.
+`ErrWorkflowStartFailed`
+means the engine did not confirm the start. Goa-AI does not retry automatically;
+the application explicitly calls `StartPrepared` again with the same value, or
+parses and submits the same stored bytes after a restart. If the cause is
+`engine.ErrWorkflowStartConflict`, another request owns the workflow ID and
+retrying cannot succeed.
 
 Callers that do not need a separate application write can use `Continue`, which
 prepares, starts, and waits for completion:
@@ -2416,7 +2488,7 @@ next, err := client.Continue(
     "run-124",
     "turn-2",
     response,
-    nil,
+    runtime.WorkflowOptions{},
 )
 ```
 
@@ -2499,10 +2571,68 @@ For runtime storage and workflow adapters:
   agent IDs, routes, queues, activity names, specifications, and required labels
   from those registrations.
 - Replace a service-side load followed by a direct continuation start with
-  `PrepareContinuation` and `StartContinuation`. Preparation validates and
+  `PrepareContinuation` and `StartPrepared`. Preparation validates and
   copies the complete input without calling the engine. Start submits only that
   prepared value. Use `Continue` only when no application write must occur
   between validation and start.
+- Use `PreparedRun` for both initial and continuation starts.
+  `PreparedRun.RunID` returns the workflow ID assigned during preparation,
+  `PreparedRun.MarshalBinary` creates the optional durable form only when
+  called, and `ParsePreparedRun` restores it after a process restart.
+- `Prepare(sessionID, messages, opts...)` and
+  `PrepareOneShot(messages, opts...)` are new methods. Handwritten
+  `AgentClient` implementations must add both methods. Preparation performs no
+  I/O, so neither method accepts a context. `Start`, `Run`, `StartOneShot`, and
+  `OneShotRun` now use the same prepared-request path internally.
+- Replace custom `RunOption` functions with the option constructors in
+  `runtime`, such as `WithRunID`, `WithMemo`, and `WithTaskQueue`. `RunOption`
+  is now a closed interface so external code cannot depend on private request
+  construction. Remove nil placeholders from option lists; a nil `RunOption`
+  now panics instead of being ignored.
+- Remove `WithWorkflowOptions` from initial and one-shot starts. Use
+  `WithTaskQueue`, `WithMemo`, and `WithSearchAttributes` so each option has one
+  clear effect. Continuation methods now take `runtime.WorkflowOptions` by
+  value; pass `runtime.WorkflowOptions{}` when no launch setting is needed.
+  `api.WorkflowOptions` is removed because launch settings are caller-side
+  values, not workflow input. `api.RunInput` no longer contains a
+  `WorkflowOptions` field.
+- Stop reading `RunInput.WorkflowOptions` from workflow handlers or custom
+  workflow engines. The field no longer exists. Read memo, search attributes,
+  and task queue from the corresponding `engine.WorkflowStartRequest` fields
+  instead. Custom engines now receive memo entries as `engine.EncodedValue`;
+  persist each entry's `Metadata` and `Data` bytes without decoding and encoding
+  it again. Search attributes arrive in their final engine-wide types: `string`,
+  `bool`, `int64`, `float64`, `time.Time`, or `[]string`. Integers and
+  `float32` values are converted before the engine receives them. Any other
+  type is rejected before submission.
+- Populate `ID`, `Workflow`, `TaskQueue`, and `Input` on every
+  `engine.WorkflowStartRequest`. All four fields are required. Official and
+  custom engines reject a missing value instead of supplying a Temporal or
+  local default. `ID` must equal `Input.RunID`.
+- Populate `ID`, `Workflow`, `TaskQueue`, and `Input` on every
+  `engine.ChildWorkflowRequest` too. `TaskQueue` is newly required for child
+  starts. A child must name its own queue instead of inheriting the parent or an
+  engine default, and its `ID` must equal `Input.RunID`. A child-start method
+  now returns only after the engine accepts or rejects the start.
+- Treat a zero `engine.RetryPolicy` as no retry override. `MaxAttempts` includes
+  the first attempt. A policy that sets `InitialInterval` or
+  `BackoffCoefficient` must also set a positive `MaxAttempts` or
+  `UnlimitedAttempts`.
+- Custom engines call `contract.NormalizeRootRequest` and bind its digest to the
+  workflow ID for exact-retry checks. They call
+  `contract.NormalizeChildRequest` for child starts. They use
+  `contract.CopyRunInput` for every initial or retry handler attempt, retain one
+  private `contract.CopyRunOutput` result, and copy that result again for every
+  wait, query, or other caller-facing read. These functions enforce the same
+  strict representation, 1 MiB limit, nil behavior, and independent ownership
+  as the shipped engines.
+- Every workflow input written by the old runtime includes the removed
+  `WorkflowOptions` field, even when its value is nil. The new strict decoder
+  rejects that old input shape, and the new exact-start identity differs from
+  every old request. Finish or cancel every old workflow before upgrading.
+  Resolve or abandon every old start whose result is uncertain, and never retry
+  an old request or reuse its workflow ID with this runtime. A changed request
+  returns `engine.ErrWorkflowStartConflict`.
 - Replace separate `session.Store` and `runlog.Store` implementations with one
   `storage.Store`. Each method stores one complete lifecycle change and its
   ordered run record together.
@@ -2546,10 +2676,6 @@ For runtime storage and workflow adapters:
   `Runtime.ResolvePromptRefs(ctx, sessionID, runID)`. Pass the Session ID that
   the caller has already authorized. A run from another Session is reported as
   missing.
-- Remove `WorkflowOptions.RetryPolicy` and `api.RetryPolicy`. There is no
-  per-run replacement. The runtime owns its workflow behavior. Custom engine
-  adapters use `engine.RetryPolicy` only on the engine requests and activity
-  options that still expose it.
 - Replace `WithRecordActivityTimeout` with `WithStorageActivityTimeout`. The
   new option covers the single storage activity that writes both lifecycle
   state and ordered run records.
@@ -2578,15 +2704,19 @@ go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.1.0.20260830031204-7b32f6cd
 For a release that changes generated or persisted runtime shapes:
 
 1. Regenerate every consumer from the same Goa-AI revision.
-2. Pause new work and deploy the runtime workers for every workflow and
-   activity queue, generated packages, and callers as one release.
-3. Verify every deployed component reports the same revision ready before
-   accepting new work.
+2. Finish or cancel every workflow started by the old runtime. Do not replay an
+   old active workflow history with the new worker.
+3. Resolve or abandon every start whose old caller did not receive a definite
+   engine result. Do not retry old uncertain requests after the upgrade.
+4. Deploy the runtime workers for every workflow and activity queue, generated
+   packages, and callers as one release.
+5. Verify every deployed component reports the same revision before accepting
+   new work.
 
-Ongoing workflows and saved suspensions must satisfy the exact current
-contract. Completed run history keeps the same meaning. A host may still need
-to convert its physical records or collections so the new store can read them.
-That conversion must preserve every recorded outcome and event.
+Completed run history keeps the same meaning. Saved suspensions must use the
+current `goa-ai.run-suspension.v7` contract. A host may still need to convert
+its physical records or collections so the new store can read them. That
+conversion must preserve every recorded outcome and event.
 
 A coordinated upgrade must replace every former session and run-record writer
 with the current `storage.Store` contract in one release. The host owns its
@@ -3177,7 +3307,11 @@ versioned digest frames the caller-submitted workflow name, task queue, input bo
 payload, run timeout, retry policy, and every sorted memo and search-attribute
 entry with its payload metadata and bytes. The in-memory engine stores only the
 fixed-size digest and executes a converter-produced input snapshot on its own
-cancelable context. After backend history expires, the owning application uses
+cancelable context. Every root and child request requires its engine workflow ID
+to equal `RunInput.RunID`. A zero `engine.RetryPolicy` supplies no override.
+When a request supplies a policy, `MaxAttempts` includes the first execution;
+retry timing requires a positive `MaxAttempts` or `UnlimitedAttempts`. After
+backend history expires, the owning application uses
 durable command identity to prevent reopening settled work; the engine does not
 add a durable identity registry.
 
@@ -3664,6 +3798,34 @@ matching field. The runtime uses `storage.ContractError` to tell an engine that
 the same command cannot succeed on retry. `runtime.WithStorageActivityTimeout`
 sets the activity's Start-to-Close timeout; it must be greater than zero.
 
+Custom engines apply the shared request and result contract instead of
+recreating the shipped adapters' validation:
+
+```go
+import "goa.design/goa-ai/runtime/agent/engine/contract"
+
+func (e *Engine) StartWorkflow(ctx context.Context, request engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
+    normalized, err := contract.NormalizeRootRequest(request)
+    if err != nil {
+        return nil, err
+    }
+
+    // Retain normalized.Digest with normalized.Request.ID while this execution
+    // can be queried. Return the existing handle only when an exact retry has
+    // the same digest.
+    return e.start(ctx, normalized.Request, normalized.Digest)
+}
+```
+
+Call `contract.NormalizeChildRequest` before retaining or submitting a child
+request. Keep each normalized request private. Call `contract.CopyRunInput`
+before every initial or retry handler attempt. After success, retain one private
+result from `contract.CopyRunOutput`, then call `CopyRunOutput` again for every
+wait, query, or other caller-facing read. The shared normalization converts
+search values to their portable types and fixes the root request digest. Each
+adapter still translates and submits those values through its own backend.
+The public functions use only `engine` and `api` values.
+
 Custom adapters must also implement `RegisterAgentChildActivity` and
 `ExecuteAgentChildActivity`. This activity prepares a nested agent's messages,
 renders any consumer-side prompt, and returns exactly one `Success` or
@@ -3673,11 +3835,16 @@ parent, tool, and label identity from the original recorded tool call. Workflow
 code must not read prompt storage directly because replay could otherwise see a
 newer prompt version than the original execution.
 
-The in-memory adapter must copy child activity input and output through the
-same type-preserving converter used by Temporal, enforce the same payload size
-limit, and apply the same retry policy. Tests that pass in memory therefore do
-not hide a retry, serialization, or payload-size failure that Temporal would
-surface.
+The in-memory adapter copies child activity input and output and every
+successful root or child workflow output through the same type-preserving,
+1 MiB converter used at the Temporal workflow boundary. Returned workflow
+outputs are independent of the handler-owned value. Tests that pass in memory
+therefore do not hide a retry, serialization, ownership, or payload-size failure
+that Temporal would surface.
+
+`StartChildWorkflow` returns only after an engine accepts or rejects the child
+start. The Temporal adapter waits for Temporal's child-start acknowledgement;
+the returned handle represents the already-accepted child's later completion.
 
 `QueryRunCompletion` returns the current `Status` in the same `RunCompletion`
 value as the terminal `Output` or `WorkflowError`. Open runs return only their

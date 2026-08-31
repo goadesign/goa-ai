@@ -78,10 +78,6 @@ type (
 		// Metadata allows orchestrators to attach arbitrary structured data.
 		Metadata map[string]any
 
-		// WorkflowOptions carries engine-specific start options (memo, search attributes,
-		// custom task queues). If nil, the runtime derives defaults from the agent registration.
-		WorkflowOptions *WorkflowOptions
-
 		// Policy carries optional per-run policy overrides applied on every planner turn.
 		// These options allow callers to set caps and tool filters without modifying
 		// the agent registration defaults.
@@ -101,19 +97,6 @@ type (
 
 		// Response satisfies the first request in Suspension.Pending.
 		Response *PendingInputResponse
-	}
-
-	// WorkflowOptions mirrors a subset of engine start options exposed through the runtime.
-	// Engine adapters convert these into native options at start time.
-	WorkflowOptions struct {
-		// Memo is a map of key-value pairs that can be used to store data for the workflow.
-		Memo map[string]any
-
-		// SearchAttributes is a map of key-value pairs indexed by the engine for visibility.
-		SearchAttributes map[string]any
-
-		// TaskQueue is the name of the task queue to use for the workflow.
-		TaskQueue string
 	}
 
 	// TagPolicyClause describes one tag-filtering clause for a run.

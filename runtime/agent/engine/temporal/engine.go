@@ -19,6 +19,7 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	temporalotel "go.temporal.io/sdk/contrib/opentelemetry"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
@@ -411,74 +412,42 @@ func (e *Engine) RegisterAgentChildActivity(_ context.Context, name string, opts
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
 
-// StartWorkflow launches a new workflow execution on Temporal using the specified
-// workflow definition and input. It constructs Temporal-specific start options from
-// the request (ID, queue, retry policy) and executes the workflow asynchronously.
-//
-// The workflow's task queue is resolved in order: req.TaskQueue → def.TaskQueue →
-// engine.defaultQueue. A base context is stored for activity execution correlation.
+// StartWorkflow submits the request's workflow name, task queue, and input to
+// Temporal. Client-only processes do not register worker handlers locally, so
+// every value needed for submission must come from the request.
 //
 // Returns a WorkflowHandle for waiting or cancelling the execution.
-// Returns an error if the workflow name is not registered, the ID conflicts with
-// an existing workflow, or if Temporal client execution fails.
+// Returns an error if the request is incomplete, the ID conflicts with an
+// existing workflow, or Temporal rejects the request.
 //
 // Thread-safe: Safe to call concurrently.
 func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
 	if err := engine.ValidateWorkflowStartRequest(req); err != nil {
 		return nil, err
 	}
-	if req.ID == "" {
-		return nil, fmt.Errorf("temporal engine: workflow id is required")
-	}
-	if req.Workflow == "" {
-		return nil, fmt.Errorf("temporal engine: workflow name is required")
-	}
-	def, err := e.workflowDefinition(req.Workflow)
-	if err != nil {
-		return nil, err
-	}
-
-	queue := req.TaskQueue
-	if queue == "" {
-		queue = def.TaskQueue
-	}
-	if queue == "" {
-		queue = e.defaultQueue
-	}
 
 	opts := client.StartWorkflowOptions{
 		ID:                                       req.ID,
-		TaskQueue:                                queue,
+		TaskQueue:                                req.TaskQueue,
 		WorkflowIDReusePolicy:                    enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
 		WorkflowExecutionErrorWhenAlreadyStarted: true,
 	}
 	if _, reserved := req.Memo[workflowStartRecipeMemoKey]; reserved {
 		return nil, fmt.Errorf("temporal engine: memo key %q is reserved", workflowStartRecipeMemoKey)
 	}
-	dataConverter := NewAgentDataConverter()
-	inputSnapshot, err := startrecipe.SnapshotRunInput(dataConverter, req.Input)
+	snapshot, err := startrecipe.SnapshotRequest(req)
 	if err != nil {
 		return nil, err
 	}
-	searchAttributes, err := startrecipe.EncodeSearchAttributes(req.SearchAttributes)
-	if err != nil {
-		return nil, err
-	}
-	fingerprint, err := startrecipe.Digest(dataConverter, startrecipe.DigestInput{
-		Workflow: req.Workflow, TaskQueue: req.TaskQueue, InputPayload: inputSnapshot.Payload,
-		RunTimeout: req.RunTimeout, RetryPolicy: req.RetryPolicy,
-		Memo: req.Memo, SearchAttributes: searchAttributes,
-	})
-	if err != nil {
-		return nil, err
-	}
+	req = snapshot.Request
+	fingerprint := snapshot.Digest
 	opts.Memo = make(map[string]any, len(req.Memo)+1)
 	for key, value := range req.Memo {
-		opts.Memo[key] = value
+		opts.Memo[key] = converter.NewRawValue(startrecipe.MemoPayload(value))
 	}
 	opts.Memo[workflowStartRecipeMemoKey] = fingerprint[:]
-	if len(searchAttributes) > 0 {
-		opts.TypedSearchAttributes = convertSearchAttributes(searchAttributes)
+	if len(snapshot.SearchAttributes) > 0 {
+		opts.TypedSearchAttributes = convertSearchAttributes(snapshot.SearchAttributes)
 	}
 	if req.RunTimeout > 0 {
 		// WorkflowRunTimeout applies separately to each workflow retry attempt.
@@ -488,7 +457,12 @@ func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequ
 		opts.RetryPolicy = rp
 	}
 
-	run, err := e.client.ExecuteWorkflow(ctx, opts, def.Name, inputSnapshot.Input)
+	run, err := e.client.ExecuteWorkflow(
+		ctx,
+		opts,
+		req.Workflow,
+		converter.NewRawValue(snapshot.InputPayload),
+	)
 	if err != nil {
 		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
 		if !errors.As(err, &alreadyStarted) {
@@ -660,17 +634,6 @@ func (e *Engine) requireWorkerMode(action string) error {
 		return nil
 	}
 	return fmt.Errorf("temporal engine: client mode cannot %s; use temporal.NewWorker", action)
-}
-
-func (e *Engine) workflowDefinition(name string) (engine.WorkflowDefinition, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	def, ok := e.workflows[name]
-	if !ok {
-		return engine.WorkflowDefinition{}, fmt.Errorf("temporal engine: workflow %q is not registered", name)
-	}
-	return def, nil
 }
 
 // beginWorkflowRegistration reserves a workflow name so duplicate concurrent

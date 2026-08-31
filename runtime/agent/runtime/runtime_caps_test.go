@@ -77,18 +77,18 @@ func TestMergeCapsKeepsRecoveryMaximumAndRemainingConsistent(t *testing.T) {
 
 func TestWithRunMaxToolCallsRejectsNonPositive(t *testing.T) {
 	require.Panics(t, func() {
-		WithRunMaxToolCalls(0)(&RunInput{})
+		WithRunMaxToolCalls(0).apply(&runStart{})
 	})
 	require.Panics(t, func() {
-		WithRunMaxToolCalls(-1)(&RunInput{})
+		WithRunMaxToolCalls(-1).apply(&runStart{})
 	})
 }
 
 func TestWithRunMaxRecoveryTurnsRejectsNonPositive(t *testing.T) {
 	require.Panics(t, func() {
-		WithRunMaxRecoveryTurns(0)(&RunInput{})
+		WithRunMaxRecoveryTurns(0).apply(&runStart{})
 	})
 	require.Panics(t, func() {
-		WithRunMaxRecoveryTurns(-1)(&RunInput{})
+		WithRunMaxRecoveryTurns(-1).apply(&runStart{})
 	})
 }
