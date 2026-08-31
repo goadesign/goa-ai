@@ -105,6 +105,34 @@ func TestRequestContractRejectsMalformedProviderUsageModel(t *testing.T) {
 	require.Equal(t, ModelClassSmall, rejected.Usage().ModelClass)
 }
 
+func TestRequestContractMakesMalformedProviderToolJSONCorrectable(t *testing.T) {
+	contract, err := NewRequestContract(&Request{ModelClass: ModelClassDefault})
+	require.NoError(t, err)
+	usage := TokenUsage{
+		ModelClass:   ModelClassDefault,
+		InputTokens:  8,
+		OutputTokens: 5,
+		TotalTokens:  13,
+	}
+	privateCause := errors.New(`provider returned {"secret":`)
+
+	rejected := contract.RejectProviderOutput(
+		OutputValidationToolArguments,
+		&usage,
+		privateCause,
+	)
+
+	require.Equal(t, OutputValidationToolArguments, rejected.Kind())
+	require.Equal(t, malformedToolArgumentsCorrection, rejected.RecoveryCorrection())
+	require.Equal(t, usage, *rejected.Usage())
+	require.True(t, rejected.Evidence().Present)
+	require.NotContains(t, rejected.Error(), "secret")
+	require.ErrorIs(t, outputValidationCause(t, rejected), privateCause)
+	response, cloneErr := rejected.RejectedResponse()
+	require.NoError(t, cloneErr)
+	require.Nil(t, response)
+}
+
 func TestRequestContractDistinguishesResponseShapeFromOutputBounds(t *testing.T) {
 	tests := []struct {
 		name     string
