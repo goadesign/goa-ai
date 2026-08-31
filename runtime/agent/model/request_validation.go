@@ -69,6 +69,13 @@ type (
 		toolName   tools.Ident
 		correction string
 	}
+
+	// malformedToolArgumentsError marks provider output that named an
+	// advertised tool but could not represent its arguments as JSON. Its fixed
+	// correction contains no provider-authored values.
+	malformedToolArgumentsError struct {
+		cause error
+	}
 )
 
 // NewRequestContract validates request and copies every value used to accept
@@ -174,6 +181,9 @@ func (c *RequestContract) RejectProviderOutput(
 	usage *TokenUsage,
 	cause error,
 ) *OutputValidationError {
+	if kind == OutputValidationToolArguments {
+		cause = &malformedToolArgumentsError{cause: cause}
+	}
 	return newOutputValidationError(
 		kind,
 		cause,
@@ -672,6 +682,24 @@ func (e *toolCallValidationError) Error() string {
 // guidance derived before the rejected payload leaves validation.
 func (e *toolCallValidationError) modelRecoveryCorrection() string {
 	return e.correction
+}
+
+// Error describes the canonical contract failure without rendering provider
+// argument bytes or adapter diagnostics.
+func (e *malformedToolArgumentsError) Error() string {
+	return "model tool arguments are not valid JSON"
+}
+
+// Unwrap preserves the provider adapter's private cause for in-process
+// diagnostics.
+func (e *malformedToolArgumentsError) Unwrap() error {
+	return e.cause
+}
+
+// modelRecoveryCorrection supplies the fixed replacement instruction consumed
+// by the existing bounded model-invocation recovery path.
+func (e *malformedToolArgumentsError) modelRecoveryCorrection() string {
+	return malformedToolArgumentsCorrection
 }
 
 // validateToolChoiceResponse enforces the exact tool-use constraint copied

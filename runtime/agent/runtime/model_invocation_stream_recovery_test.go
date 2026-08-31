@@ -129,6 +129,56 @@ func TestRunLoopRecoversMalformedStreamedToolCallBeforeExecution(t *testing.T) {
 	assert.Equal(t, 30, out.Usage.TotalTokens)
 }
 
+func TestRunLoopRecoversProviderMalformedToolJSONBeforeExecution(t *testing.T) {
+	kickoff := newAnyJSONSpec("catalog.provider_json_kickoff", "catalog")
+	lookup := newStrictRecoverySpec()
+	var providerCalls, lookupCalls int
+	h := newRecoveryHarness(
+		t,
+		"provider-malformed-json",
+		[]tools.ToolSpec{kickoff, lookup},
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			if call.Name == lookup.Name {
+				lookupCalls++
+			}
+			return successfulToolResult(call), nil
+		},
+		func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			if len(input.ToolOutputs) == 2 {
+				return finalPlannerResult("provider JSON replacement completed"), nil
+			}
+			summary, err := streamPreResponseModel(ctx, input)
+			if err != nil {
+				var validationErr *model.OutputValidationError
+				require.ErrorAs(t, err, &validationErr)
+				assert.Contains(t, validationErr.RecoveryCorrection(), "not valid JSON")
+				assert.NotContains(t, validationErr.RecoveryCorrection(), "privateSecret")
+				return nil, err
+			}
+			require.Len(t, summary.ToolCalls, 1)
+			require.Len(t, input.Reminders, 1)
+			assert.Contains(t, input.Reminders[0].Text, "not valid JSON")
+			return &planner.PlanResult{ToolCalls: summary.ToolCalls}, nil
+		},
+	)
+	h.runtime.models["test"] = newProviderMalformedJSONStreamModel(t, &providerCalls)
+
+	out, err := h.run(streamRecoveryKickoff(kickoff), policy.CapsState{
+		MaxToolCalls:           3,
+		RemainingToolCalls:     3,
+		MaxRecoveryTurns:       1,
+		RemainingRecoveryTurns: 1,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "provider JSON replacement completed", agentMessageText(out.Final))
+	assert.Equal(t, 2, providerCalls)
+	assert.Equal(t, 1, lookupCalls)
+	require.NotNil(t, out.Usage)
+	assert.Equal(t, 30, out.Usage.TotalTokens)
+}
+
 func TestRunLoopRecoversMalformedStreamedToolCallWhenCloseFails(t *testing.T) {
 	kickoff := newAnyJSONSpec("catalog.stream_close_kickoff", "catalog")
 	lookup := newStrictRecoverySpec()
@@ -318,6 +368,56 @@ func newPreResponseRecoveryStreamModel(providerCalls *int, alwaysInvalid bool, c
 					Usage:      usage,
 				},
 				closeErr: streamCloseErr,
+			}, nil
+		},
+	})
+}
+
+// newProviderMalformedJSONStreamModel reproduces a provider adapter that could
+// not represent one completed tool payload as JSON, then returns a valid call
+// for the bounded replacement invocation.
+func newProviderMalformedJSONStreamModel(t *testing.T, providerCalls *int) model.Client {
+	t.Helper()
+	return mustTestModelClient(stubModelClient{
+		stream: func(_ context.Context, request *model.Request) (model.Streamer, error) {
+			(*providerCalls)++
+			usage := model.TokenUsage{
+				InputTokens:  *providerCalls * 4,
+				OutputTokens: *providerCalls * 6,
+				TotalTokens:  *providerCalls * 10,
+			}
+			if *providerCalls == 1 {
+				contract, err := model.NewRequestContract(request)
+				require.NoError(t, err)
+				return &chunkStreamer{terminalErr: contract.RejectProviderOutput(
+					model.OutputValidationToolArguments,
+					&usage,
+					errors.New("privateSecret malformed provider payload"),
+				)}, nil
+			}
+			call := model.ToolCall{
+				ID:      "provider-json-replacement",
+				Name:    "catalog.lookup",
+				Payload: rawjson.Message(`{"query":"accepted"}`),
+			}
+			return &chunkStreamer{
+				chunks: []model.Chunk{
+					model.UsageChunk{Usage: usage},
+					model.ToolCallChunk{ToolCall: call},
+					model.StopChunk{Reason: "tool_use"},
+				},
+				response: &model.Response{
+					Content: []model.Message{{
+						Role: model.ConversationRoleAssistant,
+						Parts: []model.Part{model.ToolUsePart{
+							ID:    call.ID,
+							Name:  call.Name.String(),
+							Input: call.Payload,
+						}},
+					}},
+					StopReason: "tool_use",
+					Usage:      usage,
+				},
 			}, nil
 		},
 	})

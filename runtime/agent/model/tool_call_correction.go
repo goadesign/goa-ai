@@ -14,12 +14,13 @@ import (
 )
 
 const (
-	replacementInstruction = "Return a replacement tool call whose arguments match the generated input schema."
-	unknownFieldCorrection = "Remove properties that are not defined by the generated input schema."
-	missingFieldConstraint = "missing_field"
-	invalidTypeConstraint  = "invalid_field_type"
-	invalidEnumConstraint  = "invalid_enum_value"
-	unknownFieldConstraint = "unknown_field"
+	replacementInstruction           = "Return a replacement tool call whose arguments match the generated input schema."
+	malformedToolArgumentsCorrection = "The previous tool call arguments were not valid JSON. Return a replacement tool call whose arguments are one JSON object matching the advertised input schema."
+	unknownFieldCorrection           = "Remove properties that are not defined by the generated input schema."
+	missingFieldConstraint           = "missing_field"
+	invalidTypeConstraint            = "invalid_field_type"
+	invalidEnumConstraint            = "invalid_enum_value"
+	unknownFieldConstraint           = "unknown_field"
 )
 
 // generatedToolCallCorrection converts generated codec issues into stable,
