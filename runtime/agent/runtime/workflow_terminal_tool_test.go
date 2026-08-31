@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -702,6 +703,248 @@ func TestFinalizeWithPlannerExecutesTerminalToolCall(t *testing.T) {
 	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
 	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
 	require.Len(t, base.Messages, 2)
+}
+
+func TestFinalizeWithPlannerRecoversRejectedModelOutput(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		first       func() *PlanActivityOutput
+		assertRetry func(*testing.T, *PlanActivityInput)
+		totalTokens int
+	}{
+		{
+			name: "provider tool JSON",
+			first: func() *PlanActivityOutput {
+				return &PlanActivityOutput{
+					PublicationBatchID:      testPublicationBatchID,
+					ModelInvocationRecovery: &ModelInvocationRecovery{Correction: "Return valid tool JSON."},
+					Usage:                   model.TokenUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12},
+				}
+			},
+			assertRetry: func(t *testing.T, input *PlanActivityInput) {
+				t.Helper()
+				require.Equal(t, "Return valid tool JSON.", input.ModelInvocationRecovery.Correction)
+				require.Nil(t, input.ModelOutputRecovery)
+			},
+			totalTokens: 36,
+		},
+		{
+			name: "planner output",
+			first: func() *PlanActivityOutput {
+				reasonSHA, reasonSize := fingerprintBytes([]byte("invalid finalization output"))
+				responseSHA, responseSize := fingerprintBytes([]byte("rejected response"))
+				return &PlanActivityOutput{
+					PublicationBatchID: testPublicationBatchID,
+					OutputContractFailure: &OutputContractFailure{
+						Origin:                          planner.OutputContractOriginModel,
+						ReasonSHA256:                    reasonSHA,
+						ReasonSize:                      reasonSize,
+						ModelResponsePresent:            true,
+						ModelResponseSHA256:             responseSHA,
+						ModelResponseFingerprintVersion: api.ModelResponseFingerprintVersionV2,
+						ModelResponseSize:               responseSize,
+						Correction:                      "Return the required terminal action.",
+					},
+					Usage: model.TokenUsage{InputTokens: 8, OutputTokens: 3, TotalTokens: 11},
+				}
+			},
+			assertRetry: func(t *testing.T, input *PlanActivityInput) {
+				t.Helper()
+				require.Equal(t, "Return the required terminal action.", input.ModelOutputRecovery.Correction)
+				require.Nil(t, input.ModelInvocationRecovery)
+			},
+			totalTokens: 35,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rt, terminalTool, wfCtx := newTerminalFinalizationRuntime(t)
+			plannerCalls := 0
+			var plannerErr error
+			wfCtx.plannerRoutes["resume"] = func(_ context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+				plannerCalls++
+				require.NotNil(t, input.Finalize)
+				require.Equal(t, planner.TerminationReasonToolFailure, input.Finalize.Reason)
+				if plannerCalls == 1 {
+					require.Nil(t, input.ModelInvocationRecovery)
+					require.Nil(t, input.ModelOutputRecovery)
+					return test.first(), plannerErr
+				}
+				test.assertRetry(t, input)
+				return &PlanActivityOutput{
+					PublicationBatchID: testPublicationBatchID,
+					Result: &PlanResult{ToolCalls: []ToolCall{{
+						ToolCallID: "terminal-replacement",
+						Name:       terminalTool.Name,
+						Payload:    rawjson.Message(`{}`),
+					}}},
+					Usage: model.TokenUsage{InputTokens: 20, OutputTokens: 4, TotalTokens: 24},
+				}, plannerErr
+			}
+			base := &planner.PlanInput{RunContext: run.Context{
+				RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
+			}}
+			input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+
+			out, err := rt.finalizeRun(
+				wfCtx,
+				AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+				input,
+				base,
+				nil,
+				nil,
+				model.TokenUsage{},
+				initialCaps(RunPolicy{}),
+				2,
+				input.TurnID,
+				nil,
+				planner.TerminationReasonToolFailure,
+				time.Time{},
+			)
+
+			require.NoError(t, err)
+			require.NotNil(t, out)
+			require.Equal(t, 2, plannerCalls)
+			require.Len(t, out.ToolEvents, 1)
+			require.Equal(t, "terminal-replacement", out.ToolEvents[0].ToolCallID)
+			require.Equal(t, test.totalTokens, out.Usage.TotalTokens)
+		})
+	}
+}
+
+func TestFinalizeWithPlannerStopsWhenRecoveryBudgetIsExhausted(t *testing.T) {
+	rt, _, wfCtx := newTerminalFinalizationRuntime(t)
+	plannerCalls := 0
+	var plannerErr error
+	wfCtx.plannerRoutes["resume"] = func(_ context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+		plannerCalls++
+		require.NotNil(t, input.Finalize)
+		return &PlanActivityOutput{
+			PublicationBatchID: testPublicationBatchID,
+			ModelInvocationRecovery: &ModelInvocationRecovery{
+				Correction: "Return valid tool JSON.",
+			},
+		}, plannerErr
+	}
+	base := &planner.PlanInput{RunContext: run.Context{
+		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
+	}}
+	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+
+	out, err := rt.finalizeRun(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		input,
+		base,
+		nil,
+		nil,
+		model.TokenUsage{},
+		policy.CapsState{MaxRecoveryTurns: 1, RemainingRecoveryTurns: 0},
+		2,
+		input.TurnID,
+		nil,
+		planner.TerminationReasonToolFailure,
+		time.Time{},
+	)
+
+	require.Nil(t, out)
+	require.ErrorContains(t, err, "finalization recovery turn cap exceeded")
+	require.Equal(t, 1, plannerCalls)
+	require.Empty(t, wfCtx.lastToolCall.Name)
+}
+
+func TestFinalizeWithPlannerRecoversCorrectableTerminalTool(t *testing.T) {
+	rt := New(WithLogger(telemetry.NoopLogger{}))
+	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"), "workflow.progress")
+	terminalTool.TerminalRun = true
+	terminalTool.Bookkeeping = true
+	executions := 0
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "workflow.progress",
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			executions++
+			result := &planner.ToolResult{Name: call.Name, ToolCallID: call.ToolCallID}
+			if executions == 1 {
+				result.Failure = testToolFailure(
+					planner.FailureDomainRejection,
+					planner.RecoveryCorrectCall,
+					"replace the unknown evidence reference",
+				)
+				return result, nil
+			}
+			result.Result = map[string]any{"ok": true}
+			return result, nil
+		}),
+		Specs: []tools.ToolSpec{terminalTool},
+	}))
+	plannerCalls := 0
+	var plannerErr error
+	wfCtx := &routeWorkflowContext{
+		ctx:   context.Background(),
+		runID: "run-1",
+		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+			"resume": func(_ context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+				plannerCalls++
+				require.NotNil(t, input.Finalize)
+				if plannerCalls == 1 {
+					return &PlanActivityOutput{
+						PublicationBatchID: testPublicationBatchID,
+						Result: &PlanResult{ToolCalls: []ToolCall{{
+							ToolCallID:      "terminal-invalid-evidence",
+							ModelToolCallID: "provider-invalid-evidence",
+							Name:            terminalTool.Name,
+							Payload:         rawjson.Message(`{"evidence":"ev_unknown"}`),
+							ModelPayload:    rawjson.Message(`{"evidence":"ev_unknown"}`),
+						}}},
+					}, plannerErr
+				}
+				require.Equal(t, []string{"terminal-invalid-evidence"}, input.RecoveryToolCallIDs)
+				return &PlanActivityOutput{
+					PublicationBatchID: testPublicationBatchID,
+					RecoveryCatalog:    &RecoveryCatalog{Tools: []tools.Ident{terminalTool.Name}},
+					Result: &PlanResult{ToolCalls: []ToolCall{{
+						ToolCallID: "terminal-corrected-evidence",
+						Name:       terminalTool.Name,
+						Payload:    rawjson.Message(`{"evidence":"ev_valid"}`),
+					}}},
+				}, plannerErr
+			},
+		},
+		toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
+			"execute": func(ctx context.Context, input *ToolInput) (*ToolOutput, error) {
+				return rt.ExecuteToolActivity(ctx, input)
+			},
+		},
+	}
+	base := &planner.PlanInput{RunContext: run.Context{
+		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
+	}}
+	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+
+	out, err := rt.finalizeRun(
+		wfCtx,
+		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		input,
+		base,
+		nil,
+		nil,
+		model.TokenUsage{},
+		policy.CapsState{MaxRecoveryTurns: 1, RemainingRecoveryTurns: 1},
+		2,
+		input.TurnID,
+		nil,
+		planner.TerminationReasonToolFailure,
+		time.Time{},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Equal(t, 2, plannerCalls)
+	require.Equal(t, 2, executions)
+	require.Len(t, out.ToolEvents, 2)
+	require.NotNil(t, out.ToolEvents[0].Failure)
+	require.Equal(t, planner.RecoveryCorrectCall, out.ToolEvents[0].Failure.Recovery.Action)
+	require.Nil(t, out.ToolEvents[1].Failure)
+	require.Equal(t, "terminal-corrected-evidence", out.FinalToolResult.ToolCallID)
 }
 
 func TestFinalizeWithPlannerTerminalToolUsesRuntimeReason(t *testing.T) {

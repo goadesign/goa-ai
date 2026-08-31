@@ -462,15 +462,17 @@ type (
 		// empty field because they have no failed output to recover.
 		RecoveryToolCallIDs []string `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
-		// ModelOutputRecovery requests replacement of one rejected final answer.
-		// Its presence makes this a synthesis-only turn, so callers cannot supply
-		// correction guidance while leaving domain tools available.
+		// ModelOutputRecovery requests replacement of one rejected planner output.
+		// Outside finalization its presence makes this a synthesis-only turn. During
+		// finalization the existing final response or terminal-tool contract remains
+		// in force while the planner replaces the rejected output.
 		ModelOutputRecovery *ModelOutputRecovery `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// ModelInvocationRecovery requests replacement of one pre-canonical tool
 		// call rejected by generated input validation or provider response
-		// validation. Exactly one recovery variant is present, and the ordinary
-		// executable catalog remains available on this planner turn.
+		// validation. Exactly one recovery variant is present. Ordinary turns retain
+		// their executable catalog; finalization retains its restricted terminal
+		// contract.
 		ModelInvocationRecovery *ModelInvocationRecovery `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// SynthesisOnly requires the planner to produce a final response without
@@ -483,7 +485,8 @@ type (
 	}
 
 	// ModelOutputRecovery contains bounded guidance for replacing one rejected
-	// final answer. PlanResume derives synthesis-only behavior from this value.
+	// planner output. PlanResume derives synthesis-only behavior from this value
+	// unless Finalize preserves a stricter finalization contract.
 	ModelOutputRecovery struct {
 		// Correction tells the planner which output contract the replacement
 		// answer must satisfy.

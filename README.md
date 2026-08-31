@@ -876,7 +876,10 @@ correctable failure keeps that tool available.
 rejected tool output, a rejected model invocation, or a rejected completed
 answer. Bookkeeping calls do not consume or reset this budget. If a rejected
 bookkeeping result schedules another planner activity, that replacement
-activity consumes one recovery turn.
+activity consumes one recovery turn. Finalization uses the same budget: a
+rejected finalizer response or a terminal tool failure marked `correct_call`
+retains the finalization restriction while the model replaces that output.
+Other terminal-tool failures still end finalization.
 
 Agent-as-tool results use this same typed transition contract. The number of
 child tools observed during the nested run is telemetry for linked progress;

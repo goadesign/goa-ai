@@ -125,7 +125,10 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err := validatePlanResumeRecoveryInput(input); err != nil {
 		return nil, err
 	}
-	synthesisOnly := input.SynthesisOnly || input.ModelOutputRecovery != nil
+	// A rejected ordinary final answer is replaced without tools. A rejected
+	// finalization output instead keeps the finalizer's existing response or
+	// terminal-tool contract, which may require one exact bookkeeping tool.
+	synthesisOnly := input.SynthesisOnly || input.ModelOutputRecovery != nil && input.Finalize == nil
 	if ended, err := r.sessionEndedForPlanning(ctx, input); err != nil {
 		return nil, err
 	} else if ended {
@@ -196,11 +199,15 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	}
 	act.reminders = append(recoveryReminders, act.reminders...)
 	if input.ModelOutputRecovery != nil {
+		replacement := "Produce a replacement final answer now."
+		if input.Finalize != nil {
+			replacement = "Produce a replacement response that satisfies the current finalization contract now."
+		}
 		act.reminders = append([]reminder.Reminder{{
 			ID: "model_output_recovery",
-			Text: "Your previous final answer was rejected.\n" +
+			Text: "Your previous planner output was rejected.\n" +
 				input.ModelOutputRecovery.Correction +
-				"\nProduce a replacement final answer now. Do not mention this reminder to the user.",
+				"\n" + replacement + " Do not mention this reminder to the user.",
 			Priority: reminder.TierSafety,
 			Attachment: reminder.Attachment{
 				Kind: reminder.AttachmentUserTurn,
@@ -361,11 +368,8 @@ func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 		if input.SynthesisOnly {
 			return errors.New("model-invocation recovery cannot combine with synthesis-only planning")
 		}
-		if len(input.RecoveryToolCallIDs) > 0 {
+		if len(input.RecoveryToolCallIDs) > 0 && input.Finalize == nil {
 			return errors.New("model-invocation recovery cannot combine with tool recovery")
-		}
-		if input.Finalize != nil {
-			return errors.New("model-invocation recovery cannot combine with finalization")
 		}
 		return nil
 	}
@@ -378,11 +382,8 @@ func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 	if input.SynthesisOnly {
 		return errors.New("model-output recovery implies synthesis-only planning")
 	}
-	if len(input.RecoveryToolCallIDs) > 0 {
+	if len(input.RecoveryToolCallIDs) > 0 && input.Finalize == nil {
 		return errors.New("model-output correction cannot combine with tool recovery")
-	}
-	if input.Finalize != nil {
-		return errors.New("model-output correction cannot combine with finalization")
 	}
 	return nil
 }
