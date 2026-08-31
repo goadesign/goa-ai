@@ -808,12 +808,20 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 			wantErr: "cannot combine with tool recovery",
 		},
 		{
-			name: "model recovery with finalization",
+			name: "model output recovery with finalization evidence",
 			input: &PlanActivityInput{
 				ModelOutputRecovery: &ModelOutputRecovery{Correction: "Replace the answer."},
+				RecoveryToolCallIDs: []string{"call-1"},
 				Finalize:            termination,
 			},
-			wantErr: "cannot combine with finalization",
+		},
+		{
+			name: "model invocation recovery with finalization evidence",
+			input: &PlanActivityInput{
+				ModelInvocationRecovery: &ModelInvocationRecovery{Correction: "Replace the tool call."},
+				RecoveryToolCallIDs:     []string{"call-1"},
+				Finalize:                termination,
+			},
 		},
 		{
 			name: "combined model recovery variants",

@@ -299,6 +299,7 @@ The runtime keeps execution policy and planner intent separate:
 | A failed tool requires `finish` recovery and no successful query has another page | `PlanResumeInput.Finalize` with reason `tool_failure` |
 | A failed tool requires `finish` recovery while a successful query has another page | Recovery turn containing the failure evidence and only the generated continuation actions |
 | Any failed tool has a `ToolFailure` whose recovery action permits tools | Runtime-enforced correction or replan turn |
+| A finalization response is correctable, or its terminal tool returns `correct_call` | Spend one recovery turn while retaining finalization and, for a tool failure, advertise only that exact terminal tool |
 | A successful batch has `SynthesizeAfterTools` set without `CompletionTool` | `PlanResumeInput.SynthesisOnly` |
 | Otherwise | Normal continuation turn |
 
@@ -1108,7 +1109,10 @@ redeploys.
   prose final answer. The runtime executes only `TerminalRun()` tools in that
   path (`TerminalRun()` implies bookkeeping), keeps them inside the remaining
   hard-deadline window, and closes the run only if every terminal side effect
-  succeeds. Recovery call IDs extend the planner activity payload and select the
+  succeeds. A rejected finalizer output or terminal-tool `correct_call` failure
+  consumes the existing recovery-turn budget while retaining the same
+  finalization reason and restricted tool catalog. Other terminal failures end
+  the run. Recovery call IDs extend the planner activity payload and select the
   canonical failed outputs that shape both reminders and the advertised catalog.
   Empty recovery IDs are omitted from ordinary activity payloads. Runtime
   workers, generated packages, and callers use one generated contract and
