@@ -59,7 +59,6 @@ func TestStreamPumpClassifiesMalformedEvents(t *testing.T) {
 func TestStreamPumpDefersMalformedToolJSONUntilUsage(t *testing.T) {
 	index := int32(0)
 	providerName := "tasks_progress_complete"
-	toolUseID := "tooluse_1"
 	malformed := `{"title":"Weekly review"`
 	inputTokens := int32(85_510)
 	outputTokens := int32(3_745)
@@ -72,7 +71,7 @@ func TestStreamPumpDefersMalformedToolJSONUntilUsage(t *testing.T) {
 				Start: &brtypes.ContentBlockStartMemberToolUse{
 					Value: brtypes.ToolUseBlockStart{
 						Name:      &providerName,
-						ToolUseId: &toolUseID,
+						ToolUseId: strPtr("tooluse_1"),
 					},
 				},
 			},
