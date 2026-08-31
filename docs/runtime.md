@@ -388,9 +388,11 @@ joining, or replacing the validation error returned by `Recv`.
 
 Each retry consumes one existing `MaxRecoveryTurns` entry. Repeated misses end
 through the normal recovery-cap path. Cancellation, deadlines, transport
-failures, malformed output that has no non-empty name, and complete-answer
-corrections remain on their existing paths. Provider usage from each rejected
-invocation is counted once.
+failures, malformed output that has no attributable terminal usage, and
+complete-answer corrections remain on their existing paths. A completed tool
+call whose arguments are not valid JSON uses fixed replacement guidance; its
+raw bytes, provider diagnostics, and tool identity do not enter workflow state.
+Provider usage from each rejected invocation is counted once.
 
 Temporal records the optional name in `ModelInvocationRecovery` on the planner
 activity result and its next input. Histories recorded before this field existed
@@ -420,7 +422,10 @@ A raw model gateway transports provider chunks and the complete response; it
 does not replace the request owner's generated payload decoder with a validator
 compiled from transported JSON Schema. Provider adapters still reject malformed
 JSON, unknown tool names, invalid identifiers, illegal event order, incomplete
-streams, and provider errors before output crosses the transport.
+streams, and provider errors before output crosses the transport. For malformed
+tool argument JSON, an adapter may finish reading only terminal completion and
+usage events, then return fixed replacement guidance through the existing typed
+output rejection. It never exposes or repairs the malformed bytes.
 
 The consuming `model.Client` retains streamed tool argument fragments and
 completed calls, drains the provider through terminal usage and response, and
@@ -898,11 +903,12 @@ Workflow step boundary:
 - when one of those limits is reached, the workflow selects the matching call
   without loading saved messages, adds current run identifiers and labels,
   and executes the call through the existing terminal-tool path,
-- when a model returns a tool call that fails its generated input codec, the
-  model boundary may produce bounded replacement guidance from the generated
-  tool name, field path, expected JSON type, required-field rule, legal enum,
-  or union discriminator; it never copies submitted values, raw provider
-  output, or unknown property names into that guidance,
+- when a model returns malformed tool argument JSON, the model boundary may
+  produce fixed guidance requiring one JSON object; when a canonical tool call
+  instead fails its generated input codec, guidance may use the generated tool
+  name, field path, expected JSON type, required-field rule, legal enum, or
+  union discriminator; neither form copies submitted values, raw provider
+  output, provider diagnostics, or unknown property names into that guidance,
 - the workflow ties that guidance to the exact rejected invocation selected in
   invocation start order, records its token usage, keeps the malformed call out
   of transcript history, and schedules one normal resume activity with the

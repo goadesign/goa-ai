@@ -19,6 +19,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+var errMalformedToolPayload = errors.New("tool payload is not valid JSON")
+
 // bedrockStreamer adapts a Bedrock ConverseStream event stream to the
 // model.Streamer interface. It stamps model attribution (modelID, modelClass)
 // onto usage chunks so downstream consumers can attribute token costs.
@@ -178,7 +180,7 @@ func (s *bedrockStreamer) run() {
 				continue
 			}
 			if err := processor.Handle(event); err != nil {
-				if _, ok := model.UnadvertisedToolName(err); ok && rejected == nil {
+				if deferredBedrockOutputRejection(err) && rejected == nil {
 					rejected = err
 					processor.discardSemanticOutput()
 					continue
@@ -188,6 +190,17 @@ func (s *bedrockStreamer) run() {
 			}
 		}
 	}
+}
+
+// deferredBedrockOutputRejection identifies completed model decisions whose
+// replacement guidance is owned by the shared model contract. The stream pump
+// keeps reading only terminal events so usage is attributed to the rejected
+// invocation before the runtime decides whether a recovery turn is available.
+func deferredBedrockOutputRejection(err error) bool {
+	if _, ok := model.UnadvertisedToolName(err); ok {
+		return true
+	}
+	return errors.Is(err, errMalformedToolPayload)
 }
 
 // closeProviderStream closes the AWS event stream once and returns the same
@@ -964,7 +977,7 @@ func contentIndex(idx *int32) (int, error) {
 func decodeToolPayload(raw string) (rawjson.Message, error) {
 	data := []byte(raw)
 	if !json.Valid(data) {
-		return nil, errors.New("tool payload is not valid JSON")
+		return nil, errMalformedToolPayload
 	}
 	return rawjson.Message(data), nil
 }

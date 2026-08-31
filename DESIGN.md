@@ -264,6 +264,11 @@ and constraints only. The workflow records usage, keeps the malformed call out
 of transcript history, and spends one recovery turn on a normal planner resume
 with executable tools available. It selects the rejected invocation by
 invocation start order, never by a model-supplied value or completion order.
+When a provider cannot represent a completed tool call because its arguments
+are not valid JSON, the adapter reads only the stream's terminal usage and
+completion evidence. The same recovery path supplies fixed JSON replacement
+guidance without retaining the malformed bytes, provider diagnostics, or tool
+identity.
 When a supported provider instead returns a valid tool name absent from the
 request's advertised catalog, the adapter rejects the complete response. The
 same invocation-recovery value carries only that untouched name, mutually
