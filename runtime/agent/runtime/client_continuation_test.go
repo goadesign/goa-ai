@@ -19,7 +19,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func TestStartContinuationRejectsIdentityMismatchBeforeWorkflowStart(t *testing.T) {
+func TestPrepareContinuationRejectsIdentityMismatchBeforeWorkflowStart(t *testing.T) {
 	tests := []struct {
 		name      string
 		agentID   agent.Ident
@@ -74,7 +74,7 @@ func TestStartContinuationRejectsIdentityMismatchBeforeWorkflowStart(t *testing.
 				&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
 					ID: "clarification-1", Answer: "Building A",
 				}},
-				nil,
+				WorkflowOptions{},
 			)
 			require.ErrorContains(t, err, tt.wantError)
 			require.ErrorIs(t, err, ErrContinuationRejected)
@@ -85,7 +85,7 @@ func TestStartContinuationRejectsIdentityMismatchBeforeWorkflowStart(t *testing.
 	}
 }
 
-func TestStartContinuationRejectsWrongPendingResponseBeforeWorkflowStart(t *testing.T) {
+func TestPrepareContinuationRejectsWrongPendingResponseBeforeWorkflowStart(t *testing.T) {
 	eng := &stubEngine{}
 	sessions := newTestStore()
 	runtime := &Runtime{
@@ -126,7 +126,7 @@ func TestStartContinuationRejectsWrongPendingResponseBeforeWorkflowStart(t *test
 		&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
 			ID: "clarification-other", Answer: "Building A",
 		}},
-		nil,
+		WorkflowOptions{},
 	)
 	require.ErrorContains(t, err, "does not match pending id")
 	require.ErrorIs(t, err, ErrContinuationRejected)
@@ -145,14 +145,14 @@ func TestStartContinuationRejectsWrongPendingResponseBeforeWorkflowStart(t *test
 		}},
 	)
 	require.NoError(t, err)
-	_, err = runtime.startRunOn(context.Background(), directInput, "agent.workflow", "q", true)
+	err = runtime.buildAndSubmitWorkflowForTest(context.Background(), directInput, "agent.workflow", "q", true)
 	require.ErrorContains(t, err, "does not match pending id")
 	require.Empty(t, eng.last.Workflow)
 	_, err = sessions.LoadRun(context.Background(), "run-3")
 	require.ErrorIs(t, err, session.ErrRunNotFound)
 }
 
-func TestPreparedContinuationOwnsExactStartInput(t *testing.T) {
+func TestPreparedRunOwnsExactContinuationStartInput(t *testing.T) {
 	eng := &stubEngine{}
 	sessions := newTestStore()
 	runtime := &Runtime{
@@ -190,7 +190,24 @@ func TestPreparedContinuationOwnsExactStartInput(t *testing.T) {
 			},
 		}},
 	}}
-	options := &WorkflowOptions{
+	_, err = client.PrepareContinuation(
+		t.Context(), "session-1", "run-1", "run-invalid", "turn-invalid", response,
+		WorkflowOptions{Memo: map[string]any{"": "missing name"}},
+	)
+	require.ErrorIs(t, err, ErrContinuationRejected)
+	require.NotErrorIs(t, err, ErrPreparedRunRejected)
+	require.Zero(t, eng.sealCalls)
+	require.Zero(t, eng.startCalls)
+	_, err = client.PrepareContinuation(
+		t.Context(), "session-1", "run-1", "run-invalid", "turn-invalid", response,
+		WorkflowOptions{SearchAttributes: map[string]any{"SessionID": "another-session"}},
+	)
+	require.ErrorIs(t, err, ErrContinuationRejected)
+	require.ErrorContains(t, err, "does not match session id")
+	require.Zero(t, eng.sealCalls)
+	require.Zero(t, eng.startCalls)
+
+	options := WorkflowOptions{
 		TaskQueue: "override-q",
 		Memo: map[string]any{
 			"nested": map[string]any{"value": "original"},
@@ -209,26 +226,27 @@ func TestPreparedContinuationOwnsExactStartInput(t *testing.T) {
 	options.Memo["nested"].(map[string]any)["value"] = mutated
 	other := runtime.MustClientFor(testAgentDefinition(
 		"svc.other", "other.workflow", "other-q", []tools.ToolSpec{spec}, nil))
-	_, err = other.StartContinuation(t.Context(), prepared)
-	require.ErrorIs(t, err, ErrContinuationRejected)
+	_, err = other.StartPrepared(t.Context(), prepared)
+	require.ErrorIs(t, err, ErrPreparedRunRejected)
 	require.Zero(t, eng.startCalls)
 
-	_, err = client.StartContinuation(t.Context(), prepared)
+	_, err = client.StartPrepared(t.Context(), prepared)
 	require.NoError(t, err)
 	first := eng.last.Input
 	require.JSONEq(t, `{"results":["original"]}`, string(first.Continuation.Response.ToolResults.Results[0].Success.Result))
 	require.Equal(t, 2, *first.Continuation.Response.ToolResults.Results[0].Success.Bounds.Total)
 	require.Equal(t, "next-original", *first.Continuation.Response.ToolResults.Results[0].Success.Bounds.NextCursor)
-	require.Equal(t, "original", eng.last.Memo["nested"].(map[string]any)["value"])
+	require.Equal(t, "original", decodePreparedMemo[map[string]any](t, eng.last.Memo, "nested")["value"])
 	require.Equal(t, "override-q", eng.last.TaskQueue)
 
 	first.Continuation.Response.ToolResults.Results[0].Success.Result[13] = 'Y'
-	first.WorkflowOptions.Memo["nested"].(map[string]any)["value"] = "engine mutation"
-	_, err = client.StartContinuation(t.Context(), prepared)
+	mutatedMemo := eng.last.Memo["nested"]
+	mutatedMemo.Data[0] ^= 0xff
+	_, err = client.StartPrepared(t.Context(), prepared)
 	require.NoError(t, err)
 	retry := eng.last.Input
 	require.JSONEq(t, `{"results":["original"]}`, string(retry.Continuation.Response.ToolResults.Results[0].Success.Result))
-	require.Equal(t, "original", retry.WorkflowOptions.Memo["nested"].(map[string]any)["value"])
+	require.Equal(t, "original", decodePreparedMemo[map[string]any](t, eng.last.Memo, "nested")["value"])
 	require.Equal(t, 2, eng.startCalls)
 }
 
@@ -270,7 +288,7 @@ func TestPrepareContinuationRejectsInvalidProvidedResultBeforeEngineStart(t *tes
 				},
 			}},
 		}},
-		nil,
+		WorkflowOptions{},
 	)
 	require.ErrorIs(t, err, ErrContinuationRejected)
 	require.ErrorContains(t, err, "generated contract")
@@ -326,7 +344,7 @@ func TestPrepareContinuationValidatesGrandchildDefinitionBeforeEngineStart(t *te
 		ID: "clarification-1", Answer: "Unit 7",
 	}}
 	_, err = runtime.MustClientFor(removedDefinition).PrepareContinuation(
-		t.Context(), "session-1", "root-run", "successor", "turn-2", response, nil,
+		t.Context(), "session-1", "root-run", "successor", "turn-2", response, WorkflowOptions{},
 	)
 	require.ErrorIs(t, err, ErrContinuationRejected)
 	require.ErrorContains(t, err, `requires tool "leaf.lookup" removed`)
@@ -340,7 +358,7 @@ func TestPrepareContinuationValidatesGrandchildDefinitionBeforeEngineStart(t *te
 		[]AgentDefinition{middleDefinition, leafDefinition})
 
 	prepared, err := runtime.MustClientFor(currentDefinition).PrepareContinuation(
-		t.Context(), "session-1", "root-run", "successor", "turn-2", response, nil,
+		t.Context(), "session-1", "root-run", "successor", "turn-2", response, WorkflowOptions{},
 	)
 	require.NoError(t, err)
 	require.NotNil(t, prepared)
@@ -395,7 +413,7 @@ func TestPrepareContinuationRejectsDuplicateSavedChildCallBeforeEngineStart(t *t
 		&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
 			ID: "clarification-1", Answer: "Unit 7",
 		}},
-		nil,
+		WorkflowOptions{},
 	)
 	require.ErrorIs(t, err, ErrContinuationRejected)
 	require.ErrorContains(t, err, `duplicate saved tool call id "child-call"`)
@@ -445,7 +463,7 @@ func TestPrepareContinuationRejectsDuplicateModelToolCallIDBeforeEngineStart(t *
 		&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
 			ID: "clarification-1", Answer: "Unit 7",
 		}},
-		nil,
+		WorkflowOptions{},
 	)
 	require.ErrorIs(t, err, ErrContinuationRejected)
 	require.ErrorContains(t, err, "duplicate tool_call_id model-call")

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"text/template"
 	"time"
@@ -949,10 +950,10 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 	memo := map[string]any{"wf": "name"}
 	sa := map[string]any{"SessionID": "sess-1"}
 
-	in := RunInput{
+	start := runStart{input: RunInput{
 		AgentID:   "service.agent",
 		SessionID: "sess-1",
-	}
+	}}
 	for _, o := range []RunOption{
 		WithRunID("run-1"),
 		WithTurnID("turn-1"),
@@ -961,8 +962,9 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 		WithMemo(memo),
 		WithSearchAttributes(sa),
 	} {
-		o(&in)
+		o.apply(&start)
 	}
+	in := start.input
 	client := rt.MustClient(agent.Ident("service.agent"))
 	_, err := createSessionForTest(context.Background(), rt.Store, in.SessionID)
 	require.NoError(t, err)
@@ -973,16 +975,16 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 		WithRunID(in.RunID),
 		WithTurnID(in.TurnID),
 		WithMetadata(in.Metadata),
-		WithTaskQueue(in.WorkflowOptions.TaskQueue),
-		WithMemo(in.WorkflowOptions.Memo),
-		WithSearchAttributes(in.WorkflowOptions.SearchAttributes),
+		WithTaskQueue(start.options.TaskQueue),
+		WithMemo(start.options.Memo),
+		WithSearchAttributes(start.options.SearchAttributes),
 	)
 	require.NoError(t, err)
 
 	// Engine request
 	require.Equal(t, "custom.q", eng.last.TaskQueue)
 	require.Equal(t, "service.workflow", eng.last.Workflow)
-	require.Equal(t, memo, eng.last.Memo)
+	require.Equal(t, "name", decodePreparedMemo[string](t, eng.last.Memo, "wf"))
 	require.Equal(t, sa, eng.last.SearchAttributes)
 
 	// Input payload
@@ -990,6 +992,17 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 	require.Equal(t, "sess-1", inPtr.SessionID)
 	require.Equal(t, "turn-1", inPtr.TurnID)
 	require.Equal(t, meta, inPtr.Metadata)
+}
+
+func TestRunOptionsRejectNil(t *testing.T) {
+	client, store := newPreparedRunTestClient(&stubEngine{}, testAgentDefinition(
+		"service.agent", "service.workflow", "service.queue", nil, nil,
+	))
+	require.NoError(t, createPreparedRunSession(t.Context(), store))
+
+	require.PanicsWithValue(t, "runtime: run option is required", func() {
+		_, _ = client.Prepare("session-1", nil, nil)
+	})
 }
 
 func TestRecoveryFinishFinalizesWithoutConsumingTurn(t *testing.T) {
@@ -1029,7 +1042,7 @@ func TestRecoveryFinishFinalizesWithoutConsumingTurn(t *testing.T) {
 	require.Contains(t, err.Error(), "tool required finalization")
 }
 
-func TestStartRunForwardsWorkflowOptions(t *testing.T) {
+func TestStartRunForwardsWorkflowLaunchSettings(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
 		Engine: eng,
@@ -1044,24 +1057,62 @@ func TestStartRunForwardsWorkflowOptions(t *testing.T) {
 	in := RunInput{
 		RunID:     "run-x",
 		SessionID: "sess-1",
-		WorkflowOptions: &WorkflowOptions{
-			TaskQueue:        "customq",
-			Memo:             map[string]any{"k": "v"},
-			SearchAttributes: map[string]any{"sa": "x"},
-		},
+	}
+	options := WorkflowOptions{
+		TaskQueue:        "customq",
+		Memo:             map[string]any{"k": "v"},
+		SearchAttributes: map[string]any{"sa": "x"},
 	}
 	client := rt.MustClient(agent.Ident("service.agent"))
 	_, err := createSessionForTest(context.Background(), rt.Store, in.SessionID)
 	require.NoError(t, err)
-	_, err = client.Start(context.Background(), in.SessionID, nil, WithRunID(in.RunID), WithWorkflowOptions(in.WorkflowOptions))
+	_, err = client.Start(
+		context.Background(),
+		in.SessionID,
+		nil,
+		WithRunID(in.RunID),
+		WithTaskQueue(options.TaskQueue),
+		WithMemo(options.Memo),
+		WithSearchAttributes(options.SearchAttributes),
+	)
 	require.NoError(t, err)
 	require.Equal(t, "customq", eng.last.TaskQueue)
 	require.Equal(t, in.RunID, eng.last.ID)
-	require.Equal(t, in.WorkflowOptions.Memo, eng.last.Memo)
+	require.Equal(t, "v", decodePreparedMemo[string](t, eng.last.Memo, "k"))
 	require.Equal(t, map[string]any{
 		"sa": "x",
 	}, eng.last.SearchAttributes)
+	require.Equal(t, WorkflowOptions{
+		TaskQueue:        "customq",
+		Memo:             map[string]any{"k": "v"},
+		SearchAttributes: map[string]any{"sa": "x"},
+	}, options)
 	require.Zero(t, eng.last.RetryPolicy)
+}
+
+func TestRunInputExcludesWorkflowLaunchSettings(t *testing.T) {
+	_, found := reflect.TypeFor[RunInput]().FieldByName("WorkflowOptions")
+	require.False(t, found)
+}
+
+func TestSessionfulAndOneShotStartsEncodeMemoIdentically(t *testing.T) {
+	eng := &stubEngine{}
+	client, store := newPreparedRunTestClient(eng, testAgentDefinition(
+		"service.agent", "service.workflow", "queue", nil, nil,
+	))
+	require.NoError(t, createPreparedRunSession(t.Context(), store))
+	memo := map[string]any{
+		"alias":     preparedMemoAlias("value"),
+		"structure": preparedMemoValue{Name: "value"},
+	}
+
+	_, err := client.Start(t.Context(), "session-1", nil, WithRunID("session-run"), WithMemo(memo))
+	require.NoError(t, err)
+	sessionMemo := eng.last.Memo
+	_, err = client.StartOneShot(t.Context(), nil, WithRunID("one-shot-run"), WithMemo(memo))
+	require.NoError(t, err)
+
+	require.Equal(t, sessionMemo, eng.last.Memo)
 }
 
 func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {

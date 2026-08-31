@@ -102,10 +102,10 @@ func TestStartRunRejectsMissingRequiredLabels(t *testing.T) {
 	require.Equal(t, "service.workflow", eng.last.Workflow)
 }
 
-// TestStartContinuationUsesCheckpointRequiredLabels proves a continuation does
+// TestStartPreparedContinuationUsesCheckpointRequiredLabels proves a continuation does
 // not require callers to repeat trusted labels that the worker restores from
 // the preceding workflow's checkpoint.
-func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
+func TestStartPreparedContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
 		Engine:  eng,
@@ -140,7 +140,7 @@ func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 	}))
 
 	client := rt.MustClient(agent.Ident("svc.agent"))
-	workflowOptions := &WorkflowOptions{
+	workflowOptions := WorkflowOptions{
 		Memo:             map[string]any{"owner": "house-42"},
 		SearchAttributes: map[string]any{"tenant": "house-42"},
 	}
@@ -156,10 +156,10 @@ func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 		workflowOptions,
 	)
 	require.NoError(t, err)
-	handle, err := client.StartContinuation(context.Background(), prepared)
+	handle, err := client.StartPrepared(context.Background(), prepared)
 	require.NoError(t, err)
 	require.Equal(t, "service.workflow", eng.last.Workflow)
-	require.Equal(t, workflowOptions.Memo, eng.last.Memo)
+	require.Equal(t, "house-42", decodePreparedMemo[string](t, eng.last.Memo, "owner"))
 	require.Equal(t, workflowOptions.SearchAttributes, eng.last.SearchAttributes)
 	require.Empty(t, eng.last.Input.Labels)
 	require.NotNil(t, handle)

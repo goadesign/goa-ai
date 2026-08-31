@@ -48,6 +48,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -391,6 +392,32 @@ type (
 		// providers support tool-level checkpoints (e.g., Nova does not).
 		AfterTools bool
 	}
+
+	// RunOption configures one run and the settings used to launch its workflow.
+	// Only options returned by this package can implement this interface, which
+	// keeps the option contract stable when private preparation details change.
+	// Passing a nil option to a run method panics.
+	RunOption interface {
+		apply(*runStart)
+	}
+
+	// runOption adapts the package's option functions to RunOption.
+	runOption func(*runStart)
+
+	// workflowLaunchSettings contains the queue and encoded metadata submitted
+	// to the workflow engine. These values never become workflow input.
+	workflowLaunchSettings struct {
+		taskQueue        string
+		memo             map[string]engine.EncodedValue
+		searchAttributes map[string]any
+	}
+
+	// runStart keeps engine launch settings separate from the workflow input.
+	runStart struct {
+		input   RunInput
+		options WorkflowOptions
+		launch  workflowLaunchSettings
+	}
 )
 
 // MissingFieldsAction controls behavior when a tool validation error indicates
@@ -436,6 +463,12 @@ var (
 	ErrInvalidConfig       = errors.New("invalid configuration")
 	ErrMissingSessionID    = errors.New("session id is required")
 	ErrSessionNotAllowed   = errors.New("session id is not allowed")
+	// ErrPreparedRunRejected means a prepared run could not be serialized for
+	// storage, its stored bytes are invalid, or its request does not match the
+	// client that will start it. Prepare and PrepareOneShot return request
+	// validation errors directly because no stored bytes have been created or
+	// parsed yet.
+	ErrPreparedRunRejected = errors.New("prepared run rejected before workflow start")
 	// ErrContinuationRejected means the saved checkpoint or submitted response
 	// cannot start a successor workflow. The runtime returns it before asking the
 	// workflow engine to start that successor.
@@ -445,29 +478,25 @@ var (
 	ErrMissingLabels        = errors.New("run start: missing required labels")
 )
 
-// RunOption configures optional fields on RunInput for Run and Start. Required
-// values such as SessionID are positional arguments on AgentClient methods and
-// must not be set via RunOption.
-type RunOption func(*RunInput)
-
 // WithRunID sets the RunID on the constructed RunInput.
 func WithRunID(id string) RunOption {
-	return func(in *RunInput) { in.RunID = id }
+	return runOption(func(start *runStart) { start.input.RunID = id })
 }
 
 // WithLabels merges the provided labels into the constructed RunInput.
 func WithLabels(labels map[string]string) RunOption {
-	return func(in *RunInput) { in.Labels = mergeLabels(in.Labels, labels) }
+	return runOption(func(start *runStart) { start.input.Labels = mergeLabels(start.input.Labels, labels) })
 }
 
 // WithTurnID sets the TurnID on the constructed RunInput.
 func WithTurnID(id string) RunOption {
-	return func(in *RunInput) { in.TurnID = id }
+	return runOption(func(start *runStart) { start.input.TurnID = id })
 }
 
 // WithMetadata merges the provided metadata into the constructed RunInput.
 func WithMetadata(meta map[string]any) RunOption {
-	return func(in *RunInput) {
+	return runOption(func(start *runStart) {
+		in := &start.input
 		if len(meta) == 0 {
 			return
 		}
@@ -477,66 +506,52 @@ func WithMetadata(meta map[string]any) RunOption {
 		for k, v := range meta {
 			in.Metadata[k] = v
 		}
-	}
+	})
 }
 
 // WithRenderedPrompts records prompts whose rendered text is already included
 // in the run input. The accepted workflow stores them before planner work.
 func WithRenderedPrompts(events []prompt.RenderEvent) RunOption {
-	return func(in *RunInput) {
-		in.RenderedPrompts = clonePromptRenderEvents(events)
-	}
+	return runOption(func(start *runStart) {
+		start.input.RenderedPrompts = clonePromptRenderEvents(events)
+	})
 }
 
-// WithTaskQueue sets the target task queue on WorkflowOptions for this run.
+// WithTaskQueue sets the worker queue used to launch this run.
 func WithTaskQueue(name string) RunOption {
-	return func(in *RunInput) {
-		if in.WorkflowOptions == nil {
-			in.WorkflowOptions = &WorkflowOptions{}
-		}
-		in.WorkflowOptions.TaskQueue = name
-	}
+	return runOption(func(start *runStart) {
+		start.options.TaskQueue = name
+	})
 }
 
-// WithMemo sets memo on WorkflowOptions for this run.
+// WithMemo adds values to the workflow engine memo for this run.
 func WithMemo(m map[string]any) RunOption {
-	return func(in *RunInput) {
-		if in.WorkflowOptions == nil {
-			in.WorkflowOptions = &WorkflowOptions{}
-		}
-		// merge shallow
-		if in.WorkflowOptions.Memo == nil {
-			in.WorkflowOptions.Memo = make(map[string]any, len(m))
+	return runOption(func(start *runStart) {
+		if start.options.Memo == nil {
+			start.options.Memo = make(map[string]any, len(m))
 		}
 		for k, v := range m {
-			in.WorkflowOptions.Memo[k] = v
+			start.options.Memo[k] = v
 		}
-	}
+	})
 }
 
-// WithSearchAttributes sets search attributes on WorkflowOptions for this run.
+// WithSearchAttributes adds indexed workflow engine values for this run.
 func WithSearchAttributes(sa map[string]any) RunOption {
-	return func(in *RunInput) {
-		if in.WorkflowOptions == nil {
-			in.WorkflowOptions = &WorkflowOptions{}
+	return runOption(func(start *runStart) {
+		if start.options.SearchAttributes == nil {
+			start.options.SearchAttributes = make(map[string]any, len(sa))
 		}
-		if in.WorkflowOptions.SearchAttributes == nil {
-			in.WorkflowOptions.SearchAttributes = make(map[string]any, len(sa))
-		}
-		maps.Copy(in.WorkflowOptions.SearchAttributes, sa)
-	}
-}
-
-// WithWorkflowOptions sets workflow engine options on the constructed RunInput.
-func WithWorkflowOptions(o *WorkflowOptions) RunOption {
-	return func(in *RunInput) { in.WorkflowOptions = o }
+		maps.Copy(start.options.SearchAttributes, sa)
+	})
 }
 
 // WithTiming sets run-level timing overrides in a single structured option.
 // Budget is the semantic run budget; Plan and Tools are attempt budgets. Zero-
 // valued fields are ignored.
 func WithTiming(t Timing) RunOption {
-	return func(in *RunInput) {
+	return runOption(func(start *runStart) {
+		in := &start.input
 		if in.Policy == nil {
 			in.Policy = &PolicyOverrides{}
 		}
@@ -557,18 +572,19 @@ func WithTiming(t Timing) RunOption {
 				in.Policy.PerToolTimeout[k] = v
 			}
 		}
-	}
+	})
 }
 
 // WithLimitTerminalPlans sets the complete terminal tool-call set used when
 // this run reaches a configured time, tool-call, or recovery-turn limit.
 func WithLimitTerminalPlans(plans LimitTerminalPlans) RunOption {
-	return func(in *RunInput) {
+	return runOption(func(start *runStart) {
+		in := &start.input
 		if in.Policy == nil {
 			in.Policy = &PolicyOverrides{}
 		}
 		in.Policy.LimitTerminalPlans = cloneLimitTerminalPlans(&plans)
-	}
+	})
 }
 
 // WithRunMaxToolCalls sets a per-run cap on total tool executions.
@@ -578,12 +594,13 @@ func WithRunMaxToolCalls(n int) RunOption {
 	if n <= 0 {
 		panic("runtime: WithRunMaxToolCalls requires n > 0")
 	}
-	return func(in *RunInput) {
+	return runOption(func(start *runStart) {
+		in := &start.input
 		if in.Policy == nil {
 			in.Policy = &PolicyOverrides{}
 		}
 		in.Policy.MaxToolCalls = n
-	}
+	})
 }
 
 // WithRunMaxRecoveryTurns caps consecutive replacement planner activities for
@@ -593,12 +610,13 @@ func WithRunMaxRecoveryTurns(n int) RunOption {
 	if n <= 0 {
 		panic("runtime: WithRunMaxRecoveryTurns requires n > 0")
 	}
-	return func(in *RunInput) {
+	return runOption(func(start *runStart) {
+		in := &start.input
 		if in.Policy == nil {
 			in.Policy = &PolicyOverrides{}
 		}
 		in.Policy.MaxRecoveryTurns = n
-	}
+	})
 }
 
 // WithRunCompletionTool requires one budgeted tool to succeed before the run
@@ -609,55 +627,65 @@ func WithRunCompletionTool(id tools.Ident) RunOption {
 	if id == "" {
 		panic("runtime: WithRunCompletionTool requires a tool identifier")
 	}
-	return func(in *RunInput) {
+	return runOption(func(start *runStart) {
+		in := &start.input
 		if in.Policy == nil {
 			in.Policy = &PolicyOverrides{}
 		}
 		in.Policy.CompletionTool = id
-	}
+	})
 }
 
 // WithRunTimeBudget sets the active-time budget for planner and tool work.
 // Time between continuation workflows does not consume the budget, and the
 // runtime does not derive an engine run timeout. Zero means no override.
 func WithRunTimeBudget(d time.Duration) RunOption {
-	return func(in *RunInput) {
+	return runOption(func(start *runStart) {
+		in := &start.input
 		if in.Policy == nil {
 			in.Policy = &PolicyOverrides{}
 		}
 		in.Policy.TimeBudget = d
-	}
+	})
 }
 
 // WithRunFinalizerGrace reserves time to produce a final assistant message after
 // the run's semantic TimeBudget is exhausted. Zero means no override.
 func WithRunFinalizerGrace(d time.Duration) RunOption {
-	return func(in *RunInput) {
+	return runOption(func(start *runStart) {
+		in := &start.input
 		if in.Policy == nil {
 			in.Policy = &PolicyOverrides{}
 		}
 		in.Policy.FinalizerGrace = d
-	}
+	})
 }
 
 // WithRestrictToTool restricts candidate tools to a single tool for the run.
 func WithRestrictToTool(id tools.Ident) RunOption {
-	return func(in *RunInput) {
+	return runOption(func(start *runStart) {
+		in := &start.input
 		if in.Policy == nil {
 			in.Policy = &PolicyOverrides{}
 		}
 		in.Policy.RestrictToTool = id
-	}
+	})
 }
 
 // WithTagPolicyClauses sets explicit tag-policy clauses on the run policy.
 func WithTagPolicyClauses(clauses []TagPolicyClause) RunOption {
-	return func(in *RunInput) {
+	return runOption(func(start *runStart) {
+		in := &start.input
 		if in.Policy == nil {
 			in.Policy = &PolicyOverrides{}
 		}
 		in.Policy.TagClauses = cloneTagPolicyClauses(clauses)
-	}
+	})
+}
+
+// apply updates the private run values owned by the runtime package.
+func (option runOption) apply(start *runStart) {
+	option(start)
 }
 
 // newFromOptions constructs a Runtime using the provided options. Internal helper
@@ -1544,82 +1572,68 @@ func agentChildRunInput(definition AgentDefinition, request agentChildRequest) (
 	}, nil
 }
 
-// startRunWithDefinition contains common start logic for local and remote
-// clients. Both use the same generated definition.
-//
-// When requireSession is true, the caller must provide a stable run ID and an
-// active session. The accepted workflow writes running or canceled lifecycle
-// metadata from its first durable record after the engine accepts the start.
-//
-// When requireSession is false, the run is one-shot: SessionID must stay empty,
-// its runtime records do not belong to a session, and no SessionID search
-// attribute is set.
-func (r *Runtime) startRunWithDefinition(ctx context.Context, input *RunInput, definition AgentDefinition, requireSession bool) (engine.WorkflowHandle, error) {
+// prepareRunWithDefinition validates one run against the generated agent
+// contract and builds its workflow input and launch settings.
+func prepareRunWithDefinition(input *RunInput, launch workflowLaunchSettings, definition AgentDefinition, requireSession bool) (engine.WorkflowStartRequest, error) {
 	if !definition.valid() {
-		return nil, fmt.Errorf("%w: invalid agent definition", ErrAgentNotFound)
+		return engine.WorkflowStartRequest{}, fmt.Errorf("%w: invalid agent definition", ErrAgentNotFound)
 	}
 	if input.AgentID == "" {
 		input.AgentID = definition.route.ID
 	}
 	if input.AgentID != definition.route.ID {
-		return nil, fmt.Errorf("%w: input agent %q does not match definition %q", ErrAgentNotFound, input.AgentID, definition.route.ID)
-	}
-	// Close registration on first run submission so local start paths cannot race
-	// later handler mutations. Worker deployments should call Seal during startup;
-	// local starters still converge on the same sealed contract here.
-	if err := r.Seal(ctx); err != nil {
-		return nil, err
+		return engine.WorkflowStartRequest{}, fmt.Errorf("%w: input agent %q does not match definition %q", ErrAgentNotFound, input.AgentID, definition.route.ID)
 	}
 	if err := validateWorkflowRunInput(input); err != nil {
 		if input != nil && input.Continuation != nil {
-			return nil, continuationContractError(err)
+			return engine.WorkflowStartRequest{}, continuationContractError(err)
 		}
-		return nil, err
+		return engine.WorkflowStartRequest{}, err
 	}
 	if requireSession {
 		if strings.TrimSpace(input.SessionID) == "" {
-			return nil, ErrMissingSessionID
+			return engine.WorkflowStartRequest{}, ErrMissingSessionID
 		}
 	} else if strings.TrimSpace(input.SessionID) != "" {
-		return nil, ErrSessionNotAllowed
+		return engine.WorkflowStartRequest{}, ErrSessionNotAllowed
 	}
 	if input.RunID == "" {
 		if requireSession {
-			return nil, errors.New("run id is required for a sessionful workflow")
+			return engine.WorkflowStartRequest{}, errors.New("run id is required for a sessionful workflow")
 		}
 		input.RunID = generateRunID(string(input.AgentID))
 	}
 	if err := transcript.ValidatePlannerTranscript(input.Messages); err != nil {
-		return nil, fmt.Errorf("runtime: invalid transcript: %w", err)
+		return engine.WorkflowStartRequest{}, fmt.Errorf("runtime: invalid transcript: %w", err)
 	}
 	runLabels := input.Labels
 	effectivePolicy := input.Policy
 	if input.Continuation != nil {
 		checkpoint, err := prepareContinuation(input, definition)
 		if err != nil {
-			return nil, continuationContractError(err)
+			return engine.WorkflowStartRequest{}, continuationContractError(err)
 		}
 		runLabels = checkpoint.Context.Labels
 		effectivePolicy = checkpoint.Policy
 	}
 	if err := validateRequiredLabels(definition, runLabels); err != nil {
 		if input.Continuation != nil {
-			return nil, continuationContractError(err)
+			return engine.WorkflowStartRequest{}, continuationContractError(err)
 		}
-		return nil, err
+		return engine.WorkflowStartRequest{}, err
 	}
 	if effectivePolicy != nil {
 		if err := validateCompletionToolPolicyForDefinition(definition, effectivePolicy); err != nil {
 			if input.Continuation != nil {
-				return nil, continuationContractError(err)
+				return engine.WorkflowStartRequest{}, continuationContractError(err)
 			}
-			return nil, err
+			return engine.WorkflowStartRequest{}, err
 		}
 		if err := validateLimitTerminalPlansForDefinition(definition, effectivePolicy.LimitTerminalPlans); err != nil {
 			if input.Continuation != nil {
-				return nil, continuationContractError(err)
+				return engine.WorkflowStartRequest{}, continuationContractError(err)
 			}
-			return nil, err
+			return engine.WorkflowStartRequest{}, err
 		}
 	}
 	req := engine.WorkflowStartRequest{
@@ -1629,31 +1643,52 @@ func (r *Runtime) startRunWithDefinition(ctx context.Context, input *RunInput, d
 		Input:     input,
 		// RunTimeout is intentionally left zero (engine-unbounded): active-time
 		// enforcement is owned by the workflow's Budget and Hard deadlines
-		// (run_timing.go, workflow_loop.go). External-input requests end the
+		// (workflow_loop.go). External-input requests end the
 		// workflow and store the remaining durations for the next workflow, so an
 		// engine-level ceiling would only add a competing mid-turn deadline.
 	}
-	if opts := input.WorkflowOptions; opts != nil {
-		if opts.TaskQueue != "" {
-			req.TaskQueue = opts.TaskQueue
-		}
-		req.Memo = cloneMetadata(opts.Memo)
-		req.SearchAttributes = cloneMetadata(opts.SearchAttributes)
+	if launch.taskQueue != "" {
+		req.TaskQueue = launch.taskQueue
 	}
+	req.Memo = launch.memo
+	req.SearchAttributes = cloneMetadata(launch.searchAttributes)
 	if requireSession {
 		if v, ok := req.SearchAttributes["SessionID"]; ok && v != input.SessionID {
-			return nil, fmt.Errorf("workflow search attribute SessionID=%v does not match session id %q", v, input.SessionID)
+			return engine.WorkflowStartRequest{}, fmt.Errorf("workflow search attribute SessionID=%v does not match session id %q", v, input.SessionID)
 		}
 	} else if req.SearchAttributes != nil {
 		if _, ok := req.SearchAttributes["SessionID"]; ok {
-			return nil, fmt.Errorf("workflow search attribute SessionID is not allowed for one-shot runs")
+			return engine.WorkflowStartRequest{}, fmt.Errorf("workflow search attribute SessionID is not allowed for one-shot runs")
 		}
+	}
+	return req, nil
+}
+
+// startWorkflow closes registration and submits one fully validated request.
+// Activation and engine failures share the stable workflow start error.
+func (r *Runtime) startWorkflow(ctx context.Context, req engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
+	if err := r.Seal(ctx); err != nil {
+		return nil, fmt.Errorf("%w: activate workflow engine: %w", ErrWorkflowStartFailed, err)
 	}
 	handle, err := r.Engine.StartWorkflow(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrWorkflowStartFailed, err)
 	}
 	return handle, nil
+}
+
+// encodeWorkflowLaunch converts caller values into the exact values sent to
+// the workflow engine. The workflow input never contains these settings.
+func encodeWorkflowLaunch(options WorkflowOptions) (workflowLaunchSettings, error) {
+	memo, err := startrecipe.EncodeMemo(options.Memo)
+	if err != nil {
+		return workflowLaunchSettings{}, err
+	}
+	return workflowLaunchSettings{
+		taskQueue:        options.TaskQueue,
+		memo:             memo,
+		searchAttributes: cloneMetadata(options.SearchAttributes),
+	}, nil
 }
 
 // validateRequiredLabels fails fast, before any workflow or activity runs,

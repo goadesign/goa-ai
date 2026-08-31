@@ -491,12 +491,14 @@ func (r *Runtime) validateCheckpointToolOutput(ctx context.Context, output *plan
 	return validateCheckpointToolOutput(output, testRuntimeDefinition(r, "svc.agent"))
 }
 
-func (r *Runtime) startRunOn(
+// buildAndSubmitWorkflowForTest uses the production request builder, replaces
+// its workflow name and queue for the test, and submits the resulting request.
+func (r *Runtime) buildAndSubmitWorkflowForTest(
 	ctx context.Context,
 	input *RunInput,
 	workflow, queue string,
 	requireSession bool,
-) (engine.WorkflowHandle, error) {
+) error {
 	id := agent.Ident("")
 	if input != nil {
 		id = input.AgentID
@@ -504,7 +506,12 @@ func (r *Runtime) startRunOn(
 	definition := testRuntimeDefinition(r, id)
 	definition.route.WorkflowName = workflow
 	definition.route.DefaultTaskQueue = queue
-	return r.startRunWithDefinition(ctx, input, definition, requireSession)
+	request, err := prepareRunWithDefinition(input, workflowLaunchSettings{}, definition, requireSession)
+	if err != nil {
+		return err
+	}
+	_, err = r.startWorkflow(ctx, request)
+	return err
 }
 
 // seedTestToolset records the local registration that executes the supplied

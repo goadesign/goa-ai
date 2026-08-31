@@ -409,8 +409,8 @@ the route, tool specifications, codecs, required labels, completion policy, and
 transitive child definitions. `AgentClient.PrepareContinuation` loads the saved
 checkpoint and validates it and the supplied response against that complete
 definition before the workflow engine receives the successor ID. It returns an
-opaque snapshot. `StartContinuation` submits those exact bytes, so retrying a
-prepared start cannot silently load or construct a different request. The
+opaque `PreparedRun`. `StartPrepared` submits that exact stored request, so a
+retry cannot silently load or construct a different request. The
 workflow validates the same stored input again before restoring it. A saved
 payload, result, child suspension, or policy value that the current generated
 contract does not accept rejects the continuation. A tool call created in an earlier workflow
@@ -422,6 +422,68 @@ with the same request; continuing the parent starts a new child workflow from
 the child's saved checkpoint. Sessionless one-shot runs reject external-input
 requests because they have no continuation API.
 
+Initial sessionful runs use the same command. `Prepare` validates the generated
+agent contract and produces the final engine request without starting it.
+The returned `PreparedRun.RunID` is the workflow ID the application associates
+with its durable command. Applications can store the versioned bytes and parse
+them after a process restart. `Start` and `Continue` are convenience methods
+that prepare and start through this same path.
+
+Initial and one-shot calls express each launch setting through `WithTaskQueue`,
+`WithMemo`, or `WithSearchAttributes`. Continuations take one
+`runtime.WorkflowOptions` value because their other arguments identify the
+saved run and its typed answer. The value configures only the new engine start;
+it never becomes workflow input or changes the saved continuation state.
+
+Initial preparation is client-only and performs no storage write, worker
+registration change, or engine call. One-shot preparation uses the same path.
+Continuation preparation first reads the saved suspension, then performs the
+same pure request construction. It does not create the optional stored form.
+`MarshalBinary` creates and validates that form; `StartPrepared` independently
+submits the prepared engine request. The convenience methods never serialize
+the stored form.
+
+Prepared bytes remain private application data because they can contain the
+complete transcript and continuation checkpoint. The application atomically
+stores those bytes with initial-run admission or continuation-answer acceptance.
+Launch settings such as memo, search attributes, and task queue exist only on
+the engine request; `api.RunInput` contains only workflow input. The inclusive
+`engine.MaxPayloadBytes` limit counts request IDs and names together with the
+encoded workflow input, memo, search-value, and reserved digest memo data and
+metadata. The prepared JSON record has a separate eight-times-larger limit for
+its complete representation, including the agent ID, explicit queue override,
+JSON escaping, base64 expansion, and field syntax. `MarshalBinary` enforces it
+when creating a record and parsing enforces it before decoding. The storage
+limit protects the record format and never increases the engine request limit.
+
+Runtime callers provide ordinary memo values. Goa-AI encodes each value once
+and gives engines an `engine.EncodedValue` containing its encoding metadata and
+data bytes. Engines store those bytes directly. This keeps a local start and a
+start parsed after a process restart identical without requiring engines to
+know the caller's private Go types.
+
+Every engine adapter applies the public `engine/contract` ownership rules. It
+normalizes and privately retains each accepted request, then gives the workflow
+handler a fresh `RunInput` for every initial or retry attempt. After success it
+retains one private `RunOutput` and makes another copy for every wait, query, or
+other caller-facing read. Shared normalization fixes portable search values and
+the root request digest. Translating and submitting those values remains the
+backend adapter's responsibility.
+
+A storage-encoding failure returns `ErrPreparedRunRejected` without changing
+the in-memory prepared request; it remains startable, although a caller that
+requires durable admission must store it before starting. Malformed parsed
+bytes or a request that no longer satisfies the current generated definition
+also return `ErrPreparedRunRejected` and cannot start with that generated
+release. Passing valid bytes to the wrong generated agent client returns the
+same error, but does not invalidate the bytes; the application must submit them
+through the matching client. The detailed caller contract is in
+[External Input and Workflow Continuations](docs/runtime.md#external-input-and-workflow-continuations).
+`ErrWorkflowStartFailed` preserves the exact accepted request. Goa-AI does not
+retry it implicitly; the application chooses each attempt and submits the same
+prepared value after an uncertain response. A workflow-start conflict remains
+permanent because another request already owns the ID.
+
 #### Deployment ownership
 
 Goa-AI owns workflow replay, suspension persistence, continuation validation,
@@ -429,6 +491,10 @@ and exact call/result provenance. The consuming application owns release
 routing for the runtime workers, generated packages, and callers that use those
 contracts. They form one release unit: consumers regenerate every package from
 the same Goa-AI revision and deploy the complete generated system together.
+Before that deployment, they finish or cancel every workflow created by the old
+runtime and resolve or abandon every start whose engine result was uncertain.
+The new workers do not replay old active workflow histories or retry old
+uncertain start requests.
 Completed run history keeps the same meaning across this release. A host may
 still need to convert the physical records or collections so its new
 `storage.Store` can read them. That conversion must preserve each recorded
@@ -469,6 +535,10 @@ workflow memo. The shared digest frames the caller-submitted workflow name, task
 queue, input boundary payload, run timeout, retry policy, and every sorted memo
 and search-attribute entry with its payload metadata and bytes. The in-memory
 engine stores only that fixed-size digest and applies the same rule.
+Every root and child request requires the engine workflow ID to equal
+`RunInput.RunID`. A zero retry policy supplies no override. A non-zero policy
+counts the first execution in `MaxAttempts` and may set retry timing only when
+it also selects a positive attempt count or unlimited attempts.
 Continue-as-new retains one workflow chain identity. Once backend history
 expires, durable product command identity prevents reopening a settled
 obligation; the engine does not add a second durable registry.
@@ -527,7 +597,13 @@ immutable event-key conflicts as non-retryable, so accepted work cannot reach
 planning before the first record is durable and deterministic defects do not
 loop. Child workflow IDs are single-use commands: Temporal uses
 `REJECT_DUPLICATE`, the in-memory engine rejects every second explicit issue,
-and Temporal replay remains execution of the original command. A child link
+and Temporal replay remains execution of the original command. Temporal does
+not return a child handle until it has accepted or rejected that child start;
+the handle then represents completion only. The in-memory engine encodes and
+decodes every successful root and child output through the same strict, bounded
+converter used at the Temporal workflow boundary. The returned result is a
+separate copy and an oversized or unserializable result fails in both engines.
+A child link
 stores the tool and call that created the child plus the child run and agent;
 tool arguments, budgets, attempts, and repeated identity remain in workflow
 input or dedicated event fields.

@@ -25,8 +25,8 @@ type runTiming struct {
 	FinalizerGrace time.Duration
 }
 
-// resolveRunTiming derives the workflow timing contract shared by startRunOn and
-// ExecuteWorkflow.
+// resolveRunTiming combines the registered agent timing with any run-specific
+// policy before the workflow loop starts.
 //
 // Contract:
 //   - TimeBudget governs active planner/tool execution only; zero means no

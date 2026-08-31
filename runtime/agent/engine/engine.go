@@ -500,26 +500,39 @@ type (
 		Options ActivityOptions
 	}
 
+	// EncodedValue contains one memo value in the engine's portable wire form.
+	// Metadata describes how to decode Data. Both fields contain mutable byte
+	// slices: code that creates or retains an EncodedValue must deep-copy Data,
+	// the Metadata map, and every metadata value so callers cannot change an
+	// accepted workflow request after submission.
+	EncodedValue struct {
+		// Metadata describes the encoding stored in Data.
+		Metadata map[string][]byte
+		// Data contains the encoded value bytes.
+		Data []byte
+	}
+
 	// WorkflowStartRequest describes how to launch a workflow execution. Generated
 	// code constructs these when agents are invoked.
 	WorkflowStartRequest struct {
-		// ID is the workflow identifier, which must be unique within the engine scope.
-		// Typically derived from the agent ID and a UUID.
+		// ID is the required workflow identifier, which must be unique within the
+		// engine scope. It is typically derived from the agent ID and a UUID.
 		ID string
-		// Workflow names the registered workflow definition to execute. Engines that
-		// support multiple workflows (one per agent) require this field.
+		// Workflow is the required name that a worker uses to select the workflow
+		// handler.
 		Workflow string
-		// TaskQueue selects the queue to schedule the workflow on. Workers listening
-		// on this queue will pick up the workflow.
+		// TaskQueue is the required queue that receives the workflow task. A worker
+		// listening on this queue will execute the workflow.
 		TaskQueue string
-		// Input is the typed payload passed to the workflow handler.
+		// Input is the required typed payload passed to the workflow handler.
 		Input *api.RunInput
 		// RunTimeout bounds one workflow execution attempt. A retry starts a fresh
 		// attempt with the same timeout. Zero means use the engine default.
 		RunTimeout time.Duration
-		// Memo stores small diagnostic payloads alongside the workflow execution.
-		// Engines like Temporal persist these for queries/visibility. Nil means no memo.
-		Memo map[string]any
+		// Memo stores exact encoded diagnostic payloads alongside the workflow
+		// execution. Engines persist these bytes without decoding and re-encoding
+		// them. Nil means no memo.
+		Memo map[string]EncodedValue
 		// SearchAttributes captures indexed metadata used for visibility queries.
 		// Nil means no attributes are set.
 		SearchAttributes map[string]any
@@ -543,7 +556,9 @@ type (
 	}
 
 	// RetryPolicy defines retry semantics shared by workflows and activities.
-	// Zero-valued fields mean the engine uses its defaults.
+	// An all-zero policy leaves the engine or registered activity policy
+	// unchanged. Retry timing may be set only with a finite or unlimited attempt
+	// policy so callers cannot submit a partial retry policy.
 	RetryPolicy struct {
 		// MaxAttempts caps total attempts, including the first. Zero leaves the
 		// engine or registered activity default unchanged.
@@ -551,23 +566,25 @@ type (
 		// UnlimitedAttempts explicitly overrides a registered finite default.
 		// It must not be combined with MaxAttempts.
 		UnlimitedAttempts bool
-		// InitialInterval is the delay before the first retry. Zero means use engine default.
+		// InitialInterval is the delay before the first retry. Zero leaves the
+		// existing default unchanged.
 		InitialInterval time.Duration
 		// BackoffCoefficient multiplies the delay after each retry. Zero leaves the
-		// engine default unchanged. Values below 1 are invalid.
+		// existing default unchanged. Values below 1 are invalid.
 		BackoffCoefficient float64
 	}
 
 	// ChildWorkflowRequest describes a child workflow to start from within an
 	// existing workflow execution.
 	ChildWorkflowRequest struct {
-		// ID is the child workflow identifier, unique within the engine scope.
+		// ID is the required child workflow identifier, unique within the engine
+		// scope.
 		ID string
-		// Workflow is the provider workflow name to execute.
+		// Workflow is the required provider workflow name to execute.
 		Workflow string
-		// TaskQueue is the queue to schedule the child on.
+		// TaskQueue is the required queue that receives the child workflow task.
 		TaskQueue string
-		// Input is the payload passed to the child workflow handler.
+		// Input is the required payload passed to the child workflow handler.
 		Input *api.RunInput
 		// RunTimeout bounds one child workflow execution attempt.
 		RunTimeout time.Duration
@@ -587,25 +604,75 @@ type (
 	}
 )
 
-// ValidateWorkflowStartRequest rejects option values that workflow backends
-// cannot execute consistently. Exact-ID recipes intentionally retain every
-// valid caller-submitted value without normalizing defaults.
-func ValidateWorkflowStartRequest(req WorkflowStartRequest) error {
-	if req.RunTimeout < 0 {
+// ValidateWorkflowLaunchSettings checks the timeout and retry values shared by
+// root and child workflow starts. Callers use it before decoding or retaining
+// other launch values so malformed timing settings fail first.
+func ValidateWorkflowLaunchSettings(runTimeout time.Duration, retry RetryPolicy) error {
+	if runTimeout < 0 {
 		return errors.New("workflow run timeout must not be negative")
 	}
-	if req.RetryPolicy.MaxAttempts < 0 {
+	if retry.MaxAttempts < 0 {
 		return errors.New("workflow retry max attempts must not be negative")
 	}
-	if req.RetryPolicy.InitialInterval < 0 {
+	if retry.InitialInterval < 0 {
 		return errors.New("workflow retry initial interval must not be negative")
 	}
-	if coefficient := req.RetryPolicy.BackoffCoefficient; math.IsNaN(coefficient) ||
+	if coefficient := retry.BackoffCoefficient; math.IsNaN(coefficient) ||
 		math.IsInf(coefficient, 0) || coefficient < 0 || coefficient > 0 && coefficient < 1 {
 		return errors.New("workflow retry backoff coefficient must be zero or at least one")
 	}
-	if req.RetryPolicy.UnlimitedAttempts && req.RetryPolicy.MaxAttempts != 0 {
+	if retry.UnlimitedAttempts && retry.MaxAttempts != 0 {
 		return errors.New("workflow retry cannot set both unlimited attempts and max attempts")
 	}
+	if (retry.InitialInterval != 0 || retry.BackoffCoefficient != 0) &&
+		retry.MaxAttempts == 0 && !retry.UnlimitedAttempts {
+		return errors.New("workflow retry timing requires max attempts or unlimited attempts")
+	}
 	return nil
+}
+
+// ValidateWorkflowStartRequest rejects requests that official workflow engines
+// cannot submit with the same meaning. Callers must provide the workflow ID,
+// workflow name, task queue, and input because an engine must not guess them
+// from local worker registration or configuration.
+func ValidateWorkflowStartRequest(req WorkflowStartRequest) error {
+	if req.ID == "" {
+		return errors.New("workflow id is required")
+	}
+	if req.Workflow == "" {
+		return errors.New("workflow name is required")
+	}
+	if req.TaskQueue == "" {
+		return errors.New("workflow task queue is required")
+	}
+	if req.Input == nil {
+		return errors.New("workflow input is required")
+	}
+	if req.ID != req.Input.RunID {
+		return errors.New("workflow id must match input run id")
+	}
+	return ValidateWorkflowLaunchSettings(req.RunTimeout, req.RetryPolicy)
+}
+
+// ValidateChildWorkflowRequest rejects child requests that official workflow
+// engines cannot start with the same meaning. Callers must provide every value
+// needed to route and execute the child because an engine must not inherit a
+// queue or input from its parent workflow.
+func ValidateChildWorkflowRequest(req ChildWorkflowRequest) error {
+	if req.ID == "" {
+		return errors.New("child workflow id is required")
+	}
+	if req.Workflow == "" {
+		return errors.New("child workflow name is required")
+	}
+	if req.TaskQueue == "" {
+		return errors.New("child workflow task queue is required")
+	}
+	if req.Input == nil {
+		return errors.New("child workflow input is required")
+	}
+	if req.ID != req.Input.RunID {
+		return errors.New("child workflow id must match input run id")
+	}
+	return ValidateWorkflowLaunchSettings(req.RunTimeout, req.RetryPolicy)
 }

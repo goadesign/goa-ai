@@ -29,10 +29,21 @@ type (
 	ToolOutput              = api.ToolOutput
 	ToolClarification       = api.ToolClarification
 
-	// WorkflowOptions mirrors the subset of engine start options we expose through
-	// the runtime. Memo and SearchAttributes remain generic visibility metadata so
-	// each engine can map them to its own durable workflow substrate.
-	WorkflowOptions = api.WorkflowOptions
+	// WorkflowOptions contains the engine settings for one continuation. Continue
+	// and PrepareContinuation accept this value directly because their remaining
+	// arguments describe the saved run and its answer. Initial and one-shot runs
+	// use WithTaskQueue, WithMemo, and WithSearchAttributes instead. These values
+	// are never part of RunInput.
+	WorkflowOptions struct {
+		// TaskQueue names the worker queue that should receive the workflow.
+		TaskQueue string
+
+		// Memo stores values that callers can inspect through the workflow engine.
+		Memo map[string]any
+
+		// SearchAttributes stores values indexed by the workflow engine.
+		SearchAttributes map[string]any
+	}
 
 	// PolicyOverrides configures per-run policy constraints.
 	// All fields are optional; zero values mean no override.

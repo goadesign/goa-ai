@@ -1,6 +1,9 @@
-package temporal
+// These tests prove every workflow engine shares strict encoding, byte limits,
+// and ownership of accepted payload bytes.
+package workflowcodec
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"strings"
@@ -8,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	commonpb "go.temporal.io/api/common/v1"
+	"go.temporal.io/sdk/converter"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -33,6 +37,10 @@ type (
 	// workflowByteSlice proves named byte slices use the same byte accounting
 	// as plain []byte values.
 	workflowByteSlice []byte
+
+	// workflowStringKey proves maps may use named keys whose underlying kind is
+	// string because JSON preserves those keys without conversion.
+	workflowStringKey string
 
 	// hidingWorkflowByteSlice proves a byte slice cannot hide its contents
 	// behind custom JSON.
@@ -63,14 +71,14 @@ type (
 	}
 )
 
-func TestNewAgentDataConverterRejectsToolResult(t *testing.T) {
-	dc := NewAgentDataConverter()
+func TestNewDataConverterRejectsToolResult(t *testing.T) {
+	dc := NewDataConverter()
 	_, err := dc.ToPayload(&planner.ToolResult{Name: "test.tool"})
 	require.Error(t, err)
 }
 
-func TestNewAgentDataConverterBoundsEveryPayloadEncoding(t *testing.T) {
-	dc := NewAgentDataConverter()
+func TestNewDataConverterBoundsEveryPayloadEncoding(t *testing.T) {
+	dc := NewDataConverter()
 
 	_, err := dc.ToPayload([]byte(strings.Repeat("x", engine.MaxPayloadBytes+1)))
 	require.ErrorContains(t, err, "maximum aggregate size")
@@ -82,7 +90,111 @@ func TestNewAgentDataConverterBoundsEveryPayloadEncoding(t *testing.T) {
 	require.ErrorContains(t, err, "maximum aggregate size")
 }
 
-func TestPreflightTemporalValuesBoundsAggregateSource(t *testing.T) {
+func TestNewDataConverterCopiesRawValues(t *testing.T) {
+	source := &commonpb.Payload{
+		Metadata: map[string][]byte{"encoding": []byte("binary/plain")},
+		Data:     []byte("value"),
+	}
+	encoded, err := NewDataConverter().ToPayload(converter.NewRawValue(source))
+	require.NoError(t, err)
+	source.Metadata["encoding"][0] = 'X'
+	source.Data[0] = 'X'
+	require.Equal(t, []byte("binary/plain"), encoded.Metadata["encoding"])
+	require.Equal(t, []byte("value"), encoded.Data)
+
+	var decoded converter.RawValue
+	require.NoError(t, NewDataConverter().FromPayload(encoded, &decoded))
+	encoded.Metadata["encoding"][0] = 'Y'
+	encoded.Data[0] = 'Y'
+	require.Equal(t, []byte("binary/plain"), decoded.Payload().Metadata["encoding"])
+	require.Equal(t, []byte("value"), decoded.Payload().Data)
+}
+
+func TestNewDataConverterRejectsNilRawPayloads(t *testing.T) {
+	codec := NewDataConverter()
+	raw := converter.NewRawValue(nil)
+
+	_, err := codec.ToPayload(raw)
+	require.EqualError(t, err, "workflow codec: raw payload is nil")
+
+	_, err = codec.ToPayloads("first", raw)
+	require.EqualError(t, err, "workflow codec: raw payload is nil")
+
+	var decoded converter.RawValue
+	err = codec.FromPayload(nil, &decoded)
+	require.EqualError(t, err, "workflow codec: payload is nil")
+}
+
+func TestNewDataConverterRequiresOneDestinationPerPayload(t *testing.T) {
+	codec := NewDataConverter()
+	one, err := codec.ToPayloads("one")
+	require.NoError(t, err)
+	two, err := codec.ToPayloads("one", "two")
+	require.NoError(t, err)
+	var decoded string
+	require.NoError(t, codec.FromPayloads(one, &decoded))
+	require.Equal(t, "one", decoded)
+
+	tests := []struct {
+		name         string
+		payloads     *commonpb.Payloads
+		destinations []any
+		wantErr      string
+	}{
+		{name: "no payloads and no destinations"},
+		{
+			name:         "missing stored payload",
+			payloads:     one,
+			destinations: []any{new(string), new(string)},
+			wantErr:      "workflow codec: payload count 1 does not match destination count 2",
+		},
+		{
+			name:         "extra stored payload",
+			payloads:     two,
+			destinations: []any{new(string)},
+			wantErr:      "workflow codec: payload count 2 does not match destination count 1",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := codec.FromPayloads(test.payloads, test.destinations...)
+			if test.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.EqualError(t, err, test.wantErr)
+		})
+	}
+}
+
+func TestNewDataConverterValidatesRawValueAtExactLimit(t *testing.T) {
+	codec := NewDataConverter()
+	_, err := codec.ToPayload(converter.NewRawValue(&commonpb.Payload{
+		Data: make([]byte, engine.MaxPayloadBytes),
+	}))
+	require.NoError(t, err)
+
+	_, err = codec.ToPayload(converter.NewRawValue(&commonpb.Payload{
+		Data: make([]byte, engine.MaxPayloadBytes+1),
+	}))
+	require.ErrorContains(t, err, "maximum aggregate size")
+}
+
+func TestNewDataConverterRejectsOversizedRawValueBeforeCopy(t *testing.T) {
+	data := make([]byte, engine.MaxPayloadBytes+1)
+	raw := converter.NewRawValue(&commonpb.Payload{Data: data})
+	result := testing.Benchmark(func(b *testing.B) {
+		codec := NewDataConverter()
+		for range b.N {
+			if _, err := codec.ToPayload(raw); err == nil {
+				b.Fatal("expected oversized raw value to fail")
+			}
+		}
+	})
+	require.Less(t, result.AllocedBytesPerOp(), int64(len(data)))
+}
+
+func TestPreflightValuesBoundsAggregateSource(t *testing.T) {
 	tests := []struct {
 		name   string
 		values []any
@@ -107,37 +219,77 @@ func TestPreflightTemporalValuesBoundsAggregateSource(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := preflightTemporalValues(test.values...)
+			err := preflightValues(test.values...)
 			require.ErrorContains(t, err, "maximum aggregate size")
 		})
 	}
 }
 
-func TestPreflightTemporalValuesCountsNestedBytesAsOneBlock(t *testing.T) {
+func TestWorkflowCodecRejectsInvalidUTF8BeforeEncoding(t *testing.T) {
+	invalid := string([]byte{0xff})
+	tests := []struct {
+		name  string
+		value any
+	}{
+		{name: "string", value: invalid},
+		{name: "nested string", value: map[string]any{"value": []any{invalid}}},
+		{name: "map key", value: map[string]any{invalid: "value"}},
+		{name: "runtime raw JSON", value: rawjson.Message{'"', 0xff, '"'}},
+		{name: "standard raw JSON", value: json.RawMessage{'"', 0xff, '"'}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewDataConverter().ToPayload(test.value)
+			require.ErrorContains(t, err, "invalid UTF-8")
+		})
+	}
+}
+
+func TestWorkflowCodecRequiresStringMapKeys(t *testing.T) {
+	codec := NewDataConverter()
+
+	_, err := codec.ToPayload(map[int]string{1: "one"})
+	require.ErrorContains(t, err, "map key type int must have underlying kind string")
+
+	payload, err := codec.ToPayload(map[workflowStringKey]string{"one": "first"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"one":"first"}`, string(payload.Data))
+}
+
+func TestBudgetRejectsInvalidUTF8TextAndMetadataKeys(t *testing.T) {
+	invalid := string([]byte{0xff})
+	budget := new(Budget)
+	require.ErrorContains(t, budget.AddText(invalid), "invalid UTF-8")
+	require.ErrorContains(t, budget.AddPayload(&commonpb.Payload{
+		Metadata: map[string][]byte{invalid: []byte("value")},
+	}), "invalid UTF-8")
+}
+
+func TestPreflightValuesCountsNestedBytesAsOneBlock(t *testing.T) {
 	for _, value := range []any{
 		make([]byte, maxWorkflowJSONVisits+1),
 		workflowByteSlice(make([]byte, maxWorkflowJSONVisits+1)),
 	} {
-		err := preflightTemporalValues(map[string]any{"value": value})
+		err := preflightValues(map[string]any{"value": value})
 		require.NoError(t, err)
 	}
 
-	err := preflightTemporalValues(map[string]any{
+	err := preflightValues(map[string]any{
 		"value": make([]byte, engine.MaxPayloadBytes+1),
 	})
 	require.ErrorContains(t, err, "maximum aggregate size")
 }
 
-func TestPreflightTemporalValuesRejectsCustomByteEncoding(t *testing.T) {
-	err := preflightTemporalValues(hidingWorkflowByteSlice{1})
+func TestPreflightValuesRejectsCustomByteEncoding(t *testing.T) {
+	err := preflightValues(hidingWorkflowByteSlice{1})
 	require.ErrorContains(t, err, "unsupported custom JSON marshaler")
 
-	err = preflightTemporalValues([]hidingWorkflowByte{1})
+	err = preflightValues([]hidingWorkflowByte{1})
 	require.ErrorContains(t, err, "unsupported custom JSON marshaler")
 }
 
-func TestNewAgentDataConverterRejectsOversizedPersistedPayload(t *testing.T) {
-	err := NewAgentDataConverter().FromPayload(
+func TestNewDataConverterRejectsOversizedPersistedPayload(t *testing.T) {
+	err := NewDataConverter().FromPayload(
 		&commonpb.Payload{Data: []byte(strings.Repeat("x", engine.MaxPayloadBytes+1))},
 		new([]byte),
 	)
@@ -145,8 +297,18 @@ func TestNewAgentDataConverterRejectsOversizedPersistedPayload(t *testing.T) {
 	require.ErrorContains(t, err, "maximum aggregate size")
 }
 
-func TestNewAgentDataConverterRejectsNestedToolResultInRunInput(t *testing.T) {
-	dc := NewAgentDataConverter()
+func TestNewDataConverterRejectsInvalidUTF8PersistedJSON(t *testing.T) {
+	payload := &commonpb.Payload{
+		Metadata: map[string][]byte{"encoding": []byte("json/plain")},
+		Data:     []byte{'"', 0xff, '"'},
+	}
+	var decoded string
+	err := NewDataConverter().FromPayload(payload, &decoded)
+	require.EqualError(t, err, "workflow codec: canonical JSON payload contains invalid UTF-8")
+}
+
+func TestNewDataConverterRejectsNestedToolResultInRunInput(t *testing.T) {
+	dc := NewDataConverter()
 	_, err := dc.ToPayload(&api.RunInput{
 		AgentID: "test.agent",
 		RunID:   "run-123",
@@ -158,7 +320,7 @@ func TestNewAgentDataConverterRejectsNestedToolResultInRunInput(t *testing.T) {
 	require.ErrorContains(t, err, "planner.ToolResult must not cross workflow boundaries")
 }
 
-func TestNewAgentDataConverterRejectsNestedTypedNilToolResult(t *testing.T) {
+func TestNewDataConverterRejectsNestedTypedNilToolResult(t *testing.T) {
 	var typedNil *planner.ToolResult
 	tests := []struct {
 		name  string
@@ -170,13 +332,13 @@ func TestNewAgentDataConverterRejectsNestedTypedNilToolResult(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := NewAgentDataConverter().ToPayload(test.value)
+			_, err := NewDataConverter().ToPayload(test.value)
 			require.ErrorContains(t, err, "planner.ToolResult must not cross workflow boundaries")
 		})
 	}
 }
 
-func TestNewAgentDataConverterRejectsHidingMarshalers(t *testing.T) {
+func TestNewDataConverterRejectsHidingMarshalers(t *testing.T) {
 	var typedNil *planner.ToolResult
 	tests := []struct {
 		name  string
@@ -196,13 +358,13 @@ func TestNewAgentDataConverterRejectsHidingMarshalers(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := NewAgentDataConverter().ToPayload(test.value)
+			_, err := NewDataConverter().ToPayload(test.value)
 			require.ErrorContains(t, err, test.kind)
 		})
 	}
 }
 
-func TestNewAgentDataConverterChecksEmbeddedPrivateStructFields(t *testing.T) {
+func TestNewDataConverterChecksEmbeddedPrivateStructFields(t *testing.T) {
 	tests := []struct {
 		name    string
 		value   any
@@ -239,15 +401,15 @@ func TestNewAgentDataConverterChecksEmbeddedPrivateStructFields(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := NewAgentDataConverter().ToPayload(test.value)
+			_, err := NewDataConverter().ToPayload(test.value)
 			require.ErrorContains(t, err, test.wantErr)
 		})
 	}
 }
 
-func TestNewAgentDataConverterDecodesToolResultsSetIntoSinglePointer(t *testing.T) {
+func TestNewDataConverterDecodesToolResultsSetIntoSinglePointer(t *testing.T) {
 	toolName := tools.Ident("test.tool")
-	dc := NewAgentDataConverter()
+	dc := NewDataConverter()
 	p, err := dc.ToPayload(&api.ToolResultsSet{
 		ID: "await-123",
 		Results: []*api.ProvidedToolResult{
@@ -271,10 +433,10 @@ func TestNewAgentDataConverterDecodesToolResultsSetIntoSinglePointer(t *testing.
 	require.JSONEq(t, `{"value":"ok"}`, string(decoded.Results[0].Success.Result))
 }
 
-func TestNewAgentDataConverterRoundTripsPlanActivityInputToolOutputs(t *testing.T) {
+func TestNewDataConverterRoundTripsPlanActivityInputToolOutputs(t *testing.T) {
 	t.Parallel()
 
-	dc := NewAgentDataConverter()
+	dc := NewDataConverter()
 	p, err := dc.ToPayload(&api.PlanActivityInput{
 		AgentID: "test.agent",
 		RunID:   "run-123",
@@ -305,7 +467,7 @@ func TestNewAgentDataConverterRoundTripsPlanActivityInputToolOutputs(t *testing.
 	require.Equal(t, "call-1", decoded.ToolOutputs[0].ToolCallID)
 }
 
-func TestNewAgentDataConverterRoundTripsOutputContractFailure(t *testing.T) {
+func TestNewDataConverterRoundTripsOutputContractFailure(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -331,7 +493,7 @@ func TestNewAgentDataConverterRoundTripsOutputContractFailure(t *testing.T) {
 			ModelResponseSize:               42,
 		},
 	}
-	dc := NewAgentDataConverter()
+	dc := NewDataConverter()
 	payload, err := dc.ToPayload(expected)
 	require.NoError(t, err)
 
@@ -340,14 +502,14 @@ func TestNewAgentDataConverterRoundTripsOutputContractFailure(t *testing.T) {
 	require.Equal(t, expected, decoded)
 }
 
-func TestNewAgentDataConverterRejectsJSONStringifiedToolResult(t *testing.T) {
-	dc := NewAgentDataConverter()
+func TestNewDataConverterRejectsJSONStringifiedToolResult(t *testing.T) {
+	dc := NewDataConverter()
 	_, err := dc.ToPayload(planner.ToolResult{Name: "test.tool", Result: `{"value":"ok"}`})
 	require.Error(t, err)
 }
 
-func TestNewAgentDataConverterRejectsObsoletePolicyFields(t *testing.T) {
-	dc := NewAgentDataConverter()
+func TestNewDataConverterRejectsObsoletePolicyFields(t *testing.T) {
+	dc := NewDataConverter()
 	payload, err := dc.ToPayload(map[string]any{
 		"AgentID": "test.agent",
 		"RunID":   "run-123",
@@ -376,6 +538,15 @@ func (m hidingTextMarshaler) MarshalText() ([]byte, error) {
 		return nil, errors.New("hidden text value is required")
 	}
 	return []byte("hidden"), nil
+}
+
+// MarshalText proves JSON map encoding uses the underlying string key and does
+// not replace it with custom text.
+func (key workflowStringKey) MarshalText() ([]byte, error) {
+	if key == "" {
+		return nil, errors.New("key is required")
+	}
+	return []byte("replaced"), nil
 }
 
 // MarshalJSON would hide a named byte slice if preflight let encoding/json call

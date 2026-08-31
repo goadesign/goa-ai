@@ -10,7 +10,6 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -20,11 +19,11 @@ type (
 	// AgentClient is the high-level execution surface for one agent.
 	//
 	// Contract:
-	// - Run and Start are sessionful APIs: callers must provide a concrete
-	//   session ID that the host application has already created.
-	// - StartOneShot and OneShotRun are sessionless: callers provide no session
-	//   ID and the runtime persists only canonical run-log events for
-	//   introspection by RunID.
+	// - Run, Start, and Prepare are sessionful APIs: callers must provide a
+	//   concrete session ID that the host application has already created.
+	// - OneShotRun, StartOneShot, and PrepareOneShot are sessionless: callers
+	//   provide no session ID and the runtime persists only run records that can
+	//   be read by run ID.
 	// - Generated code typically returns AgentClient implementations via NewClient
 	//   helpers bound to one agent route.
 	AgentClient interface {
@@ -41,6 +40,16 @@ type (
 		// on workflow completion.
 		Start(ctx context.Context, sessionID string, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error)
 
+		// Prepare validates one initial sessionful run and returns its complete
+		// launch request without starting a workflow. Callers store the result
+		// before StartPrepared so a new process can retry the exact same start.
+		Prepare(sessionID string, messages []*model.Message, opts ...RunOption) (*PreparedRun, error)
+
+		// PrepareOneShot validates one initial sessionless run and returns its
+		// complete launch request without starting a workflow. Callers store the
+		// result before StartPrepared so a new process can retry the exact start.
+		PrepareOneShot(messages []*model.Message, opts ...RunOption) (*PreparedRun, error)
+
 		// Continue loads one exact predecessor suspension, starts a new sessionful
 		// workflow with its first pending response, and blocks until completion.
 		// WorkflowOptions apply only to the new engine workflow; the predecessor
@@ -49,7 +58,7 @@ type (
 			ctx context.Context,
 			sessionID, predecessorRunID, runID, turnID string,
 			response *api.PendingInputResponse,
-			workflowOptions *WorkflowOptions,
+			workflowOptions WorkflowOptions,
 		) (*RunOutput, error)
 
 		// PrepareContinuation loads and validates one exact stored suspension
@@ -58,13 +67,13 @@ type (
 			ctx context.Context,
 			sessionID, predecessorRunID, runID, turnID string,
 			response *api.PendingInputResponse,
-			workflowOptions *WorkflowOptions,
-		) (*PreparedContinuation, error)
+			workflowOptions WorkflowOptions,
+		) (*PreparedRun, error)
 
-		// StartContinuation submits one value returned by PrepareContinuation.
-		// The prepared value can only be used by a client for the same generated
-		// agent definition.
-		StartContinuation(ctx context.Context, prepared *PreparedContinuation) (engine.WorkflowHandle, error)
+		// StartPrepared submits one value returned by Prepare or
+		// PrepareContinuation. The prepared run can be stored in trusted application
+		// storage and parsed in another process before it is submitted.
+		StartPrepared(ctx context.Context, prepared *PreparedRun) (engine.WorkflowHandle, error)
 
 		// StartOneShot starts one sessionless workflow and returns immediately with
 		// a workflow handle for asynchronous coordination.
@@ -107,7 +116,6 @@ type (
 	// a run before the workflow engine accepts it. Its data cannot be changed
 	// after construction.
 	AgentDefinition struct {
-		identity        *agentDefinitionIdentity
 		route           AgentRoute
 		specs           []tools.ToolSpec
 		specByName      map[tools.Ident]tools.ToolSpec
@@ -116,18 +124,6 @@ type (
 		executableTools []tools.Ident
 		agents          map[agent.Ident]AgentDefinition
 	}
-
-	// PreparedContinuation is an immutable continuation start accepted by one
-	// generated agent client. Callers can retain it to retry the exact same
-	// engine start after a transport failure.
-	PreparedContinuation struct {
-		definitionIdentity *agentDefinitionIdentity
-		snapshot           startrecipe.RunInputSnapshot
-	}
-
-	// agentDefinitionIdentity distinguishes generated definitions that happen
-	// to use the same route while carrying different static contracts.
-	agentDefinitionIdentity byte
 
 	// agentClient binds execution to one generated agent definition.
 	agentClient struct {
@@ -194,7 +190,6 @@ func NewAgentDefinition(
 		ownedAgents[child.route.ID] = child
 	}
 	definition := AgentDefinition{
-		identity:        new(agentDefinitionIdentity),
 		route:           route,
 		specs:           ownedSpecs,
 		specByName:      byName,
@@ -226,7 +221,7 @@ func (d AgentDefinition) ChildDefinition(id agent.Ident) (AgentDefinition, bool)
 
 // valid reports whether the definition was created with NewAgentDefinition.
 func (d AgentDefinition) valid() bool {
-	return d.identity != nil && d.route.ID != "" && d.route.WorkflowName != "" && d.route.DefaultTaskQueue != "" && d.specByName != nil
+	return d.route.ID != "" && d.route.WorkflowName != "" && d.route.DefaultTaskQueue != "" && d.specByName != nil
 }
 
 // spec returns one owned generated tool contract.
@@ -301,21 +296,48 @@ func (c *agentClient) Run(ctx context.Context, sessionID string, messages []*mod
 }
 
 func (c *agentClient) Start(ctx context.Context, sessionID string, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error) {
-	input := buildSessionRunInput(c.definition.route.ID, sessionID, messages, opts)
-	return c.r.startRunWithDefinition(ctx, &input, c.definition, true)
+	prepared, err := c.Prepare(sessionID, messages, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return c.StartPrepared(ctx, prepared)
+}
+
+func (c *agentClient) Prepare(sessionID string, messages []*model.Message, opts ...RunOption) (*PreparedRun, error) {
+	start, err := buildSessionRunStart(c.definition.route.ID, sessionID, messages, opts)
+	if err != nil {
+		return nil, err
+	}
+	request, err := prepareRunWithDefinition(&start.input, start.launch, c.definition, true)
+	if err != nil {
+		return nil, err
+	}
+	return newPreparedRun(c.definition.route.ID, request, start.launch.taskQueue)
+}
+
+func (c *agentClient) PrepareOneShot(messages []*model.Message, opts ...RunOption) (*PreparedRun, error) {
+	start, err := buildOneShotRunStart(c.definition.route.ID, messages, opts)
+	if err != nil {
+		return nil, err
+	}
+	request, err := prepareRunWithDefinition(&start.input, start.launch, c.definition, false)
+	if err != nil {
+		return nil, err
+	}
+	return newPreparedRun(c.definition.route.ID, request, start.launch.taskQueue)
 }
 
 func (c *agentClient) Continue(
 	ctx context.Context,
 	sessionID, predecessorRunID, runID, turnID string,
 	response *api.PendingInputResponse,
-	workflowOptions *WorkflowOptions,
+	workflowOptions WorkflowOptions,
 ) (*RunOutput, error) {
 	prepared, err := c.PrepareContinuation(ctx, sessionID, predecessorRunID, runID, turnID, response, workflowOptions)
 	if err != nil {
 		return nil, err
 	}
-	handle, err := c.StartContinuation(ctx, prepared)
+	handle, err := c.StartPrepared(ctx, prepared)
 	if err != nil {
 		return nil, err
 	}
@@ -326,39 +348,33 @@ func (c *agentClient) PrepareContinuation(
 	ctx context.Context,
 	sessionID, predecessorRunID, runID, turnID string,
 	response *api.PendingInputResponse,
-	workflowOptions *WorkflowOptions,
-) (*PreparedContinuation, error) {
-	input, err := c.r.buildStoredContinuationRunInput(ctx, c.definition, sessionID, predecessorRunID, runID, turnID, response, workflowOptions)
+	workflowOptions WorkflowOptions,
+) (*PreparedRun, error) {
+	input, err := c.r.buildStoredContinuationRunInput(ctx, c.definition, sessionID, predecessorRunID, runID, turnID, response)
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := startrecipe.SnapshotRunInput(startrecipe.NewDataConverter(), input)
+	launch, err := encodeWorkflowLaunch(workflowOptions)
 	if err != nil {
 		return nil, continuationContractError(err)
 	}
-	return &PreparedContinuation{
-		definitionIdentity: c.definition.identity,
-		snapshot:           snapshot,
-	}, nil
-}
-
-func (c *agentClient) StartContinuation(ctx context.Context, prepared *PreparedContinuation) (engine.WorkflowHandle, error) {
-	if prepared == nil {
-		return nil, continuationContractError(errors.New("prepared continuation is required"))
+	request, err := prepareRunWithDefinition(input, launch, c.definition, true)
+	if err != nil {
+		return nil, continuationContractError(err)
 	}
-	if prepared.definitionIdentity != c.definition.identity {
-		return nil, continuationContractError(errors.New("prepared continuation belongs to another agent definition"))
+	prepared, err := newPreparedRun(c.definition.route.ID, request, launch.taskQueue)
+	if err != nil {
+		return nil, continuationContractError(err)
 	}
-	var input *RunInput
-	if err := startrecipe.NewDataConverter().FromPayload(prepared.snapshot.Payload, &input); err != nil {
-		return nil, continuationContractError(fmt.Errorf("decode prepared continuation: %w", err))
-	}
-	return c.r.startRunWithDefinition(ctx, input, c.definition, true)
+	return prepared, nil
 }
 
 func (c *agentClient) StartOneShot(ctx context.Context, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error) {
-	input := buildOneShotRunInput(c.definition.route.ID, messages, opts)
-	return c.r.startRunWithDefinition(ctx, &input, c.definition, false)
+	prepared, err := c.PrepareOneShot(messages, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return c.StartPrepared(ctx, prepared)
 }
 
 func (c *agentClient) OneShotRun(ctx context.Context, messages []*model.Message, opts ...RunOption) (*RunOutput, error) {
@@ -369,27 +385,37 @@ func (c *agentClient) OneShotRun(ctx context.Context, messages []*model.Message,
 	return handle.Wait(ctx)
 }
 
-// buildSessionRunInput constructs RunInput for sessionful execution and applies
-// all caller options in-order.
-func buildSessionRunInput(agentID agent.Ident, sessionID string, messages []*model.Message, opts []RunOption) RunInput {
-	input := RunInput{
+// buildSessionRunStart constructs a sessionful workflow input and its separate
+// engine launch settings.
+func buildSessionRunStart(agentID agent.Ident, sessionID string, messages []*model.Message, opts []RunOption) (runStart, error) {
+	start := runStart{input: RunInput{
 		AgentID:   agentID,
 		SessionID: sessionID,
 		Messages:  messages,
+	}}
+	applyRunOptions(&start, opts)
+	launch, err := encodeWorkflowLaunch(start.options)
+	if err != nil {
+		return runStart{}, err
 	}
-	applyRunOptions(&input, opts)
-	return input
+	start.launch = launch
+	return start, nil
 }
 
-// buildOneShotRunInput constructs RunInput for one-shot execution and applies
-// all caller options in-order.
-func buildOneShotRunInput(agentID agent.Ident, messages []*model.Message, opts []RunOption) RunInput {
-	input := RunInput{
+// buildOneShotRunStart constructs a sessionless workflow input and its
+// separate engine launch settings.
+func buildOneShotRunStart(agentID agent.Ident, messages []*model.Message, opts []RunOption) (runStart, error) {
+	start := runStart{input: RunInput{
 		AgentID:  agentID,
 		Messages: messages,
+	}}
+	applyRunOptions(&start, opts)
+	launch, err := encodeWorkflowLaunch(start.options)
+	if err != nil {
+		return runStart{}, err
 	}
-	applyRunOptions(&input, opts)
-	return input
+	start.launch = launch
+	return start, nil
 }
 
 // buildContinuationRunInput constructs the only legal input shape for a
@@ -433,7 +459,6 @@ func (r *Runtime) buildStoredContinuationRunInput(
 	definition AgentDefinition,
 	sessionID, predecessorRunID, runID, turnID string,
 	response *api.PendingInputResponse,
-	workflowOptions *WorkflowOptions,
 ) (*RunInput, error) {
 	if predecessorRunID == "" {
 		return nil, continuationContractError(errors.New("predecessor run id is required"))
@@ -453,17 +478,16 @@ func (r *Runtime) buildStoredContinuationRunInput(
 	if checkpoint.PreviousRunID != predecessorRunID {
 		return nil, continuationContractError(errors.New("predecessor run id does not match stored suspension"))
 	}
-	input.WorkflowOptions = workflowOptions
 	return input, nil
 }
 
-// applyRunOptions mutates input with non-nil run options in the order supplied
-// by the caller.
-func applyRunOptions(input *RunInput, opts []RunOption) {
+// applyRunOptions applies caller options in order to workflow input and launch
+// settings.
+func applyRunOptions(start *runStart, opts []RunOption) {
 	for _, option := range opts {
 		if option == nil {
-			continue
+			panic("runtime: run option is required")
 		}
-		option(input)
+		option.apply(start)
 	}
 }
