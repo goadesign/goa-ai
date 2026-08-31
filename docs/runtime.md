@@ -874,7 +874,10 @@ Workflow step boundary:
   inside the remaining hard-deadline window, stamps generated tool-call IDs
   with an opaque SHA-256 digest of length-delimited run ID, turn ID, attempt,
   batch index, and exact tool name, and requires every terminal side effect in
-  the batch to complete successfully,
+  the batch to complete successfully; a rejected finalizer output or terminal
+  tool failure marked `correct_call` spends the existing recovery-turn budget
+  while retaining finalization, and only the exact failed terminal tool is
+  advertised for a tool-call repair,
 - before executing either a fixed limit call or a terminal call returned by the
   finalization planner, the runtime writes the exact
   `planner.TerminationReason` to
@@ -1102,8 +1105,10 @@ Bookkeeping turn invariant:
 - failed bookkeeping results are the planner-visible exception: the runtime
   resumes through the typed recovery transition; `correct_call` and `replan`
   may use tools, while `finish` resumes without tools for terminal synthesis,
-- during forced finalization, terminal bookkeeping calls are not replayed into a
-  later planner turn; they either durably close the run or fail finalization,
+- during forced finalization, a terminal bookkeeping call marked `correct_call`
+  may use the bounded recovery-turn budget to replace that exact call; the
+  finalization reason remains present and every other terminal failure ends
+  finalization,
 - otherwise the runtime fails fast instead of scheduling an implicit extra
   `PlanResume`.
 
