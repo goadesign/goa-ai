@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
@@ -196,8 +197,9 @@ func NewProviderFromAPIKey(apiKey, defaultModel string) (model.Provider, error) 
 	return NewProvider(&ac.Messages, Options{DefaultModel: defaultModel})
 }
 
-// Complete issues a non-streaming Messages.New request and translates the
-// response into planner-friendly structures (assistant messages + tool calls).
+// Complete returns one fully assembled Messages response. It uses Anthropic's
+// non-streaming transport when the SDK admits the encoded request and drains
+// the streaming transport when the request's output allowance requires it.
 func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
 	contract, err := model.NewRequestContract(req)
 	if err != nil {
@@ -210,6 +212,13 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	params, err := c.completionParams(ctx, req, enc)
 	if err != nil {
 		return nil, err
+	}
+	if _, err := sdk.CalculateNonStreamingTimeout(int(params.MaxTokens), params.Model, enc.opts); err != nil {
+		stream, streamErr := c.openPreparedStream(ctx, req, contract, enc, params)
+		if streamErr != nil {
+			return nil, streamErr
+		}
+		return completeFromAnthropicStream(stream)
 	}
 	msg, err := c.msg.New(ctx, *params, enc.opts...)
 	if err != nil {
@@ -288,6 +297,18 @@ func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Stream
 	if err != nil {
 		return nil, err
 	}
+	return c.openPreparedStream(ctx, req, contract, enc, params)
+}
+
+// openPreparedStream starts an Anthropic Messages stream after the shared
+// request validation and encoding have succeeded.
+func (c *provider) openPreparedStream(
+	ctx context.Context,
+	req *model.Request,
+	contract *model.RequestContract,
+	enc *encodedRequest,
+	params *sdk.MessageNewParams,
+) (model.Streamer, error) {
 	stream := c.msg.NewStreaming(ctx, *params, enc.opts...)
 	if stream == nil {
 		return nil, errors.New("anthropic: stream is nil")
@@ -305,6 +326,27 @@ func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Stream
 		req.StructuredOutput,
 		contract,
 	), nil
+}
+
+// completeFromAnthropicStream drains the provider stream without exposing its
+// chunks and returns the response that became final at clean EOF.
+func completeFromAnthropicStream(stream model.Streamer) (*model.Response, error) {
+	for {
+		_, recvErr := stream.Recv()
+		// Only literal EOF completes the response. A wrapped EOF is a provider
+		// failure under the model.Streamer contract.
+		//nolint:errorlint // Exact equality is required by the stream contract.
+		if recvErr == io.EOF {
+			response := stream.Response()
+			if err := stream.Close(); err != nil {
+				return nil, err
+			}
+			return response, nil
+		}
+		if recvErr != nil {
+			return nil, errors.Join(recvErr, stream.Close())
+		}
+	}
 }
 
 // encodeRequest builds the canonical Anthropic encoding of req: resolved

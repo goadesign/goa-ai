@@ -725,8 +725,9 @@ type (
 	// Close after that cancellation so activity shutdown cannot retain provider
 	// work.
 	Provider interface {
-		// Complete performs a raw non-streaming provider invocation and returns
-		// promptly when ctx is canceled.
+		// Complete returns one raw provider response without exposing incremental
+		// chunks and returns promptly when ctx is canceled. The provider adapter
+		// owns the wire transport used to assemble that response.
 		Complete(ctx context.Context, req *Request) (*Response, error)
 
 		// Stream performs a raw streaming provider invocation when supported.
@@ -739,7 +740,8 @@ type (
 	// implementations, so every response and stream crosses the same canonical
 	// validation boundary before consumer code can observe it.
 	Client interface {
-		// Complete performs a validated non-streaming model invocation.
+		// Complete returns one validated model response without exposing
+		// incremental chunks.
 		Complete(ctx context.Context, req *Request) (*Response, error)
 
 		// Stream performs a validated streaming model invocation.
