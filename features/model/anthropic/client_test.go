@@ -316,6 +316,68 @@ func TestComplete_TextOnly(t *testing.T) {
 	}
 }
 
+func TestCompleteStreamsWhenOutputLimitExceedsNonStreamingTransport(t *testing.T) {
+	var requestBody []byte
+	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var err error
+		requestBody, err = io.ReadAll(req.Body)
+		require.NoError(t, err)
+		body := strings.Join([]string{
+			`event: message_start`,
+			`data: {"type":"message_start","message":{"id":"msg_test","type":"message","role":"assistant","content":[],"model":"claude-sonnet-5","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0}}}`,
+			``,
+			`event: content_block_start`,
+			`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+			``,
+			`event: content_block_delta`,
+			`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"world"}}`,
+			``,
+			`event: content_block_stop`,
+			`data: {"type":"content_block_stop","index":0}`,
+			``,
+			`event: message_delta`,
+			`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5}}`,
+			``,
+			`event: message_stop`,
+			`data: {"type":"message_stop"}`,
+			``,
+			``,
+		}, "\n")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+	sdkClient := sdk.NewClient(
+		option.WithAPIKey("test-key"),
+		option.WithBaseURL("https://anthropic.test"),
+		option.WithHTTPClient(httpClient),
+	)
+	client, err := New(&sdkClient.Messages, Options{
+		DefaultModel: "claude-sonnet-5",
+		MaxTokens:    32768,
+	})
+	require.NoError(t, err)
+
+	response, err := client.Complete(t.Context(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "hello"}},
+		}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	assert.Equal(t, []model.Part{model.TextPart{Text: "world"}}, response.Content[0].Parts)
+	assert.Equal(t, 10, response.Usage.InputTokens)
+	assert.Equal(t, 5, response.Usage.OutputTokens)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(requestBody, &payload))
+	assert.Equal(t, true, payload["stream"])
+	assert.EqualValues(t, 32768, payload["max_tokens"])
+}
+
 func TestCountTokensRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
 	request := func(schema rawjson.Message) *model.Request {
 		return &model.Request{
