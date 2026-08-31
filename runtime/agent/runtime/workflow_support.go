@@ -97,6 +97,8 @@ func (r *Runtime) finalizeRun(
 		nextAttempt,
 		turnID,
 		recovery,
+		"",
+		nil,
 		reason,
 		hardDeadline,
 	)
@@ -116,6 +118,8 @@ func (r *Runtime) finalizeFromHistory(
 	nextAttempt int,
 	turnID string,
 	recovery []*planner.ToolOutput,
+	outputCorrection string,
+	invocationRecovery *ModelInvocationRecovery,
 	reason planner.TerminationReason,
 	hardDeadline time.Time,
 ) (*RunOutput, error) {
@@ -170,6 +174,13 @@ func (r *Runtime) finalizeFromHistory(
 		RecoveryToolCallIDs: recoveryToolCallIDs(recovery),
 		Finalize:            &planner.Termination{Reason: reason, Message: hint},
 	}
+	if outputCorrection != "" {
+		req.ModelOutputRecovery = &ModelOutputRecovery{Correction: outputCorrection}
+	}
+	if invocationRecovery != nil {
+		recoveryCopy := *invocationRecovery
+		req.ModelInvocationRecovery = &recoveryCopy
+	}
 	if err := enforcePlanActivityInputBudget(req); err != nil {
 		return nil, err
 	}
@@ -199,22 +210,81 @@ func (r *Runtime) finalizeFromHistory(
 		// Surface the termination reason prominently; include underlying error for observability.
 		return nil, fmt.Errorf("%s: %w", reasonText, err)
 	}
-	if output == nil || output.Result == nil {
-		if output != nil && output.OutputContractFailure != nil {
+	if output == nil {
+		return nil, errors.New(reasonText)
+	}
+	aggUsage, err = addTokenUsage(aggUsage, output.Usage)
+	if err != nil {
+		return nil, fmt.Errorf("aggregate finalization usage: %w", err)
+	}
+	if output.Result == nil {
+		switch {
+		case output.OutputContractFailure != nil && output.OutputContractFailure.Correction != "":
+			if !consumeRecoveryTurn(&caps) {
+				return nil, fmt.Errorf(
+					"%s: finalization recovery turn cap exceeded: %w",
+					reasonText,
+					boundedOutputContractError(output.OutputContractFailure),
+				)
+			}
+			return r.finalizeFromHistory(
+				wfCtx,
+				reg,
+				input,
+				base,
+				allToolResults,
+				allToolOutputs,
+				aggUsage,
+				caps,
+				nextAttempt+1,
+				turnID,
+				recovery,
+				output.OutputContractFailure.Correction,
+				nil,
+				reason,
+				hardDeadline,
+			)
+		case output.OutputContractFailure != nil:
 			return nil, fmt.Errorf(
 				"%s: %w",
 				reasonText,
 				boundedOutputContractError(output.OutputContractFailure),
 			)
+		case output.ModelInvocationRecovery != nil:
+			if !consumeRecoveryTurn(&caps) {
+				return nil, fmt.Errorf("%s: finalization recovery turn cap exceeded after model invocation rejection", reasonText)
+			}
+			return r.finalizeFromHistory(
+				wfCtx,
+				reg,
+				input,
+				base,
+				allToolResults,
+				allToolOutputs,
+				aggUsage,
+				caps,
+				nextAttempt+1,
+				turnID,
+				recovery,
+				"",
+				output.ModelInvocationRecovery,
+				reason,
+				hardDeadline,
+			)
+		default:
+			return nil, errors.New(reasonText)
 		}
-		return nil, errors.New(reasonText)
+	}
+	if len(correctCallCatalog(recovery)) > 0 {
+		if err := r.rewriteRecoveryCatalogToolCalls(output.RecoveryCatalog, output.Result); err != nil {
+			return nil, fmt.Errorf("%s: %w", reasonText, err)
+		}
+		if err := validateRecoveryCatalog(recovery, output.RecoveryCatalog, output.Result); err != nil {
+			return nil, fmt.Errorf("%s: %w", reasonText, err)
+		}
 	}
 	if err := validateFinalizationPlanResult(output.Result); err != nil {
 		return nil, fmt.Errorf("%s: %w", reasonText, err)
-	}
-	aggUsage, err = addTokenUsage(aggUsage, output.Usage)
-	if err != nil {
-		return nil, fmt.Errorf("aggregate finalization usage: %w", err)
 	}
 	if isFinalizationTerminalToolPlan(output.Result) {
 		out, err := r.finishFinalizationTerminalToolCalls(
@@ -403,8 +473,31 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	if len(confirmations) > 0 || len(items) > 0 {
 		return nil, errors.New("finalization terminal tool step cannot request clarification")
 	}
-	if err := r.validateFinalizationTerminalToolRecords(batch.records); err != nil {
+	recovery, err := r.validateFinalizationTerminalToolRecords(batch.records)
+	if err != nil {
 		return nil, err
+	}
+	if len(recovery) > 0 {
+		if !consumeRecoveryTurn(&st.Caps) {
+			return nil, errors.New("finalization terminal tool correction exceeded the recovery turn cap")
+		}
+		return r.finalizeFromHistory(
+			wfCtx,
+			reg,
+			input,
+			&execBase,
+			st.ToolEvents,
+			st.ToolOutputs,
+			st.AggUsage,
+			st.Caps,
+			nextAttempt+1,
+			turnID,
+			recovery,
+			"",
+			nil,
+			reason,
+			hardDeadline,
+		)
 	}
 	return r.finishAfterSuccessfulToolCompletion(wfCtx.Context(), input, &execBase, st)
 }
@@ -443,31 +536,33 @@ func (r *Runtime) validateFinalizationTerminalToolCalls(calls []ToolCall) error 
 	return nil
 }
 
-// validateFinalizationTerminalToolRecords requires every finalization terminal
-// side effect to complete successfully after policy and unavailable-tool rewrites.
-func (r *Runtime) validateFinalizationTerminalToolRecords(records []stepToolRecord) error {
+// validateFinalizationTerminalToolRecords returns exact same-tool corrections
+// after validating every finalization side effect. Other failures remain
+// terminal because finalization cannot choose another operation or ask a user.
+func (r *Runtime) validateFinalizationTerminalToolRecords(records []stepToolRecord) ([]*planner.ToolOutput, error) {
 	if len(records) == 0 {
-		return errors.New("finalization terminal tool step produced no records")
+		return nil, errors.New("finalization terminal tool step produced no records")
 	}
 	for _, record := range records {
 		if err := validateStepToolRecord("finalization terminal tool step", record); err != nil {
-			return err
+			return nil, err
 		}
 		if record.clarification != nil {
-			return fmt.Errorf("finalization terminal tool step cannot request clarification from tool %q", record.call.Name)
+			return nil, fmt.Errorf("finalization terminal tool step cannot request clarification from tool %q", record.call.Name)
 		}
-		if record.result.Failure != nil {
-			return fmt.Errorf("finalization terminal tool step failed on tool %q: %w", record.call.Name, record.result.Failure.Error)
+		if record.result.Failure != nil &&
+			record.result.Failure.Recovery.Action != planner.RecoveryCorrectCall {
+			return nil, fmt.Errorf("finalization terminal tool step failed on tool %q: %w", record.call.Name, record.result.Failure.Error)
 		}
 		spec, ok := r.toolSpec(record.result.Name)
 		if !ok {
-			return fmt.Errorf("finalization terminal tool step returned unknown tool %q", record.result.Name)
+			return nil, fmt.Errorf("finalization terminal tool step returned unknown tool %q", record.result.Name)
 		}
 		if !spec.TerminalRun {
-			return fmt.Errorf("finalization terminal tool step returned non-terminal tool %q", record.result.Name)
+			return nil, fmt.Errorf("finalization terminal tool step returned non-terminal tool %q", record.result.Name)
 		}
 	}
-	return nil
+	return pendingRecoveryOutputs(records), nil
 }
 
 // applyMissingFieldsPolicy inspects generated validation issues for missing
